@@ -2458,17 +2458,16 @@ namespace Lumina
     void FEditorUI::OpenProjectManagerDialog(EProjectManagerTab DefaultTab)
     {
         
-        
-        bool bNeedsTabSet = true;
+        bool bInitTabState = true;
 
-        ModalManager.CreateDialogue("Project Manager", ImVec2(1000, 650), [this, DefaultTab, &bNeedsTabSet] () -> bool
+        ModalManager.CreateDialogue("Project Manager", ImVec2(1000, 650), [this, DefaultTab, bInitTabState] () mutable -> bool
         {
             bool bShouldClose = false;
 
-            ImGuiTabItemFlags openTabFlags = (DefaultTab == EProjectManagerTab::OpenProject && bNeedsTabSet)
+            ImGuiTabItemFlags openTabFlags = (DefaultTab == EProjectManagerTab::OpenProject && bInitTabState)
                 ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
 
-            ImGuiTabItemFlags newTabFlags = (DefaultTab == EProjectManagerTab::NewProject && bNeedsTabSet)
+            ImGuiTabItemFlags newTabFlags = (DefaultTab == EProjectManagerTab::NewProject && bInitTabState)
                 ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
             
             if (ImGui::BeginTabBar("ProjectManager"))
@@ -2703,8 +2702,9 @@ namespace Lumina
                     ImGui::EndTabItem();
                 }
                 ImGui::EndTabBar();
+
+                bInitTabState = false;
             }
-            bNeedsTabSet = false;
             return bShouldClose;
         }, true, false);
     }
