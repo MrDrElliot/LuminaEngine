@@ -54,6 +54,7 @@ namespace Lumina
 
             JPH::CharacterVirtual::EGroundState GroundState = Character->GetGroundState();
             bool bWasGrounded = Movement.bGrounded;
+            Controller.bIsOnGround = bWasGrounded;
             Movement.bGrounded = (GroundState == JPH::CharacterVirtual::EGroundState::OnGround);
         
             if (!bWasGrounded && Movement.bGrounded)

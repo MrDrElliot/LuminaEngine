@@ -18,6 +18,9 @@ namespace Lumina
         void AddLookInput(const glm::vec2& Look) { LookInput += Look; }
         
         FUNCTION(Script)
+        bool GetIsOnGround() { return bIsOnGround; }
+        
+        FUNCTION(Script)
         void Jump() { bJumpPressed = true; }
         
         PROPERTY(Script, ReadOnly)
@@ -28,5 +31,8 @@ namespace Lumina
 
         PROPERTY(Script, ReadOnly)
         bool bJumpPressed = false;
+        
+        PROPERTY(Script)
+        bool bIsOnGround = false;
     };
 }
