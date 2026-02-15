@@ -2633,8 +2633,8 @@ namespace Lumina
                     ImGui::Separator();
                     ImGui::Spacing();
 
-                    static char NewProjectName[256] = "MyProject";
-                    static char NewProjectPath[512] = "";
+                    char NewProjectName[256] = "MyProject";
+                    char NewProjectPath[512] = "";
 
                     ImGui::Text("Project Name:");
                     ImGui::SetNextItemWidth(-1);
