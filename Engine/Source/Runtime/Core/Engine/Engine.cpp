@@ -144,7 +144,7 @@ namespace Lumina
         FPluginManager::Get().DiscoverEnginePlugins();
 
         // Apply project overrides before any module loads; path from --Project, falling
-        // back to Editor.StartupProject so a bare-launch reopen respects plugin enable/disable.
+        // back to CEditorSettings::StartupProject so a bare-launch reopen respects plugin enable/disable.
         {
             FString PreloadLproj;
             if (TOptional<FFixedString> ProjectArg = GCommandLine->Get("Project"))
@@ -154,7 +154,7 @@ namespace Lumina
             }
             else if (GConfig)
             {
-                const std::string Stashed = GConfig->Get<std::string>("Editor.StartupProject");
+                const std::string Stashed = GetDefault<CEditorSettings>()->StartupProject.c_str();
                 if (!Stashed.empty() && Stashed != "NULL")
                 {
                     PreloadLproj.assign(Stashed.c_str(), Stashed.size());

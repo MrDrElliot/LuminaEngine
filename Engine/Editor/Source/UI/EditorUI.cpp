@@ -285,7 +285,7 @@ namespace Lumina
         }
 
         // Recent .lproject paths: absolute, most-recent-first, deduped, capped at
-        // kMaxRecents. Backed by the "Editor.RecentProjects" StringArray config key.
+        // kMaxRecents. Backed by the CEditorSettings::RecentProjects variable.
         constexpr size_t kMaxRecents = 10;
 
         void PushRecentProject(FStringView LprojPath)
@@ -294,14 +294,14 @@ namespace Lumina
             {
                 return;
             }
-
-            const std::string NewEntry(LprojPath.data(), LprojPath.size());
-            auto Recents = GConfig->Get<std::vector<std::string>>("Editor.RecentProjects");
+            FString NewEntry(LprojPath);
+            auto Recents = GetDefault<CEditorSettings>()->RecentProjects;
 
             // Drop legacy name-only entries and any prior occurrence of this path.
-            std::erase_if(Recents, [&](const std::string& Entry)
+            
+            eastl::erase_if(Recents, [&](const FString& Entry)
             {
-                return Entry == NewEntry || Entry.find(".lproject") == std::string::npos;
+                return Entry == LprojPath || Entry.find(".lproject") == FString::npos;
             });
 
             Recents.insert(Recents.begin(), NewEntry);
@@ -309,47 +309,50 @@ namespace Lumina
             {
                 Recents.resize(kMaxRecents);
             }
-
-            GConfig->Set("Editor.RecentProjects", Recents);
+            
+            GetMutableDefault<CEditorSettings>()->RecentProjects = Recents;
+            GConfig->SaveSettings(CEditorSettings::StaticClass());
         }
 
-        void RemoveRecentProject(const std::string& LprojPath)
+        void RemoveRecentProject(const FString& LprojPath)
         {
-            auto Recents = GConfig->Get<std::vector<std::string>>("Editor.RecentProjects");
-            std::erase(Recents, LprojPath);
-            GConfig->Set("Editor.RecentProjects", Recents);
+            auto Recents = GetDefault<CEditorSettings>()->RecentProjects;
+            eastl::erase(Recents, LprojPath);
+            GetMutableDefault<CEditorSettings>()->RecentProjects = Recents;
+            GConfig->SaveSettings(CEditorSettings::StaticClass());
         }
 
         // Drop entries whose .lproject no longer exists; returns the cleaned list and
         // writes it back if anything was pruned, keeping the menu and dialog in sync.
-        std::vector<std::string> PruneMissingRecents()
+        TVector<FString> PruneMissingRecents()
         {
-            auto Recents = GConfig->Get<std::vector<std::string>>("Editor.RecentProjects");
+            auto Recents = GetDefault<CEditorSettings>()->RecentProjects;
             const size_t Before = Recents.size();
 
-            std::erase_if(Recents, [](const std::string& Entry)
+            eastl::erase_if(Recents, [](const FString& Entry)
             {
-                if (Entry.find(".lproject") == std::string::npos)
+                if (Entry.find(".lproject") == FString::npos)
                 {
                     return true;
                 }
                 std::error_code Ec;
-                return !std::filesystem::exists(Entry, Ec);
+                return !std::filesystem::exists(Entry.c_str(), Ec);
             });
 
             if (Recents.size() != Before)
             {
-                GConfig->Set("Editor.RecentProjects", Recents);
+                GetMutableDefault<CEditorSettings>()->RecentProjects = Recents;
+                GConfig->SaveSettings(CEditorSettings::StaticClass());
             }
             return Recents;
         }
 
         // Returns the project display name from an absolute .lproject path
         // (basename without extension). Cheap; no filesystem access.
-        FString DisplayNameFromLprojPath(const std::string& LprojPath)
+        FString DisplayNameFromLprojPath(const FString& LprojPath)
         {
-            std::filesystem::path P(LprojPath);
-            return P.stem().string().c_str();
+            std::filesystem::path P(LprojPath.c_str());
+            return FString(P.stem().string().c_str());
         }
     }
 
@@ -501,7 +504,7 @@ namespace Lumina
         {
             // No --Project at startup: try the last-opened Editor.StartupProject,
             // falling through to the Open dialog if that's also missing/stale.
-            const std::string StartupPath = GConfig->Get<std::string>("Editor.StartupProject");
+            const std::string StartupPath = GetDefault<CEditorSettings>()->StartupProject.c_str();
             if (!StartupPath.empty() && StartupPath != "NULL")
             {
                 std::error_code Ec;
@@ -2396,11 +2399,11 @@ namespace Lumina
                 auto Recents = PruneMissingRecents();
 
                 bool bAnyRecent = false;
-                std::string PendingRemove;
+                FString PendingRemove;
                 FFixedString PendingLoad;
                 for (const auto& Entry : Recents)
                 {
-                    if (Entry.find(".lproject") == std::string::npos)
+                    if (Entry.find(".lproject") == FString::npos)
                     {
                         continue;
                     }
@@ -2818,8 +2821,8 @@ namespace Lumina
             Paths::Normalize(LprojPath);
 
             PushRecentProject(FStringView(LprojPath.c_str(), LprojPath.size()));
-
-            GConfig->Set("Editor.StartupProject", std::string(LprojPath.c_str(), LprojPath.size()));
+            GetMutableDefault<CEditorSettings>()->StartupProject = FString(LprojPath.c_str(), LprojPath.size());
+            GConfig->SaveSettings(CEditorSettings::StaticClass());
         }
     }
 
