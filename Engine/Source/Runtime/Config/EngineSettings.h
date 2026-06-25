@@ -55,6 +55,14 @@ namespace Lumina
             Ctrl+Shift+C/V/R, F5/F9). */
         PROPERTY(Editable, Category = "Hotkeys")
         SKey ReloadScriptsHotkey = SKey(EKey::B, /*Ctrl*/ true, /*Shift*/ true);
+        
+        /** List of recently open projects. **/
+        PROPERTY(Editable, Category = "Loading")
+        TVector<FString> RecentProjects;
+        
+        /** Project to open at startup. **/
+        PROPERTY(Editable, Category = "Loading")
+        FString StartupProject;
     };
 
     // The editor's central color palette. The ImGui renderer derives the global style from these (live --

@@ -1815,7 +1815,10 @@ namespace Lumina
     {
         ToolContext->PushModal("Rename", ImVec2(480.0f, 300.0f), [this, ContentItem, RenameState = MakeUnique<FRenameModalState<>>()]
         {
-            RenameState->Initialize(ContentItem->GetName());
+            if (!RenameState->IsValid())
+            {
+                RenameState->Initialize(ContentItem->GetName());
+            }
             
             const ImGuiStyle& style = ImGui::GetStyle();
             const float ContentWidth = ImGui::GetContentRegionAvail().x;

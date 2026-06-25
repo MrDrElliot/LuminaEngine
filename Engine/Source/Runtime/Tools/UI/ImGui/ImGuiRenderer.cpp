@@ -143,6 +143,9 @@ namespace Lumina
                 Scale *= ResolutionFactor(static_cast<float>(Window->GetMonitorResolution().y));
             }
             Scale = (Scale > 0.0f ? Scale : 1.0f) * kAutoScaleBias;
+        	
+        	GetMutableDefault<CEditorSettings>()->UIScale = Scale;
+        	
             return std::max(Scale, 0.5f);
         }
 
