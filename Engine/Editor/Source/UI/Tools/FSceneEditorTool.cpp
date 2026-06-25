@@ -498,8 +498,7 @@ namespace Lumina
                 return;
             }
 
-            // Copy the edited property from the focus instance onto this one (only uniform, editable
-            // properties reach here; "(Multiple Values)" rows are non-editable), then patch to fire on_update.
+            // Copy the edited property from the focus instance onto this one.
             if (FocusInstance != nullptr && Entity != DetailsEntity)
             {
                 void* DestInstance = nullptr;
@@ -516,9 +515,6 @@ namespace Lumina
                     Event.Property->CopyCompleteValue_InContainer(DestInstance, FocusInstance);
                 }
             }
-
-            entt::meta_any Component = ECS::Utils::InvokeMetaFunc(TypeID, "get"_hs, entt::forward_as_meta(Registry), Entity);
-            ECS::Utils::InvokeMetaFunc(TypeID, "patch"_hs, entt::forward_as_meta(Registry), Entity, entt::forward_as_meta(Component));
 
             // Prefab instance: re-diff this component against the prefab so the override ledger reflects the
             // edit. A back-to-prefab edit (or a reset, which dispatches as an edit) leaves zero divergent
@@ -659,8 +655,7 @@ namespace Lumina
                 Entry.Table->SetStartEditCallback([&](const FPropertyChangedEvent& Event)  { BeginTransaction(); });
                 Entry.Table->SetFinishEditCallback([&](const FPropertyChangedEvent& Event) { EndTransaction(Event.PropertyName); });
 
-                // Multi-edit value compare; propagation is handled in OnPostPropertyChangeEvent, which
-                // also patches each entity so on_update (physics rebuild, etc.) fires.
+                // Multi-edit value compare; propagation handled in OnPostPropertyChangeEvent.
                 if (!Row.OtherInstances.empty())
                 {
                     void* FocusData = Row.Data;
@@ -858,7 +853,7 @@ namespace Lumina
         Display.bAllowRenaming = !bIsLockedPrefabChild;
 
         // Per-entity script enable toggle: only shown when the entity carries a script.
-        if (Registry.any_of<SCSharpScriptComponent>(Entity))
+        if (Registry.any_of<SScriptComponent>(Entity))
         {
             Display.bShowSecondaryIcon = true;
             Display.SecondaryIconOn    = LE_ICON_SCRIPT_TEXT;

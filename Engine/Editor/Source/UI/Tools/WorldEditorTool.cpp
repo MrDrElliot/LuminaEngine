@@ -2649,7 +2649,7 @@ namespace Lumina
             return;
         }
 
-        const bool bHasScript = Registry.all_of<SCSharpScriptComponent>(Entity);
+        const bool bHasScript = Registry.all_of<SScriptComponent>(Entity);
 
         // Inline searchable dropdown of every loaded C# EntityScript class. Always offered -- it assigns
         // a script, or swaps the one already on the entity for a quick change.
@@ -2691,12 +2691,12 @@ namespace Lumina
             return;
         }
 
-        const bool bHad = Registry.all_of<SCSharpScriptComponent>(Entity);
+        const bool bHad = Registry.all_of<SScriptComponent>(Entity);
 
         BeginTransaction();
         // get_or_emplace the component, then reset its transient binding so SCSharpScriptSystem rebinds to
         // the new class. This both attaches a first script and swaps an existing one.
-        SCSharpScriptComponent& Component = Registry.get_or_emplace<SCSharpScriptComponent>(Entity);
+        SScriptComponent& Component = Registry.get_or_emplace<SScriptComponent>(Entity);
         if (Component.Instance != nullptr && Component.Generation == DotNet::GetScriptGeneration())
         {
             DotNet::DestroyEntityScript(Component.Instance);
@@ -2712,20 +2712,20 @@ namespace Lumina
             World->GetPackage()->MarkDirty();
         }
         bDetailsDirty = true;
-        // on_construct<SCSharpScriptComponent> refreshes the outliner on a first attach; harmless to mark again.
+        // on_construct<SScriptComponent> refreshes the outliner on a first attach; harmless to mark again.
         OutlinerListView.MarkTreeDirty();
     }
 
     void FWorldEditorTool::RemoveScriptFromEntity(entt::entity Entity)
     {
         FEntityRegistry& Registry = World->GetEntityRegistry();
-        if (!Registry.valid(Entity) || !Registry.all_of<SCSharpScriptComponent>(Entity))
+        if (!Registry.valid(Entity) || !Registry.all_of<SScriptComponent>(Entity))
         {
             return;
         }
 
         BeginTransaction();
-        Registry.remove<SCSharpScriptComponent>(Entity); // on_destroy refreshes the outliner
+        Registry.remove<SScriptComponent>(Entity); // on_destroy refreshes the outliner
         EndTransaction("Remove Script");
 
         if (World->GetPackage() != nullptr)
@@ -3493,8 +3493,8 @@ namespace Lumina
         ObservedRegistry->on_destroy<entt::entity>().disconnect<&FWorldEditorTool::OnEntityDestroyed>(this);
         ObservedRegistry->on_construct<SNameComponent>().disconnect<&FSceneEditorTool::OnOutlinerEntityConstructed>(this);
         ObservedRegistry->on_destroy<SNameComponent>().disconnect<&FSceneEditorTool::OnOutlinerEntityDestroyed>(this);
-        ObservedRegistry->on_construct<SCSharpScriptComponent>().disconnect<&FWorldEditorTool::OnEntityScriptChanged>(this);
-        ObservedRegistry->on_destroy<SCSharpScriptComponent>().disconnect<&FWorldEditorTool::OnEntityScriptChanged>(this);
+        ObservedRegistry->on_construct<SScriptComponent>().disconnect<&FWorldEditorTool::OnEntityScriptChanged>(this);
+        ObservedRegistry->on_destroy<SScriptComponent>().disconnect<&FWorldEditorTool::OnEntityScriptChanged>(this);
         ObservedRegistry = nullptr;
     }
 
@@ -3513,8 +3513,8 @@ namespace Lumina
         Registry.on_construct<SNameComponent>().connect<&FSceneEditorTool::OnOutlinerEntityConstructed>(this);
         Registry.on_destroy<SNameComponent>().connect<&FSceneEditorTool::OnOutlinerEntityDestroyed>(this);
         // Add/remove of a script component changes the row's script toggle; rebuild the outliner.
-        Registry.on_construct<SCSharpScriptComponent>().connect<&FWorldEditorTool::OnEntityScriptChanged>(this);
-        Registry.on_destroy<SCSharpScriptComponent>().connect<&FWorldEditorTool::OnEntityScriptChanged>(this);
+        Registry.on_construct<SScriptComponent>().connect<&FWorldEditorTool::OnEntityScriptChanged>(this);
+        Registry.on_destroy<SScriptComponent>().connect<&FWorldEditorTool::OnEntityScriptChanged>(this);
         ObservedRegistry = &Registry;
     }
 

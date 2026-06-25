@@ -236,7 +236,38 @@ namespace Lumina
                         }
                     }
                 }
-        
+
+                // Match old tag names against the ';'-joined Aliases metadata of renamed properties.
+                if (FoundProperty == nullptr)
+                {
+                    for (FProperty* Search = LinkedProperty; Search; Search = (FProperty*)Search->Next)
+                    {
+                        if (!Search->HasMetadata("Aliases"))
+                        {
+                            continue;
+                        }
+                        const FString& Aliases = Search->GetMetadata("Aliases");
+                        for (size_t Start = 0; Start <= Aliases.size(); )
+                        {
+                            size_t End = Aliases.find(';', Start);
+                            if (End == FString::npos)
+                            {
+                                End = Aliases.size();
+                            }
+                            if (End > Start && FName(Aliases.data() + Start, End - Start) == Tag.Name)
+                            {
+                                FoundProperty = Search;
+                                break;
+                            }
+                            Start = End + 1;
+                        }
+                        if (FoundProperty != nullptr)
+                        {
+                            break;
+                        }
+                    }
+                }
+
                 if (FoundProperty)
                 {
                     if (!FoundProperty->ShouldSerialize())

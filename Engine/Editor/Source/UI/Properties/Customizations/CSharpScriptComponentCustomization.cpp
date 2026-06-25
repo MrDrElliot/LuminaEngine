@@ -1,9 +1,11 @@
 #include "CSharpScriptComponentCustomization.h"
-#include "ScriptPropertyDrawer.h"
+#include "UI/Properties/PropertyTable.h"
 #include "imgui.h"
 #include "Lumina.h"
 #include "Scripting/DotNet/DotNetHost.h"
 #include "Scripting/ScriptExports.h"
+#include "Scripting/ScriptStruct.h"
+#include "Scripting/ScriptValueBridge.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "World/Entity/Components/CSharpScriptComponent.h"
@@ -19,7 +21,7 @@ namespace Lumina
     {
         using namespace Scripting;
         
-        void RebindScript(SCSharpScriptComponent* Component, const FString& NewClass)
+        void RebindScript(SScriptComponent* Component, const FString& NewClass)
         {
             if (Component->Instance != nullptr && Component->Generation == DotNet::GetScriptGeneration())
             {
@@ -29,8 +31,11 @@ namespace Lumina
             Component->BindState = ECSharpBindState::Unbound;
             Component->ScriptClass = NewClass;
             Component->Generation = -1;
-            
-            Component->PropertyOverrides.Items.clear();
+
+            if (NewClass.empty())
+            {
+                Component->Values.Reset();
+            }
         }
         
         FString FindScriptSourceFile(FStringView ScriptClass)
@@ -118,67 +123,10 @@ namespace Lumina
             Platform::LaunchURL(UTF8_TO_TCHAR(Path.c_str()));
         }
         
-        bool DrawScriptProperties(SCSharpScriptComponent* Component)
-        {
-            FScriptExportSchema Schema;
-            TVector<FScriptPropertyEntry> Defaults;
-            if (!DotNet::GatherScriptSchema(FStringView(Component->ScriptClass.c_str(), Component->ScriptClass.size()), Schema, Defaults)
-                || Schema.Fields.empty())
-            {
-                return false;
-            }
-            
-            ReconcileOverrides(Schema, Defaults, Component->PropertyOverrides.Items);
-
-            ImGui::SeparatorText("Script Properties");
-            bool bChanged = false;
-
-            if (ImGui::BeginTable("##CSharpScriptProperties", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_PadOuterX))
-            {
-                ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthFixed, ImGui::GetContentRegionAvail().x * 0.4f);
-                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-
-                for (const FScriptExportField& Field : Schema.Fields)
-                {
-                    if (!Field.Type)
-                    {
-                        continue;
-                    }
-
-                    FScriptPropertyValue* Value = nullptr;
-                    for (FScriptPropertyEntry& Entry : Component->PropertyOverrides.Items)
-                    {
-                        if (Entry.Name == Field.Name)
-                        {
-                            Value = &Entry.Value;
-                            break;
-                        }
-                    }
-                    if (Value == nullptr)
-                    {
-                        continue;
-                    }
-
-                    FString Label = Field.Name.ToString();
-                    ScriptPropertyDrawer::DrawValueRows(*Field.Type, *Value, Label.c_str(), Field.Meta, bChanged);
-                }
-
-                ImGui::EndTable();
-            }
-
-            // Push edits to the running instance immediately (else they'd only take effect on the next
-            // bind). No-op in edit mode where there's no live instance.
-            if (bChanged && Component->Instance != nullptr)
-            {
-                DotNet::ApplyScriptProperties(Component->Instance, Component->PropertyOverrides);
-            }
-            return bChanged;
-        }
-
         // Draws a clickable button per [Button] method. Invoking a method is a runtime action on the live
         // instance, not a serialized edit, so it doesn't participate in the property-change transaction.
         // Buttons are disabled until the script is bound to a live instance (i.e. while the game runs).
-        void DrawScriptButtons(SCSharpScriptComponent* Component)
+        void DrawScriptButtons(SScriptComponent* Component)
         {
             TVector<Scripting::FScriptButton> Buttons;
             DotNet::GatherScriptButtons(FStringView(Component->ScriptClass.c_str(), Component->ScriptClass.size()), Buttons);
@@ -222,7 +170,7 @@ namespace Lumina
     EPropertyChangeOp FCSharpScriptComponentPropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property)
     {
         bool bWasChanged = false;
-        auto* Component = static_cast<SCSharpScriptComponent*>(Property->ContainerPtr);
+        auto* Component = static_cast<SScriptComponent*>(Property->ContainerPtr);
 
         ImGui::PushID(this);
 
@@ -285,13 +233,47 @@ namespace Lumina
             ImGui::SetTooltip("Clear script");
         }
 
-        if (!Component->ScriptClass.empty() && DrawScriptProperties(Component))
-        {
-            bWasChanged = true;
-        }
-
         if (!Component->ScriptClass.empty())
         {
+            const FStringView ClassName(Component->ScriptClass.c_str(), Component->ScriptClass.size());
+            const CScriptStruct* Layout = DotNet::GetScriptStruct(ClassName);
+            if (Layout != nullptr)
+            {
+                Component->Values.EnsureLayout(Layout);
+                void* Buffer = Component->Values.GetBuffer();
+                if (Buffer != nullptr)
+                {
+                    if (ValueTable == nullptr || BoundLayout != Layout || BoundBuffer != Buffer)
+                    {
+                        BoundLayout = Layout;
+                        BoundBuffer = Buffer;
+                        ValueTable = MakeUnique<FPropertyTable>(Buffer, const_cast<CScriptStruct*>(Layout),
+                            const_cast<void*>(Layout->GetDefaults()));
+                        ValueTable->SetPostEditCallback([this](const FPropertyChangedEvent&) { bValueEdited = true; });
+                    }
+
+                    ImGui::SeparatorText("Script Properties");
+                    ValueTable->DrawTree();
+
+                    if (bValueEdited)
+                    {
+                        bValueEdited = false;
+                        bWasChanged = true;
+                        if (Component->Instance != nullptr && Component->Generation == DotNet::GetScriptGeneration())
+                        {
+                            TVector<Scripting::FScriptPropertyEntry> Values;
+                            Scripting::ReadStructToValues(Layout, Buffer, Values);
+                            DotNet::ApplyScriptProperties(Component->Instance, Values);
+                        }
+                    }
+                }
+            }
+            else
+            {
+                ImGui::TextDisabled("Script '%s' is not loaded (renamed, removed, or failed to compile).", Component->ScriptClass.c_str());
+                ImGui::TextDisabled("Saved values are preserved -- pick a script above to remap (matching fields carry over by name).");
+            }
+
             DrawScriptButtons(Component);
         }
 

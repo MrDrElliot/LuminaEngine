@@ -7,8 +7,8 @@
 
 namespace Lumina
 {
-    struct FScriptPropertyOverrides;
     struct FSystemContext;
+    class CScriptStruct;
     enum class EUpdateStage : uint8;
     namespace Scripting { struct FScriptExportSchema; struct FScriptPropertyEntry; struct FScriptButton; }
 }
@@ -21,7 +21,8 @@ namespace Lumina::DotNet
     // v4: LoadScripts takes per-unit assembly buckets (FSourceAssembly).
     // v5: native->managed exports resolved by name (ResolveManagedExport) instead of a mirrored struct/hash.
     // v6: managed system-descriptor sink carries declared read/write component-ops tokens (parallel C# systems).
-    inline constexpr int32 GAbiVersion = 6;
+    // v7: delegate properties replace hardcoded collision/perception dispatch; adds OnNativeDelegateDestroyed.
+    inline constexpr int32 GAbiVersion = 7;
 
     // Boots the embedded runtime and runs the managed handshake.
     RUNTIME_API void Initialize();
@@ -103,16 +104,8 @@ namespace Lumina::DotNet
     RUNTIME_API void DestroyManagedSystem(void* Handle);
     
     RUNTIME_API void TickManagedSystem(void* Handle, const FSystemContext* Context);
-    
-    RUNTIME_API void DispatchScriptCollision(void* Instance, int32 Kind, const void* Event);
 
-    // Invokes an AI perception callback on the script Instance (Kind: 7=OnTargetPerceived, 8=OnTargetLost).
-    // Event points at an SPerceptionEvent (opaque here to keep the header lean). Game thread, during the
-    // world update; gated by GetScriptCallbackFlags bits (1<<7)/(1<<8).
-    RUNTIME_API void DispatchScriptPerception(void* Instance, int32 Kind, const void* Event);
-
-    // Bitmask of collision callbacks the script overrides (bit (1<<Kind)); 0 if none / not bound. Lets
-    // the caller skip the managed crossing for callbacks the script doesn't handle.
+    // Bitmask of the frame callbacks a script overrides; 0 if none. Lets the caller skip the managed crossing.
     RUNTIME_API int32 GetScriptCallbackFlags(void* Instance);
     
     RUNTIME_API void DispatchScriptInput(void* Instance, int32 Type, int32 KeyCode, int32 bMouse, int32 Mods,
@@ -120,9 +113,14 @@ int32 bRepeat, double MouseX, double MouseY, double DeltaX, double DeltaY, doubl
 
     //~ Exported [Property] schema bridge (editor inspector + serialization). Game thread only.
 
-    // Builds the [Property] schema + default values for a C# script type (via managed reflection).
-    // Scalar kinds (bool/int/double/string/vec2-4). Returns false if the type isn't loaded.
+    // Builds the [Property] schema + default values for a C# script type; false if the type isn't loaded.
     RUNTIME_API bool GatherScriptSchema(FStringView ScriptClass, Scripting::FScriptExportSchema& OutSchema, TVector<Scripting::FScriptPropertyEntry>& OutDefaults);
+
+    // The minted reflection layout for a C# script type, cached per script generation; null if not loaded.
+    RUNTIME_API const CScriptStruct* GetScriptStruct(FStringView ScriptClass);
+
+    // Resolves a script reference to its current full type name; empty if it resolves to no live type.
+    RUNTIME_API FString ResolveScriptClassName(FStringView ScriptClass);
 
     // Gathers the [Button] methods exposed on a C# script type (via managed reflection). Empty if the type
     // isn't loaded or declares no buttons.
@@ -132,8 +130,6 @@ int32 bRepeat, double MouseX, double MouseY, double DeltaX, double DeltaY, doubl
     // is down or Instance is null. The method runs synchronously on the calling (game) thread.
     RUNTIME_API bool InvokeScriptButton(void* Instance, FStringView Method);
 
-    // Applies per-instance override values onto a live script Instance via a recursive value blob
-    // (supports nested structs + arrays; schema-drift fields are skipped). Call after CreateEntityScript
-    // + ReconcileOverrides.
-    RUNTIME_API void ApplyScriptProperties(void* Instance, const FScriptPropertyOverrides& Overrides);
+    // Applies per-instance values onto a live script Instance; schema-drift fields are skipped.
+    RUNTIME_API void ApplyScriptProperties(void* Instance, const TVector<Scripting::FScriptPropertyEntry>& Values);
 }

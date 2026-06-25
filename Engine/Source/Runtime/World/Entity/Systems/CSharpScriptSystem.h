@@ -4,7 +4,7 @@
 
 namespace Lumina
 {
-    // Ticks C# EntityScripts. For each SCSharpScriptComponent it binds a managed instance
+    // Ticks C# EntityScripts. For each SScriptComponent it binds a managed instance
     // (generation-keyed, so the same path handles first attach and hot-reload rebind) and
     // dispatches OnUpdate. Runs in BOTH PrePhysics and PostPhysics: binding/input/OnReady happen once in the
     // PrePhysics pass, and OnUpdate is dispatched in two groups -- PrePhysics-phase scripts in the PrePhysics

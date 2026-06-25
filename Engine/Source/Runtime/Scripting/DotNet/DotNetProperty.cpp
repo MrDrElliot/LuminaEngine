@@ -2,6 +2,7 @@
 
 #include "Containers/Name.h"
 #include "Containers/String.h"
+#include "Core/Delegates/ScriptDelegate.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectCore.h"
 #include "Core/Object/ObjectHandleTyped.h"
@@ -170,4 +171,24 @@ extern "C" RUNTIME_API void LuminaSharp_PropSetObject(void* C, const void* Prop,
     }
     const FProperty* Property = static_cast<const FProperty*>(Prop);
     LuminaSharp_SetObjectPtr(Property->GetValuePtr<TObjectPtr<CObject>>(C), Obj);
+}
+
+// Script delegate bind/unbind. Game thread only.
+
+extern "C" RUNTIME_API uint64 LuminaSharp_DelegateBind(void* DelegatePtr, void* Thunk, void* Context)
+{
+    if (DelegatePtr == nullptr || Thunk == nullptr)
+    {
+        return 0;
+    }
+    return static_cast<FScriptDelegateBase*>(DelegatePtr)->BindManaged(
+        reinterpret_cast<FScriptDelegateBase::FManagedThunk>(Thunk), Context);
+}
+
+extern "C" RUNTIME_API void LuminaSharp_DelegateUnbind(void* DelegatePtr, uint64 Handle)
+{
+    if (DelegatePtr != nullptr)
+    {
+        static_cast<FScriptDelegateBase*>(DelegatePtr)->UnbindManaged(Handle);
+    }
 }

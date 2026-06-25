@@ -163,24 +163,24 @@ namespace Lumina
             Context.DispatchEvent<FPerceptionUpdatedEvent>(FPerceptionUpdatedEvent{
                 Perceiver, Target.Target, (EAISenseChannel)Target.ActiveSenses, Target.LastKnownLocation, bSensed });
 
-            const SCSharpScriptComponent* Cs = Context.TryGet<SCSharpScriptComponent>(Perceiver);
-            if (Cs == nullptr)
+            SPerceptionComponent* Comp = Context.TryGet<SPerceptionComponent>(Perceiver);
+            if (Comp == nullptr)
             {
                 return;
             }
-            const int32 Kind = bSensed ? 7 : 8;
-            if (Cs->Instance != nullptr
-                && Cs->Generation == DotNet::GetScriptGeneration()
-                && (Cs->CallbackFlags & (1 << Kind)) != 0)
+            TScriptDelegate<SPerceptionEvent>& Delegate = bSensed ? Comp->OnTargetPerceived : Comp->OnTargetLost;
+            if (!Delegate.IsBound())
             {
-                SPerceptionEvent Payload;
-                Payload.Perceiver = Perceiver;
-                Payload.Target    = Target.Target;
-                Payload.Location  = Target.LastKnownLocation;
-                Payload.Sense     = (EAISenseChannel)Target.ActiveSenses;
-                Payload.Strength  = Target.LastStrength;
-                DotNet::DispatchScriptPerception(Cs->Instance, Kind, &Payload);
+                return;
             }
+
+            SPerceptionEvent Payload;
+            Payload.Perceiver = Perceiver;
+            Payload.Target    = Target.Target;
+            Payload.Location  = Target.LastKnownLocation;
+            Payload.Sense     = (EAISenseChannel)Target.ActiveSenses;
+            Payload.Strength  = Target.LastStrength;
+            Delegate.Broadcast(Payload);
         }
 
         void DrawPerceptionDebug(const FSystemContext& Context, const SPerceptionComponent& Comp,

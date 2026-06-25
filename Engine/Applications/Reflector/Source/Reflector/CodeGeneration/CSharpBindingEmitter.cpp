@@ -12,6 +12,7 @@
 #include "Reflector/Types/FieldInfo.h"
 #include "Reflector/Types/Functions/ReflectedFunction.h"
 #include "Reflector/Types/Properties/ReflectedArrayProperty.h"
+#include "Reflector/Types/Properties/ReflectedDelegateProperty.h"
 #include "Reflector/Types/PropertyFlags.h"
 #include "Reflector/Types/ReflectedType.h"
 #include "StringHash.h"
@@ -357,7 +358,7 @@ namespace Lumina::Reflection
 
         // How a property is surfaced to C#. Drives BOTH the managed member and the native thunk, so
         // the two stay in lock-step: classify once, emit on each side from the same result.
-        enum class EBind { None, Number, Bool, Enum, Str, Object, StructValue, StructOpaque, Array, Span };
+        enum class EBind { None, Number, Bool, Enum, Str, Object, StructValue, StructOpaque, Array, Span, Delegate };
 
         struct FBinding
         {
@@ -480,6 +481,25 @@ namespace Lumina::Reflection
                 B.CSharp = Elem->CSharp;  // element C# type; the property type is NativeReadOnlyList<this>
                 B.bReadOnly = true;       // read-only view this pass (no add/remove/set)
                 B.Elem = eastl::move(Elem);
+                return true;
+            }
+
+            if (auto* Del = dynamic_cast<FReflectedDelegateProperty*>(&Prop))
+            {
+                B.Kind = EBind::Delegate;
+                B.bReadOnly = true;
+                if (Del->bHasPayload)
+                {
+                    const FReflectedStruct* S = Db.GetReflectedType<FReflectedStruct>(FStringHash(Prop.TypeName));
+                    int Size = 0;
+                    int Align = 0;
+                    if (S == nullptr || !(HasMetadata(*S, "ManualStub") || IsBlittableValueStruct(*S, Db, Size, Align)))
+                    {
+                        return false; // skip non-blittable delegate payloads
+                    }
+                    B.CSharp = GlobalCSharp(Prop.TypeName);
+                    B.TargetCpp = Prop.TypeName;
+                }
                 return true;
             }
 
@@ -837,6 +857,22 @@ namespace Lumina::Reflection
                 case EBind::Array:
                     EmitCSharpArray(Writer, Prop, B, Friendly, Module, TypeName);
                     break;
+                case EBind::Delegate:
+                {
+                    if (B.CSharp.empty())
+                    {
+                        Writer.Linef("public global::LuminaSharp.ScriptDelegate %s => new global::LuminaSharp.ScriptDelegate((void*)((nint)Handle + %s));",
+                            PropName.c_str(), OffName.c_str());
+                    }
+                    else
+                    {
+                        Writer.Linef("public global::LuminaSharp.ScriptDelegate<%s> %s => new global::LuminaSharp.ScriptDelegate<%s>((void*)((nint)Handle + %s));",
+                            CS, PropName.c_str(), CS, OffName.c_str());
+                    }
+                    EmitOffsetField(Writer, OffName, TypeName, Member);
+                    break;
+                }
+                case EBind::Span:
                 case EBind::None:
                     break;
             }
@@ -1573,6 +1609,7 @@ namespace Lumina::Reflection
 
         if (bBlittable)
         {
+            Writer.Linef("[global::LuminaSharp.NativeType(\"%s\")]", Struct.DisplayName.c_str());
             Writer.Line("[System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]");
             Writer.Linef("public struct %s", Struct.DisplayName.c_str());
             Writer.BeginBlock();
@@ -1590,6 +1627,7 @@ namespace Lumina::Reflection
         {
             // Non-blittable (FString/containers/smart-ptrs): an opaque handle, not a value mirror.
             const eastl::string Base = CSharpBase(Struct, Database, "global::LuminaSharp.NativeStruct");
+            Writer.Linef("[global::LuminaSharp.NativeType(\"%s\")]", Struct.DisplayName.c_str());
             Writer.Linef("public unsafe partial class %s : %s", Struct.DisplayName.c_str(), Base.c_str());
             Writer.BeginBlock();
             Writer.Linef("internal %s(System.IntPtr handle) : base(handle) { }", Struct.DisplayName.c_str());
@@ -1619,6 +1657,7 @@ namespace Lumina::Reflection
         // Opaque handle wrapper: derives its reflected base's wrapper (inheriting its members) and
         // adds its own bound properties.
         const eastl::string Base = CSharpBase(Class, Database, "global::LuminaSharp.NativeObject");
+        Writer.Linef("[global::LuminaSharp.NativeType(\"%s\")]", Class.DisplayName.c_str());
         Writer.Linef("public unsafe partial class %s : %s", Class.DisplayName.c_str(), Base.c_str());
         Writer.BeginBlock();
         Writer.Linef("internal %s(System.IntPtr handle) : base(handle) { }", Class.DisplayName.c_str());

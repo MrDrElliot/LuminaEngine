@@ -405,8 +405,7 @@ namespace Lumina::Physics
 
         FEntityRegistry& Registry = World->GetEntityRegistry();
 
-        // Invoke the script's callback if defined; Contact = solid impact, Overlap = a sensor/trigger side.
-        // Routes to C# (EntityScript) scripts on this entity.
+        // Contact is a solid impact, Overlap is a sensor/trigger side.
         auto Deliver = [&](entt::entity Self, entt::entity Other, uint32 SelfBody, uint32 OtherBody,
                            const FContactRecord& Record, bool bFlipNormal, bool bIsAdded, bool bIsOverlap)
         {
@@ -415,26 +414,23 @@ namespace Lumina::Physics
                 return;
             }
 
-            // Kind: 0=ContactBegin, 1=ContactEnd, 2=OverlapBegin, 3=OverlapEnd (matches the C# side).
-            const int32 Kind = bIsOverlap ? (bIsAdded ? 2 : 3) : (bIsAdded ? 0 : 1);
+            SRigidBodyComponent* Body = Registry.try_get<SRigidBodyComponent>(Self);
+            if (Body == nullptr)
+            {
+                return;
+            }
 
-            // C# side: gated on the script's overridden-callback bitmask so we don't cross the boundary
-            // for callbacks it doesn't handle.
-            SCSharpScriptComponent* CsComp = Registry.try_get<SCSharpScriptComponent>(Self);
-            // Require the instance to be from the CURRENT generation: after a hot reload a component can
-            // still hold a freed handle until the bind pass rebinds it next frame; never dispatch onto that.
-            const bool bCs = CsComp != nullptr && CsComp->Instance != nullptr
-                && CsComp->Generation == DotNet::GetScriptGeneration()
-                && (CsComp->CallbackFlags & (1 << Kind)) != 0;
+            TScriptDelegate<SCollisionEvent>& Delegate = bIsOverlap
+                ? (bIsAdded ? Body->OnOverlapBegin : Body->OnOverlapEnd)
+                : (bIsAdded ? Body->OnContactBegin : Body->OnContactEnd);
 
-            if (!bCs)
+            if (!Delegate.IsBound())
             {
                 return;
             }
 
             const SCollisionEvent Event = BuildCollisionEvent(Self, Other, SelfBody, OtherBody, Record, bFlipNormal);
-
-            DotNet::DispatchScriptCollision(CsComp->Instance, Kind, &Event);
+            Delegate.Broadcast(Event);
         };
 
         for (const FContactRecord& Record : Drain)
@@ -469,22 +465,15 @@ namespace Lumina::Physics
                 continue;
             }
 
-            // Kind 5 = Wake, 6 = Sleep (matches EntityScriptRuntime.Dispatch + the CallbackFlags bits).
-            const int32 Kind = Record.bActivated ? 5 : 6;
-
-            SCSharpScriptComponent* CsComp = Registry.try_get<SCSharpScriptComponent>(Record.Entity);
-            if (CsComp == nullptr || CsComp->Instance == nullptr
-                || CsComp->Generation != DotNet::GetScriptGeneration()
-                || (CsComp->CallbackFlags & (1 << Kind)) == 0)
+            SRigidBodyComponent* Body = Registry.try_get<SRigidBodyComponent>(Record.Entity);
+            if (Body == nullptr)
             {
                 continue;
             }
 
-            // The activation callbacks ignore the event payload; carry the self entity for context.
-            SCollisionEvent Event{};
-            Event.Entity = Record.Entity;
-            Event.Other  = entt::null;
-            DotNet::DispatchScriptCollision(CsComp->Instance, Kind, &Event);
+            // OnWake also fires on spawn (the body becomes active).
+            FScriptDelegate& Delegate = Record.bActivated ? Body->OnWake : Body->OnSleep;
+            Delegate.Broadcast();
         }
     }
 

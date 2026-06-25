@@ -324,7 +324,7 @@ namespace Lumina
 
         EntityRegistry.on_destroy   <FRelationshipComponent>()      .connect<&ThisClass::OnRelationshipComponentDestroyed>(this);
         EntityRegistry.on_construct <STransformComponent>()         .connect<&ThisClass::OnTransformComponentConstruct>(this);
-        EntityRegistry.on_destroy   <SCSharpScriptComponent>()      .connect<&ThisClass::OnCSharpScriptComponentDestroyed>(this);
+        EntityRegistry.on_destroy   <SScriptComponent>()      .connect<&ThisClass::OnCSharpScriptComponentDestroyed>(this);
         EntityRegistry.on_destroy   <SWidgetComponent>()            .connect<&ThisClass::OnWidgetComponentDestroyed>(this);
         EntityRegistry.on_construct <SInputComponent>()             .connect<&ThisClass::OnInputComponentConstruct>(this);
         SystemContext.EventSink     <FSwitchActiveCameraEvent>()    .connect<&ThisClass::OnChangeCameraEvent>(this);
@@ -1242,7 +1242,7 @@ namespace Lumina
 
     void CWorld::OnCSharpScriptComponentDestroyed(entt::registry& Registry, entt::entity Entity)
     {
-        SCSharpScriptComponent& Component = Registry.get<SCSharpScriptComponent>(Entity);
+        SScriptComponent& Component = Registry.get<SScriptComponent>(Entity);
         if (Component.Instance != nullptr && Component.Generation == DotNet::GetScriptGeneration())
         {
             DotNet::DestroyEntityScript(Component.Instance);
@@ -1258,7 +1258,7 @@ namespace Lumina
             return;
         }
 
-        SCSharpScriptComponent& Component = EntityRegistry.get_or_emplace<SCSharpScriptComponent>(Entity);
+        SScriptComponent& Component = EntityRegistry.get_or_emplace<SScriptComponent>(Entity);
         if (FStringView(Component.ScriptClass.c_str(), Component.ScriptClass.size()) == ScriptClass)
         {
             return; // already bound to this class
@@ -1454,7 +1454,7 @@ namespace Lumina
 
         // After a hot reload the managed side already freed the old generation's GCHandles, so an
         // instance from a stale generation must be DROPPED, not destroyed (that would touch a freed
-        // handle, mirroring the SCSharpScriptComponent generation guard).
+        // handle, mirroring the SScriptComponent generation guard).
         const int32 Generation = DotNet::IsInitialized() ? DotNet::GetScriptGeneration() : -1;
         for (FManagedSystem& Managed : ManagedSystems)
         {

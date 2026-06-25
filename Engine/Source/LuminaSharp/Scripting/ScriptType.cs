@@ -3,77 +3,99 @@ using System.Collections.Generic;
 
 namespace LuminaSharp;
 
-/// <summary>
-/// Discriminator for a script property's serialized shape. Mirrors Lumina::Scripting::EScriptExportKind
-/// exactly (same integer values) so the native schema/value codec and editor reuse one model.
-/// </summary>
+/// <summary>Discriminator for a script property's reflected type, driving which native FProperty is minted.</summary>
 public enum EScriptKind : byte
 {
     Nil = 0,
-    Bool = 1,
-    Int = 2,
-    Double = 3,
-    String = 4,
-    Vec2 = 5,
-    Vec3 = 6,
-    Vec4 = 7,
-    Array = 8,
-    NestedStruct = 9,
-    UnknownUserdata = 10,
+    Bool,
+    I8, I16, I32, I64,
+    U8, U16, U32, U64,
+    F32, F64,
+    String,
+    Enum,
+    NativeStruct,
+    ScriptStruct,
+    AssetRef,
+    Entity,
+    Array,
 }
 
-/// <summary>
-/// The resolved, recursive shape of a script property's type. Scalars carry only <see cref="Kind"/>;
-/// an <see cref="EScriptKind.Array"/> carries its <see cref="Element"/> type; a
-/// <see cref="EScriptKind.NestedStruct"/> carries its member <see cref="Fields"/> (the nested type's
-/// serializable members). Resolved once per type by the <see cref="TypeLibrary"/> and shared.
-/// </summary>
+/// <summary>Coarse self-describing kind on the value wire; integers and enums and entity are Int, asset refs String, structs Nested.</summary>
+public enum EScriptValueKind : byte
+{
+    Nil = 0,
+    Bool,
+    Int,
+    Double,
+    String,
+    Nested,
+    Array,
+}
+
+/// <summary>One enumerator of a C# enum exposed to the editor.</summary>
+public readonly struct EnumEntry
+{
+    public string Name { get; init; }
+    public long Value { get; init; }
+}
+
+/// <summary>The resolved, recursive shape of a script property's type, resolved once per type and shared.</summary>
 public sealed class ScriptType
 {
     public EScriptKind Kind { get; init; } = EScriptKind.Nil;
 
-    /// <summary>The CLR type this describes (used for value coercion + nested instance creation).</summary>
+    /// <summary>The CLR type this describes.</summary>
     public Type Clr { get; init; } = typeof(object);
 
     /// <summary>Element shape when <see cref="Kind"/> is <see cref="EScriptKind.Array"/>.</summary>
     public ScriptType? Element { get; init; }
 
-    /// <summary>Member shapes when <see cref="Kind"/> is <see cref="EScriptKind.NestedStruct"/>.</summary>
+    /// <summary>Members for a NativeStruct or ScriptStruct, round-tripped as a Nested value by member name.</summary>
     public IReadOnlyList<ScriptProperty>? Fields { get; init; }
 
-    /// <summary>True for an asset-reference type (FSoftObjectPath / TSoftObjectPtr&lt;T&gt; / TObjectPtr&lt;T&gt;):
-    /// the wire <see cref="Kind"/> is <see cref="EScriptKind.String"/> (the path), but the serializer
-    /// round-trips it through <see cref="IAssetRef"/> instead of as a plain string.</summary>
-    public bool IsAssetRef { get; init; }
+    /// <summary>Native CStruct name the editor resolves via FindObject.</summary>
+    public string? NativeName { get; init; }
 
-    /// <summary>For an asset-reference type, the asset class to pick (e.g. "CMaterial"); "" = any.</summary>
-    public string? AssetType { get; init; }
+    /// <summary>Asset class filter for an AssetRef; empty means any.</summary>
+    public string? TargetClass { get; init; }
+
+    public string? EnumName { get; init; }
+    public EScriptKind EnumUnderlying { get; init; } = EScriptKind.I32;
+    public IReadOnlyList<EnumEntry>? EnumEntries { get; init; }
+
+    /// <summary>The coarse wire kind the value codec uses.</summary>
+    public EScriptValueKind ValueKind => Kind switch
+    {
+        EScriptKind.Bool => EScriptValueKind.Bool,
+        EScriptKind.I8 or EScriptKind.I16 or EScriptKind.I32 or EScriptKind.I64 or
+        EScriptKind.U8 or EScriptKind.U16 or EScriptKind.U32 or EScriptKind.U64 or
+        EScriptKind.Enum or EScriptKind.Entity => EScriptValueKind.Int,
+        EScriptKind.F32 or EScriptKind.F64 => EScriptValueKind.Double,
+        EScriptKind.String or EScriptKind.AssetRef => EScriptValueKind.String,
+        EScriptKind.NativeStruct or EScriptKind.ScriptStruct => EScriptValueKind.Nested,
+        EScriptKind.Array => EScriptValueKind.Array,
+        _ => EScriptValueKind.Nil,
+    };
 }
 
-/// <summary>
-/// One serializable member of a script type: its name, accessors (resolved once), recursive
-/// <see cref="Type"/> shape, and optional editor metadata (only top-level [Property] members carry
-/// meta; members of a nested struct are auto-exposed without it).
-/// </summary>
+/// <summary>One serializable member of a script type, with name, accessors, type shape, and editor metadata.</summary>
 public sealed class ScriptProperty
 {
     public string Name { get; init; } = "";
     public ScriptType Type { get; init; } = new();
     public PropertyAttribute? Meta { get; init; }
+    /// <summary>Prior member names so a renamed field's saved value still replays.</summary>
+    public IReadOnlyList<string>? Aliases { get; init; }
+    /// <summary>Reset to default on a hot reload instead of carrying the previous value.</summary>
+    public bool SkipHotReload { get; init; }
     public Func<object, object?> Get { get; init; } = Instance => null;
     public Action<object, object?> Set { get; init; } = (Instance, Value) => { };
 }
 
-/// <summary>One [Button] method: a parameterless instance method surfaced as an inspector button. The
-/// method is invoked by name through the generic managed-invoke path, so no compiled invoker is cached.</summary>
+/// <summary>One [Button] method surfaced as an inspector button, invoked by name.</summary>
 public sealed class ScriptButton
 {
-    /// <summary>The reflected method name (the invoke key).</summary>
     public string Method { get; init; } = "";
-
-    /// <summary>Button text shown in the inspector.</summary>
     public string Label { get; init; } = "";
-
-    /// <summary>Optional hover help.</summary>
     public string Tooltip { get; init; } = "";
 }

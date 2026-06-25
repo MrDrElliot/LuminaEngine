@@ -317,7 +317,7 @@ namespace Lumina
         void OnWidgetComponentDestroyed(entt::registry& Registry, entt::entity Entity);
         void OnInputComponentConstruct(entt::registry& Registry, entt::entity Entity);
 
-        // Set (or change) the C# script class on an entity by class name: emplaces SCSharpScriptComponent if
+        // Set (or change) the C# script class on an entity by class name: emplaces SScriptComponent if
         // needed and clears any prior binding so SCSharpScriptSystem rebinds (OnAttach/OnReady) next tick.
         void SetEntityScript(entt::entity Entity, FStringView ScriptClass);
 

@@ -2,7 +2,7 @@
 #include "Containers/String.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Platform/GenericPlatform.h"
-#include "Scripting/ScriptPropertyOverrides.h"
+#include "Scripting/ScriptValueStore.h"
 #include "CSharpScriptComponent.generated.h"
 
 namespace Lumina
@@ -17,45 +17,44 @@ namespace Lumina
 
     // Attaches a C# EntityScript to an entity.
     REFLECT(Component, Category = "Gameplay")
-    struct RUNTIME_API SCSharpScriptComponent
+    struct RUNTIME_API SScriptComponent
     {
         GENERATED_BODY()
 
-        SCSharpScriptComponent() = default;
+        SScriptComponent() = default;
 
         // Duplicating a script entity must NOT share the source's managed binding.
-        SCSharpScriptComponent(const SCSharpScriptComponent& Other)
+        SScriptComponent(const SScriptComponent& Other)
             : ScriptClass(Other.ScriptClass)
-            , PropertyOverrides(Other.PropertyOverrides)
+            , Values(Other.Values)
         {
         }
 
-        SCSharpScriptComponent& operator=(const SCSharpScriptComponent& Other)
+        SScriptComponent& operator=(const SScriptComponent& Other)
         {
             if (this != &Other)
             {
-                ScriptClass       = Other.ScriptClass;
-                PropertyOverrides = Other.PropertyOverrides;
-                Instance          = nullptr;
-                Generation        = -1;
-                BindState         = ECSharpBindState::Unbound;
-                CallbackFlags     = 0;
+                ScriptClass   = Other.ScriptClass;
+                Values        = Other.Values;
+                Instance      = nullptr;
+                Generation    = -1;
+                BindState     = ECSharpBindState::Unbound;
+                CallbackFlags = 0;
             }
             return *this;
         }
 
         // Move transfers the binding (ownership), so it is the default memberwise move.
-        SCSharpScriptComponent(SCSharpScriptComponent&&) noexcept            = default;
-        SCSharpScriptComponent& operator=(SCSharpScriptComponent&&) noexcept = default;
+        SScriptComponent(SScriptComponent&&) noexcept            = default;
+        SScriptComponent& operator=(SScriptComponent&&) noexcept = default;
 
         // Full C# type name to run on this entity, e.g. "Game.HelloScript".
         PROPERTY(Editable, Category = "Script")
         FString ScriptClass;
 
-        // Per-instance overrides for the script's [Property] fields (serialized; reconciled against the
-        // script's current schema on bind so it survives field add/remove/retype).
+        // Per-instance values for the script's [Property] fields, laid out by the script's minted CScriptStruct.
         PROPERTY(Editable)
-        FScriptPropertyOverrides PropertyOverrides;
+        SScriptValueStore Values;
 
         // Opaque managed-instance handle (a strong GCHandle, as void*). Owned by managed; freed on detach.
         void* Instance = nullptr;

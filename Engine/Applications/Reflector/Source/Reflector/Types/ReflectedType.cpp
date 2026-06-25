@@ -57,6 +57,8 @@ namespace Lumina::Reflection
             case Fnv1aLike("Lumina::TSubStructOf"):     return EPropertyTypeFlags::SubStruct;
             case Fnv1aLike("Lumina::TSoftObjectPtr"):   return EPropertyTypeFlags::SoftObject;
             case Fnv1aLike("Lumina::FSoftObjectPath"):  return EPropertyTypeFlags::SoftObject;
+            case Fnv1aLike("Lumina::TScriptDelegate"):  return EPropertyTypeFlags::Delegate;
+            case Fnv1aLike("Lumina::FScriptDelegate"):  return EPropertyTypeFlags::Delegate;
             default:                                       return EPropertyTypeFlags::None;
         }
     }

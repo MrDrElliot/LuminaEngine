@@ -10,7 +10,7 @@ namespace LuminaSharp;
 public static unsafe partial class Host
 {
     // Must equal Lumina::DotNet::GAbiVersion. Bump on ABI breaks.
-    private const int AbiVersion = 6;
+    private const int AbiVersion = 7;
 
     // Logical name for the engine module hosting this assembly (Runtime); resolved to a native handle via ModuleHandle.
     public const string NativeLibrary = "LuminaNative";
@@ -289,21 +289,6 @@ public static unsafe partial class Host
         }
     }
 
-    /// Routes a collision/overlap callback to a script (kind: 0=ContactBegin, 1=ContactEnd, 2=OverlapBegin, 3=OverlapEnd).
-    [ManagedExport]
-    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
-    public static void DispatchCollision(IntPtr Handle, int Kind, Lumina.SCollisionEvent* Event)
-    {
-        try
-        {
-            Scripts?.EntityScripts?.Dispatch(Handle, Kind, in *Event);
-        }
-        catch (Exception Exception)
-        {
-            Interop.LogException(Exception);
-        }
-    }
-
     /// Routes one discrete input event to a script's OnInput (flat args, no struct marshaling).
     [ManagedExport]
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
@@ -322,14 +307,14 @@ public static unsafe partial class Host
         }
     }
 
-    /// Routes an AI perception callback to a script (kind: 7=OnTargetPerceived, 8=OnTargetLost).
+    /// A native script delegate with live managed bindings was destroyed; free the matching GCHandles.
     [ManagedExport]
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
-    public static void DispatchPerception(IntPtr Handle, int Kind, Lumina.SPerceptionEvent* Event)
+    public static void OnNativeDelegateDestroyed(IntPtr Delegate)
     {
         try
         {
-            Scripts?.EntityScripts?.DispatchPerception(Handle, Kind, in *Event);
+            DelegateBindings.ForgetByAddress(Delegate);
         }
         catch (Exception Exception)
         {
@@ -337,7 +322,7 @@ public static unsafe partial class Host
         }
     }
 
-    /// Bitmask of collision callbacks the script overrides (bit 1&lt;&lt;kind), so native skips the crossing for the rest.
+    /// Bitmask of the frame callbacks the script overrides, so native skips the crossing for the rest.
     [ManagedExport]
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
     public static int GetScriptCallbackFlags(IntPtr Handle)
@@ -429,6 +414,37 @@ public static unsafe partial class Host
             Action<IntPtr>? Trampoline = Handle.Target as Action<IntPtr>;
             Handle.Free();
             Trampoline?.Invoke(Object);
+        }
+        catch (Exception Exception)
+        {
+            Interop.LogException(Exception);
+        }
+    }
+
+    /// Resolves a script reference to its current full name and writes it to the native sink, writing nothing if unresolved.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static void ResolveEntityScriptName(byte* ScriptClass, int ClassLength, IntPtr Sink, IntPtr Context)
+    {
+        try
+        {
+            string? Resolved = Scripts?.EntityScripts?.ResolveName(Interop.GetString(ScriptClass, ClassLength));
+            if (Resolved == null || Sink == IntPtr.Zero)
+            {
+                return;
+            }
+
+            var Add = (delegate* unmanaged[Stdcall]<IntPtr, byte*, int, void>)Sink;
+            Span<byte> Scratch = stackalloc byte[256];
+            Interop.FInteropString Encoded = new(Resolved, Scratch);
+            try
+            {
+                Add(Context, Encoded.Pointer, Encoded.Length);
+            }
+            finally
+            {
+                Encoded.Free();
+            }
         }
         catch (Exception Exception)
         {

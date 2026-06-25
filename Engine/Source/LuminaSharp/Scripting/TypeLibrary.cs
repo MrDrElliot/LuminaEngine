@@ -13,6 +13,8 @@ internal sealed class TypeLibrary
     private readonly Dictionary<string, TypeDescription> EntityScripts = new();
     private readonly Dictionary<string, Type> EntitySystems = new();
     private readonly Dictionary<Type, TypeDescription> ByType = new();
+    // Prior full type names to current full name, so renamed script references resolve.
+    private readonly Dictionary<string, string> ScriptAliases = new();
 
     public TypeLibrary(IEnumerable<Type> Types)
     {
@@ -32,6 +34,25 @@ internal sealed class TypeLibrary
                 EntitySystems[FullName] = Type;
             }
         }
+
+        // Build the alias map after all current names are known, so an alias never shadows a live type.
+        foreach (TypeDescription Description in EntityScripts.Values)
+        {
+            string Current = Description.Type.FullName!;
+            foreach (AliasAttribute Alias in Description.Type.GetCustomAttributes<AliasAttribute>())
+            {
+                if (string.IsNullOrEmpty(Alias.Name) || EntityScripts.ContainsKey(Alias.Name))
+                {
+                    continue;
+                }
+                if (ScriptAliases.TryGetValue(Alias.Name, out string? Existing) && Existing != Current)
+                {
+                    Native.Log(ELogLevel.Warn, $"[Alias] '{Alias.Name}' is claimed by both '{Existing}' and '{Current}'; ignoring the latter.");
+                    continue;
+                }
+                ScriptAliases[Alias.Name] = Current;
+            }
+        }
     }
 
     /// <summary>Full type names of every EntityScript (for the editor's script-picker dropdown).</summary>
@@ -46,10 +67,28 @@ internal sealed class TypeLibrary
         return EntitySystems.TryGetValue(FullName, out Type? Type) ? Type : null;
     }
 
-    /// <summary>The description for an EntityScript by full name, or null if unknown.</summary>
+    /// <summary>The description for an EntityScript by full name, falling back through class aliases.</summary>
     public TypeDescription? GetEntityScript(string FullName)
     {
-        return EntityScripts.TryGetValue(FullName, out TypeDescription? Description) ? Description : null;
+        if (EntityScripts.TryGetValue(FullName, out TypeDescription? Description))
+        {
+            return Description;
+        }
+        if (ScriptAliases.TryGetValue(FullName, out string? Current))
+        {
+            return EntityScripts.TryGetValue(Current, out Description) ? Description : null;
+        }
+        return null;
+    }
+
+    /// <summary>The canonical current full name for a script name, or null if it resolves to no live type.</summary>
+    public string? ResolveScriptName(string Name)
+    {
+        if (EntityScripts.ContainsKey(Name))
+        {
+            return Name;
+        }
+        return ScriptAliases.TryGetValue(Name, out string? Current) ? Current : null;
     }
 
     /// <summary>Get-or-build the description for any type (used recursively for nested struct members).</summary>
@@ -78,45 +117,66 @@ internal sealed class TypeLibrary
         {
             return new ScriptType { Kind = EScriptKind.Bool, Clr = Type };
         }
-        if (Type.IsEnum || Type == typeof(int) || Type == typeof(uint) || Type == typeof(short) || Type == typeof(ushort)
-            || Type == typeof(byte) || Type == typeof(sbyte) || Type == typeof(long) || Type == typeof(ulong))
-        {
-            return new ScriptType { Kind = EScriptKind.Int, Clr = Type };
-        }
-        if (Type == typeof(float) || Type == typeof(double))
-        {
-            return new ScriptType { Kind = EScriptKind.Double, Clr = Type };
-        }
         if (Type == typeof(string))
         {
             return new ScriptType { Kind = EScriptKind.String, Clr = Type };
         }
-        if (Type == typeof(FVector2))
+        if (Type == typeof(Entity))
         {
-            return new ScriptType { Kind = EScriptKind.Vec2, Clr = Type };
+            return new ScriptType { Kind = EScriptKind.Entity, Clr = Type };
         }
-        if (Type == typeof(FVector3))
+        if (Type == typeof(float))
         {
-            return new ScriptType { Kind = EScriptKind.Vec3, Clr = Type };
+            return new ScriptType { Kind = EScriptKind.F32, Clr = Type };
         }
-        if (Type == typeof(FVector4))
+        if (Type == typeof(double))
         {
-            return new ScriptType { Kind = EScriptKind.Vec4, Clr = Type };
+            return new ScriptType { Kind = EScriptKind.F64, Clr = Type };
         }
 
-        // Asset-reference types serialize as a path string (drawn as an AssetType picker). Checked before
-        // the generic struct fallback so they aren't mistaken for nested structs.
+        EScriptKind Numeric = MapNumeric(Type);
+        if (Numeric != EScriptKind.Nil)
+        {
+            return new ScriptType { Kind = Numeric, Clr = Type };
+        }
+
+        if (Type.IsEnum)
+        {
+            EScriptKind Underlying = MapNumeric(Enum.GetUnderlyingType(Type));
+            if (Underlying == EScriptKind.Nil)
+            {
+                return new ScriptType { Kind = EScriptKind.Nil, Clr = Type };
+            }
+
+            string[] Names = Enum.GetNames(Type);
+            Array Values = Enum.GetValues(Type);
+            var Entries = new List<EnumEntry>(Names.Length);
+            for (int Index = 0; Index < Names.Length; Index++)
+            {
+                Entries.Add(new EnumEntry { Name = Names[Index], Value = Convert.ToInt64(Values.GetValue(Index)) });
+            }
+
+            return new ScriptType
+            {
+                Kind = EScriptKind.Enum,
+                Clr = Type,
+                EnumName = Type.FullName ?? Type.Name,
+                EnumUnderlying = Underlying,
+                EnumEntries = Entries,
+            };
+        }
+
+        // Asset references round-trip as a path and draw as an asset picker filtered to the target class.
         if (Type == typeof(FSoftObjectPath))
         {
-            return new ScriptType { Kind = EScriptKind.String, Clr = Type, IsAssetRef = true, AssetType = "" };
+            return new ScriptType { Kind = EScriptKind.AssetRef, Clr = Type, TargetClass = "" };
         }
         if (Type.IsGenericType)
         {
             Type Definition = Type.GetGenericTypeDefinition();
             if (Definition == typeof(TSoftObjectPtr<>) || Definition == typeof(TObjectPtr<>))
             {
-                Type Target = Type.GetGenericArguments()[0];
-                return new ScriptType { Kind = EScriptKind.String, Clr = Type, IsAssetRef = true, AssetType = Target.Name };
+                return new ScriptType { Kind = EScriptKind.AssetRef, Clr = Type, TargetClass = Type.GetGenericArguments()[0].Name };
             }
         }
 
@@ -130,15 +190,31 @@ internal sealed class TypeLibrary
             return new ScriptType { Kind = EScriptKind.Array, Clr = Type, Element = Element };
         }
 
-        // Any other struct/class with serializable members becomes a nested struct. Guard depth + cycles.
+        // A C# mirror of a native reflected value struct, drawn by the native CStruct's own customization.
+        string? NativeName = Type.GetCustomAttribute<NativeTypeAttribute>()?.Name
+                           ?? Type.GetCustomAttribute<NativeLayoutAttribute>()?.NativeType;
+        if (NativeName != null && Type.IsValueType && Depth < 16 && Visiting.Add(Type))
+        {
+            try
+            {
+                List<ScriptProperty> Fields = BuildNativeMembers(Type, Depth, Visiting);
+                return new ScriptType { Kind = EScriptKind.NativeStruct, Clr = Type, NativeName = NativeName, Fields = Fields };
+            }
+            finally
+            {
+                Visiting.Remove(Type);
+            }
+        }
+
+        // A C#-defined struct or class; its [Property] members are minted into a sub-CScriptStruct.
         if ((Type.IsClass || (Type.IsValueType && !Type.IsPrimitive)) && Depth < 16 && Visiting.Add(Type))
         {
             try
             {
-                List<ScriptProperty> Fields = BuildMembers(Type, false, Depth, Visiting);
+                List<ScriptProperty> Fields = BuildMembers(Type, Depth, Visiting);
                 if (Fields.Count > 0)
                 {
-                    return new ScriptType { Kind = EScriptKind.NestedStruct, Clr = Type, Fields = Fields };
+                    return new ScriptType { Kind = EScriptKind.ScriptStruct, Clr = Type, Fields = Fields };
                 }
             }
             finally
@@ -150,27 +226,30 @@ internal sealed class TypeLibrary
         return new ScriptType { Kind = EScriptKind.Nil, Clr = Type };
     }
 
-    /// <summary>
-    /// Builds the serializable members of a type. At the top level (<paramref name="bTopLevel"/> true)
-    /// only members carrying [Property] are exposed; inside a nested struct every public read/write
-    /// field/property whose type resolves is auto-exposed (Unity-style).
-    /// </summary>
-    internal List<ScriptProperty> BuildMembers(Type Type, bool bTopLevel, int Depth, HashSet<Type> Visiting)
+    private static EScriptKind MapNumeric(Type Type)
+    {
+        if (Type == typeof(sbyte))  return EScriptKind.I8;
+        if (Type == typeof(short))  return EScriptKind.I16;
+        if (Type == typeof(int))    return EScriptKind.I32;
+        if (Type == typeof(long))   return EScriptKind.I64;
+        if (Type == typeof(byte))   return EScriptKind.U8;
+        if (Type == typeof(ushort)) return EScriptKind.U16;
+        if (Type == typeof(uint))   return EScriptKind.U32;
+        if (Type == typeof(ulong))  return EScriptKind.U64;
+        return EScriptKind.Nil;
+    }
+
+    /// <summary>Builds the serializable members of a C#-defined type, every field or property carrying [Property] and not [Hide].</summary>
+    internal List<ScriptProperty> BuildMembers(Type Type, int Depth, HashSet<Type> Visiting)
     {
         var Members = new List<ScriptProperty>();
         const BindingFlags Flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.FlattenHierarchy;
+        bool bClassSkip = Type.GetCustomAttribute<SkipHotReloadAttribute>() != null;
 
         foreach (FieldInfo Field in Type.GetFields(Flags))
         {
             PropertyAttribute? Meta = Field.GetCustomAttribute<PropertyAttribute>();
-            if (bTopLevel)
-            {
-                if (Meta == null || Field.GetCustomAttribute<HideAttribute>() != null)
-                {
-                    continue;
-                }
-            }
-            else if (!Field.IsPublic)
+            if (Meta == null || Field.GetCustomAttribute<HideAttribute>() != null)
             {
                 continue;
             }
@@ -183,9 +262,11 @@ internal sealed class TypeLibrary
 
             Members.Add(new ScriptProperty
             {
-                Name = Meta?.Name ?? Field.Name,
+                Name = Meta.Name ?? Field.Name,
                 Type = Resolved,
                 Meta = Meta,
+                Aliases = GatherAliases(Field),
+                SkipHotReload = bClassSkip || Field.GetCustomAttribute<SkipHotReloadAttribute>() != null,
                 Get = Field.GetValue,
                 Set = Field.SetValue,
             });
@@ -199,14 +280,7 @@ internal sealed class TypeLibrary
             }
 
             PropertyAttribute? Meta = Property.GetCustomAttribute<PropertyAttribute>();
-            if (bTopLevel)
-            {
-                if (Meta == null || Property.GetCustomAttribute<HideAttribute>() != null)
-                {
-                    continue;
-                }
-            }
-            else if (!(Property.GetMethod?.IsPublic ?? false))
+            if (Meta == null || Property.GetCustomAttribute<HideAttribute>() != null)
             {
                 continue;
             }
@@ -219,9 +293,70 @@ internal sealed class TypeLibrary
 
             Members.Add(new ScriptProperty
             {
-                Name = Meta?.Name ?? Property.Name,
+                Name = Meta.Name ?? Property.Name,
                 Type = Resolved,
                 Meta = Meta,
+                Aliases = GatherAliases(Property),
+                SkipHotReload = bClassSkip || Property.GetCustomAttribute<SkipHotReloadAttribute>() != null,
+                Get = Property.GetValue,
+                Set = Property.SetValue,
+            });
+        }
+
+        return Members;
+    }
+
+    // Prior member names declared via [Alias], so a renamed field's saved value replays.
+    private static IReadOnlyList<string>? GatherAliases(MemberInfo Member)
+    {
+        List<string>? Result = null;
+        foreach (AliasAttribute Alias in Member.GetCustomAttributes<AliasAttribute>())
+        {
+            if (!string.IsNullOrEmpty(Alias.Name))
+            {
+                (Result ??= new List<string>()).Add(Alias.Name);
+            }
+        }
+        return Result;
+    }
+
+    /// <summary>Members of a C# mirror of a native struct, used only to round-trip its value by member name.</summary>
+    private List<ScriptProperty> BuildNativeMembers(Type Type, int Depth, HashSet<Type> Visiting)
+    {
+        var Members = new List<ScriptProperty>();
+        const BindingFlags Flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.FlattenHierarchy;
+
+        foreach (FieldInfo Field in Type.GetFields(Flags))
+        {
+            ScriptType Resolved = ResolveType(Field.FieldType, Depth + 1, Visiting);
+            if (Resolved.Kind == EScriptKind.Nil)
+            {
+                continue;
+            }
+            Members.Add(new ScriptProperty
+            {
+                Name = Field.Name,
+                Type = Resolved,
+                Get = Field.GetValue,
+                Set = Field.SetValue,
+            });
+        }
+
+        foreach (PropertyInfo Property in Type.GetProperties(Flags))
+        {
+            if (!Property.CanRead || !Property.CanWrite || Property.GetIndexParameters().Length > 0)
+            {
+                continue;
+            }
+            ScriptType Resolved = ResolveType(Property.PropertyType, Depth + 1, Visiting);
+            if (Resolved.Kind == EScriptKind.Nil)
+            {
+                continue;
+            }
+            Members.Add(new ScriptProperty
+            {
+                Name = Property.Name,
+                Type = Resolved,
                 Get = Property.GetValue,
                 Set = Property.SetValue,
             });
@@ -252,8 +387,6 @@ internal sealed class TypeLibrary
 // deliberately: a compiled factory would pin this collectible ALC's ctor and block hot-reload unload.
 internal sealed class TypeDescription
 {
-    private static readonly string[] CollisionCallbacks = { "OnContactBegin", "OnContactEnd", "OnOverlapBegin", "OnOverlapEnd" };
-
     public Type Type { get; }
     public IReadOnlyList<ScriptProperty> Properties { get; private set; } = Array.Empty<ScriptProperty>();
     public IReadOnlyList<ScriptButton> Buttons { get; private set; } = Array.Empty<ScriptButton>();
@@ -271,7 +404,7 @@ internal sealed class TypeDescription
 
     public void Build(TypeLibrary Library)
     {
-        Properties = Library.BuildMembers(Type, true, 0, new HashSet<Type>());
+        Properties = Library.BuildMembers(Type, 0, new HashSet<Type>());
         Buttons = ComputeButtons(Type);
         CallbackFlags = ComputeCallbackFlags(Type);
         RequiredComponents = ComputeRequiredComponents(Type);
@@ -413,37 +546,16 @@ internal sealed class TypeDescription
 
     private static int ComputeCallbackFlags(Type Type)
     {
+        // Bit indices must match the native CSharpScriptSystem.
         int Flags = 0;
-        for (int Index = 0; Index < CollisionCallbacks.Length; Index++)
-        {
-            MethodInfo? Method = Type.GetMethod(
-                CollisionCallbacks[Index],
-                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
-                null, new[] { typeof(Lumina.SCollisionEvent) }, null);
-            if (Method != null && Method.DeclaringType != typeof(EntityScript))
-            {
-                Flags |= 1 << Index;
-            }
-        }
 
-        // OnInput (bit 4): event-driven input listening. Different signature (InputEvent), checked separately.
+        // OnInput (bit 4).
         MethodInfo? Input = Type.GetMethod("OnInput",
             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
             null, new[] { typeof(Lumina.InputEvent) }, null);
         if (Input != null && Input.DeclaringType != typeof(EntityScript))
         {
             Flags |= 1 << 4;
-        }
-
-        // OnWake (bit 5) / OnSleep (bit 6): parameterless physics sleep/wake callbacks. The bit indices must
-        // match the native activation dispatch in JoltPhysicsScene.
-        if (HasParameterlessOverride(Type, "OnWake"))
-        {
-            Flags |= 1 << 5;
-        }
-        if (HasParameterlessOverride(Type, "OnSleep"))
-        {
-            Flags |= 1 << 6;
         }
 
         // OnFixedUpdate (bit 9): runs at the fixed physics timestep. Only overriding scripts are dispatched.
@@ -455,32 +567,13 @@ internal sealed class TypeDescription
             Flags |= 1 << 9;
         }
 
-        // OnUpdate (bit 10): the per-frame tick. Gating it lets native skip non-overriding scripts entirely
-        // (no crossing, no virtual call). Bit index must match native CSharpScriptSystem.
+        // OnUpdate (bit 10).
         MethodInfo? Update = Type.GetMethod("OnUpdate",
             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
             null, new[] { typeof(float) }, null);
         if (Update != null && Update.DeclaringType != typeof(EntityScript))
         {
             Flags |= 1 << 10;
-        }
-
-        // OnTargetPerceived (bit 7) / OnTargetLost (bit 8): AI perception callbacks (signature:
-        // SPerceptionEvent). The bit indices must match the native perception dispatch in SPerceptionSystem.
-        MethodInfo? Perceived = Type.GetMethod("OnTargetPerceived",
-            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
-            null, new[] { typeof(Lumina.SPerceptionEvent) }, null);
-        if (Perceived != null && Perceived.DeclaringType != typeof(EntityScript))
-        {
-            Flags |= 1 << 7;
-        }
-
-        MethodInfo? Lost = Type.GetMethod("OnTargetLost",
-            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
-            null, new[] { typeof(Lumina.SPerceptionEvent) }, null);
-        if (Lost != null && Lost.DeclaringType != typeof(EntityScript))
-        {
-            Flags |= 1 << 8;
         }
 
         // Update phase (bit 16): a [UpdatePhase(EScriptPhase.PostPhysics)] script runs its OnUpdate in the
@@ -493,14 +586,6 @@ internal sealed class TypeDescription
         }
 
         return Flags;
-    }
-
-    private static bool HasParameterlessOverride(Type Type, string Name)
-    {
-        MethodInfo? Method = Type.GetMethod(Name,
-            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
-            null, Type.EmptyTypes, null);
-        return Method != null && Method.DeclaringType != typeof(EntityScript);
     }
 }
 

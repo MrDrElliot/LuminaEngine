@@ -5,7 +5,7 @@ using System.Runtime.InteropServices;
 namespace LuminaSharp;
 
 // Owns the live EntityScript instances for one loaded generation. Native links each via a GCHandle stored on
-// SCSharpScriptComponent (dereferenced directly per call, no lookup map); LiveHandles only exists to free them
+// SScriptComponent (dereferenced directly per call, no lookup map); LiveHandles only exists to free them
 // all before the collectible ALC unloads. Lifecycle is driven entirely by the native ECS view.
 internal sealed class EntityScriptRuntime
 {
@@ -24,6 +24,12 @@ internal sealed class EntityScriptRuntime
     public Type? FindType(string Name)
     {
         return Library.GetEntityScript(Name)?.Type;
+    }
+
+    /// <summary>The canonical current full name for a script reference, or null if it resolves to no live type.</summary>
+    public string? ResolveName(string Name)
+    {
+        return Library.ResolveScriptName(Name);
     }
 
     /// <summary>Instantiates the named EntityScript for an entity, runs OnAttach, and returns a strong
@@ -49,7 +55,7 @@ internal sealed class EntityScriptRuntime
 
         try
         {
-            using (Game.Push(Script.World, Script.Entity))
+            using (Game.Push(Script.World, Script.Entity, Script))
             {
                 Script.OnAttach();
             }
@@ -71,7 +77,7 @@ internal sealed class EntityScriptRuntime
             return;
         }
 
-        using (Game.Push(Script.World, Script.Entity))
+        using (Game.Push(Script.World, Script.Entity, Script))
         {
             try
             {
@@ -113,7 +119,7 @@ internal sealed class EntityScriptRuntime
                 }
                 try
                 {
-                    using (Game.Push(Script.World, Script.Entity))
+                    using (Game.Push(Script.World, Script.Entity, Script))
                     {
                         Script.OnUpdate(DeltaTime);
                     }
@@ -153,7 +159,7 @@ internal sealed class EntityScriptRuntime
                 }
                 try
                 {
-                    using (Game.Push(Script.World, Script.Entity))
+                    using (Game.Push(Script.World, Script.Entity, Script))
                     {
                         Script.OnFixedUpdate(FixedDeltaTime);
                     }
@@ -185,7 +191,7 @@ internal sealed class EntityScriptRuntime
         {
             try
             {
-                using (Game.Push(Script.World, Script.Entity))
+                using (Game.Push(Script.World, Script.Entity, Script))
                 {
                     Script.OnDetach();
                 }
@@ -194,6 +200,7 @@ internal sealed class EntityScriptRuntime
             {
                 Native.Log(ELogLevel.Error, $"EntityScript.OnDetach threw: {Exception}");
             }
+            Script.UnbindAllDelegates();
             Script.CancelDestroyToken();
         }
 
@@ -201,91 +208,6 @@ internal sealed class EntityScriptRuntime
         if (Handle.IsAllocated)
         {
             Handle.Free();
-        }
-    }
-
-    // Collision + activation dispatch. Kind: 0=ContactBegin, 1=ContactEnd, 2=OverlapBegin, 3=OverlapEnd,
-    // 5=Wake, 6=Sleep (the bit (1<<kind) must match the native callback-flag check; 4 is OnInput). The
-    // activation kinds ignore Event (the body, not a contact, is the subject).
-    public void Dispatch(IntPtr Handle, int Kind, in Lumina.SCollisionEvent Event)
-    {
-        if (Resolve(Handle) is not EntityScript Script)
-        {
-            return;
-        }
-
-        try
-        {
-            using var Scope = Game.Push(Script.World, Script.Entity);
-            switch (Kind)
-            {
-                case 0:
-                {
-                    Script.OnContactBegin(Event);
-                    break;
-                }
-                case 1:
-                {
-                    Script.OnContactEnd(Event);
-                    break;
-                }
-                case 2:
-                {
-                    Script.OnOverlapBegin(Event);
-                    break;
-                }
-                case 3:
-                {
-                    Script.OnOverlapEnd(Event);
-                    break;
-                }
-                case 5:
-                {
-                    Script.OnWake();
-                    break;
-                }
-                case 6:
-                {
-                    Script.OnSleep();
-                    break;
-                }
-            }
-        }
-        catch (Exception Exception)
-        {
-            Native.Log(ELogLevel.Error, $"EntityScript collision callback threw: {Exception}");
-        }
-    }
-
-    // AI perception dispatch. Kind: 7=OnTargetPerceived, 8=OnTargetLost (the bit (1<<kind) must match the
-    // native callback-flag check in SPerceptionSystem). The payload is the self-oriented SPerceptionEvent.
-    public void DispatchPerception(IntPtr Handle, int Kind, in Lumina.SPerceptionEvent Event)
-    {
-        if (Resolve(Handle) is not EntityScript Script)
-        {
-            return;
-        }
-
-        try
-        {
-            using var Scope = Game.Push(Script.World, Script.Entity);
-            switch (Kind)
-            {
-                case 7:
-                {
-                    Script.OnTargetPerceived(Event);
-                    break;
-                }
-                case 8:
-                {
-                    Script.OnTargetLost(Event);
-                    break;
-                }
-            }
-        }
-        catch (Exception Exception)
-        {
-            Native.Log(ELogLevel.Error, $"EntityScript perception callback threw: {Exception}");
         }
     }
 
@@ -299,7 +221,7 @@ internal sealed class EntityScriptRuntime
 
         try
         {
-            using var Scope = Game.Push(Script.World, Script.Entity);
+            using var Scope = Game.Push(Script.World, Script.Entity, Script);
             Script.OnInput(Event);
         }
         catch (Exception Exception)
@@ -342,13 +264,16 @@ internal sealed class EntityScriptRuntime
     /// reload/shutdown before the old generation's context is torn down.</summary>
     public void FreeAll()
     {
+        // Detach every managed delegate binding before this collectible generation unloads.
+        DelegateBindings.PurgeAll();
+
         foreach (GCHandle Handle in LiveHandles)
         {
             if (Handle.Target is EntityScript Script)
             {
                 try
                 {
-                    using (Game.Push(Script.World, Script.Entity))
+                    using (Game.Push(Script.World, Script.Entity, Script))
                     {
                         Script.OnDetach();
                     }

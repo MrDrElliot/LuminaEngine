@@ -11,7 +11,9 @@
 #include "Containers/Array.h"
 #include "Containers/String.h"
 #include "Core/Console/ConsoleVariable.h"
+#include "Core/Delegates/ScriptDelegate.h"
 #include "Core/Engine/Engine.h"
+#include "Scripting/ScriptStruct.h"
 #include "Core/Plugin/Plugin.h"
 #include "Core/Plugin/PluginManager.h"
 #include "FileSystem/FileSystem.h"
@@ -23,7 +25,6 @@
 #include "World/Entity/Components/Component.h"
 #include "Scripting/DotNet/DotNetExport.h"
 #include "Scripting/ScriptExports.h"
-#include "Scripting/ScriptPropertyOverrides.h"
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectCore.h"
 #include "Core/Object/ObjectHandleTyped.h"
@@ -135,12 +136,12 @@ namespace Lumina::DotNet
         typedef void* (CORECLR_DELEGATE_CALLTYPE* CreateEntitySystemFn)(const char*, int32, uint64);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* TickEntitySystemFn)(void*, void*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* DestroyEntitySystemFn)(void*);
-        typedef void  (CORECLR_DELEGATE_CALLTYPE* DispatchCollisionFn)(void*, int32, const void*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* DispatchInputFn)(void*, int32, int32, int32, int32, int32, double, double, double, double, double);
-        typedef void  (CORECLR_DELEGATE_CALLTYPE* DispatchPerceptionFn)(void*, int32, const void*);
+        typedef void  (CORECLR_DELEGATE_CALLTYPE* OnNativeDelegateDestroyedFn)(void*);
         typedef int32 (CORECLR_DELEGATE_CALLTYPE* GetCallbackFlagsFn)(void*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* GetScriptSchemaFn)(const char*, int32, void*, void*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* GetScriptButtonsFn)(const char*, int32, void*, void*);
+        typedef void  (CORECLR_DELEGATE_CALLTYPE* ResolveEntityScriptNameFn)(const char*, int32, void*, void*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* ApplyScriptPropertiesFn)(void*, const uint8*, int32);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* InvokeAssetCallbackFn)(void*, void*);
         typedef void* (CORECLR_DELEGATE_CALLTYPE* ManagedClassFindFn)(const char*, int32);
@@ -161,9 +162,8 @@ namespace Lumina::DotNet
             CreateEntitySystemFn        CreateEntitySystem;
             DestroyEntityScriptFn       DestroyEntityScript;
             DestroyEntitySystemFn       DestroyEntitySystem;
-            DispatchCollisionFn         DispatchCollision;
             DispatchInputFn             DispatchInput;
-            DispatchPerceptionFn        DispatchPerception;
+            OnNativeDelegateDestroyedFn OnNativeDelegateDestroyed;
             EnumerateEntityScriptsFn    EnumerateEntityScripts;
             EnumerateEntitySystemsFn    EnumerateEntitySystems;
             ManagedFieldGetFn           FieldGet;
@@ -174,6 +174,7 @@ namespace Lumina::DotNet
             GetCallbackFlagsFn          GetScriptCallbackFlags;
             GetScriptSchemaFn           GetScriptSchema;
             GetScriptButtonsFn          GetScriptButtons;
+            ResolveEntityScriptNameFn   ResolveEntityScriptName;
             ManagedInvokeFn             Invoke;
             InvokeAssetCallbackFn       InvokeAssetCallback;
             LoadScriptsFn               LoadScripts;
@@ -193,6 +194,18 @@ namespace Lumina::DotNet
         ResolveManagedExportFn                      GResolveManagedExport = nullptr;
         FManagedExports                             GManaged{};
 
+        // Reflection layouts for each C# script type, cleared on reload/shutdown.
+        Scripting::FScriptStructRegistry            GScriptStructs;
+
+        // On native delegate destruction, ask the managed registry to free the matching GCHandles.
+        void NotifyManagedDelegateDestroyed(void* DelegateAddress)
+        {
+            if (bInitialized && GManaged.OnNativeDelegateDestroyed != nullptr)
+            {
+                GManaged.OnNativeDelegateDestroyed(DelegateAddress);
+            }
+        }
+
         // Sink the managed EnumerateEntityScripts calls once per script type; Ctx is the out vector.
         void LmScriptNameSink(void* Ctx, const char* Name, int Len)
         {
@@ -200,6 +213,16 @@ namespace Lumina::DotNet
             if (Out != nullptr && Name != nullptr && Len > 0)
             {
                 Out->emplace_back(FString(Name, static_cast<size_t>(Len)));
+            }
+        }
+
+        // Single-name sink for ResolveEntityScriptName; Ctx is the out FString.
+        void LmSingleNameSink(void* Ctx, const char* Name, int Len)
+        {
+            auto* Out = static_cast<FString*>(Ctx);
+            if (Out != nullptr && Name != nullptr && Len > 0)
+            {
+                Out->assign(Name, static_cast<size_t>(Len));
             }
         }
 
@@ -768,9 +791,7 @@ namespace Lumina::DotNet
         LM_RESOLVE(CreateEntitySystem,     CreateEntitySystemFn);
         LM_RESOLVE(DestroyEntityScript,    DestroyEntityScriptFn);
         LM_RESOLVE(DestroyEntitySystem,    DestroyEntitySystemFn);
-        LM_RESOLVE(DispatchCollision,      DispatchCollisionFn);
         LM_RESOLVE(DispatchInput,          DispatchInputFn);
-        LM_RESOLVE(DispatchPerception,     DispatchPerceptionFn);
         LM_RESOLVE(EnumerateEntityScripts, EnumerateEntityScriptsFn);
         LM_RESOLVE(EnumerateEntitySystems, EnumerateEntitySystemsFn);
         LM_RESOLVE(FieldGet,               ManagedFieldGetFn);
@@ -781,9 +802,11 @@ namespace Lumina::DotNet
         LM_RESOLVE(GetScriptCallbackFlags, GetCallbackFlagsFn);
         LM_RESOLVE(GetScriptSchema,        GetScriptSchemaFn);
         LM_RESOLVE(GetScriptButtons,       GetScriptButtonsFn);
+        LM_RESOLVE(ResolveEntityScriptName, ResolveEntityScriptNameFn);
         LM_RESOLVE(Invoke,                 ManagedInvokeFn);
         LM_RESOLVE(InvokeAssetCallback,    InvokeAssetCallbackFn);
         LM_RESOLVE(LoadScripts,            LoadScriptsFn);
+        LM_RESOLVE(OnNativeDelegateDestroyed, OnNativeDelegateDestroyedFn);
         LM_RESOLVE(ObjectNew,              ManagedObjectNewFn);
         LM_RESOLVE(OnReadyScript,          OnReadyScriptFn);
         LM_RESOLVE(Shutdown,               ShutdownFn);
@@ -803,6 +826,7 @@ namespace Lumina::DotNet
         }
 
         bInitialized = true;
+        GOnScriptDelegateDestroyed = &NotifyManagedDelegateDestroyed;
         LOG_DISPLAY(".NET host initialized (bundled runtime: {}).", Bundled.string().c_str());
     }
 
@@ -819,8 +843,10 @@ namespace Lumina::DotNet
         }
 
         bInitialized = false;
+        GOnScriptDelegateDestroyed = nullptr;
         GExports = FExporterTable{};
         GCachedGeneration = 0;
+        GScriptStructs.Clear();
         GManaged = FManagedExports{};   // clears the whole native->managed table in one go
         LOG_DISPLAY(".NET host shut down.");
     }
@@ -936,6 +962,8 @@ namespace Lumina::DotNet
         // Refresh the native generation mirror once here (the only place it can change), so the
         // per-frame tick never crosses the boundary to read it.
         GCachedGeneration = GManaged.GetGeneration ? GManaged.GetGeneration() : GCachedGeneration;
+
+        GScriptStructs.Clear();
 
         // Keep the IDE projects in lockstep with the scripts that just (re)loaded so an absent or deleted
         // .csproj self-heals on ANY reload, not only on a full project load (idempotent; no-op if unchanged).
@@ -1081,22 +1109,6 @@ namespace Lumina::DotNet
         }
     }
 
-    void DispatchScriptCollision(void* Instance, int32 Kind, const void* Event)
-    {
-        if (bInitialized && GManaged.DispatchCollision && Instance)
-        {
-            GManaged.DispatchCollision(Instance, Kind, Event);
-        }
-    }
-
-    void DispatchScriptPerception(void* Instance, int32 Kind, const void* Event)
-    {
-        if (bInitialized && GManaged.DispatchPerception && Instance)
-        {
-            GManaged.DispatchPerception(Instance, Kind, Event);
-        }
-    }
-
     void DispatchScriptInput(void* Instance, int32 Type, int32 KeyCode, int32 bMouse, int32 Mods, int32 bRepeat,
         double MouseX, double MouseY, double DeltaX, double DeltaY, double Scroll)
     {
@@ -1153,46 +1165,104 @@ namespace Lumina::DotNet
             void Str(FStringView S) { I32((int32)S.size()); Raw(S.data(), S.size()); }
         };
 
-        // Recursive schema TYPE reader (managed Serializer.WriteType): Array carries its element type,
-        // NestedStruct carries named field types. Already nesting-complete on the FScriptExportType side.
+        // Folds a field's alias list into the field metadata as a ';'-joined "Aliases" value.
+        void ReadAliasesInto(FBlobReader& R, Scripting::FScriptExportMeta& Meta)
+        {
+            const int32 N = R.I32();
+            FString Joined;
+            for (int32 i = 0; i < N; ++i)
+            {
+                const FString Alias = R.Str();
+                if (Alias.empty())
+                {
+                    continue;
+                }
+                if (!Joined.empty())
+                {
+                    Joined += ";";
+                }
+                Joined += Alias;
+            }
+            if (!Joined.empty())
+            {
+                Meta.Set("Aliases", Joined);
+            }
+        }
+
         TSharedPtr<Scripting::FScriptExportType> ReadType(FBlobReader& R)
         {
             auto Type = MakeShared<Scripting::FScriptExportType>();
             Type->Kind = static_cast<Scripting::EScriptExportKind>(R.U8());
-            if (Type->Kind == Scripting::EScriptExportKind::Array)
+            switch (Type->Kind)
             {
-                Type->ElementType = ReadType(R);
-            }
-            else if (Type->Kind == Scripting::EScriptExportKind::NestedStruct)
-            {
-                const int32 N = R.I32();
-                for (int32 i = 0; i < N; ++i)
+                case Scripting::EScriptExportKind::Enum:
                 {
-                    Scripting::FScriptExportField F;
-                    F.Name = FName(R.Str().c_str());
-                    F.Type = ReadType(R);
-                    Type->Fields.push_back(F);
+                    Type->EnumName = FName(R.Str().c_str());
+                    Type->EnumUnderlying = static_cast<Scripting::EScriptExportKind>(R.U8());
+                    const int32 N = R.I32();
+                    for (int32 i = 0; i < N; ++i)
+                    {
+                        Scripting::FScriptEnumEntry E;
+                        E.Name = FName(R.Str().c_str());
+                        E.Value = R.I64();
+                        Type->EnumEntries.push_back(E);
+                    }
+                    break;
                 }
+                case Scripting::EScriptExportKind::NativeStruct:
+                {
+                    Type->NativeName = FName(R.Str().c_str());
+                    const int32 N = R.I32();
+                    for (int32 i = 0; i < N; ++i)
+                    {
+                        Scripting::FScriptExportField F;
+                        F.Name = FName(R.Str().c_str());
+                        ReadAliasesInto(R, F.Meta);
+                        F.Type = ReadType(R);
+                        Type->Fields.push_back(F);
+                    }
+                    break;
+                }
+                case Scripting::EScriptExportKind::ScriptStruct:
+                {
+                    const int32 N = R.I32();
+                    for (int32 i = 0; i < N; ++i)
+                    {
+                        Scripting::FScriptExportField F;
+                        F.Name = FName(R.Str().c_str());
+                        ReadAliasesInto(R, F.Meta);
+                        F.Type = ReadType(R);
+                        Type->Fields.push_back(F);
+                    }
+                    break;
+                }
+                case Scripting::EScriptExportKind::AssetRef:
+                {
+                    Type->TargetClass = FName(R.Str().c_str());
+                    break;
+                }
+                case Scripting::EScriptExportKind::Array:
+                {
+                    Type->ElementType = ReadType(R);
+                    break;
+                }
+                default: break;
             }
             return Type;
         }
 
-        // Recursive self-describing VALUE reader (managed Serializer.WriteValue). Each value leads with
-        // its kind byte so it round-trips without the schema.
+        // Recursive self-describing value reader; each value leads with its kind byte.
         void ReadValue(FBlobReader& R, Scripting::FScriptPropertyValue& Out)
         {
             Out = Scripting::FScriptPropertyValue{};
-            Out.Kind = static_cast<Scripting::EScriptExportKind>(R.U8());
+            Out.Kind = static_cast<Scripting::EScriptValueKind>(R.U8());
             switch (Out.Kind)
             {
-                case Scripting::EScriptExportKind::Bool:   Out.AsBool = R.U8() != 0; break;
-                case Scripting::EScriptExportKind::Int:    Out.AsInt = R.I64(); break;
-                case Scripting::EScriptExportKind::Double: Out.AsDouble = R.F64(); break;
-                case Scripting::EScriptExportKind::String: Out.AsString = R.Str(); break;
-                case Scripting::EScriptExportKind::Vec2:   Out.AsVec.x = R.F32(); Out.AsVec.y = R.F32(); break;
-                case Scripting::EScriptExportKind::Vec3:   Out.AsVec.x = R.F32(); Out.AsVec.y = R.F32(); Out.AsVec.z = R.F32(); break;
-                case Scripting::EScriptExportKind::Vec4:   Out.AsVec.x = R.F32(); Out.AsVec.y = R.F32(); Out.AsVec.z = R.F32(); Out.AsVec.w = R.F32(); break;
-                case Scripting::EScriptExportKind::Array:
+                case Scripting::EScriptValueKind::Bool:   Out.AsBool = R.U8() != 0; break;
+                case Scripting::EScriptValueKind::Int:    Out.AsInt = R.I64(); break;
+                case Scripting::EScriptValueKind::Double: Out.AsDouble = R.F64(); break;
+                case Scripting::EScriptValueKind::String: Out.AsString = R.Str(); break;
+                case Scripting::EScriptValueKind::Array:
                 {
                     const int32 N = R.I32();
                     Out.Items.reserve(N > 0 ? N : 0);
@@ -1204,7 +1274,7 @@ namespace Lumina::DotNet
                     }
                     break;
                 }
-                case Scripting::EScriptExportKind::NestedStruct:
+                case Scripting::EScriptValueKind::Nested:
                 {
                     const int32 N = R.I32();
                     Out.StructFields.reserve(N > 0 ? N : 0);
@@ -1221,20 +1291,17 @@ namespace Lumina::DotNet
             }
         }
 
-        // Recursive self-describing VALUE writer (mirror of ReadValue); used to ship overrides to managed.
+        // Mirror of ReadValue.
         void WriteValue(FBlobWriter& W, const Scripting::FScriptPropertyValue& V)
         {
             W.U8((uint8)V.Kind);
             switch (V.Kind)
             {
-                case Scripting::EScriptExportKind::Bool:   W.U8(V.AsBool ? 1 : 0); break;
-                case Scripting::EScriptExportKind::Int:    W.I64(V.AsInt); break;
-                case Scripting::EScriptExportKind::Double: W.F64(V.AsDouble); break;
-                case Scripting::EScriptExportKind::String: W.Str(FStringView(V.AsString.c_str(), V.AsString.size())); break;
-                case Scripting::EScriptExportKind::Vec2:   W.F32(V.AsVec.x); W.F32(V.AsVec.y); break;
-                case Scripting::EScriptExportKind::Vec3:   W.F32(V.AsVec.x); W.F32(V.AsVec.y); W.F32(V.AsVec.z); break;
-                case Scripting::EScriptExportKind::Vec4:   W.F32(V.AsVec.x); W.F32(V.AsVec.y); W.F32(V.AsVec.z); W.F32(V.AsVec.w); break;
-                case Scripting::EScriptExportKind::Array:
+                case Scripting::EScriptValueKind::Bool:   W.U8(V.AsBool ? 1 : 0); break;
+                case Scripting::EScriptValueKind::Int:    W.I64(V.AsInt); break;
+                case Scripting::EScriptValueKind::Double: W.F64(V.AsDouble); break;
+                case Scripting::EScriptValueKind::String: W.Str(FStringView(V.AsString.c_str(), V.AsString.size())); break;
+                case Scripting::EScriptValueKind::Array:
                 {
                     W.I32((int32)V.Items.size());
                     for (const Scripting::FScriptPropertyValue& E : V.Items)
@@ -1243,7 +1310,7 @@ namespace Lumina::DotNet
                     }
                     break;
                 }
-                case Scripting::EScriptExportKind::NestedStruct:
+                case Scripting::EScriptValueKind::Nested:
                 {
                     W.I32((int32)V.StructFields.size());
                     for (const Scripting::FScriptPropertyEntry& E : V.StructFields)
@@ -1270,7 +1337,7 @@ namespace Lumina::DotNet
         // One self-describing value (kind byte + payload), wire-compatible with the managed ReadBoxed.
         void WriteManagedArg(FBlobWriter& W, const FManagedValue& V)
         {
-            using K = Scripting::EScriptExportKind;
+            using K = Scripting::EScriptValueKind;
             switch (V.GetKind())
             {
                 case EManagedValueKind::Bool:   W.U8((uint8)K::Bool);   W.U8(V.AsBool() ? 1 : 0); break;
@@ -1290,7 +1357,7 @@ namespace Lumina::DotNet
         // Mirror of WriteManagedArg / the managed WriteBoxed: decode one self-describing value.
         FManagedValue ReadManagedArg(FBlobReader& R)
         {
-            using K = Scripting::EScriptExportKind;
+            using K = Scripting::EScriptValueKind;
             switch ((K)R.U8())
             {
                 case K::Bool:   return FManagedValue(R.U8() != 0);
@@ -1461,6 +1528,7 @@ namespace Lumina::DotNet
         {
             Scripting::FScriptExportField Field;
             Field.Name = FName(R.Str().c_str());
+            ReadAliasesInto(R, Field.Meta);
 
             const FString Category = R.Str();
             const FString Tooltip = R.Str();
@@ -1471,7 +1539,7 @@ namespace Lumina::DotNet
             }
             if (!Tooltip.empty())
             {
-                Field.Meta.Set("Tooltip", Tooltip);
+                Field.Meta.Set("ToolTip", Tooltip);
             }
             if (!Units.empty())
             {
@@ -1485,19 +1553,13 @@ namespace Lumina::DotNet
             {
                 Field.Meta.Set("ClampMax", NumberToString(R.F64()));
             }
-            
-            const FString AssetType = R.Str();
-            if (!AssetType.empty())
-            {
-                Field.Meta.Set("AssetType", AssetType);
-            }
             if (R.U8())
             {
                 Field.Meta.Set("Color", FString());
             }
             if (R.U8())
             {
-                Field.Meta.Set("Slider", FString());
+                Field.Meta.Set("SkipHotReload", FString());
             }
 
             Field.Type = ReadType(R);
@@ -1513,19 +1575,34 @@ namespace Lumina::DotNet
         return true;
     }
 
-    void ApplyScriptProperties(void* Instance, const FScriptPropertyOverrides& Overrides)
+    const CScriptStruct* GetScriptStruct(FStringView ScriptClass)
+    {
+        return GScriptStructs.GetOrBuild(ScriptClass);
+    }
+
+    FString ResolveScriptClassName(FStringView ScriptClass)
+    {
+        FString Result;
+        if (bInitialized && GManaged.ResolveEntityScriptName != nullptr && !ScriptClass.empty())
+        {
+            GManaged.ResolveEntityScriptName(ScriptClass.data(), (int32)ScriptClass.size(),
+                reinterpret_cast<void*>(&LmSingleNameSink), &Result);
+        }
+        return Result;
+    }
+
+    void ApplyScriptProperties(void* Instance, const TVector<Scripting::FScriptPropertyEntry>& Values)
     {
         if (!bInitialized || GManaged.ApplyScriptProperties == nullptr || Instance == nullptr)
         {
             return;
         }
 
-        // Serialize the (reconciled) overrides to one recursive value blob and hand it to managed, which
-        // deserializes it onto the live instance via reflection. One crossing, nesting-complete.
+        // Serialize the values to one value blob; managed deserializes onto the live instance via reflection.
         TVector<uint8> Blob;
         FBlobWriter W{ Blob };
-        W.I32((int32)Overrides.Items.size());
-        for (const Scripting::FScriptPropertyEntry& Entry : Overrides.Items)
+        W.I32((int32)Values.size());
+        for (const Scripting::FScriptPropertyEntry& Entry : Values)
         {
             W.Str(FStringView(Entry.Name.c_str()));
             WriteValue(W, Entry.Value);

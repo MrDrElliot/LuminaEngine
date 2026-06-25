@@ -3,7 +3,6 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
-using Lumina;
 
 namespace LuminaSharp;
 
@@ -30,7 +29,9 @@ internal static class Serializer
         foreach (ScriptProperty Property in Description.Properties)
         {
             WriteString(Writer, Property.Name);
-            WriteMeta(Writer, Property.Meta, Property.Type.AssetType);
+            WriteAliases(Writer, Property.Aliases);
+            WriteMeta(Writer, Property.Meta);
+            Writer.Write((byte)(Property.SkipHotReload ? 1 : 0));
             WriteType(Writer, Property.Type);
             WriteValue(Writer, Property.Type, Defaults != null ? Property.Get(Defaults) : null);
         }
@@ -58,7 +59,7 @@ internal static class Serializer
         return Stream.ToArray();
     }
 
-    private static void WriteMeta(BinaryWriter Writer, PropertyAttribute? Meta, string? DerivedAssetType)
+    private static void WriteMeta(BinaryWriter Writer, PropertyAttribute? Meta)
     {
         WriteString(Writer, Meta?.Category ?? "");
         WriteString(Writer, Meta?.Tooltip ?? "");
@@ -78,100 +79,134 @@ internal static class Serializer
             Writer.Write((double)Meta!.Max);
         }
 
-        // Reference + widget hints (parsed in lockstep by DotNetHost GatherScriptSchema). A typed
-        // asset-reference field's class wins; else the explicit [Property(AssetType=...)] on a string.
-        string AssetType = !string.IsNullOrEmpty(DerivedAssetType) ? DerivedAssetType! : (Meta?.AssetType ?? "");
-        WriteString(Writer, AssetType);
         Writer.Write((byte)((Meta?.Color ?? false) ? 1 : 0));
-        Writer.Write((byte)((Meta?.Slider ?? false) ? 1 : 0));
     }
 
+    // Type descriptor; parsed in lockstep by the native GatherScriptSchema.
     private static void WriteType(BinaryWriter Writer, ScriptType Type)
     {
         Writer.Write((byte)Type.Kind);
-        if (Type.Kind == EScriptKind.Array && Type.Element != null)
-        {
-            WriteType(Writer, Type.Element);
-        }
-        else if (Type.Kind == EScriptKind.NestedStruct && Type.Fields != null)
-        {
-            Writer.Write(Type.Fields.Count);
-            foreach (ScriptProperty Field in Type.Fields)
-            {
-                WriteString(Writer, Field.Name);
-                WriteType(Writer, Field.Type);
-            }
-        }
-    }
-
-    private static void WriteValue(BinaryWriter Writer, ScriptType Type, object? Value)
-    {
-        // Asset references serialize as a path string (wire kind String) via IAssetRef.
-        if (Type.IsAssetRef)
-        {
-            Writer.Write((byte)EScriptKind.String);
-            WriteString(Writer, Value is IAssetRef Reference ? Reference.GetPath() : "");
-            return;
-        }
-
-        Writer.Write((byte)Type.Kind);
         switch (Type.Kind)
         {
-            case EScriptKind.Bool:
+            case EScriptKind.Enum:
             {
-                Writer.Write((byte)(Value is bool Bool && Bool ? 1 : 0));
+                WriteString(Writer, Type.EnumName ?? "");
+                Writer.Write((byte)Type.EnumUnderlying);
+                IReadOnlyList<EnumEntry> Entries = Type.EnumEntries ?? Array.Empty<EnumEntry>();
+                Writer.Write(Entries.Count);
+                foreach (EnumEntry Entry in Entries)
+                {
+                    WriteString(Writer, Entry.Name);
+                    Writer.Write(Entry.Value);
+                }
                 break;
             }
-            case EScriptKind.Int:
+            case EScriptKind.NativeStruct:
             {
-                Writer.Write(Value != null ? Convert.ToInt64(Value) : 0L);
+                WriteString(Writer, Type.NativeName ?? "");
+                WriteFields(Writer, Type.Fields);
                 break;
             }
-            case EScriptKind.Double:
+            case EScriptKind.ScriptStruct:
             {
-                Writer.Write(Value != null ? Convert.ToDouble(Value) : 0.0);
+                WriteFields(Writer, Type.Fields);
                 break;
             }
-            case EScriptKind.String:
+            case EScriptKind.AssetRef:
             {
-                WriteString(Writer, Value as string ?? "");
-                break;
-            }
-            case EScriptKind.Vec2:
-            {
-                FVector2 V = Value is FVector2 Typed ? Typed : default;
-                Writer.Write(V.X);
-                Writer.Write(V.Y);
-                break;
-            }
-            case EScriptKind.Vec3:
-            {
-                FVector3 V = Value is FVector3 Typed ? Typed : default;
-                Writer.Write(V.X);
-                Writer.Write(V.Y);
-                Writer.Write(V.Z);
-                break;
-            }
-            case EScriptKind.Vec4:
-            {
-                FVector4 V = Value is FVector4 Typed ? Typed : default;
-                Writer.Write(V.X);
-                Writer.Write(V.Y);
-                Writer.Write(V.Z);
-                Writer.Write(V.W);
+                WriteString(Writer, Type.TargetClass ?? "");
                 break;
             }
             case EScriptKind.Array:
             {
-                WriteArray(Writer, Type, Value);
+                WriteType(Writer, Type.Element ?? new ScriptType());
                 break;
             }
-            case EScriptKind.NestedStruct:
+        }
+    }
+
+    private static void WriteFields(BinaryWriter Writer, IReadOnlyList<ScriptProperty>? Fields)
+    {
+        IReadOnlyList<ScriptProperty> List = Fields ?? Array.Empty<ScriptProperty>();
+        Writer.Write(List.Count);
+        foreach (ScriptProperty Field in List)
+        {
+            WriteString(Writer, Field.Name);
+            WriteAliases(Writer, Field.Aliases);
+            WriteType(Writer, Field.Type);
+        }
+    }
+
+    private static void WriteAliases(BinaryWriter Writer, IReadOnlyList<string>? Aliases)
+    {
+        IReadOnlyList<string> List = Aliases ?? Array.Empty<string>();
+        Writer.Write(List.Count);
+        foreach (string Alias in List)
+        {
+            WriteString(Writer, Alias);
+        }
+    }
+
+    // Coarse self-describing value with a leading EScriptValueKind byte.
+    private static void WriteValue(BinaryWriter Writer, ScriptType Type, object? Value)
+    {
+        EScriptValueKind Kind = Type.ValueKind;
+        Writer.Write((byte)Kind);
+        switch (Kind)
+        {
+            case EScriptValueKind.Bool:
+            {
+                Writer.Write((byte)(Value is bool Bool && Bool ? 1 : 0));
+                break;
+            }
+            case EScriptValueKind.Int:
+            {
+                Writer.Write(EncodeInt(Type, Value));
+                break;
+            }
+            case EScriptValueKind.Double:
+            {
+                Writer.Write(Value != null ? Convert.ToDouble(Value) : 0.0);
+                break;
+            }
+            case EScriptValueKind.String:
+            {
+                WriteString(Writer, EncodeString(Type, Value));
+                break;
+            }
+            case EScriptValueKind.Nested:
             {
                 WriteNested(Writer, Type, Value);
                 break;
             }
+            case EScriptValueKind.Array:
+            {
+                WriteArray(Writer, Type, Value);
+                break;
+            }
         }
+    }
+
+    private static long EncodeInt(ScriptType Type, object? Value)
+    {
+        if (Value == null)
+        {
+            return 0L;
+        }
+        if (Type.Kind == EScriptKind.Entity)
+        {
+            return Value is Entity Ent ? Ent.Id : 0L;
+        }
+        return Convert.ToInt64(Value);
+    }
+
+    private static string EncodeString(ScriptType Type, object? Value)
+    {
+        if (Type.Kind == EScriptKind.AssetRef)
+        {
+            return Value is IAssetRef Reference ? Reference.GetPath() : "";
+        }
+        return Value as string ?? "";
     }
 
     private static void WriteArray(BinaryWriter Writer, ScriptType Type, object? Value)
@@ -241,7 +276,8 @@ internal static class Serializer
     {
         foreach (ScriptProperty Property in Properties)
         {
-            if (Property.Name == Name)
+            // Case-insensitive so a native struct member matches its differently-cased C# mirror.
+            if (string.Equals(Property.Name, Name, StringComparison.OrdinalIgnoreCase))
             {
                 return Property;
             }
@@ -257,27 +293,8 @@ internal static class Serializer
     {
         Value = null;
 
-        // Asset references arrive as a path string (wire kind String); rebuild the typed ref via IAssetRef.
-        if (Type.IsAssetRef)
-        {
-            var RefKind = (EScriptKind)Reader.ReadByte();
-            if (RefKind != EScriptKind.String)
-            {
-                SkipBody(ref Reader, RefKind);
-                return false;
-            }
-            string Path = Reader.ReadString();
-            object? Box = Activator.CreateInstance(Type.Clr);
-            if (Box is IAssetRef Reference)
-            {
-                Reference.SetFromPath(Path);
-            }
-            Value = Box;
-            return Box != null;
-        }
-
-        var Kind = (EScriptKind)Reader.ReadByte();
-        if (Kind != Type.Kind)
+        var Kind = (EScriptValueKind)Reader.ReadByte();
+        if (Kind != Type.ValueKind)
         {
             SkipBody(ref Reader, Kind);
             return false;
@@ -285,17 +302,17 @@ internal static class Serializer
 
         switch (Kind)
         {
-            case EScriptKind.Bool:
+            case EScriptValueKind.Bool:
             {
                 Value = Reader.ReadByte() != 0;
                 return true;
             }
-            case EScriptKind.Int:
+            case EScriptValueKind.Int:
             {
-                Value = CoerceInt(Reader.ReadInt64(), Type.Clr);
+                Value = DecodeInt(Reader.ReadInt64(), Type);
                 return true;
             }
-            case EScriptKind.Double:
+            case EScriptValueKind.Double:
             {
                 // Box the EXACT field type: a `? (float) : (double)` ternary re-widens both branches to
                 // double, so a float field would get a boxed double and FieldInfo.SetValue throws.
@@ -310,31 +327,15 @@ internal static class Serializer
                 }
                 return true;
             }
-            case EScriptKind.String:
+            case EScriptValueKind.String:
             {
-                Value = Reader.ReadString();
-                return true;
+                return DecodeString(ref Reader, Type, out Value);
             }
-            case EScriptKind.Vec2:
-            {
-                Value = new FVector2(Reader.ReadSingle(), Reader.ReadSingle());
-                return true;
-            }
-            case EScriptKind.Vec3:
-            {
-                Value = new FVector3(Reader.ReadSingle(), Reader.ReadSingle(), Reader.ReadSingle());
-                return true;
-            }
-            case EScriptKind.Vec4:
-            {
-                Value = new FVector4(Reader.ReadSingle(), Reader.ReadSingle(), Reader.ReadSingle(), Reader.ReadSingle());
-                return true;
-            }
-            case EScriptKind.Array:
+            case EScriptValueKind.Array:
             {
                 return ReadArray(ref Reader, Type, out Value);
             }
-            case EScriptKind.NestedStruct:
+            case EScriptValueKind.Nested:
             {
                 return ReadNested(ref Reader, Type, out Value);
             }
@@ -343,6 +344,23 @@ internal static class Serializer
                 return false;
             }
         }
+    }
+
+    private static bool DecodeString(ref FBlobReader Reader, ScriptType Type, out object? Value)
+    {
+        string Text = Reader.ReadString();
+        if (Type.Kind == EScriptKind.AssetRef)
+        {
+            object? Box = Activator.CreateInstance(Type.Clr);
+            if (Box is IAssetRef Reference)
+            {
+                Reference.SetFromPath(Text);
+            }
+            Value = Box;
+            return Box != null;
+        }
+        Value = Text;
+        return true;
     }
 
     private static bool ReadArray(ref FBlobReader Reader, ScriptType Type, out object? Value)
@@ -411,65 +429,59 @@ internal static class Serializer
         return Box != null;
     }
 
-    private static object CoerceInt(long Value, Type Target)
+    private static object DecodeInt(long Value, ScriptType Type)
     {
+        if (Type.Kind == EScriptKind.Entity)
+        {
+            return new Entity(unchecked((uint)Value));
+        }
+        Type Target = Type.Clr;
         if (Target.IsEnum)
         {
             return Enum.ToObject(Target, Value);
         }
-        if (Target == typeof(long) || Target == typeof(ulong))
+        if (Target == typeof(ulong))
         {
-            return Target == typeof(ulong) ? (object)(ulong)Value : Value;
+            return (ulong)Value;
+        }
+        if (Target == typeof(long))
+        {
+            return Value;
         }
         return Convert.ChangeType(Value, Target);
     }
 
     private static void SkipValue(ref FBlobReader Reader)
     {
-        var Kind = (EScriptKind)Reader.ReadByte();
+        var Kind = (EScriptValueKind)Reader.ReadByte();
         SkipBody(ref Reader, Kind);
     }
 
-    private static void SkipBody(ref FBlobReader Reader, EScriptKind Kind)
+    private static void SkipBody(ref FBlobReader Reader, EScriptValueKind Kind)
     {
         switch (Kind)
         {
-            case EScriptKind.Bool:
+            case EScriptValueKind.Bool:
             {
                 Reader.Skip(1);
                 break;
             }
-            case EScriptKind.Int:
+            case EScriptValueKind.Int:
             {
                 Reader.Skip(8);
                 break;
             }
-            case EScriptKind.Double:
+            case EScriptValueKind.Double:
             {
                 Reader.Skip(8);
                 break;
             }
-            case EScriptKind.String:
+            case EScriptValueKind.String:
             {
                 Reader.Skip(Reader.ReadInt32());
                 break;
             }
-            case EScriptKind.Vec2:
-            {
-                Reader.Skip(8);
-                break;
-            }
-            case EScriptKind.Vec3:
-            {
-                Reader.Skip(12);
-                break;
-            }
-            case EScriptKind.Vec4:
-            {
-                Reader.Skip(16);
-                break;
-            }
-            case EScriptKind.Array:
+            case EScriptValueKind.Array:
             {
                 int Count = Reader.ReadInt32();
                 for (int Index = 0; Index < Count; Index++)
@@ -478,7 +490,7 @@ internal static class Serializer
                 }
                 break;
             }
-            case EScriptKind.NestedStruct:
+            case EScriptValueKind.Nested:
             {
                 int Count = Reader.ReadInt32();
                 for (int Index = 0; Index < Count; Index++)

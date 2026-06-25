@@ -14,6 +14,7 @@
 #include "Reflector/Types/Functions/ReflectedFunction.h"
 #include "Reflector/Types/Properties/ReflectedArrayProperty.h"
 #include "Reflector/Types/Properties/ReflectedClassProperty.h"
+#include "Reflector/Types/Properties/ReflectedDelegateProperty.h"
 #include "Reflector/Types/Properties/ReflectedEnumProperty.h"
 #include "Reflector/Types/Properties/ReflectedNumericProperty.h"
 #include "Reflector/Types/Properties/ReflectedObjectProperty.h"
@@ -509,6 +510,31 @@ namespace Lumina::Reflection::Visitor
 			NewProperty = eastl::move(OptionalProperty);
 
 			FieldProperty->bInner = true; // Inner T is owned by the optional.
+		}
+		break;
+		case EPropertyTypeFlags::Delegate:
+		{
+			const CXType ArgType = clang_Type_getTemplateArgumentAsType(FieldInfo.Type, 0);
+			if (ArgType.kind != CXType_Invalid && ArgType.kind != CXType_Void)
+			{
+				eastl::optional<FFieldInfo> ParamFieldInfo = CreateSubFieldInfo(Context, ArgType, FieldInfo);
+				if (!ParamFieldInfo.has_value())
+				{
+					return false;
+				}
+
+				ParamFieldInfo->Name = FieldInfo.Name;
+
+				auto DelegateProperty = CreateProperty<FReflectedDelegateProperty>(ParamFieldInfo.value());
+				DelegateProperty->bHasPayload = true;
+				NewProperty = eastl::move(DelegateProperty);
+			}
+			else
+			{
+				auto DelegateProperty = CreateProperty<FReflectedDelegateProperty>(FieldInfo);
+				DelegateProperty->bHasPayload = false;
+				NewProperty = eastl::move(DelegateProperty);
+			}
 		}
 		break;
 		default:

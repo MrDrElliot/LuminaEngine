@@ -13,6 +13,7 @@ public static class Game
     [ThreadStatic] private static Lumina.CWorld? ActiveWorld;
     [ThreadStatic] private static Entity ActiveEntity;
     [ThreadStatic] private static bool ActiveHasEntity;
+    [ThreadStatic] private static EntityScript? ActiveScriptField;
 
     /// <summary>The world the current callback runs in. Throws if accessed outside a gameplay callback.</summary>
     public static Lumina.CWorld World => ActiveWorld ?? throw new InvalidOperationException(
@@ -24,20 +25,35 @@ public static class Game
     // The entity whose script callback is running (Entity.Null in a system tick). Used by Trace.IgnoreSelf.
     internal static Entity CurrentEntity => ActiveHasEntity ? ActiveEntity : Entity.Null;
 
+    // The script whose callback is currently running, or null.
+    internal static EntityScript? ActiveScript => ActiveScriptField;
+
     internal static Scope Push(Lumina.CWorld World, Entity Entity)
     {
-        Scope Prior = new(ActiveWorld, ActiveEntity, ActiveHasEntity);
+        Scope Prior = new(ActiveWorld, ActiveEntity, ActiveHasEntity, ActiveScriptField);
         ActiveWorld = World;
         ActiveEntity = Entity;
         ActiveHasEntity = true;
+        ActiveScriptField = null;
+        return Prior;
+    }
+
+    internal static Scope Push(Lumina.CWorld World, Entity Entity, EntityScript Script)
+    {
+        Scope Prior = new(ActiveWorld, ActiveEntity, ActiveHasEntity, ActiveScriptField);
+        ActiveWorld = World;
+        ActiveEntity = Entity;
+        ActiveHasEntity = true;
+        ActiveScriptField = Script;
         return Prior;
     }
 
     internal static Scope PushWorld(Lumina.CWorld World)
     {
-        Scope Prior = new(ActiveWorld, ActiveEntity, ActiveHasEntity);
+        Scope Prior = new(ActiveWorld, ActiveEntity, ActiveHasEntity, ActiveScriptField);
         ActiveWorld = World;
         ActiveHasEntity = false;
+        ActiveScriptField = null;
         return Prior;
     }
 
@@ -46,12 +62,14 @@ public static class Game
         private readonly Lumina.CWorld? World;
         private readonly Entity Entity;
         private readonly bool HasEntity;
+        private readonly EntityScript? Script;
 
-        internal Scope(Lumina.CWorld? World, Entity Entity, bool HasEntity)
+        internal Scope(Lumina.CWorld? World, Entity Entity, bool HasEntity, EntityScript? Script)
         {
             this.World = World;
             this.Entity = Entity;
             this.HasEntity = HasEntity;
+            this.Script = Script;
         }
 
         public void Dispose()
@@ -59,6 +77,7 @@ public static class Game
             ActiveWorld = World;
             ActiveEntity = Entity;
             ActiveHasEntity = HasEntity;
+            ActiveScriptField = Script;
         }
     }
 }

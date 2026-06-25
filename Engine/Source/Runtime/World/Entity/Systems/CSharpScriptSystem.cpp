@@ -3,6 +3,8 @@
 
 #include "Scripting/DotNet/DotNetHost.h"
 #include "Scripting/ScriptExports.h"
+#include "Scripting/ScriptStruct.h"
+#include "Scripting/ScriptValueBridge.h"
 #include "World/World.h"
 #include "World/Subsystems/WorldSettings.h"
 #include "World/Entity/Components/CSharpScriptComponent.h"
@@ -33,13 +35,13 @@ namespace Lumina
         // managed TypeLibrary). Bit index MUST match TypeLibrary.ComputeCallbackFlags. No bit => PrePhysics.
         constexpr int32 PostPhysicsPhaseBit = 1 << 16;
 
-        auto View = Context.CreateView<SCSharpScriptComponent>(entt::exclude<SDisabledTag>);
+        auto View = Context.CreateView<SScriptComponent>(entt::exclude<SDisabledTag>);
 
         // Binding, input dispatch and OnReady happen ONCE per frame, in the PrePhysics pass. A post-physics
         // script is still created and readied here; only its OnUpdate is deferred to the PostPhysics pass.
         if (bPrePhysics)
         {
-            View.each([&](entt::entity Entity, SCSharpScriptComponent& Component)
+            View.each([&](entt::entity Entity, SScriptComponent& Component)
             {
                 if (Component.ScriptClass.empty())
                 {
@@ -52,9 +54,17 @@ namespace Lumina
 
                 // Generation changed, managed already freed the old instance handle on unload, so drop our
                 // stale pointer WITHOUT calling destroy (that would touch a freed GCHandle).
+                const bool bHotReload = Component.Generation >= 0 && Component.Generation != Generation;
                 Component.Instance = nullptr;
                 Component.BindState = ECSharpBindState::Unbound;
                 Component.Generation = Generation;
+
+                // Self-heal a renamed script by rewriting the reference to the current type name.
+                FString Resolved = DotNet::ResolveScriptClassName(FStringView(Component.ScriptClass.c_str(), Component.ScriptClass.size()));
+                if (!Resolved.empty() && Resolved != Component.ScriptClass)
+                {
+                    Component.ScriptClass = Resolved;
+                }
 
                 const FStringView ClassName(Component.ScriptClass.c_str(), Component.ScriptClass.size());
                 void* Instance = DotNet::CreateEntityScript(ClassName, World, (uint32)entt::to_integral(Entity));
@@ -68,15 +78,20 @@ namespace Lumina
                 Component.CallbackFlags = DotNet::GetScriptCallbackFlags(Instance);
                 Component.BindState = ECSharpBindState::Attached;
 
-                // Reconcile saved overrides against the script's current [Property] schema (drop drift, fill
-                // missing from defaults), then push them onto the fresh instance.
-                Scripting::FScriptExportSchema Schema;
-                TVector<Scripting::FScriptPropertyEntry> Defaults;
-                if (DotNet::GatherScriptSchema(ClassName, Schema, Defaults))
+                // Bind the value buffer to the script's current layout, then push it onto the fresh instance.
+                const CScriptStruct* Layout = DotNet::GetScriptStruct(ClassName);
+                Component.Values.EnsureLayout(Layout);
+                if (Layout != nullptr && Component.Values.GetBuffer() != nullptr)
                 {
-                    Scripting::ReconcileOverrides(Schema, Defaults, Component.PropertyOverrides.Items);
+                    // On a hot reload, [SkipHotReload] fields take the new default instead of the carried value.
+                    if (bHotReload)
+                    {
+                        Layout->ResetHotReloadFields(Component.Values.GetBuffer());
+                    }
+                    TVector<Scripting::FScriptPropertyEntry> Values;
+                    Scripting::ReadStructToValues(Layout, Component.Values.GetBuffer(), Values);
+                    DotNet::ApplyScriptProperties(Instance, Values);
                 }
-                DotNet::ApplyScriptProperties(Instance, Component.PropertyOverrides);
             });
 
             {
@@ -86,7 +101,7 @@ namespace Lumina
                 if (Events != nullptr && !Events->empty())
                 {
                     constexpr int32 OnInputBit = 1 << 4;
-                    View.each([&](entt::entity Entity, SCSharpScriptComponent& Component)
+                    View.each([&](entt::entity Entity, SScriptComponent& Component)
                     {
                         if (Component.Instance == nullptr || (Component.CallbackFlags & OnInputBit) == 0)
                         {
@@ -109,7 +124,7 @@ namespace Lumina
                 }
             }
 
-            View.each([&](entt::entity, SCSharpScriptComponent& Component)
+            View.each([&](entt::entity, SScriptComponent& Component)
             {
                 if (Component.Instance != nullptr && Component.BindState == ECSharpBindState::Attached)
                 {
@@ -148,7 +163,7 @@ namespace Lumina
                         // stale handle in a later step.
                         TVector<void*> FixedScripts;
                         FixedScripts.reserve(View.size_hint());
-                        View.each([&](entt::entity, SCSharpScriptComponent& Component)
+                        View.each([&](entt::entity, SScriptComponent& Component)
                         {
                             if (Component.Instance != nullptr && Component.BindState == ECSharpBindState::Ready
                                 && (Component.CallbackFlags & OnFixedUpdateBit) != 0)
@@ -170,7 +185,7 @@ namespace Lumina
         constexpr int32 OnUpdateBit = 1 << 10; // must match TypeLibrary.ComputeCallbackFlags
         TVector<void*> Ready;
         Ready.reserve(View.size_hint());
-        View.each([&](entt::entity, SCSharpScriptComponent& Component)
+        View.each([&](entt::entity, SScriptComponent& Component)
         {
             if (Component.Instance == nullptr || Component.BindState != ECSharpBindState::Ready
                 || (Component.CallbackFlags & OnUpdateBit) == 0)

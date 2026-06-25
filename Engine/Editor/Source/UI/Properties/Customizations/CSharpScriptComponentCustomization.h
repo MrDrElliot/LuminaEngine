@@ -2,9 +2,13 @@
 
 #include "Core/Reflection/PropertyCustomization/PropertyCustomization.h"
 #include "Containers/Function.h"
+#include "Memory/SmartPtr.h"
 
 namespace Lumina
 {
+    class CScriptStruct;
+    class FPropertyTable;
+
     class FCSharpScriptComponentPropertyCustomization : public IPropertyTypeCustomization
     {
     public:
@@ -21,5 +25,11 @@ namespace Lumina
         // the undo snapshot is pre-change.
         TFunction<void()> PendingMutation;
         bool bFinishPending = false;
+
+        // Rebuilt when the resolved layout or live buffer changes.
+        TUniquePtr<FPropertyTable> ValueTable;
+        const CScriptStruct*       BoundLayout = nullptr;
+        void*                      BoundBuffer = nullptr;
+        bool                       bValueEdited = false;
     };
 }

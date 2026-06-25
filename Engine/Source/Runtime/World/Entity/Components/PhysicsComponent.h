@@ -1,8 +1,10 @@
 ﻿#pragma once
 
+#include "Core/Delegates/ScriptDelegate.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Physics/PhysicsTypes.h"
+#include "World/Entity/Events/CollisionEvent.h"
 #include "PhysicsComponent.generated.h"
 
 namespace Lumina
@@ -136,6 +138,25 @@ namespace Lumina
         /** Prevent the body from rotating about the world Z axis. */
         PROPERTY(Script, Editable, Category = "Physics|Constraints")
         bool bLockRotationZ = false;
+
+        PROPERTY(Script)
+        TScriptDelegate<SCollisionEvent> OnContactBegin;
+
+        // Velocities are zero in this payload.
+        PROPERTY(Script)
+        TScriptDelegate<SCollisionEvent> OnContactEnd;
+
+        PROPERTY(Script)
+        TScriptDelegate<SCollisionEvent> OnOverlapBegin;
+
+        PROPERTY(Script)
+        TScriptDelegate<SCollisionEvent> OnOverlapEnd;
+
+        PROPERTY(Script)
+        FScriptDelegate OnWake;
+
+        PROPERTY(Script)
+        FScriptDelegate OnSleep;
 
     };
 

@@ -50,6 +50,30 @@ public abstract class EntityScript
         }
     }
 
+    // Delegate bindings this script made; auto-detached when the script is destroyed.
+    private System.Collections.Generic.List<DelegateBinding>? TrackedBindings;
+
+    internal void TrackBinding(DelegateBinding Binding)
+    {
+        if (Binding.IsValid)
+        {
+            (TrackedBindings ??= new System.Collections.Generic.List<DelegateBinding>()).Add(Binding);
+        }
+    }
+
+    internal void UnbindAllDelegates()
+    {
+        if (TrackedBindings == null)
+        {
+            return;
+        }
+        foreach (DelegateBinding Binding in TrackedBindings)
+        {
+            Binding.Unbind();
+        }
+        TrackedBindings.Clear();
+    }
+
     private Lumina.STransformComponent? CachedTransform;
 
     /// <summary>This entity's transform, resolved once and cached (avoids a per-frame Get crossing + alloc).</summary>
@@ -101,48 +125,6 @@ public abstract class EntityScript
 
     /// <summary>Called once when the script/entity is detached or destroyed.</summary>
     public virtual void OnDetach()
-    {
-    }
-
-    // Collision callbacks (after the physics step). Contact = solid impact; Overlap = sensor/trigger.
-
-    public virtual void OnContactBegin(Lumina.SCollisionEvent Event)
-    {
-    }
-
-    public virtual void OnContactEnd(Lumina.SCollisionEvent Event)
-    {
-    }
-
-    public virtual void OnOverlapBegin(Lumina.SCollisionEvent Event)
-    {
-    }
-
-    public virtual void OnOverlapEnd(Lumina.SCollisionEvent Event)
-    {
-    }
-
-    // Physics sleep/wake callbacks (OnWake also fires on spawn).
-
-    /// <summary>The entity's physics body just became active (woke up or spawned).</summary>
-    public virtual void OnWake()
-    {
-    }
-
-    /// <summary>The entity's physics body just went to sleep (came to rest).</summary>
-    public virtual void OnSleep()
-    {
-    }
-
-    // AI perception callbacks: this entity's SPerceptionComponent gained/lost awareness of another (self-oriented event).
-
-    /// <summary>This entity first became aware of Event.Target (Event.Sense is the sense that detected it).</summary>
-    public virtual void OnTargetPerceived(Lumina.SPerceptionEvent Event)
-    {
-    }
-
-    /// <summary>This entity lost awareness of Event.Target (Event.Location is its last known position).</summary>
-    public virtual void OnTargetLost(Lumina.SPerceptionEvent Event)
     {
     }
 }

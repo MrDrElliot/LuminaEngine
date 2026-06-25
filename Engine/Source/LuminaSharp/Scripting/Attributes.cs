@@ -2,6 +2,25 @@ using System;
 
 namespace LuminaSharp;
 
+/// <summary>Declares a prior name this element was serialized under, so saved data survives a rename. Repeatable.</summary>
+[AttributeUsage(AttributeTargets.Class | AttributeTargets.Field | AttributeTargets.Property, AllowMultiple = true)]
+public sealed class AliasAttribute : Attribute
+{
+    public AliasAttribute(string Name)
+    {
+        this.Name = Name;
+    }
+
+    /// <summary>A prior name, a full type name on a class or a member name on a property.</summary>
+    public string Name { get; }
+}
+
+/// <summary>Resets this [Property] (or every [Property] on the class) to its default on a C# hot reload instead of carrying the previous value into the reloaded instance.</summary>
+[AttributeUsage(AttributeTargets.Class | AttributeTargets.Field | AttributeTargets.Property, AllowMultiple = false)]
+public sealed class SkipHotReloadAttribute : Attribute
+{
+}
+
 /// <summary>
 /// Exposes a script field/property to the editor (and saves it).
 /// </summary>
@@ -26,16 +45,8 @@ public sealed class PropertyAttribute : Attribute
     /// <summary>Unit suffix shown after the value (e.g. "m/s").</summary>
     public string? Units { get; set; }
 
-    /// <summary>For a string field: the asset class to pick (e.g. "CMaterial", "CStaticMesh"), making the
-    /// inspector show a searchable asset picker that stores the chosen asset's virtual path. The script
-    /// loads it with <c>Asset.Load&lt;T&gt;(field)</c>. The C# analog of Lua's --@export(AssetType="...").</summary>
-    public string? AssetType { get; set; }
-
     /// <summary>Draw a color picker for a Vector3/Vector4 value instead of drag fields.</summary>
     public bool Color { get; set; }
-
-    /// <summary>Draw a slider (needs Min+Max) for a numeric value instead of a drag field.</summary>
-    public bool Slider { get; set; }
 
     public bool HasMin => !float.IsNaN(Min);
     public bool HasMax => !float.IsNaN(Max);

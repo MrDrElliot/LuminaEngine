@@ -447,7 +447,7 @@ namespace Lumina
         {
             return FTransformPropertyCustomization::MakeInstance();
         });
-        PropertyCustomizationRegistry->RegisterPropertyCustomization(SCSharpScriptComponent::StaticStruct()->GetName(), []
+        PropertyCustomizationRegistry->RegisterPropertyCustomization(SScriptComponent::StaticStruct()->GetName(), []
         {
            return FCSharpScriptComponentPropertyCustomization::MakeInstance();
         });

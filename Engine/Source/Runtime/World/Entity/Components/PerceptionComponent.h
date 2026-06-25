@@ -1,10 +1,12 @@
 #pragma once
 
+#include "Core/Delegates/ScriptDelegate.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Math/Math.h"
 #include "AI/Perception/PerceptionTypes.h"
 #include "GameplayTags/GameplayTag.h"
 #include "Physics/PhysicsTypes.h"
+#include "World/Entity/Events/PerceptionEvent.h"
 #include "PerceptionComponent.generated.h"
 
 namespace Lumina
@@ -123,6 +125,13 @@ namespace Lumina
         /** Draw this perceiver's sight cone / ranges / target lines (also gated by the ai.Perception.Debug CVar). */
         PROPERTY(Script, Editable, Category = "AI|Perception|Debug")
         bool bDrawDebug = false;
+
+        PROPERTY(Script)
+        TScriptDelegate<SPerceptionEvent> OnTargetPerceived;
+
+        // Location is the last known position.
+        PROPERTY(Script)
+        TScriptDelegate<SPerceptionEvent> OnTargetLost;
 
         //~ Runtime state (NOT reflected): recomputed every tick, never serialized, must stay trivially copyable.
         static constexpr int32 MaxPerceivedTargets = 16;

@@ -115,4 +115,7 @@ public static unsafe partial class Native
     [NativeCall] public static partial void PropSetName(IntPtr C, IntPtr Prop, string Value);
     [NativeCall] public static partial IntPtr PropGetObject(IntPtr C, IntPtr Prop);
     [NativeCall] public static partial void PropSetObject(IntPtr C, IntPtr Prop, IntPtr Object);
+
+    [NativeCall] public static partial ulong DelegateBind(IntPtr Delegate, IntPtr Thunk, IntPtr Context);
+    [NativeCall] public static partial void DelegateUnbind(IntPtr Delegate, ulong Handle);
 }

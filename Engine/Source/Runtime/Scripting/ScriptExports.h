@@ -4,7 +4,6 @@
 #include "Containers/Name.h"
 #include "Containers/String.h"
 #include "Memory/SmartPtr.h"
-#include "Core/Math/Math.h"
 #include "Platform/GenericPlatform.h"
 
 namespace Lumina
@@ -12,30 +11,41 @@ namespace Lumina
     class FArchive;
 }
 
-// The neutral per-instance script-property schema + value model. Originally authored for Lua exports; now
-// the single source of truth shared by the C# [Property] path (DotNetHost / CSharpScriptComponent /
-// ScriptPropertyDrawer). Pure data - no VM coupling.
+// Per-script-type schema + value model bridging the C# [Property] reflection to the native editor.
 namespace Lumina::Scripting
 {
-    // Discriminated kinds for a per-instance script property.
+    // Schema kind. Mirrors LuminaSharp.EScriptKind (same integer values).
     enum class EScriptExportKind : uint8
+    {
+        Nil = 0,
+        Bool,
+        I8, I16, I32, I64,
+        U8, U16, U32, U64,
+        F32, F64,
+        String,
+        Enum,
+        NativeStruct,
+        ScriptStruct,
+        AssetRef,
+        Entity,
+        Array,
+    };
+
+    // Self-describing value kind. Mirrors LuminaSharp.EScriptValueKind.
+    enum class EScriptValueKind : uint8
     {
         Nil = 0,
         Bool,
         Int,
         Double,
         String,
-        Vec2,
-        Vec3,
-        Vec4,
-        Array,             ///< Homogeneous; ElementType holds the schema.
-        NestedStruct,
-        UnknownUserdata,   ///< Reflected C++ userdata; editing deferred.
+        Nested,
+        Array,
     };
 
     struct FScriptExportType;
 
-    // One editor-display metadata pair (Category/Tooltip/Units/Min/Max/AssetType/...), set on a field.
+    // One editor-display metadata pair set on a field.
     struct FScriptExportMetaArg
     {
         FName   Key;
@@ -52,6 +62,13 @@ namespace Lumina::Scripting
         bool GetNumber(const FName& Key, double& OutValue) const;
     };
 
+    // One enumerator of a C# enum.
+    struct FScriptEnumEntry
+    {
+        FName Name;
+        int64 Value = 0;
+    };
+
     struct FScriptExportField
     {
         FName                         Name;
@@ -62,9 +79,16 @@ namespace Lumina::Scripting
     struct FScriptExportType
     {
         EScriptExportKind             Kind = EScriptExportKind::Nil;
-        FName                         UserdataTypeName;          ///< When Kind == UnknownUserdata.
-        TSharedPtr<FScriptExportType> ElementType;               ///< When Kind == Array.
-        TVector<FScriptExportField>   Fields;                    ///< When Kind == NestedStruct.
+
+        // Enum kind.
+        FName                         EnumName;
+        EScriptExportKind             EnumUnderlying = EScriptExportKind::I32;
+        TVector<FScriptEnumEntry>     EnumEntries;
+
+        FName                         NativeName;     ///< NativeStruct kind, the native CStruct's name.
+        FName                         TargetClass;    ///< AssetRef kind, the asset class filter ("" = any).
+        TSharedPtr<FScriptExportType> ElementType;    ///< Array kind.
+        TVector<FScriptExportField>   Fields;         ///< NativeStruct / ScriptStruct kind.
     };
 
     struct FScriptExportSchema
@@ -85,32 +109,23 @@ namespace Lumina::Scripting
 
     struct FScriptPropertyEntry;
 
-    // Tagged-union style per-instance value; self-serializing, schema-drift safe via reconcile.
-    struct RUNTIME_API FScriptPropertyValue
+    // Transient per-field value bridging the native CScriptStruct buffer to and from the managed instance.
+    struct FScriptPropertyValue
     {
-        EScriptExportKind           Kind = EScriptExportKind::Nil;
+        EScriptValueKind            Kind = EScriptValueKind::Nil;
 
         bool                        AsBool   = false;
         int64                       AsInt    = 0;
         double                      AsDouble = 0.0;
         FString                     AsString;
-        FVector4                    AsVec    {0.0f};     ///< Covers vec2/3/4.
-        FName                       UserdataTypeName;
 
         TVector<FScriptPropertyValue> Items;             ///< When Kind == Array.
-        TVector<FScriptPropertyEntry> StructFields;      ///< When Kind == NestedStruct.
-
-        bool Serialize(FArchive& Ar);
-
-        static FScriptPropertyValue FromType(const FScriptExportType& Type);
+        TVector<FScriptPropertyEntry> StructFields;      ///< When Kind == Nested.
     };
 
-    struct RUNTIME_API FScriptPropertyEntry
+    struct FScriptPropertyEntry
     {
         FName                       Name;
         FScriptPropertyValue        Value;
     };
-
-    // Drops type-mismatched fields, fills missing ones with defaults.
-    RUNTIME_API void ReconcileOverrides(const FScriptExportSchema& Schema, const TVector<FScriptPropertyEntry>& Defaults, TVector<FScriptPropertyEntry>& InOutOverrides);
 }

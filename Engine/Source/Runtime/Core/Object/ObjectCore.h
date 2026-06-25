@@ -165,6 +165,7 @@ namespace Lumina
         Struct,
         Optional,
         SubStruct,
+        Delegate,
 
         Count,
     };
@@ -197,7 +198,8 @@ namespace Lumina
         "VectorProperty",
         "StructProperty",
         "OptionalProperty",
-        "SubStructProperty"
+        "SubStructProperty",
+        "DelegateProperty"
     };
 
     static_assert(std::size(PropertyTypeFlagNames) == (size_t)EPropertyTypeFlags::Count, "PropertyTypeFlagStrings must match number of flags in EPropertyTypeFlags");
@@ -317,6 +319,15 @@ namespace Lumina
     struct FSubStructPropertyParams : FPropertyParams
     {
         CStruct*            (*StructFunc)();
+
+        uint16 NumMetaData;
+        const FMetaDataPairParam* MetaDataArray;
+    };
+
+    // TScriptDelegate<T> event; PayloadStructFunc returns the payload struct (null when no payload).
+    struct FDelegatePropertyParams : FPropertyParams
+    {
+        CStruct*            (*PayloadStructFunc)();
 
         uint16 NumMetaData;
         const FMetaDataPairParam* MetaDataArray;

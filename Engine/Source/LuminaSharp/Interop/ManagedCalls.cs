@@ -296,29 +296,29 @@ public static unsafe class ManagedCalls
         switch (Value)
         {
             case bool Bool:
-                Writer.Write((byte)EScriptKind.Bool);
+                Writer.Write((byte)EScriptValueKind.Bool);
                 Writer.Write((byte)(Bool ? 1 : 0));
                 break;
             case Enum:
-                Writer.Write((byte)EScriptKind.Int);
+                Writer.Write((byte)EScriptValueKind.Int);
                 Writer.Write(Convert.ToInt64(Value));
                 break;
             case sbyte or byte or short or ushort or int or uint or long or ulong:
-                Writer.Write((byte)EScriptKind.Int);
+                Writer.Write((byte)EScriptValueKind.Int);
                 Writer.Write(Convert.ToInt64(Value));
                 break;
             case float or double:
-                Writer.Write((byte)EScriptKind.Double);
+                Writer.Write((byte)EScriptValueKind.Double);
                 Writer.Write(Convert.ToDouble(Value));
                 break;
             case string Text:
-                Writer.Write((byte)EScriptKind.String);
+                Writer.Write((byte)EScriptValueKind.String);
                 byte[] Bytes = Encoding.UTF8.GetBytes(Text);
                 Writer.Write(Bytes.Length);
                 Writer.Write(Bytes);
                 break;
             default:
-                Writer.Write((byte)EScriptKind.Nil);
+                Writer.Write((byte)EScriptValueKind.Nil);
                 break;
         }
     }
@@ -326,16 +326,16 @@ public static unsafe class ManagedCalls
     // Self-describing value decode to the natural CLR type. Mirror of the native WriteManagedArg.
     private static object? ReadBoxed(ref FBlobReader Reader)
     {
-        var Kind = (EScriptKind)Reader.ReadByte();
+        var Kind = (EScriptValueKind)Reader.ReadByte();
         switch (Kind)
         {
-            case EScriptKind.Bool:
+            case EScriptValueKind.Bool:
                 return Reader.ReadByte() != 0;
-            case EScriptKind.Int:
+            case EScriptValueKind.Int:
                 return Reader.ReadInt64();
-            case EScriptKind.Double:
+            case EScriptValueKind.Double:
                 return Reader.ReadDouble();
-            case EScriptKind.String:
+            case EScriptValueKind.String:
                 return Reader.ReadString();
             default:
                 return null;

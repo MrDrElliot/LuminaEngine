@@ -13,6 +13,7 @@
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Reflection/Type/Properties/ArrayProperty.h"
 #include "Core/Reflection/Type/Properties/ClassProperty.h"
+#include "Core/Reflection/Type/Properties/DelegateProperty.h"
 #include "Core/Reflection/Type/Properties/EnumProperty.h"
 #include "Core/Reflection/Type/Properties/ObjectProperty.h"
 #include "Core/Reflection/Type/Properties/SubStructProperty.h"
@@ -396,6 +397,9 @@ namespace Lumina
             break;
         case EPropertyTypeFlags::SubStruct:
             NewFProperty<FSubStructProperty, FSubStructPropertyParams>(FieldOwner, Param);
+            break;
+        case EPropertyTypeFlags::Delegate:
+            NewFProperty<FDelegateProperty, FDelegatePropertyParams>(FieldOwner, Param);
             break;
         case EPropertyTypeFlags::Enum:
             {

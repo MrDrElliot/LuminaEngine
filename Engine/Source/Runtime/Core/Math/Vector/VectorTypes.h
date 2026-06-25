@@ -219,14 +219,16 @@ namespace Lumina
     using FVector2 = TVec<float, 2>;
     using FVector3 = TVec<float, 3>;
     using FVector4 = TVec<float, 4>;
-#endif
 
+    // Hidden from the parser; reflected via the stub structs below.
     using FIntVector2 = TVec<int32, 2>;
     using FIntVector3 = TVec<int32, 3>;
-    using FIntVector4 = TVec<int32, 4>;
-
     using FUIntVector2 = TVec<uint32, 2>;
     using FUIntVector3 = TVec<uint32, 3>;
+#endif
+
+    using FIntVector4 = TVec<int32, 4>;
+
     using FUIntVector4 = TVec<uint32, 4>;
 
     using FU8Vector2 = TVec<uint8, 2>;
@@ -279,6 +281,36 @@ namespace Lumina
         PROPERTY(Editable) float y;
         PROPERTY(Editable) float z;
         PROPERTY(Editable) float w;
+    };
+
+    REFLECT(ManualStub)
+    struct FIntVector2
+    {
+        PROPERTY(Editable) int32 x;
+        PROPERTY(Editable) int32 y;
+    };
+
+    REFLECT(ManualStub)
+    struct FIntVector3
+    {
+        PROPERTY(Editable) int32 x;
+        PROPERTY(Editable) int32 y;
+        PROPERTY(Editable) int32 z;
+    };
+
+    REFLECT(ManualStub)
+    struct FUIntVector2
+    {
+        PROPERTY(Editable) uint32 x;
+        PROPERTY(Editable) uint32 y;
+    };
+
+    REFLECT(ManualStub)
+    struct FUIntVector3
+    {
+        PROPERTY(Editable) uint32 x;
+        PROPERTY(Editable) uint32 y;
+        PROPERTY(Editable) uint32 z;
     };
 }
 #endif

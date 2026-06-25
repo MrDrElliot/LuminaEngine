@@ -73,7 +73,7 @@ LUMINA_DOTNET_EXPORT(void*, GetEntityScriptHandle)(uint64 World, uint32 Entity)
     {
         return nullptr;
     }
-    const SCSharpScriptComponent* Script = W->GetEntityRegistry().try_get<SCSharpScriptComponent>(AsEntity(Entity));
+    const SScriptComponent* Script = W->GetEntityRegistry().try_get<SScriptComponent>(AsEntity(Entity));
     if (Script == nullptr || Script->Instance == nullptr || Script->Generation != DotNet::GetScriptGeneration())
     {
         return nullptr;
