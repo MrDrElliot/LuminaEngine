@@ -293,6 +293,10 @@ namespace Lumina::Import::Mesh::GLTF
             Progress->EnterProgressFrame(0.05f, "Reading textures...");
         }
 
+        // Per-image RelativePath, populated alongside texture extraction. Materials link to their textures by
+        // this key (FMeshImportData::Textures is an unordered set, so image index alone isn't recoverable later).
+        TVector<FFixedString> ImageRelativePaths(Asset.images.size());
+
         // Texture extraction is per-asset; tag each image with its material role so the texture factory picks correct BC/colorspace.
         if (ImportOptions.bImportTextures)
         {
@@ -329,7 +333,9 @@ namespace Lumina::Import::Mesh::GLTF
                 }
                 if (Material.normalTexture.has_value())
                 {
-                    MarkImageForTexture(Material.normalTexture->textureIndex, ETextureColorSpace::NormalMap);
+                    // Normal maps are imported as Linear (BC7 RGB), NOT NormalMap: the BC5-packed normal path
+                    // is currently broken. The material output node reconstructs Z from XY either way.
+                    MarkImageForTexture(Material.normalTexture->textureIndex, ETextureColorSpace::Linear);
                 }
                 if (Material.occlusionTexture.has_value())
                 {
@@ -370,6 +376,7 @@ namespace Lumina::Import::Mesh::GLTF
                         FFixedString FullPath = Paths::Combine(VFS::Parent(FilePath), GLTFImage.RelativePath);
                         GLTFImage.DisplayImage = Textures::CreateTextureFromImport(FullPath, true, FUIntVector2(128, 128));
                     }
+                    ImageRelativePaths[ImageCounter] = GLTFImage.RelativePath;
                     ImportData.Textures.emplace(Move(GLTFImage));
                 }
                 else if (auto* BufferView = std::get_if<fastgltf::sources::BufferView>(&Image.data))
@@ -389,6 +396,7 @@ namespace Lumina::Import::Mesh::GLTF
                     {
                         GLTFImage.DisplayImage = RenderUtils::CreateImageFromPixels(GLTFImage.Bytes, true, FUIntVector2(128, 128));
                     }
+                    ImageRelativePaths[ImageCounter] = GLTFImage.RelativePath;
                     ImportData.Textures.emplace(Move(GLTFImage));
                 }
                 else if (auto* Array = std::get_if<fastgltf::sources::Array>(&Image.data))
@@ -401,6 +409,7 @@ namespace Lumina::Import::Mesh::GLTF
                     {
                         GLTFImage.DisplayImage = RenderUtils::CreateImageFromPixels(GLTFImage.Bytes, true, FUIntVector2(128, 128));
                     }
+                    ImageRelativePaths[ImageCounter] = GLTFImage.RelativePath;
                     ImportData.Textures.emplace(Move(GLTFImage));
                 }
                 else if (auto* Vector = std::get_if<fastgltf::sources::Vector>(&Image.data))
@@ -413,6 +422,7 @@ namespace Lumina::Import::Mesh::GLTF
                     {
                         GLTFImage.DisplayImage = RenderUtils::CreateImageFromPixels(GLTFImage.Bytes, true, FUIntVector2(128, 128));
                     }
+                    ImageRelativePaths[ImageCounter] = GLTFImage.RelativePath;
                     ImportData.Textures.emplace(Move(GLTFImage));
                 }
                 else if (auto* ByteView = std::get_if<fastgltf::sources::ByteView>(&Image.data))
@@ -425,10 +435,96 @@ namespace Lumina::Import::Mesh::GLTF
                     {
                         GLTFImage.DisplayImage = RenderUtils::CreateImageFromPixels(GLTFImage.Bytes, true, FUIntVector2(128, 128));
                     }
+                    ImageRelativePaths[ImageCounter] = GLTFImage.RelativePath;
                     ImportData.Textures.emplace(Move(GLTFImage));
                 }
 
                 ImageCounter++;
+            }
+        }
+
+        // Extract PBR material definitions. Indexed by glTF material index, which is exactly what
+        // FGeometrySurface::MaterialIndex stores in non-merge mode (merge mode remaps; see below).
+        if (ImportOptions.bImportMaterials)
+        {
+            auto ResolveTexturePath = [&](size_t TextureIndex) -> FFixedString
+            {
+                if (TextureIndex >= Asset.textures.size())
+                {
+                    return {};
+                }
+                const fastgltf::Texture& Tex = Asset.textures[TextureIndex];
+                if (!Tex.imageIndex.has_value())
+                {
+                    return {};
+                }
+                const size_t ImgIdx = Tex.imageIndex.value();
+                if (ImgIdx >= ImageRelativePaths.size())
+                {
+                    return {};
+                }
+                return ImageRelativePaths[ImgIdx];
+            };
+
+            ImportData.Materials.reserve(Asset.materials.size());
+            uint32 MaterialCounter = 0;
+            for (const fastgltf::Material& Mat : Asset.materials)
+            {
+                FMeshImportMaterial Out;
+
+                if (Mat.name.empty())
+                {
+                    FFixedString GenName(FFixedString::CtorSprintf(), "%.*s_Mat%u", (int)Name.length(), Name.data(), MaterialCounter);
+                    Out.Name = GenName.c_str();
+                }
+                else
+                {
+                    Out.Name = Mat.name.c_str();
+                }
+
+                Out.BaseColorFactor = FVector4(Mat.pbrData.baseColorFactor[0], Mat.pbrData.baseColorFactor[1],
+                                               Mat.pbrData.baseColorFactor[2], Mat.pbrData.baseColorFactor[3]);
+                Out.MetallicFactor  = (float)Mat.pbrData.metallicFactor;
+                Out.RoughnessFactor = (float)Mat.pbrData.roughnessFactor;
+
+                const float EmissiveStrength = (float)Mat.emissiveStrength;
+                Out.EmissiveColor = FVector3((float)Mat.emissiveFactor[0] * EmissiveStrength,
+                                             (float)Mat.emissiveFactor[1] * EmissiveStrength,
+                                             (float)Mat.emissiveFactor[2] * EmissiveStrength);
+
+                switch (Mat.alphaMode)
+                {
+                case fastgltf::AlphaMode::Mask:  Out.AlphaMode = EImportAlphaMode::Mask;  break;
+                case fastgltf::AlphaMode::Blend: Out.AlphaMode = EImportAlphaMode::Blend; break;
+                default:                         Out.AlphaMode = EImportAlphaMode::Opaque; break;
+                }
+                Out.AlphaCutoff = (float)Mat.alphaCutoff;
+                Out.bTwoSided   = Mat.doubleSided;
+                Out.bUnlit      = Mat.unlit;
+
+                if (Mat.pbrData.baseColorTexture.has_value())
+                {
+                    Out.BaseColorTexture = ResolveTexturePath(Mat.pbrData.baseColorTexture->textureIndex);
+                }
+                if (Mat.pbrData.metallicRoughnessTexture.has_value())
+                {
+                    Out.MetallicRoughnessTexture = ResolveTexturePath(Mat.pbrData.metallicRoughnessTexture->textureIndex);
+                }
+                if (Mat.normalTexture.has_value())
+                {
+                    Out.NormalTexture = ResolveTexturePath(Mat.normalTexture->textureIndex);
+                }
+                if (Mat.emissiveTexture.has_value())
+                {
+                    Out.EmissiveTexture = ResolveTexturePath(Mat.emissiveTexture->textureIndex);
+                }
+                if (Mat.occlusionTexture.has_value())
+                {
+                    Out.OcclusionTexture = ResolveTexturePath(Mat.occlusionTexture->textureIndex);
+                }
+
+                ImportData.Materials.push_back(Move(Out));
+                ++MaterialCounter;
             }
         }
 
@@ -697,6 +793,17 @@ namespace Lumina::Import::Mesh::GLTF
                 for (size_t MeshIdx = 0; MeshIdx < Asset.meshes.size(); ++MeshIdx)
                 {
                     VisitMeshInstance(MeshIdx, FMatrix4(1.0f));
+                }
+            }
+
+            // Merge mode collapsed source material indices into dense slots; expose the inverse so the
+            // asset commit can map each merged mesh slot back to its FMeshImportData::Materials entry.
+            ImportData.MergedMaterialSlotToSource.assign(MergedMaterialRemap.size(), 0);
+            for (const auto& Pair : MergedMaterialRemap)
+            {
+                if (Pair.second >= 0 && (size_t)Pair.second < ImportData.MergedMaterialSlotToSource.size())
+                {
+                    ImportData.MergedMaterialSlotToSource[Pair.second] = Pair.first;
                 }
             }
 

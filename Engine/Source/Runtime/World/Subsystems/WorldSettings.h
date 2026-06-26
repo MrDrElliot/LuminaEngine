@@ -74,8 +74,8 @@ namespace Lumina
         PROPERTY(Editable, Category = "Rendering")
         ESMAAQuality SMAAQuality = ESMAAQuality::High;
 
-        /** MSAA sample count. Off = no multisampling. Applied at scene init; reload the world to change. */
-        PROPERTY(Editable, Category = "Rendering")
+        /** CURRENTLY DISABLED MSAA sample count. Off = no multisampling. Applied at scene init; reload the world to change. */
+        PROPERTY(ReadOnly, Category = "Rendering")
         EMSAASampleCount MSAASampleCount = EMSAASampleCount::Off;
 
         // VRS rate for opted-in passes (sky, particles, translucency, fog, opaque base). Coarser = fewer PS

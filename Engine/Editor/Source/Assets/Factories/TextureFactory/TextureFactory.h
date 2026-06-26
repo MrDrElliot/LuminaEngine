@@ -29,6 +29,11 @@ namespace Lumina
         /** Re-runs Basis compression on Texture->SourcePath; false if path is missing or asset is mesh-embedded. */
         static EDITOR_API bool Recook(CTexture* Texture);
 
+        /** Creates a 4x4 solid-color CTexture asset at Path, cooked via the normal Basis path. Used to mint the
+         *  neutral material-import defaults (white for color/MR/AO/emissive, 128,128,255 for flat normals).
+         *  Returns the created object (NOT saved); the caller saves + registers it. */
+        static EDITOR_API CTexture* CreateSolidColorTexture(FStringView Path, uint8 R, uint8 G, uint8 B, uint8 A, ETextureColorSpace ColorSpace);
+
     private:
 
     };

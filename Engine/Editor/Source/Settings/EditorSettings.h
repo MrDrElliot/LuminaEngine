@@ -131,7 +131,6 @@ namespace Lumina
         PROPERTY(Editable, Category = "Appearance")
         FString Palette = "Dark";
 
-        // ---- Syntax colors -------------------------------------------------------------------------
         // RGB token colors layered over the Dark/Light base. Defaults match the dark palette.
 
         /** Element tags (div, span, button, ...). */
@@ -165,10 +164,8 @@ namespace Lumina
         /** Punctuation. */
         PROPERTY(Editable, Color, Category = "Syntax Colors")
         FVector3 PunctuationColor = FVector3(1.0f, 1.0f, 0.6f);
-
-        // ---- Hotkeys -------------------------------------------------------------------------------
-
-        /** Open the Go To Line prompt. */
+        
+        /** Open the Go-To Line prompt. */
         PROPERTY(Editable, Category = "Hotkeys")
         SKey GoToLineKey = SKey(EKey::G, true);   // Ctrl+G
     };

@@ -907,9 +907,10 @@ namespace Lumina::RHI
             {
                 .sType           = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
                 .messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT,
+                // DEVICE_ADDRESS_BINDING_BIT omitted: it requires the VK_EXT_device_address_binding_report
+                // device extension + feature, else vkCreateInstance rejects the messageType as invalid.
                 .messageType     = VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
-                                 | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT
-                                 | VK_DEBUG_UTILS_MESSAGE_TYPE_DEVICE_ADDRESS_BINDING_BIT_EXT,
+                                 | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
                 .pfnUserCallback = VkDebugCallback,
             };
 
@@ -1120,6 +1121,10 @@ namespace Lumina::RHI
         Features10.independentBlend                     = VK_TRUE;
         Features10.pipelineStatisticsQuery              = VK_TRUE;
         Features10.wideLines                            = Supported2.features.wideLines;
+        // The VisBuffer mesh-shader fragment reads SV_PrimitiveID; Slang emits the SPIR-V Geometry
+        // capability for that builtin (it has no MeshShadingEXT lowering for it), which needs this feature
+        // even though no geometry-shader stage exists. Every mesh-shader-capable GPU supports it.
+        Features10.geometryShader                       = Supported2.features.geometryShader;
 
         VkPhysicalDeviceVulkan11Features Features11{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
         Features11.shaderDrawParameters = VK_TRUE;

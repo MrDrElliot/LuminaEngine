@@ -195,6 +195,7 @@ namespace Lumina
 
         Params.m_uastc                      = true;
         Params.m_print_stats                = false;
+        Params.m_status_output              = false;   // silence per-slice "Slice: N, alpha: ..." spam during cook
         Params.m_mip_gen                    = true;
         Params.m_mip_fast                   = true;
         Params.m_multithreading             = true;
@@ -242,8 +243,11 @@ namespace Lumina
         }
         else if (bIsNormalMap)
         {
-            StoredFormat    = EFormat::BC5_UNORM;
-            TranscodeTarget = basist::transcoder_texture_format::cTFBC5_RG;
+            // BC5-packed normals are currently broken, so cook normal maps as full BC7 RGB instead. The
+            // material output node reconstructs Z from XY, so a linear RGB normal renders correctly. This
+            // makes a NormalMap-tagged texture safe even if one is set manually (importers now tag Linear).
+            StoredFormat    = EFormat::BC7_UNORM;
+            TranscodeTarget = basist::transcoder_texture_format::cTFBC7_RGBA;
         }
         else
         {
@@ -352,8 +356,10 @@ namespace Lumina
             return Stem.size() >= SufLen && Stem.compare(Stem.size() - SufLen, SufLen, Suffix) == 0;
         };
 
+        // Normal maps resolve to Linear (BC7 RGB), NOT NormalMap: the BC5-packed normal path is currently
+        // broken. The material output node reconstructs Z from XY, so Linear-stored normals work correctly.
         if (EndsWith("_n") || EndsWith("_normal") || EndsWith("_norm") || EndsWith("_nrm"))
-            return ETextureColorSpace::NormalMap;
+            return ETextureColorSpace::Linear;
 
         if (EndsWith("_orm") || EndsWith("_arm") || EndsWith("_mra") || EndsWith("_rmo") ||
             EndsWith("_mro") || EndsWith("_rma") || EndsWith("_amr") ||
@@ -539,6 +545,41 @@ namespace Lumina
         }
 
         NewTexture->ConditionalBeginDestroy();
+    }
+
+    CTexture* CTextureFactory::CreateSolidColorTexture(FStringView Path, uint8 R, uint8 G, uint8 B, uint8 A, ETextureColorSpace ColorSpace)
+    {
+        CTexture* Texture = CFactory::CreateNewOf<CTexture>(Path);
+        if (Texture == nullptr)
+        {
+            return nullptr;
+        }
+
+        Texture->SetFlag(OF_NeedsPostLoad);
+        Texture->ColorSpace = ColorSpace;
+        if (!Texture->TextureResource)
+        {
+            Texture->TextureResource = MakeUnique<FTextureResource>();
+        }
+
+        // 4x4 (not 1x1) so the block-compression encoder always has a full BC block to work with.
+        constexpr uint32 Dim = 4;
+        TVector<uint8> Pixels(Dim * Dim * 4);
+        for (uint32 i = 0; i < Dim * Dim; ++i)
+        {
+            Pixels[i * 4 + 0] = R;
+            Pixels[i * 4 + 1] = G;
+            Pixels[i * 4 + 2] = B;
+            Pixels[i * 4 + 3] = A;
+        }
+
+        if (!CookTexturePixels(Texture, Pixels, FUIntVector2(Dim, Dim), ColorSpace))
+        {
+            Texture->ConditionalBeginDestroy();
+            return nullptr;
+        }
+
+        return Texture;
     }
 
     bool CTextureFactory::Recook(CTexture* Texture)

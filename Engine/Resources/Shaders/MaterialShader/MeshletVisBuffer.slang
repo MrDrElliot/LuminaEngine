@@ -22,10 +22,15 @@ struct FVisVertex
     float4 Position : SV_Position;
 };
 
-// Per-primitive output: the flat visibility ID, written once per triangle.
+// Per-primitive output: the visibility ID, written once per triangle. Carried via the SV_PrimitiveID
+// builtin instead of a user-defined location -- Slang can't decorate a user-defined fragment input
+// PerPrimitiveEXT (slang #7019), so a custom per-primitive output makes a spec-invalid mesh->fragment
+// interface that AMD rejects (VisBuffer reads 0 -> deferred pass discards every pixel -> depth-only ghost).
+// The builtin's per-primitive handling is implicit, so it matches cleanly; pairs with VisBufferPixel.slang
+// compiled with VISBUFFER_PRIMID.
 struct FVisPrimitive
 {
-    nointerpolation uint VisID : VIS_ID;
+    uint VisID : SV_PrimitiveID;
 };
 
 [shader("mesh")]

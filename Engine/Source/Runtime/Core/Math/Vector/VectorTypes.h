@@ -114,6 +114,10 @@ namespace Lumina
         {
             switch (i) { case 0: return x; case 1: return y; default: return z; }
         }
+        
+        constexpr T Right()   const { return x; }
+        constexpr T Up()      const { return y; }
+        constexpr T Forward() const { return z; }
     };
 
     template<typename T>

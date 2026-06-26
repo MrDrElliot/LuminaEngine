@@ -2,6 +2,12 @@
 #include "MeshFactory.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Assets/AssetTypes/Material/Material.h"
+#include "Assets/AssetTypes/Material/MaterialInstance.h"
+#include "Containers/Array.h"
+#include "Core/Object/ObjectCore.h"
+#include "Core/Threading/Thread.h"
+#include "TaskSystem/Future.h"
+#include "Tools/Import/MaterialImport.h"
 #include "Assets/AssetTypes/Mesh/Animation/Animation.h"
 #include "Assets/AssetTypes/Mesh/SkeletalMesh/SkeletalMesh.h"
 #include "assets/assettypes/mesh/skeleton/skeleton.h"
@@ -528,6 +534,9 @@ namespace Lumina
         TVector<CObject*> CreatedObjects;
         CreatedObjects.reserve(ImportData.Skeletons.size() + ImportData.Resources.size() + ImportData.Animations.size());
 
+        // Imported meshes whose material slots get the generated material instances assigned below.
+        TVector<CMesh*> CreatedMeshes;
+
         TObjectPtr<CSkeleton> PrimarySkeleton;
         const bool bMultipleSkeletons = ImportData.Skeletons.size() > 1;
 
@@ -613,6 +622,7 @@ namespace Lumina
 
             NewMesh->MeshResources = Move(MeshResource);
             CreatedObjects.push_back(NewMesh);
+            CreatedMeshes.push_back(NewMesh);
         }
 
         const bool bMultipleAnims = ImportData.Animations.size() > 1;
@@ -639,7 +649,15 @@ namespace Lumina
         
         SlowTask.UpdateMessage("Importing textures...");
 
-        if (Options.bImportTextures && !ImportData.Textures.empty())
+        // RelativePath -> created CTexture, so generated material instances can bind the textures they reference.
+        THashMap<FFixedString, CTexture*> TextureMap;
+
+        // Materials reference textures, so importing materials implies importing textures (the dialog hides the
+        // Import Textures checkbox while materials are on, and Options is static across imports, so a stale
+        // bImportTextures=false must not drop the textures the generated materials need).
+        const bool bWantTextures = Options.bImportTextures || Options.bImportMaterials;
+
+        if (bWantTextures && !ImportData.Textures.empty())
         {
             TVector<FMeshImportImage> Images(ImportData.Textures.begin(), ImportData.Textures.end());
             CTextureFactory* TextureFactory = CTextureFactory::StaticClass()->GetDefaultObject<CTextureFactory>();
@@ -647,30 +665,39 @@ namespace Lumina
             const float TextureStep = kTextureBudget / (float)Images.size();
             for (const FMeshImportImage& Texture : Images)
             {
+                FFixedString SourcePath;     // empty for mesh-embedded bytes
+                FFixedString QualifiedPath;  // destination package path (extension added below)
+
                 if (Texture.IsBytes())
                 {
-                    FFixedString QualifiedPath = Paths::Combine(Paths::Parent(DestinationPath), Texture.RelativePath);
-                    if (!FindObject<CPackage>(QualifiedPath))
-                    {
-                        CPackage::AddPackageExt(QualifiedPath);
-                        TextureFactory->Import({}, QualifiedPath, &Texture);
-                    }
+                    QualifiedPath = Paths::Combine(Paths::Parent(DestinationPath), Texture.RelativePath);
                 }
                 else
                 {
                     FStringView ParentPath = VFS::Parent(RawPath, true);
-                    FFixedString TexturePath;
-                    TexturePath.append_convert(ParentPath.data(), ParentPath.length()).append("/").append_convert(Texture.RelativePath);
-                    FStringView TextureFileName = VFS::FileName(TexturePath, true);
+                    SourcePath.append_convert(ParentPath.data(), ParentPath.length()).append("/").append_convert(Texture.RelativePath);
+                    FStringView TextureFileName = VFS::FileName(SourcePath, true);
 
-                    FFixedString QualifiedPath = DestinationDir;
+                    QualifiedPath = DestinationDir;
                     QualifiedPath.append_convert(TextureFileName.data(), TextureFileName.length());
+                }
 
-                    if (!FindObject<CPackage>(QualifiedPath))
+                // Match the original existence check (no extension), then add the extension for import/load.
+                const bool bAlreadyExists = (FindObject<CPackage>(QualifiedPath) != nullptr);
+                CPackage::AddPackageExt(QualifiedPath);
+                if (!bAlreadyExists)
+                {
+                    // Pass mesh-import metadata so IntendedColorSpace survives to the texture factory.
+                    TextureFactory->Import(SourcePath, QualifiedPath, &Texture);
+                }
+
+                // Resolve the saved asset so material generation can reference it (the factory tears down its
+                // in-memory copy after saving, so this re-loads it). GetAssetByPath is extension-insensitive.
+                if (Options.bImportMaterials)
+                {
+                    if (CTexture* Loaded = LoadObject<CTexture>(QualifiedPath))
                     {
-                        CPackage::AddPackageExt(QualifiedPath);
-                        // Pass mesh-import metadata so IntendedColorSpace survives to the texture factory.
-                        TextureFactory->Import(TexturePath, QualifiedPath, &Texture);
+                        TextureMap.emplace(Texture.RelativePath, Loaded);
                     }
                 }
 
@@ -683,6 +710,63 @@ namespace Lumina
             SlowTask.EnterProgressFrame(kTextureBudget);
         }
 
+        // Generate the PBR master material(s) + per-source-material instances and assign them to mesh slots so
+        // imported meshes render with their authored materials out of the box.
+        if (Options.bImportMaterials && !ImportData.Materials.empty())
+        {
+            SlowTask.UpdateMessage("Generating materials...");
+
+            auto GenerateAndAssign = [&]()
+            {
+                const TVector<CMaterialInstance*> Instances =
+                    Import::Materials::GenerateMaterials(ImportData, DestinationDir, BaseName, TextureMap, CreatedObjects);
+
+                const TVector<int16>& SlotToSource = ImportData.MergedMaterialSlotToSource;
+                for (CMesh* Mesh : CreatedMeshes)
+                {
+                    Mesh->ForEachSurface([&](const FGeometrySurface& Surface, uint32)
+                    {
+                        const int32 Slot = Surface.MaterialIndex;
+                        if (Slot < 0 || (size_t)Slot >= Mesh->GetNumMaterials())
+                        {
+                            return;
+                        }
+
+                        // Identity unless merge mode remapped source indices into dense slots.
+                        int32 SourceIndex = Slot;
+                        if (!SlotToSource.empty())
+                        {
+                            SourceIndex = (Slot < (int32)SlotToSource.size()) ? SlotToSource[Slot] : -1;
+                        }
+
+                        if (SourceIndex >= 0 && (size_t)SourceIndex < Instances.size() && Instances[SourceIndex] != nullptr)
+                        {
+                            Mesh->SetMaterialAtSlot((size_t)Slot, Instances[SourceIndex]);
+                        }
+                    });
+                }
+            };
+
+            // Material generation compiles shaders via GShaderCompiler->Flush(), whose hard atomic_wait would
+            // stall a worker fiber. The editor's material compile path runs on the main thread; mirror that:
+            // run generation on the main thread and park this worker fiber on a fiber-aware future until done.
+            if (Threading::IsMainThread())
+            {
+                GenerateAndAssign();
+            }
+            else
+            {
+                TPromise<void> Promise;
+                TFuture<void> Future = Promise.GetFuture();
+                MainThread::Enqueue([&GenerateAndAssign, Promise = Move(Promise)]() mutable
+                {
+                    GenerateAndAssign();
+                    Promise.SetValue();
+                });
+                Future.Wait();
+            }
+        }
+
         SlowTask.UpdateMessage("Saving packages...");
 
         const float SaveStep = kSaveBudget / (float)eastl::max<size_t>((size_t)1, CreatedObjects.size());
@@ -691,7 +775,12 @@ namespace Lumina
             CPackage* Package = Obj->GetPackage();
             if (CPackage::SavePackage(Package, Package->GetPackagePath()))
             {
-                FAssetRegistry::Get().AssetCreated(Obj);
+                // The generated material node graph rides along in its master's package (saved with it) but is
+                // not itself a browsable asset; only register real assets in the registry.
+                if (Obj->IsAsset())
+                {
+                    FAssetRegistry::Get().AssetCreated(Obj);
+                }
             }
             else
             {

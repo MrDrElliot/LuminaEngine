@@ -111,7 +111,41 @@ namespace Lumina::Import
         };
 
         using FMeshImportTextureMap = THashSet<FMeshImportImage, FMeshImportImageHasher, FMeshImportImageEqual>;
-        
+
+        /** Alpha handling parsed from the source material; maps to EBlendMode at material-asset creation. */
+        enum class EImportAlphaMode : uint8
+        {
+            Opaque,
+            Mask,
+            Blend,
+        };
+
+        /** One source-file material definition (PBR metallic-roughness). Indexed by the same value that
+         *  FGeometrySurface::MaterialIndex references (for merge mode, see FMeshImportData::MergedMaterialSlotToSource).
+         *  Texture slots store the source image's FMeshImportImage::RelativePath key so the committed CTexture
+         *  asset can be resolved after import; an empty path means the channel has no texture. */
+        struct FMeshImportMaterial
+        {
+            FString             Name;
+
+            FVector4            BaseColorFactor   = FVector4(1.0f, 1.0f, 1.0f, 1.0f);
+            float               MetallicFactor    = 1.0f;
+            float               RoughnessFactor   = 1.0f;
+            FVector3            EmissiveColor     = FVector3(0.0f, 0.0f, 0.0f);
+
+            EImportAlphaMode    AlphaMode         = EImportAlphaMode::Opaque;
+            float               AlphaCutoff       = 0.5f;
+            bool                bTwoSided         = false;
+            bool                bUnlit            = false;
+
+            // RelativePath keys into FMeshImportData::Textures; empty = no texture for that channel.
+            FFixedString        BaseColorTexture;
+            FFixedString        MetallicRoughnessTexture;   // glTF packing: G = roughness, B = metallic.
+            FFixedString        NormalTexture;
+            FFixedString        EmissiveTexture;
+            FFixedString        OcclusionTexture;
+        };
+
         struct FMeshStatistics : INonCopyable
         {
             TVector<meshopt_OverdrawStatistics>         OverdrawStatics;
@@ -125,6 +159,15 @@ namespace Lumina::Import
             TVector<TUniquePtr<FMeshResource>>          Resources;
             TVector<TUniquePtr<FAnimationResource>>     Animations;
             TVector<TUniquePtr<FSkeletonResource>>      Skeletons;
+
+            /** Parsed source materials, indexed the same way FGeometrySurface::MaterialIndex references them
+             *  (except in merge mode; see MergedMaterialSlotToSource). Empty when bImportMaterials is off. */
+            TVector<FMeshImportMaterial>                Materials;
+
+            /** Merge mode only: maps a merged mesh's material slot -> index into Materials. Empty otherwise
+             *  (then a slot index is itself the Materials index). */
+            TVector<int16>                              MergedMaterialSlotToSource;
+
             /** Populated by the dialog at commit; drives FinalizeMeshImportData and per-asset creation gates. */
             FMeshImportOptions                          CommitOptions;
 

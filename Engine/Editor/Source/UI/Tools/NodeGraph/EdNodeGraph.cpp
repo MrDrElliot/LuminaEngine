@@ -291,7 +291,18 @@ namespace Lumina
         
         TVector<TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>> Links;
         Links.reserve(40);
-    
+
+        // Procedurally-built graphs (e.g. import-generated materials) carry node positions in GridX/GridY but
+        // have no saved editor layout; seed the editor from them on first draw so the graph isn't stacked at
+        // the origin. Interactive graphs always have GraphSaveData after their first save, so this is skipped.
+        if (bFirstDraw && GraphSaveData.empty())
+        {
+            for (CEdGraphNode* Node : Nodes)
+            {
+                NodeEditor::SetNodePosition(Node->GetNodeID(), ImVec2(Node->GridX, Node->GridY));
+            }
+        }
+
         uint32 Index = 0;
         for (CEdGraphNode* Node : Nodes)
         {

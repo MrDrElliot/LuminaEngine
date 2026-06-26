@@ -289,59 +289,77 @@ namespace Lumina::VFS
             LOG_WARN("DirectoryIterator: failed to open '{0}': {1}", ResolvedPath, EC.message());
             return;
         }
-
-        for (auto& Itr : Begin)
+        
+        const std::filesystem::directory_iterator End{};
+        while (Begin != End)
         {
-            std::string FilePath        = Itr.path().generic_string();
+            const std::filesystem::directory_entry& Entry = *Begin;
+
+            std::string FilePath        = Entry.path().generic_string();
             std::string RelativeStr     = FilePath.substr(BasePath.size());
             FFixedString VirtualPath    { RelativeStr.data(), RelativeStr.size() };
-            
+
             VirtualPath.insert(0, AliasPath);
 
-            auto FileTime           = std::filesystem::last_write_time(Itr);
-            auto SysTime            = std::chrono::clock_cast<std::chrono::system_clock>(FileTime);
-            int64 LastModifyTime    = std::chrono::duration_cast<std::chrono::nanoseconds>(SysTime.time_since_epoch()).count();
-            bool bHidden            = Itr.path().filename().generic_string().starts_with(".");
-            
+            std::error_code EntryEC;
+            auto FileTime           = std::filesystem::last_write_time(Entry, EntryEC);
+            int64 LastModifyTime    = 0;
+            if (!EntryEC)
+            {
+                auto SysTime        = std::chrono::clock_cast<std::chrono::system_clock>(FileTime);
+                LastModifyTime      = std::chrono::duration_cast<std::chrono::nanoseconds>(SysTime.time_since_epoch()).count();
+            }
+            bool bHidden            = Entry.path().filename().generic_string().starts_with(".");
 
             EFileFlags Flags = EFileFlags::None;
 
-            if (Itr.path().extension() == ".lasset")
+            if (Entry.path().extension() == ".lasset")
             {
                 Flags |= EFileFlags::LAssetFile;
             }
-            
+
             if (bHidden)
             {
                 Flags |= EFileFlags::Hidden;
             }
-            
-            if (Itr.is_directory())
+
+            if (Entry.is_directory(EntryEC))
             {
                 Flags |= EFileFlags::Directory;
             }
-            
-            if (Itr.is_symlink())
+
+            if (Entry.is_symlink(EntryEC))
             {
                 Flags |= EFileFlags::Symlink;
             }
-            
-            auto Perms = Itr.status().permissions();
-            if ((Perms & std::filesystem::perms::owner_write) == std::filesystem::perms::none)
+
+            auto Status = Entry.status(EntryEC);
+            if (!EntryEC)
             {
-                Flags |= EFileFlags::ReadOnly;
+                auto Perms = Status.permissions();
+                if ((Perms & std::filesystem::perms::owner_write) == std::filesystem::perms::none)
+                {
+                    Flags |= EFileFlags::ReadOnly;
+                }
             }
-            
+
             FFileInfo FileInfo
             {
-                .Name               = Itr.path().filename().generic_string().c_str(),
+                .Name               = Entry.path().filename().generic_string().c_str(),
                 .VirtualPath        = FFixedString{VirtualPath.data(),VirtualPath.size()},
                 .PathSource         = FFixedString{FilePath.data(), FilePath.size()},
                 .LastModifyTime     = LastModifyTime,
                 .Flags              = Flags
             };
-            
+
             Callback(Move(FileInfo));
+
+            Begin.increment(EC);
+            if (EC)
+            {
+                LOG_WARN("DirectoryIterator: iteration error under '{0}': {1}", ResolvedPath, EC.message());
+                break;
+            }
         }
     }
 

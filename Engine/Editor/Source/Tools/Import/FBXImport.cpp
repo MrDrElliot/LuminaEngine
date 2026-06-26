@@ -331,29 +331,124 @@ namespace Lumina::Import::Mesh::FBX
 
         int MeshCount = FBXScene->getMeshCount();
 
-        for (int MeshIdx = 0; MeshIdx < MeshCount; ++MeshIdx)
-        {
-            const ofbx::Mesh* Mesh = FBXScene->getMesh(MeshIdx);
-            int MaterialCount = Mesh->getMaterialCount();
+        // FBX materials are per-mesh and indexed by geometry partition, so partition indices collide across
+        // meshes. Build a global, de-duplicated material list and remap each mesh partition to a global slot;
+        // the geometry pass writes the global slot into FGeometrySurface::MaterialIndex. FBX is Phong, so the
+        // PBR mapping is an approximation (no native metallic; roughness derived from the shininess exponent).
+        THashMap<const ofbx::Material*, int16> MaterialToGlobal;
+        TVector<TVector<int16>> MeshPartitionToGlobal(MeshCount);
 
-            for (int MatIdx = 0; MatIdx < MaterialCount; ++MatIdx)
+        if (ImportOptions.bImportMaterials)
+        {
+            auto ViewToString = [](const ofbx::DataView& V) -> FString
             {
-                const ofbx::Material* Material = Mesh->getMaterial(MatIdx);
-                auto Texture = Material->getTexture(ofbx::Texture::DIFFUSE);
-                
-                if (Texture)
+                if (V.begin == nullptr || V.end <= V.begin)
                 {
-                    ofbx::DataView View = Texture->getEmbeddedData(); 
-                    if (View.begin != View.end) 
+                    return FString();
+                }
+                FString S(reinterpret_cast<const char*>(V.begin), reinterpret_cast<const char*>(V.end));
+                for (FString::value_type& C : S)
+                {
+                    if (C == '\\') { C = '/'; }
+                }
+                return S;
+            };
+
+            // Resolves an ofbx texture into an FMeshImportImage (embedded bytes or relative path), emits it into
+            // the texture set (when textures are imported), and returns the RelativePath key the slot links to.
+            auto ExtractTexture = [&](const ofbx::Material* Material, ofbx::Texture::TextureType Type,
+                                      ETextureColorSpace Role, int16 GlobalIdx, const char* Suffix) -> FFixedString
+            {
+                const ofbx::Texture* Tex = Material->getTexture(Type);
+                if (Tex == nullptr)
+                {
+                    return {};
+                }
+
+                const FString Rel = ViewToString(Tex->getRelativeFileName());
+                const ofbx::DataView Embedded = Tex->getEmbeddedData();
+
+                FMeshImportImage Image;
+                Image.IntendedColorSpace = Role;
+
+                if (Embedded.begin != nullptr && Embedded.end > Embedded.begin)
+                {
+                    const uint8* Start = reinterpret_cast<const uint8*>(Embedded.begin);
+                    Image.Bytes.assign(Start, reinterpret_cast<const uint8*>(Embedded.end));
+
+                    if (!Rel.empty())
                     {
-                        
+                        FStringView Leaf = VFS::FileName(Rel, true);
+                        Image.RelativePath.append_convert(Leaf.data(), Leaf.length());
                     }
                     else
                     {
-                        ofbx::DataView filename = Texture->getRelativeFileName();
-                        ofbx::DataView absolutePath = Texture->getFileName();
-                        FString Path((FString::value_type*)absolutePath.begin, (FString::value_type*)absolutePath.end);
+                        Image.RelativePath = FFixedString(FFixedString::CtorSprintf(), "FBXMat%d_%s", (int)GlobalIdx, Suffix);
                     }
+                }
+                else
+                {
+                    if (Rel.empty())
+                    {
+                        return {};
+                    }
+                    Image.RelativePath = Rel.c_str();
+                }
+
+                FFixedString Key = Image.RelativePath;
+                if (ImportOptions.bImportTextures)
+                {
+                    ImportData.Textures.emplace(Move(Image));
+                }
+                return Key;
+            };
+
+            for (int MeshIdx = 0; MeshIdx < MeshCount; ++MeshIdx)
+            {
+                const ofbx::Mesh* Mesh = FBXScene->getMesh(MeshIdx);
+                const int MaterialCount = Mesh->getMaterialCount();
+                MeshPartitionToGlobal[MeshIdx].resize(MaterialCount, 0);
+
+                for (int MatIdx = 0; MatIdx < MaterialCount; ++MatIdx)
+                {
+                    const ofbx::Material* Material = Mesh->getMaterial(MatIdx);
+
+                    int16 GlobalIdx;
+                    auto It = MaterialToGlobal.find(Material);
+                    if (It != MaterialToGlobal.end())
+                    {
+                        GlobalIdx = It->second;
+                    }
+                    else
+                    {
+                        GlobalIdx = (int16)ImportData.Materials.size();
+                        MaterialToGlobal.emplace(Material, GlobalIdx);
+
+                        FMeshImportMaterial Out;
+                        Out.Name = (Material->name[0] != '\0')
+                            ? FString(Material->name)
+                            : FString(FFixedString(FFixedString::CtorSprintf(), "%.*s_Mat%d", (int)FileName.length(), FileName.data(), (int)GlobalIdx).c_str());
+
+                        const ofbx::Color Diffuse  = Material->getDiffuseColor();
+                        const ofbx::Color Emissive = Material->getEmissiveColor();
+                        const float       Opacity  = (float)Material->getOpacity();
+                        const float       EmissiveF = (float)Material->getEmissiveFactor();
+
+                        Out.BaseColorFactor = FVector4(Diffuse.r, Diffuse.g, Diffuse.b, Opacity);
+                        Out.MetallicFactor  = 0.0f;
+                        Out.RoughnessFactor = Math::Sqrt(2.0f / (Math::Max((float)Material->getShininessExponent(), 0.0f) + 2.0f));
+                        Out.EmissiveColor   = FVector3(Emissive.r * EmissiveF, Emissive.g * EmissiveF, Emissive.b * EmissiveF);
+                        Out.AlphaMode       = (Opacity < 0.999f) ? EImportAlphaMode::Blend : EImportAlphaMode::Opaque;
+
+                        Out.BaseColorTexture = ExtractTexture(Material, ofbx::Texture::DIFFUSE,  ETextureColorSpace::SRGB,      GlobalIdx, "D");
+                        // Linear (BC7 RGB), not NormalMap: the BC5-packed normal path is currently broken.
+                        Out.NormalTexture    = ExtractTexture(Material, ofbx::Texture::NORMAL,   ETextureColorSpace::Linear, GlobalIdx, "N");
+                        Out.EmissiveTexture  = ExtractTexture(Material, ofbx::Texture::EMISSIVE, ETextureColorSpace::SRGB,      GlobalIdx, "E");
+
+                        ImportData.Materials.push_back(Move(Out));
+                    }
+
+                    MeshPartitionToGlobal[MeshIdx][MatIdx] = GlobalIdx;
                 }
             }
         }
@@ -721,7 +816,10 @@ namespace Lumina::Import::Mesh::FBX
                 Surface.ID = Mesh->name;
                 Surface.StartIndex = StartIndex;
                 Surface.IndexCount = (uint32)Result.Indices.size() - StartIndex;
-                Surface.MaterialIndex = (int16)PartitionIdx;
+                // Remap the per-mesh partition index to its global material slot (identity fallback when
+                // materials weren't extracted, preserving the original partition-index behavior).
+                const TVector<int16>& P2G = MeshPartitionToGlobal[MeshIdx];
+                Surface.MaterialIndex = (PartitionIdx < (int)P2G.size()) ? P2G[PartitionIdx] : (int16)PartitionIdx;
                 Result.Surfaces.push_back(Surface);
             }
 

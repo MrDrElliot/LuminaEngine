@@ -1,8 +1,17 @@
 #include "Includes/SceneGlobals.slang"
 
-// VisBuffer pixel shader: write the per-primitive visibility ID to the R32_UINT VisBuffer. Depth comes
-// from SV_Position via the bound depth target. Material-independent -- one shader for every meshlet draw;
-// only the geometry (mesh) stage is per-material (for WorldPositionOffset).
+// VisBuffer pixel shader: write the visibility ID to the R32_UINT VisBuffer. Depth comes from SV_Position
+// via the bound depth target.
+
+#ifdef VISBUFFER_PRIMID
+
+[shader("fragment")]
+uint FragmentMain(uint VisID : SV_PrimitiveID) : SV_Target0
+{
+    return VisID;
+}
+
+#else
 
 struct FVisInput
 {
@@ -15,3 +24,5 @@ uint FragmentMain(FVisInput Input) : SV_Target0
 {
     return Input.VisID;
 }
+
+#endif

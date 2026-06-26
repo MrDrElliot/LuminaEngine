@@ -18,6 +18,7 @@
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "UI/RmlUiBridge.h"
 #include "UI/Tools/NodeGraph/Material/MaterialCompiler.h"
+#include "UI/Tools/NodeGraph/Material/MaterialGraphCompile.h"
 #include "UI/Tools/NodeGraph/Material/MaterialNodeGraph.h"
 #include "world/entity/components/cameracomponent.h"
 #include "world/entity/components/environmentcomponent.h"
@@ -613,14 +614,17 @@ namespace Lumina
         CompilationResult = FCompilationResultInfo();
         CMaterial* Material = Cast<CMaterial>(Asset.Get());
 
-        FMaterialCompiler Compiler;
-        Compiler.SetMaterialType(Material->GetMaterialType());
-        NodeGraph->CompileGraph(Compiler);
-        Material->SetReadyForRender(false);
+        // All the heavy lifting (graph compile -> every shader stage -> params/textures -> PostLoad) lives in
+        // the shared CompileMaterialGraph so the importer's procedural materials compile identically.
+        const FMaterialGraphCompileResult CompileResult = CompileMaterialGraph(Material, NodeGraph);
 
-        if (Compiler.HasErrors())
+        ShaderStats       = CompileResult.Stats;
+        bHasCompiledOnce  = true;
+        bGLSLPreviewDirty = true;
+
+        if (!CompileResult.bSuccess)
         {
-            for (const EdNodeGraph::FError& Error : Compiler.GetErrors())
+            for (const EdNodeGraph::FError& Error : CompileResult.Errors)
             {
                 CompilationResult.CompilationLog += "ERROR - [" + Error.Name + "]: " + Error.Description + "\n";
 
@@ -632,135 +636,23 @@ namespace Lumina
             }
 
             CompilationResult.bIsError = true;
-            bGLSLPreviewDirty = true;
-            bHasCompiledOnce = true;
-            ShaderStats = Compiler.GetStats();
+            return;
         }
-        else
-        {
-            // BuildShaders yields both pixel and vertex source with tokens substituted.
-            FString VertexSource;
-            Compiler.BuildShaders(Tree, VertexSource, Material->GetMaterialType());
-            VertexTree = VertexSource;
-            ShaderStats = Compiler.GetStats();
-            bHasCompiledOnce = true;
 
-            // ReplacementStart/End power the GLSL preview highlight band; recompute against the pixel shader tree.
-            ReplacementStart = Tree.find("$MATERIAL_INPUTS");
-            ReplacementEnd   = ReplacementStart;
+        Tree       = CompileResult.PixelSource;
+        VertexTree = CompileResult.VertexSource;
 
-            CompilationResult.CompilationLog = "Generated GLSL: \n \n \n";
-            CompilationResult.bIsError = false;
-            bGLSLPreviewDirty = true;
+        // ReplacementStart/End power the GLSL preview highlight band; recompute against the pixel shader tree.
+        ReplacementStart = Tree.find("$MATERIAL_INPUTS");
+        ReplacementEnd   = ReplacementStart;
 
-            IShaderCompiler* ShaderCompiler = GShaderCompiler;
+        CompilationResult.CompilationLog = "Generated GLSL: \n \n \n";
+        CompilationResult.bIsError = false;
 
-            // Crash-dump-friendly shader names: "<MaterialName> [Stage]" instead of the generic "RawShader".
-            const FString MatName = Material->GetName().c_str();
+        Material->GetPackage()->MarkDirty();
 
-            FShaderCompileOptions Options;
-            Options.DebugName = MatName + " [PS]";
-            if (Material->GetBlendMode() == EBlendMode::Translucent)
-            {
-                Options.MacroDefinitions.emplace_back("TRANSLUCENT");
-            }
-            if (Material->GetBlendMode() == EBlendMode::Masked)
-            {
-                // Drops [earlydepthstencil] in the pixel shader so the alpha-test discard runs before the
-                // depth write; otherwise masked cutout texels write depth and corrupt fog/HZB/decals.
-                Options.MacroDefinitions.emplace_back("MASKED");
-            }
-            if (Material->GetShadingModel() == EMaterialShadingModel::Unlit)
-            {
-                Options.MacroDefinitions.emplace_back("UNLIT");
-            }
-
-            FShaderCompileOptions VSOptions;
-            VSOptions.DebugName = MatName + " [VS]";
-
-            ShaderCompiler->CompilerShaderRaw(VertexSource, Move(VSOptions), [this](const FShaderHeader& Header) mutable
-            {
-                CMaterial* Material = Cast<CMaterial>(Asset.Get());
-                Material->VertexShaderBinaries.assign(Header.Binaries.begin(), Header.Binaries.end());
-                Material->VertexShader = FShaderLibrary::Commit(FName((Material->GetGUID().ToString() + "_VS").c_str()), ERHIShaderType::Vertex,
-                    TSpan<const uint32>(Header.Binaries.data(), Header.Binaries.size()));
-            });
-
-            // Mesh-shader variant of the geometry stage (same material vertex graph as the VS). Only the
-            // meshlet (PBR) path has one. ALWAYS compiled (it's just SPIR-V -- no GPU mesh support needed) so
-            // the cooked asset is portable; the renderer uses it only when the device supports mesh shaders
-            // and r.MeshShaders is on, otherwise it falls back to the VS path.
-            if (Material->GetMaterialType() == EMaterialType::PBR)
-            {
-                const FString MeshShaderDir = Paths::GetEngineResourceDirectory() + "/Shaders/MaterialShader/";
-                const FString MeshSource = Compiler.BuildVertexShaderFromTemplate(MeshShaderDir + "MeshletMesh.slang", EMaterialType::PBR);
-                FShaderCompileOptions MeshOptions; MeshOptions.DebugName = MatName + " [MS]";
-                ShaderCompiler->CompilerShaderRaw(MeshSource, Move(MeshOptions), [this](const FShaderHeader& Header) mutable
-                {
-                    CMaterial* M = Cast<CMaterial>(Asset.Get());
-                    M->MeshShaderBinaries.assign(Header.Binaries.begin(), Header.Binaries.end());
-                    M->MeshShader = FShaderLibrary::Commit(FName((M->GetGUID().ToString() + "_MS").c_str()), ERHIShaderType::Mesh,
-                        TSpan<const uint32>(Header.Binaries.data(), Header.Binaries.size()));
-                });
-
-                // VisBuffer geometry stage (same vertex graph; emits per-primitive IDs instead of shading attrs).
-                const FString VisSource = Compiler.BuildVertexShaderFromTemplate(MeshShaderDir + "MeshletVisBuffer.slang", EMaterialType::PBR);
-                FShaderCompileOptions VisOptions; VisOptions.DebugName = MatName + " [VBM]";
-                ShaderCompiler->CompilerShaderRaw(VisSource, Move(VisOptions), [this](const FShaderHeader& Header) mutable
-                {
-                    CMaterial* M = Cast<CMaterial>(Asset.Get());
-                    M->VisBufferMeshShaderBinaries.assign(Header.Binaries.begin(), Header.Binaries.end());
-                    M->VisBufferMeshShader = FShaderLibrary::Commit(FName((M->GetGUID().ToString() + "_VBM").c_str()), ERHIShaderType::Mesh,
-                        TSpan<const uint32>(Header.Binaries.data(), Header.Binaries.size()));
-                });
-
-                const FString VisVSSource = Compiler.BuildVertexShaderFromTemplate(MeshShaderDir + "MeshletVisBufferVS.slang", EMaterialType::PBR);
-                FShaderCompileOptions VisVSOptions; VisVSOptions.DebugName = MatName + " [VBV]";
-                ShaderCompiler->CompilerShaderRaw(VisVSSource, Move(VisVSOptions), [this](const FShaderHeader& Header) mutable
-                {
-                    CMaterial* M = Cast<CMaterial>(Asset.Get());
-                    M->VisBufferVertexShaderBinaries.assign(Header.Binaries.begin(), Header.Binaries.end());
-                    M->VisBufferVertexShader = FShaderLibrary::Commit(FName((M->GetGUID().ToString() + "_VBV").c_str()), ERHIShaderType::Vertex,
-                        TSpan<const uint32>(Header.Binaries.data(), Header.Binaries.size()));
-                });
-
-                // Deferred material pixel shader (reconstructs from the VisBuffer + runs the pixel graph).
-                const FString DeferredSource = Compiler.BuildDeferredShaderFromTemplate(MeshShaderDir + "DeferredMaterial.slang", EMaterialType::PBR);
-                FShaderCompileOptions DeferredOptions; DeferredOptions.DebugName = MatName + " [DM]";
-                ShaderCompiler->CompilerShaderRaw(DeferredSource, Move(DeferredOptions), [this](const FShaderHeader& Header) mutable
-                {
-                    CMaterial* M = Cast<CMaterial>(Asset.Get());
-                    M->DeferredShaderBinaries.assign(Header.Binaries.begin(), Header.Binaries.end());
-                    M->DeferredShader = FShaderLibrary::Commit(FName((M->GetGUID().ToString() + "_DM").c_str()), ERHIShaderType::Fragment,
-                        TSpan<const uint32>(Header.Binaries.data(), Header.Binaries.size()));
-                });
-            }
-
-            ShaderCompiler->CompilerShaderRaw(Tree, Move(Options), [this](const FShaderHeader& Header) mutable
-            {
-                CMaterial* Material = Cast<CMaterial>(Asset.Get());
-                Material->PixelShaderBinaries.assign(Header.Binaries.begin(), Header.Binaries.end());
-                Material->PixelShader = FShaderLibrary::Commit(FName((Material->GetGUID().ToString() + "_PS").c_str()), ERHIShaderType::Fragment,
-                    TSpan<const uint32>(Header.Binaries.data(), Header.Binaries.size()));
-            });
-            
-            // The single merged VS (MeshletVertex.slang) compiled above serves base/depth/shadow via the
-            // EPass spec constant set at pipeline creation -- no separate depth/shadow vertex compiles.
-            ShaderCompiler->Flush();
-
-            Compiler.GetBoundTextures(Material->Textures);
-
-            Memory::Memzero(&Material->MaterialUniforms, sizeof(FMaterialUniforms));
-            Material->Parameters.clear();
-
-            Compiler.GetParameters(Material->Parameters, Material->MaterialUniforms);
-
-            Material->PostLoad();
-            Material->GetPackage()->MarkDirty();
-
-            // Re-route asset to preview in case MaterialType changed during compile.
-            ApplyMaterialToPreview();
-        }
+        // Re-route asset to preview in case MaterialType changed during compile.
+        ApplyMaterialToPreview();
     }
 
     void FMaterialEditorTool::OnSave()

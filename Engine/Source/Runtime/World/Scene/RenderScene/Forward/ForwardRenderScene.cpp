@@ -4955,6 +4955,10 @@ namespace Lumina
         LUMINA_PROFILE_SECTION_COLORED("VisBuffer Geometry Pass", tracy::Color::Red);
 
         static const FShaderEntry* const VisPixel = FShaderLibrary::Get("VisBufferPixel.slang");
+        // Mesh path carries VisID via SV_PrimitiveID (slang #7019: a user-defined per-primitive fragment
+        // input can't be decorated PerPrimitiveEXT, which AMD rejects); the VS path uses the flat VIS_ID.
+        static const FString VisPrimIdDefine("VISBUFFER_PRIMID");
+        static const FShaderEntry* const VisPixelPrim = FShaderLibrary::Get("VisBufferPixel.slang", TSpan<const FString>(&VisPrimIdDefine, 1));
         if (!VisPixel)
         {
             return;
@@ -5007,7 +5011,7 @@ namespace Lumina
             FGraphicsPipelineKey Key;
             Key.VS          = bUseMesh ? nullptr : Batch.VisBufferVertexShader;
             Key.MS          = bUseMesh ? Batch.VisBufferMeshShader : nullptr;
-            Key.PS          = VisPixel;
+            Key.PS          = bUseMesh ? VisPixelPrim : VisPixel;
             Key.SampleCount = MSAASampleCount;
             Key.DepthFormat = EFormat::D32;
             Key.ColorTargets.push_back({ VisRT.Desc.Format, {} });

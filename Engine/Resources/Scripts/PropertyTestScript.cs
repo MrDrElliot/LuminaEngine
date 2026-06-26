@@ -23,6 +23,9 @@ public enum ETestPriority : byte
     High = 3,
 }
 
+/**
+ * Just an engine script for testing different property types to validate visuals and serialization.
+ */
 public sealed class PropertyTestScript : EntityScript
 {
     [Property(Category = "Numbers")] public sbyte I8Value;
@@ -69,7 +72,7 @@ public sealed class PropertyTestScript : EntityScript
     [Property(Category = "Arrays")] public List<FVector3> VectorList;
     [Property(Category = "Arrays")] public TestStats[] StatsArray;
     [Property(Category = "Arrays")] public List<TestStats> StatsList;
-
+    
     [Button(Tooltip = "Reset the scalar fields to their defaults.")]
     public void ResetScalars()
     {

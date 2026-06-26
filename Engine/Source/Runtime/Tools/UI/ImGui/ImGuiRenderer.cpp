@@ -30,10 +30,6 @@ namespace Lumina
 {
     namespace
     {
-        // ImGui's secondary platform windows receive ImGui's GLFW callbacks but NOT Lumina's (those are
-        // installed only on the primary window). Without forwarding, a previewed world living in a separate
-        // OS window never gets keyboard/mouse. These wrappers run ImGui's callback first, then dispatch the
-        // event into Lumina's processor so the focused preview window can drive its world.
         THashMap<GLFWwindow*, ImVec2> GSecondaryWindowLastMouse;
 
         void SecondaryKeyCallback(GLFWwindow* W, int Key, int Scancode, int Action, int Mods)
@@ -106,18 +102,12 @@ namespace Lumina
 
     namespace
     {
-        // Unscaled reference style captured after Initialize(); scaling resets to this before
-        // re-applying so repeated changes don't compound (ScaleAllSizes multiplies what it sees).
         ImGuiStyle GBaseStyle;
         bool       GBaseStyleValid = false;
         float      GAppliedScale   = -1.0f;
-
-        // Auto-derived scale is biased below the raw monitor scale: 1:1 DPI made the
-        // editor feel cramped, so we trade a little crispness for more usable room.
+    	
         constexpr float kAutoScaleBias = 0.85f;
-
-        // UI is tuned for high-res screens; below the reference height we scale down further
-        // (chunky on 1080p otherwise). Lerps MinFactor..1 across 0..ReferenceHeight.
+    	
         float ResolutionFactor(float ScreenHeight)
         {
             constexpr float ReferenceHeight = 2160.0f;  // 4K, where the UI looks right
@@ -163,12 +153,9 @@ namespace Lumina
             Style.FontScaleMain = Scale;    // 1.92 dynamic fonts rasterize at the scaled size
             GAppliedScale = Scale;
 
-            // Publish so custom toolbars can scale their hardcoded pixel dimensions.
             ImGuiX::SetUIScale(Scale);
         }
-
-        // Cheap per-frame poll: re-apply only when the resolved scale actually changes
-        // (e.g. the user edits Editor.UIScale in the settings editor).
+    	
         void RefreshUIScaleIfNeeded()
         {
             if (GBaseStyleValid && ResolveUIScale() != GAppliedScale)
@@ -179,9 +166,6 @@ namespace Lumina
 
         uint64 GAppliedPaletteHash = 0;
 
-        // Maps the editor color palette (CEditorColorSettings) onto the ImGui style. Hover/active variants
-        // are derived so the whole theme follows from a handful of colors. Colors not in the palette
-        // (scrollbars, plots, docking, overlays) are left as set in Initialize.
         void ApplyPaletteColors(ImGuiStyle& Style)
         {
             using namespace EditorColors;

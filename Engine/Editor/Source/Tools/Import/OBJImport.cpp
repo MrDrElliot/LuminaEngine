@@ -49,63 +49,65 @@ namespace Lumina::Import::Mesh::OBJ
 
         if (ImportOptions.bImportTextures)
         {
+            auto EmitImage = [&](const std::string& TexName, ETextureColorSpace Role)
+            {
+                if (TexName.empty())
+                {
+                    return;
+                }
+                FMeshImportImage Image;
+                Image.RelativePath = TexName.c_str();
+                Image.IntendedColorSpace = Role;
+                ImportData.Textures.emplace(Image);
+            };
+
             for (const tinyobj::material_t& Material : Materials)
             {
-                if (!Material.diffuse_texname.empty())
+                EmitImage(Material.diffuse_texname,            ETextureColorSpace::SRGB);
+                // Linear (BC7 RGB), not NormalMap: the BC5-packed normal path is currently broken.
+                EmitImage(Material.bump_texname,               ETextureColorSpace::Linear);
+                EmitImage(Material.normal_texname,             ETextureColorSpace::Linear);
+                EmitImage(Material.specular_texname,           ETextureColorSpace::Linear);
+                EmitImage(Material.ambient_texname,            ETextureColorSpace::Linear);
+                EmitImage(Material.specular_highlight_texname, ETextureColorSpace::Linear);
+                EmitImage(Material.metallic_texname,           ETextureColorSpace::Linear);
+                EmitImage(Material.roughness_texname,          ETextureColorSpace::Linear);
+                EmitImage(Material.emissive_texname,           ETextureColorSpace::SRGB);
+            }
+        }
+
+        // Material definitions (indexed by tinyobj material_id, matching FGeometrySurface::MaterialIndex).
+        if (ImportOptions.bImportMaterials)
+        {
+            ImportData.Materials.reserve(Materials.size());
+            for (const tinyobj::material_t& Material : Materials)
+            {
+                FMeshImportMaterial Out;
+                Out.Name = Material.name.empty() ? FString("Material") : FString(Material.name.c_str());
+
+                Out.BaseColorFactor = FVector4(Material.diffuse[0], Material.diffuse[1], Material.diffuse[2], Material.dissolve);
+                Out.MetallicFactor  = Material.metallic;
+
+                // Classic OBJ has no roughness; derive it from the Phong shininess exponent so non-PBR
+                // .mtl files don't import as mirror-smooth. PBR .mtl roughness (when authored) wins.
+                if (Material.roughness > 0.0f)
                 {
-                    FMeshImportImage Image;
-                    Image.RelativePath = Material.diffuse_texname.c_str();
-                    ImportData.Textures.emplace(Image);
+                    Out.RoughnessFactor = Material.roughness;
                 }
-        
-                if (!Material.bump_texname.empty())
+                else
                 {
-                    FMeshImportImage Image;
-                    Image.RelativePath = Material.bump_texname.c_str();
-                    ImportData.Textures.emplace(Image);
-                }
-        
-                if (!Material.specular_texname.empty())
-                {
-                    FMeshImportImage Image;
-                    Image.RelativePath = Material.specular_texname.c_str();
-                    ImportData.Textures.emplace(Image);
+                    Out.RoughnessFactor = Math::Sqrt(2.0f / (Math::Max(Material.shininess, 0.0f) + 2.0f));
                 }
 
-                if (!Material.ambient_texname.empty())
-                {
-                    FMeshImportImage Image;
-                    Image.RelativePath = Material.ambient_texname.c_str();
-                    ImportData.Textures.emplace(Image);
-                }
+                Out.EmissiveColor = FVector3(Material.emission[0], Material.emission[1], Material.emission[2]);
 
-                if (!Material.specular_highlight_texname.empty())
-                {
-                    FMeshImportImage Image;
-                    Image.RelativePath = Material.specular_highlight_texname.c_str();
-                    ImportData.Textures.emplace(Image);
-                }
+                Out.AlphaMode = (Material.dissolve < 0.999f) ? EImportAlphaMode::Blend : EImportAlphaMode::Opaque;
 
-                if (!Material.metallic_texname.empty())
-                {
-                    FMeshImportImage Image;
-                    Image.RelativePath = Material.metallic_texname.c_str();
-                    ImportData.Textures.emplace(Image);
-                }
+                Out.BaseColorTexture = Material.diffuse_texname.c_str();
+                Out.NormalTexture    = !Material.normal_texname.empty() ? Material.normal_texname.c_str() : Material.bump_texname.c_str();
+                Out.EmissiveTexture  = Material.emissive_texname.c_str();
 
-                if (!Material.roughness_texname.empty())
-                {
-                    FMeshImportImage Image;
-                    Image.RelativePath = Material.roughness_texname.c_str();
-                    ImportData.Textures.emplace(Image);
-                }
-
-                if (!Material.emissive_texname.empty())
-                {
-                    FMeshImportImage Image;
-                    Image.RelativePath = Material.emissive_texname.c_str();
-                    ImportData.Textures.emplace(Image);
-                }
+                ImportData.Materials.push_back(Move(Out));
             }
         }
         
