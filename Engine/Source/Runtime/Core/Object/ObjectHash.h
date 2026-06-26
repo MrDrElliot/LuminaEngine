@@ -1,5 +1,6 @@
 #pragma once
 #include "Containers/Array.h"
+#include "Containers/Name.h"
 #include "Core/Singleton/Singleton.h"
 #include "Core/Threading/Thread.h"
 #include "GUID/GUID.h"
@@ -36,6 +37,6 @@ namespace Lumina
 
         mutable FSharedMutex            Mutex;
         FObjectGUIDMap                  ObjectGUIDHash;
-        TObjectHashMap<CClass*>         ObjectClassBucket;
+        TObjectHashMap<FName>           ObjectNameHash;
     };
 }

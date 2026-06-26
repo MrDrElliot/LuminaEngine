@@ -20,16 +20,16 @@ struct FDeferredPassArgs
     uint  DBufferAIndex;    // 4   overlaid by FDBufferPushConstants in ApplyDBuffer
     uint  DBufferBIndex;    // 8
     uint  DBufferCIndex;    // 12
-    uint  MaterialIndex;    // 16  GPU material slot this pass shades; other materials' pixels discard
+    uint  MaterialIndex;    // 16  unused: superseded by SlotIndex as the per-pixel reject key
     uint  DrawListCount;    // 20  total MeshletDrawList entries (NumViews * TotalMeshletBound); slot bound
-    uint  SlotIndex;        // 24  dense deferred-draw slot (tile-bitmask bit; see DeferredMaterialTileVS)
+    uint  SlotIndex;        // 24  dense deferred-draw slot (tile-bitmask bit + per-pixel reject key)
     uint  TileCountX;       // 28
     uint  TileSizePx;       // 32
     uint  TileWordCount;    // 36
     uint  ScreenW;          // 40
     uint  ScreenH;          // 44
-    uint* TileBits;         // 48  per-tile material bitmask (read by the tile-quad VS)
-    uint* MaterialId;       // 56  per-pixel owning MaterialIndex (classify output; cheap reject here)
+    uint* TileBits;         // 48  per-tile slot bitmask (read by the tile-quad VS)
+    uint* MaterialId;       // 56  per-pixel owning SLOT (classify output; cheap reject here)
 };
 FDeferredPassArgs* Pass() { return GetPassArgs<FDeferredPassArgs>(); }
 
@@ -110,12 +110,12 @@ PSOutput FragmentMain(float4 SvPosition : SV_Position)
     Output.Color  = float4(0.0, 0.0, 0.0, 0.0);
     Output.Picker = 0u;
 
-    // Material binning: the classify pass tagged every covered pixel with its owning MaterialIndex, and the
-    // tile-quad VS already skipped the tiles this material doesn't touch. So this pass shades only the pixels
-    // it owns; the only rejects left are foreign-material pixels inside a shared tile -- a single buffer load,
-    // not the old per-pixel MeshletDrawList -> 128B FGPUInstance -> header chase done once per material.
+    // Material binning: the classify pass tagged every covered pixel with its owning deferred SLOT, and the
+    // tile-quad VS already skipped the tiles this slot doesn't touch. This draw owns one slot (one master
+    // DeferredShader); keep only its pixels. The shading below re-reads each pixel's own per-instance
+    // MaterialIndex (Ref.Inst.MaterialIndex), so instances sharing this master shade correctly in this one draw.
     uint PixelIdx = (uint)Texel.y * Pass().ScreenW + (uint)Texel.x;
-    if (Pass().MaterialId[PixelIdx] != Pass().MaterialIndex)
+    if (Pass().MaterialId[PixelIdx] != Pass().SlotIndex)
     {
         discard;
         return Output;
@@ -249,7 +249,16 @@ PSOutput FragmentMain(float4 SvPosition : SV_Position)
     float3 WorldNormal   = normalize(NormalWS);
     float3 ViewPosition  = ViewPos.xyz;
 
+    // Deferred-texturing fix: redirect the codegen's UV0 texture samples to explicit-gradient sampling using
+    // the analytic perspective-correct gradients computed above. A fullscreen deferred PS has no valid 2x2
+    // quad (it straddles unrelated triangles), so implicit ddx/ddy pick wrong mips along every silhouette,
+    // meshlet seam, and instance edge -- the canonical VisBuffer pitfall. Exact for UV0-direct samples (the
+    // common case); derived UVs (tiling/panners) use UV0's gradient -- bounded and far better than garbage.
+    // Scoped to the material graph only: ShadeSurface (below) and the forward/masked raster passes keep
+    // implicit derivatives, which are correct there.
+#define SampleTexture2D(TexIndex, SamplerIndex, UV) SampleTexture2DGrad((TexIndex), (SamplerIndex), (UV), dUVdx, dUVdy)
     $MATERIAL_INPUTS
+#undef SampleTexture2D
 
     FShadedSurface Shaded = ShadeSurface(Input, Material);
 

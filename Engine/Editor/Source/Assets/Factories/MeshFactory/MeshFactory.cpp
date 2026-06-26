@@ -390,18 +390,14 @@ namespace Lumina
     void CMeshFactory::PrepareImportAsync(const FFixedString& RawPath, const FFixedString& DestinationPath, FImportPrepareCallback OnReady)
     {
         using namespace Import::Mesh;
-
-        // Parse off-thread so a heavy asset doesn't freeze the editor; options dialog opens once
-        // the parsed result lands back on main thread.
+        
         Task::AsyncTask(1, 1, [RawPath, OnReady = Move(OnReady)](uint32, uint32, uint32) mutable
         {
             FScopedSlowTask SlowTask(1.0f, "Reading Mesh", "Parsing source file...");
 
             auto Data = MakeUnique<FMeshImportData>();
             const bool bOk = PreviewParse(RawPath, *Data, &SlowTask);
-
-            // Build preview thumbnails here on the worker thread (RHI resource creation is
-            // multi-threaded by design); doing this on the main thread froze the editor.
+            
             if (bOk)
             {
                 BuildPreviewThumbnails(RawPath, *Data, SlowTask);
@@ -443,8 +439,7 @@ namespace Lumina
         DrawSkeletonsPreview(*ImportedData);
         DrawAnimationsPreview(*ImportedData);
 
-        const bool bImport = DrawDialogButtons();
-        if (bImport)
+        if (const bool bImport = DrawDialogButtons())
         {
             ImportedData->CommitOptions = Options;
             bShouldClose = true;
@@ -496,6 +491,11 @@ namespace Lumina
         {
             BaseName = BaseName.substr(0, DotPos);
         }
+        
+        FFixedString TexturesDir = DestinationDir;
+        TexturesDir.append("Textures/");
+        FFixedString MaterialsDir = DestinationDir;
+        MaterialsDir.append("Materials/");
 
         auto BuildPath = [&](FStringView Suffix) -> FFixedString
         {
@@ -647,30 +647,45 @@ namespace Lumina
             CreatedObjects.push_back(NewAnimation);
         }
         
+        FScopedAssetRegistryBatch RegistryBatch;
+
         SlowTask.UpdateMessage("Importing textures...");
 
-        // RelativePath -> created CTexture, so generated material instances can bind the textures they reference.
         THashMap<FFixedString, CTexture*> TextureMap;
-
-        // Materials reference textures, so importing materials implies importing textures (the dialog hides the
-        // Import Textures checkbox while materials are on, and Options is static across imports, so a stale
-        // bImportTextures=false must not drop the textures the generated materials need).
+        
         const bool bWantTextures = Options.bImportTextures || Options.bImportMaterials;
 
         if (bWantTextures && !ImportData.Textures.empty())
         {
             TVector<FMeshImportImage> Images(ImportData.Textures.begin(), ImportData.Textures.end());
             CTextureFactory* TextureFactory = CTextureFactory::StaticClass()->GetDefaultObject<CTextureFactory>();
-
-            const float TextureStep = kTextureBudget / (float)Images.size();
-            for (const FMeshImportImage& Texture : Images)
+            
+            for (FMeshImportImage& Img : Images)
+            {
+                Img.EncodeThreadBudget = 1;
+            }
+            
+            struct FTextureWork
             {
                 FFixedString SourcePath;     // empty for mesh-embedded bytes
-                FFixedString QualifiedPath;  // destination package path (extension added below)
+                FFixedString QualifiedPath;  // destination package path (with extension)
+                size_t       ImageIndex;
+                bool         bNeedsImport;
+            };
 
+            TVector<FTextureWork> Work;
+            Work.reserve(Images.size());
+            THashSet<FFixedString> SeenPaths;
+
+            for (size_t i = 0; i < Images.size(); ++i)
+            {
+                const FMeshImportImage& Texture = Images[i];
+
+                FFixedString SourcePath;
+                FFixedString QualifiedPath;
                 if (Texture.IsBytes())
                 {
-                    QualifiedPath = Paths::Combine(Paths::Parent(DestinationPath), Texture.RelativePath);
+                    QualifiedPath = Paths::Combine(TexturesDir, Texture.RelativePath);
                 }
                 else
                 {
@@ -678,31 +693,48 @@ namespace Lumina
                     SourcePath.append_convert(ParentPath.data(), ParentPath.length()).append("/").append_convert(Texture.RelativePath);
                     FStringView TextureFileName = VFS::FileName(SourcePath, true);
 
-                    QualifiedPath = DestinationDir;
+                    QualifiedPath = TexturesDir;
                     QualifiedPath.append_convert(TextureFileName.data(), TextureFileName.length());
                 }
 
-                // Match the original existence check (no extension), then add the extension for import/load.
+                // Existence check (no extension), then add the extension for import/load.
                 const bool bAlreadyExists = (FindObject<CPackage>(QualifiedPath) != nullptr);
                 CPackage::AddPackageExt(QualifiedPath);
-                if (!bAlreadyExists)
-                {
-                    // Pass mesh-import metadata so IntendedColorSpace survives to the texture factory.
-                    TextureFactory->Import(SourcePath, QualifiedPath, &Texture);
-                }
 
-                // Resolve the saved asset so material generation can reference it (the factory tears down its
-                // in-memory copy after saving, so this re-loads it). GetAssetByPath is extension-insensitive.
-                if (Options.bImportMaterials)
+                // Import a given destination exactly once: skip if it already exists, or if an earlier item this
+                // batch already claimed the same path (duplicate source filenames). Both still load + map below.
+                const bool bDuplicate = !SeenPaths.insert(QualifiedPath).second;
+
+                FTextureWork W;
+                W.SourcePath    = Move(SourcePath);
+                W.QualifiedPath = Move(QualifiedPath);
+                W.ImageIndex    = i;
+                W.bNeedsImport  = !bAlreadyExists && !bDuplicate;
+                Work.push_back(Move(W));
+            }
+            
+            Task::ParallelFor((uint32)Work.size(), [&](uint32 i)
+            {
+                const FTextureWork& W = Work[i];
+                if (W.bNeedsImport)
                 {
-                    if (CTexture* Loaded = LoadObject<CTexture>(QualifiedPath))
+                    // Settings carry IntendedColorSpace + the single-thread encode budget set above.
+                    TextureFactory->Import(W.SourcePath, W.QualifiedPath, &Images[W.ImageIndex]);
+                }
+            }, 1);
+            
+            if (Options.bImportMaterials)
+            {
+                for (const FTextureWork& W : Work)
+                {
+                    if (CTexture* Loaded = LoadObject<CTexture>(W.QualifiedPath))
                     {
-                        TextureMap.emplace(Texture.RelativePath, Loaded);
+                        TextureMap.emplace(Images[W.ImageIndex].RelativePath, Loaded);
                     }
                 }
-
-                SlowTask.EnterProgressFrame(TextureStep);
             }
+
+            SlowTask.EnterProgressFrame(kTextureBudget);
         }
         else
         {
@@ -719,7 +751,7 @@ namespace Lumina
             auto GenerateAndAssign = [&]()
             {
                 const TVector<CMaterialInstance*> Instances =
-                    Import::Materials::GenerateMaterials(ImportData, DestinationDir, BaseName, TextureMap, CreatedObjects);
+                    Import::Materials::GenerateMaterials(ImportData, MaterialsDir, BaseName, TextureMap, CreatedObjects);
 
                 const TVector<int16>& SlotToSource = ImportData.MergedMaterialSlotToSource;
                 for (CMesh* Mesh : CreatedMeshes)
@@ -748,8 +780,7 @@ namespace Lumina
             };
 
             // Material generation compiles shaders via GShaderCompiler->Flush(), whose hard atomic_wait would
-            // stall a worker fiber. The editor's material compile path runs on the main thread; mirror that:
-            // run generation on the main thread and park this worker fiber on a fiber-aware future until done.
+            // stall a worker fiber.
             if (Threading::IsMainThread())
             {
                 GenerateAndAssign();
@@ -794,11 +825,6 @@ namespace Lumina
             SlowTask.EnterProgressFrame(kSaveBudget);
         }
         
-        // The import assets cross-reference each other (mesh->Skeleton, skeleton->PreviewMesh,
-        // anim->Skeleton) and the local PrimarySkeleton holds one too. Force-destroying them while
-        // those TObjectPtrs are live would dangle them. Break the skeleton<->mesh back-edge and drop
-        // the local handle, then tear down by refcount: in reverse creation order each object reaches
-        // zero strong refs (its holders are destroyed first) and ConditionalBeginDestroy frees it.
         if (PrimarySkeleton)
         {
             PrimarySkeleton->PreviewMesh = nullptr;

@@ -19,13 +19,21 @@ static const uint EPASS_BASE   = 0u;
 static const uint EPASS_DEPTH  = 1u;
 static const uint EPASS_SHADOW = 2u;
 
+// One CmdDrawMeshTasksIndirect covers a whole batch; SV_DrawIndex selects the sub-draw and the per-draw
+// meshlet base is the cull's FDrawIndirectArguments.FirstInstance (raw uints, 4/arg, FirstInstance = element 3).
 struct FMeshPassArgs
 {
-    uint MeshletBase;      // global MeshletDrawList offset for this draw (VS path's FirstInstance)
-    int  ShadowDataIndex;  // EPass == Shadow only
-    int  ViewIndex;        // EPass == Shadow only (CSM cascade / point face / spot)
+    uint* IndirectArgs;    // FDrawIndirectArguments[] as raw uints; [arg*4 + 3] = FirstInstance = MeshletBase
+    uint  ArgBase;         // first arg index for this batch (CullViewIndex*NumDrawsPerView + IndirectDrawOffset)
+    int   ShadowDataIndex; // EPass == Shadow only
+    int   ViewIndex;       // EPass == Shadow only (CSM cascade / point face / spot)
 };
 FMeshPassArgs* Pass() { return GetPassArgs<FMeshPassArgs>(); }
+
+uint LoadMeshletBase(uint DrawIndex)
+{
+    return Pass().IndirectArgs[(Pass().ArgBase + DrawIndex) * 4u + 3u];
+}
 
 // 128 threads covers a full meshlet in one pass: up to MESHLET_MAX_VERTICES (64) verts and
 // MESHLET_MAX_TRIANGLES (124) prims, one of each per thread under the count guards.
@@ -33,12 +41,13 @@ FMeshPassArgs* Pass() { return GetPassArgs<FMeshPassArgs>(); }
 [outputtopology("triangle")]
 [numthreads(128, 1, 1)]
 void MeshMain(
-    uint3 GroupID  : SV_GroupID,
-    uint  ThreadID : SV_GroupIndex,
+    uint3 GroupID   : SV_GroupID,
+    uint  ThreadID  : SV_GroupIndex,
+    uint  DrawIndex : SV_DrawIndex,
     out vertices FBaseVertexOutput Verts[MESHLET_MAX_VERTICES],
     out indices  uint3             Tris[MESHLET_MAX_TRIANGLES])
 {
-    uint MeshletSlot = Pass().MeshletBase + GroupID.x;
+    uint MeshletSlot = LoadMeshletBase(DrawIndex) + GroupID.x;
     FMeshletRef Ref  = ResolveMeshlet(MeshletSlot, EPass == EPASS_SHADOW);
 
     const uint VertCount = Ref.M.VertexCount;

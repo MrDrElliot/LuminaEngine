@@ -51,7 +51,7 @@ namespace Lumina
     void FMaterialInstanceEditorTool::SetupWorldForTool()
     {
         FAssetEditorTool::SetupWorldForTool();
-
+        
         DirectionalLightEntity = World->ConstructEntity("Directional Light");
         World->GetEntityRegistry().emplace<SDirectionalLightComponent>(DirectionalLightEntity);
         World->GetEntityRegistry().emplace<SEnvironmentComponent>(DirectionalLightEntity);
@@ -73,6 +73,17 @@ namespace Lumina
         else if (Material->GetMaterialType() == EMaterialType::PostProcess)
         {
             World->GetEntityRegistry().get<SCameraComponent>(EditorEntity).PostProcessMaterials.push_back(Material);
+        }
+    }
+
+    void FMaterialInstanceEditorTool::Update(const FUpdateContext& UpdateContext)
+    {
+        FAssetEditorTool::Update(UpdateContext);
+        
+        // @TODO figure out why this needs to exist..
+        if (World->GetRenderer())
+        {
+            World->GetRenderer()->GetSceneRenderSettings().bDrawBillboards = false;
         }
     }
 
@@ -206,52 +217,26 @@ namespace Lumina
                 ImGui::TableSetupColumn("##Name", ImGuiTableColumnFlags_WidthFixed, 175);
                 ImGui::TableSetupColumn("##Editor", ImGuiTableColumnFlags_WidthStretch);
 
-                for (const FMaterialParameter& Param : Instance->GetMaterialParams())
+                // Iterate a stable copy: toggling an override mutates the instance's parameter list
+                // (RemoveOverride rebuilds it), which would invalidate a live range-for mid-loop.
+                const TVector<FMaterialParameter> Params = Instance->GetMaterialParams();
+                for (const FMaterialParameter& Param : Params)
                 {
-                    ImGui::PushID(&Param);
+                    ImGui::PushID(Param.ParameterName.c_str());
                     ImGui::TableNextRow();
 
                     ImGui::TableNextColumn();
-                    bool bHasOverride = Instance->HasOverride(Param.ParameterName);
-                    if (ImGui::Checkbox("##Override", &bHasOverride))
+                    bool bEnabled = Instance->IsOverrideEnabled(Param.ParameterName);
+                    if (ImGui::Checkbox("##Override", &bEnabled))
                     {
-                        if (!bHasOverride)
-                        {
-                            Instance->RemoveOverride(Param.ParameterName);
-                            Asset->GetPackage()->MarkDirty();
-                        }
-                        else
-                        {
-                            // Re-assert the current uniform value as an override so the user can immediately tweak it.
-                            switch (Param.Type)
-                            {
-                            case EMaterialParameterType::Scalar:
-                                if (Param.Index < MAX_SCALARS)
-                                {
-                                    Instance->SetScalarValue(Param.ParameterName, Instance->GetMaterialUniforms()->Scalars[Param.Index]);
-                                }
-                                break;
-                            case EMaterialParameterType::Vector:
-                                if (Param.Index < MAX_VECTORS)
-                                {
-                                    Instance->SetVectorValue(Param.ParameterName, Instance->GetMaterialUniforms()->Vectors[Param.Index]);
-                                }
-                                break;
-                            case EMaterialParameterType::Texture:
-                                // Re-assign the parent's default so an override entry exists; user can replace it via drag/drop.
-                                if (Param.Index < Instance->Material->Textures.size())
-                                {
-                                    Instance->SetTextureValue(Param.ParameterName, Instance->Material->Textures[Param.Index].Get());
-                                }
-                                break;
-                            }
-                            Asset->GetPackage()->MarkDirty();
-                        }
+                        // The toggle only flips application; the override value is retained while disabled.
+                        Instance->SetOverrideEnabled(Param.ParameterName, bEnabled);
+                        Asset->GetPackage()->MarkDirty();
                     }
 
                     ImGui::TableNextColumn();
                     ImGui::AlignTextToFramePadding();
-                    if (bHasOverride)
+                    if (bEnabled)
                     {
                         ImGui::TextUnformatted(Param.ParameterName.c_str());
                     }
@@ -263,8 +248,11 @@ namespace Lumina
                     ImGui::TableNextColumn();
                     ImGui::AlignTextToFramePadding();
 
-                    // Disable editor when no override is active so the parent value shows but cannot be edited.
-                    ImGui::BeginDisabled(!bHasOverride);
+                    // Editor disabled while the override is off: the retained value shows but cannot be edited.
+                    ImGui::BeginDisabled(!bEnabled);
+
+                    // Show the stored override value (kept even while disabled), else the parent default.
+                    const FMaterialParameterOverride* Override = Instance->FindOverride(Param.ParameterName);
 
                     switch (Param.Type)
                     {
@@ -275,7 +263,7 @@ namespace Lumina
                             ImGui::TextDisabled("Invalid index");
                             break;
                         }
-                        float Value = Instance->GetMaterialUniforms()->Scalars[Param.Index];
+                        float Value = Override ? Override->Scalar : Instance->GetMaterialUniforms()->Scalars[Param.Index];
                         if (ImGui::DragFloat("##Scalar", &Value, 0.01f))
                         {
                             Instance->SetScalarValue(Param.ParameterName, Value);
@@ -291,7 +279,7 @@ namespace Lumina
                             ImGui::TextDisabled("Invalid index");
                             break;
                         }
-                        FVector4 Value = Instance->GetMaterialUniforms()->Vectors[Param.Index];
+                        FVector4 Value = Override ? Override->Vector : Instance->GetMaterialUniforms()->Vectors[Param.Index];
                         if (ImGui::ColorEdit4("##Vector", Math::ValuePtr(Value), ImGuiColorEditFlags_Float))
                         {
                             Instance->SetVectorValue(Param.ParameterName, Value);
@@ -302,7 +290,7 @@ namespace Lumina
 
                     case EMaterialParameterType::Texture:
                     {
-                        DrawTextureParameterColumn(Instance, Param, bHasOverride);
+                        DrawTextureParameterColumn(Instance, Param, bEnabled);
                         break;
                     }
                     }
@@ -319,7 +307,7 @@ namespace Lumina
         ImGui::PopStyleColor(3);
     }
 
-    void FMaterialInstanceEditorTool::DrawTextureParameterColumn(CMaterialInstance* Instance, const FMaterialParameter& Param, bool bHasOverride)
+    void FMaterialInstanceEditorTool::DrawTextureParameterColumn(CMaterialInstance* Instance, const FMaterialParameter& Param, bool bEnabled)
     {
         // Texture in effect for this slot: this instance's override, else the
         // parent material's default for the slot.
@@ -367,7 +355,7 @@ namespace Lumina
         }
 
         // Click → open searchable picker; respects the disabled state so click-to-pick is gated by override toggle.
-        if (bClicked && bHasOverride)
+        if (bClicked && bEnabled)
         {
             TexturePickerFilter.Clear();
             ImGui::OpenPopup("##TexturePickerPopup");
@@ -468,7 +456,7 @@ namespace Lumina
             ImGui::EndChild();
 
             // Restore disabled state expected by the surrounding row.
-            ImGui::BeginDisabled(!bHasOverride);
+            ImGui::BeginDisabled(!bEnabled);
             ImGui::EndPopup();
         }
     }

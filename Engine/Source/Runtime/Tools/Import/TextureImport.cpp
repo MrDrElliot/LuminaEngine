@@ -64,7 +64,7 @@ namespace Lumina::Import::Textures
     {
         FTextureImportResult Result = {};
         
-        stbi_set_flip_vertically_on_load(bFlipVertical);
+        stbi_set_flip_vertically_on_load_thread(bFlipVertical);
         
         int x, y, channels;
         
@@ -201,7 +201,7 @@ namespace Lumina::Import::Textures
     {
         FTextureImportResult Result = {};
         
-        stbi_set_flip_vertically_on_load(bFlipVertical);
+        stbi_set_flip_vertically_on_load_thread(bFlipVertical);
         int DataSize = static_cast<int>(ImageData.size());
         
         int x, y, channels;

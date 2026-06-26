@@ -7,6 +7,15 @@ namespace Lumina
 {
     bool FSaveContext::AddExport(CObject* Export)
     {
+        // An object whose refcount hit 0 mid-save is marked-destroy but not yet freed (e.g. an intermediate
+        // created during a large import); it still matches the package, so GetObjectsWithPackage hands it back,
+        // but its weak handle resolves to null at write time -> the WriteExports invariant trips. It is on its
+        // way out, so skip it and don't recurse into a dying object's references.
+        if (Export == nullptr || Export->HasAnyFlag(OF_MarkedDestroy))
+        {
+            return false;
+        }
+
         if (!SeenExports.insert(Export).second)
         {
             return false;
@@ -49,7 +58,9 @@ namespace Lumina
     FArchive& FPackageSaver::operator<<(CObject*& Value)
     {
         FObjectPackageIndex Index;
-        if (Value)
+        // A reference to a dying object (skipped from the export table) would otherwise write a stale index;
+        // serialize it as null instead. The default-constructed Index is the null sentinel.
+        if (Value && !Value->HasAnyFlag(OF_MarkedDestroy))
         {
             if (Value->GetPackage() == Package)
             {
@@ -78,7 +89,7 @@ namespace Lumina
     FArchive& FPackageSaver::operator<<(FObjectHandle& Value)
     {
         FObjectPackageIndex Index;
-        if (CObject* Obj = Value.Resolve())
+        if (CObject* Obj = Value.Resolve(); Obj && !Obj->HasAnyFlag(OF_MarkedDestroy))
         {
             if (Obj->GetPackage() == Package)
             {

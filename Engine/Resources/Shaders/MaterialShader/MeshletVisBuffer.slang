@@ -1,49 +1,58 @@
 #pragma once
 #include "Includes/MeshletGeometry.slang"
 
-// VisBuffer geometry mesh shader: rasterize meshlets writing ONLY a per-primitive visibility ID + depth.
-// No interpolated attributes, no shading -- the deferred material pass reconstructs everything (positions,
-// barycentrics, UVs, normals, derivatives) from the ID by re-fetching the meshlet triangle. WPO still
-// applies here, since the rasterized geometry must be displaced. One workgroup per meshlet, like MeshletMesh.
+// VisBuffer geometry MESH shader: rasterize meshlets writing a per-primitive visibility ID + depth. One
+// workgroup per meshlet, like MeshletMesh.
 //
-// VisID packing (uint32): [31:7] = global MeshletDrawList slot, [6:0] = local triangle index (<= 124).
-// Stored as VisID + 1 so the natural clear-to-0 marks empty pixels (0 is otherwise a valid triangle ID);
-// the deferred pass tests for 0 and subtracts 1 to recover the VisID.
+// One module serves BOTH opaque and masked via the VISBUFFER_MASKED spec constant (mirrors MeshletVisBufferVS):
+//   - 0 (opaque): emit only clip position per vertex; the base interpolants are zeroed and dead-strip per-PSO
+//     (the opaque pixel shader reads only VisID). The lean original behavior.
+//   - 1 (masked): emit the full per-vertex base interpolants so the masked pixel shader can run the opacity
+//     graph and discard cut-out texels before they write VisID/depth.
+// WPO always applies (the rasterized geometry must match what the deferred pass reconstructs).
+//
+// VisID is per-PRIMITIVE via the SV_PrimitiveID builtin (a user-defined per-primitive fragment input can't be
+// decorated PerPrimitiveEXT in slang #7019; AMD rejects it). VisID packing: [31:7] global MeshletDrawList slot,
+// [6:0] local triangle index; stored as VisID + 1 so clear-to-0 marks empty.
 
+// One CmdDrawMeshTasksIndirect covers a whole batch; SV_DrawIndex selects the sub-draw. The per-draw meshlet
+// base is the cull's FDrawIndirectArguments.FirstInstance (the same value the VS path consumes) -- read it from
+// the raw uint array (4 uints/arg, FirstInstance = element 3) instead of a per-sub-draw push constant.
 struct FVisPassArgs
 {
-    uint MeshletBase;   // global MeshletDrawList offset for this draw (the VS path's FirstInstance)
+    uint* IndirectArgs;   // FDrawIndirectArguments[] as raw uints; [arg*4 + 3] = arg's FirstInstance = MeshletBase
+    uint  ArgBase;        // first arg index for this batch: ViewIndex*NumDrawsPerView + IndirectDrawOffset
 };
 FVisPassArgs* Pass() { return GetPassArgs<FVisPassArgs>(); }
 
-// Per-vertex output: clip position only (rasterizer needs nothing else).
-struct FVisVertex
+uint LoadMeshletBase(uint DrawIndex)
 {
-    float4 Position : SV_Position;
-};
+    return Pass().IndirectArgs[(Pass().ArgBase + DrawIndex) * 4u + 3u];
+}
 
-// Per-primitive output: the visibility ID, written once per triangle. Carried via the SV_PrimitiveID
-// builtin instead of a user-defined location -- Slang can't decorate a user-defined fragment input
-// PerPrimitiveEXT (slang #7019), so a custom per-primitive output makes a spec-invalid mesh->fragment
-// interface that AMD rejects (VisBuffer reads 0 -> deferred pass discards every pixel -> depth-only ghost).
-// The builtin's per-primitive handling is implicit, so it matches cleanly; pairs with VisBufferPixel.slang
-// compiled with VISBUFFER_PRIMID.
 struct FVisPrimitive
 {
     uint VisID : SV_PrimitiveID;
 };
 
+[vk::constant_id(4)] const uint VISBUFFER_MASKED = 0;
+
+// Sized to the VERTEX phase (MESHLET_MAX_VERTICES = 64), not the triangle cap (124): the vertex phase is the
+// expensive one (BDA load + normal matrix + WPO graph + 2 mat-vec muls), so all 64 lanes must do vertex work.
+// The cheap triangle phase grid-strides over the 64 lanes (<=124 tris -> 2 iterations). At 128 threads the
+// vertex phase ran at ~50% lane utilization (lanes 64..127 idle through the costly work).
 [shader("mesh")]
 [outputtopology("triangle")]
-[numthreads(128, 1, 1)]
+[numthreads(64, 1, 1)]
 void MeshMain(
-    uint3 GroupID  : SV_GroupID,
-    uint  ThreadID : SV_GroupIndex,
-    out vertices   FVisVertex    Verts[MESHLET_MAX_VERTICES],
-    out indices    uint3         Tris[MESHLET_MAX_TRIANGLES],
-    out primitives FVisPrimitive Prims[MESHLET_MAX_TRIANGLES])
+    uint3 GroupID   : SV_GroupID,
+    uint  ThreadID  : SV_GroupIndex,
+    uint  DrawIndex : SV_DrawIndex,
+    out vertices   FBaseVertexOutput Verts[MESHLET_MAX_VERTICES],
+    out indices    uint3             Tris[MESHLET_MAX_TRIANGLES],
+    out primitives FVisPrimitive     Prims[MESHLET_MAX_TRIANGLES])
 {
-    uint MeshletSlot = Pass().MeshletBase + GroupID.x;
+    uint MeshletSlot = LoadMeshletBase(DrawIndex) + GroupID.x;
     FMeshletRef Ref  = ResolveSurfaceMeshlet(MeshletSlot);
 
     const uint VertCount = Ref.M.VertexCount;
@@ -67,12 +76,23 @@ void MeshMain(
         $MATERIAL_VERTEX_INPUTS
         WorldPos.xyz += Material.WorldPositionOffset;
 
-        Verts[ThreadID].Position = CameraClipPosition(CameraViewPosition(WorldPos.xyz));
+        if (VISBUFFER_MASKED != 0u)
+        {
+            Verts[ThreadID] = MakeBaseVertexOutput(Ref, W, WorldPos.xyz);
+        }
+        else
+        {
+            // Opaque: only the clip position is consumed; interpolants stay zeroed and dead-strip per-PSO.
+            FBaseVertexOutput O = MakeDegenerateBaseVertexOutput();
+            O.Position = CameraClipPosition(CameraViewPosition(WorldPos.xyz));
+            Verts[ThreadID] = O;
+        }
     }
 
-    if (ThreadID < TriCount)
+    // Triangle phase grid-strides the 64 lanes (2 iterations at the 124-tri cap). VisID packs the LOOP var.
+    for (uint t = ThreadID; t < TriCount; t += 64u)
     {
-        Tris[ThreadID]        = UnpackMeshletTriangle(Ref, ThreadID);
-        Prims[ThreadID].VisID = ((MeshletSlot << 7u) | (ThreadID & 0x7Fu)) + 1u;
+        Tris[t]        = UnpackMeshletTriangle(Ref, t);
+        Prims[t].VisID = ((MeshletSlot << 7u) | (t & 0x7Fu)) + 1u;
     }
 }

@@ -16,7 +16,7 @@ namespace Lumina
         ASSERT(It == ObjectGUIDHash.end());
 
         ObjectGUIDHash.emplace(ObjectGUID, Object);
-        ObjectClassBucket[Object->GetClass()].emplace(Object);
+        ObjectNameHash[Object->GetName()].emplace(Object);
     }
 
     void FObjectHashTables::RemoveObject(CObjectBase* Object)
@@ -30,8 +30,8 @@ namespace Lumina
 
         ObjectGUIDHash.erase(It);
 
-
-        ObjectClassBucket[Object->GetClass()].erase(Object);
+        // Uses the object's CURRENT name -- HandleNameChange removes under the old name before it mutates.
+        ObjectNameHash[Object->GetName()].erase(Object);
     }
 
     CObjectBase* FObjectHashTables::FindObject(const FGuid& GUID)
@@ -44,9 +44,7 @@ namespace Lumina
         {
             return nullptr;
         }
-
-        // A package/object marked for destroy is logically gone even though it
-        // lingers in the table until DrainPendingDestroys frees it.
+        
         if (It->second->HasAnyFlag(OF_MarkedDestroy))
         {
             return nullptr;
@@ -60,15 +58,15 @@ namespace Lumina
         LUMINA_PROFILE_SCOPE();
         FReadScopeLock Lock(Mutex);
 
-        auto It = ObjectClassBucket.find(Class);
-        if (It == ObjectClassBucket.end())
+        auto It = ObjectNameHash.find(Name);
+        if (It == ObjectNameHash.end())
         {
             return nullptr;
         }
-
+        
         for (CObjectBase* Object : It->second)
         {
-            if (Object->GetName() == Name && !Object->HasAnyFlag(OF_MarkedDestroy))
+            if (Object->GetClass() == Class && !Object->HasAnyFlag(OF_MarkedDestroy))
             {
                 return Object;
             }
@@ -82,5 +80,6 @@ namespace Lumina
     {
         FWriteScopeLock Lock(Mutex);
         ObjectGUIDHash.clear();
+        ObjectNameHash.clear();
     }
 }

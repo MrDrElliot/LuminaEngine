@@ -211,9 +211,6 @@ namespace Lumina
         }
         else if (MaterialType == EMaterialType::Decal)
         {
-            // Decal materials project through the DBuffer pass; their vertex shader is the decal-box VS,
-            // not a mesh VS, so they can't be surface-shaded on the preview mesh (doing so reads the decal
-            // buffer from an unbound slot and faults the GPU). Leave the sphere on its default material.
             StaticMeshComponent.MaterialOverrides.clear();
         }
         else

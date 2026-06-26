@@ -25,6 +25,10 @@ namespace Lumina
         PROPERTY()
         EMaterialParameterType Type = EMaterialParameterType::Scalar;
 
+        /** When false the override is retained (value kept) but not applied; the parent value shows instead. */
+        PROPERTY()
+        bool bEnabled = true;
+
         PROPERTY()
         float Scalar = 0.0f;
 
@@ -77,7 +81,18 @@ namespace Lumina
         /** Reset uniforms to parent defaults and re-apply every override. */
         void RebuildUniformsFromOverrides();
 
-        bool HasOverride(const FName& Name) const;
+        /** Re-derive uniforms from the (possibly recompiled) parent and push them to this instance's GPU slot.
+            Called by the parent after a recompile; without the upload the instance keeps stale GPU uniforms. */
+        void RefreshFromParent();
+
+        /** True only when an override exists for the parameter AND is enabled (the checkbox state). */
+        bool IsOverrideEnabled(const FName& Name) const;
+        /** Enable/disable a parameter's override. Disabling RETAINS the stored value; enabling with no existing
+            entry seeds one from the parent's current value. */
+        void SetOverrideEnabled(const FName& Name, bool bEnabled);
+        /** The stored override for a parameter (retained even while disabled), or null. */
+        const FMaterialParameterOverride* FindOverride(const FName& Name) const;
+        /** Drop a parameter's override entirely (discards its stored value). */
         void RemoveOverride(const FName& Name);
 
         PROPERTY(ReadOnly, Category = "Material")

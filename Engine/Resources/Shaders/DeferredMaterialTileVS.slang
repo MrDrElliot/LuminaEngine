@@ -14,7 +14,7 @@ struct FDeferredPassArgs
     uint  DBufferAIndex;    // 4
     uint  DBufferBIndex;    // 8
     uint  DBufferCIndex;    // 12
-    uint  MaterialIndex;    // 16  GPU material slot this pass shades
+    uint  MaterialIndex;    // 16  unused: superseded by SlotIndex as the per-pixel reject key
     uint  DrawListCount;    // 20
     uint  SlotIndex;        // 24  dense deferred-draw slot (bitmask bit + per-pixel reject key)
     uint  TileCountX;       // 28
@@ -22,8 +22,8 @@ struct FDeferredPassArgs
     uint  TileWordCount;    // 36
     uint  ScreenW;          // 40
     uint  ScreenH;          // 44
-    uint* TileBits;         // 48
-    uint* MaterialId;       // 56
+    uint* TileBits;         // 48  per-tile slot bitmask
+    uint* MaterialId;       // 56  per-pixel owning slot (classify output)
 };
 FDeferredPassArgs* Pass() { return GetPassArgs<FDeferredPassArgs>(); }
 

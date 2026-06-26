@@ -81,9 +81,8 @@ namespace Lumina
             {
                 continue;
             }
-
-            Instance->RebuildUniformsFromOverrides();
-            UpdateMaterialUniforms();
+            
+            Instance->RefreshFromParent();
         }
     }
 
@@ -132,6 +131,16 @@ namespace Lumina
             {
                 VisBufferVertexShader = FShaderLibrary::Commit(FName((Guid + "_VBV").c_str()), ERHIShaderType::Vertex,
                     TSpan<const uint32>(VisBufferVertexShaderBinaries.data(), VisBufferVertexShaderBinaries.size()));
+            }
+            if (!MaskedVisBufferPixelShaderBinaries.empty())
+            {
+                MaskedVisBufferPixelShader = FShaderLibrary::Commit(FName((Guid + "_MVBP").c_str()), ERHIShaderType::Fragment,
+                    TSpan<const uint32>(MaskedVisBufferPixelShaderBinaries.data(), MaskedVisBufferPixelShaderBinaries.size()));
+            }
+            if (!MaskedVisBufferPixelShaderPrimBinaries.empty())
+            {
+                MaskedVisBufferPixelShaderPrim = FShaderLibrary::Commit(FName((Guid + "_MVBPP").c_str()), ERHIShaderType::Fragment,
+                    TSpan<const uint32>(MaskedVisBufferPixelShaderPrimBinaries.data(), MaskedVisBufferPixelShaderPrimBinaries.size()));
             }
             if (!DeferredShaderBinaries.empty())
             {
@@ -211,6 +220,8 @@ namespace Lumina
             Drop(MeshShaderBinaries);
             Drop(VisBufferMeshShaderBinaries);
             Drop(VisBufferVertexShaderBinaries);
+            Drop(MaskedVisBufferPixelShaderBinaries);
+            Drop(MaskedVisBufferPixelShaderPrimBinaries);
             Drop(DeferredShaderBinaries);
 #endif
         }

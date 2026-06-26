@@ -22,7 +22,7 @@ struct FClassifyArgs
     uint  ScreenH;
     uint  SlotByMaterialCount;  // entries in SlotByMaterial (guards the lookup)
     uint* TileBits;             // uint[TileCount * TileWordCount], cleared to 0 before this pass
-    uint* MaterialId;           // uint[ScreenW * ScreenH], every in-screen pixel written here
+    uint* MaterialId;           // uint[ScreenW * ScreenH]: per-pixel owning deferred SLOT (~0u = none)
     uint* SlotByMaterial;       // uint[SlotByMaterialCount]: global MaterialIndex -> dense slot (~0u = none)
 };
 FClassifyArgs* Pass() { return GetPassArgs<FClassifyArgs>(); }
@@ -68,14 +68,14 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
         return;
     }
 
-    Pass().MaterialId[PixelIdx] = MaterialIndex;
-
-    // Map the global material index to its dense deferred-draw slot, then mark the tile.
-    if (MaterialIndex >= Pass().SlotByMaterialCount)
-    {
-        return;
-    }
-    const uint Slot = Pass().SlotByMaterial[MaterialIndex];
+    // Resolve the owning deferred-draw SLOT (every instance of a master maps to the master's slot) and store
+    // THAT per pixel -- not the raw material index. The deferred draw then rejects foreign pixels with a single
+    // compare against its SlotIndex, and shades the rest with each pixel's own per-instance MaterialIndex
+    // (re-read from the VisBuffer in DeferredMaterial.slang), so instances sharing a master shade in one draw.
+    const uint Slot = (MaterialIndex < Pass().SlotByMaterialCount)
+        ? Pass().SlotByMaterial[MaterialIndex]
+        : 0xFFFFFFFFu;
+    Pass().MaterialId[PixelIdx] = Slot;
     if (Slot == 0xFFFFFFFFu)
     {
         return;   // material has no deferred draw (e.g. no DeferredShader); nothing to bin

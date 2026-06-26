@@ -65,6 +65,14 @@ float4 SampleTexture2D(uint TextureIndex, uint SamplerIndex, float2 UV)
     return gTextures2D[TextureIndex].Sample(gSamplers[SamplerIndex], UV);
 }
 
+// Explicit-gradient sample. The deferred VisBuffer material lane has no rasterizer 2x2 quad (its quad
+// straddles unrelated triangles), so implicit ddx/ddy are garbage -> wrong mips on every silhouette/seam.
+// DeferredMaterial.slang feeds the analytic perspective-correct UV gradients here instead.
+float4 SampleTexture2DGrad(uint TextureIndex, uint SamplerIndex, float2 UV, float2 Ddx, float2 Ddy)
+{
+    return gTextures2D[TextureIndex].SampleGrad(gSamplers[SamplerIndex], UV, Ddx, Ddy);
+}
+
 float4 SampleTexture2DLevel(uint TextureIndex, uint SamplerIndex, float2 UV, float Lod)
 {
     return gTextures2D[TextureIndex].SampleLevel(gSamplers[SamplerIndex], UV, Lod);

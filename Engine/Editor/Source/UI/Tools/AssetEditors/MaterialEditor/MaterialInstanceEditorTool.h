@@ -27,6 +27,7 @@ namespace Lumina
         void OnInitialize() override;
         void OnDeinitialize(const FUpdateContext& UpdateContext) override;
         void SetupWorldForTool() override;
+        void Update(const FUpdateContext& UpdateContext) override;
 
         void OnAssetLoadFinished() override;
         void DrawToolMenu(const FUpdateContext& UpdateContext) override;
@@ -37,7 +38,7 @@ namespace Lumina
     private:
 
         void DrawParameterEditor(bool bFocused);
-        void DrawTextureParameterColumn(class CMaterialInstance* Instance, const struct FMaterialParameter& Param, bool bHasOverride);
+        void DrawTextureParameterColumn(class CMaterialInstance* Instance, const struct FMaterialParameter& Param, bool bEnabled);
         void SetDebugMesh(EDebugMesh Mesh);
 
         entt::entity MeshEntity;

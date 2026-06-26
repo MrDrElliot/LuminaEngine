@@ -178,6 +178,20 @@ namespace Lumina
 		return Loaded;
 	}
 
+	FString FMaterialCompiler::BuildPixelShaderFromTemplate(const FString& TemplateAbsolutePath) const
+	{
+		FString Loaded;
+		if (!FileHelper::LoadFileIntoString(Loaded, TemplateAbsolutePath))
+		{
+			LOG_ERROR("Failed to find {}!", TemplateAbsolutePath);
+			return Loaded;
+		}
+
+		// Pixel template declares FMaterialPixelInputs Material above the token; append body + assignments only.
+		SubstituteToken(Loaded, "$MATERIAL_INPUTS", PixelChunks + PixelOutputChunks);
+		return Loaded;
+	}
+
 	static FString GetVectorType(EMaterialInputType Type)
 	{
 		switch (Type)

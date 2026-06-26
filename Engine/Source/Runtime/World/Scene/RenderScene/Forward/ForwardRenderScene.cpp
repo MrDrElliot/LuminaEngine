@@ -98,6 +98,25 @@ namespace Lumina
     {
     }
 
+    // The VisBuffer resolves all opaque geometry at 1x -- visibility IDs cannot be MSAA-averaged -- and uses
+    // SMAA for edge AA, so hardware MSAA is not supported here. A >1x count would make the geometry pass bind a
+    // 1x VisBuffer color against an Nx depth target (an invalid mixed-sample subpass / UB). Clamp to 1, warn once.
+    static uint8 ResolveVisBufferSampleCount(EMSAASampleCount RequestedSetting)
+    {
+        const uint8 Requested = ::Lumina::GetMSAASampleCount(RequestedSetting);
+        if (Requested > 1u)
+        {
+            static bool bWarned = false;
+            if (!bWarned)
+            {
+                bWarned = true;
+                LOG_WARN("MSAA ({}x) is not supported by the VisBuffer renderer; rendering at 1x with SMAA.", (uint32)Requested);
+            }
+            return 1u;
+        }
+        return Requested;
+    }
+
     void FForwardRenderScene::Init()
     {
         LUMINA_MEMORY_SCOPE("Render Scene");
@@ -107,7 +126,7 @@ namespace Lumina
         // MSAA is a scene-global world setting; cached here and used to size every view's
         // MS scratch images. Init runs before any Extract -- read straight from the world.
         const SDefaultWorldSettings& InitSettings = World ? World->GetDefaultWorldSettings() : SDefaultWorldSettings{};
-        MSAASampleCount = ::Lumina::GetMSAASampleCount(InitSettings.MSAASampleCount);
+        MSAASampleCount = ResolveVisBufferSampleCount(InitSettings.MSAASampleCount);
 
         // Shared (view-independent) buffers + images first.
         InitBuffers();
@@ -322,6 +341,7 @@ namespace Lumina
             FreeBuffer(MeshDrawArgsRing[Slot]);
             FreeBuffer(MeshletDeferListRing[Slot]);
             FreeBuffer(DeferCountRing[Slot]);
+            FreeBuffer(CullDispatchArgsRing[Slot]);
             FreeBuffer(SpdCounterRing[Slot]);
             FreeBuffer(MaterialBinTileBitsRing[Slot]);
             FreeBuffer(MaterialBinPixelIdRing[Slot]);
@@ -2303,6 +2323,8 @@ namespace Lumina
         const FShaderEntry*   MeshShader = nullptr;
         const FShaderEntry*   VisBufferMeshShader = nullptr;
         const FShaderEntry*   VisBufferVertexShader = nullptr;
+        const FShaderEntry*   MaskedVisBufferPixelShader = nullptr;
+        const FShaderEntry*   MaskedVisBufferPixelShaderPrim = nullptr;
         const FShaderEntry*   DeferredShader = nullptr;
         uint64              MaterialID;
         EInstanceFlags      ExtraFlags;
@@ -2359,7 +2381,13 @@ namespace Lumina
         R.MeshShader            = ConcreteMaterial ? ConcreteMaterial->GetMeshShader() : nullptr;
         R.VisBufferMeshShader   = ConcreteMaterial ? ConcreteMaterial->GetVisBufferMeshShader() : nullptr;
         R.VisBufferVertexShader = ConcreteMaterial ? ConcreteMaterial->GetVisBufferVertexShader() : nullptr;
+        R.MaskedVisBufferPixelShader     = ConcreteMaterial ? ConcreteMaterial->GetMaskedVisBufferPixelShader() : nullptr;
+        R.MaskedVisBufferPixelShaderPrim = ConcreteMaterial ? ConcreteMaterial->GetMaskedVisBufferPixelShaderPrim() : nullptr;
         R.DeferredShader        = ConcreteMaterial ? ConcreteMaterial->GetDeferredShader() : nullptr;
+        // Batch by the MASTER material (the shader/pipeline): instances of one master share its shaders, so they
+        // belong in ONE geometry DrawBatch (instances must not multiply draw calls). The per-instance GPU slot
+        // (MaterialIdx) still travels per-instance into FGPUInstance.MaterialIndex; the deferred pass keys its
+        // material shading on the master's DeferredShader and maps every instance slot to it (DeferredMaterialPass).
         R.MaterialID            = (uint64)ConcreteMaterial;
         R.MaterialIdx           = (uint16)Material->GetMaterialIndex();
         R.bTranslucent          = bTranslucent;
@@ -2399,6 +2427,8 @@ namespace Lumina
         R.MeshShader            = M.MeshShader;
         R.VisBufferMeshShader   = M.VisBufferMeshShader;
         R.VisBufferVertexShader = M.VisBufferVertexShader;
+        R.MaskedVisBufferPixelShader     = M.MaskedVisBufferPixelShader;
+        R.MaskedVisBufferPixelShaderPrim = M.MaskedVisBufferPixelShaderPrim;
         R.DeferredShader        = M.DeferredShader;
         R.MaterialID            = M.MaterialID;
         R.ExtraFlags         = Extra;
@@ -2431,6 +2461,8 @@ namespace Lumina
         Entry.MeshShader           = Slot.MeshShader;
         Entry.VisBufferMeshShader  = Slot.VisBufferMeshShader;
         Entry.VisBufferVertexShader = Slot.VisBufferVertexShader;
+        Entry.MaskedVisBufferPixelShader     = Slot.MaskedVisBufferPixelShader;
+        Entry.MaskedVisBufferPixelShaderPrim = Slot.MaskedVisBufferPixelShaderPrim;
         Entry.DeferredShader       = Slot.DeferredShader;
         Entry.MaterialIdx          = Slot.MaterialIdx;
 
@@ -3144,6 +3176,8 @@ namespace Lumina
                     NewCmd.MeshShader          = LocalBatch.MeshShader;
                     NewCmd.VisBufferMeshShader   = LocalBatch.VisBufferMeshShader;
                     NewCmd.VisBufferVertexShader = LocalBatch.VisBufferVertexShader;
+                    NewCmd.MaskedVisBufferPixelShader     = LocalBatch.MaskedVisBufferPixelShader;
+                    NewCmd.MaskedVisBufferPixelShaderPrim = LocalBatch.MaskedVisBufferPixelShaderPrim;
                     NewCmd.DeferredShader        = LocalBatch.DeferredShader;
                     NewCmd.MaterialIndex         = LocalBatch.MaterialIdx;
                     NewCmd.IndirectDrawOffset  = 0;
@@ -3398,6 +3432,25 @@ namespace Lumina
                 if (Cmd.bDrawInDepthPass)
                 {
                     OpaqueOccluderDrawList.push_back(i);
+                }
+            }
+        }
+
+        // Distinct opaque material slots for the deferred pass. The per-thread resolve caches hold one entry
+        // per material instance (with its master DeferredShader), so this is the one place that carries the
+        // PER-INSTANCE MaterialIndex alongside the shader -- the geometry batches above collapse instances of a
+        // shared master to one draw and only keep a single representative index. Duplicates across threads (and
+        // the shared default-material fallback) are fine; the deferred pass dedupes by DeferredShader.
+        auto& DeferredMaterials = Frame.Geometry.DeferredMaterials;
+        DeferredMaterials.clear();
+        for (const FThreadLocalDrawData& Local : ThreadLocal)
+        {
+            for (const FMaterialCacheEntry& Entry : Local.MaterialCache)
+            {
+                const FCachedMaterialResolve& R = Entry.Resolve;
+                if (!R.bTranslucent && R.DeferredShader != nullptr && R.MaterialIdx != (uint16)-1)
+                {
+                    DeferredMaterials.push_back({ (uint32)R.MaterialIdx, R.DeferredShader });
                 }
             }
         }
@@ -4746,6 +4799,20 @@ namespace Lumina
 
         // Draw list + indirect args feed the phase-1 VisBuffer raster.
         Barriers::ComputeToAll(CL);
+
+        // Size the LATE cull's indirect dispatch from the now-final DeferCount (GPU-side, no readback): the late
+        // cull then launches O(deferred) workgroups instead of the worst-case full-scene grid. Skipped for
+        // single-phase capture views (no late phase).
+        static const FShaderEntry* const DispatchArgsShader = FShaderLibrary::Get("BuildCullDispatchArgs.slang");
+        if (DispatchArgsShader && CameraLateViewIndex != ~0u)
+        {
+            struct FBuildCullDispatchArgsPC { uint64 DeferCountAddr; uint64 DispatchArgsAddr; } DPC;
+            DPC.DeferCountAddr   = GetDeferCount().GetAddress();
+            DPC.DispatchArgsAddr = GetCullDispatchArgs().GetAddress();
+            RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(DispatchArgsShader));
+            RHI::CmdDispatch(CL, MakeArgs(DPC), 1u, 1u, 1u);
+            Barriers::ComputeToAll(CL);   // orders the args write before the late CmdDispatchIndirect reads it
+        }
     }
 
     void FForwardRenderScene::CullPassLate(RHI::FCmdListH CL)
@@ -4768,8 +4835,6 @@ namespace Lumina
 
         LUMINA_PROFILE_SECTION_COLORED("Cull Pass (Late)", tracy::Color::Pink3);
 
-        // Worst-case dispatch (every camera meshlet deferred); threads past uDeferCount
-        // early-out. No indirect-dispatch readback: the round-trip outweighs the tiny dispatch.
         static const FShaderEntry* const CullShader = FShaderLibrary::Get("CullMeshlets.slang");
         if (!CullShader)
         {
@@ -4786,13 +4851,10 @@ namespace Lumina
         PC.DeferListAddr       = GetMeshletDeferList().GetAddress();
         PC.DeferCountAddr      = GetDeferCount().GetAddress();
 
-        // Same X/Y fold as CullPassEarly so Vulkan's 65535 per-axis workgroup
-        // limit doesn't cap us on very large scenes.
-        const uint32 NumWorkgroups = (TotalMeshletBound + 63u) / 64u;
-        constexpr uint32 MaxDispatchAxis = 65535u;
-        const uint32 DispatchX = NumWorkgroups < MaxDispatchAxis ? NumWorkgroups : MaxDispatchAxis;
-        const uint32 DispatchY = (NumWorkgroups + MaxDispatchAxis - 1u) / MaxDispatchAxis;
-        RHI::CmdDispatch(CL, MakeArgs(PC), DispatchX, DispatchY, 1u);
+        // Indirect dispatch sized to the deferred set (BuildCullDispatchArgs wrote {ceil(DeferCount/64),1,1} from
+        // DeferCount after the early cull). The 1D grid keeps RunLatePhase's flat-index = GlobalID.x; the
+        // in-shader idx>=DeferCount guard backstops, and GroupCountX==0 (nothing deferred) launches no waves.
+        RHI::CmdDispatchIndirect(CL, MakeArgs(PC), GetCullDispatchArgs().Ptr, 0);
 
         Barriers::ComputeToAll(CL);
     }
@@ -4942,8 +5004,6 @@ namespace Lumina
         const FFrameData& Frame             = *RenderFrame;
         const auto& DrawCommands            = Frame.Geometry.DrawCommands;
         const auto& OpaqueDrawList          = Frame.Geometry.OpaqueDrawList;
-        const auto& DrawMeshletStartOffsets = Frame.Geometry.DrawMeshletStartOffsets;
-        const uint32 TotalMeshletBound      = Frame.Views.TotalMeshletBound;
         const bool   bMeshShaders           = CVarMeshShaders.GetValue() && RHI::SupportsMeshShaders();
         const uint32 NumDrawsPerView        = Frame.Views.NumDrawsPerView;
 
@@ -4955,8 +5015,7 @@ namespace Lumina
         LUMINA_PROFILE_SECTION_COLORED("VisBuffer Geometry Pass", tracy::Color::Red);
 
         static const FShaderEntry* const VisPixel = FShaderLibrary::Get("VisBufferPixel.slang");
-        // Mesh path carries VisID via SV_PrimitiveID (slang #7019: a user-defined per-primitive fragment
-        // input can't be decorated PerPrimitiveEXT, which AMD rejects); the VS path uses the flat VIS_ID.
+        // (slang #7019)
         static const FString VisPrimIdDefine("VISBUFFER_PRIMID");
         static const FShaderEntry* const VisPixelPrim = FShaderLibrary::Get("VisBufferPixel.slang", TSpan<const FString>(&VisPrimIdDefine, 1));
         if (!VisPixel)
@@ -4971,10 +5030,7 @@ namespace Lumina
         const FSceneImage& VisRT   = GetNamedImage(ENamedImage::VisBuffer);
         const FSceneImage& DepthRT = GetSceneDepthRT();
         const FUIntVector2 Extent  = GetNamedImage(ENamedImage::HDR).GetExtent();
-
-        // Single-sample visibility buffer: triangle IDs can't be average-resolved, so the VisBuffer
-        // pipeline runs at 1x and relies on a spatial post AA (SMAA), not hardware MSAA. Phase 1 clears
-        // (VisBuffer 0 = empty, reverse-Z depth 0); phase 2 loads and accumulates the disoccluded meshlets.
+        
         const RHI::ELoadOp GeomLoadOp = bClear ? RHI::ELoadOp::Clear : RHI::ELoadOp::Load;
 
         RHI::FRenderAttachment Color;
@@ -5001,39 +5057,35 @@ namespace Lumina
 
         const uint32 ViewBase = ViewIndex * NumDrawsPerView;
 
-        struct FVisPassArgs { uint32 MeshletBase; };
-
         for (uint32 Idx : OpaqueDrawList)
         {
             const FMeshDrawCommand& Batch = DrawCommands[Idx];
-            const bool bUseMesh = bMeshShaders && Batch.VisBufferMeshShader != nullptr;
+            
+            const bool bUseMesh  = bMeshShaders && Batch.VisBufferMeshShader != nullptr;
+            const FShaderEntry* MaskedPS = bUseMesh ? Batch.MaskedVisBufferPixelShaderPrim : Batch.MaskedVisBufferPixelShader;
+            const bool bMaskedClip = Batch.bMasked && MaskedPS != nullptr;
 
             FGraphicsPipelineKey Key;
-            Key.VS          = bUseMesh ? nullptr : Batch.VisBufferVertexShader;
-            Key.MS          = bUseMesh ? Batch.VisBufferMeshShader : nullptr;
-            Key.PS          = bUseMesh ? VisPixelPrim : VisPixel;
-            Key.SampleCount = MSAASampleCount;
+            Key.VS               = bUseMesh ? nullptr : Batch.VisBufferVertexShader;
+            Key.MS               = bUseMesh ? Batch.VisBufferMeshShader : nullptr;
+            Key.PS               = bMaskedClip ? MaskedPS : (bUseMesh ? VisPixelPrim : VisPixel);
+            Key.bVisBufferMasked = bMaskedClip;   // geometry emits interpolants only when actually masked-clipping
+            Key.SampleCount      = MSAASampleCount;
             Key.DepthFormat = EFormat::D32;
             Key.ColorTargets.push_back({ VisRT.Desc.Format, {} });
             RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
-            // Two-sided materials must rasterize both faces into the VisBuffer (the deferred pass flips the
-            // shading normal for back faces); single-sided keep back-face culling. Cull mode is dynamic and
-            // persists across binds, so this is the only cull-mode set the pass needs.
+            // Two-sided materials must rasterize both faces into the VisBuffer.
             RHI::CmdSetCullMode(CL, Batch.bTwoSided ? RHI::ECullMode::None : RHI::ECullMode::Back);
 
             if (bUseMesh)
             {
-                // Mesh dispatch has no firstInstance, so each sub-draw pushes its own MeshletBase.
-                for (uint32 Sub = 0; Sub < Batch.DrawCount; ++Sub)
-                {
-                    const uint32 D = Batch.IndirectDrawOffset + Sub;
-                    FVisPassArgs VisArgs;
-                    VisArgs.MeshletBase = ViewIndex * TotalMeshletBound + DrawMeshletStartOffsets[D];
-                    RHI::CmdDrawMeshTasksIndirect(CL, MakeArgs(VisArgs),
-                        GetMeshDrawArgs().Ptr, (ViewBase + D) * sizeof(RHI::FDrawMeshTasksIndirectArguments),
-                        1u, sizeof(RHI::FDrawMeshTasksIndirectArguments));
-                }
+                struct { uint64 IndirectArgsAddr; uint32 ArgBase; } VisArgs;
+                VisArgs.IndirectArgsAddr = GetIndirectArgs().GetAddress();
+                VisArgs.ArgBase          = ViewBase + Batch.IndirectDrawOffset;
+                RHI::CmdDrawMeshTasksIndirect(CL, MakeArgs(VisArgs),
+                    GetMeshDrawArgs().Ptr, (ViewBase + Batch.IndirectDrawOffset) * sizeof(RHI::FDrawMeshTasksIndirectArguments),
+                    Batch.DrawCount, sizeof(RHI::FDrawMeshTasksIndirectArguments));
             }
             else
             {
@@ -5078,7 +5130,6 @@ namespace Lumina
         const uint32 NumMips = std::min(MipCount, SpdMaxMips);
 
         RHI::CmdMemset(CL, SpdCounter.Ptr, SpdCounter.Size, 0u);
-        // Counter fill + the depth writes this pass reduces.
         RHI::CmdBarrier(CL,
             RHI::EStageFlags::Transfer | RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::FragmentTests,
             RHI::EStageFlags::Compute);
@@ -5133,10 +5184,7 @@ namespace Lumina
         }
 
         LUMINA_PROFILE_SECTION_COLORED("Cluster Build Pass", tracy::Color::Pink2);
-
-        // Grid params live in the per-view scene snapshot the shader reads via the scene root,
-        // matching LightCull and the base pass. AABBs are rebuilt every frame so they always track
-        // the snapshot frustum.
+        
         static const FShaderEntry* const ComputeShader = FShaderLibrary::Get("ClusterBuild.slang");
         if (!ComputeShader)
         {
@@ -5187,8 +5235,6 @@ namespace Lumina
     {
         const FFrameData& Frame              = *RenderFrame;
         const uint32 NumDrawsPerView         = Frame.Views.NumDrawsPerView;
-        const uint32 TotalMeshletBound       = Frame.Views.TotalMeshletBound;
-        const auto&  DrawMeshletStartOffsets = Frame.Geometry.DrawMeshletStartOffsets;
         const bool   bUseMesh = CVarMeshShaders.GetValue() && RHI::SupportsMeshShaders() && Batch.MeshShader != nullptr;
 
         FGraphicsPipelineKey Key;
@@ -5202,18 +5248,14 @@ namespace Lumina
         const uint32 ViewBase = CullViewIndex * NumDrawsPerView;
         if (bUseMesh)
         {
-            // Mesh dispatch has no firstInstance: one dispatch per sub-draw, each pushing its own MeshletBase.
-            for (uint32 Sub = 0; Sub < Batch.DrawCount; ++Sub)
-            {
-                const uint32 D = Batch.IndirectDrawOffset + Sub;
-                struct { uint32 MeshletBase; int32 ShadowDataIndex; int32 ViewIndex; } MP;
-                MP.MeshletBase     = CullViewIndex * TotalMeshletBound + DrawMeshletStartOffsets[D];
-                MP.ShadowDataIndex = ShadowDataIndex;
-                MP.ViewIndex       = ShadowViewIndex;
-                RHI::CmdDrawMeshTasksIndirect(CL, MakeArgs(MP),
-                    GetMeshDrawArgs().Ptr, (ViewBase + D) * sizeof(RHI::FDrawMeshTasksIndirectArguments),
-                    1u, sizeof(RHI::FDrawMeshTasksIndirectArguments));
-            }
+            struct { uint64 IndirectArgsAddr; uint32 ArgBase; int32 ShadowDataIndex; int32 ViewIndex; } MP;
+            MP.IndirectArgsAddr = GetIndirectArgs().GetAddress();
+            MP.ArgBase          = ViewBase + Batch.IndirectDrawOffset;
+            MP.ShadowDataIndex  = ShadowDataIndex;
+            MP.ViewIndex        = ShadowViewIndex;
+            RHI::CmdDrawMeshTasksIndirect(CL, MakeArgs(MP),
+                GetMeshDrawArgs().Ptr, (ViewBase + Batch.IndirectDrawOffset) * sizeof(RHI::FDrawMeshTasksIndirectArguments),
+                Batch.DrawCount, sizeof(RHI::FDrawMeshTasksIndirectArguments));
         }
         else
         {
@@ -5604,7 +5646,6 @@ namespace Lumina
     {
         const FFrameData& Frame    = *RenderFrame;
         const auto& DrawCommands   = Frame.Geometry.DrawCommands;
-        const auto& OpaqueDrawList = Frame.Geometry.OpaqueDrawList;
 
         if (DrawCommands.empty())
         {
@@ -5627,26 +5668,51 @@ namespace Lumina
         const uint32 ScreenW = Extent.x;
         const uint32 ScreenH = Extent.y;
 
-        // Material binning. Each opaque material with a deferred shader gets a DENSE slot (0..N-1); the
-        // classify pass writes each covered pixel's owning MaterialIndex and sets the owning slot's bit in
-        // that pixel's tile bitmask. The per-material draw then rasterizes ONLY the tiles its slot bit is
-        // set in (the tile-quad VS self-culls the rest) and shades only the pixels whose recorded
-        // MaterialIndex matches it. This replaces the old per-material fullscreen reshade (O(materials x
-        // pixels)) with O(pixels) classify + tile-local shading.
-        BinnedDeferredSlotMaterials.clear();
+        // Material binning. Each distinct master DeferredShader gets ONE dense slot (0..N-1); EVERY opaque
+        // material instance that shares that shader maps its own GPU MaterialIndex to the same slot. The
+        // classify pass writes each covered pixel's owning slot and sets that slot's bit in the pixel's tile
+        // bitmask. One shading draw per slot then rasterizes ONLY the tiles its bit is set in (the tile-quad
+        // VS self-culls the rest), keeps the pixels whose recorded slot matches, and shades each with its own
+        // per-instance MaterialIndex. So instances of one master share both the geometry batch AND this
+        // shading draw -- O(distinct visible master shaders) tile-binned draws, not per-instance, not fullscreen.
+        const auto& DeferredMaterials = Frame.Geometry.DeferredMaterials;
+
+        BinnedDeferredSlotShaders.clear();
         uint32 MaxMaterialIndex = 0u;
-        for (uint32 Idx : OpaqueDrawList)
+        for (const auto& M : DeferredMaterials)
         {
-            const FMeshDrawCommand& Batch = DrawCommands[Idx];
-            if (!Batch.DeferredShader)
+            if (M.DeferredShader)
+            {
+                MaxMaterialIndex = Math::Max(MaxMaterialIndex, M.MaterialIndex);
+            }
+        }
+
+        BinnedDeferredSlotByMaterial.assign((size_t)MaxMaterialIndex + 1u, 0xFFFFFFFFu);
+        for (const auto& M : DeferredMaterials)
+        {
+            if (!M.DeferredShader)
             {
                 continue;
             }
-            BinnedDeferredSlotMaterials.push_back(Idx);
-            MaxMaterialIndex = Math::Max(MaxMaterialIndex, Batch.MaterialIndex);
+            // Dense slot per distinct DeferredShader (linear scan: distinct visible masters per frame are few).
+            uint32 Slot = 0xFFFFFFFFu;
+            for (uint32 s = 0; s < (uint32)BinnedDeferredSlotShaders.size(); ++s)
+            {
+                if (BinnedDeferredSlotShaders[s] == M.DeferredShader)
+                {
+                    Slot = s;
+                    break;
+                }
+            }
+            if (Slot == 0xFFFFFFFFu)
+            {
+                Slot = (uint32)BinnedDeferredSlotShaders.size();
+                BinnedDeferredSlotShaders.push_back(M.DeferredShader);
+            }
+            BinnedDeferredSlotByMaterial[M.MaterialIndex] = Slot;
         }
 
-        const uint32 NumSlots = (uint32)BinnedDeferredSlotMaterials.size();
+        const uint32 NumSlots = (uint32)BinnedDeferredSlotShaders.size();
 
         const FSceneImage& ColorImg  = ColorRT;
         const FSceneImage& PickerImg = PickerRT;
@@ -5685,14 +5751,8 @@ namespace Lumina
         const uint32 TotalTiles   = TileCountX * TileCountY;
         const uint32 TileWordCount = (NumSlots + 31u) / 32u;
 
-        // Dense MaterialIndex -> slot lookup (one material == one opaque batch, so this is 1:1). Uploaded to
-        // the transient ring; the classify shader reads it by device address.
-        BinnedDeferredSlotByMaterial.assign((size_t)MaxMaterialIndex + 1u, 0xFFFFFFFFu);
-        for (uint32 Slot = 0; Slot < NumSlots; ++Slot)
-        {
-            const FMeshDrawCommand& Batch = DrawCommands[BinnedDeferredSlotMaterials[Slot]];
-            BinnedDeferredSlotByMaterial[Batch.MaterialIndex] = Slot;
-        }
+        // MaterialIndex -> dense slot (built above; every instance of a master maps to the master's slot).
+        // Uploaded to the transient ring; the classify shader reads it by device address.
         const RHI::GPUPtr SlotByMaterialAddr =
             RHI::Core::CopyTransientArray(BinnedDeferredSlotByMaterial.data(), BinnedDeferredSlotByMaterial.size());
 
@@ -5752,15 +5812,16 @@ namespace Lumina
         RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
 
         // Layout overlays FDBufferPushConstants on offsets 0-12 so ShadeSurface's ApplyDBuffer reads the
-        // decal indices from this same push constant; MaterialIndex follows. Tile-binning fields trail it
-        // and must stay byte-identical with DeferredMaterial.slang/DeferredMaterialTileVS.slang.
+        // decal indices from this same push constant. The per-pixel reject now keys on SlotIndex (MaterialIdAddr
+        // stores the owning SLOT, see classify), so MaterialIndex is unused-but-kept for byte-identical layout
+        // with DeferredMaterial.slang/DeferredMaterialTileVS.slang.
         struct FDeferredPushConstants
         {
             uint32      VisBufferIndex;
             uint32      DBufferAIndex;
             uint32      DBufferBIndex;
             uint32      DBufferCIndex;
-            uint32      MaterialIndex;
+            uint32      MaterialIndex;    // unused: superseded by SlotIndex as the per-pixel reject key
             uint32      DrawListCount;
             uint32      SlotIndex;
             uint32      TileCountX;
@@ -5769,7 +5830,7 @@ namespace Lumina
             uint32      ScreenW;
             uint32      ScreenH;
             RHI::GPUPtr TileBitsAddr;
-            RHI::GPUPtr MaterialIdAddr;
+            RHI::GPUPtr MaterialIdAddr;   // per-pixel owning deferred slot (classify output)
         } PC = {};
         static_assert(sizeof(FDeferredPushConstants) == 64, "FDeferredPushConstants must match DeferredMaterial.slang FDeferredPassArgs.");
         PC.VisBufferIndex = (uint32)VisRT.GetResourceID();
@@ -5794,22 +5855,20 @@ namespace Lumina
         PC.TileBitsAddr   = TileBits.GetAddress();
         PC.MaterialIdAddr = PixelId.GetAddress();
 
-        // One tile-quad instanced draw per opaque material; the VS self-culls tiles the material doesn't
-        // cover, so a material only touches the pixels it actually owns.
+        // One tile-quad instanced draw per master DeferredShader; the VS self-culls tiles this slot doesn't
+        // cover, so a shader only touches the pixels its instances own. The pixel shader reads each pixel's
+        // own MaterialIndex for instance uniforms, so all instances of the master shade in this one draw.
         for (uint32 Slot = 0; Slot < NumSlots; ++Slot)
         {
-            const FMeshDrawCommand& Batch = DrawCommands[BinnedDeferredSlotMaterials[Slot]];
-
             FGraphicsPipelineKey Key;
             Key.VS          = TileVS;
-            Key.PS          = Batch.DeferredShader;
+            Key.PS          = BinnedDeferredSlotShaders[Slot];
             Key.SampleCount = MSAASampleCount;
             Key.ColorTargets.push_back({ ColorImg.Desc.Format, {} });
             Key.ColorTargets.push_back({ PickerImg.Desc.Format, {} });
             RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
-            PC.MaterialIndex = Batch.MaterialIndex;
-            PC.SlotIndex     = Slot;
+            PC.SlotIndex = Slot;
             RHI::CmdDraw(CL, MakeArgs(PC), 6, TotalTiles, 0, 0);
         }
 
@@ -9209,6 +9268,10 @@ namespace Lumina
             // Atomic counter paired with MeshletDeferList; zeroed via CmdMemset before phase 0.
             DeferCountRing[Slot] = CreateSceneBuffer(sizeof(uint32));
 
+            // {GroupCountX,Y,Z} for the late-cull indirect dispatch; written GPU-side from DeferCount each
+            // frame so the late cull launches O(deferred) workgroups, not the worst-case full-scene grid.
+            CullDispatchArgsRing[Slot] = CreateSceneBuffer(sizeof(uint32) * 3);
+
             // SPD hand-off counter: phase 1 (per-tile mips 0..5) to phase 2 (last workgroup,
             // mips 6..11). Zeroed before each dispatch; phase 2 resets it so it stays zero.
             SpdCounterRing[Slot] = CreateSceneBuffer(sizeof(uint32));
@@ -9257,7 +9320,7 @@ namespace Lumina
         {
             return;
         }
-        const uint8 Desired = ::Lumina::GetMSAASampleCount(RenderFrame->CachedWorldSettings.MSAASampleCount);
+        const uint8 Desired = ResolveVisBufferSampleCount(RenderFrame->CachedWorldSettings.MSAASampleCount);
 
         if (Desired == MSAASampleCount)
         {
@@ -9637,7 +9700,7 @@ namespace Lumina
         Hash::HashCombine(Seed, ((uint64)Key.Topology) | ((uint64)Key.bWireframe << 8) |
                                 ((uint64)Key.bAlphaToCoverage << 9) | ((uint64)Key.SampleCount << 16) |
                                 ((uint64)Key.DepthFormat << 24) | ((uint64)Key.PassVariant << 32) |
-                                ((uint64)Key.ShadingFeatures << 40));
+                                ((uint64)Key.ShadingFeatures << 40) | ((uint64)Key.bVisBufferMasked << 56));
         for (const RHI::FColorTarget& Target : Key.ColorTargets)
         {
             const RHI::FBlendDesc& B = Target.Blend;
@@ -9682,8 +9745,9 @@ namespace Lumina
             MakeUInt(1, (Key.ShadingFeatures & SF_DebugViews) ? 1u : 0u),
             MakeUInt(2, (Key.ShadingFeatures & SF_Decals)     ? 1u : 0u),
             MakeUInt(3, (Key.ShadingFeatures & SF_SSAO)       ? 1u : 0u),
+            MakeUInt(4, Key.bVisBufferMasked ? 1u : 0u),
         };
-        const TSpan<const RHI::FSpecializationConstant> Consts(SpecConsts, 4);
+        const TSpan<const RHI::FSpecializationConstant> Consts(SpecConsts, 5);
         RHI::FPipelineH Pipeline = Key.MS
             ? RHI::CreateMeshShaderPipeline(RHI::FShaderSource{}, Key.MS->Source(), PSSource, Desc, Consts)
             : RHI::CreateGraphicsPipeline(Key.VS->Source(), PSSource, Desc, Consts);

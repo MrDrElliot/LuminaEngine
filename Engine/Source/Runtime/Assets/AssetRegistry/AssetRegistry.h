@@ -6,6 +6,7 @@
 #include "Core/Threading/Thread.h"
 #include "Memory/SmartPtr.h"
 #include "GUID/GUID.h"
+#include <atomic>
 
 
 DECLARE_MULTICAST_DELEGATE(FAssetRegistryUpdatedDelegate);
@@ -132,10 +133,21 @@ namespace Lumina
 
 		FAssetRegistryUpdatedDelegate& GetOnAssetRegistryUpdated() { return OnAssetRegistryUpdated; }
 
+		// Coalesce registry-update broadcasts across a bulk operation (e.g. importing many assets). While
+		// suspended (count > 0) the per-asset mutators record a pending broadcast instead of firing one each;
+		// the final ResumeBroadcasts fires a single broadcast iff anything changed. Reentrant/thread-safe.
+		// Prefer the FScopedAssetRegistryBatch guard below.
+		void SuspendBroadcasts();
+		void ResumeBroadcasts();
+
 		const FAssetDataMap& GetAssets() const { return Assets; }
 		const TVector<FString>& GetFailedAssets() const { return FailedAssets; }
 
 	private:
+
+		// Fire OnAssetRegistryUpdated, or, while broadcasts are suspended, just flag one pending. Always called
+		// OUTSIDE AssetsMutex so a listener can re-enter the (non-recursive) registry without self-deadlock.
+		void NotifyRegistryChanged();
 
 		// True iff the on-disk asset is new or changed since the cached entry was extracted.
 		bool NeedsReextract(FStringView Path, int64 MTimeNs, uint64 ContentHash) const;
@@ -176,10 +188,25 @@ namespace Lumina
 		THashMap<FGuid, TVector<FGuid>, FGuidHash> ReverseDepMap; // dep -> referrers
 		mutable bool					bReverseMapDirty = true;
 
+		// Broadcast coalescing (see SuspendBroadcasts). Suspend count is reentrant; pending flag survives until
+		// the final resume fires the single broadcast.
+		std::atomic<int32>				BroadcastSuspendCount { 0 };
+		std::atomic<bool>				bBroadcastPending { false };
+
 		// Snapshot from the most recent RunInitialDiscovery, consumed by
 		// OnInitialDiscoveryCompleted to drive the reap pass.
 		TVector<FFixedString>			LastDiscoveryWalkedRoots;
 		TVector<FFixedString>			LastDiscoveryVisitedPaths; // sorted
+	};
+
+	// RAII: suspends FAssetRegistry broadcasts for its lifetime so a bulk operation (importing many assets)
+	// fires one registry-update broadcast at the end instead of one per asset. Reentrant (nests safely).
+	struct RUNTIME_API FScopedAssetRegistryBatch
+	{
+		FScopedAssetRegistryBatch();
+		~FScopedAssetRegistryBatch();
+		FScopedAssetRegistryBatch(const FScopedAssetRegistryBatch&) = delete;
+		FScopedAssetRegistryBatch& operator=(const FScopedAssetRegistryBatch&) = delete;
 	};
 
 }

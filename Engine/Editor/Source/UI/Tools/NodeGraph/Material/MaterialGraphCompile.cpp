@@ -98,6 +98,37 @@ namespace Lumina
                     TSpan<const uint32>(Header.Binaries.data(), Header.Binaries.size()));
             });
 
+            // Masked-only VisBuffer PIXEL shaders: run the opacity graph + discard cut-out texels BEFORE they
+            // write VisID/depth. The GEOMETRY stage is the SHARED VisBuffer VS/mesh above -- the VISBUFFER_MASKED
+            // spec constant makes it emit interpolants for masked materials (no separate masked geometry shader).
+            // Two PS variants: flat-VisID (VS path) + SV_PrimitiveID (mesh path). Cleared first so a
+            // masked->opaque recompile drops the stale stages (never bound for non-masked).
+            Material->MaskedVisBufferPixelShaderBinaries.clear();
+            Material->MaskedVisBufferPixelShaderPrimBinaries.clear();
+            Material->MaskedVisBufferPixelShader       = nullptr;
+            Material->MaskedVisBufferPixelShaderPrim   = nullptr;
+            if (Material->GetBlendMode() == EBlendMode::Masked)
+            {
+                const FString MaskedPSSource = Compiler.BuildPixelShaderFromTemplate(MeshShaderDir + "VisBufferMaskedPixel.slang");
+                FShaderCompileOptions MaskedPSOptions; MaskedPSOptions.DebugName = MatName + " [MVBP]";
+                ShaderCompiler->CompilerShaderRaw(MaskedPSSource, Move(MaskedPSOptions), [Material](const FShaderHeader& Header) mutable
+                {
+                    Material->MaskedVisBufferPixelShaderBinaries.assign(Header.Binaries.begin(), Header.Binaries.end());
+                    Material->MaskedVisBufferPixelShader = FShaderLibrary::Commit(FName((Material->GetGUID().ToString() + "_MVBP").c_str()), ERHIShaderType::Fragment,
+                        TSpan<const uint32>(Header.Binaries.data(), Header.Binaries.size()));
+                });
+
+                // Mesh-path variant: same source compiled with VISBUFFER_PRIMID (VisID via SV_PrimitiveID).
+                FShaderCompileOptions MaskedPSPrimOptions; MaskedPSPrimOptions.DebugName = MatName + " [MVBPP]";
+                MaskedPSPrimOptions.MacroDefinitions.emplace_back("VISBUFFER_PRIMID");
+                ShaderCompiler->CompilerShaderRaw(MaskedPSSource, Move(MaskedPSPrimOptions), [Material](const FShaderHeader& Header) mutable
+                {
+                    Material->MaskedVisBufferPixelShaderPrimBinaries.assign(Header.Binaries.begin(), Header.Binaries.end());
+                    Material->MaskedVisBufferPixelShaderPrim = FShaderLibrary::Commit(FName((Material->GetGUID().ToString() + "_MVBPP").c_str()), ERHIShaderType::Fragment,
+                        TSpan<const uint32>(Header.Binaries.data(), Header.Binaries.size()));
+                });
+            }
+
             const FString DeferredSource = Compiler.BuildDeferredShaderFromTemplate(MeshShaderDir + "DeferredMaterial.slang", EMaterialType::PBR);
             FShaderCompileOptions DeferredOptions; DeferredOptions.DebugName = MatName + " [DM]";
             ShaderCompiler->CompilerShaderRaw(DeferredSource, Move(DeferredOptions), [Material](const FShaderHeader& Header) mutable
@@ -145,6 +176,14 @@ namespace Lumina
             // the mesh-shader variants are optional (device-gated), so they're not checked here.
             bStageFailed |= StageEmpty(Material->DeferredShaderBinaries, "Deferred");
             bStageFailed |= StageEmpty(Material->VisBufferVertexShaderBinaries, "VisBuffer");
+            // Masked materials additionally require their masked VisBuffer PIXEL shaders so cut-outs clip in the
+            // geometry stage; without them they'd stamp full-coverage depth and occlude geometry behind. (The
+            // geometry shader is the shared VisBuffer VS/mesh, already required above, spec-gated for masked.)
+            if (Material->GetBlendMode() == EBlendMode::Masked)
+            {
+                bStageFailed |= StageEmpty(Material->MaskedVisBufferPixelShaderBinaries, "Masked VisBuffer Pixel");
+                bStageFailed |= StageEmpty(Material->MaskedVisBufferPixelShaderPrimBinaries, "Masked VisBuffer Pixel (mesh)");
+            }
         }
         if (bStageFailed)
         {

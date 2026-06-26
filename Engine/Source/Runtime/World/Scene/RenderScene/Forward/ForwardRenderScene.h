@@ -93,6 +93,8 @@ namespace Lumina
             const FShaderEntry*                 MeshShader   = nullptr;   // mesh-path geometry stage (optional)
             const FShaderEntry*                 VisBufferMeshShader   = nullptr;
             const FShaderEntry*                 VisBufferVertexShader = nullptr;
+            const FShaderEntry*                 MaskedVisBufferPixelShader  = nullptr;
+            const FShaderEntry*                 MaskedVisBufferPixelShaderPrim = nullptr;
             const FShaderEntry*                 DeferredShader        = nullptr;
             uint16                              MaterialIdx = 0;
             TFrameVector<FDrawKey>              LocalDraws;
@@ -118,6 +120,8 @@ namespace Lumina
             const FShaderEntry* MeshShader;
             const FShaderEntry* VisBufferMeshShader;
             const FShaderEntry* VisBufferVertexShader;
+            const FShaderEntry* MaskedVisBufferPixelShader;
+            const FShaderEntry* MaskedVisBufferPixelShaderPrim;
             const FShaderEntry* DeferredShader;
             uint64              MaterialID;
             uint16              MaterialIdx;
@@ -282,6 +286,15 @@ namespace Lumina
             bool                             bExtractedThisFrame = false;
             FSceneRenderStats                FrameStats = {};
 
+            // One distinct opaque GPU material slot (a material instance) + the master DeferredShader that
+            // shades it. The deferred pass groups these by DeferredShader so instances of one master share a
+            // single shading draw (they batch in geometry too), while each keeps its own MaterialIndex/uniforms.
+            struct FDeferredMaterialEntry
+            {
+                uint32              MaterialIndex;
+                const FShaderEntry* DeferredShader;
+            };
+
             struct FGeometry
             {
                 TVector<FGPUInstance>            Instances;
@@ -292,6 +305,7 @@ namespace Lumina
                 TVector<uint32>                  OpaqueDrawList;
                 TVector<uint32>                  OpaqueOccluderDrawList;
                 TVector<uint32>                  TranslucentDrawList;
+                TVector<FDeferredMaterialEntry>  DeferredMaterials;   // distinct opaque slots for the deferred pass
                 FSceneCullContext                SceneCullContext;
                 TVector<uint32>                  DrawMeshletStartOffsets;
                 TVector<uint32>                  InstanceMeshletPrefix;
@@ -477,6 +491,7 @@ namespace Lumina
         FSceneBuffer GetMeshDrawArgs()     const { return MeshDrawArgsRing[CurrentFrameSlot]; }
         FSceneBuffer GetMeshletDeferList() const { return MeshletDeferListRing[CurrentFrameSlot]; }
         FSceneBuffer GetDeferCount()       const { return DeferCountRing[CurrentFrameSlot]; }
+        FSceneBuffer GetCullDispatchArgs() const { return CullDispatchArgsRing[CurrentFrameSlot]; }
         FSceneBuffer GetSpdCounter()       const { return SpdCounterRing[CurrentFrameSlot]; }
 
         // Deferred material-binning scratch (device-address only): per-tile material bitmask + per-pixel
@@ -660,6 +675,7 @@ namespace Lumina
             EFormat         DepthFormat = EFormat::UNKNOWN;
             EMeshPass       PassVariant = EMeshPass::Base;   // EPass spec constant for the merged VS
             uint32          ShadingFeatures = SF_All;        // ShadeSurface spec constants (ids 1-3)
+            bool            bVisBufferMasked = false;        // VISBUFFER_MASKED spec constant (id 4): VisBuffer geometry emits interpolants
             TFixedVector<RHI::FColorTarget, 4> ColorTargets;
         };
 
@@ -667,8 +683,7 @@ namespace Lumina
         RHI::FPipelineH      GetOrCreateComputePipeline(const FShaderEntry* CS);
         RHI::FDepthStencilH  GetOrCreateDepthState(const RHI::FDepthStencilDesc& Desc);
 
-        // Engine-wide per-draw args: FRootConstants{SceneRoot, PassData} in the transient ring;
-        // the returned address is what every CmdDraw/CmdDispatch pushes as gRHI.Args.
+        // Engine-wide per-draw args.
         template<typename T>
         RHI::GPUPtr MakeArgs(const T& PassData)
         {
@@ -687,11 +702,10 @@ namespace Lumina
 
         static void WriteBuffer(RHI::FCmdListH CL, RHI::GPUPtr Dst, const void* Data, uint64 Size);
 
-        // Grow/shrink-with-hysteresis for the persistent GPU buffers; the replaced
-        // allocation is queued on DeferredFrees for the current slot.
+        // Grow/shrink-with-hysteresis for the persistent GPU buffers.
         void ResizeBufferIfNeeded(FSceneBuffer& Buffer, uint64 NeededSize, float SlackFactor, uint32& LowUsageCounter);
 
-        // Frame-deferred destruction: freed when this slot's previous GPU work has completed.
+        // Freed when this slot's previous GPU work has completed.
         void DeferFree(RHI::GPUPtr Ptr);
         void DeferRelease(FSceneImage& Image);
     
@@ -772,6 +786,7 @@ namespace Lumina
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          MeshDrawArgsRing = {};
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          MeshletDeferListRing = {};
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          DeferCountRing = {};
+        TArray<FSceneBuffer, RHI::kFramesInFlight>                          CullDispatchArgsRing = {};   // {GroupCountX,Y,Z} for the late-cull indirect dispatch
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          SpdCounterRing = {};
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          MaterialBinTileBitsRing = {};
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          MaterialBinPixelIdRing = {};
@@ -795,8 +810,8 @@ namespace Lumina
         TVector<uint32>                         MergeThreadBoneBase;
 
         // Deferred material-binning scratch (rebuilt each DeferredMaterialPass; capacity reused):
-        // dense slot -> DrawCommands index, and global MaterialIndex -> dense slot.
-        TVector<uint32>                         BinnedDeferredSlotMaterials;
+        // dense slot -> master DeferredShader, and global MaterialIndex -> dense slot.
+        TVector<const FShaderEntry*>            BinnedDeferredSlotShaders;
         TVector<uint32>                         BinnedDeferredSlotByMaterial;
 
         TVector<uint32>                         ShadowSizeScratch;

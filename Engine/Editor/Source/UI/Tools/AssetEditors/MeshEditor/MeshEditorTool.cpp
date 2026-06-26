@@ -390,10 +390,21 @@ namespace Lumina
             // Shared threshold editor writes to every surface in lockstep; per-surface overrides still work below.
             if (!Resource.GeometrySurfaces.empty())
             {
+                // Thresholds are authored globally, but a surface that built fewer LODs leaves FLT_MAX in its
+                // unused high slots. Read each LOD's shared value from a surface that actually has that LOD so a
+                // high row doesn't display the FLT_MAX sentinel when surface 0 happens to be a low-LOD surface.
                 float SharedThresholds[MAX_MESH_LODS];
                 for (uint32 i = 0; i < MAX_MESH_LODS; ++i)
                 {
-                    SharedThresholds[i] = Resource.GeometrySurfaces[0].LODScreenThreshold[i];
+                    SharedThresholds[i] = (i == 0) ? 0.0f : FLT_MAX;
+                    for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
+                    {
+                        if (i < Surface.NumLODs)
+                        {
+                            SharedThresholds[i] = Surface.LODScreenThreshold[i];
+                            break;
+                        }
+                    }
                 }
 
                 bool bThresholdChanged = false;
@@ -440,10 +451,11 @@ namespace Lumina
 
                 if (bThresholdChanged)
                 {
-                    // Replicate to every surface; persist via package dirty.
+                    // Replicate to every surface, but only into the LODs that surface actually has -- leave the
+                    // unused high slots at their FLT_MAX sentinel (never read at runtime; the picker stops at NumLODs).
                     for (FGeometrySurface& Surface : Resource.GeometrySurfaces)
                     {
-                        for (uint32 i = 0; i < MAX_MESH_LODS; ++i)
+                        for (uint32 i = 0; i < Surface.NumLODs; ++i)
                         {
                             Surface.LODScreenThreshold[i] = SharedThresholds[i];
                         }
@@ -600,8 +612,6 @@ namespace Lumina
     {
         FEditorTool::SetupWorldForTool();
         
-        World->GetRenderer()->GetSceneRenderSettings().bDrawBillboards = false;
-        
         DirectionalLightEntity = World->ConstructEntity("Directional Light");
         World->GetEntityRegistry().emplace<SDirectionalLightComponent>(DirectionalLightEntity);
         World->GetEntityRegistry().emplace<SEnvironmentComponent>(DirectionalLightEntity);
@@ -632,6 +642,12 @@ namespace Lumina
         if (!World.IsValid())
         {
             return;
+        }
+        
+        // @TODO figure out why this needs to exist..
+        if (World->GetRenderer())
+        {
+            World->GetRenderer()->GetSceneRenderSettings().bDrawBillboards = false;
         }
 
         SStaticMeshComponent& StaticMeshComponent = World->GetEntityRegistry().get<SStaticMeshComponent>(MeshEntity);

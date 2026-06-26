@@ -72,8 +72,18 @@ namespace Lumina
 
         for (const FMaterialParameterOverride& Override : Overrides)
         {
-            ApplyOverride(Override, Parameters, MaterialUniforms);
+            // Disabled overrides keep their stored value but are not applied; the parent value shows through.
+            if (Override.bEnabled)
+            {
+                ApplyOverride(Override, Parameters, MaterialUniforms);
+            }
         }
+    }
+
+    void CMaterialInstance::RefreshFromParent()
+    {
+        RebuildUniformsFromOverrides();
+        UpdateMaterialUniforms();
     }
 
     static FMaterialParameterOverride& FindOrAddOverride(TVector<FMaterialParameterOverride>& Overrides, const FName& Name, EMaterialParameterType Type)
@@ -107,15 +117,13 @@ namespace Lumina
             return false;
         }
 
-        if (Param.Index < MAX_SCALARS)
-        {
-            MaterialUniforms.Scalars[Param.Index] = Value;
-        }
+        FMaterialParameterOverride& Override = FindOrAddOverride(Overrides, Name, EMaterialParameterType::Scalar);
+        Override.Scalar = Value;
+        Override.bEnabled = true;
 
-        FindOrAddOverride(Overrides, Name, EMaterialParameterType::Scalar).Scalar = Value;
-
+        RebuildUniformsFromOverrides();
         UpdateMaterialUniforms();
-        
+
         return true;
     }
 
@@ -133,13 +141,11 @@ namespace Lumina
             return false;
         }
 
-        if (Param.Index < MAX_VECTORS)
-        {
-            MaterialUniforms.Vectors[Param.Index] = Value;
-        }
+        FMaterialParameterOverride& Override = FindOrAddOverride(Overrides, Name, EMaterialParameterType::Vector);
+        Override.Vector = Value;
+        Override.bEnabled = true;
 
-        FindOrAddOverride(Overrides, Name, EMaterialParameterType::Vector).Vector = Value;
-
+        RebuildUniformsFromOverrides();
         UpdateMaterialUniforms();
 
         return true;
@@ -159,21 +165,13 @@ namespace Lumina
             return false;
         }
 
-        if (Param.Index < MAX_TEXTURES)
-        {
-            if (TextureValue && TextureValue->GetResourceID() >= 0)
-            {
-                MaterialUniforms.Textures[Param.Index] = (uint32)TextureValue->GetResourceID();
-            }
-            else
-            {
-                // Fall back to parent default texture.
-                MaterialUniforms.Textures[Param.Index] = Material->MaterialUniforms.Textures[Param.Index];
-            }
-        }
+        FMaterialParameterOverride& Override = FindOrAddOverride(Overrides, Name, EMaterialParameterType::Texture);
+        Override.Texture = TextureValue;
+        Override.bEnabled = true;
 
-        FindOrAddOverride(Overrides, Name, EMaterialParameterType::Texture).Texture = TextureValue;
-        
+        RebuildUniformsFromOverrides();
+        UpdateMaterialUniforms();
+
         return true;
     }
 
@@ -194,16 +192,80 @@ namespace Lumina
         return false;
     }
 
-    bool CMaterialInstance::HasOverride(const FName& Name) const
+    const FMaterialParameterOverride* CMaterialInstance::FindOverride(const FName& Name) const
     {
         for (const FMaterialParameterOverride& O : Overrides)
         {
             if (O.ParameterName == Name)
             {
-                return true;
+                return &O;
             }
         }
-        return false;
+        return nullptr;
+    }
+
+    bool CMaterialInstance::IsOverrideEnabled(const FName& Name) const
+    {
+        const FMaterialParameterOverride* Override = FindOverride(Name);
+        return Override != nullptr && Override->bEnabled;
+    }
+
+    void CMaterialInstance::SetOverrideEnabled(const FName& Name, bool bEnabled)
+    {
+        if (!Material)
+        {
+            return;
+        }
+
+        // An existing entry just flips its flag; the stored value is retained either way, so re-enabling
+        // restores the user's edits rather than resetting to the parent.
+        for (FMaterialParameterOverride& O : Overrides)
+        {
+            if (O.ParameterName == Name)
+            {
+                O.bEnabled = bEnabled;
+                RebuildUniformsFromOverrides();
+                UpdateMaterialUniforms();
+                return;
+            }
+        }
+
+        // Disabling a parameter that was never overridden: nothing to do.
+        if (!bEnabled)
+        {
+            return;
+        }
+
+        // First enable: create the entry seeded with the parent's current value so it starts where the
+        // parameter already is. From here the value persists across toggles.
+        FMaterialParameter Param;
+        const bool bFound =
+            GetParameterValue(EMaterialParameterType::Scalar,  Name, Param) ||
+            GetParameterValue(EMaterialParameterType::Vector,  Name, Param) ||
+            GetParameterValue(EMaterialParameterType::Texture, Name, Param);
+        if (!bFound)
+        {
+            LOG_ERROR("Cannot override unknown parameter '{}'", Name);
+            return;
+        }
+
+        FMaterialParameterOverride& Override = FindOrAddOverride(Overrides, Name, Param.Type);
+        Override.bEnabled = true;
+        switch (Param.Type)
+        {
+        case EMaterialParameterType::Scalar:
+            Override.Scalar = (Param.Index < MAX_SCALARS) ? Material->MaterialUniforms.Scalars[Param.Index] : 0.0f;
+            break;
+        case EMaterialParameterType::Vector:
+            Override.Vector = (Param.Index < MAX_VECTORS) ? Material->MaterialUniforms.Vectors[Param.Index] : FVector4(0.0f);
+            break;
+        case EMaterialParameterType::Texture:
+            Override.Texture = (Param.Index < Material->Textures.size()) ? Material->Textures[Param.Index] : nullptr;
+            break;
+        }
+
+        RebuildUniformsFromOverrides();
+        UpdateMaterialUniforms();
     }
 
     void CMaterialInstance::RemoveOverride(const FName& Name)

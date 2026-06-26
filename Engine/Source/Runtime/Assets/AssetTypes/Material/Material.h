@@ -56,6 +56,13 @@ namespace Lumina
         const FShaderEntry* GetVisBufferMeshShader() const { return VisBufferMeshShader; }
         const FShaderEntry* GetVisBufferVertexShader() const { return VisBufferVertexShader; }
 
+        // Masked-only VisBuffer PIXEL shaders: run the opacity graph and alpha-clip cut-out texels BEFORE they
+        // write VisID/depth (VisBufferMaskedPixel.slang). The GEOMETRY stage is the SAME shared VisBuffer VS/mesh
+        // as opaque -- the VISBUFFER_MASKED spec constant makes it emit the interpolants the masked PS reads.
+        // Flat = VS-emulation path; Prim = mesh-shader path (SV_PrimitiveID). Null for non-masked materials.
+        const FShaderEntry* GetMaskedVisBufferPixelShader() const { return MaskedVisBufferPixelShader; }
+        const FShaderEntry* GetMaskedVisBufferPixelShaderPrim() const { return MaskedVisBufferPixelShaderPrim; }
+
         // Deferred material pixel shader (DeferredMaterial.slang): reconstructs surface from the VisBuffer
         // triangle ID and shades. The deferred pass binds it per opaque material.
         const FShaderEntry* GetDeferredShader() const { return DeferredShader; }
@@ -122,6 +129,14 @@ namespace Lumina
         PROPERTY()
         TVector<uint32>                         VisBufferVertexShaderBinaries;
 
+        /** Masked-only VisBuffer pixel stage, VS path (VisBufferMaskedPixel.slang): opacity clip; empty for non-masked. */
+        PROPERTY()
+        TVector<uint32>                         MaskedVisBufferPixelShaderBinaries;
+
+        /** Masked-only VisBuffer pixel stage, mesh path (VisBufferMaskedPixel.slang + VISBUFFER_PRIMID). */
+        PROPERTY()
+        TVector<uint32>                         MaskedVisBufferPixelShaderPrimBinaries;
+
         /** Deferred material pixel stage (DeferredMaterial.slang); empty if not compiled. */
         PROPERTY()
         TVector<uint32>                         DeferredShaderBinaries;
@@ -137,6 +152,8 @@ namespace Lumina
         const FShaderEntry*                     MeshShader = nullptr;
         const FShaderEntry*                     VisBufferMeshShader = nullptr;
         const FShaderEntry*                     VisBufferVertexShader = nullptr;
+        const FShaderEntry*                     MaskedVisBufferPixelShader = nullptr;
+        const FShaderEntry*                     MaskedVisBufferPixelShaderPrim = nullptr;
         const FShaderEntry*                     DeferredShader = nullptr;
 
     protected:

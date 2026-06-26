@@ -15,7 +15,17 @@ namespace Lumina
         // v2: ERHIShaderType renumbered when the old RHI's resource-type enum was trimmed.
         // v3: shader debug-info level raised to STANDARD (Nsight source debugging) on non-AMD non-Shipping.
         // v4: Slang optimization forced to HIGH (DEFAULT -O1 emitted spirv-val-invalid BDA pointer locals).
-        constexpr uint32 SHADER_CACHE_VERSION = 4;
+        // v5: deferred material binning re-keyed per-pixel on owning SLOT (classify/DeferredMaterial) so
+        //     instances of a shared master shade in one draw.
+        // v6: SampleTexture2DGrad added (GlobalRHI); deferred material lane samples with analytic UV gradients
+        //     (correct mips across triangle/meshlet/instance seams -- the VisBuffer deferred-texturing fix).
+        // v7: VisBuffer geometry unified opaque+masked via the VISBUFFER_MASKED spec constant (FVisVertexOut
+        //     interpolants gated/dead-stripped); separate masked geometry shaders removed.
+        // v8: VisBuffer mesh shader sized to the vertex phase ([numthreads(64)] + grid-stride tri loop);
+        //     BuildCullDispatchArgs added (late cull now indirect-dispatched from DeferCount).
+        // v9: mesh shaders (MeshletVisBuffer/MeshletMesh) take SV_DrawIndex + pull MeshletBase from the cull
+        //     args (one indirect draw per batch, not per sub-draw) -- push-constant layout changed.
+        constexpr uint32 SHADER_CACHE_VERSION = 9;
 
         constexpr const char* CACHE_DIR = "/Intermediates/ShaderCache";
 

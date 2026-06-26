@@ -77,6 +77,8 @@ namespace Lumina
 		const FShaderEntry*					MeshShader   = nullptr;
 		const FShaderEntry*					VisBufferMeshShader   = nullptr;   // VisBuffer geometry, mesh path
 		const FShaderEntry*					VisBufferVertexShader = nullptr;   // VisBuffer geometry, VS-emulation path
+		const FShaderEntry*					MaskedVisBufferPixelShader  = nullptr;   // masked-only PS, VS path (flat VisID): opacity clip
+		const FShaderEntry*					MaskedVisBufferPixelShaderPrim = nullptr; // masked-only PS, mesh path (SV_PrimitiveID)
 		const FShaderEntry*					DeferredShader        = nullptr;   // deferred material pixel shader
 		uint32                      		MaterialIndex = 0;                  // GPU material slot (deferred pixel classification)
 		uint32                      		IndirectDrawOffset = 0;

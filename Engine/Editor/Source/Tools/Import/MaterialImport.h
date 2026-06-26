@@ -48,12 +48,13 @@ namespace Lumina
         // and returns the instances indexed by Data.Materials index (entries may be null on failure). One
         // master is created per distinct render state (blend mode / shading model / two-sided / cutoff), since
         // instances can only diverge in parameters. Texture parameters are resolved from TextureMap
-        // (FMeshImportImage::RelativePath -> loaded CTexture). Every created CObject (the two neutral default
-        // textures, the master(s), and the instances) is appended to OutCreated for the caller to save,
-        // register, and tear down alongside the rest of the import.
+        // (FMeshImportImage::RelativePath -> loaded CTexture). MaterialsDir is the package directory every
+        // generated asset is created under (the master(s), the instances, and the two neutral default
+        // textures). Every created CObject is appended to OutCreated for the caller to save, register, and
+        // tear down alongside the rest of the import.
         EDITOR_API TVector<CMaterialInstance*> GenerateMaterials(
             const Import::Mesh::FMeshImportData&         Data,
-            const FFixedString&                          DestinationDir,
+            const FFixedString&                          MaterialsDir,
             const FFixedString&                          BaseName,
             const THashMap<FFixedString, CTexture*>&     TextureMap,
             TVector<CObject*>&                           OutCreated);

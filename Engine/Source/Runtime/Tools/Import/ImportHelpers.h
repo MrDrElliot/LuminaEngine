@@ -83,6 +83,12 @@ namespace Lumina::Import
             /** Semantic role from the mesh importer; Auto defers to filename heuristic. */
             ETextureColorSpace IntendedColorSpace = ETextureColorSpace::Auto;
 
+            // Total basisu encode threads for this texture (includes the calling thread; 1 = single-threaded).
+            // 0 = auto (use the worker count). A batch importer that cooks many textures in parallel sets this to
+            // 1 so each texture doesn't also spawn a full encode pool and oversubscribe the cores. Not part of
+            // identity (operator== / hasher ignore it).
+            uint32 EncodeThreadBudget = 0;
+
             NODISCARD bool IsBytes() const { return !Bytes.empty(); }
 
             bool operator==(const FMeshImportImage& Other) const

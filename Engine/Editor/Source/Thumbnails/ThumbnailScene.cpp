@@ -39,7 +39,6 @@ namespace Lumina
         if (IRenderScene* Scene = World->GetRenderer())
         {
             Scene->Resize(FUIntVector2(RTSize, RTSize));
-            // Editor-only debug overlays don't belong in saved thumbnails.
             Scene->GetSceneRenderSettings().bDrawBillboards = false;
         }
 

@@ -176,7 +176,10 @@ namespace Lumina
     }
 
     // Encodes RGBA8 via Basis Universal; shared by initial import and Recook.
-    static bool CookTexturePixels(CTexture* Texture, const TVector<uint8>& Pixels, FUIntVector2 Dimensions, ETextureColorSpace ColorSpace)
+    // EncodeThreads = total basisu encode threads (basisu counts the calling thread, so 1 = single-threaded,
+    // 0 new threads). 0 = auto (use the worker count). A batch importer cooking many textures in parallel
+    // passes 1 so each texture doesn't spawn its own full pool and oversubscribe the cores.
+    static bool CookTexturePixels(CTexture* Texture, const TVector<uint8>& Pixels, FUIntVector2 Dimensions, ETextureColorSpace ColorSpace, uint32 EncodeThreads = 0)
     {
         // basisu's encoder tables are per-DLL static; FEngine::Init's init runs in Runtime,
         // so init the Editor's copy here. Idempotent (mutex + g_library_initialized).
@@ -185,7 +188,10 @@ namespace Lumina
         const bool bIsSRGB     = (ColorSpace == ETextureColorSpace::SRGB);
         const bool bIsNormalMap = (ColorSpace == ETextureColorSpace::NormalMap);
 
-        basisu::job_pool JobPool(Threading::GetNumThreads() - 1);
+        const uint32 TotalEncodeThreads = (EncodeThreads == 0)
+            ? Math::Max(1u, Threading::GetNumThreads() - 1u)
+            : Math::Max(1u, EncodeThreads);
+        basisu::job_pool JobPool(TotalEncodeThreads);   // total incl. caller; 1 => single-threaded (0 new threads)
 
         basisu::basis_compressor_params Params;
         Params.m_pJob_pool = &JobPool;
@@ -198,7 +204,7 @@ namespace Lumina
         Params.m_status_output              = false;   // silence per-slice "Slice: N, alpha: ..." spam during cook
         Params.m_mip_gen                    = true;
         Params.m_mip_fast                   = true;
-        Params.m_multithreading             = true;
+        Params.m_multithreading             = (TotalEncodeThreads > 1);
         Params.m_create_ktx2_file           = false;
         Params.m_quality_level              = 128;
         Params.m_pack_uastc_ldr_4x4_flags   = basisu::cPackUASTCLevelFastest;
@@ -524,8 +530,11 @@ namespace Lumina
         }
         else
         {
+            // Batch importers pass a per-texture encode-thread budget (1 = single-threaded) so many textures
+            // cooking in parallel don't each spawn a full basisu pool. Direct/standalone imports leave it 0 (auto).
+            const uint32 EncodeThreads = ImageSettings ? ImageSettings->EncodeThreadBudget : 0u;
             TVector<uint8> Pixels = Move(Result.Pixels);
-            bCooked = CookTexturePixels(NewTexture, Pixels, Result.Dimensions, NewTexture->ColorSpace);
+            bCooked = CookTexturePixels(NewTexture, Pixels, Result.Dimensions, NewTexture->ColorSpace, EncodeThreads);
         }
 
         if (!bCooked)

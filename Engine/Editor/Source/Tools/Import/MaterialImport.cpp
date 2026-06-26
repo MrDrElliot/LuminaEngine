@@ -234,7 +234,7 @@ namespace Lumina
 
         TVector<CMaterialInstance*> GenerateMaterials(
             const FMeshImportData&                      Data,
-            const FFixedString&                         DestinationDir,
+            const FFixedString&                         MaterialsDir,
             const FFixedString&                         BaseName,
             const THashMap<FFixedString, CTexture*>&    TextureMap,
             TVector<CObject*>&                          OutCreated)
@@ -247,7 +247,7 @@ namespace Lumina
 
             auto MakePath = [&](FStringView Suffix) -> FFixedString
             {
-                FFixedString Path = DestinationDir;
+                FFixedString Path = MaterialsDir;
                 Path.append(BaseName.c_str());
                 Path.append_convert(Suffix.data(), Suffix.length());
                 return Path;
@@ -255,18 +255,36 @@ namespace Lumina
 
             // Neutral defaults shared by every master's texture parameters: white for color/MR/AO/emissive,
             // 128,128,255 (decodes to a flat tangent normal) for the normal channel.
-            CTexture* White = CTextureFactory::CreateSolidColorTexture(
+            //
+            // These are referenced only by each master's graph nodes (TObjectPtr<CTexture>), so hold strong
+            // pins for the whole generation pass: a mid-loop master teardown (a failed compile destroys its
+            // graph below) would otherwise release the last ref and free them, leaving every later master
+            // building its graph against dangling White/FlatNormal pointers -> use-after-free when the next
+            // compile's FMaterialCompiler releases its texture refs. Registered into OutCreated lazily (on the
+            // first master that actually keeps them) so an all-fail pass frees them cleanly at function return
+            // instead of leaving dangling raw pointers in the caller's reverse-order teardown list.
+            TObjectPtr<CTexture> White = CTextureFactory::CreateSolidColorTexture(
                 EnsureUniquePath(MakePath("_DefaultWhite")), 255, 255, 255, 255, ETextureColorSpace::Linear);
-            if (White)
-            {
-                OutCreated.push_back(White);
-            }
-            CTexture* FlatNormal = CTextureFactory::CreateSolidColorTexture(
+            TObjectPtr<CTexture> FlatNormal = CTextureFactory::CreateSolidColorTexture(
                 EnsureUniquePath(MakePath("_DefaultFlatNormal")), 128, 128, 255, 255, ETextureColorSpace::Linear);
-            if (FlatNormal)
+
+            bool bDefaultsRegistered = false;
+            auto RegisterSharedDefaults = [&]()
             {
-                OutCreated.push_back(FlatNormal);
-            }
+                if (bDefaultsRegistered)
+                {
+                    return;
+                }
+                bDefaultsRegistered = true;
+                if (White)
+                {
+                    OutCreated.push_back(White.Get());
+                }
+                if (FlatNormal)
+                {
+                    OutCreated.push_back(FlatNormal.Get());
+                }
+            };
 
             // One master per distinct render state (instances can only diverge in parameters, not blend/two-sided).
             struct FMasterGroup
@@ -318,7 +336,7 @@ namespace Lumina
                 }
 
                 CMaterialNodeGraph* Graph = MaterialGraphBuilder::CreateHeadlessGraph(Master);
-                BuildPBRGraph(Graph, White, FlatNormal, Blend != EBlendMode::Opaque);
+                BuildPBRGraph(Graph, White.Get(), FlatNormal.Get(), Blend != EBlendMode::Opaque);
 
                 const FMaterialGraphCompileResult CompileResult = CompileMaterialGraph(Master, Graph);
                 if (!CompileResult.bSuccess)
@@ -335,6 +353,10 @@ namespace Lumina
                     Master->ConditionalBeginDestroy();
                     return nullptr;
                 }
+
+                // Register the shared default textures ahead of the first master that keeps them, so the
+                // caller's reverse-order teardown destroys masters/graphs before the textures they reference.
+                RegisterSharedDefaults();
 
                 // Push the master, THEN its graph: the importer's reverse-order teardown then destroys the graph
                 // first, releasing its TObjectPtr<CMaterial> back-ref so the master (and its default textures)
@@ -367,7 +389,7 @@ namespace Lumina
                     continue;
                 }
 
-                FFixedString InstPath = DestinationDir;
+                FFixedString InstPath = MaterialsDir;
                 InstPath.append(BaseName.c_str());
                 InstPath.append("_");
                 InstPath.append(SanitizeAssetName(Src.Name).c_str());

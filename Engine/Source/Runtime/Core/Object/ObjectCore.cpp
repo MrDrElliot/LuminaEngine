@@ -1,5 +1,7 @@
 #include "pch.h"
 
+#include <atomic>
+
 #include "ObjectCore.h"
 #include "Class.h"
 #include "Object.h"
@@ -214,7 +216,11 @@ namespace Lumina
 
         if (Name == NAME_None)
         {
-            Params.Name = InClass->GetName() + "_" + eastl::to_string(++InClass->ClassUnique);
+            // Atomic: object creation can run on multiple threads (e.g. parallel asset import), and a plain ++ on
+            // the shared per-class counter would race and hand out duplicate auto-generated names. atomic_ref
+            // keeps CClass's member layout unchanged. fetch_add returns the old value, so +1 matches the old ++.
+            const int32 Unique = std::atomic_ref<int32>(InClass->ClassUnique).fetch_add(1, std::memory_order_relaxed) + 1;
+            Params.Name = InClass->GetName() + "_" + eastl::to_string(Unique);
         }
         else
         {

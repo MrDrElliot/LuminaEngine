@@ -217,6 +217,43 @@ namespace Lumina
         return true; // not yet in registry
     }
 
+    void FAssetRegistry::SuspendBroadcasts()
+    {
+        BroadcastSuspendCount.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    void FAssetRegistry::ResumeBroadcasts()
+    {
+        // Last suspender out fires the single coalesced broadcast iff something flagged a change while suspended.
+        if (BroadcastSuspendCount.fetch_sub(1, std::memory_order_acq_rel) == 1)
+        {
+            if (bBroadcastPending.exchange(false, std::memory_order_relaxed))
+            {
+                OnAssetRegistryUpdated.Broadcast();
+            }
+        }
+    }
+
+    void FAssetRegistry::NotifyRegistryChanged()
+    {
+        if (BroadcastSuspendCount.load(std::memory_order_relaxed) > 0)
+        {
+            bBroadcastPending.store(true, std::memory_order_relaxed);
+            return;
+        }
+        OnAssetRegistryUpdated.Broadcast();
+    }
+
+    FScopedAssetRegistryBatch::FScopedAssetRegistryBatch()
+    {
+        FAssetRegistry::Get().SuspendBroadcasts();
+    }
+
+    FScopedAssetRegistryBatch::~FScopedAssetRegistryBatch()
+    {
+        FAssetRegistry::Get().ResumeBroadcasts();
+    }
+
     void FAssetRegistry::AssetCreated(const CObject* Asset)
     {
         FFixedString FilePath = Asset->GetPackage()->GetPackagePath();
@@ -228,77 +265,85 @@ namespace Lumina
         AssetData->Path          = Move(FilePath);
         AssetData->OwningPlugin  = ExtractOwningPlugin(AssetData->Path);
 
-        FWriteScopeLock Lock(AssetsMutex);
-        Assets.emplace(Move(AssetData));
+        {
+            FWriteScopeLock Lock(AssetsMutex);
+            Assets.emplace(Move(AssetData));
+        }
 
         {
             FWriteScopeLock RLock(ReverseMapMutex);
             bReverseMapDirty = true;
         }
 
-        GetOnAssetRegistryUpdated().Broadcast();
+        // Broadcast OUTSIDE the locks -- a listener that queries the registry on this thread would otherwise
+        // re-enter the non-recursive AssetsMutex and self-deadlock. Coalesced to one during a batch import.
+        NotifyRegistryChanged();
     }
 
     void FAssetRegistry::AssetDeleted(const FGuid& GUID)
     {
-        FWriteScopeLock Lock(AssetsMutex);
-
-        auto It = Assets.find_as(GUID, FGuidHash(), FAssetDataGuidEqual());
-        if (It == Assets.end())
         {
-            LOG_WARN("AssetRegistry::AssetDeleted: GUID not present in registry; ignoring");
-            return;
-        }
+            FWriteScopeLock Lock(AssetsMutex);
 
-        Assets.erase(It);
+            auto It = Assets.find_as(GUID, FGuidHash(), FAssetDataGuidEqual());
+            if (It == Assets.end())
+            {
+                LOG_WARN("AssetRegistry::AssetDeleted: GUID not present in registry; ignoring");
+                return;
+            }
+
+            Assets.erase(It);
+        }
 
         {
             FWriteScopeLock RLock(ReverseMapMutex);
             bReverseMapDirty = true;
         }
 
-        GetOnAssetRegistryUpdated().Broadcast();
+        NotifyRegistryChanged();
     }
 
     void FAssetRegistry::AssetRenamed(FStringView OldPath, FStringView NewPath)
     {
-        FWriteScopeLock Lock(AssetsMutex);
+        {
+            FWriteScopeLock Lock(AssetsMutex);
 
-        auto It = eastl::find_if(Assets.begin(), Assets.end(), [&OldPath](const TUniquePtr<FAssetData>& Asset)
-        {
-            return Asset->Path == OldPath;
-        });
-
-        if (It == Assets.end())
-        {
-            LOG_WARN("AssetRegistry::AssetRenamed: no entry for {}; rename of {} -> {} not reflected in registry until next discovery", OldPath, OldPath, NewPath);
-            return;
-        }
-
-        // Drop any stale entry already at NewPath (different GUID), else GetAssetByPath is non-deterministic.
-        const FGuid RenamedGuid = (*It)->AssetGUID;
-        auto Colliding = eastl::find_if(Assets.begin(), Assets.end(), [&](const TUniquePtr<FAssetData>& Asset)
-        {
-            return Asset->AssetGUID != RenamedGuid && Asset->Path == NewPath;
-        });
-        if (Colliding != Assets.end())
-        {
-            LOG_WARN("AssetRegistry::AssetRenamed: dropping stale entry at {} colliding with rename {} -> {}", NewPath, OldPath, NewPath);
-            Assets.erase(Colliding);
-            // hash_set::erase can invalidate other iterators; re-find.
-            It = eastl::find_if(Assets.begin(), Assets.end(), [&OldPath](const TUniquePtr<FAssetData>& Asset)
+            auto It = eastl::find_if(Assets.begin(), Assets.end(), [&OldPath](const TUniquePtr<FAssetData>& Asset)
             {
                 return Asset->Path == OldPath;
             });
-            if (It == Assets.end()) return;
+
+            if (It == Assets.end())
+            {
+                LOG_WARN("AssetRegistry::AssetRenamed: no entry for {}; rename of {} -> {} not reflected in registry until next discovery", OldPath, OldPath, NewPath);
+                return;
+            }
+
+            // Drop any stale entry already at NewPath (different GUID), else GetAssetByPath is non-deterministic.
+            const FGuid RenamedGuid = (*It)->AssetGUID;
+            auto Colliding = eastl::find_if(Assets.begin(), Assets.end(), [&](const TUniquePtr<FAssetData>& Asset)
+            {
+                return Asset->AssetGUID != RenamedGuid && Asset->Path == NewPath;
+            });
+            if (Colliding != Assets.end())
+            {
+                LOG_WARN("AssetRegistry::AssetRenamed: dropping stale entry at {} colliding with rename {} -> {}", NewPath, OldPath, NewPath);
+                Assets.erase(Colliding);
+                // hash_set::erase can invalidate other iterators; re-find.
+                It = eastl::find_if(Assets.begin(), Assets.end(), [&OldPath](const TUniquePtr<FAssetData>& Asset)
+                {
+                    return Asset->Path == OldPath;
+                });
+                if (It == Assets.end()) return;
+            }
+
+            const TUniquePtr<FAssetData>& Data = *It;
+            Data->Path.assign_convert(NewPath);
+            Data->AssetName    = VFS::FileName(NewPath, true);
+            Data->OwningPlugin = ExtractOwningPlugin(NewPath);
         }
 
-        const TUniquePtr<FAssetData>& Data = *It;
-        Data->Path.assign_convert(NewPath);
-        Data->AssetName    = VFS::FileName(NewPath, true);
-        Data->OwningPlugin = ExtractOwningPlugin(NewPath);
-
-        GetOnAssetRegistryUpdated().Broadcast();
+        NotifyRegistryChanged();
     }
 
     void FAssetRegistry::AssetSaved(CObject* Asset)
@@ -313,7 +358,7 @@ namespace Lumina
             bReverseMapDirty = true;
         }
 
-        GetOnAssetRegistryUpdated().Broadcast();
+        NotifyRegistryChanged();
     }
 
     FAssetData* FAssetRegistry::GetAssetByGUID(const FGuid& GUID) const

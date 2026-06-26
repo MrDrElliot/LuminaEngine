@@ -4,7 +4,9 @@
 // scratch image so each material reads the previous output via uSceneColor. Returns Material.Emissive.
 // No pass-local set: the three scene inputs are read through the bindless table via push-constant
 // indices. The codegen emits `uSceneColor.Sample(uv)` etc., so each input is a small wrapper that
-// mirrors the Sampler2D interface; FragmentMain builds them from the indices before $MATERIAL_INPUTS.
+// mirrors the Sampler2D interface; FragmentMain builds them from the indices before the material-graph
+// token. (That token must NOT appear literally in any comment above it -- the compiler substitutes the
+// FIRST occurrence, so a comment match would inject the codegen at file scope and fail to compile.)
 struct FSceneTex
 {
     Texture2D    Tex;

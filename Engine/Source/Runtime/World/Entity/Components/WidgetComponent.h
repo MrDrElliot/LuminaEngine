@@ -3,6 +3,7 @@
 #include "Core/Math/Math.h"
 #include "Containers/String.h"
 #include "Core/Object/ObjectMacros.h"
+#include "Core/Templates/LuminaTemplate.h"
 #include "Assets/AssetRef.h"
 #include "Renderer/RHITexture.h"
 #include "WidgetComponent.generated.h"
@@ -22,7 +23,7 @@ namespace Lumina
         Rml::Context*         Context = nullptr;
         Rml::ElementDocument* Document = nullptr;
         RHI::FManagedTexture  Target;
-        FUIntVector2            BuiltSize{0, 0};
+        FUIntVector2          BuiltSize{0, 0};
         FString               LoadedPath;
         int64                 DocWriteTime = 0;   // last-seen .rml mtime, for hot-reload
         int32                 ResourceID   = -1;  // global-heap id of Target, read by the gather
@@ -47,7 +48,6 @@ namespace Lumina
             ResourceID   = Other.ResourceID;
             bVisible     = Other.bVisible;
             bRmlIdle     = Other.bRmlIdle;
-            // Clear the source so a later teardown of the moved-from runtime can't double-release.
             Other.Context    = nullptr;
             Other.Document   = nullptr;
             Other.Target     = {};

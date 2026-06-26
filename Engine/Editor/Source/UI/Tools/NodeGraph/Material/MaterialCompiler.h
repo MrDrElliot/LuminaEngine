@@ -106,6 +106,10 @@ namespace Lumina
         // ($MATERIAL_VERTEX_INPUTS, for WPO reconstruction) and the pixel graph ($MATERIAL_INPUTS, shading).
         FString BuildDeferredShaderFromTemplate(const FString& TemplateAbsolutePath, EMaterialType MaterialType = EMaterialType::PBR) const;
 
+        // Substitute only $MATERIAL_INPUTS in a pixel template with the pixel-graph chunks (e.g. the masked
+        // VisBuffer pixel shader, which runs the graph just to evaluate Opacity for the geometry-stage clip).
+        FString BuildPixelShaderFromTemplate(const FString& TemplateAbsolutePath) const;
+
         // True when the graph fed any chunks into the vertex stage. Equivalent
         // to "WorldPositionOffset pin had a connection."
         bool UsesVertexStage() const { return !VertexChunks.empty() || !VertexOutputChunks.empty(); }

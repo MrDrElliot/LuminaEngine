@@ -134,6 +134,19 @@ struct FBaseVertexOutput
     precise float4 Position            : SV_Position;
 };
 
+// VisBuffer vertex-emulation geometry output: the base interpolants + the flat VisID. The interpolants are
+// only computed when the VISBUFFER_MASKED spec constant is set (so the masked pixel shader can run the opacity
+// graph -- which may read UV / normal / world position); for opaque materials the spec constant is 0 and the
+// interpolant compute + outputs dead-strip at pipeline specialization (same pattern as the EPass spec constant).
+struct FVisVertexOut
+{
+    // VisID FIRST so it gets interface location 0 -- the opaque pixel shader reads only {VisID, SV_Position}
+    // and must link to the same location; the Base interpolants (locations 1+) are then unconsumed by the
+    // opaque PS (not interpolated) and consumed only by the masked PS. SPIR-V-verified.
+    nointerpolation uint VisID : VIS_ID;
+    FBaseVertexOutput   Base;
+};
+
 // FinalWorldPos is post-WPO (the shader adds Material.WorldPositionOffset before calling this).
 FBaseVertexOutput MakeBaseVertexOutput(FMeshletRef Ref, FMeshletWorldVertex W, float3 FinalWorldPos)
 {
