@@ -13,6 +13,7 @@ namespace Lumina
     class FPropertyHandle;
     class FArrayProperty;
     class FOptionalProperty;
+    class FInstancedStructProperty;
     class FProperty;
     struct IPropertyTypeCustomization;
     class CObject;
@@ -182,6 +183,31 @@ namespace Lumina
         TUniquePtr<FPropertyTable>  PropertyTable;
     };
 
+    // Editor row for TInstancedStruct<T>. A type-picker combo (T or derived) plus an inline nested
+    // table editing the chosen instance.
+    class FInstancedStructPropertyRow : public FPropertyRow
+    {
+    public:
+
+        FInstancedStructPropertyRow(const TSharedPtr<FPropertyHandle>& InPropHandle, FPropertyRow* InParentRow, const FPropertyChangedEventCallbacks& InCallbacks);
+        ~FInstancedStructPropertyRow() override = default;
+
+        void Update() override;
+        void DrawHeader(float Offset) override;
+        void DrawEditor(bool bReadOnly) override;
+        float GetMeasuredHeaderTextWidth() const override;
+        void OnValueResetToDefault() override { RebuildChildren(); }
+
+        // Rebuilds the nested table over the currently-stored instance (after a type change or reset).
+        void RebuildChildren();
+
+    private:
+
+        FInstancedStructProperty*   InstancedStructProperty = nullptr;
+        CStruct*                    CachedType = nullptr;
+        TUniquePtr<FPropertyTable>  PropertyTable;
+    };
+
     // Editor row for TOptional<T>: a "Set" checkbox; when engaged, the inner T
     // renders as a child row using whichever PropertyRow fits T's type.
     class FOptionalPropertyRow : public FPropertyRow
@@ -235,7 +261,8 @@ namespace Lumina
     class FPropertyTable
     {
         friend class FStructPropertyRow;
-        
+        friend class FInstancedStructPropertyRow;
+
     public:
 
         FPropertyTable() = default;

@@ -65,6 +65,11 @@ public sealed class PropertyTestScript : EntityScript
     [Property(Category = "Nested")] public TestStats Stats;
     [Property(Category = "Nested")] public TestContainer Container;
 
+    // Instanced (polymorphic) objects. Pick a concrete type in the inspector and edit it inline. Opt-in
+    // only; a field is instanced only when it carries [Instanced], whatever its declared type.
+    [Property(Category = "Instanced", Tooltip = "Pick a command type and edit it inline."), Instanced] public ITestCommand Command;
+    [Property(Category = "Instanced"), Instanced] public TestShapeBase Shape;
+
     [Property(Category = "Arrays")] public int[] IntArray;
     [Property(Category = "Arrays")] public List<float> FloatList;
     [Property(Category = "Arrays")] public string[] StringArray;
@@ -108,4 +113,45 @@ public sealed class TestContainer
     [Property] public FVector2 Offset;
     [Property] public TestStats Inner;
     [Property] public List<TestStats> Children;
+}
+
+// An instanced-object family. A field typed as ITestCommand offers these concrete types in a picker
+// and edits the chosen one's [Property] fields inline. Each candidate must be default-constructible.
+public interface ITestCommand
+{
+}
+
+public sealed class TestAttackCommand : ITestCommand
+{
+    [Property(Min = 0.0f)] public float Damage = 10.0f;
+    [Property] public string Target = "Enemy";
+    [Property] public ETestPriority Priority = ETestPriority.High;
+}
+
+public sealed class TestWaitCommand : ITestCommand
+{
+    [Property(Min = 0.0f, Units = "s")] public float Seconds = 1.0f;
+    [Property] public bool Interruptible = true;
+}
+
+public sealed class TestLogCommand : ITestCommand
+{
+    [Property] public string Message = "Hello";
+    [Property(Color = true)] public FVector3 Color = new FVector3 { X = 1.0f, Y = 1.0f, Z = 1.0f };
+}
+
+// A concrete base used as an instanced field via [Instanced]; the base itself is also selectable.
+public class TestShapeBase
+{
+    [Property] public FVector3 Center;
+}
+
+public sealed class TestSphereShape : TestShapeBase
+{
+    [Property(Min = 0.0f)] public float Radius = 1.0f;
+}
+
+public sealed class TestBoxShape : TestShapeBase
+{
+    [Property] public FVector3 Extents = new FVector3 { X = 1.0f, Y = 1.0f, Z = 1.0f };
 }

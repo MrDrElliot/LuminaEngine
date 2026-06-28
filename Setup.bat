@@ -1,7 +1,7 @@
 @echo off
 setlocal enableextensions
 
-rem Bootstrap premake5, run `premake5 setup`, then generate Lumina.sln.
+rem Bootstrap premake5, run `premake5 setup`, then generate Lumina.slnx.
 rem Uses curl.exe and tar.exe (Windows 10 1803+); no Python.
 
 cd /d "%~dp0"
@@ -129,14 +129,14 @@ if /I not "%PERSISTED_LUMINA_DIR%"=="%EXPECTED_LUMINA_DIR%" (
 rem Generate the Visual Studio solution.
 echo.
 echo ============================================================
-echo  Generating Visual Studio 2022 solution
+echo  Generating Visual Studio 2026 solution
 echo ============================================================
-"%PREMAKE_EXE%" vs2022
+"%PREMAKE_EXE%" vs2026
 if errorlevel 1 goto :fail
 
 echo.
 echo ============================================================
-echo  ALL DONE - Lumina.sln generated
+echo  ALL DONE - Lumina.slnx generated
 echo ============================================================
 echo  LUMINA_DIR persisted: %PERSISTED_LUMINA_DIR%
 echo  Note: already-running Visual Studio / Rider instances must be
@@ -148,11 +148,11 @@ set "DO_OPEN=1"
 if defined LUMINA_NO_OPEN set "DO_OPEN=0"
 echo %* | findstr /I /C:"--no-open" >nul && set "DO_OPEN=0"
 if "%DO_OPEN%"=="1" (
-    if exist "%LUMINA_DIR%\Lumina.sln" (
-        echo  Opening Lumina.sln...
-        start "" "%LUMINA_DIR%\Lumina.sln"
+    if exist "%LUMINA_DIR%\Lumina.slnx" (
+        echo  Opening Lumina.slnx...
+        start "" "%LUMINA_DIR%\Lumina.slnx"
     ) else (
-        echo  Lumina.sln not found at %LUMINA_DIR%; open it manually.
+        echo  Lumina.slnx not found at %LUMINA_DIR%; open it manually.
     )
 )
 

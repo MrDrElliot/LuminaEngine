@@ -25,15 +25,16 @@ namespace Lumina
     // shadow casters to topology-preserving LODs.
     constexpr uint32 MAX_SHADOW_LOD             = 3;
 
-    // LoInt: quant origin in its LOD's grid units; LODIndex selects MeshOrigin/MeshGridStep[LODIndex].
-    // TriangleOffset is in dwords (3 micro-indices per dword).
-    struct alignas(16) FMeshlet
+    // Positions are full float3 (FMeshletVertex.Position) -- no quantization, gap-free. LODIndex kept for
+    // LOD selection. TriangleOffset is in dwords (3 micro-indices per dword).
+    // NO alignas: the GPU mirror (Common.slang FMeshlet) is 5 tightly packed uints = 20B; alignas(16) here
+    // would pad the upload stride to 32B and desync every meshlet after the first (GPU page fault).
+    struct FMeshlet
     {
         uint32     VertexOffset;
         uint32     TriangleOffset;
         uint32     VertexCount;
         uint32     TriangleCount;
-        FIntVector3 LoInt;
         uint32     LODIndex;
 
         friend FArchive& operator<<(FArchive& Ar, FMeshlet& Data)
@@ -42,11 +43,11 @@ namespace Lumina
             Ar << Data.TriangleOffset;
             Ar << Data.VertexCount;
             Ar << Data.TriangleCount;
-            Ar << Data.LoInt;
             Ar << Data.LODIndex;
             return Ar;
         }
     };
+    static_assert(sizeof(FMeshlet) == 20, "FMeshlet must stay 20B to match the GPU mirror (Common.slang)");
 
     // Sphere for frustum/occlusion, cone for backface culling.
     struct alignas(16) FMeshletBounds
@@ -79,11 +80,6 @@ namespace Lumina
         TVector<uint32>                 MeshletTriangles;
         TVector<FMeshletBounds>         MeshletBounds;
 
-        // Per-LOD integer-grid basis (indexed by FMeshlet::LODIndex); GridStep fits that LOD's largest
-        // meshlet in <=1023 cells/axis. Per-LOD (not global) keeps LOD 0 sharp; shared within a LOD keeps seams snapped.
-        FVector3                       MeshOrigin[MAX_MESH_LODS]   = {};
-        FVector3                       MeshGridStep[MAX_MESH_LODS] = {};
-
         FORCEINLINE bool IsEmpty() const { return Meshlets.empty(); }
 
         FORCEINLINE void Clear()
@@ -93,11 +89,6 @@ namespace Lumina
             MeshletSkinnedVertices.clear();
             MeshletTriangles.clear();
             MeshletBounds.clear();
-            for (uint32 i = 0; i < MAX_MESH_LODS; ++i)
-            {
-                MeshOrigin[i]   = FVector3(0.0f);
-                MeshGridStep[i] = FVector3(0.0f);
-            }
         }
 
         friend FArchive& operator<<(FArchive& Ar, FMeshletData& Data)
@@ -107,29 +98,18 @@ namespace Lumina
             Ar << Data.MeshletSkinnedVertices;
             Ar << Data.MeshletTriangles;
             Ar << Data.MeshletBounds;
-
-            for (uint32 i = 0; i < MAX_MESH_LODS; ++i)
-            {
-                Ar << Data.MeshOrigin[i];
-            }
-            for (uint32 i = 0; i < MAX_MESH_LODS; ++i)
-            {
-                Ar << Data.MeshGridStep[i];
-            }
             return Ar;
         }
     };
 
     // Per-mesh GPU header. Reached through FGPUInstance's MeshletHeader BDA.
-    // MeshOrigin/MeshGridStep are per-LOD; the VS indexes them by FMeshlet::LODIndex.
+    // Positions are full float3 in the vertex buffer -- no per-LOD grid needed.
     struct alignas(16) FMeshletHeaderGPU
     {
         uint64    MeshletsAddress;                  // FMeshlet*
         uint64    BoundsAddress;                    // FMeshletBounds*
         uint64    VerticesAddress;                  // uint32*
         uint64    TrianglesAddress;                 // uint32*
-        FVector4 MeshOrigin[MAX_MESH_LODS];        // xyz = per-LOD grid origin
-        FVector4 MeshGridStep[MAX_MESH_LODS];      // xyz = per-LOD grid cell size
     };
 
     struct FGeometrySurface final

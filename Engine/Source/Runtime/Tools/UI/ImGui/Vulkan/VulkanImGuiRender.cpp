@@ -14,10 +14,14 @@
 #include "Memory/Memcpy.h"
 #include "Renderer/RHICore.h"
 #include "Renderer/RHITexture.h"
+#include "Renderer/RenderThread.h"
 #include "Tools/Import/ImportHelpers.h"
 
 namespace Lumina
 {
+    // The single live backend instance, so the static ImGuiPlatformIO::Renderer_* hooks can reach it.
+    static FVulkanImGuiRender* GImGuiBackend = nullptr;
+
     // Mirrors FImGuiArgs in ImGuiVert/Pixel.slang (32 B scalar).
     struct FNewImGuiArgs
     {
@@ -39,6 +43,16 @@ namespace Lumina
         IO.BackendRendererName = "Lumina_RHI";
         IO.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset;  // 16-bit indices + VtxOffset for >64K meshes
         IO.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;   // ImTextureData create/update/destroy path
+        IO.BackendFlags |= ImGuiBackendFlags_RendererHasViewports;  // we drive secondary-window swapchains
+
+        // Multi-viewport: ImGui strips ViewportsEnable on the first NewFrame unless both Platform and
+        // Renderer advertise viewport support. We render secondary viewports ourselves (capture on the
+        // game thread, present on the render thread), so only the window-lifecycle hooks are registered;
+        // RenderPlatformWindowsDefault is intentionally not used.
+        ImGuiPlatformIO& PlatformIO = ImGui::GetPlatformIO();
+        PlatformIO.Renderer_CreateWindow  = &FVulkanImGuiRender::OnRendererCreateWindow;
+        PlatformIO.Renderer_DestroyWindow = &FVulkanImGuiRender::OnRendererDestroyWindow;
+        GImGuiBackend = this;
 
         // The VS pulls ImDrawVert from the transient ring by device address; the shader hard-codes
         // the field offsets, so pin the layout here.
@@ -65,10 +79,18 @@ namespace Lumina
         }
         PathTextures.clear();
 
+        for (TVector<FCapturedViewport>& Slot : SecondaryCaptures)
+        {
+            Slot.clear();
+        }
+
+        // ImGui_ImplGlfw_Shutdown / DestroyContext tear down any remaining secondary windows, which
+        // calls OnRendererDestroyWindow back into us; keep GImGuiBackend valid until after.
         ImGui_ImplGlfw_Shutdown();
         ImPlot::DestroyContext();
         ClearSnapshots();
         ImGui::DestroyContext();
+        GImGuiBackend = nullptr;
     }
 
     void FVulkanImGuiRender::OnStartFrame(const FUpdateContext& UpdateContext)
@@ -250,6 +272,231 @@ namespace Lumina
         }
 
         RHI::CmdEndRenderPass(CL);
+    }
+
+    void FVulkanImGuiRender::OnRendererCreateWindow(ImGuiViewport* Viewport)
+    {
+        if (GImGuiBackend == nullptr || Viewport->PlatformHandle == nullptr)
+        {
+            return;
+        }
+
+        // The swapchain is created lazily on the render thread (first RenderCapturedViewport); here we
+        // only record the window the platform backend just created.
+        FImGuiViewportData* Data = IM_NEW(FImGuiViewportData)();
+        Data->Window = Viewport->PlatformHandle;
+        Viewport->RendererUserData = Data;
+    }
+
+    void FVulkanImGuiRender::OnRendererDestroyWindow(ImGuiViewport* Viewport)
+    {
+        FImGuiViewportData* Data = static_cast<FImGuiViewportData*>(Viewport->RendererUserData);
+        if (Data == nullptr)
+        {
+            return;
+        }
+
+        // ImGui destroys the GLFW window (and its surface) right after this hook, so the swapchain must
+        // go first. Drain the render thread + GPU so no in-flight frame still references it.
+        if (RHI::IsValid(Data->Swapchain))
+        {
+            FlushRenderingCommands();
+            RHI::WaitDeviceIdle();
+            RHI::FreeH(Data->Swapchain);
+        }
+
+        IM_DELETE(Data);
+        Viewport->RendererUserData = nullptr;
+    }
+
+    void FVulkanImGuiRender::CaptureSecondaryViewports_GameThread(uint8 FrameIndex)
+    {
+        LUMINA_PROFILE_SCOPE();
+
+        const uint8 Slot = FrameIndex % RHI::kFramesInFlight;
+        TVector<FCapturedViewport>& Captures = SecondaryCaptures[Slot];
+        Captures.clear();
+
+        ImGuiPlatformIO& PlatformIO = ImGui::GetPlatformIO();
+        for (int32 i = 1; i < PlatformIO.Viewports.Size; ++i)   // index 0 is the main viewport
+        {
+            ImGuiViewport*      Viewport = PlatformIO.Viewports[i];
+            FImGuiViewportData* Data     = static_cast<FImGuiViewportData*>(Viewport->RendererUserData);
+            ImDrawData*         DrawData = Viewport->DrawData;
+            if (Data == nullptr || DrawData == nullptr || DrawData->TotalVtxCount == 0)
+            {
+                continue;
+            }
+
+            const float FbW = DrawData->DisplaySize.x * DrawData->FramebufferScale.x;
+            const float FbH = DrawData->DisplaySize.y * DrawData->FramebufferScale.y;
+            if (FbW <= 0.0f || FbH <= 0.0f)
+            {
+                continue;
+            }
+
+            Captures.emplace_back();
+            FCapturedViewport& Cap = Captures.back();
+            Cap.Data         = Data;
+            Cap.Scale[0]     = 2.0f / DrawData->DisplaySize.x;
+            Cap.Scale[1]     = 2.0f / DrawData->DisplaySize.y;
+            Cap.Translate[0] = -1.0f - DrawData->DisplayPos.x * Cap.Scale[0];
+            Cap.Translate[1] = -1.0f - DrawData->DisplayPos.y * Cap.Scale[1];
+            Cap.Extent       = FUIntVector2((uint32)FbW, (uint32)FbH);
+            Cap.Vertices.reserve(DrawData->TotalVtxCount);
+            Cap.Indices.reserve(DrawData->TotalIdxCount);
+
+            const ImVec2 ClipOff   = DrawData->DisplayPos;
+            const ImVec2 ClipScale = DrawData->FramebufferScale;
+            const uint32 DefaultTex = RHI::Textures::DefaultResourceID();
+            uint32 GlobalVtx = 0, GlobalIdx = 0;
+            for (int32 n = 0; n < DrawData->CmdListsCount; ++n)
+            {
+                const ImDrawList* List = DrawData->CmdLists[n];
+                Cap.Vertices.insert(Cap.Vertices.end(), List->VtxBuffer.Data, List->VtxBuffer.Data + List->VtxBuffer.Size);
+                Cap.Indices.insert(Cap.Indices.end(),   List->IdxBuffer.Data, List->IdxBuffer.Data + List->IdxBuffer.Size);
+
+                for (int32 c = 0; c < List->CmdBuffer.Size; ++c)
+                {
+                    const ImDrawCmd& Cmd = List->CmdBuffer[c];
+                    if (Cmd.UserCallback != nullptr)
+                    {
+                        continue;   // user callbacks aren't replayed for secondary viewports
+                    }
+
+                    const float MinX = std::max((Cmd.ClipRect.x - ClipOff.x) * ClipScale.x, 0.0f);
+                    const float MinY = std::max((Cmd.ClipRect.y - ClipOff.y) * ClipScale.y, 0.0f);
+                    const float MaxX = std::min((Cmd.ClipRect.z - ClipOff.x) * ClipScale.x, FbW);
+                    const float MaxY = std::min((Cmd.ClipRect.w - ClipOff.y) * ClipScale.y, FbH);
+                    if (MaxX <= MinX || MaxY <= MinY)
+                    {
+                        continue;
+                    }
+
+                    FCapturedCmd CC;
+                    CC.ClipMinX  = MinX; CC.ClipMinY = MinY; CC.ClipMaxX = MaxX; CC.ClipMaxY = MaxY;
+                    const int32 TexID = (int32)Cmd.GetTexID();
+                    CC.TextureID = (TexID >= 0) ? (uint32)TexID : DefaultTex;
+                    CC.ElemCount = Cmd.ElemCount;
+                    CC.IdxOffset = Cmd.IdxOffset + GlobalIdx;
+                    CC.VtxOffset = (int32)(Cmd.VtxOffset + GlobalVtx);
+                    Cap.Cmds.push_back(CC);
+                }
+                GlobalVtx += List->VtxBuffer.Size;
+                GlobalIdx += List->IdxBuffer.Size;
+            }
+        }
+    }
+
+    void FVulkanImGuiRender::RenderSecondaryViewports_RenderThread(uint8 FrameIndex)
+    {
+        LUMINA_PROFILE_SCOPE();
+
+        const uint8 Slot = FrameIndex % RHI::kFramesInFlight;
+        for (FCapturedViewport& Cap : SecondaryCaptures[Slot])
+        {
+            RenderCapturedViewport(Cap);
+        }
+        SecondaryCaptures[Slot].clear();
+    }
+
+    void FVulkanImGuiRender::RenderCapturedViewport(FCapturedViewport& Cap)
+    {
+        FImGuiViewportData* Data = Cap.Data;
+        if (Data == nullptr || Data->Window == nullptr || Cap.Indices.empty() || Cap.Extent.x == 0 || Cap.Extent.y == 0)
+        {
+            return;
+        }
+
+        // Create / resize the secondary swapchain on the render thread (the only thread that touches
+        // the swapchain pool during a frame), tracking the built extent so a clamped surface doesn't
+        // thrash recreation every frame.
+        if (!RHI::IsValid(Data->Swapchain))
+        {
+            Data->Swapchain   = RHI::CreateSwapchain(Data->Window, Cap.Extent);
+            Data->BuiltExtent = Cap.Extent;
+        }
+        else if (Data->BuiltExtent != Cap.Extent)
+        {
+            RHI::RecreateSwapchain(Data->Swapchain, Cap.Extent);
+            Data->BuiltExtent = Cap.Extent;
+        }
+
+        RHI::FTextureH Img = RHI::AcquireNextImage(Data->Swapchain);
+        if (!RHI::IsValid(Img))
+        {
+            RHI::RecreateSwapchain(Data->Swapchain, Cap.Extent);
+            Data->BuiltExtent = Cap.Extent;
+            return;   // retry next frame
+        }
+
+        const FUIntVector2 ImgExtent = RHI::GetSwapchainExtent(Data->Swapchain);
+
+        RHI::FCmdListH CL = RHI::OpenCommandList();
+        RHI::CmdSetTextureHeap(CL, RHI::Core::GetGlobalHeap());
+        RHI::CmdSwapchainBarrierToRender(CL, Data->Swapchain);
+
+        RHI::FRenderAttachment Color;
+        Color.Texture  = Img;
+        Color.LoadOp   = RHI::ELoadOp::Clear;
+        Color.StoreOp  = RHI::EStoreOp::Store;
+        Color.Color[0] = Color.Color[1] = Color.Color[2] = 0.0f;
+        Color.Color[3] = 1.0f;
+
+        RHI::FRenderPassDesc Pass;
+        Pass.ColorAttachments = TSpan<const RHI::FRenderAttachment>(&Color, 1);
+        Pass.RenderArea       = ImgExtent;
+        RHI::CmdBeginRenderPass(CL, Pass);
+
+        const float FBW = (float)ImgExtent.x;
+        const float FBH = (float)ImgExtent.y;
+
+        if (NewPipeline && FBW > 0.0f && FBH > 0.0f)
+        {
+            const size_t VBytes = Cap.Vertices.size() * sizeof(ImDrawVert);
+            const size_t IBytes = Cap.Indices.size()  * sizeof(uint16);
+            RHI::FTransientAlloc VB = RHI::Core::AllocTransient(VBytes, 16);
+            RHI::FTransientAlloc IB = RHI::Core::AllocTransient(IBytes, 4);
+            Memory::Memcpy(VB.Cpu, Cap.Vertices.data(), VBytes);
+            Memory::Memcpy(IB.Cpu, Cap.Indices.data(),  IBytes);
+
+            FNewImGuiArgs Args;
+            Args.Scale[0]     = Cap.Scale[0];
+            Args.Scale[1]     = Cap.Scale[1];
+            Args.Translate[0] = Cap.Translate[0];
+            Args.Translate[1] = Cap.Translate[1];
+            Args.SamplerIndex = (uint32)RHI::EStockSampler::LinearWrap;
+            Args.VertexAddr   = VB.Gpu;
+
+            RHI::CmdSetDepthStencilState(CL, NewDepthState.Get());
+            RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
+            RHI::CmdSetFrontFace(CL, RHI::EFrontFace::CCW);
+            RHI::CmdSetPipeline(CL, NewPipeline.Get());
+
+            for (const FCapturedCmd& CC : Cap.Cmds)
+            {
+                // Clip rects were captured against the requested size, which can exceed the clamped
+                // swapchain extent; re-clamp to the actual image.
+                const float MinX = std::min(CC.ClipMinX, FBW);
+                const float MinY = std::min(CC.ClipMinY, FBH);
+                const float MaxX = std::min(CC.ClipMaxX, FBW);
+                const float MaxY = std::min(CC.ClipMaxY, FBH);
+                if (MaxX <= MinX || MaxY <= MinY)
+                {
+                    continue;
+                }
+
+                RHI::CmdSetScissor(CL, RHI::FRect{ (int)MinX, (int)MaxX, (int)MinY, (int)MaxY });
+                Args.TextureID = CC.TextureID;
+                const RHI::GPUPtr ArgsPtr = RHI::Core::CopyTransient(Args);
+
+                RHI::CmdDrawIndexed(CL, IB.Gpu, 0, ArgsPtr, CC.ElemCount, 1,
+                                    CC.IdxOffset, CC.VtxOffset, 0, RHI::EIndexType::Uint16);
+            }
+        }
+
+        RHI::CmdEndRenderPass(CL);
+        RHI::Core::Present(Data->Swapchain, CL);
     }
 
     ImTextureID FVulkanImGuiRender::GetOrCreateImTexture(FStringView Path)

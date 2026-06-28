@@ -240,6 +240,10 @@ namespace Lumina
             {
                 return;
             }
+
+            // Tooltip building (component scan) is deferred from tree-build to first hover.
+            BuildEntityTooltip(Data.Entity, Tree.Get<FTreeNodeDisplay>(Item));
+
             if (const STransformComponent* Transform = Registry.try_get<STransformComponent>(Data.Entity))
             {
                 if (const SStaticMeshComponent* MeshComp = Registry.try_get<SStaticMeshComponent>(Data.Entity))

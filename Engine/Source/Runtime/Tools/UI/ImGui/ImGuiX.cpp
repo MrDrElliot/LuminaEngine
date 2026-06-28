@@ -9,7 +9,6 @@
 #include "Core/Engine/Engine.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectCore.h"
-#include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Windows/Window.h"
 #include "Paths/Paths.h"
 #include "Renderer/RenderManager.h"
@@ -420,69 +419,6 @@ namespace Lumina::ImGuiX
     {
         return SliderScalarStyled(Label, ImGuiDataType_S32, Value, &Min, &Max, Flags, Format, Style);
     }
-
-    TPair<bool, uint32> DirectoryTreeViewRecursive(const std::filesystem::path& Path, uint32* Count, int* SelectionMask)
-    {
-        ImGuiTreeNodeFlags base_flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick | 
-                                        ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_SpanFullWidth;
-    
-        bool any_node_clicked = false;
-        uint32 node_clicked = 0;
-    
-        for (const auto& entry : std::filesystem::directory_iterator(Path))
-        {
-            ImGuiTreeNodeFlags node_flags = base_flags;
-            const bool is_selected = (*SelectionMask & (1 << (*Count))) != 0;
-            if (is_selected)
-            {
-                node_flags |= ImGuiTreeNodeFlags_Selected;
-            }
-    
-            std::string name = entry.path().string();
-            auto lastSlash = name.find_last_of("/\\");
-            lastSlash = lastSlash == FString::npos ? 0 : lastSlash + 1;
-            name = name.substr(lastSlash, name.size() - lastSlash);
-    
-            if (!std::filesystem::is_directory(entry.path()))
-            {
-                continue;
-            }
-           
-            bool node_open = ImGui::TreeNodeEx((void*)(intptr_t)(*Count), node_flags, name.c_str());
-            
-    
-            if (ImGui::IsItemClicked())
-            {
-                node_clicked = *Count;
-                any_node_clicked = true;
-            }
-    
-            (*Count)--;
-    
-            if (node_open)
-            {
-                const auto& clickState = DirectoryTreeViewRecursive(entry.path(), Count, SelectionMask);
-    
-                if (!any_node_clicked)
-                {
-                    any_node_clicked = clickState.first;
-                    node_clicked = clickState.second;
-                }
-    
-                ImGui::TreePop();
-            }
-            else
-            {
-                for (const auto& e : std::filesystem::recursive_directory_iterator(entry.path()))
-                {
-                    (*Count)--;
-                }
-            }
-        }
-    
-        return { any_node_clicked, node_clicked };
-    }
-
 
     int32 SearchableCombo(const char* StrId, const char* Preview, int32 ItemCount, int32 CurrentIndex, const TFunction<FFixedString(int32)>& GetItemLabel, const char* ItemIcon)
     {
@@ -1227,5 +1163,3 @@ namespace Lumina::ImGuiX
         ImGui::End();
     }
 }
-
-#undef IMDRAW_DEBUG

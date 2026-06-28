@@ -25,6 +25,7 @@ Engine/*/Build/
 *.filters
 *.pyc
 *.sln
+*.slnx
 *.DotSettings
 *.tlog
 *.idb

@@ -174,13 +174,15 @@ PSOutput FragmentMain(float4 SvPosition : SV_Position)
 
     // Re-apply the material vertex graph (WorldPositionOffset) per vertex so the reconstructed triangle
     // matches what the VisBuffer geometry pass rasterized. The token appears once; the unrolled loop runs
-    // it for all three corners (same local contract as the geometry shaders).
+    // it for all three corners (same local contract as the geometry shaders). Inst/ModelMatrix are
+    // loop-invariant; hoist them so the unroll doesn't materialize the 64-byte BDA matrix three times
+    // (SPIR-V LICM doesn't hoist BDA loads -- see the FLightShadow note in SurfaceShading).
+    FGPUInstance Inst    = Ref.Inst;
+    float4x4 ModelMatrix = Inst.ModelMatrix;
     float3 FinalWorldPos[3];
     [unroll]
     for (int k = 0; k < 3; ++k)
     {
-        FGPUInstance Inst    = Ref.Inst;
-        float4x4 ModelMatrix = Ref.Inst.ModelMatrix;
         float4   WorldPos    = float4(W[k].WorldPos, 1.0);
         float3   NormalWS    = W[k].NormalWS;
         float3   TangentWS   = W[k].TangentWS.xyz;

@@ -46,6 +46,9 @@ namespace Lumina
         {
             return;
         }
+        // Instances of one master PostLoad concurrently on worker fibers (the parallel leaf-first wave),
+        // so this back-reference list is touched from many threads at once.
+        FScopeLock Lock(InstancesMutex);
         for (CMaterialInstance* Existing : Instances)
         {
             if (Existing == Instance)
@@ -62,6 +65,7 @@ namespace Lumina
         {
             return;
         }
+        FScopeLock Lock(InstancesMutex);
         for (auto It = Instances.begin(); It != Instances.end(); ++It)
         {
             if (*It == Instance)
@@ -74,14 +78,19 @@ namespace Lumina
 
     void CMaterial::NotifyInstancesParentChanged()
     {
-        // Refresh instances whose cached uniforms are stale after a recompile or first-time load order.
-        for (CMaterialInstance* Instance : Instances)
+        TVector<CMaterialInstance*> Snapshot;
+        {
+            FScopeLock Lock(InstancesMutex);
+            Snapshot = Instances;
+        }
+
+        for (CMaterialInstance* Instance : Snapshot)
         {
             if (Instance == nullptr || Instance->Material.Get() != this)
             {
                 continue;
             }
-            
+
             Instance->RefreshFromParent();
         }
     }

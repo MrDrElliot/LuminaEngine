@@ -66,6 +66,14 @@ public sealed class HideAttribute : Attribute
 {
 }
 
+/// <summary>Marks a [Property] field as an instanced (polymorphic) object. The inspector shows a type
+/// picker of the concrete classes deriving from the field's declared type and edits the chosen
+/// instance's own [Property] members inline. Opt-in only; an unmarked field is never instanced.</summary>
+[AttributeUsage(AttributeTargets.Field | AttributeTargets.Property, AllowMultiple = false)]
+public sealed class InstancedAttribute : Attribute
+{
+}
+
 /// <summary>Resolves a component-wrapper field/property (a <see cref="NativeStruct"/> subclass) and caches it
 /// on the script before <see cref="EntityScript.OnReady"/>, adding the component if missing. Caching the handle
 /// skips the per-frame Registry.Get; valid until the component is removed.</summary>

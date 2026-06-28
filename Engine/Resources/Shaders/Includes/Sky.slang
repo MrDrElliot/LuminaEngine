@@ -130,7 +130,9 @@ float3 Sky_OpticalDepth(float3 RayOrigin, float3 RayDir, float RayLength)
     float StepSize     = RayLength / float(Steps);
     float3 OpticalDepth = float3(0.0, 0.0, 0.0);
 
-    [[unroll]]
+    // [[loop]]: unrolling holds every step's heavy temporaries live at once (register spike on the SkyCube
+    // capture pass); rolling keeps one step. The serial exp() chain is latency-bound regardless.
+    [[loop]]
     for (int i = 0; i < Steps; i++)
     {
         float3 P = RayOrigin + RayDir * (float(i) + 0.5) * StepSize;
@@ -169,7 +171,9 @@ float3 Sky_Atmosphere(float3 RayOrigin, float3 RayDir, float3 SunDir, float3 Sun
     float3 SumM = float3(0.0, 0.0, 0.0);
     float3 PrimaryOD = float3(0.0, 0.0, 0.0);
 
-    [[unroll]]
+    // [[loop]]: rolling keeps one march step's temporaries (+ the nested optical-depth march) live instead
+    // of all Steps copies; loop-carried accumulators stay resident either way. Capture-pass occupancy win.
+    [[loop]]
     for (int i = 0; i < Steps; i++)
     {
         float3 P = RayOrigin + RayDir * (Start + (float(i) + 0.5) * StepSize);

@@ -15,10 +15,13 @@ internal sealed class TypeLibrary
     private readonly Dictionary<Type, TypeDescription> ByType = new();
     // Prior full type names to current full name, so renamed script references resolve.
     private readonly Dictionary<string, string> ScriptAliases = new();
+    // Every loaded script type, the universe an instanced field's candidate concrete types are drawn from.
+    private readonly List<Type> AllTypes;
 
     public TypeLibrary(IEnumerable<Type> Types)
     {
-        foreach (Type Type in Types)
+        AllTypes = new List<Type>(Types);
+        foreach (Type Type in AllTypes)
         {
             if (Type.IsAbstract || Type.FullName is not { } FullName)
             {
@@ -111,7 +114,7 @@ internal sealed class TypeLibrary
     /// <see cref="EScriptKind.NestedStruct"/> whose members recurse. Returns Nil for shapes we can't
     /// serialize. <paramref name="Depth"/> + <paramref name="Visiting"/> guard against cycles.
     /// </summary>
-    public ScriptType ResolveType(Type Type, int Depth, HashSet<Type> Visiting)
+    public ScriptType ResolveType(Type Type, int Depth, HashSet<Type> Visiting, bool ForceInstanced = false)
     {
         if (Type == typeof(bool))
         {
@@ -206,6 +209,24 @@ internal sealed class TypeLibrary
             }
         }
 
+        // Instanced (polymorphic) object, opt-in via [Instanced] on the field. Offers a picker of
+        // concrete subtypes (and the type itself if concrete). An unmarked field is never instanced.
+        if (ForceInstanced && Depth < 16)
+        {
+            List<ScriptInstanceCandidate> Candidates = DiscoverInstanceCandidates(Type, Depth, Visiting);
+            if (Candidates.Count > 0)
+            {
+                return new ScriptType
+                {
+                    Kind = EScriptKind.Instance,
+                    Clr = Type,
+                    BaseName = Type.Name,
+                    Candidates = Candidates,
+                };
+            }
+            return new ScriptType { Kind = EScriptKind.Nil, Clr = Type };
+        }
+
         // A C#-defined struct or class; its [Property] members are minted into a sub-CScriptStruct.
         if ((Type.IsClass || (Type.IsValueType && !Type.IsPrimitive)) && Depth < 16 && Visiting.Add(Type))
         {
@@ -225,6 +246,47 @@ internal sealed class TypeLibrary
 
         return new ScriptType { Kind = EScriptKind.Nil, Clr = Type };
     }
+
+    /// <summary>The concrete, default-constructible types assignable to Base (and Base itself if concrete),
+    /// each resolved to its [Property] members. Drawn from every loaded script type.</summary>
+    private List<ScriptInstanceCandidate> DiscoverInstanceCandidates(Type Base, int Depth, HashSet<Type> Visiting)
+    {
+        var Result = new List<ScriptInstanceCandidate>();
+        foreach (Type Candidate in AllTypes)
+        {
+            if (Candidate.IsAbstract || Candidate.IsInterface || !Base.IsAssignableFrom(Candidate))
+            {
+                continue;
+            }
+            // Must be default-constructible: the editor and the deserializer both Activator.CreateInstance it.
+            if (Candidate.GetConstructor(System.Type.EmptyTypes) == null)
+            {
+                continue;
+            }
+            if (!Visiting.Add(Candidate))
+            {
+                continue;
+            }
+            try
+            {
+                Result.Add(new ScriptInstanceCandidate
+                {
+                    TypeName = StableTypeName(Candidate),
+                    Clr = Candidate,
+                    Fields = BuildMembers(Candidate, Depth, Visiting),
+                });
+            }
+            finally
+            {
+                Visiting.Remove(Candidate);
+            }
+        }
+        Result.Sort((A, B) => string.CompareOrdinal(A.TypeName, B.TypeName));
+        return Result;
+    }
+
+    // The round-trip key for an instanced candidate; must match on both serialize and deserialize.
+    private static string StableTypeName(Type Type) => Type.FullName ?? Type.Name;
 
     private static EScriptKind MapNumeric(Type Type)
     {
@@ -254,7 +316,7 @@ internal sealed class TypeLibrary
                 continue;
             }
 
-            ScriptType Resolved = ResolveType(Field.FieldType, Depth + 1, Visiting);
+            ScriptType Resolved = ResolveType(Field.FieldType, Depth + 1, Visiting, Field.GetCustomAttribute<InstancedAttribute>() != null);
             if (Resolved.Kind == EScriptKind.Nil)
             {
                 continue;
@@ -285,7 +347,7 @@ internal sealed class TypeLibrary
                 continue;
             }
 
-            ScriptType Resolved = ResolveType(Property.PropertyType, Depth + 1, Visiting);
+            ScriptType Resolved = ResolveType(Property.PropertyType, Depth + 1, Visiting, Property.GetCustomAttribute<InstancedAttribute>() != null);
             if (Resolved.Kind == EScriptKind.Nil)
             {
                 continue;

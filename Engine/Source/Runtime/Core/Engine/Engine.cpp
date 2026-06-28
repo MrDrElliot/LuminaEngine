@@ -1,6 +1,7 @@
 ﻿#include "pch.h"
 #include "Engine.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
+#include "Core/Diagnostics/HangWatchdog.h"
 #include "Audio/AudioContext.h"
 #include "Networking/NetworkGlobals.h"
 #include "Config/Config.h"
@@ -330,6 +331,10 @@ namespace Lumina
         bCloseRequested = bApplicationWantsExit;
 
         UpdateContext.MarkFrameStart(Platform::GetTime());
+
+        // Prove the main thread is alive this frame; the hang watchdog dumps every thread's stack if
+        // this stops advancing (catches the intermittent asset-open deadlock).
+        HangWatchdog::Heartbeat();
 
         // Frame boundary: reclaim every thread's frame arena before any system gathers into it this frame.
         // Quiescent here (single game thread, previous frame's parallel gathers already joined+consumed).
@@ -803,7 +808,8 @@ namespace Lumina
             return;
         }
 
-        CWorld* SourceWorld = LoadObject<CWorld>(FStringView(MapName.c_str(), MapName.size()));
+        // Phased parallel load: the startup map fans its whole dependency closure across worker threads.
+        CWorld* SourceWorld = LoadObjectGraph<CWorld>(FStringView(MapName.c_str(), MapName.size()));
         if (SourceWorld == nullptr)
         {
             LOG_ERROR("Failed to load startup map '{}' (resolved to '{}').", RawMapName.c_str(), MapName.c_str());
@@ -869,7 +875,8 @@ namespace Lumina
 
         const FFixedString MapName = VFS::ResolveToVirtualPath(RawPath);
 
-        CWorld* WorldAsset = LoadObject<CWorld>(FStringView(MapName.c_str(), MapName.size()));
+        // Phased parallel load: travel fans the destination world's whole dependency closure across workers.
+        CWorld* WorldAsset = LoadObjectGraph<CWorld>(FStringView(MapName.c_str(), MapName.size()));
         if (WorldAsset == nullptr)
         {
             LOG_ERROR("FEngine::Travel: failed to load world '{}' (resolved to '{}').", RawPath.c_str(), MapName.c_str());

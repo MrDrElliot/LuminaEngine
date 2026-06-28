@@ -30,12 +30,7 @@ namespace Lumina
             uint64 CompressedSize;
         };
 
-        // Chunked container: the uncompressed binary is split into fixed-size slices, each deflated
-        // independently so compression fans out across worker threads. A texture package's single
-        // multi-megabyte deflate was the dominant cost of saving large assets.
-        //
-        // Layout: [magic u32][version u32][uncompressedSize u64][chunkSize u32][numChunks u32]
-        //         [compressedSize u32 * numChunks][deflate bytes, concatenated]
+        // Chunked container.
         constexpr uint32 kPackageChunkMagic   = 0x32435A4C; // 'LZC2'
         constexpr uint32 kPackageChunkVersion = 1;
         constexpr uint32 kPackageChunkSize    = 4u * 1024 * 1024; // 4 MiB uncompressed per chunk
@@ -175,9 +170,13 @@ namespace Lumina
 
             Out.resize((size_t)Total);
 
-            // Sequential per-chunk inflate: no task-system dependency, so this path is valid in any
-            // context (shipping runtime, registry discovery) without nested-parallelism concerns.
-            for (uint32 i = 0; i < NumChunks; ++i)
+            // Each chunk inflates into a disjoint output slice, so the chunks are independent. A big
+            // multi-chunk package (e.g. a world or texture atlas) is the dominant load cost, so fan the
+            // inflate across workers. Single-chunk packages (the common small asset) stay inline to avoid
+            // a pointless task hop and any nested-parallelism cost on the registry-discovery path.
+            TVector<uint8> ChunkOk(NumChunks, 1);
+
+            auto InflateOne = [&](uint32 i)
             {
                 const size_t OutStart = (size_t)i * ChunkSize;
                 const size_t Expected = (size_t)(((uint64)OutStart + ChunkSize <= Total) ? ChunkSize : (Total - OutStart));
@@ -187,6 +186,23 @@ namespace Lumina
                 {
                     LOG_ERROR("DecompressChunkedPackage: chunk {} inflate failed (ret={}, got={}, expected={})",
                         i, Ret, (uint64)OutLen, (uint64)Expected);
+                    ChunkOk[i] = 0;
+                }
+            };
+
+            if (NumChunks <= 1)
+            {
+                InflateOne(0);
+            }
+            else
+            {
+                Task::ParallelFor(NumChunks, InflateOne, 1);
+            }
+
+            for (uint32 i = 0; i < NumChunks; ++i)
+            {
+                if (ChunkOk[i] == 0)
+                {
                     Out.clear();
                     return false;
                 }
@@ -239,6 +255,21 @@ namespace Lumina
             }
 
             return true;
+        }
+    }
+
+    namespace
+    {
+        thread_local bool          GtDeferPostLoad = false;
+        
+        const THashSet<CPackage*>* GGraphClosure = nullptr;
+
+        bool ShouldDeferPostLoad(const CObject* Object)
+        {
+            return GtDeferPostLoad
+                && Object != nullptr
+                && GGraphClosure != nullptr
+                && GGraphClosure->find(Object->GetPackage()) != GGraphClosure->end();
         }
     }
 
@@ -776,9 +807,11 @@ namespace Lumina
             return false;
         }
 
-        // Refresh loader only after disk commit so it can't point at uncommitted bytes.
-        // Loader always holds the uncompressed bytes.
+        // Refresh loader only after disk commit so it can't point at uncommitted bytes (a partially-resident
+        // package still needs it for lazy loads at the new offsets). Drop it again immediately if the save
+        // left every export resident -- then the bytes are dead weight, re-read on demand if ever needed.
         Package->CreateLoader(FileBinary);
+        Package->ConditionalDropLoader();
 
         LOG_INFO("Saved Package: \"{}\" - ( [{}] Exports | [{}] Imports | [{:.2f}] KiB on disk, [{:.2f}] KiB uncompressed)",
             Package->GetName(),
@@ -812,6 +845,55 @@ namespace Lumina
         void* HeapData = Memory::Malloc(FileBinary.size());
         Memory::Memcpy(HeapData, FileBinary.data(), FileBinary.size());
         Loader = MakeUnique<FPackageLoader>(HeapData, FileBinary.size(), this);
+    }
+
+    bool CPackage::EnsureLoader()
+    {
+        if (Loader)
+        {
+            return true;
+        }
+
+        // In-memory (transient / never-saved) packages have no backing file to re-read; their objects are
+        // resident anyway, so this path is only ever hit for disk-backed packages whose bytes we dropped.
+        const FFixedString Path = GetPackagePath();
+        if (IsTransientPackage() || !VFS::Exists(Path))
+        {
+            return false;
+        }
+
+        TVector<uint8> FileBinary;
+        if (!ReadPackageFile(Path, FileBinary))
+        {
+            LOG_ERROR("EnsureLoader: failed to re-read package file {}", Path);
+            return false;
+        }
+
+        CreateLoader(FileBinary);
+        return Loader != nullptr;
+    }
+
+    void CPackage::ConditionalDropLoader()
+    {
+        // Never free the buffer out from under an in-flight (possibly nested) load.
+        if (!Loader || ActiveLoadDepth > 0)
+        {
+            return;
+        }
+
+        // Keep the cached bytes while any export still needs them. A null/stale export weak-ptr is treated
+        // conservatively as "might load again" (we can't tell a never-requested export from a freed one),
+        // so we only reclaim once the whole package is resident -- exactly when the buffer is dead weight.
+        for (const FObjectExport& Export : ExportTable)
+        {
+            const CObject* Obj = Export.Object.Get();
+            if (Obj == nullptr || Obj->HasAnyFlag(OF_NeedsLoad))
+            {
+                return;
+            }
+        }
+
+        Loader.reset();
     }
 
     FPackageLoader* CPackage::GetLoader() const
@@ -868,21 +950,21 @@ namespace Lumina
         Ar << ExportTable;
     }
 
-    void CPackage::LoadObject(CObject* Object)
+    void CPackage::SerializeObject(CObject* Object)
     {
         LUMINA_PROFILE_SCOPE();
         if (!Object || !Object->HasAnyFlag(OF_NeedsLoad) || Object->HasAnyFlag(OF_Loading))
         {
             return;
         }
-        
+
         Object->SetFlag(OF_Loading);
-        
+
         CPackage* ObjectPackage = Object->GetPackage();
-        
+
         if (ObjectPackage != this)
         {
-            ObjectPackage->LoadObject(Object);
+            ObjectPackage->SerializeObject(Object);
             return;
         }
 
@@ -891,14 +973,22 @@ namespace Lumina
         if (FoundLoaderIndex < 0 || std::cmp_greater_equal(FoundLoaderIndex, ExportTable.size()))
         {
             LOG_ERROR("Invalid loader index {} for object {}", FoundLoaderIndex, Object->GetName());
+            Object->ClearFlags(OF_Loading);
             return;
         }
 
         FObjectExport& Export = ExportTable[FoundLoaderIndex];
 
+        // The cached file bytes are dropped once a package is fully resident; re-open them on demand.
+        if (!Loader)
+        {
+            EnsureLoader();
+        }
+
         if (!Loader)
         {
             LOG_ERROR("No loader set for package {}", GetName().ToString());
+            Object->ClearFlags(OF_Loading);
             return;
         }
 
@@ -909,28 +999,118 @@ namespace Lumina
         if (DataPos < 0 || ExpectedSize <= 0)
         {
             LOG_ERROR("Invalid export data for object {}. Offset: {}, Size: {}", Object->GetName().ToString(), DataPos, ExpectedSize);
+            Object->ClearFlags(OF_Loading);
             return;
         }
-        
+
+        // Guard the buffer against being dropped by a nested IndexToObject load triggered inside Serialize.
+        ++ActiveLoadDepth;
+
         Loader->Seek(DataPos);
-        
+
         Object->PreLoad();
-        
+
         Object->Serialize(*Loader);
-        
+
         const int64 ActualSize = Loader->Tell() - DataPos;
-        
+
         if (ActualSize != ExpectedSize)
         {
             LOG_WARN("Mismatched size when loading object {}: expected {}, got {}", Object->GetName().ToString(), ExpectedSize, ActualSize);
         }
-        
-        Object->ClearFlags(OF_NeedsLoad | OF_Loading);
-        Object->SetFlag(OF_WasLoaded);
 
-        Object->PostLoad();
+        // Data is resident but PostLoad is still owed; the caller (or the graph loader's leaf-first pass)
+        // runs it via PostLoadObject. This is what lets serialize and PostLoad split into phases.
+        Object->ClearFlags(OF_NeedsLoad | OF_Loading);
+        Object->SetFlag(OF_WasLoaded | OF_NeedsPostLoad);
 
         Loader->Seek(SavedPos);
+
+        --ActiveLoadDepth;
+
+        // Reclaim the cached file bytes once the outermost load leaves the package fully resident.
+        ConditionalDropLoader();
+    }
+
+    void CPackage::PostLoadObject(CObject* Object)
+    {
+        if (Object && Object->HasAnyFlag(OF_NeedsPostLoad))
+        {
+            Object->ClearFlags(OF_NeedsPostLoad);
+            Object->PostLoad();
+        }
+    }
+
+    void CPackage::LoadObject(CObject* Object)
+    {
+        SerializeObject(Object);
+
+        // The phased graph loader defers PostLoad for in-closure objects to its ordered leaf-first pass.
+        // Every other caller (and out-of-closure refs) gets the legacy serialize-then-PostLoad behavior.
+        if (!ShouldDeferPostLoad(Object))
+        {
+            PostLoadObject(Object);
+        }
+    }
+
+    CObject* CPackage::CreateExportShell(int32 ExportIndex)
+    {
+        FObjectExport& Export = ExportTable[ExportIndex];
+
+        CObject* Object = FindObjectImpl(Export.ObjectGUID);
+
+        if (Object == nullptr)
+        {
+            CClass* ObjectClass = FindObject<CClass>(Export.ClassName);
+            if (ObjectClass == nullptr)
+            {
+                LOG_ERROR("CreateExportShell: class '{}' for export '{}' in package '{}' could not be resolved", Export.ClassName, Export.ObjectName, GetName());
+                return nullptr;
+            }
+
+            Object = NewObject(ObjectClass, this, Export.ObjectName, Export.ObjectGUID);
+            Object->SetFlag(OF_NeedsLoad);
+
+            if (Object->IsAsset())
+            {
+                Object->SetFlag(OF_Public);
+            }
+        }
+
+        Object->LoaderIndex = FObjectPackageIndex::FromExport(ExportIndex).GetRaw();
+        Export.Object = Object;
+
+        return Object;
+    }
+
+    void CPackage::CreateExportShells()
+    {
+        for (int32 i = 0; i < (int32)ExportTable.size(); ++i)
+        {
+            CreateExportShell(i);
+        }
+    }
+
+    void CPackage::SerializeExports()
+    {
+        for (FObjectExport& Export : ExportTable)
+        {
+            if (CObject* Object = Export.Object.Get())
+            {
+                SerializeObject(Object);
+            }
+        }
+    }
+
+    void CPackage::PostLoadExports()
+    {
+        for (FObjectExport& Export : ExportTable)
+        {
+            if (CObject* Object = Export.Object.Get())
+            {
+                PostLoadObject(Object);
+            }
+        }
     }
 
     CObject* CPackage::LoadObject(const FGuid& GUID)
@@ -941,29 +1121,11 @@ namespace Lumina
 
             if (Export.ObjectGUID == GUID)
             {
-                CObject* Object = FindObjectImpl(Export.ObjectGUID);
-
+                CObject* Object = CreateExportShell(static_cast<int32>(i));
                 if (Object == nullptr)
                 {
-                    CClass* ObjectClass = FindObject<CClass>(Export.ClassName);
-                    if (ObjectClass == nullptr)
-                    {
-                        LOG_ERROR("LoadObject: class '{}' for export '{}' in package '{}' could not be resolved", Export.ClassName, Export.ObjectName, GetName());
-                        return nullptr;
-                    }
-
-                    Object = NewObject(ObjectClass, this, Export.ObjectName, Export.ObjectGUID);
-                    Object->SetFlag(OF_NeedsLoad);
-
-                    if (Object->IsAsset())
-                    {
-                        Object->SetFlag(OF_Public);
-                    }
+                    return nullptr;
                 }
-
-                Object->LoaderIndex = FObjectPackageIndex::FromExport(static_cast<int32>(i)).GetRaw();
-
-                Export.Object = Object;
 
                 LoadObject(Object);
 
@@ -982,29 +1144,11 @@ namespace Lumina
 
             if (Export.ObjectName == Name)
             {
-                CObject* Object = FindObjectImpl(Export.ObjectGUID);
-
+                CObject* Object = CreateExportShell(static_cast<int32>(i));
                 if (Object == nullptr)
                 {
-                    CClass* ObjectClass = FindObject<CClass>(Export.ClassName);
-                    if (ObjectClass == nullptr)
-                    {
-                        LOG_ERROR("LoadObjectByName: class '{}' for export '{}' in package '{}' could not be resolved", Export.ClassName, Name, GetName());
-                        return nullptr;
-                    }
-
-                    Object = NewObject(ObjectClass, this, Export.ObjectName, Export.ObjectGUID);
-                    Object->SetFlag(OF_NeedsLoad);
-
-                    if (Object->IsAsset())
-                    {
-                        Object->SetFlag(OF_Public);
-                    }
+                    return nullptr;
                 }
-
-                Object->LoaderIndex = FObjectPackageIndex::FromExport(static_cast<int32>(i)).GetRaw();
-
-                Export.Object = Object;
 
                 LoadObject(Object);
 
@@ -1013,6 +1157,185 @@ namespace Lumina
         }
 
         return nullptr;
+    }
+
+    CObject* CPackage::LoadAssetGraph(const FGuid& RootGUID)
+    {
+        LUMINA_PROFILE_SCOPE();
+        
+        static FMutex GraphLoadMutex;
+        FScopeLock GraphLock(GraphLoadMutex);
+
+        FAssetRegistry& Registry = FAssetRegistry::Get();
+
+        if (Registry.GetAssetByGUID(RootGUID) == nullptr)
+        {
+            // Not a registered asset (transient), take the inline path.
+            return StaticLoadObject(RootGUID);
+        }
+        
+        THashMap<FGuid, int32>      GuidToNode;
+        TVector<FFixedString>       NodePaths;
+        TVector<THashSet<int32>>    NodeDeps;
+
+        auto GetOrAddNode = [&](const FGuid& Guid, const FAssetData* Data) -> int32
+        {
+            auto It = GuidToNode.find(Guid);
+            if (It != GuidToNode.end())
+            {
+                return It->second;
+            }
+            const int32 Index = (int32)NodePaths.size();
+            GuidToNode.emplace(Guid, Index);
+            NodePaths.push_back(Data->Path);
+            NodeDeps.emplace_back();
+            return Index;
+        };
+
+        THashSet<FGuid> Visited;
+        TVector<FGuid>  Queue;
+        Queue.push_back(RootGUID);
+
+        while (!Queue.empty())
+        {
+            const FGuid Guid = Queue.back();
+            Queue.pop_back();
+
+            if (!Visited.insert(Guid).second)
+            {
+                continue;
+            }
+
+            const FAssetData* Data = Registry.GetAssetByGUID(Guid);
+            if (Data == nullptr)
+            {
+                continue; // unresolvable ref; the inline fallback during serialize handles it
+            }
+
+            const int32 NodeIdx = GetOrAddNode(Guid, Data);
+
+            for (const FAssetDependency& Dep : Data->Dependencies)
+            {
+                // Only eagerly load the always-resident graph; Soft/Script/EditorOnly/Generated stream lazily.
+                if (Dep.Type != EDependencyType::Hard && Dep.Type != EDependencyType::Owned)
+                {
+                    continue;
+                }
+
+                if (const FAssetData* DepData = Registry.GetAssetByGUID(Dep.TargetGUID))
+                {
+                    const int32 DepIdx = GetOrAddNode(Dep.TargetGUID, DepData);
+                    if (DepIdx != NodeIdx)
+                    {
+                        NodeDeps[NodeIdx].insert(DepIdx);
+                    }
+                }
+                Queue.push_back(Dep.TargetGUID);
+            }
+        }
+
+        const int32 NumNodes = (int32)NodePaths.size();
+
+        TVector<CPackage*> Packages;
+        Packages.resize(NumNodes, nullptr);
+        Task::ParallelFor((uint32)NumNodes, [&](uint32 i)
+        {
+            Packages[i] = LoadPackage(NodePaths[i]);
+        }, 1);
+
+        // Need to create the shells to assets actually have a live pointer reference.
+        Task::ParallelFor((uint32)NumNodes, [&](uint32 i)
+        {
+            if (Packages[i])
+            {
+                Packages[i]->CreateExportShells();
+            }
+        }, 1);
+
+        THashSet<CPackage*> ClosureSet;
+        ClosureSet.reserve(NumNodes);
+        for (CPackage* P : Packages)
+        {
+            if (P)
+            {
+                ClosureSet.insert(P);
+            }
+        }
+
+        GGraphClosure = &ClosureSet;
+
+        Task::ParallelFor((uint32)NumNodes, [&](uint32 i)
+        {
+            if (Packages[i])
+            {
+                // Scope the defer flag to this worker's call stack so nested in-closure loads (same-package
+                // export refs reached inside Serialize) also defer their PostLoad to Phase D.
+                GtDeferPostLoad = true;
+                Packages[i]->SerializeExports();
+                GtDeferPostLoad = false;
+            }
+        }, 1);
+
+        GGraphClosure = nullptr;
+        
+        TVector<uint8> Processed(NumNodes, 0);
+        TVector<int32> Wave;
+        int32          Remaining = NumNodes;
+
+        while (Remaining > 0)
+        {
+            Wave.clear();
+            for (int32 i = 0; i < NumNodes; ++i)
+            {
+                if (Processed[i])
+                {
+                    continue;
+                }
+                bool bReady = true;
+                for (int32 Dep : NodeDeps[i])
+                {
+                    if (!Processed[Dep])
+                    {
+                        bReady = false;
+                        break;
+                    }
+                }
+                if (bReady)
+                {
+                    Wave.push_back(i);
+                }
+            }
+
+            if (Wave.empty())
+            {
+                // Dependency cycle among the survivors (e.g. a material instance pair): break it by taking
+                // them all at once; the per-asset PostLoad guards resolve the intra-cycle order.
+                for (int32 i = 0; i < NumNodes; ++i)
+                {
+                    if (!Processed[i])
+                    {
+                        Wave.push_back(i);
+                    }
+                }
+            }
+
+            Task::ParallelFor((uint32)Wave.size(), [&](uint32 k)
+            {
+                const int32 Idx = Wave[k];
+                if (Packages[Idx])
+                {
+                    Packages[Idx]->PostLoadExports();
+                }
+            }, 1);
+
+            for (int32 Idx : Wave)
+            {
+                Processed[Idx] = 1;
+                --Remaining;
+            }
+        }
+
+        return FindObjectImpl(RootGUID);
     }
 
     bool CPackage::FullyLoad()

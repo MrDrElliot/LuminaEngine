@@ -207,7 +207,7 @@ function LuminaGameProject(Def)
 
     SetupProject(Def)
 
-    -- Only project-local plugins are added here; engine plugins ship pre-built in Lumina.sln. Runtime loads both at startup.
+    -- Only project-local plugins are added here; engine plugins ship pre-built in Lumina.slnx. Runtime loads both at startup.
     group "Plugins"
         LuminaDiscoverPlugins(path.join(_MAIN_SCRIPT_DIR, "Plugins"))
     group ""

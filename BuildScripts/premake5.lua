@@ -1,5 +1,5 @@
 project "BuildScripts"
-	kind "None"
+	kind "Utility"
 
 	files
 	{

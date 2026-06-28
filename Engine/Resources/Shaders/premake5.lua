@@ -1,5 +1,5 @@
 project "Shaders"
-	kind "None"   
+	kind "Utility"
 	
 	files
 	{

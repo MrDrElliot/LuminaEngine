@@ -49,9 +49,18 @@ FMeshletRef ResolveShadowMeshlet(uint MeshletSlot)  { return ResolveMeshlet(Mesh
 // Vertex + triangle access
 // ---------------------------------------------------------------------------------------------------
 
+// SPEC_SKINNED dead-strips the unused vertex-load path for homogeneous batches: 0=static-only, 1=skinned-only,
+// 2=dynamic (per-instance runtime branch, used by mixed batches and by passes that don't specialize, e.g. deferred).
+[vk::constant_id(5)] const uint SPEC_SKINNED = 2;
+
 FVertexData LoadMeshletVertexData(FMeshletRef Ref, uint LocalVertIdx)
 {
-    if (Ref.Inst.HasFlag(EInstanceFlags::Skinned))
+    bool bSkinned;
+    if      (SPEC_SKINNED == 0u) { bSkinned = false; }
+    else if (SPEC_SKINNED == 1u) { bSkinned = true;  }
+    else                         { bSkinned = Ref.Inst.HasFlag(EInstanceFlags::Skinned); }
+
+    if (bSkinned)
     {
         return LoadSkinnedVertex(Ref.M, LocalVertIdx, Ref.Inst.SkinnedVertexBase);
     }

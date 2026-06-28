@@ -2155,12 +2155,7 @@ namespace Lumina::Physics
 
                 for (uint32 v = 0; v < M.VertexCount; ++v)
                 {
-                    const FMeshletVertex& MV = MD.MeshletVertices[M.VertexOffset + v];
-                    const uint32 P  = MV.Position;
-                    const float qx  = (float)( P        & 0x3FFu);
-                    const float qy  = (float)((P >> 10) & 0x3FFu);
-                    const float qz  = (float)((P >> 20) & 0x3FFu);
-                    FVector3 Pos = MD.MeshOrigin[M.LODIndex] + (FVector3(M.LoInt) + FVector3(qx, qy, qz)) * MD.MeshGridStep[M.LODIndex];
+                    FVector3 Pos = MD.MeshletVertices[M.VertexOffset + v].Position;
                     Pos *= Scale;
                     Vertices.push_back(JPH::Float3(Pos.x, Pos.y, Pos.z));
                 }

@@ -15,7 +15,8 @@ namespace Lumina
     public:
 
         void BuildNode() override;
-
+        void DrawNodeTitleBar() override;
+        
         CMaterialOutput* Output;
 
         /** When true, this expression's result varies per-instance at runtime via dynamic parameters. */

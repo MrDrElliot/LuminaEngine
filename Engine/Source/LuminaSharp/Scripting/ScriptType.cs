@@ -18,6 +18,7 @@ public enum EScriptKind : byte
     AssetRef,
     Entity,
     Array,
+    Instance,
 }
 
 /// <summary>Coarse self-describing kind on the value wire; integers and enums and entity are Int, asset refs String, structs Nested.</summary>
@@ -30,6 +31,15 @@ public enum EScriptValueKind : byte
     String,
     Nested,
     Array,
+    Instance,
+}
+
+/// <summary>One selectable concrete type for an instanced field, with its stable name, CLR type, and members.</summary>
+public sealed class ScriptInstanceCandidate
+{
+    public string TypeName { get; init; } = "";
+    public Type Clr { get; init; } = typeof(object);
+    public IReadOnlyList<ScriptProperty> Fields { get; init; } = Array.Empty<ScriptProperty>();
 }
 
 /// <summary>One enumerator of a C# enum exposed to the editor.</summary>
@@ -63,6 +73,12 @@ public sealed class ScriptType
     public EScriptKind EnumUnderlying { get; init; } = EScriptKind.I32;
     public IReadOnlyList<EnumEntry>? EnumEntries { get; init; }
 
+    /// <summary>Display name of the base type when <see cref="Kind"/> is <see cref="EScriptKind.Instance"/>.</summary>
+    public string? BaseName { get; init; }
+
+    /// <summary>Selectable concrete types when <see cref="Kind"/> is <see cref="EScriptKind.Instance"/>.</summary>
+    public IReadOnlyList<ScriptInstanceCandidate>? Candidates { get; init; }
+
     /// <summary>The coarse wire kind the value codec uses.</summary>
     public EScriptValueKind ValueKind => Kind switch
     {
@@ -74,6 +90,7 @@ public sealed class ScriptType
         EScriptKind.String or EScriptKind.AssetRef => EScriptValueKind.String,
         EScriptKind.NativeStruct or EScriptKind.ScriptStruct => EScriptValueKind.Nested,
         EScriptKind.Array => EScriptValueKind.Array,
+        EScriptKind.Instance => EScriptValueKind.Instance,
         _ => EScriptValueKind.Nil,
     };
 }

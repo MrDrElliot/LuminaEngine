@@ -88,5 +88,7 @@ namespace Lumina
 		uint32                      		bMasked : 1;
 		uint32                      		bAdditive : 1;
 		uint32                      		bTwoSided : 1;        // two-sided material: VisBuffer disables back-face cull
+		uint32                      		bAnySkinned : 1;      // batch has >=1 skinned instance (SPEC_SKINNED variant select)
+		uint32                      		bAnyStatic  : 1;      // batch has >=1 static instance; both set => mixed => dynamic
 	};
 }

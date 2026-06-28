@@ -3529,10 +3529,16 @@ namespace Lumina::RHI
 
         const FTexture& DestTexture = GDevice->Textures[Dest];
 
+        // bufferRowLength is in texels but, for block-compressed formats, Vulkan requires it to be a
+        // multiple of the block extent (the small mips of a BCn texture have width 1/2 < block width).
+        // Rounding up to the block width equals the tightly-packed block count, so the layout is unchanged.
+        const uint8 BlockW = RHI::Format::Info(DestTexture.Format).BlockSize;
+        const uint32 RowLengthBlocks = (BlockW > 1) ? Math::AlignUp(RowLength, (uint32)BlockW) : RowLength;
+
         VkBufferImageCopy Region
         {
             .bufferOffset       = SourceOffset,
-            .bufferRowLength    = RowLength,
+            .bufferRowLength    = RowLengthBlocks,
             .bufferImageHeight  = 0,
             .imageSubresource   = SliceLayers(DestTexture, Slice),
             .imageOffset        = { (int32)Slice.Offset.x, (int32)Slice.Offset.y, (int32)Slice.Offset.z },
@@ -3562,10 +3568,14 @@ namespace Lumina::RHI
 
         const FTexture& SourceTexture = GDevice->Textures[Source];
 
+        // See CmdCopyMemoryToTexture: block-compressed formats need bufferRowLength block-aligned.
+        const uint8 BlockW = RHI::Format::Info(SourceTexture.Format).BlockSize;
+        const uint32 RowLengthBlocks = (BlockW > 1) ? Math::AlignUp(RowLength, (uint32)BlockW) : RowLength;
+
         VkBufferImageCopy Region
         {
             .bufferOffset       = DestOffset,
-            .bufferRowLength    = RowLength,
+            .bufferRowLength    = RowLengthBlocks,
             .bufferImageHeight  = 0,
             .imageSubresource   = SliceLayers(SourceTexture, Slice),
             .imageOffset        = { (int32)Slice.Offset.x, (int32)Slice.Offset.y, (int32)Slice.Offset.z },

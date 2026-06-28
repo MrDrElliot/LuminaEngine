@@ -40,14 +40,14 @@ if /I "%PLATFORM%"=="Editor" (
 echo.
 echo ===============================================================================
 echo  [EnsureEngineBuilt] Engine libraries for "%CONFIG% ^| %PLATFORM%" are missing.
-echo  Building Lumina.sln -- one-time cost; subsequent builds reuse the cached libs.
+echo  Building Lumina.slnx -- one-time cost; subsequent builds reuse the cached libs.
 echo ===============================================================================
 echo.
 
-rem -latest -prerelease matches any VS2022 edition (Community/Pro/Enterprise/BuildTools).
+rem -latest -prerelease matches any VS2026 edition (Community/Pro/Enterprise/BuildTools).
 set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
 if not exist "%VSWHERE%" (
-    echo [EnsureEngineBuilt] vswhere.exe not found. Install Visual Studio 2022 or build the engine manually.
+    echo [EnsureEngineBuilt] vswhere.exe not found. Install Visual Studio 2026 or build the engine manually.
     exit /b 1
 )
 
@@ -57,16 +57,16 @@ for /f "usebackq tokens=*" %%i in (`"%VSWHERE%" -latest -prerelease -requires Mi
 )
 
 if not defined MSBUILD (
-    echo [EnsureEngineBuilt] MSBuild.exe not found via vswhere. Install the Visual Studio 2022 "Desktop development with C++" workload.
+    echo [EnsureEngineBuilt] MSBuild.exe not found via vswhere. Install the Visual Studio 2026 "Desktop development with C++" workload.
     exit /b 1
 )
 
-if not exist "%LUMINA_DIR%\Lumina.sln" (
-    echo [EnsureEngineBuilt] %LUMINA_DIR%\Lumina.sln not found. Run GenerateProject.bat first.
+if not exist "%LUMINA_DIR%\Lumina.slnx" (
+    echo [EnsureEngineBuilt] %LUMINA_DIR%\Lumina.slnx not found. Run GenerateProject.bat first.
     exit /b 1
 )
 
-"%MSBUILD%" "%LUMINA_DIR%\Lumina.sln" -p:Configuration=%CONFIG% -p:Platform=%PLATFORM% -m -v:minimal -nologo
+"%MSBUILD%" "%LUMINA_DIR%\Lumina.slnx" -p:Configuration=%CONFIG% -p:Platform=%PLATFORM% -m -v:minimal -nologo
 if errorlevel 1 (
     echo.
     echo [EnsureEngineBuilt] Engine build failed for "%CONFIG% ^| %PLATFORM%". Resolve the errors above and retry.

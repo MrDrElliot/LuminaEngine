@@ -49,6 +49,12 @@ namespace Lumina
         // (Target) via the new RHI. The frame loop has set the heap + acquire barrier.
         virtual void OnEndFrame_NewRHI(RHI::FCmdListH CL, RHI::FTextureH Target, const FUIntVector2& Extent, FImDrawDataSnapshot& Snapshot) {}
 
+        // Multi-viewport (windows dragged out of the main window into their own OS windows). Capture
+        // runs on the game thread inside BuildFrame (deep-copies each secondary viewport's draw data
+        // into the frame slot); render runs on the render thread and presents each secondary swapchain.
+        virtual void CaptureSecondaryViewports_GameThread(uint8 FrameIndex) {}
+        virtual void RenderSecondaryViewports_RenderThread(uint8 FrameIndex) {}
+
         // Game thread: process pending ImGui textures before handing off the snapshot, else 1.92's
         // backend does it lazily in RenderDrawData against shared state and races. Hold the gfx-queue lock.
         virtual void ProcessTextureUpdates_GameThread() {}

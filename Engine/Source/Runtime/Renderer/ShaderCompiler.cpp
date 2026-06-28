@@ -84,9 +84,68 @@ namespace Lumina
         void* castAs(const SlangUUID&) noexcept override { return nullptr; }
     };
     
-    static Slang::ComPtr<slang::IGlobalSession> SLangGlobalSession;
-    static FSharedMutex SlangMutex;
     static FShaderFS FileSystem;
+
+    // Slang's global session is NOT thread-safe: objects created from one may only be touched by a
+    // single thread at a time (see slang.h IGlobalSession docs). To compile in parallel we keep a
+    // pool of global sessions and lend one to each compile task for its lifetime; the lock is only
+    // held for the brief borrow/return, never across the (hundreds-of-ms) compile itself.
+    class FSlangSessionPool
+    {
+    public:
+        Slang::ComPtr<slang::IGlobalSession> Acquire()
+        {
+            {
+                FScopeLock Lock(Mutex);
+                if (!Free.empty())
+                {
+                    Slang::ComPtr<slang::IGlobalSession> Session = Move(Free.back());
+                    Free.pop_back();
+                    return Session;
+                }
+            }
+
+            // Grow on demand. createGlobalSession loads the Slang core module and touches
+            // process-global state, so serialize creation behind its own lock.
+            Slang::ComPtr<slang::IGlobalSession> Session;
+            {
+                FScopeLock Lock(CreateMutex);
+                slang::createGlobalSession(Session.writeRef());
+            }
+            return Session;
+        }
+
+        void Release(Slang::ComPtr<slang::IGlobalSession>&& Session)
+        {
+            if (!Session)
+            {
+                return;
+            }
+            FScopeLock Lock(Mutex);
+            Free.push_back(Move(Session));
+        }
+
+        void Prewarm(uint32 Count)
+        {
+            TVector<Slang::ComPtr<slang::IGlobalSession>> Sessions;
+            Sessions.reserve(Count);
+            for (uint32 i = 0; i < Count; ++i)
+            {
+                Sessions.push_back(Acquire());
+            }
+            for (auto& Session : Sessions)
+            {
+                Release(Move(Session));
+            }
+        }
+
+    private:
+        FMutex Mutex;
+        FMutex CreateMutex;
+        TVector<Slang::ComPtr<slang::IGlobalSession>> Free;
+    };
+
+    static FSlangSessionPool GSlangSessionPool;
     
     bool FSpirVShaderCompiler::HasPendingRequests() const
     {
@@ -164,7 +223,13 @@ namespace Lumina
 
         LOG_INFO("Starting Shader Task Swarm - Num: {}", NumShaders);
 
-        Task::AsyncTask(NumShaders, NumShaders, [this,
+        // Spread the work across workers instead of one serial chunk. Bound concurrency so we don't
+        // spin up a global session (each loads the Slang core module) per shader; a handful of
+        // sessions, each compiling a few shaders, is the sweet spot.
+        const uint32 TargetChunks = std::min(NumShaders, std::max(1u, Threading::GetNumThreads() / 2));
+        const uint32 Grain        = (NumShaders + TargetChunks - 1) / TargetChunks;
+
+        Task::AsyncTask(NumShaders, Grain, [this,
             Paths = Move(Paths),
             Options = Move(Options),
             SourceHashes = Move(SourceHashes),
@@ -178,20 +243,23 @@ namespace Lumina
                 PendingTasks.fetch_sub(Num, std::memory_order_relaxed);
                 std::atomic_notify_all(&PendingTasks);
             };
-        
+
+            // Borrow one global session for this whole chunk (reused across its shaders) and return
+            // it when done. Slang explicitly supports re-using one global session for many sessions.
+            Slang::ComPtr<slang::IGlobalSession> GlobalSession = GSlangSessionPool.Acquire();
+            DEFER { GSlangSessionPool.Release(Move(GlobalSession)); };
+
             auto CompileStart = std::chrono::high_resolution_clock::now();
 
             for (uint32 i = Start; i < End; ++i)
             {
-                FWriteScopeLock Lock(SlangMutex);
-                
                 slang::SessionDesc SessionDesc = {};
                 SessionDesc.defaultMatrixLayoutMode = SLANG_MATRIX_LAYOUT_COLUMN_MAJOR;
                 SessionDesc.fileSystem = &FileSystem;
         
                 slang::TargetDesc TargetDesc = {};
                 TargetDesc.format  = SLANG_SPIRV;
-                TargetDesc.profile = SLangGlobalSession->findProfile("spirv_1_5");
+                TargetDesc.profile = GlobalSession->findProfile("spirv_1_5");
                 TargetDesc.flags   = SLANG_TARGET_FLAG_GENERATE_SPIRV_DIRECTLY | SLANG_TARGET_FLAG_GENERATE_WHOLE_PROGRAM;
 
                 // Debug-info level is GPU/build-gated (see GetShaderDebugInfoLevel): STANDARD for Nsight
@@ -261,7 +329,7 @@ namespace Lumina
         
                 Slang::ComPtr<slang::ISession> Session;
                 {
-                    if (SLANG_FAILED(SLangGlobalSession->createSession(SessionDesc, Session.writeRef())))
+                    if (SLANG_FAILED(GlobalSession->createSession(SessionDesc, Session.writeRef())))
                     {
                         LOG_ERROR("Slang: Failed to create session");
                         return;
@@ -412,7 +480,9 @@ namespace Lumina
 
     void FSpirVShaderCompiler::Initialize()
     {
-        slang::createGlobalSession(SLangGlobalSession.writeRef());
+        // Pre-warm the global-session pool so the first compile wave doesn't serialize on core-module
+        // loads. Sized to the batch target concurrency; the pool still grows on demand beyond this.
+        GSlangSessionPool.Prewarm(std::max(1u, Threading::GetNumThreads() / 2));
 
         TVector<FString> Shaders;
         auto EnumerateShadersUnder = [&](FStringView Root)
@@ -502,14 +572,15 @@ namespace Lumina
             Callback = Move(OnCompleted)]
             (uint32, uint32, uint32 Thread)
         {
-            FWriteScopeLock Lock(SlangMutex);
-
             DEFER
             {
                 PendingTasks.fetch_sub(1, std::memory_order_relaxed);
                 std::atomic_notify_all(&PendingTasks);
             };
-        
+
+            Slang::ComPtr<slang::IGlobalSession> GlobalSession = GSlangSessionPool.Acquire();
+            DEFER { GSlangSessionPool.Release(Move(GlobalSession)); };
+
             auto CompileStart = std::chrono::high_resolution_clock::now();
         
             slang::SessionDesc SessionDesc = {};
@@ -518,7 +589,7 @@ namespace Lumina
 
             slang::TargetDesc TargetDesc = {};
             TargetDesc.format  = SLANG_SPIRV;
-            TargetDesc.profile = SLangGlobalSession->findProfile("spirv_1_5");
+            TargetDesc.profile = GlobalSession->findProfile("spirv_1_5");
             TargetDesc.flags   = SLANG_TARGET_FLAG_GENERATE_SPIRV_DIRECTLY | SLANG_TARGET_FLAG_GENERATE_WHOLE_PROGRAM;
 
             slang::CompilerOptionEntry TargetOptions[2] = {};
@@ -565,7 +636,7 @@ namespace Lumina
             SessionDesc.preprocessorMacroCount = (SlangInt)Macros.size();
         
             Slang::ComPtr<slang::ISession> Session;
-            if (SLANG_FAILED(SLangGlobalSession->createSession(SessionDesc, Session.writeRef())))
+            if (SLANG_FAILED(GlobalSession->createSession(SessionDesc, Session.writeRef())))
             {
                 LOG_ERROR("Slang: Failed to create session");
                 return;

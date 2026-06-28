@@ -255,12 +255,7 @@ namespace Lumina
 
                     for (uint32 v = 0; v < M.VertexCount; ++v)
                     {
-                        const uint32 P  = MD.MeshletVertices[M.VertexOffset + v].Position;
-                        const float qx  = static_cast<float>( P        & 0x3FFu);
-                        const float qy  = static_cast<float>((P >> 10) & 0x3FFu);
-                        const float qz  = static_cast<float>((P >> 20) & 0x3FFu);
-                        const FVector3 Pos = MD.MeshOrigin[M.LODIndex] + (FVector3(M.LoInt) + FVector3(qx, qy, qz)) * MD.MeshGridStep[M.LODIndex];
-                        OutPositions.push_back(Pos);
+                        OutPositions.push_back(MD.MeshletVertices[M.VertexOffset + v].Position);
                     }
 
                     for (uint32 t = 0; t < M.TriangleCount; ++t)

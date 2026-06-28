@@ -29,8 +29,54 @@ namespace ofbx {
 
 template <typename T>
 struct Array {
+	// Rule-of-5: the original Array had no destructor, so every malloc'd m_data leaked unless clear() was
+	// called explicitly -- which it never is on the geometry buffers, so a large FBX leaked hundreds of MB.
+	// dtor frees; move transfers ownership (keeps reserve()'s element relocation correct); copy is deep.
+	Array() = default;
+
+	~Array() {
+		for (size_t i = 0; i < m_size; ++i) { m_data[i].~T(); }
+		free(m_data);
+	}
+
+	Array(const Array& other) {
+		reserve(other.m_size);
+		for (size_t i = 0; i < other.m_size; ++i) { OFBX_PLACEMENT_NEW(m_data + i) T(other.m_data[i]); }
+		m_size = other.m_size;
+	}
+
+	Array(Array&& other) noexcept
+		: m_data(other.m_data), m_size(other.m_size), m_capacity(other.m_capacity) {
+		other.m_data = nullptr;
+		other.m_size = 0;
+		other.m_capacity = 0;
+	}
+
+	Array& operator=(const Array& other) {
+		if (this != &other) {
+			clear();
+			reserve(other.m_size);
+			for (size_t i = 0; i < other.m_size; ++i) { OFBX_PLACEMENT_NEW(m_data + i) T(other.m_data[i]); }
+			m_size = other.m_size;
+		}
+		return *this;
+	}
+
+	Array& operator=(Array&& other) noexcept {
+		if (this != &other) {
+			clear();
+			m_data = other.m_data;
+			m_size = other.m_size;
+			m_capacity = other.m_capacity;
+			other.m_data = nullptr;
+			other.m_size = 0;
+			other.m_capacity = 0;
+		}
+		return *this;
+	}
+
 	size_t size() const { return m_size; };
-	
+
 	T* data() const { return m_data; }
 	bool empty() const { return m_size == 0; }
 	T& operator[](const size_t index) const { return m_data[index]; }
@@ -105,7 +151,40 @@ struct HashMap {
 	static_assert(alignof(Key) <= 16, "Unsupported alignment");
 	static_assert(alignof(Value) <= 16, "Unsupported alignment");
 
-	Value& operator[](const Key& key) { 
+	// Like Array, the original HashMap never freed m_slots (only clear() did, which isn't called on the
+	// Scene's object/id maps) -> a leak. dtor frees; move transfers; copy deleted (these maps are never copied).
+	HashMap() = default;
+	~HashMap() {
+		for (size_t i = 0; i < m_capacity; ++i) {
+			if (m_slots[i].valid) {
+				((Key*)m_slots[i].key_mem)->~Key();
+				((Value*)m_slots[i].value_mem)->~Value();
+			}
+		}
+		free(m_slots);
+	}
+	HashMap(const HashMap&) = delete;
+	HashMap& operator=(const HashMap&) = delete;
+	HashMap(HashMap&& other) noexcept
+		: m_slots(other.m_slots), m_size(other.m_size), m_capacity(other.m_capacity) {
+		other.m_slots = nullptr;
+		other.m_size = 0;
+		other.m_capacity = 0;
+	}
+	HashMap& operator=(HashMap&& other) noexcept {
+		if (this != &other) {
+			clear();
+			m_slots = other.m_slots;
+			m_size = other.m_size;
+			m_capacity = other.m_capacity;
+			other.m_slots = nullptr;
+			other.m_size = 0;
+			other.m_capacity = 0;
+		}
+		return *this;
+	}
+
+	Value& operator[](const Key& key) {
 		Value* v = find(key);
 		if (v) return *v;
 

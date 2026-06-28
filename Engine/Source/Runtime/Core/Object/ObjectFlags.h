@@ -38,7 +38,8 @@ namespace Lumina
         if (EnumHasAnyFlags(Flags, OF_Rooted))          Result += "OF_Rooted|";
         if (EnumHasAnyFlags(Flags, OF_DefaultObject))   Result += "OF_DefaultObject|";
         if (EnumHasAnyFlags(Flags, OF_NeedsLoad))       Result += "OF_NeedsLoad|";
-        if (EnumHasAnyFlags(Flags, OF_NeedsLoad))       Result += "OF_NeedsPostLoad|";
+        if (EnumHasAnyFlags(Flags, OF_Loading))         Result += "OF_Loading|";
+        if (EnumHasAnyFlags(Flags, OF_NeedsPostLoad))   Result += "OF_NeedsPostLoad|";
         if (EnumHasAnyFlags(Flags, OF_WasLoaded))       Result += "OF_WasLoaded|";
         if (EnumHasAnyFlags(Flags, OF_Public))          Result += "OF_Public|";
         if (EnumHasAnyFlags(Flags, OF_MarkedDestroy))   Result += "OF_MarkedDestroy|";

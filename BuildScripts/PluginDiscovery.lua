@@ -1,5 +1,5 @@
 -- Scans a Plugins root for <PluginName>/<PluginName>.lua build files and include()s each into the surrounding workspace.
--- Called from the engine root (Engine/Plugins/) and LuminaGameProject (<Project>/Plugins/) so plugins join the matching .sln.
+-- Called from the engine root (Engine/Plugins/) and LuminaGameProject (<Project>/Plugins/) so plugins join the matching .slnx.
 
 assert(LuminaConfig, "PluginDiscovery.lua: include BuildScripts/Dependencies first")
 include(path.join(_SCRIPT_DIR, "Plugin.lua"))

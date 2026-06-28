@@ -22,26 +22,17 @@ namespace Lumina
 
     struct RUNTIME_API FTreeNodeDisplay
     {
-        FString         DisplayName;
-        FString         TooltipText;
-
-        // Optional rich tooltip. When TooltipTitle is set or TooltipChips is non-empty, the tree
-        // draws a styled tooltip (accent title + dim subtitle + a wrapped row of "chip" pills)
-        // instead of the plain TooltipText. Each chip string is drawn verbatim (icons included).
+        FString             DisplayName;
+        FString             TooltipText;
         FString             TooltipTitle;
         FString             TooltipSubtitle;
-        FString             TooltipChipHeader;   // small dim caps label above the chips (e.g. "COMPONENTS")
+        FString             TooltipChipHeader;
         TVector<FString>    TooltipChips;
 
         ImVec4          DisplayColor = ImVec4(0.725f, 0.725f, 0.725f, 1.0f);
 
-        // Optional: tinted overdraw of DisplayName's leading glyph. Must match the icon DisplayName starts with.
         FString         IconText;
         ImVec4          IconColor = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
-
-        // Optional secondary right-aligned toggle button, drawn left of the visibility eye. The
-        // glyph shown depends on FTreeNodeState::bSecondaryToggled (On = active, Off = toggled).
-        // Used by the world outliner for the per-entity script enable/disable toggle.
         FString         SecondaryIconOn;
         FString         SecondaryIconOff;
         FString         SecondaryTooltip;
@@ -49,6 +40,7 @@ namespace Lumina
         uint8           bShowDisabledIcon:1 = false;
         uint8           bShowSecondaryIcon:1 = false;
 		uint8		    bAllowRenaming:1 = false;
+        uint8           bTooltipBuilt:1 = false;
     };
 
     struct RUNTIME_API FTreeNodeState

@@ -225,7 +225,7 @@ namespace Lumina
         return true;
     }
 
-    // Walk LOD-0 verts. Mesh data is per-meshlet 10-10-10 quantized: dequant = MeshOrigin + (LoInt + q) * GridStep.
+    // Walk LOD-0 verts. Meshlet vertex positions are full mesh-local float3 (no quantization).
     template <typename TVisitor>
     static void ForEachMeshVertexLocal(const CStaticMesh& Mesh, TVisitor&& Visit)
     {
@@ -255,13 +255,7 @@ namespace Lumina
                 const FMeshlet& M = Meshlets[Offset + i];
                 for (uint32 v = 0; v < M.VertexCount; ++v)
                 {
-                    const uint32 P = Verts[M.VertexOffset + v].Position;
-                    FIntVector3 Q;
-                    Q.x = int32( P        & 0x3FFu);
-                    Q.y = int32((P >> 10) & 0x3FFu);
-                    Q.z = int32((P >> 20) & 0x3FFu);
-                    const FVector3 LocalPos = MeshletData.MeshOrigin[M.LODIndex] + FVector3(M.LoInt + Q) * MeshletData.MeshGridStep[M.LODIndex];
-                    Visit(LocalPos);
+                    Visit(Verts[M.VertexOffset + v].Position);
                 }
             }
         });
@@ -582,7 +576,10 @@ namespace Lumina
             {
                 return;
             }
-            
+
+            // Tooltip building (component scan) is deferred from tree-build to first hover.
+            BuildEntityTooltip(Data.Entity, Tree.Get<FTreeNodeDisplay>(Item));
+
             EditorEntityUtils::DrawEntityBounds(World, Data.Entity, FColor::White, 3.0f);
         };
 

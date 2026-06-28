@@ -243,7 +243,9 @@ float SampleDirectionalCascade(FLight Light, int CascadeIndex, float3 FragmentPo
 
     // Fixed (non per-pixel) rotation for the blocker search: per-pixel rotation of this sparse pattern
     // stipples thin-occluder penumbras; a shared angle keeps the lit/shadow boundary coherent. PCF below still rotates.
-    [unroll]
+    // [loop] (not [unroll]): unrolling holds 8 tap temporary-sets live at once, spiking PS VGPR -> the
+    // dominant warp-launch register stall. A rolling loop keeps one set; extra resident warps re-hide the tap latency.
+    [loop]
     for (int s = 0; s < PCSS_BLOCKER_SEARCH_TAPS; ++s)
     {
         float2 VOffset  = VogelDiskSample(s, PCSS_BLOCKER_SEARCH_TAPS, 0.0);
@@ -310,8 +312,8 @@ float SampleDirectionalCascade(FLight Light, int CascadeIndex, float3 FragmentPo
     return float(Shadow) * rcp(float(SampleCount));
 }
 
-// The directional/cascade (sun) shadow factor. Factored out so the dedicated screen-space sun-shadow-mask
-// pass (computed once per pixel at full occupancy) and the per-light path both share the exact same PCSS.
+// The directional/cascade (sun) shadow factor. Factored out so the sun (light 0) and any other directional
+// light in the clustered loop share the exact same cascade PCSS.
 float ComputeDirectionalShadow(FLight Light, float3 FragmentPos, float3 Normal, float3 ViewPosition, float2 ScreenPos)
 {
     // Sun with bCastShadows = false leaves ShadowDataIndex at INDEX_NONE;
@@ -451,6 +453,12 @@ float ComputeShadowFactor(FLight Light, float3 FragmentPos, float3 Normal, float
 
     float Shadow = 0.0;
     float Weight = 0.0;
+    // [loop] (not unrolled): SHADOW_SAMPLE_COUNT is a compile-time constant, so an unrolled body holds all
+    // 8 tap temporary-sets live at once and inflates the PS register allocation for the WHOLE shader (the
+    // allocator reserves the peak across every path, so even sun-only pixels pay it) -> warp-launch stall.
+    // A rolling loop keeps one tap's temps; extra resident warps re-hide the SampleCmp latency. Matches the
+    // directional PCSS loops above.
+    [loop]
     for (int i = 0; i < SHADOW_SAMPLE_COUNT; i++)
     {
         float2 Offset   = VogelDiskSample(i, SHADOW_SAMPLE_COUNT, Angle) * FilterRadius;
@@ -584,7 +592,8 @@ float3 ShadowPenumbraDebug(float3 FragmentPos, float3 ViewPosition, float2 Scree
 
     float BlockerDepthSum = 0.0;
     int   NumBlockers     = 0;
-    [unroll]
+    // [loop] (not [unroll]): see the directional blocker search -- rolling collapses 8 live tap-temp sets to one.
+    [loop]
     for (int s = 0; s < PCSS_BLOCKER_SEARCH_TAPS; ++s)
     {
         float2 Offset    = VogelDiskSample(s, PCSS_BLOCKER_SEARCH_TAPS, 0.0) * SearchRadius;
@@ -755,7 +764,8 @@ FShadedSurface ShadeSurface(FBaseVertexOutput Input, FMaterialPixelInputs Materi
     // so colored metals get colored multi-bounce. Ess = single-scatter albedo (BRDF LUT scale+bias).
     float  NdotV_EC    = saturate(dot(N, V));
     float2 DFG_EC      = SampleBRDFLUT(NdotV_EC, Roughness);
-    float3 EnergyComp  = 1.0 + F0 * (1.0 / max(DFG_EC.x + DFG_EC.y, 1e-4) - 1.0);
+    // EnergyComp is computed below, just before its only use, so this BRDF-LUT fetch's latency overlaps the
+    // independent context ALU instead of stalling here.
 
     // Loop-invariant surface terms: hoisted out of the per-light BRDF so each light only re-derives the
     // L-dependent half. NdotV / roughness remap / view geometry term are identical across every light.
@@ -771,6 +781,7 @@ FShadedSurface ShadeSurface(FBaseVertexOutput Input, FMaterialPixelInputs Materi
     Ctx.Gv          = (half)(Ctx.NdotV / (Ctx.NdotV * (1.0 - KgF) + KgF));
     Ctx.F0          = (half3)F0;
     Ctx.DiffuseBase = (half3)(Albedo * (1.0 - Metallic) * INV_PI);
+    float3 EnergyComp = 1.0 + F0 * (1.0 / max(DFG_EC.x + DFG_EC.y, 1e-4) - 1.0);
     Ctx.EnergyComp  = (half3)EnergyComp;
 
     float  ZNear      = GetNearPlane();
@@ -871,7 +882,11 @@ FShadedSurface ShadeSurface(FBaseVertexOutput Input, FMaterialPixelInputs Materi
     {
         // IBL ambient: split-sum convolutions of the sky cube (irradiance by N, GGX-prefiltered specular
         // by R + BRDF LUT). GetAmbientLightIntensity() scales it so the SkyLight Intensity slider applies.
-        float3 IBLAmbient = EvaluateIBLAmbient(N, V, NdotV_EC, DFG_EC, Albedo, F0, Roughness, Metallic, AO);
+        // Recompute NdotV/DFG locally (N/V/Roughness are already live) so the top-of-shader DFG_EC/NdotV_EC
+        // need not stay register-resident across PCSS + the whole clustered-light loop just to feed this branch.
+        float  NdotV_IBL  = saturate(dot(N, V));
+        float2 DFG_IBL    = SampleBRDFLUT(NdotV_IBL, Roughness);
+        float3 IBLAmbient = EvaluateIBLAmbient(N, V, NdotV_IBL, DFG_IBL, Albedo, F0, Roughness, Metallic, AO);
         Ambient = IBLAmbient * GetAmbientLightIntensity() * SSAO;
     }
     else

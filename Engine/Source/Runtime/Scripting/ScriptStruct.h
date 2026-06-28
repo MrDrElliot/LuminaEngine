@@ -29,6 +29,7 @@ namespace Lumina::Scripting
         AssetRef,
         NativeStruct,
         ScriptStruct,
+        Instance,     ///< FInstancedStruct field (polymorphic, picks one of a candidate set).
     };
 
     struct FScriptArrayElementDesc
@@ -77,6 +78,15 @@ namespace Lumina
         RUNTIME_API void DestructIn(void* Buffer) const;
         RUNTIME_API void CopyInto(void* Dst, const void* Src) const;
 
+        // CStruct lifetime overrides so an FInstancedStruct can own a script-defined instance (a minted
+        // CScriptStruct has no FStructOps).
+        void InitializeStruct(void* Dest) const override { ConstructInto(Dest); }
+        void DestroyStruct(void* Dest) const override { DestructIn(Dest); }
+        void CopyStruct(void* Dest, const void* Src) const override { CopyInto(Dest, Src); }
+
+        // The layout's defaults buffer, so editor diff and reset-to-default work for script fields.
+        void* GetDefaultInstance() override { return const_cast<void*>(GetDefaults()); }
+
         // Resets every [SkipHotReload] field in Buffer to the layout default; called on a hot-reload rebind.
         RUNTIME_API void ResetHotReloadFields(void* Buffer) const;
 
@@ -101,6 +111,15 @@ namespace Lumina
         bool ResolveElement(const Scripting::FScriptExportType& Type, Scripting::FScriptArrayElementDesc& Out);
         FProperty* CreateElement(void* ArrayOwner, const Scripting::FScriptExportType& Type, Scripting::FScriptArrayElementDesc& Desc);
         CScriptStruct* MintSubStruct(const Scripting::FScriptExportType& Type);
+
+        // An empty marker the candidate sub-structs derive from, so the picker enumerates this field's
+        // candidates via IsChildOf. Tagged ScriptInstanceBase so the picker hides it.
+        CScriptStruct* MintInstanceBase(const FName& BaseName);
+
+        // One selectable concrete type for an Instance field. A sub-CScriptStruct deriving from Base,
+        // tagged with its stable C# type name in ScriptTypeName metadata.
+        CScriptStruct* MintInstanceCandidate(const Scripting::FScriptExportInstanceCandidate& Candidate, CScriptStruct* Base);
+
         CEnum* MintEnum(const Scripting::FScriptExportType& Type);
         void FreeRuntimeData();
 

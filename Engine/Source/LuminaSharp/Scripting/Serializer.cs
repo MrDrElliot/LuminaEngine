@@ -122,6 +122,18 @@ internal static class Serializer
                 WriteType(Writer, Type.Element ?? new ScriptType());
                 break;
             }
+            case EScriptKind.Instance:
+            {
+                WriteString(Writer, Type.BaseName ?? "");
+                IReadOnlyList<ScriptInstanceCandidate> Candidates = Type.Candidates ?? Array.Empty<ScriptInstanceCandidate>();
+                Writer.Write(Candidates.Count);
+                foreach (ScriptInstanceCandidate Candidate in Candidates)
+                {
+                    WriteString(Writer, Candidate.TypeName);
+                    WriteFields(Writer, Candidate.Fields);
+                }
+                break;
+            }
         }
     }
 
@@ -184,6 +196,45 @@ internal static class Serializer
                 WriteArray(Writer, Type, Value);
                 break;
             }
+            case EScriptValueKind.Instance:
+            {
+                WriteInstance(Writer, Type, Value);
+                break;
+            }
+        }
+    }
+
+    // Writes the chosen type name, then (when non-empty) a field count and each field's name and value.
+    // An unmatched or null instance writes an empty name. The candidate is found by runtime CLR type.
+    private static void WriteInstance(BinaryWriter Writer, ScriptType Type, object? Value)
+    {
+        IReadOnlyList<ScriptInstanceCandidate> Candidates = Type.Candidates ?? Array.Empty<ScriptInstanceCandidate>();
+        ScriptInstanceCandidate? Chosen = null;
+        if (Value != null)
+        {
+            Type Runtime = Value.GetType();
+            foreach (ScriptInstanceCandidate Candidate in Candidates)
+            {
+                if (Candidate.Clr == Runtime)
+                {
+                    Chosen = Candidate;
+                    break;
+                }
+            }
+        }
+
+        if (Chosen == null)
+        {
+            WriteString(Writer, "");
+            return;
+        }
+
+        WriteString(Writer, Chosen.TypeName);
+        Writer.Write(Chosen.Fields.Count);
+        foreach (ScriptProperty Field in Chosen.Fields)
+        {
+            WriteString(Writer, Field.Name);
+            WriteValue(Writer, Field.Type, Value != null ? Field.Get(Value) : null);
         }
     }
 
@@ -339,11 +390,68 @@ internal static class Serializer
             {
                 return ReadNested(ref Reader, Type, out Value);
             }
+            case EScriptValueKind.Instance:
+            {
+                return ReadInstance(ref Reader, Type, out Value);
+            }
             default:
             {
                 return false;
             }
         }
+    }
+
+    private static bool ReadInstance(ref FBlobReader Reader, ScriptType Type, out object? Value)
+    {
+        Value = null;
+
+        string TypeName = Reader.ReadString();
+        if (string.IsNullOrEmpty(TypeName))
+        {
+            return true; // a null instance is a valid value
+        }
+
+        ScriptInstanceCandidate? Chosen = null;
+        IReadOnlyList<ScriptInstanceCandidate> Candidates = Type.Candidates ?? Array.Empty<ScriptInstanceCandidate>();
+        foreach (ScriptInstanceCandidate Candidate in Candidates)
+        {
+            if (Candidate.TypeName == TypeName)
+            {
+                Chosen = Candidate;
+                break;
+            }
+        }
+
+        int Count = Reader.ReadInt32();
+        if (Chosen == null)
+        {
+            // Unknown type (removed/renamed): consume the body, leave the field at its default.
+            for (int Index = 0; Index < Count; Index++)
+            {
+                Reader.Skip(Reader.ReadInt32()); // field name
+                SkipValue(ref Reader);
+            }
+            return false;
+        }
+
+        object? Box = Activator.CreateInstance(Chosen.Clr);
+        for (int Index = 0; Index < Count; Index++)
+        {
+            string Name = Reader.ReadString();
+            ScriptProperty? Field = FindProperty(Chosen.Fields, Name);
+            if (Field == null)
+            {
+                SkipValue(ref Reader);
+                continue;
+            }
+            if (Box != null && ReadValue(ref Reader, Field.Type, out object? FieldValue))
+            {
+                Field.Set(Box, FieldValue);
+            }
+        }
+
+        Value = Box;
+        return Box != null;
     }
 
     private static bool DecodeString(ref FBlobReader Reader, ScriptType Type, out object? Value)
@@ -497,6 +605,20 @@ internal static class Serializer
                 {
                     Reader.Skip(Reader.ReadInt32()); // field name
                     SkipValue(ref Reader);
+                }
+                break;
+            }
+            case EScriptValueKind.Instance:
+            {
+                string Name = Reader.ReadString();
+                if (!string.IsNullOrEmpty(Name))
+                {
+                    int Count = Reader.ReadInt32();
+                    for (int Index = 0; Index < Count; Index++)
+                    {
+                        Reader.Skip(Reader.ReadInt32()); // field name
+                        SkipValue(ref Reader);
+                    }
                 }
                 break;
             }

@@ -599,7 +599,7 @@ namespace Lumina
                         LOG_INFO("[PluginBrowser] Created plugin at {}", OutDir.c_str());
 
                         // Regenerate the project so the new modules join its
-                        // .sln, then prompt a rebuild + restart to load them.
+                        // .slnx, then prompt a rebuild + restart to load them.
                         GEditorEngine->GenerateProjectFiles(GEngine->GetProjectPath());
 
                         CreatePluginResult = "Created plugin '";

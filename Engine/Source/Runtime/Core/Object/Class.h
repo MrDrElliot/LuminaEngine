@@ -112,6 +112,13 @@ namespace Lumina
         /** Lazy default-constructed instance for property-editor diff/reset. Null if not default-constructible. Never destructed. */
         RUNTIME_API virtual void* GetDefaultInstance();
 
+        //~ Value lifetime for one instance in caller-owned raw memory. Default uses FStructOps, else
+        //~ walks the property list. CScriptStruct overrides these. Used by FInstancedStruct.
+        RUNTIME_API virtual void InitializeStruct(void* Dest) const;
+        RUNTIME_API virtual void DestroyStruct(void* Dest) const;
+        RUNTIME_API virtual void CopyStruct(void* Dest, const void* Src) const;
+        RUNTIME_API virtual bool CompareStruct(const void* A, const void* B) const;
+
         /** Reflected-property serialization with tags for versioning/skip support. */
         RUNTIME_API void SerializeTaggedProperties(FArchive& Ar, void* Data) const;
 

@@ -686,11 +686,9 @@ namespace Lumina
                     const uint32 End = OverlayOffset + OverlayCount;
                     for (uint32 m = OverlayOffset; m < End; ++m)
                     {
-                        const FMeshlet& Mesh = MD.Meshlets[m];
-                        const FVector3 GridOrigin = MD.MeshOrigin[Mesh.LODIndex];
-                        const FVector3 GridStep   = MD.MeshGridStep[Mesh.LODIndex];
-                        const FVector3 BoxLo = GridOrigin + FVector3(Mesh.LoInt) * GridStep;
-                        const FVector3 BoxHi = BoxLo + FVector3(1023.0f) * GridStep;
+                        const FMeshletBounds& B = MD.MeshletBounds[m];
+                        const FVector3 BoxLo = B.Center - FVector3(B.Radius);
+                        const FVector3 BoxHi = B.Center + FVector3(B.Radius);
                         Lo = Math::Min(Lo, BoxLo);
                         Hi = Math::Max(Hi, BoxHi);
                     }

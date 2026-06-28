@@ -28,7 +28,7 @@ LuminaWorkspaceSettings({
 		include "Engine/Source/Runtime"
         include "Engine/Editor"
 	group ""
-    -- Sandbox is a standalone game project (own Sandbox.sln, links the pre-built engine), so it is intentionally not in the engine workspace.
+    -- Sandbox is a standalone game project (own Sandbox.slnx, links the pre-built engine), so it is intentionally not in the engine workspace.
 
     group "Engine/Managed"
         -- [NativeCall] Roslyn source generator.

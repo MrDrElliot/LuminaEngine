@@ -114,6 +114,9 @@ namespace Lumina
         void RebuildSceneOutliner(FTreeListView& Tree);
         // Add an entity row (under its parent if present). Returns the node or InvalidTreeNode.
         FTreeNodeID AddEntityToOutliner(entt::entity Entity);
+        // Populate a row's rich hover tooltip (title, subtitle, component chips). Deferred to first
+        // hover because the component scan is expensive; no-op once Display.bTooltipBuilt is set.
+        void BuildEntityTooltip(entt::entity Entity, FTreeNodeDisplay& Display);
         void RemoveEntityFromOutliner(entt::entity Entity);
         void ReparentEntityInOutliner(entt::entity Entity);
         void RefreshOutlinerExpander(entt::entity Entity);

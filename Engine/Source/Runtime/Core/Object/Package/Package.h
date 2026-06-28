@@ -67,7 +67,10 @@ namespace Lumina
             Ar << Data.ObjectGUID;
             uint8 T = static_cast<uint8>(Data.Type);
             Ar << T;
-            if (Ar.IsReading()) Data.Type = static_cast<EDependencyType>(T);
+            if (Ar.IsReading())
+            {
+                Data.Type = static_cast<EDependencyType>(T);
+            }
             return Ar;
         }
     };
@@ -206,6 +209,13 @@ namespace Lumina
         /** Idempotent. Returns shells marked OF_NeedsLoad; objects are not yet serialized. */
         RUNTIME_API static CPackage* LoadPackage(FStringView Path);
 
+        /** Fully loads RootGUID and its entire Hard/Owned dependency closure with a parallel, phased loader:
+         *  discover the package set from the asset registry, read+inflate every package in parallel, create
+         *  all object shells, serialize all data in parallel (refs resolve to shells), then PostLoad
+         *  leaf-first. Falls back to the plain inline load if RootGUID isn't a registered asset. Returns the
+         *  loaded root object. Use this for top-level asset opens (worlds, large assets) that fan out widely. */
+        RUNTIME_API static CObject* LoadAssetGraph(const FGuid& RootGUID);
+
         RUNTIME_API static bool SavePackage(CPackage* Package, FStringView Path);
 
         /** Save a loaded package to compressed bytes for the cooker (Cooking flag set);
@@ -264,7 +274,43 @@ namespace Lumina
 
     private:
 
+        // Phased-load building blocks used by LoadAssetGraph. Each runs over this package's whole ExportTable
+        // on a single task (cross-package parallelism comes from running these per-package concurrently).
+
+        // Create (or find) every export's object shell with OF_NeedsLoad set, so cross-package references can
+        // resolve to a live pointer before any data is serialized.
+        void CreateExportShells();
+
+        // Serialize every export's data. During a graph load PostLoad is deferred (objects come out marked
+        // OF_NeedsPostLoad); references resolve to already-created shells without triggering a nested load.
+        void SerializeExports();
+
+        // PostLoad every export still owing one (OF_NeedsPostLoad). Called leaf-first across packages.
+        void PostLoadExports();
+
+        // Create/find one export's shell (no data load). Returns null only if its class can't be resolved.
+        CObject* CreateExportShell(int32 ExportIndex);
+
+        // Read one export's data from the loader (PreLoad + Serialize). Marks OF_NeedsPostLoad instead of
+        // PostLoading, so serialize and PostLoad can be separated into phases.
+        void SerializeObject(CObject* Object);
+
+        // Run a deferred PostLoad if one is owed; idempotent (clears OF_NeedsPostLoad first).
+        static void PostLoadObject(CObject* Object);
+
+        // Re-open the on-disk loader if its cached bytes were dropped after a full load. Returns false when
+        // no backing file is available (transient / never-saved package), leaving Loader null.
+        bool EnsureLoader();
+
+        // Free the cached uncompressed file bytes once every export is resident. A still-unloaded export
+        // keeps them (re-read lazily via EnsureLoader). No-op while a load is in flight on this package.
+        void ConditionalDropLoader();
+
         TAtomic<ELoadState>             LoadState{ELoadState::Unloaded};
+
+        // Reentrancy depth of object loads sharing this package's Loader. The cached bytes are dropped only
+        // when the outermost load unwinds, so a nested IndexToObject load can't free the buffer mid-read.
+        int32                           ActiveLoadDepth = 0;
 #if USING(WITH_EDITOR)
         mutable FMutex                  ThumbnailMutex;
         TUniquePtr<FPackageThumbnail>   PackageThumbnail;

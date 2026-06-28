@@ -20,7 +20,6 @@ namespace Lumina
         void SetNodeValue(void* Value) override;
         void DrawNodeBody() override;
         void DrawContextMenu() override;
-        void DrawNodeTitleBar() override;
 
         /** The texture asset to sample in this node. */
         PROPERTY(Editable, Category = "Texture")

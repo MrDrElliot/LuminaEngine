@@ -451,7 +451,7 @@ namespace Lumina
 
         std::thread([BatPathStr, WorkingDirStr]()
         {
-            FScopedSlowTask Task(1.0f, "Generating project files", "Running premake5 vs2022...");
+            FScopedSlowTask Task(1.0f, "Generating project files", "Running premake5 vs2026...");
 
             LOG_INFO("[premake] running {0}", BatPathStr.c_str());
 

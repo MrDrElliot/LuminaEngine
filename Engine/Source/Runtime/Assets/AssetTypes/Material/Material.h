@@ -2,6 +2,7 @@
 
 #include "MaterialInterface.h"
 #include "Containers/Array.h"
+#include "Core/Threading/Thread.h"
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Object/ObjectMacros.h"
@@ -164,8 +165,10 @@ namespace Lumina
 
         void RebuildParameterLookup();
 
-        /** Instance back-references; instances unregister in OnDestroy so raw pointers are safe. */
+        /** Instance back-references; instances unregister in OnDestroy so raw pointers are safe. Guarded by
+            InstancesMutex: instances of one master Register concurrently during the parallel PostLoad wave. */
         TVector<CMaterialInstance*>             Instances;
+        FMutex                                  InstancesMutex;
 
         THashMap<FName, FMaterialParameter>     ParameterLookup;
     };

@@ -297,6 +297,23 @@ namespace Lumina::Import::Mesh::GLTF
         // this key (FMeshImportData::Textures is an unordered set, so image index alone isn't recoverable later).
         TVector<FFixedString> ImageRelativePaths(Asset.images.size());
 
+        // A texture's image can come from the core imageIndex OR a compressed-texture extension
+        // (KHR_texture_basisu / EXT_texture_webp / MSFT_texture_dds, all enabled above). Resolve whichever is
+        // present so those textures aren't seen as imageless and dropped to the white default.
+        auto ResolveImageIndex = [&](size_t TextureIndex, size_t& OutImage) -> bool
+        {
+            if (TextureIndex >= Asset.textures.size())
+            {
+                return false;
+            }
+            const fastgltf::Texture& Tex = Asset.textures[TextureIndex];
+            if (Tex.imageIndex.has_value())       { OutImage = Tex.imageIndex.value();       return true; }
+            if (Tex.basisuImageIndex.has_value()) { OutImage = Tex.basisuImageIndex.value(); return true; }
+            if (Tex.webpImageIndex.has_value())   { OutImage = Tex.webpImageIndex.value();   return true; }
+            if (Tex.ddsImageIndex.has_value())    { OutImage = Tex.ddsImageIndex.value();    return true; }
+            return false;
+        };
+
         // Texture extraction is per-asset; tag each image with its material role so the texture factory picks correct BC/colorspace.
         if (ImportOptions.bImportTextures)
         {
@@ -304,16 +321,11 @@ namespace Lumina::Import::Mesh::GLTF
 
             auto MarkImageForTexture = [&](size_t TextureIndex, ETextureColorSpace Role)
             {
-                if (TextureIndex >= Asset.textures.size())
+                size_t ImgIdx;
+                if (!ResolveImageIndex(TextureIndex, ImgIdx))
                 {
                     return;
                 }
-                const auto& Tex = Asset.textures[TextureIndex];
-                if (!Tex.imageIndex.has_value())
-                {
-                    return;
-                }
-                const size_t ImgIdx = Tex.imageIndex.value();
                 if (ImgIdx >= ImageRoles.size())
                 {
                     return;
@@ -384,10 +396,21 @@ namespace Lumina::Import::Mesh::GLTF
                     const fastgltf::BufferView& View = Asset.bufferViews[BufferView->bufferViewIndex];
                     const fastgltf::Buffer& Buffer   = Asset.buffers[View.bufferIndex];
 
-                    if (auto* BufferArray = std::get_if<fastgltf::sources::Array>(&Buffer.data))
+                    // The backing buffer may be owned (Array/Vector) or a view into the GLB blob (ByteView)
+                    // depending on load options -- handle all so GLB-embedded images aren't silently dropped.
+                    const uint8* Base = nullptr;
+                    if (auto* A = std::get_if<fastgltf::sources::Array>(&Buffer.data))        { Base = reinterpret_cast<const uint8*>(A->bytes.data()); }
+                    else if (auto* V = std::get_if<fastgltf::sources::Vector>(&Buffer.data))  { Base = reinterpret_cast<const uint8*>(V->bytes.data()); }
+                    else if (auto* B = std::get_if<fastgltf::sources::ByteView>(&Buffer.data)){ Base = reinterpret_cast<const uint8*>(B->bytes.data()); }
+
+                    if (Base != nullptr)
                     {
-                        const uint8* Start = BufferArray->bytes.data() + View.byteOffset;
+                        const uint8* Start = Base + View.byteOffset;
                         GLTFImage.Bytes.assign(Start, Start + View.byteLength);
+                    }
+                    else
+                    {
+                        LOG_WARN("[GLTFImport] image {} GLB bufferView had no readable bytes; using neutral default.", ImageCounter);
                     }
 
                     AssignFallbackName();
@@ -449,16 +472,11 @@ namespace Lumina::Import::Mesh::GLTF
         {
             auto ResolveTexturePath = [&](size_t TextureIndex) -> FFixedString
             {
-                if (TextureIndex >= Asset.textures.size())
+                size_t ImgIdx;
+                if (!ResolveImageIndex(TextureIndex, ImgIdx))
                 {
                     return {};
                 }
-                const fastgltf::Texture& Tex = Asset.textures[TextureIndex];
-                if (!Tex.imageIndex.has_value())
-                {
-                    return {};
-                }
-                const size_t ImgIdx = Tex.imageIndex.value();
                 if (ImgIdx >= ImageRelativePaths.size())
                 {
                     return {};

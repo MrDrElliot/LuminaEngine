@@ -800,18 +800,77 @@ namespace Lumina
 
         FTreeNodeDisplay& Display = OutlinerListView.Get<FTreeNodeDisplay>(ItemEntity);
 
-        // Styled hover tooltip: title (type icon + name), a dim subtitle, then component chips.
-        const char* TypeIcon = bIsPrefabInstanceRoot ? LE_ICON_PACKAGE_VARIANT_CLOSED
-                             : bIsLockedPrefabChild   ? LE_ICON_LOCK
-                                                      : LE_ICON_CUBE;
-        Display.TooltipTitle = FString(TypeIcon) + " " + NameComponent.Name.c_str();
-
         // Tint the entity's box glyph with the editor accent so plain entities stand out in the outliner.
         if (!bIsPrefabInstanceRoot && !bIsLockedPrefabChild)
         {
             Display.IconText = LE_ICON_CUBE;
             Display.IconColor = EditorColors::EntityIcon();
         }
+
+        // The rich hover tooltip (title + subtitle + component chips) is intentionally NOT built here:
+        // the component scan is the dominant per-row cost, and tooltips only show on hover. Built lazily
+        // by BuildEntityTooltip on first hover instead.
+
+        Display.bShowDisabledIcon = true;
+        Display.bAllowRenaming = !bIsLockedPrefabChild;
+
+        // Per-entity script enable toggle: only shown when the entity carries a script.
+        if (Registry.any_of<SScriptComponent>(Entity))
+        {
+            Display.bShowSecondaryIcon = true;
+            Display.SecondaryIconOn    = LE_ICON_SCRIPT_TEXT;
+            Display.SecondaryIconOff   = LE_ICON_SCRIPT_TEXT_OUTLINE;
+            Display.SecondaryTooltip   = "Toggle this entity's script on/off (the entity stays active).";
+        }
+
+        OutlinerListView.EmplaceUserData<FEntityListViewItemData>(ItemEntity).Entity = Entity;
+
+        if (Registry.any_of<FSelectedInEditorComponent>(Entity))
+        {
+            OutlinerListView.Get<FTreeNodeState>(ItemEntity).bSelected = true;
+        }
+
+        if (Registry.any_of<SDisabledTag>(Entity))
+        {
+            OutlinerListView.Get<FTreeNodeState>(ItemEntity).bDisabled = true;
+        }
+
+        if (Registry.any_of<SScriptDisabledTag>(Entity))
+        {
+            OutlinerListView.Get<FTreeNodeState>(ItemEntity).bSecondaryToggled = true;
+        }
+
+        // Only show an expander if the entity actually has child entities; lazy expansion populates them.
+        const FRelationshipComponent* RelForChildren = Registry.try_get<FRelationshipComponent>(Entity);
+        const bool bHasChildren = RelForChildren != nullptr && RelForChildren->Children > 0;
+        OutlinerListView.MarkHasLazyChildren(ItemEntity, bHasChildren);
+
+        return ItemEntity;
+    }
+
+    void FSceneEditorTool::BuildEntityTooltip(entt::entity Entity, FTreeNodeDisplay& Display)
+    {
+        if (Display.bTooltipBuilt)
+        {
+            return;
+        }
+
+        FEntityRegistry& Registry = GetSceneRegistry();
+        if (!Registry.valid(Entity) || !Registry.all_of<SNameComponent>(Entity))
+        {
+            return;
+        }
+
+        const SNameComponent& NameComponent = Registry.get<SNameComponent>(Entity);
+        const SPrefabInstanceComponent* PrefabInstance = Registry.try_get<SPrefabInstanceComponent>(Entity);
+        const bool bIsPrefabInstanceRoot = PrefabInstance != nullptr && PrefabInstance->bIsRoot;
+        const bool bIsLockedPrefabChild = PrefabInstance != nullptr && !PrefabInstance->bIsRoot;
+
+        // Styled hover tooltip: title (type icon + name), a dim subtitle, then component chips.
+        const char* TypeIcon = bIsPrefabInstanceRoot ? LE_ICON_PACKAGE_VARIANT_CLOSED
+                             : bIsLockedPrefabChild   ? LE_ICON_LOCK
+                                                      : LE_ICON_CUBE;
+        Display.TooltipTitle = FString(TypeIcon) + " " + NameComponent.Name.c_str();
 
         if (bIsLockedPrefabChild)
         {
@@ -849,41 +908,7 @@ namespace Lumina
             Display.TooltipChips.emplace_back("(none)");
         }
 
-        Display.bShowDisabledIcon = true;
-        Display.bAllowRenaming = !bIsLockedPrefabChild;
-
-        // Per-entity script enable toggle: only shown when the entity carries a script.
-        if (Registry.any_of<SScriptComponent>(Entity))
-        {
-            Display.bShowSecondaryIcon = true;
-            Display.SecondaryIconOn    = LE_ICON_SCRIPT_TEXT;
-            Display.SecondaryIconOff   = LE_ICON_SCRIPT_TEXT_OUTLINE;
-            Display.SecondaryTooltip   = "Toggle this entity's script on/off (the entity stays active).";
-        }
-
-        OutlinerListView.EmplaceUserData<FEntityListViewItemData>(ItemEntity).Entity = Entity;
-
-        if (Registry.any_of<FSelectedInEditorComponent>(Entity))
-        {
-            OutlinerListView.Get<FTreeNodeState>(ItemEntity).bSelected = true;
-        }
-
-        if (Registry.any_of<SDisabledTag>(Entity))
-        {
-            OutlinerListView.Get<FTreeNodeState>(ItemEntity).bDisabled = true;
-        }
-
-        if (Registry.any_of<SScriptDisabledTag>(Entity))
-        {
-            OutlinerListView.Get<FTreeNodeState>(ItemEntity).bSecondaryToggled = true;
-        }
-
-        // Only show an expander if the entity actually has child entities; lazy expansion populates them.
-        const FRelationshipComponent* RelForChildren = Registry.try_get<FRelationshipComponent>(Entity);
-        const bool bHasChildren = RelForChildren != nullptr && RelForChildren->Children > 0;
-        OutlinerListView.MarkHasLazyChildren(ItemEntity, bHasChildren);
-
-        return ItemEntity;
+        Display.bTooltipBuilt = true;
     }
 
     void FSceneEditorTool::RemoveEntityFromOutliner(entt::entity Entity)

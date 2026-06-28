@@ -115,7 +115,9 @@ float4 FragmentMain(FragmentInput Input) : SV_Target0
 
     float Visibility = 0.0;
 
-    [unroll]
+    // [loop] (not [unroll]): unrolling replicates the inner step march -- each copy holds the 4x4 InvProj +
+    // ReconstructViewPos temporaries live -- which is the SSAO register dominator. Rolling keeps one slice's worth.
+    [loop]
     for (int SliceI = 0; SliceI < GTAO_SLICES; ++SliceI)
     {
         float  Phi  = (float(SliceI) + Noise) * (PI / float(GTAO_SLICES));
@@ -142,7 +144,9 @@ float4 FragmentMain(FragmentInput Input) : SV_Target0
 
         // March both sides for the max horizon cosine.
         float2 HorizonCos = float2(-1.0, -1.0);
-        [unroll]
+        // [loop]: the per-step ReconstructViewPos (4x4 InvProj live) is the SSAO register dominator; rolling
+        // collapses GTAO_STEPS_PER_SIDE live tap-sets to one. Extra resident warps re-hide the depth-tap latency.
+        [loop]
         for (int StepI = 0; StepI < GTAO_STEPS_PER_SIDE; ++StepI)
         {
             // Squared distribution (more samples near the center, where occlusion detail lives),

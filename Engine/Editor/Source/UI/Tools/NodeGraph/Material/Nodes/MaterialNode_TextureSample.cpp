@@ -81,24 +81,4 @@ namespace Lumina
             }
         }
     }
-
-    void CMaterialExpression_TextureSample::DrawNodeTitleBar()
-    {
-        if (bDynamic)
-        {
-            ImGui::SetNextItemWidth(125);
-
-            char Buffer[256];
-            strncpy(Buffer, ParameterName.c_str(), sizeof(Buffer));
-            Buffer[sizeof(Buffer) - 1] = '\0';
-            if (ImGui::InputText("##ParamName", Buffer, sizeof(Buffer)))
-            {
-                ParameterName = FName(Buffer);
-            }
-        }
-        else
-        {
-            CMaterialExpression::DrawNodeTitleBar();
-        }
-    }
 }

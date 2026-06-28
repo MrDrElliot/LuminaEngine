@@ -60,14 +60,6 @@ namespace Lumina
         return Math::Normalize(n);
     }
 
-    // 10-10-10 pack of a meshlet-local integer offset. Dequant is
-    // MeshOrigin + (LoInt + q) * GridStep.
-    inline uint32 PackMeshletPosition(FIntVector3 q)
-    {
-        return  (uint32(q.x) & 0x3FFu)
-             | ((uint32(q.y) & 0x3FFu) << 10)
-             | ((uint32(q.z) & 0x3FFu) << 20);
-    }
 
     // Octahedral 15-15 tangent + 1-bit handedness packed into uint32 (4-byte aligned).
     // Layout: [0..14]=qx, [15..29]=qy, [30]=hand (1=+, 0=-), [31]=reserved.
@@ -151,11 +143,11 @@ namespace Lumina
         }
     };
 
-    // 20-byte runtime vertex. Position is 10-10-10 q (see PackMeshletPosition);
-    // Tangent is 15-15 octahedral + 1-bit handedness (PackTangent).
+    // 28-byte runtime vertex. Position is full mesh-local float3 (exact, gap-free across meshlet boundaries);
+    // Normal/Tangent octahedral; UV half2; Color RGBA8.
     struct FMeshletVertex
     {
-        uint32 Position;
+        FVector3 Position;
         uint32 Normal;
         uint32 Tangent;
         uint32 UV;
@@ -182,8 +174,8 @@ namespace Lumina
 
     static_assert(sizeof(FVertex) == 28);
     static_assert(sizeof(FSkinnedVertex) == 36);
-    static_assert(sizeof(FMeshletVertex) == 20);
-    static_assert(sizeof(FMeshletSkinnedVertex) == 28);
+    static_assert(sizeof(FMeshletVertex) == 28);
+    static_assert(sizeof(FMeshletSkinnedVertex) == 36);
     static_assert(offsetof(FVertex, Position) == 0);
     static_assert(TCanBulkSerialize<FVertex>::value);
     static_assert(TCanBulkSerialize<FSkinnedVertex>::value);

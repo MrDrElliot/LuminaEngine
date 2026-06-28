@@ -29,6 +29,7 @@ namespace Lumina::Scripting
         AssetRef,
         Entity,
         Array,
+        Instance,
     };
 
     // Self-describing value kind. Mirrors LuminaSharp.EScriptValueKind.
@@ -41,6 +42,7 @@ namespace Lumina::Scripting
         String,
         Nested,
         Array,
+        Instance,
     };
 
     struct FScriptExportType;
@@ -76,6 +78,14 @@ namespace Lumina::Scripting
         FScriptExportMeta             Meta;   ///< Editor display data, rebuilt per load.
     };
 
+    // One selectable concrete type for an Instance field. Its stable C# type name plus the [Property]
+    // members minted into that candidate's sub-CScriptStruct.
+    struct FScriptExportInstanceCandidate
+    {
+        FName                       TypeName;
+        TVector<FScriptExportField> Fields;
+    };
+
     struct FScriptExportType
     {
         EScriptExportKind             Kind = EScriptExportKind::Nil;
@@ -89,6 +99,9 @@ namespace Lumina::Scripting
         FName                         TargetClass;    ///< AssetRef kind, the asset class filter ("" = any).
         TSharedPtr<FScriptExportType> ElementType;    ///< Array kind.
         TVector<FScriptExportField>   Fields;         ///< NativeStruct / ScriptStruct kind.
+
+        FName                                       BaseName;    ///< Instance kind, the C# base type's display name.
+        TVector<FScriptExportInstanceCandidate>     Candidates;  ///< Instance kind, the selectable concrete types.
     };
 
     struct FScriptExportSchema

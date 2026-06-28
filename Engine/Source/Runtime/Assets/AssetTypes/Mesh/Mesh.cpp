@@ -129,14 +129,16 @@ namespace Lumina
             }
             else
             {
-                // Fallback (no bounds stored): conservative per-meshlet grid extent.
-                for (const FMeshlet& M : MD.Meshlets)
+                // Fallback (no bounds stored): union the meshlet vertex positions (now full float3).
+                for (const FMeshletVertex& V : MD.MeshletVertices)
                 {
-                    const FVector3 Origin   = MD.MeshOrigin[M.LODIndex];
-                    const FVector3 GridStep = MD.MeshGridStep[M.LODIndex];
-                    const FVector3 Lo = Origin + FVector3(M.LoInt) * GridStep;
-                    BoundingBox.Min = Math::Min(BoundingBox.Min, Lo);
-                    BoundingBox.Max = Math::Max(BoundingBox.Max, Lo + FVector3(1023.0f) * GridStep);
+                    BoundingBox.Min = Math::Min(BoundingBox.Min, V.Position);
+                    BoundingBox.Max = Math::Max(BoundingBox.Max, V.Position);
+                }
+                for (const FMeshletSkinnedVertex& V : MD.MeshletSkinnedVertices)
+                {
+                    BoundingBox.Min = Math::Min(BoundingBox.Min, V.Position);
+                    BoundingBox.Max = Math::Max(BoundingBox.Max, V.Position);
                 }
             }
         }
@@ -171,11 +173,6 @@ namespace Lumina
             Header.BoundsAddress      = MB.MeshletBoundsBuffer;
             Header.VerticesAddress    = MB.MeshletVertexBuffer;
             Header.TrianglesAddress   = MB.MeshletTriangleBuffer;
-            for (uint32 i = 0; i < MAX_MESH_LODS; ++i)
-            {
-                Header.MeshOrigin[i]   = FVector4(MData.MeshOrigin[i],   0.0f);
-                Header.MeshGridStep[i] = FVector4(MData.MeshGridStep[i], 0.0f);
-            }
 
             MB.MeshletHeaderBuffer = CreateAndUpload(&Header, sizeof(FMeshletHeaderGPU));
         }

@@ -1,5 +1,5 @@
 project "VMA"
-	kind "None"
+	kind "Utility"
 	warnings "off"
 
 	files

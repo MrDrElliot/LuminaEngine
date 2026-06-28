@@ -25,7 +25,20 @@ namespace Lumina
         //     BuildCullDispatchArgs added (late cull now indirect-dispatched from DeferCount).
         // v9: mesh shaders (MeshletVisBuffer/MeshletMesh) take SV_DrawIndex + pull MeshletBase from the cull
         //     args (one indirect draw per batch, not per sub-draw) -- push-constant layout changed.
-        constexpr uint32 SHADER_CACHE_VERSION = 9;
+        // v10: CullMeshlets writes the mesh-task GroupCountX directly (second atomic) into a {0,1,1}-seeded
+        //      buffer; ConvertMeshDrawArgs/BuildMeshDrawArgs deleted. Cull push-constant layout grew.
+        // v11: meshlet position quantization is PER-MESHLET (FMeshlet.QuantOrigin/QuantStep) instead of a
+        //      per-LOD shared grid -- fixes merged mixed-scale meshes shattering. FMeshlet/FMeshletHeader changed.
+        // v12: reverted v11 -> back to the per-LOD global grid (LoInt + header MeshOrigin/MeshGridStep). Per-meshlet
+        //      and per-surface both caused meshlet boundary cracks; merged mixed-scale meshes are an asset-level concern.
+        // v13: meshlet positions are now full mesh-local float3 (FMeshletVertex.Position) -- no quantization at all.
+        //      Gap-free + exact; removed LoInt/MeshOrigin/MeshGridStep/UnpackMeshletPosition. Unifies with skinned.
+        // v14: PS register-pressure cuts (Nsight: 72% PS warp-launch register stall on Deferred Material) --
+        //      PCSS blocker search [unroll]->[loop] (SurfaceShading), DFG_EC live-range sunk into the IBL branch,
+        //      EnergyComp sunk to its use, Sky atmosphere/optical-depth marches [unroll]->[loop].
+        // v15: spot/point atlas PCF loop [unroll]->[loop] (SurfaceShading ComputeShadowFactor) -- the prior
+        //      pass missed it; constant SHADOW_SAMPLE_COUNT unrolled it, inflating whole-shader PS regs.
+        constexpr uint32 SHADER_CACHE_VERSION = 15;
 
         constexpr const char* CACHE_DIR = "/Intermediates/ShaderCache";
 

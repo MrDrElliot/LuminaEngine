@@ -18,7 +18,7 @@ if not exist "%PREMAKE_EXE%" (
     exit /b 1
 )
 
-"%PREMAKE_EXE%" vs2022
+"%PREMAKE_EXE%" vs2026
 if errorlevel 1 (
     echo.
     echo Project generation failed.

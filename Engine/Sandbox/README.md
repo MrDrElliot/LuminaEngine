@@ -9,8 +9,8 @@ A Lumina Engine project.
 
 ## First-time setup
 
-1. Run `GenerateProject.bat` from this folder. This invokes `%LUMINA_DIR%\Tools\premake5.exe vs2022` and writes `Sandbox.sln`.
-2. Open `Sandbox.sln` in **Visual Studio** or **JetBrains Rider**.
+1. Run `GenerateProject.bat` from this folder. This invokes `%LUMINA_DIR%\Tools\premake5.exe vs2026` and writes `Sandbox.slnx`.
+2. Open `Sandbox.slnx` in **Visual Studio** or **JetBrains Rider**.
 3. Press **F5**.
 
 F5 builds the game DLL (`Binaries\Windows64\Sandbox-Development.dll`) and launches the Lumina editor with this project pre-loaded. Breakpoints in your game module will hit as soon as `IMPLEMENT_MODULE` runs.
@@ -39,7 +39,7 @@ The C++ module in `Source/` is optional: use it for native types, custom compone
 ```
 Sandbox.lproject               Project descriptor (name, GUID, plugins)
 premake5.lua                   Build script, calls LuminaGameProject()
-GenerateProject.bat            One-shot: regenerate the .sln after source changes
+GenerateProject.bat            One-shot: regenerate the .slnx after source changes
 Config/GameSettings.json       Per-project engine settings (startup maps, cook roots, ...)
 Source/                        Your C++ module (optional)
 Game/Content/                  Assets, surfaced to the engine under /Game/Content

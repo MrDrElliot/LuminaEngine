@@ -74,11 +74,11 @@ enum EInstanceFlags
     Masked          = BIT(7),
 }
 
-// Mirror of Lumina::FMeshletVertex. Position: 10-10-10 q (see UnpackMeshletPosition).
+// Mirror of Lumina::FMeshletVertex. Position: full mesh-local float3 (exact, gap-free).
 // Tangent: 15-15 octahedral + 1-bit handedness (see UnpackTangent).
 struct FVertex
 {
-    uint    Position;
+    float3  Position;
     uint    Normal;
     uint    Tangent;
     uint    UV;
@@ -87,7 +87,7 @@ struct FVertex
 
 struct FSkinnedVertex
 {
-    uint    Position;
+    float3  Position;
     uint    Normal;
     uint    Tangent;
     uint    UV;
@@ -221,15 +221,14 @@ struct FCustomPrimitiveData
 #define MESHLET_VERTICES_PER_DRAW (MESHLET_MAX_TRIANGLES * 3)  // 372
 #define MESHLET_MAX_LODS      6
 
-// Mirror of Lumina::FMeshlet. LoInt: meshlet quantization origin in its LOD's grid units.
-// LODIndex selects the per-LOD grid in FMeshletHeader (MeshOrigin[LODIndex]/MeshGridStep[LODIndex]).
+// Mirror of Lumina::FMeshlet. Positions are full float3 in the vertex buffer (no quantization). LODIndex
+// kept for LOD selection.
 struct FMeshlet
 {
     uint VertexOffset;
     uint TriangleOffset;
     uint VertexCount;
     uint TriangleCount;
-    int3 LoInt;
     uint LODIndex;
 };
 
@@ -244,46 +243,14 @@ struct FMeshletBounds
     float  _Pad0;
 };
 
-// Mirror of Lumina::FMeshletHeaderGPU. Per-LOD grids flattened to explicit fields (not arrays):
-// Slang asserts laying out an array member inside a buffer-pointer (BDA) struct. Select via GetMeshOrigin/Step.
+// Mirror of Lumina::FMeshletHeaderGPU. Positions are full float3 in the vertex buffer -- no per-LOD grid.
 struct FMeshletHeader
 {
     FMeshlet*       Meshlets;
     FMeshletBounds* Bounds;
     uint*           Vertices;
     uint*           Triangles;
-    float4          MeshOrigin0;    float4 MeshOrigin1;    float4 MeshOrigin2;
-    float4          MeshOrigin3;    float4 MeshOrigin4;    float4 MeshOrigin5;
-    float4          MeshGridStep0;  float4 MeshGridStep1;  float4 MeshGridStep2;
-    float4          MeshGridStep3;  float4 MeshGridStep4;  float4 MeshGridStep5;
 };
-
-// Per-LOD grid selectors (see FMeshletHeader: arrays can't live in a BDA struct).
-float3 GetMeshOrigin(FMeshletHeader* H, uint LOD)
-{
-    switch (LOD)
-    {
-        case 0:  return H.MeshOrigin0.xyz;
-        case 1:  return H.MeshOrigin1.xyz;
-        case 2:  return H.MeshOrigin2.xyz;
-        case 3:  return H.MeshOrigin3.xyz;
-        case 4:  return H.MeshOrigin4.xyz;
-        default: return H.MeshOrigin5.xyz;
-    }
-}
-
-float3 GetMeshGridStep(FMeshletHeader* H, uint LOD)
-{
-    switch (LOD)
-    {
-        case 0:  return H.MeshGridStep0.xyz;
-        case 1:  return H.MeshGridStep1.xyz;
-        case 2:  return H.MeshGridStep2.xyz;
-        case 3:  return H.MeshGridStep3.xyz;
-        case 4:  return H.MeshGridStep4.xyz;
-        default: return H.MeshGridStep5.xyz;
-    }
-}
 
 // Mirror of Lumina::FSkinDescriptor. One per rendered-LOD meshlet; drives the skinning dispatch.
 struct FSkinDescriptor
@@ -636,14 +603,6 @@ float3 OctDecode01(float2 Enc)
     return normalize(n);
 }
 
-float3 UnpackMeshletPosition(uint Packed, int3 LoInt, float3 MeshOrigin, float3 GridStep)
-{
-    int qx = int( Packed        & 0x3FFu);
-    int qy = int((Packed >> 10u) & 0x3FFu);
-    int qz = int((Packed >> 20u) & 0x3FFu);
-    float3 Q = float3(LoInt + int3(qx, qy, qz));
-    return MeshOrigin + Q * GridStep;
-}
 
 float2 UnpackUV(uint Packed)
 {

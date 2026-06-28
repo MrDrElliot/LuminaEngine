@@ -1,5 +1,5 @@
 project "SPDLog"
-	kind "None"
+	kind "Utility"
 	warnings "off"
     
 	files

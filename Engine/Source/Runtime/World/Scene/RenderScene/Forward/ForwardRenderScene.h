@@ -105,6 +105,15 @@ namespace Lumina
             TFrameVector<uint32>                LocalToGlobalDraw;
             TFrameVector<uint32>                LocalDrawWriteBase;
 
+            // Homogeneity of this batch's instances; merged into FMeshDrawCommand to pick the SPEC_SKINNED variant.
+            bool                                bAnySkinned = false;
+            bool                                bAnyStatic  = false;
+            void AccumSkinned(EInstanceFlags F)
+            {
+                if (((uint32)F & (uint32)EInstanceFlags::Skinned) != 0u) { bAnySkinned = true; }
+                else                                                     { bAnyStatic  = true; }
+            }
+
             FLocalBatchEntry() = default;
             explicit FLocalBatchEntry(FFrameArenaAllocator A)
                 : LocalDraws(A), LocalDrawCounts(A), LocalMeshletCounts(A)
@@ -315,6 +324,7 @@ namespace Lumina
             {
                 TVector<FCullView>               CullViews;
                 TVector<RHI::FDrawIndirectArguments> IndirectArgs;
+                TVector<RHI::FDrawMeshTasksIndirectArguments> MeshDrawArgs;   // per-frame {0,1,1} seed; cull accumulates GroupCountX
                 uint32                           TotalMeshletBound   = 0;
                 uint32                           NumDrawsPerView     = 0;
                 uint32                           CameraLateViewIndex = ~0u;
@@ -571,10 +581,6 @@ namespace Lumina
         void VisBufferPass(RHI::FCmdListH CL, uint32 ViewIndex, bool bClear);
         // Deferred material: per opaque material, reconstruct attributes from the VisBuffer and shade.
         void DeferredMaterialPass(RHI::FCmdListH CL);
-        // Converts the cull's FDrawIndirectArguments into mesh-task args (GroupCountX = survivors); mesh path only.
-        // SingleViewIndex >= 0 reconverts only that cull view's draw slice (the late call: only the
-        // camera-late view's InstanceCounts changed). -1 converts every view.
-        void ConvertMeshDrawArgs(RHI::FCmdListH CL, int32 SingleViewIndex = -1);
         // One shadow-map draw of a batch, VS-emulation or mesh path per r.MeshShaders. Shared by all shadow passes.
         void DrawShadowBatch(RHI::FCmdListH CL, const FMeshDrawCommand& Batch, const FShaderEntry* PixelShader,
                              uint32 CullViewIndex, int32 ShadowDataIndex, int32 ShadowViewIndex);
@@ -676,6 +682,7 @@ namespace Lumina
             EMeshPass       PassVariant = EMeshPass::Base;   // EPass spec constant for the merged VS
             uint32          ShadingFeatures = SF_All;        // ShadeSurface spec constants (ids 1-3)
             bool            bVisBufferMasked = false;        // VISBUFFER_MASKED spec constant (id 4): VisBuffer geometry emits interpolants
+            uint8           SkinnedMode = 2;                 // SPEC_SKINNED spec constant (id 5): 0=static, 1=skinned, 2=dynamic (runtime branch)
             TFixedVector<RHI::FColorTarget, 4> ColorTargets;
         };
 

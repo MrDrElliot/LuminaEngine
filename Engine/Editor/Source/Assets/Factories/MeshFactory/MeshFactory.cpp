@@ -167,6 +167,7 @@ namespace Lumina
                 DragFloatRow("Scale", "Uniform scale factor applied to all imported geometry.",
                              Options.Scale, 0.001f, 100.0f, "%.3f");
                 CheckboxRow("Flip UVs",     "Flip UV coordinates vertically (1 - V).",                   Options.bFlipUVs);
+                CheckboxRow("Flip U",       "Flip UV coordinates horizontally (1 - U); for sources with mirrored UVs (backwards text).", Options.bFlipU);
                 CheckboxRow("Flip Normals", "Invert mesh normals (useful for inside-out geometry).",     Options.bFlipNormals);
 
                 CheckboxRow("Optimize Mesh",
@@ -677,6 +678,20 @@ namespace Lumina
             Work.reserve(Images.size());
             THashSet<FFixedString> SeenPaths;
 
+            // Destination asset name: T_<clean stem> (directory + extension stripped, sanitized). The TextureMap
+            // below is still keyed by the source RelativePath, so renaming the asset doesn't break material binding.
+            auto TextureAssetName = [](FStringView Raw) -> FFixedString
+            {
+                const size_t Slash = Raw.find_last_of("/\\");
+                FStringView Stem = (Slash == FStringView::npos) ? Raw : Raw.substr(Slash + 1);
+                const size_t Dot = Stem.find_last_of('.');
+                if (Dot != FStringView::npos && Dot > 0)
+                {
+                    Stem = Stem.substr(0, Dot);
+                }
+                return FFixedString(Import::MakeAssetName("T_", Stem).c_str());
+            };
+
             for (size_t i = 0; i < Images.size(); ++i)
             {
                 const FMeshImportImage& Texture = Images[i];
@@ -685,7 +700,7 @@ namespace Lumina
                 FFixedString QualifiedPath;
                 if (Texture.IsBytes())
                 {
-                    QualifiedPath = Paths::Combine(TexturesDir, Texture.RelativePath);
+                    QualifiedPath = Paths::Combine(TexturesDir, TextureAssetName(Texture.RelativePath).c_str());
                 }
                 else
                 {
@@ -693,8 +708,7 @@ namespace Lumina
                     SourcePath.append_convert(ParentPath.data(), ParentPath.length()).append("/").append_convert(Texture.RelativePath);
                     FStringView TextureFileName = VFS::FileName(SourcePath, true);
 
-                    QualifiedPath = TexturesDir;
-                    QualifiedPath.append_convert(TextureFileName.data(), TextureFileName.length());
+                    QualifiedPath = Paths::Combine(TexturesDir, TextureAssetName(TextureFileName).c_str());
                 }
 
                 // Existence check (no extension), then add the extension for import/load.

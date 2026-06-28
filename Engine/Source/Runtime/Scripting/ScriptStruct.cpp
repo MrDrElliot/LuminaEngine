@@ -4,12 +4,14 @@
 #include "Core/Math/Math.h"
 #include "Core/Object/ConstructObjectParams.h"
 #include "Core/Object/Field.h"
+#include "Core/Object/InstancedStruct.h"
 #include "Core/Object/ObjectCore.h"
 #include "Core/Object/Package/Package.h"
 #include "Core/Object/SoftObjectPtr.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Reflection/Type/Properties/ArrayProperty.h"
 #include "Core/Reflection/Type/Properties/EnumProperty.h"
+#include "Core/Reflection/Type/Properties/InstancedStructProperty.h"
 #include "Core/Reflection/Type/Properties/SoftObjectProperty.h"
 #include "Core/Reflection/Type/Properties/StringProperty.h"
 #include "Core/Reflection/Type/Properties/StructProperty.h"
@@ -125,6 +127,20 @@ namespace Lumina
             Params.NumMetaData   = 0;
             Params.MetaDataArray = nullptr;
             FProperty* Property = Memory::New<FStructProperty>(Owner, &Params);
+            GPendingStruct = nullptr;
+            return Property;
+        }
+
+        FProperty* MakeInstanced(const FFieldOwner& Owner, const FName& Name, uint32 Offset, CStruct* MetaBase)
+        {
+            GPendingStruct = MetaBase;
+            const FString NameStr = Name.ToString();
+            FInstancedStructPropertyParams Params{};
+            FillBaseParams(Params, EPropertyTypeFlags::InstancedStruct, Offset, NameStr.c_str());
+            Params.StructFunc    = +[]() -> CStruct* { return GPendingStruct; };
+            Params.NumMetaData   = 0;
+            Params.MetaDataArray = nullptr;
+            FProperty* Property = Memory::New<FInstancedStructProperty>(Owner, &Params);
             GPendingStruct = nullptr;
             return Property;
         }
@@ -360,6 +376,67 @@ namespace Lumina
         return Raw;
     }
 
+    CScriptStruct* CScriptStruct::MintInstanceBase(const FName& BaseName)
+    {
+        static TAtomic<uint64> Serial{ 0 };
+        FString Name = "ScriptInstanceBase_";
+        Name += eastl::to_string(Serial.fetch_add(1)).c_str();
+
+        FConstructCObjectParams Params(CScriptStruct::StaticClass());
+        Params.Name    = FName(Name);
+        Params.Flags   = OF_Transient;
+        Params.Package = CPackage::GetTransientPackage();
+        Params.Guid    = FGuid::New();
+
+        TObjectPtr<CScriptStruct> Base = static_cast<CScriptStruct*>(StaticAllocateObject(Params));
+        CObjectForceRegistration(Base.Get());
+
+        // A type marker only. The ScriptInstanceBase tag hides it from the picker.
+        FScriptExportSchema Empty;
+        Base->BuildFromSchema(Empty);
+        Base->Metadata.AddValue("ScriptInstanceBase", "");
+        if (!BaseName.IsNone())
+        {
+            Base->Metadata.AddValue("ScriptTypeName", BaseName.c_str());
+        }
+
+        CScriptStruct* Raw = Base.Get();
+        SubStructs.push_back(eastl::move(Base));
+        return Raw;
+    }
+
+    CScriptStruct* CScriptStruct::MintInstanceCandidate(const FScriptExportInstanceCandidate& Candidate, CScriptStruct* Base)
+    {
+        static TAtomic<uint64> Serial{ 0 };
+        FString Name = "ScriptInstance_";
+        Name += eastl::to_string(Serial.fetch_add(1)).c_str();
+
+        FConstructCObjectParams Params(CScriptStruct::StaticClass());
+        Params.Name    = FName(Name);
+        Params.Flags   = OF_Transient;
+        Params.Package = CPackage::GetTransientPackage();
+        Params.Guid    = FGuid::New();
+
+        TObjectPtr<CScriptStruct> Sub = static_cast<CScriptStruct*>(StaticAllocateObject(Params));
+        CObjectForceRegistration(Sub.Get());
+
+        FScriptExportSchema Schema;
+        Schema.Fields = Candidate.Fields;
+        if (!Sub->BuildFromSchema(Schema))
+        {
+            return nullptr;
+        }
+
+        // Derive from Base so the IsChildOf picker enumerates this candidate (Base is empty, no relink
+        // needed). The stable C# name drives value round-trip.
+        Sub->SetSuperStruct(Base);
+        Sub->Metadata.AddValue("ScriptTypeName", Candidate.TypeName.c_str());
+
+        CScriptStruct* Raw = Sub.Get();
+        SubStructs.push_back(eastl::move(Sub));
+        return Raw;
+    }
+
     bool CScriptStruct::ResolveElement(const FScriptExportType& Type, FScriptArrayElementDesc& Out)
     {
         uint32 ScalarSize = 0;
@@ -525,6 +602,25 @@ namespace Lumina
             Out.Life = !Sub->FieldInfos.empty() ? EScriptElementKind::ScriptStruct : EScriptElementKind::Trivial;
             return true;
         }
+        if (Type.Kind == EScriptExportKind::Instance)
+        {
+            // Mint an empty base plus one candidate sub-CScriptStruct per selectable C# type. The field
+            // is an FInstancedStruct the editor picks into.
+            CScriptStruct* Base = MintInstanceBase(Type.BaseName);
+            if (Base == nullptr)
+            {
+                return false;
+            }
+            for (const FScriptExportInstanceCandidate& Candidate : Type.Candidates)
+            {
+                MintInstanceCandidate(Candidate, Base);
+            }
+            Out.Sub = Base;
+            Out.Size = sizeof(FInstancedStruct);
+            Out.Align = alignof(FInstancedStruct);
+            Out.Life = EScriptElementKind::Instance;
+            return true;
+        }
         return false;
     }
 
@@ -566,6 +662,12 @@ namespace Lumina
         if (Type.Kind == EScriptExportKind::AssetRef)
         {
             FProperty* Property = MakeSoftObject(Owner, Field.Name, Offset, FindObject<CClass>(Type.TargetClass));
+            ApplyMeta(Property, &Field.Meta, nullptr);
+            return Property;
+        }
+        if (Type.Kind == EScriptExportKind::Instance)
+        {
+            FProperty* Property = MakeInstanced(Owner, Field.Name, Offset, const_cast<CScriptStruct*>(Plan.Sub));
             ApplyMeta(Property, &Field.Meta, nullptr);
             return Property;
         }
@@ -667,6 +769,9 @@ namespace Lumina
             case EScriptElementKind::ScriptStruct:
                 if (Info.ScriptStruct != nullptr) { Info.ScriptStruct->ConstructInto(Field); }
                 break;
+            case EScriptElementKind::Instance:
+                new (Field) FInstancedStruct();
+                break;
             case EScriptElementKind::Trivial:
                 break;
             }
@@ -702,6 +807,9 @@ namespace Lumina
                 break;
             case EScriptElementKind::ScriptStruct:
                 if (Info.ScriptStruct != nullptr) { Info.ScriptStruct->DestructIn(Field); }
+                break;
+            case EScriptElementKind::Instance:
+                static_cast<FInstancedStruct*>(Field)->~FInstancedStruct();
                 break;
             case EScriptElementKind::Trivial:
                 break;

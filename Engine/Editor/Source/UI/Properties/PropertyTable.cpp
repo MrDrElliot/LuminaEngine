@@ -1,10 +1,15 @@
 #include "PropertyTable.h"
 
+#include <EASTL/algorithm.h>
+
 #include "Core/Engine/Engine.h"
 #include "Core/Object/Class.h"
+#include "Core/Object/InstancedStruct.h"
+#include "Core/Object/ObjectIterator.h"
 #include "Core/Reflection/PropertyCustomization/PropertyCustomization.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Reflection/Type/Properties/ArrayProperty.h"
+#include "Core/Reflection/Type/Properties/InstancedStructProperty.h"
 #include "Core/Reflection/Type/Properties/OptionalProperty.h"
 #include "Core/Reflection/Type/Properties/StructProperty.h"
 #include "Customizations/CoreTypeCustomization.h"
@@ -43,6 +48,7 @@ namespace Lumina
         case EPropertyTypeFlags::Struct:
         case EPropertyTypeFlags::Vector:
         case EPropertyTypeFlags::Optional:
+        case EPropertyTypeFlags::InstancedStruct:
             return false;
         default:
             return true;
@@ -59,6 +65,8 @@ namespace Lumina
             return MakeUnique<FStructPropertyRow>(InPropHandle, InParentRow, InCallbacks);
         case EPropertyTypeFlags::Optional:
             return MakeUnique<FOptionalPropertyRow>(InPropHandle, InParentRow, InCallbacks);
+        case EPropertyTypeFlags::InstancedStruct:
+            return MakeUnique<FInstancedStructPropertyRow>(InPropHandle, InParentRow, InCallbacks);
         default:
             return MakeUnique<FPropertyPropertyRow>(InPropHandle, InParentRow, InCallbacks);
         }
@@ -807,6 +815,170 @@ namespace Lumina
         PropertyTable = MakeUnique<FPropertyTable>(InstancePtr, StructProperty->GetStruct(), DefaultInstancePtr);
         // Forward the owning row's change callbacks so edits to nested-struct members notify
         // (save/undo) exactly like top-level property edits.
+        PropertyTable->ChangeEventCallbacks = Callbacks;
+        PropertyTable->RebuildTree();
+    }
+
+    // Display label for a candidate. The script candidate's C# type name in ScriptTypeName metadata
+    // when present, else the struct's own name.
+    static const char* InstancedStructLabel(const CStruct* Type)
+    {
+        if (const FString* ScriptName = Type->Metadata.TryGetMetadata("ScriptTypeName"))
+        {
+            return ScriptName->c_str();
+        }
+        return Type->GetName().c_str();
+    }
+
+    // Type picker over Base and its derived structs, with a None entry at index 0. Returns the chosen
+    // type (or Current when unchanged). ScriptInstanceBase markers are hidden.
+    static CStruct* DrawInstancedStructTypePicker(const char* StrId, CStruct* Base, CStruct* Current, bool& bOutChanged)
+    {
+        bOutChanged = false;
+
+        TVector<CStruct*> Candidates;
+        for (TObjectIterator<CStruct> It; It; ++It)
+        {
+            CStruct* Candidate = *It;
+            if (Candidate->Metadata.HasMetadata("ScriptInstanceBase"))
+            {
+                continue;
+            }
+            if (Base == nullptr || Candidate->IsChildOf(Base))
+            {
+                Candidates.push_back(Candidate);
+            }
+        }
+
+        eastl::sort(Candidates.begin(), Candidates.end(), [](CStruct* A, CStruct* B)
+        {
+            return strcmp(InstancedStructLabel(A), InstancedStructLabel(B)) < 0;
+        });
+
+        int32 CurrentIndex = 0;
+        for (size_t i = 0; i < Candidates.size(); ++i)
+        {
+            if (Candidates[i] == Current)
+            {
+                CurrentIndex = static_cast<int32>(i + 1);
+                break;
+            }
+        }
+
+        const char* Preview = Current ? InstancedStructLabel(Current) : "None";
+
+        ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x);
+        const int32 Picked = ImGuiX::SearchableCombo(StrId, Preview, static_cast<int32>(Candidates.size()) + 1, CurrentIndex,
+            [&Candidates](int32 Index) -> FFixedString
+            {
+                return (Index == 0) ? FFixedString("None") : FFixedString(InstancedStructLabel(Candidates[Index - 1]));
+            });
+        ImGui::PopItemWidth();
+
+        if (Picked != INDEX_NONE)
+        {
+            bOutChanged = true;
+            return (Picked == 0) ? nullptr : Candidates[Picked - 1];
+        }
+
+        return Current;
+    }
+
+    FInstancedStructPropertyRow::FInstancedStructPropertyRow(const TSharedPtr<FPropertyHandle>& InPropHandle, FPropertyRow* InParentRow, const FPropertyChangedEventCallbacks& InCallbacks)
+        : FPropertyRow(InPropHandle, InParentRow, InCallbacks)
+        , InstancedStructProperty(static_cast<FInstancedStructProperty*>(InPropHandle->Property))
+    {
+        if (InstancedStructProperty->HasMetadata("DefaultCollapsed"))
+        {
+            bExpanded = false;
+        }
+
+        RebuildChildren();
+    }
+
+    void FInstancedStructPropertyRow::Update()
+    {
+        // Detect a type change underneath us (undo, gameplay, reset) and rebuild the nested table.
+        if (auto* Instance = static_cast<FInstancedStruct*>(PropertyHandle->GetValuePtr());
+            Instance && Instance->GetScriptStruct() != CachedType)
+        {
+            RebuildChildren();
+        }
+
+        DispatchChange(ChangeOp);
+        ChangeOp = EPropertyChangeOp::None;
+    }
+
+    void FInstancedStructPropertyRow::DrawHeader(float Offset)
+    {
+        ImGui::Dummy(ImVec2(Offset, 0));
+        ImGui::SameLine();
+
+        ImGui::SetNextItemOpen(bExpanded);
+        ImGui::PushStyleColor(ImGuiCol_Header, 0);
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, 0);
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, 0);
+        bExpanded = ImGui::CollapsingHeader(InstancedStructProperty->GetPropertyDisplayName().c_str());
+        ImGui::PopStyleColor(3);
+
+        DrawPropertyTooltip(InstancedStructProperty);
+    }
+
+    void FInstancedStructPropertyRow::DrawEditor(bool bReadOnly)
+    {
+        auto* Instance = static_cast<FInstancedStruct*>(PropertyHandle->GetValuePtr());
+        if (Instance == nullptr)
+        {
+            return;
+        }
+
+        // Type picker on the header line; visible whether expanded or not so the type is always changeable.
+        ImGui::BeginDisabled(bReadOnly || IsReadOnly());
+
+        bool bChanged = false;
+        CStruct* Current = Instance->GetScriptStruct();
+        CStruct* Picked = DrawInstancedStructTypePicker("##instancedstructpicker", InstancedStructProperty->GetMetaStruct(), Current, bChanged);
+
+        if (bChanged && Picked != Current)
+        {
+            // A type swap reallocates the instance, so run it as one transaction and rebuild the table.
+            DispatchChange(EPropertyChangeOp::Started);
+            Instance->InitializeAs(Picked);
+            RebuildChildren();
+            DispatchChange(EPropertyChangeOp::Updated);
+            DispatchChange(EPropertyChangeOp::Finished);
+        }
+
+        ImGui::EndDisabled();
+
+        // Inline editor for the chosen instance's own properties.
+        if (bExpanded && PropertyTable && Instance->IsValid())
+        {
+            ImGui::BeginDisabled(IsReadOnly());
+            PropertyTable->DrawTree(bReadOnly);
+            ImGui::EndDisabled();
+        }
+    }
+
+    float FInstancedStructPropertyRow::GetMeasuredHeaderTextWidth() const
+    {
+        return ImGui::GetTreeNodeToLabelSpacing() + ImGui::CalcTextSize(InstancedStructProperty->GetPropertyDisplayName().c_str()).x;
+    }
+
+    void FInstancedStructPropertyRow::RebuildChildren()
+    {
+        auto* Instance = static_cast<FInstancedStruct*>(PropertyHandle->GetValuePtr());
+        CStruct* Type = Instance ? Instance->GetScriptStruct() : nullptr;
+        CachedType = Type;
+
+        if (Instance == nullptr || Type == nullptr)
+        {
+            PropertyTable.reset();
+            return;
+        }
+
+        // Diff/reset of the instance's own fields compares against that struct's default instance.
+        PropertyTable = MakeUnique<FPropertyTable>(Instance->GetMutableMemory(), Type, Type->GetDefaultInstance());
         PropertyTable->ChangeEventCallbacks = Callbacks;
         PropertyTable->RebuildTree();
     }

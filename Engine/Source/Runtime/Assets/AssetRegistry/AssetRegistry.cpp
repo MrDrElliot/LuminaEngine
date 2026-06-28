@@ -23,14 +23,10 @@
 
 namespace Lumina
 {
-    // Tag for the cooked-runtime registry blob bundled into the PAK (compact
-    // binary; shipping wants size/speed, not inspectability).
-    // v2 appends the text-asset (.luau/.rml/.rcss) identity table; bumping the
-    // tag invalidates pre-text PAKs so they rebuild cleanly.
+    // Tag for the cooked-runtime registry blob bundled into the PAK.
     static constexpr uint32 kAssetRegistryCacheTag     = 0xA55E1DB2; // 'AssetIDB2'
 
-    // Schema version for the human-readable on-disk editor cache (AssetRegistry.json).
-    // Bump on any field add/remove so stale caches are dropped and rebuilt.
+    // Schema version for the human-readable on-disk editor cache.
     static constexpr int32 kAssetRegistryJsonVersion   = 2;
 
     FAssetRegistry& FAssetRegistry::Get()
@@ -54,11 +50,17 @@ namespace Lumina
         {
             // Resolve virtual -> absolute and stat via std::filesystem (VFS has no uniform mtime accessor).
             const FFixedString Resolved = VFS::ResolvePath(VirtualPath);
-            if (Resolved.empty()) return 0;
+            if (Resolved.empty())
+            {
+                return 0;
+            }
             std::error_code Ec;
             const auto Ftime = std::filesystem::last_write_time(
                 std::filesystem::path(Resolved.c_str(), Resolved.c_str() + Resolved.size()), Ec);
-            if (Ec) return 0;
+            if (Ec)
+            {
+                return 0;
+            }
             const auto Dur = Ftime.time_since_epoch();
             return std::chrono::duration_cast<std::chrono::nanoseconds>(Dur).count();
         }
@@ -73,7 +75,10 @@ namespace Lumina
                 return 0;
             }
             const uint64 H = Hash::XXHash::GetHash64(Bytes.data(), Bytes.size());
-            if (OutBytes) *OutBytes = Move(Bytes);
+            if (OutBytes)
+            {
+                *OutBytes = Move(Bytes);
+            }
             return H;
         }
 
@@ -91,13 +96,10 @@ namespace Lumina
                 return FName();
             }
             FStringView Alias = VirtualPath.substr(1, SecondSlash - 1);
-            // /Game and /Engine never belong to a plugin.
             if (Alias == "Game" || Alias == "Engine" || Alias == "Config")
             {
                 return FName();
             }
-            // FPluginManager keys plugins by FName(Plugin->GetName()); the
-            // alias for plugin content IS the plugin name.
             if (FPluginManager::Get().FindPlugin(Alias) != nullptr)
             {
                 return FName(Alias);
@@ -125,8 +127,14 @@ namespace Lumina
 
         auto Callback = [&](const VFS::FFileInfo& File)
         {
-            if (File.IsDirectory()) return;
-            if (File.IsLAsset())    PackagePaths.emplace_back(File.VirtualPath);
+            if (File.IsDirectory())
+            {
+                return;
+            }
+            if (File.IsLAsset())
+            {
+                PackagePaths.emplace_back(File.VirtualPath);
+            }
         };
 
         WalkedRoots.emplace_back(FFixedString("/Engine/Resources/Content"));
@@ -134,13 +142,17 @@ namespace Lumina
 
         WalkedRoots.emplace_back(FFixedString("/Game/Content"));
         VFS::RecursiveDirectoryIterator("/Game/Content", Callback);
-
-        // Plugin content: walk every enabled plugin's mount alias. The
-        // PluginManager already mounted these into VFS at /<PluginName>.
+        
         for (const FPlugin* Plugin : FPluginManager::Get().GetAllPlugins())
         {
-            if (!Plugin->IsEnabled())                  continue;
-            if (!Plugin->IsContentMounted())           continue;
+            if (!Plugin->IsEnabled())
+            {
+                continue;
+            }
+            if (!Plugin->IsContentMounted())
+            {
+                continue;
+            }
             const FString MountAlias = Plugin->GetMountAlias();
             WalkedRoots.emplace_back(FFixedString(MountAlias.c_str()));
             VFS::RecursiveDirectoryIterator(MountAlias, Callback);
@@ -151,9 +163,7 @@ namespace Lumina
         LastDiscoveryWalkedRoots  = WalkedRoots;
         LastDiscoveryVisitedPaths = PackagePaths;
         eastl::sort(LastDiscoveryVisitedPaths.begin(), LastDiscoveryVisitedPaths.end());
-
-        // Text assets (.luau/.rml/.rcss) are rebuilt synchronously from their durable sidecars; cheap and
-        // independent of the async .lasset extraction below.
+        
         RunTextAssetDiscovery();
 
         const uint32 NumPackages = (uint32)PackagePaths.size();
@@ -275,8 +285,6 @@ namespace Lumina
             bReverseMapDirty = true;
         }
 
-        // Broadcast OUTSIDE the locks -- a listener that queries the registry on this thread would otherwise
-        // re-enter the non-recursive AssetsMutex and self-deadlock. Coalesced to one during a batch import.
         NotifyRegistryChanged();
     }
 

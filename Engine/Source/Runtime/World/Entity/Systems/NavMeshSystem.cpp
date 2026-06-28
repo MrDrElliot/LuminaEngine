@@ -192,15 +192,6 @@ namespace Lumina
             C = (Packed >> 16) & 0xFFu;
         }
 
-        // 10-10-10 unsigned position; MeshOrigin + (LoInt + q) * GridStep.
-        FORCEINLINE FVector3 DecodePosition(uint32 Packed, const FIntVector3& LoInt, const FVector3& MeshOrigin, const FVector3& GridStep)
-        {
-            const FIntVector3 Q(
-                (int32)((Packed >>  0) & 0x3FFu),
-                (int32)((Packed >> 10) & 0x3FFu),
-                (int32)((Packed >> 20) & 0x3FFu));
-            return MeshOrigin + FVector3(LoInt + Q) * GridStep;
-        }
 
         bool TriIntersectsAABB(const FVector3& A, const FVector3& B, const FVector3& C, const FVector3& BMin, const FVector3& BMax)
         {
@@ -409,7 +400,7 @@ namespace Lumina
                     const uint32 V0 = Meshlet.VertexOffset;
                     for (uint32 v = 0; v < Meshlet.VertexCount; ++v)
                     {
-                        const FVector3 Local = DecodePosition(MV[V0 + v].Position, Meshlet.LoInt, Md.MeshOrigin[Meshlet.LODIndex], Md.MeshGridStep[Meshlet.LODIndex]);
+                        const FVector3 Local = MV[V0 + v].Position;
                         LocalVerts[v] = FVector3(W * FVector4(Local, 1.0f));
                     }
 

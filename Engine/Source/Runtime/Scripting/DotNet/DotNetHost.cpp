@@ -1246,6 +1246,27 @@ namespace Lumina::DotNet
                     Type->ElementType = ReadType(R);
                     break;
                 }
+                case Scripting::EScriptExportKind::Instance:
+                {
+                    Type->BaseName = FName(R.Str().c_str());
+                    const int32 NumCandidates = R.I32();
+                    for (int32 c = 0; c < NumCandidates; ++c)
+                    {
+                        Scripting::FScriptExportInstanceCandidate Candidate;
+                        Candidate.TypeName = FName(R.Str().c_str());
+                        const int32 NumFields = R.I32();
+                        for (int32 i = 0; i < NumFields; ++i)
+                        {
+                            Scripting::FScriptExportField F;
+                            F.Name = FName(R.Str().c_str());
+                            ReadAliasesInto(R, F.Meta);
+                            F.Type = ReadType(R);
+                            Candidate.Fields.push_back(F);
+                        }
+                        Type->Candidates.push_back(eastl::move(Candidate));
+                    }
+                    break;
+                }
                 default: break;
             }
             return Type;
@@ -1287,6 +1308,24 @@ namespace Lumina::DotNet
                     }
                     break;
                 }
+                case Scripting::EScriptValueKind::Instance:
+                {
+                    // Chosen type name, then (when non-empty) a field count and each field's name and value.
+                    Out.AsString = R.Str();
+                    if (!Out.AsString.empty())
+                    {
+                        const int32 N = R.I32();
+                        Out.StructFields.reserve(N > 0 ? N : 0);
+                        for (int32 i = 0; i < N; ++i)
+                        {
+                            Scripting::FScriptPropertyEntry E;
+                            E.Name = FName(R.Str().c_str());
+                            ReadValue(R, E.Value);
+                            Out.StructFields.push_back(E);
+                        }
+                    }
+                    break;
+                }
                 default: break;
             }
         }
@@ -1320,10 +1359,24 @@ namespace Lumina::DotNet
                     }
                     break;
                 }
+                case Scripting::EScriptValueKind::Instance:
+                {
+                    W.Str(FStringView(V.AsString.c_str(), V.AsString.size()));
+                    if (!V.AsString.empty())
+                    {
+                        W.I32((int32)V.StructFields.size());
+                        for (const Scripting::FScriptPropertyEntry& E : V.StructFields)
+                        {
+                            W.Str(FStringView(E.Name.c_str()));
+                            WriteValue(W, E.Value);
+                        }
+                    }
+                    break;
+                }
                 default: break;
             }
         }
-        
+
         // Captures a sink-delivered blob into a TVector<uint8> (the invoke / field-get return path).
         void LmInvokeResultSink(void* Ctx, const char* Data, int Len)
         {

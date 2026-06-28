@@ -119,10 +119,6 @@ function LuminaWorkspaceSettings(Opts)
             runtime "Debug"
             defines { "LE_DEBUG", "LUMINA_DEBUG", "_DEBUG", "DEBUG" }
 
-        -- FASTLINK is linker-only; scope off StaticLib or lib.exe spams LNK4044.
-        filter { "configurations:Debug", "kind:not StaticLib" }
-            linkoptions { "/DEBUG:FASTLINK" }
-
         filter "configurations:Development"
             targetsuffix "-Development"
             optimize "Speed"
@@ -136,7 +132,7 @@ function LuminaWorkspaceSettings(Opts)
             defines { "NDEBUG", "LE_DEVELOPMENT", "LUMINA_DEVELOPMENT" }
 
         filter { "configurations:Development", "kind:not StaticLib" }
-            linkoptions { "/OPT:NOICF", "/OPT:NOREF", "/DEBUG:FASTLINK" }
+            linkoptions { "/OPT:NOICF", "/OPT:NOREF" }
 
         filter "configurations:Shipping"
             targetsuffix "-Shipping"

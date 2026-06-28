@@ -17,6 +17,7 @@
 #include "Core/Reflection/Type/Properties/ClassProperty.h"
 #include "Core/Reflection/Type/Properties/DelegateProperty.h"
 #include "Core/Reflection/Type/Properties/EnumProperty.h"
+#include "Core/Reflection/Type/Properties/InstancedStructProperty.h"
 #include "Core/Reflection/Type/Properties/ObjectProperty.h"
 #include "Core/Reflection/Type/Properties/SubStructProperty.h"
 #include "Core/Reflection/Type/Properties/SoftObjectProperty.h"
@@ -140,8 +141,24 @@ namespace Lumina
         {
             return StaticLoadObject(Data->AssetGUID);
         }
-        
+
         return nullptr;
+    }
+
+    CObject* StaticLoadObjectGraph(const FGuid& GUID)
+    {
+        return CPackage::LoadAssetGraph(GUID);
+    }
+
+    CObject* StaticLoadObjectGraph(FStringView Name)
+    {
+        if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(Name))
+        {
+            return CPackage::LoadAssetGraph(Data->AssetGUID);
+        }
+
+        // Not a registered asset: nothing to fan out, fall back to the plain inline load.
+        return StaticLoadObject(Name);
     }
 
     FFixedString SanitizeObjectName(FStringView Name)
@@ -216,10 +233,7 @@ namespace Lumina
 
         if (Name == NAME_None)
         {
-            // Atomic: object creation can run on multiple threads (e.g. parallel asset import), and a plain ++ on
-            // the shared per-class counter would race and hand out duplicate auto-generated names. atomic_ref
-            // keeps CClass's member layout unchanged. fetch_add returns the old value, so +1 matches the old ++.
-            const int32 Unique = std::atomic_ref<int32>(InClass->ClassUnique).fetch_add(1, std::memory_order_relaxed) + 1;
+            int32 Unique = std::atomic_ref<int32>(InClass->ClassUnique).fetch_add(1, std::memory_order_relaxed) + 1;
             Params.Name = InClass->GetName() + "_" + eastl::to_string(Unique);
         }
         else
@@ -403,6 +417,9 @@ namespace Lumina
             break;
         case EPropertyTypeFlags::SubStruct:
             NewFProperty<FSubStructProperty, FSubStructPropertyParams>(FieldOwner, Param);
+            break;
+        case EPropertyTypeFlags::InstancedStruct:
+            NewFProperty<FInstancedStructProperty, FInstancedStructPropertyParams>(FieldOwner, Param);
             break;
         case EPropertyTypeFlags::Delegate:
             NewFProperty<FDelegateProperty, FDelegatePropertyParams>(FieldOwner, Param);

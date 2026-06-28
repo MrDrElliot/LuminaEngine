@@ -12,7 +12,6 @@ namespace Lumina
 
         FFixedString GetNodeCategory() const override { return "Constants"; }
         void DrawContextMenu() override;
-        void DrawNodeTitleBar() override;
         void BuildNode() override;
 
         void* GetNodeDefaultValue() override { return &Value.r; }

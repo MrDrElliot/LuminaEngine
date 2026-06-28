@@ -73,9 +73,16 @@ namespace Lumina::Import::Mesh::FBX
         // their construction shaves work off ofbx::load for files that contain them.
         ofbx::LoadFlags LoadFlags = ofbx::LoadFlags::IGNORE_CAMERAS
             | ofbx::LoadFlags::IGNORE_LIGHTS
-            | ofbx::LoadFlags::IGNORE_VIDEOS
             | ofbx::LoadFlags::IGNORE_BLEND_SHAPES
             | ofbx::LoadFlags::IGNORE_POSES;
+
+        // Video objects carry FBX's EMBEDDED texture bytes -- only skip parsing them (an optimization)
+        // when we're not importing textures/materials at all. Ignoring them is what made embedded
+        // textures vanish: m_videos stayed empty, so neither getEmbeddedData() nor the scene table saw them.
+        if (!ImportOptions.bImportTextures && !ImportOptions.bImportMaterials)
+        {
+            LoadFlags = LoadFlags | ofbx::LoadFlags::IGNORE_VIDEOS;
+        }
 
         ofbx::IScene* FBXScene = ofbx::load(FileBlob.data(), FileBlob.size(), (uint16)LoadFlags);
         if (!FBXScene)
@@ -86,6 +93,12 @@ namespace Lumina::Import::Mesh::FBX
         const auto TSceneStart = std::chrono::steady_clock::now();
         LOG_INFO("[FBX] Parse (ofbx::load): {} ms",
             std::chrono::duration_cast<std::chrono::milliseconds>(TSceneStart - TParseStart).count());
+
+        // The engine is left-handed; FBX is normally right-handed (getGlobalSettings()->CoordAxis). Without a
+        // handedness conversion the entire scene imports mirrored (backwards text/geometry). Convert RH -> LH by
+        // reflecting one axis below; that reflection flips winding (handled per-mesh via bMirroredXform).
+        const ofbx::GlobalSettings* GlobalSettings = FBXScene->getGlobalSettings();
+        const bool bConvertHandedness = (GlobalSettings == nullptr) || (GlobalSettings->CoordAxis == ofbx::CoordSystem_RightHanded);
 
         if (Progress)
         {
@@ -315,13 +328,91 @@ namespace Lumina::Import::Mesh::FBX
             Progress->UpdateMessage("Reading skeleton & materials...");
         }
 
-        int DataCount = FBXScene->getEmbeddedDataCount();
-        
-        for (int DataIdx = 0; DataIdx < DataCount; ++DataIdx)
+        // FBX stores embedded textures as scene-level Video objects. Texture::getEmbeddedData() only finds them
+        // when the texture carries a matching "Media" property, which many exporters omit -> it returns empty and
+        // the texture would be treated as an external file at the (now-missing) authoring path, falling back to the
+        // white default. Harvest the Video table up front, keyed by lower-cased filename leaf, so ExtractTexture
+        // can recover the embedded bytes (binary content directly, or base64-encoded ASCII-FBX content decoded).
+        auto DecodeBase64 = [](const char* Data, size_t Len) -> TVector<uint8>
         {
-            ofbx::DataView Data = FBXScene->getEmbeddedData(DataIdx);
-            auto Filename = FBXScene->getEmbeddedFilename(DataIdx);
-            
+            auto V = [](char C) -> int
+            {
+                if (C >= 'A' && C <= 'Z') { return C - 'A'; }
+                if (C >= 'a' && C <= 'z') { return C - 'a' + 26; }
+                if (C >= '0' && C <= '9') { return C - '0' + 52; }
+                if (C == '+') { return 62; }
+                if (C == '/') { return 63; }
+                return -1;
+            };
+            TVector<uint8> Out;
+            Out.reserve(Len * 3 / 4 + 3);
+            int Buf = 0, Bits = 0;
+            for (size_t i = 0; i < Len; ++i)
+            {
+                const int D = V(Data[i]);
+                if (D < 0) { continue; }
+                Buf = (Buf << 6) | D;
+                Bits += 6;
+                if (Bits >= 8)
+                {
+                    Bits -= 8;
+                    Out.push_back((uint8)((Buf >> Bits) & 0xFF));
+                }
+            }
+            return Out;
+        };
+
+        auto EmbeddedLeafKey = [](ofbx::DataView View) -> FString
+        {
+            FString S;
+            if (View.begin != nullptr && View.end > View.begin)
+            {
+                S.assign(reinterpret_cast<const char*>(View.begin), reinterpret_cast<const char*>(View.end));
+            }
+            for (FString::value_type& C : S) { if (C == '\\') { C = '/'; } }
+            FStringView Leaf = VFS::FileName(S, true);
+            FString Key(Leaf.data(), Leaf.length());
+            for (FString::value_type& C : Key) { if (C >= 'A' && C <= 'Z') { C = C - 'A' + 'a'; } }
+            return Key;
+        };
+
+        THashMap<FString, TVector<uint8>> EmbeddedByName;
+        if (ImportOptions.bImportTextures || ImportOptions.bImportMaterials)
+        {
+            const int DataCount = FBXScene->getEmbeddedDataCount();
+            for (int DataIdx = 0; DataIdx < DataCount; ++DataIdx)
+            {
+                FString Key = EmbeddedLeafKey(FBXScene->getEmbeddedFilename(DataIdx));
+                if (Key.empty())
+                {
+                    continue;
+                }
+
+                TVector<uint8> Bytes;
+                const ofbx::DataView Content = FBXScene->getEmbeddedData(DataIdx);
+                if (Content.begin != nullptr && Content.end > Content.begin)
+                {
+                    Bytes.assign(reinterpret_cast<const uint8*>(Content.begin), reinterpret_cast<const uint8*>(Content.end));
+                }
+                else if (FBXScene->isEmbeddedBase64(DataIdx))
+                {
+                    if (const ofbx::IElementProperty* B64 = FBXScene->getEmbeddedBase64Data(DataIdx))
+                    {
+                        const ofbx::DataView Enc = B64->getValue();
+                        if (Enc.begin != nullptr && Enc.end > Enc.begin)
+                        {
+                            Bytes = DecodeBase64(reinterpret_cast<const char*>(Enc.begin), (size_t)(Enc.end - Enc.begin));
+                        }
+                    }
+                }
+
+                if (!Bytes.empty())
+                {
+                    EmbeddedByName.emplace(Move(Key), Move(Bytes));
+                }
+            }
+
+            LOG_INFO("[FBX] Embedded textures: {} video(s) in scene, {} with usable bytes.", DataCount, EmbeddedByName.size());
         }
         
         
@@ -371,28 +462,44 @@ namespace Lumina::Import::Mesh::FBX
                 FMeshImportImage Image;
                 Image.IntendedColorSpace = Role;
 
+                // Filename leaf, computed once: the embedded key and the Video-table lookup both use it.
+                FFixedString Leaf;
+                if (!Rel.empty())
+                {
+                    FStringView L = VFS::FileName(Rel, true);
+                    Leaf.append_convert(L.data(), L.length());
+                }
+
                 if (Embedded.begin != nullptr && Embedded.end > Embedded.begin)
                 {
                     const uint8* Start = reinterpret_cast<const uint8*>(Embedded.begin);
                     Image.Bytes.assign(Start, reinterpret_cast<const uint8*>(Embedded.end));
+                    Image.RelativePath = !Leaf.empty()
+                        ? Leaf
+                        : FFixedString(FFixedString::CtorSprintf(), "FBXMat%d_%s", (int)GlobalIdx, Suffix);
+                }
+                else if (!Leaf.empty())
+                {
+                    // getEmbeddedData() missed it (no Media link); recover from the scene Video table by leaf
+                    // before giving up to an external path that, for an embedded texture, won't exist on disk.
+                    FString LeafLower(Leaf.c_str());
+                    for (FString::value_type& C : LeafLower) { if (C >= 'A' && C <= 'Z') { C = C - 'A' + 'a'; } }
 
-                    if (!Rel.empty())
+                    auto It = EmbeddedByName.find(LeafLower);
+                    if (It != EmbeddedByName.end() && !It->second.empty())
                     {
-                        FStringView Leaf = VFS::FileName(Rel, true);
-                        Image.RelativePath.append_convert(Leaf.data(), Leaf.length());
+                        Image.Bytes.assign(It->second.begin(), It->second.end());
+                        Image.RelativePath = Leaf;
                     }
                     else
                     {
-                        Image.RelativePath = FFixedString(FFixedString::CtorSprintf(), "FBXMat%d_%s", (int)GlobalIdx, Suffix);
+                        Image.RelativePath = Rel.c_str();   // external file (Rel is non-empty here)
                     }
                 }
                 else
                 {
-                    if (Rel.empty())
-                    {
-                        return {};
-                    }
-                    Image.RelativePath = Rel.c_str();
+                    // No embedded bytes and no path at all.
+                    return {};
                 }
 
                 FFixedString Key = Image.RelativePath;
@@ -401,6 +508,33 @@ namespace Lumina::Import::Mesh::FBX
                     ImportData.Textures.emplace(Move(Image));
                 }
                 return Key;
+            };
+
+            // FBX has no masked/alpha-test flag and OpenFBX exposes no opacity texture, so alpha-tested foliage
+            // would import Opaque (the cutout lives in the base-color alpha). Heuristically flag foliage-like
+            // materials as Masked by name; the user can override the blend mode per-material in the editor.
+            auto IsFoliageName = [](const FString& Name, const FFixedString& TexKey) -> bool
+            {
+                static const char* const kKeywords[] = {
+                    "leaf", "leaves", "foliage", "tree", "plant", "ivy", "bush",
+                    "grass", "branch", "fern", "hedge", "vine", "shrub", "flower" };
+
+                auto Lower = [](const char* S) -> FString
+                {
+                    FString L(S);
+                    for (FString::value_type& C : L) { if (C >= 'A' && C <= 'Z') { C = C - 'A' + 'a'; } }
+                    return L;
+                };
+                const FString N = Lower(Name.c_str());
+                const FString T = Lower(TexKey.c_str());
+                for (const char* K : kKeywords)
+                {
+                    if (N.find(K) != FString::npos || T.find(K) != FString::npos)
+                    {
+                        return true;
+                    }
+                }
+                return false;
             };
 
             for (int MeshIdx = 0; MeshIdx < MeshCount; ++MeshIdx)
@@ -437,13 +571,29 @@ namespace Lumina::Import::Mesh::FBX
                         Out.BaseColorFactor = FVector4(Diffuse.r, Diffuse.g, Diffuse.b, Opacity);
                         Out.MetallicFactor  = 0.0f;
                         Out.RoughnessFactor = Math::Sqrt(2.0f / (Math::Max((float)Material->getShininessExponent(), 0.0f) + 2.0f));
-                        Out.EmissiveColor   = FVector3(Emissive.r * EmissiveF, Emissive.g * EmissiveF, Emissive.b * EmissiveF);
                         Out.AlphaMode       = (Opacity < 0.999f) ? EImportAlphaMode::Blend : EImportAlphaMode::Opaque;
 
                         Out.BaseColorTexture = ExtractTexture(Material, ofbx::Texture::DIFFUSE,  ETextureColorSpace::SRGB,      GlobalIdx, "D");
                         // Linear (BC7 RGB), not NormalMap: the BC5-packed normal path is currently broken.
                         Out.NormalTexture    = ExtractTexture(Material, ofbx::Texture::NORMAL,   ETextureColorSpace::Linear, GlobalIdx, "N");
                         Out.EmissiveTexture  = ExtractTexture(Material, ofbx::Texture::EMISSIVE, ETextureColorSpace::SRGB,      GlobalIdx, "E");
+
+                        // OpenFBX returns emissive_color=(1,1,1), factor=1 for materials that DON'T author emissive
+                        // (those are its struct defaults). Combined with the white default emissive texture, that makes
+                        // every non-emissive material glow full white (emissive is additive + unlit). Treat the exact
+                        // unauthored default (with no emissive map) as "not emissive"; any authored value/map is kept.
+                        const bool bDefaultEmissive = (Emissive.r == 1.0f && Emissive.g == 1.0f && Emissive.b == 1.0f && EmissiveF == 1.0f);
+                        Out.EmissiveColor = (Out.EmissiveTexture.empty() && bDefaultEmissive)
+                            ? FVector3(0.0f)
+                            : FVector3(Emissive.r * EmissiveF, Emissive.g * EmissiveF, Emissive.b * EmissiveF);
+
+                        // Foliage heuristic: promote opaque materials with a foliage-like name to alpha-test
+                        // (base-color alpha drives the clip). Already-translucent materials keep their blend.
+                        if (Out.AlphaMode == EImportAlphaMode::Opaque && IsFoliageName(Out.Name, Out.BaseColorTexture))
+                        {
+                            Out.AlphaMode   = EImportAlphaMode::Mask;
+                            Out.AlphaCutoff = 0.5f;
+                        }
 
                         ImportData.Materials.push_back(Move(Out));
                     }
@@ -608,8 +758,17 @@ namespace Lumina::Import::Mesh::FBX
             const FMatrix4 GlobalMatrix    = ConvertMatrix(Mesh->getGlobalTransform());
             const FMatrix4 GeometricMatrix = ConvertMatrix(Mesh->getGeometricMatrix());
             const FMatrix4 MeshToWorld     = GlobalMatrix * GeometricMatrix;
-            const FMatrix4 PosMatrix       = Math::Scale(FMatrix4(1.0f), FVector3(SceneScale)) * MeshToWorld;
-            const FMatrix3 NormalMatrix    = Math::Transpose(Math::Inverse(FMatrix3(MeshToWorld)));
+            // RH(FBX) -> LH(engine): reflect X. Applied in world space so it converts the whole baked scene; the
+            // reflection inverts winding (compensated below) and the normal basis (NormalMatrix uses it too).
+            const FMatrix4 HandednessFix   = bConvertHandedness ? Math::Scale(FMatrix4(1.0f), FVector3(-1.0f, 1.0f, 1.0f)) : FMatrix4(1.0f);
+            const FMatrix4 MeshToEngine    = HandednessFix * MeshToWorld;
+            const FMatrix4 PosMatrix       = Math::Scale(FMatrix4(1.0f), FVector3(SceneScale)) * MeshToEngine;
+            const FMatrix3 NormalMatrix    = Math::Transpose(Math::Inverse(FMatrix3(MeshToEngine)));
+
+            // A negative-determinant (mirrored / negative-scale) node reflects the baked geometry, which flips
+            // triangle winding. The engine is CCW-front + back-face-cull, so the correct side would be culled and
+            // the reversed side shown (mirrored textures, e.g. backwards menu boards). Reverse the winding below.
+            const bool     bMirroredXform = Math::Determinant(FMatrix3(MeshToEngine)) < 0.0f;
 
             const int CPCount = Mesh->getGeometry()->getGeometryData().getPositions().count;
 
@@ -718,6 +877,16 @@ namespace Lumina::Import::Mesh::FBX
                     int TriangleIndices[128];
                     uint32 TriIndexCount = ofbx::triangulate(Geometry, Polygon, TriangleIndices);
 
+                    if (bMirroredXform)
+                    {
+                        for (uint32 t = 0; t + 2 < TriIndexCount; t += 3)
+                        {
+                            const int Tmp          = TriangleIndices[t + 1];
+                            TriangleIndices[t + 1] = TriangleIndices[t + 2];
+                            TriangleIndices[t + 2] = Tmp;
+                        }
+                    }
+
                     for (uint32 i = 0; i < TriIndexCount; ++i)
                     {
                         int Index = TriangleIndices[i];
@@ -746,10 +915,11 @@ namespace Lumina::Import::Mesh::FBX
                             {
                                 ofbx::Vec2 U = UVs.get(Index);
 
-                                if (ImportOptions.bFlipUVs)
-                                {
-                                    U.y = 1.0f - U.y;
-                                }
+                                // FBX authoring uses the OpenGL bottom-left UV origin; the engine renders with the
+                                // Vulkan top-left origin, so convert here (otherwise textures import upside-down).
+                                // The bFlipUVs option (applied again in FinalizeMeshImportData) then toggles this
+                                // back off for the rare FBX that was authored top-left. glTF is already top-left.
+                                U.y = 1.0f - U.y;
 
                                 UV = FVector2(U.x, U.y);
                             }

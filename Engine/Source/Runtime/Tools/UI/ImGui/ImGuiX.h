@@ -17,7 +17,6 @@ struct ImGuiWindow;
 
 namespace Lumina
 {
-    struct FARFilter;
     class CClass;
 }
 
@@ -88,15 +87,15 @@ namespace Lumina::ImGuiX
     void TextWrapped(std::format_string<TArgs...> fmt, TArgs&&... Args)
     {
         ImGuiContext& g = *GImGui;
-        const bool need_backup = (g.CurrentWindow->DC.TextWrapPos < 0.0f);
-        if (need_backup)
+        const bool bNeedBackup = (g.CurrentWindow->DC.TextWrapPos < 0.0f);
+        if (bNeedBackup)
         {
             ImGui::PushTextWrapPos(0.0f);
         }
         
         Text(std::forward<decltype(fmt)>(fmt), std::forward<TArgs>(Args)...);
         
-        if (need_backup)
+        if (bNeedBackup)
         {
             ImGui::PopTextWrapPos();
         }
@@ -115,13 +114,6 @@ namespace Lumina::ImGuiX
     {
         return ButtonEx(pIcon, pLabel, size, ImGui::ColorConvertFloat4ToU32(ImGui::GetStyle().Colors[ImGuiCol_Button]), iconColor, ImGui::ColorConvertFloat4ToU32(ImGui::GetStyle().Colors[ImGuiCol_Text]), shouldCenterContents);
     }
-
-    // ---------------------------------------------------------------------------------------------
-    // Slider
-    //
-    // A clean, capsule-track slider with a spherical (shaded circular) knob. Mirrors the
-    // ImGui::SliderXxx signatures so it drops in as a replacement.
-    // ---------------------------------------------------------------------------------------------
 
     enum class ESliderFlags : uint32
     {
@@ -149,9 +141,7 @@ namespace Lumina::ImGuiX
 
     RUNTIME_API bool SliderFloat(const char* Label, float* Value, float Min, float Max, ESliderFlags Flags = ESliderFlags::None, const char* Format = "%.2f", const FSliderStyle* Style = nullptr);
     RUNTIME_API bool SliderInt(const char* Label, int32* Value, int32 Min, int32 Max, ESliderFlags Flags = ESliderFlags::None, const char* Format = "%d", const FSliderStyle* Style = nullptr);
-
-    RUNTIME_API TPair<bool, uint32> DirectoryTreeViewRecursive(const std::filesystem::path& Path, uint32* Count, int* SelectionMask);
-
+    
     // A searchable single-select dropdown.
     RUNTIME_API int32 SearchableCombo(const char* StrId, const char* Preview, int32 ItemCount, int32 CurrentIndex, const TFunction<FFixedString(int32)>& GetItemLabel, const char* ItemIcon = nullptr);
 

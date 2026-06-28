@@ -23,6 +23,63 @@ namespace Lumina
 
 namespace Lumina::Import
 {
+    // Clean a raw source string (a file stem, a DCC material name, ...) into a tidy asset name: keep
+    // [A-Za-z0-9], collapse every run of other characters (spaces, '.', '_', punctuation) into a single '_',
+    // and trim leading/trailing separators. An empty result falls back to Fallback.
+    inline FString SanitizeAssetName(FStringView In, FStringView Fallback = "Asset")
+    {
+        FString Out;
+        Out.reserve(In.size());
+        bool bSep = false;
+        for (char C : In)
+        {
+            const bool bKeep = (C >= 'a' && C <= 'z') || (C >= 'A' && C <= 'Z') || (C >= '0' && C <= '9');
+            if (bKeep)
+            {
+                if (bSep && !Out.empty())
+                {
+                    Out.push_back('_');
+                }
+                Out.push_back(C);
+                bSep = false;
+            }
+            else
+            {
+                bSep = true;
+            }
+        }
+        if (Out.empty())
+        {
+            Out.assign(Fallback.data(), Fallback.size());
+        }
+        return Out;
+    }
+
+    // Sanitized name with Prefix (e.g. "T_") prepended, unless it already begins with Prefix (case-insensitive)
+    // so a re-import or an already-conventionally-named source never becomes "T_T_Foo".
+    inline FString MakeAssetName(FStringView Prefix, FStringView Raw, FStringView Fallback = "Asset")
+    {
+        FString Name = SanitizeAssetName(Raw, Fallback);
+
+        bool bHasPrefix = Name.size() >= Prefix.size();
+        for (size_t i = 0; bHasPrefix && i < Prefix.size(); ++i)
+        {
+            char A = Name[i];
+            char B = Prefix[i];
+            if (A >= 'a' && A <= 'z') { A -= 32; }
+            if (B >= 'a' && B <= 'z') { B -= 32; }
+            if (A != B) { bHasPrefix = false; }
+        }
+        if (bHasPrefix)
+        {
+            return Name;
+        }
+
+        FString Out(Prefix.data(), Prefix.size());
+        Out.append(Name);
+        return Out;
+    }
+
     struct FImportSettings
     {
         virtual ~FImportSettings() = default;
@@ -67,7 +124,8 @@ namespace Lumina::Import
             bool bImportAnimations  = true;
             bool bImportSkeleton    = true;
             bool bFlipNormals       = false;
-            bool bFlipUVs           = false;
+            bool bFlipUVs           = false;   // flips V (1 - V)
+            bool bFlipU             = false;   // flips U (1 - U); for sources whose UVs are horizontally mirrored
             bool bMergeMeshes       = false;
             float Scale             = 1.0f;
             /** Skip heavy finalization and user transforms; dialog defers them to commit time. */

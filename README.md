@@ -189,7 +189,7 @@ https://github.com/user-attachments/assets/3d797479-fc47-4b8f-baf4-87315709d0c2
    (`External.zip`, ~671 MB), verifies it against a SHA-256 hash pinned in this
    repo (once the maintainer records it, see
    [`DEPENDENCIES.md`](DEPENDENCIES.md)), persists the `LUMINA_DIR` environment
-   variable, configures git hooks, and generates `Lumina.sln`.
+   variable, configures git hooks, and generates `Lumina.slnx`.
 
    The bundle contains the .NET 10 runtime (C# scripting), LLVM/Clang 19
    (reflection codegen), the Slang shader compiler, RenderDoc, and Tracy. Each
@@ -205,7 +205,7 @@ https://github.com/user-attachments/assets/3d797479-fc47-4b8f-baf4-87315709d0c2
 
 1. **Open the solution**
 
-   Open `Lumina.sln` in Visual Studio.
+   Open `Lumina.slnx` in Visual Studio.
 
 2. **Build and run**
 
@@ -268,7 +268,7 @@ Regenerating prints the resolved feature set, e.g.
 > - **"Application control policy blocked this file"?** Disable Windows 11
 >   Smart App Control.
 > - **"C# scripting disabled: managed bootstrap missing"?** The `LuminaSharp`
->   managed project didn't build. Reopen `Lumina.sln` so Visual Studio restores
+>   managed project didn't build. Reopen `Lumina.slnx` so Visual Studio restores
 >   its NuGet packages, then rebuild (the `Lumina` app now builds it as a
 >   dependency). From the command line, pass `-restore` to MSBuild.
 > - **Build still failing?**

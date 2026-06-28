@@ -1,5 +1,5 @@
 project "Entt"
-	kind "None"
+	kind "Utility"
 	warnings "off"
 
 	files

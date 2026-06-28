@@ -1,5 +1,5 @@
 project "NlohmannJson"
-	kind "None"
+	kind "Utility"
 	warnings "off"
     
 

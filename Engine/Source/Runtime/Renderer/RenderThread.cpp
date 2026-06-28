@@ -7,6 +7,8 @@
 #include "TaskSystem/TaskSystem.h"
 #include "TaskSystem/Scheduler/JobScheduler.h"
 
+#include <chrono>
+
 
 namespace Lumina
 {
@@ -132,12 +134,27 @@ namespace Lumina
         {
             return;
         }
-
-        std::unique_lock Lock(IdleMutex);
-        IdleCV.wait(Lock, [this, Target]()
+        
+        for (;;)
         {
-            return CommandsCompleted.load(Atomic::MemoryOrderAcquire) >= Target;
-        });
+            if (CommandsCompleted.load(Atomic::MemoryOrderAcquire) >= Target)
+            {
+                return;
+            }
+
+            bool Expected = false;
+            if (bDrainActive.compare_exchange_strong(Expected, true, Atomic::MemoryOrderAcqRel))
+            {
+                DrainLoop();
+                continue;
+            }
+
+            std::unique_lock Lock(IdleMutex);
+            IdleCV.wait_for(Lock, std::chrono::milliseconds(2), [this, Target]()
+            {
+                return CommandsCompleted.load(Atomic::MemoryOrderAcquire) >= Target;
+            });
+        }
     }
 
     void FRenderThread::DrainEntry(void* Arg, uint32 /*WorkerIndex*/)

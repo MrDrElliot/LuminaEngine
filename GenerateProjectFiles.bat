@@ -24,7 +24,7 @@ if not defined SKIP_PREREQ_CHECKS (
 )
 
 rem Extra args pass straight through to premake (e.g. --tracy=off); persistent defaults live in BuildScripts\BuildConfig.lua.
-"%PREMAKE_EXE%" vs2022 %*
+"%PREMAKE_EXE%" vs2026 %*
 if errorlevel 1 (
     echo.
     echo Project generation failed.
@@ -33,6 +33,6 @@ if errorlevel 1 (
 )
 
 echo.
-echo Solution generated. Open Lumina.sln in Visual Studio 2022.
+echo Solution generated. Open Lumina.slnx in Visual Studio 2026.
 endlocal
 exit /b 0

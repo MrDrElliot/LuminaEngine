@@ -9,8 +9,8 @@ A Lumina Engine project.
 
 ## First-time setup
 
-1. Run `GenerateProject.bat` from this folder. This invokes `%LUMINA_DIR%\Tools\premake5.exe vs2022` and writes `$PROJECTNAME.sln`.
-2. Open `$PROJECTNAME.sln` in **Visual Studio** or **JetBrains Rider**.
+1. Run `GenerateProject.bat` from this folder. This invokes `%LUMINA_DIR%\Tools\premake5.exe vs2026` and writes `$PROJECTNAME.slnx`.
+2. Open `$PROJECTNAME.slnx` in **Visual Studio** or **JetBrains Rider**.
 3. Press **F5**.
 
 F5 builds the game DLL (`Binaries\Windows64\$PROJECTNAME-Development.dll`) and launches the Lumina editor with this project pre-loaded. Breakpoints in your game module will hit as soon as `IMPLEMENT_MODULE` runs.
@@ -39,7 +39,7 @@ The C++ module in `Source/` is optional: use it for native types, custom compone
 ```
 $PROJECTNAME.lproject          Project descriptor (name, GUID, plugins)
 premake5.lua                   Build script, calls LuminaGameProject()
-GenerateProject.bat            One-shot: regenerate the .sln after source changes
+GenerateProject.bat            One-shot: regenerate the .slnx after source changes
 Config/GameSettings.json       Per-project engine settings (startup maps, cook roots, ...)
 Source/                        Your C++ module (optional)
 Game/Content/                  Assets, surfaced to the engine under /Game/Content

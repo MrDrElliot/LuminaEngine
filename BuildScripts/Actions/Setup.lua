@@ -40,7 +40,7 @@ newoption
 newoption
 {
     trigger     = "no-open",
-    description = "Do not open Lumina.sln after setup finishes (consumed by Setup.bat)",
+    description = "Do not open Lumina.slnx after setup finishes (consumed by Setup.bat)",
 }
 
 

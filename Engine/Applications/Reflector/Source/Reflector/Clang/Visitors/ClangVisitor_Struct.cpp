@@ -22,6 +22,7 @@
 #include "Reflector/Types/Properties/ReflectedSoftObjectProperty.h"
 #include "Reflector/Types/Properties/ReflectedStringProperty.h"
 #include "Reflector/Types/Properties/ReflectedStructProperty.h"
+#include "Reflector/Types/Properties/ReflectedInstancedStructProperty.h"
 #include "Reflector/Types/Properties/ReflectedSubStructProperty.h"
 
 namespace Lumina::Reflection::Visitor
@@ -425,6 +426,29 @@ namespace Lumina::Reflection::Visitor
 			ParamFieldInfo->Name = FieldInfo.Name;
 
 			NewProperty = CreateProperty<FReflectedSubStructProperty>(ParamFieldInfo.value());
+		}
+		break;
+		case EPropertyTypeFlags::InstancedStruct:
+		{
+			// Reflect against the base T for Construct_CStruct_<T>(). A reflected base is required
+			// (bare FInstancedStruct has no symbol to bind).
+			const CXType ArgType = clang_Type_getTemplateArgumentAsType(FieldInfo.Type, 0);
+			eastl::optional<FFieldInfo> ParamFieldInfo;
+			if (ArgType.kind != CXType_Invalid)
+			{
+				ParamFieldInfo = CreateSubFieldInfo(Context, ArgType, FieldInfo);
+			}
+			if (!ParamFieldInfo.has_value())
+			{
+				return false;
+			}
+
+			ParamFieldInfo->Name = FieldInfo.Name;
+			// FInstancedStruct owns heap memory, so never bulk-copy it as POD (the meta-struct's
+			// POD-ness would otherwise leak onto the owning property).
+			ParamFieldInfo->PropertyFlags &= ~EPropertyFlags::Trivial;
+
+			NewProperty = CreateProperty<FReflectedInstancedStructProperty>(ParamFieldInfo.value());
 		}
 		break;
 		case EPropertyTypeFlags::SoftObject:

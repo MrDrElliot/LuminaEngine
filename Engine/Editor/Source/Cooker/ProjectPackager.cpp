@@ -270,7 +270,7 @@ namespace Lumina
         const FString MSBuild = Options.MSBuildPath.empty() ? DefaultMSBuildPath() : Options.MSBuildPath;
         const FString Config  = Options.MSBuildConfiguration.empty() ? FString("Shipping") : Options.MSBuildConfiguration;
 
-        const FString SolutionPath = FString(Paths::GetEngineInstallDirectory().c_str()) + "/Lumina.sln";
+        const FString SolutionPath = FString(Paths::GetEngineInstallDirectory().c_str()) + "/Lumina.slnx";
 
         FString Args;
         Args = FString("\"") + SolutionPath + "\""
@@ -379,8 +379,8 @@ namespace Lumina
             }
         }
 
-        // Fallback: VS 2022 Community default; user can override via "MSBuild Path".
-        CachedPath = "C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/MSBuild.exe";
+        // Fallback: VS 2026 Community default; user can override via "MSBuild Path".
+        CachedPath = "C:/Program Files/Microsoft Visual Studio/2026/Community/MSBuild/Current/Bin/MSBuild.exe";
         return CachedPath;
     }
 

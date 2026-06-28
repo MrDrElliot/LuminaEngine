@@ -173,11 +173,13 @@ namespace Lumina::Import::Mesh
         });
     }
 
-    void OptimizeNewlyImportedMesh(FMeshResource& MeshResource, FScopedSlowTask* Progress)
+    // MUST run before meshlet/LOD generation, regardless of the "optimize" option: meshopt_simplify allocates
+    // O(vertex_count) internal buffers, so an un-deduplicated array (FBX commonly emits 3 unique verts per
+    // triangle) can request multi-GB allocations and OOM-crash. Dedup is a correctness prerequisite, not an optimization.
+    void DeduplicateMeshVertices(FMeshResource& MeshResource, FScopedSlowTask* Progress)
     {
-        size_t NumVertices = MeshResource.GetNumVertices();
-        const size_t NumIndices = MeshResource.Indices.size();
-
+        const size_t NumVertices = MeshResource.GetNumVertices();
+        const size_t NumIndices  = MeshResource.Indices.size();
         if (NumVertices == 0 || NumIndices == 0)
         {
             return;
@@ -188,26 +190,37 @@ namespace Lumina::Import::Mesh
         {
             Progress->UpdateMessage("Removing duplicate vertices...");
         }
+
+        meshopt_Stream Streams[7];
+        const uint32 StreamCount = BuildVertexStreams(MeshResource, Streams);
+
+        TVector<uint32> Remap(NumVertices);
+        const size_t UniqueVerts = meshopt_generateVertexRemapMulti(
+            Remap.data(),
+            MeshResource.Indices.data(), NumIndices,
+            NumVertices, Streams, StreamCount);
+
+        if (UniqueVerts < NumVertices)
         {
-            meshopt_Stream Streams[7];
-            const uint32 StreamCount = BuildVertexStreams(MeshResource, Streams);
-
-            TVector<uint32> Remap(NumVertices);
-            const size_t UniqueVerts = meshopt_generateVertexRemapMulti(
-                Remap.data(),
+            meshopt_remapIndexBuffer(
+                MeshResource.Indices.data(),
                 MeshResource.Indices.data(), NumIndices,
-                NumVertices, Streams, StreamCount);
+                Remap.data());
 
-            if (UniqueVerts < NumVertices)
-            {
-                meshopt_remapIndexBuffer(
-                    MeshResource.Indices.data(),
-                    MeshResource.Indices.data(), NumIndices,
-                    Remap.data());
+            RemapVertexStreams(MeshResource, Remap.data(), NumVertices, UniqueVerts);
+        }
+    }
 
-                RemapVertexStreams(MeshResource, Remap.data(), NumVertices, UniqueVerts);
-                NumVertices = UniqueVerts;
-            }
+    // Vertex cache / overdraw / fetch reordering -- a pure optimization gated on the import option.
+    // Assumes vertices were already deduplicated (DeduplicateMeshVertices ran first).
+    void OptimizeNewlyImportedMesh(FMeshResource& MeshResource, FScopedSlowTask* Progress)
+    {
+        const size_t NumVertices = MeshResource.GetNumVertices();
+        const size_t NumIndices  = MeshResource.Indices.size();
+
+        if (NumVertices == 0 || NumIndices == 0)
+        {
+            return;
         }
 
         // Per-surface reorder; disjoint index slices make the in-place reorder thread-safe.
@@ -546,43 +559,8 @@ namespace Lumina::Import::Mesh
             }
         });
 
-        // Per-LOD grid: each LOD sizes to its own largest meshlet (a coarse LOD can't inflate
-        // LOD 0's cell size); still shared within a LOD so adjacent meshlets snap and never crack.
-        FVector3 LODOrigin[MAX_MESH_LODS];
-        FVector3 LODInvStep[MAX_MESH_LODS];
-        for (uint32 lod = 0; lod < MAX_MESH_LODS; ++lod)
-        {
-            FVector3 LodLo(FLT_MAX);
-            FVector3 LodMaxExtent(0.0f);
-            for (uint32 SurfaceIdx = 0; SurfaceIdx < NumSurfaces; ++SurfaceIdx)
-            {
-                const FSurfaceMeshletResult& R = Results[lod * NumSurfaces + SurfaceIdx];
-                if (!R.bHasData)
-                {
-                    continue;
-                }
-                LodMaxExtent = Math::Max(LodMaxExtent, R.MaxExtent);
-                for (const FVector3& Lo : R.MeshletLo)
-                {
-                    LodLo = Math::Min(LodLo, Lo);
-                }
-            }
-
-            const bool bHasLOD = LodLo.x != FLT_MAX;
-            const FVector3 Origin = bHasLOD ? LodLo : FVector3(0.0f);
-
-            // 1022 (not 1023): round() can introduce a +1, so 1022 keeps q in [0, 1023].
-            FVector3 GridStep(0.0f);
-            FVector3 InvStep(0.0f);
-            if (LodMaxExtent.x > 0.0f) { GridStep.x = LodMaxExtent.x / 1022.0f; InvStep.x = 1.0f / GridStep.x; }
-            if (LodMaxExtent.y > 0.0f) { GridStep.y = LodMaxExtent.y / 1022.0f; InvStep.y = 1.0f / GridStep.y; }
-            if (LodMaxExtent.z > 0.0f) { GridStep.z = LodMaxExtent.z / 1022.0f; InvStep.z = 1.0f / GridStep.z; }
-
-            LODOrigin[lod]  = Origin;
-            LODInvStep[lod] = InvStep;
-            MeshResource.MeshletData.MeshOrigin[lod]   = Origin;
-            MeshResource.MeshletData.MeshGridStep[lod] = GridStep;
-        }
+        // Positions are stored as full mesh-local float3 in the vertex buffer -- no quantization grid,
+        // so no per-meshlet/per-LOD precision tradeoff and no boundary cracks (shared verts are bit-identical).
 
         size_t TotalMeshlets  = 0;
         size_t TotalVertices  = 0;
@@ -628,15 +606,6 @@ namespace Lumina::Import::Mesh
         // Phase 3: serial pack, LOD-major so LOD 0 is contiguous at the front of the buffer.
         for (uint32 lod = 0; lod < MAX_MESH_LODS; ++lod)
         {
-            // This LOD's grid. Quantizing every meshlet in the LOD against the same origin/step
-            // is what keeps the LOD seam-free.
-            const FVector3 GridOrigin = LODOrigin[lod];
-            const FVector3 GridInvStep = LODInvStep[lod];
-            auto GridIndex = [&](FVector3 P) -> FIntVector3
-            {
-                return FIntVector3(Math::Round((P - GridOrigin) * GridInvStep));
-            };
-
             for (uint32 SurfaceIdx = 0; SurfaceIdx < NumSurfaces; ++SurfaceIdx)
             {
                 FGeometrySurface&      Section = MeshResource.GeometrySurfaces[SurfaceIdx];
@@ -656,7 +625,6 @@ namespace Lumina::Import::Mesh
                 {
                     FMeshlet Out = Result.OutMeshlets[MeshletIdx];
 
-                    Out.LoInt    = GridIndex(Result.MeshletLo[MeshletIdx]);
                     Out.LODIndex = lod;
 
                     const uint32 PackedVertexStart = MeshResource.bSkinnedMesh
@@ -670,7 +638,7 @@ namespace Lumina::Import::Mesh
                             const uint32 GlobalIdx = Result.Vertices[Out.VertexOffset + i];
 
                             FMeshletSkinnedVertex Packed;
-                            Packed.Position = PackMeshletPosition(GridIndex(MeshResource.Positions[GlobalIdx]) - Out.LoInt);
+                            Packed.Position = MeshResource.Positions[GlobalIdx];
                             Packed.Normal   = MeshResource.Normals[GlobalIdx];
                             Packed.Tangent  = MeshResource.Tangents[GlobalIdx];
                             Packed.UV       = MeshResource.UVs[GlobalIdx];
@@ -687,7 +655,7 @@ namespace Lumina::Import::Mesh
                             const uint32 GlobalIdx = Result.Vertices[Out.VertexOffset + i];
 
                             FMeshletVertex Packed;
-                            Packed.Position = PackMeshletPosition(GridIndex(MeshResource.Positions[GlobalIdx]) - Out.LoInt);
+                            Packed.Position = MeshResource.Positions[GlobalIdx];
                             Packed.Normal   = MeshResource.Normals[GlobalIdx];
                             Packed.Tangent  = MeshResource.Tangents[GlobalIdx];
                             Packed.UV       = MeshResource.UVs[GlobalIdx];
@@ -881,10 +849,11 @@ namespace Lumina::Import::Mesh
         const float Scale          = Options.Scale;
         const bool  bScaleEnabled  = (Scale != 1.0f);
         const bool  bFlipUVs       = Options.bFlipUVs;
+        const bool  bFlipU         = Options.bFlipU;
         const bool  bFlipNormals   = Options.bFlipNormals;
 
         // Per-mesh transforms (each resource owns its own vertex buffer).
-        if (bScaleEnabled || bFlipUVs || bFlipNormals)
+        if (bScaleEnabled || bFlipUVs || bFlipU || bFlipNormals)
         {
             Task::ParallelFor((uint32)Data.Resources.size(), [&](uint32 ResIdx)
             {
@@ -903,10 +872,11 @@ namespace Lumina::Import::Mesh
                     {
                         M.SetPositionAt(i, M.GetPositionAt(i) * Scale);
                     }
-                    if (bFlipUVs)
+                    if (bFlipUVs || bFlipU)
                     {
                         FVector2 UV = M.GetUVAt(i);
-                        UV.y = 1.0f - UV.y;
+                        if (bFlipUVs) { UV.y = 1.0f - UV.y; }
+                        if (bFlipU)   { UV.x = 1.0f - UV.x; }
                         M.SetUVAt(i, UV);
                     }
                     if (bFlipNormals)
@@ -1058,6 +1028,9 @@ namespace Lumina::Import::Mesh
                 return;
             }
             FMeshResource& M = *MeshPtr;
+            // Dedup ALWAYS (correctness: meshlet/simplify need a sane vertex count or they OOM); only the
+            // cache/overdraw/fetch reordering is the optional "optimize" pass.
+            DeduplicateMeshVertices(M, Progress);
             if (Options.bOptimize)
             {
                 OptimizeNewlyImportedMesh(M, Progress);

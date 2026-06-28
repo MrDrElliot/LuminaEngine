@@ -1,16 +1,67 @@
 #include "pch.h"
 #include "Core/Object/Class.h"
+#include "Core/Object/Class/StructTraits.h"
 #include "Core/Object/Field.h"
 #include "Containers/Function.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Reflection/Type/Properties/ArrayProperty.h"
 #include "Core/Reflection/Type/Properties/PropertyTag.h"
 #include "Core/Serialization/NetArchive.h"
+#include "Memory/Memory.h"
 
 IMPLEMENT_INTRINSIC_CLASS(CStruct, CField, RUNTIME_API)
 
 namespace Lumina
 {
+    void CStruct::InitializeStruct(void* Dest) const
+    {
+        if (FStructOps* Ops = GetStructOps(); Ops && Ops->HasConstruct())
+        {
+            Ops->Construct(Dest);
+        }
+        else
+        {
+            Memory::Memzero(Dest, GetSize());
+        }
+    }
+
+    void CStruct::DestroyStruct(void* Dest) const
+    {
+        if (FStructOps* Ops = GetStructOps(); Ops && Ops->HasDestruct())
+        {
+            Ops->Destruct(Dest);
+        }
+    }
+
+    void CStruct::CopyStruct(void* Dest, const void* Src) const
+    {
+        if (FStructOps* Ops = GetStructOps(); Ops && Ops->HasCopy())
+        {
+            Ops->Copy(Dest, Src);
+            return;
+        }
+        for (FProperty* Current = LinkedProperty; Current; Current = static_cast<FProperty*>(Current->Next))
+        {
+            Current->CopyCompleteValue_InContainer(Dest, Src);
+        }
+    }
+
+    bool CStruct::CompareStruct(const void* A, const void* B) const
+    {
+        if (FStructOps* Ops = GetStructOps(); Ops && Ops->HasEquality())
+        {
+            return Ops->Equals(A, B);
+        }
+        for (FProperty* Current = LinkedProperty; Current; Current = static_cast<FProperty*>(Current->Next))
+        {
+            if (!Current->Identical_InContainer(A, B))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
 
     void CStruct::SetSuperStruct(CStruct* InSuper)
     {

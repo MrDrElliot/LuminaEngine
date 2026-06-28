@@ -332,6 +332,156 @@ namespace Lumina
         return true;
     }
 
+    static uint32 ReadU32LE(const uint8* P)
+    {
+        return (uint32)P[0] | ((uint32)P[1] << 8) | ((uint32)P[2] << 16) | ((uint32)P[3] << 24);
+    }
+
+    // DDS magic "DDS " + a full DDS_HEADER (124B); the smallest valid file is magic(4)+header(124).
+    static bool LooksLikeDDS(TSpan<const uint8> Data)
+    {
+        return Data.size() >= 128 && Data[0] == 'D' && Data[1] == 'D' && Data[2] == 'S' && Data[3] == ' ';
+    }
+
+    // DDS holds already-block-compressed (BCn) data that stb_image cannot read. Instead of decode+recompress,
+    // map the DDS format to our EFormat and upload the blocks VERBATIM (lossless; the GPU samples BCn natively).
+    // sRGB-ness is taken from the texture's role (base color = SRGB, normals/data = Linear), matching the cook.
+    // Returns false for non-DDS or unsupported (uncompressed/legacy) DDS so the caller can fall back to stb.
+    static bool CookDDS(CTexture* Texture, TSpan<const uint8> Data, ETextureColorSpace ColorSpace)
+    {
+        if (!LooksLikeDDS(Data))
+        {
+            return false;
+        }
+
+        const uint8* Bytes = Data.data();
+        const uint32 Height   = ReadU32LE(Bytes + 12);   // DDS_HEADER.dwHeight
+        const uint32 Width    = ReadU32LE(Bytes + 16);   // DDS_HEADER.dwWidth
+        uint32       MipCount = ReadU32LE(Bytes + 28);   // DDS_HEADER.dwMipMapCount
+        const uint32 FourCC   = ReadU32LE(Bytes + 84);   // DDS_HEADER.ddspf.dwFourCC
+
+        if (Width == 0 || Height == 0)
+        {
+            return false;
+        }
+        MipCount = Math::Max(1u, MipCount);
+
+        auto MakeFourCC = [](char A, char B, char C, char D) -> uint32
+        {
+            return (uint32)(uint8)A | ((uint32)(uint8)B << 8) | ((uint32)(uint8)C << 16) | ((uint32)(uint8)D << 24);
+        };
+
+        const bool bSRGB = (ColorSpace == ETextureColorSpace::SRGB);
+        EFormat Format   = EFormat::UNKNOWN;
+        size_t  DataOffset = 128;   // magic(4) + DDS_HEADER(124)
+
+        if (FourCC == MakeFourCC('D', 'X', '1', '0'))
+        {
+            // DDS_HEADER_DXT10 (20B) follows; dxgiFormat is its first field. Pixel data then starts at 148.
+            if (Data.size() < 148)
+            {
+                return false;
+            }
+            const uint32 DXGI = ReadU32LE(Bytes + 128);
+            DataOffset = 148;
+            switch (DXGI)
+            {
+                case 70: case 71: case 72: Format = bSRGB ? EFormat::BC1_UNORM_SRGB : EFormat::BC1_UNORM; break;
+                case 73: case 74: case 75: Format = bSRGB ? EFormat::BC2_UNORM_SRGB : EFormat::BC2_UNORM; break;
+                case 76: case 77: case 78: Format = bSRGB ? EFormat::BC3_UNORM_SRGB : EFormat::BC3_UNORM; break;
+                case 79: case 80:          Format = EFormat::BC4_UNORM; break;
+                case 81:                   Format = EFormat::BC4_SNORM; break;
+                case 82: case 83:          Format = EFormat::BC5_UNORM; break;
+                case 84:                   Format = EFormat::BC5_SNORM; break;
+                case 94: case 95:          Format = EFormat::BC6H_UFLOAT; break;
+                case 96:                   Format = EFormat::BC6H_SFLOAT; break;
+                case 97: case 98: case 99: Format = bSRGB ? EFormat::BC7_UNORM_SRGB : EFormat::BC7_UNORM; break;
+                default: return false;     // uncompressed / unsupported DX10 format
+            }
+        }
+        else if (FourCC == MakeFourCC('D', 'X', 'T', '1'))                                          { Format = bSRGB ? EFormat::BC1_UNORM_SRGB : EFormat::BC1_UNORM; }
+        else if (FourCC == MakeFourCC('D', 'X', 'T', '3'))                                          { Format = bSRGB ? EFormat::BC2_UNORM_SRGB : EFormat::BC2_UNORM; }
+        else if (FourCC == MakeFourCC('D', 'X', 'T', '5'))                                          { Format = bSRGB ? EFormat::BC3_UNORM_SRGB : EFormat::BC3_UNORM; }
+        else if (FourCC == MakeFourCC('A', 'T', 'I', '1') || FourCC == MakeFourCC('B', 'C', '4', 'U')) { Format = EFormat::BC4_UNORM; }
+        else if (FourCC == MakeFourCC('B', 'C', '4', 'S'))                                          { Format = EFormat::BC4_SNORM; }
+        else if (FourCC == MakeFourCC('A', 'T', 'I', '2') || FourCC == MakeFourCC('B', 'C', '5', 'U')) { Format = EFormat::BC5_UNORM; }
+        else if (FourCC == MakeFourCC('B', 'C', '5', 'S'))                                          { Format = EFormat::BC5_SNORM; }
+        else
+        {
+            return false;   // uncompressed / legacy-RGB DDS not handled here
+        }
+
+        const uint32 BytesPerBlock = RHI::Format::BytesPerBlock(Format);
+        if (BytesPerBlock == 0)
+        {
+            return false;
+        }
+
+        if (!Texture->TextureResource)
+        {
+            Texture->TextureResource = MakeUnique<FTextureResource>();
+        }
+        Texture->TextureResource->Mips.clear();
+        Texture->TextureResource->Mips.reserve(MipCount);
+
+        size_t Offset     = DataOffset;
+        uint32 StoredMips = 0;
+        for (uint32 m = 0; m < MipCount; ++m)
+        {
+            const uint32 MipW    = Math::Max(1u, Width  >> m);
+            const uint32 MipH    = Math::Max(1u, Height >> m);
+            const uint32 BlocksX = Math::Max(1u, (MipW + 3u) / 4u);
+            const uint32 BlocksY = Math::Max(1u, (MipH + 3u) / 4u);
+            const size_t MipSize = (size_t)BlocksX * BlocksY * BytesPerBlock;
+
+            if (Offset + MipSize > Data.size())
+            {
+                break;   // truncated file -- keep whatever mips parsed cleanly
+            }
+
+            FTextureResource::FMip Mip;
+            Mip.Width      = MipW;
+            Mip.Height     = MipH;
+            Mip.Depth      = 1;
+            Mip.RowPitch   = BlocksX * BytesPerBlock;
+            Mip.SlicePitch = (uint32)MipSize;
+            Mip.Pixels.assign(Bytes + Offset, Bytes + Offset + MipSize);
+            Texture->TextureResource->Mips.push_back(Move(Mip));
+
+            Offset += MipSize;
+            ++StoredMips;
+        }
+
+        if (StoredMips == 0)
+        {
+            return false;
+        }
+
+        FTextureResource::FDescription Desc;
+        Desc.Format  = Format;
+        Desc.Extent  = FUIntVector2(Width, Height);
+        Desc.NumMips = (uint8)StoredMips;
+        Texture->TextureResource->ImageDescription = Desc;
+
+        Texture->TextureResource->NewTexture = RHI::Textures::Create(RHI::FTexture2DDesc
+        {
+            .Width  = Width,
+            .Height = Height,
+            .Mips   = StoredMips,
+            .Format = Format,
+        });
+        for (uint32 i = 0; i < StoredMips; ++i)
+        {
+            const FTextureResource::FMip& Mip = Texture->TextureResource->Mips[i];
+            if (!Mip.Pixels.empty())
+            {
+                RHI::Textures::Upload(Texture->TextureResource->NewTexture, i, Mip.Pixels.data(), Mip.Pixels.size(), Mip.Width);
+            }
+        }
+
+        return true;
+    }
+
     // Filename suffix heuristic for Auto; falls back to SRGB. Editable in the inspector for misclassifications.
     static ETextureColorSpace ClassifyByFilename(FStringView Path)
     {
@@ -469,6 +619,64 @@ namespace Lumina
         if (Settings)
         {
             ImageSettings = &Settings->As<Import::Mesh::FMeshImportImage>();
+        }
+
+        // DDS containers hold pre-compressed BCn blocks stb_image can't read; pass them straight through to the
+        // GPU (handles both .dds bytes embedded in a mesh and external .dds files). Non-DDS falls through to stb.
+        {
+            auto HasDDSExtension = [](const FFixedString& P) -> bool
+            {
+                const size_t N = P.size();
+                if (N < 4) { return false; }
+                const char* S = P.c_str();
+                return S[N - 4] == '.'
+                    && (S[N - 3] == 'd' || S[N - 3] == 'D')
+                    && (S[N - 2] == 'd' || S[N - 2] == 'D')
+                    && (S[N - 1] == 's' || S[N - 1] == 'S');
+            };
+
+            TVector<uint8>     DDSStorage;
+            TSpan<const uint8> DDSBytes;
+            if (ImageSettings && ImageSettings->IsBytes())
+            {
+                DDSBytes = TSpan<const uint8>(ImageSettings->Bytes.data(), ImageSettings->Bytes.size());
+            }
+            else if (HasDDSExtension(RawPath) && FileHelper::LoadFileToArray(DDSStorage, RawPath.c_str()))
+            {
+                DDSBytes = TSpan<const uint8>(DDSStorage.data(), DDSStorage.size());
+            }
+
+            if (LooksLikeDDS(DDSBytes))
+            {
+                const ETextureColorSpace Role = (ImageSettings && ImageSettings->IntendedColorSpace != ETextureColorSpace::Auto)
+                    ? ImageSettings->IntendedColorSpace
+                    : ClassifyByFilename(RawPath.c_str());
+                NewTexture->ColorSpace = Role;
+
+                if (!CookDDS(NewTexture, DDSBytes, Role))
+                {
+                    LOG_WARN("TextureFactory: unsupported DDS format for '{}'; using neutral default.", RawPath.c_str());
+                    NewTexture->ConditionalBeginDestroy();
+                    return;
+                }
+
+                if (!ImageSettings || !ImageSettings->IsBytes())
+                {
+                    NewTexture->SourcePath = FString(RawPath.c_str());
+                }
+
+                CPackage* NewPackage = NewTexture->GetPackage();
+                if (CPackage::SavePackage(NewPackage, NewPackage->GetPackagePath()))
+                {
+                    FAssetRegistry::Get().AssetCreated(NewTexture);
+                }
+                else
+                {
+                    LOG_ERROR("TextureFactory: failed to save imported DDS texture; asset will not be registered");
+                }
+                NewTexture->ConditionalBeginDestroy();
+                return;
+            }
         }
 
         // Bytes path = mesh-embedded; file path = direct or mesh-resolved URI.

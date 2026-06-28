@@ -212,7 +212,6 @@ namespace Lumina
             {
                 LUMINA_PROFILE_SECTION_COLORED("RT ImGui Record", tracy::Color::SlateBlue3);
                 ImGuiRenderer->OnEndFrame_NewRHI(CL, SwapImage, Extent, *Snapshot);
-                ImGuiRenderer->SignalSnapshotSlotConsumed(ThisFrameIndex);
             }
             #endif
 
@@ -220,6 +219,17 @@ namespace Lumina
                 LUMINA_PROFILE_SECTION_COLORED("RT Present", tracy::Color::Orange4);
                 RHI::Core::Present(Swapchain, CL);
             }
+
+            #if WITH_EDITOR
+            if (Snapshot)
+            {
+                // Multi-viewport: render + present each dragged-out tool window into its own swapchain.
+                // Must finish (it reads this frame slot's captures) before releasing the slot.
+                LUMINA_PROFILE_SECTION_COLORED("RT ImGui Secondary Viewports", tracy::Color::SlateBlue4);
+                ImGuiRenderer->RenderSecondaryViewports_RenderThread(ThisFrameIndex);
+                ImGuiRenderer->SignalSnapshotSlotConsumed(ThisFrameIndex);
+            }
+            #endif
         });
     }
 

@@ -217,7 +217,9 @@ namespace Lumina::Reflection
             {
                 return false; // hidden non-PROPERTY state: reflected layout is incomplete, can't blit by value
             }
-            return ComputeBlittableLayout(Struct, Db, OutSize, OutAlign, 0);
+            // An empty reflected struct computes a zero-size mirror, which can never match C++ sizeof
+            // >= 1. Treat it as opaque.
+            return ComputeBlittableLayout(Struct, Db, OutSize, OutAlign, 0) && OutSize > 0;
         }
 
         // An entt::entity / FEntity field (the reflector classifies it as Int32, so it stays a 4-byte

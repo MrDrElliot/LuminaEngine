@@ -11,6 +11,15 @@
 //                   VisBuffer rasters them. This removes the one-frame disocclusion lag of a single phase.
 #define LOCAL_SIZE_X 64
 
+// Mesh-task indirect args {GroupCountX, Y, Z}. The cull writes GroupCountX directly (= surviving meshlets) so
+// no separate VS-args -> mesh-args conversion pass is needed; Y/Z are pre-seeded to 1 each frame CPU-side.
+struct FDrawMeshTasksIndirectArguments
+{
+    uint GroupCountX;
+    uint GroupCountY;
+    uint GroupCountZ;
+};
+
 struct FPushConstants
 {
     uint NumViews;
@@ -19,9 +28,10 @@ struct FPushConstants
     uint _Pad;
     // Cull-private scratch, addressed by device pointer (not a descriptor) so draw/post passes
     // never bind or transition them. State tracked CPU-side via State.Writes; 8-byte aligned here.
-    FDrawIndirectArguments* IndirectArgs;
-    FMeshletDeferred*       DeferList;
-    uint*                   DeferCount;
+    FDrawIndirectArguments*          IndirectArgs;
+    FMeshletDeferred*                DeferList;
+    uint*                            DeferCount;
+    FDrawMeshTasksIndirectArguments* MeshDrawArgs;   // GroupCountX accumulated here too (mesh path)
 };
 
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
@@ -32,6 +42,11 @@ void EmitMeshlet(FCullView View, uint DrawID, uint InstanceID, uint MeshletLocal
     uint IndirectIndex = View.IndirectArgsOffset + DrawID;
     uint OldCount;
     InterlockedAdd(Pass().IndirectArgs[IndirectIndex].InstanceCount, 1, OldCount);
+
+    // Same survivor count, written straight into the mesh-task GroupCountX so ConvertMeshDrawArgs is gone.
+    // Must be atomic (each lane only knows its own +1, not the total); HW coalesces same-address-in-wave.
+    uint MeshOld;
+    InterlockedAdd(Pass().MeshDrawArgs[IndirectIndex].GroupCountX, 1u, MeshOld);
 
     uint Slot = Pass().IndirectArgs[IndirectIndex].FirstInstance + OldCount;
 

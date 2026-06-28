@@ -10,6 +10,7 @@
 #include "Core/Delegates/CoreDelegates.h"
 #include "Core/Engine/Engine.h"
 #include "Memory/Memory.h"
+#include "Core/Diagnostics/HangWatchdog.h"
 #include "Platform/CrashHandler.h"
 
 using namespace Lumina;
@@ -25,6 +26,10 @@ int LuminaMain(int ArgC, char** ArgV)  // NOLINT(misc-use-internal-linkage)
     // Must come before anything else so an early-init fault still produces a
     // dump and a modal.
     CrashHandler::Install();
+
+    // Watches the main-thread heartbeat (bumped each frame in FEngine::Update) and dumps every
+    // thread's call stack on a stall. No-op in Shipping / non-Windows.
+    HangWatchdog::Start();
 
     int Result = 0;
     FApplicationGlobalState GlobalState;
@@ -69,6 +74,7 @@ int LuminaMain(int ArgC, char** ArgV)  // NOLINT(misc-use-internal-linkage)
     GCommandLine    = nullptr;
     GConfig         = nullptr;
 
+    HangWatchdog::Stop();
     CrashHandler::Shutdown();
     return Result;
 }

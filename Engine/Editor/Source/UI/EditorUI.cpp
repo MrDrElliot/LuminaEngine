@@ -949,8 +949,11 @@ namespace Lumina
 
     void FEditorUI::OpenAssetEditor(const FGuid& AssetGUID)
     {
-        CObject* Asset = LoadObject<CObject>(AssetGUID);
-        
+        // Phased parallel load: opening a world/large asset fans its whole Hard/Owned dependency closure
+        // across worker threads instead of the inline depth-first walk. Falls back to a plain load inside
+        // LoadAssetGraph if this isn't a registered asset.
+        CObject* Asset = CPackage::LoadAssetGraph(AssetGUID);
+
         if (Asset == nullptr)
         {
             return;
@@ -2528,7 +2531,7 @@ namespace Lumina
             DrawProjectRow(
                 LE_ICON_CUBE,
                 "Blank Project (C++)",
-                "Empty C++ module + C# scripting. F5 in the generated .sln launches the editor with the project loaded.",
+                "Empty C++ module + C# scripting. F5 in the generated .slnx launches the editor with the project loaded.",
                 kProjDialogAccentBlue,
                 /*bCompact=*/false);
 
@@ -2651,7 +2654,7 @@ namespace Lumina
     {
         const FString ProjectFileCopy(ProjectFile.data(), ProjectFile.size());
 
-        // Derive the .sln path from the .lproject path (sibling file).
+        // Derive the .slnx path from the .lproject path (sibling file).
         FString SlnPath = ProjectFileCopy;
         {
             const size_t Dot = SlnPath.find_last_of('.');
@@ -2659,7 +2662,7 @@ namespace Lumina
             {
                 SlnPath.erase(Dot);
             }
-            SlnPath.append(".sln");
+            SlnPath.append(".slnx");
         }
 
         ModalManager.CreateDialogue("Project Created", ImVec2(640, 400), [this, ProjectFileCopy, SlnPath] () -> bool

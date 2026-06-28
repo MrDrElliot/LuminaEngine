@@ -86,7 +86,7 @@ namespace Lumina
         /** Screen-space ambient occlusion. Reconstructs occlusion from depth and darkens the ambient/IBL
             term -- only visible where there is some skylight/environment ambient. */
         PROPERTY(Editable, Category = "Rendering")
-        bool bEnableSSAO = true;
+        bool bEnableSSAO = false;
 
         /** SSAO sample radius in world units. Larger = wider, softer occlusion. */
         PROPERTY(Editable, ClampMin = 0.01f, Category = "Rendering")

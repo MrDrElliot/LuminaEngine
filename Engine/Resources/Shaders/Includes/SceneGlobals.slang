@@ -98,7 +98,7 @@ FVertexData LoadStaticVertex(FMeshletHeader* Header, FMeshlet M, uint VertexLoca
     FVertex V = reinterpret<FVertex*>(Header.Vertices)[M.VertexOffset + VertexLocalIdx];
 
     FVertexData Data;
-    Data.Position = UnpackMeshletPosition(V.Position, M.LoInt, GetMeshOrigin(Header, M.LODIndex), GetMeshGridStep(Header, M.LODIndex));
+    Data.Position = V.Position;
     Data.Normal   = UnpackNormal(V.Normal);
     Data.Tangent  = UnpackTangent(V.Tangent);
     Data.UV       = UnpackUV(V.UV);
@@ -124,7 +124,7 @@ FVertexData LoadSkinnedVertex(FMeshlet M, uint VertexLocalIdx, uint SkinnedVerte
 float3 LoadStaticPosition(FMeshletHeader* Header, FMeshlet M, uint VertexLocalIdx)
 {
     FVertex V = reinterpret<FVertex*>(Header.Vertices)[M.VertexOffset + VertexLocalIdx];
-    return UnpackMeshletPosition(V.Position, M.LoInt, GetMeshOrigin(Header, M.LODIndex), GetMeshGridStep(Header, M.LODIndex));
+    return V.Position;
 }
 
 float3 LoadSkinnedPosition(FMeshletHeader* Header, FMeshlet M, uint VertexLocalIdx, uint SkinnedVertexBase)
@@ -139,7 +139,7 @@ FPreSkinnedVertex SkinVertex(FMeshletHeader* Header, FMeshlet M, uint VertexLoca
 {
     FSkinnedVertex V = reinterpret<FSkinnedVertex*>(Header.Vertices)[M.VertexOffset + VertexLocalIdx];
 
-    float3 LocalPos     = UnpackMeshletPosition(V.Position, M.LoInt, GetMeshOrigin(Header, M.LODIndex), GetMeshGridStep(Header, M.LODIndex));
+    float3 LocalPos     = V.Position;
     float3 LocalNormal  = UnpackNormal(V.Normal);
     float4 LocalTangent = UnpackTangent(V.Tangent);
 

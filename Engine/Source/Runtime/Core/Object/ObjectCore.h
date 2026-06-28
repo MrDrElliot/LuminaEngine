@@ -37,6 +37,14 @@ namespace Lumina
     RUNTIME_API void AsyncLoadObject(const FGuid& GUID, const TFunction<void(CObject*)>& Callback);
     RUNTIME_API void AsyncLoadObject(const FName& Name, const TFunction<void(CObject*)>& Callback);
     RUNTIME_API CObject* StaticLoadObject(FStringView Name);
+
+    // Top-level "load this asset and its whole dependency closure in parallel" (CPackage::LoadAssetGraph).
+    // Use for big fan-out opens (worlds, level travel); falls back to the inline StaticLoadObject when the
+    // target isn't a registered asset. Do NOT call from inside a load to resolve a single reference -- that
+    // is StaticLoadObject's job (the graph loader is built on top of it).
+    RUNTIME_API CObject* StaticLoadObjectGraph(const FGuid& GUID);
+    RUNTIME_API CObject* StaticLoadObjectGraph(FStringView Name);
+
     RUNTIME_API FFixedString SanitizeObjectName(FStringView Name);
 
     RUNTIME_API bool IsValid(const CObjectBase* Obj);
@@ -71,7 +79,19 @@ namespace Lumina
     {
         return static_cast<T*>(StaticLoadObject(Name));
     }
-    
+
+    template<Concept::IsACObject T>
+    T* LoadObjectGraph(const FGuid& GUID)
+    {
+        return static_cast<T*>(StaticLoadObjectGraph(GUID));
+    }
+
+    template<Concept::IsACObject T>
+    T* LoadObjectGraph(FStringView Name)
+    {
+        return static_cast<T*>(StaticLoadObjectGraph(Name));
+    }
+
     RUNTIME_API CObject* NewObject(CClass* InClass, CPackage* Package = nullptr, const FName& Name = NAME_None, const FGuid& GUID = FGuid::New(), EObjectFlags Flags = OF_None);
     RUNTIME_API void GetObjectsWithPackage(const CPackage* Package, TVector<CObject*>& OutObjects);
 
@@ -166,6 +186,7 @@ namespace Lumina
         Optional,
         SubStruct,
         Delegate,
+        InstancedStruct,
 
         Count,
     };
@@ -199,7 +220,8 @@ namespace Lumina
         "StructProperty",
         "OptionalProperty",
         "SubStructProperty",
-        "DelegateProperty"
+        "DelegateProperty",
+        "InstancedStructProperty"
     };
 
     static_assert(std::size(PropertyTypeFlagNames) == (size_t)EPropertyTypeFlags::Count, "PropertyTypeFlagStrings must match number of flags in EPropertyTypeFlags");
@@ -317,6 +339,15 @@ namespace Lumina
 
     // TSubStructOf<T>: StructFunc returns the base struct T every assignable value must derive from.
     struct FSubStructPropertyParams : FPropertyParams
+    {
+        CStruct*            (*StructFunc)();
+
+        uint16 NumMetaData;
+        const FMetaDataPairParam* MetaDataArray;
+    };
+
+    // TInstancedStruct<T>. StructFunc returns the base struct every owned instance must derive from.
+    struct FInstancedStructPropertyParams : FPropertyParams
     {
         CStruct*            (*StructFunc)();
 

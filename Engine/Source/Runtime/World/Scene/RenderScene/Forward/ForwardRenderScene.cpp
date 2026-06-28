@@ -687,10 +687,9 @@ namespace Lumina
             {
                 LUMINA_PROFILE_SECTION("RenderPasses");
 
-                const bool bMeshArgs = CVarMeshShaders.GetValue() && RHI::SupportsMeshShaders();
-
                 // Phase 0 cull: frustum + cone all views, Hi-Z occlusion vs LAST frame's pyramid for the
-                // camera; meshlets the stale pyramid hides are deferred (not dropped).
+                // camera; meshlets the stale pyramid hides are deferred (not dropped). The cull writes the
+                // mesh-task GroupCountX directly into the {0,1,1}-seeded args (no ConvertMeshDrawArgs pass).
                 {
                     SCENE_GPU_SCOPE(CL, "Cull Early");
                     CullPassEarly(CL);
@@ -699,13 +698,6 @@ namespace Lumina
                 {
                     SCENE_GPU_SCOPE(CL, "Skinning");
                     SkinningPass(CL);
-                }
-
-                // Mesh-task args for the early camera + shadow + capture views, before phase-1 raster.
-                if (bMeshArgs)
-                {
-                    SCENE_GPU_SCOPE(CL, "Mesh Draw Args (Early)");
-                    ConvertMeshDrawArgs(CL);
                 }
 
                 // VisBuffer phase 1: rasterize the early (non-occluded) camera meshlets into triangle IDs +
@@ -727,14 +719,6 @@ namespace Lumina
                 {
                     SCENE_GPU_SCOPE(CL, "Cull Late");
                     CullPassLate(CL);
-                }
-
-                // Re-emit only the camera-late view's mesh-task args: the late cull touches just that view's
-                // InstanceCounts; shadow/capture views were finalized by the early conversion above.
-                if (bMeshArgs && CurrentCameraLateView != ~0u)
-                {
-                    SCENE_GPU_SCOPE(CL, "Mesh Draw Args (Late)");
-                    ConvertMeshDrawArgs(CL, (int32)CurrentCameraLateView);
                 }
 
                 // VisBuffer phase 2: rasterize the disoccluded meshlets, loading + accumulating into the
@@ -2151,6 +2135,7 @@ namespace Lumina
         const auto& BonesData            = Frame.Geometry.BonesData;
         const auto& CullViews            = Frame.Views.CullViews;
         const auto& IndirectArgs         = Frame.Views.IndirectArgs;
+        const auto& MeshDrawArgs         = Frame.Views.MeshDrawArgs;
         const auto& InstanceMeshletPrefix= Frame.Geometry.InstanceMeshletPrefix;
         const auto& LightData            = Frame.Lighting.LightData;
         const auto& EnvironmentParams    = Frame.Volumetrics.EnvironmentParams;
@@ -2212,6 +2197,9 @@ namespace Lumina
             if (!IndirectArgs.empty())
             {
                 WriteBuffer(CL, GetIndirectArgs().Ptr, IndirectArgs.data(), IndirectArgs.size() * sizeof(RHI::FDrawIndirectArguments));
+                // Mesh-task args {0,1,1} seed: the cull accumulates GroupCountX into this (replacing the old
+                // ConvertMeshDrawArgs pass). One barrier orders both uploads before the cull reads/writes them.
+                WriteBuffer(CL, GetMeshDrawArgs().Ptr, MeshDrawArgs.data(), MeshDrawArgs.size() * sizeof(RHI::FDrawMeshTasksIndirectArguments));
                 Barriers::TransferToAll(CL);
             }
 
@@ -2647,6 +2635,7 @@ namespace Lumina
             Item.MaterialIndex        = Slot.MaterialIdx;
             Item.LocalBatchIndex      = LocalBatchIdx;
             Item.LocalDrawIndex       = LocalDrawIdx;
+            Local.LocalBatches[LocalBatchIdx].AccumSkinned(Flags);
             Item._Pad                 = 0;
         }
     }
@@ -2758,6 +2747,7 @@ namespace Lumina
             Item.MaterialIndex        = Slot.MaterialIdx;
             Item.LocalBatchIndex      = LocalBatchIdx;
             Item.LocalDrawIndex       = LocalDrawIdx;
+            Local.LocalBatches[LocalBatchIdx].AccumSkinned(Flags);
             Item._Pad                 = 0;
         }
     }
@@ -2877,6 +2867,7 @@ namespace Lumina
             Item.MaterialIndex        = Slot.MaterialIdx;
             Item.LocalBatchIndex      = LocalBatchIdx;
             Item.LocalDrawIndex       = LocalDrawIdx;
+            Local.LocalBatches[LocalBatchIdx].AccumSkinned(Flags);
             Item._Pad                 = 0;
         }
     }
@@ -3027,6 +3018,7 @@ namespace Lumina
             Item.MaterialIndex        = Slot.MaterialIdx;
             Item.LocalBatchIndex      = LocalBatchIdx;
             Item.LocalDrawIndex       = LocalDrawIdx;
+            Local.LocalBatches[LocalBatchIdx].AccumSkinned(Flags);
             Item._Pad                 = 0;
 
             // Same offsets/counts the dropped second pass recomputed; fold them into the span here.
@@ -3187,7 +3179,13 @@ namespace Lumina
                     NewCmd.bMasked             = LocalBatch.Key.bMasked;
                     NewCmd.bAdditive           = LocalBatch.Key.bAdditive;
                     NewCmd.bTwoSided           = LocalBatch.Key.bTwoSided;
+                    NewCmd.bAnySkinned         = 0u;
+                    NewCmd.bAnyStatic          = 0u;
                 }
+                // A global batch unions many per-thread LocalBatches; OR their homogeneity (covers new + existing).
+                FMeshDrawCommand& MergedCmd = DrawCommands[GlobalIdx];
+                MergedCmd.bAnySkinned |= LocalBatch.bAnySkinned ? 1u : 0u;
+                MergedCmd.bAnyStatic  |= LocalBatch.bAnyStatic  ? 1u : 0u;
                 LocalBatch.GlobalBatchIndex = GlobalIdx;
             }
         }
@@ -3942,6 +3940,7 @@ namespace Lumina
         FFrameData& Frame = *ExtractFrame;
         auto& CullViews                = Frame.Views.CullViews;
         auto& IndirectArgs             = Frame.Views.IndirectArgs;
+        auto& MeshDrawArgs             = Frame.Views.MeshDrawArgs;
         auto& DrawMeshletStartOffsets  = Frame.Geometry.DrawMeshletStartOffsets;
         auto& LightData                = Frame.Lighting.LightData;
         auto& PackedShadows            = Frame.Lighting.PackedShadows;
@@ -3989,6 +3988,9 @@ namespace Lumina
                 Arg.FirstVertex   = 0u;
                 Arg.FirstInstance = ViewDrawListBase + DrawMeshletStartOffsets[d];
                 IndirectArgs.push_back(Arg);
+
+                // Mesh-task args seed: GroupCountX = 0 (the cull accumulates survivors atomically), Y = Z = 1.
+                MeshDrawArgs.push_back(RHI::FDrawMeshTasksIndirectArguments{ 0u, 1u, 1u });
             }
             return ViewIndex;
         };
@@ -4007,6 +4009,7 @@ namespace Lumina
 
         CullViews.reserve(NumViews);
         IndirectArgs.reserve((size_t)NumViews * (size_t)NumDraws);
+        MeshDrawArgs.reserve((size_t)NumViews * (size_t)NumDraws);
 
         CascadeViewBase = ~0u;
         CameraLateViewIndex = ~0u;
@@ -4696,6 +4699,7 @@ namespace Lumina
         Frame.Geometry.TranslucentDrawList.clear();
         Frame.Geometry.DrawMeshletStartOffsets.clear();
         Frame.Views.IndirectArgs.clear();
+        Frame.Views.MeshDrawArgs.clear();
         Frame.Views.CullViews.clear();
         Frame.Views.CaptureViews.clear();
         Frame.Views.TotalMeshletBound = 0;
@@ -4754,6 +4758,7 @@ namespace Lumina
         uint64 IndirectArgsAddr;
         uint64 DeferListAddr;
         uint64 DeferCountAddr;
+        uint64 MeshDrawArgsAddr;   // GroupCountX accumulated here (mesh path; replaces ConvertMeshDrawArgs)
     };
 
     void FForwardRenderScene::CullPassEarly(RHI::FCmdListH CL)
@@ -4789,6 +4794,7 @@ namespace Lumina
         PC.IndirectArgsAddr    = GetIndirectArgs().GetAddress();
         PC.DeferListAddr       = GetMeshletDeferList().GetAddress();
         PC.DeferCountAddr      = GetDeferCount().GetAddress();
+        PC.MeshDrawArgsAddr    = GetMeshDrawArgs().GetAddress();
 
         // Flat thread-per-meshlet; workgroups beyond the 65535 X cap fold into Y.
         const uint32 NumWorkgroups = (TotalMeshletBound + 63u) / 64u;
@@ -4850,6 +4856,7 @@ namespace Lumina
         PC.IndirectArgsAddr    = GetIndirectArgs().GetAddress();
         PC.DeferListAddr       = GetMeshletDeferList().GetAddress();
         PC.DeferCountAddr      = GetDeferCount().GetAddress();
+        PC.MeshDrawArgsAddr    = GetMeshDrawArgs().GetAddress();
 
         // Indirect dispatch sized to the deferred set (BuildCullDispatchArgs wrote {ceil(DeferCount/64),1,1} from
         // DeferCount after the early cull). The 1D grid keeps RunLatePhase's flat-index = GlobalID.x; the
@@ -5070,6 +5077,8 @@ namespace Lumina
             Key.MS               = bUseMesh ? Batch.VisBufferMeshShader : nullptr;
             Key.PS               = bMaskedClip ? MaskedPS : (bUseMesh ? VisPixelPrim : VisPixel);
             Key.bVisBufferMasked = bMaskedClip;   // geometry emits interpolants only when actually masked-clipping
+            // SPEC_SKINNED: homogeneous batch -> dead-strip the unused vertex-load path; mixed -> runtime branch (2).
+            Key.SkinnedMode      = (Batch.bAnySkinned && Batch.bAnyStatic) ? 2u : (Batch.bAnySkinned ? 1u : 0u);
             Key.SampleCount      = MSAASampleCount;
             Key.DepthFormat = EFormat::D32;
             Key.ColorTargets.push_back({ VisRT.Desc.Format, {} });
@@ -5590,56 +5599,6 @@ namespace Lumina
 
         RHI::CmdEndRenderPass(CL);
         Barriers::RasterToRead(CL);
-    }
-
-    void FForwardRenderScene::ConvertMeshDrawArgs(RHI::FCmdListH CL, int32 SingleViewIndex)
-    {
-        const FFrameData& Frame = *RenderFrame;
-        const uint32 NumDrawsPerView = Frame.Views.NumDrawsPerView;
-        const uint32 NumViews        = (uint32)Frame.Views.CullViews.size();
-
-        uint32 Count;
-        uint32 StartIndex;
-        if (SingleViewIndex >= 0)
-        {
-            // Late call: only the camera-late view's InstanceCounts changed, so reconvert just its slice.
-            Count      = NumDrawsPerView;
-            StartIndex = (uint32)SingleViewIndex * NumDrawsPerView;
-        }
-        else
-        {
-            Count      = NumViews * NumDrawsPerView;
-            StartIndex = 0u;
-        }
-
-        if (Count == 0)
-        {
-            return;
-        }
-
-        static const FShaderEntry* const Shader = FShaderLibrary::Get("BuildMeshDrawArgs.slang");
-        if (!Shader)
-        {
-            return;
-        }
-
-        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(Shader));
-
-        struct FBuildMeshArgsPC
-        {
-            RHI::GPUPtr SrcArgs;
-            RHI::GPUPtr DstArgs;
-            uint32      Count;
-            uint32      StartIndex;
-        } PC;
-        PC.SrcArgs    = GetIndirectArgs().GetAddress();
-        PC.DstArgs    = GetMeshDrawArgs().GetAddress();
-        PC.Count      = Count;
-        PC.StartIndex = StartIndex;
-
-        const uint32 Groups = (Count + 63u) / 64u;
-        RHI::CmdDispatch(CL, MakeArgs(PC), Groups, 1u, 1u);
-        Barriers::ComputeToAll(CL);
     }
 
     void FForwardRenderScene::DeferredMaterialPass(RHI::FCmdListH CL)
@@ -9700,7 +9659,8 @@ namespace Lumina
         Hash::HashCombine(Seed, ((uint64)Key.Topology) | ((uint64)Key.bWireframe << 8) |
                                 ((uint64)Key.bAlphaToCoverage << 9) | ((uint64)Key.SampleCount << 16) |
                                 ((uint64)Key.DepthFormat << 24) | ((uint64)Key.PassVariant << 32) |
-                                ((uint64)Key.ShadingFeatures << 40) | ((uint64)Key.bVisBufferMasked << 56));
+                                ((uint64)Key.ShadingFeatures << 40) | ((uint64)Key.bVisBufferMasked << 56) |
+                                ((uint64)Key.SkinnedMode << 57));
         for (const RHI::FColorTarget& Target : Key.ColorTargets)
         {
             const RHI::FBlendDesc& B = Target.Blend;
@@ -9746,8 +9706,9 @@ namespace Lumina
             MakeUInt(2, (Key.ShadingFeatures & SF_Decals)     ? 1u : 0u),
             MakeUInt(3, (Key.ShadingFeatures & SF_SSAO)       ? 1u : 0u),
             MakeUInt(4, Key.bVisBufferMasked ? 1u : 0u),
+            MakeUInt(5, (uint32)Key.SkinnedMode),   // SPEC_SKINNED: 0=static, 1=skinned, 2=dynamic
         };
-        const TSpan<const RHI::FSpecializationConstant> Consts(SpecConsts, 5);
+        const TSpan<const RHI::FSpecializationConstant> Consts(SpecConsts, 6);
         RHI::FPipelineH Pipeline = Key.MS
             ? RHI::CreateMeshShaderPipeline(RHI::FShaderSource{}, Key.MS->Source(), PSSource, Desc, Consts)
             : RHI::CreateGraphicsPipeline(Key.VS->Source(), PSSource, Desc, Consts);

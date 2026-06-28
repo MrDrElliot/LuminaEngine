@@ -103,75 +103,83 @@ namespace Lumina
             {
                 return;
             }
-            Output->SetGridPos(820.0f, 360.0f);
+
+            // Layout: named columns + a vertical scale, sized so the (tall) texture-sample nodes aren't crowded.
+            // Bump these to spread the auto-generated graph further apart.
+            constexpr float ColTex = 0.0f;      // texture + factor inputs
+            constexpr float ColMul = 620.0f;    // multiply nodes
+            constexpr float ColOut = 1320.0f;   // output node
+            constexpr float VS     = 1.7f;      // vertical spacing scale
+
+            Output->SetGridPos(ColOut, 360.0f * VS);
 
             // Base color = BaseColorTexture.rgb * BaseColorFactor.rgb.
-            auto* TexBase = AddNode<CMaterialExpression_TextureSample>(Graph, 0.0f, 0.0f);
+            auto* TexBase = AddNode<CMaterialExpression_TextureSample>(Graph, ColTex, 0.0f * VS);
             TexBase->bDynamic = true;
             TexBase->ParameterName = "BaseColorTexture";
             TexBase->Texture = White;
 
-            auto* FacBase = AddNode<CMaterialExpression_ConstantFloat4>(Graph, 0.0f, 190.0f);
+            auto* FacBase = AddNode<CMaterialExpression_ConstantFloat4>(Graph, ColTex, 190.0f * VS);
             FacBase->bDynamic = true;
             FacBase->ParameterName = "BaseColorFactor";
             FacBase->Value = FVector4(1.0f, 1.0f, 1.0f, 1.0f);
 
-            auto* MulBase = AddNode<CMaterialExpression_Multiplication>(Graph, 430.0f, 60.0f);
+            auto* MulBase = AddNode<CMaterialExpression_Multiplication>(Graph, ColMul, 60.0f * VS);
             Connect(TexBase->GetOutputPins()[0].Get(), MulBase->A);   // RGBA
             Connect(FacBase->GetOutputPins()[0].Get(), MulBase->B);
             Connect(MulBase->Output, Output->BaseColorPin);
 
             // Metallic-roughness (glTF packing: G = roughness, B = metallic), each scaled by its factor.
-            auto* TexMR = AddNode<CMaterialExpression_TextureSample>(Graph, 0.0f, 380.0f);
+            auto* TexMR = AddNode<CMaterialExpression_TextureSample>(Graph, ColTex, 380.0f * VS);
             TexMR->bDynamic = true;
             TexMR->ParameterName = "MetallicRoughnessTexture";
             TexMR->Texture = White;
 
-            auto* FacMetal = AddNode<CMaterialExpression_ConstantFloat>(Graph, 0.0f, 570.0f);
+            auto* FacMetal = AddNode<CMaterialExpression_ConstantFloat>(Graph, ColTex, 570.0f * VS);
             FacMetal->bDynamic = true;
             FacMetal->ParameterName = "MetallicFactor";
             FacMetal->Value = FVector4(1.0f, 0.0f, 0.0f, 0.0f);
 
-            auto* FacRough = AddNode<CMaterialExpression_ConstantFloat>(Graph, 0.0f, 650.0f);
+            auto* FacRough = AddNode<CMaterialExpression_ConstantFloat>(Graph, ColTex, 650.0f * VS);
             FacRough->bDynamic = true;
             FacRough->ParameterName = "RoughnessFactor";
             FacRough->Value = FVector4(1.0f, 0.0f, 0.0f, 0.0f);
 
-            auto* MulMetal = AddNode<CMaterialExpression_Multiplication>(Graph, 430.0f, 380.0f);
+            auto* MulMetal = AddNode<CMaterialExpression_Multiplication>(Graph, ColMul, 380.0f * VS);
             Connect(TexMR->GetOutputPins()[3].Get(), MulMetal->A);    // B channel
             Connect(FacMetal->GetOutputPins()[0].Get(), MulMetal->B);
             Connect(MulMetal->Output, Output->MetallicPin);
 
-            auto* MulRough = AddNode<CMaterialExpression_Multiplication>(Graph, 430.0f, 490.0f);
+            auto* MulRough = AddNode<CMaterialExpression_Multiplication>(Graph, ColMul, 490.0f * VS);
             Connect(TexMR->GetOutputPins()[2].Get(), MulRough->A);    // G channel
             Connect(FacRough->GetOutputPins()[0].Get(), MulRough->B);
             Connect(MulRough->Output, Output->RoughnessPin);
 
             // Normal map: feed the raw RGB; the output node decodes (xy*2-1) and reconstructs z.
-            auto* TexNormal = AddNode<CMaterialExpression_TextureSample>(Graph, 0.0f, 730.0f);
+            auto* TexNormal = AddNode<CMaterialExpression_TextureSample>(Graph, ColTex, 730.0f * VS);
             TexNormal->bDynamic = true;
             TexNormal->ParameterName = "NormalTexture";
             TexNormal->Texture = FlatNormal;
             Connect(TexNormal->GetOutputPins()[0].Get(), Output->NormalPin);
 
             // Emissive = EmissiveTexture.rgb * EmissiveColor.rgb.
-            auto* TexEmissive = AddNode<CMaterialExpression_TextureSample>(Graph, 0.0f, 920.0f);
+            auto* TexEmissive = AddNode<CMaterialExpression_TextureSample>(Graph, ColTex, 920.0f * VS);
             TexEmissive->bDynamic = true;
             TexEmissive->ParameterName = "EmissiveTexture";
             TexEmissive->Texture = White;
 
-            auto* FacEmissive = AddNode<CMaterialExpression_ConstantFloat4>(Graph, 0.0f, 1110.0f);
+            auto* FacEmissive = AddNode<CMaterialExpression_ConstantFloat4>(Graph, ColTex, 1110.0f * VS);
             FacEmissive->bDynamic = true;
             FacEmissive->ParameterName = "EmissiveColor";
             FacEmissive->Value = FVector4(0.0f, 0.0f, 0.0f, 1.0f);
 
-            auto* MulEmissive = AddNode<CMaterialExpression_Multiplication>(Graph, 430.0f, 960.0f);
+            auto* MulEmissive = AddNode<CMaterialExpression_Multiplication>(Graph, ColMul, 960.0f * VS);
             Connect(TexEmissive->GetOutputPins()[0].Get(), MulEmissive->A);
             Connect(FacEmissive->GetOutputPins()[0].Get(), MulEmissive->B);
             Connect(MulEmissive->Output, Output->EmissivePin);
 
             // Ambient occlusion = OcclusionTexture.r.
-            auto* TexOcclusion = AddNode<CMaterialExpression_TextureSample>(Graph, 0.0f, 1300.0f);
+            auto* TexOcclusion = AddNode<CMaterialExpression_TextureSample>(Graph, ColTex, 1300.0f * VS);
             TexOcclusion->bDynamic = true;
             TexOcclusion->ParameterName = "OcclusionTexture";
             TexOcclusion->Texture = White;
@@ -179,33 +187,18 @@ namespace Lumina
 
             if (bNeedsOpacity)
             {
-                auto* FacOpacity = AddNode<CMaterialExpression_ConstantFloat>(Graph, 0.0f, 1490.0f);
+                auto* FacOpacity = AddNode<CMaterialExpression_ConstantFloat>(Graph, ColTex, 1490.0f * VS);
                 FacOpacity->bDynamic = true;
                 FacOpacity->ParameterName = "OpacityFactor";
                 FacOpacity->Value = FVector4(1.0f, 0.0f, 0.0f, 0.0f);
 
-                auto* MulOpacity = AddNode<CMaterialExpression_Multiplication>(Graph, 430.0f, 1300.0f);
+                auto* MulOpacity = AddNode<CMaterialExpression_Multiplication>(Graph, ColMul, 1300.0f * VS);
                 Connect(TexBase->GetOutputPins()[4].Get(), MulOpacity->A);    // base color A
                 Connect(FacOpacity->GetOutputPins()[0].Get(), MulOpacity->B);
                 Connect(MulOpacity->Output, Output->OpacityPin);
             }
 
             FinalizeGraph(Graph);
-        }
-
-        FFixedString SanitizeAssetName(FStringView In)
-        {
-            FFixedString Out;
-            for (char C : In)
-            {
-                const bool bValid = (C >= 'a' && C <= 'z') || (C >= 'A' && C <= 'Z') || (C >= '0' && C <= '9') || C == '_';
-                Out.push_back(bValid ? C : '_');
-            }
-            if (Out.empty())
-            {
-                Out = "Material";
-            }
-            return Out;
         }
 
         FFixedString EnsureUniquePath(FFixedString Path)
@@ -245,11 +238,13 @@ namespace Lumina
                 return Instances;
             }
 
-            auto MakePath = [&](FStringView Suffix) -> FFixedString
+            // <Dir>/<Prefix><cleaned BaseName><Variant>. Prefix follows the asset convention (M_ materials,
+            // T_ textures); Variant is an already-clean tag like "_Masked" appended after the sanitized core.
+            auto MakeAssetPath = [&](FStringView Prefix, FStringView Variant) -> FFixedString
             {
                 FFixedString Path = MaterialsDir;
-                Path.append(BaseName.c_str());
-                Path.append_convert(Suffix.data(), Suffix.length());
+                Path.append(Import::MakeAssetName(Prefix, BaseName.c_str()).c_str());
+                Path.append_convert(Variant.data(), Variant.length());
                 return Path;
             };
 
@@ -264,9 +259,9 @@ namespace Lumina
             // first master that actually keeps them) so an all-fail pass frees them cleanly at function return
             // instead of leaving dangling raw pointers in the caller's reverse-order teardown list.
             TObjectPtr<CTexture> White = CTextureFactory::CreateSolidColorTexture(
-                EnsureUniquePath(MakePath("_DefaultWhite")), 255, 255, 255, 255, ETextureColorSpace::Linear);
+                EnsureUniquePath(MakeAssetPath("T_", "_DefaultWhite")), 255, 255, 255, 255, ETextureColorSpace::Linear);
             TObjectPtr<CTexture> FlatNormal = CTextureFactory::CreateSolidColorTexture(
-                EnsureUniquePath(MakePath("_DefaultFlatNormal")), 128, 128, 255, 255, ETextureColorSpace::Linear);
+                EnsureUniquePath(MakeAssetPath("T_", "_DefaultFlatNormal")), 128, 128, 255, 255, ETextureColorSpace::Linear);
 
             bool bDefaultsRegistered = false;
             auto RegisterSharedDefaults = [&]()
@@ -313,14 +308,16 @@ namespace Lumina
                     }
                 }
 
-                FFixedString Suffix = "_Material";
-                if (Blend == EBlendMode::Masked)           { Suffix.append("_Masked"); }
-                else if (Blend == EBlendMode::Translucent) { Suffix.append("_Translucent"); }
-                else if (Blend == EBlendMode::Additive)    { Suffix.append("_Additive"); }
-                if (Shading == EMaterialShadingModel::Unlit) { Suffix.append("_Unlit"); }
-                if (bTwoSided)                               { Suffix.append("_TwoSided"); }
+                // Master name: M_<BaseName>[_Masked/_Translucent/_Additive][_Unlit][_TwoSided] -- one master per
+                // distinct render state. The "M_" prefix replaces the old "_Material" tag.
+                FFixedString Variant;
+                if (Blend == EBlendMode::Masked)           { Variant.append("_Masked"); }
+                else if (Blend == EBlendMode::Translucent) { Variant.append("_Translucent"); }
+                else if (Blend == EBlendMode::Additive)    { Variant.append("_Additive"); }
+                if (Shading == EMaterialShadingModel::Unlit) { Variant.append("_Unlit"); }
+                if (bTwoSided)                               { Variant.append("_TwoSided"); }
 
-                CMaterial* Master = CFactory::CreateNewOf<CMaterial>(EnsureUniquePath(MakePath(Suffix)));
+                CMaterial* Master = CFactory::CreateNewOf<CMaterial>(EnsureUniquePath(MakeAssetPath("M_", Variant)));
                 if (Master == nullptr)
                 {
                     return nullptr;
@@ -389,10 +386,9 @@ namespace Lumina
                     continue;
                 }
 
+                // Instance name: MI_<source material name>, cleaned. The folder already scopes it to this import.
                 FFixedString InstPath = MaterialsDir;
-                InstPath.append(BaseName.c_str());
-                InstPath.append("_");
-                InstPath.append(SanitizeAssetName(Src.Name).c_str());
+                InstPath.append(Import::MakeAssetName("MI_", Src.Name.c_str(), "Material").c_str());
                 InstPath = EnsureUniquePath(InstPath);
 
                 CMaterialInstance* Instance = CFactory::CreateNewOf<CMaterialInstance>(InstPath);

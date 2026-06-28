@@ -2,9 +2,12 @@
 #include "ScriptValueBridge.h"
 
 #include "Core/Object/Class.h"
+#include "Core/Object/InstancedStruct.h"
+#include "Core/Object/ObjectIterator.h"
 #include "Core/Object/SoftObjectPtr.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Reflection/Type/Properties/ArrayProperty.h"
+#include "Core/Reflection/Type/Properties/InstancedStructProperty.h"
 #include "Core/Reflection/Type/Properties/StructProperty.h"
 
 namespace Lumina::Scripting
@@ -41,6 +44,28 @@ namespace Lumina::Scripting
                 if (NameEqualsIgnoreCase(Entry.Name, Name))
                 {
                     return &Entry;
+                }
+            }
+            return nullptr;
+        }
+
+        // The candidate struct (deriving from Base) carrying the matching ScriptTypeName, or null.
+        CStruct* FindInstanceCandidate(CStruct* Base, const FString& TypeName)
+        {
+            if (Base == nullptr || TypeName.empty())
+            {
+                return nullptr;
+            }
+            for (TObjectIterator<CStruct> It; It; ++It)
+            {
+                CStruct* Candidate = *It;
+                if (Candidate == Base || !Candidate->IsChildOf(Base))
+                {
+                    continue;
+                }
+                if (const FString* Name = Candidate->Metadata.TryGetMetadata("ScriptTypeName"); Name && *Name == TypeName)
+                {
+                    return Candidate;
                 }
             }
             return nullptr;
@@ -118,6 +143,24 @@ namespace Lumina::Scripting
                 Value.Kind = EScriptValueKind::Nested;
                 ReadStruct(static_cast<FStructProperty*>(Property)->GetStruct(), ValuePtr, Value.StructFields);
                 break;
+            case EPropertyTypeFlags::InstancedStruct:
+            {
+                Value.Kind = EScriptValueKind::Instance;
+                const FInstancedStruct* Instance = static_cast<const FInstancedStruct*>(ValuePtr);
+                if (CStruct* Chosen = Instance->GetScriptStruct())
+                {
+                    if (const FString* TypeName = Chosen->Metadata.TryGetMetadata("ScriptTypeName"))
+                    {
+                        Value.AsString = *TypeName;
+                    }
+                    else
+                    {
+                        Value.AsString.assign(Chosen->GetName().c_str());
+                    }
+                    ReadStruct(Chosen, Instance->GetMemory(), Value.StructFields);
+                }
+                break;
+            }
             case EPropertyTypeFlags::Vector:
             {
                 Value.Kind = EScriptValueKind::Array;
@@ -174,6 +217,23 @@ namespace Lumina::Scripting
             case EPropertyTypeFlags::Struct:
                 WriteStruct(static_cast<FStructProperty*>(Property)->GetStruct(), ValuePtr, Value.StructFields);
                 break;
+            case EPropertyTypeFlags::InstancedStruct:
+            {
+                FInstancedStruct* Instance = static_cast<FInstancedStruct*>(ValuePtr);
+                if (Value.AsString.empty())
+                {
+                    Instance->Reset();
+                    break;
+                }
+                CStruct* Base = static_cast<FInstancedStructProperty*>(Property)->GetMetaStruct();
+                CStruct* Chosen = FindInstanceCandidate(Base, Value.AsString);
+                Instance->InitializeAs(Chosen);
+                if (Chosen != nullptr)
+                {
+                    WriteStruct(Chosen, Instance->GetMutableMemory(), Value.StructFields);
+                }
+                break;
+            }
             case EPropertyTypeFlags::Vector:
             {
                 FArrayProperty* Array = static_cast<FArrayProperty*>(Property);
