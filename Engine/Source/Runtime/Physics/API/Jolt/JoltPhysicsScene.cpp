@@ -403,7 +403,7 @@ namespace Lumina::Physics
             Drain.swap(PendingContacts);
         }
 
-        FEntityRegistry& Registry = World->GetEntityRegistry();
+        FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
 
         // Contact is a solid impact, Overlap is a sensor/trigger side.
         auto Deliver = [&](entt::entity Self, entt::entity Other, uint32 SelfBody, uint32 OtherBody,
@@ -457,7 +457,7 @@ namespace Lumina::Physics
             Drain.swap(PendingActivations);
         }
 
-        FEntityRegistry& Registry = World->GetEntityRegistry();
+        FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
         for (const FActivationRecord& Record : Drain)
         {
             if (Record.Entity == entt::null || !Registry.valid(Record.Entity))
@@ -663,7 +663,7 @@ namespace Lumina::Physics
         JoltSettings.mCheckActiveEdges                          = InitSettings.bCheckActiveEdges;
         JoltSystem->SetPhysicsSettings(JoltSettings);
         
-        entt::dispatcher& Dispatcher = World->GetEntityRegistry().ctx().get<entt::dispatcher&>();
+        entt::dispatcher& Dispatcher = World->GetSingleton<entt::dispatcher&>();
         ContactListener = MakeUnique<FJoltContactListener>(this, Dispatcher, &JoltSystem->GetBodyLockInterfaceNoLock());
         JoltSystem->SetContactListener(ContactListener.get());
 
@@ -677,7 +677,7 @@ namespace Lumina::Physics
         // Shared registry for character-vs-character (mutual pushing); characters opt in at construction.
         CharacterVsCharacter = MakeUnique<JPH::CharacterVsCharacterCollisionSimple>();
         
-        FEntityRegistry& Registry = World->GetEntityRegistry();
+        FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
 
         Registry.on_construct<SSphereColliderComponent>().connect<&entt::registry::emplace_or_replace<SRigidBodyComponent>>();
         Registry.on_construct<SBoxColliderComponent>().connect<&entt::registry::emplace_or_replace<SRigidBodyComponent>>();
@@ -696,7 +696,7 @@ namespace Lumina::Physics
         // Remove joints before JoltSystem is torn down (constraints reference live bodies/the manager).
         DestroyAllConstraints();
 
-        FEntityRegistry& Registry = World->GetEntityRegistry();
+        FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
 
         Registry.on_construct<SSphereColliderComponent>().disconnect<&entt::registry::emplace_or_replace<SRigidBodyComponent>>();
         Registry.on_construct<SBoxColliderComponent>().disconnect<&entt::registry::emplace_or_replace<SRigidBodyComponent>>();
@@ -733,7 +733,7 @@ namespace Lumina::Physics
     {
         LUMINA_PROFILE_SCOPE();
 
-        entt::registry& Registry = World->GetEntityRegistry();
+        entt::registry& Registry = ECS::GetWorldRegistry(*World);
         
         ECS::Utils::FlushDirtyPhysicsBodies(Registry);
 
@@ -849,9 +849,9 @@ namespace Lumina::Physics
                 PendingRigidBodyCreations.pop();
             }
 
-            if (World->GetEntityRegistry().valid(Entity))
+            if (World->IsValidEntity(Entity))
             {
-                CreateRigidBodyImmediate(World->GetEntityRegistry(), Entity);
+                CreateRigidBodyImmediate(ECS::GetWorldRegistry(*World), Entity);
             }
         }
 
@@ -962,7 +962,7 @@ namespace Lumina::Physics
     
     void FJoltPhysicsScene::Simulate()
     {
-        entt::registry& Registry = World->GetEntityRegistry();
+        entt::registry& Registry = ECS::GetWorldRegistry(*World);
         
         BulkCreateRigidBodies(Registry);
 
@@ -996,7 +996,7 @@ namespace Lumina::Physics
             PendingConstraintCreations.push_back(E);
         });
 
-        entt::dispatcher& Dispatcher = World->GetEntityRegistry().ctx().get<entt::dispatcher&>();
+        entt::dispatcher& Dispatcher = World->GetSingleton<entt::dispatcher&>();
         Dispatcher.sink<SImpulseEvent>().connect<&FJoltPhysicsScene::OnImpulseEvent>(this);
         Dispatcher.sink<SForceEvent>().connect<&FJoltPhysicsScene::OnForceEvent>(this);
         Dispatcher.sink<STorqueEvent>().connect<&FJoltPhysicsScene::OnTorqueEvent>(this);
@@ -1010,7 +1010,7 @@ namespace Lumina::Physics
 
     void FJoltPhysicsScene::StopSimulate()
     {
-        entt::registry& Registry = World->GetEntityRegistry();
+        entt::registry& Registry = ECS::GetWorldRegistry(*World);
 
         Registry.on_construct<SCharacterPhysicsComponent>().disconnect<&FJoltPhysicsScene::OnCharacterComponentConstructed>(this);
         Registry.on_destroy<SCharacterPhysicsComponent>().disconnect<&FJoltPhysicsScene::OnCharacterComponentDestroyed>(this);
@@ -1021,7 +1021,7 @@ namespace Lumina::Physics
         Registry.on_construct<SPhysicsConstraintComponent>().disconnect<&FJoltPhysicsScene::OnConstraintComponentConstructed>(this);
         Registry.on_destroy<SPhysicsConstraintComponent>().disconnect<&FJoltPhysicsScene::OnConstraintComponentDestroyed>(this);
 
-        entt::dispatcher& Dispatcher = World->GetEntityRegistry().ctx().get<entt::dispatcher&>();
+        entt::dispatcher& Dispatcher = World->GetSingleton<entt::dispatcher&>();
         Dispatcher.sink<SImpulseEvent>().disconnect<&FJoltPhysicsScene::OnImpulseEvent>(this);
         Dispatcher.sink<SForceEvent>().disconnect<&FJoltPhysicsScene::OnForceEvent>(this);
         Dispatcher.sink<STorqueEvent>().disconnect<&FJoltPhysicsScene::OnTorqueEvent>(this);
@@ -1067,7 +1067,7 @@ namespace Lumina::Physics
         LUMINA_PROFILE_SCOPE();
 
         const JPH::BodyLockInterfaceNoLock& LockInterface = JoltSystem->GetBodyLockInterfaceNoLock();
-        entt::registry& Registry = World->GetEntityRegistry();
+        entt::registry& Registry = ECS::GetWorldRegistry(*World);
         
         auto RigidView = Registry.view<SRigidBodyComponent>();
         auto RigidHandle = RigidView.handle();
@@ -1161,7 +1161,7 @@ namespace Lumina::Physics
 
         const float KillHeight = World->GetDefaultWorldSettings().WorldKillHeight;
         const JPH::BodyLockInterfaceNoLock& LockInterface = JoltSystem->GetBodyLockInterfaceNoLock();
-        entt::registry& Registry = World->GetEntityRegistry();
+        entt::registry& Registry = ECS::GetWorldRegistry(*World);
 
         auto RigidView   = Registry.view<SRigidBodyComponent>();
         auto RigidHandle = RigidView.handle();
@@ -1282,7 +1282,7 @@ namespace Lumina::Physics
             return;
         }
 
-        entt::registry& Registry = World->GetEntityRegistry();
+        entt::registry& Registry = ECS::GetWorldRegistry(*World);
         auto& TransformStorage = Registry.storage<STransformComponent>();
 
         // A pending FNeedsPhysicsBodyUpdate is a game-authored teleport (e.g. SetLocation right after a
@@ -1325,7 +1325,7 @@ namespace Lumina::Physics
     {
         LUMINA_PROFILE_SCOPE();
 
-        entt::registry& Registry = World->GetEntityRegistry();
+        entt::registry& Registry = ECS::GetWorldRegistry(*World);
         auto View = Registry.view<SCharacterControllerComponent, SCharacterMovementComponent>();
 
         View.each([&](SCharacterControllerComponent& Controller, SCharacterMovementComponent& Movement)
@@ -1387,7 +1387,7 @@ namespace Lumina::Physics
     {
         LUMINA_PROFILE_SCOPE();
 
-        entt::registry& Registry = World->GetEntityRegistry();
+        entt::registry& Registry = ECS::GetWorldRegistry(*World);
         JPH::PhysicsSystem* PhysicsSystem = JoltSystem.get();
 
         auto View = Registry.view<SCharacterPhysicsComponent, SCharacterMovementComponent>();
@@ -1626,7 +1626,7 @@ namespace Lumina::Physics
 
     uint32 FJoltPhysicsScene::GetEntityBodyID(entt::entity Entity)
     {
-        entt::registry& Registry = World->GetEntityRegistry();
+        entt::registry& Registry = ECS::GetWorldRegistry(*World);
 
         if (auto* RigidBody = Registry.try_get<SRigidBodyComponent>(Entity))
         {
@@ -3461,7 +3461,7 @@ namespace Lumina::Physics
             Batch.swap(PendingConstraintCreations);
         }
 
-        entt::registry& Registry = World->GetEntityRegistry();
+        entt::registry& Registry = ECS::GetWorldRegistry(*World);
         for (entt::entity Entity : Batch)
         {
             if (!Registry.valid(Entity))
@@ -3886,7 +3886,7 @@ namespace Lumina::Physics
             return;
         }
 
-        entt::registry& Registry = World->GetEntityRegistry();
+        entt::registry& Registry = ECS::GetWorldRegistry(*World);
 
         TVector<FRigidBodyBuildResult> Results(Count);
         TVector<EBodyBuildStatus>      Statuses(Count, EBodyBuildStatus::Error);

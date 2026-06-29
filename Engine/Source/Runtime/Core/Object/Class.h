@@ -70,7 +70,7 @@ namespace Lumina
         RUNTIME_API uint64 GetValueAtIndex(int64 Index) const { return Names[Index].second; }
         
         void AddEnum(FName Name, uint64 Value);
-        void ForEachEnum(TFunction<void(const TPair<FName, uint64>&)> Functor);
+        void ForEachEnum(const TFunction<void(const TPair<FName, uint64>&)>& Functor);
         FFixedString MakeDisplayName() const override;
         
         NODISCARD bool IsBitmaskEnum() const { return HasMeta("BitMask"); }

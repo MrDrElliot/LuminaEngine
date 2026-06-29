@@ -693,10 +693,6 @@ namespace Lumina
             }
             else
             {
-                // LoadModule refused/failed. An ABI mismatch (e.g. a project DLL built in the wrong
-                // configuration or platform, which would corrupt memory) records a reason -- report it
-                // loudly and warn in the editor so it isn't mistaken for a missing module. We deliberately
-                // never load an ABI-incompatible DLL.
                 const FString& LoadError = FModuleManager::Get().GetLastLoadError();
                 if (!LoadError.empty())
                 {
@@ -723,45 +719,47 @@ namespace Lumina
         // Must run after GConfig->LoadPath but before any OnReady script body.
         FInputActionMap::Get().RebuildFromSettings();
 
+        // Compile/load C# scripts before creating the GameInstance.
+        DotNet::ReloadScripts();
+
+        // Re-resolve settings that reference classes now that C# scripts have minted their CClasses: a
+        // Project.GameInstanceClass naming a C# CGameInstance subclass couldn't resolve at first config load
+        // (scripts weren't minted yet), so its TSubclassOf was null until this re-read.
+        GConfig->ReloadSettings(CProjectSettings::StaticClass());
+
         CreateGameInstance();
         LoadStartupMap();
 
         OnProjectLoaded.Broadcast();
-
-        // Initial C# script compile/load now that the project and its plugins are mounted (Scripts/ folders
-        // are discovered across every VFS mount). ReloadScripts also (re)generates the IDE .csproj files, so
-        // a deleted/absent project self-heals here. Re-run via "dotnet.reload" / "dotnet.genprojects".
-        DotNet::ReloadScripts();
     }
 
     void FEngine::CreateGameInstance()
     {
-        const FString& ClassName = GetDefault<CProjectSettings>()->GameInstanceClass;
-
-        CClass* InstanceClass = nullptr;
-        if (!ClassName.empty())
-        {
-            InstanceClass = FindObject<CClass>(FName(ClassName.c_str()));
-            if (InstanceClass == nullptr)
-            {
-                LOG_WARN("Project.GameInstanceClass '{}' not found; falling back to CGameInstance.", ClassName.c_str());
-            }
-        }
-
+        // Gotta tear down any prior instance first.
+        DestroyGameInstance();
+        
+        CClass* InstanceClass = GetDefault<CProjectSettings>()->GameInstanceClass.Get();
         if (InstanceClass == nullptr)
         {
             InstanceClass = CGameInstance::StaticClass();
         }
 
         GameInstance = Cast<CGameInstance>(NewObject(InstanceClass, nullptr, NAME_None, FGuid::New(), OF_Transient));
+        if (GameInstance == nullptr)
+        {
+            // Defensive: the class resolved but isn't actually a CGameInstance (NewObject failure, or a future
+            // path that bypasses the TSubclassOf MetaClass check). Never Init() through a null Cast.
+            LOG_WARN("GameInstance class '{}' is not a CGameInstance; using base CGameInstance.", InstanceClass->GetName().ToString().c_str());
+            GameInstance = Cast<CGameInstance>(NewObject(CGameInstance::StaticClass(), nullptr, NAME_None, FGuid::New(), OF_Transient));
+        }
         GameInstance->Init();
+
+        // DISPLAY so it survives Shipping: proves which class (native vs a C# subclass) actually backs the instance.
+        LOG_DISPLAY("GameInstance created: class '{}'.", GameInstance->GetClass()->GetName().ToString().c_str());
     }
 
     void FEngine::LoadStartupMap()
     {
-        // Priority: -map= command line > explicit Project.GameStartupMap > first CookRoots entry, so a
-        // project that only declares CookRoots[] works without the legacy single-map field, and a server
-        // can be pointed at a specific map at launch.
         FString RawMapName;
         if (TOptional<FFixedString> MapArg = GCommandLine->Get("map"))
         {
@@ -778,7 +776,6 @@ namespace Lumina
             if (!Roots.empty())
             {
                 RawMapName = Roots[0].Asset;
-                // DISPLAY (not INFO) so a Shipping post-mortem can see this fallback fired.
                 LOG_DISPLAY("No Project.GameStartupMap set; falling back to first cook root '{}'.", RawMapName.c_str());
             }
         }
@@ -791,11 +788,8 @@ namespace Lumina
 
         // Tolerate legacy absolute paths from before the path resolver.
         const FFixedString MapName = VFS::ResolveToVirtualPath(RawMapName);
-        // DISPLAY, survives Shipping; first diagnostic to look at on a black screen.
         LOG_DISPLAY("LoadStartupMap: loading '{}' (resolved '{}').", RawMapName.c_str(), MapName.c_str());
 
-        // Headless dedicated server: host the map (clientless, non-rendered) on -port instead of opening
-        // it standalone and binding a viewport. The deferred host travel runs at the first FrameStart.
         if (GIsHeadless)
         {
             uint16 Port = 7777;
@@ -808,7 +802,6 @@ namespace Lumina
             return;
         }
 
-        // Phased parallel load: the startup map fans its whole dependency closure across worker threads.
         CWorld* SourceWorld = LoadObjectGraph<CWorld>(FStringView(MapName.c_str(), MapName.size()));
         if (SourceWorld == nullptr)
         {
@@ -896,10 +889,7 @@ namespace Lumina
                 }
             }
         }
-
-        // No running game world yet (cold-boot): spawn a fresh game context. Duplicate the asset like every
-        // other path -- the cached WorldAsset must never be the live world, or the next Travel would tear it
-        // down and a later LoadObject of this map would hand back a destroyed husk.
+        
         if (OldContext == nullptr)
         {
             CWorld* ColdWorld = CWorld::DuplicateWorld(WorldAsset);
@@ -960,13 +950,10 @@ namespace Lumina
             bPendingHostOverride  = false;
             bPendingHostDedicated = false;
         }
-
-        // Carry a live CLIENT connection across the travel so a Welcome-driven map load doesn't drop the
-        // link (no disconnect/reconnect, no server-side spawn churn). Move the transport out of the old
-        // world's net state BEFORE its context (and registry) is destroyed; the new world adopts it.
+        
         if (NetMode == ENetMode::Client && OldWorld != nullptr)
         {
-            if (FNetWorldState* OldNet = OldWorld->GetEntityRegistry().ctx().find<FNetWorldState>())
+            if (FNetWorldState* OldNet = OldWorld->TryGetSingleton<FNetWorldState>())
             {
                 if (OldNet->Transport != nullptr && OldNet->bClientConnected)
                 {
@@ -1061,9 +1048,6 @@ namespace Lumina
 
         if (URL.IsClient())
         {
-            // Client: flip the current game world to Client + connect target. The network system dials it
-            // next tick; the server's Welcome then travels us to its map. No travel here (we don't yet know
-            // which map the server is running).
             FWorldContext* Ctx = GWorldManager->GetPrimaryGameContext();
             if (Ctx == nullptr)
             {
@@ -1117,8 +1101,14 @@ namespace Lumina
         TVector<FFixedString> PakPaths;
         for (const auto& Entry : std::filesystem::directory_iterator(ExeDir.c_str()))
         {
-            if (!Entry.is_regular_file()) continue;
-            if (Entry.path().extension() != ".pak") continue;
+            if (!Entry.is_regular_file())
+            {
+                continue;
+            }
+            if (Entry.path().extension() != ".pak")
+            {
+                continue;
+            }
             FFixedString P;
             P.assign_convert(Entry.path().generic_string().c_str());
             PakPaths.push_back(Move(P));
@@ -1156,11 +1146,7 @@ namespace Lumina
                 ConfigArchive = Archive;
             }
         }
-
-
-        // Loose-files overlay; mounted after PAK so most-recently-mounted wins and users can tweak shipped
-        // files. /Game is the project root, so this overlays both Content (loose .rml/.wav) and Scripts
-        // (.cs compiled at runtime) under the single /Game mount.
+        
         const FString LooseGameDir = ExeDir + "/Game";
         if (std::filesystem::exists(LooseGameDir.c_str()))
         {
@@ -1171,6 +1157,9 @@ namespace Lumina
         if (ConfigArchive)
         {
             GConfig->LoadPath("/Config");
+            // The developer-settings CDOs (CProjectSettings etc.) are populated later, in StartCookedGame:
+            // here at OnPreEngineInit the Runtime CObjects aren't registered yet (and the editor's Init-time
+            // DiscoverAndLoadSettings pass is WITH_EDITOR-only), so a call here would load into nothing.
         }
         else
         {
@@ -1220,6 +1209,12 @@ namespace Lumina
             LOG_DISPLAY("FEngine::LoadCookedRuntime: asset discovery complete.");
         }
 
+        // Populate the developer-settings CDOs (CProjectSettings -> GameStartupMap / CookRoots, CInputSettings,
+        // ...) from the cooked /Config now that all Runtime CObjects are registered (we're at OnPostEngineInit,
+        // past every Init phase). The editor's Init-time DiscoverAndLoadSettings pass is WITH_EDITOR-only, so
+        // without this a cooked game sees empty project settings and LoadStartupMap finds no map.
+        GConfig->DiscoverAndLoadSettings();
+
         FInputActionMap::Get().RebuildFromSettings();
 
         // Project DLL: cooker stashes Project.Name in config to resolve "<Name>-<Config>.dll" next to the exe.
@@ -1244,6 +1239,15 @@ namespace Lumina
                 LOG_INFO("FEngine::LoadCookedRuntime: no project DLL at '{}' (ok if project has no C++ module)", DLLPath.c_str());
             }
         }
+
+        // Load the prebuilt C# script assemblies the packager staged under DotNet/Scripts/ (manifest-driven).
+        // After the project DLL (so any C++ types its scripts reference exist) and before the startup map (so
+        // EntityScript types are registered when entities spawn). No-op when the game ships no C# scripts.
+        DotNet::LoadCookedScripts();
+
+        // Cooked settings loaded before the scripts minted (DiscoverAndLoadSettings runs earlier in this fn), so
+        // re-resolve Project.GameInstanceClass now that a C# CGameInstance subclass (if any) has a minted CClass.
+        GConfig->ReloadSettings(CProjectSettings::StaticClass());
 
         CreateGameInstance();
         LoadStartupMap();

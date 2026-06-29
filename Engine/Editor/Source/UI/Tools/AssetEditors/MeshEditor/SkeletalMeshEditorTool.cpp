@@ -386,16 +386,16 @@ namespace Lumina
         CreateFloorPlane();
         
         DirectionalLightEntity = World->ConstructEntity("Directional Light");
-        World->GetEntityRegistry().emplace<SDirectionalLightComponent>(DirectionalLightEntity);
-        World->GetEntityRegistry().emplace<SEnvironmentComponent>(DirectionalLightEntity);
-        World->GetEntityRegistry().emplace<SSkyLightComponent>(DirectionalLightEntity);
+        World->EmplaceComponent<SDirectionalLightComponent>(DirectionalLightEntity);
+        World->EmplaceComponent<SEnvironmentComponent>(DirectionalLightEntity);
+        World->EmplaceComponent<SSkyLightComponent>(DirectionalLightEntity);
         
         CSkeletalMesh* SkeletalMesh = Cast<CSkeletalMesh>(Asset.Get());
         
         CameraState.Speed = 5.0f;
 
         MeshEntity = World->ConstructEntity("MeshEntity");
-        SSkeletalMeshComponent& MeshComponent = World->GetEntityRegistry().emplace<SSkeletalMeshComponent>(MeshEntity);
+        SSkeletalMeshComponent& MeshComponent = World->EmplaceComponent<SSkeletalMeshComponent>(MeshEntity);
         MeshComponent.SkeletalMesh = SkeletalMesh;
         if (!SkeletalMesh->Skeleton.IsValid())
         {
@@ -404,9 +404,9 @@ namespace Lumina
 
         SkeletalMesh->Skeleton->ComputeBindPoseSkinningMatrices(MeshComponent.BoneTransforms);
         
-        STransformComponent& MeshTransform = World->GetEntityRegistry().get<STransformComponent>(MeshEntity);
+        STransformComponent& MeshTransform = World->GetComponent<STransformComponent>(MeshEntity);
 
-        STransformComponent& EditorTransform = World->GetEntityRegistry().get<STransformComponent>(EditorEntity);
+        STransformComponent& EditorTransform = World->GetComponent<STransformComponent>(EditorEntity);
 
         FQuat Rotation = Math::FindLookAtRotation(MeshTransform.GetLocation() + FVector3(0.0f, 0.85f, 0.0f), EditorTransform.GetLocation());
         EditorTransform.SetRotation(Rotation);
@@ -423,8 +423,8 @@ namespace Lumina
 
         if (bShowAABB)
         {
-            SSkeletalMeshComponent& MeshComponent = World->GetEntityRegistry().get<SSkeletalMeshComponent>(MeshEntity);
-            STransformComponent& Transform = World->GetEntityRegistry().get<STransformComponent>(MeshEntity);
+            SSkeletalMeshComponent& MeshComponent = World->GetComponent<SSkeletalMeshComponent>(MeshEntity);
+            STransformComponent& Transform = World->GetComponent<STransformComponent>(MeshEntity);
 
             FAABB AABB = MeshComponent.GetAABB().ToWorld(Transform.GetWorldMatrix());
             
@@ -434,7 +434,7 @@ namespace Lumina
         CSkeleton* Skeleton = GetAsset<CSkeletalMesh>()->Skeleton;
         if (bShowBones && Skeleton)
         {
-            STransformComponent& Transform = World->GetEntityRegistry().get<STransformComponent>(MeshEntity);
+            STransformComponent& Transform = World->GetComponent<STransformComponent>(MeshEntity);
 
             FSkeletonResource* SkeletonResource = Skeleton->GetSkeletonResource();
             TVector<FMatrix4> WorldTransforms;

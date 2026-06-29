@@ -426,7 +426,7 @@ namespace Lumina
             {
                 return;
             }
-            entt::registry& Registry = World->GetEntityRegistry();
+            entt::registry& Registry = ECS::GetWorldRegistry(*World);
             const entt::entity Entity = State.GuidTable.Find(FNetGUID{ Guid });
             if (Entity != entt::null && Registry.valid(Entity))
             {

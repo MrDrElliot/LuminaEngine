@@ -243,9 +243,9 @@ namespace Lumina
         CreateFloorPlane();
 
         DirectionalLightEntity = World->ConstructEntity("Directional Light");
-        World->GetEntityRegistry().emplace<SDirectionalLightComponent>(DirectionalLightEntity);
-        World->GetEntityRegistry().emplace<SEnvironmentComponent>(DirectionalLightEntity);
-        World->GetEntityRegistry().emplace<SSkyLightComponent>(DirectionalLightEntity);
+        World->EmplaceComponent<SDirectionalLightComponent>(DirectionalLightEntity);
+        World->EmplaceComponent<SEnvironmentComponent>(DirectionalLightEntity);
+        World->EmplaceComponent<SSkyLightComponent>(DirectionalLightEntity);
 
         CameraState.Speed = 5.0f;
 
@@ -266,8 +266,7 @@ namespace Lumina
             && Graph->Skeleton.IsValid()
             && Graph->Skeleton->PreviewMesh.IsValid();
 
-        auto& Registry = World->GetEntityRegistry();
-        const bool bMeshEntityValid = MeshEntity != entt::null && Registry.valid(MeshEntity);
+        const bool bMeshEntityValid = MeshEntity != entt::null && World->IsValidEntity(MeshEntity);
 
         // Skeleton cleared while the tool is open -> tear the preview down.
         if (!bHasPreview)
@@ -285,14 +284,14 @@ namespace Lumina
         if (!bMeshEntityValid)
         {
             MeshEntity = World->ConstructEntity("Preview Mesh");
-            Registry.emplace<SSkeletalMeshComponent>(MeshEntity).SkeletalMesh = PreviewMesh;
-            Registry.emplace<SAnimationGraphComponent>(MeshEntity).Graph = Graph;
+            World->EmplaceComponent<SSkeletalMeshComponent>(MeshEntity).SkeletalMesh = PreviewMesh;
+            World->EmplaceComponent<SAnimationGraphComponent>(MeshEntity).Graph = Graph;
             // Drive parameter values through a blackboard instance, exactly like
             // a real entity would; the Parameters panel writes into it.
-            Registry.emplace<SBlackboardComponent>(MeshEntity).Blackboard = Graph->Blackboard;
+            World->EmplaceComponent<SBlackboardComponent>(MeshEntity).Blackboard = Graph->Blackboard;
 
-            STransformComponent& MeshTransform   = Registry.get<STransformComponent>(MeshEntity);
-            STransformComponent& EditorTransform = Registry.get<STransformComponent>(EditorEntity);
+            STransformComponent& MeshTransform   = World->GetComponent<STransformComponent>(MeshEntity);
+            STransformComponent& EditorTransform = World->GetComponent<STransformComponent>(EditorEntity);
 
             FQuat Rotation = Math::FindLookAtRotation(MeshTransform.GetLocation() + FVector3(0.0f, 0.85f, 0.0f), EditorTransform.GetLocation());
             EditorTransform.SetRotation(Rotation);
@@ -301,20 +300,20 @@ namespace Lumina
 
         // Entity exists -> keep its mesh / graph references current in case the
         // skeleton's preview mesh or the graph asset changed underneath us.
-        SSkeletalMeshComponent& MeshComp = Registry.get<SSkeletalMeshComponent>(MeshEntity);
+        SSkeletalMeshComponent& MeshComp = World->GetComponent<SSkeletalMeshComponent>(MeshEntity);
         if (MeshComp.SkeletalMesh.Get() != PreviewMesh)
         {
             MeshComp.SkeletalMesh = PreviewMesh;
         }
 
-        SAnimationGraphComponent& GraphComp = Registry.get<SAnimationGraphComponent>(MeshEntity);
+        SAnimationGraphComponent& GraphComp = World->GetComponent<SAnimationGraphComponent>(MeshEntity);
         if (GraphComp.Graph.Get() != Graph)
         {
             GraphComp.Graph = Graph;
         }
 
         // Keep the preview blackboard instance pointed at the graph's schema.
-        SBlackboardComponent& BlackboardComp = Registry.get_or_emplace<SBlackboardComponent>(MeshEntity);
+        SBlackboardComponent& BlackboardComp = World->GetOrEmplaceComponent<SBlackboardComponent>(MeshEntity);
         if (BlackboardComp.Blackboard.Get() != Graph->Blackboard.Get())
         {
             BlackboardComp.Blackboard = Graph->Blackboard;
@@ -348,13 +347,12 @@ namespace Lumina
             return;
         }
 
-        auto& Registry = World->GetEntityRegistry();
-        if (!Registry.valid(MeshEntity))
+        if (!World->IsValidEntity(MeshEntity))
         {
             return;
         }
 
-        SBlackboardComponent* BlackboardComp = Registry.try_get<SBlackboardComponent>(MeshEntity);
+        SBlackboardComponent* BlackboardComp = World->TryGetComponent<SBlackboardComponent>(MeshEntity);
         if (BlackboardComp == nullptr)
         {
             return;
@@ -845,10 +843,9 @@ namespace Lumina
         const FAnimGraphVMState* VMState = nullptr;
         if (TargetWorld != nullptr && TargetEntity != entt::null)
         {
-            auto& Registry = TargetWorld->GetEntityRegistry();
-            if (Registry.valid(TargetEntity))
+            if (TargetWorld->IsValidEntity(TargetEntity))
             {
-                if (SAnimationGraphComponent* Comp = Registry.try_get<SAnimationGraphComponent>(TargetEntity))
+                if (SAnimationGraphComponent* Comp = TargetWorld->TryGetComponent<SAnimationGraphComponent>(TargetEntity))
                 {
                     VMState = &Comp->VMState;
                 }
@@ -911,10 +908,9 @@ namespace Lumina
         FString CurrentLabel = "Preview";
         if (CWorld* CurWorld = DebugTargetWorld.Get())
         {
-            auto& Registry = CurWorld->GetEntityRegistry();
-            if (Registry.valid(DebugTargetEntity))
+            if (CurWorld->IsValidEntity(DebugTargetEntity))
             {
-                const SNameComponent* Name = Registry.try_get<SNameComponent>(DebugTargetEntity);
+                const SNameComponent* Name = CurWorld->TryGetComponent<SNameComponent>(DebugTargetEntity);
                 CurrentLabel = Name ? Name->Name.ToString() : FString("Entity");
             }
             else
@@ -943,15 +939,14 @@ namespace Lumina
                     continue;
                 }
 
-                auto& Registry = CandidateWorld->GetEntityRegistry();
-                for (entt::entity Entity : Registry.view<SAnimationGraphComponent>())
+                for (entt::entity Entity : CandidateWorld->View<SAnimationGraphComponent>())
                 {
-                    if (Registry.get<SAnimationGraphComponent>(Entity).Graph.Get() != AssetGraph)
+                    if (CandidateWorld->GetComponent<SAnimationGraphComponent>(Entity).Graph.Get() != AssetGraph)
                     {
                         continue;
                     }
 
-                    const SNameComponent* Name = Registry.try_get<SNameComponent>(Entity);
+                    const SNameComponent* Name = CandidateWorld->TryGetComponent<SNameComponent>(Entity);
                     Labels.push_back((Name ? Name->Name.ToString() : FString("Entity"))
                         + "  (" + WorldTypeLabel(Ctx->Type) + ")");
                     Targets.push_back({ CandidateWorld, Entity });

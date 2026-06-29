@@ -914,8 +914,7 @@ namespace Lumina::RmlUi
 
         UI->WidgetJobs.clear();
 
-        FEntityRegistry& Registry = World->GetEntityRegistry();
-        Registry.view<SWidgetComponent>().each([&](entt::entity Entity, SWidgetComponent& Comp)
+        World->View<SWidgetComponent>().each([&](entt::entity Entity, SWidgetComponent& Comp)
         {
             FWidgetRuntime& R = Comp.Runtime;
 

@@ -59,53 +59,66 @@ namespace Lumina
             SettingsDefaults[Class] = Snapshot;
             DiscoveredSettings.push_back(Class);
         }
-
-        // 2) Apply file values for any discovered class whose file is now readable. A class whose
-        //    ConfigFile is not yet mounted (e.g. project settings before a project opens) is left
-        //    for a later pass; until then its CDO keeps its code defaults.
+        
         for (CClass* Class : DiscoveredSettings)
         {
             if (SettingsFileLoaded.find(Class) != SettingsFileLoaded.end())
             {
                 continue;
             }
-
-            if (!Class->HasMeta("ConfigFile"))
-            {
-                SettingsFileLoaded.insert(Class);
-                continue;
-            }
-
-            const FString& FilePath = Class->GetMeta("ConfigFile");
-            FString Result;
-            if (!VFS::ReadFile(Result, FilePath))
-            {
-                continue; // not available yet; retry on a later pass
-            }
-
-            Json FileJson;
-            try
-            {
-                FileJson = Json::parse(Result.c_str());
-            }
-            catch (const std::exception& Ex)
-            {
-                LOG_ERROR("FConfig: failed to parse settings file {0} ({1})", FilePath.c_str(), Ex.what());
-                FileJson = Json::object();
-            }
-
-            SettingsFileCache[FilePath] = FileJson;
-
-            const FString Section = GetSettingsSection(Class);
-            auto SectionIt = FileJson.find(Section.c_str());
-            if (SectionIt != FileJson.end())
-            {
-                FJsonStructuredArchive::LoadStruct(*SectionIt, Class, Class->GetDefaultObject());
-            }
-
-            static_cast<CDeveloperSettings*>(Class->GetDefaultObject())->PostInitSettings();
-            SettingsFileLoaded.insert(Class);
+            LoadSettingsForClass(Class);
         }
+    }
+
+    void FConfig::LoadSettingsForClass(CClass* Class)
+    {
+        if (!Class->HasMeta("ConfigFile"))
+        {
+            SettingsFileLoaded.insert(Class);
+            return;
+        }
+
+        const FString& FilePath = Class->GetMeta("ConfigFile");
+        FString Result;
+        if (!VFS::ReadFile(Result, FilePath))
+        {
+            return; // not available yet; retry on a later pass
+        }
+
+        Json FileJson;
+        try
+        {
+            FileJson = Json::parse(Result.c_str());
+        }
+        catch (const std::exception& Ex)
+        {
+            LOG_ERROR("FConfig: failed to parse settings file {0} ({1})", FilePath.c_str(), Ex.what());
+            FileJson = Json::object();
+        }
+
+        SettingsFileCache[FilePath] = FileJson;
+
+        const FString Section = GetSettingsSection(Class);
+        auto SectionIt = FileJson.find(Section.c_str());
+        if (SectionIt != FileJson.end())
+        {
+            FJsonStructuredArchive::LoadStruct(*SectionIt, Class, Class->GetDefaultObject());
+        }
+
+        static_cast<CDeveloperSettings*>(Class->GetDefaultObject())->PostInitSettings();
+        SettingsFileLoaded.insert(Class);
+    }
+
+    void FConfig::ReloadSettings(CClass* SettingsClass)
+    {
+        if (SettingsClass == nullptr)
+        {
+            return;
+        }
+        // Force a re-read even if already loaded; class-reference properties may now resolve to classes that
+        // didn't exist at first load (e.g. C# Scriptable subclasses minted during script (re)load).
+        SettingsFileLoaded.erase(SettingsClass);
+        LoadSettingsForClass(SettingsClass);
     }
 
     FString FConfig::GetSettingsSection(CClass* SettingsClass)

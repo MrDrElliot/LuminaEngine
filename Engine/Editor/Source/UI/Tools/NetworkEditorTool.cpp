@@ -70,7 +70,7 @@ namespace Lumina
         FNetWorldState* GetNetState(CWorld* World)
         {
             if (World == nullptr) { return nullptr; }
-            FNetWorldState* State = World->GetEntityRegistry().ctx().find<FNetWorldState>();
+            FNetWorldState* State = World->TryGetSingleton<FNetWorldState>();
             return (State != nullptr && State->Transport) ? State : nullptr;
         }
     }
@@ -184,7 +184,7 @@ namespace Lumina
             return;
         }
 
-        FEntityRegistry& Registry = SelectedWorld->GetEntityRegistry();
+        FEntityRegistry& Registry = ECS::GetWorldRegistry(*SelectedWorld);
         const bool bIsServer = SelectedWorld->GetNetMode() == ENetMode::ListenServer
                             || SelectedWorld->GetNetMode() == ENetMode::DedicatedServer;
 

@@ -71,6 +71,10 @@ function LuminaPluginModule(Def)
     end
 
     -- Delegate to LuminaModule for force-includes/reflection/EASTL/linking, then steer output and source dirs into the plugin tree.
+    -- Editor-typed modules drop the Game platform; pass it THROUGH the Def so it lands on the LuminaModules
+    -- record, not just as a loose removeplatforms() directive. The monolithic-Shipping WHOLEARCHIVE loops in
+    -- the Lumina app premake key off Mod.RemovePlatforms to exclude editor modules from the Game exe; setting
+    -- it only via a bare removeplatforms() left those loops force-linking a lib that was never built for Game.
     LuminaModule({
         Name                     = Def.Name,
         Kind                     = "SharedLib",
@@ -83,6 +87,7 @@ function LuminaPluginModule(Def)
         PublicDefines            = Def.PublicDefines,
         PrivateDefines           = Def.PrivateDefines,
         ExtraFiles               = Def.ExtraFiles,
+        RemovePlatforms          = (Def.Type == "Editor") and { "Game" } or nil,
     })
 
     -- Multi-module plugins share Source/, so drop LuminaModule's blanket Source/** glob first, then add only this module's slice.
@@ -105,8 +110,5 @@ function LuminaPluginModule(Def)
     filter "configurations:Shipping"
         targetdir(LuminaConfig.GetTargetDirectory())
     filter {}
-
-    if Def.Type == "Editor" then
-        removeplatforms { "Game" }
-    end
+    -- (Editor modules' removeplatforms{"Game"} is now passed through the LuminaModule Def above.)
 end

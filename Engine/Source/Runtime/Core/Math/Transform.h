@@ -152,10 +152,6 @@ namespace Lumina
     #endif // !REFLECTION_PARSER
 }
 
-// Reflection-parser-only shim; ManualStub skips StaticStruct(), NoCSharp routes to the hand-written C#
-// mirror (LuminaSharp Math.cs), NoLua excludes it. The padded layout matches the real VTransform exactly
-// (Location@0, Rotation@16, Scale@32, 48 bytes / align 16), so reflected FVector3/FQuat properties land on
-// the VFloat4 lanes and the editor + by-name serialization keep the scalar TRS view.
 #ifdef REFLECTION_PARSER
 #ifndef REFLECT
 #define REFLECT(...)

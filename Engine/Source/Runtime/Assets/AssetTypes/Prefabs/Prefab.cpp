@@ -212,7 +212,7 @@ namespace Lumina
             return entt::null;
         }
 
-        entt::registry& WorldRegistry = TargetWorld->GetEntityRegistry();
+        entt::registry& WorldRegistry = ECS::GetWorldRegistry(*TargetWorld);
 
         // Collect parentless entities to pick a canonical root; multi-root is a data error but
         // handled (extras reparented) rather than silently orphaned.
@@ -305,7 +305,7 @@ namespace Lumina
             return;
         }
 
-        entt::registry& WorldRegistry = World->GetEntityRegistry();
+        entt::registry& WorldRegistry = ECS::GetWorldRegistry(*World);
         if (!WorldRegistry.valid(InstanceRoot))
         {
             return;
@@ -678,7 +678,7 @@ namespace Lumina
             return;
         }
 
-        entt::registry& WorldRegistry = World->GetEntityRegistry();
+        entt::registry& WorldRegistry = ECS::GetWorldRegistry(*World);
 
         // Belt-and-suspenders: also cull orphans here (InitializeWorld culls the pending set pre-swap, but
         // other paths reach this without that step).
@@ -723,7 +723,7 @@ namespace Lumina
                 continue;
             }
 
-            entt::registry& WorldRegistry = World->GetEntityRegistry();
+            entt::registry& WorldRegistry = ECS::GetWorldRegistry(*World);
 
             TVector<entt::entity> Roots;
             WorldRegistry.view<SPrefabInstanceComponent>().each([&](entt::entity E, const SPrefabInstanceComponent& Inst)
@@ -778,7 +778,7 @@ namespace Lumina
                 continue;
             }
 
-            entt::registry& WorldRegistry = World->GetEntityRegistry();
+            entt::registry& WorldRegistry = ECS::GetWorldRegistry(*World);
 
             // Every entity sourced from this prefab (roots + descendants). Detached subtrees have no
             // SPrefabInstanceComponent, so they are not matched and survive.
@@ -810,7 +810,7 @@ namespace Lumina
             return false;
         }
 
-        entt::registry& WorldRegistry = World->GetEntityRegistry();
+        entt::registry& WorldRegistry = ECS::GetWorldRegistry(*World);
         if (!WorldRegistry.valid(InstanceRoot))
         {
             return false;
@@ -852,7 +852,7 @@ namespace Lumina
             return;
         }
 
-        entt::registry& WorldRegistry = SourceWorld->GetEntityRegistry();
+        entt::registry& WorldRegistry = ECS::GetWorldRegistry(*SourceWorld);
         if (!WorldRegistry.valid(RootEntity))
         {
             return;

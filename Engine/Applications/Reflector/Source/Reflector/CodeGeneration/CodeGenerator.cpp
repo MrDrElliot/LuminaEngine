@@ -559,6 +559,18 @@ namespace Lumina::Reflection
         Writer.Line("#include \"Core/Math/Hash/Hash.h\"");
         Writer.Line("#include \"Core/Object/Class.h\"");
         Writer.Line("#include \"Containers/ContainerOps.h\"");
+        // A REFLECT(Scriptable) class generates a forwarding shim (FScriptableBridge + the host resolver) into
+        // this .cpp; pull the headers + placement-new only when the header actually declares one.
+        for (const auto& T : Types)
+        {
+            if (T->Type == FReflectedType::EType::Class && T->HasMetadata("Scriptable"))
+            {
+                Writer.Line("#include \"Scripting/ScriptableObject.h\"");
+                Writer.Line("#include \"Scripting/DotNet/DotNetHost.h\"");
+                Writer.Line("#include <new>");
+                break;
+            }
+        }
         Writer.Line("using namespace entt::literals;");
         Writer.BlankLines(2);
 

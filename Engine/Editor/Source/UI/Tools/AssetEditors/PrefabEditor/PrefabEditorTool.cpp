@@ -97,7 +97,7 @@ namespace Lumina
             }
 
             FEntityListViewItemData& Data = Tree.Get<FEntityListViewItemData>(Item);
-            if (Data.Entity == entt::null || !World->GetEntityRegistry().valid(Data.Entity))
+            if (Data.Entity == entt::null || !World->IsValidEntity(Data.Entity))
             {
                 return;
             }
@@ -121,7 +121,7 @@ namespace Lumina
         OutlinerContext.ItemContextMenuFunction = [this](FTreeListView& Tree, FTreeNodeID Item)
         {
             FEntityListViewItemData& Data = Tree.Get<FEntityListViewItemData>(Item);
-            entt::registry& Registry = World->GetEntityRegistry();
+            entt::registry& Registry = ECS::GetWorldRegistry(*World);
 
             if (!Registry.valid(Data.Entity))
             {
@@ -196,7 +196,7 @@ namespace Lumina
         OutlinerContext.RenameFunction = [this](FTreeListView& Tree, FTreeNodeID Item, FStringView NewName)
         {
             FEntityListViewItemData& Data = Tree.Get<FEntityListViewItemData>(Item);
-            entt::registry& Registry = World->GetEntityRegistry();
+            entt::registry& Registry = ECS::GetWorldRegistry(*World);
             if (!Registry.valid(Data.Entity))
             {
                 return;
@@ -218,24 +218,24 @@ namespace Lumina
         {
             FEntityListViewItemData& Data = Tree.Get<FEntityListViewItemData>(Item);
             FTreeNodeState& State = Tree.Get<FTreeNodeState>(Item);
-            if (!World->GetEntityRegistry().valid(Data.Entity))
+            if (!World->IsValidEntity(Data.Entity))
             {
                 return;
             }
             if (State.bDisabled)
             {
-                World->GetEntityRegistry().emplace<SDisabledTag>(Data.Entity);
+                World->EmplaceComponent<SDisabledTag>(Data.Entity);
             }
             else
             {
-                World->GetEntityRegistry().remove<SDisabledTag>(Data.Entity);
+                World->RemoveComponent<SDisabledTag>(Data.Entity);
             }
         };
 
         OutlinerContext.HoveredFunction = [this](FTreeListView& Tree, FTreeNodeID Item)
         {
             FEntityListViewItemData& Data = Tree.Get<FEntityListViewItemData>(Item);
-            entt::registry& Registry = World->GetEntityRegistry();
+            entt::registry& Registry = ECS::GetWorldRegistry(*World);
             if (!Registry.valid(Data.Entity))
             {
                 return;
@@ -321,10 +321,10 @@ namespace Lumina
         FEditorTool::SetupWorldForTool();
 
         DirectionalLightEntity = World->ConstructEntity("PreviewLight");
-        World->GetEntityRegistry().emplace<FHideInSceneOutliner>(DirectionalLightEntity);
-        World->GetEntityRegistry().emplace<SDirectionalLightComponent>(DirectionalLightEntity);
-        World->GetEntityRegistry().emplace<SEnvironmentComponent>(DirectionalLightEntity);
-        World->GetEntityRegistry().emplace<SSkyLightComponent>(DirectionalLightEntity);
+        World->EmplaceComponent<FHideInSceneOutliner>(DirectionalLightEntity);
+        World->EmplaceComponent<SDirectionalLightComponent>(DirectionalLightEntity);
+        World->EmplaceComponent<SEnvironmentComponent>(DirectionalLightEntity);
+        World->EmplaceComponent<SSkyLightComponent>(DirectionalLightEntity);
     }
 
     void FPrefabEditorTool::OnSceneLoaded()
@@ -361,7 +361,7 @@ namespace Lumina
         }
 
         // Wipe any previously-loaded prefab entities (leave preview-only lights / floor / camera).
-        entt::registry& WorldRegistry = World->GetEntityRegistry();
+        entt::registry& WorldRegistry = ECS::GetWorldRegistry(*World);
         TVector<entt::entity> ToDestroy;
         WorldRegistry.view<SPrefabComponent>().each([&](entt::entity E, const SPrefabComponent&)
         {
@@ -407,7 +407,7 @@ namespace Lumina
             return;
         }
 
-        entt::registry& WorldRegistry = World->GetEntityRegistry();
+        entt::registry& WorldRegistry = ECS::GetWorldRegistry(*World);
 
         // Gather every entity that belongs to the prefab (tagged with SPrefabComponent); the
         // preview world also holds preview-only lights/floor/camera that must not be captured.
@@ -453,7 +453,7 @@ namespace Lumina
         ProcessDestroyRequests();
 
         // Mark selection's transform dirty so the gizmo's edits propagate to children this frame.
-        entt::registry& Registry = World->GetEntityRegistry();
+        entt::registry& Registry = ECS::GetWorldRegistry(*World);
         Registry.view<FSelectedInEditorComponent>().each([&](entt::entity Entity)
         {
             Registry.emplace_or_replace<FNeedsTransformUpdate>(Entity);
@@ -523,7 +523,7 @@ namespace Lumina
             entt::entity Entity = EntityDestroyRequests.back();
             EntityDestroyRequests.pop();
 
-            if (Entity == entt::null || !World->GetEntityRegistry().valid(Entity))
+            if (Entity == entt::null || !World->IsValidEntity(Entity))
             {
                 continue;
             }
@@ -537,12 +537,12 @@ namespace Lumina
 
             // Drop selection links so the selection set doesn't carry stale entities into next frame.
             RemoveSelectedEntity(Entity);
-            ECS::Utils::ForEachDescendant(World->GetEntityRegistry(), Entity, [&](entt::entity Desc)
+            ECS::Utils::ForEachDescendant(ECS::GetWorldRegistry(*World), Entity, [&](entt::entity Desc)
             {
                 RemoveSelectedEntity(Desc);
             });
 
-            ECS::Utils::DestroyEntityHierarchy(World->GetEntityRegistry(), Entity);
+            ECS::Utils::DestroyEntityHierarchy(ECS::GetWorldRegistry(*World), Entity);
             bDestroyed = true;
             OutlinerListView.MarkTreeDirty();
             Asset->GetPackage()->MarkDirty();
@@ -571,7 +571,7 @@ namespace Lumina
             return entt::null;
         }
 
-        entt::registry& WorldRegistry = World->GetEntityRegistry();
+        entt::registry& WorldRegistry = ECS::GetWorldRegistry(*World);
         entt::entity Root = entt::null;
         WorldRegistry.view<SPrefabComponent>().each([&](entt::entity E, const SPrefabComponent&)
         {
@@ -590,7 +590,7 @@ namespace Lumina
 
     void FPrefabEditorTool::OnEntityCreatedInScene(entt::entity Entity)
     {
-        entt::registry& Registry = World->GetEntityRegistry();
+        entt::registry& Registry = ECS::GetWorldRegistry(*World);
 
         // Resolve the root BEFORE tagging the new entity, or it becomes a root candidate itself.
         const entt::entity Root = FindPrefabRoot();
@@ -633,7 +633,7 @@ namespace Lumina
             return;
         }
 
-        entt::registry& Registry = World->GetEntityRegistry();
+        entt::registry& Registry = ECS::GetWorldRegistry(*World);
 
         TFixedVector<entt::entity, 64> Targets;
         Registry.view<FSelectedInEditorComponent>().each([&](entt::entity Selected)
@@ -677,7 +677,7 @@ namespace Lumina
             return;
         }
 
-        entt::registry& Registry = World->GetEntityRegistry();
+        entt::registry& Registry = ECS::GetWorldRegistry(*World);
         FVector3 Center;
         float Radius;
         if (!EditorEntityUtils::ComputeFocusBoundsForEntity(Registry, Root, Center, Radius))
@@ -725,7 +725,7 @@ namespace Lumina
                     return;
                 }
 
-                entt::registry& Registry = World->GetEntityRegistry();
+                entt::registry& Registry = ECS::GetWorldRegistry(*World);
                 if (!Registry.valid(Source) || (DropItem != entt::null && !Registry.valid(DropItem)))
                 {
                     return;
@@ -773,7 +773,7 @@ namespace Lumina
         if (Spawned != entt::null && Spawned != DropTarget)
         {
             // Mark the freshly created entity as part of the prefab so it round-trips on save.
-            entt::registry& Registry = World->GetEntityRegistry();
+            entt::registry& Registry = ECS::GetWorldRegistry(*World);
             if (!Registry.any_of<SPrefabComponent>(Spawned))
             {
                 Registry.emplace<SPrefabComponent>(Spawned).StableID = FName(FGuid::New().ToShortString());
@@ -802,7 +802,7 @@ namespace Lumina
             return entt::null;
         }
 
-        entt::registry& Registry = World->GetEntityRegistry();
+        entt::registry& Registry = ECS::GetWorldRegistry(*World);
         if (!Registry.valid(Source))
         {
             return entt::null;
@@ -852,7 +852,7 @@ namespace Lumina
         const bool bPastePressed     = IO.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_V, false);
         const bool bSavePressed      = IO.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false);
 
-        entt::registry& Registry = World->GetEntityRegistry();
+        entt::registry& Registry = ECS::GetWorldRegistry(*World);
         const entt::entity Root = FindPrefabRoot();
 
         if (bSavePressed)
@@ -958,7 +958,7 @@ namespace Lumina
             EditorEntityUtils::CycleGizmoOp(GuizmoOp);
         }
 
-        SCameraComponent* CameraComponent = World->GetEntityRegistry().try_get<SCameraComponent>(EditorEntity);
+        SCameraComponent* CameraComponent = World->TryGetComponent<SCameraComponent>(EditorEntity);
         if (CameraComponent == nullptr)
         {
             return;
@@ -1012,7 +1012,7 @@ namespace Lumina
                 if (!bOverGizmo && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
                 {
                     entt::entity Hit = Renderer->GetEntityAtPixel(TexX, TexY);
-                    entt::registry& Registry = World->GetEntityRegistry();
+                    entt::registry& Registry = ECS::GetWorldRegistry(*World);
                     if (Hit != entt::null && Registry.valid(Hit) && Registry.any_of<SPrefabComponent>(Hit))
                     {
                         if (ImGui::GetIO().KeyCtrl)
@@ -1029,7 +1029,7 @@ namespace Lumina
         }
 
         const entt::entity PivotEntity = GetLastSelectedEntity();
-        const bool bGizmoTargetValid = PivotEntity != entt::null && World->GetEntityRegistry().valid(PivotEntity);
+        const bool bGizmoTargetValid = PivotEntity != entt::null && World->IsValidEntity(PivotEntity);
 
         // Mid-drag selection vanish: end the transaction so future clicks aren't blocked by IsOver().
         if (!bGizmoTargetValid && bImGuizmoUsedOnce)
@@ -1043,7 +1043,7 @@ namespace Lumina
             return;
         }
 
-        STransformComponent* PivotTransform = World->GetEntityRegistry().try_get<STransformComponent>(PivotEntity);
+        STransformComponent* PivotTransform = World->TryGetComponent<STransformComponent>(PivotEntity);
         if (PivotTransform == nullptr)
         {
             return;
@@ -1084,7 +1084,7 @@ namespace Lumina
                 bImGuizmoUsedOnce = true;
             }
 
-            entt::registry& Registry = World->GetEntityRegistry();
+            entt::registry& Registry = ECS::GetWorldRegistry(*World);
 
             // Apply the same world translation/rotation to every selected entity (rigid group);
             // scale stays per-entity to avoid skew under mixed parent transforms.

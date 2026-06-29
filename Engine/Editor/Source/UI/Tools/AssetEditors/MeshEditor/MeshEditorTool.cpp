@@ -613,17 +613,17 @@ namespace Lumina
         FEditorTool::SetupWorldForTool();
         
         DirectionalLightEntity = World->ConstructEntity("Directional Light");
-        World->GetEntityRegistry().emplace<SDirectionalLightComponent>(DirectionalLightEntity);
-        World->GetEntityRegistry().emplace<SEnvironmentComponent>(DirectionalLightEntity);
-        World->GetEntityRegistry().emplace<SSkyLightComponent>(DirectionalLightEntity);
+        World->EmplaceComponent<SDirectionalLightComponent>(DirectionalLightEntity);
+        World->EmplaceComponent<SEnvironmentComponent>(DirectionalLightEntity);
+        World->EmplaceComponent<SSkyLightComponent>(DirectionalLightEntity);
         
         CStaticMesh* StaticMesh = Cast<CStaticMesh>(Asset.Get());
 
         CameraState.Speed = 5.0f;
 
         MeshEntity = World->ConstructEntity("MeshEntity");
-        World->GetEntityRegistry().emplace<SStaticMeshComponent>(MeshEntity).StaticMesh = StaticMesh;
-        STransformComponent& MeshTransform = World->GetEntityRegistry().get<STransformComponent>(MeshEntity);
+        World->EmplaceComponent<SStaticMeshComponent>(MeshEntity).StaticMesh = StaticMesh;
+        STransformComponent& MeshTransform = World->GetComponent<STransformComponent>(MeshEntity);
 
         float FloorY = MeshTransform.GetLocation().y + StaticMesh->GetAABB().Min.y;
         CreateFloorPlane(FloorY);
@@ -650,8 +650,8 @@ namespace Lumina
             World->GetRenderer()->GetSceneRenderSettings().bDrawBillboards = false;
         }
 
-        SStaticMeshComponent& StaticMeshComponent = World->GetEntityRegistry().get<SStaticMeshComponent>(MeshEntity);
-        STransformComponent&  Transform           = World->GetEntityRegistry().get<STransformComponent>(MeshEntity);
+        SStaticMeshComponent& StaticMeshComponent = World->GetComponent<SStaticMeshComponent>(MeshEntity);
+        STransformComponent&  Transform           = World->GetComponent<STransformComponent>(MeshEntity);
 
         // Renderer reads ForcedLODIndex during instance build; push every frame to stay in sync with the LOD combo.
         StaticMeshComponent.ForcedLODIndex = PreviewLODIndex;

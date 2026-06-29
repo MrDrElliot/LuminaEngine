@@ -411,6 +411,7 @@ public static unsafe partial class Host
         try
         {
             GCHandle Handle = GCHandle.FromIntPtr(Callback);
+            Asset.Complete(Callback);
             Action<IntPtr>? Trampoline = Handle.Target as Action<IntPtr>;
             Handle.Free();
             Trampoline?.Invoke(Object);
@@ -479,6 +480,66 @@ public static unsafe partial class Host
                     Encoded.Free();
                 }
             }
+        }
+        catch (Exception Exception)
+        {
+            Interop.LogException(Exception);
+        }
+    }
+
+    // Scriptable bridge: a C# subclass of a REFLECT(Scriptable) native CObject. Native creates the CObject
+    // (a minted CClass), then binds the managed instance to it via a GCHandle the native shim stores.
+
+    /// Instantiates the named Scriptable subclass, pairs it to the native object, writes the override-flag
+    /// bitmask, and returns a strong GCHandle (IntPtr.Zero on failure).
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static IntPtr CreateScriptable(byte* TypeName, int TypeNameLength, ulong NativePtr, int* OutOverrideFlags)
+    {
+        try
+        {
+            ScriptableRuntime? Runtime = Scripts?.Scriptables;
+            if (Runtime == null)
+            {
+                if (OutOverrideFlags != null) { *OutOverrideFlags = 0; }
+                return IntPtr.Zero;
+            }
+            IntPtr Handle = Runtime.Create(Interop.GetString(TypeName, TypeNameLength), NativePtr, out int Flags);
+            if (OutOverrideFlags != null) { *OutOverrideFlags = Flags; }
+            return Handle;
+        }
+        catch (Exception Exception)
+        {
+            Interop.LogException(Exception);
+            if (OutOverrideFlags != null) { *OutOverrideFlags = 0; }
+            return IntPtr.Zero;
+        }
+    }
+
+    /// Frees a Scriptable instance's GCHandle (the native shim's destructor calls this).
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static void DestroyScriptable(IntPtr Handle)
+    {
+        try
+        {
+            Scripts?.Scriptables?.Destroy(Handle);
+        }
+        catch (Exception Exception)
+        {
+            Interop.LogException(Exception);
+        }
+    }
+
+    /// Reports each discovered Scriptable C# type as (full name, native base class name) to a native sink, so
+    /// the host can mint a CClass deriving from that native base.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static void EnumerateScriptables(IntPtr Sink, IntPtr Context)
+    {
+        try
+        {
+            Scripts?.Scriptables?.Enumerate(Sink, Context);
         }
         catch (Exception Exception)
         {

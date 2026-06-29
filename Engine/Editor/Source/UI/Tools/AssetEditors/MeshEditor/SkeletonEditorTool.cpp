@@ -152,9 +152,9 @@ namespace Lumina
         CreateFloorPlane();
         
         DirectionalLightEntity = World->ConstructEntity("Directional Light");
-        World->GetEntityRegistry().emplace<SDirectionalLightComponent>(DirectionalLightEntity);
-        World->GetEntityRegistry().emplace<SEnvironmentComponent>(DirectionalLightEntity);
-        World->GetEntityRegistry().emplace<SSkyLightComponent>(DirectionalLightEntity);
+        World->EmplaceComponent<SDirectionalLightComponent>(DirectionalLightEntity);
+        World->EmplaceComponent<SEnvironmentComponent>(DirectionalLightEntity);
+        World->EmplaceComponent<SSkyLightComponent>(DirectionalLightEntity);
         
         CSkeleton* Skeleton = GetAsset<CSkeleton>();
         
@@ -166,12 +166,12 @@ namespace Lumina
         }
 
         MeshEntity = World->ConstructEntity("MeshEntity");
-        SSkeletalMeshComponent& MeshComponent = World->GetEntityRegistry().emplace<SSkeletalMeshComponent>(MeshEntity);
+        SSkeletalMeshComponent& MeshComponent = World->EmplaceComponent<SSkeletalMeshComponent>(MeshEntity);
         MeshComponent.SkeletalMesh = Skeleton->PreviewMesh;
         Skeleton->ComputeBindPoseSkinningMatrices(MeshComponent.BoneTransforms);
         
-        STransformComponent& MeshTransform = World->GetEntityRegistry().get<STransformComponent>(MeshEntity);
-        STransformComponent& EditorTransform = World->GetEntityRegistry().get<STransformComponent>(EditorEntity);
+        STransformComponent& MeshTransform = World->GetComponent<STransformComponent>(MeshEntity);
+        STransformComponent& EditorTransform = World->GetComponent<STransformComponent>(EditorEntity);
 
         FQuat Rotation = Math::FindLookAtRotation(MeshTransform.GetWorldLocation()+ FVector3(0.0f, 0.85f, 0.0f), EditorTransform.GetLocation());
         EditorTransform.SetRotation(Rotation);
@@ -195,7 +195,7 @@ namespace Lumina
                 return;
             }
     
-            STransformComponent& Transform = World->GetEntityRegistry().get<STransformComponent>(MeshEntity);
+            STransformComponent& Transform = World->GetComponent<STransformComponent>(MeshEntity);
             FSkeletonResource* SkeletonResource = Skeleton->GetSkeletonResource();
             TVector<FMatrix4> WorldTransforms;
             WorldTransforms.resize(SkeletonResource->GetNumBones());

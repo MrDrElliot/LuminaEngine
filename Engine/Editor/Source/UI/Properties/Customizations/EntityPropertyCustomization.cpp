@@ -72,7 +72,7 @@ namespace Lumina
             bChanged = true;
         }
 
-        FEntityRegistry& Registry = World->GetEntityRegistry();
+        FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
 
         // Index 0 is always "None"; the rest are the same named entities the outliner shows.
         TVector<entt::entity> Candidates;

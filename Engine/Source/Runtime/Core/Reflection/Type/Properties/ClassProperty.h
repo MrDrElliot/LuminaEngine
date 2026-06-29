@@ -29,6 +29,11 @@ namespace Lumina
 
     private:
 
+        // Resolves a serialized class name to a CClass*, enforcing the MetaClass (TSubclassOf<T>) constraint that
+        // the raw-pointer write in Serialize/SerializeItem otherwise bypasses. Returns null for none / unknown /
+        // not-a-subclass so a malformed or stale config can never yield a wrong-typed class.
+        CClass* ResolveSerializedClass(const FName& ClassName) const;
+
         CClass* MetaClass = nullptr;
     };
 }

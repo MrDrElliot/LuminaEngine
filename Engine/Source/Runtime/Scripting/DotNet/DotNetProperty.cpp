@@ -44,7 +44,7 @@ namespace
 
 // Resolves "Type::Prop" to the FProperty* token (searches the full inheritance chain). Cached once per
 // property on the C# side; null when the type or property isn't found.
-extern "C" RUNTIME_API const void* LuminaSharp_FindProperty(const char* Type, int TLen, const char* Prop, int PLen)
+extern "C" LUMINA_SCRIPT_API const void* LuminaSharp_FindProperty(const char* Type, int TLen, const char* Prop, int PLen)
 {
     const CStruct* Struct = FindReflectedType(Type, TLen);
     if (Struct == nullptr || Prop == nullptr || PLen <= 0)
@@ -56,13 +56,13 @@ extern "C" RUNTIME_API const void* LuminaSharp_FindProperty(const char* Type, in
 
 // The property's byte offset within its container. Resolved once per blittable property on the C# side,
 // which then reads/writes native memory directly at (container + offset).
-extern "C" RUNTIME_API int32 LuminaSharp_PropertyOffset(const void* Prop)
+extern "C" LUMINA_SCRIPT_API int32 LuminaSharp_PropertyOffset(const void* Prop)
 {
     return Prop ? (int32)static_cast<const FProperty*>(Prop)->Offset : -1;
 }
 
 // Combined resolve: type+prop -> offset in one crossing (the C# blittable path caches just the offset).
-extern "C" RUNTIME_API int32 LuminaSharp_PropertyOffsetByName(const char* Type, int TLen, const char* Prop, int PLen)
+extern "C" LUMINA_SCRIPT_API int32 LuminaSharp_PropertyOffsetByName(const char* Type, int TLen, const char* Prop, int PLen)
 {
     const void* Property = LuminaSharp_FindProperty(Type, TLen, Prop, PLen);
     return LuminaSharp_PropertyOffset(Property);
@@ -75,7 +75,7 @@ extern "C" RUNTIME_API int32 LuminaSharp_PropertyOffsetByName(const char* Type, 
 
 // FString get: fills a caller buffer (UTF-8 bytes) and returns the full length. Two-pass protocol matching
 // LuminaSharp_GetObjectPath: a first call with a null/0 buffer queries the length, the second copies.
-extern "C" RUNTIME_API int32 LuminaSharp_PropGetString(void* C, const void* Prop, char* Buf, int Cap)
+extern "C" LUMINA_SCRIPT_API int32 LuminaSharp_PropGetString(void* C, const void* Prop, char* Buf, int Cap)
 {
     if (C == nullptr || Prop == nullptr)
     {
@@ -96,7 +96,7 @@ extern "C" RUNTIME_API int32 LuminaSharp_PropGetString(void* C, const void* Prop
     return L;
 }
 
-extern "C" RUNTIME_API void LuminaSharp_PropSetString(void* C, const void* Prop, const char* Utf8, int Len)
+extern "C" LUMINA_SCRIPT_API void LuminaSharp_PropSetString(void* C, const void* Prop, const char* Utf8, int Len)
 {
     if (C == nullptr || Prop == nullptr)
     {
@@ -115,7 +115,7 @@ extern "C" RUNTIME_API void LuminaSharp_PropSetString(void* C, const void* Prop,
 }
 
 // FName get/set: same buffer-fill shape as FString; the set builds an FName from the UTF-8 bytes.
-extern "C" RUNTIME_API int32 LuminaSharp_PropGetName(void* C, const void* Prop, char* Buf, int Cap)
+extern "C" LUMINA_SCRIPT_API int32 LuminaSharp_PropGetName(void* C, const void* Prop, char* Buf, int Cap)
 {
     if (C == nullptr || Prop == nullptr)
     {
@@ -136,7 +136,7 @@ extern "C" RUNTIME_API int32 LuminaSharp_PropGetName(void* C, const void* Prop, 
     return L;
 }
 
-extern "C" RUNTIME_API void LuminaSharp_PropSetName(void* C, const void* Prop, const char* Utf8, int Len)
+extern "C" LUMINA_SCRIPT_API void LuminaSharp_PropSetName(void* C, const void* Prop, const char* Utf8, int Len)
 {
     if (C == nullptr || Prop == nullptr)
     {
@@ -150,9 +150,9 @@ extern "C" RUNTIME_API void LuminaSharp_PropSetName(void* C, const void* Prop, c
 // Object/TObjectPtr get/set. The member is a pointer-sized TObjectPtr<T>; read its raw CObject* and write
 // via the type-erased setter (which views it as TObjectPtr<CObject> for correct refcounting). Mirrors the
 // old per-property object thunk.
-extern "C" RUNTIME_API void LuminaSharp_SetObjectPtr(void*, void*); // defined in DotNetHost.cpp
+extern "C" LUMINA_SCRIPT_API void LuminaSharp_SetObjectPtr(void*, void*); // defined in DotNetHost.cpp
 
-extern "C" RUNTIME_API void* LuminaSharp_PropGetObject(void* C, const void* Prop)
+extern "C" LUMINA_SCRIPT_API void* LuminaSharp_PropGetObject(void* C, const void* Prop)
 {
     if (C == nullptr || Prop == nullptr)
     {
@@ -163,7 +163,7 @@ extern "C" RUNTIME_API void* LuminaSharp_PropGetObject(void* C, const void* Prop
     return (void*)Value.Get();
 }
 
-extern "C" RUNTIME_API void LuminaSharp_PropSetObject(void* C, const void* Prop, void* Obj)
+extern "C" LUMINA_SCRIPT_API void LuminaSharp_PropSetObject(void* C, const void* Prop, void* Obj)
 {
     if (C == nullptr || Prop == nullptr)
     {
@@ -175,7 +175,7 @@ extern "C" RUNTIME_API void LuminaSharp_PropSetObject(void* C, const void* Prop,
 
 // Script delegate bind/unbind. Game thread only.
 
-extern "C" RUNTIME_API uint64 LuminaSharp_DelegateBind(void* DelegatePtr, void* Thunk, void* Context)
+extern "C" LUMINA_SCRIPT_API uint64 LuminaSharp_DelegateBind(void* DelegatePtr, void* Thunk, void* Context)
 {
     if (DelegatePtr == nullptr || Thunk == nullptr)
     {
@@ -185,7 +185,7 @@ extern "C" RUNTIME_API uint64 LuminaSharp_DelegateBind(void* DelegatePtr, void* 
         reinterpret_cast<FScriptDelegateBase::FManagedThunk>(Thunk), Context);
 }
 
-extern "C" RUNTIME_API void LuminaSharp_DelegateUnbind(void* DelegatePtr, uint64 Handle)
+extern "C" LUMINA_SCRIPT_API void LuminaSharp_DelegateUnbind(void* DelegatePtr, uint64 Handle)
 {
     if (DelegatePtr != nullptr)
     {

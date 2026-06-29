@@ -1279,6 +1279,8 @@ namespace Lumina::Reflection
             return false;
         }
 
+        bool IsScriptEvent(const FReflectedFunction& Fn); // defined below; used to skip ScriptEvents here
+
         void EmitFunctions(FCodeWriter& Writer, const FReflectedStruct& Type, const FReflectionDatabase& Db)
         {
             const eastl::string Friendly = Names::FriendlyFromQualified(Type.QualifiedName);
@@ -1286,6 +1288,7 @@ namespace Lumina::Reflection
             const bool bStructFastCalls = Type.HasMetadata("ScriptFastCalls");
             for (const auto& Fn : Type.Functions)
             {
+                if (IsScriptEvent(*Fn)) { continue; } // ScriptEvents are emitted specially in EmitForClass
                 FFnBinding FB;
                 if (ClassifyFunction(*Fn, Type, Db, FB))
                 {
@@ -1303,12 +1306,302 @@ namespace Lumina::Reflection
             const eastl::string Friendly = Names::FriendlyFromQualified(Type.QualifiedName);
             for (const auto& Fn : Type.Functions)
             {
+                if (IsScriptEvent(*Fn)) { continue; } // ScriptEvent base/dispatch thunks come from EmitScriptableNative
                 FFnBinding FB;
                 if (ClassifyFunction(*Fn, Type, Db, FB))
                 {
                     EmitNativeFunction(Writer, *Fn, FB, Friendly, Qualified, Api);
                 }
             }
+        }
+
+        // ---- Scriptable: C# subclassing of REFLECT(Scriptable) CObjects via per-method FUNCTION(ScriptEvent) ----
+        //
+        // A ScriptEvent is a native virtual a C# subclass may override. The Reflector emits: a C# `virtual`
+        // whose default body calls a native base thunk (runs the C++ impl); a reverse [UnmanagedCallersOnly]
+        // dispatcher native calls when a subclass overrides it; and a native shim subclass whose overrides route
+        // to managed (when overridden) or fall through to the base. Arg/return marshalling mirrors the forward
+        // function thunks (ClassifyField) in the opposite direction.
+
+        bool IsScriptEvent(const FReflectedFunction& Fn) { return FunctionHasMetadata(Fn, "ScriptEvent"); }
+
+        // Reverse-marshalable kinds. Objects (CObject pointers) marshal as the engine handle (void* native /
+        // IntPtr managed), exactly like the forward path. Strings are still deferred (their return needs the
+        // two-pass caller-buffer protocol, which the reverse dispatcher doesn't implement yet).
+        bool ScriptEventArgSupported(const FArg& A)
+        {
+            if (A.bEntity) { return true; }
+            switch (A.Kind)
+            {
+            case EBind::Number: case EBind::Bool: case EBind::Enum: case EBind::StructValue: case EBind::Object: return true;
+            default: return false;
+            }
+        }
+
+        // A ScriptEvent must be non-overloaded and have only v1 reverse-marshalable args + return. It must also
+        // be `virtual` for the shim's `override` to bind, but that's enforced at C++ compile time on the generated
+        // shim rather than here (libclang's isVirtual is unreliable for inline-defined methods in this parse).
+        bool ClassifyScriptEvent(const FReflectedFunction& Fn, const FReflectedStruct& Type, const FReflectionDatabase& Db, FFnBinding& Out)
+        {
+            if (!ClassifyFunction(Fn, Type, Db, Out)) { return false; }
+            if (!Out.bVoid && !ScriptEventArgSupported(Out.Ret)) { return false; }
+            for (const FArg& A : Out.Args) { if (!ScriptEventArgSupported(A)) { return false; } }
+            return true;
+        }
+
+        struct FScriptEvent { const FReflectedFunction* Fn; FFnBinding FB; int Index; };
+
+        // The classifiable ScriptEvents of a type, each tagged with its stable bit index (the index counts EVERY
+        // ScriptEvent in declaration order, so the native shim and C# [ScriptEvent(index)] tags align by construction).
+        void CollectScriptEvents(const FReflectedStruct& Type, const FReflectionDatabase& Db, eastl::vector<FScriptEvent>& Out)
+        {
+            int Index = 0;
+            for (const auto& Fn : Type.Functions)
+            {
+                if (!IsScriptEvent(*Fn)) { continue; }
+                FFnBinding FB;
+                if (ClassifyScriptEvent(*Fn, Type, Db, FB)) { Out.push_back({ Fn.get(), eastl::move(FB), Index }); }
+                ++Index;
+            }
+        }
+
+        //~ C# reverse-dispatcher ABI mapping (native ABI <-> C# call value).
+        eastl::string SeArgAbiCS(const FArg& A)
+        {
+            if (A.bEntity) { return "uint"; }
+            switch (A.Kind) { case EBind::Bool: return "byte"; case EBind::Enum: return "int"; case EBind::Object: return "global::System.IntPtr"; default: return A.CSharp; }
+        }
+        eastl::string SeArgFromAbiCS(const FArg& A, const eastl::string& N)
+        {
+            if (A.bEntity) { return "new global::LuminaSharp.Entity(" + N + ")"; }
+            switch (A.Kind)
+            {
+            case EBind::Bool:   return "(" + N + " != 0)";
+            case EBind::Enum:   return "(" + A.CSharp + ")" + N;
+            case EBind::Object: return "(" + N + " == global::System.IntPtr.Zero ? null : new " + A.CSharp + "(" + N + "))";
+            default:            return N;
+            }
+        }
+        eastl::string SeRetAbiCS(const FFnBinding& FB)
+        {
+            if (FB.bVoid) { return "void"; }
+            if (FB.Ret.bEntity) { return "uint"; }
+            switch (FB.Ret.Kind) { case EBind::Bool: return "byte"; case EBind::Enum: return "int"; case EBind::Object: return "global::System.IntPtr"; default: return FB.Ret.CSharp; }
+        }
+        eastl::string SeRetToAbiCS(const FFnBinding& FB, const eastl::string& Expr)
+        {
+            if (FB.Ret.bEntity) { return "(" + Expr + ").Id"; }
+            switch (FB.Ret.Kind)
+            {
+            case EBind::Bool:   return "(byte)((" + Expr + ") ? 1 : 0)";
+            case EBind::Enum:   return "(int)(" + Expr + ")";
+            case EBind::Object: return "((" + Expr + ") is null ? global::System.IntPtr.Zero : (" + Expr + ").Handle)";
+            default:            return Expr;
+            }
+        }
+
+        //~ Native shim ABI mapping (real C++ type <-> reverse-thunk ABI type).
+        eastl::string SeArgCppParam(const FArg& A)
+        {
+            if (A.bEntity) { return "entt::entity"; }
+            switch (A.Kind) { case EBind::Bool: return "bool"; case EBind::Enum: return A.TargetCpp; case EBind::StructValue: return A.TargetCpp; case EBind::Object: return A.TargetCpp + "*"; default: return A.Cpp; }
+        }
+        eastl::string SeArgAbiCpp(const FArg& A)
+        {
+            if (A.bEntity) { return "uint32"; }
+            switch (A.Kind) { case EBind::Bool: return "unsigned char"; case EBind::Enum: return "int"; case EBind::StructValue: return A.TargetCpp; case EBind::Object: return "void*"; default: return A.Cpp; }
+        }
+        eastl::string SeArgCppToAbi(const FArg& A, const eastl::string& N)
+        {
+            if (A.bEntity) { return "(uint32)" + N; }
+            switch (A.Kind) { case EBind::Bool: return "(unsigned char)(" + N + " ? 1 : 0)"; case EBind::Enum: return "(int)" + N; case EBind::Object: return "(void*)" + N; default: return N; }
+        }
+        eastl::string SeRetCpp(const FFnBinding& FB)
+        {
+            if (FB.bVoid) { return "void"; }
+            if (FB.Ret.bEntity) { return "entt::entity"; }
+            switch (FB.Ret.Kind) { case EBind::Bool: return "bool"; case EBind::Enum: return FB.Ret.TargetCpp; case EBind::StructValue: return FB.Ret.TargetCpp; case EBind::Object: return FB.Ret.TargetCpp + "*"; default: return FB.Ret.Cpp; }
+        }
+        eastl::string SeRetAbiCpp(const FFnBinding& FB)
+        {
+            if (FB.bVoid) { return "void"; }
+            if (FB.Ret.bEntity) { return "uint32"; }
+            switch (FB.Ret.Kind) { case EBind::Bool: return "unsigned char"; case EBind::Enum: return "int"; case EBind::StructValue: return FB.Ret.TargetCpp; case EBind::Object: return "void*"; default: return FB.Ret.Cpp; }
+        }
+        eastl::string SeRetAbiToCpp(const FFnBinding& FB, const eastl::string& Expr)
+        {
+            if (FB.Ret.bEntity) { return "static_cast<entt::entity>(" + Expr + ")"; }
+            switch (FB.Ret.Kind) { case EBind::Bool: return "(" + Expr + " != 0)"; case EBind::Enum: return "(" + FB.Ret.TargetCpp + ")(" + Expr + ")"; case EBind::Object: return "static_cast<" + FB.Ret.TargetCpp + "*>(" + Expr + ")"; default: return Expr; }
+        }
+
+        // Emits the C# side of one ScriptEvent into the wrapper class: a private [NativeCall] base partial (runs
+        // the C++ default), the overridable `virtual` (default body calls it), and the reverse dispatcher.
+        void EmitScriptEventCSharp(FCodeWriter& Writer, const FScriptEvent& E, const eastl::string& Friendly,
+            const eastl::string& Module, const eastl::string& ClassName)
+        {
+            const eastl::string& Name = E.Fn->Name;
+            const FFnBinding& FB = E.FB;
+            const eastl::string BaseThunk = "LuminaSharp_Base_" + Friendly + "_" + Name;
+            const eastl::string Dispatch  = "__ScriptEvent_" + Friendly + "_" + Name;
+
+            eastl::string SigParams, ArgNames;
+            for (size_t i = 0; i < FB.Args.size(); ++i)
+            {
+                if (i) { SigParams += ", "; ArgNames += ", "; }
+                SigParams += FB.Args[i].CSharp + " " + ArgIndexName('a', i);
+                ArgNames  += ArgIndexName('a', i);
+            }
+            const eastl::string RetCS = FB.bVoid ? eastl::string("void") : FB.Ret.CSharp;
+
+            Writer.Linef("[global::LuminaSharp.NativeCall(Module = \"%s\", EntryPoint = \"%s\")]", Module.c_str(), BaseThunk.c_str());
+            Writer.Linef("private partial %s __base_%s(%s);", RetCS.c_str(), Name.c_str(), SigParams.c_str());
+
+            Writer.Linef("[global::LuminaSharp.ScriptEvent(%d)]", E.Index);
+            Writer.Linef("public virtual %s %s(%s)", RetCS.c_str(), Name.c_str(), SigParams.c_str());
+            Writer.BeginBlock();
+            Writer.Linef("%s__base_%s(%s);", FB.bVoid ? "" : "return ", Name.c_str(), ArgNames.c_str());
+            Writer.EndBlock();
+
+            eastl::string AbiParams, CallArgs;
+            for (size_t i = 0; i < FB.Args.size(); ++i)
+            {
+                AbiParams += ", " + SeArgAbiCS(FB.Args[i]) + " " + ArgIndexName('a', i);
+                if (i) { CallArgs += ", "; }
+                CallArgs += SeArgFromAbiCS(FB.Args[i], ArgIndexName('a', i));
+            }
+            Writer.Line("[global::LuminaSharp.ManagedExport]");
+            Writer.Line("[global::System.Runtime.InteropServices.UnmanagedCallersOnly(CallConvs = new[] { typeof(global::System.Runtime.CompilerServices.CallConvStdcall) })]");
+            Writer.Linef("internal static %s %s(global::System.IntPtr __handle%s)", SeRetAbiCS(FB).c_str(), Dispatch.c_str(), AbiParams.c_str());
+            Writer.BeginBlock();
+            Writer.Line("try");
+            Writer.BeginBlock();
+            Writer.Linef("if (global::System.Runtime.InteropServices.GCHandle.FromIntPtr(__handle).Target is %s __o)", ClassName.c_str());
+            Writer.BeginBlock();
+            if (FB.bVoid)
+            {
+                Writer.Linef("__o.%s(%s);", Name.c_str(), CallArgs.c_str());
+            }
+            else
+            {
+                // Store the result first: the object-return conversion references it twice (null-check + .Handle),
+                // and we must not invoke the override twice.
+                Writer.Linef("var __r = __o.%s(%s);", Name.c_str(), CallArgs.c_str());
+                Writer.Linef("return %s;", SeRetToAbiCS(FB, "__r").c_str());
+            }
+            Writer.EndBlock();
+            Writer.EndBlock();
+            Writer.Line("catch (global::System.Exception __ex) { global::LuminaSharp.Interop.LogException(__ex); }");
+            if (!FB.bVoid) { Writer.Line("return default;"); }
+            Writer.EndBlock();
+        }
+
+        // Emits the native side for a Scriptable class: per-event base thunks, a forwarding shim subclass, and a
+        // static registration so the host can mint a CClass(super = this class) using the shim.
+        void EmitScriptableNative(FCodeWriter& Writer, const FReflectedStruct& Type, const FReflectionDatabase& Db, const char* Qualified, const char* Api)
+        {
+            const eastl::string Friendly = Names::FriendlyFromQualified(Type.QualifiedName);
+            const eastl::string Shim = Friendly + "__Script";
+
+            eastl::vector<FScriptEvent> Events;
+            CollectScriptEvents(Type, Db, Events);
+
+            // Base-call thunks (qualified, non-virtual) backing each event's C# default body.
+            for (const FScriptEvent& E : Events)
+            {
+                const FFnBinding& FB = E.FB;
+                eastl::string Params, CallArgs;
+                for (size_t i = 0; i < FB.Args.size(); ++i)
+                {
+                    if (i) { Params += ", "; CallArgs += ", "; }
+                    Params += SeArgAbiCpp(FB.Args[i]) + " " + ArgIndexName('A', i);
+                    // ABI param -> the C++ base call argument (inverse of SeArgCppToAbi).
+                    const FArg& A = FB.Args[i];
+                    const eastl::string An = ArgIndexName('A', i);
+                    if (A.bEntity)                   { CallArgs += "static_cast<entt::entity>(" + An + ")"; }
+                    else if (A.Kind == EBind::Bool)  { CallArgs += "(" + An + " != 0)"; }
+                    else if (A.Kind == EBind::Enum)  { CallArgs += "(" + A.TargetCpp + ")" + An; }
+                    else if (A.Kind == EBind::Object){ CallArgs += "static_cast<" + A.TargetCpp + "*>(" + An + ")"; }
+                    else                             { CallArgs += An; }
+                }
+                const eastl::string Call = eastl::string("Self->") + Qualified + "::" + E.Fn->Name + "(" + CallArgs + ")";
+                const eastl::string ParamSig = Params.empty() ? eastl::string() : (", " + Params);
+                if (FB.bVoid)
+                {
+                    Writer.Linef("extern \"C\" %s void LuminaSharp_Base_%s_%s(%s* Self%s) { %s; }",
+                        Api, Friendly.c_str(), E.Fn->Name.c_str(), Qualified, ParamSig.c_str(), Call.c_str());
+                }
+                else
+                {
+                    // Return the ABI form (inverse of SeRetAbiToCpp): bool->0/1, enum->int, entity->uint32, else by value.
+                    eastl::string RetExpr;
+                    if (FB.Ret.bEntity)                    { RetExpr = "return (uint32)(" + Call + ");"; }
+                    else if (FB.Ret.Kind == EBind::Bool)   { RetExpr = "return (" + Call + ") ? 1 : 0;"; }
+                    else if (FB.Ret.Kind == EBind::Enum)   { RetExpr = "return (int)(" + Call + ");"; }
+                    else if (FB.Ret.Kind == EBind::Object) { RetExpr = "return (void*)(" + Call + ");"; }
+                    else                                   { RetExpr = "return " + Call + ";"; }
+                    Writer.Linef("extern \"C\" %s %s LuminaSharp_Base_%s_%s(%s* Self%s) { %s }",
+                        Api, SeRetAbiCpp(FB).c_str(), Friendly.c_str(), E.Fn->Name.c_str(), Qualified, ParamSig.c_str(), RetExpr.c_str());
+                }
+            }
+
+            // The forwarding shim + its registration (anonymous namespace: one per Scriptable class, TU-local).
+            Writer.Line("namespace");
+            Writer.Line("{");
+            Writer.Linef("    class %s final : public %s", Shim.c_str(), Qualified);
+            Writer.Line("    {");
+            Writer.Line("    public:");
+            Writer.Line("        Lumina::FScriptableBridge __Bridge;");
+            Writer.Linef("        virtual void PostInitProperties() override { %s::PostInitProperties(); __Bridge.Attach(this); }", Qualified);
+            Writer.Linef("        virtual ~%s() override { __Bridge.Destroy(); }", Shim.c_str());
+            for (const FScriptEvent& E : Events)
+            {
+                const FFnBinding& FB = E.FB;
+                const eastl::string& Name = E.Fn->Name;
+                eastl::string CppParams, BaseArgs, AbiTypes, AbiArgs;
+                for (size_t i = 0; i < FB.Args.size(); ++i)
+                {
+                    const eastl::string An = ArgIndexName('A', i);
+                    if (i) { CppParams += ", "; BaseArgs += ", "; }
+                    CppParams += SeArgCppParam(FB.Args[i]) + " " + An;
+                    BaseArgs  += An;
+                    AbiTypes  += ", " + SeArgAbiCpp(FB.Args[i]);
+                    AbiArgs   += ", " + SeArgCppToAbi(FB.Args[i], An);
+                }
+                const eastl::string BaseCall = eastl::string(Qualified) + "::" + Name + "(" + BaseArgs + ")";
+                Writer.Linef("        virtual %s %s(%s) override", SeRetCpp(FB).c_str(), Name.c_str(), CppParams.c_str());
+                Writer.Line("        {");
+                Writer.Linef("            if (__Bridge.ShouldDispatch(%d))", E.Index);
+                Writer.Line("            {");
+                Writer.Linef("                typedef %s (*FThunk)(void*%s);", SeRetAbiCpp(FB).c_str(), AbiTypes.c_str());
+                Writer.Linef("                static FThunk __t = (FThunk)Lumina::DotNet::ResolveManagedExport(\"__ScriptEvent_%s_%s\");", Friendly.c_str(), Name.c_str());
+                if (FB.bVoid)
+                {
+                    Writer.Linef("                if (__t) { __t(__Bridge.Handle%s); return; }", AbiArgs.c_str());
+                }
+                else
+                {
+                    const eastl::string ThunkCall = eastl::string("__t(__Bridge.Handle") + AbiArgs + ")";
+                    Writer.Linef("                if (__t) { return %s; }", SeRetAbiToCpp(FB, ThunkCall).c_str());
+                }
+                Writer.Line("            }");
+                Writer.Linef("            %s%s;", FB.bVoid ? "" : "return ", BaseCall.c_str());
+                Writer.Line("        }");
+            }
+            Writer.Line("    };");
+            Writer.Linef("    struct __ScriptableReg_%s", Friendly.c_str());
+            Writer.Line("    {");
+            Writer.Linef("        __ScriptableReg_%s()", Friendly.c_str());
+            Writer.Line("        {");
+            Writer.Line("            Lumina::FScriptableNativeInfo __I;");
+            Writer.Linef("            __I.GetBaseClass = []() -> Lumina::CClass* { return %s::StaticClass(); };", Qualified);
+            Writer.Linef("            __I.Factory = [](void* __m) -> Lumina::CObject* { return new (__m) %s(); };", Shim.c_str());
+            Writer.Linef("            __I.ShimSize = (uint32)sizeof(%s);", Shim.c_str());
+            Writer.Linef("            __I.ShimAlign = (uint32)alignof(%s);", Shim.c_str());
+            Writer.Linef("            Lumina::FScriptableRegistry::RegisterNative(\"%s\", __I);", Type.DisplayName.c_str());
+            Writer.Line("        }");
+            Writer.Line("    };");
+            Writer.Linef("    static __ScriptableReg_%s __scriptableReg_%s;", Friendly.c_str(), Friendly.c_str());
+            Writer.Line("}");
         }
 
         // ---- SCRIPT_EXPORT free functions (no owning type) ----
@@ -1578,14 +1871,16 @@ namespace Lumina::Reflection
             return;
         }
 
-        const eastl::string Module = (Header->Project != nullptr) ? Header->Project->Name : eastl::string("Runtime");
-        const eastl::string Api = Names::ProjectApiMacro(Module);
+        // Interop thunks are resolved by name at runtime from whatever binary they land in (their module DLL
+        // in modular builds, the exe in monolithic), so they always use the always-dllexport LUMINA_SCRIPT_API
+        // rather than the per-module API macro (which is empty under LUMINA_MONOLITHIC). See ModuleAPI.h.
+        const char* Api = "LUMINA_SCRIPT_API";
         for (const auto& Fn : It->second)
         {
             FFnBinding FB;
             if (ClassifyFreeFunction(*Fn, Database, FB))
             {
-                EmitNativeFreeFunction(Writer, *Fn, FB, Api.c_str());
+                EmitNativeFreeFunction(Writer, *Fn, FB, Api);
             }
         }
     }
@@ -1659,10 +1954,30 @@ namespace Lumina::Reflection
         // Opaque handle wrapper: derives its reflected base's wrapper (inheriting its members) and
         // adds its own bound properties.
         const eastl::string Base = CSharpBase(Class, Database, "global::LuminaSharp.NativeObject");
+        const bool bScriptable = Class.HasMetadata("Scriptable");
+        if (bScriptable)
+        {
+            // Marks the wrapper as a user-subclassable base; the runtime discovers Scriptable subclasses by it.
+            Writer.Line("[global::LuminaSharp.ScriptableType]");
+        }
         Writer.Linef("[global::LuminaSharp.NativeType(\"%s\")]", Class.DisplayName.c_str());
         Writer.Linef("public unsafe partial class %s : %s", Class.DisplayName.c_str(), Base.c_str());
         Writer.BeginBlock();
         Writer.Linef("internal %s(System.IntPtr handle) : base(handle) { }", Class.DisplayName.c_str());
+        // Managed-first ctor: a user subclass (or the Scriptable host) Activator-creates the instance, then the
+        // native object is bound via BindNativeHandle. Chains to the base's parameterless ctor up to NativeObject().
+        Writer.Linef("protected %s() : base() { }", Class.DisplayName.c_str());
+        if (bScriptable)
+        {
+            const eastl::string Module = ModuleOf(Class);
+            const eastl::string Friendly = Names::FriendlyFromQualified(Class.QualifiedName);
+            eastl::vector<FScriptEvent> Events;
+            CollectScriptEvents(Class, Database, Events);
+            for (const FScriptEvent& E : Events)
+            {
+                EmitScriptEventCSharp(Writer, E, Friendly, Module, Class.DisplayName);
+            }
+        }
         EmitProperties(Writer, Class, Database);
         EmitFunctions(Writer, Class, Database);
         Writer.EndBlock();
@@ -1712,10 +2027,10 @@ namespace Lumina::Reflection
 
         const eastl::string Friendly = Names::FriendlyFromQualified(Type.QualifiedName);
         const char* Qualified = Type.QualifiedName.c_str();
-        // Export from the module that defines the type (RUNTIME_API/EDITOR_API/SANDBOX_API/...) so a
-        // thunk landing in another module's TU is a dllexport there, not a forbidden dllimport define.
-        const eastl::string Api = Names::ProjectApiMacro(ModuleOf(Type));
-        const char* ApiMacro = Api.c_str();
+        // Interop thunks are resolved by name at runtime from whatever binary they land in (their module
+        // DLL in modular builds, the exe in monolithic), so they use the always-dllexport LUMINA_SCRIPT_API
+        // rather than the per-module API macro (empty under LUMINA_MONOLITHIC). See ModuleAPI.h.
+        const char* ApiMacro = "LUMINA_SCRIPT_API";
 
         for (const auto& Prop : Type.Props)
         {
@@ -1731,5 +2046,11 @@ namespace Lumina::Reflection
         }
 
         EmitNativeFunctions(Writer, Type, Qualified, ApiMacro, Database);
+
+        // Scriptable class: emit the forwarding shim subclass + base thunks + the CClass-minting registration.
+        if (Type.Type == FReflectedType::EType::Class && Type.HasMetadata("Scriptable"))
+        {
+            EmitScriptableNative(Writer, Type, Database, Qualified, ApiMacro);
+        }
     }
 }

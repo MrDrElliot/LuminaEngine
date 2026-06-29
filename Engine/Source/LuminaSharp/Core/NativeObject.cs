@@ -4,21 +4,29 @@ namespace LuminaSharp;
 
 /// <summary>
 /// Base for the generated opaque wrappers around native CObjects. Holds a WEAK handle (the CObject's
-/// object-array index + generation) rather than a bare pointer, so a wrapper to a since-destroyed object
-/// fails loudly instead of silently reading reclaimed memory: <see cref="IsValid"/> reports liveness (like
-/// Unity's <c>obj != null</c>), and every generated property/method accessor reads through
-/// <see cref="Handle"/>, which re-resolves and throws once the object is freed. Engine-constructed only,
-/// instances are handed out by the engine (Asset.Load, the generated getters, ...), never <c>new</c>'d by
-/// user code. CObjects don't move while alive, so re-resolving returns the same pointer; it's purely a
-/// generation-validated liveness gate.
+/// object-array index + generation) rather than a bare pointer.
 /// </summary>
 public class NativeObject
 {
-    private readonly IntPtr RawHandle;       // pointer captured at construction; the fallback when untracked
-    private readonly int ObjectIndex;        // GObjectArray slot, or -1 if the object isn't array-tracked
-    private readonly int ObjectGeneration;   // slot generation at capture; a free/reuse bumps it -> stale
+    private IntPtr RawHandle;            // pointer captured at construction; the fallback when untracked
+    private int ObjectIndex = -1;        // GObjectArray slot, or -1 if the object isn't array-tracked
+    private int ObjectGeneration;        // slot generation at capture; a free/reuse bumps it -> stale
 
     internal NativeObject(IntPtr Handle)
+    {
+        BindNativeHandle(Handle);
+    }
+
+    /// <summary>Parameterless ctor for a managed-first subclass: a C# subclass of a <c>REFLECT(Scriptable)</c>
+    /// native class is Activator-created, then paired to its (already-constructed) native object via
+    /// <see cref="BindNativeHandle"/>. Until bound the wrapper is invalid.</summary>
+    protected NativeObject()
+    {
+    }
+
+    /// <summary>Pairs this wrapper with its native CObject after construction. Used by the Scriptable hosting
+    /// path, which creates the native object first, then binds the managed instance to it.</summary>
+    internal void BindNativeHandle(IntPtr Handle)
     {
         RawHandle = Handle;
         long Packed = Native.ObjectGetHandle(Handle);
@@ -26,9 +34,7 @@ public class NativeObject
         ObjectGeneration = (int)(Packed >> 32);
     }
 
-    /// <summary>True while the native CObject this wraps is still alive (index + generation validated
-    /// against the object array). Mirrors Unity's <c>obj != null</c>, check it before using a reference
-    /// you've held across frames, asset unloads, or other structural changes.</summary>
+    /// <summary>True while the native CObject this wraps is still alive. </summary>
     public bool IsValid => ObjectIndex < 0
         ? RawHandle != IntPtr.Zero
         : Native.ObjectResolve(ObjectIndex, ObjectGeneration) != IntPtr.Zero;
@@ -64,17 +70,57 @@ public class NativeObject
 }
 
 /// <summary>
-/// Base for the generated opaque wrappers around native structs that are NOT blittable (they hold
-/// FString/containers/smart-pointers, so they can't be mirrored by value). A wrapper is a VIEW onto a
-/// component living in the ECS (returned by Registry.Get/Emplace/View); writes through it persist.
-/// Engine-constructed only.
+/// Base for the generated opaque wrappers around native structs that are NOT blittable.
 /// </summary>
 public class NativeStruct
 {
-    internal IntPtr Handle;
+    private IntPtr RawHandle;
+
+    // When bound, Handle re-resolves the live component each access via the registry op-table instead of
+    // returning the cached pointer (see BindToEntity).
+    private bool Bound;
+    private ulong BoundWorld;
+    private uint BoundEntity;
+    private IntPtr BoundToken;
 
     internal NativeStruct(IntPtr Handle)
     {
-        this.Handle = Handle;
+        RawHandle = Handle;
+    }
+
+    /// <summary>The live native component pointer every generated accessor reads/writes through. A bound
+    /// wrapper re-resolves it per access (throwing if the component was removed); an unbound view returns
+    /// the pointer it was created with. The setter feeds the view-reuse path (one wrapper, reassigned per
+    /// iteration).</summary>
+    internal IntPtr Handle
+    {
+        get
+        {
+            if (!Bound)
+            {
+                return RawHandle;
+            }
+            IntPtr Pointer = Native.GetComponent(BoundWorld, BoundEntity, BoundToken);
+            if (Pointer == IntPtr.Zero)
+            {
+                throw new InvalidOperationException(
+                    "Use of a [RequireComponent] view whose component is no longer on the entity " +
+                    "(it was removed). Re-add it, or guard with Registry.Has<T>.");
+            }
+            return Pointer;
+        }
+        set => RawHandle = value;
+    }
+
+    /// <summary>Binds this wrapper to an entity so <see cref="Handle"/> re-resolves the live component on
+    /// each access instead of caching a pointer that a later structural change could dangle. Used by the
+    /// [RequireComponent] injector, which must store the wrapper in a script field for its whole lifetime.
+    /// Token is the component's native op-table token.</summary>
+    internal void BindToEntity(ulong World, uint Entity, IntPtr Token)
+    {
+        Bound = true;
+        BoundWorld = World;
+        BoundEntity = Entity;
+        BoundToken = Token;
     }
 }

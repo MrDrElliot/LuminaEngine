@@ -56,9 +56,14 @@ public static unsafe partial class Native
     [NativeCall] public static partial void RegistryDisconnect(ulong World, IntPtr Ops, int Kind, IntPtr Handle);
     [NativeCall] public static partial void RegistryPatch(ulong World, uint Entity, IntPtr Ops);
 
-    // Script-to-script: the managed GCHandle (as IntPtr) of the EntityScript bound to an entity, or 0.
-    // Resolve with GCHandle.FromIntPtr(...).Target. Backs Registry.GetScript<T>.
+    // Script-to-script: the managed GCHandle (as IntPtr) of the first EntityScript bound to an entity, or 0.
     [NativeCall] public static partial IntPtr GetEntityScriptHandle(ulong World, uint Entity);
+
+    // Appends a script of the named class to an entity and binds it; returns the new instance's handle.
+    [NativeCall] public static partial IntPtr AddEntityScript(ulong World, uint Entity, string ClassName);
+
+    // Removes the slot holding the given instance handle, destroying the managed instance.
+    [NativeCall] public static partial void RemoveEntityScript(ulong World, uint Entity, IntPtr Instance);
 
     // entt::runtime_view iteration for the C# View<...>. Native gathers a CHUNK of entities + parallel
     // component pointers per call (one crossing per chunk). Hand-written delegate* binds: the chunk

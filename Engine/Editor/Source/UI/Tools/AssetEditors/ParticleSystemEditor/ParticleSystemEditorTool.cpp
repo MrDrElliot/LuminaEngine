@@ -58,16 +58,16 @@ namespace Lumina
         FAssetEditorTool::SetupWorldForTool();
 
         DirectionalLightEntity = World->ConstructEntity("Directional Light");
-        World->GetEntityRegistry().emplace<SDirectionalLightComponent>(DirectionalLightEntity);
-        World->GetEntityRegistry().emplace<SEnvironmentComponent>(DirectionalLightEntity);
-        World->GetEntityRegistry().emplace<SSkyLightComponent>(DirectionalLightEntity);
+        World->EmplaceComponent<SDirectionalLightComponent>(DirectionalLightEntity);
+        World->EmplaceComponent<SEnvironmentComponent>(DirectionalLightEntity);
+        World->EmplaceComponent<SSkyLightComponent>(DirectionalLightEntity);
 
         ParticleEntity = World->ConstructEntity("Particle System");
-        SParticleSystemComponent& ParticleComponent = World->GetEntityRegistry().emplace<SParticleSystemComponent>(ParticleEntity);
+        SParticleSystemComponent& ParticleComponent = World->EmplaceComponent<SParticleSystemComponent>(ParticleEntity);
         ParticleComponent.ParticleSystem = Cast<CParticleSystem>(Asset.Get());
 
-        STransformComponent& ParticleTransform = World->GetEntityRegistry().get<STransformComponent>(ParticleEntity);
-        STransformComponent& EditorTransform   = World->GetEntityRegistry().get<STransformComponent>(EditorEntity);
+        STransformComponent& ParticleTransform = World->GetComponent<STransformComponent>(ParticleEntity);
+        STransformComponent& EditorTransform   = World->GetComponent<STransformComponent>(EditorEntity);
         const FQuat LookRotation = Math::FindLookAtRotation(ParticleTransform.GetLocation(), EditorTransform.GetLocation());
         EditorTransform.SetRotation(LookRotation);
     }

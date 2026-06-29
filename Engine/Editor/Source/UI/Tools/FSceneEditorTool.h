@@ -85,7 +85,7 @@ namespace Lumina
         NODISCARD bool IsInspectingForeignWorld() const { return ObservedWorld != nullptr && ObservedWorld != World.Get(); }
 
         // The registry holding the scene's entities (the observed world's registry).
-        NODISCARD FEntityRegistry& GetSceneRegistry() const { return GetObservedWorld()->GetEntityRegistry(); }
+        NODISCARD FEntityRegistry& GetSceneRegistry() const { return ECS::GetWorldRegistry(*GetObservedWorld()); }
 
         // Outliner observes this world instead of World (null/own-world = follow World). Subclasses
         // that switch worlds set it; the base only reads it through GetObservedWorld/GetSceneRegistry.

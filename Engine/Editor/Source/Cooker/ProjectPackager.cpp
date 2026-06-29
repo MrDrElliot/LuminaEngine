@@ -8,6 +8,7 @@
 #include "Log/Log.h"
 #include "Paths/Paths.h"
 #include "Platform/Process/PlatformProcess.h"
+#include "Scripting/DotNet/DotNetHost.h"
 
 #include <fstream>
 
@@ -255,6 +256,126 @@ namespace Lumina
             }
             return Copied;
         }
+
+        // Recursively copies a directory tree (overwriting existing files). Returns the file count copied.
+        size_t CopyDirectoryRecursive(const std::filesystem::path& Src, const std::filesystem::path& Dst)
+        {
+            std::error_code Ec;
+            if (!std::filesystem::exists(Src, Ec))
+            {
+                return 0;
+            }
+            size_t Count = 0;
+            std::filesystem::create_directories(Dst, Ec);
+            for (const auto& Entry : std::filesystem::recursive_directory_iterator(Src, Ec))
+            {
+                const std::filesystem::path Rel    = std::filesystem::relative(Entry.path(), Src, Ec);
+                const std::filesystem::path Target = Dst / Rel;
+                if (Entry.is_directory())
+                {
+                    std::filesystem::create_directories(Target, Ec);
+                }
+                else if (Entry.is_regular_file())
+                {
+                    std::filesystem::create_directories(Target.parent_path(), Ec);
+                    std::filesystem::copy_file(Entry.path(), Target, std::filesystem::copy_options::overwrite_existing, Ec);
+                    if (!Ec)
+                    {
+                        ++Count;
+                    }
+                }
+            }
+            return Count;
+        }
+
+        // Stages the C# scripting payload a packaged (monolithic) game needs at runtime, mirroring the
+        // exe-relative layout DotNetHost::Initialize + DotNet::LoadCookedScripts probe:
+        //   - DotNet/Managed/{LuminaSharp.dll, .runtimeconfig.json, Roslyn + deps}  (managed bootstrap)
+        //   - External/DotNet/runtime/<rid>/...                                     (bundled CoreCLR + hostfxr)
+        //   - DotNet/Scripts/<Unit>.dll + scripts.manifest.json                     (prebuilt user/plugin scripts)
+        void CopyDotNetPayload(const std::filesystem::path& EngineInstallDir,
+                               const std::filesystem::path& BinariesDir,
+                               const std::filesystem::path& DestDir,
+                               const TFunction<void(FStringView)>& LogFunc)
+        {
+            std::error_code Ec;
+
+            // 1. Managed bootstrap assembly + its dependency closure (Roslyn, runtimeconfig, deps.json).
+            const std::filesystem::path ManagedSrc = BinariesDir / "DotNet" / "Managed";
+            if (std::filesystem::exists(ManagedSrc, Ec))
+            {
+                const size_t N = CopyDirectoryRecursive(ManagedSrc, DestDir / "DotNet" / "Managed");
+                Log(LogFunc, FString().sprintf("DotNet: staged managed bootstrap (%zu file(s)).", N).c_str());
+            }
+            else
+            {
+                Log(LogFunc, FString().sprintf("DotNet: [warn] managed bootstrap not found at %s; C# disabled in package.", ManagedSrc.string().c_str()).c_str());
+            }
+
+            // 2. Bundled .NET runtime (whole tree so whatever <rid> the host resolves is present).
+            const std::filesystem::path RuntimeSrc = EngineInstallDir / "External" / "DotNet" / "runtime";
+            if (std::filesystem::exists(RuntimeSrc, Ec))
+            {
+                Log(LogFunc, "DotNet: copying bundled .NET runtime (this can take a moment)...");
+                const size_t N = CopyDirectoryRecursive(RuntimeSrc, DestDir / "External" / "DotNet" / "runtime");
+                Log(LogFunc, FString().sprintf("DotNet: staged .NET runtime (%zu file(s)).", N).c_str());
+            }
+            else
+            {
+                Log(LogFunc, FString().sprintf("DotNet: [warn] bundled runtime not found at %s; C# disabled in package.", RuntimeSrc.string().c_str()).c_str());
+            }
+
+            // 3. Prebuilt script assemblies + the manifest the cooked loader reads.
+            TVector<DotNet::FPackagedScriptUnit> Units;
+            DotNet::GatherScriptUnitsForPackaging(Units);
+
+            const std::filesystem::path ScriptsDst = DestDir / "DotNet" / "Scripts";
+            FString Manifest = "{\n  \"Units\": [\n";
+            size_t Staged = 0;
+            for (const DotNet::FPackagedScriptUnit& Unit : Units)
+            {
+                const std::filesystem::path DllSrc(Unit.DllSourcePath.c_str());
+                if (Unit.DllSourcePath.empty() || !std::filesystem::exists(DllSrc, Ec))
+                {
+                    continue; // unit had no .cs / failed to emit -> nothing to ship
+                }
+                const FString DllName = Unit.Name + ".dll";
+                if (!CopyFileTo(DllSrc, ScriptsDst / DllName.c_str()))
+                {
+                    Log(LogFunc, FString().sprintf("DotNet: [warn] failed to stage script DLL %s", DllName.c_str()).c_str());
+                    continue;
+                }
+
+                if (Staged > 0)
+                {
+                    Manifest += ",\n";
+                }
+                Manifest += FString().sprintf("    { \"Name\": \"%s\", \"Dll\": \"%s\", \"Deps\": [",
+                    Unit.Name.c_str(), DllName.c_str());
+                for (size_t i = 0; i < Unit.Deps.size(); ++i)
+                {
+                    Manifest += FString().sprintf("%s\"%s\"", (i == 0 ? "" : ", "), Unit.Deps[i].c_str());
+                }
+                Manifest += "] }";
+                ++Staged;
+            }
+            Manifest += "\n  ]\n}\n";
+
+            if (Staged > 0)
+            {
+                std::filesystem::create_directories(ScriptsDst, Ec);
+                std::ofstream Out(ScriptsDst / "scripts.manifest.json", std::ios::binary | std::ios::trunc);
+                if (Out)
+                {
+                    Out.write(Manifest.c_str(), (std::streamsize)Manifest.size());
+                }
+                Log(LogFunc, FString().sprintf("DotNet: staged %zu prebuilt script assembly(ies) + manifest.", Staged).c_str());
+            }
+            else
+            {
+                Log(LogFunc, "DotNet: no C# script assemblies to stage (project ships no scripts).");
+            }
+        }
     }
 
     FPackageBuildResult FProjectPackager::BuildAndCopyOnly(
@@ -319,6 +440,14 @@ namespace Lumina
             return Result;
         }
         Log(LogFunc, FString().sprintf("Copied %zu runtime files.", Copied).c_str());
+
+        // Stage the C# scripting payload (managed bootstrap, bundled .NET runtime, prebuilt script DLLs +
+        // manifest) so the cooked game can boot CoreCLR and load its scripts without the editor/dev tree.
+        CopyDotNetPayload(
+            std::filesystem::path(Paths::GetEngineInstallDirectory().c_str()),
+            BinariesDir,
+            DestDir,
+            LogFunc);
 
         Result.bSuccess = true;
         return Result;

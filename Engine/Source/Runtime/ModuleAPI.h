@@ -12,6 +12,14 @@
 	#define SANDBOX_API
 #endif
 
+// C#<->native interop thunks (the reflector-generated LuminaSharp_* thunks + the hand-written
+// LUMINA_DOTNET_EXPORT ones) are resolved by NAME at runtime via GetProcAddress / NativeLibrary.TryGetExport,
+// never linked at compile time. They must therefore live in an export table in EVERY build mode: their
+// owning module's DLL in modular, or the exe itself in monolithic (Shipping whole-archives every module
+// .obj into the exe, and an exe can carry an export table). So this is ALWAYS dllexport, regardless of
+// LUMINA_MONOLITHIC and regardless of which module's TU the thunk lands in.
+#define LUMINA_SCRIPT_API DLL_EXPORT
+
 // Runtime
 #ifndef RUNTIME_API
 	#ifdef RUNTIME_EXPORTS
@@ -38,5 +46,10 @@
 		#define SANDBOX_API DLL_IMPORT
 	#endif
 #endif
+
+#else // REFLECTION_PARSER
+
+	// The libclang frontend never sees __declspec; keep the interop macro empty while parsing.
+	#define LUMINA_SCRIPT_API
 
 #endif // REFLECTION_PARSER

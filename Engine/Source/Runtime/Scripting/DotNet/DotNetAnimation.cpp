@@ -25,7 +25,7 @@ LUMINA_DOTNET_EXPORT(void, Animation_Play)(uint64 World, uint32 Entity, void* An
         return;
     }
     CAnimation* Clip = static_cast<CAnimation*>(AnimationPtr);
-    SSimpleAnimationComponent& Comp = W->GetEntityRegistry().get_or_emplace<SSimpleAnimationComponent>(AsEntity(Entity));
+    SSimpleAnimationComponent& Comp = W->GetOrEmplaceComponent<SSimpleAnimationComponent>(AsEntity(Entity));
     Comp.PlayAnimation(Clip, bLoop != 0, Speed);
 }
 
@@ -36,7 +36,7 @@ LUMINA_DOTNET_EXPORT(void, Animation_Stop)(uint64 World, uint32 Entity)
     {
         return;
     }
-    if (SSimpleAnimationComponent* Comp = W->GetEntityRegistry().try_get<SSimpleAnimationComponent>(AsEntity(Entity)))
+    if (SSimpleAnimationComponent* Comp = W->TryGetComponent<SSimpleAnimationComponent>(AsEntity(Entity)))
     {
         Comp->Stop();
     }
@@ -49,7 +49,7 @@ LUMINA_DOTNET_EXPORT(void, Animation_Pause)(uint64 World, uint32 Entity)
     {
         return;
     }
-    if (SSimpleAnimationComponent* Comp = W->GetEntityRegistry().try_get<SSimpleAnimationComponent>(AsEntity(Entity)))
+    if (SSimpleAnimationComponent* Comp = W->TryGetComponent<SSimpleAnimationComponent>(AsEntity(Entity)))
     {
         Comp->Pause();
     }
@@ -62,7 +62,7 @@ LUMINA_DOTNET_EXPORT(void, Animation_Resume)(uint64 World, uint32 Entity)
     {
         return;
     }
-    if (SSimpleAnimationComponent* Comp = W->GetEntityRegistry().try_get<SSimpleAnimationComponent>(AsEntity(Entity)))
+    if (SSimpleAnimationComponent* Comp = W->TryGetComponent<SSimpleAnimationComponent>(AsEntity(Entity)))
     {
         Comp->Resume();
     }
@@ -75,7 +75,7 @@ LUMINA_DOTNET_EXPORT(int32, Animation_IsPlaying)(uint64 World, uint32 Entity)
     {
         return 0;
     }
-    const SSimpleAnimationComponent* Comp = W->GetEntityRegistry().try_get<SSimpleAnimationComponent>(AsEntity(Entity));
+    const SSimpleAnimationComponent* Comp = W->TryGetComponent<SSimpleAnimationComponent>(AsEntity(Entity));
     return (Comp != nullptr && Comp->IsPlaying()) ? 1 : 0;
 }
 
@@ -86,7 +86,7 @@ LUMINA_DOTNET_EXPORT(int32, Animation_IsFinished)(uint64 World, uint32 Entity)
     {
         return 0;
     }
-    const SSimpleAnimationComponent* Comp = W->GetEntityRegistry().try_get<SSimpleAnimationComponent>(AsEntity(Entity));
+    const SSimpleAnimationComponent* Comp = W->TryGetComponent<SSimpleAnimationComponent>(AsEntity(Entity));
     return (Comp != nullptr && Comp->IsFinished()) ? 1 : 0;
 }
 
@@ -97,7 +97,7 @@ LUMINA_DOTNET_EXPORT(void, Animation_SetSpeed)(uint64 World, uint32 Entity, floa
     {
         return;
     }
-    if (SSimpleAnimationComponent* Comp = W->GetEntityRegistry().try_get<SSimpleAnimationComponent>(AsEntity(Entity)))
+    if (SSimpleAnimationComponent* Comp = W->TryGetComponent<SSimpleAnimationComponent>(AsEntity(Entity)))
     {
         Comp->PlaybackSpeed = Speed;
     }
@@ -110,7 +110,7 @@ LUMINA_DOTNET_EXPORT(void, Animation_SetTime)(uint64 World, uint32 Entity, float
     {
         return;
     }
-    if (SSimpleAnimationComponent* Comp = W->GetEntityRegistry().try_get<SSimpleAnimationComponent>(AsEntity(Entity)))
+    if (SSimpleAnimationComponent* Comp = W->TryGetComponent<SSimpleAnimationComponent>(AsEntity(Entity)))
     {
         Comp->CurrentTime = Time;
         Comp->bDirty = true;
@@ -124,7 +124,7 @@ LUMINA_DOTNET_EXPORT(float, Animation_GetTime)(uint64 World, uint32 Entity)
     {
         return 0.0f;
     }
-    const SSimpleAnimationComponent* Comp = W->GetEntityRegistry().try_get<SSimpleAnimationComponent>(AsEntity(Entity));
+    const SSimpleAnimationComponent* Comp = W->TryGetComponent<SSimpleAnimationComponent>(AsEntity(Entity));
     return Comp != nullptr ? Comp->CurrentTime : 0.0f;
 }
 
@@ -137,7 +137,7 @@ LUMINA_DOTNET_EXPORT(void, Animation_SetFloat)(uint64 World, uint32 Entity, cons
     {
         return;
     }
-    if (SAnimationGraphComponent* Comp = W->GetEntityRegistry().try_get<SAnimationGraphComponent>(AsEntity(Entity)))
+    if (SAnimationGraphComponent* Comp = W->TryGetComponent<SAnimationGraphComponent>(AsEntity(Entity)))
     {
         Comp->SetFloat(FName(FStringView(Name, (size_t)Length)), Value);
     }
@@ -150,7 +150,7 @@ LUMINA_DOTNET_EXPORT(float, Animation_GetFloat)(uint64 World, uint32 Entity, con
     {
         return Default;
     }
-    const SAnimationGraphComponent* Comp = W->GetEntityRegistry().try_get<SAnimationGraphComponent>(AsEntity(Entity));
+    const SAnimationGraphComponent* Comp = W->TryGetComponent<SAnimationGraphComponent>(AsEntity(Entity));
     return Comp != nullptr ? Comp->GetFloat(FName(FStringView(Name, (size_t)Length)), Default) : Default;
 }
 
@@ -161,7 +161,7 @@ LUMINA_DOTNET_EXPORT(void, Animation_SetBool)(uint64 World, uint32 Entity, const
     {
         return;
     }
-    if (SAnimationGraphComponent* Comp = W->GetEntityRegistry().try_get<SAnimationGraphComponent>(AsEntity(Entity)))
+    if (SAnimationGraphComponent* Comp = W->TryGetComponent<SAnimationGraphComponent>(AsEntity(Entity)))
     {
         Comp->SetBool(FName(FStringView(Name, (size_t)Length)), bValue != 0);
     }
@@ -174,7 +174,7 @@ LUMINA_DOTNET_EXPORT(int32, Animation_GetBool)(uint64 World, uint32 Entity, cons
     {
         return bDefault;
     }
-    const SAnimationGraphComponent* Comp = W->GetEntityRegistry().try_get<SAnimationGraphComponent>(AsEntity(Entity));
+    const SAnimationGraphComponent* Comp = W->TryGetComponent<SAnimationGraphComponent>(AsEntity(Entity));
     if (Comp == nullptr)
     {
         return bDefault;
@@ -189,6 +189,6 @@ LUMINA_DOTNET_EXPORT(int32, Animation_HasParameter)(uint64 World, uint32 Entity,
     {
         return 0;
     }
-    const SAnimationGraphComponent* Comp = W->GetEntityRegistry().try_get<SAnimationGraphComponent>(AsEntity(Entity));
+    const SAnimationGraphComponent* Comp = W->TryGetComponent<SAnimationGraphComponent>(AsEntity(Entity));
     return (Comp != nullptr && Comp->HasParameter(FName(FStringView(Name, (size_t)Length)))) ? 1 : 0;
 }

@@ -215,6 +215,27 @@ namespace Lumina
             }
             #endif
 
+            #if !WITH_EDITOR
+            {
+                LUMINA_PROFILE_SECTION_COLORED("RT Game Composite", tracy::Color::ForestGreen);
+
+                IRenderScene* Scene = nullptr;
+                if (FWorldContext* GameContext = GWorldManager->GetPrimaryGameContext())
+                {
+                    if (CWorld* GameWorld = GameContext->World.Get())
+                    {
+                        Scene = GameWorld->GetRenderer();
+                    }
+                }
+
+                const RHI::FTextureH Source = Scene ? Scene->GetDisplayTexture() : RHI::FTextureH{};
+                if (RHI::IsValid(Source))
+                {
+                    RHI::CmdBlitTexture(CL, Source, RHI::FTextureSlice{}, SwapImage, RHI::FTextureSlice{}, RHI::EFilter::Linear);
+                }
+            }
+            #endif
+
             {
                 LUMINA_PROFILE_SECTION_COLORED("RT Present", tracy::Color::Orange4);
                 RHI::Core::Present(Swapchain, CL);

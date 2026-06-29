@@ -79,10 +79,39 @@ public abstract class EntityScript
     /// <summary>This entity's transform, resolved once and cached (avoids a per-frame Get crossing + alloc).</summary>
     public Lumina.STransformComponent Transform => CachedTransform ??= Registry.Get<Lumina.STransformComponent>(Entity);
 
+    // The owning world handle and this instance's own GCHandle (as IntPtr), set at Create. Used by the
+    // multi-script index and RemoveScript.
+    internal ulong WorldHandle;
+    internal System.IntPtr SelfHandle;
+
     /// <summary>Get the script of type T on another entity (or this one), or null.</summary>
     protected T? GetScript<T>(Entity Target) where T : EntityScript
     {
         return Registry.GetScript<T>(Target);
+    }
+
+    /// <summary>Get the script of type T on this entity, or null.</summary>
+    protected T? GetScript<T>() where T : EntityScript
+    {
+        return Registry.GetScript<T>(Entity);
+    }
+
+    /// <summary>Every script of type T on this entity.</summary>
+    protected System.Collections.Generic.List<T> GetScripts<T>() where T : EntityScript
+    {
+        return Registry.GetScripts<T>(Entity);
+    }
+
+    /// <summary>Attach a new script of type T to this entity and return it (null on failure).</summary>
+    protected T? AddScript<T>() where T : EntityScript
+    {
+        return Registry.AddScript<T>(Entity);
+    }
+
+    /// <summary>Remove the first script of type T from this entity. Returns true if one was removed.</summary>
+    protected bool RemoveScript<T>() where T : EntityScript
+    {
+        return Registry.RemoveScript<T>(Entity);
     }
 
     /// <summary>Called once when the script instance is attached to its entity.</summary>

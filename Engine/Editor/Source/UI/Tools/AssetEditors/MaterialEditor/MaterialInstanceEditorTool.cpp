@@ -53,15 +53,15 @@ namespace Lumina
         FAssetEditorTool::SetupWorldForTool();
         
         DirectionalLightEntity = World->ConstructEntity("Directional Light");
-        World->GetEntityRegistry().emplace<SDirectionalLightComponent>(DirectionalLightEntity);
-        World->GetEntityRegistry().emplace<SEnvironmentComponent>(DirectionalLightEntity);
-        World->GetEntityRegistry().emplace<SSkyLightComponent>(DirectionalLightEntity);
+        World->EmplaceComponent<SDirectionalLightComponent>(DirectionalLightEntity);
+        World->EmplaceComponent<SEnvironmentComponent>(DirectionalLightEntity);
+        World->EmplaceComponent<SSkyLightComponent>(DirectionalLightEntity);
 
         MeshEntity = World->ConstructEntity("MeshEntity");
-        SStaticMeshComponent& StaticMeshComponent = World->GetEntityRegistry().emplace<SStaticMeshComponent>(MeshEntity);
+        SStaticMeshComponent& StaticMeshComponent = World->EmplaceComponent<SStaticMeshComponent>(MeshEntity);
         StaticMeshComponent.StaticMesh = CPrimitiveManager::Get().SphereMesh;
 
-        const STransformComponent& MeshTransform = World->GetEntityRegistry().get<STransformComponent>(MeshEntity);
+        const STransformComponent& MeshTransform = World->GetComponent<STransformComponent>(MeshEntity);
         SetOrbitTarget(MeshTransform.GetLocation(), 4.0f);
         SetCameraMode(EEditorCameraMode::Orbit);
 
@@ -72,7 +72,7 @@ namespace Lumina
         }
         else if (Material->GetMaterialType() == EMaterialType::PostProcess)
         {
-            World->GetEntityRegistry().get<SCameraComponent>(EditorEntity).PostProcessMaterials.push_back(Material);
+            World->GetComponent<SCameraComponent>(EditorEntity).PostProcessMaterials.push_back(Material);
         }
     }
 
@@ -89,7 +89,7 @@ namespace Lumina
 
     void FMaterialInstanceEditorTool::SetDebugMesh(EDebugMesh Mesh)
     {
-        SStaticMeshComponent& Component = World->GetEntityRegistry().get<SStaticMeshComponent>(MeshEntity);
+        SStaticMeshComponent& Component = World->GetComponent<SStaticMeshComponent>(MeshEntity);
         switch (Mesh)
         {
         case EDebugMesh::Sphere:    Component.StaticMesh = CPrimitiveManager::Get().SphereMesh;   break;

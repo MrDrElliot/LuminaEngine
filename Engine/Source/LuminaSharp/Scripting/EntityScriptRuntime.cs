@@ -12,9 +12,72 @@ internal sealed class EntityScriptRuntime
     private readonly TypeLibrary Library;
     private readonly HashSet<GCHandle> LiveHandles = new();
 
+    // Live scripts indexed by (world, entity) so GetScript/GetScripts resolve without a native crossing,
+    // and an entity can carry several scripts. Kept in sync with Create/Destroy/FreeAll.
+    private readonly Dictionary<(ulong World, uint Entity), List<EntityScript>> ByEntity = new();
+
+    // The runtime for the current generation; GetScript/AddScript route through it.
+    public static EntityScriptRuntime? Current { get; private set; }
+
     public EntityScriptRuntime(TypeLibrary Library)
     {
         this.Library = Library;
+        Current = this;
+    }
+
+    /// <summary>The first live script of type T on the entity, or null.</summary>
+    public T? GetScript<T>(ulong World, uint Entity) where T : EntityScript
+    {
+        if (ByEntity.TryGetValue((World, Entity), out List<EntityScript>? Scripts))
+        {
+            foreach (EntityScript Script in Scripts)
+            {
+                if (Script is T Typed)
+                {
+                    return Typed;
+                }
+            }
+        }
+        return null;
+    }
+
+    /// <summary>Appends every live script of type T on the entity to Out.</summary>
+    public void CollectScripts<T>(ulong World, uint Entity, List<T> Out) where T : EntityScript
+    {
+        if (ByEntity.TryGetValue((World, Entity), out List<EntityScript>? Scripts))
+        {
+            foreach (EntityScript Script in Scripts)
+            {
+                if (Script is T Typed)
+                {
+                    Out.Add(Typed);
+                }
+            }
+        }
+    }
+
+    private void IndexAdd(ulong World, uint Entity, EntityScript Script)
+    {
+        (ulong, uint) Key = (World, Entity);
+        if (!ByEntity.TryGetValue(Key, out List<EntityScript>? Scripts))
+        {
+            Scripts = new List<EntityScript>();
+            ByEntity[Key] = Scripts;
+        }
+        Scripts.Add(Script);
+    }
+
+    private void IndexRemove(EntityScript Script)
+    {
+        (ulong, uint) Key = (Script.WorldHandle, Script.Entity.Id);
+        if (ByEntity.TryGetValue(Key, out List<EntityScript>? Scripts))
+        {
+            Scripts.Remove(Script);
+            if (Scripts.Count == 0)
+            {
+                ByEntity.Remove(Key);
+            }
+        }
     }
 
     public IReadOnlyCollection<string> TypeNames => Library.EntityScriptTypeNames;
@@ -51,6 +114,7 @@ internal sealed class EntityScriptRuntime
 
         Script.Entity = new Entity(Entity);
         Script.World = new Lumina.CWorld(new IntPtr(unchecked((long)World)));
+        Script.WorldHandle = World;
         Script.Description = Description;
 
         try
@@ -66,8 +130,10 @@ internal sealed class EntityScriptRuntime
         }
 
         GCHandle Handle = GCHandle.Alloc(Script);
+        Script.SelfHandle = GCHandle.ToIntPtr(Handle);
         LiveHandles.Add(Handle);
-        return GCHandle.ToIntPtr(Handle);
+        IndexAdd(World, Entity, Script);
+        return Script.SelfHandle;
     }
 
     public void OnReady(IntPtr Handle)
@@ -202,6 +268,7 @@ internal sealed class EntityScriptRuntime
             }
             Script.UnbindAllDelegates();
             Script.CancelDestroyToken();
+            IndexRemove(Script);
         }
 
         LiveHandles.Remove(Handle);
@@ -267,8 +334,20 @@ internal sealed class EntityScriptRuntime
         // Detach every managed delegate binding before this collectible generation unloads.
         DelegateBindings.PurgeAll();
 
-        foreach (GCHandle Handle in LiveHandles)
+        // Iterate a snapshot: a script's OnDetach may remove a sibling script (routing through Destroy,
+        // which mutates LiveHandles), which would otherwise throw "collection modified" mid-iteration.
+        // LiveHandles membership is the source of truth for "still alive": Destroy removes from it BEFORE
+        // freeing, so a handle no longer in the set has already been freed. We must consult it rather than
+        // GCHandle.IsAllocated, because GCHandle is a value type -- Destroy's Free() zeroes only its own
+        // struct copy, so this snapshot's copy would still report IsAllocated and double-free.
+        foreach (GCHandle Handle in new List<GCHandle>(LiveHandles))
         {
+            // Already destroyed (and OnDetach'd) by an earlier sibling's OnDetach; don't repeat either.
+            if (!LiveHandles.Contains(Handle))
+            {
+                continue;
+            }
+
             if (Handle.Target is EntityScript Script)
             {
                 try
@@ -284,12 +363,24 @@ internal sealed class EntityScriptRuntime
                 }
                 Script.CancelDestroyToken();
             }
-            if (Handle.IsAllocated)
+
+            // OnDetach may have destroyed siblings (or, rarely, this script itself). Only free if still
+            // present: Remove returns false when Destroy already pulled it, guarding against a double-free.
+            if (LiveHandles.Remove(Handle) && Handle.IsAllocated)
             {
                 Handle.Free();
             }
         }
         LiveHandles.Clear();
+        ByEntity.Clear();
+
+        // Drop the static link to this now-dead generation. Current lives in the non-collectible default
+        // ALC, so if it kept pointing here it would root this runtime's TypeLibrary (and its user Type
+        // objects) through the collectible ALC's unload GC loop, blocking the unload on every reload.
+        if (Current == this)
+        {
+            Current = null;
+        }
     }
 
     private static EntityScript? Resolve(IntPtr Pointer)

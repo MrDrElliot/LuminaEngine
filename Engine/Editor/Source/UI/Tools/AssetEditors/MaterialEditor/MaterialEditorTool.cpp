@@ -136,18 +136,18 @@ namespace Lumina
         World->GetRenderer()->GetSceneRenderSettings().bDrawBillboards = false;
 
         DirectionalLightEntity = World->ConstructEntity("Directional Light");
-        auto& Directional = World->GetEntityRegistry().emplace<SDirectionalLightComponent>(DirectionalLightEntity);
-        auto& Environment = World->GetEntityRegistry().emplace<SEnvironmentComponent>(DirectionalLightEntity);
-        World->GetEntityRegistry().emplace<SSkyLightComponent>(DirectionalLightEntity);
+        auto& Directional = World->EmplaceComponent<SDirectionalLightComponent>(DirectionalLightEntity);
+        auto& Environment = World->EmplaceComponent<SEnvironmentComponent>(DirectionalLightEntity);
+        World->EmplaceComponent<SSkyLightComponent>(DirectionalLightEntity);
 
         DirectionalEditor = MakeUnique<FPropertyTable>(&Directional, SDirectionalLightComponent::StaticStruct());
         EnvironmentEditor = MakeUnique<FPropertyTable>(&Environment, SEnvironmentComponent::StaticStruct());
 
         MeshEntity = World->ConstructEntity("MeshEntity");
-        SStaticMeshComponent& StaticMeshComponent = World->GetEntityRegistry().emplace<SStaticMeshComponent>(MeshEntity);
+        SStaticMeshComponent& StaticMeshComponent = World->EmplaceComponent<SStaticMeshComponent>(MeshEntity);
         StaticMeshComponent.StaticMesh = CPrimitiveManager::Get().SphereMesh;
 
-        const STransformComponent& MeshTransform = World->GetEntityRegistry().get<STransformComponent>(MeshEntity);
+        const STransformComponent& MeshTransform = World->GetComponent<STransformComponent>(MeshEntity);
         SetOrbitTarget(MeshTransform.GetLocation(), 4.0f);
         SetCameraMode(EEditorCameraMode::Orbit);
 
@@ -159,7 +159,7 @@ namespace Lumina
         CMaterialInterface* MaterialInterface = CastAsserted<CMaterialInterface>(Asset.Get());
         const EMaterialType MaterialType = MaterialInterface ? MaterialInterface->GetMaterialType() : EMaterialType::None;
 
-        SStaticMeshComponent& StaticMeshComponent = World->GetEntityRegistry().get<SStaticMeshComponent>(MeshEntity);
+        SStaticMeshComponent& StaticMeshComponent = World->GetComponent<SStaticMeshComponent>(MeshEntity);
         StaticMeshComponent.MaterialOverrides.clear();
 
         SCameraComponent* Camera = World->GetActiveCamera();
@@ -243,7 +243,7 @@ namespace Lumina
 
     void FMaterialEditorTool::SetDebugMesh(EDebugMesh Mesh, FStringView Path)
     {
-        SStaticMeshComponent& Component = World->GetEntityRegistry().get<SStaticMeshComponent>(MeshEntity);
+        SStaticMeshComponent& Component = World->GetComponent<SStaticMeshComponent>(MeshEntity);
         switch (Mesh)
         {
         case EDebugMesh::Sphere:    Component.StaticMesh = CPrimitiveManager::Get().SphereMesh;   break;

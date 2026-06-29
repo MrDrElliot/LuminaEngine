@@ -26,6 +26,11 @@ namespace Lumina
         // a module (e.g. the editor) registers more settings classes.
         void DiscoverAndLoadSettings();
 
+        // Force re-read of one already-loaded settings class's file section into its CDO. Use after new classes
+        // become available so class-reference properties (TSubclassOf) re-resolve -- e.g. a C# script reload mints
+        // a CGameInstance subclass that Project.GameInstanceClass names but couldn't resolve at first load.
+        void ReloadSettings(CClass* SettingsClass);
+
         // Re-serialize a settings class's CDO into its ConfigFile, preserving other sections.
         void SaveSettings(CClass* SettingsClass);
 
@@ -56,6 +61,10 @@ namespace Lumina
         const nlohmann::json* GetRaw(FStringView Key) const;
 
     private:
+
+        // Reads one (already-discovered) settings class's file section into its CDO and marks it loaded. The
+        // caller decides whether to skip already-loaded classes (DiscoverAndLoadSettings) or force (ReloadSettings).
+        void LoadSettingsForClass(CClass* Class);
 
         // Loads (and caches) a settings JSON file; returns an empty object if absent/unparseable.
         nlohmann::json& LoadSettingsFile(const FString& VFSPath);

@@ -43,7 +43,7 @@ namespace Lumina
         }
 
         CameraEntity = World->ConstructEntity("ThumbnailCamera");
-        SCameraComponent& Camera = World->GetEntityRegistry().emplace<SCameraComponent>(CameraEntity);
+        SCameraComponent& Camera = World->EmplaceComponent<SCameraComponent>(CameraEntity);
         Camera.SetAspectRatio(1.0f);
         World->SetActiveCamera(CameraEntity);
 
@@ -75,13 +75,13 @@ namespace Lumina
             return;
         }
 
-        STransformComponent& Transform = World->GetEntityRegistry().get<STransformComponent>(CameraEntity);
+        STransformComponent& Transform = World->GetComponent<STransformComponent>(CameraEntity);
         Transform.SetLocation(Position);
         const FQuat Rotation = Math::FindLookAtRotation(Target, Position);
         Transform.SetRotation(Rotation);
 
         // World is never ticked so CameraSystem doesn't run; set view directly here.
-        SCameraComponent& Camera = World->GetEntityRegistry().get<SCameraComponent>(CameraEntity);
+        SCameraComponent& Camera = World->GetComponent<SCameraComponent>(CameraEntity);
         Camera.SetFOV(FOVDegrees);
         Camera.SetAspectRatio(1.0f);
         const FVector3 Forward = Math::Normalize(Target - Position);

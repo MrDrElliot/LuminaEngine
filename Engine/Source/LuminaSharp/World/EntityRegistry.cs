@@ -128,15 +128,43 @@ public readonly struct EntityRegistry
     private static readonly unsafe IntPtr SignalThunkPtr =
         (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, uint, void>)&SignalThunk;
 
-    /// The live C# script of type T on the entity, or null. Re-fetch per use; do not cache across frames (a stored ref outlives a destroyed script).
+    /// The first live C# script of type T on the entity, or null. Re-fetch per use; do not cache across frames (a stored ref outlives a destroyed script).
     public T? GetScript<T>(Entity Entity) where T : EntityScript
     {
-        IntPtr Handle = Native.GetEntityScriptHandle(WorldHandle, Entity.Id);
-        if (Handle == IntPtr.Zero)
+        return EntityScriptRuntime.Current?.GetScript<T>(WorldHandle, Entity.Id);
+    }
+
+    /// Every live C# script of type T on the entity (empty if none). A fresh list per call.
+    public System.Collections.Generic.List<T> GetScripts<T>(Entity Entity) where T : EntityScript
+    {
+        var Result = new System.Collections.Generic.List<T>();
+        EntityScriptRuntime.Current?.CollectScripts(WorldHandle, Entity.Id, Result);
+        return Result;
+    }
+
+    /// Attach a new script of type T to the entity and return the live instance (null on failure).
+    public T? AddScript<T>(Entity Entity) where T : EntityScript
+    {
+        return AddScript(Entity, typeof(T).FullName!) as T;
+    }
+
+    /// Attach a script of the named class to the entity and return the live instance (null on failure).
+    public EntityScript? AddScript(Entity Entity, string ClassName)
+    {
+        IntPtr Handle = Native.AddEntityScript(WorldHandle, Entity.Id, ClassName);
+        return Handle != IntPtr.Zero ? GCHandle.FromIntPtr(Handle).Target as EntityScript : null;
+    }
+
+    /// Remove the first script of type T from the entity. Returns true if one was removed.
+    public bool RemoveScript<T>(Entity Entity) where T : EntityScript
+    {
+        T? Script = EntityScriptRuntime.Current?.GetScript<T>(WorldHandle, Entity.Id);
+        if (Script == null)
         {
-            return null;
+            return false;
         }
-        return GCHandle.FromIntPtr(Handle).Target as T;
+        Native.RemoveEntityScript(WorldHandle, Entity.Id, Script.SelfHandle);
+        return true;
     }
 
     /// True if the entity has a C# script assignable to T.

@@ -82,6 +82,30 @@ public sealed class RequireComponentAttribute : Attribute
 {
 }
 
+/// <summary>Stamped by the Reflector on the generated C# wrapper of a <c>REFLECT(Scriptable)</c> native class,
+/// marking it as a base a user may subclass. The runtime discovers Scriptable user types by looking for a class
+/// whose base chain carries this attribute. Never hand-written.</summary>
+[AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
+public sealed class ScriptableTypeAttribute : Attribute
+{
+}
+
+/// <summary>Marks a generated wrapper method as a native <c>FUNCTION(ScriptEvent)</c> that a C# subclass of a
+/// <c>REFLECT(Scriptable)</c> class may override. Emitted by the Reflector, never hand-written. <see cref="Index"/>
+/// is the override-flag bit, aligned by construction with the native forwarding shim's per-method bit, so the
+/// runtime can tell native which events the subclass actually overrides.</summary>
+[AttributeUsage(AttributeTargets.Method, AllowMultiple = false)]
+public sealed class ScriptEventAttribute : Attribute
+{
+    public ScriptEventAttribute(int Index)
+    {
+        this.Index = Index;
+    }
+
+    /// <summary>The override-flag bit index for this event within its declaring Scriptable class.</summary>
+    public int Index { get; }
+}
+
 /// <summary>Exposes a parameterless method as a clickable button in the script component's inspector.
 /// Clicking it invokes the method on the live script instance (only while the game is running). Methods
 /// taking arguments are ignored with a warning.</summary>

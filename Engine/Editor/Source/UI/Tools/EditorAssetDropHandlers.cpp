@@ -34,7 +34,7 @@ namespace Lumina
                         return entt::null;
                     }
 
-                    entt::registry& Registry = World->GetEntityRegistry();
+                    entt::registry& Registry = ECS::GetWorldRegistry(*World);
                     if (DropTarget != entt::null && Registry.valid(DropTarget))
                     {
                         if (SStaticMeshComponent* Existing = Registry.try_get<SStaticMeshComponent>(DropTarget))
@@ -66,7 +66,7 @@ namespace Lumina
                         return entt::null;
                     }
 
-                    entt::registry& Registry = World->GetEntityRegistry();
+                    entt::registry& Registry = ECS::GetWorldRegistry(*World);
                     if (!Registry.valid(DropTarget))
                     {
                         return entt::null;

@@ -10,8 +10,8 @@ public enum ENetMode
 }
 
 /// <summary>
-/// A world's networking interface (<c>World.Net</c>), the C# mirror of Lua's <c>World.Net:*</c> facade.
-/// The role/mode queries; the convenience booleans are derived from <see cref="Mode"/>. Game thread only.
+/// A world's networking interface (<c>World.Net</c>). The role/mode queries; the convenience booleans are
+/// derived from <see cref="Mode"/>. Game thread only.
 /// Forwards to flat <c>LuminaSharp_Net_*</c> shims in the Runtime module (DotNetGameplay.cpp).
 /// </summary>
 public readonly unsafe partial struct Net

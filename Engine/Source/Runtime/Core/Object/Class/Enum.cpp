@@ -64,7 +64,7 @@ namespace Lumina
         }
     }
 
-    void CEnum::ForEachEnum(TFunction<void(const TPair<FName, uint64>&)> Functor)
+    void CEnum::ForEachEnum(const TFunction<void(const TPair<FName, uint64>&)>& Functor)
     {
         for (const auto& Pair : Names)
         {

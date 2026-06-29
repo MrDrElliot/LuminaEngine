@@ -44,6 +44,15 @@ public static class PropertyAccessor
         });
     }
 
+    /// Drops every cached accessor. Called on a script ALC unload: the cache keys (PropertyInfo) and the
+    /// closed-generic delegate values reference user types in the collectible ALC, so leaving them would
+    /// pin that generation (and accumulate one entry set per reload). The next generation rebuilds lazily.
+    public static void ClearScriptCaches()
+    {
+        Getters.Clear();
+        Setters.Clear();
+    }
+
     private static Func<object, object?> BuildGetter<TTarget, TValue>(MethodInfo Get)
     {
         var Typed = (Func<TTarget, TValue>)Delegate.CreateDelegate(typeof(Func<TTarget, TValue>), Get);

@@ -81,9 +81,9 @@ namespace Lumina
         CreateFloorPlane();
 
         DirectionalLightEntity = World->ConstructEntity("Directional Light");
-        World->GetEntityRegistry().emplace<SDirectionalLightComponent>(DirectionalLightEntity);
-        World->GetEntityRegistry().emplace<SEnvironmentComponent>(DirectionalLightEntity);
-        World->GetEntityRegistry().emplace<SSkyLightComponent>(DirectionalLightEntity);
+        World->EmplaceComponent<SDirectionalLightComponent>(DirectionalLightEntity);
+        World->EmplaceComponent<SEnvironmentComponent>(DirectionalLightEntity);
+        World->EmplaceComponent<SSkyLightComponent>(DirectionalLightEntity);
 
         CAnimation* Animation = Cast<CAnimation>(Asset.Get());
         if (!Animation->Skeleton.IsValid())
@@ -94,14 +94,14 @@ namespace Lumina
         CameraState.Speed = 5.0f;
 
         MeshEntity = World->ConstructEntity("MeshEntity");
-        World->GetEntityRegistry().emplace<SSkeletalMeshComponent>(MeshEntity).SkeletalMesh = Animation->Skeleton->PreviewMesh;
-        SSimpleAnimationComponent& AnimComp = World->GetEntityRegistry().emplace<SSimpleAnimationComponent>(MeshEntity);
+        World->EmplaceComponent<SSkeletalMeshComponent>(MeshEntity).SkeletalMesh = Animation->Skeleton->PreviewMesh;
+        SSimpleAnimationComponent& AnimComp = World->EmplaceComponent<SSimpleAnimationComponent>(MeshEntity);
         AnimComp.Animation = Animation;
         AnimComp.bPlaying  = false;
         AnimComp.bLooping  = bLooping;
 
-        STransformComponent& MeshTransform = World->GetEntityRegistry().get<STransformComponent>(MeshEntity);
-        STransformComponent& EditorTransform = World->GetEntityRegistry().get<STransformComponent>(EditorEntity);
+        STransformComponent& MeshTransform = World->GetComponent<STransformComponent>(MeshEntity);
+        STransformComponent& EditorTransform = World->GetComponent<STransformComponent>(EditorEntity);
 
         FQuat Rotation = Math::FindLookAtRotation(MeshTransform.GetLocation() + FVector3(0.0f, 0.85f, 0.0f), EditorTransform.GetLocation());
         EditorTransform.SetRotation(Rotation);
@@ -130,7 +130,7 @@ namespace Lumina
         {
             return nullptr;
         }
-        return World->GetEntityRegistry().try_get<SSimpleAnimationComponent>(MeshEntity);
+        return World->TryGetComponent<SSimpleAnimationComponent>(MeshEntity);
     }
 
     void FAnimationEditorTool::MarkAnimationDirty()

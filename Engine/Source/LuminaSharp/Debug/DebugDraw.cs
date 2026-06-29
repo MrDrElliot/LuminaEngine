@@ -3,8 +3,8 @@ using Lumina;
 namespace LuminaSharp;
 
 /// <summary>
-/// A world's debug-draw interface (<c>World.Draw</c>), the C# mirror of Lua's <c>World.Debug:*</c> facade.
-/// Dev/Debug builds only, the draws are no-ops in Shipping. <c>Duration</c> &lt;= 0 draws for one frame.
+/// A world's debug-draw interface (<c>World.Draw</c>). Dev/Debug builds only, the draws are no-ops in
+/// Shipping. <c>Duration</c> &lt;= 0 draws for one frame.
 /// Game thread only. Forwards to flat <c>LuminaSharp_Debug_*</c> shims in the Runtime module
 /// (DotNetGameplay.cpp), with the world Handle passed first.
 /// </summary>

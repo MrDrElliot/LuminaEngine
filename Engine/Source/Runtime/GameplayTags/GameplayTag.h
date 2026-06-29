@@ -19,7 +19,7 @@ namespace Lumina
 
         bool IsValid() const { return !TagName.IsNone(); }
 
-        // Hierarchical: this tag IS Other or a descendant of it ("Ability.Fire.Fireball" matches "Ability.Fire").
+        // Hierarchical, this tag IS Other or a descendant of it ("Ability.Fire.Fireball" matches "Ability.Fire").
         bool MatchesTag(const FGameplayTag& Other) const;
 
         // Exact (non-hierarchical) name equality.

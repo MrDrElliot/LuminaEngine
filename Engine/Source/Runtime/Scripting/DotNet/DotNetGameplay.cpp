@@ -54,13 +54,13 @@ struct FLmRayHit
 LUMINA_DOTNET_EXPORT(int32, World_IsValidEntity)(uint64 World, uint32 Entity)
 {
     CWorld* W = AsWorld(World);
-    return (W != nullptr && W->GetEntityRegistry().valid(AsEntity(Entity))) ? 1 : 0;
+    return (W != nullptr && W->IsValidEntity(AsEntity(Entity))) ? 1 : 0;
 }
 
 LUMINA_DOTNET_EXPORT(FQuat, World_GetRotation)(uint64 World, uint32 Entity)
 {
     CWorld* W = AsWorld(World);
-    return W ? ECS::Utils::GetEntityRotation(W->GetEntityRegistry(), AsEntity(Entity)) : FQuat();
+    return W ? ECS::Utils::GetEntityRotation(ECS::GetWorldRegistry(*W), AsEntity(Entity)) : FQuat();
 }
 
 // Script-to-script: hands back the managed GCHandle (as void*) of the C# EntityScript bound to an entity,
@@ -73,25 +73,72 @@ LUMINA_DOTNET_EXPORT(void*, GetEntityScriptHandle)(uint64 World, uint32 Entity)
     {
         return nullptr;
     }
-    const SScriptComponent* Script = W->GetEntityRegistry().try_get<SScriptComponent>(AsEntity(Entity));
-    if (Script == nullptr || Script->Instance == nullptr || Script->Generation != DotNet::GetScriptGeneration())
+    const SScriptComponent* Component = W->TryGetComponent<SScriptComponent>(AsEntity(Entity));
+    if (Component == nullptr)
     {
         return nullptr;
     }
-    return Script->Instance;
+    const int32 Generation = DotNet::GetScriptGeneration();
+    for (const SScriptInstance& Slot : Component->Scripts)
+    {
+        if (Slot.Instance != nullptr && Slot.Generation == Generation)
+        {
+            return Slot.Instance;
+        }
+    }
+    return nullptr;
+}
+
+// Appends a script of the named class to an entity and binds it; returns the managed instance handle.
+LUMINA_DOTNET_EXPORT(void*, AddEntityScript)(uint64 World, uint32 Entity, const char* ClassName, int32 ClassLen)
+{
+    CWorld* W = AsWorld(World);
+    if (W == nullptr || ClassName == nullptr)
+    {
+        return nullptr;
+    }
+    return W->AddEntityScript(AsEntity(Entity), FStringView(ClassName, (size_t)ClassLen));
+}
+
+// Removes the slot holding the given instance handle, destroying the managed instance.
+LUMINA_DOTNET_EXPORT(void, RemoveEntityScript)(uint64 World, uint32 Entity, void* Instance)
+{
+    CWorld* W = AsWorld(World);
+    if (W == nullptr || Instance == nullptr)
+    {
+        return;
+    }
+    SScriptComponent* Component = W->TryGetComponent<SScriptComponent>(AsEntity(Entity));
+    if (Component == nullptr)
+    {
+        return;
+    }
+    const int32 Generation = DotNet::GetScriptGeneration();
+    for (auto It = Component->Scripts.begin(); It != Component->Scripts.end(); ++It)
+    {
+        if (It->Instance == Instance)
+        {
+            if (It->Generation == Generation)
+            {
+                DotNet::DestroyEntityScript(It->Instance);
+            }
+            Component->Scripts.erase(It);
+            return;
+        }
+    }
 }
 
 LUMINA_DOTNET_EXPORT(FVector3, World_GetScale)(uint64 World, uint32 Entity)
 {
     CWorld* W = AsWorld(World);
-    return W ? ECS::Utils::GetEntityScale(W->GetEntityRegistry(), AsEntity(Entity)) : FVector3(1.0f);
+    return W ? ECS::Utils::GetEntityScale(ECS::GetWorldRegistry(*W), AsEntity(Entity)) : FVector3(1.0f);
 }
 
 LUMINA_DOTNET_EXPORT(void, World_SetScale)(uint64 World, uint32 Entity, FVector3 Scale)
 {
     if (CWorld* W = AsWorld(World))
     {
-        ECS::Utils::SetEntityScale(W->GetEntityRegistry(), AsEntity(Entity), Scale);
+        ECS::Utils::SetEntityScale(ECS::GetWorldRegistry(*W), AsEntity(Entity), Scale);
     }
 }
 
@@ -112,7 +159,7 @@ LUMINA_DOTNET_EXPORT(uint32, World_GetParentEntity)(uint64 World, uint32 Entity)
     {
         return ToId(entt::null);
     }
-    const FRelationshipComponent* Rel = W->GetEntityRegistry().try_get<FRelationshipComponent>(AsEntity(Entity));
+    const FRelationshipComponent* Rel = W->TryGetComponent<FRelationshipComponent>(AsEntity(Entity));
     return ToId(Rel ? Rel->Parent : entt::null);
 }
 
@@ -123,7 +170,7 @@ LUMINA_DOTNET_EXPORT(uint32, World_GetFirstChildEntity)(uint64 World, uint32 Ent
     {
         return ToId(entt::null);
     }
-    const FRelationshipComponent* Rel = W->GetEntityRegistry().try_get<FRelationshipComponent>(AsEntity(Entity));
+    const FRelationshipComponent* Rel = W->TryGetComponent<FRelationshipComponent>(AsEntity(Entity));
     return ToId(Rel ? Rel->First : entt::null);
 }
 
@@ -134,7 +181,7 @@ LUMINA_DOTNET_EXPORT(uint32, World_GetNextSiblingEntity)(uint64 World, uint32 En
     {
         return ToId(entt::null);
     }
-    const FRelationshipComponent* Rel = W->GetEntityRegistry().try_get<FRelationshipComponent>(AsEntity(Entity));
+    const FRelationshipComponent* Rel = W->TryGetComponent<FRelationshipComponent>(AsEntity(Entity));
     return ToId(Rel ? Rel->Next : entt::null);
 }
 
@@ -148,7 +195,6 @@ LUMINA_DOTNET_EXPORT(int32, World_GetAncestorChain)(uint64 World, uint32 Entity,
     {
         return 0;
     }
-    FEntityRegistry& R = W->GetEntityRegistry();
     int32 Count = 0;
     for (entt::entity Cur = AsEntity(Entity); Cur != entt::null; )
     {
@@ -157,7 +203,7 @@ LUMINA_DOTNET_EXPORT(int32, World_GetAncestorChain)(uint64 World, uint32 Entity,
             OutIds[Count] = ToId(Cur);
         }
         ++Count;
-        const FRelationshipComponent* Rel = R.try_get<FRelationshipComponent>(Cur);
+        const FRelationshipComponent* Rel = W->TryGetComponent<FRelationshipComponent>(Cur);
         Cur = Rel ? Rel->Parent : entt::null;
     }
     return Count;
@@ -170,7 +216,6 @@ LUMINA_DOTNET_EXPORT(int32, World_GetSubtree)(uint64 World, uint32 Entity, uint3
     {
         return 0;
     }
-    FEntityRegistry& R = W->GetEntityRegistry();
     int32 Count = 0;
     TVector<entt::entity> Stack;
     Stack.push_back(AsEntity(Entity));
@@ -183,11 +228,11 @@ LUMINA_DOTNET_EXPORT(int32, World_GetSubtree)(uint64 World, uint32 Entity, uint3
             OutIds[Count] = ToId(Node);
         }
         ++Count;
-        const FRelationshipComponent* Rel = R.try_get<FRelationshipComponent>(Node);
+        const FRelationshipComponent* Rel = W->TryGetComponent<FRelationshipComponent>(Node);
         for (entt::entity Child = Rel ? Rel->First : entt::null; Child != entt::null; )
         {
             Stack.push_back(Child);
-            const FRelationshipComponent* CRel = R.try_get<FRelationshipComponent>(Child);
+            const FRelationshipComponent* CRel = W->TryGetComponent<FRelationshipComponent>(Child);
             Child = CRel ? CRel->Next : entt::null;
         }
     }
@@ -225,17 +270,17 @@ LUMINA_DOTNET_EXPORT(uint32, Camera_PlayShake)(uint64 World, FLmCameraShake Wire
     P.Duration          = Wire.Duration;
     P.BlendInTime       = Wire.BlendInTime;
     P.BlendOutTime      = Wire.BlendOutTime;
-    return SCameraSystem::PlayCameraShake(W->GetEntityRegistry(), P);
+    return SCameraSystem::PlayCameraShake(ECS::GetWorldRegistry(*W), P);
 }
 
 LUMINA_DOTNET_EXPORT(void, Camera_StopShake)(uint64 World, uint32 Handle)
 {
-    if (CWorld* W = AsWorld(World)) { SCameraSystem::StopCameraShake(W->GetEntityRegistry(), Handle); }
+    if (CWorld* W = AsWorld(World)) { SCameraSystem::StopCameraShake(ECS::GetWorldRegistry(*W), Handle); }
 }
 
 LUMINA_DOTNET_EXPORT(void, Camera_StopAllShakes)(uint64 World)
 {
-    if (CWorld* W = AsWorld(World)) { SCameraSystem::StopAllCameraShakes(W->GetEntityRegistry()); }
+    if (CWorld* W = AsWorld(World)) { SCameraSystem::StopAllCameraShakes(ECS::GetWorldRegistry(*W)); }
 }
 
 //================================================================================================
@@ -986,7 +1031,7 @@ LUMINA_DOTNET_EXPORT(void, GameplayTags_Add)(uint64 World, uint32 Entity, uint32
     const FGameplayTag Tag = TagFromId(TagId);
     if (Tag.IsValid())
     {
-        W->GetEntityRegistry().get_or_emplace<SGameplayTagComponent>(AsEntity(Entity)).Tags.AddTag(Tag);
+        W->GetOrEmplaceComponent<SGameplayTagComponent>(AsEntity(Entity)).Tags.AddTag(Tag);
     }
 }
 
@@ -997,7 +1042,7 @@ LUMINA_DOTNET_EXPORT(void, GameplayTags_Remove)(uint64 World, uint32 Entity, uin
     {
         return;
     }
-    if (SGameplayTagComponent* C = W->GetEntityRegistry().try_get<SGameplayTagComponent>(AsEntity(Entity)))
+    if (SGameplayTagComponent* C = W->TryGetComponent<SGameplayTagComponent>(AsEntity(Entity)))
     {
         C->Tags.RemoveTag(TagFromId(TagId));
     }
@@ -1010,7 +1055,7 @@ LUMINA_DOTNET_EXPORT(int32, GameplayTags_Has)(uint64 World, uint32 Entity, uint3
     {
         return 0;
     }
-    const SGameplayTagComponent* C = W->GetEntityRegistry().try_get<SGameplayTagComponent>(AsEntity(Entity));
+    const SGameplayTagComponent* C = W->TryGetComponent<SGameplayTagComponent>(AsEntity(Entity));
     if (C == nullptr)
     {
         return 0;
@@ -1033,7 +1078,7 @@ LUMINA_DOTNET_EXPORT(int32, GameplayTags_HasExact)(uint64 World, uint32 Entity, 
     {
         return 0;
     }
-    const SGameplayTagComponent* C = W->GetEntityRegistry().try_get<SGameplayTagComponent>(AsEntity(Entity));
+    const SGameplayTagComponent* C = W->TryGetComponent<SGameplayTagComponent>(AsEntity(Entity));
     if (C == nullptr)
     {
         return 0;
@@ -1056,7 +1101,7 @@ LUMINA_DOTNET_EXPORT(void, GameplayTags_Clear)(uint64 World, uint32 Entity)
     {
         return;
     }
-    if (SGameplayTagComponent* C = W->GetEntityRegistry().try_get<SGameplayTagComponent>(AsEntity(Entity)))
+    if (SGameplayTagComponent* C = W->TryGetComponent<SGameplayTagComponent>(AsEntity(Entity)))
     {
         C->Tags.Tags.clear();
     }
@@ -1070,7 +1115,7 @@ LUMINA_DOTNET_EXPORT(int32, GameplayTags_Get)(uint64 World, uint32 Entity, uint3
     {
         return 0;
     }
-    const SGameplayTagComponent* C = W->GetEntityRegistry().try_get<SGameplayTagComponent>(AsEntity(Entity));
+    const SGameplayTagComponent* C = W->TryGetComponent<SGameplayTagComponent>(AsEntity(Entity));
     if (C == nullptr)
     {
         return 0;

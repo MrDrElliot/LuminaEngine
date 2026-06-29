@@ -53,6 +53,8 @@
 #include "Scene/RenderScene/Forward/ForwardRenderScene.h"
 #include "Scripting/DotNet/DotNetHost.h"
 #include "World/Entity/Components/CSharpScriptComponent.h"
+#include "World/Entity/Components/LifetimeComponent.h"
+#include "World/Entity/Components/ProjectileComponent.h"
 #include "World/Net/NetWorldState.h"
 #include "World/Net/NetRole.h"
 #include "World/Net/NetReplication.h"
@@ -64,8 +66,16 @@
 
 namespace Lumina
 {
-    
-    
+    namespace ECS
+    {
+        // Engine-internal raw registry access (friended). Routes through CWorld's private accessor so the
+        // registry stays off the public API; only whole-registry systems (serialization, net, meta) use this.
+        FEntityRegistry& GetWorldRegistry(CWorld& World)
+        {
+            return World.GetEntityRegistry();
+        }
+    }
+
     namespace
     {
         bool NetIsServerMode(ENetMode Mode)
@@ -220,13 +230,13 @@ namespace Lumina
         using namespace entt::literals;
         
         WorldType = InWorldType;
-
-        // Skip spawning instances whose source prefab was deleted while this world was unloaded: their
-        // SourcePrefab deserialized to null. Cull the pending set so they never enter the live registry
-        // (no transforms, physics bodies, scripts, or render data are ever created for them).
+        
         CPrefab::CullOrphanedInstances(RegistryPending);
-
-        EntityRegistry.swap(RegistryPending);
+        
+        if (!RegistryPending.storage<entt::entity>().empty())
+        {
+            EntityRegistry.swap(RegistryPending);
+        }
         RegistryPending = {};
 
         CPrefab::RefreshAllInstancesInWorld(this);
@@ -556,10 +566,29 @@ namespace Lumina
         
         EntityRegistry.emplace<SNameComponent>(NewEntity).Name = Name;
         EntityRegistry.emplace<STransformComponent>(NewEntity, Transform);
-        
+
         return NewEntity;
     }
-    
+
+    entt::entity CWorld::SpawnProjectile(FVector3 Position, FVector3 Velocity, float Damage, float Lifetime, entt::entity Instigator)
+    {
+        FTransform SpawnTransform;
+        SpawnTransform.SetLocation(Position);
+        entt::entity Entity = ConstructEntity("Projectile", SpawnTransform);
+
+        SProjectileComponent& Projectile = EntityRegistry.emplace<SProjectileComponent>(Entity);
+        Projectile.Velocity = Velocity;
+        Projectile.Damage = Damage;
+        Projectile.Instigator = Instigator;
+
+        // Reuse the engine lifetime system for auto-despawn.
+        if (Lifetime > 0.0f)
+        {
+            EntityRegistry.emplace<SLifetimeComponent>(Entity).Lifetime = Lifetime;
+        }
+        return Entity;
+    }
+
     bool CWorld::FractureEntity(entt::entity Entity, const FVector3& Origin, float Strength)
     {
         LUMINA_PROFILE_SCOPE();
@@ -1243,39 +1272,41 @@ namespace Lumina
     void CWorld::OnCSharpScriptComponentDestroyed(entt::registry& Registry, entt::entity Entity)
     {
         SScriptComponent& Component = Registry.get<SScriptComponent>(Entity);
-        if (Component.Instance != nullptr && Component.Generation == DotNet::GetScriptGeneration())
+        const int32 Generation = DotNet::GetScriptGeneration();
+        for (SScriptInstance& Slot : Component.Scripts)
         {
-            DotNet::DestroyEntityScript(Component.Instance);
+            if (Slot.Instance != nullptr && Slot.Generation == Generation)
+            {
+                DotNet::DestroyEntityScript(Slot.Instance);
+            }
+            Slot.Instance = nullptr;
+            Slot.BindState = ECSharpBindState::Unbound;
         }
-        Component.Instance = nullptr;
-        Component.BindState = ECSharpBindState::Unbound;
+    }
+
+    void* CWorld::AddEntityScript(entt::entity Entity, FStringView ScriptClass)
+    {
+        if (!EntityRegistry.valid(Entity) || ScriptClass.empty())
+        {
+            return nullptr;
+        }
+
+        SScriptComponent& Component = EntityRegistry.get_or_emplace<SScriptComponent>(Entity);
+        Component.Scripts.emplace_back();
+        const int32 NewIndex = (int32)Component.Scripts.size() - 1;
+        Component.Scripts[NewIndex].ScriptClass.assign(ScriptClass.data(), ScriptClass.size());
+
+        // Bind now so the caller gets a usable instance; OnReady runs on the next system tick.
+        if (!DotNet::IsInitialized())
+        {
+            return nullptr;
+        }
+        return BindScriptInstance(reinterpret_cast<uint64>(this), (uint32)entt::to_integral(Entity), Component, NewIndex, DotNet::GetScriptGeneration(), false);
     }
 
     void CWorld::SetEntityScript(entt::entity Entity, FStringView ScriptClass)
     {
-        if (!EntityRegistry.valid(Entity))
-        {
-            return;
-        }
-
-        SScriptComponent& Component = EntityRegistry.get_or_emplace<SScriptComponent>(Entity);
-        if (FStringView(Component.ScriptClass.c_str(), Component.ScriptClass.size()) == ScriptClass)
-        {
-            return; // already bound to this class
-        }
-
-        // Free any live instance from the current generation before swapping classes so the bind pass
-        // does not overwrite (and leak) the managed handle.
-        if (Component.Instance != nullptr && Component.Generation == DotNet::GetScriptGeneration())
-        {
-            DotNet::DestroyEntityScript(Component.Instance);
-        }
-
-        Component.ScriptClass.assign(ScriptClass.data(), ScriptClass.size());
-        Component.Instance = nullptr;
-        Component.Generation = -1;
-        Component.BindState = ECSharpBindState::Unbound;
-        Component.CallbackFlags = 0;
+        AddEntityScript(Entity, ScriptClass);
     }
 
     void CWorld::RegisterSystems()

@@ -2,13 +2,13 @@
 
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Object/SoftObjectPtr.h"
+#include "Core/Object/SubclassOf.h"
+#include "Core/Engine/GameInstance.h"
 #include "Config/DeveloperSettings.h"
 #include "Containers/Array.h"
 #include "Containers/String.h"
-#include "Core/Math/Math.h"
 #include "Input/Key.h"
 #include "World/World.h"
-#include "Assets/AssetRef.h"
 #include "EngineSettings.generated.h"
 
 namespace Lumina
@@ -20,9 +20,9 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
-        /** Reflected CGameInstance subclass to instantiate at runtime. Empty = base CGameInstance. */
+        /** CGameInstance subclass to instantiate at runtime */
         PROPERTY(Editable, Category = "Scripting")
-        FString GameInstanceClass;
+        TSubclassOf<CGameInstance> GameInstanceClass;
 
         /** World loaded when the standalone game starts. */
         PROPERTY(Editable, Category = "Maps")
@@ -50,9 +50,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "Appearance", ClampMin = 0.0f, ClampMax = 3.0f, NoDrag, Delta = 0.1f)
         float UIScale = 0.0f;
         
-        /** Chord that recompiles + hot-reloads all C# scripts. Rebind it in the Settings panel. Default
-            Ctrl+Shift+B ("Build") -- chosen to avoid the editor's existing chords (gizmo W/E/R, Ctrl+S/Z/Y,
-            Ctrl+Shift+C/V/R, F5/F9). */
+        /** Chord that recompiles + hot-reloads all C# scripts. */
         PROPERTY(Editable, Category = "Hotkeys")
         SKey ReloadScriptsHotkey = SKey(EKey::B, /*Ctrl*/ true, /*Shift*/ true);
         
@@ -65,10 +63,7 @@ namespace Lumina
         FString StartupProject;
     };
 
-    // The editor's central color palette. The ImGui renderer derives the global style from these (live --
-    // edits in the Settings panel re-theme the whole editor immediately), and editor widgets read the same
-    // semantic colors through the Lumina::EditorColors accessor instead of hardcoding ImVec4s. Lives in the
-    // runtime module so the runtime ImGui renderer can read it. Defaults reproduce the prior look.
+    // The editor's central color palette.
     REFLECT(MinimalAPI, ConfigFile = "/Editor/Config/EditorPreferences.json", DisplayName = "Editor Colors", Category = "Editor")
     class CEditorColorSettings : public CDeveloperSettings
     {

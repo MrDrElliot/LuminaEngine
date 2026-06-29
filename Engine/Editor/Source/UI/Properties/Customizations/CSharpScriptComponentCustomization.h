@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Core/Reflection/PropertyCustomization/PropertyCustomization.h"
+#include "Containers/Array.h"
 #include "Containers/Function.h"
 #include "Memory/SmartPtr.h"
 
@@ -21,15 +22,21 @@ namespace Lumina
 
     private:
 
+        // Per-slot value editor, rebuilt when that slot's resolved layout or live buffer changes.
+        struct FSlotView
+        {
+            const CScriptStruct*       BoundLayout = nullptr;
+            void*                      BoundBuffer = nullptr;
+            TUniquePtr<FPropertyTable> ValueTable;
+        };
+
         // The pick is captured here and replayed from UpdatePropertyValue (after BeginTransaction) so
         // the undo snapshot is pre-change.
         TFunction<void()> PendingMutation;
         bool bFinishPending = false;
 
-        // Rebuilt when the resolved layout or live buffer changes.
-        TUniquePtr<FPropertyTable> ValueTable;
-        const CScriptStruct*       BoundLayout = nullptr;
-        void*                      BoundBuffer = nullptr;
-        bool                       bValueEdited = false;
+        // Parallel to the component's Scripts vector.
+        TVector<FSlotView> SlotViews;
+        bool               bValueEdited = false;
     };
 }

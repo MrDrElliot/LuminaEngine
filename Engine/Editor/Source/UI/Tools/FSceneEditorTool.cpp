@@ -1169,6 +1169,88 @@ namespace Lumina
         bDetailsDirty = true;
     }
 
+    namespace
+    {
+        // Shared visuals for the Add / Create-Entity picker. Kept compact and purely vertical: a
+        // collapsing section header per group, then a tight 2-column table (icon, name) of full-width
+        // selectable rows. Scales to large component counts without the old card-button style.
+        constexpr ImGuiTableFlags GPickerTableFlags =
+            ImGuiTableFlags_RowBg | ImGuiTableFlags_NoBordersInBody | ImGuiTableFlags_PadOuterX;
+
+        // Maps a component Category to a representative icon; falls back to a generic component glyph.
+        const char* PickerCategoryIcon(const FString& Name)
+        {
+            if (Name == "Rendering")   return LE_ICON_CUBE_OUTLINE;
+            if (Name == "Lights")      return LE_ICON_LIGHTBULB;
+            if (Name == "Environment") return LE_ICON_WEATHER_PARTLY_CLOUDY;
+            if (Name == "Physics")     return LE_ICON_ATOM;
+            if (Name == "Audio")       return LE_ICON_VOLUME_HIGH;
+            if (Name == "AI")          return LE_ICON_ROBOT;
+            if (Name == "Camera")      return LE_ICON_CAMERA;
+            if (Name == "Animation")   return LE_ICON_RUN;
+            if (Name == "Gameplay")    return LE_ICON_GAMEPAD_VARIANT;
+            if (Name == "Networking")  return LE_ICON_LAN;
+            if (Name == "Character")   return LE_ICON_ACCOUNT;
+            if (Name == "Movement")    return LE_ICON_WALK;
+            if (Name == "Effects")     return LE_ICON_FIRE;
+            if (Name == "Foliage")     return LE_ICON_GRASS;
+            if (Name == "Terrain")     return LE_ICON_TERRAIN;
+            if (Name == "Destruction") return LE_ICON_HAMMER_WRENCH;
+            if (Name == "UI")          return LE_ICON_VIEW_DASHBOARD;
+            if (Name == "Prefab")      return LE_ICON_PACKAGE_VARIANT_CLOSED;
+            return LE_ICON_PUZZLE_OUTLINE;
+        }
+
+        // Collapsing group header with a trailing count. Force-opens while a search filter is active so
+        // matches stay visible even if the user previously collapsed the section. Returns whether open.
+        bool BeginPickerSection(const char* Icon, const char* Label, int32 Count, bool bForceOpen)
+        {
+            if (bForceOpen)
+            {
+                ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+            }
+
+            FFixedString Header;
+            Header.append(Icon);
+            Header.append("  ");
+            Header.append(Label);
+            Header.append("  (");
+            Header.append(eastl::to_string(Count).c_str());
+            Header.append(")");
+
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::SectionHeader());
+            const bool bOpen = ImGui::CollapsingHeader(Header.c_str(),
+                ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth);
+            ImGui::PopStyleColor();
+            return bOpen;
+        }
+
+        // One compact picker row: [icon] Label with a full-row hover/click target. Returns true on click.
+        // Expects to be called between BeginTable/EndTable on a 2-column (icon, name) table.
+        bool DrawPickerRow(const void* ID, const char* Icon, const char* Label)
+        {
+            ImGui::PushID(ID);
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+
+            const bool bClicked = ImGui::Selectable("##sel", false,
+                ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap);
+
+            ImGui::SameLine();
+            // Soft slate tone (matches the section header) keeps the icon column a subtle visual rail
+            // rather than a loud accent stripe down a long list.
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::SectionHeader());
+            ImGui::TextUnformatted(Icon);
+            ImGui::PopStyleColor();
+
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextUnformatted(Label);
+
+            ImGui::PopID();
+            return bClicked;
+        }
+    }
+
     bool FSceneEditorTool::DrawAddableComponentList(const ImGuiTextFilter& Filter, entt::meta_type& OutMetaType, CStruct*& OutStruct)
     {
         struct FComponentEntry
@@ -1247,6 +1329,9 @@ namespace Lumina
         });
 
         bool bPicked = false;
+        const bool bFiltering = Filter.IsActive();
+
+        ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(6.0f, 3.0f));
         for (FComponentCategory& Category : Categories)
         {
             auto EntryName = [](const FComponentEntry& E) -> FString
@@ -1260,47 +1345,34 @@ namespace Lumina
 
             ImGui::PushID(Category.Name.c_str());
 
-            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::SectionHeader());
-            FFixedString Header;
-            Header.append(LE_ICON_FOLDER " ");
-            Header.append(Category.Name.c_str());
-            ImGui::TextUnformatted(Header.c_str());
-            ImGui::PopStyleColor();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            for (const FComponentEntry& Entry : Category.Entries)
+            const char* CategoryIcon = PickerCategoryIcon(Category.Name);
+            if (BeginPickerSection(CategoryIcon, Category.Name.c_str(), (int32)Category.Entries.size(), bFiltering))
             {
-                // Stable per-item ID across frames (the entry list is rebuilt every frame, so its
-                // address is not stable -- an unstable ID breaks click press/release matching).
-                ImGui::PushID((void*)Entry.Struct);
-
-                ImGui::PushStyleColor(ImGuiCol_Button, EditorColors::RowBg());
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, EditorColors::RowBgHovered());
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, EditorColors::RowBgActive());
-                ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12.0f, 10.0f));
-
-                const float ButtonWidth = ImGui::GetContentRegionAvail().x;
-
-                FFixedString DisplayName = Entry.Struct->MakeDisplayName();
-                if (ImGui::Button(DisplayName.c_str(), ImVec2(ButtonWidth, 0.0f)))
+                if (ImGui::BeginTable("##Components", 2, GPickerTableFlags))
                 {
-                    OutMetaType = Entry.MetaType;
-                    OutStruct   = Entry.Struct;
-                    bPicked = true;
+                    ImGui::TableSetupColumn("##Icon", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFrameHeight());
+                    ImGui::TableSetupColumn("##Name", ImGuiTableColumnFlags_WidthStretch);
+
+                    for (const FComponentEntry& Entry : Category.Entries)
+                    {
+                        // Stable per-item ID across frames (the entry list is rebuilt every frame, so its
+                        // address is not stable -- an unstable ID breaks click press/release matching).
+                        FFixedString DisplayName = Entry.Struct->MakeDisplayName();
+                        if (DrawPickerRow((void*)Entry.Struct, CategoryIcon, DisplayName.c_str()))
+                        {
+                            OutMetaType = Entry.MetaType;
+                            OutStruct   = Entry.Struct;
+                            bPicked = true;
+                        }
+                    }
+
+                    ImGui::EndTable();
                 }
-
-                ImGui::PopStyleVar(2);
-                ImGui::PopStyleColor(3);
-
-                ImGui::PopID();
-                ImGui::Spacing();
             }
 
             ImGui::PopID();
-            ImGui::Spacing();
         }
+        ImGui::PopStyleVar();
 
         return bPicked;
     }
@@ -1407,22 +1479,22 @@ namespace Lumina
         if (ImGui::BeginPopup("CameraSettings", ImGuiWindowFlags_NoMove))
         {
             // The editor camera (EditorEntity) lives in the tool's own World, not the observed world.
-            STransformComponent& CameraTransform = World->GetEntityRegistry().get<STransformComponent>(EditorEntity);
+            STransformComponent& CameraTransform = World->GetComponent<STransformComponent>(EditorEntity);
 
             ImGui::SeparatorText(LE_ICON_VIDEO " Camera Settings");
 
-            bool bHasCameraLight = World->GetEntityRegistry().all_of<SPointLightComponent>(EditorEntity);
+            bool bHasCameraLight = World->HasComponent<SPointLightComponent>(EditorEntity);
             ImGui::TextUnformatted("Camera Light");
             if (ImGuiX::IconButton(LE_ICON_LIGHTBULB, "Light"))
             {
                 if (bHasCameraLight)
                 {
-                    World->GetEntityRegistry().remove<SPointLightComponent>(EditorEntity);
+                    World->RemoveComponent<SPointLightComponent>(EditorEntity);
                     bHasCameraLight = false;
                 }
                 else
                 {
-                    auto&& PL = World->GetEntityRegistry().emplace<SPointLightComponent>(EditorEntity);
+                    auto&& PL = World->EmplaceComponent<SPointLightComponent>(EditorEntity);
                     PL.Intensity = 50.0f;
                     PL.Attenuation = 50.0f;
                 }
@@ -1430,7 +1502,7 @@ namespace Lumina
             
             if (bHasCameraLight)
             {
-                auto&& PL = World->GetEntityRegistry().get<SPointLightComponent>(EditorEntity);
+                auto&& PL = World->GetComponent<SPointLightComponent>(EditorEntity);
                 ImGuiX::SliderFloat("Intensity", &PL.Intensity, 0.0f, 300.0f);
                 ImGuiX::SliderFloat("Attenuation", &PL.Attenuation, 0.0f, 200.0f);
                 ImGui::ColorEdit3("Color", &PL.LightColor.x, ImGuiColorEditFlags_Float);
@@ -1477,11 +1549,11 @@ namespace Lumina
             ImGui::Separator();
             if (ImGui::Button("Reset Position", ImVec2(-1, 0)))
             {
-                World->GetEntityRegistry().get<STransformComponent>(EditorEntity).SetLocation(FVector3(0.0f));
+                World->GetComponent<STransformComponent>(EditorEntity).SetLocation(FVector3(0.0f));
             }
             if (ImGui::Button("Reset Rotation", ImVec2(-1, 0)))
             {
-                World->GetEntityRegistry().get<STransformComponent>(EditorEntity).SetRotation(FQuat(1.0f, 0.0f, 0.0f, 0.0f));
+                World->GetComponent<STransformComponent>(EditorEntity).SetRotation(FQuat(1.0f, 0.0f, 0.0f, 0.0f));
             }
             ImGui::Spacing();
             if (ImGui::Button("Close", ImVec2(-1, 0)))
@@ -2330,27 +2402,12 @@ namespace Lumina
 
             ImGui::Spacing();
 
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f, 16.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 8.0f));
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f, 4.0f));
 
             if (ImGui::BeginChild("TemplateList", ImVec2(0, -35.0f), true))
             {
-                bool bDrewComponentsHeader = false;
-                auto DrawComponentsHeader = [&]()
-                {
-                    if (bDrewComponentsHeader)
-                    {
-                        return;
-                    }
-                    bDrewComponentsHeader = true;
-
-                    ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
-                    ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::SectionHeader());
-                    ImGui::TextUnformatted(LE_ICON_CUBE " Components");
-                    ImGui::PopStyleColor();
-                    ImGui::Separator();
-                    ImGui::Spacing();
-                };
+                const bool bFiltering = AddEntityComponentFilter.IsActive();
 
                 if (Entity == entt::null)
                 {
@@ -2379,42 +2436,26 @@ namespace Lumina
 
                         if (!FilteredPrefabs.empty())
                         {
-                            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::SectionHeader());
-                            ImGui::TextUnformatted(LE_ICON_PACKAGE_VARIANT_CLOSED " Prefabs");
-                            ImGui::PopStyleColor();
-                            ImGui::Separator();
-                            ImGui::Spacing();
-
-                            for (FAssetData* Data : FilteredPrefabs)
+                            ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(6.0f, 3.0f));
+                            if (BeginPickerSection(LE_ICON_PACKAGE_VARIANT_CLOSED, "Prefabs", (int32)FilteredPrefabs.size(), bFiltering)
+                                && ImGui::BeginTable("##Prefabs", 2, GPickerTableFlags))
                             {
-                                ImGui::PushID(Data);
+                                ImGui::TableSetupColumn("##Icon", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFrameHeight());
+                                ImGui::TableSetupColumn("##Name", ImGuiTableColumnFlags_WidthStretch);
 
-                                ImGui::PushStyleColor(ImGuiCol_Button, EditorColors::RowBg());
-                                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, EditorColors::RowBgHovered());
-                                ImGui::PushStyleColor(ImGuiCol_ButtonActive, EditorColors::RowBgActive());
-                                ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
-                                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12.0f, 10.0f));
-
-                                const float ButtonWidth = ImGui::GetContentRegionAvail().x;
-
-                                FFixedString Label;
-                                Label.append(LE_ICON_PACKAGE_VARIANT_CLOSED " ");
-                                Label.append(Data->AssetName.c_str());
-                                if (ImGui::Button(Label.c_str(), ImVec2(ButtonWidth, 0.0f)))
+                                for (FAssetData* Data : FilteredPrefabs)
                                 {
-                                    HandlePrefabContentDrop(FStringView(Data->Path.c_str()), entt::null);
-                                    ImGui::CloseCurrentPopup();
-                                    AddEntityComponentFilter.Clear();
+                                    if (DrawPickerRow(Data, LE_ICON_PACKAGE_VARIANT_CLOSED, Data->AssetName.c_str()))
+                                    {
+                                        HandlePrefabContentDrop(FStringView(Data->Path.c_str()), entt::null);
+                                        ImGui::CloseCurrentPopup();
+                                        AddEntityComponentFilter.Clear();
+                                    }
                                 }
 
-                                ImGui::PopStyleVar(2);
-                                ImGui::PopStyleColor(3);
-
-                                ImGui::PopID();
-                                ImGui::Spacing();
+                                ImGui::EndTable();
                             }
-
-                            DrawComponentsHeader();
+                            ImGui::PopStyleVar();
                         }
                     }
                 }
@@ -2422,26 +2463,26 @@ namespace Lumina
                 {
                     struct FPrimitiveEntry
                     {
-                        const char* Label;
-                        const char* EntityName;
+                        const char* Icon;
+                        const char* Name;
                         CStaticMesh* (*GetMesh)();
                     };
 
                     static const FPrimitiveEntry PrimitiveEntries[] =
                     {
-                        { LE_ICON_CUBE     " Cube",     "Cube",     []() -> CStaticMesh* { return CPrimitiveManager::Get().CubeMesh; } },
-                        { LE_ICON_CIRCLE   " Sphere",   "Sphere",   []() -> CStaticMesh* { return CPrimitiveManager::Get().SphereMesh; } },
-                        { LE_ICON_SQUARE   " Plane",    "Plane",    []() -> CStaticMesh* { return CPrimitiveManager::Get().PlaneMesh; } },
-                        { LE_ICON_CYLINDER " Cylinder", "Cylinder", []() -> CStaticMesh* { return CPrimitiveManager::Get().CylinderMesh; } },
-                        { LE_ICON_CONE     " Cone",     "Cone",     []() -> CStaticMesh* { return CPrimitiveManager::Get().ConeMesh; } },
-                        { LE_ICON_GAS_CYLINDER " Capsule", "Capsule", []() -> CStaticMesh* { return CPrimitiveManager::Get().CapsuleMesh; } },
+                        { LE_ICON_CUBE,         "Cube",     []() -> CStaticMesh* { return CPrimitiveManager::Get().CubeMesh; } },
+                        { LE_ICON_CIRCLE,       "Sphere",   []() -> CStaticMesh* { return CPrimitiveManager::Get().SphereMesh; } },
+                        { LE_ICON_SQUARE,       "Plane",    []() -> CStaticMesh* { return CPrimitiveManager::Get().PlaneMesh; } },
+                        { LE_ICON_CYLINDER,     "Cylinder", []() -> CStaticMesh* { return CPrimitiveManager::Get().CylinderMesh; } },
+                        { LE_ICON_CONE,         "Cone",     []() -> CStaticMesh* { return CPrimitiveManager::Get().ConeMesh; } },
+                        { LE_ICON_GAS_CYLINDER, "Capsule",  []() -> CStaticMesh* { return CPrimitiveManager::Get().CapsuleMesh; } },
                     };
 
                     TVector<const FPrimitiveEntry*> FilteredPrimitives;
                     FilteredPrimitives.reserve(IM_ARRAYSIZE(PrimitiveEntries));
                     for (const FPrimitiveEntry& Entry : PrimitiveEntries)
                     {
-                        if (AddEntityComponentFilter.PassFilter(Entry.EntityName))
+                        if (AddEntityComponentFilter.PassFilter(Entry.Name))
                         {
                             FilteredPrimitives.push_back(&Entry);
                         }
@@ -2449,60 +2490,47 @@ namespace Lumina
 
                     if (!FilteredPrimitives.empty())
                     {
-                        ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::SectionHeader());
-                        ImGui::TextUnformatted(LE_ICON_SHAPE " Primitives");
-                        ImGui::PopStyleColor();
-                        ImGui::Separator();
-                        ImGui::Spacing();
-
-                        for (const FPrimitiveEntry* Entry : FilteredPrimitives)
+                        ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(6.0f, 3.0f));
+                        if (BeginPickerSection(LE_ICON_SHAPE, "Primitives", (int32)FilteredPrimitives.size(), bFiltering)
+                            && ImGui::BeginTable("##Primitives", 2, GPickerTableFlags))
                         {
-                            ImGui::PushID(Entry);
+                            ImGui::TableSetupColumn("##Icon", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFrameHeight());
+                            ImGui::TableSetupColumn("##Name", ImGuiTableColumnFlags_WidthStretch);
 
-                            ImGui::PushStyleColor(ImGuiCol_Button, EditorColors::RowBg());
-                            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, EditorColors::RowBgHovered());
-                            ImGui::PushStyleColor(ImGuiCol_ButtonActive, EditorColors::RowBgActive());
-                            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
-                            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12.0f, 10.0f));
-
-                            const float ButtonWidth = ImGui::GetContentRegionAvail().x;
-
-                            if (ImGui::Button(Entry->Label, ImVec2(ButtonWidth, 0.0f)))
+                            for (const FPrimitiveEntry* Entry : FilteredPrimitives)
                             {
-                                CStaticMesh* PrimitiveMesh = Entry->GetMesh();
-                                if (GetSceneRegistry().valid(Entity))
+                                if (DrawPickerRow(Entry, Entry->Icon, Entry->Name))
                                 {
-                                    if (PrimitiveMesh != nullptr)
+                                    CStaticMesh* PrimitiveMesh = Entry->GetMesh();
+                                    if (GetSceneRegistry().valid(Entity))
                                     {
-                                        BeginTransaction();
-                                        SStaticMeshComponent& MeshComp = GetSceneRegistry().emplace_or_replace<SStaticMeshComponent>(Entity);
-                                        MeshComp.StaticMesh = PrimitiveMesh;
-                                        EndTransaction("Set Primitive Mesh");
-
-                                        OutlinerListView.MarkTreeDirty();
-                                        if (Entity == DetailsEntity)
+                                        if (PrimitiveMesh != nullptr)
                                         {
-                                            bDetailsDirty = true;
+                                            BeginTransaction();
+                                            SStaticMeshComponent& MeshComp = GetSceneRegistry().emplace_or_replace<SStaticMeshComponent>(Entity);
+                                            MeshComp.StaticMesh = PrimitiveMesh;
+                                            EndTransaction("Set Primitive Mesh");
+
+                                            OutlinerListView.MarkTreeDirty();
+                                            if (Entity == DetailsEntity)
+                                            {
+                                                bDetailsDirty = true;
+                                            }
                                         }
                                     }
-                                }
-                                else
-                                {
-                                    CreatePrimitiveEntity(PrimitiveMesh, Entry->EntityName);
-                                }
+                                    else
+                                    {
+                                        CreatePrimitiveEntity(PrimitiveMesh, Entry->Name);
+                                    }
 
-                                ImGui::CloseCurrentPopup();
-                                AddEntityComponentFilter.Clear();
+                                    ImGui::CloseCurrentPopup();
+                                    AddEntityComponentFilter.Clear();
+                                }
                             }
 
-                            ImGui::PopStyleVar(2);
-                            ImGui::PopStyleColor(3);
-
-                            ImGui::PopID();
-                            ImGui::Spacing();
+                            ImGui::EndTable();
                         }
-
-                        DrawComponentsHeader();
+                        ImGui::PopStyleVar();
                     }
                 }
 

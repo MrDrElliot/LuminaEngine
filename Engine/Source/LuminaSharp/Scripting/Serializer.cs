@@ -248,6 +248,18 @@ internal static class Serializer
         {
             return Value is Entity Ent ? Ent.Id : 0L;
         }
+        // Bit-preserving for unsigned values: Convert.ToInt64 throws OverflowException on a ulong (or a
+        // ulong-backed enum) whose high bit is set, which would abort the whole schema/value blob and
+        // silently drop every property on the type. Reinterpret the bits instead; DecodeInt casts back.
+        Type Underlying = Value.GetType();
+        if (Underlying.IsEnum)
+        {
+            Underlying = Enum.GetUnderlyingType(Underlying);
+        }
+        if (Underlying == typeof(ulong))
+        {
+            return unchecked((long)Convert.ToUInt64(Value));
+        }
         return Convert.ToInt64(Value);
     }
 
@@ -680,18 +692,6 @@ internal ref struct FBlobReader
         }
         double Value = BitConverter.ToDouble(Span.Slice(Position, 8));
         Position += 8;
-        return Value;
-    }
-
-    public float ReadSingle()
-    {
-        if (Position + 4 > Span.Length)
-        {
-            Position = Span.Length;
-            return 0.0f;
-        }
-        float Value = BitConverter.ToSingle(Span.Slice(Position, 4));
-        Position += 4;
         return Value;
     }
 

@@ -20,24 +20,25 @@ namespace Lumina
     namespace
     {
         using namespace Scripting;
-        
-        void RebindScript(SScriptComponent* Component, const FString& NewClass)
+
+        // Clears a slot's binding and class. Frees any live instance from the current generation first.
+        void RebindSlot(SScriptInstance& Slot, const FString& NewClass)
         {
-            if (Component->Instance != nullptr && Component->Generation == DotNet::GetScriptGeneration())
+            if (Slot.Instance != nullptr && Slot.Generation == DotNet::GetScriptGeneration())
             {
-                DotNet::DestroyEntityScript(Component->Instance);
+                DotNet::DestroyEntityScript(Slot.Instance);
             }
-            Component->Instance = nullptr;
-            Component->BindState = ECSharpBindState::Unbound;
-            Component->ScriptClass = NewClass;
-            Component->Generation = -1;
+            Slot.Instance = nullptr;
+            Slot.BindState = ECSharpBindState::Unbound;
+            Slot.ScriptClass = NewClass;
+            Slot.Generation = -1;
 
             if (NewClass.empty())
             {
-                Component->Values.Reset();
+                Slot.Values.Reset();
             }
         }
-        
+
         FString FindScriptSourceFile(FStringView ScriptClass)
         {
             FStringView ClassName = ScriptClass;
@@ -122,14 +123,13 @@ namespace Lumina
             }
             Platform::LaunchURL(UTF8_TO_TCHAR(Path.c_str()));
         }
-        
-        // Draws a clickable button per [Button] method. Invoking a method is a runtime action on the live
-        // instance, not a serialized edit, so it doesn't participate in the property-change transaction.
-        // Buttons are disabled until the script is bound to a live instance (i.e. while the game runs).
-        void DrawScriptButtons(SScriptComponent* Component)
+
+        // Draws a clickable button per [Button] method on the slot. Invoking is a runtime action on the live
+        // instance, so it doesn't participate in the property-change transaction and is disabled until bound.
+        void DrawScriptButtons(SScriptInstance& Slot)
         {
             TVector<Scripting::FScriptButton> Buttons;
-            DotNet::GatherScriptButtons(FStringView(Component->ScriptClass.c_str(), Component->ScriptClass.size()), Buttons);
+            DotNet::GatherScriptButtons(FStringView(Slot.ScriptClass.c_str(), Slot.ScriptClass.size()), Buttons);
             if (Buttons.empty())
             {
                 return;
@@ -137,8 +137,7 @@ namespace Lumina
 
             ImGui::SeparatorText("Script Actions");
 
-            const bool bHasInstance = Component->Instance != nullptr
-                && Component->Generation == DotNet::GetScriptGeneration();
+            const bool bHasInstance = Slot.Instance != nullptr && Slot.Generation == DotNet::GetScriptGeneration();
 
             ImGui::BeginDisabled(!bHasInstance);
             for (const Scripting::FScriptButton& Button : Buttons)
@@ -146,7 +145,7 @@ namespace Lumina
                 FString Label = Button.Label + "##btn_" + Button.Method;
                 if (ImGui::Button(Label.c_str(), ImVec2(-FLT_MIN, 0.0f)))
                 {
-                    DotNet::InvokeScriptButton(Component->Instance, FStringView(Button.Method.c_str(), Button.Method.size()));
+                    DotNet::InvokeScriptButton(Slot.Instance, FStringView(Button.Method.c_str(), Button.Method.size()));
                 }
                 if (!Button.Tooltip.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                 {
@@ -174,107 +173,173 @@ namespace Lumina
 
         ImGui::PushID(this);
 
-        // Discover the loaded C# EntityScript types (managed crossing; only while this component is inspected).
+        // Discover the loaded C# EntityScript types once for every slot's picker.
         TVector<FString> Types;
         DotNet::GatherEntityScriptTypes(Types);
 
-        int32 Current = INDEX_NONE;
-        for (int32 i = 0; i < (int32)Types.size(); ++i)
+        // Keep the per-slot editor state parallel to the component's slots.
+        SlotViews.resize(Component->Scripts.size());
+
+        for (int32 Index = 0; Index < (int32)Component->Scripts.size(); ++Index)
         {
-            if (Types[i] == Component->ScriptClass)
+            SScriptInstance& Slot = Component->Scripts[Index];
+            FSlotView& View = SlotViews[Index];
+            ImGui::PushID(Index);
+
+            // Each script sits under its own collapsible header (its class name), with a remove button on
+            // the header line so it works whether the script is expanded or not.
+            const FString HeaderLabel = Slot.ScriptClass.empty() ? FString("(empty script)") : Slot.ScriptClass;
+            const float ButtonWidth = ImGui::GetFrameHeight();
+            const float Spacing = ImGui::GetStyle().ItemSpacing.x;
+
+            // Local X of the row's right edge, captured before the full-width header so the remove button
+            // can be right-aligned on the header line.
+            const float HeaderRight = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
+
+            // AllowOverlap so the right-aligned remove button on this header line receives its own clicks
+            // instead of the header swallowing them (toggling collapse).
+            ImGui::SetNextItemOpen(true, ImGuiCond_FirstUseEver);
+            const bool bOpen = ImGui::CollapsingHeader((HeaderLabel + "##scripthdr").c_str(), ImGuiTreeNodeFlags_AllowOverlap);
+
+            ImGui::SameLine(HeaderRight - ButtonWidth);
+            if (ImGui::SmallButton(LE_ICON_DELETE "##RemoveCSharpScript"))
             {
-                Current = i;
-                break;
-            }
-        }
-
-        const FString Preview = Component->ScriptClass.empty() ? FString("Select a script...") : Component->ScriptClass;
-
-        const float ButtonWidth = ImGui::GetFrameHeight();
-        const float Spacing = ImGui::GetStyle().ItemSpacing.x;
-        ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x - 2.0f * ButtonWidth - 2.0f * Spacing);
-        const int32 Picked = ImGuiX::SearchableCombo(
-            "##CSharpScript", Preview.c_str(), (int32)Types.size(), Current,
-            [&Types](int32 Index) { return FFixedString(Types[Index].c_str(), Types[Index].size()); },
-            LE_ICON_LANGUAGE_CSHARP);
-        ImGui::PopItemWidth();
-
-        if (Picked != INDEX_NONE && Picked != Current)
-        {
-            FString NewClass = Types[Picked];
-            PendingMutation = [Component, NewClass] { RebindScript(Component, NewClass); };
-            bWasChanged = true;
-        }
-
-        // Open the bound script's source file in the user's IDE (the auto-generated <Project>.Scripts.csproj
-        // beside it supplies full IntelliSense). Resolved by the class declaration, not the filename.
-        ImGui::SameLine();
-        ImGui::BeginDisabled(Component->ScriptClass.empty());
-        if (ImGui::Button(LE_ICON_OPEN_IN_NEW "##OpenCSharpScript", ImVec2(ButtonWidth, 0)))
-        {
-            OpenScriptSource(Component->ScriptClass);
-        }
-        ImGui::EndDisabled();
-        if (ImGui::IsItemHovered())
-        {
-            ImGui::SetTooltip("Open script in your IDE");
-        }
-
-        ImGui::SameLine();
-        ImGui::BeginDisabled(Component->ScriptClass.empty());
-        if (ImGui::Button(LE_ICON_CLOSE "##ClearCSharpScript", ImVec2(ButtonWidth, 0)))
-        {
-            PendingMutation = [Component] { RebindScript(Component, FString()); };
-            bWasChanged = true;
-        }
-        ImGui::EndDisabled();
-        if (ImGui::IsItemHovered())
-        {
-            ImGui::SetTooltip("Clear script");
-        }
-
-        if (!Component->ScriptClass.empty())
-        {
-            const FStringView ClassName(Component->ScriptClass.c_str(), Component->ScriptClass.size());
-            const CScriptStruct* Layout = DotNet::GetScriptStruct(ClassName);
-            if (Layout != nullptr)
-            {
-                Component->Values.EnsureLayout(Layout);
-                void* Buffer = Component->Values.GetBuffer();
-                if (Buffer != nullptr)
+                PendingMutation = [Component, Index]
                 {
-                    if (ValueTable == nullptr || BoundLayout != Layout || BoundBuffer != Buffer)
+                    if (Index < (int32)Component->Scripts.size())
                     {
-                        BoundLayout = Layout;
-                        BoundBuffer = Buffer;
-                        ValueTable = MakeUnique<FPropertyTable>(Buffer, const_cast<CScriptStruct*>(Layout),
-                            const_cast<void*>(Layout->GetDefaults()));
-                        ValueTable->SetPostEditCallback([this](const FPropertyChangedEvent&) { bValueEdited = true; });
+                        RebindSlot(Component->Scripts[Index], FString());
+                        Component->Scripts.erase(Component->Scripts.begin() + Index);
                     }
+                };
+                bWasChanged = true;
+            }
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip("Remove this script");
+            }
 
-                    ImGui::SeparatorText("Script Properties");
-                    ValueTable->DrawTree();
+            if (bOpen)
+            {
+                ImGui::Indent();
 
-                    if (bValueEdited)
+                int32 Current = INDEX_NONE;
+                for (int32 i = 0; i < (int32)Types.size(); ++i)
+                {
+                    if (Types[i] == Slot.ScriptClass)
                     {
-                        bValueEdited = false;
-                        bWasChanged = true;
-                        if (Component->Instance != nullptr && Component->Generation == DotNet::GetScriptGeneration())
-                        {
-                            TVector<Scripting::FScriptPropertyEntry> Values;
-                            Scripting::ReadStructToValues(Layout, Buffer, Values);
-                            DotNet::ApplyScriptProperties(Component->Instance, Values);
-                        }
+                        Current = i;
+                        break;
                     }
                 }
-            }
-            else
-            {
-                ImGui::TextDisabled("Script '%s' is not loaded (renamed, removed, or failed to compile).", Component->ScriptClass.c_str());
-                ImGui::TextDisabled("Saved values are preserved -- pick a script above to remap (matching fields carry over by name).");
+
+                const FString Preview = Slot.ScriptClass.empty() ? FString("Select a script...") : Slot.ScriptClass;
+
+                ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x - 2.0f * ButtonWidth - 2.0f * Spacing);
+                const int32 Picked = ImGuiX::SearchableCombo(
+                    "##CSharpScript", Preview.c_str(), (int32)Types.size(), Current,
+                    [&Types](int32 i) { return FFixedString(Types[i].c_str(), Types[i].size()); },
+                    LE_ICON_LANGUAGE_CSHARP);
+                ImGui::PopItemWidth();
+
+                if (Picked != INDEX_NONE && Picked != Current)
+                {
+                    FString NewClass = Types[Picked];
+                    PendingMutation = [Component, Index, NewClass]
+                    {
+                        if (Index < (int32)Component->Scripts.size())
+                        {
+                            RebindSlot(Component->Scripts[Index], NewClass);
+                        }
+                    };
+                    bWasChanged = true;
+                }
+
+                ImGui::SameLine();
+                ImGui::BeginDisabled(Slot.ScriptClass.empty());
+                if (ImGui::Button(LE_ICON_OPEN_IN_NEW "##OpenCSharpScript", ImVec2(ButtonWidth, 0)))
+                {
+                    OpenScriptSource(Slot.ScriptClass);
+                }
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered())
+                {
+                    ImGui::SetTooltip("Open script in your IDE");
+                }
+
+                ImGui::SameLine();
+                ImGui::BeginDisabled(Slot.ScriptClass.empty());
+                if (ImGui::Button(LE_ICON_CLOSE "##ClearCSharpScript", ImVec2(ButtonWidth, 0)))
+                {
+                    PendingMutation = [Component, Index]
+                    {
+                        if (Index < (int32)Component->Scripts.size())
+                        {
+                            RebindSlot(Component->Scripts[Index], FString());
+                        }
+                    };
+                    bWasChanged = true;
+                }
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered())
+                {
+                    ImGui::SetTooltip("Clear script");
+                }
+
+                if (!Slot.ScriptClass.empty())
+                {
+                    const FStringView ClassName(Slot.ScriptClass.c_str(), Slot.ScriptClass.size());
+                    const CScriptStruct* Layout = DotNet::GetScriptStruct(ClassName);
+                    if (Layout != nullptr)
+                    {
+                        Slot.Values.EnsureLayout(Layout);
+                        void* Buffer = Slot.Values.GetBuffer();
+                        if (Buffer != nullptr)
+                        {
+                            if (View.ValueTable == nullptr || View.BoundLayout != Layout || View.BoundBuffer != Buffer)
+                            {
+                                View.BoundLayout = Layout;
+                                View.BoundBuffer = Buffer;
+                                View.ValueTable = MakeUnique<FPropertyTable>(Buffer, const_cast<CScriptStruct*>(Layout),
+                                    const_cast<void*>(Layout->GetDefaults()));
+                                View.ValueTable->SetPostEditCallback([this](const FPropertyChangedEvent&) { bValueEdited = true; });
+                            }
+
+                            ImGui::SeparatorText("Script Properties");
+                            View.ValueTable->DrawTree();
+
+                            if (bValueEdited)
+                            {
+                                bValueEdited = false;
+                                bWasChanged = true;
+                                if (Slot.Instance != nullptr && Slot.Generation == DotNet::GetScriptGeneration())
+                                {
+                                    TVector<Scripting::FScriptPropertyEntry> Values;
+                                    Scripting::ReadStructToValues(Layout, Buffer, Values);
+                                    DotNet::ApplyScriptProperties(Slot.Instance, Values);
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        ImGui::TextDisabled("Script '%s' is not loaded (renamed, removed, or failed to compile).", Slot.ScriptClass.c_str());
+                        ImGui::TextDisabled("Saved values are preserved -- pick a script above to remap (matching fields carry over by name).");
+                    }
+
+                    DrawScriptButtons(Slot);
+                }
+
+                ImGui::Unindent();
             }
 
-            DrawScriptButtons(Component);
+            ImGui::PopID();
+        }
+
+        if (ImGui::Button(LE_ICON_PLUS " Add Script", ImVec2(-FLT_MIN, 0.0f)))
+        {
+            PendingMutation = [Component] { Component->Scripts.emplace_back(); };
+            bWasChanged = true;
         }
 
         ImGui::PopID();

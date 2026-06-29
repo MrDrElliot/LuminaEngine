@@ -17,6 +17,59 @@ namespace Lumina
 {
     class CWorld;
 
+    void* BindScriptInstance(uint64 World, uint32 Entity, SScriptComponent& Component, int32 SlotIndex, int32 Generation, bool bHotReload)
+    {
+        // Read the class by value first: CreateEntityScript runs the script's OnAttach, which may add
+        // scripts and reallocate this entity's Scripts vector, so we must not hold a slot reference across it.
+        FString ClassNameStr;
+        {
+            SScriptInstance& Slot = Component.Scripts[SlotIndex];
+            FString Resolved = DotNet::ResolveScriptClassName(FStringView(Slot.ScriptClass.c_str(), Slot.ScriptClass.size()));
+            if (!Resolved.empty() && Resolved != Slot.ScriptClass)
+            {
+                Slot.ScriptClass = Resolved;
+            }
+            ClassNameStr = Slot.ScriptClass;
+        }
+
+        const FStringView ClassName(ClassNameStr.c_str(), ClassNameStr.size());
+        void* Instance = DotNet::CreateEntityScript(ClassName, World, Entity);
+
+        // Re-acquire the slot by index; the vector may have moved during OnAttach. Guard the rare case
+        // where OnAttach removed earlier slots and shifted this one out of range.
+        if (SlotIndex >= (int32)Component.Scripts.size())
+        {
+            return Instance;
+        }
+        SScriptInstance& Slot = Component.Scripts[SlotIndex];
+        if (Instance == nullptr)
+        {
+            Slot.CallbackFlags = 0;
+            return nullptr;
+        }
+
+        Slot.Instance = Instance;
+        Slot.Generation = Generation;
+        Slot.CallbackFlags = DotNet::GetScriptCallbackFlags(Instance);
+        Slot.BindState = ECSharpBindState::Attached;
+
+        // Bind the value buffer to the script's current layout, then push it onto the fresh instance.
+        const CScriptStruct* Layout = DotNet::GetScriptStruct(ClassName);
+        Slot.Values.EnsureLayout(Layout);
+        if (Layout != nullptr && Slot.Values.GetBuffer() != nullptr)
+        {
+            // On a hot reload, [SkipHotReload] fields take the new default instead of the carried value.
+            if (bHotReload)
+            {
+                Layout->ResetHotReloadFields(Slot.Values.GetBuffer());
+            }
+            TVector<Scripting::FScriptPropertyEntry> Values;
+            Scripting::ReadStructToValues(Layout, Slot.Values.GetBuffer(), Values);
+            DotNet::ApplyScriptProperties(Instance, Values);
+        }
+        return Instance;
+    }
+
     void SCSharpScriptSystem::Update(const FSystemContext& Context) noexcept
     {
         LUMINA_PROFILE_SCOPE();
@@ -43,54 +96,28 @@ namespace Lumina
         {
             View.each([&](entt::entity Entity, SScriptComponent& Component)
             {
-                if (Component.ScriptClass.empty())
+                const uint32 EntityId = (uint32)entt::to_integral(Entity);
+                // Index-based: BindScriptInstance runs user OnAttach, which may append slots (reallocating).
+                for (int32 i = 0; i < (int32)Component.Scripts.size(); ++i)
                 {
-                    return;
-                }
-                if (Component.Generation == Generation && Component.Instance != nullptr)
-                {
-                    return;
-                }
-
-                // Generation changed, managed already freed the old instance handle on unload, so drop our
-                // stale pointer WITHOUT calling destroy (that would touch a freed GCHandle).
-                const bool bHotReload = Component.Generation >= 0 && Component.Generation != Generation;
-                Component.Instance = nullptr;
-                Component.BindState = ECSharpBindState::Unbound;
-                Component.Generation = Generation;
-
-                // Self-heal a renamed script by rewriting the reference to the current type name.
-                FString Resolved = DotNet::ResolveScriptClassName(FStringView(Component.ScriptClass.c_str(), Component.ScriptClass.size()));
-                if (!Resolved.empty() && Resolved != Component.ScriptClass)
-                {
-                    Component.ScriptClass = Resolved;
-                }
-
-                const FStringView ClassName(Component.ScriptClass.c_str(), Component.ScriptClass.size());
-                void* Instance = DotNet::CreateEntityScript(ClassName, World, (uint32)entt::to_integral(Entity));
-                if (Instance == nullptr)
-                {
-                    Component.CallbackFlags = 0;
-                    return;
-                }
-
-                Component.Instance = Instance;
-                Component.CallbackFlags = DotNet::GetScriptCallbackFlags(Instance);
-                Component.BindState = ECSharpBindState::Attached;
-
-                // Bind the value buffer to the script's current layout, then push it onto the fresh instance.
-                const CScriptStruct* Layout = DotNet::GetScriptStruct(ClassName);
-                Component.Values.EnsureLayout(Layout);
-                if (Layout != nullptr && Component.Values.GetBuffer() != nullptr)
-                {
-                    // On a hot reload, [SkipHotReload] fields take the new default instead of the carried value.
-                    if (bHotReload)
+                    SScriptInstance& Slot = Component.Scripts[i];
+                    if (Slot.ScriptClass.empty())
                     {
-                        Layout->ResetHotReloadFields(Component.Values.GetBuffer());
+                        continue;
                     }
-                    TVector<Scripting::FScriptPropertyEntry> Values;
-                    Scripting::ReadStructToValues(Layout, Component.Values.GetBuffer(), Values);
-                    DotNet::ApplyScriptProperties(Instance, Values);
+                    if (Slot.Generation == Generation && Slot.Instance != nullptr)
+                    {
+                        continue;
+                    }
+
+                    // Generation changed, managed already freed the old instance handle on unload, so drop
+                    // our stale pointer WITHOUT calling destroy (that would touch a freed GCHandle).
+                    const bool bHotReload = Slot.Generation >= 0 && Slot.Generation != Generation;
+                    Slot.Instance = nullptr;
+                    Slot.BindState = ECSharpBindState::Unbound;
+                    Slot.Generation = Generation;
+
+                    BindScriptInstance(World, EntityId, Component, i, Generation, bHotReload);
                 }
             });
 
@@ -103,39 +130,63 @@ namespace Lumina
                     constexpr int32 OnInputBit = 1 << 4;
                     View.each([&](entt::entity Entity, SScriptComponent& Component)
                     {
-                        if (Component.Instance == nullptr || (Component.CallbackFlags & OnInputBit) == 0)
-                        {
-                            return;
-                        }
                         const SInputComponent* Input = Context.GetRegistry().try_get<SInputComponent>(Entity);
                         if (Input == nullptr || !Input->bReceivingInput)
                         {
                             return;
                         }
-                        for (const SInputEvent& E : *Events)
+
+                        // Snapshot the listeners first: OnInput runs user code that may add/remove scripts on
+                        // this entity, reallocating Component.Scripts and dangling a held Slot reference.
+                        TVector<void*> Listeners;
+                        for (SScriptInstance& Slot : Component.Scripts)
                         {
-                            const int32 bMouse  = (E.Key.Device == EKeyDevice::Mouse) ? 1 : 0;
-                            const int32 KeyCode = bMouse ? (int32)E.Key.MouseButton : (int32)E.Key.Key;
-                            const int32 Mods    = (E.Key.bShift ? 1 : 0) | (E.Key.bCtrl ? 2 : 0) | (E.Key.bAlt ? 4 : 0);
-                            DotNet::DispatchScriptInput(Component.Instance, (int32)E.Type, KeyCode, bMouse, Mods,
-                                E.bRepeat ? 1 : 0, E.MouseX, E.MouseY, E.DeltaX, E.DeltaY, E.Scroll);
+                            if (Slot.Instance != nullptr && (Slot.CallbackFlags & OnInputBit) != 0)
+                            {
+                                Listeners.push_back(Slot.Instance);
+                            }
+                        }
+
+                        for (void* Instance : Listeners)
+                        {
+                            for (const SInputEvent& E : *Events)
+                            {
+                                const int32 bMouse  = (E.Key.Device == EKeyDevice::Mouse) ? 1 : 0;
+                                const int32 KeyCode = bMouse ? (int32)E.Key.MouseButton : (int32)E.Key.Key;
+                                const int32 Mods    = (E.Key.bShift ? 1 : 0) | (E.Key.bCtrl ? 2 : 0) | (E.Key.bAlt ? 4 : 0);
+                                DotNet::DispatchScriptInput(Instance, (int32)E.Type, KeyCode, bMouse, Mods,
+                                    E.bRepeat ? 1 : 0, E.MouseX, E.MouseY, E.DeltaX, E.DeltaY, E.Scroll);
+                            }
                         }
                     });
                 }
             }
 
-            View.each([&](entt::entity, SScriptComponent& Component)
+            // OnReady runs user code that may add scripts to this entity (reallocating Component.Scripts), so
+            // flip the bind state in the gather pass while the slot is still valid, then dispatch from a
+            // snapshot instead of holding a Slot reference across the user callback.
             {
-                if (Component.Instance != nullptr && Component.BindState == ECSharpBindState::Attached)
+                TVector<void*> ToReady;
+                View.each([&](entt::entity, SScriptComponent& Component)
                 {
-                    DotNet::OnReadyScript(Component.Instance);
-                    Component.BindState = ECSharpBindState::Ready;
+                    for (SScriptInstance& Slot : Component.Scripts)
+                    {
+                        if (Slot.Instance != nullptr && Slot.BindState == ECSharpBindState::Attached)
+                        {
+                            Slot.BindState = ECSharpBindState::Ready;
+                            ToReady.push_back(Slot.Instance);
+                        }
+                    }
+                });
+                for (void* Instance : ToReady)
+                {
+                    DotNet::OnReadyScript(Instance);
                 }
-            });
+            }
 
-            // --- Fixed update: dispatch OnFixedUpdate at the physics fixed rate, BEFORE OnUpdate and before
-            //     physics. A game-thread accumulator matching the physics scene's own (same Hz/cap), so it runs
-            //     the same number of steps per frame without a cross-thread query. Runs 0..N times this frame.
+            // Fixed update: dispatch OnFixedUpdate at the physics fixed rate, BEFORE OnUpdate and before
+            // physics. A game-thread accumulator matching the physics scene's own (same Hz/cap), so it runs
+            // the same number of steps per frame without a cross-thread query. Runs 0..N times this frame.
             {
                 CWorld* CW = Context.GetRegistry().ctx().get<CWorld*>();
                 const SDefaultWorldSettings& Settings = CW->GetDefaultWorldSettings();
@@ -165,10 +216,13 @@ namespace Lumina
                         FixedScripts.reserve(View.size_hint());
                         View.each([&](entt::entity, SScriptComponent& Component)
                         {
-                            if (Component.Instance != nullptr && Component.BindState == ECSharpBindState::Ready
-                                && (Component.CallbackFlags & OnFixedUpdateBit) != 0)
+                            for (SScriptInstance& Slot : Component.Scripts)
                             {
-                                FixedScripts.push_back(Component.Instance);
+                                if (Slot.Instance != nullptr && Slot.BindState == ECSharpBindState::Ready
+                                    && (Slot.CallbackFlags & OnFixedUpdateBit) != 0)
+                                {
+                                    FixedScripts.push_back(Slot.Instance);
+                                }
                             }
                         });
                         if (!FixedScripts.empty())
@@ -187,16 +241,19 @@ namespace Lumina
         Ready.reserve(View.size_hint());
         View.each([&](entt::entity, SScriptComponent& Component)
         {
-            if (Component.Instance == nullptr || Component.BindState != ECSharpBindState::Ready
-                || (Component.CallbackFlags & OnUpdateBit) == 0)
+            for (SScriptInstance& Slot : Component.Scripts)
             {
-                return;
-            }
-            const bool bScriptPost   = (Component.CallbackFlags & PostPhysicsPhaseBit) != 0;
-            const bool bRunThisStage = bScriptPost ? !bPrePhysics : bPrePhysics;
-            if (bRunThisStage)
-            {
-                Ready.push_back(Component.Instance);
+                if (Slot.Instance == nullptr || Slot.BindState != ECSharpBindState::Ready
+                    || (Slot.CallbackFlags & OnUpdateBit) == 0)
+                {
+                    continue;
+                }
+                const bool bScriptPost   = (Slot.CallbackFlags & PostPhysicsPhaseBit) != 0;
+                const bool bRunThisStage = bScriptPost ? !bPrePhysics : bPrePhysics;
+                if (bRunThisStage)
+                {
+                    Ready.push_back(Slot.Instance);
+                }
             }
         });
 

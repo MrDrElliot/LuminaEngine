@@ -32,8 +32,25 @@ namespace Lumina::DotNet
     RUNTIME_API void Tick();
     
     RUNTIME_API void ReloadScripts();
-    
+
+    // Cooked-game variant of ReloadScripts: loads the prebuilt script DLLs the packager staged under
+    // <exeDir>/DotNet/Scripts/ (driven by scripts.manifest.json) instead of compiling .cs from disk. No
+    // Roslyn, no .csproj generation. Safe to call when no manifest exists (no-op).
+    RUNTIME_API void LoadCookedScripts();
+
     RUNTIME_API void GenerateScriptProjects();
+
+    // One script unit the packager should ship as a prebuilt assembly in a cooked game.
+    struct FPackagedScriptUnit
+    {
+        FString          Name;           // assembly / unit name
+        FString          DllSourcePath;  // the freshly-emitted DLL on disk (may be absent if the unit had no .cs)
+        TVector<FString> Deps;           // sibling units this one references (drives managed load order)
+    };
+
+    // Recompiles scripts (so every unit's DLL is freshly emitted) and returns the unit graph for the packager
+    // to stage under DotNet/Scripts/ + scripts.manifest.json. Editor-side; no-op if scripting is disabled.
+    RUNTIME_API void GatherScriptUnitsForPackaging(TVector<FPackagedScriptUnit>& Out);
 
     RUNTIME_API bool IsInitialized();
 
@@ -86,7 +103,29 @@ namespace Lumina::DotNet
     RUNTIME_API void DestroyEntityScript(void* Instance);
     
     RUNTIME_API void GatherEntityScriptTypes(TVector<FString>& OutTypeNames);
-    
+
+    //~ Scriptable CObjects: a C# subclass of a REFLECT(Scriptable) native CObject. The Reflector mints a CClass
+    //  per discovered C# subclass; native creates the CObject (a minted CClass) and binds the managed instance.
+
+    // One discovered C# Scriptable subclass: its full type name + the native base class it derives from (the
+    // [ScriptableType] wrapper's reflected name). The host mints a CClass(super = that native base) per entry.
+    struct FScriptableTypeDesc
+    {
+        FString TypeName;
+        FString NativeBaseName;
+    };
+
+    // Reports every loaded C# Scriptable subclass + its native base. Drives runtime CClass minting + editor picker.
+    RUNTIME_API void GatherScriptableTypes(TVector<FScriptableTypeDesc>& Out);
+
+    // Instantiates the named C# Scriptable subclass and pairs it to an already-created native object (NativePtr).
+    // Writes the override-flag bitmask (which ScriptEvents the subclass overrides). Returns a GCHandle (the native
+    // shim stores it), or nullptr on failure.
+    RUNTIME_API void* CreateScriptable(FStringView TypeName, uint64 NativePtr, int32& OutOverrideFlags);
+
+    // Frees a Scriptable instance's managed GCHandle (the native shim's destructor calls this).
+    RUNTIME_API void DestroyScriptable(void* Instance);
+
     struct FManagedSystemDesc
     {
         FString         TypeName;

@@ -414,11 +414,11 @@ namespace Lumina
     void FEditorTool::SetupWorldForTool()
     {
         EditorEntity = World->ConstructEntity("Editor Entity");
-        World->GetEntityRegistry().emplace<FHideInSceneOutliner>(EditorEntity);
-        World->GetEntityRegistry().emplace<SCameraComponent>(EditorEntity);
-        World->GetEntityRegistry().emplace<SInputComponent>(EditorEntity);
-        World->GetEntityRegistry().emplace<FEditorComponent>(EditorEntity);
-        World->GetEntityRegistry().get<STransformComponent>(EditorEntity).SetLocation(FVector3(0.0f, 1.25f, 3.25f));
+        World->EmplaceComponent<FHideInSceneOutliner>(EditorEntity);
+        World->EmplaceComponent<SCameraComponent>(EditorEntity);
+        World->EmplaceComponent<SInputComponent>(EditorEntity);
+        World->EmplaceComponent<FEditorComponent>(EditorEntity);
+        World->GetComponent<STransformComponent>(EditorEntity).SetLocation(FVector3(0.0f, 1.25f, 3.25f));
 
         World->SetActiveCamera(EditorEntity);
     }
@@ -431,8 +431,8 @@ namespace Lumina
         Transform.Translate(FVector3(0.0f, YOffset, 0.0f));
         
         entt::entity FloorEntity = World->ConstructEntity("FloorPlane", Transform);
-        World->GetEntityRegistry().emplace<FHideInSceneOutliner>(FloorEntity);
-        SStaticMeshComponent& MeshComponent = World->GetEntityRegistry().emplace<SStaticMeshComponent>(FloorEntity);
+        World->EmplaceComponent<FHideInSceneOutliner>(FloorEntity);
+        SStaticMeshComponent& MeshComponent = World->EmplaceComponent<SStaticMeshComponent>(FloorEntity);
         MeshComponent.StaticMesh = CPrimitiveManager::Get().PlaneMesh;
         
         return FloorEntity;
@@ -703,13 +703,13 @@ namespace Lumina
             return;
         }
 
-        if (!World->GetEntityRegistry().valid(Entity))
+        if (!World->IsValidEntity(Entity))
         {
             return;
         }
 
-        const STransformComponent& EntityTransform = World->GetEntityRegistry().get<STransformComponent>(Entity);
-        STransformComponent& EditorTransform = World->GetEntityRegistry().get<STransformComponent>(EditorEntity);
+        const STransformComponent& EntityTransform = World->GetComponent<STransformComponent>(Entity);
+        STransformComponent& EditorTransform = World->GetComponent<STransformComponent>(EditorEntity);
 
         // Resolve to world space, local would mis-frame any entity parented under another.
         const FVector3 EntityWorldLocation = EntityTransform.GetWorldLocation();
@@ -741,9 +741,9 @@ namespace Lumina
 
         // Derive orbit yaw/pitch/distance from current camera so the first frame doesn't snap.
         if (Mode == EEditorCameraMode::Orbit && HasWorld() && EditorEntity != entt::null
-            && World->GetEntityRegistry().valid(EditorEntity))
+            && World->IsValidEntity(EditorEntity))
         {
-            const STransformComponent& Transform = World->GetEntityRegistry().get<STransformComponent>(EditorEntity);
+            const STransformComponent& Transform = World->GetComponent<STransformComponent>(EditorEntity);
             const FVector3 Position = Transform.GetLocation();
             const FVector3 Offset   = Position - CameraState.OrbitTarget;
             const float Distance = Math::Length(Offset);
@@ -794,7 +794,7 @@ namespace Lumina
         {
             return;
         }
-        if (!World->GetEntityRegistry().valid(EditorEntity))
+        if (!World->IsValidEntity(EditorEntity))
         {
             return;
         }
@@ -807,7 +807,7 @@ namespace Lumina
             CameraState.OrbitDistance * std::cos(PitchRad) * std::cos(YawRad));
 
         const FVector3 NewPosition = CameraState.OrbitTarget + Offset;
-        STransformComponent& Transform = World->GetEntityRegistry().get<STransformComponent>(EditorEntity);
+        STransformComponent& Transform = World->GetComponent<STransformComponent>(EditorEntity);
         Transform.SetLocation(NewPosition);
         Transform.SetRotation(Math::FindLookAtRotation(CameraState.OrbitTarget, NewPosition));
     }
@@ -855,7 +855,7 @@ namespace Lumina
         {
             return;
         }
-        if (!World->GetEntityRegistry().valid(EditorEntity))
+        if (!World->IsValidEntity(EditorEntity))
         {
             return;
         }
@@ -892,7 +892,7 @@ namespace Lumina
         
         CameraState.bWasLooking = bWantsCaptured;
 
-        STransformComponent& Transform = World->GetEntityRegistry().get<STransformComponent>(EditorEntity);
+        STransformComponent& Transform = World->GetComponent<STransformComponent>(EditorEntity);
 
         // Advance any in-flight focus lerp before reading user input. Movement input
         // from the focused viewport cancels the lerp so the user can take over mid-flight.
@@ -1237,7 +1237,7 @@ namespace Lumina
 
         FMemoryWriter Writer(PendingBeforeState);
         FObjectProxyArchiver Ar(Writer, false);
-        ECS::Utils::SerializeRegistry(Ar, World->GetEntityRegistry());
+        ECS::Utils::SerializeRegistry(Ar, ECS::GetWorldRegistry(*World));
 
         RedoStack.clear();
     }
@@ -1252,7 +1252,7 @@ namespace Lumina
         TVector<uint8> AfterState;
         FMemoryWriter Writer(AfterState);
         FObjectProxyArchiver Ar(Writer, false);
-        ECS::Utils::SerializeRegistry(Ar, World->GetEntityRegistry());
+        ECS::Utils::SerializeRegistry(Ar, ECS::GetWorldRegistry(*World));
 
         if (UndoStack.size() >= GMaxUndoHistory)
         {
@@ -1286,7 +1286,7 @@ namespace Lumina
         FMemoryReader Reader(Transaction.BeforeState);
         FObjectProxyArchiver Ar(Reader, true);
 
-        FEntityRegistry& Registry = World->GetEntityRegistry();
+        FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
         ECS::Utils::SerializeRegistry(Ar, Registry);
 
         OnPostUndoRedo();
@@ -1315,7 +1315,7 @@ namespace Lumina
         FMemoryReader Reader(Transaction.AfterState);
         FObjectProxyArchiver Ar(Reader, true);
 
-        FEntityRegistry& Registry = World->GetEntityRegistry();
+        FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
         ECS::Utils::SerializeRegistry(Ar, Registry);
 
         OnPostUndoRedo();
@@ -1346,9 +1346,9 @@ namespace Lumina
         // Prefer the world's active camera; fall back to the EditorEntity (asset editors
         // typically own the camera there directly and may not call SetActiveCamera).
         const SCameraComponent* Camera = World->GetActiveCamera();
-        if (Camera == nullptr && EditorEntity != entt::null && World->GetEntityRegistry().valid(EditorEntity))
+        if (Camera == nullptr && EditorEntity != entt::null && World->IsValidEntity(EditorEntity))
         {
-            Camera = World->GetEntityRegistry().try_get<SCameraComponent>(EditorEntity);
+            Camera = World->TryGetComponent<SCameraComponent>(EditorEntity);
         }
 
         if (Camera == nullptr)

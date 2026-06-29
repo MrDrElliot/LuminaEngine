@@ -171,8 +171,6 @@ float3 Sky_Atmosphere(float3 RayOrigin, float3 RayDir, float3 SunDir, float3 Sun
     float3 SumM = float3(0.0, 0.0, 0.0);
     float3 PrimaryOD = float3(0.0, 0.0, 0.0);
 
-    // [[loop]]: rolling keeps one march step's temporaries (+ the nested optical-depth march) live instead
-    // of all Steps copies; loop-carried accumulators stay resident either way. Capture-pass occupancy win.
     [[loop]]
     for (int i = 0; i < Steps; i++)
     {
@@ -208,9 +206,11 @@ float3 Sky_Atmosphere(float3 RayOrigin, float3 RayDir, float3 SunDir, float3 Sun
     float3 Rayleigh = kRayleighCoeff * Sky_RayleighPhase(CosTheta) * SumR;
     float3 Mie      = float3(kMieCoeff, kMieCoeff, kMieCoeff) * Sky_MiePhase(CosTheta, MieG) * SumM;
 
-    // Cheap multi-scatter: bleed isotropic Rayleigh into shadowed sky, softening the
-    // crushed horizon at noon and deep zenith at dusk.
-    float3 MultiScatter = kRayleighCoeff * SumR * 0.35 / kPI;
+    const float kMsStrength = 0.9;
+    const float kMsTint     = 0.15;
+    float3 MsEnergy     = kRayleighCoeff * SumR;
+    float  MsGrey       = dot(MsEnergy, float3(0.2126, 0.7152, 0.0722));
+    float3 MultiScatter = lerp(float3(MsGrey), MsEnergy, kMsTint) * kMsStrength / kPI;
 
     return SunColor * (Rayleigh + Mie + MultiScatter);
 }

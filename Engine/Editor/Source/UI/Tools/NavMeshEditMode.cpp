@@ -22,7 +22,7 @@ namespace Lumina
             return;
         }
 
-        auto View = World->GetEntityRegistry().view<SNavMeshComponent>();
+        auto View = World->View<SNavMeshComponent>();
         for (entt::entity Entity : View)
         {
             const SNavMeshComponent& Nav = View.get<SNavMeshComponent>(Entity);
@@ -63,7 +63,7 @@ namespace Lumina
         ImGui::SameLine();
         if (ImGui::Button(LE_ICON_REFRESH, ImVec2(ButtonSize, ButtonSize)))
         {
-            auto View = World->GetEntityRegistry().view<SNavMeshComponent>();
+            auto View = World->View<SNavMeshComponent>();
             for (entt::entity Entity : View)
             {
                 View.get<SNavMeshComponent>(Entity).bBakeRequested = true;
@@ -75,7 +75,7 @@ namespace Lumina
         }
 
         // Compact state readout for the first nav volume.
-        auto View = World->GetEntityRegistry().view<SNavMeshComponent>();
+        auto View = World->View<SNavMeshComponent>();
         for (entt::entity Entity : View)
         {
             const SNavMeshComponent& Nav = View.get<SNavMeshComponent>(Entity);

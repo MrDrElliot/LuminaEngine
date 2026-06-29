@@ -1,13 +1,10 @@
 #include "pch.h"
 #include "PakWriter.h"
-
-#include <cstring>
 #include <fstream>
-
+#include "miniz.h"
 #include "Core/Math/Hash/Hash.h"
 #include "Core/Templates/LuminaTemplate.h"
 #include "Log/Log.h"
-#include "miniz.h"
 
 namespace Lumina
 {

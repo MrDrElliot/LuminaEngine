@@ -14,6 +14,7 @@
 #include "Core/Delegates/ScriptDelegate.h"
 #include "Core/Engine/Engine.h"
 #include "Scripting/ScriptStruct.h"
+#include "Scripting/ScriptableObject.h"
 #include "Core/Plugin/Plugin.h"
 #include "Core/Plugin/PluginManager.h"
 #include "FileSystem/FileSystem.h"
@@ -32,6 +33,7 @@
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "TaskSystem/ThreadedCallback.h"
 #include "Tools/UI/ImGui/ImGuiX.h"   // editor toast notifications for script-compile feedback
+#include "nlohmann/json.hpp"          // cooked script manifest (prebuilt-DLL unit graph)
 
 #if defined(_WIN32)
     #ifndef WIN32_LEAN_AND_MEAN
@@ -133,6 +135,9 @@ namespace Lumina::DotNet
         typedef void  (CORECLR_DELEGATE_CALLTYPE* DestroyEntityScriptFn)(void*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* EnumerateEntityScriptsFn)(void*, void*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* EnumerateEntitySystemsFn)(void*, void*);
+        typedef void* (CORECLR_DELEGATE_CALLTYPE* CreateScriptableFn)(const char*, int32, uint64, int32*);
+        typedef void  (CORECLR_DELEGATE_CALLTYPE* DestroyScriptableFn)(void*);
+        typedef void  (CORECLR_DELEGATE_CALLTYPE* EnumerateScriptablesFn)(void*, void*);
         typedef void* (CORECLR_DELEGATE_CALLTYPE* CreateEntitySystemFn)(const char*, int32, uint64);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* TickEntitySystemFn)(void*, void*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* DestroyEntitySystemFn)(void*);
@@ -166,6 +171,9 @@ namespace Lumina::DotNet
             OnNativeDelegateDestroyedFn OnNativeDelegateDestroyed;
             EnumerateEntityScriptsFn    EnumerateEntityScripts;
             EnumerateEntitySystemsFn    EnumerateEntitySystems;
+            CreateScriptableFn          CreateScriptable;
+            DestroyScriptableFn         DestroyScriptable;
+            EnumerateScriptablesFn      EnumerateScriptables;
             ManagedFieldGetFn           FieldGet;
             ManagedFieldSetFn           FieldSet;
             ManagedFreeHandleFn         FreeHandle;
@@ -214,6 +222,23 @@ namespace Lumina::DotNet
             {
                 Out->emplace_back(FString(Name, static_cast<size_t>(Len)));
             }
+        }
+
+        // Sink the managed EnumerateScriptables calls once per Scriptable C# type; Ctx is the out desc vector.
+        void LmScriptableSink(void* Ctx, const char* Name, int NameLen, const char* Base, int BaseLen)
+        {
+            auto* Out = static_cast<TVector<FScriptableTypeDesc>*>(Ctx);
+            if (Out == nullptr || Name == nullptr || NameLen <= 0)
+            {
+                return;
+            }
+            FScriptableTypeDesc Desc;
+            Desc.TypeName = FString(Name, static_cast<size_t>(NameLen));
+            if (Base != nullptr && BaseLen > 0)
+            {
+                Desc.NativeBaseName = FString(Base, static_cast<size_t>(BaseLen));
+            }
+            Out->emplace_back(eastl::move(Desc));
         }
 
         // Single-name sink for ResolveEntityScriptName; Ctx is the out FString.
@@ -401,6 +426,81 @@ namespace Lumina::DotNet
                 Units.push_back(eastl::move(Engine));
             }
 
+            return Units;
+        }
+
+        // Cooked-game unit graph. The packager stages each script unit's prebuilt DLL under
+        // <exeDir>/DotNet/Scripts/ together with scripts.manifest.json carrying [{Name, Deps, Dll}], so the
+        // managed load order (topo-sort over Deps) and cross-assembly references survive without re-running
+        // plugin discovery. Units carry NO sources (DiskDir empty) -> the shared load core takes the
+        // prebuilt-DLL branch. Returns empty when no manifest is present (dev runs, or a project with no C#).
+        TVector<FScriptUnit> BuildCookedScriptUnits()
+        {
+            TVector<FScriptUnit> Units;
+
+            const fs::path ExeDir      = NativePath(fs::path(Platform::GetCurrentProcessPath().c_str())).parent_path();
+            const fs::path ScriptsDir  = ExeDir / "DotNet" / "Scripts";
+            const fs::path ManifestPath = ScriptsDir / "scripts.manifest.json";
+
+            std::error_code Ec;
+            if (!fs::exists(ManifestPath, Ec))
+            {
+                return Units;
+            }
+
+            std::ifstream In(ManifestPath, std::ios::binary);
+            if (!In)
+            {
+                return Units;
+            }
+            const std::string Text((std::istreambuf_iterator<char>(In)), std::istreambuf_iterator<char>());
+
+            nlohmann::json J;
+            try
+            {
+                J = nlohmann::json::parse(Text);
+            }
+            catch (const std::exception& Err)
+            {
+                LOG_ERROR("C#: failed to parse cooked script manifest '{}': {}", ManifestPath.string().c_str(), Err.what());
+                return Units;
+            }
+
+            const nlohmann::json& Arr = J.contains("Units") ? J["Units"] : J;
+            if (!Arr.is_array())
+            {
+                return Units;
+            }
+
+            for (const nlohmann::json& Entry : Arr)
+            {
+                if (!Entry.is_object())
+                {
+                    continue;
+                }
+                const std::string Name = Entry.value("Name", std::string());
+                if (Name.empty())
+                {
+                    continue;
+                }
+
+                FScriptUnit Unit;
+                Unit.Name = FString(Name.c_str());
+                const std::string Dll = Entry.value("Dll", Name + ".dll");
+                Unit.AssemblyPath = FString((ScriptsDir / Dll).string().c_str());
+
+                if (Entry.contains("Deps") && Entry["Deps"].is_array())
+                {
+                    for (const nlohmann::json& Dep : Entry["Deps"])
+                    {
+                        if (Dep.is_string())
+                        {
+                            Unit.Deps.push_back(FString(Dep.get<std::string>().c_str()));
+                        }
+                    }
+                }
+                Units.push_back(eastl::move(Unit));
+            }
             return Units;
         }
 
@@ -654,6 +754,36 @@ namespace Lumina::DotNet
             return nullptr; // POSIX: dladdr-based, added with the POSIX port
         #endif
         }
+
+        // Best-effort recursive copy (overwriting). Returns false if any file failed to copy (e.g. a
+        // destination locked by another process). Used to shadow the managed dir so the build output stays free.
+        bool CopyTreeBestEffort(const fs::path& Src, const fs::path& Dst)
+        {
+            std::error_code Ec;
+            fs::create_directories(Dst, Ec);
+            bool bAllOk = true;
+            for (fs::recursive_directory_iterator It(Src, fs::directory_options::skip_permission_denied, Ec), End;
+                 It != End && !Ec; It.increment(Ec))
+            {
+                std::error_code FileEc;
+                const fs::path Rel    = fs::relative(It->path(), Src, FileEc);
+                const fs::path Target = Dst / Rel;
+                if (It->is_directory(FileEc))
+                {
+                    fs::create_directories(Target, FileEc);
+                }
+                else if (It->is_regular_file(FileEc))
+                {
+                    fs::create_directories(Target.parent_path(), FileEc);
+                    fs::copy_file(It->path(), Target, fs::copy_options::overwrite_existing, FileEc);
+                    if (FileEc)
+                    {
+                        bAllOk = false;
+                    }
+                }
+            }
+            return bAllOk;
+        }
     }
 
     void Initialize()
@@ -663,11 +793,19 @@ namespace Lumina::DotNet
             return;
         }
 
-        const fs::path Install = fs::path(Paths::GetEngineInstallDirectory().c_str());
-        const fs::path Bundled = NativePath(Install / "External" / "DotNet" / "runtime" / RuntimeRid());
+        // A packaged game ships the runtime next to the exe (<exeDir>/External/DotNet/runtime/<rid>) and has
+        // no LUMINA_DIR / on-disk Engine/Resources, so GetEngineInstallDirectory() is empty there. Probe the
+        // exe-relative layout first, then fall back to the engine install dir for the in-tree dev build.
+        const fs::path ExeDir = NativePath(fs::path(Platform::GetCurrentProcessPath().c_str())).parent_path();
+        fs::path Bundled = NativePath(ExeDir / "External" / "DotNet" / "runtime" / RuntimeRid());
         if (!fs::exists(Bundled))
         {
-            LOG_ERROR("C# scripting disabled: bundled .NET runtime not found at '{}'. Run Setup.bat to extract External.", Bundled.string().c_str());
+            const fs::path Install = fs::path(Paths::GetEngineInstallDirectory().c_str());
+            Bundled = NativePath(Install / "External" / "DotNet" / "runtime" / RuntimeRid());
+        }
+        if (!fs::exists(Bundled))
+        {
+            LOG_ERROR("C# scripting disabled: bundled .NET runtime not found next to the exe or under the engine install ('{}'). Run Setup.bat to extract External.", Bundled.string().c_str());
             return;
         }
 
@@ -705,14 +843,38 @@ namespace Lumina::DotNet
             return;
         }
 
-        // Managed bootstrap, built next to the binaries by the LuminaSharpManaged project.
+        // Managed bootstrap, built next to the binaries by the LuminaSharp project.
         const fs::path ExePath      = NativePath(fs::path(Platform::GetCurrentProcessPath().c_str()));
         const fs::path ManagedDir   = ExePath.parent_path() / "DotNet" / "Managed";
-        const fs::path BootstrapDll = NativePath(ManagedDir / "LuminaSharp.dll");
-        const fs::path BootstrapCfg = NativePath(ManagedDir / "LuminaSharp.runtimeconfig.json");
+
+        // In the editor, CoreCLR keeps LuminaSharp.dll (and the Roslyn assemblies the script compiler pulls
+        // from the same folder) open for the whole session. That locks the build output, so a packaging
+        // MSBuild can't overwrite it ("LuminaSharp.dll is in use"). Load from a shadow copy instead, leaving
+        // the canonical DotNet/Managed output free to rebuild. A cooked game has no build step (and may sit in
+        // a read-only dir), so it loads in place. Multi-instance: if the shadow is locked by another editor,
+        // the copy fails and we fall back to loading in place.
+        fs::path LoadDir = ManagedDir;
+    #if WITH_EDITOR
+        {
+            const fs::path ShadowDir = ExePath.parent_path() / "DotNet" / "ManagedShadow";
+            if (CopyTreeBestEffort(ManagedDir, ShadowDir)
+                && fs::exists(ShadowDir / "LuminaSharp.dll")
+                && fs::exists(ShadowDir / "LuminaSharp.runtimeconfig.json"))
+            {
+                LoadDir = ShadowDir;
+            }
+            else
+            {
+                LOG_WARN("C#: managed shadow copy incomplete; loading in place (packaging may report LuminaSharp.dll in use).");
+            }
+        }
+    #endif
+
+        const fs::path BootstrapDll = NativePath(LoadDir / "LuminaSharp.dll");
+        const fs::path BootstrapCfg = NativePath(LoadDir / "LuminaSharp.runtimeconfig.json");
         if (!fs::exists(BootstrapDll) || !fs::exists(BootstrapCfg))
         {
-            LOG_ERROR("C# scripting disabled: managed bootstrap missing under '{}'. Did LuminaSharpManaged build?", ManagedDir.string().c_str());
+            LOG_ERROR("C# scripting disabled: managed bootstrap missing under '{}'. Did LuminaSharp build?", LoadDir.string().c_str());
             return;
         }
 
@@ -794,6 +956,9 @@ namespace Lumina::DotNet
         LM_RESOLVE(DispatchInput,          DispatchInputFn);
         LM_RESOLVE(EnumerateEntityScripts, EnumerateEntityScriptsFn);
         LM_RESOLVE(EnumerateEntitySystems, EnumerateEntitySystemsFn);
+        LM_RESOLVE(CreateScriptable,       CreateScriptableFn);      // optional: only when scripts ship Scriptables
+        LM_RESOLVE(DestroyScriptable,      DestroyScriptableFn);
+        LM_RESOLVE(EnumerateScriptables,   EnumerateScriptablesFn);
         LM_RESOLVE(FieldGet,               ManagedFieldGetFn);
         LM_RESOLVE(FieldSet,               ManagedFieldSetFn);
         LM_RESOLVE(FreeHandle,             ManagedFreeHandleFn);
@@ -860,11 +1025,15 @@ namespace Lumina::DotNet
         GManaged.Tick();
     }
 
-    void ReloadScripts()
+    // Core load path shared by the editor (ReloadScripts, compile-from-source) and the cooked game
+    // (LoadCookedScripts, prebuilt DLLs). Turns a prepared unit list into managed assemblies and refreshes
+    // the native mirrors. bEditorFollowups drives the editor-only steps (toast notifications + .csproj regen)
+    // that a cooked game has no use for. Returns the managed load result (0 == ok, <0 = could not run).
+    int32 LoadScriptUnitsCore(const TVector<FScriptUnit>& UnitList, bool bEditorFollowups)
     {
         if (!bInitialized || GManaged.LoadScripts == nullptr)
         {
-            return;
+            return -1;
         }
 
         // Turn the shared unit graph into compilation buckets: gather each unit's .cs, and skip units with
@@ -880,7 +1049,7 @@ namespace Lumina::DotNet
         };
 
         TVector<FSourceBucket> Buckets;
-        for (const FScriptUnit& Unit : BuildScriptUnits())
+        for (const FScriptUnit& Unit : UnitList)
         {
             FSourceBucket Bucket;
             Bucket.Name    = Unit.Name;
@@ -944,17 +1113,21 @@ namespace Lumina::DotNet
             TotalFiles += Files.size();
         }
 
-        LOG_DISPLAY("C#: compiling {} script unit(s), {} file(s)...", Units.size(), TotalFiles);
+        LOG_DISPLAY("C#: {} {} script unit(s), {} file(s)...",
+            bEditorFollowups ? "compiling" : "loading", Units.size(), TotalFiles);
         const int32 Result = GManaged.LoadScripts(Units.empty() ? nullptr : Units.data(), (int32)Units.size());
         // The compile runs synchronously on this (main) thread, so a live progress modal can't animate during
         // it; instead report the outcome as a toast (covers every reload trigger: hot-key, content-browser
-        // save-watch, console command, and the initial project-load compile).
+        // save-watch, console command, and the initial project-load compile). A cooked game has no editor UI.
         if (Result != 0)
         {
             LOG_ERROR("C# script load/reload returned error {}.", Result);
-            ImGuiX::Notifications::NotifyError("Script compile failed ({} file(s)) -- see the Output Log.", TotalFiles);
+            if (bEditorFollowups)
+            {
+                ImGuiX::Notifications::NotifyError("Script compile failed ({} file(s)) -- see the Output Log.", TotalFiles);
+            }
         }
-        else
+        else if (bEditorFollowups)
         {
             ImGuiX::Notifications::NotifySuccess("Recompiled {} C# script file(s).", TotalFiles);
         }
@@ -965,9 +1138,66 @@ namespace Lumina::DotNet
 
         GScriptStructs.Clear();
 
+        // Mint a real CClass for every C# subclass of a REFLECT(Scriptable) native class, so FindObject<CClass>
+        // / NewObject / editor pickers see them like any native class (minted classes are reused by name across
+        // reloads; the managed instance behind each rebinds via the per-instance FScriptableBridge generation gate).
+        FScriptableRegistry::RefreshMintedClasses();
+
         // Keep the IDE projects in lockstep with the scripts that just (re)loaded so an absent or deleted
         // .csproj self-heals on ANY reload, not only on a full project load (idempotent; no-op if unchanged).
-        GenerateScriptProjects();
+        // Editor-only: a cooked game ships no sources and no IDE.
+        if (bEditorFollowups)
+        {
+            GenerateScriptProjects();
+        }
+        return Result;
+    }
+
+    void ReloadScripts()
+    {
+        LoadScriptUnitsCore(BuildScriptUnits(), /*bEditorFollowups*/true);
+    }
+
+    void LoadCookedScripts()
+    {
+        if (!bInitialized || GManaged.LoadScripts == nullptr)
+        {
+            return;
+        }
+
+        const TVector<FScriptUnit> Units = BuildCookedScriptUnits();
+        if (Units.empty())
+        {
+            LOG_DISPLAY("C#: no cooked script units to load (no DotNet/Scripts/scripts.manifest.json or it was empty).");
+            return;
+        }
+        LoadScriptUnitsCore(Units, /*bEditorFollowups*/false);
+    }
+
+    void GatherScriptUnitsForPackaging(TVector<FPackagedScriptUnit>& Out)
+    {
+        Out.clear();
+        if (!bInitialized)
+        {
+            return;
+        }
+
+        // Recompile first so each unit's <root>/Binaries/DotNet/<Name>.dll is emitted fresh (captures the
+        // latest .cs edits); the cooked game then loads these prebuilt rather than running Roslyn at boot.
+        ReloadScripts();
+
+        for (const FScriptUnit& Unit : BuildScriptUnits())
+        {
+            if (Unit.AssemblyPath.empty())
+            {
+                continue; // no canonical DLL location (e.g. a unit with no project path) -- nothing to ship
+            }
+            FPackagedScriptUnit Packaged;
+            Packaged.Name          = Unit.Name;
+            Packaged.DllSourcePath = Unit.AssemblyPath;
+            Packaged.Deps          = Unit.Deps;
+            Out.push_back(eastl::move(Packaged));
+        }
     }
 
     void GenerateScriptProjects()
@@ -1075,6 +1305,33 @@ namespace Lumina::DotNet
         }
     }
 
+    void GatherScriptableTypes(TVector<FScriptableTypeDesc>& Out)
+    {
+        Out.clear();
+        if (bInitialized && GManaged.EnumerateScriptables)
+        {
+            GManaged.EnumerateScriptables(reinterpret_cast<void*>(&LmScriptableSink), &Out);
+        }
+    }
+
+    void* CreateScriptable(FStringView TypeName, uint64 NativePtr, int32& OutOverrideFlags)
+    {
+        OutOverrideFlags = 0;
+        if (!bInitialized || GManaged.CreateScriptable == nullptr)
+        {
+            return nullptr;
+        }
+        return GManaged.CreateScriptable(TypeName.data(), (int32)TypeName.size(), NativePtr, &OutOverrideFlags);
+    }
+
+    void DestroyScriptable(void* Instance)
+    {
+        if (bInitialized && GManaged.DestroyScriptable && Instance)
+        {
+            GManaged.DestroyScriptable(Instance);
+        }
+    }
+
     void GatherManagedSystemDescs(TVector<FManagedSystemDesc>& Out)
     {
         Out.clear();
@@ -1145,9 +1402,19 @@ namespace Lumina::DotNet
             int32   I32() { int32 V = 0; Take(&V, 4); return V; }
             int64   I64() { int64 V = 0; Take(&V, 8); return V; }
             double  F64() { double V = 0; Take(&V, 8); return V; }
-            float   F32() { float V = 0; Take(&V, 4); return V; }
             uint8   U8()  { uint8 V = 0; Take(&V, 1); return V; }
-            FString Str() { int32 N = I32(); if (N <= 0 || P + N > End) { return FString(); } FString S(reinterpret_cast<const char*>(P), static_cast<size_t>(N)); P += N; return S; }
+
+            // On a truncated/corrupt length, consume the rest of the buffer so every subsequent read fails
+            // cleanly: returning without advancing P would desync the cursor and silently misread the tail.
+            FString Str()
+            {
+                int32 N = I32();
+                if (N == 0) { return FString(); }
+                if (N < 0 || P + N > End) { P = End; return FString(); }
+                FString S(reinterpret_cast<const char*>(P), static_cast<size_t>(N));
+                P += N;
+                return S;
+            }
         };
 
         FString NumberToString(double V) { char Buf[32]; snprintf(Buf, sizeof(Buf), "%g", V); return FString(Buf); }
@@ -1161,7 +1428,6 @@ namespace Lumina::DotNet
             void I32(int32 V) { Raw(&V, 4); }
             void I64(int64 V) { Raw(&V, 8); }
             void F64(double V) { Raw(&V, 8); }
-            void F32(float V) { Raw(&V, 4); }
             void Str(FStringView S) { I32((int32)S.size()); Raw(S.data(), S.size()); }
         };
 
@@ -1744,7 +2010,7 @@ namespace
     Lumina::FEntityRegistry* LmRegistryFromWorld(uint64 World)
     {
         Lumina::CWorld* W = reinterpret_cast<Lumina::CWorld*>(World);
-        return W ? &W->GetEntityRegistry() : nullptr;
+        return W ? &Lumina::ECS::GetWorldRegistry(*W) : nullptr;
     }
 }
 
@@ -1921,10 +2187,15 @@ LUMINA_DOTNET_EXPORT(int, GetObjectPath)(void* Object, char* Buffer, int Capacit
     return L;
 }
 
-// Maps a module name ("Runtime", "Editor", "Sandbox", ...) to its loaded native handle so the
-// managed DllImportResolver can route each generated binding's P/Invoke to the module that exports
-// its thunks. Matches the base name up to the build-config suffix ("Editor-Development.dll") or
-// extension, so any module's reflected types can carry C# bindings, not just Runtime.
+// Maps a module name ("Runtime", "Editor", "Sandbox", ...) to its loaded native handle so the managed
+// binding resolver can route each generated binding's call to the module that exports its thunks. Matches
+// the base name up to the build-config suffix ("Editor-Development.dll") or extension, so any module's
+// reflected types can carry C# bindings, not just Runtime.
+//
+// Monolithic (LUMINA_MONOLITHIC): engine + plugin module thunks are whole-archived into the exe's own
+// export table (there is no per-module DLL to enumerate), so a name matching no loaded DLL falls back to
+// the exe handle. A separately loaded game module DLL (<Project>-<Cfg>.dll) still matches the enumeration
+// and keeps its own handle, so its thunks resolve from there.
 LUMINA_DOTNET_EXPORT(void*, ResolveModuleHandle)(const char* Name, int Len)
 {
     if (Name == nullptr || Len <= 0)
@@ -1976,6 +2247,12 @@ LUMINA_DOTNET_EXPORT(void*, ResolveModuleHandle)(const char* Name, int Len)
         while (::Module32NextW(Snap, &Entry));
     }
     ::CloseHandle(Snap);
+#ifdef LUMINA_MONOLITHIC
+    if (Result == nullptr)
+    {
+        Result = ::GetModuleHandleW(nullptr); // exe export table holds every whole-archived module's thunks
+    }
+#endif
     return Result;
 #else
     struct FCtx { const char* Name; int Len; void* Result; } Ctx{ Name, Len, nullptr };
@@ -2004,6 +2281,12 @@ LUMINA_DOTNET_EXPORT(void*, ResolveModuleHandle)(const char* Name, int Len)
         }
         return 0;
     }, &Ctx);
+#ifdef LUMINA_MONOLITHIC
+    if (Ctx.Result == nullptr)
+    {
+        Ctx.Result = ::dlopen(nullptr, RTLD_NOW | RTLD_NOLOAD); // main program handle (all static thunks)
+    }
+#endif
     return Ctx.Result;
 #endif
 }

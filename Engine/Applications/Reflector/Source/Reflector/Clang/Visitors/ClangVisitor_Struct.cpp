@@ -591,6 +591,7 @@ namespace Lumina::Reflection::Visitor
 		auto NewFunction = eastl::make_unique<FReflectedFunction>();
 		NewFunction->Outer = Struct->DisplayName;
 		NewFunction->Name = ClangUtils::GetCursorSpelling(Cursor);
+		NewFunction->bIsVirtual = clang_CXXMethod_isVirtual(Cursor) != 0;
 
 		int NumArgs = clang_Cursor_getNumArguments(Cursor);
 

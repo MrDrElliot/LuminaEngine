@@ -45,7 +45,7 @@ LUMINA_DOTNET_EXPORT(int32, Perception_GetPerceivedTargets)(uint64 World, uint32
     {
         return 0;
     }
-    const SPerceptionComponent* C = W->GetEntityRegistry().try_get<SPerceptionComponent>(AsEntity(Perceiver));
+    const SPerceptionComponent* C = W->TryGetComponent<SPerceptionComponent>(AsEntity(Perceiver));
     if (C == nullptr)
     {
         return 0;
@@ -67,7 +67,7 @@ LUMINA_DOTNET_EXPORT(int32, Perception_CanSense)(uint64 World, uint32 Perceiver,
     {
         return 0;
     }
-    const SPerceptionComponent* C = W->GetEntityRegistry().try_get<SPerceptionComponent>(AsEntity(Perceiver));
+    const SPerceptionComponent* C = W->TryGetComponent<SPerceptionComponent>(AsEntity(Perceiver));
     if (C == nullptr)
     {
         return 0;
@@ -85,7 +85,7 @@ LUMINA_DOTNET_EXPORT(FLmPerceptionPoint, Perception_GetLastKnownLocation)(uint64
     {
         return Result;
     }
-    const SPerceptionComponent* C = W->GetEntityRegistry().try_get<SPerceptionComponent>(AsEntity(Perceiver));
+    const SPerceptionComponent* C = W->TryGetComponent<SPerceptionComponent>(AsEntity(Perceiver));
     if (C == nullptr)
     {
         return Result;
@@ -107,7 +107,7 @@ LUMINA_DOTNET_EXPORT(uint32, Perception_GetClosest)(uint64 World, uint32 Perceiv
     {
         return ToId(entt::null);
     }
-    const SPerceptionComponent* C = W->GetEntityRegistry().try_get<SPerceptionComponent>(AsEntity(Perceiver));
+    const SPerceptionComponent* C = W->TryGetComponent<SPerceptionComponent>(AsEntity(Perceiver));
     return C != nullptr ? ToId(C->GetClosestPerceivedTarget()) : ToId(entt::null);
 }
 
@@ -120,7 +120,7 @@ LUMINA_DOTNET_EXPORT(int32, Perception_HasLineOfSight)(uint64 World, uint32 From
         return 0;
     }
     Physics::IPhysicsScene* Scene = W->GetPhysicsScene();
-    auto& Registry = W->GetEntityRegistry();
+    auto& Registry = ECS::GetWorldRegistry(*W);
     const entt::entity From = AsEntity(FromEntity);
     const entt::entity To = AsEntity(ToEntity);
     const STransformComponent* FromXf = Registry.try_get<STransformComponent>(From);
@@ -168,7 +168,7 @@ LUMINA_DOTNET_EXPORT(void, Perception_ReportNoise)(uint64 World, FVector3 Locati
     Event.Target = entt::null;
     Event.Location = Location;
     Event.Strength = Loudness;
-    Perception::EnqueueStimulus(Perception::GetOrCreateState(W->GetEntityRegistry()), Event);
+    Perception::EnqueueStimulus(Perception::GetOrCreateState(ECS::GetWorldRegistry(*W)), Event);
 }
 
 // Queue a damage report: the victim immediately perceives its attacker (affiliation-agnostic).
@@ -185,7 +185,7 @@ LUMINA_DOTNET_EXPORT(void, Perception_ReportDamage)(uint64 World, uint32 Victim,
     Event.Target = AsEntity(Victim);
     Event.Location = HitLocation;
     Event.Strength = Amount;
-    Perception::EnqueueStimulus(Perception::GetOrCreateState(W->GetEntityRegistry()), Event);
+    Perception::EnqueueStimulus(Perception::GetOrCreateState(ECS::GetWorldRegistry(*W)), Event);
 }
 
 // Make an entity perceivable: ensure an SAIStimuliSourceComponent, set its registered senses, add one
@@ -197,7 +197,7 @@ LUMINA_DOTNET_EXPORT(void, Perception_RegisterSource)(uint64 World, uint32 Entit
     {
         return;
     }
-    SAIStimuliSourceComponent& Source = W->GetEntityRegistry().get_or_emplace<SAIStimuliSourceComponent>(AsEntity(Entity));
+    SAIStimuliSourceComponent& Source = W->GetOrEmplaceComponent<SAIStimuliSourceComponent>(AsEntity(Entity));
     if (SenseBits != 0)
     {
         Source.RegisteredSenses = (Lumina::EAISenseChannel)(uint8)SenseBits;
@@ -228,7 +228,7 @@ LUMINA_DOTNET_EXPORT(void, Perception_AddDetectableTag)(uint64 World, uint32 Per
     {
         return;
     }
-    SPerceptionComponent& Comp = W->GetEntityRegistry().get_or_emplace<SPerceptionComponent>(AsEntity(Perceiver));
+    SPerceptionComponent& Comp = W->GetOrEmplaceComponent<SPerceptionComponent>(AsEntity(Perceiver));
     FGameplayTag Tag;
     Tag.TagName = FName(Name.c_str());
     Comp.DetectableTags.AddTag(Tag);

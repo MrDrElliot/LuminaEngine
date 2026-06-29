@@ -18,6 +18,7 @@
 #include "WorldTypes.h"
 #include "Core/Functional/FunctionRef.h"
 #include "Entity/Systems/EntitySystem.h"
+#include "Entity/EntityHandle.h"
 #include "World.generated.h"
 
 
@@ -32,6 +33,14 @@ namespace Lumina
     class CTextureRenderTarget;
     class CWorld;
     enum class ENetMode : uint8;
+
+    namespace ECS
+    {
+        // Engine-internal raw registry access for whole-registry operations that have no per-op wrapper
+        // (serialization, net replication, reflection meta-invoke). Gameplay, tooling, and C# go through
+        // CWorld's typed component/entity/singleton wrappers instead -- the registry is not public API.
+        RUNTIME_API FEntityRegistry& GetWorldRegistry(CWorld& World);
+    }
 }
 
 namespace Lumina
@@ -80,7 +89,8 @@ namespace Lumina
         friend class FWorldManager;
         friend struct FSystemContext;
         friend struct SRenderComponent;
-        
+        friend FEntityRegistry& ECS::GetWorldRegistry(CWorld&);
+
     public:
         
         // A system as scheduled in one stage.
@@ -159,9 +169,20 @@ namespace Lumina
         bool FractureEntity(entt::entity Entity, const FVector3& Origin, float Strength = 0.0f);
         
         void SpawnPrefabAsync(const FName& Path, const TFunction<void(entt::entity)>& Callback);
-        
-        FEntityRegistry& GetEntityRegistry() { return EntityRegistry; }
-        
+
+        /** Spawns a projectile entity at Position moving at Velocity (world m/s). Damage rides along in
+         *  the hit event; the entity auto-despawns after Lifetime seconds (0 = never); Instigator is
+         *  ignored by the sweep so the shooter is never hit. Returns the new entity. Bind its hit with
+         *  GetEntityRegistry().get<SProjectileComponent>(e).OnHit, or set more fields on that component. */
+        FUNCTION(Script)
+        entt::entity SpawnProjectile(FVector3 Position, FVector3 Velocity, float Damage, float Lifetime, entt::entity Instigator);
+
+        // C++ convenience with defaults.
+        entt::entity SpawnProjectile(FVector3 Position, FVector3 Velocity, float Damage = 0.0f, float Lifetime = 5.0f)
+        {
+            return SpawnProjectile(Position, Velocity, Damage, Lifetime, entt::null);
+        }
+
         Physics::IPhysicsScene* GetPhysicsScene() const { return PhysicsScene.get(); }
         
         STransformComponent& GetEntityTransform(entt::entity Entity);
@@ -317,8 +338,11 @@ namespace Lumina
         void OnWidgetComponentDestroyed(entt::registry& Registry, entt::entity Entity);
         void OnInputComponentConstruct(entt::registry& Registry, entt::entity Entity);
 
-        // Set (or change) the C# script class on an entity by class name: emplaces SScriptComponent if
-        // needed and clears any prior binding so SCSharpScriptSystem rebinds (OnAttach/OnReady) next tick.
+        // Appends a C# script of the given class to an entity (emplacing SScriptComponent if needed) and
+        // binds it immediately. Returns the managed instance handle, or null on failure.
+        void* AddEntityScript(entt::entity Entity, FStringView ScriptClass);
+
+        // Convenience that forwards to AddEntityScript.
         void SetEntityScript(entt::entity Entity, FStringView ScriptClass);
 
         void RegisterSystems();
@@ -357,11 +381,171 @@ namespace Lumina
         
         void SetEntityTransform(entt::entity Entity, const FTransform& NewTransform);
 
+        const FSystemContext& GetSystemContext() const { return SystemContext; }
+        
+        
         template<typename TFunc>
         void ForEachUniqueSystem(TFunc&& Func);
         
-        const FSystemContext& GetSystemContext() const { return SystemContext; }
+        template<typename T, typename... TArgs>
+        decltype(auto) EmplaceComponent(FEntity Entity, TArgs&&... Args);
         
+        template<typename T>
+        requires(!std::is_empty_v<T>)
+        T& GetComponent(FEntity Entity);
+        
+        template<typename T>
+        T* TryGetComponent(FEntity Entity);
+
+        // --- Entity-registry wrappers ---------------------------------------------------------------
+        // The registry object is intentionally not exposed publicly; gameplay (C++ and C#) and tooling go
+        // through these. entt views / entities / signal sinks are still surfaced -- we hide the registry
+        // handle, not entt itself.
+
+        template<typename T, typename... TArgs>
+        decltype(auto) EmplaceOrReplaceComponent(FEntity Entity, TArgs&&... Args)
+        {
+            return EntityRegistry.emplace_or_replace<T>(Entity, std::forward<TArgs>(Args)...);
+        }
+
+        template<typename T, typename... TArgs>
+        T& GetOrEmplaceComponent(FEntity Entity, TArgs&&... Args)
+        {
+            return EntityRegistry.get_or_emplace<T>(Entity, std::forward<TArgs>(Args)...);
+        }
+
+        template<typename T, typename... TArgs>
+        T& ReplaceComponent(FEntity Entity, TArgs&&... Args)
+        {
+            return EntityRegistry.replace<T>(Entity, std::forward<TArgs>(Args)...);
+        }
+
+        template<typename T, typename TFunc>
+        T& PatchComponent(FEntity Entity, TFunc&& Func)
+        {
+            return EntityRegistry.patch<T>(Entity, std::forward<TFunc>(Func));
+        }
+
+        template<typename... T>
+        void RemoveComponent(FEntity Entity)
+        {
+            EntityRegistry.remove<T...>(Entity);
+        }
+
+        template<typename... T>
+        NODISCARD bool HasComponent(FEntity Entity) const
+        {
+            return EntityRegistry.all_of<T...>(Entity);
+        }
+
+        template<typename... T>
+        NODISCARD bool HasAnyComponent(FEntity Entity) const
+        {
+            return EntityRegistry.any_of<T...>(Entity);
+        }
+
+        template<typename T>
+        const T& GetComponent(FEntity Entity) const
+        {
+            return EntityRegistry.get<T>(Entity);
+        }
+
+        template<typename T>
+        const T* TryGetComponent(FEntity Entity) const
+        {
+            return EntityRegistry.try_get<T>(Entity);
+        }
+
+        template<typename T>
+        void ClearComponents()
+        {
+            EntityRegistry.clear<T>();
+        }
+
+        NODISCARD bool IsValidEntity(FEntity Entity) const
+        {
+            return EntityRegistry.valid(Entity);
+        }
+
+        // Iteration. Returns the entt view directly; pass entt::exclude<...> for an exclusion set.
+        template<typename... Get>
+        NODISCARD auto View()
+        {
+            return EntityRegistry.view<Get...>();
+        }
+
+        template<typename... Get, typename... Exclude>
+        NODISCARD auto View(entt::exclude_t<Exclude...> ExcludeSet)
+        {
+            return EntityRegistry.view<Get...>(ExcludeSet);
+        }
+
+        // Per-world singletons stored in the registry context.
+        template<typename T, typename... TArgs>
+        T& EmplaceSingleton(TArgs&&... Args)
+        {
+            return EntityRegistry.ctx().emplace<T>(std::forward<TArgs>(Args)...);
+        }
+
+        template<typename T>
+        NODISCARD T& GetSingleton()
+        {
+            return EntityRegistry.ctx().get<T>();
+        }
+
+        template<typename T>
+        NODISCARD const T& GetSingleton() const
+        {
+            return EntityRegistry.ctx().get<T>();
+        }
+
+        template<typename T>
+        NODISCARD T* TryGetSingleton()
+        {
+            return EntityRegistry.ctx().find<T>();
+        }
+
+        template<typename T>
+        NODISCARD const T* TryGetSingleton() const
+        {
+            return EntityRegistry.ctx().find<T>();
+        }
+
+        // Component lifecycle observers (entt signal sinks); connect member fns exactly as with entt.
+        template<typename T> NODISCARD auto OnConstruct() { return EntityRegistry.on_construct<T>(); }
+        template<typename T> NODISCARD auto OnDestroy()   { return EntityRegistry.on_destroy<T>(); }
+        template<typename T> NODISCARD auto OnUpdate()    { return EntityRegistry.on_update<T>(); }
+        NODISCARD auto OnEntityConstruct() { return EntityRegistry.on_construct<entt::entity>(); }
+        NODISCARD auto OnEntityDestroy()   { return EntityRegistry.on_destroy<entt::entity>(); }
+
+        // Low-level storage access for reflection-style passes (all storages) and named/tag storages.
+        NODISCARD auto ComponentStorages() { return EntityRegistry.storage(); }
+
+        template<typename T>
+        NODISCARD auto& ComponentStorage() { return EntityRegistry.storage<T>(); }
+
+        template<typename T>
+        NODISCARD auto& NamedStorage(FEntityID Id) { return EntityRegistry.storage<T>(Id); }
+
+        // Bare entity (no components); prefer ConstructEntity for a named/transformed entity.
+        NODISCARD FEntity CreateEntity() { return EntityRegistry.create(); }
+
+        // Destroys every entity in the world (component storages retain their types).
+        void ClearAllEntities() { EntityRegistry.clear(); }
+
+        template<typename T>
+        NODISCARD bool HasSingleton() const { return EntityRegistry.ctx().contains<T>(); }
+
+        template<typename T>
+        void EraseSingleton() { EntityRegistry.ctx().erase<T>(); }
+
+    private:
+
+        // Raw registry handle. Intentionally private -- gameplay (C++/C#) and tooling use the typed wrappers
+        // above; engine internals reach it through friendship (FSystemContext, FWorldManager, ...).
+        FEntityRegistry& GetEntityRegistry() { return EntityRegistry; }
+        const FEntityRegistry& GetEntityRegistry() const { return EntityRegistry; }
+
     private:
         
         void CreateRenderer();
@@ -457,6 +641,25 @@ namespace Lumina
         {
             Func(System);
         }
+    }
+
+    template <typename T, typename ... TArgs>
+    decltype(auto) CWorld::EmplaceComponent(FEntity Entity, TArgs&&... Args)
+    {
+        return EntityRegistry.emplace<T>(Entity, std::forward<TArgs>(Args)...);
+    }
+
+    template <typename T>
+    requires(!std::is_empty_v<T>)
+    T& CWorld::GetComponent(FEntity Entity)
+    {
+        return EntityRegistry.get<T>(Entity);
+    }
+
+    template <typename T>
+    T* CWorld::TryGetComponent(FEntity Entity)
+    {
+        return EntityRegistry.try_get<T>(Entity);
     }
 }
 

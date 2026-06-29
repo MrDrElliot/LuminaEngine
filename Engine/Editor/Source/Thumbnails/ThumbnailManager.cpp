@@ -45,11 +45,10 @@ namespace Lumina
         
         auto SetupStudioLighting = [](CWorld* World)
         {
-            FEntityRegistry& Registry = World->GetEntityRegistry();
             entt::entity Light = World->ConstructEntity("StudioLight");
-            Registry.emplace<SDirectionalLightComponent>(Light);
-            Registry.emplace<SEnvironmentComponent>(Light);
-            Registry.emplace<SSkyLightComponent>(Light);
+            World->EmplaceComponent<SDirectionalLightComponent>(Light);
+            World->EmplaceComponent<SEnvironmentComponent>(Light);
+            World->EmplaceComponent<SSkyLightComponent>(Light);
         };
 
         // Bounding-sphere framing so wide-flat and tall-narrow meshes frame the same as cubes.
@@ -72,12 +71,11 @@ namespace Lumina
             }
 
             CWorld* World = Scene.GetWorld();
-            FEntityRegistry& Registry = World->GetEntityRegistry();
 
             SetupStudioLighting(World);
 
             entt::entity MeshEntity = World->ConstructEntity("SkeletalMesh");
-            Registry.emplace<SSkeletalMeshComponent>(MeshEntity).SkeletalMesh = Mesh;
+            World->EmplaceComponent<SSkeletalMeshComponent>(MeshEntity).SkeletalMesh = Mesh;
 
             FrameBounds(Scene, Mesh->GetAABB());
         };
@@ -91,12 +89,11 @@ namespace Lumina
                 }
 
                 CWorld* World = Scene.GetWorld();
-                FEntityRegistry& Registry = World->GetEntityRegistry();
 
                 SetupStudioLighting(World);
 
                 entt::entity MeshEntity = World->ConstructEntity("Mesh");
-                Registry.emplace<SStaticMeshComponent>(MeshEntity).StaticMesh = Mesh;
+                World->EmplaceComponent<SStaticMeshComponent>(MeshEntity).StaticMesh = Mesh;
 
                 FrameBounds(Scene, Mesh->GetAABB());
             });
@@ -137,7 +134,6 @@ namespace Lumina
                 }
 
                 CWorld* World = Scene.GetWorld();
-                FEntityRegistry& Registry = World->GetEntityRegistry();
 
                 SetupStudioLighting(World);
 
@@ -146,7 +142,7 @@ namespace Lumina
                 const bool bIsPostProcess = BaseMaterial != nullptr && BaseMaterial->GetMaterialType() == EMaterialType::PostProcess;
 
                 entt::entity MeshEntity = World->ConstructEntity("PreviewSphere");
-                SStaticMeshComponent& MeshComp = Registry.emplace<SStaticMeshComponent>(MeshEntity);
+                SStaticMeshComponent& MeshComp = World->EmplaceComponent<SStaticMeshComponent>(MeshEntity);
                 MeshComp.StaticMesh = CPrimitiveManager::Get().SphereMesh;
                 if (!bIsPostProcess)
                 {
@@ -156,7 +152,7 @@ namespace Lumina
                 if (bIsPostProcess)
                 {
                     entt::entity VolumeEntity = World->ConstructEntity("PreviewPostProcessVolume");
-                    SPostProcessComponent& Volume = Registry.emplace<SPostProcessComponent>(VolumeEntity);
+                    SPostProcessComponent& Volume = World->EmplaceComponent<SPostProcessComponent>(VolumeEntity);
                     Volume.bInfiniteExtent = true;
                     Volume.PostProcessMaterials.push_back(Material);
                 }
@@ -175,12 +171,11 @@ namespace Lumina
                 }
 
                 CWorld* World = Scene.GetWorld();
-                FEntityRegistry& Registry = World->GetEntityRegistry();
 
                 SetupStudioLighting(World);
 
                 entt::entity ParticleEntity = World->ConstructEntity("ParticleSystem");
-                Registry.emplace<SParticleSystemComponent>(ParticleEntity).ParticleSystem = PS;
+                World->EmplaceComponent<SParticleSystemComponent>(ParticleEntity).ParticleSystem = PS;
 
                 // No AABB on a particle system; fixed pull-back for typical spawn radius.
                 const FVector3 Dir = Math::Normalize(FVector3(0.0f, 0.25f, 1.0f));

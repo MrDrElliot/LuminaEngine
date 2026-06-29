@@ -148,8 +148,7 @@ namespace Lumina::SkeletonDebugDraw
                 return;
             }
 
-            FEntityRegistry& Registry = World->GetEntityRegistry();
-            auto View = Registry.view<SSkeletalMeshComponent, STransformComponent>();
+            auto View = World->View<SSkeletalMeshComponent, STransformComponent>();
 
             TVector<FMatrix4> Globals;
             for (entt::entity Entity : View)

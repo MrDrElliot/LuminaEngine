@@ -36,9 +36,9 @@ namespace Lumina
         World->GetRenderer()->GetSceneRenderSettings().bDrawBillboards = false;
 
         LightEntity = World->ConstructEntity("Directional Light");
-        World->GetEntityRegistry().emplace<SDirectionalLightComponent>(LightEntity);
-        World->GetEntityRegistry().emplace<SEnvironmentComponent>(LightEntity);
-        World->GetEntityRegistry().emplace<SSkyLightComponent>(LightEntity);
+        World->EmplaceComponent<SDirectionalLightComponent>(LightEntity);
+        World->EmplaceComponent<SEnvironmentComponent>(LightEntity);
+        World->EmplaceComponent<SSkyLightComponent>(LightEntity);
 
         CameraState.Speed = 5.0f;
 
@@ -73,7 +73,7 @@ namespace Lumina
         {
             for (entt::entity Entity : PieceEntities)
             {
-                if (Entity != entt::null && World->GetEntityRegistry().valid(Entity))
+                if (Entity != entt::null && World->IsValidEntity(Entity))
                 {
                     World->DestroyEntity(Entity);
                 }
@@ -111,7 +111,7 @@ namespace Lumina
             }
 
             entt::entity Entity = World->ConstructEntity("Piece");
-            World->GetEntityRegistry().emplace<SStaticMeshComponent>(Entity).StaticMesh = PieceMesh;
+            World->EmplaceComponent<SStaticMeshComponent>(Entity).StaticMesh = PieceMesh;
             PieceEntities.push_back(Entity);
         }
 
@@ -132,7 +132,7 @@ namespace Lumina
         for (int32 i = 0; i < Count; ++i)
         {
             const entt::entity Entity = PieceEntities[i];
-            if (Entity == entt::null || !World->GetEntityRegistry().valid(Entity))
+            if (Entity == entt::null || !World->IsValidEntity(Entity))
             {
                 continue;
             }
@@ -143,7 +143,7 @@ namespace Lumina
             const FVector3 Delta = PieceCenter - Center;
             const float Length = Math::Length(Delta);
             const FVector3 Offset = (Length > 1e-4f ? Delta / Length : FVector3(0.0f)) * ExplodeAmount;
-            World->GetEntityRegistry().get<STransformComponent>(Entity).SetLocation(PieceCenter + Offset);
+            World->GetComponent<STransformComponent>(Entity).SetLocation(PieceCenter + Offset);
         }
     }
 

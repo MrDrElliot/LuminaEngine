@@ -52,7 +52,7 @@ namespace Lumina
         {
             return entt::null;
         }
-        auto View = World->GetEntityRegistry().view<STerrainComponent>();
+        auto View = World->View<STerrainComponent>();
         for (auto Entity : View)
         {
             return Entity;
@@ -68,7 +68,7 @@ namespace Lumina
         }
 
         entt::entity Entity = World->ConstructEntity("Terrain");
-        STerrainComponent& Terrain = World->GetEntityRegistry().emplace<STerrainComponent>(Entity);
+        STerrainComponent& Terrain = World->EmplaceComponent<STerrainComponent>(Entity);
         Terrain.Resolution      = 513;
         Terrain.ChunkResolution = 64;
         Terrain.TileWorldSize   = 4096.0f;
@@ -264,7 +264,7 @@ namespace Lumina
                 "All Files (*.*)\0*.*\0";
             if (TerrainEntity != entt::null && Platform::OpenFileDialogue(File, "Select Heightmap Image", Filter))
             {
-                STerrainComponent& Terrain = World->GetEntityRegistry().get<STerrainComponent>(TerrainEntity);
+                STerrainComponent& Terrain = World->GetComponent<STerrainComponent>(TerrainEntity);
 
                 // Wrap in an undo transaction so the import is a single Ctrl+Z (snapshots the pre-import heightmap).
                 const bool bTransaction = (Context != nullptr);
@@ -383,7 +383,7 @@ namespace Lumina
         {
             entt::entity TerrainEntity = FindPreferredTerrain(World);
             STerrainComponent* Terrain = (TerrainEntity != entt::null)
-                ? &World->GetEntityRegistry().get<STerrainComponent>(TerrainEntity)
+                ? &World->GetComponent<STerrainComponent>(TerrainEntity)
                 : nullptr;
             if (Terrain)
             {
@@ -588,7 +588,7 @@ namespace Lumina
         {
             return;
         }
-        STerrainComponent& Terrain = World->GetEntityRegistry().get<STerrainComponent>(TerrainEntity);
+        STerrainComponent& Terrain = World->GetComponent<STerrainComponent>(TerrainEntity);
         if (Terrain.Resolution < 2)
         {
             return;
@@ -596,7 +596,7 @@ namespace Lumina
 
         // The renderer centers the terrain on the owning entity's transform, so the
         // sculpt system needs that origin to match sample coords to rendered world coords.
-        const STransformComponent& TerrainTransform = World->GetEntityRegistry().get<STransformComponent>(TerrainEntity);
+        const STransformComponent& TerrainTransform = World->GetComponent<STransformComponent>(TerrainEntity);
         const FVector3 TerrainOrigin = TerrainTransform.GetWorldLocation();
 
         // Bracket keys resize the brush multiplicatively, like UE / Photoshop. Wired

@@ -1102,7 +1102,7 @@ namespace Lumina
 
         {
             LUMINA_PROFILE_SECTION("Compile Draw Commands");
-            FEntityRegistry& Registry = World->GetEntityRegistry();
+            FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
             TAtomic<uint32> LightCount{0};
             
             auto DirectionalView     = Registry.view<SDirectionalLightComponent>(entt::exclude<SDisabledTag>);
@@ -3483,7 +3483,7 @@ namespace Lumina
             SceneCullContext.CaptureFrusta.push_back(Capture.ViewVolume.GetFrustum());
         }
 
-        FEntityRegistry& Registry = World->GetEntityRegistry();
+        FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
 
         // First enabled directional light wins (matches ProcessDirectionalLight).
         auto DirectionalView = Registry.view<SDirectionalLightComponent>(entt::exclude<SDisabledTag>);

@@ -1224,8 +1224,7 @@ namespace Lumina
             FNavMesh* FirstReadyNavMeshFromWorld(CWorld* World)
             {
                 if (!World) return nullptr;
-                auto& Reg = World->GetEntityRegistry();
-                auto View = Reg.view<SNavMeshComponent>();
+                auto View = World->View<SNavMeshComponent>();
                 for (entt::entity E : View)
                 {
                     SNavMeshComponent& Comp = View.get<SNavMeshComponent>(E);
@@ -1250,7 +1249,7 @@ namespace Lumina
                 return 0;
             }
             int32 Count = 0;
-            auto View = World->GetEntityRegistry().view<SNavMeshComponent>();
+            auto View = World->View<SNavMeshComponent>();
             for (entt::entity E : View)
             {
                 View.get<SNavMeshComponent>(E).bBakeRequested = true;

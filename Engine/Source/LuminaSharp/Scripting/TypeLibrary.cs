@@ -12,6 +12,8 @@ internal sealed class TypeLibrary
 {
     private readonly Dictionary<string, TypeDescription> EntityScripts = new();
     private readonly Dictionary<string, Type> EntitySystems = new();
+    // C# subclasses of REFLECT(Scriptable) native CObjects, keyed by full name; the host mints a CClass per one.
+    private readonly Dictionary<string, Type> Scriptables = new();
     private readonly Dictionary<Type, TypeDescription> ByType = new();
     // Prior full type names to current full name, so renamed script references resolve.
     private readonly Dictionary<string, string> ScriptAliases = new();
@@ -35,6 +37,10 @@ internal sealed class TypeLibrary
                      && Type.GetCustomAttribute<EntitySystemAttribute>() != null)
             {
                 EntitySystems[FullName] = Type;
+            }
+            else if (IsScriptableSubclass(Type))
+            {
+                Scriptables[FullName] = Type;
             }
         }
 
@@ -60,6 +66,28 @@ internal sealed class TypeLibrary
 
     /// <summary>Full type names of every EntityScript (for the editor's script-picker dropdown).</summary>
     public IReadOnlyCollection<string> EntityScriptTypeNames => EntityScripts.Keys;
+
+    /// <summary>Full type names of every discovered Scriptable C# subclass.</summary>
+    public IReadOnlyCollection<string> ScriptableTypeNames => Scriptables.Keys;
+
+    /// <summary>Every discovered Scriptable C# subclass type.</summary>
+    public IEnumerable<Type> ScriptableTypes => Scriptables.Values;
+
+    /// <summary>A Scriptable C# subclass by full name, or null if unknown.</summary>
+    public Type? GetScriptable(string FullName) => Scriptables.TryGetValue(FullName, out Type? Type) ? Type : null;
+
+    // True if any base type carries [ScriptableType] (Type is a user subclass of a REFLECT(Scriptable) class).
+    private static bool IsScriptableSubclass(Type Type)
+    {
+        for (Type? Base = Type.BaseType; Base != null; Base = Base.BaseType)
+        {
+            if (Base.GetCustomAttribute<ScriptableTypeAttribute>(false) != null)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
 
     /// <summary>Every discovered EntitySystem type (carries [EntitySystem]); for the native scheduler.</summary>
     public IReadOnlyCollection<Type> EntitySystemTypes => EntitySystems.Values;
@@ -526,7 +554,16 @@ internal sealed class TypeDescription
                     $"[RequireComponent] {Type.Name}.{Required.MemberName}: '{Required.ComponentName}' is not a registered component.");
                 continue;
             }
-            Required.Setter(Script, Required.Factory(Pointer));
+
+            // Bind the stored wrapper to the entity so it re-resolves the live component on each access. The
+            // field outlives the entt pointer captured here: any later add/remove of this component type can
+            // relocate or free the backing slot, so caching the raw pointer would silently dangle (UAF).
+            object? View = Required.Factory(Pointer);
+            if (View is NativeStruct Component)
+            {
+                Component.BindToEntity(Registry.WorldHandle, Script.Entity.Id, Required.Token);
+            }
+            Required.Setter(Script, View);
         }
     }
 

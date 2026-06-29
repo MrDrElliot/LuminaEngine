@@ -367,6 +367,18 @@ public sealed unsafe class UIDataModel : IDisposable
     private static readonly IntPtr EventThunkPtr =
         (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, int, int, UIArg*, void>)&EventThunk;
 
+    /// <summary>Disposes every registered data model. Called before a script ALC unload as a safety net: a
+    /// model whose owner forgot to Dispose() in OnDetach holds the user ViewModel (and PropertyAccessor
+    /// delegates over user types), which would pin the collectible generation and leak the native model.</summary>
+    public static void DisposeAll()
+    {
+        foreach (UIDataModel Model in new List<UIDataModel>(Registry.Values))
+        {
+            Model.Dispose();
+        }
+        Registry.Clear();
+    }
+
     public void Dispose()
     {
         Registry.Remove((_world, _name));

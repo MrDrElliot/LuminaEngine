@@ -92,7 +92,7 @@ namespace Lumina
         {
             return nullptr;
         }
-        auto View = World->GetEntityRegistry().view<SFoliageComponent>();
+        auto View = World->View<SFoliageComponent>();
         for (auto Entity : View)
         {
             return &View.get<SFoliageComponent>(Entity);
@@ -107,15 +107,14 @@ namespace Lumina
             return nullptr;
         }
 
-        auto& Registry = World->GetEntityRegistry();
-        auto View = Registry.view<SFoliageComponent>();
+        auto View = World->View<SFoliageComponent>();
         for (auto Entity : View)
         {
             return &View.get<SFoliageComponent>(Entity);
         }
 
         entt::entity Entity = World->ConstructEntity("Foliage");
-        return &Registry.emplace<SFoliageComponent>(Entity);
+        return &World->EmplaceComponent<SFoliageComponent>(Entity);
     }
 
     STerrainComponent* FFoliageEditMode::FindTerrain(CWorld* World, FVector3& OutOrigin) const
@@ -124,8 +123,7 @@ namespace Lumina
         {
             return nullptr;
         }
-        auto& Registry = World->GetEntityRegistry();
-        auto View = Registry.view<STerrainComponent, STransformComponent>();
+        auto View = World->View<STerrainComponent, STransformComponent>();
         for (auto Entity : View)
         {
             OutOrigin = View.get<STransformComponent>(Entity).GetWorldLocation();

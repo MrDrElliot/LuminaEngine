@@ -6,13 +6,14 @@
 namespace Lumina
 {
     class FEngine;
+    class CWorld;
     struct FWorldContext;
 }
 
 namespace Lumina
 {
     // Persistent object that lives across world transitions and owns game-wide state.
-    REFLECT()
+    REFLECT(Scriptable)
     class RUNTIME_API CGameInstance : public CObject
     {
         GENERATED_BODY()
@@ -24,10 +25,13 @@ namespace Lumina
         // Called once before the GameInstance is destroyed during engine shutdown / project unload.
         virtual void Shutdown();
 
-        // Called after a world that belongs to this GameInstance finishes InitializeWorld.
-        virtual void OnWorldInitialized(FWorldContext* Context) {}
+        // Called for every Game world (packaged boot, runtime travel, and editor PIE play) right BEFORE it is
+        // initialized.
+        FUNCTION(ScriptEvent)
+        virtual void PreWorldLoad(CWorld* World) {}
 
-        // Called right before a world that belongs to this GameInstance is torn down.
-        virtual void OnWorldTornDown(FWorldContext* Context) {}
+        // Called for the same worlds right AFTER InitializeWorld.
+        FUNCTION(ScriptEvent)
+        virtual void PostWorldLoad(CWorld* World) {}
     };
 }

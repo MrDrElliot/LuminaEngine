@@ -42,6 +42,9 @@ internal sealed class ScriptManager
     /// <summary>The EntitySystem runtime for the current generation, or null when no scripts are loaded.</summary>
     public EntitySystemRuntime? EntitySystems { get; private set; }
 
+    /// <summary>Hosts C# subclasses of REFLECT(Scriptable) native CObjects for the current generation.</summary>
+    public ScriptableRuntime? Scriptables { get; private set; }
+
     /// <summary>Bumps on every successful (re)load; the native side rebinds entity scripts when it changes.</summary>
     public int Generation { get; private set; }
 
@@ -137,6 +140,7 @@ internal sealed class ScriptManager
         var Library = new TypeLibrary(AllTypes);
         EntityScripts = new EntityScriptRuntime(Library);
         EntitySystems = new EntitySystemRuntime(Library);
+        Scriptables = new ScriptableRuntime(Library);
 
         Native.Log(ELogLevel.Info,
             $"Loaded C# scripts [generation {Generation}]: {Pending.Count} assembl(ies), {AllTypes.Count} type(s), " +
@@ -248,12 +252,22 @@ internal sealed class ScriptManager
         // process-static BusRegistry would otherwise pin the collectible ALC. The next generation re-subscribes.
         BusRegistry.ClearAll();
 
+        // Same rationale for the other process-static holders of script-side state: each roots user types, or
+        // GCHandles over user delegates, that would otherwise pin the collectible generation across the unload.
+        // The next generation rebuilds them lazily / re-subscribes.
+        RegistrySubscription.ClearAll();      // entt signal listeners (on_construct/on_destroy/on_update)
+        UIDataModel.DisposeAll();             // MVVM bindings (user ViewModel + native data model)
+        Asset.PurgePending();                 // in-flight async asset-load callbacks
+        PropertyAccessor.ClearScriptCaches(); // cached get/set delegates over user property types
+
         // Free every live script + system GCHandle BEFORE unloading: a strong handle is a GC root that
         // would otherwise pin the old generation and stop the collectible ALC from unloading.
         EntityScripts?.FreeAll();
         EntityScripts = null;
         EntitySystems?.FreeAll();
         EntitySystems = null;
+        Scriptables?.FreeAll();   // C# Scriptable subclass instances (GCHandles) -> teardown contract
+        Scriptables = null;
 
         // Drop this generation's script-tier managed exports: their function pointers reference code in the
         // ALC about to unload and would dangle. The next generation's module initializers repopulate them.

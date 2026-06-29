@@ -282,7 +282,7 @@ namespace Lumina::EditorEntityUtils
     {
         FVector3 Center, HalfExtents;
         FQuat Rotation;
-        if (World && GetEntityDrawBox(World->GetEntityRegistry(), Entity, Center, HalfExtents, Rotation))
+        if (World && GetEntityDrawBox(ECS::GetWorldRegistry(*World), Entity, Center, HalfExtents, Rotation))
         {
             World->DrawBoxCorners(Center, HalfExtents, Rotation, Color, Thickness, bDepthTest);
         }
@@ -292,7 +292,7 @@ namespace Lumina::EditorEntityUtils
     {
         FVector3 Center, HalfExtents;
         FQuat Rotation;
-        if (World && GetEntityDrawBox(World->GetEntityRegistry(), Entity, Center, HalfExtents, Rotation))
+        if (World && GetEntityDrawBox(ECS::GetWorldRegistry(*World), Entity, Center, HalfExtents, Rotation))
         {
             World->DrawBoxCorners(Center, HalfExtents, Rotation, Color, CornerFraction, Thickness, bDepthTest);
         }

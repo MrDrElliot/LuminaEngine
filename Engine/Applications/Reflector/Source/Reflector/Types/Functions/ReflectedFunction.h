@@ -28,6 +28,10 @@ namespace Lumina
         // a generated call would pass too few args.
         bool                            bHasOmittedArgs = false;
 
+        // True for a C++ virtual method. A FUNCTION(ScriptEvent) must be virtual: the Scriptable codegen
+        // generates a native shim override + a reverse-dispatch managed thunk so a C# subclass can override it.
+        bool                            bIsVirtual = false;
+
         //~ Free-function (SCRIPT_EXPORT) fields. A free function has no owning type: it binds to a named C#
         //  static class and is called by its fully-qualified name in the generated thunk.
         bool                            bFreeFunction = false;
