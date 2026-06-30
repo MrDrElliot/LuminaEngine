@@ -459,7 +459,14 @@ namespace Lumina
         const EUpdateStage Stage = Context.GetUpdateStage();
 
         FCPUProfiler::Get().PushWorldTarget(this);
-        struct FPopGuard { ~FPopGuard() { FCPUProfiler::Get().PopTarget(); } } PopGuard;
+        
+        struct FPopGuard
+        {
+            ~FPopGuard()
+            {
+                FCPUProfiler::Get().PopTarget();
+            }
+        } PopGuard;
 
         CPU_PROFILE_SCOPE(StageName(Stage));
 
@@ -467,7 +474,7 @@ namespace Lumina
         // is applied here (between frames) and never inside a running system batch.
         ApplyPendingSystemChanges();
 
-        // C# hot reload: the script generation bumped, so the ManagedSystems hold GCHandles the managed
+        // The script generation bumped, so the ManagedSystems hold GCHandles the managed
         // side already freed. Rebuild the system lists (drops stale slots, re-creates under the new
         // generation) before any tick so the shared shim never dereferences a freed handle. FrameStart
         // only, between frames, never inside a running batch.
@@ -526,19 +533,16 @@ namespace Lumina
     void CWorld::Extract()
     {
         LUMINA_PROFILE_SCOPE();
+        DEBUG_ASSERT(Threading::IsMainThread());
 
         RmlUi::TickWorldUI(this);
         RmlUi::TickWorldWidgets(this);
-
-        // Renderer-less worlds (headless process or dedicated server) have nothing to extract. The
-        // RmlUi ticks above are safe no-ops when uninitialized; bail before touching RenderScene.
+        
         if (RenderScene == nullptr)
         {
             return;
         }
-
-        // SCameraSystem resolves the active view + post-process volumes into this
-        // singleton at the tail of the update; we just forward it to the renderer.
+        
         const FResolvedSceneView& View = EntityRegistry.ctx().get<FResolvedSceneView>();
 
         if (View.bHasView)
@@ -552,19 +556,18 @@ namespace Lumina
         RenderScene->Extract(FViewVolume{}, nullptr);
     }
 
-    entt::entity CWorld::ConstructEntity(const FName& Name, const FTransform& Transform)
+    entt::entity CWorld::ConstructEntity(FName Name, const FTransform& Transform)
     {
+        DEBUG_ASSERT(Threading::IsMainThread(), "You may only construct entities on the main thread.");
+        
         entt::entity NewEntity = GetEntityRegistry().create();
         
-        FName ActualName = Name;
-        if (ActualName == NAME_None)
+        if (Name == NAME_None)
         {
-            FFixedString StringName;
-            StringName.append_convert(Name + eastl::to_string(entt::to_integral(NewEntity)));
-            ActualName = StringName;
+            Name = FName("Entity", entt::to_integral(NewEntity));
         }
-        
-        EntityRegistry.emplace<SNameComponent>(NewEntity).Name = Name;
+     
+        EntityRegistry.emplace<SNameComponent>(NewEntity, Name);
         EntityRegistry.emplace<STransformComponent>(NewEntity, Transform);
 
         return NewEntity;
@@ -856,28 +859,29 @@ namespace Lumina
         return Spawned > 0;
     }
 
-    entt::entity CWorld::SpawnPrefab(const FName& Path)
+    entt::entity CWorld::SpawnPrefab(const FAssetRef& Prefab)
     {
-        return SpawnPrefabAt(Path, FTransform(), entt::null);
+        return SpawnPrefabAt(Prefab, FTransform(), entt::null);
     }
 
-    entt::entity CWorld::SpawnPrefabAt(const FName& Path, const FTransform& SpawnTransform, entt::entity Parent)
+    entt::entity CWorld::SpawnPrefabAt(const FAssetRef& Prefab, const FTransform& SpawnTransform, entt::entity Parent)
     {
-        FAssetData* AssetData = FAssetRegistry::Get().GetAssetByPath(FStringView(Path.c_str()));
+        FStringView Path = Prefab.GetPath();
+        FAssetData* AssetData = FAssetRegistry::Get().GetAssetByPath(Path);
         if (AssetData == nullptr)
         {
-            LOG_WARN("SpawnPrefab: no asset found at path '{}'", Path.c_str());
+            LOG_WARN("SpawnPrefab: no asset found at path '{}'", Path);
             return entt::null;
         }
 
-        CPrefab* Prefab = Cast<CPrefab>(LoadObject<CObject>(AssetData->AssetGUID));
-        if (Prefab == nullptr)
+        CPrefab* PrefabObject = LoadObject<CPrefab>(AssetData->AssetGUID);
+        if (PrefabObject == nullptr)
         {
-            LOG_WARN("SpawnPrefab: asset '{}' is not a CPrefab", Path.c_str());
+            LOG_WARN("SpawnPrefab: asset '{}' is not a CPrefab", Path);
             return entt::null;
         }
 
-        return Prefab->Instantiate(this, SpawnTransform, Parent);
+        return PrefabObject->Instantiate(this, SpawnTransform, Parent);
     }
 
     void CWorld::SpawnPrefabAsync(const FName& Path, const TFunction<void(entt::entity)>& Callback)

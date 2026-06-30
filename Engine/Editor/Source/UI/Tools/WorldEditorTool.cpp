@@ -488,15 +488,12 @@ namespace Lumina
 
             ImGui::Separator();
 
-            // --- Prefab ---
             if (!bLocked && ImGui::MenuItem(LE_ICON_PACKAGE_VARIANT " Create Prefab from Entity..."))
             {
                 PushCreatePrefabModalForEntity(Data.Entity);
             }
             ImGuiX::TextTooltip("{}", "Save this entity (and its descendants) as a reusable prefab asset.");
-
-            // Detach: only on a prefab instance root. After detach the entities become plain
-            // and stop syncing to the source asset.
+            
             if (const SPrefabInstanceComponent* Instance = Registry.try_get<SPrefabInstanceComponent>(Data.Entity);
                 Instance != nullptr && Instance->bIsRoot)
             {
@@ -516,7 +513,6 @@ namespace Lumina
                 ImGuiX::TextTooltip("{}", "Unlink this instance from its source prefab; the entities become plain and stop syncing.");
             }
 
-            // --- Destructive ---
             if (!bLocked)
             {
                 ImGui::Separator();

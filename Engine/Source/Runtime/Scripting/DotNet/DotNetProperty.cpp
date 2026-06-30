@@ -51,7 +51,7 @@ extern "C" LUMINA_SCRIPT_API const void* LuminaSharp_FindProperty(const char* Ty
     {
         return nullptr;
     }
-    return Struct->GetProperty(FName(Prop, (size_t)PLen));
+    return Struct->GetProperty(FName(FStringView(Prop, (size_t)PLen)));
 }
 
 // The property's byte offset within its container. Resolved once per blittable property on the C# side,
@@ -144,7 +144,7 @@ extern "C" LUMINA_SCRIPT_API void LuminaSharp_PropSetName(void* C, const void* P
     }
     const FProperty* Property = static_cast<const FProperty*>(Prop);
     FName& Value = *Property->GetValuePtr<FName>(C);
-    Value = (Len > 0) ? FName(Utf8, (size_t)Len) : FName();
+    Value = (Len > 0) ? FName(FStringView(Utf8, (size_t)Len)) : FName();
 }
 
 // Object/TObjectPtr get/set. The member is a pointer-sized TObjectPtr<T>; read its raw CObject* and write

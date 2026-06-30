@@ -613,8 +613,6 @@ namespace Lumina
 
         if (IsInnerFixedHeight())
         {
-            // All elements render as a single fixed-height table row, so the clipper
-            // can skip offscreen rows entirely. Critical for arrays with thousands of entries.
             ImGuiListClipper Clipper;
             Clipper.Begin(ChildCount);
             while (Clipper.Step())
@@ -626,9 +624,7 @@ namespace Lumina
             }
             return;
         }
-
-        // Complex element types (struct/nested array) have variable height due to
-        // independent expansion state, so the clipper can't be used.
+        
         const int DisplayCount = bShowAllElements ? ChildCount : std::min(ChildCount, ComplexArrayDisplayLimit);
         for (int i = 0; i < DisplayCount; ++i)
         {
@@ -663,17 +659,13 @@ namespace Lumina
         void* ContainerPtr = GetPropertyHandle()->GetValuePtr();
         void* DefaultContainerPtr = GetPropertyHandle()->GetDefaultValuePtr();
         const size_t ElementCount = ArrayProperty->GetNum(ContainerPtr);
-
-        // Reset the truncation override whenever the array shape changes, so a
-        // resize or clear does not leave a stale "show all" flag in place.
+        
         bShowAllElements = false;
 
         Children.reserve(ElementCount);
         FProperty* InnerProperty = ArrayProperty->GetInternalProperty();
         for (size_t i = 0; i < ElementCount; ++i)
         {
-            // Element handle stores array instance + index and resolves the live address per
-            // access (reallocation-safe); indices past the default's end treat as modified.
             TSharedPtr<FPropertyHandle> ElementPropHandle = MakeShared<FPropertyHandle>(
                 ArrayProperty,
                 ContainerPtr,

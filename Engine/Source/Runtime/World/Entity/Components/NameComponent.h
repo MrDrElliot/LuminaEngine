@@ -11,6 +11,11 @@ namespace Lumina
     {
         GENERATED_BODY()
 
+        SNameComponent() = default;
+        SNameComponent(FName InName)
+            : Name(std::move(InName))
+        {}
+
         /** Display name of the entity shown in the editor hierarchy. */
         PROPERTY(ReadOnly, Replicated)
         FName Name;

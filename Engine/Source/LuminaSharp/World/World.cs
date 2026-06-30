@@ -4,7 +4,7 @@ using LuminaSharp;
 namespace Lumina;
 
 /// <summary>
-/// Hand-written extensions to the REFLECTED <see cref="CWorld"/> wrapper.
+/// Handwritten extensions to the REFLECTED <see cref="CWorld"/> wrapper.
 /// </summary>
 public unsafe partial class CWorld
 {
@@ -35,7 +35,7 @@ public unsafe partial class CWorld
     /// </summary>
     public Entity SpawnPrefab(string Path, FVector3 Location, FQuat? Rotation = null, Entity? Parent = null)
     {
-        Entity Spawned = SpawnPrefab(Path);
+        Entity Spawned = SpawnPrefab(Path, Location, Rotation, Parent);
         if (Spawned.IsNull)
         {
             return Spawned;
@@ -52,13 +52,6 @@ public unsafe partial class CWorld
         return Spawned;
     }
 
-    /// <summary>Spawn the prefab at <paramref name="Path"/> (s&amp;box-style alias of <see cref="SpawnPrefab(string)"/>).</summary>
-    public Entity Spawn(string Path) => SpawnPrefab(Path);
-
-    /// <summary>Spawn and place the prefab at <paramref name="Path"/>.</summary>
-    public Entity Spawn(string Path, FVector3 Location, FQuat? Rotation = null, Entity? Parent = null)
-        => SpawnPrefab(Path, Location, Rotation, Parent);
-
     /// <summary>Spawn a projectile at <paramref name="position"/> moving at <paramref name="velocity"/>
     /// (world m/s). It sweeps forward each frame, reports its first hit, and auto-despawns after
     /// <paramref name="lifetime"/> seconds. Read or bind its hit via
@@ -66,7 +59,6 @@ public unsafe partial class CWorld
     public Entity SpawnProjectile(FVector3 position, FVector3 velocity, float damage = 0.0f, float lifetime = 5.0f)
         => SpawnProjectile(position, velocity, damage, lifetime, Entity.Null);
 
-    // --- Component access ------------------------------------------------------------------------
     // Mirrors the C++ CWorld wrappers so scripts reach components straight off the world (or an
     // EntityScript) instead of an entity-registry object. Each forwards to the per-world component store.
 

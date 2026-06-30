@@ -164,3 +164,115 @@ TEST(FNameTests, ToStringRoundTrip)
 
     EXPECT_EQ(a, b);
 }
+
+TEST(FNameTests, ExplicitNumberConstructor)
+{
+    FName a("Entity", 3);
+
+    EXPECT_TRUE(a.HasNumber());
+    EXPECT_EQ(a.GetNumber(), 3u);
+    EXPECT_EQ(a.ToString(), "Entity_3");
+}
+
+TEST(FNameTests, ExplicitNumberZero)
+{
+    FName a("Entity", 0);
+
+    EXPECT_TRUE(a.HasNumber());
+    EXPECT_EQ(a.GetNumber(), 0u);
+    EXPECT_EQ(a.ToString(), "Entity_0");
+}
+
+TEST(FNameTests, ParsesTrailingNumber)
+{
+    FName a("Cube_42");
+
+    EXPECT_TRUE(a.HasNumber());
+    EXPECT_EQ(a.GetNumber(), 42u);
+    EXPECT_EQ(a.ToString(), "Cube_42");
+    EXPECT_EQ(a, FName("Cube", 42));
+}
+
+TEST(FNameTests, NumberedNamesShareBase)
+{
+    FName a("Cube_1");
+    FName b("Cube_2");
+    FName base("Cube");
+
+    // Same pooled base string, distinct numbers.
+    EXPECT_EQ(a.GetID(), b.GetID());
+    EXPECT_EQ(a.GetID(), base.GetID());
+    EXPECT_NE(a, b);
+    EXPECT_EQ(a.GetBaseName(), base);
+}
+
+TEST(FNameTests, LeadingZeroNotTreatedAsNumber)
+{
+    FName a("Item_05");
+
+    EXPECT_FALSE(a.HasNumber());
+    EXPECT_EQ(a.ToString(), "Item_05");
+}
+
+TEST(FNameTests, TrailingZeroIsNumber)
+{
+    FName a("Item_0");
+
+    EXPECT_TRUE(a.HasNumber());
+    EXPECT_EQ(a.GetNumber(), 0u);
+    EXPECT_EQ(a.ToString(), "Item_0");
+}
+
+TEST(FNameTests, UnderscoreWithoutDigitsIsNotNumber)
+{
+    FName a("My_Name");
+
+    EXPECT_FALSE(a.HasNumber());
+    EXPECT_EQ(a.ToString(), "My_Name");
+}
+
+TEST(FNameTests, NumberedCStrIncludesSuffix)
+{
+    FName a("Light", 7);
+
+    EXPECT_STREQ(a.c_str(), "Light_7");
+    EXPECT_EQ(a.Length(), strlen("Light_7"));
+}
+
+TEST(FNameTests, NumberedRoundTrip)
+{
+    FName a("Spawn_128");
+
+    FName b(a.ToString());
+    EXPECT_EQ(a, b);
+}
+
+TEST(FNameTests, CaseInsensitiveEquality)
+{
+    FName a("Hello");
+    FName b("HELLO");
+    FName c("hello");
+
+    EXPECT_EQ(a, b);
+    EXPECT_EQ(a, c);
+    EXPECT_EQ(a.GetID(), b.GetID());
+}
+
+TEST(FNameTests, DisplayPreservesFirstSeenCasing)
+{
+    // Unique base so this test is the first to intern it process-wide.
+    FName first("ZxMixedCaseName");
+    FName second("ZXMIXEDCASENAME");
+
+    EXPECT_EQ(first, second);
+    EXPECT_EQ(second.ToString(), "ZxMixedCaseName");
+}
+
+TEST(FNameTests, CaseInsensitiveWithNumber)
+{
+    FName a("Cube_5");
+    FName b("CUBE_5");
+
+    EXPECT_EQ(a, b);
+    EXPECT_EQ(a.GetNumber(), 5u);
+}

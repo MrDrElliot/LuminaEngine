@@ -139,6 +139,9 @@
 #include "Tools/UI/ImGui/ImGuiRenderer.h"
 #include "Tools/UI/ImGui/ImGuiFonts.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
+#include "World/Entity/Components/EnvironmentComponent.h"
+#include "World/Entity/Components/LightComponent.h"
+#include "World/Entity/Components/SkyLightComponent.h"
 #include "World/Scene/RenderScene/RenderScene.h"
 
 namespace Lumina
@@ -487,7 +490,17 @@ namespace Lumina
         EditorWindowClass.ParentViewportId              = 0; // Top level window
         EditorWindowClass.DockingAlwaysTabBar           = true;
 
-        WorldEditorTool = CreateTool<FWorldEditorTool>(this, NewObject<CWorld>(nullptr, "Transient World", FGuid::New(), OF_Transient));
+        CWorld* World = NewObject<CWorld>(nullptr, "Transient World", FGuid::New(), OF_Transient);
+        auto Entity = World->ConstructEntity("Environment");
+        World->EmplaceComponent<SEnvironmentComponent>(Entity);
+        
+        Entity = World->ConstructEntity("DirectionalLight");
+        World->EmplaceComponent<SDirectionalLightComponent>(Entity);
+
+        Entity = World->ConstructEntity("SkyLight");
+        World->EmplaceComponent<SSkyLightComponent>(Entity);
+        
+        WorldEditorTool = CreateTool<FWorldEditorTool>(this, World);
         ConsoleLogTool = CreateTool<FConsoleLogEditorTool>(this);
         ContentBrowser = CreateTool<FContentBrowserEditorTool>(this);
 

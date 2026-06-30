@@ -312,8 +312,6 @@ namespace Lumina
         TSharedPtr<FPropertyHandle>                         PropertyHandle;
         CStruct*                                            Struct = nullptr;
         void*                                               Object = nullptr;
-        // Resolves a property's default for diff/reset-to-default; null when no
-        // default is plumbed in (e.g. plain struct details with no CDO).
         void*                                               DefaultObject = nullptr;
         THashMap<FName, TUniquePtr<FCategoryPropertyRow>>   CategoryMap;
         

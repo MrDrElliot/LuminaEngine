@@ -5,7 +5,6 @@
 #include "Core/Delegates/Delegate.h"
 #include "World/Entity/Components/CameraComponent.h"
 #include "Entity/Registry/EntityRegistry.h"
-#include "Renderer/RHIFwd.h"
 #include "Memory/SmartPtr.h"
 #include "Physics/PhysicsScene.h"
 #include "Entity/Systems/SystemContext.h"
@@ -24,6 +23,7 @@
 
 namespace Lumina
 {
+    struct FAssetRef;
     struct SDefaultWorldSettings;
     struct FLineBatcherComponent;
     struct FTriangleBatcherComponent;
@@ -154,15 +154,22 @@ namespace Lumina
         // per-frame state. Must run before any render-thread RenderView consumes it.
         void Extract();
 
+        /**
+         * Constructs an entity into the registry.
+         * @param Name New name of the entity, not unique.
+         * @param Transform Optional Transform.
+         * @return a newly created entity.
+         */
         FUNCTION(Script)
-        entt::entity ConstructEntity(const FName& Name, const FTransform& Transform = FTransform());
+        entt::entity ConstructEntity(FName Name, const FTransform& Transform = FTransform());
+
 
         FUNCTION(Script)
-        entt::entity SpawnPrefab(const FName& Path);
+        entt::entity SpawnPrefab(const FAssetRef& Prefab);
 
         /** Like SpawnPrefab(Path), but positions the spawned root at SpawnTransform and
          *  optionally reparents under Parent (entt::null = world root). */
-        entt::entity SpawnPrefabAt(const FName& Path, const FTransform& SpawnTransform, entt::entity Parent = entt::null);
+        entt::entity SpawnPrefabAt(const FAssetRef& Prefab, const FTransform& SpawnTransform, entt::entity Parent = entt::null);
 
         // Shatter a destructible entity into physics-driven fragments. Origin = blast point;
         // Strength = outward launch m/s (0 uses ExplosionStrength). No-op without an unbroken SDestructibleComponent.

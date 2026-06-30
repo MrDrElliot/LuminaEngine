@@ -234,7 +234,7 @@ namespace Lumina
         if (Name == NAME_None)
         {
             int32 Unique = std::atomic_ref<int32>(InClass->ClassUnique).fetch_add(1, std::memory_order_relaxed) + 1;
-            Params.Name = InClass->GetName() + "_" + eastl::to_string(Unique);
+            Params.Name = FName(InClass->GetName().c_str(), Unique);
         }
         else
         {
