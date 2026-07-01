@@ -88,6 +88,13 @@ namespace Lumina::VFS
         }
     }
 
+    void Unmount(FStringView Alias)
+    {
+        // Keyed by normalized FFixedString (e.g. "/Game"), same as AddFileSystemImpl.
+        FFixedString Key = Paths::Normalize(Alias);
+        Detail::FileSystemStorage.erase(Key);
+    }
+
     bool DoesAliasExists(const FName& Alias)
     {
         // FileSystemStorage is keyed by normalized FFixedString (e.g. "/Game").

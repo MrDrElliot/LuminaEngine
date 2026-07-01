@@ -12,6 +12,7 @@
 #include "Core/Windows/Window.h"
 #include "Core/Serialization/MemoryArchiver.h"
 #include "Core/Serialization/ObjectArchiver.h"
+#include "Transactions/EcsRegistrySnapshotCommand.h"
 #include "Thumbnails/ThumbnailManager.h"
 #include "Thumbnails/ThumbnailUtils.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
@@ -52,6 +53,9 @@ namespace Lumina
         , EditorEntity(entt::null)
     {
         ToolFlags |= EEditorToolFlags::Tool_WantsToolbar;
+
+        // Command-based Undo/Redo routes its post-apply cache rebuild through the tool's existing hook.
+        TransactionManager.OnPostApply = [this]() { OnPostUndoRedo(); };
     }
 
     FEditorTool::~FEditorTool() = default;
@@ -453,8 +457,8 @@ namespace Lumina
             }
         }
 
-        ImGui::BeginDisabled(UndoStack.empty());
-        
+        ImGui::BeginDisabled(!AllowsUndoRedo() || !CanUndo());
+
         if (ImGui::MenuItem(LE_ICON_UNDO_VARIANT"##Undo"))
         {
             Undo();
@@ -463,8 +467,8 @@ namespace Lumina
         
         ImGuiX::TextTooltip("Undo last transaction");
 
-        ImGui::BeginDisabled(RedoStack.empty());
-        
+        ImGui::BeginDisabled(!AllowsUndoRedo() || !CanRedo());
+
         if (ImGui::MenuItem(LE_ICON_REDO_VARIANT"##Redo"))
         {
             Redo();
@@ -1224,8 +1228,6 @@ namespace Lumina
         }
     }
 
-    static constexpr int32 GMaxUndoHistory = 64;
-
     void FEditorTool::BeginTransaction()
     {
         if (!CanTransact())
@@ -1233,13 +1235,9 @@ namespace Lumina
             return;
         }
 
-        PendingBeforeState.clear();
-
-        FMemoryWriter Writer(PendingBeforeState);
-        FObjectProxyArchiver Ar(Writer, false);
-        ECS::Utils::SerializeRegistry(Ar, ECS::GetWorldRegistry(*World));
-
-        RedoStack.clear();
+        // World/prefab editors record a whole-registry snapshot as one command (migrated to fine-grained in Phase 3).
+        TransactionManager.BeginTransaction(FName());
+        TransactionManager.Record(MakeUnique<FEcsRegistrySnapshotCommand>(World));
     }
 
     void FEditorTool::EndTransaction(FName Name)
@@ -1249,90 +1247,52 @@ namespace Lumina
             return;
         }
 
-        TVector<uint8> AfterState;
-        FMemoryWriter Writer(AfterState);
-        FObjectProxyArchiver Ar(Writer, false);
-        ECS::Utils::SerializeRegistry(Ar, ECS::GetWorldRegistry(*World));
+        TransactionManager.SetOpenTransactionName(Name);
+        TransactionManager.CommitTransaction();
 
-        if (UndoStack.size() >= GMaxUndoHistory)
-        {
-            UndoStack.erase(UndoStack.begin());
-        }
-
-        UndoStack.push_back({ Name, PendingBeforeState, eastl::move(AfterState) });
-        PendingBeforeState.clear();
-
-        RedoStack.clear();
-
-        if (World->GetPackage())
+        // Dirty the world package so the unsaved-document indicator appears (most world sites rely on this).
+        if (World != nullptr && World->GetPackage())
         {
             World->GetPackage()->MarkDirty();
         }
+    }
+
+    void FEditorTool::AbortTransaction()
+    {
+        TransactionManager.AbortTransaction();
     }
 
     void FEditorTool::Undo()
     {
-        if (UndoStack.empty() || !CanTransact())
+        if (!AllowsUndoRedo() || !TransactionManager.CanUndo())
         {
             return;
         }
 
-        FTransaction& Transaction = UndoStack.back();
-
-        ImGuiX::Notifications::NotifyInfo("Undid {}", Transaction.Name);
-
-        RedoStack.push_back(Transaction);
-
-        FMemoryReader Reader(Transaction.BeforeState);
-        FObjectProxyArchiver Ar(Reader, true);
-
-        FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
-        ECS::Utils::SerializeRegistry(Ar, Registry);
-
-        OnPostUndoRedo();
-
-        UndoStack.pop_back();
-
-        if (World->GetPackage())
-        {
-            World->GetPackage()->MarkDirty();
-        }
+        const FName Name = TransactionManager.PeekUndoName();
+        bRestoringTransaction = true;
+        TransactionManager.Undo();   // applies the transaction and fires OnPostApply -> OnPostUndoRedo
+        bRestoringTransaction = false;
+        ImGuiX::Notifications::NotifyInfo("Undid {}", Name);
     }
 
     void FEditorTool::Redo()
     {
-        if (RedoStack.empty() || !CanTransact())
+        if (!AllowsUndoRedo() || !TransactionManager.CanRedo())
         {
             return;
         }
 
-        FTransaction& Transaction = RedoStack.back();
-
-        ImGuiX::Notifications::NotifyInfo("Redid {}", Transaction.Name);
-
-        UndoStack.push_back(Transaction);
-
-        FMemoryReader Reader(Transaction.AfterState);
-        FObjectProxyArchiver Ar(Reader, true);
-
-        FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
-        ECS::Utils::SerializeRegistry(Ar, Registry);
-
-        OnPostUndoRedo();
-
-        RedoStack.pop_back();
-
-        if (World->GetPackage())
-        {
-            World->GetPackage()->MarkDirty();
-        }
+        const FName Name = TransactionManager.PeekRedoName();
+        bRestoringTransaction = true;
+        TransactionManager.Redo();
+        bRestoringTransaction = false;
+        ImGuiX::Notifications::NotifyInfo("Redid {}", Name);
     }
 
     void FEditorTool::ClearTransactionHistory()
     {
-        UndoStack.clear();
-        RedoStack.clear();
-        PendingBeforeState.clear();
+        TransactionManager.Clear();
     }
 
     FTransform FEditorTool::GetCameraSpawnTransform(float DistanceForward) const

@@ -4,6 +4,7 @@
 #include "imgui_internal.h"
 #include "EditorAction.h"
 #include "ToolFlags.h"
+#include "Transactions/EditorTransaction.h"
 #include "Containers/Array.h"
 #include "Containers/Function.h"
 #include "Containers/String.h"
@@ -92,13 +93,6 @@ namespace Lumina
         };
         
         
-        struct FTransaction
-        {
-            FName           Name;
-            TVector<uint8>  BeforeState;
-            TVector<uint8>  AfterState;
-        };
-
 
     public:
 
@@ -289,8 +283,21 @@ namespace Lumina
         /** End a transaction; captures after-state and pushes onto the undo stack. */
         virtual void EndTransaction(FName Name);
 
+        /** Discard the open transaction without committing (the "did nothing, cancel" paths). */
+        virtual void AbortTransaction();
+
         virtual void Undo();
         virtual void Redo();
+
+        /** Shared, domain-blind undo/redo manager; every tool records commands here. */
+        FTransactionManager& GetTransactionManager() { return TransactionManager; }
+
+        /** Undo/redo availability (all tools now record command-based transactions on the manager). */
+        bool CanUndo() const { return TransactionManager.CanUndo(); }
+        bool CanRedo() const { return TransactionManager.CanRedo(); }
+
+        /** Whether undo/redo may run now; the world editor blocks it during PIE. */
+        virtual bool AllowsUndoRedo() const { return true; }
 
         /** After a registry round-trip in Undo/Redo; override to rebuild caches mirroring registry state. */
         virtual void OnPostUndoRedo() { }
@@ -333,9 +340,11 @@ namespace Lumina
     
     protected:
 
-        TVector<FTransaction>               UndoStack;
-        TVector<FTransaction>               RedoStack;
-        TVector<uint8>                      PendingBeforeState;
+        // Domain-blind command-based undo/redo shared by ALL tools (world editor, asset editors, ...).
+        FTransactionManager                 TransactionManager;
+
+        // True while an undo/redo restore destroys+recreates entities; entity-destroy observers no-op so caches survive.
+        bool                                bRestoringTransaction = false;
         
         ImGuiID                             CurrDockID = 0;
         ImGuiID                             DesiredDockID = 0;      // The dock we wish to be in

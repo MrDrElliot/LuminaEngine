@@ -27,6 +27,11 @@ namespace Lumina::VFS
         return Result;
     }
 
+    // Remove every mount registered under Alias (e.g. "/Game"). No-op if nothing is mounted there.
+    // Use before re-mounting a project-scoped alias so reloads/switches don't stack duplicate mounts
+    // (the mount list is append-only and DirectoryIterator visits every entry).
+    RUNTIME_API void Unmount(FStringView Alias);
+
     RUNTIME_API void DirectoryIterator(FStringView Path, const TFunction<void(const FFileInfo&)>& Callback);
     RUNTIME_API void RecursiveDirectoryIterator(FStringView Path, const TFunction<void(const FFileInfo&)>& Callback);
 

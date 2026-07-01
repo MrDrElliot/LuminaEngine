@@ -171,7 +171,7 @@ namespace Lumina
                 }
                 else
                 {
-                    PendingBeforeState.clear();
+                    AbortTransaction();
                 }
             }
 
@@ -343,7 +343,8 @@ namespace Lumina
 
     void FPrefabEditorTool::OnPostUndoRedo()
     {
-        // Selection lives in registry tags; undo restores them. Mirror them into the cached set.
+        // The true-restore preserves handles but drops the (non-serialized) selection tags; re-stamp then rebuild the cache.
+        ReapplySelectionTags();
         ResyncSelectionFromRegistry();
 
         // Component pointers in PropertyTables are stale after the registry serialize.
@@ -554,7 +555,7 @@ namespace Lumina
         }
         else
         {
-            PendingBeforeState.clear();
+            AbortTransaction();
         }
     }
 
@@ -791,7 +792,7 @@ namespace Lumina
         }
         else
         {
-            PendingBeforeState.clear();
+            AbortTransaction();
         }
     }
 
@@ -903,7 +904,7 @@ namespace Lumina
             }
             else
             {
-                PendingBeforeState.clear();
+                AbortTransaction();
             }
         };
 

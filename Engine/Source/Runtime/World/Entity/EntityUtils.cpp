@@ -404,7 +404,7 @@ namespace Lumina::ECS::Utils
 
         return !Ar.HasError();
     }
-    
+
     bool EntityHasTag(const FName& Tag, FEntityRegistry& Registry, entt::entity Entity)
     {
         return Registry.storage<STagComponent>(entt::hashed_string(Tag.c_str())).contains(Entity);

@@ -1,12 +1,36 @@
 #include "AssetEditorTool.h"
 #include "Core/Object/Package/Package.h"
+#include "GUID/GUID.h"
 #include "Thumbnails/ThumbnailManager.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
+#include "UI/Tools/Transactions/ObjectSnapshotCommand.h"
+
+#include <format>
 
 namespace Lumina
 {
     void FAssetEditorTool::OnInitialize()
     {
+    }
+
+    void FAssetEditorTool::SetupPropertyUndo()
+    {
+        // Start (edit begin / drag start): open a transaction and snapshot the asset's before-image.
+        PropertyTable.SetStartEditCallback([this](const FPropertyChangedEvent& Event)
+        {
+            if (Asset != nullptr)
+            {
+                FTransactionManager& Manager = GetTransactionManager();
+                Manager.BeginTransaction(Event.PropertyName);
+                Manager.Record(MakeUnique<FObjectSnapshotCommand>(Asset.Get(), Event.PropertyName));
+            }
+        });
+
+        // Finish (edit end): commit; the command captures its after-image and self-drops if nothing changed.
+        PropertyTable.SetFinishEditCallback([this](const FPropertyChangedEvent&)
+        {
+            GetTransactionManager().CommitTransaction();
+        });
     }
 
     void FAssetEditorTool::Deinitialize(const FUpdateContext& UpdateContext)
@@ -18,7 +42,14 @@ namespace Lumina
     {
         if (Asset != nullptr)
         {
-            return Asset->GetName();
+            // "Name###GUID": ImGui shows the label but hashes the stable GUID, so same-named assets don't merge.
+            const FName Name = Asset->GetName();
+            if (CachedWindowNameSource != Name)
+            {
+                CachedWindowNameSource = Name;
+                CachedWindowName = std::format("{0}###{1}", Name.c_str(), Asset->GetGUID().ToShortString().c_str()).c_str();
+            }
+            return CachedWindowName;
         }
         return ToolName;
     }

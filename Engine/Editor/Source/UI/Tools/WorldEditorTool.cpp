@@ -425,7 +425,7 @@ namespace Lumina
                 }
                 else
                 {
-                    PendingBeforeState.clear();
+                    AbortTransaction();
                 }
             }
 
@@ -507,7 +507,7 @@ namespace Lumina
                     }
                     else
                     {
-                        PendingBeforeState.clear();
+                        AbortTransaction();
                     }
                 }
                 ImGuiX::TextTooltip("{}", "Unlink this instance from its source prefab; the entities become plain and stop syncing.");
@@ -779,6 +779,7 @@ namespace Lumina
             OutlinerListView.MarkTreeDirty();
             EntityToTreeNode.clear();
             PendingOutlinerAdds.clear();
+            PendingExpanderRefresh.clear();
             RebindRegistryObservers();      // now binds to World
             ResyncSelectionFromRegistry();
         }
@@ -827,7 +828,7 @@ namespace Lumina
             }
             else
             {
-                PendingBeforeState.clear();
+                AbortTransaction();
             }
         }
 
@@ -913,7 +914,7 @@ namespace Lumina
                 }
                 else
                 {
-                    PendingBeforeState.clear();
+                    AbortTransaction();
                 }
             }
         }
@@ -991,7 +992,7 @@ namespace Lumina
                 }
                 else
                 {
-                    PendingBeforeState.clear();
+                    AbortTransaction();
                 }
             }
         }
@@ -1978,7 +1979,7 @@ namespace Lumina
                         }
                         else
                         {
-                            PendingBeforeState.clear();
+                            AbortTransaction();
                         }
                         ImGui::CloseCurrentPopup();
                     }
@@ -2125,7 +2126,7 @@ namespace Lumina
                         }
                         else
                         {
-                            PendingBeforeState.clear();
+                            AbortTransaction();
                         }
                         ImGui::CloseCurrentPopup();
                     }
@@ -3220,6 +3221,12 @@ namespace Lumina
 
     void FWorldEditorTool::OnEntityDestroyed(entt::registry& Registry, entt::entity Entity)
     {
+        // During a restore, entities are destroyed then recreated at the same handles; skip pruning so caches survive (OnPostUndoRedo rebuilds).
+        if (bRestoringTransaction)
+        {
+            return;
+        }
+
         // Entity is leaving the registry: drop from selection, fix up LastSelectedEntity,
         // invalidate cached property tables (their component pointers are about to dangle).
         if (SelectedEntities.find(Entity) != SelectedEntities.end())
@@ -3437,8 +3444,12 @@ namespace Lumina
 
     void FWorldEditorTool::OnPostUndoRedo()
     {
-        // Serialized registry is authoritative post-undo; rebuild the cached set from FSelectedInEditorComponent / FLastSelectedTag.
+        // The true-restore preserves handles but drops the (non-serialized) selection tags; re-stamp then rebuild the cache.
+        ReapplySelectionTags();
         ResyncSelectionFromRegistry();
+
+        // The restore reallocated component storage, so the details panel's cached pointers are stale.
+        bDetailsDirty = true;
 
         // Outliner topology may have changed; force a rebuild.
         OutlinerListView.MarkTreeDirty();
@@ -3457,7 +3468,13 @@ namespace Lumina
             }
         }
     }
-    
+
+    bool FWorldEditorTool::AllowsUndoRedo() const
+    {
+        // Not during PIE/Simulate: World then points at the transient play world, not the edited source registry.
+        return World != nullptr && World->GetWorldType() == EWorldType::Editor;
+    }
+
     namespace
     {
         FORCEINLINE void SetTreeNodeSelected(FTreeListView& Tree, FTreeNodeID Node, bool bSelected)
@@ -3530,6 +3547,7 @@ namespace Lumina
         OutlinerListView.MarkTreeDirty();
         EntityToTreeNode.clear();
         PendingOutlinerAdds.clear();
+        PendingExpanderRefresh.clear();
 
         RebindRegistryObservers();      // binds to GetObservedWorld()
         ResyncSelectionFromRegistry();  // adopt any selection tags already on the observed world
@@ -3663,6 +3681,7 @@ namespace Lumina
         OutlinerListView.MarkTreeDirty();
         EntityToTreeNode.clear();
         PendingOutlinerAdds.clear();
+        PendingExpanderRefresh.clear();
 
         RebindRegistryObservers();
 
@@ -4049,7 +4068,7 @@ namespace Lumina
         }
         else
         {
-            PendingBeforeState.clear();
+            AbortTransaction();
         }
     }
 
@@ -4104,7 +4123,9 @@ namespace Lumina
         const ImVec2 P1     = ImVec2(P0.x + Avail, P0.y + Height);
 
         ImGui::SetCursorScreenPos(P0);
-        const bool bClicked = ImGui::InvisibleButton("##row", ImVec2(Avail - TrashW, Height));
+        // Floor the width: InvisibleButton asserts on an exactly-zero dimension when the panel is dragged to ~0.
+        const float RowWidth = Avail - TrashW;
+        const bool bClicked = ImGui::InvisibleButton("##row", ImVec2(RowWidth < 1.0f ? 1.0f : RowWidth, Height));
         const bool bHovered = ImGui::IsItemHovered();
         const bool bActive  = ImGui::IsItemActive();
         if (bHovered)
@@ -4546,7 +4567,7 @@ namespace Lumina
         entt::entity Group = World->ConstructEntity("Group", GroupTransform);
         if (Group == entt::null)
         {
-            PendingBeforeState.clear();
+            AbortTransaction();
             return;
         }
 
@@ -4672,7 +4693,7 @@ namespace Lumina
         }
         else
         {
-            PendingBeforeState.clear();
+            AbortTransaction();
         }
     }
 

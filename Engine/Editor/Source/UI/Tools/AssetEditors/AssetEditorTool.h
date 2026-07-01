@@ -29,6 +29,9 @@ namespace Lumina
                 {
                    Asset->GetPackage()->MarkDirty();
                 });
+
+                // Property edits on the asset become undoable CObject snapshots -- undo for free, no per-editor code.
+                SetupPropertyUndo();
             }
         }
 
@@ -53,6 +56,11 @@ namespace Lumina
 
         bool HasAsset() const { return Asset.IsValid(); }
 
+    private:
+
+        // Wires the PropertyTable start/finish edit callbacks to record a CObject snapshot transaction.
+        void SetupPropertyUndo();
+
     protected:
 
         template<Concept::IsACObject T>
@@ -66,5 +74,9 @@ namespace Lumina
         TObjectPtr<CObject>         Asset;
         FPropertyTable              PropertyTable;
         uint8                       bAssetLoadBroadcasted:1;
+
+        // Cached "DisplayName###GUID" ImGui window title; rebuilt only when the asset is renamed.
+        mutable FName               CachedWindowName;
+        mutable FName               CachedWindowNameSource;
     };
 }

@@ -251,6 +251,22 @@ namespace Lumina
         OnSelectionChanged();
     }
 
+    void FSceneEditorTool::ReapplySelectionTags()
+    {
+        FEntityRegistry& Registry = GetSceneRegistry();
+        for (entt::entity Entity : SelectedEntities)
+        {
+            if (Registry.valid(Entity))
+            {
+                Registry.emplace_or_replace<FSelectedInEditorComponent>(Entity);
+            }
+        }
+        if (LastSelectedEntity != entt::null && Registry.valid(LastSelectedEntity))
+        {
+            Registry.emplace_or_replace<FLastSelectedTag>(LastSelectedEntity);
+        }
+    }
+
     void FSceneEditorTool::ClearSelectedEntities()
     {
         FEntityRegistry& Registry = GetSceneRegistry();
@@ -701,6 +717,7 @@ namespace Lumina
         // Incremental tree: rebuild just resets the map and re-adds roots. Children fill lazily on expand.
         EntityToTreeNode.clear();
         PendingOutlinerAdds.clear();
+        PendingExpanderRefresh.clear();
 
         FEntityRegistry& Registry = GetSceneRegistry();
         auto View = Registry.view<SNameComponent>(entt::exclude<FHideInSceneOutliner>);
@@ -1010,23 +1027,52 @@ namespace Lumina
     void FSceneEditorTool::OnOutlinerEntityDestroyed(entt::registry& Registry, entt::entity Entity)
     {
         (void)Registry;
+
+        // Remember the parent so its expander arrow can be re-evaluated after the destroy settles:
+        // deleting an entity's last child must drop the parent's twisty. Prefer the outliner's own
+        // tree parent (always accurate for a materialized row); fall back to the registry relationship
+        // for a collapsed parent whose child was never built into a row. The SNameComponent destroy
+        // signal fires before the FRelationshipComponent one, so the child's parent link is still intact.
+        entt::entity ParentEntity = entt::null;
+        if (auto It = EntityToTreeNode.find(Entity); It != EntityToTreeNode.end())
+        {
+            FTreeNodeID ParentNode = OutlinerListView.GetParentNode(It->second);
+            if (ParentNode.IsValid())
+            {
+                ParentEntity = OutlinerListView.Get<FEntityListViewItemData>(ParentNode).Entity;
+            }
+        }
+        else if (const FRelationshipComponent* Rel = GetSceneRegistry().try_get<FRelationshipComponent>(Entity))
+        {
+            ParentEntity = Rel->Parent;
+        }
+
         RemoveEntityFromOutliner(Entity);
         PendingOutlinerAdds.erase(eastl::remove(PendingOutlinerAdds.begin(), PendingOutlinerAdds.end(), Entity), PendingOutlinerAdds.end());
+
+        if (ParentEntity != entt::null)
+        {
+            PendingExpanderRefresh.push_back(ParentEntity);
+        }
     }
 
     void FSceneEditorTool::FlushOutlinerPending()
     {
-        if (PendingOutlinerAdds.empty())
-        {
-            return;
-        }
-
         // Iterate by index; AddEntityToOutliner could grow the queue.
         for (int32 i = 0; i < static_cast<int32>(PendingOutlinerAdds.size()); ++i)
         {
             AddEntityToOutliner(PendingOutlinerAdds[i]);
         }
         PendingOutlinerAdds.clear();
+
+        // Re-evaluate parents whose last child just left: the destroy has fully settled by now, so the
+        // registry child count is current. RefreshOutlinerExpander no-ops for parents that were themselves
+        // removed (e.g. deleting a whole subtree), so stale entries are harmless.
+        for (entt::entity Parent : PendingExpanderRefresh)
+        {
+            RefreshOutlinerExpander(Parent);
+        }
+        PendingExpanderRefresh.clear();
     }
 
     FTransform FSceneEditorTool::GetNewEntitySpawnTransform() const

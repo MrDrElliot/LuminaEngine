@@ -2873,9 +2873,7 @@ namespace Lumina::RHI
         ActualExtent.width  = Math::Clamp(ActualExtent.width,  Caps.minImageExtent.width,  Caps.maxImageExtent.width);
         ActualExtent.height = Math::Clamp(ActualExtent.height, Caps.minImageExtent.height, Caps.maxImageExtent.height);
 
-        // A minimized / mid-resize / offscreen surface reports a zero extent; creating a
-        // swapchain with imageExtent {0,0} is rejected by strict drivers (AMD returns
-        // VK_ERROR_UNKNOWN). minImageExtent can itself be {0,0}, so the clamp does not cover this.
+        // Skip a zero-area surface (minimized / mid-resize): imageExtent {0,0} is rejected by AMD; min extent can also be {0,0}.
         if (ActualExtent.width == 0 || ActualExtent.height == 0)
         {
             return false;
@@ -3016,8 +3014,7 @@ namespace Lumina::RHI
         DestroySwapchainImages(SC);
         if (!BuildSwapchainImages(SC, Extent, Old))
         {
-            // Surface has no drawable area (minimized / mid-resize). Leave the swapchain
-            // unbuilt; callers skip the frame and retry once the surface is valid again.
+            // No drawable area (minimized / mid-resize): leave it unbuilt; callers skip the frame and retry.
             SC.Swapchain = VK_NULL_HANDLE;
             SC.Extent = FUIntVector2(0, 0);
         }

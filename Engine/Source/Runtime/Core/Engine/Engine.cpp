@@ -605,6 +605,13 @@ namespace Lumina
         std::filesystem::create_directories(GameContentDir.c_str(), GameDirEc);
         std::filesystem::create_directories(GameScriptsDir.c_str(), GameDirEc);
 
+        // Reloading a project (or switching to another) re-enters here. The VFS mount list is
+        // append-only and DirectoryIterator visits every mount, so re-mounting /Game onto a stale
+        // mount would surface every folder twice in the content browser (Content, Content, Scripts,
+        // Scripts...). Drop the previous project's mounts for these aliases before re-mounting.
+        // (Plugin content mounts are already guarded by IsContentMounted()/DoesAliasExists().)
+        VFS::Unmount("/Game");
+        VFS::Unmount("/Config");
         VFS::Mount<VFS::FNativeFileSystem>("/Game", GameRootDir);
         VFS::Mount<VFS::FNativeFileSystem>("/Config", ConfigDir);
 

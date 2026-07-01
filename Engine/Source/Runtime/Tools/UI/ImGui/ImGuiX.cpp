@@ -1107,9 +1107,9 @@ namespace Lumina::ImGuiX
         Remaining -= ControlsWidth;
         const ImVec2 ControlsSectionPos(ControlsPos.x - SectionPadding - ControlsWidth, ImGui::GetCursorPosY());
 
-        // Drag zone fills the gap between the menu and the controls.
+        // Clamp width to >0: InvisibleButton asserts on an exactly-zero dimension when the window is narrow.
         ImGui::SetCursorPos(ImVec2(MenuPos.x + MenuWidth + 10.0f * Scale, MenuPos.y));
-        ImGui::InvisibleButton("TitleBarDragZone", ImVec2(Remaining, BarHeight));
+        ImGui::InvisibleButton("TitleBarDragZone", ImVec2(eastl::max(Remaining, 1.0f), BarHeight));
         if (FWindow* MainWindow = Windowing::GetPrimaryWindowHandle())
         {
             MainWindow->SetTitleBarHovered(ImGui::IsItemHovered());

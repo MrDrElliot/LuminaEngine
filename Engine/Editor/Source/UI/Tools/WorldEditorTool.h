@@ -135,6 +135,9 @@ namespace Lumina
 
         void OnPostUndoRedo() override;
 
+        // Block undo/redo during PIE: transactions target the editor source world, not the running game.
+        bool AllowsUndoRedo() const override;
+
         // Selection model + outliner engine live in FSceneEditorTool; the world editor only
         // supplies this hook (the base selection methods call it on focus change).
         void OnSelectionChanged() override { bDetailsDirty = true; }

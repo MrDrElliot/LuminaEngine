@@ -198,13 +198,17 @@ namespace Lumina
             const ImVec2 P0       = ImGui::GetCursorScreenPos();
             const ImVec2 P1       = ImVec2(P0.x + Avail, P0.y + Height);
 
+            // Seed the ID scope from title AND subtitle: two rows can share a title (the "Sandbox"
+            // recent vs the "Sandbox" example, or two same-named projects in different folders), which
+            // would otherwise collide on the "##row"/"##close" IDs. Subtitle is the unique path for recents.
             ImGui::PushID(Title);
+            ImGui::PushID(Subtitle ? Subtitle : "");
 
             // Invisible button covers the full row area (minus the close column).
             ImGui::SetCursorScreenPos(P0);
             const bool bRowClicked = ImGui::InvisibleButton(
                 "##row",
-                ImVec2(Avail - CloseW, Height));
+                ImVec2(eastl::max(Avail - CloseW, 1.0f), Height));   // floor: InvisibleButton asserts on zero width
             const bool bHovered    = ImGui::IsItemHovered();
             const bool bActive     = ImGui::IsItemActive();
 
@@ -283,6 +287,7 @@ namespace Lumina
             const ImVec2 NextRow(P0.x, P1.y + 6.0f);
             ImGui::SetCursorScreenPos(NextRow);
             ImGui::Dummy(ImVec2(0.0f, 0.0f));
+            ImGui::PopID();
             ImGui::PopID();
             return bRowClicked;
         }
@@ -1251,7 +1256,7 @@ namespace Lumina
         {
             const float HandleH = 5.0f * Scale;
             ImGui::SetCursorPos(ImVec2(0.0f, 0.0f));
-            ImGui::InvisibleButton("##DrawerResize", ImVec2(ImGui::GetWindowWidth(), HandleH));
+            ImGui::InvisibleButton("##DrawerResize", ImVec2(eastl::max(ImGui::GetWindowWidth(), 1.0f), HandleH));
             const bool bHandleHovered = ImGui::IsItemHovered();
             const bool bHandleActive  = ImGui::IsItemActive();
             if (bHandleHovered || bHandleActive)
@@ -1696,6 +1701,8 @@ namespace Lumina
                     ImGuiWindowFlags ToolWindowFlags = ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_NoCollapse;
 
                     ImGui::SetNextWindowClass(&Tool->ToolWindowsClass);
+                    // Floor the size so a panel can't be dragged to a degenerate extent (child widgets assert at zero width).
+                    ImGui::SetNextWindowSizeConstraints(ImVec2(100.0f, 80.0f), ImVec2(FLT_MAX, FLT_MAX));
 
                     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImGui::GetStyle().WindowPadding);
                     bool const DrawToolWindow = ImGui::Begin(ToolWindowName.c_str(), nullptr, ToolWindowFlags);
@@ -1869,7 +1876,7 @@ namespace Lumina
                     // Hover-only background; click anywhere on the row
                     // toggles the checkbox.
                     ImGui::SetCursorScreenPos(P0);
-                    const bool bRowClicked = ImGui::InvisibleButton("##row", ImVec2(Avail, Height));
+                    const bool bRowClicked = ImGui::InvisibleButton("##row", ImVec2(eastl::max(Avail, 1.0f), Height));
                     const bool bHovered    = ImGui::IsItemHovered();
                     if (bRowClicked && States[i] == ESaveState::Idle)
                     {

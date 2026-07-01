@@ -1213,7 +1213,8 @@ namespace Lumina
 
                     if (Sep > SegmentStart)
                     {
-                        FName SegmentName(CategoryPath.data() + SegmentStart, Sep - SegmentStart);
+                        // Via FStringView: FName(const char*, uint32) is base+NUMBER, so a raw length there yields "Physics_8".
+                        FName SegmentName(FStringView(CategoryPath.data() + SegmentStart, Sep - SegmentStart));
                         TargetRow = (TargetRow == nullptr)
                             ? FindOrCreateCategoryRow(SegmentName)
                             : TargetRow->FindOrCreateChildCategory(SegmentName);

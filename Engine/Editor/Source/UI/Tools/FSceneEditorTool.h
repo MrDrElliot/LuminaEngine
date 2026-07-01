@@ -73,6 +73,9 @@ namespace Lumina
         // Rebuild the cached set + last-selected from the registry tags (after undo/redo/world swap).
         void ResyncSelectionFromRegistry();
 
+        // Re-stamp the non-serialized selection tags from the surviving CPU set (a true-restore keeps handles but drops tags).
+        void ReapplySelectionTags();
+
         NODISCARD bool IsEntitySelected(entt::entity Entity) const { return SelectedEntities.find(Entity) != SelectedEntities.end(); }
         NODISCARD const THashSet<entt::entity>& GetSelectedEntities() const { return SelectedEntities; }
         NODISCARD entt::entity GetLastSelectedEntity() const { return LastSelectedEntity; }
@@ -172,6 +175,9 @@ namespace Lumina
         FTreeListViewContext                OutlinerContext;
         THashMap<entt::entity, FTreeNodeID> EntityToTreeNode;
         TVector<entt::entity>               PendingOutlinerAdds;
+        // Parents whose expander arrow may be stale after a child row was removed; re-evaluated
+        // on the next FlushOutlinerPending once the destroy has settled (see OnOutlinerEntityDestroyed).
+        TVector<entt::entity>               PendingExpanderRefresh;
 
         // --- Component details / property tables ---------------------------------------
         // Canonical (world) model: one FPropertyTable row per reflected component, plus
