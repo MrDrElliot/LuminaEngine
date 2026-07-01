@@ -36,6 +36,7 @@ namespace Lumina::Vulkan
             case VK_ERROR_TOO_MANY_OBJECTS:             return "VK_ERROR_TOO_MANY_OBJECTS: Too many objects of the type have already been created.";
             case VK_ERROR_FORMAT_NOT_SUPPORTED:         return "VK_ERROR_FORMAT_NOT_SUPPORTED: A requested format is not supported on this device.";
             case VK_ERROR_FRAGMENTED_POOL:              return "VK_ERROR_FRAGMENTED_POOL: A pool allocation has failed due to fragmentation.";
+            case VK_ERROR_UNKNOWN:                      return "VK_ERROR_UNKNOWN: An unknown error occurred; usually an invalid or unsupported parameter the driver could not classify (e.g. a zero-area swapchain imageExtent).";
             case VK_ERROR_SURFACE_LOST_KHR:             return "VK_ERROR_SURFACE_LOST_KHR: A surface is no longer available.";
             case VK_ERROR_NATIVE_WINDOW_IN_USE_KHR:     return "VK_ERROR_NATIVE_WINDOW_IN_USE_KHR: The requested window is already in use by Vulkan.";
             case VK_ERROR_OUT_OF_DATE_KHR:              return "VK_ERROR_OUT_OF_DATE_KHR: A surface has changed in such a way that it is no longer compatible with the swapchain.";

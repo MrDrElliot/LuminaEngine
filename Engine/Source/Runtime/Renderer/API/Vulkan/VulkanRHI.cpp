@@ -2859,20 +2859,26 @@ namespace Lumina::RHI
         return VK_PRESENT_MODE_FIFO_KHR;
     }
 
-    static void BuildSwapchainImages(FSwapchain& SC, const FUIntVector2& Extent, VkSwapchainKHR OldSwapchain)
+    static bool BuildSwapchainImages(FSwapchain& SC, const FUIntVector2& Extent, VkSwapchainKHR OldSwapchain)
     {
         VkSurfaceCapabilitiesKHR Caps{};
-        vkGetPhysicalDeviceSurfaceCapabilitiesKHR(GDevice->PhysicsDevice, SC.Surface, &Caps);
-
-        VkExtent2D ActualExtent;
-        if (Caps.currentExtent.width != UINT32_MAX)
+        if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(GDevice->PhysicsDevice, SC.Surface, &Caps) != VK_SUCCESS)
         {
-            ActualExtent = Caps.currentExtent;
+            return false;   // surface transiently unqueryable; caller retries next frame
         }
-        else
+
+        VkExtent2D ActualExtent = (Caps.currentExtent.width != UINT32_MAX)
+            ? Caps.currentExtent
+            : VkExtent2D{ Extent.x, Extent.y };
+        ActualExtent.width  = Math::Clamp(ActualExtent.width,  Caps.minImageExtent.width,  Caps.maxImageExtent.width);
+        ActualExtent.height = Math::Clamp(ActualExtent.height, Caps.minImageExtent.height, Caps.maxImageExtent.height);
+
+        // A minimized / mid-resize / offscreen surface reports a zero extent; creating a
+        // swapchain with imageExtent {0,0} is rejected by strict drivers (AMD returns
+        // VK_ERROR_UNKNOWN). minImageExtent can itself be {0,0}, so the clamp does not cover this.
+        if (ActualExtent.width == 0 || ActualExtent.height == 0)
         {
-            ActualExtent.width  = Math::Clamp(Extent.x, Caps.minImageExtent.width,  Caps.maxImageExtent.width);
-            ActualExtent.height = Math::Clamp(Extent.y, Caps.minImageExtent.height, Caps.maxImageExtent.height);
+            return false;
         }
 
         uint32 ImageCount = Math::Max((uint32)kFramesInFlight, Caps.minImageCount);
@@ -2901,7 +2907,11 @@ namespace Lumina::RHI
             .oldSwapchain     = OldSwapchain,
         };
 
-        VK_CHECK(vkCreateSwapchainKHR(*GDevice, &Info, nullptr, &SC.Swapchain));
+        if (vkCreateSwapchainKHR(*GDevice, &Info, nullptr, &SC.Swapchain) != VK_SUCCESS)
+        {
+            SC.Swapchain = VK_NULL_HANDLE;
+            return false;   // transient create failure during resize; retry next frame
+        }
 
         SC.Format = Format;
         SC.Extent = FUIntVector2(ActualExtent.width, ActualExtent.height);
@@ -2953,6 +2963,8 @@ namespace Lumina::RHI
         const VkSemaphoreCreateInfo SemInfo { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
         for (uint32 i = 0; i < Count; ++i)        { VK_CHECK(vkCreateSemaphore(*GDevice, &SemInfo, nullptr, &SC.PresentSemaphores[i])); }
         for (uint32 i = 0; i < AcquireCount; ++i) { VK_CHECK(vkCreateSemaphore(*GDevice, &SemInfo, nullptr, &SC.AcquireSemaphores[i])); }
+
+        return true;
     }
 
     static void DestroySwapchainImages(FSwapchain& SC)
@@ -3002,8 +3014,18 @@ namespace Lumina::RHI
         VkSwapchainKHR Old = SC.Swapchain;
 
         DestroySwapchainImages(SC);
-        BuildSwapchainImages(SC, Extent, Old);
-        vkDestroySwapchainKHR(*GDevice, Old, nullptr);
+        if (!BuildSwapchainImages(SC, Extent, Old))
+        {
+            // Surface has no drawable area (minimized / mid-resize). Leave the swapchain
+            // unbuilt; callers skip the frame and retry once the surface is valid again.
+            SC.Swapchain = VK_NULL_HANDLE;
+            SC.Extent = FUIntVector2(0, 0);
+        }
+
+        if (Old != VK_NULL_HANDLE)
+        {
+            vkDestroySwapchainKHR(*GDevice, Old, nullptr);
+        }
 
         SC.AcquireIndex = 0;
         SC.CurrentImageIndex = 0;
@@ -3013,6 +3035,11 @@ namespace Lumina::RHI
     FTextureH AcquireNextImage(FSwapchainH Swapchain)
     {
         FSwapchain& SC = GDevice->Swapchains[Swapchain];
+
+        if (SC.Swapchain == VK_NULL_HANDLE || SC.AcquireSemaphores.empty())
+        {
+            return {};   // swapchain not built (zero-area surface); caller retries next frame
+        }
 
         VkSemaphore Acquire = SC.AcquireSemaphores[SC.AcquireIndex];
         const VkResult Result = vkAcquireNextImageKHR(*GDevice, SC.Swapchain, UINT64_MAX, Acquire, VK_NULL_HANDLE, &SC.CurrentImageIndex);

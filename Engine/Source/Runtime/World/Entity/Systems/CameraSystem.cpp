@@ -51,7 +51,7 @@ namespace Lumina
             OutLocation    = FVector3(0.0f);
             OutRotationDeg = FVector3(0.0f);
 
-            const float TwoPi = Math::TwoPi<float>();
+            constexpr float TwoPi = Math::TwoPi<float>();
             for (int32 i = 0; i < (int32)State.Shakes.size(); )
             {
                 FCameraShakeInstance& S = State.Shakes[i];

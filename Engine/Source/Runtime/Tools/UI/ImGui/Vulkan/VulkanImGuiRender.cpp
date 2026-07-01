@@ -422,6 +422,15 @@ namespace Lumina
             Data->BuiltExtent = Cap.Extent;
         }
 
+        // The OS surface may have collapsed to zero area (minimized / mid-drag) so the swapchain
+        // did not build. Force a rebuild attempt next frame and skip this one.
+        const FUIntVector2 BuiltExtent = RHI::GetSwapchainExtent(Data->Swapchain);
+        if (BuiltExtent.x == 0 || BuiltExtent.y == 0)
+        {
+            Data->BuiltExtent = FUIntVector2(0, 0);
+            return;
+        }
+
         RHI::FTextureH Img = RHI::AcquireNextImage(Data->Swapchain);
         if (!RHI::IsValid(Img))
         {
