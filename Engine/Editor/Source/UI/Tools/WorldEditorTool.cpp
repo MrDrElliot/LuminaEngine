@@ -672,12 +672,15 @@ namespace Lumina
         RebindRegistryObservers();
 
         WorldTravelledHandle = FCoreDelegates::OnWorldTravelled.AddMember(this, &FWorldEditorTool::OnWorldTravelled);
+        GameQuitHandle = FCoreDelegates::OnGameQuitRequested.AddMember(this, &FWorldEditorTool::OnGameQuitRequested);
     }
 
     void FWorldEditorTool::OnDeinitialize(const FUpdateContext& UpdateContext)
     {
         FCoreDelegates::OnWorldTravelled.Remove(WorldTravelledHandle);
         WorldTravelledHandle = FDelegateHandle{};
+        FCoreDelegates::OnGameQuitRequested.Remove(GameQuitHandle);
+        GameQuitHandle = FDelegateHandle{};
 
         if (bSimulatingWorld)
         {
@@ -762,6 +765,17 @@ namespace Lumina
 
     void FWorldEditorTool::Update(const FUpdateContext& UpdateContext)
     {
+        // Deferred gameplay quit (Game.Quit from a script): requested mid-world-tick, applied here at
+        // FrameStart -- the same safe point the Play toolbar uses -- so we never tear down a ticking world.
+        if (bGameQuitRequested && UpdateContext.GetUpdateStage() == EUpdateStage::FrameStart)
+        {
+            bGameQuitRequested = false;
+            if (bGamePreviewRunning)
+            {
+                SetWorldPlayInEditor(false);
+            }
+        }
+
         // If the world we were inspecting was torn down (client disconnect, PIE stop, travel), its registry
         // and our observers went with it. Forget the dead connection WITHOUT disconnecting (the signal storage
         // is already freed), then fall back to observing our own World. Pointer compares only -- no deref of

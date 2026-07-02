@@ -35,5 +35,9 @@ namespace Lumina
         // Fired after FConfig::SaveSettings persists a CDeveloperSettings class (arg = that CClass*).
         // Lets open editors live-refresh from their settings instead of waiting for a reopen.
         RUNTIME_API static TMulticastDelegate<void, CClass*>         OnSettingsSaved;
+
+        // Fired by FEngine::RequestExitGame when gameplay asks to quit. The editor binds this to end the
+        // PIE session instead; when unbound (packaged game) the engine exits the process.
+        RUNTIME_API static TMulticastDelegate<void>                  OnGameQuitRequested;
     };
 }

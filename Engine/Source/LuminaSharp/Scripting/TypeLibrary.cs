@@ -211,9 +211,11 @@ internal sealed class TypeLibrary
             }
         }
 
+        // A List<T> or T[]. When the field is marked [Instanced], the ELEMENT is the instanced (polymorphic)
+        // one, so forward the flag inward: List<ICommand> with [Instanced] picks a concrete type per element.
         if (TryGetElementType(Type, out Type? ElementType))
         {
-            ScriptType Element = ResolveType(ElementType!, Depth + 1, Visiting);
+            ScriptType Element = ResolveType(ElementType!, Depth + 1, Visiting, ForceInstanced);
             if (Element.Kind == EScriptKind.Nil)
             {
                 return new ScriptType { Kind = EScriptKind.Nil, Clr = Type };

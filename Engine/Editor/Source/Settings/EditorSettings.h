@@ -60,6 +60,33 @@ namespace Lumina
         float GizmoSnapScale = 0.1f;
     };
 
+    // External application C# script sources open in.
+    REFLECT()
+    enum class EScriptEditor : uint8
+    {
+        SystemDefault,
+        VisualStudio2022,
+        VisualStudio2026,
+        VSCode,
+        Rider,
+    };
+
+    // Scripting preferences.
+    REFLECT(MinimalAPI, ConfigFile = "/Editor/Config/EditorPreferences.json", DisplayName = "Scripting", Category = "Editor")
+    class CScriptEditorSettings : public CDeveloperSettings
+    {
+        GENERATED_BODY()
+    public:
+
+        /** Application used to open script source files. System Default uses the OS file association. */
+        PROPERTY(Editable, Category = "Scripts")
+        EScriptEditor ScriptEditor = EScriptEditor::SystemDefault;
+
+        /** Full path to an editor executable; overrides the choice above. Invoked as: "<exe>" "<file>". */
+        PROPERTY(Editable, Category = "Scripts")
+        FString CustomEditorPath;
+    };
+
     // Content browser preferences.
     REFLECT(MinimalAPI, ConfigFile = "/Editor/Config/EditorPreferences.json", DisplayName = "Content Browser", Category = "Editor")
     class CContentBrowserSettings : public CDeveloperSettings

@@ -57,6 +57,7 @@ namespace Lumina
         TMoveOnlyFunction<bool()>   DrawFunction;
         FString                     Title;
         ImVec2                      Size;
+        ImVec2                      OpenPos = ImVec2(-FLT_MAX, -FLT_MAX);
         bool                        bBlocking;
         bool                        bCloseable = true;
         bool                        bOpen = true;

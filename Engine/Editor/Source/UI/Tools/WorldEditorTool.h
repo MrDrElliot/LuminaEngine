@@ -164,6 +164,9 @@ namespace Lumina
         /** Engine-driven world travel: drop everything tied to OldWorld and re-bind to NewWorld. ProxyWorld is preserved. */
         void OnWorldTravelled(CWorld* OldWorld, CWorld* NewWorld);
 
+        /** Gameplay quit (Game.Quit): raised mid-world-tick, so only flag it; Update ends PIE at FrameStart. */
+        void OnGameQuitRequested() { bGameQuitRequested = true; }
+
         /** Accept a content-browser drag payload in the current scope and, if it's a prefab, instantiate it under DropTarget. */
         void AcceptContentBrowserPrefabPayload(entt::entity DropTarget);
 
@@ -293,6 +296,8 @@ namespace Lumina
         bool                                    bSavedDrawAABB = true;
 
         FDelegateHandle                         WorldTravelledHandle;
+        FDelegateHandle                         GameQuitHandle;
+        bool                                    bGameQuitRequested = false;
         
         bool                                    bVertexSnapAnchorValid = false;
         FVector3                                VertexSnapAnchorLocal = FVector3(0.0f);

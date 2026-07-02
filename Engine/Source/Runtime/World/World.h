@@ -293,8 +293,20 @@ namespace Lumina
         double GetTimeSinceWorldCreation() const { return TimeSinceCreation; }
         
 
+        /** Pauses gameplay (systems + physics). UI keeps updating (ticked from Extract), so a script-driven
+         *  pause menu can still unpause; systems registered for EUpdateStage::Paused keep running too. */
+        FUNCTION(Script)
         void SetPaused(bool bNewPause) { bPaused = bNewPause; }
+
+        FUNCTION(Script)
         bool IsPaused() const { return bPaused; }
+
+        /** World time scale (slow motion / speed up). Scales DeltaTime for systems, scripts, and physics. */
+        FUNCTION(Script)
+        void SetTimeDilation(float Dilation);
+
+        FUNCTION(Script)
+        float GetTimeDilation();
 
         void SetActive(bool bNewActive);
         bool IsSuspended() const { return !bActive; }

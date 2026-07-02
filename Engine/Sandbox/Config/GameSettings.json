@@ -1,10 +1,8 @@
 {
     "ProjectSettings": {
-        "CookRoots": [
-            "/Game/Content/NewWorld.lasset"
-        ],
-        "EditorStartupMap": "/Game/Content/NewWorld.lasset",
+        "CookRoots": [],
+        "EditorStartupMap": "",
         "GameInstanceClass": "CGameInstance",
-        "GameStartupMap": "/Game/Content/NewWorld.lasset"
+        "GameStartupMap": ""
     }
 }

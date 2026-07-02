@@ -1,5 +1,6 @@
 #include "EditorUI.h"
 #include <cfloat>
+#include <cstdlib>
 #include <filesystem>
 #include <imgui.h>
 #include <ImGuizmo.h>
@@ -920,9 +921,157 @@ namespace Lumina
         ModalManager.CreateDialogue(Title, Size, Move(DrawFunction));
     }
 
+    namespace
+    {
+        // Resolve devenv.exe for a VS major-version range via vswhere; canonical Microsoft recipe.
+        FString FindDevEnv(const wchar_t* VersionRange)
+        {
+            const char* VsWhereCandidates[] =
+            {
+                R"(C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe)",
+                R"(C:\Program Files\Microsoft Visual Studio\Installer\vswhere.exe)",
+            };
+
+            for (const char* Candidate : VsWhereCandidates)
+            {
+                std::error_code Ec;
+                if (!std::filesystem::exists(Candidate, Ec))
+                {
+                    continue;
+                }
+
+                FWString Args = L"-latest -products * -version \"";
+                Args += VersionRange;
+                Args += L"\" -property productPath -nologo";
+
+                FString FirstLine;
+                const int ExitCode = Platform::RunProcessAndWaitCapture(
+                    StringUtils::ToWideString(Candidate).c_str(), Args.c_str(), nullptr,
+                    [&FirstLine](FStringView Line)
+                    {
+                        if (FirstLine.empty() && !Line.empty())
+                        {
+                            FirstLine.assign(Line.data(), Line.size());
+                        }
+                    });
+
+                if (ExitCode == 0 && !FirstLine.empty())
+                {
+                    return FirstLine;
+                }
+            }
+            return FString();
+        }
+
+        FString FindVSCode()
+        {
+            TVector<FString> Candidates;
+            if (const char* LocalAppData = std::getenv("LOCALAPPDATA"))
+            {
+                Candidates.emplace_back(FString(LocalAppData) + R"(\Programs\Microsoft VS Code\Code.exe)");
+            }
+            Candidates.emplace_back(R"(C:\Program Files\Microsoft VS Code\Code.exe)");
+
+            for (const FString& Candidate : Candidates)
+            {
+                std::error_code Ec;
+                if (std::filesystem::exists(Candidate.c_str(), Ec))
+                {
+                    return Candidate;
+                }
+            }
+            return FString();
+        }
+
+        FString FindRider()
+        {
+            // JetBrains Toolbox shim first, then classic installs (versioned folders) under Program Files.
+            if (const char* LocalAppData = std::getenv("LOCALAPPDATA"))
+            {
+                FString Toolbox = FString(LocalAppData) + R"(\Programs\Rider\bin\rider64.exe)";
+                std::error_code Ec;
+                if (std::filesystem::exists(Toolbox.c_str(), Ec))
+                {
+                    return Toolbox;
+                }
+            }
+
+            FString Best;
+            std::error_code Ec;
+            for (const auto& Entry : std::filesystem::directory_iterator(R"(C:\Program Files\JetBrains)", Ec))
+            {
+                const std::string Folder = Entry.path().filename().string();
+                if (Folder.rfind("JetBrains Rider", 0) != 0)
+                {
+                    continue;
+                }
+                const std::string Exe = (Entry.path() / "bin" / "rider64.exe").string();
+                std::error_code ExeEc;
+                if (std::filesystem::exists(Exe, ExeEc) && (Best.empty() || Best.comparei(Exe.c_str()) < 0))
+                {
+                    Best = Exe.c_str();
+                }
+            }
+            return Best;
+        }
+    }
+
+    void FEditorUI::OpenScriptInExternalEditor(FStringView ScriptPath)
+    {
+        const FString File(ScriptPath.data(), ScriptPath.size());
+        const CScriptEditorSettings* Settings = GetDefault<CScriptEditorSettings>();
+
+        FString Exe;
+        bool bVisualStudio = false;
+        if (!Settings->CustomEditorPath.empty())
+        {
+            Exe = Settings->CustomEditorPath;
+        }
+        else
+        {
+            // Cached per editor choice; disk probing / the vswhere subprocess don't change in-session.
+            switch (Settings->ScriptEditor)
+            {
+            case EScriptEditor::VisualStudio2022: { static FString Found = FindDevEnv(L"[17.0,18.0)"); Exe = Found; bVisualStudio = true; break; }
+            case EScriptEditor::VisualStudio2026: { static FString Found = FindDevEnv(L"[18.0,19.0)"); Exe = Found; bVisualStudio = true; break; }
+            case EScriptEditor::VSCode:           { static FString Found = FindVSCode(); Exe = Found; break; }
+            case EScriptEditor::Rider:            { static FString Found = FindRider(); Exe = Found; break; }
+            case EScriptEditor::SystemDefault:    break;
+            }
+        }
+
+        std::error_code Ec;
+        if (!Exe.empty() && std::filesystem::exists(Exe.c_str(), Ec))
+        {
+            FWString FileW = StringUtils::ToWideString(File);
+            eastl::replace(FileW.begin(), FileW.end(), L'/', L'\\');
+
+            // /Edit reuses a running Visual Studio instance instead of spawning a new one.
+            FWString Params = bVisualStudio ? L"/Edit \"" : L"\"";
+            Params += FileW;
+            Params += L"\"";
+
+            FWString ExeQuoted = L"\"";
+            ExeQuoted += StringUtils::ToWideString(Exe);
+            ExeQuoted += L"\"";
+
+            if (Platform::LaunchProcess(ExeQuoted.c_str(), Params.c_str()) == 0)
+            {
+                return;
+            }
+            LOG_WARN("Failed to launch script editor '{}'; falling back to the OS file association.", Exe.c_str());
+        }
+        else if (Settings->ScriptEditor != EScriptEditor::SystemDefault || !Settings->CustomEditorPath.empty())
+        {
+            LOG_WARN("Configured script editor was not found; falling back to the OS file association.");
+        }
+
+        Platform::LaunchURL(StringUtils::ToWideString(File).c_str());
+    }
+
     void FEditorUI::OpenScriptEditor(FStringView ScriptPath)
     {
-        Platform::LaunchURL(StringUtils::ToWideString(ScriptPath.data()).c_str());
+        OpenScriptInExternalEditor(ScriptPath);
     }
 
     FEditorTool* FEditorUI::FinalizeNewTool(FEditorTool* Tool)

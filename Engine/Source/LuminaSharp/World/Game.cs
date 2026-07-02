@@ -8,8 +8,27 @@ namespace LuminaSharp;
 /// <see cref="Trace"/>, <see cref="Gizmo"/>) and the entity extension methods resolve their world without you
 /// threading one through. Game-thread only, never touch it from a worker Task body.
 /// </summary>
-public static class Game
+public static partial class Game
 {
+    /// <summary>
+    /// Switches to another level. The world swap is deferred to the next frame start, so this is safe to
+    /// call from any script callback; everything in the current world (entities, scripts, timers) is torn
+    /// down and the new world starts fresh. URL forms: a world asset path ("/Game/Maps/Arena"), a hosted
+    /// map ("/Game/Maps/Arena?listen?port=7777"), or a server address to connect to ("192.168.1.5:7777").
+    /// </summary>
+    public static void OpenLevel(string Url) => OpenLevelRaw(Url);
+
+    /// <summary>
+    /// Quits the game: exits the process in a packaged game; in the editor it ends the Play session
+    /// instead. Deferred to a safe frame point, so it is fine to call from any script callback.
+    /// </summary>
+    public static void Quit() => QuitRaw();
+
+    [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Game_OpenLevel")]
+    private static partial void OpenLevelRaw(string Url);
+    [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Game_Quit")]
+    private static partial void QuitRaw();
+
     [ThreadStatic] private static Lumina.CWorld? ActiveWorld;
     [ThreadStatic] private static Entity ActiveEntity;
     [ThreadStatic] private static bool ActiveHasEntity;

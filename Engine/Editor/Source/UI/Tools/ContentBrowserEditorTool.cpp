@@ -998,10 +998,14 @@ namespace Lumina
                 // Files with an in-engine editor (.rml/.rcss) open as editor tabs.
                 ToolContext->OpenFileEditor(ContentItem->GetVirtualPath());
             }
+            else if (ContentItem->GetPathSource().ends_with(".cs"))
+            {
+                // Scripts honor the editor choice in CScriptEditorSettings.
+                ToolContext->OpenScriptEditor(ContentItem->GetPathSource());
+            }
             else
             {
-                // No in-engine editor (e.g. .cs): hand the native file to the OS so it opens in the
-                // user's associated app (Rider / Visual Studio / VS Code for C#).
+                // No in-engine editor: hand the native file to the OS association.
                 Platform::LaunchURL(UTF8_TO_TCHAR(ContentItem->GetPathSource().data()));
             }
         };

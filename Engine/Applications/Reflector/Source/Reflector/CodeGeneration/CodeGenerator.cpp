@@ -571,6 +571,25 @@ namespace Lumina::Reflection
                 break;
             }
         }
+        // A function taking FAssetRef gets a thunk that constructs one by value; the source header may
+        // only forward-declare it, so pull the definition in when any reflected function names it.
+        [&]
+        {
+            for (const auto& T : Types)
+            {
+                for (const auto& Fn : T->Functions)
+                {
+                    for (const FFieldInfo& Arg : Fn->Arguments)
+                    {
+                        if (Arg.RawFieldType.find("FAssetRef") != eastl::string::npos)
+                        {
+                            Writer.Line("#include \"Assets/AssetRef.h\"");
+                            return;
+                        }
+                    }
+                }
+            }
+        }();
         Writer.Line("using namespace entt::literals;");
         Writer.BlankLines(2);
 

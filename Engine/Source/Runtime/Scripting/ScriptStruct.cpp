@@ -483,6 +483,25 @@ namespace Lumina
             Out.Size = Sub->GetAlignedSize();
             return true;
         }
+        if (Type.Kind == EScriptExportKind::Instance)
+        {
+            // A List<Instanced>/Instanced[] element. Mint the empty base plus one candidate sub-CScriptStruct
+            // per selectable C# type, exactly as a single Instance field does; each element is an
+            // FInstancedStruct the editor picks into. The base is stashed in ScriptStruct for CreateElement.
+            CScriptStruct* Base = MintInstanceBase(Type.BaseName);
+            if (Base == nullptr)
+            {
+                return false;
+            }
+            for (const FScriptExportInstanceCandidate& Candidate : Type.Candidates)
+            {
+                MintInstanceCandidate(Candidate, Base);
+            }
+            Out.Kind = EScriptElementKind::Instance;
+            Out.ScriptStruct = Base;
+            Out.Size = sizeof(FInstancedStruct);
+            return true;
+        }
         return false;
     }
 
@@ -515,6 +534,11 @@ namespace Lumina
         if (Type.Kind == EScriptExportKind::AssetRef)
         {
             return MakeSoftObject(Owner, Element, 0, FindObject<CClass>(Type.TargetClass));
+        }
+        if (Type.Kind == EScriptExportKind::Instance)
+        {
+            // ScriptStruct holds the minted base (see ResolveElement); the inner is an FInstancedStructProperty.
+            return MakeInstanced(Owner, Element, 0, const_cast<CScriptStruct*>(Desc.ScriptStruct));
         }
 
         CStruct* Resolved = Desc.NativeStruct != nullptr ? Desc.NativeStruct
@@ -912,6 +936,9 @@ namespace Lumina::Scripting
         case EScriptElementKind::ScriptStruct:
             if (ScriptStruct != nullptr) { ScriptStruct->ConstructInto(Element); }
             break;
+        case EScriptElementKind::Instance:
+            new (Element) FInstancedStruct();
+            break;
         case EScriptElementKind::Trivial:
             break;
         }
@@ -934,6 +961,9 @@ namespace Lumina::Scripting
             break;
         case EScriptElementKind::ScriptStruct:
             if (ScriptStruct != nullptr) { ScriptStruct->DestructIn(Element); }
+            break;
+        case EScriptElementKind::Instance:
+            static_cast<FInstancedStruct*>(Element)->~FInstancedStruct();
             break;
         case EScriptElementKind::Trivial:
             break;

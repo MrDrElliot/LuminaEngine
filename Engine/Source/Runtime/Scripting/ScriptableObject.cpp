@@ -4,8 +4,13 @@
 #include "Containers/Array.h"
 #include "DotNet/DotNetHost.h"
 #include "Core/Object/Class.h"
+#include "Core/Object/InstancedStruct.h"
+#include "Core/Object/ObjectArray.h"
 #include "Core/Object/ObjectCore.h"
 #include "Core/Object/ObjectBase.h"
+#include "Core/Reflection/Type/LuminaTypes.h"
+#include "Core/Reflection/Type/Properties/ArrayProperty.h"
+#include "Core/Reflection/Type/Properties/StructProperty.h"
 #include "Log/Log.h"
 
 namespace Lumina
@@ -78,6 +83,123 @@ namespace Lumina
             static THashMap<FName, CClass*> Map;
             return Map;
         }
+
+        void ClearDeadClassRefsInStruct(CStruct* Layout, void* Data, CClass* Dead, const CObject* Owner, int32& OutCleared);
+
+        // Nulls every reflected value inside Value that still points at Dead: FClassProperty (TSubclassOf)
+        // directly, recursing through struct values, array elements, and instanced-struct payloads.
+        void ClearDeadClassRefsInValue(FProperty* Property, void* Value, CClass* Dead, const CObject* Owner, int32& OutCleared)
+        {
+            switch (Property->TypeFlags)
+            {
+            case EPropertyTypeFlags::Class:
+            {
+                CClass** Ptr = static_cast<CClass**>(Value);
+                if (*Ptr == Dead)
+                {
+                    *Ptr = nullptr;
+                    ++OutCleared;
+                    LOG_DISPLAY("Scriptable: cleared '{}.{}', it referenced the retired class '{}'.",
+                        Owner->GetName().c_str(), Property->Name.c_str(), Dead->GetName().c_str());
+                }
+                break;
+            }
+            case EPropertyTypeFlags::Struct:
+            {
+                FStructProperty* StructProperty = static_cast<FStructProperty*>(Property);
+                if (StructProperty->GetStruct() != nullptr)
+                {
+                    ClearDeadClassRefsInStruct(StructProperty->GetStruct(), Value, Dead, Owner, OutCleared);
+                }
+                break;
+            }
+            case EPropertyTypeFlags::Vector:
+            {
+                FArrayProperty* ArrayProperty = static_cast<FArrayProperty*>(Property);
+                if (FProperty* Inner = ArrayProperty->GetInternalProperty())
+                {
+                    ArrayProperty->ForEach(Value, [&](void* Element, SIZE_T)
+                    {
+                        ClearDeadClassRefsInValue(Inner, Element, Dead, Owner, OutCleared);
+                    });
+                }
+                break;
+            }
+            case EPropertyTypeFlags::InstancedStruct:
+            {
+                FInstancedStruct* Instanced = static_cast<FInstancedStruct*>(Value);
+                if (Instanced->GetScriptStruct() != nullptr && Instanced->GetMutableMemory() != nullptr)
+                {
+                    ClearDeadClassRefsInStruct(Instanced->GetScriptStruct(), Instanced->GetMutableMemory(), Dead, Owner, OutCleared);
+                }
+                break;
+            }
+            default:
+                break;
+            }
+        }
+
+        void ClearDeadClassRefsInStruct(CStruct* Layout, void* Data, CClass* Dead, const CObject* Owner, int32& OutCleared)
+        {
+            for (CStruct* Current = Layout; Current != nullptr; Current = Current->GetSuperStruct())
+            {
+                Current->ForEachProperty<FProperty>([&](FProperty* Property)
+                {
+                    ClearDeadClassRefsInValue(Property, static_cast<uint8*>(Data) + Property->Offset, Dead, Owner, OutCleared);
+                });
+            }
+        }
+
+        // Tears down a minted class whose C# type no longer exists in the current generation, so
+        // FindObject / pickers stop seeing it and the name frees up for a future re-mint. Returns false
+        // (class kept) while live instances remain; destroying the class under them would dangle their
+        // class pointer, so removal is retried on the next reload once they are gone.
+        bool TryRetireMintedClass(const FName& NameId, CClass* Class)
+        {
+            int32 LiveInstances = 0;
+            GObjectArray.ForEachObject([&](CObjectBase* Base, int32)
+            {
+                if (Base != nullptr && Base->GetClass() == Class
+                    && !Base->HasAnyFlag(OF_MarkedDestroy) && !Base->HasAnyFlag(OF_DefaultObject))
+                {
+                    ++LiveInstances;
+                }
+            });
+            if (LiveInstances > 0)
+            {
+                LOG_WARN("Scriptable: C# class '{}' was removed but {} live instance(s) remain; the class is kept until they are gone.",
+                    NameId.c_str(), LiveInstances);
+                return false;
+            }
+
+            // FClassProperty holds a raw CClass* (TSubclassOf), so any reflected value still naming this
+            // class (a settings CDO, for example) must be nulled before the class dies. It serializes by
+            // name, so a re-added type re-resolves from config/saves untouched.
+            int32 Cleared = 0;
+            GObjectArray.ForEachObject([&](CObjectBase* Base, int32)
+            {
+                if (Base == nullptr || Base == Class || Base->HasAnyFlag(OF_MarkedDestroy))
+                {
+                    return;
+                }
+                CObject* Object = static_cast<CObject*>(Base);
+                if (Object->GetClass() != nullptr)
+                {
+                    ClearDeadClassRefsInStruct(Object->GetClass(), Object, Class, Object, Cleared);
+                }
+            });
+
+            if (CObject* DefaultObject = Class->GetDefaultObjectIfCreated())
+            {
+                DefaultObject->RemoveFromRoot();
+                DefaultObject->ForceDestroyNow();
+            }
+            Class->RemoveFromRoot();
+            Class->ForceDestroyNow();
+
+            LOG_DISPLAY("Scriptable: retired minted class '{}' (its C# type no longer exists).", NameId.c_str());
+            return true;
+        }
     }
 
     void FScriptableRegistry::RegisterNative(const char* NativeClassName, const FScriptableNativeInfo& Info)
@@ -124,6 +246,29 @@ namespace Lumina
     {
         TVector<DotNet::FScriptableTypeDesc> Descs;
         DotNet::GatherScriptableTypes(Descs);
+
+        // Retire minted classes whose C# type vanished this generation (source deleted or renamed), so a
+        // deleted script's class doesn't linger in FindObject / editor pickers forever.
+        THashSet<FName> LiveNames;
+        for (const DotNet::FScriptableTypeDesc& Desc : Descs)
+        {
+            LiveNames.insert(FName(Desc.TypeName.c_str()));
+        }
+        TVector<FName> StaleNames;
+        for (const auto& [Name, Class] : GMintedClasses())
+        {
+            if (LiveNames.find(Name) == LiveNames.end())
+            {
+                StaleNames.push_back(Name);
+            }
+        }
+        for (const FName& Name : StaleNames)
+        {
+            if (TryRetireMintedClass(Name, GMintedClasses()[Name]))
+            {
+                GMintedClasses().erase(Name);
+            }
+        }
 
         bool bMintedAny = false;
         for (const DotNet::FScriptableTypeDesc& Desc : Descs)

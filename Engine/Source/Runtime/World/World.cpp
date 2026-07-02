@@ -1080,6 +1080,16 @@ namespace Lumina
         SetActiveCamera(Event.NewActiveEntity);
     }
 
+    void CWorld::SetTimeDilation(float Dilation)
+    {
+        GetDefaultWorldSettings().DeltaTimeScale = Math::Max(Dilation, 0.0f);
+    }
+
+    float CWorld::GetTimeDilation()
+    {
+        return GetDefaultWorldSettings().DeltaTimeScale;
+    }
+
     SDefaultWorldSettings& CWorld::GetDefaultWorldSettings()
     {
         if (!EntityRegistry.valid(SingletonEntity))
@@ -1087,7 +1097,7 @@ namespace Lumina
             static SDefaultWorldSettings Defaults{};
             return Defaults;
         }
-        
+
         return EntityRegistry.get_or_emplace<SDefaultWorldSettings>(SingletonEntity);
     }
 

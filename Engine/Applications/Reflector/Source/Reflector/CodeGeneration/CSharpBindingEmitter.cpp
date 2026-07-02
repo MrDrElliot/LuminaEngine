@@ -955,6 +955,7 @@ namespace Lumina::Reflection
             eastl::string TargetCpp;
             bool          bEntity = false; // entt::entity: ABI-marshalled as uint32, surfaced as C# Entity.
             bool          bIsName = false; // EBind::Str arg: FName (true) vs FString (false), for the native ctor.
+            bool          bAssetRef = false; // EBind::Str arg: FAssetRef built from the marshalled path string.
             // EBind::Span: a (T* ptr, int32 count) C++ pair -> one C# Span<T>/ReadOnlySpan<T>. SpanElemCpp is the
             // C++ element ("uint32"); CSharp is the full "System.Span<uint>"; bReadOnlySpan = const T*.
             eastl::string SpanElemCpp;
@@ -1079,6 +1080,12 @@ namespace Lumina::Reflection
                     B.Kind = EBind::Enum; B.CSharp = GlobalCSharp(F.TypeName); B.TargetCpp = F.TypeName; return true;
                 case EPropertyTypeFlags::Struct:
                 {
+                    // FAssetRef marshals as a C# string (the asset path); ARGS only - the thunk constructs a
+                    // temporary FAssetRef from the UTF-8 path. A return would need the two-pass string protocol.
+                    if (bIsArg && (Bare == "FAssetRef" || Bare == "Lumina::FAssetRef"))
+                    {
+                        B.Kind = EBind::Str; B.CSharp = "string"; B.bAssetRef = true; return true;
+                    }
                     const FReflectedStruct* S = Db.GetReflectedType<FReflectedStruct>(FStringHash(F.TypeName));
                     if (S == nullptr)
                     {
@@ -1204,10 +1211,18 @@ namespace Lumina::Reflection
                 }
                 else if (A.Kind == EBind::Str)
                 {
-                    // (const char* utf8, int len) -> a temporary FName/FString bound to the (const ref) param.
+                    // (const char* utf8, int len) -> a temporary FName/FString/FAssetRef bound to the (const ref) param.
                     Params += "const char* " + An + ", int " + An + "Len";
-                    const eastl::string Ctor = A.bIsName ? eastl::string("Lumina::FName") : eastl::string("Lumina::FString");
-                    CallArgs += "((" + An + "Len > 0) ? " + Ctor + "(" + An + ", (size_t)" + An + "Len) : " + Ctor + "())";
+                    if (A.bAssetRef)
+                    {
+                        CallArgs += "((" + An + "Len > 0) ? Lumina::FAssetRef(Lumina::FStringView(" + An
+                            + ", (size_t)" + An + "Len)) : Lumina::FAssetRef())";
+                    }
+                    else
+                    {
+                        const eastl::string Ctor = A.bIsName ? eastl::string("Lumina::FName") : eastl::string("Lumina::FString");
+                        CallArgs += "((" + An + "Len > 0) ? " + Ctor + "(" + An + ", (size_t)" + An + "Len) : " + Ctor + "())";
+                    }
                 }
                 else
                 {

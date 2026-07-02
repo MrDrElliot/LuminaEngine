@@ -27,6 +27,22 @@ public unsafe partial class CWorld
     public float DeltaTime => (float)GetWorldDeltaTime();
     public double ElapsedTime => GetTimeSinceWorldCreation();
 
+    /// <summary>Pauses gameplay (systems, scripts, physics). UI keeps running, so a pause menu built with
+    /// <see cref="UI"/> can still set this back to false.</summary>
+    public bool Paused
+    {
+        get => IsPaused();
+        set => SetPaused(value);
+    }
+
+    /// <summary>World time scale: below 1 is slow motion, above 1 speeds the world up. Scales delta time
+    /// for systems, scripts, and physics. Clamped to 0 or greater natively.</summary>
+    public float TimeDilation
+    {
+        get => GetTimeDilation();
+        set => SetTimeDilation(value);
+    }
+
     /// <summary>
     /// Spawns the prefab at <paramref name="Path"/> and places its root at <paramref name="Location"/>
     /// (optionally rotated, optionally parented) in one call -- composes the generated
@@ -35,7 +51,7 @@ public unsafe partial class CWorld
     /// </summary>
     public Entity SpawnPrefab(string Path, FVector3 Location, FQuat? Rotation = null, Entity? Parent = null)
     {
-        Entity Spawned = SpawnPrefab(Path, Location, Rotation, Parent);
+        Entity Spawned = SpawnPrefab(Path);
         if (Spawned.IsNull)
         {
             return Spawned;

@@ -8,9 +8,9 @@
 #include "Scripting/ScriptValueBridge.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
+#include "UI/EditorUI.h"
 #include "World/Entity/Components/CSharpScriptComponent.h"
 #include "FileSystem/FileSystem.h"
-#include "Platform/Process/PlatformProcess.h"
 #include "Core/Plugin/Plugin.h"
 #include "Core/Plugin/PluginManager.h"
 #include "Log/Log.h"
@@ -121,7 +121,7 @@ namespace Lumina
                 LOG_WARN("Open script: no .cs file declaring '{}' found under the script roots.", ScriptClass.c_str());
                 return;
             }
-            Platform::LaunchURL(UTF8_TO_TCHAR(Path.c_str()));
+            FEditorUI::OpenScriptInExternalEditor(FStringView(Path.c_str(), Path.size()));
         }
 
         // Draws a clickable button per [Button] method on the slot. Invoking is a runtime action on the live
@@ -323,6 +323,22 @@ namespace Lumina
                     }
                     else
                     {
+                        // The script type is gone (deleted, or renamed with no [Alias]) or failed to compile.
+                        // Release the store's stale layout so the previous generation's minted CScriptStruct
+                        // tree (instanced-list candidates and all) is torn down instead of stranded on this
+                        // slot; EnsureLayout(nullptr) migrates the live values to tagged bytes first, so they
+                        // restore if the type comes back. Drop the property table that aliased the freed buffer.
+                        if (Slot.Values.GetLayout() != nullptr)
+                        {
+                            Slot.Values.EnsureLayout(nullptr);
+                        }
+                        if (View.ValueTable != nullptr)
+                        {
+                            View.ValueTable.reset();
+                            View.BoundLayout = nullptr;
+                            View.BoundBuffer = nullptr;
+                        }
+
                         ImGui::TextDisabled("Script '%s' is not loaded (renamed, removed, or failed to compile).", Slot.ScriptClass.c_str());
                         ImGui::TextDisabled("Saved values are preserved -- pick a script above to remap (matching fields carry over by name).");
                     }

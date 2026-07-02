@@ -121,7 +121,7 @@ namespace Lumina
         };
 
         // Material-pure portion of a resolved draw slot, cached per-thread keyed
-        // by material. Per-entity bits (CastShadow / bDrawInDepthPass) added in ResolveSlot.
+        // by material. Per-entity bits (CastShadow) added in ResolveSlot.
         struct FCachedMaterialResolve
         {
             const FShaderEntry* VertexShader;
@@ -312,7 +312,6 @@ namespace Lumina
                 uint32                           TotalPreSkinnedVertices = 0;
                 TVector<FMeshDrawCommand>        DrawCommands;
                 TVector<uint32>                  OpaqueDrawList;
-                TVector<uint32>                  OpaqueOccluderDrawList;
                 TVector<uint32>                  TranslucentDrawList;
                 TVector<FDeferredMaterialEntry>  DeferredMaterials;   // distinct opaque slots for the deferred pass
                 FSceneCullContext                SceneCullContext;

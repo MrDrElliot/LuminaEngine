@@ -113,13 +113,17 @@ internal sealed class ScriptManager
 
         UnloadCurrent();
 
+        // Even an EMPTY generation must advance the counter: live native bridges gate their rebind on it,
+        // and UnloadCurrent just freed their GCHandles. Without a bump they would keep dispatching into
+        // the unloaded generation instead of rebinding to nothing and falling back to native behavior.
+        Generation++;
+
         if (Pending.Count == 0)
         {
             Native.Log(ELogLevel.Info, "No C# scripts found.");
             return true;
         }
 
-        Generation++;
         var NewContext = new ScriptLoadContext($"GameScripts.Gen{Generation}");
 
         // Load in dependency order: each unit is registered before any dependent loads, so a dependent's

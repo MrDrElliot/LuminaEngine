@@ -70,6 +70,10 @@ public sealed class PropertyTestScript : EntityScript
     [Property(Category = "Instanced", Tooltip = "Pick a command type and edit it inline."), Instanced] public ITestCommand Command;
     [Property(Category = "Instanced"), Instanced] public TestShapeBase Shape;
 
+    // Lists of instanced objects. Each element independently picks a concrete type and edits inline.
+    [Property(Category = "Instanced", Tooltip = "A list of commands, each independently typed."), Instanced] public List<ITestCommand> Commands;
+    [Property(Category = "Instanced"), Instanced] public List<TestShapeBase> Shapes;
+
     [Property(Category = "Arrays")] public int[] IntArray;
     [Property(Category = "Arrays")] public List<float> FloatList;
     [Property(Category = "Arrays")] public string[] StringArray;

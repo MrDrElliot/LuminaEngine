@@ -531,6 +531,14 @@ namespace Lumina::DotNet
             }
         }
 
+        // Sidecar stamped next to a unit's DLL when WE compiled it from sources. It is what tells a stale
+        // emitted artifact (sources since deleted -> delete the DLL, never load it) apart from an authored
+        // prebuilt assembly at the same canonical path (a code-only plugin -> load it).
+        fs::path CompiledMarkerPath(const FString& DllPath)
+        {
+            return NativePath(fs::path((DllPath + ".compiled").c_str()));
+        }
+
         // Deterministic GUID from a seed string (FNV-1a x2 -> 16 bytes), so a unit's .sln project GUID is
         // stable across regenerations and the IDE doesn't treat each regen as a brand-new project.
         std::string MakeStableGuid(const FString& Seed)
@@ -1057,6 +1065,22 @@ namespace Lumina::DotNet
 
             GatherSourcesUnder(Unit.DiskDir, Bucket.Sources);
 
+            // A source-rooted unit (editor units carry a DiskDir; cooked ones don't) whose sources are all
+            // gone must NOT fall back to the DLL we emitted from them earlier: loading it would resurrect
+            // every deleted class. The compile marker identifies that DLL as ours; delete both and move on.
+            if (Bucket.Sources.empty() && !Unit.DiskDir.empty() && !Unit.AssemblyPath.empty())
+            {
+                std::error_code Ec;
+                const fs::path Marker = CompiledMarkerPath(Unit.AssemblyPath);
+                if (fs::exists(Marker, Ec))
+                {
+                    fs::remove(NativePath(fs::path(Unit.AssemblyPath.c_str())), Ec);
+                    fs::remove(Marker, Ec);
+                    LOG_DISPLAY("C#: unit '{}' no longer has sources; deleted its stale compiled assembly.", Unit.Name.c_str());
+                    continue;
+                }
+            }
+
             // With no .cs, the unit can still load a prebuilt managed DLL sitting at its canonical path (a
             // code-only plugin that ships a compiled assembly). With neither, there is nothing to do.
             const bool bHasPrebuilt = Bucket.Sources.empty() && !Unit.AssemblyPath.empty()
@@ -1130,6 +1154,31 @@ namespace Lumina::DotNet
         else if (bEditorFollowups)
         {
             ImGuiX::Notifications::NotifySuccess("Recompiled {} C# script file(s).", TotalFiles);
+        }
+
+        if (Result == 0)
+        {
+            // Stamp each source-compiled unit's emitted DLL so a later reload can tell it apart from an
+            // authored prebuilt assembly (and delete it once the unit's sources are gone, see above).
+            for (const FSourceBucket& Bucket : Buckets)
+            {
+                if (!Bucket.Sources.empty() && !Bucket.DllPath.empty())
+                {
+                    const fs::path Marker = CompiledMarkerPath(Bucket.DllPath);
+                    std::error_code Ec;
+                    if (!fs::exists(Marker, Ec))
+                    {
+                        fs::create_directories(Marker.parent_path(), Ec);
+                        std::ofstream Out(Marker, std::ios::binary | std::ios::trunc);
+                        if (Out)
+                        {
+                            static constexpr const char Text[] =
+                                "Compiled from this unit's C# sources by the engine. Both this marker and the DLL are deleted when the sources are removed.\n";
+                            Out.write(Text, sizeof(Text) - 1);
+                        }
+                    }
+                }
+            }
         }
 
         // Refresh the native generation mirror once here (the only place it can change), so the

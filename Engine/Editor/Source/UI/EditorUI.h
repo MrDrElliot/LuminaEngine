@@ -50,6 +50,10 @@ namespace Lumina
         void PushModal(const FString& Title, ImVec2 Size, TMoveOnlyFunction<bool()> DrawFunction) override;
 
         void OpenScriptEditor(FStringView ScriptPath) override;
+
+        /** Opens a script source file in the editor chosen in CScriptEditorSettings (falls back to the OS association). */
+        static void OpenScriptInExternalEditor(FStringView ScriptPath);
+
         void OpenAssetEditor(const FGuid& AssetGUID) override;
         void OpenFileEditor(FStringView VirtualPath) override;
         void OnDestroyAsset(CObject* InAsset) override;

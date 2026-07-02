@@ -850,6 +850,18 @@ namespace Lumina
         bHasPendingTravel = true;
     }
 
+    void FEngine::RequestExitGame()
+    {
+        // The editor binds this to end PIE (deferred to a safe frame point on its side); with no
+        // subscriber this is a packaged game, where quitting the game means exiting the process.
+        if (FCoreDelegates::OnGameQuitRequested.IsBound())
+        {
+            FCoreDelegates::OnGameQuitRequested.Broadcast();
+            return;
+        }
+        FApplication::RequestExit();
+    }
+
     void FEngine::ProcessPendingTravel()
     {
         if (!bHasPendingTravel)

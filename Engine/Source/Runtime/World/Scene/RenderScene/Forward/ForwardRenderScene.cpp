@@ -707,8 +707,28 @@ namespace Lumina
                     VisBufferPass(CL, CurrentCameraEarlyView, /*bClear*/ true);
                 }
 
-                // Rebuild the depth pyramid from this frame's partial depth so phase 1's occluders are
-                // up to date for the late re-test.
+                {
+                    SCENE_GPU_SCOPE(CL, "Terrain Update");
+                    TerrainUpdatePass(CL);
+                }
+
+                // Terrain cull tests against LAST frame's end pyramid (which includes terrain); chunks are
+                // large, so the one-frame lag is a conservative, low-risk trade.
+                {
+                    SCENE_GPU_SCOPE(CL, "Terrain Cull");
+                    TerrainCullPass(CL);
+                }
+
+                // Terrain depth + VisBuffer 'empty' stamp, BEFORE the mid pyramid: terrain occludes the
+                // late meshlet re-test, SSAO/decals see full opaque depth, and the deferred pass skips
+                // mesh pixels terrain covers (their VisID is stamped empty).
+                {
+                    SCENE_GPU_SCOPE(CL, "Terrain Depth");
+                    TerrainDepthPrePass(CL);
+                }
+
+                // Rebuild the depth pyramid from this frame's partial depth (meshes + terrain) so phase 1's
+                // occluders are up to date for the late re-test.
                 {
                     SCENE_GPU_SCOPE(CL, "Depth Pyramid (Mid)");
                     DepthPyramidPass(CL);
@@ -776,17 +796,12 @@ namespace Lumina
                 }
 
                 {
-                    SCENE_GPU_SCOPE(CL, "Terrain Update");
-                    TerrainUpdatePass(CL);
-                }
-
-                {
-                    // DBuffer decals: project onto opaque depth before the base pass composites them.
+                    // DBuffer decals: project onto the full opaque depth (meshes + terrain).
                     SCENE_GPU_SCOPE(CL, "Decals");
                     DecalPass(CL);
                 }
 
-                // After the depth prepass (full opaque depth available), before the base pass that samples it.
+                // Full opaque depth (meshes + terrain) is in place, before the passes that sample it.
                 {
                     SCENE_GPU_SCOPE(CL, "SSAO");
                     SSAOPass(CL);
@@ -798,18 +813,7 @@ namespace Lumina
                     DeferredMaterialPass(CL);
                 }
 
-                // Terrain cull uses the post-base-pass Hi-Z (freshest occlusion).
-                {
-                    SCENE_GPU_SCOPE(CL, "Terrain Cull");
-                    TerrainCullPass(CL);
-                }
-
-                // VS-only early-Z so the heavy terrain PS shades each visible pixel once.
-                {
-                    SCENE_GPU_SCOPE(CL, "Terrain Depth");
-                    TerrainDepthPrePass(CL);
-                }
-
+                // Early-Z vs the pre-pass depth: the heavy terrain PS shades each visible pixel once.
                 {
                     SCENE_GPU_SCOPE(CL, "Terrain Render");
                     TerrainRenderPass(CL);
@@ -993,14 +997,15 @@ namespace Lumina
         }
 
         // Capture views are frustum-only (single phase): rasterize the camera view, no late re-test.
+        // Terrain depth (+ VisBuffer stamp) before decals/deferred, mirroring the primary path.
         VisBufferPass(CL, CurrentCameraEarlyView, /*bClear*/ true);
+        TerrainCullPass(CL);
+        TerrainDepthPrePass(CL);
         ClusterBuildPass(CL);
         LightCullPass(CL);
         EnvironmentPass(CL);
         DecalPass(CL);
         DeferredMaterialPass(CL);
-        TerrainCullPass(CL);
-        TerrainDepthPrePass(CL);
         TerrainRenderPass(CL);
         WaterPass(CL);
         TransparentPass(CL);
@@ -2320,7 +2325,6 @@ namespace Lumina
         uint8               bTranslucent     : 1;
         uint8               bMasked          : 1;
         uint8               bAdditive        : 1;
-        uint8               bDrawInDepthPass : 1;
         uint8               bTwoSided        : 1;
     };
 
@@ -2387,7 +2391,7 @@ namespace Lumina
     }
 
     template <typename TComponent>
-    static FResolvedSlot ResolveSlot(FForwardRenderScene::FThreadLocalDrawData& Local, const TComponent& MeshComponent, int16 SlotIdx, bool bSignificantOccluder)
+    static FResolvedSlot ResolveSlot(FForwardRenderScene::FThreadLocalDrawData& Local, const TComponent& MeshComponent, int16 SlotIdx)
     {
         const FForwardRenderScene::FCachedMaterialResolve& M = ResolveMaterialCached(Local, MeshComponent, SlotIdx);
 
@@ -2425,7 +2429,6 @@ namespace Lumina
         R.bMasked            = M.bMasked;
         R.bAdditive          = M.bAdditive;
         R.bTwoSided          = M.bTwoSided;
-        R.bDrawInDepthPass   = MeshComponent.bUseAsOccluder && !M.bTranslucent && bSignificantOccluder;
         return R;
     }
 
@@ -2563,13 +2566,9 @@ namespace Lumina
         // GPUPtr is the BDA; dead-mesh safety comes from Core::DeferredFree, no pinning needed.
         const uint64 MeshletHeaderAddress = MB.MeshletHeaderBuffer;
 
-        constexpr float kMinAngularSize = 0.05f;
-        
-        // Angular size proxy (2r/d, squared to skip sqrt). Tiny props skip depth pre-pass.
         const FVector3 CameraPos  = FVector3(SceneGlobalData.CameraData.Location);
         const FVector3 ToCamera   = Center - CameraPos;
         const float     DistSq     = Math::Dot(ToCamera, ToCamera);
-        const bool bSignificantOccluder = (Radius * Radius) > DistSq * (kMinAngularSize * kMinAngularSize);
 
         const float DistanceOverRadius = (Radius > 0.0f) ? (Math::Sqrt(DistSq) / Radius) : 0.0f;
 
@@ -2599,14 +2598,13 @@ namespace Lumina
 
         for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
         {
-            const FResolvedSlot Slot = ResolveSlot(Local, MeshComponent, Surface.MaterialIndex, bSignificantOccluder);
+            const FResolvedSlot Slot = ResolveSlot(Local, MeshComponent, Surface.MaterialIndex);
 
             const EInstanceFlags Flags = BaseFlags | Slot.ExtraFlags;
 
             FDrawBatchKey BatchKey
             {
                 .MaterialID       = Slot.MaterialID,
-                .bDrawInDepthPass = (Slot.bDrawInDepthPass ? 1u : 0u),
                 .bTranslucent     = (Slot.bTranslucent     ? 1u : 0u),
                 .bMasked          = (Slot.bMasked          ? 1u : 0u),
                 .bAdditive        = (Slot.bAdditive        ? 1u : 0u),
@@ -2678,12 +2676,9 @@ namespace Lumina
         const FMeshResource::FMeshBuffers& MB = Mesh->GetMeshBuffers();
         const uint64 MeshletHeaderAddress = MB.MeshletHeaderBuffer;
 
-        constexpr float kMinAngularSize = 0.05f;
-
         const FVector3 CameraPos  = FVector3(SceneGlobalData.CameraData.Location);
         const FVector3 ToCamera   = Center - CameraPos;
         const float     DistSq     = Math::Dot(ToCamera, ToCamera);
-        const bool bSignificantOccluder = (Radius * Radius) > DistSq * (kMinAngularSize * kMinAngularSize);
 
         const float DistanceOverRadius = (Radius > 0.0f) ? (Math::Sqrt(DistSq) / Radius) : 0.0f;
 
@@ -2713,14 +2708,13 @@ namespace Lumina
 
         for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
         {
-            const FResolvedSlot Slot = ResolveSlot(Local, MeshComponent, Surface.MaterialIndex, bSignificantOccluder);
+            const FResolvedSlot Slot = ResolveSlot(Local, MeshComponent, Surface.MaterialIndex);
 
             const EInstanceFlags Flags = BaseFlags | Slot.ExtraFlags;
 
             FDrawBatchKey BatchKey
             {
                 .MaterialID       = Slot.MaterialID,
-                .bDrawInDepthPass = (Slot.bDrawInDepthPass ? 1u : 0u),
                 .bTranslucent     = (Slot.bTranslucent     ? 1u : 0u),
                 .bMasked          = (Slot.bMasked          ? 1u : 0u),
                 .bAdditive        = (Slot.bAdditive        ? 1u : 0u),
@@ -2760,7 +2754,6 @@ namespace Lumina
         {
             const SFoliageType* Type = nullptr;
             bool bCastShadow   = true;
-            bool bUseAsOccluder = false; // foliage is small; never an occlusion writer
 
             CMaterialInterface* GetMaterialForSlot(size_t Slot) const
             {
@@ -2833,14 +2826,13 @@ namespace Lumina
 
         for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
         {
-            const FResolvedSlot Slot = ResolveSlot(Local, Proxy, Surface.MaterialIndex, /*bSignificantOccluder*/ false);
+            const FResolvedSlot Slot = ResolveSlot(Local, Proxy, Surface.MaterialIndex);
 
             const EInstanceFlags Flags = BaseFlags | Slot.ExtraFlags;
 
             FDrawBatchKey BatchKey
             {
                 .MaterialID       = Slot.MaterialID,
-                .bDrawInDepthPass = (Slot.bDrawInDepthPass ? 1u : 0u),
                 .bTranslucent     = (Slot.bTranslucent     ? 1u : 0u),
                 .bMasked          = (Slot.bMasked          ? 1u : 0u),
                 .bAdditive        = (Slot.bAdditive        ? 1u : 0u),
@@ -2944,12 +2936,9 @@ namespace Lumina
 
         const uint32 NumBones = SkeletonBoneCount;
 
-        // Angular size proxy; bind-pose bounds are conservative but fine for this coarse test.
         const FVector3 CameraPos  = FVector3(SceneGlobalData.CameraData.Location);
         const FVector3 ToCamera   = Center - CameraPos;
         const float     DistSq     = Math::Dot(ToCamera, ToCamera);
-        constexpr float kMinAngularSize = 0.05f;
-        const bool bSignificantOccluder = (Radius * Radius) > DistSq * (kMinAngularSize * kMinAngularSize);
 
         const float DistanceOverRadius = (Radius > 0.0f)
             ? (Math::Sqrt(DistSq) / Radius)
@@ -2983,14 +2972,13 @@ namespace Lumina
 
         for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
         {
-            const FResolvedSlot Slot = ResolveSlot(Local, MeshComponent, Surface.MaterialIndex, bSignificantOccluder);
+            const FResolvedSlot Slot = ResolveSlot(Local, MeshComponent, Surface.MaterialIndex);
 
             const EInstanceFlags Flags = BaseFlags | Slot.ExtraFlags;
 
             FDrawBatchKey BatchKey
             {
                 .MaterialID       = Slot.MaterialID,
-                .bDrawInDepthPass = (uint32)(Slot.bDrawInDepthPass ? 1u : 0u),
                 .bTranslucent     = (uint32)(Slot.bTranslucent     ? 1u : 0u),
                 .bMasked          = (uint32)(Slot.bMasked          ? 1u : 0u),
                 .bAdditive        = (uint32)(Slot.bAdditive        ? 1u : 0u),
@@ -3067,7 +3055,6 @@ namespace Lumina
         auto& BonesData                 = Frame.Geometry.BonesData;
         auto& DrawCommands              = Frame.Geometry.DrawCommands;
         auto& OpaqueDrawList            = Frame.Geometry.OpaqueDrawList;
-        auto& OpaqueOccluderDrawList    = Frame.Geometry.OpaqueOccluderDrawList;
         auto& TranslucentDrawList       = Frame.Geometry.TranslucentDrawList;
         auto& DrawMeshletStartOffsets   = Frame.Geometry.DrawMeshletStartOffsets;
         auto& InstanceMeshletPrefix     = Frame.Geometry.InstanceMeshletPrefix;
@@ -3174,7 +3161,6 @@ namespace Lumina
                     NewCmd.MaterialIndex         = LocalBatch.MaterialIdx;
                     NewCmd.IndirectDrawOffset  = 0;
                     NewCmd.DrawCount           = 0;
-                    NewCmd.bDrawInDepthPass    = LocalBatch.Key.bDrawInDepthPass;
                     NewCmd.bTranslucent        = LocalBatch.Key.bTranslucent;
                     NewCmd.bMasked             = LocalBatch.Key.bMasked;
                     NewCmd.bAdditive           = LocalBatch.Key.bAdditive;
@@ -3415,7 +3401,6 @@ namespace Lumina
 
         FrameStats.NumBatches = NumBatches;
         OpaqueDrawList.reserve(NumBatches);
-        OpaqueOccluderDrawList.reserve(NumBatches);
         TranslucentDrawList.reserve(NumBatches);
         for (uint32 i = 0; i < NumBatches; ++i)
         {
@@ -3427,10 +3412,6 @@ namespace Lumina
             else
             {
                 OpaqueDrawList.push_back(i);
-                if (Cmd.bDrawInDepthPass)
-                {
-                    OpaqueOccluderDrawList.push_back(i);
-                }
             }
         }
 
@@ -4695,7 +4676,6 @@ namespace Lumina
         Frame.Primitives.SolidBatches.clear();
         Frame.Geometry.DrawCommands.clear();
         Frame.Geometry.OpaqueDrawList.clear();
-        Frame.Geometry.OpaqueOccluderDrawList.clear();
         Frame.Geometry.TranslucentDrawList.clear();
         Frame.Geometry.DrawMeshletStartOffsets.clear();
         Frame.Views.IndirectArgs.clear();
@@ -4729,9 +4709,9 @@ namespace Lumina
 
     void FForwardRenderScene::ResetPass_RenderThread(RHI::FCmdListH CL)
     {
-        // DepthPrePassEarly clears the depth target when it runs (occluders non-empty).
-        // Only clear here as the no-occluder fallback to avoid a redundant re-clear.
-        if (RenderFrame->Geometry.OpaqueOccluderDrawList.empty())
+        // VisBuffer phase 1 clears depth when it runs (LoadOp); with no geometry it early-outs, so clear
+        // here for the downstream depth consumers (terrain, water, transparent, fog).
+        if (RenderFrame->Geometry.DrawCommands.empty())
         {
             const float DepthClear[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
             RHI::CmdClearTexture(CL, GetNamedImage(ENamedImage::DepthAttachment).Texture, DepthClear);
@@ -5252,6 +5232,8 @@ namespace Lumina
         Key.PS          = PixelShader;
         Key.PassVariant = EMeshPass::Shadow;
         Key.DepthFormat = EFormat::D32;
+        // SPEC_SKINNED: homogeneous batch -> dead-strip the unused vertex-load path; mixed -> runtime branch (2).
+        Key.SkinnedMode = (Batch.bAnySkinned && Batch.bAnyStatic) ? 2u : (Batch.bAnySkinned ? 1u : 0u);
         RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
         const uint32 ViewBase = CullViewIndex * NumDrawsPerView;
@@ -5622,7 +5604,6 @@ namespace Lumina
 
         const FSceneImage& VisRT    = GetNamedImage(ENamedImage::VisBuffer);
         const FSceneImage& ColorRT  = GetSceneColorRT();
-        const FSceneImage& PickerRT = GetPickerRT();
         const FUIntVector2 Extent   = GetNamedImage(ENamedImage::HDR).GetExtent();
         const uint32 ScreenW = Extent.x;
         const uint32 ScreenH = Extent.y;
@@ -5674,22 +5655,27 @@ namespace Lumina
         const uint32 NumSlots = (uint32)BinnedDeferredSlotShaders.size();
 
         const FSceneImage& ColorImg  = ColorRT;
-        const FSceneImage& PickerImg = PickerRT;
 
         // Sky/environment already populated HDR for background pixels; the deferred draws overwrite the
-        // covered pixels and discard the rest. Picker is cleared here (it had no VisBuffer-stage write).
+        // covered pixels and discard the rest.
         RHI::FRenderAttachment Colors[2];
+        uint32 NumColors = 1;
         Colors[0].Texture        = ColorImg.Texture;
         Colors[0].ResolveTexture = GetSceneColorResolve();
         Colors[0].LoadOp         = RenderSettings.bHasEnvironment ? RHI::ELoadOp::Load : RHI::ELoadOp::Clear;
         Colors[0].StoreOp        = RHI::EStoreOp::Store;
+        // Editor: Picker is cleared here (it had no VisBuffer-stage write). A packaged game has no picker.
+        #if USING(WITH_EDITOR)
+        const FSceneImage& PickerImg = GetPickerRT();
         Colors[1].Texture        = PickerImg.Texture;
         Colors[1].ResolveTexture = GetPickerResolve();
         Colors[1].LoadOp         = RHI::ELoadOp::Clear;
         Colors[1].StoreOp        = RHI::EStoreOp::Store;
+        NumColors = 2;
+        #endif
 
         RHI::FRenderPassDesc Pass;
-        Pass.ColorAttachments = TSpan<const RHI::FRenderAttachment>(Colors, 2);
+        Pass.ColorAttachments = TSpan<const RHI::FRenderAttachment>(Colors, NumColors);
         Pass.RenderArea       = Extent;
 
         // No deferred-drawing materials (e.g. terrain-only scene): still run the clear-only pass so Picker
@@ -5824,7 +5810,9 @@ namespace Lumina
             Key.PS          = BinnedDeferredSlotShaders[Slot];
             Key.SampleCount = MSAASampleCount;
             Key.ColorTargets.push_back({ ColorImg.Desc.Format, {} });
+            #if USING(WITH_EDITOR)
             Key.ColorTargets.push_back({ PickerImg.Desc.Format, {} });
+            #endif
             RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
             PC.SlotIndex = Slot;
@@ -6765,8 +6753,10 @@ namespace Lumina
         }
     }
 
-    // Depth-only pre-pass over culled terrain meshlets (reverse-Z, DepthWrite on) so the heavy shaded pass
-    // early-Z rejects overdraw and runs its ~80-tap PBR once per pixel. Shares the material VS; no PS bound.
+    // Depth pre-pass over culled terrain meshlets (reverse-Z, DepthWrite on) so the heavy shaded pass
+    // early-Z rejects overdraw and runs its ~80-tap PBR once per pixel. Runs BEFORE the mid pyramid /
+    // SSAO / deferred pass: alongside depth it stamps 'empty' (0) into the VisBuffer wherever terrain is
+    // the closest surface, so classify/deferred never shade mesh pixels the terrain covers.
     void FForwardRenderScene::TerrainDepthPrePass(RHI::FCmdListH CL)
     {
         const FFrameData& Frame = *RenderFrame;
@@ -6778,6 +6768,13 @@ namespace Lumina
         }
 
         LUMINA_PROFILE_SECTION_COLORED("Terrain Depth", tracy::Color::SeaGreen);
+
+        static const FShaderEntry* const StampPS = FShaderLibrary::Get("TerrainDepthPixel.slang");
+        const FSceneImage& VisRT = GetNamedImage(ENamedImage::VisBuffer);
+
+        // With no meshes, VisBufferPass didn't run, so the first terrain pass owns the VisBuffer clear
+        // (0 = empty). Depth was already transfer-cleared by ResetPass in that case, so it always loads.
+        RHI::ELoadOp VisLoadOp = DrawCommands.empty() ? RHI::ELoadOp::Clear : RHI::ELoadOp::Load;
 
         for (const FFrameData::FTerrainExtract& TerrainItem : Frame.Extracts.TerrainExtracts)
         {
@@ -6839,13 +6836,21 @@ namespace Lumina
 
             const FUIntVector2 Extent = GetNamedImage(ENamedImage::HDR).GetExtent();
 
-            // First depth writer when there are no meshes; otherwise the mesh
-            // depth pre-pass / base pass already populated this view's depth.
+            // VisBuffer rides along so terrain-covered pixels read as empty in classify/deferred. The
+            // stamp only lands where the depth test passes (terrain closest).
+            RHI::FRenderAttachment Color;
+            Color.Texture = VisRT.Texture;
+            Color.LoadOp  = VisLoadOp;
+            Color.StoreOp = RHI::EStoreOp::Store;
+
             RHI::FRenderPassDesc Pass;
+            if (StampPS != nullptr)
+            {
+                Pass.ColorAttachments = TSpan<const RHI::FRenderAttachment>(&Color, 1);
+            }
             Pass.DepthAttachment.Texture  = GetSceneDepthRT().Texture;
-            Pass.DepthAttachment.LoadOp   = DrawCommands.empty() ? RHI::ELoadOp::Clear : RHI::ELoadOp::Load;
+            Pass.DepthAttachment.LoadOp   = RHI::ELoadOp::Load;   // cleared by VisBuffer phase 1 or ResetPass
             Pass.DepthAttachment.StoreOp  = RHI::EStoreOp::Store;
-            Pass.DepthAttachment.Color[0] = 0.0f;
             Pass.RenderArea               = Extent;
 
             RHI::CmdBeginRenderPass(CL, Pass);
@@ -6859,8 +6864,13 @@ namespace Lumina
 
             FGraphicsPipelineKey Key;
             Key.VS          = VertexShader;
+            Key.PS          = StampPS;
             Key.SampleCount = MSAASampleCount;
             Key.DepthFormat = EFormat::D32;
+            if (StampPS != nullptr)
+            {
+                Key.ColorTargets.push_back({ VisRT.Desc.Format, {} });
+            }
             RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
             FTerrainPushConstants Push{};
@@ -6875,6 +6885,7 @@ namespace Lumina
             RHI::CmdDrawIndirect(CL, MakeArgs(Push), State.IndirectDrawBuffer.Ptr, 0u, 1u, sizeof(RHI::FDrawIndirectArguments));
 
             RHI::CmdEndRenderPass(CL);
+            VisLoadOp = RHI::ELoadOp::Load;   // only the first terrain may own the clear
         }
 
         Barriers::RasterToRead(CL);
@@ -6957,23 +6968,28 @@ namespace Lumina
 
             const bool bHDRWasWritten = !DrawCommands.empty() || RenderSettings.bHasEnvironment;
             const FSceneImage& ColorRT  = GetSceneColorRT();
-            const FSceneImage& PickerRT = GetPickerRT();
             const FUIntVector2 Extent   = GetNamedImage(ENamedImage::HDR).GetExtent();
 
             RHI::FRenderAttachment Colors[2];
+            uint32 NumColors = 1;
             Colors[0].Texture        = ColorRT.Texture;
             Colors[0].ResolveTexture = GetSceneColorResolve();
             Colors[0].LoadOp         = bHDRWasWritten ? RHI::ELoadOp::Load : RHI::ELoadOp::Clear;
             Colors[0].StoreOp        = RHI::EStoreOp::Store;
+            #if USING(WITH_EDITOR)
+            const FSceneImage& PickerRT = GetPickerRT();
+            // Deferred clears the picker when meshes exist; terrain-only scenes never ran it (early-out).
             Colors[1].Texture        = PickerRT.Texture;
             Colors[1].ResolveTexture = GetPickerResolve();
             Colors[1].LoadOp         = DrawCommands.empty() ? RHI::ELoadOp::Clear : RHI::ELoadOp::Load;
             Colors[1].StoreOp        = RHI::EStoreOp::Store;
+            NumColors = 2;
+            #endif
 
             // TerrainDepthPrePass laid down terrain depth (and cleared when there
             // were no meshes), so always load and let early-Z drop the overdraw.
             RHI::FRenderPassDesc Pass;
-            Pass.ColorAttachments               = TSpan<const RHI::FRenderAttachment>(Colors, 2);
+            Pass.ColorAttachments               = TSpan<const RHI::FRenderAttachment>(Colors, NumColors);
             Pass.DepthAttachment.Texture        = GetSceneDepthRT().Texture;
             Pass.DepthAttachment.ResolveTexture = GetSceneDepthResolve();
             Pass.DepthAttachment.LoadOp         = RHI::ELoadOp::Load;
@@ -6994,11 +7010,14 @@ namespace Lumina
             Key.PS          = PixelShader;
             Key.SampleCount = MSAASampleCount;
             Key.DepthFormat = EFormat::D32;
-            // Terrain binds FTerrainPushConstants (not the DBuffer overlay) and has no SSAO input, so it
-            // specializes ShadeSurface's decal + AO blocks off; they dead-strip, matching terrain's look.
-            Key.ShadingFeatures = SF_DebugViews;
+            // Terrain binds FTerrainPushConstants (not the DBuffer overlay), so decals stay specialized
+            // off. SSAO is on: terrain depth now precedes the SSAO pass, and the fetch reads the scene
+            // globals (no push input needed); views without SSAO (captures) fall back via AOTextureIndex.
+            Key.ShadingFeatures = SF_DebugViews | SF_SSAO;
             Key.ColorTargets.push_back({ ColorRT.Desc.Format, {} });
+            #if USING(WITH_EDITOR)
             Key.ColorTargets.push_back({ PickerRT.Desc.Format, {} });
+            #endif
             RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
             FTerrainPushConstants Push{};
@@ -7167,7 +7186,6 @@ namespace Lumina
         }
 
         const FSceneImage& HDR    = GetNamedImage(ENamedImage::HDR);
-        const FSceneImage& Picker = GetNamedImage(ENamedImage::Picker);
 
         // Only Load when an earlier pass wrote HDR; debug tris/lines and particles render before this
         // pass, so clearing here would erase them (editor grid + a light billboard hit this).
@@ -7176,15 +7194,21 @@ namespace Lumina
             || !Frame.Primitives.LineBatches.empty() || !Frame.Extracts.ParticleExtracts.empty();
 
         RHI::FRenderAttachment Colors[2];
+        uint32 NumColors = 1;
         Colors[0].Texture = HDR.Texture;
         Colors[0].LoadOp  = bHDRWasWritten ? RHI::ELoadOp::Load : RHI::ELoadOp::Clear;
         Colors[0].StoreOp = RHI::EStoreOp::Store;
+        // Entity picking is editor-only; a packaged game binds no Picker MRT (SV_Target1 writes discard).
+        #if USING(WITH_EDITOR)
+        const FSceneImage& Picker = GetNamedImage(ENamedImage::Picker);
         Colors[1].Texture = Picker.Texture;
         Colors[1].LoadOp  = RHI::ELoadOp::Load;
         Colors[1].StoreOp = RHI::EStoreOp::Store;
+        NumColors = 2;
+        #endif
 
         RHI::FRenderPassDesc Pass;
-        Pass.ColorAttachments        = TSpan<const RHI::FRenderAttachment>(Colors, 2);
+        Pass.ColorAttachments        = TSpan<const RHI::FRenderAttachment>(Colors, NumColors);
         Pass.DepthAttachment.Texture = GetNamedImage(ENamedImage::DepthAttachment).Texture;
         Pass.DepthAttachment.LoadOp  = RHI::ELoadOp::Load;
         Pass.DepthAttachment.StoreOp = RHI::EStoreOp::Store;
@@ -7207,7 +7231,9 @@ namespace Lumina
         Key.PS          = PixelShader;
         Key.DepthFormat = EFormat::D32;
         Key.ColorTargets.push_back({ HDR.Desc.Format, AlphaBlend });
+        #if USING(WITH_EDITOR)
         Key.ColorTargets.push_back({ Picker.Desc.Format, {} });
+        #endif
         RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
         RHI::CmdDraw(CL, MakeArgs(), 6, (uint32)BillboardInstances.size(), 0, 0);
@@ -7357,22 +7383,26 @@ namespace Lumina
         }
 
         const FSceneImage& HDR    = GetNamedImage(ENamedImage::HDR);
-        const FSceneImage& Picker = GetNamedImage(ENamedImage::Picker);
 
-        // Drawn pre-tone-map into HDR like billboards: one MRT pass writes color (SV_Target0) and stamps the
-        // glyph's entity id into the Picker buffer (SV_Target1), so text stays click-selectable without a
-        // second pass. Per-component bDepthTest selects depth-tested+written vs always-on-top; depth state
-        // is dynamic so both share one render pass and one pipeline.
+        // Drawn pre-tone-map into HDR like billboards: one MRT pass writes color (SV_Target0) and, in the
+        // editor, stamps the glyph's entity id into the Picker buffer (SV_Target1) so text stays
+        // click-selectable without a second pass. Per-component bDepthTest selects depth-tested+written vs
+        // always-on-top; depth state is dynamic so both share one render pass and one pipeline.
         RHI::FRenderAttachment Colors[2];
+        uint32 NumColors = 1;
         Colors[0].Texture = HDR.Texture;
         Colors[0].LoadOp  = RHI::ELoadOp::Load;
         Colors[0].StoreOp = RHI::EStoreOp::Store;
+        #if USING(WITH_EDITOR)
+        const FSceneImage& Picker = GetNamedImage(ENamedImage::Picker);
         Colors[1].Texture = Picker.Texture;
         Colors[1].LoadOp  = RHI::ELoadOp::Load;
         Colors[1].StoreOp = RHI::EStoreOp::Store;
+        NumColors = 2;
+        #endif
 
         RHI::FRenderPassDesc Pass;
-        Pass.ColorAttachments        = TSpan<const RHI::FRenderAttachment>(Colors, 2);
+        Pass.ColorAttachments        = TSpan<const RHI::FRenderAttachment>(Colors, NumColors);
         Pass.DepthAttachment.Texture = GetNamedImage(ENamedImage::DepthAttachment).Texture;
         Pass.DepthAttachment.LoadOp  = RHI::ELoadOp::Load;
         Pass.DepthAttachment.StoreOp = RHI::EStoreOp::Store;
@@ -7395,7 +7425,9 @@ namespace Lumina
         Key.PS          = PixelShader;
         Key.DepthFormat = EFormat::D32;
         Key.ColorTargets.push_back({ HDR.Desc.Format, AlphaBlend });
+        #if USING(WITH_EDITOR)
         Key.ColorTargets.push_back({ Picker.Desc.Format, {} });
+        #endif
         RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
         // Reversed-Z: GreaterOrEqual keeps fragments at/in front of scene depth, and writes depth so
@@ -7555,10 +7587,10 @@ namespace Lumina
 
         const FSceneImage& Accum     = GetNamedImage(ENamedImage::Accum);
         const FSceneImage& Revealage = GetNamedImage(ENamedImage::Revealage);
-        const FSceneImage& Picker    = GetNamedImage(ENamedImage::Picker);
         const FUIntVector2 Extent    = GetNamedImage(ENamedImage::HDR).GetExtent();
 
         RHI::FRenderAttachment Colors[3];
+        uint32 NumColors = 2;
         Colors[0].Texture  = Accum.Texture;
         Colors[0].LoadOp   = RHI::ELoadOp::Clear;
         Colors[0].StoreOp  = RHI::EStoreOp::Store;
@@ -7567,12 +7599,16 @@ namespace Lumina
         Colors[1].LoadOp   = RHI::ELoadOp::Clear;
         Colors[1].StoreOp  = RHI::EStoreOp::Store;
         Colors[1].Color[0] = Colors[1].Color[1] = Colors[1].Color[2] = Colors[1].Color[3] = 1.0f;
+        #if USING(WITH_EDITOR)
+        const FSceneImage& Picker = GetNamedImage(ENamedImage::Picker);
         Colors[2].Texture  = Picker.Texture;
         Colors[2].LoadOp   = RHI::ELoadOp::Load;
         Colors[2].StoreOp  = RHI::EStoreOp::Store;
+        NumColors = 3;
+        #endif
 
         RHI::FRenderPassDesc Pass;
-        Pass.ColorAttachments        = TSpan<const RHI::FRenderAttachment>(Colors, 3);
+        Pass.ColorAttachments        = TSpan<const RHI::FRenderAttachment>(Colors, NumColors);
         Pass.DepthAttachment.Texture = GetNamedImage(ENamedImage::DepthAttachment).Texture;
         Pass.DepthAttachment.LoadOp  = RHI::ELoadOp::Load;
         Pass.DepthAttachment.StoreOp = RHI::EStoreOp::Store;
@@ -7615,7 +7651,9 @@ namespace Lumina
             Key.DepthFormat = EFormat::D32;
             Key.ColorTargets.push_back({ Accum.Desc.Format, Batch.bAdditive ? AdditiveBlend : AccumBlend });
             Key.ColorTargets.push_back({ Revealage.Desc.Format, Batch.bAdditive ? RHI::FBlendDesc{} : RevealBlend });
+            #if USING(WITH_EDITOR)
             Key.ColorTargets.push_back({ Picker.Desc.Format, {} });
+            #endif
             RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
             RHI::CmdDrawIndirect(CL, MakeArgs(),
@@ -9268,9 +9306,11 @@ namespace Lumina
         Desc.Usage  = RHI::EImageUsageFlags::DepthAttachment;
         View.Images[(int)ENamedImage::Depth_MS] = CreateSceneImage(Desc, /*bSampled*/ false);
 
+        #if USING(WITH_EDITOR)
         Desc.Format = EFormat::R32_UINT;
         Desc.Usage  = RHI::EImageUsageFlags::ColorAttachment;
         View.Images[(int)ENamedImage::Picker_MS] = CreateSceneImage(Desc, /*bSampled*/ false);
+        #endif
     }
 
     void FForwardRenderScene::SyncMSAAState()
@@ -9414,10 +9454,12 @@ namespace Lumina
             View.Images[(int)ENamedImage::DepthPyramid] = CreateSceneImage(PyramidDesc, true, /*bMipUAVs*/ true);
         }
 
-        // Entity picker; copy source for the click readback.
+        // Entity picker; copy source for the click readback. Editor-only: a packaged game never picks.
+        #if USING(WITH_EDITOR)
         Desc.Format = EFormat::R32_UINT;
         Desc.Usage  = RHI::EImageUsageFlags::ColorAttachment | RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::TransferSrc;
         View.Images[(int)ENamedImage::Picker] = CreateSceneImage(Desc);
+        #endif
 
         // VisBuffer: per-pixel {meshletSlot, triId} visibility ID; written by the VisBuffer geometry pass,
         // sampled by the deferred material pass.

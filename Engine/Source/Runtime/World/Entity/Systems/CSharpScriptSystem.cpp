@@ -44,6 +44,17 @@ namespace Lumina
         SScriptInstance& Slot = Component.Scripts[SlotIndex];
         if (Instance == nullptr)
         {
+            // The script type is gone (deleted, or renamed with no [Alias]) or failed to construct. If the
+            // value store still holds a previous layout, rebind it to the now-current (possibly null) one:
+            // EnsureLayout migrates the live values to tagged bytes and drops the old layout's strong ref,
+            // so the previous generation's minted CScriptStruct tree (instanced-list candidates and all) is
+            // torn down instead of stranded on this slot. The bytes are retained, so re-adding the type
+            // later restores the values. Guarded on GetLayout() so a persistently missing slot does this
+            // once, not every frame.
+            if (Slot.Values.GetLayout() != nullptr)
+            {
+                Slot.Values.EnsureLayout(DotNet::GetScriptStruct(ClassName));
+            }
             Slot.CallbackFlags = 0;
             return nullptr;
         }

@@ -13,6 +13,8 @@
 #include "AI/Navigation/NavTypes.h"
 #include "GameplayTags/GameplayTagRegistry.h"
 #include "GameplayTags/GameplayTagComponent.h"
+#include "Core/Engine/Engine.h"
+#include "Core/Engine/EngineURL.h"
 #include "Core/Profiler/GameplayProfiler.h"
 #include "Scripting/DotNet/DotNetExport.h"
 #include "Scripting/DotNet/DotNetHost.h"
@@ -87,6 +89,29 @@ LUMINA_DOTNET_EXPORT(void*, GetEntityScriptHandle)(uint64 World, uint32 Entity)
         }
     }
     return nullptr;
+}
+
+//================================================================================================
+// Game (engine-level session ops)
+//================================================================================================
+
+// Deferred level switch; URL forms per FURL::Parse: "/Game/Maps/Foo", "/Game/Maps/Foo?listen?port=7777",
+// or "host:port" to connect. The swap runs at the next FrameStart, so this is safe mid-tick.
+LUMINA_DOTNET_EXPORT(void, Game_OpenLevel)(const char* Url, int32 UrlLen)
+{
+    if (GEngine != nullptr && Url != nullptr && UrlLen > 0)
+    {
+        GEngine->OpenLevel(FURL::Parse(FStringView(Url, (size_t)UrlLen)));
+    }
+}
+
+// Ends the PIE session in the editor; exits the process in a packaged game. Safe mid-tick (deferred both ways).
+LUMINA_DOTNET_EXPORT(void, Game_Quit)()
+{
+    if (GEngine != nullptr)
+    {
+        GEngine->RequestExitGame();
+    }
 }
 
 // Appends a script of the named class to an entity and binds it; returns the managed instance handle.

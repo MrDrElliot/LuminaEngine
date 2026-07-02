@@ -219,6 +219,9 @@ namespace Lumina
 
         RUNTIME_API CObject* GetDefaultObject() const;
 
+        /** The CDO if one has been created; never creates it (unlike GetDefaultObject). */
+        RUNTIME_API CObject* GetDefaultObjectIfCreated() const { return ClassDefaultObject; }
+
         /** Routes to the CDO so object and struct details panels share one path. */
         RUNTIME_API void* GetDefaultInstance() override;
 
