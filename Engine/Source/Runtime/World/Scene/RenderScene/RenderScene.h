@@ -63,8 +63,10 @@ namespace Lumina
 
         // Scene-capture views: render the world from an extra camera into its own RT (gather once, shade each).
         // Register returns an opaque handle (-1 on fail); display via the capture's heap ResourceID.
+        // SetCaptureView returns false for a handle this scene doesn't know (e.g. it predates a scene
+        // rebuild); the caller must re-register. Handles are only meaningful to the scene that issued them.
         virtual int32 RegisterCaptureView(const FUIntVector2& Size) { return -1; }
-        virtual void  SetCaptureView(int32 Handle, const FViewVolume& View, bool bEnabled) {}
+        virtual bool  SetCaptureView(int32 Handle, const FViewVolume& View, bool bEnabled) { return false; }
         virtual int32 GetCaptureDisplayResourceID(int32 Handle) const { return -1; }
 
         // Re-create the scene's render target at a new size. Used by transient render paths

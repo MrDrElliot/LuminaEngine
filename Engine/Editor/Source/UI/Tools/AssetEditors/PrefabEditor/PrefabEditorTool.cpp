@@ -67,6 +67,7 @@ namespace Lumina
         GuizmoSnapTranslate = Settings->GizmoSnapTranslate;
         GuizmoSnapRotate    = Settings->GizmoSnapRotate;
         GuizmoSnapScale     = Settings->GizmoSnapScale;
+        CameraPreviewScale  = Math::Clamp(Settings->CameraPreviewScale, 0.25f, 1.5f);
 
         OutlinerContext.RebuildTreeFunction = [this](FTreeListView& Tree)
         {
@@ -450,6 +451,16 @@ namespace Lumina
     void FPrefabEditorTool::Update(const FUpdateContext& UpdateContext)
     {
         FAssetEditorTool::Update(UpdateContext);
+
+        // The preview world never draws editor billboards (light/camera icons). Re-applied every
+        // frame because the render scene (and its settings) can be rebuilt by idle reclaim.
+        if (IRenderScene* Renderer = World->GetRenderer())
+        {
+            Renderer->GetSceneRenderSettings().bDrawBillboards = false;
+        }
+
+        // Drive the selected-camera preview (shared with the world editor) before extract.
+        UpdateCameraPreview();
 
         ProcessDestroyRequests();
 
@@ -1009,8 +1020,10 @@ namespace Lumina
                 // Publish the cursor so the renderer reads back the pixel under it.
                 Renderer->SetPickerCursor(TexX, TexY, true);
 
+                // Skip picking while the mouse is on the camera-preview resize grip (flag set by
+                // DrawCameraPreviewOverlay below, one frame behind).
                 const bool bOverGizmo = (bImGuizmoUsedOnce && ImGuizmo::IsOver()) || ImGuizmo::IsUsing();
-                if (!bOverGizmo && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+                if (!bOverGizmo && !bCameraPreviewMouseOver && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
                 {
                     entt::entity Hit = Renderer->GetEntityAtPixel(TexX, TexY);
                     entt::registry& Registry = ECS::GetWorldRegistry(*World);
@@ -1028,6 +1041,9 @@ namespace Lumina
                 }
             }
         }
+
+        // Selected-camera PiP (shared with the world editor); before the gizmo's early returns.
+        DrawCameraPreviewOverlay(ViewportOrigin, ViewportSize);
 
         const entt::entity PivotEntity = GetLastSelectedEntity();
         const bool bGizmoTargetValid = PivotEntity != entt::null && World->IsValidEntity(PivotEntity);
@@ -1165,6 +1181,13 @@ namespace Lumina
         Settings->GizmoSnapTranslate = GuizmoSnapTranslate;
         Settings->GizmoSnapRotate    = GuizmoSnapRotate;
         Settings->GizmoSnapScale     = GuizmoSnapScale;
+        GConfig->SaveSettings(CPrefabEditorSettings::StaticClass());
+    }
+
+    void FPrefabEditorTool::PersistCameraPreviewScale()
+    {
+        CPrefabEditorSettings* Settings = GetMutableDefault<CPrefabEditorSettings>();
+        Settings->CameraPreviewScale = CameraPreviewScale;
         GConfig->SaveSettings(CPrefabEditorSettings::StaticClass());
     }
 

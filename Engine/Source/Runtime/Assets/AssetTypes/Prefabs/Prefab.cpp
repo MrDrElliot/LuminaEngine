@@ -230,6 +230,7 @@ namespace Lumina
 
         if (PrefabRoots.empty())
         {
+            LOG_WARN("Prefab '{}' has no entities; nothing to instantiate.", GetName().c_str());
             return entt::null;
         }
 

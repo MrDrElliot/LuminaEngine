@@ -485,7 +485,7 @@ namespace Lumina
         void Resize(const FUIntVector2& NewSize) override { SwapchainResized(FVector2(NewSize)); }
 
         int32 RegisterCaptureView(const FUIntVector2& Size) override;
-        void  SetCaptureView(int32 Handle, const FViewVolume& View, bool bEnabled) override;
+        bool  SetCaptureView(int32 Handle, const FViewVolume& View, bool bEnabled) override;
         int32 GetCaptureDisplayResourceID(int32 Handle) const override;
 
         void DrawBillboard(int32 ResourceID, const FVector3& Location, float Scale) override;

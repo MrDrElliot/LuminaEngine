@@ -1332,18 +1332,21 @@ namespace Lumina
         FAssetData* AssetData = FAssetRegistry::Get().GetAssetByPath(VirtualPath);
         if (AssetData == nullptr)
         {
+            LOG_WARN("Asset drop: no registry entry for '{}'", FString(VirtualPath.data(), VirtualPath.size()).c_str());
             return entt::null;
         }
 
         const FEditorAssetDropHandler* Handler = FEditorAssetDropRegistry::Get().FindHandler(AssetData->AssetClass);
         if (Handler == nullptr || !*Handler)
         {
+            LOG_WARN("Asset drop: no drop handler for class '{}' ('{}')", AssetData->AssetClass.c_str(), FString(VirtualPath.data(), VirtualPath.size()).c_str());
             return entt::null;
         }
 
         CObject* Loaded = LoadObject<CObject>(AssetData->AssetGUID);
         if (Loaded == nullptr)
         {
+            LOG_WARN("Asset drop: failed to load '{}'", FString(VirtualPath.data(), VirtualPath.size()).c_str());
             return entt::null;
         }
 

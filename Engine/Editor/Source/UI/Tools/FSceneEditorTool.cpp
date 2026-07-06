@@ -14,6 +14,8 @@
 #include "Core/Object/Package/Package.h"
 #include "EASTL/sort.h"
 #include "Input/InputViewport.h"
+#include "Renderer/ViewVolume.h"
+#include "World/Entity/Components/CameraComponent.h"
 #include "World/Scene/RenderScene/RenderScene.h"
 #include "World/Scene/RenderScene/SceneRenderTypes.h"
 #include "World/Entity/Components/StaticMeshComponent.h"
@@ -1946,6 +1948,155 @@ namespace Lumina
     void FSceneEditorTool::ToggleGuizmoMode()
     {
         EditorEntityUtils::ToggleGizmoMode(GuizmoMode);
+    }
+
+    void FSceneEditorTool::UpdateCameraPreview()
+    {
+        bCameraPreviewActive = false;
+
+        IRenderScene* RenderScene = World ? World->GetRenderer() : nullptr;
+        if (RenderScene == nullptr)
+        {
+            return;
+        }
+
+        // The render scene can be torn down + rebuilt (idle reclaim), invalidating our handle. The
+        // pointer compare catches most rebuilds, but a new scene can land at the freed scene's
+        // address, so SetCaptureView's return below is the authoritative staleness check.
+        if (RenderScene != CameraPreviewScene)
+        {
+            CameraPreviewScene  = RenderScene;
+            CameraPreviewHandle = -1;
+        }
+
+        // Only preview a selected camera entity in the tool's own world (the capture renders
+        // World's scene, so a foreign observed world's selection has nothing to render), and
+        // never inside a running game world. Otherwise leave the capture registered but
+        // disabled (no render cost).
+        entt::registry& Registry = ECS::GetWorldRegistry(*World);
+        const entt::entity Selected = GetLastSelectedEntity();
+        const bool bWantPreview =
+            AllowCameraPreview() &&
+            !World->IsGameWorld() && !IsInspectingForeignWorld() &&
+            Registry.valid(Selected) &&
+            Registry.all_of<SCameraComponent, STransformComponent>(Selected);
+
+        if (!bWantPreview)
+        {
+            if (CameraPreviewHandle >= 0 && !RenderScene->SetCaptureView(CameraPreviewHandle, FViewVolume{}, false))
+            {
+                CameraPreviewHandle = -1;   // stale handle from a rebuilt scene
+            }
+            return;
+        }
+
+        // Build the camera's view from its world transform + FOV (its own ViewVolume isn't
+        // resolved while it's a non-active camera). Forward/up convention matches SCameraSystem.
+        const SCameraComponent& Camera = Registry.get<SCameraComponent>(Selected);
+        STransformComponent& Transform = Registry.get<STransformComponent>(Selected);
+        (void)Transform.GetWorldMatrix();   // ensure the world transform is current
+
+        const FVector3 Position = Transform.GetWorldLocation();
+        const FQuat Rotation = Transform.GetWorldRotation();
+        const FVector3 Forward  = Rotation * FVector3(0.0f, 0.0f, 1.0f);
+        const FVector3 Up       = Rotation * FVector3(0.0f, 1.0f, 0.0f);
+
+        // Use the authored FOV property, not GetFOV(): ViewVolume only tracks the property for
+        // the active camera, so a non-active selected camera's value would be stale.
+        FViewVolume View(Camera.FOV, (float)CameraPreviewWidth / (float)CameraPreviewHeight);
+        View.SetView(Position, Forward, Up);
+
+        // Two attempts: if the first SetCaptureView rejects the handle (scene rebuilt at the same
+        // address, so the pointer compare above missed it), register against the live scene and retry.
+        for (int32 Attempt = 0; Attempt < 2; ++Attempt)
+        {
+            if (CameraPreviewHandle < 0)
+            {
+                CameraPreviewHandle = RenderScene->RegisterCaptureView(FUIntVector2(CameraPreviewWidth, CameraPreviewHeight));
+                if (CameraPreviewHandle < 0)
+                {
+                    return;
+                }
+            }
+
+            if (RenderScene->SetCaptureView(CameraPreviewHandle, View, true))
+            {
+                bCameraPreviewActive = true;
+                return;
+            }
+
+            CameraPreviewHandle = -1;
+        }
+    }
+
+    void FSceneEditorTool::DrawCameraPreviewOverlay(const ImVec2& ViewportOrigin, const ImVec2& ViewportSize)
+    {
+        // Selected-camera PiP, pinned bottom-right. The render scene shades it into a capture
+        // view (in UpdateCameraPreview); here we just composite it by its heap ResourceID.
+        // Drag the top-left corner grip to resize; the scale persists per tool.
+        bCameraPreviewMouseOver = false;
+        const int32 PreviewID = (bCameraPreviewActive && CameraPreviewHandle >= 0 && World->GetRenderer() != nullptr)
+            ? World->GetRenderer()->GetCaptureDisplayResourceID(CameraPreviewHandle) : -1;
+        if (PreviewID < 0)
+        {
+            bCameraPreviewResizing = false;
+            return;
+        }
+
+        const float Margin = 14.0f;
+        const ImVec2 Max(ViewportOrigin.x + ViewportSize.x - Margin,
+                         ViewportOrigin.y + ViewportSize.y - Margin);
+
+        const ImVec2 Mouse = ImGui::GetMousePos();
+        if (bCameraPreviewResizing)
+        {
+            if (ImGui::IsMouseDown(ImGuiMouseButton_Left))
+            {
+                // Bottom-right corner is the anchor; scale follows the dragged top-left corner.
+                const float ScaleX = (Max.x - Mouse.x) / (float)CameraPreviewWidth;
+                const float ScaleY = (Max.y - Mouse.y) / (float)CameraPreviewHeight;
+                CameraPreviewScale = Math::Clamp(Math::Max(ScaleX, ScaleY), 0.25f, 1.5f);
+            }
+            else
+            {
+                bCameraPreviewResizing = false;
+                PersistCameraPreviewScale();
+            }
+        }
+
+        // Fit-clamp keeps the preview inside small viewports regardless of the saved scale.
+        const float FitScale = Math::Min((ViewportSize.x * 0.85f) / (float)CameraPreviewWidth,
+                                         (ViewportSize.y * 0.85f) / (float)CameraPreviewHeight);
+        const float Scale = Math::Min(CameraPreviewScale, Math::Max(FitScale, 0.1f));
+        const ImVec2 Size((float)CameraPreviewWidth * Scale, (float)CameraPreviewHeight * Scale);
+        const ImVec2 Min(Max.x - Size.x, Max.y - Size.y);
+
+        const float GripExtent = 14.0f;
+        const bool bOverGrip = Mouse.x >= Min.x - 6.0f && Mouse.x <= Min.x + GripExtent &&
+                               Mouse.y >= Min.y - 6.0f && Mouse.y <= Min.y + GripExtent;
+        if (!bCameraPreviewResizing && bOverGrip &&
+            ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows) &&
+            ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+        {
+            bCameraPreviewResizing = true;
+        }
+        bCameraPreviewMouseOver = bOverGrip || bCameraPreviewResizing;
+        if (bCameraPreviewMouseOver)
+        {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNWSE);
+        }
+
+        ImDrawList* DL = ImGui::GetWindowDrawList();
+        DL->AddRectFilled(ImVec2(Min.x - 3.0f, Min.y - 18.0f), ImVec2(Max.x + 3.0f, Max.y + 3.0f),
+            IM_COL32(0, 0, 0, 190), 4.0f);
+        DL->AddText(ImVec2(Min.x + 2.0f, Min.y - 16.0f), IM_COL32(235, 235, 235, 220), "Camera Preview");
+        DL->AddImage(ImGuiX::ToImTextureRef((uint32)PreviewID), Min, Max);
+        DL->AddRect(Min, Max, IM_COL32(255, 255, 255, 110), 2.0f);
+
+        // Corner resize grip: diagonal ticks, brightened while hovered/dragging.
+        const ImU32 GripCol = bCameraPreviewMouseOver ? IM_COL32(255, 255, 255, 255) : IM_COL32(255, 255, 255, 140);
+        DL->AddLine(ImVec2(Min.x + 2.0f, Min.y + 9.0f),  ImVec2(Min.x + 9.0f,  Min.y + 2.0f), GripCol, 2.0f);
+        DL->AddLine(ImVec2(Min.x + 2.0f, Min.y + 14.0f), ImVec2(Min.x + 14.0f, Min.y + 2.0f), GripCol, 2.0f);
     }
 
     void FSceneEditorTool::EndFrame()

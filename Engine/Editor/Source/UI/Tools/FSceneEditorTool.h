@@ -11,6 +11,7 @@ namespace Lumina
     class CStruct;
     class CStaticMesh;
     class CPackage;
+    class IRenderScene;
     struct FPropertyChangedEvent;
 
     // Shared base for ECS scene editors (world + prefab). A prefab is a mini-scene, so both
@@ -277,7 +278,36 @@ namespace Lumina
 
         ImGuizmo::OPERATION GuizmoOp = ImGuizmo::TRANSLATE;
         ImGuizmo::MODE      GuizmoMode = ImGuizmo::WORLD;
-        
+
+        // --- Selected-camera preview (shared) --------------------------------------------
+        // When the focused selection holds a camera, the render scene shades it into a capture
+        // view (UpdateCameraPreview, call every Update) and DrawCameraPreviewOverlay composites
+        // it as a corner PiP. Drag the free corner grip to resize; the scale persists through
+        // PersistCameraPreviewScale into the tool's settings object.
+
+        void UpdateCameraPreview();
+        void DrawCameraPreviewOverlay(const ImVec2& ViewportOrigin, const ImVec2& ViewportSize);
+
+        // Hook: extra gate for the preview (world editor: off during game view).
+        virtual bool AllowCameraPreview() const { return true; }
+        // Hook: persist CameraPreviewScale after a resize drag. Default no-op; World/Prefab
+        // editors write their CDeveloperSettings + save (mirrors PersistGizmoSettings).
+        virtual void PersistCameraPreviewScale() {}
+
+        IRenderScene*           CameraPreviewScene = nullptr;
+        int32                   CameraPreviewHandle = -1;
+        bool                    bCameraPreviewActive = false;
+        static constexpr uint32 CameraPreviewWidth  = 720;
+        static constexpr uint32 CameraPreviewHeight = 405;
+
+        // Preview overlay display scale + corner drag-resize state. bCameraPreviewMouseOver is
+        // last frame's grip hover/drag; it gates viewport picking so a resize drag never falls
+        // through to selection.
+        float                   CameraPreviewScale = 0.6f;
+        bool                    bCameraPreviewResizing = false;
+        bool                    bCameraPreviewMouseOver = false;
+
+
 
         // Tool-window body: resolves the last-selected entity, rebuilds tables, draws the panel.
         void DrawDetailsPanel(bool bFocused);

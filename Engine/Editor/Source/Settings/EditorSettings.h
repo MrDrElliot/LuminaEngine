@@ -34,6 +34,10 @@ namespace Lumina
         /** Snap step (scale factor) for the scale gizmo. */
         PROPERTY(Editable, Category = "Snapping", ClampMin = 0.001f, ClampMax = 10.0f)
         float GizmoSnapScale = 0.1f;
+
+        /** Display scale of the selected-camera preview overlay in the viewport (drag its corner to resize). */
+        PROPERTY(Editable, Category = "Viewport", ClampMin = 0.25f, ClampMax = 1.5f)
+        float CameraPreviewScale = 0.6f;
     };
 
     // Transform-gizmo snapping defaults for the prefab editor (kept distinct from the world editor).
@@ -58,6 +62,10 @@ namespace Lumina
         /** Snap step (scale factor) for the scale gizmo. */
         PROPERTY(Editable, Category = "Snapping", ClampMin = 0.001f, ClampMax = 10.0f)
         float GizmoSnapScale = 0.1f;
+
+        /** Display scale of the selected-camera preview overlay in the viewport (drag its corner to resize). */
+        PROPERTY(Editable, Category = "Viewport", ClampMin = 0.25f, ClampMax = 1.5f)
+        float CameraPreviewScale = 0.6f;
     };
 
     // External application C# script sources open in.

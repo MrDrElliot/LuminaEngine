@@ -264,14 +264,10 @@ namespace Lumina
         FTransform                              CameraBookmarks[NumCameraBookmarks];
         bool                                    bCameraBookmarkSet[NumCameraBookmarks] = {};
         
-        void UpdateCameraPreview();
-
-        IRenderScene*                           CameraPreviewScene = nullptr;
-        int32                                   CameraPreviewHandle = -1;
-        bool                                    bCameraPreviewActive = false;
-        static constexpr uint32                 CameraPreviewWidth  = 720;
-        static constexpr uint32                 CameraPreviewHeight = 405;
-
+        // Camera preview (UpdateCameraPreview / DrawCameraPreviewOverlay) lives in FSceneEditorTool;
+        // the world editor only adds the game-view gate + its settings persistence.
+        bool AllowCameraPreview() const override { return !bGameViewMode; }
+        void PersistCameraPreviewScale() override;
 
         bool                                    bDrawEntityDebugInfo = false;
         bool                                    bDrawNetworkDebug = false;

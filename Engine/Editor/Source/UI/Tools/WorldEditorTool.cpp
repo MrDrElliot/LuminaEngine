@@ -353,6 +353,7 @@ namespace Lumina
         GuizmoSnapTranslate = Settings->GizmoSnapTranslate;
         GuizmoSnapRotate    = Settings->GizmoSnapRotate;
         GuizmoSnapScale     = Settings->GizmoSnapScale;
+        CameraPreviewScale  = Math::Clamp(Settings->CameraPreviewScale, 0.25f, 1.5f);
 
         RegisterEditorActions();
         RegisterEditorModes();
@@ -696,71 +697,6 @@ namespace Lumina
         // GWorldManager). Leaving these connected lets a later world teardown -- including the editor
         // world still observed across a PIE session -- fire on_destroy into this freed tool -> crash.
         UnbindRegistryObservers();
-    }
-
-    void FWorldEditorTool::UpdateCameraPreview()
-    {
-        bCameraPreviewActive = false;
-
-        IRenderScene* RenderScene = World ? World->GetRenderer() : nullptr;
-        if (RenderScene == nullptr)
-        {
-            return;
-        }
-
-        // The render scene can be torn down + rebuilt (idle reclaim), invalidating our handle.
-        // Detect the swap and force re-registration against the new scene.
-        if (RenderScene != CameraPreviewScene)
-        {
-            CameraPreviewScene  = RenderScene;
-            CameraPreviewHandle = -1;
-        }
-
-        // Only preview in the editor (not during PIE / game-view), and only for a selected
-        // camera entity. Otherwise leave the capture registered but disabled (no render cost).
-        entt::registry& Registry = ECS::GetWorldRegistry(*World);
-        const entt::entity Selected = GetLastSelectedEntity();
-        const bool bWantPreview =
-            !World->IsGameWorld() && !bGameViewMode &&
-            Registry.valid(Selected) &&
-            Registry.all_of<SCameraComponent, STransformComponent>(Selected);
-
-        if (!bWantPreview)
-        {
-            if (CameraPreviewHandle >= 0)
-            {
-                RenderScene->SetCaptureView(CameraPreviewHandle, FViewVolume{}, false);
-            }
-            return;
-        }
-
-        if (CameraPreviewHandle < 0)
-        {
-            CameraPreviewHandle = RenderScene->RegisterCaptureView(FUIntVector2(CameraPreviewWidth, CameraPreviewHeight));
-            if (CameraPreviewHandle < 0)
-            {
-                return;
-            }
-        }
-
-        // Build the camera's view from its world transform + FOV (its own ViewVolume isn't
-        // resolved while it's a non-active camera). Forward/up convention matches SCameraSystem.
-        const SCameraComponent& Camera = Registry.get<SCameraComponent>(Selected);
-        STransformComponent& Transform = Registry.get<STransformComponent>(Selected);
-        (void)Transform.GetWorldMatrix();   // ensure the world transform is current
-
-        const FVector3 Position = Transform.GetWorldLocation();
-        const FQuat Rotation = Transform.GetWorldRotation();
-        const FVector3 Forward  = Rotation * FVector3(0.0f, 0.0f, 1.0f);
-        const FVector3 Up       = Rotation * FVector3(0.0f, 1.0f, 0.0f);
-
-        // Use the authored FOV property, not GetFOV(): ViewVolume only tracks the property for
-        // the active camera, so a non-active selected camera's value would be stale.
-        FViewVolume View(Camera.FOV, (float)CameraPreviewWidth / (float)CameraPreviewHeight);
-        View.SetView(Position, Forward, Up);
-
-        RenderScene->SetCaptureView(CameraPreviewHandle, View, true);
-        bCameraPreviewActive = true;
     }
 
     void FWorldEditorTool::Update(const FUpdateContext& UpdateContext)
@@ -1731,8 +1667,9 @@ namespace Lumina
         }
 
         // Yield to the world's UI: a click over an interactive Rml element must not
-        // also fall through to entity picking / marquee behind it.
-        if (!bModeOwnsInput && ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows) && !RmlUi::WorldUIWantsMouse(World))
+        // also fall through to entity picking / marquee behind it. Same for the camera-preview
+        // resize grip (bCameraPreviewMouseOver is set by the preview overlay below, one frame behind).
+        if (!bModeOwnsInput && !bCameraPreviewMouseOver && ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows) && !RmlUi::WorldUIWantsMouse(World))
         {
             uint32 PickerWidth = World->GetRenderer()->GetRenderExtent().x;
             uint32 PickerHeight = World->GetRenderer()->GetRenderExtent().y;
@@ -2178,28 +2115,7 @@ namespace Lumina
         DrawEntityDebugOverlay(ViewportOrigin, ViewportSize, CameraComponent);
         DrawOffscreenSelectionIndicators(ViewportOrigin, ViewportSize, CameraComponent);
 
-        // Selected-camera PiP, pinned bottom-right. The render scene shades it into a capture
-        // view (in UpdateCameraPreview); here we just composite it by its heap ResourceID.
-        if (bCameraPreviewActive && CameraPreviewHandle >= 0)
-        {
-            const int32 PreviewID = World->GetRenderer()->GetCaptureDisplayResourceID(CameraPreviewHandle);
-            if (PreviewID >= 0)
-            {
-                const float Scale  = 0.6f;
-                const float Margin = 14.0f;
-                const ImVec2 Size((float)CameraPreviewWidth * Scale, (float)CameraPreviewHeight * Scale);
-                const ImVec2 Max(ViewportOrigin.x + ViewportSize.x - Margin,
-                                 ViewportOrigin.y + ViewportSize.y - Margin);
-                const ImVec2 Min(Max.x - Size.x, Max.y - Size.y);
-
-                ImDrawList* DL = ImGui::GetWindowDrawList();
-                DL->AddRectFilled(ImVec2(Min.x - 3.0f, Min.y - 18.0f), ImVec2(Max.x + 3.0f, Max.y + 3.0f),
-                    IM_COL32(0, 0, 0, 190), 4.0f);
-                DL->AddText(ImVec2(Min.x + 2.0f, Min.y - 16.0f), IM_COL32(235, 235, 235, 220), "Camera Preview");
-                DL->AddImage(ImGuiX::ToImTextureRef((uint32)PreviewID), Min, Max);
-                DL->AddRect(Min, Max, IM_COL32(255, 255, 255, 110), 2.0f);
-            }
-        }
+        DrawCameraPreviewOverlay(ViewportOrigin, ViewportSize);
     }
 
     // The viewport overlay toolbar lives in FSceneEditorTool; the world editor supplies these hooks.
@@ -2215,6 +2131,13 @@ namespace Lumina
         Settings->GizmoSnapTranslate = GuizmoSnapTranslate;
         Settings->GizmoSnapRotate    = GuizmoSnapRotate;
         Settings->GizmoSnapScale     = GuizmoSnapScale;
+        GConfig->SaveSettings(CWorldEditorSettings::StaticClass());
+    }
+
+    void FWorldEditorTool::PersistCameraPreviewScale()
+    {
+        CWorldEditorSettings* Settings = GetMutableDefault<CWorldEditorSettings>();
+        Settings->CameraPreviewScale = CameraPreviewScale;
         GConfig->SaveSettings(CWorldEditorSettings::StaticClass());
     }
 
@@ -2382,9 +2305,11 @@ namespace Lumina
         ImGui::MenuItem("Draw Entity Debug Info", nullptr, &bDrawEntityDebugInfo);
         ImGui::MenuItem("Network (AOI / Grid)", nullptr, &bDrawNetworkDebug);
 
-        if (ImGui::MenuItem("Game View", "G", &bGameViewMode))
+        // Route through ToggleGameViewMode so grid/billboard/visualizer state is saved and restored;
+        // the bool* MenuItem overload would flip the flag without doing any of that.
+        if (ImGui::MenuItem("Game View", "G", bGameViewMode))
         {
-            bGameViewMode = !bGameViewMode;
+            ToggleGameViewMode();
         }
     }
 
@@ -4083,6 +4008,8 @@ namespace Lumina
         else
         {
             AbortTransaction();
+            ImGuiX::Notifications::NotifyWarning("Could not add \"{0}\" to the world (see log for details).",
+                FString(VirtualPath.data(), VirtualPath.size()).c_str());
         }
     }
 

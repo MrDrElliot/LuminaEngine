@@ -206,14 +206,15 @@ namespace Lumina
         return Handle;
     }
 
-    void FForwardRenderScene::SetCaptureView(int32 Handle, const FViewVolume& View, bool bEnabled)
+    bool FForwardRenderScene::SetCaptureView(int32 Handle, const FViewVolume& View, bool bEnabled)
     {
         if (Handle <= 0 || Handle >= (int32)SceneViews.size())
         {
-            return;
+            return false;
         }
         SceneViews[Handle].PendingViewVolume = View;
         SceneViews[Handle].bEnabled          = bEnabled;
+        return true;
     }
 
     int32 FForwardRenderScene::GetCaptureDisplayResourceID(int32 Handle) const
