@@ -85,7 +85,11 @@ namespace Lumina
         SSAO                = 15,
         MaterialID          = 16,
         TriangleID          = 17,
-        Num                 = 18,
+        OITAccumColor       = 18,
+        OITAccumWeight      = 19,
+        OITRevealage        = 20,
+        OITLayerCount       = 21,
+        Num                 = 22,
     };
 
     constexpr FStringView RenderFlagsAsString(ERenderSceneDebugFlags Flags)
@@ -110,6 +114,10 @@ namespace Lumina
             case ERenderSceneDebugFlags::SSAO:              return "SSAO";
             case ERenderSceneDebugFlags::MaterialID:        return "Material ID";
             case ERenderSceneDebugFlags::TriangleID:        return "Triangle ID";
+            case ERenderSceneDebugFlags::OITAccumColor:     return "OIT Accum Color";
+            case ERenderSceneDebugFlags::OITAccumWeight:    return "OIT Accum Weight";
+            case ERenderSceneDebugFlags::OITRevealage:      return "OIT Revealage";
+            case ERenderSceneDebugFlags::OITLayerCount:     return "OIT Layer Count";
             default:                                        return "Lit";
         }
     }

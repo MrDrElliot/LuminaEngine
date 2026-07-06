@@ -1,29 +1,13 @@
 #include "pch.h"
 #include "TaskGraph.h"
+#include "Task.h"
 #include "Scheduler/JobScheduler.h"
 #include "Core/Threading/Atomic.h"
 
+#include <coroutine>
+
 namespace Lumina
 {
-    namespace
-    {
-        constexpr uint32 kGraphMaxChunks = 256;
-
-        uint32 ComputeGraphChunkCount(uint32 Count, uint32 MinRange)
-        {
-            const uint32 Grain = MinRange == 0 ? 1u : MinRange;
-            uint32 NumChunks = (Count + Grain - 1) / Grain;
-
-            uint32 MaxChunks = Jobs::GetNumWorkers() * 4u;
-            if (MaxChunks == 0)              MaxChunks = 1;
-            if (MaxChunks > kGraphMaxChunks) MaxChunks = kGraphMaxChunks;
-
-            if (NumChunks > MaxChunks) NumChunks = MaxChunks;
-            if (NumChunks == 0)        NumChunks = 1;
-            return NumChunks;
-        }
-    }
-
     struct FTaskGraph::FNode
     {
         void*                           Callable       = nullptr;
@@ -36,50 +20,91 @@ namespace Lumina
         ETaskPriority                   Priority       = ETaskPriority::Medium;
 
         FTaskGraph*                     Graph          = nullptr;
+        FBlockLinearAllocator*          Arena          = nullptr;
         uint32                          Index          = 0;
 
-        // Dispatch state.
         TAtomic<int32>                  PendingDeps{0};
         TFrameVector<uint32>            Dependents;
-        Jobs::FCounter*                 Counter        = nullptr;
 
-        // Pre-built (at Dispatch) so worker-side scheduling never touches the arena.
-        struct FChunk
-        {
-            FNode* Node;
-            uint32 Start;
-            uint32 End;
-        };
-        FChunk*                         Chunks    = nullptr;
-        Jobs::FJobDecl*                 Decls     = nullptr;
-        uint32                          NumChunks = 0;
-
-        static void RunChunk(void* Arg, uint32 Worker)
-        {
-            FChunk* C = static_cast<FChunk*>(Arg);
-            FNode*  N = C->Node;
-            if (N->bIsParallelFor)
-            {
-                if (N->InvokeParallel)
-                {
-                    N->InvokeParallel(N->Callable, Task::FParallelRange{ C->Start, C->End, Worker });
-                }
-            }
-            else if (N->InvokeOneShot)
-            {
-                N->InvokeOneShot(N->Callable);
-            }
-        }
+        std::coroutine_handle<>         CoroHandle{};
 
         ~FNode()
         {
-            // Closure lives in the arena: run its destructor, but never free (arena owns the bytes).
+            // Closure lives in the arena; run its destructor, never free.
             if (Callable && Destroy)
             {
                 Destroy(Callable);
             }
         }
     };
+
+    struct FTaskGraph::FNodeCoro
+    {
+        struct promise_type
+        {
+            // The coroutine's FNode* is forwarded here so the frame lands in the graph arena.
+            static void* operator new(std::size_t Size, FNode* Node)
+            {
+                return Node->Arena->Allocate(Size, alignof(std::max_align_t));
+            }
+            static void operator delete(void* /*Ptr*/) noexcept {}
+            static void operator delete(void* /*Ptr*/, std::size_t) noexcept {}
+
+            FNodeCoro get_return_object() noexcept
+            {
+                return FNodeCoro{ std::coroutine_handle<promise_type>::from_promise(*this) };
+            }
+
+            std::suspend_always initial_suspend() noexcept { return {}; }
+            std::suspend_always final_suspend()   noexcept { return {}; }
+            void                return_void()     noexcept {}
+            void                unhandled_exception() { ASSERT(false); }
+        };
+
+        std::coroutine_handle<promise_type> Handle;
+    };
+
+    FTaskGraph::FNodeCoro FTaskGraph::RunNode(FNode* Node)
+    {
+        if (Node->bIsParallelFor)
+        {
+            if (Node->InvokeParallel)
+            {
+                FNode* N = Node;
+                co_await Task::ParallelForAsync(N->SetSize, N->MinRange,
+                    [N](const Task::FParallelRange& R) { N->InvokeParallel(N->Callable, R); },
+                    N->Priority);
+            }
+        }
+        else if (Node->InvokeOneShot)
+        {
+            Node->InvokeOneShot(Node->Callable);
+        }
+
+        FTaskGraph::CompleteNode(Node);
+        co_return;
+    }
+
+    void FTaskGraph::StartNode(FNode* Node)
+    {
+        CoroDetail::ScheduleResume(Node->CoroHandle, Node->Priority);
+    }
+
+    void FTaskGraph::CompleteNode(FNode* Node)
+    {
+        FTaskGraph* Graph = Node->Graph;
+
+        for (uint32 DepIndex : Node->Dependents)
+        {
+            FNode* Dependent = Graph->Nodes[DepIndex];
+            if (Dependent->PendingDeps.fetch_sub(1, std::memory_order_acq_rel) - 1 == 0)
+            {
+                StartNode(Dependent);
+            }
+        }
+
+        Jobs::DecrementCounter(Graph->GraphCounter, 1);
+    }
 
     FTaskGraph::FTaskGraph()
         : Allocator(16llu * 1024)
@@ -107,9 +132,9 @@ namespace Lumina
         {
             Node->~FNode();
         }
-        Nodes.clear();          // keep capacity
-        Edges.clear();          // keep capacity
-        Allocator.Reset();      // rewind blocks, keep them
+        Nodes.clear();
+        Edges.clear();
+        Allocator.Reset();
         bDispatched = false;
     }
 
@@ -124,6 +149,7 @@ namespace Lumina
         Node->SetSize           = 1;
         Node->MinRange          = 1;
         Node->Priority          = Priority;
+        Node->Arena             = &Allocator;
 
         FNodeHandle Handle{ static_cast<uint32>(Nodes.size()) };
         Nodes.push_back(Node);
@@ -136,10 +162,11 @@ namespace Lumina
         Node->Dependents.set_allocator(FFrameArenaAllocator(&Allocator, "TaskGraphDeps"));
         Node->bIsParallelFor    = true;
         Node->Priority          = Priority;
+        Node->Arena             = &Allocator;
 
         if (Count == 0)
         {
-            // Empty work; node still needed so dependents fire. No callable was placed.
+            // Empty work; node still fires dependents. No callable placed.
             Node->SetSize       = 0;
             Node->MinRange      = 1;
         }
@@ -165,33 +192,6 @@ namespace Lumina
         Edges.emplace_back(Node.Index, Dependency.Index);
     }
 
-    void FTaskGraph::ScheduleNode(FNode* Node)
-    {
-        Node->Counter = Jobs::AllocCounter(0);
-        Jobs::SetCounterCompletion(Node->Counter, &FTaskGraph::OnNodeComplete, Node);
-        Jobs::RunJobs(Node->Decls, Node->NumChunks, ToJobPriority(Node->Priority), Node->Counter);
-    }
-
-    void FTaskGraph::OnNodeComplete(void* NodeCtx, uint32 /*Worker*/)
-    {
-        FNode*      Node  = static_cast<FNode*>(NodeCtx);
-        FTaskGraph* Graph = Node->Graph;
-
-        Jobs::FreeCounter(Node->Counter);
-        Node->Counter = nullptr;
-
-        for (uint32 DepIndex : Node->Dependents)
-        {
-            FNode* Dependent = Graph->Nodes[DepIndex];
-            if (Dependent->PendingDeps.fetch_sub(1, std::memory_order_acq_rel) - 1 == 0)
-            {
-                ScheduleNode(Dependent);
-            }
-        }
-
-        Jobs::DecrementCounter(Graph->GraphCounter, 1);
-    }
-
     void FTaskGraph::Dispatch()
     {
         ASSERT(!bDispatched);
@@ -204,7 +204,6 @@ namespace Lumina
             return;
         }
 
-        // Reset per-node dispatch state and build the in-degree / dependents graph.
         for (uint32 i = 0; i < NumNodes; ++i)
         {
             FNode* Node = Nodes[i];
@@ -220,41 +219,13 @@ namespace Lumina
             Nodes[Edge.second]->Dependents.push_back(Edge.first);
         }
 
-        // Pre-chunk every node here (single-threaded), so worker-side ScheduleNode never allocates.
+        // Create node coroutines single-threaded; the arena is not thread-safe.
         for (uint32 i = 0; i < NumNodes; ++i)
         {
-            FNode* Node = Nodes[i];
-            const uint32 Count = Node->bIsParallelFor ? Node->SetSize : 1u;
-
-            uint32 ChunkCount;
-            if (Count <= 1 || (Node->bIsParallelFor && Node->InvokeParallel == nullptr))
-            {
-                ChunkCount = 1;
-            }
-            else
-            {
-                ChunkCount = ComputeGraphChunkCount(Count, Node->MinRange);
-            }
-
-            Node->NumChunks = ChunkCount;
-            Node->Chunks = static_cast<FNode::FChunk*>(Allocator.Allocate(sizeof(FNode::FChunk) * ChunkCount, alignof(FNode::FChunk)));
-            Node->Decls  = static_cast<Jobs::FJobDecl*>(Allocator.Allocate(sizeof(Jobs::FJobDecl) * ChunkCount, alignof(Jobs::FJobDecl)));
-
-            const uint32 Base = ChunkCount ? Count / ChunkCount : 0;
-            const uint32 Rem  = ChunkCount ? Count % ChunkCount : 0;
-            uint32 Start = 0;
-            for (uint32 c = 0; c < ChunkCount; ++c)
-            {
-                const uint32 Len = Base + (c < Rem ? 1u : 0u);
-                Node->Chunks[c] = FNode::FChunk{ Node, Start, Start + Len };
-                Node->Decls[c]  = Jobs::FJobDecl{ &FNode::RunChunk, &Node->Chunks[c], "Graph" };
-                Start += Len;
-            }
+            Nodes[i]->CoroHandle = RunNode(Nodes[i]).Handle;
         }
 
-        // Capture the root set NOW, while PendingDeps is stable (no node has been scheduled yet, so no
-        // worker can be decrementing in-degrees). Scheduling a root below may complete it and drive a
-        // dependent to zero on a worker thread; that worker, not this loop, owns scheduling it.
+        // Capture roots before scheduling, so a worker driving a dependent to zero can't race the loop.
         DispatchRoots.clear();
         for (uint32 i = 0; i < NumNodes; ++i)
         {
@@ -268,7 +239,7 @@ namespace Lumina
 
         for (uint32 RootIndex : DispatchRoots)
         {
-            ScheduleNode(Nodes[RootIndex]);
+            StartNode(Nodes[RootIndex]);
         }
     }
 

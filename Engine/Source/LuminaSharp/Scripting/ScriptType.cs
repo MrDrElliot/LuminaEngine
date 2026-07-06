@@ -3,22 +3,22 @@ using System.Collections.Generic;
 
 namespace LuminaSharp;
 
-/// <summary>Discriminator for a script property's reflected type, driving which native FProperty is minted.</summary>
-public enum EScriptKind : byte
+/// <summary>
+/// C# mirror of the engine's reflected type taxonomy <c>Lumina::EPropertyTypeFlags</c> (ObjectCore.h). The
+/// script schema keys on this single shared enum instead of a parallel one, so there is nothing to keep in
+/// sync by hand; <see cref="LayoutValidator"/> asserts the values match native at bootstrap. Order IS the wire
+/// ABI (the schema sends these as kind bytes), so only ever append. Script-specific shapes are carried as data
+/// rather than distinct kinds: an entity is <c>UInt32</c> + <see cref="ScriptType.IsEntity"/>; an asset ref is
+/// <c>SoftObject</c> + TargetClass; a native vs. script struct is <c>Struct</c> distinguished by NativeName.
+/// </summary>
+public enum EPropertyType : byte
 {
-    Nil = 0,
-    Bool,
-    I8, I16, I32, I64,
-    U8, U16, U32, U64,
-    F32, F64,
-    String,
-    Enum,
-    NativeStruct,
-    ScriptStruct,
-    AssetRef,
-    Entity,
-    Array,
-    Instance,
+    None = 0,
+    Int8, Int16, Int32, Int64,
+    UInt8, UInt16, UInt32, UInt64,
+    Float, Double,
+    Bool, Object, SoftObject, Class, Name, String,
+    Enum, Vector, Struct, Optional, SubStruct, Delegate, InstancedStruct, Map,
 }
 
 /// <summary>Coarse self-describing kind on the value wire; integers and enums and entity are Int, asset refs String, structs Nested.</summary>
@@ -32,6 +32,7 @@ public enum EScriptValueKind : byte
     Nested,
     Array,
     Instance,
+    Map,   // count (i32) followed by that many [key value, value value] pairs. Append-only (persisted wire).
 }
 
 /// <summary>One selectable concrete type for an instanced field, with its stable name, CLR type, and members.</summary>
@@ -52,13 +53,24 @@ public readonly struct EnumEntry
 /// <summary>The resolved, recursive shape of a script property's type, resolved once per type and shared.</summary>
 public sealed class ScriptType
 {
-    public EScriptKind Kind { get; init; } = EScriptKind.Nil;
+    public EPropertyType Kind { get; init; } = EPropertyType.None;
 
     /// <summary>The CLR type this describes.</summary>
     public Type Clr { get; init; } = typeof(object);
 
-    /// <summary>Element shape when <see cref="Kind"/> is <see cref="EScriptKind.Array"/>.</summary>
+    /// <summary>True when this is a <see cref="Entity"/> handle (kind <see cref="EPropertyType.UInt32"/> carries
+    /// no entity marker of its own, so this rides alongside so the value codec and the native entity picker both
+    /// see it).</summary>
+    public bool IsEntity { get; init; }
+
+    /// <summary>Element shape when <see cref="Kind"/> is <see cref="EPropertyType.Vector"/>.</summary>
     public ScriptType? Element { get; init; }
+
+    /// <summary>Key shape when <see cref="Kind"/> is <see cref="EPropertyType.Map"/>.</summary>
+    public ScriptType? KeyType { get; init; }
+
+    /// <summary>Value shape when <see cref="Kind"/> is <see cref="EPropertyType.Map"/>.</summary>
+    public ScriptType? ValueType { get; init; }
 
     /// <summary>Members for a NativeStruct or ScriptStruct, round-tripped as a Nested value by member name.</summary>
     public IReadOnlyList<ScriptProperty>? Fields { get; init; }
@@ -70,27 +82,28 @@ public sealed class ScriptType
     public string? TargetClass { get; init; }
 
     public string? EnumName { get; init; }
-    public EScriptKind EnumUnderlying { get; init; } = EScriptKind.I32;
+    public EPropertyType EnumUnderlying { get; init; } = EPropertyType.Int32;
     public IReadOnlyList<EnumEntry>? EnumEntries { get; init; }
 
-    /// <summary>Display name of the base type when <see cref="Kind"/> is <see cref="EScriptKind.Instance"/>.</summary>
+    /// <summary>Display name of the base type when <see cref="Kind"/> is <see cref="EPropertyType.InstancedStruct"/>.</summary>
     public string? BaseName { get; init; }
 
-    /// <summary>Selectable concrete types when <see cref="Kind"/> is <see cref="EScriptKind.Instance"/>.</summary>
+    /// <summary>Selectable concrete types when <see cref="Kind"/> is <see cref="EPropertyType.InstancedStruct"/>.</summary>
     public IReadOnlyList<ScriptInstanceCandidate>? Candidates { get; init; }
 
-    /// <summary>The coarse wire kind the value codec uses.</summary>
+    /// <summary>The coarse wire kind the value codec uses, projected from the reflected property type.</summary>
     public EScriptValueKind ValueKind => Kind switch
     {
-        EScriptKind.Bool => EScriptValueKind.Bool,
-        EScriptKind.I8 or EScriptKind.I16 or EScriptKind.I32 or EScriptKind.I64 or
-        EScriptKind.U8 or EScriptKind.U16 or EScriptKind.U32 or EScriptKind.U64 or
-        EScriptKind.Enum or EScriptKind.Entity => EScriptValueKind.Int,
-        EScriptKind.F32 or EScriptKind.F64 => EScriptValueKind.Double,
-        EScriptKind.String or EScriptKind.AssetRef => EScriptValueKind.String,
-        EScriptKind.NativeStruct or EScriptKind.ScriptStruct => EScriptValueKind.Nested,
-        EScriptKind.Array => EScriptValueKind.Array,
-        EScriptKind.Instance => EScriptValueKind.Instance,
+        EPropertyType.Bool => EScriptValueKind.Bool,
+        EPropertyType.Int8 or EPropertyType.Int16 or EPropertyType.Int32 or EPropertyType.Int64 or
+        EPropertyType.UInt8 or EPropertyType.UInt16 or EPropertyType.UInt32 or EPropertyType.UInt64 or
+        EPropertyType.Enum => EScriptValueKind.Int,
+        EPropertyType.Float or EPropertyType.Double => EScriptValueKind.Double,
+        EPropertyType.String or EPropertyType.SoftObject => EScriptValueKind.String,
+        EPropertyType.Struct => EScriptValueKind.Nested,
+        EPropertyType.Vector => EScriptValueKind.Array,
+        EPropertyType.Map => EScriptValueKind.Map,
+        EPropertyType.InstancedStruct => EScriptValueKind.Instance,
         _ => EScriptValueKind.Nil,
     };
 }

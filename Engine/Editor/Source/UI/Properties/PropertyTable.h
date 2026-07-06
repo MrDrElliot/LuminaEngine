@@ -12,6 +12,8 @@ namespace Lumina
     class CStruct;
     class FPropertyHandle;
     class FArrayProperty;
+    class FMapProperty;
+    class FMapPropertyRow;
     class FOptionalProperty;
     class FInstancedStructProperty;
     class FProperty;
@@ -160,6 +162,70 @@ namespace Lumina
 
         TVector<TFunction<void()>>  PendingMutations;
         bool                        bShowAllElements = false;
+    };
+
+    // Editor row for THashMap<K,V> / a C# Dictionary: an Add/Clear header with one FMapEntryRow per entry.
+    class FMapPropertyRow : public FPropertyRow
+    {
+    public:
+
+        FMapPropertyRow(const TSharedPtr<FPropertyHandle>& InPropHandle, FPropertyRow* InParentRow, const FPropertyChangedEventCallbacks& InCallbacks);
+        void Update() override;
+        void DrawHeader(float Offset) override;
+        void DrawEditor(bool bReadOnly) override;
+        float GetMeasuredHeaderTextWidth() const override;
+        void RebuildChildren();
+        bool HasExtraControls() const override;
+        float GetExtraControlsSectionWidth() override;
+        void DrawExtraControlsSection() override;
+        void OnValueResetToDefault() override { RebuildChildren(); }
+        TSharedPtr<FPropertyHandle> GetPropertyHandle() const { return PropertyHandle; }
+
+        // The "NoResize" meta hides add/remove/clear.
+        bool AllowResize() const;
+
+        // Deferred to next Update: a structural edit reallocates the map, invalidating child slot pointers.
+        void QueueMutation(TFunction<void()> Mutation);
+
+        FMapProperty* MapProperty = nullptr;
+
+    private:
+
+        TVector<TFunction<void()>> PendingMutations;
+    };
+
+    // One map entry: an editable key in the header column, the value delegated to a composed value row.
+    class FMapEntryRow : public FPropertyRow
+    {
+    public:
+
+        FMapEntryRow(FMapPropertyRow* InMapRow, int64 InIndex, const FPropertyChangedEventCallbacks& InCallbacks);
+        ~FMapEntryRow() override;
+        void Update() override;
+        void DrawHeader(float Offset) override;
+        void DrawEditor(bool bReadOnly) override;
+        float GetMeasuredHeaderTextWidth() const override;
+        bool HasExtraControls() const override { return true; }
+        float GetExtraControlsSectionWidth() override { return 22.0f; }
+        void DrawExtraControlsSection() override;
+
+    private:
+
+        // Copy the live key slot into PreviousKey; the last unique key to snap back to on a duplicate edit.
+        void CaptureKeySnapshot();
+
+        // True if this entry's key now equals another entry's key (which would silently collapse on reload).
+        bool KeyDuplicatesAnotherEntry() const;
+
+        FMapPropertyRow*                        MapRow = nullptr;
+        FMapProperty*                           Map = nullptr;          // == MapRow->MapProperty, cached for dtor-safe key destruct
+        void*                                   MapContainer = nullptr; // map instance, stable for its lifetime
+        void*                                   PreviousKey = nullptr;  // owned scratch: last unique key value
+        int64                                   EntryIndex = 0;
+        TSharedPtr<FPropertyHandle>             KeyHandle;
+        TSharedPtr<IPropertyTypeCustomization>  KeyCustomization;
+        TUniquePtr<FPropertyRow>                ValueRow;
+        EPropertyChangeOp                       KeyChangeOp = EPropertyChangeOp::None;
     };
 
     class FStructPropertyRow : public FPropertyRow

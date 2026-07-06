@@ -137,46 +137,49 @@ internal sealed class TypeLibrary
     }
 
     /// <summary>
-    /// Resolves a CLR type to its recursive serialized shape. Scalars/vectors/enums map directly;
-    /// arrays and lists become <see cref="EScriptKind.Array"/>; any other struct/class becomes a
-    /// <see cref="EScriptKind.NestedStruct"/> whose members recurse. Returns Nil for shapes we can't
-    /// serialize. <paramref name="Depth"/> + <paramref name="Visiting"/> guard against cycles.
+    /// Resolves a CLR type to its recursive serialized shape, expressed in the shared reflected taxonomy
+    /// <see cref="EPropertyType"/>. Scalars/enums map directly; arrays and lists become
+    /// <see cref="EPropertyType.Vector"/>; any other struct/class becomes a <see cref="EPropertyType.Struct"/>
+    /// whose members recurse. Returns None for shapes we can't serialize. <paramref name="Depth"/> +
+    /// <paramref name="Visiting"/> guard against cycles.
     /// </summary>
     public ScriptType ResolveType(Type Type, int Depth, HashSet<Type> Visiting, bool ForceInstanced = false)
     {
         if (Type == typeof(bool))
         {
-            return new ScriptType { Kind = EScriptKind.Bool, Clr = Type };
+            return new ScriptType { Kind = EPropertyType.Bool, Clr = Type };
         }
         if (Type == typeof(string))
         {
-            return new ScriptType { Kind = EScriptKind.String, Clr = Type };
+            return new ScriptType { Kind = EPropertyType.String, Clr = Type };
         }
+        // An entity handle is a uint32 tagged so the value codec round-trips it as an Entity and the native
+        // editor draws an entity picker; there is no dedicated reflected property type for it.
         if (Type == typeof(Entity))
         {
-            return new ScriptType { Kind = EScriptKind.Entity, Clr = Type };
+            return new ScriptType { Kind = EPropertyType.UInt32, Clr = Type, IsEntity = true };
         }
         if (Type == typeof(float))
         {
-            return new ScriptType { Kind = EScriptKind.F32, Clr = Type };
+            return new ScriptType { Kind = EPropertyType.Float, Clr = Type };
         }
         if (Type == typeof(double))
         {
-            return new ScriptType { Kind = EScriptKind.F64, Clr = Type };
+            return new ScriptType { Kind = EPropertyType.Double, Clr = Type };
         }
 
-        EScriptKind Numeric = MapNumeric(Type);
-        if (Numeric != EScriptKind.Nil)
+        EPropertyType Numeric = MapNumeric(Type);
+        if (Numeric != EPropertyType.None)
         {
             return new ScriptType { Kind = Numeric, Clr = Type };
         }
 
         if (Type.IsEnum)
         {
-            EScriptKind Underlying = MapNumeric(Enum.GetUnderlyingType(Type));
-            if (Underlying == EScriptKind.Nil)
+            EPropertyType Underlying = MapNumeric(Enum.GetUnderlyingType(Type));
+            if (Underlying == EPropertyType.None)
             {
-                return new ScriptType { Kind = EScriptKind.Nil, Clr = Type };
+                return new ScriptType { Kind = EPropertyType.None, Clr = Type };
             }
 
             string[] Names = Enum.GetNames(Type);
@@ -189,7 +192,7 @@ internal sealed class TypeLibrary
 
             return new ScriptType
             {
-                Kind = EScriptKind.Enum,
+                Kind = EPropertyType.Enum,
                 Clr = Type,
                 EnumName = Type.FullName ?? Type.Name,
                 EnumUnderlying = Underlying,
@@ -197,17 +200,18 @@ internal sealed class TypeLibrary
             };
         }
 
-        // Asset references round-trip as a path and draw as an asset picker filtered to the target class.
+        // Asset references round-trip as a path and draw as an asset picker filtered to the target class; they
+        // are the script layer's soft-object references (kind SoftObject, distinguished only by TargetClass).
         if (Type == typeof(FSoftObjectPath))
         {
-            return new ScriptType { Kind = EScriptKind.AssetRef, Clr = Type, TargetClass = "" };
+            return new ScriptType { Kind = EPropertyType.SoftObject, Clr = Type, TargetClass = "" };
         }
         if (Type.IsGenericType)
         {
             Type Definition = Type.GetGenericTypeDefinition();
             if (Definition == typeof(TSoftObjectPtr<>) || Definition == typeof(TObjectPtr<>))
             {
-                return new ScriptType { Kind = EScriptKind.AssetRef, Clr = Type, TargetClass = Type.GetGenericArguments()[0].Name };
+                return new ScriptType { Kind = EPropertyType.SoftObject, Clr = Type, TargetClass = Type.GetGenericArguments()[0].Name };
             }
         }
 
@@ -216,14 +220,28 @@ internal sealed class TypeLibrary
         if (TryGetElementType(Type, out Type? ElementType))
         {
             ScriptType Element = ResolveType(ElementType!, Depth + 1, Visiting, ForceInstanced);
-            if (Element.Kind == EScriptKind.Nil)
+            if (Element.Kind == EPropertyType.None)
             {
-                return new ScriptType { Kind = EScriptKind.Nil, Clr = Type };
+                return new ScriptType { Kind = EPropertyType.None, Clr = Type };
             }
-            return new ScriptType { Kind = EScriptKind.Array, Clr = Type, Element = Element };
+            return new ScriptType { Kind = EPropertyType.Vector, Clr = Type, Element = Element };
         }
 
-        // A C# mirror of a native reflected value struct, drawn by the native CStruct's own customization.
+        // A Dictionary<K,V> -> a reflected map. Key and value resolve recursively; [Instanced] applies to the
+        // value (polymorphic values), never the key. Dropped if either key or value isn't serializable.
+        if (TryGetMapTypes(Type, out Type? KeyClr, out Type? ValueClr))
+        {
+            ScriptType Key = ResolveType(KeyClr!, Depth + 1, Visiting);
+            ScriptType Value = ResolveType(ValueClr!, Depth + 1, Visiting, ForceInstanced);
+            if (Key.Kind == EPropertyType.None || Value.Kind == EPropertyType.None)
+            {
+                return new ScriptType { Kind = EPropertyType.None, Clr = Type };
+            }
+            return new ScriptType { Kind = EPropertyType.Map, Clr = Type, KeyType = Key, ValueType = Value };
+        }
+
+        // A C# mirror of a native reflected value struct, drawn by the native CStruct's own customization. Both
+        // native and script structs are kind Struct; a non-null NativeName is what marks it as the native one.
         string? NativeName = Type.GetCustomAttribute<NativeTypeAttribute>()?.Name
                            ?? Type.GetCustomAttribute<NativeLayoutAttribute>()?.NativeType;
         if (NativeName != null && Type.IsValueType && Depth < 16 && Visiting.Add(Type))
@@ -231,7 +249,7 @@ internal sealed class TypeLibrary
             try
             {
                 List<ScriptProperty> Fields = BuildNativeMembers(Type, Depth, Visiting);
-                return new ScriptType { Kind = EScriptKind.NativeStruct, Clr = Type, NativeName = NativeName, Fields = Fields };
+                return new ScriptType { Kind = EPropertyType.Struct, Clr = Type, NativeName = NativeName, Fields = Fields };
             }
             finally
             {
@@ -248,16 +266,17 @@ internal sealed class TypeLibrary
             {
                 return new ScriptType
                 {
-                    Kind = EScriptKind.Instance,
+                    Kind = EPropertyType.InstancedStruct,
                     Clr = Type,
                     BaseName = Type.Name,
                     Candidates = Candidates,
                 };
             }
-            return new ScriptType { Kind = EScriptKind.Nil, Clr = Type };
+            return new ScriptType { Kind = EPropertyType.None, Clr = Type };
         }
 
-        // A C#-defined struct or class; its [Property] members are minted into a sub-CScriptStruct.
+        // A C#-defined struct or class; its [Property] members are minted into a sub-CScriptStruct. It is a
+        // Struct with no NativeName (the marker that separates it from a native-struct mirror above).
         if ((Type.IsClass || (Type.IsValueType && !Type.IsPrimitive)) && Depth < 16 && Visiting.Add(Type))
         {
             try
@@ -265,7 +284,7 @@ internal sealed class TypeLibrary
                 List<ScriptProperty> Fields = BuildMembers(Type, Depth, Visiting);
                 if (Fields.Count > 0)
                 {
-                    return new ScriptType { Kind = EScriptKind.ScriptStruct, Clr = Type, Fields = Fields };
+                    return new ScriptType { Kind = EPropertyType.Struct, Clr = Type, Fields = Fields };
                 }
             }
             finally
@@ -274,7 +293,7 @@ internal sealed class TypeLibrary
             }
         }
 
-        return new ScriptType { Kind = EScriptKind.Nil, Clr = Type };
+        return new ScriptType { Kind = EPropertyType.None, Clr = Type };
     }
 
     /// <summary>The concrete, default-constructible types assignable to Base (and Base itself if concrete),
@@ -318,17 +337,17 @@ internal sealed class TypeLibrary
     // The round-trip key for an instanced candidate; must match on both serialize and deserialize.
     private static string StableTypeName(Type Type) => Type.FullName ?? Type.Name;
 
-    private static EScriptKind MapNumeric(Type Type)
+    private static EPropertyType MapNumeric(Type Type)
     {
-        if (Type == typeof(sbyte))  return EScriptKind.I8;
-        if (Type == typeof(short))  return EScriptKind.I16;
-        if (Type == typeof(int))    return EScriptKind.I32;
-        if (Type == typeof(long))   return EScriptKind.I64;
-        if (Type == typeof(byte))   return EScriptKind.U8;
-        if (Type == typeof(ushort)) return EScriptKind.U16;
-        if (Type == typeof(uint))   return EScriptKind.U32;
-        if (Type == typeof(ulong))  return EScriptKind.U64;
-        return EScriptKind.Nil;
+        if (Type == typeof(sbyte))  return EPropertyType.Int8;
+        if (Type == typeof(short))  return EPropertyType.Int16;
+        if (Type == typeof(int))    return EPropertyType.Int32;
+        if (Type == typeof(long))   return EPropertyType.Int64;
+        if (Type == typeof(byte))   return EPropertyType.UInt8;
+        if (Type == typeof(ushort)) return EPropertyType.UInt16;
+        if (Type == typeof(uint))   return EPropertyType.UInt32;
+        if (Type == typeof(ulong))  return EPropertyType.UInt64;
+        return EPropertyType.None;
     }
 
     /// <summary>Builds the serializable members of a C#-defined type, every field or property carrying [Property] and not [Hide].</summary>
@@ -347,7 +366,7 @@ internal sealed class TypeLibrary
             }
 
             ScriptType Resolved = ResolveType(Field.FieldType, Depth + 1, Visiting, Field.GetCustomAttribute<InstancedAttribute>() != null);
-            if (Resolved.Kind == EScriptKind.Nil)
+            if (Resolved.Kind == EPropertyType.None)
             {
                 continue;
             }
@@ -378,7 +397,7 @@ internal sealed class TypeLibrary
             }
 
             ScriptType Resolved = ResolveType(Property.PropertyType, Depth + 1, Visiting, Property.GetCustomAttribute<InstancedAttribute>() != null);
-            if (Resolved.Kind == EScriptKind.Nil)
+            if (Resolved.Kind == EPropertyType.None)
             {
                 continue;
             }
@@ -421,7 +440,7 @@ internal sealed class TypeLibrary
         foreach (FieldInfo Field in Type.GetFields(Flags))
         {
             ScriptType Resolved = ResolveType(Field.FieldType, Depth + 1, Visiting);
-            if (Resolved.Kind == EScriptKind.Nil)
+            if (Resolved.Kind == EPropertyType.None)
             {
                 continue;
             }
@@ -441,7 +460,7 @@ internal sealed class TypeLibrary
                 continue;
             }
             ScriptType Resolved = ResolveType(Property.PropertyType, Depth + 1, Visiting);
-            if (Resolved.Kind == EScriptKind.Nil)
+            if (Resolved.Kind == EPropertyType.None)
             {
                 continue;
             }
@@ -470,6 +489,20 @@ internal sealed class TypeLibrary
             return true;
         }
         ElementType = null;
+        return false;
+    }
+
+    private static bool TryGetMapTypes(Type Type, out Type? KeyType, out Type? ValueType)
+    {
+        if (Type.IsGenericType && Type.GetGenericTypeDefinition() == typeof(Dictionary<,>))
+        {
+            Type[] Args = Type.GetGenericArguments();
+            KeyType = Args[0];
+            ValueType = Args[1];
+            return true;
+        }
+        KeyType = null;
+        ValueType = null;
         return false;
     }
 }

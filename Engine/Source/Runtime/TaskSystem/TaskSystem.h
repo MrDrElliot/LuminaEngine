@@ -24,6 +24,11 @@ namespace Lumina
             uint32 End;
             uint32 Thread;
         };
+
+        // Worker-balanced chunk count for splitting [0, Num) with the given grain.
+        RUNTIME_API uint32 ComputeChunkCount(uint32 Num, uint32 MinRange);
+
+        inline constexpr uint32 kMaxChunks = 256;
     }
 
     class FTaskSystem

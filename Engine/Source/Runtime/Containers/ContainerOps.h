@@ -45,4 +45,88 @@ namespace Lumina
         };
         return &Ops;
     }
+
+    // Type-erased op table for a THashMap<K,V>, the associative analogue of FVectorOps; one static table per
+    // (K,V) via GetMapOps<K,V>(). Not index-addressable, so no Data/GetAt/Swap/Resize. Each captureless lambda
+    // casts void* back to concrete K/V, so hashing/equality run on the real types.
+    struct FMapOps
+    {
+        SIZE_T (*Size)(const void* Map);
+        // Insert-or-assign; ValuePtr null => value default-constructed. Returns the stored value slot.
+        void*  (*Insert)(void* Map, const void* KeyPtr, const void* ValuePtr);
+        void*  (*Find)(void* Map, const void* KeyPtr);          // stored value for KeyPtr, or null
+        bool   (*RemoveByKey)(void* Map, const void* KeyPtr);
+        void   (*Clear)(void* Map);
+        void   (*Reserve)(void* Map, SIZE_T Count);
+        void   (*ForEach)(const void* Map, void (*Visitor)(const void* KeyPtr, void* ValuePtr, void* UserData), void* UserData);
+        // Placement construct/destruct a scratch key (deserialize path). Map is passed so a type-erased runtime
+        // map can reach its key element description; the compile-time map ignores it.
+        void   (*ConstructKey)(void* Map, void* Dst);
+        void   (*DestructKey)(void* Map, void* Dst);
+        // Key/value slot for the pair at iteration index (null out-params if out of range). Iteration order is
+        // stable between mutations, so an editor can address entries by index. O(index) here, O(1) for the script map.
+        void   (*At)(void* Map, SIZE_T Index, const void** OutKey, void** OutValue);
+        uint32 KeySize;
+        uint32 ValueSize;
+    };
+
+    template <typename K, typename V>
+    const FMapOps* GetMapOps()
+    {
+        using MapT = THashMap<K, V>;
+        static const FMapOps Ops =
+        {
+            [](const void* M) -> SIZE_T { return static_cast<const MapT*>(M)->size(); },
+            [](void* M, const void* KP, const void* VP) -> void*
+            {
+                MapT* Map = static_cast<MapT*>(M);
+                V& Slot = (*Map)[*static_cast<const K*>(KP)];  // operator[] default-constructs on insert
+                if (VP) { Slot = *static_cast<const V*>(VP); }
+                return &Slot;
+            },
+            [](void* M, const void* KP) -> void*
+            {
+                MapT* Map = static_cast<MapT*>(M);
+                auto It = Map->find(*static_cast<const K*>(KP));
+                return It != Map->end() ? &It->second : nullptr;
+            },
+            [](void* M, const void* KP) -> bool
+            {
+                return static_cast<MapT*>(M)->erase(*static_cast<const K*>(KP)) != 0;
+            },
+            [](void* M) { static_cast<MapT*>(M)->clear(); },
+            [](void* M, SIZE_T N) { static_cast<MapT*>(M)->reserve(N); },
+            [](const void* M, void (*Visitor)(const void*, void*, void*), void* UserData)
+            {
+                // value_type is pair<const K, V>; hand out &first (key) and a mutable &second (value). ForEach is
+                // only used on the read side (serialize-out / copy-out / compare), so the mutable value is never
+                // written through here -- the const_cast just erases the pair's constness for the void* signature.
+                for (const auto& Pair : *static_cast<const MapT*>(M))
+                {
+                    Visitor(&Pair.first, const_cast<V*>(&Pair.second), UserData);
+                }
+            },
+            [](void*, void* Dst) { new (Dst) K(); },
+            [](void*, void* Dst) { static_cast<K*>(Dst)->~K(); },
+            [](void* M, SIZE_T Index, const void** OutKey, void** OutValue)
+            {
+                MapT* Map = static_cast<MapT*>(M);
+                SIZE_T i = 0;
+                for (auto& Pair : *Map)
+                {
+                    if (i++ == Index)
+                    {
+                        if (OutKey)   { *OutKey = &Pair.first; }
+                        if (OutValue) { *OutValue = &Pair.second; }
+                        return;
+                    }
+                }
+                if (OutKey)   { *OutKey = nullptr; }
+                if (OutValue) { *OutValue = nullptr; }
+            },
+            static_cast<uint32>(sizeof(K)),
+            static_cast<uint32>(sizeof(V)),
+        };
+        return &Ops;
+    }
 }

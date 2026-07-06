@@ -1,4 +1,5 @@
 #pragma once
+#include "Common.slang"
 
 // Pure sky evaluator shared by the fullscreen sky and the IBL cubemap capture; no global bindings.
 // Ray is world-space, +Y up; SunDir points from surface to sun, so SunDir.y is elevation in [-1, 1].
@@ -24,7 +25,6 @@ struct FEnvironmentParams
     float4 GalaxyParams;      // x=intensity, y=tilt(rad)
 };
 
-static const float kPI         = 3.14159265358979;
 static const float kSunBaseAngle  = radians(0.53);
 static const float kMoonBaseAngle = radians(0.50);
 
@@ -41,14 +41,14 @@ static const float  kOzoneWidth    = 15e3;
 
 float Sky_RayleighPhase(float CosTheta)
 {
-    return (3.0 / (16.0 * kPI)) * (1.0 + CosTheta * CosTheta);
+    return (3.0 / (16.0 * PI)) * (1.0 + CosTheta * CosTheta);
 }
 
 float Sky_MiePhase(float CosTheta, float G)
 {
     float G2    = G * G;
     float Denom = 1.0 + G2 - 2.0 * G * CosTheta;
-    return (1.0 / (4.0 * kPI)) * (1.0 - G2) / max(Denom * sqrt(max(Denom, 1e-6)), 1e-6);
+    return (1.0 / (4.0 * PI)) * (1.0 - G2) / max(Denom * sqrt(max(Denom, 1e-6)), 1e-6);
 }
 
 float2 Sky_RaySphereIntersect(float3 RayOrigin, float3 RayDir, float Radius)
@@ -209,8 +209,8 @@ float3 Sky_Atmosphere(float3 RayOrigin, float3 RayDir, float3 SunDir, float3 Sun
     const float kMsStrength = 0.9;
     const float kMsTint     = 0.15;
     float3 MsEnergy     = kRayleighCoeff * SumR;
-    float  MsGrey       = dot(MsEnergy, float3(0.2126, 0.7152, 0.0722));
-    float3 MultiScatter = lerp(float3(MsGrey), MsEnergy, kMsTint) * kMsStrength / kPI;
+    float  MsGrey       = Luminance(MsEnergy);
+    float3 MultiScatter = lerp(float3(MsGrey), MsEnergy, kMsTint) * kMsStrength / PI;
 
     return SunColor * (Rayleigh + Mie + MultiScatter);
 }

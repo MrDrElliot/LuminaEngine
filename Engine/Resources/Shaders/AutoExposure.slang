@@ -32,7 +32,7 @@ void ComputeMain(uint3 LocalID : SV_GroupThreadID)
     float3 Color = gTextures2D[Pass().HDRIndex].SampleLevel(
         gSamplers[SAMPLER_LINEAR_CLAMP], UV, 0.0).rgb;
 
-    float Luma = max(dot(Color, float3(0.2126, 0.7152, 0.0722)), 1e-5);
+    float Luma = max(Luminance(Color), 1e-5);
     gLogLum[Local] = log(Luma);
 
     GroupMemoryBarrierWithGroupSync();

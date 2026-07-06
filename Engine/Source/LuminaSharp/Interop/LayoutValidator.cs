@@ -16,6 +16,14 @@ internal static unsafe partial class LayoutValidator
     [NativeCall("LuminaSharp_Layout_GetSize")]
     private static partial int NativeSize(string Name);
 
+    /// <summary>Native (int)EPropertyTypeFlags for a plain enumerator name ("Int8".."InstancedStruct"), or -1.</summary>
+    [NativeCall("LuminaSharp_PropertyType_Value")]
+    private static partial int PropertyTypeNativeValue(string Name);
+
+    /// <summary>Native EPropertyTypeFlags::Count (the member total, including None).</summary>
+    [NativeCall("LuminaSharp_PropertyType_Count")]
+    private static partial int PropertyTypeNativeCount();
+
     private static readonly MethodInfo SizeOf =
         typeof(Unsafe).GetMethod(nameof(Unsafe.SizeOf), BindingFlags.Public | BindingFlags.Static)!;
 
@@ -77,13 +85,31 @@ internal static unsafe partial class LayoutValidator
             }
         }
 
+        // The reflected EPropertyType enum is a hand-written mirror of native EPropertyTypeFlags; the script
+        // schema wire sends its values as kind bytes, so a drift would silently misread every property. Check
+        // each enumerator's integer value against native and the total member count.
+        Array PropertyTypes = Enum.GetValues(typeof(EPropertyType));
+        foreach (EPropertyType Value in PropertyTypes)
+        {
+            int NativeValue = PropertyTypeNativeValue(Value.ToString());
+            if (NativeValue != (int)Value)
+            {
+                Failures.Append($"\n  - EPropertyType.{Value} is {(int)Value} in C# but native reports {NativeValue}.");
+            }
+        }
+        int NativeTypeCount = PropertyTypeNativeCount();
+        if (NativeTypeCount != PropertyTypes.Length)
+        {
+            Failures.Append($"\n  - EPropertyType has {PropertyTypes.Length} members in C# but native EPropertyTypeFlags has {NativeTypeCount}.");
+        }
+
         if (Failures.Length > 0)
         {
-            Debug.LogError($"FATAL: C#/C++ interop layout validation FAILED, refusing to start C# (a mismatched blittable layout would corrupt memory). Fix the C# mirror or the native type:{Failures}");
+            Debug.LogError($"FATAL: C#/C++ interop layout validation FAILED, refusing to start C# (a mismatched blittable layout or enum would corrupt memory). Fix the C# mirror or the native type:{Failures}");
             return false;
         }
 
-        Debug.Log($"Interop layout validated: {Validated} native mirrors match byte-for-byte.");
+        Debug.Log($"Interop layout validated: {Validated} native mirrors + {PropertyTypes.Length} EPropertyType members match native.");
         return true;
     }
 }

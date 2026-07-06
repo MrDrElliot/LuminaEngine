@@ -91,8 +91,9 @@ namespace Lumina
             RHI::CmdBarrier(CL, RHI::EStageFlags::AllCommands, RHI::EStageFlags::Transfer);
             RHI::CmdCopyTextureToMemory(CL, RenderTarget, RHI::FTextureSlice{}, Readback, SourceWidth);
             RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
-            RHI::Submit(CL);
-            RHI::WaitDeviceIdle();
+            // Wait only on this copy, not the whole device (see RHI::SubmitAndWait): WaitDeviceIdle from inside
+            // a render-thread command wedges the cooperative drain and hangs later flushes.
+            RHI::SubmitAndWait(CL);
             RHI::ResetCommandList(CL);
         };
 

@@ -113,6 +113,13 @@ namespace Lumina::Jobs
     // Make a previously parked fiber runnable again. Callable from any thread.
     RUNTIME_API void ResumeFiber(FFiberHandle Handle);
 
+    // Mark the calling THREAD as running a serial pump that must never yield to the scheduler (the
+    // render drain). While set, any fiber park on this thread logs a loud error naming the guard:
+    // the park strands the pump until the wait resolves, and the fiber can resume on a different
+    // thread, breaking the pump's thread_local state. Diagnostic tripwire only -- the park still
+    // proceeds. Pass nullptr to clear.
+    RUNTIME_API void SetThreadNoParkGuard(const char* GuardName);
+
     // Run one queued job inline if one is available; returns true if it ran one. The assist primitive
     // for external-thread (non-fiber) wait loops in fiber-aware sync objects, running queued work
     // while spinning keeps the system deadlock-free when the awaited signal depends on other jobs.

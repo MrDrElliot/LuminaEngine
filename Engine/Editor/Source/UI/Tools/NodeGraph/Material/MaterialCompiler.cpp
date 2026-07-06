@@ -1034,7 +1034,7 @@ namespace Lumina
 
 	bool FMaterialCompiler::RequirePixelStage(CMaterialGraphNode* Node, const FString& NodeKindName)
 	{
-		if (CurrentStage == EMaterialShaderStage::Pixel)
+		if (CurrentStage == EMaterialCompileStage::Pixel)
 		{
 			return true;
 		}

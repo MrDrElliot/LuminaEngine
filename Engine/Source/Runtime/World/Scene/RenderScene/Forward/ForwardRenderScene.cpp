@@ -841,6 +841,11 @@ namespace Lumina
                 }
 
                 {
+                    SCENE_GPU_SCOPE(CL, "Additive Translucent");
+                    AdditiveTranslucentPass(CL);
+                }
+
+                {
                     SCENE_GPU_SCOPE(CL, "Froxel Fog Inject");
                     FroxelInjectPass(CL);
                 }
@@ -1010,6 +1015,7 @@ namespace Lumina
         WaterPass(CL);
         TransparentPass(CL);
         OITResolvePass(CL);
+        AdditiveTranslucentPass(CL);
         FroxelInjectPass(CL);
         FroxelIntegratePass(CL);
         FroxelApplyPass(CL);
@@ -7577,6 +7583,12 @@ namespace Lumina
         const auto& TranslucentDrawList = Frame.Geometry.TranslucentDrawList;
         const uint32 NumDrawsPerView    = Frame.Views.NumDrawsPerView;
         const uint32 ViewBase           = CurrentCameraEarlyView * NumDrawsPerView;
+        // Camera-LATE view slice: meshlets the stale phase-0 HZB wrongly occluded, re-emitted by the
+        // phase-1 cull (a meshlet is in early XOR late, never both). The VisBuffer rasters both views;
+        // transparency must too, or deferred glass meshlets vanish for a frame and pop back -- with a
+        // moving camera the defer set changes every frame, which reads as heavy flicker. ~0u = no late
+        // view this frame (scene captures).
+        const uint32 LateViewBase       = (CurrentCameraLateView != ~0u) ? CurrentCameraLateView * NumDrawsPerView : ~0u;
 
         if (TranslucentDrawList.empty())
         {
@@ -7623,7 +7635,13 @@ namespace Lumina
         DepthDesc.DepthTest = RHI::EOp::GreaterEqual;
         RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(DepthDesc));
 
-        // WBOIT: accum adds, revealage multiplies in (1 - coverage).
+        // WBOIT: accum adds, revealage multiplies in (1 - coverage). Both are commutative, so the
+        // atomic (frame-varying) instance order from the cull cannot change the result. Additive
+        // batches are EXCLUDED: their materials compile the opaque-variant shader (Color+Picker),
+        // whose outputs misalign against these three attachments (the Picker uint landed in the R16F
+        // revealage with blending disabled, stomping the coverage product at an order-dependent point
+        // in the per-pixel blend sequence -- overlap pixels strobed frame to frame). They composite
+        // additively onto HDR after the resolve instead (AdditiveTranslucentPass).
         RHI::FBlendDesc AccumBlend;
         AccumBlend.bBlendEnable   = true;
         AccumBlend.SrcColorFactor = RHI::EFactor::One;
@@ -7634,23 +7652,20 @@ namespace Lumina
         RevealBlend.SrcColorFactor = RHI::EFactor::Zero;
         RevealBlend.DstColorFactor = RHI::EFactor::OneMinusSrcColor;
 
-        RHI::FBlendDesc AdditiveBlend;
-        AdditiveBlend.bBlendEnable   = true;
-        AdditiveBlend.SrcColorFactor = RHI::EFactor::SrcAlpha;
-        AdditiveBlend.DstColorFactor = RHI::EFactor::One;
-        AdditiveBlend.SrcAlphaFactor = RHI::EFactor::One;
-        AdditiveBlend.DstAlphaFactor = RHI::EFactor::One;
-
         for (uint32 Idx : TranslucentDrawList)
         {
             const FMeshDrawCommand& Batch = DrawCommands[Idx];
+            if (Batch.bAdditive)
+            {
+                continue;
+            }
 
             FGraphicsPipelineKey Key;
             Key.VS          = Batch.VertexShader;
             Key.PS          = Batch.PixelShader;
             Key.DepthFormat = EFormat::D32;
-            Key.ColorTargets.push_back({ Accum.Desc.Format, Batch.bAdditive ? AdditiveBlend : AccumBlend });
-            Key.ColorTargets.push_back({ Revealage.Desc.Format, Batch.bAdditive ? RHI::FBlendDesc{} : RevealBlend });
+            Key.ColorTargets.push_back({ Accum.Desc.Format, AccumBlend });
+            Key.ColorTargets.push_back({ Revealage.Desc.Format, RevealBlend });
             #if USING(WITH_EDITOR)
             Key.ColorTargets.push_back({ Picker.Desc.Format, {} });
             #endif
@@ -7659,6 +7674,13 @@ namespace Lumina
             RHI::CmdDrawIndirect(CL, MakeArgs(),
                 GetIndirectArgs().Ptr, (ViewBase + Batch.IndirectDrawOffset) * sizeof(RHI::FDrawIndirectArguments),
                 Batch.DrawCount, sizeof(RHI::FDrawIndirectArguments));
+
+            if (LateViewBase != ~0u)
+            {
+                RHI::CmdDrawIndirect(CL, MakeArgs(),
+                    GetIndirectArgs().Ptr, (LateViewBase + Batch.IndirectDrawOffset) * sizeof(RHI::FDrawIndirectArguments),
+                    Batch.DrawCount, sizeof(RHI::FDrawIndirectArguments));
+            }
         }
 
         RHI::CmdEndRenderPass(CL);
@@ -7729,6 +7751,107 @@ namespace Lumina
         PC.RevealageIndex = (uint32)Revealage.GetResourceID();
 
         RHI::CmdDraw(CL, MakeArgs(PC), 3, 1, 0, 0);
+        RHI::CmdEndRenderPass(CL);
+        Barriers::RasterToRead(CL);
+    }
+
+    void FForwardRenderScene::AdditiveTranslucentPass(RHI::FCmdListH CL)
+    {
+        const FFrameData& Frame = *RenderFrame;
+        const auto& DrawCommands        = Frame.Geometry.DrawCommands;
+        const auto& TranslucentDrawList = Frame.Geometry.TranslucentDrawList;
+        const uint32 NumDrawsPerView    = Frame.Views.NumDrawsPerView;
+        const uint32 ViewBase           = CurrentCameraEarlyView * NumDrawsPerView;
+        const uint32 LateViewBase       = (CurrentCameraLateView != ~0u) ? CurrentCameraLateView * NumDrawsPerView : ~0u;
+
+        bool bHasAdditive = false;
+        for (uint32 Idx : TranslucentDrawList)
+        {
+            if (DrawCommands[Idx].bAdditive)
+            {
+                bHasAdditive = true;
+                break;
+            }
+        }
+        if (!bHasAdditive)
+        {
+            return;
+        }
+
+        LUMINA_PROFILE_SECTION_COLORED("Additive Translucent Pass", tracy::Color::CadetBlue3);
+
+        // Additive surfaces add light without occluding, so they don't belong in the WBOIT average at
+        // all: pure addition is order-independent by itself, and their materials compile the
+        // opaque-variant shader (Color + Picker), which matches these attachments exactly. Runs after
+        // the OIT resolve so they layer on top of the composited translucency, like the particle pass.
+        const FSceneImage& HDR = GetNamedImage(ENamedImage::HDR);
+
+        RHI::FRenderAttachment Colors[2];
+        uint32 NumColors = 1;
+        Colors[0].Texture = HDR.Texture;
+        Colors[0].LoadOp  = RHI::ELoadOp::Load;
+        Colors[0].StoreOp = RHI::EStoreOp::Store;
+        #if USING(WITH_EDITOR)
+        const FSceneImage& Picker = GetNamedImage(ENamedImage::Picker);
+        Colors[1].Texture = Picker.Texture;
+        Colors[1].LoadOp  = RHI::ELoadOp::Load;
+        Colors[1].StoreOp = RHI::EStoreOp::Store;
+        NumColors = 2;
+        #endif
+
+        RHI::FRenderPassDesc Pass;
+        Pass.ColorAttachments        = TSpan<const RHI::FRenderAttachment>(Colors, NumColors);
+        Pass.DepthAttachment.Texture = GetNamedImage(ENamedImage::DepthAttachment).Texture;
+        Pass.DepthAttachment.LoadOp  = RHI::ELoadOp::Load;
+        Pass.DepthAttachment.StoreOp = RHI::EStoreOp::Store;
+        Pass.RenderArea              = HDR.GetExtent();
+
+        RHI::CmdBeginRenderPass(CL, Pass);
+        SetViewportScissor(CL, HDR.GetExtent());
+        RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
+
+        RHI::FDepthStencilDesc DepthDesc;
+        DepthDesc.DepthMode = RHI::EDepthFlags::Read;
+        DepthDesc.DepthTest = RHI::EOp::GreaterEqual;
+        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(DepthDesc));
+
+        RHI::FBlendDesc AdditiveBlend;
+        AdditiveBlend.bBlendEnable   = true;
+        AdditiveBlend.SrcColorFactor = RHI::EFactor::SrcAlpha;
+        AdditiveBlend.DstColorFactor = RHI::EFactor::One;
+        AdditiveBlend.SrcAlphaFactor = RHI::EFactor::One;
+        AdditiveBlend.DstAlphaFactor = RHI::EFactor::One;
+
+        for (uint32 Idx : TranslucentDrawList)
+        {
+            const FMeshDrawCommand& Batch = DrawCommands[Idx];
+            if (!Batch.bAdditive)
+            {
+                continue;
+            }
+
+            FGraphicsPipelineKey Key;
+            Key.VS          = Batch.VertexShader;
+            Key.PS          = Batch.PixelShader;
+            Key.DepthFormat = EFormat::D32;
+            Key.ColorTargets.push_back({ HDR.Desc.Format, AdditiveBlend });
+            #if USING(WITH_EDITOR)
+            Key.ColorTargets.push_back({ Picker.Desc.Format, {} });
+            #endif
+            RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
+
+            RHI::CmdDrawIndirect(CL, MakeArgs(),
+                GetIndirectArgs().Ptr, (ViewBase + Batch.IndirectDrawOffset) * sizeof(RHI::FDrawIndirectArguments),
+                Batch.DrawCount, sizeof(RHI::FDrawIndirectArguments));
+
+            if (LateViewBase != ~0u)
+            {
+                RHI::CmdDrawIndirect(CL, MakeArgs(),
+                    GetIndirectArgs().Ptr, (LateViewBase + Batch.IndirectDrawOffset) * sizeof(RHI::FDrawIndirectArguments),
+                    Batch.DrawCount, sizeof(RHI::FDrawIndirectArguments));
+            }
+        }
+
         RHI::CmdEndRenderPass(CL);
         Barriers::RasterToRead(CL);
     }

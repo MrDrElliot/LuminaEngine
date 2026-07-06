@@ -6,6 +6,7 @@
 namespace Lumina
 {
     class FArrayProperty;
+    class FMapProperty;
 
     class RUNTIME_API FPropertyHandle
     {
@@ -18,6 +19,10 @@ namespace Lumina
          *  so it survives reallocation), InProperty is the element property. */
         FPropertyHandle(FArrayProperty* InOwnerArray, void* InArrayPtr, void* InDefaultArrayPtr, FProperty* InElementProperty, int64 InIndex);
 
+        /** Map-entry handle; ContainerPtr is the map instance, resolved by iteration Index each access. bInIsKey
+         *  selects the key or value slot of that pair; InProperty is the key or value property accordingly. */
+        FPropertyHandle(FMapProperty* InOwnerMap, void* InMapPtr, void* InDefaultMapPtr, FProperty* InProperty, int64 InIndex, bool bInIsKey);
+
         /** Resolves to the property's value (the member itself, or the live array element). Null container yields null. */
         void* GetValuePtr() const;
 
@@ -28,7 +33,7 @@ namespace Lumina
         template<typename T>
         void GetValue(T* OutValue) const
         {
-            if (OwnerArray != nullptr)
+            if (OwnerArray != nullptr || OwnerMap != nullptr)
             {
                 if (const void* Ptr = GetValuePtr())
                 {
@@ -44,7 +49,7 @@ namespace Lumina
         template<typename T>
         void SetValue(const T& InValue) const
         {
-            if (OwnerArray != nullptr)
+            if (OwnerArray != nullptr || OwnerMap != nullptr)
             {
                 if (void* Ptr = GetValuePtr())
                 {
@@ -72,6 +77,11 @@ namespace Lumina
 
         /** Non-null marks this as an array element; ContainerPtr is then the array instance. */
         FArrayProperty* OwnerArray = nullptr;
+
+        /** Non-null marks this as a map entry; ContainerPtr is then the map instance, addressed by Index. */
+        FMapProperty* OwnerMap = nullptr;
+        /** For a map entry, true resolves the key slot, false the value slot. */
+        bool bMapKey = false;
     };
 
     enum class RUNTIME_API EPropertyChangeOp : uint8

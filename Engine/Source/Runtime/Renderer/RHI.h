@@ -534,6 +534,12 @@ namespace Lumina::RHI
     RUNTIME_API void        Submit(EQueueType Queue, TSpan<const FCmdListH> CommandLists, TSpan<const FSemaphoreInfo> Waits = {}, TSpan<const FSemaphoreInfo> Signals = {});
     RUNTIME_API void        Submit(FCmdListH CommandList, EQueueType Type = EQueueType::Default);
 
+    // Submit CommandList on the graphics queue and block until ONLY this submission has completed (waits on
+    // its own frame-timeline value), NOT the whole device. Use this for one-off captures instead of
+    // Submit()+WaitDeviceIdle(): a WaitDeviceIdle issued from inside a render-thread command blocks on
+    // unrelated in-flight frame work while holding the cooperative drain, which hangs the next FlushRenderingCommands.
+    RUNTIME_API void        SubmitAndWait(FCmdListH CommandList);
+
 
     RUNTIME_API void        CmdMemcpy(FCmdListH CL, GPUPtr Dest, GPUPtr Source, size_t Size);
     RUNTIME_API void        CmdMemset(FCmdListH CL, GPUPtr Dest, uint64 Size, uint32 Value);

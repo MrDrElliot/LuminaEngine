@@ -13,6 +13,7 @@
 #include "Reflector/ReflectionCore/ReflectionMacro.h"
 #include "Reflector/Types/Functions/ReflectedFunction.h"
 #include "Reflector/Types/Properties/ReflectedArrayProperty.h"
+#include "Reflector/Types/Properties/ReflectedMapProperty.h"
 #include "Reflector/Types/Properties/ReflectedClassProperty.h"
 #include "Reflector/Types/Properties/ReflectedDelegateProperty.h"
 #include "Reflector/Types/Properties/ReflectedEnumProperty.h"
@@ -502,6 +503,56 @@ namespace Lumina::Reflection::Visitor
 			NewProperty = eastl::move(ArrayProperty);
 
 			FieldProperty->bInner = true; // This property "belongs" to the array.
+		}
+		break;
+		case EPropertyTypeFlags::Map:
+		{
+			auto MapProperty = CreateProperty<FReflectedMapProperty>(FieldInfo);
+
+			// THashMap<K, V, Hash, Equal, Alloc>: args 0 and 1 are the key and value; the rest are ignored.
+			if (clang_Type_getNumTemplateArguments(FieldInfo.Type) < 2)
+			{
+				LRT_ERROR(FieldInfo.OwningCursor, Reflection::EDiagId::ArrayElementUnknown,
+					"Map property '%s' is missing its key/value template arguments.", FieldInfo.Name.c_str());
+				return false;
+			}
+
+			const CXType KeyType   = clang_Type_getTemplateArgumentAsType(FieldInfo.Type, 0);
+			const CXType ValueType = clang_Type_getTemplateArgumentAsType(FieldInfo.Type, 1);
+
+			eastl::optional<FFieldInfo> KeyInfo   = CreateSubFieldInfo(Context, KeyType, FieldInfo);
+			eastl::optional<FFieldInfo> ValueInfo = CreateSubFieldInfo(Context, ValueType, FieldInfo);
+			if (!KeyInfo.has_value() || !ValueInfo.has_value())
+			{
+				return false;
+			}
+
+			KeyInfo->Name = FieldInfo.Name + "_KeyInner";
+			KeyInfo->PropertyFlags |= EPropertyFlags::SubField;
+			ValueInfo->Name = FieldInfo.Name + "_ValueInner";
+			ValueInfo->PropertyFlags |= EPropertyFlags::SubField;
+
+			// Push the VALUE inner first, then the KEY inner, so Struct->Props ends up [Value, Key, Map]. The
+			// runtime constructs the map (ReadMore = 2) and walks backward, attaching Key then Value -- matching
+			// FMapProperty::AddProperty (Key first, Value second). This order is the ABI contract; do not swap.
+			FReflectedProperty* ValueProperty = nullptr;
+			CreatePropertyForType(Context, Struct, ValueProperty, ValueInfo.value());
+			FReflectedProperty* KeyProperty = nullptr;
+			CreatePropertyForType(Context, Struct, KeyProperty, KeyInfo.value());
+			if (KeyProperty == nullptr || ValueProperty == nullptr)
+			{
+				LRT_ERROR(FieldInfo.OwningCursor, Reflection::EDiagId::ArrayElementUnknown,
+					"Map property '%s' has a key or value type ('%s' / '%s') which is not reflectable.",
+					FieldInfo.Name.c_str(), KeyInfo->TypeName.c_str(), ValueInfo->TypeName.c_str());
+				return false;
+			}
+
+			MapProperty->KeyTypeName   = ClangUtils::GetSafeTypeAsString(ClangUtils::GetQualType(KeyType));
+			MapProperty->ValueTypeName = ClangUtils::GetSafeTypeAsString(ClangUtils::GetQualType(ValueType));
+			NewProperty = eastl::move(MapProperty);
+
+			KeyProperty->bInner = true;   // Key "belongs" to the map.
+			ValueProperty->bInner = true; // Value "belongs" to the map.
 		}
 		break;
 		case EPropertyTypeFlags::Optional:

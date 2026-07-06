@@ -2,6 +2,7 @@
 
 #include "TaskSystem/TaskSystem.h"
 #include "TaskSystem/TaskGraph.h"
+#include "TaskSystem/Task.h"
 #include "TaskSystem/Scheduler/JobScheduler.h"
 #include "TaskSystem/FiberSync.h"
 #include "TaskSystem/Future.h"
@@ -658,5 +659,146 @@ TEST(Future, WhenAll_CompletesAfterAll)
     for (int i = 0; i < 16; ++i)
     {
         EXPECT_TRUE(Futures[i].IsReady()) << "future " << i << " not ready after WhenAll";
+    }
+}
+
+namespace
+{
+    TTask<int> CoConst()
+    {
+        co_return 42;
+    }
+
+    TTask<int> CoAdd(int A, int B)
+    {
+        co_return A + B;
+    }
+
+    // Deep recursive chain, unwound via symmetric transfer.
+    TTask<uint64> CoSumTo(uint32 N)
+    {
+        if (N == 0)
+        {
+            co_return 0;
+        }
+        const uint64 Rest = co_await CoSumTo(N - 1);
+        co_return Rest + N;
+    }
+
+    TTask<void> CoIncrement(std::atomic<int>* Counter)
+    {
+        Counter->fetch_add(1, std::memory_order_relaxed);
+        co_return;
+    }
+
+    TTask<int> CoWhenAllFan(std::atomic<int>* Counter, int N)
+    {
+        TVector<TTask<void>> Tasks;
+        for (int i = 0; i < N; ++i)
+        {
+            Tasks.push_back(CoIncrement(Counter));
+        }
+        co_await WhenAll(Move(Tasks));
+        co_return Counter->load(std::memory_order_relaxed);
+    }
+
+    TTask<int> CoAwaitFuture(TFuture<int> F)
+    {
+        const int V = co_await Move(F);
+        co_return V * 2;
+    }
+
+    TTask<uint64> CoParallelSum(uint32 N)
+    {
+        std::atomic<uint64> Sum{0};
+        co_await Task::ParallelForAsync(N, 64, [&](uint32 i)
+        {
+            Sum.fetch_add(i, std::memory_order_relaxed);
+        });
+        co_return Sum.load(std::memory_order_relaxed);
+    }
+
+    TTask<void> CoSetPromise(TPromise<int> P, int Value)
+    {
+        P.SetValue(Value);
+        co_return;
+    }
+}
+
+TEST(Coro, SyncWait_ReturnsResult)
+{
+    EXPECT_EQ(SyncWait(CoConst()), 42);
+    EXPECT_EQ(SyncWait(CoAdd(20, 22)), 42);
+}
+
+TEST(Coro, DeepChain_SymmetricTransfer)
+{
+    constexpr uint32 N = 4000;
+    const uint64 Expected = (uint64)N * (N + 1) / 2;
+    EXPECT_EQ(SyncWait(CoSumTo(N)), Expected);
+}
+
+TEST(Coro, WhenAll_RunsEveryChild)
+{
+    std::atomic<int> Counter{0};
+    const int Result = SyncWait(CoWhenAllFan(&Counter, 128));
+    EXPECT_EQ(Result, 128);
+    EXPECT_EQ(Counter.load(), 128);
+}
+
+TEST(Coro, AwaitFuture_BridgesFuturesLayer)
+{
+    TPromise<int> Promise;
+    TFuture<int>  Future = Promise.GetFuture();
+
+    // Fulfil on a worker while the coroutine (driven by SyncWait) awaits the future.
+    Task::Async([P = Move(Promise)]() mutable { P.SetValue(21); });
+
+    EXPECT_EQ(SyncWait(CoAwaitFuture(Move(Future))), 42);
+}
+
+TEST(Coro, ParallelForAsync_SumsRange)
+{
+    constexpr uint32 N = 10000;
+    const uint64 Expected = (uint64)(N - 1) * N / 2;
+    EXPECT_EQ(SyncWait(CoParallelSum(N)), Expected);
+}
+
+TEST(Coro, ParallelForAsync_ZeroIsNoOp)
+{
+    EXPECT_EQ(SyncWait(CoParallelSum(0)), 0u);
+}
+
+TEST(Coro, LaunchDetached_RunsToCompletion)
+{
+    TPromise<int> Promise;
+    TFuture<int>  Future = Promise.GetFuture();
+
+    Launch(CoSetPromise(Move(Promise), 7));
+
+    EXPECT_EQ(Future.Get(), 7);
+}
+
+// SyncWait from inside a worker fiber must not deadlock.
+TEST(Coro, SyncWait_FromWorkerFiber)
+{
+    std::atomic<int> Ran{0};
+    Task::ParallelFor(8u, [&](uint32)
+    {
+        if (SyncWait(CoConst()) == 42)
+        {
+            Ran.fetch_add(1, std::memory_order_relaxed);
+        }
+    }, 1);
+    EXPECT_EQ(Ran.load(), 8);
+}
+
+TEST(Coro, ManyConcurrentWhenAll_Stress)
+{
+    for (int Round = 0; Round < 200; ++Round)
+    {
+        std::atomic<int> Counter{0};
+        const int Result = SyncWait(CoWhenAllFan(&Counter, 64));
+        ASSERT_EQ(Result, 64) << "round " << Round;
     }
 }

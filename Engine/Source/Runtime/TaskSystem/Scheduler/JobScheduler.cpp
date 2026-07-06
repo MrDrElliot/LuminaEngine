@@ -8,6 +8,7 @@
 #include "Memory/MemoryConcurrentQueue.h"
 #include "Platform/Process/PlatformProcess.h"
 #include "Containers/Array.h"
+#include "Core/Diagnostics/HangWatchdog.h"
 #include "Core/LuminaMacros.h"
 #include "Core/Profiler/Profile.h"
 #include "Log/Log.h"
@@ -144,6 +145,12 @@ namespace Lumina::Jobs
             uint32         StealCursor    = 0;       // rotating victim offset for work-stealing
         };
         thread_local FThreadState TLS;
+
+        // Set while this thread runs a serial pump that must never yield to the scheduler (the render
+        // drain). Fiber parks check it: parking under the guard strands the pump until the wait
+        // resolves, and the fiber can resume on a DIFFERENT thread, breaking any thread_local state
+        // the pump relies on. See Jobs::SetThreadNoParkGuard.
+        thread_local const char* GNoParkGuardName = nullptr;
 
         // Per-worker job queues (one per priority) + a private wake futex. A worker drains its OWN queues
         // first, then steals from others. A burst submit is spread across these at enqueue time
@@ -785,6 +792,48 @@ namespace Lumina::Jobs
         }
     }
 
+    namespace
+    {
+        // Hang-watchdog reporter: thread stacks can't show parked fibers (their stacks live off-thread),
+        // so a stall dump needs this to see in-flight work that stopped moving -- which fiber is parked
+        // on which counter, and what job it was running.
+        void JobsHangReporter()
+        {
+            FJobLiveStats Stats;
+            GetLiveStats(Stats);
+            LOG_ERROR("Job system: {} workers, fibers free={} ready={} in-use={}, queued jobs {}/{}/{} (H/N/L), in-flight {}",
+                Stats.NumWorkers, Stats.FibersFree, Stats.FibersReady, Stats.FibersInUse,
+                Stats.QueueDepth[0], Stats.QueueDepth[1], Stats.QueueDepth[2], Stats.InFlight);
+
+            TVector<FFiberState> Fibers;
+            SnapshotFiberStates(Fibers);   // editor builds only; empty otherwise
+            for (const FFiberState& F : Fibers)
+            {
+                switch (F.State)
+                {
+                case EFiberState::Running:
+                    LOG_ERROR("  fiber {}: RUNNING on worker {} job '{}'", F.Index, F.OwnerWorker, F.Name ? F.Name : "<unnamed>");
+                    break;
+                case EFiberState::Parked:
+                    LOG_ERROR("  fiber {}: PARKED on counter {} job '{}'", F.Index, F.WaitCounterId, F.Name ? F.Name : "<unnamed>");
+                    break;
+                case EFiberState::Ready:
+                    LOG_ERROR("  fiber {}: READY (awaiting a worker) job '{}'", F.Index, F.Name ? F.Name : "<unnamed>");
+                    break;
+                default:
+                    break;
+                }
+            }
+
+            TVector<FCounterState> Counters;
+            SnapshotActiveCounters(Counters);   // editor builds only; empty otherwise
+            for (const FCounterState& C : Counters)
+            {
+                LOG_ERROR("  counter {}: value {} with {} parked waiter(s)", C.Id, C.Value, C.ParkedWaiters);
+            }
+        }
+    }
+
     void Initialize(const FConfig& Config)
     {
         ASSERT(G == nullptr);
@@ -856,6 +905,14 @@ namespace Lumina::Jobs
 
         LOG_DISPLAY("Job system online: {} workers, {} thread slots, {} fibers ({}KB stacks).",
             G->NumWorkers, G->NumThreadSlots, G->NumWorkFibers, G->FiberStackSize / 1024);
+
+        // Idempotent under Initialize/Shutdown cycles: the watchdog reporter list is append-only.
+        static bool bReporterRegistered = false;
+        if (!bReporterRegistered)
+        {
+            bReporterRegistered = true;
+            HangWatchdog::RegisterReporter(&JobsHangReporter);
+        }
     }
 
     void Shutdown()
@@ -1093,6 +1150,18 @@ namespace Lumina::Jobs
 
         if (TLS.bIsWorker)
         {
+            if (GNoParkGuardName != nullptr)
+            {
+#if USING(WITH_EDITOR)
+                LOG_ERROR("Jobs: fiber '{0}' is parking on a counter while its thread runs '{1}', which must never yield. "
+                          "The pump is stalled until this wait resolves, and the fiber may resume on another thread.",
+                          TLS.CurrentFiber->Job.Name ? TLS.CurrentFiber->Job.Name : "<unnamed>", GNoParkGuardName);
+#else
+                LOG_ERROR("Jobs: a fiber is parking on a counter while its thread runs '{0}', which must never yield.",
+                          GNoParkGuardName);
+#endif
+            }
+
             // Park and yield to the scheduler, which links us into the counter (see
             // ProcessPending). The releasing decrement touches nothing of a waited (no-completion)
             // counter once we are spliced out, so the caller may reclaim it the instant this returns.
@@ -1158,6 +1227,18 @@ namespace Lumina::Jobs
         // Worker fibers only. An external thread has no fiber to suspend and must assist-wait instead.
         ASSERT(TLS.bIsWorker && TLS.CurrentFiber != nullptr);
 
+        if (GNoParkGuardName != nullptr)
+        {
+#if USING(WITH_EDITOR)
+            LOG_ERROR("Jobs: fiber '{0}' is parking (ParkFiber) while its thread runs '{1}', which must never yield. "
+                      "The pump is stalled until this wait resolves, and the fiber may resume on another thread.",
+                      TLS.CurrentFiber->Job.Name ? TLS.CurrentFiber->Job.Name : "<unnamed>", GNoParkGuardName);
+#else
+            LOG_ERROR("Jobs: a fiber is parking (ParkFiber) while its thread runs '{0}', which must never yield.",
+                      GNoParkGuardName);
+#endif
+        }
+
 #if USING(WITH_EDITOR)
         { 
             FJobProfiler& Prof = FJobProfiler::Get(); 
@@ -1183,6 +1264,11 @@ namespace Lumina::Jobs
             return;
         }
         PushReady(static_cast<FWorkFiber*>(Handle.Fiber));
+    }
+
+    void SetThreadNoParkGuard(const char* GuardName)
+    {
+        GNoParkGuardName = GuardName;
     }
 
     bool AssistOneJob()

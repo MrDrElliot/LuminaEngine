@@ -3,6 +3,7 @@
 #include "Containers/Array.h"
 #include "Containers/Name.h"
 #include "Containers/String.h"
+#include "Core/Object/ObjectCore.h"
 #include "Memory/SmartPtr.h"
 #include "Platform/GenericPlatform.h"
 
@@ -14,23 +15,10 @@ namespace Lumina
 // Per-script-type schema + value model bridging the C# [Property] reflection to the native editor.
 namespace Lumina::Scripting
 {
-    // Schema kind. Mirrors LuminaSharp.EScriptKind (same integer values).
-    enum class EScriptExportKind : uint8
-    {
-        Nil = 0,
-        Bool,
-        I8, I16, I32, I64,
-        U8, U16, U32, U64,
-        F32, F64,
-        String,
-        Enum,
-        NativeStruct,
-        ScriptStruct,
-        AssetRef,
-        Entity,
-        Array,
-        Instance,
-    };
+    // The schema kind is the shared reflected taxonomy Lumina::EPropertyTypeFlags (ObjectCore.h), mirrored by
+    // LuminaSharp.EPropertyType. Script-specific shapes are carried as data on FScriptExportType rather than as
+    // distinct kinds: an entity is UInt32 + bEntity; an asset ref is SoftObject + TargetClass; a native vs.
+    // script struct is Struct distinguished by whether NativeName is set.
 
     // Self-describing value kind. Mirrors LuminaSharp.EScriptValueKind.
     enum class EScriptValueKind : uint8
@@ -43,6 +31,7 @@ namespace Lumina::Scripting
         Nested,
         Array,
         Instance,
+        Map,   ///< count (i32) then that many [key value, value value] pairs. Append-only (persisted wire).
     };
 
     struct FScriptExportType;
@@ -88,20 +77,23 @@ namespace Lumina::Scripting
 
     struct FScriptExportType
     {
-        EScriptExportKind             Kind = EScriptExportKind::Nil;
+        EPropertyTypeFlags            Kind = EPropertyTypeFlags::None;
+        bool                          bEntity = false;  ///< A UInt32 that is really an entt entity handle.
 
         // Enum kind.
         FName                         EnumName;
-        EScriptExportKind             EnumUnderlying = EScriptExportKind::I32;
+        EPropertyTypeFlags            EnumUnderlying = EPropertyTypeFlags::Int32;
         TVector<FScriptEnumEntry>     EnumEntries;
 
-        FName                         NativeName;     ///< NativeStruct kind, the native CStruct's name.
-        FName                         TargetClass;    ///< AssetRef kind, the asset class filter ("" = any).
-        TSharedPtr<FScriptExportType> ElementType;    ///< Array kind.
-        TVector<FScriptExportField>   Fields;         ///< NativeStruct / ScriptStruct kind.
+        FName                         NativeName;     ///< Struct kind: the native CStruct's name (empty = script struct).
+        FName                         TargetClass;    ///< SoftObject kind, the asset class filter ("" = any).
+        TSharedPtr<FScriptExportType> ElementType;    ///< Vector kind.
+        TSharedPtr<FScriptExportType> KeyType;        ///< Map kind, the key shape.
+        TSharedPtr<FScriptExportType> ValueType;      ///< Map kind, the value shape.
+        TVector<FScriptExportField>   Fields;         ///< Struct kind (native or script).
 
-        FName                                       BaseName;    ///< Instance kind, the C# base type's display name.
-        TVector<FScriptExportInstanceCandidate>     Candidates;  ///< Instance kind, the selectable concrete types.
+        FName                                       BaseName;    ///< InstancedStruct kind, the C# base type's display name.
+        TVector<FScriptExportInstanceCandidate>     Candidates;  ///< InstancedStruct kind, the selectable concrete types.
     };
 
     struct FScriptExportSchema

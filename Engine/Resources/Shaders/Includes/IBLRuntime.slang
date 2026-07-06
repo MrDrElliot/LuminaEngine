@@ -53,7 +53,11 @@ float ComputeSpecularOcclusion(float NdotV, float AO, float Roughness)
 // N is the shading normal; V points surface->camera. AO occludes diffuse+multi-scatter, SpecAO the mirror.
 // NdotV (= saturate(dot(N,V))) and DFG (BRDF LUT scale,bias) are passed in: the caller already sampled the
 // LUT for energy compensation, so reusing it here avoids a second per-pixel texture fetch with identical args.
-float3 EvaluateIBLAmbient(float3 N, float3 V, float NdotV, float2 DFG, float3 Albedo, float3 F0, float Roughness, float Metallic, float AO)
+// Split variant: the mirror-lobe specular comes back separately from the irradiance-driven terms so the
+// translucent path can keep reflections un-premultiplied (glass attenuates what's behind it, not its own
+// reflections). Opaque callers use the combined wrapper below.
+void EvaluateIBLAmbientSplit(float3 N, float3 V, float NdotV, float2 DFG, float3 Albedo, float3 F0, float Roughness, float Metallic, float AO,
+                             out float3 OutDiffuse, out float3 OutSpecular)
 {
     float3 R = reflect(-V, N);
 
@@ -77,5 +81,13 @@ float3 EvaluateIBLAmbient(float3 N, float3 V, float NdotV, float2 DFG, float3 Al
 
     float SpecAO = ComputeSpecularOcclusion(NdotV, AO, Roughness);
 
-    return FssEss * PreFilt * SpecAO + (FmsEms + kD) * Irradiance * AO;
+    OutSpecular = FssEss * PreFilt * SpecAO;
+    OutDiffuse  = (FmsEms + kD) * Irradiance * AO;
+}
+
+float3 EvaluateIBLAmbient(float3 N, float3 V, float NdotV, float2 DFG, float3 Albedo, float3 F0, float Roughness, float Metallic, float AO)
+{
+    float3 Diffuse, Specular;
+    EvaluateIBLAmbientSplit(N, V, NdotV, DFG, Albedo, F0, Roughness, Metallic, AO, Diffuse, Specular);
+    return Diffuse + Specular;
 }

@@ -461,7 +461,7 @@ namespace Lumina
         Compiler.NewLine();
 
         // Walk pixel set in topo order with stage = Pixel.
-        Compiler.SetStage(EMaterialShaderStage::Pixel);
+        Compiler.SetStage(EMaterialCompileStage::Pixel);
         for (size_t i = 0; i < SortedNodes.size(); ++i)
         {
             CEdGraphNode* Node = SortedNodes[i];
@@ -489,7 +489,7 @@ namespace Lumina
         // Skipped when VertexSet empty (WPO unconnected); unmodified materials pay zero compile-time cost.
         if (!VertexSet.empty())
         {
-            Compiler.SetStage(EMaterialShaderStage::Vertex);
+            Compiler.SetStage(EMaterialCompileStage::Vertex);
             for (CEdGraphNode* Node : SortedNodes)
             {
                 if (Node->GetClass() == CMaterialOutputNode::StaticClass())
@@ -516,7 +516,7 @@ namespace Lumina
         }
 
         // Restore default cursor.
-        Compiler.SetStage(EMaterialShaderStage::Pixel);
+        Compiler.SetStage(EMaterialCompileStage::Pixel);
 
         for (auto& Error : Compiler.GetErrors())
         {

@@ -24,7 +24,9 @@ namespace Lumina
 
 namespace Lumina
 {
-    enum class EMaterialShaderStage : uint8
+    // Which codegen chunk the compiler is currently emitting into (pixel vs vertex graph). Distinct from
+    // the runtime EMaterialShaderStage (Material.h), which enumerates every COMPILED stage on the asset.
+    enum class EMaterialCompileStage : uint8
     {
         Pixel,
         Vertex,
@@ -116,10 +118,10 @@ namespace Lumina
 
         // Stage routing: each node-emit op writes the current stage's chunk. CompileGraph flips this around
         // the two-root walk (WPO->vertex, pixel pins->pixel); shared nodes are visited once per stage.
-        void SetStage(EMaterialShaderStage InStage) { CurrentStage = InStage; }
-        EMaterialShaderStage GetStage() const { return CurrentStage; }
-        FString& GetActiveChunk() { return CurrentStage == EMaterialShaderStage::Vertex ? VertexChunks : PixelChunks; }
-        const FString& GetActiveChunk() const { return CurrentStage == EMaterialShaderStage::Vertex ? VertexChunks : PixelChunks; }
+        void SetStage(EMaterialCompileStage InStage) { CurrentStage = InStage; }
+        EMaterialCompileStage GetStage() const { return CurrentStage; }
+        FString& GetActiveChunk() { return CurrentStage == EMaterialCompileStage::Vertex ? VertexChunks : PixelChunks; }
+        const FString& GetActiveChunk() const { return CurrentStage == EMaterialCompileStage::Vertex ? VertexChunks : PixelChunks; }
 
         // Output-node-direct emission helpers (bypass the stage cursor).
         void AddPixelOutput(const FString& Raw) { PixelOutputChunks.append(Raw); }
@@ -359,7 +361,7 @@ namespace Lumina
         FString PixelOutputChunks;
         FString VertexOutputChunks;
 
-        EMaterialShaderStage CurrentStage = EMaterialShaderStage::Pixel;
+        EMaterialCompileStage CurrentStage = EMaterialCompileStage::Pixel;
 
         TVector<TObjectPtr<CTexture>> BoundImages;
         TVector<EdNodeGraph::FError> Errors;

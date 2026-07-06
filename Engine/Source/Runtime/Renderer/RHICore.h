@@ -50,6 +50,10 @@ namespace Lumina::RHI
         // the frame timeline so BeginFrame can pace slot reuse.
         void Submit(FCmdListH CommandList);
 
+        // Submit + block until ONLY this submission completes (its own frame-timeline value), NOT the whole
+        // device. Backs the public RHI::SubmitAndWait; see it for the deadlock rationale.
+        void SubmitAndWait(FCmdListH CommandList);
+
         // Render thread. Presents FinalCommandList to the swapchain: signals the
         // frame timeline (paces BeginFrame) + recycles the list with the slot.
         bool Present(FSwapchainH Swapchain, FCmdListH FinalCommandList);

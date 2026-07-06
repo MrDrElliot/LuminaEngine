@@ -1875,6 +1875,16 @@ namespace Lumina
                         { ERenderSceneDebugFlags::ShadowPenumbra,  "Shadow Penumbra"  },
                         { ERenderSceneDebugFlags::SSAO,            "SSAO"             },
                     };
+                    // Raw WBOIT target inspectors (OITResolve.slang): accum color flags INF red /
+                    // NaN magenta, weight turns red near the fp16 ceiling, revealage is the
+                    // background-transmittance product. For chasing translucency artifacts.
+                    static const FViewModeEntry Translucency[] =
+                    {
+                        { ERenderSceneDebugFlags::OITAccumColor,  "OIT Accum Color"  },
+                        { ERenderSceneDebugFlags::OITAccumWeight, "OIT Accum Weight" },
+                        { ERenderSceneDebugFlags::OITRevealage,   "OIT Revealage"    },
+                        { ERenderSceneDebugFlags::OITLayerCount,  "OIT Layer Count"  },
+                    };
 
                     auto DrawGroup = [&](const char* Header, const FViewModeEntry* Entries, size_t Count)
                     {
@@ -1897,6 +1907,8 @@ namespace Lumina
                     DrawGroup("Geometry", Geometry, std::size(Geometry));
                     ImGui::Spacing();
                     DrawGroup("Lighting", Lighting, std::size(Lighting));
+                    ImGui::Spacing();
+                    DrawGroup("Translucency", Translucency, std::size(Translucency));
 
                     ImGui::EndMenu();
                 }

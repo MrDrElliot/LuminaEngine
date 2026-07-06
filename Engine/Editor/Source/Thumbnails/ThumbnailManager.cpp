@@ -1,5 +1,8 @@
-﻿#include "ThumbnailManager.h"
+#include "ThumbnailManager.h"
+#include "ThumbnailCache.h"
 #include "ThumbnailScene.h"
+#include "Assets/AssetRegistry/AssetData.h"
+#include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Assets/AssetTypes/Material/Material.h"
 #include "Assets/AssetTypes/Material/MaterialInstance.h"
 #include "Assets/AssetTypes/Mesh/Animation/Animation.h"
@@ -9,12 +12,15 @@
 #include "Assets/AssetTypes/ParticleSystem/ParticleSystem.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/Class.h"
+#include "Core/Object/ObjectCore.h"
+#include "Core/Object/ObjectFlags.h"
 #include "Core/Object/Package/Package.h"
 #include "Core/Object/Package/Thumbnail/PackageThumbnail.h"
 #include "Paths/Paths.h"
 #include "Renderer/RHITexture.h"
 
 #include "TaskSystem/TaskSystem.h"
+#include "TaskSystem/ThreadedCallback.h"
 #include "Tools/PrimitiveManager/PrimitiveManager.h"
 #include "World/Entity/Components/EnvironmentComponent.h"
 #include "World/Entity/Components/SkyLightComponent.h"
@@ -35,17 +41,27 @@ namespace Lumina
     {
     }
 
+    CThumbnailManager::~CThumbnailManager() = default;
+
     void CThumbnailManager::Initialize()
     {
         (void)CPackage::OnPackageDestroyed.AddMember(this, &ThisClass::OnPackageDestroyed);
 
+        // Any registry change (import/save/delete) may have altered content hashes; flag a sweep so
+        // stale in-memory records regenerate. The actual erase happens on the game thread (ProcessRenderQueue).
+        (void)FAssetRegistry::Get().GetOnAssetRegistryUpdated().AddLambda([this]()
+        {
+            bRegistryDirty.store(true, std::memory_order_relaxed);
+        });
+
         constexpr float kThumbnailFOV       = 35.0f;
         constexpr float kMeshFramingScale   = 3.2f;   // Margin around bounds
         constexpr float kSphereFramingScale = 5.5f;   // Sphere fills ~60% of frame
-        
-        auto SetupStudioLighting = [](CWorld* World)
+
+        auto SetupStudioLighting = [](FThumbnailScene& Scene)
         {
-            entt::entity Light = World->ConstructEntity("StudioLight");
+            CWorld* World = Scene.GetWorld();
+            entt::entity Light = Scene.SpawnEntity("StudioLight");
             World->EmplaceComponent<SDirectionalLightComponent>(Light);
             World->EmplaceComponent<SEnvironmentComponent>(Light);
             World->EmplaceComponent<SSkyLightComponent>(Light);
@@ -72,9 +88,9 @@ namespace Lumina
 
             CWorld* World = Scene.GetWorld();
 
-            SetupStudioLighting(World);
+            SetupStudioLighting(Scene);
 
-            entt::entity MeshEntity = World->ConstructEntity("SkeletalMesh");
+            entt::entity MeshEntity = Scene.SpawnEntity("SkeletalMesh");
             World->EmplaceComponent<SSkeletalMeshComponent>(MeshEntity).SkeletalMesh = Mesh;
 
             FrameBounds(Scene, Mesh->GetAABB());
@@ -90,9 +106,9 @@ namespace Lumina
 
                 CWorld* World = Scene.GetWorld();
 
-                SetupStudioLighting(World);
+                SetupStudioLighting(Scene);
 
-                entt::entity MeshEntity = World->ConstructEntity("Mesh");
+                entt::entity MeshEntity = Scene.SpawnEntity("Mesh");
                 World->EmplaceComponent<SStaticMeshComponent>(MeshEntity).StaticMesh = Mesh;
 
                 FrameBounds(Scene, Mesh->GetAABB());
@@ -135,13 +151,13 @@ namespace Lumina
 
                 CWorld* World = Scene.GetWorld();
 
-                SetupStudioLighting(World);
+                SetupStudioLighting(Scene);
 
                 // PP materials are screen-space; mesh override falls back to default. Use a volume.
                 CMaterial* BaseMaterial = Material->GetMaterial();
                 const bool bIsPostProcess = BaseMaterial != nullptr && BaseMaterial->GetMaterialType() == EMaterialType::PostProcess;
 
-                entt::entity MeshEntity = World->ConstructEntity("PreviewSphere");
+                entt::entity MeshEntity = Scene.SpawnEntity("PreviewSphere");
                 SStaticMeshComponent& MeshComp = World->EmplaceComponent<SStaticMeshComponent>(MeshEntity);
                 MeshComp.StaticMesh = CPrimitiveManager::Get().SphereMesh;
                 if (!bIsPostProcess)
@@ -151,7 +167,7 @@ namespace Lumina
 
                 if (bIsPostProcess)
                 {
-                    entt::entity VolumeEntity = World->ConstructEntity("PreviewPostProcessVolume");
+                    entt::entity VolumeEntity = Scene.SpawnEntity("PreviewPostProcessVolume");
                     SPostProcessComponent& Volume = World->EmplaceComponent<SPostProcessComponent>(VolumeEntity);
                     Volume.bInfiniteExtent = true;
                     Volume.PostProcessMaterials.push_back(Material);
@@ -172,9 +188,9 @@ namespace Lumina
 
                 CWorld* World = Scene.GetWorld();
 
-                SetupStudioLighting(World);
+                SetupStudioLighting(Scene);
 
-                entt::entity ParticleEntity = World->ConstructEntity("ParticleSystem");
+                entt::entity ParticleEntity = Scene.SpawnEntity("ParticleSystem");
                 World->EmplaceComponent<SParticleSystemComponent>(ParticleEntity).ParticleSystem = PS;
 
                 // No AABB on a particle system; fixed pull-back for typical spawn radius.
@@ -196,62 +212,6 @@ namespace Lumina
         return *ThumbnailManagerSingleton;
     }
 
-    void CThumbnailManager::AsyncLoadThumbnailsForPackage(const FName& Package)
-    {
-        Task::AsyncTask(1, 1, [this, Package](uint32, uint32, uint32)
-        {
-            CPackage* MaybePackage = CPackage::LoadPackage(Package.c_str());
-            if (MaybePackage == nullptr)
-            {
-                return;
-            }
-            
-            FPackageThumbnail* Thumbnail = MaybePackage->GetPackageThumbnail();
-            
-            FPackageThumbnail::EState Expected = FPackageThumbnail::EState::None;
-            if (!Thumbnail->LoadState.compare_exchange_strong(Expected, FPackageThumbnail::EState::Loading, std::memory_order_acquire))
-            {
-                return;
-            }
-            
-            if (Thumbnail->ImageData.empty())
-            {
-                FWriteScopeLock Lock(ThumbnailLock);
-                Thumbnails.insert_or_assign(Package, Thumbnail);
-                return;
-            }
-            
-            constexpr uint32 ThumbExtent = 256;
-            RHI::FManagedTexture Image = RHI::Textures::Create(RHI::FTexture2DDesc
-            {
-                .Width  = ThumbExtent,
-                .Height = ThumbExtent,
-                .Format = EFormat::RGBA8_UNORM,
-            });
-
-            const uint8 BytesPerPixel = RHI::Format::BytesPerBlock(EFormat::RGBA8_UNORM);
-            const uint32 RowBytes = ThumbExtent * BytesPerPixel;
-
-            TVector<uint8> FlippedData(Thumbnail->ImageData.size());
-            uint8* Destination = FlippedData.data();
-            const uint8* Source = Thumbnail->ImageData.data();
-
-            for (uint32 y = 0; y < ThumbExtent; ++y)
-            {
-                const uint32 FlippedY = ThumbExtent - 1 - y;
-                Memory::Memcpy(Destination + FlippedY * RowBytes, Source + y * RowBytes, RowBytes);
-            }
-
-            RHI::Textures::Upload(Image, 0, FlippedData.data(), FlippedData.size(), ThumbExtent);
-
-            Thumbnail->LoadedImage = Image;
-            Thumbnail->LoadState.store(FPackageThumbnail::EState::Loaded, std::memory_order_release);
-
-            FWriteScopeLock Lock(ThumbnailLock);
-            Thumbnails.insert_or_assign(Package, Thumbnail);
-        });
-    }
-
     FPackageThumbnail* CThumbnailManager::GetThumbnailForPackage(const FName& Package)
     {
         {
@@ -259,27 +219,338 @@ namespace Lumina
             auto It = Thumbnails.find(Package);
             if (It != Thumbnails.end())
             {
-                FPackageThumbnail* CachedThumbnail = It->second;
-                if (CachedThumbnail && CachedThumbnail->IsReadyForRender())
+                FThumbnailRecord* Record = It->second.get();
+                if (Record != nullptr && Record->Thumbnail.IsReadyForRender())
                 {
-                    return CachedThumbnail;
+                    return &Record->Thumbnail;
                 }
-                
-                if (CachedThumbnail)
-                {
-                    auto LoadState = CachedThumbnail->LoadState.load(std::memory_order_acquire);
-                    if (LoadState == FPackageThumbnail::EState::None) // The package thumbnail may be dirty.
-                    {
-                        AsyncLoadThumbnailsForPackage(Package);
-                    }
-                }
-                
+                // Present but in-flight (Requested/queued) or Failed: show the generic icon, don't re-enqueue.
                 return nullptr;
             }
         }
-    
-        AsyncLoadThumbnailsForPackage(Package);
+
+        // First sighting of this asset: insert a placeholder (dedups concurrent callers) and resolve async.
+        {
+            FWriteScopeLock Lock(ThumbnailLock);
+            if (Thumbnails.find(Package) != Thumbnails.end())
+            {
+                return nullptr;   // another caller raced us in; let its resolve run
+            }
+            auto Record = MakeUnique<FThumbnailRecord>();
+            Record->Thumbnail.LoadState.store(FPackageThumbnail::EState::Requested, std::memory_order_release);
+            Thumbnails.insert_or_assign(Package, Move(Record));
+        }
+
+        ResolveThumbnailAsync(Package);
         return nullptr;
+    }
+
+    void CThumbnailManager::ResolveThumbnailAsync(FName Package)
+    {
+        Task::AsyncTask(1, 1, [this, Package](uint32, uint32, uint32)
+        {
+            // Snapshot the identity out of the registry immediately; the returned pointer is only valid
+            // under the registry's momentary lock.
+            FGuid        GUID;
+            uint64       ContentHash = 0;
+            FName        ClassName;
+            FFixedString PackagePath;
+            {
+                const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(Package.c_str());
+                if (Data == nullptr)
+                {
+                    SetRecordState(Package, FPackageThumbnail::EState::Failed);
+                    return;
+                }
+                GUID        = Data->AssetGUID;
+                ContentHash = Data->ContentHash;
+                ClassName   = Data->AssetClass;
+                PackagePath = Data->Path;
+            }
+
+            // Record the identity so a later invalidation sweep can compare content hashes.
+            {
+                FWriteScopeLock Lock(ThumbnailLock);
+                auto It = Thumbnails.find(Package);
+                if (It != Thumbnails.end() && It->second)
+                {
+                    It->second->GUID        = GUID;
+                    It->second->ContentHash = ContentHash;
+                }
+            }
+
+            // 1. Sidecar cache (fast path; no package load once warm).
+            {
+                FPackageThumbnail Cached;
+                if (ThumbnailCache::Load(GUID, ContentHash, Cached))
+                {
+                    UploadAndStore(Package, Cached);
+                    return;
+                }
+            }
+
+            // 2. Legacy thumbnail embedded in the .lasset. Migrate it into the sidecar for next launch.
+            CPackage* Pkg = CPackage::LoadPackage(PackagePath);
+            if (Pkg != nullptr)
+            {
+                if (FPackageThumbnail* Embedded = Pkg->GetPackageThumbnail())
+                {
+                    if (!Embedded->ImageData.empty())
+                    {
+                        ThumbnailCache::Save(GUID, ContentHash, *Embedded);
+                        UploadAndStore(Package, *Embedded);
+                        return;
+                    }
+                }
+            }
+
+            // 3. Queue for render. Only bother if this class has a renderer; the game-thread drain renders it
+            // once it is resident (we never load the object here -- that races the editor's loader).
+            CClass* Klass = FindObject<CClass>(ClassName);
+            if (Klass == nullptr || FindRenderer(Klass) == nullptr)
+            {
+                SetRecordState(Package, FPackageThumbnail::EState::Failed);
+                return;
+            }
+
+            FRenderRequest Request;
+            Request.Package     = Package;
+            Request.GUID        = GUID;
+            Request.ContentHash = ContentHash;
+
+            {
+                FScopeLock Lock(RenderQueueMutex);
+                RenderQueue.push_back(Move(Request));
+            }
+        });
+    }
+
+    void CThumbnailManager::UploadAndStore(const FName& Package, const FPackageThumbnail& Source)
+    {
+        const uint32 Width  = Source.ImageWidth;
+        const uint32 Height = Source.ImageHeight;
+        if (Width == 0 || Height == 0 || Source.ImageData.size() < (size_t)Width * Height * 4u)
+        {
+            SetRecordState(Package, FPackageThumbnail::EState::Failed);
+            return;
+        }
+
+        RHI::FManagedTexture Image = RHI::Textures::Create(RHI::FTexture2DDesc
+        {
+            .Width  = Width,
+            .Height = Height,
+            .Format = EFormat::RGBA8_UNORM,
+        });
+
+        // Stored bottom-up; flip back to top-down for display (matches ThumbnailUtils::StoreDownsampledRGBA).
+        const uint32 RowBytes = Width * 4u;
+        TVector<uint8> Flipped(Source.ImageData.size());
+        for (uint32 y = 0; y < Height; ++y)
+        {
+            const uint32 FlippedY = Height - 1 - y;
+            Memory::Memcpy(Flipped.data() + FlippedY * RowBytes, Source.ImageData.data() + y * RowBytes, RowBytes);
+        }
+        RHI::Textures::Upload(Image, 0, Flipped.data(), Flipped.size(), Width);
+
+        FWriteScopeLock Lock(ThumbnailLock);
+        auto It = Thumbnails.find(Package);
+        if (It == Thumbnails.end() || It->second == nullptr)
+        {
+            RHI::Textures::Release(Image);   // record vanished (invalidated) while we uploaded
+            return;
+        }
+
+        FPackageThumbnail& Dest = It->second->Thumbnail;
+        if (Dest.LoadedImage.IsValid())
+        {
+            RHI::Textures::Release(Dest.LoadedImage);
+        }
+        Dest.ImageWidth  = Width;
+        Dest.ImageHeight = Height;
+        Dest.ImageData.clear();   // the GPU texture is what displays; drop the CPU copy to save memory
+        Dest.LoadedImage = Image;
+        Dest.LoadState.store(FPackageThumbnail::EState::Loaded, std::memory_order_release);
+    }
+
+    void CThumbnailManager::SetRecordState(const FName& Package, FPackageThumbnail::EState State)
+    {
+        FWriteScopeLock Lock(ThumbnailLock);
+        auto It = Thumbnails.find(Package);
+        if (It != Thumbnails.end() && It->second)
+        {
+            It->second->Thumbnail.LoadState.store(State, std::memory_order_release);
+        }
+    }
+
+    CThumbnailManager::FThumbnailRendererFn* CThumbnailManager::FindRenderer(CClass* AssetClass)
+    {
+        for (CClass* Klass = AssetClass; Klass != nullptr; Klass = Cast<CClass>(Klass->GetSuperClass()))
+        {
+            auto It = ThumbnailRenderers.find(Klass);
+            if (It != ThumbnailRenderers.end())
+            {
+                return &It->second;
+            }
+        }
+        return nullptr;
+    }
+
+    bool CThumbnailManager::RenderThumbnail(CObject* Asset, FPackageThumbnail& Out)
+    {
+        if (Asset == nullptr)
+        {
+            return false;
+        }
+
+        FThumbnailRendererFn* Renderer = FindRenderer(Asset->GetClass());
+        if (Renderer == nullptr)
+        {
+            return false;
+        }
+
+        // Build a fresh preview world per capture and tear it down immediately. A PERSISTENT thumbnail world
+        // lingers in the render-scene registry and wedges the FlushRenderingCommands() that opening an asset
+        // editor (FWorldManager::CreateWorldContext) performs -> hang. Per-capture matches the original
+        // save-path pattern, which never had this problem.
+        FThumbnailScene Scene(512);
+        Scene.Begin();
+        if (Scene.GetWorld() == nullptr)
+        {
+            return false;
+        }
+
+        (*Renderer)(Scene, Asset);
+        const bool bCaptured = Scene.Capture(Out);
+        Scene.End();
+        return bCaptured;
+    }
+
+    void CThumbnailManager::ProcessRenderQueue(uint32 Budget)
+    {
+        if (bRegistryDirty.exchange(false, std::memory_order_acquire))
+        {
+            SweepInvalidatedRecords();
+        }
+
+        // Take the whole queue and render up to Budget assets that are ALREADY resident + fully loaded, keeping
+        // the rest for a later frame. We NEVER load the object here (or on a worker): loading a CObject off the
+        // editor's own loader path races it on the same non-atomic object and tears its resources -> crash.
+        // So an asset without a cached/embedded thumbnail only renders once something else has loaded it (the
+        // open level, or the user opening it). FindObject is a cheap hash lookup, so scanning the queue each
+        // frame is fine; kMaxDeferChecks bounds how long a never-loaded asset lingers before we give up.
+        TVector<FRenderRequest> Work;
+        {
+            FScopeLock Lock(RenderQueueMutex);
+            Work.swap(RenderQueue);
+        }
+        if (Work.empty())
+        {
+            return;
+        }
+
+        constexpr uint32 kMaxDeferChecks = 900;   // ~15s at 60fps
+        uint32 Rendered = 0;
+        TVector<FRenderRequest> Keep;
+        Keep.reserve(Work.size());
+
+        auto DeferOrDrop = [&](FRenderRequest& Request)
+        {
+            if (++Request.DeferChecks < kMaxDeferChecks)
+            {
+                Keep.push_back(Move(Request));
+            }
+            else
+            {
+                SetRecordState(Request.Package, FPackageThumbnail::EState::Failed);   // gave up -> generic icon
+            }
+        };
+
+        // Newest first so visible/just-scrolled tiles win.
+        for (size_t Index = Work.size(); Index-- > 0; )
+        {
+            FRenderRequest& Request = Work[Index];
+
+            if (Rendered >= Budget)
+            {
+                Keep.push_back(Move(Request));   // budget spent this frame; re-check next frame
+                continue;
+            }
+
+            CObject* Asset = FindObject<CObject>(Request.GUID);
+            const bool bResident = Asset != nullptr
+                && !Asset->HasAnyFlag(OF_NeedsLoad | OF_Loading | OF_NeedsPostLoad | OF_MarkedDestroy);
+            if (!bResident)
+            {
+                DeferOrDrop(Request);   // not loaded yet -> keep watching (bounded)
+                continue;
+            }
+
+            // A material whose shaders aren't compiled yet would capture as the default material -- defer.
+            if (CMaterialInterface* Material = Cast<CMaterialInterface>(Asset))
+            {
+                if (!Material->IsReadyForRender())
+                {
+                    DeferOrDrop(Request);
+                    continue;
+                }
+            }
+
+            FPackageThumbnail Captured;
+            if (RenderThumbnail(Asset, Captured))
+            {
+                ThumbnailCache::Save(Request.GUID, Request.ContentHash, Captured);
+                UploadAndStore(Request.Package, Captured);
+                ++Rendered;
+            }
+            else
+            {
+                SetRecordState(Request.Package, FPackageThumbnail::EState::Failed);
+            }
+        }
+
+        if (!Keep.empty())
+        {
+            FScopeLock Lock(RenderQueueMutex);   // fresh resolves may have arrived during the scan; keep both
+            for (FRenderRequest& R : Keep)
+            {
+                RenderQueue.push_back(Move(R));
+            }
+        }
+    }
+
+    void CThumbnailManager::SweepInvalidatedRecords()
+    {
+        FWriteScopeLock Lock(ThumbnailLock);
+        for (auto It = Thumbnails.begin(); It != Thumbnails.end(); )
+        {
+            FThumbnailRecord* Record = It->second.get();
+            bool bDrop = (Record == nullptr);
+
+            if (!bDrop)
+            {
+                const auto State = Record->Thumbnail.LoadState.load(std::memory_order_acquire);
+                if (State == FPackageThumbnail::EState::Failed)
+                {
+                    // The asset may exist now (registry was mid-discovery earlier); let it re-resolve.
+                    bDrop = true;
+                }
+                else if (Record->GUID.IsValid())
+                {
+                    if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByGUID(Record->GUID))
+                    {
+                        bDrop = (Data->ContentHash != Record->ContentHash);   // content changed -> regenerate
+                    }
+                }
+            }
+
+            It = bDrop ? Thumbnails.erase(It) : eastl::next(It);
+        }
+    }
+
+    void CThumbnailManager::InvalidateThumbnail(const FName& Package)
+    {
+        FWriteScopeLock Lock(ThumbnailLock);
+        Thumbnails.erase(Package);
     }
 
     void CThumbnailManager::RegisterThumbnailRenderer(CClass* AssetClass, FThumbnailRendererFn Renderer)
@@ -298,51 +569,36 @@ namespace Lumina
             return false;
         }
 
-        FThumbnailRendererFn* Renderer = nullptr;
-        for (CClass* Klass = Asset->GetClass(); Klass != nullptr; Klass = Cast<CClass>(Klass->GetSuperClass()))
-        {
-            auto It = ThumbnailRenderers.find(Klass);
-            if (It != ThumbnailRenderers.end())
-            {
-                Renderer = &It->second;
-                break;
-            }
-        }
-
-        if (Renderer == nullptr)
-        {
-            return false;
-        }
-
-        FThumbnailScene Scene(512);
-        Scene.Begin();
-
-        if (Scene.GetWorld() == nullptr)
-        {
-            return false;
-        }
-
-        (*Renderer)(Scene, Asset);
-
         FPackageThumbnail* Thumbnail = Package->GetPackageThumbnail();
         if (Thumbnail == nullptr)
         {
             return false;
         }
 
-        const bool bCaptured = Scene.Capture(*Thumbnail);
-        Scene.End();
-        return bCaptured;
+        // Writes into the package's slot so the editor save path still embeds it in the .lasset.
+        return RenderThumbnail(Asset, *Thumbnail);
     }
 
     void CThumbnailManager::OnPackageDestroyed(FName Package)
     {
-        FWriteScopeLock Lock(ThumbnailLock);
-
-        auto It = Thumbnails.find(Package);
-        if (It != Thumbnails.end())
+        FGuid GUID;
         {
-            Thumbnails.erase(It);
+            FWriteScopeLock Lock(ThumbnailLock);
+            auto It = Thumbnails.find(Package);
+            if (It != Thumbnails.end())
+            {
+                if (It->second)
+                {
+                    GUID = It->second->GUID;
+                }
+                Thumbnails.erase(It);
+            }
+        }
+
+        // Drop the sidecar too so a deleted asset doesn't leave an orphan (harmless, but keeps the cache tidy).
+        if (GUID.IsValid())
+        {
+            ThumbnailCache::Delete(GUID);
         }
     }
 }

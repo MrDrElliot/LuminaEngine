@@ -104,14 +104,15 @@ namespace Lumina
                 
                 TVector<uint8> Bytes;
                 
+                const bool bContainer = Current->IsA(EPropertyTypeFlags::Vector) || Current->IsA(EPropertyTypeFlags::Map);
                 {
-                    void* ValuePtr = Current->IsA(EPropertyTypeFlags::Vector) ? this : Current->GetValuePtr<void>(this);
+                    void* ValuePtr = bContainer ? this : Current->GetValuePtr<void>(this);
                     FMemoryWriter Writer(Bytes);
                     Current->Serialize(Writer, ValuePtr);
                 }
-                
+
                 {
-                    void* ValuePtr = Current->IsA(EPropertyTypeFlags::Vector) ? Other : Current->GetValuePtr<void>(Other);
+                    void* ValuePtr = bContainer ? Other : Current->GetValuePtr<void>(Other);
                     FMemoryReader Reader(Bytes);
                     Current->Serialize(Reader, ValuePtr);
                 }

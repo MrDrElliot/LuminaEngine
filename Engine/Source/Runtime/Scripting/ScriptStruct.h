@@ -55,6 +55,38 @@ namespace Lumina::Scripting
         ~FScriptDynamicArray();
         LE_NO_COPYMOVE(FScriptDynamicArray);
     };
+
+    // Key/value element description for a script-minted map. The Key/Value reuse the array element desc (size,
+    // lifecycle kind, inner FProperty, construct/destruct/copy). Pairs are packed [key][pad][value][pad] with a
+    // 16-byte alignment so any key/value type stays aligned inside the (16-byte-aligned) backing buffer.
+    struct FScriptMapElementDesc
+    {
+        FScriptArrayElementDesc  Key;
+        FScriptArrayElementDesc  Value;
+        uint32                   ValueOffset = 0;   // byte offset of the value within a pair
+        uint32                   PairStride  = 0;   // byte stride between consecutive pairs
+        FMapOps                  Ops{};
+
+        void* KeyAt(void* Pair)   const { return Pair; }
+        void* ValueAt(void* Pair) const { return static_cast<uint8*>(Pair) + ValueOffset; }
+
+        void ConstructPair(void* Pair) const;
+        void DestructPair(void* Pair) const;
+        void CopyPair(void* Dst, const void* Src) const;
+    };
+
+    // A script map's runtime backing: packed key/value pairs in a byte buffer, with linear find-by-key via the
+    // key property's Identical (no hashing needed; script/config maps are small and this is an editor/serialize
+    // path, not a hot loop). The C# instance keeps a real Dictionary<K,V>; this mirrors it for the FMapProperty.
+    struct FScriptDynamicMap
+    {
+        TVector<uint8>                   Bytes;
+        const FScriptMapElementDesc*     Desc = nullptr;
+
+        FScriptDynamicMap() = default;
+        ~FScriptDynamicMap();
+        LE_NO_COPYMOVE(FScriptDynamicMap);
+    };
 }
 
 namespace Lumina
@@ -102,6 +134,8 @@ namespace Lumina
             const CScriptStruct*                    ScriptStruct = nullptr;
             bool                                    bArray = false;
             const Scripting::FScriptArrayElementDesc* ArrayElement = nullptr;
+            bool                                    bMap = false;
+            const Scripting::FScriptMapElementDesc* MapDesc = nullptr;
         };
 
         struct FFieldPlan;
@@ -128,6 +162,7 @@ namespace Lumina
         TVector<TObjectPtr<CScriptStruct>>             SubStructs;
         TVector<TObjectPtr<CEnum>>                     MintedEnums;
         TVector<Scripting::FScriptArrayElementDesc*>   ElementDescs;
+        TVector<Scripting::FScriptMapElementDesc*>     MapDescs;
         bool                                           bRuntimeFreed = false;
     };
 }

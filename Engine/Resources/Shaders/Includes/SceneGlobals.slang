@@ -78,11 +78,6 @@ float3 SanitizeRadiance(float3 C)
                   SanitizeRadianceChannel(C.b));
 }
 
-float Luminance(float3 C)
-{
-    return dot(C, float3(0.2126, 0.7152, 0.0722));
-}
-
 // Karis "tone map then average" firefly suppression for importance-sampled IBL convolution. A lone very
 // bright texel (a city light, the sun) hit by only a few GGX samples otherwise produces high-variance
 // blocky/sparkly reflections. Weighting by 1/(1+luma) in tonemapped space and un-tonemapping the mean
@@ -201,6 +196,16 @@ float    GetTime()                  { return Scene().Time;       }
 float    GetDeltaTime()             { return Scene().DeltaTime;  }
 float    GetNearPlane()             { return Scene().NearPlane;  }
 float    GetFarPlane()              { return Scene().FarPlane;   }
+
+// Raw reverse-Z NDC depth [0,1] -> linear view-space distance, using the scene camera's planes.
+// The single scene-depth linearization -- material-graph codegen (SceneDepth node) emits calls to it,
+// so it must stay visible in every material template.
+float LinearizeSceneDepth(float RawDepth)
+{
+    float ZNear = GetNearPlane();
+    float ZFar  = GetFarPlane();
+    return ZNear * ZFar / max(ZFar - RawDepth * (ZFar - ZNear), 1e-6);
+}
 uint2    GetScreenSize()            { return Scene().ScreenSize.xy; }
 
 float3   GetCameraPosition()        { return Scene().CameraView.CameraPosition.xyz; }

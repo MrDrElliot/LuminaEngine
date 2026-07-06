@@ -45,7 +45,7 @@ namespace Lumina
         }
 
         // Functions only ever contribute to the pixel stage during validation; WPO is a material concept.
-        Compiler.SetStage(EMaterialShaderStage::Pixel);
+        Compiler.SetStage(EMaterialCompileStage::Pixel);
         for (size_t i = 0; i < SortedNodes.size(); ++i)
         {
             CEdGraphNode* Node = SortedNodes[i];

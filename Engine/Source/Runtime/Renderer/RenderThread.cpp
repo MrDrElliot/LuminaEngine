@@ -2,8 +2,10 @@
 #include "RenderThread.h"
 
 #include "Core/Assertions/Assert.h"
+#include "Core/Diagnostics/HangWatchdog.h"
 #include "Core/Profiler/Profile.h"
 #include "Core/Templates/LuminaTemplate.h"
+#include "Log/Log.h"
 #include "TaskSystem/TaskSystem.h"
 #include "TaskSystem/Scheduler/JobScheduler.h"
 
@@ -40,6 +42,24 @@ namespace Lumina
         Stop();
     }
 
+    // These few atomics distinguish the drain failure modes at a glance: armed-but-not-running = the
+    // scheduler stranded the drain job; running with a stuck command name = the command is blocked
+    // (or its fiber parked -- see the job-system reporter for which counter).
+    void FRenderThread::ReportForHangWatchdog()
+    {
+        FRenderThread* RT = GRenderThread;
+        if (RT == nullptr)
+        {
+            return;
+        }
+        const char* Command = RT->ActiveCommandName.load(Atomic::MemoryOrderAcquire);
+        LOG_ERROR("Render drain: running={} armed={} enqueued={} completed={} command='{}'",
+            RT->bDrainRunning.load(Atomic::MemoryOrderAcquire),
+            RT->bDrainJobArmed.load(Atomic::MemoryOrderAcquire),
+            RT->EnqueuedCount(), RT->CompletedCount(),
+            Command != nullptr ? Command : "<none>");
+    }
+
     void FRenderThread::Start()
     {
         if (bRunning.load(Atomic::MemoryOrderAcquire))
@@ -48,6 +68,13 @@ namespace Lumina
         }
         DrainCounter = Jobs::AllocCounter(0);
         bRunning.store(true, Atomic::MemoryOrderRelease);
+
+        static bool bReporterRegistered = false;
+        if (!bReporterRegistered)
+        {
+            bReporterRegistered = true;
+            HangWatchdog::RegisterReporter(&FRenderThread::ReportForHangWatchdog);
+        }
     }
 
     void FRenderThread::Stop()
@@ -71,9 +98,12 @@ namespace Lumina
 
     void FRenderThread::ArmDrain()
     {
-        // Schedule a drain only if none is active; the running drain picks up newly-queued commands.
+        // At most one armed drain job in flight. Armed is cleared when the job STARTS (DrainEntry), not
+        // when the drain finishes: a running drain re-checks the queue before exiting, so an Enqueue
+        // racing a live drain needs no new job -- and a job the scheduler strands can never lock out
+        // the WaitForCounter assist, because bDrainRunning stays false.
         bool Expected = false;
-        if (bDrainActive.compare_exchange_strong(Expected, true, Atomic::MemoryOrderAcqRel))
+        if (bDrainJobArmed.compare_exchange_strong(Expected, true, Atomic::MemoryOrderAcqRel))
         {
             Jobs::RunJob(&FRenderThread::DrainEntry, this, Jobs::EJobPriority::High, DrainCounter, "RenderFrame");
         }
@@ -143,7 +173,7 @@ namespace Lumina
             }
 
             bool Expected = false;
-            if (bDrainActive.compare_exchange_strong(Expected, true, Atomic::MemoryOrderAcqRel))
+            if (bDrainRunning.compare_exchange_strong(Expected, true, Atomic::MemoryOrderAcqRel))
             {
                 DrainLoop();
                 continue;
@@ -159,12 +189,27 @@ namespace Lumina
 
     void FRenderThread::DrainEntry(void* Arg, uint32 /*WorkerIndex*/)
     {
-        static_cast<FRenderThread*>(Arg)->DrainLoop();
+        FRenderThread* Self = static_cast<FRenderThread*>(Arg);
+
+        // The armed job has started; a fresh Enqueue may arm a new one from here on.
+        Self->bDrainJobArmed.store(false, Atomic::MemoryOrderRelease);
+
+        // Become the drainer -- unless an assisting waiter already is. The loser just exits; the live
+        // drainer re-checks the queue before exiting, so nothing is stranded.
+        bool Expected = false;
+        if (Self->bDrainRunning.compare_exchange_strong(Expected, true, Atomic::MemoryOrderAcqRel))
+        {
+            Self->DrainLoop();
+        }
     }
 
+    // Callers must own bDrainRunning (won the CAS); DrainLoop releases it on exit.
     void FRenderThread::DrainLoop()
     {
         GbInRenderDrain = true;
+        // Tripwire: render commands must never fiber-park (the drain is serial; a park strands every
+        // Flush waiter, and the fiber can resume on another thread, breaking GbInRenderDrain).
+        Jobs::SetThreadNoParkGuard("render drain");
 
         TVector<FQueuedCommand> Batch;
         for (;;)
@@ -176,8 +221,8 @@ namespace Lumina
 
             if (Batch.empty())
             {
-                // Tentatively done. Re-check under the arm flag so a command racing in isn't stranded.
-                bDrainActive.store(false, Atomic::MemoryOrderRelease);
+                // Tentatively done. Re-check under the run flag so a command racing in isn't stranded.
+                bDrainRunning.store(false, Atomic::MemoryOrderRelease);
 
                 bool HasMore;
                 {
@@ -187,12 +232,12 @@ namespace Lumina
                 if (HasMore)
                 {
                     bool Expected = false;
-                    if (bDrainActive.compare_exchange_strong(Expected, true, Atomic::MemoryOrderAcqRel))
+                    if (bDrainRunning.compare_exchange_strong(Expected, true, Atomic::MemoryOrderAcqRel))
                     {
                         continue; // re-armed self
                     }
                 }
-                break; // queue empty, or another Enqueue armed a fresh drain
+                break; // queue empty, or another drainer took over
             }
 
             for (FQueuedCommand& Q : Batch)
@@ -208,6 +253,7 @@ namespace Lumina
             }
         }
 
+        Jobs::SetThreadNoParkGuard(nullptr);
         GbInRenderDrain = false;
     }
 
@@ -215,7 +261,9 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE_COLORED(tracy::Color::SteelBlue);
         LUMINA_PROFILE_TAG(DebugName);
+        ActiveCommandName.store(DebugName, Atomic::MemoryOrderRelease);
         Cmd();
+        ActiveCommandName.store(nullptr, Atomic::MemoryOrderRelease);
     }
 
 

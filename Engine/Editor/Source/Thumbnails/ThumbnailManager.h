@@ -1,7 +1,13 @@
-﻿#pragma once
+#pragma once
+#include "Containers/Array.h"
 #include "Containers/Function.h"
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectMacros.h"
+#include "Core/Object/ObjectHandleTyped.h"
+#include "Core/Object/Package/Thumbnail/PackageThumbnail.h"
+#include "Core/Threading/Thread.h"
+#include "GUID/GUID.h"
+#include "Memory/SmartPtr.h"
 #include "ThumbnailManager.generated.h"
 
 namespace Lumina
@@ -9,7 +15,6 @@ namespace Lumina
     class CClass;
     class CPackage;
     class FThumbnailScene;
-    struct FPackageThumbnail;
 }
 
 namespace Lumina
@@ -24,13 +29,23 @@ namespace Lumina
         using FThumbnailRendererFn = TFunction<void(FThumbnailScene&, CObject* /*Asset*/)>;
 
         CThumbnailManager();
+        ~CThumbnailManager();
 
         void Initialize();
 
         static CThumbnailManager& Get();
 
-        void AsyncLoadThumbnailsForPackage(const FName& Package);
+        // Returns the ready-to-display thumbnail for a package/asset path, or nullptr if it isn't ready yet.
+        // A miss kicks off async resolve/generation in the background; callers show a generic icon meanwhile.
         FPackageThumbnail* GetThumbnailForPackage(const FName& Package);
+
+        // Game-thread pump: render up to Budget queued thumbnails this frame, and apply any pending
+        // invalidations. Call once per frame from the editor update.
+        void ProcessRenderQueue(uint32 Budget = 1);
+
+        // Drop the in-memory record for a path so the next request re-resolves it (used after save/re-import
+        // so a refreshed thumbnail shows without a restart). Game thread.
+        void InvalidateThumbnail(const FName& Package);
 
         void OnPackageDestroyed(FName Package);
 
@@ -40,12 +55,58 @@ namespace Lumina
         // Generate a fresh thumbnail for Asset into Package's slot; false if no renderer is registered (caller can fall back to viewport-grab).
         bool GenerateThumbnail(CObject* Asset, CPackage* Package);
 
-        FSharedMutex ThumbnailLock;
-        THashMap<FName, FPackageThumbnail*> Thumbnails;
-
     private:
+
+        // One cached thumbnail plus the identity it was built from (for hash-based invalidation).
+        struct FThumbnailRecord
+        {
+            FPackageThumbnail Thumbnail;
+            FGuid             GUID;
+            uint64            ContentHash = 0;
+        };
+
+        // A resolved asset that has a renderer but no cached/embedded thumbnail, so it must be rendered. The
+        // thumbnail path NEVER loads the object itself -- loading a CObject off-thread races the editor's
+        // loader on the same non-atomic object (torn FMeshResource -> crash). Instead the game-thread drain
+        // renders it only once it is ALREADY resident + fully loaded (e.g. it's in the open level, or the user
+        // opened it); non-resident requests are deferred and re-checked cheaply. DeferChecks bounds that wait.
+        struct FRenderRequest
+        {
+            FName    Package;
+            FGuid    GUID;
+            uint64   ContentHash = 0;
+            uint32   DeferChecks = 0;
+        };
+
+        // Worker task: sidecar cache -> legacy embedded block -> queue a render. Resolves where a thumbnail comes from.
+        void ResolveThumbnailAsync(FName Package);
+
+        // Create + upload an RHI texture from Source's RGBA image and mark Package's record ready. Thread-safe.
+        void UploadAndStore(const FName& Package, const FPackageThumbnail& Source);
+
+        // Store an already-final record state (Failed etc.) without an image.
+        void SetRecordState(const FName& Package, FPackageThumbnail::EState State);
+
+        // Walk AssetClass's hierarchy for a registered renderer; nullptr if none.
+        FThumbnailRendererFn* FindRenderer(CClass* AssetClass);
+
+        // Populate the persistent scene with Asset and capture into Out. Game thread only. False if there's
+        // no renderer for Asset or the capture failed.
+        bool RenderThumbnail(CObject* Asset, FPackageThumbnail& Out);
+
+        // Drop cached records whose asset changed (content hash) or that failed before the asset existed.
+        void SweepInvalidatedRecords();
+
+        FSharedMutex ThumbnailLock;
+        THashMap<FName, TUniquePtr<FThumbnailRecord>> Thumbnails;
+
+        // Render requests produced by worker resolve tasks, drained by the game-thread ProcessRenderQueue
+        // (which renders only resident assets and re-queues the rest). Guarded because workers push to it.
+        FMutex                  RenderQueueMutex;
+        TVector<FRenderRequest> RenderQueue;
 
         THashMap<CClass*, FThumbnailRendererFn> ThumbnailRenderers;
 
+        std::atomic<bool> bRegistryDirty{false};
     };
 }

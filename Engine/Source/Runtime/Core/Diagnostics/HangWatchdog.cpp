@@ -32,6 +32,10 @@ namespace Lumina::HangWatchdog
         float               GTimeoutSeconds   = 8.0f;
         DWORD               GMainThreadId     = 0;
         DWORD               GWatchdogThreadId = 0;
+
+        constexpr uint32          kMaxReporters = 8;
+        std::atomic<uint32>       GNumReporters{0};
+        void (*GReporters[kMaxReporters])() = {};
         
         void EnsureSymbols()
         {
@@ -237,6 +241,13 @@ namespace Lumina::HangWatchdog
                 CloseHandle(Snapshot);
             }
 
+            // Subsystem reporters last: they explain state the stacks can't (parked fibers, counters).
+            const uint32 NumReporters = GNumReporters.load(std::memory_order_acquire);
+            for (uint32 i = 0; i < NumReporters; ++i)
+            {
+                GReporters[i]();
+            }
+
             LOG_ERROR("================== END HANG WATCHDOG ==================");
             if (Logging::IsInitialized())
             {
@@ -314,6 +325,21 @@ namespace Lumina::HangWatchdog
     {
         GHeartbeat.fetch_add(1, std::memory_order_relaxed);
     }
+
+    void RegisterReporter(void (*Reporter)())
+    {
+        if (Reporter == nullptr)
+        {
+            return;
+        }
+        const uint32 Slot = GNumReporters.load(std::memory_order_relaxed);
+        if (Slot >= kMaxReporters)
+        {
+            return;
+        }
+        GReporters[Slot] = Reporter;
+        GNumReporters.store(Slot + 1, std::memory_order_release);
+    }
 }
 
 #else
@@ -323,6 +349,7 @@ namespace Lumina::HangWatchdog
     void Start(float) {}
     void Stop() {}
     void Heartbeat() {}
+    void RegisterReporter(void (*)()) {}
 }
 
 #endif

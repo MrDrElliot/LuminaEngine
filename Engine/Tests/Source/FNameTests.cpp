@@ -143,7 +143,7 @@ TEST(FNameTests, HashStability)
     FName a("StableName");
     FName b("StableName");
 
-    EXPECT_EQ(a.hash(), b.hash());
+    EXPECT_EQ(a.Hash(), b.Hash());
 }
 
 TEST(FNameTests, AtAccessValid)

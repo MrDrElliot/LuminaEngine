@@ -49,6 +49,7 @@ namespace Lumina::Reflection
             case Fnv1aLike("Lumina::FFixedString"):     return EPropertyTypeFlags::String;
             case Fnv1aLike("Lumina::TVector"):          return EPropertyTypeFlags::Vector;
             case Fnv1aLike("Lumina::TFixedVector"):     return EPropertyTypeFlags::Vector;
+            case Fnv1aLike("Lumina::THashMap"):         return EPropertyTypeFlags::Map;
             case Fnv1aLike("Lumina::TOptional"):        return EPropertyTypeFlags::Optional;
             case Fnv1aLike("Lumina::TObjectPtr"):       return EPropertyTypeFlags::Object;
             case Fnv1aLike("Lumina::TWeakObjectPtr"):   return EPropertyTypeFlags::Object;

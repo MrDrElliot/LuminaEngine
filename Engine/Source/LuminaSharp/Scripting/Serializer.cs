@@ -82,13 +82,17 @@ internal static class Serializer
         Writer.Write((byte)((Meta?.Color ?? false) ? 1 : 0));
     }
 
-    // Type descriptor; parsed in lockstep by the native GatherScriptSchema.
+    // Type descriptor; parsed in lockstep by the native ReadType. The kind is the shared reflected taxonomy
+    // (EPropertyType); the entity byte rides alongside because an entity is a plain UInt32 with no kind of its
+    // own. A Struct always writes its NativeName (empty for a C#-defined script struct) so the reader tells the
+    // two apart from one uniform shape.
     private static void WriteType(BinaryWriter Writer, ScriptType Type)
     {
         Writer.Write((byte)Type.Kind);
+        Writer.Write((byte)(Type.IsEntity ? 1 : 0));
         switch (Type.Kind)
         {
-            case EScriptKind.Enum:
+            case EPropertyType.Enum:
             {
                 WriteString(Writer, Type.EnumName ?? "");
                 Writer.Write((byte)Type.EnumUnderlying);
@@ -101,28 +105,29 @@ internal static class Serializer
                 }
                 break;
             }
-            case EScriptKind.NativeStruct:
+            case EPropertyType.Struct:
             {
                 WriteString(Writer, Type.NativeName ?? "");
                 WriteFields(Writer, Type.Fields);
                 break;
             }
-            case EScriptKind.ScriptStruct:
-            {
-                WriteFields(Writer, Type.Fields);
-                break;
-            }
-            case EScriptKind.AssetRef:
+            case EPropertyType.SoftObject:
             {
                 WriteString(Writer, Type.TargetClass ?? "");
                 break;
             }
-            case EScriptKind.Array:
+            case EPropertyType.Vector:
             {
                 WriteType(Writer, Type.Element ?? new ScriptType());
                 break;
             }
-            case EScriptKind.Instance:
+            case EPropertyType.Map:
+            {
+                WriteType(Writer, Type.KeyType ?? new ScriptType());
+                WriteType(Writer, Type.ValueType ?? new ScriptType());
+                break;
+            }
+            case EPropertyType.InstancedStruct:
             {
                 WriteString(Writer, Type.BaseName ?? "");
                 IReadOnlyList<ScriptInstanceCandidate> Candidates = Type.Candidates ?? Array.Empty<ScriptInstanceCandidate>();
@@ -196,6 +201,11 @@ internal static class Serializer
                 WriteArray(Writer, Type, Value);
                 break;
             }
+            case EScriptValueKind.Map:
+            {
+                WriteMap(Writer, Type, Value);
+                break;
+            }
             case EScriptValueKind.Instance:
             {
                 WriteInstance(Writer, Type, Value);
@@ -244,7 +254,7 @@ internal static class Serializer
         {
             return 0L;
         }
-        if (Type.Kind == EScriptKind.Entity)
+        if (Type.IsEntity)
         {
             return Value is Entity Ent ? Ent.Id : 0L;
         }
@@ -265,7 +275,7 @@ internal static class Serializer
 
     private static string EncodeString(ScriptType Type, object? Value)
     {
-        if (Type.Kind == EScriptKind.AssetRef)
+        if (Type.Kind == EPropertyType.SoftObject)
         {
             return Value is IAssetRef Reference ? Reference.GetPath() : "";
         }
@@ -286,6 +296,27 @@ internal static class Serializer
             foreach (object? Item in Items)
             {
                 WriteValue(Writer, Element, Item);
+            }
+        }
+        else
+        {
+            Writer.Write(0);
+        }
+    }
+
+    // Count followed by that many [key value, value value] pairs, each via the recursive value codec.
+    private static void WriteMap(BinaryWriter Writer, ScriptType Type, object? Value)
+    {
+        ScriptType Key = Type.KeyType ?? new ScriptType();
+        ScriptType Val = Type.ValueType ?? new ScriptType();
+        if (Value is IDictionary Dict && Type.KeyType != null && Type.ValueType != null)
+        {
+            Writer.Write(Dict.Count);
+            IDictionaryEnumerator Enumerator = Dict.GetEnumerator();
+            while (Enumerator.MoveNext())
+            {
+                WriteValue(Writer, Key, Enumerator.Key);
+                WriteValue(Writer, Val, Enumerator.Value);
             }
         }
         else
@@ -398,6 +429,10 @@ internal static class Serializer
             {
                 return ReadArray(ref Reader, Type, out Value);
             }
+            case EScriptValueKind.Map:
+            {
+                return ReadMap(ref Reader, Type, out Value);
+            }
             case EScriptValueKind.Nested:
             {
                 return ReadNested(ref Reader, Type, out Value);
@@ -469,7 +504,7 @@ internal static class Serializer
     private static bool DecodeString(ref FBlobReader Reader, ScriptType Type, out object? Value)
     {
         string Text = Reader.ReadString();
-        if (Type.Kind == EScriptKind.AssetRef)
+        if (Type.Kind == EPropertyType.SoftObject)
         {
             object? Box = Activator.CreateInstance(Type.Clr);
             if (Box is IAssetRef Reference)
@@ -524,6 +559,38 @@ internal static class Serializer
         return false;
     }
 
+    private static bool ReadMap(ref FBlobReader Reader, ScriptType Type, out object? Value)
+    {
+        Value = null;
+        int Count = Reader.ReadInt32();
+        ScriptType Key = Type.KeyType ?? new ScriptType();
+        ScriptType Val = Type.ValueType ?? new ScriptType();
+
+        // The concrete Dictionary<K,V> reached through IDictionary so key/value box/unbox to the exact CLR types.
+        if (Activator.CreateInstance(Type.Clr) is not IDictionary Dict)
+        {
+            for (int Index = 0; Index < Count; Index++)
+            {
+                SkipValue(ref Reader); // key
+                SkipValue(ref Reader); // value
+            }
+            return false;
+        }
+
+        for (int Index = 0; Index < Count; Index++)
+        {
+            bool HasKey = ReadValue(ref Reader, Key, out object? KeyValue);
+            bool HasValue = ReadValue(ref Reader, Val, out object? ValueValue);
+            if (HasKey && KeyValue != null && HasValue)
+            {
+                Dict[KeyValue] = ValueValue;
+            }
+        }
+
+        Value = Dict;
+        return true;
+    }
+
     private static bool ReadNested(ref FBlobReader Reader, ScriptType Type, out object? Value)
     {
         object? Box = Activator.CreateInstance(Type.Clr);
@@ -551,7 +618,7 @@ internal static class Serializer
 
     private static object DecodeInt(long Value, ScriptType Type)
     {
-        if (Type.Kind == EScriptKind.Entity)
+        if (Type.IsEntity)
         {
             return new Entity(unchecked((uint)Value));
         }
@@ -607,6 +674,16 @@ internal static class Serializer
                 for (int Index = 0; Index < Count; Index++)
                 {
                     SkipValue(ref Reader);
+                }
+                break;
+            }
+            case EScriptValueKind.Map:
+            {
+                int Count = Reader.ReadInt32();
+                for (int Index = 0; Index < Count; Index++)
+                {
+                    SkipValue(ref Reader); // key
+                    SkipValue(ref Reader); // value
                 }
                 break;
             }

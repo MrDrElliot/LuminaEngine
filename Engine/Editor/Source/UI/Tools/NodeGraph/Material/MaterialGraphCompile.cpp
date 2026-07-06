@@ -1,11 +1,14 @@
 #include "MaterialGraphCompile.h"
 #include "MaterialNodeGraph.h"
 #include "Assets/AssetTypes/Material/Material.h"
+#include "Core/Object/Cast.h"
+#include "Core/Object/Package/Package.h"
 #include "Memory/Memory.h"
 #include "Paths/Paths.h"
 #include "Renderer/MaterialTypes.h"
 #include "Renderer/ShaderCompiler.h"
 #include "Renderer/ShaderLibrary.h"
+#include "Tools/UI/ImGui/ImGuiX.h"
 
 namespace Lumina
 {
@@ -57,12 +60,17 @@ namespace Lumina
         FShaderCompileOptions VSOptions;
         VSOptions.DebugName = MatName + " [VS]";
 
-        ShaderCompiler->CompilerShaderRaw(Result.VertexSource, Move(VSOptions), [Material](const FShaderHeader& Header) mutable
+        // One committing callback per stage; CMaterial::CommitShaderStage owns the blob-store +
+        // library-commit against the shared stage table, so this file never repeats suffixes/types.
+        auto CommitStage = [Material](EMaterialShaderStage Stage)
         {
-            Material->VertexShaderBinaries.assign(Header.Binaries.begin(), Header.Binaries.end());
-            Material->VertexShader = FShaderLibrary::Commit(FName((Material->GetGUID().ToString() + "_VS").c_str()), ERHIShaderType::Vertex,
-                TSpan<const uint32>(Header.Binaries.data(), Header.Binaries.size()));
-        });
+            return [Material, Stage](const FShaderHeader& Header)
+            {
+                Material->CommitShaderStage(Stage, TSpan<const uint32>(Header.Binaries.data(), Header.Binaries.size()));
+            };
+        };
+
+        ShaderCompiler->CompilerShaderRaw(Result.VertexSource, Move(VSOptions), CommitStage(EMaterialShaderStage::Vertex));
 
         // The PBR domain also compiles the mesh-shader geometry stage, the two VisBuffer variants, and the
         // deferred-material pixel stage so the asset is portable across all render paths (matches the default
@@ -73,78 +81,41 @@ namespace Lumina
 
             const FString MeshSource = Compiler.BuildVertexShaderFromTemplate(MeshShaderDir + "MeshletMesh.slang", EMaterialType::PBR);
             FShaderCompileOptions MeshOptions; MeshOptions.DebugName = MatName + " [MS]";
-            ShaderCompiler->CompilerShaderRaw(MeshSource, Move(MeshOptions), [Material](const FShaderHeader& Header) mutable
-            {
-                Material->MeshShaderBinaries.assign(Header.Binaries.begin(), Header.Binaries.end());
-                Material->MeshShader = FShaderLibrary::Commit(FName((Material->GetGUID().ToString() + "_MS").c_str()), ERHIShaderType::Mesh,
-                    TSpan<const uint32>(Header.Binaries.data(), Header.Binaries.size()));
-            });
+            ShaderCompiler->CompilerShaderRaw(MeshSource, Move(MeshOptions), CommitStage(EMaterialShaderStage::Mesh));
 
             const FString VisSource = Compiler.BuildVertexShaderFromTemplate(MeshShaderDir + "MeshletVisBuffer.slang", EMaterialType::PBR);
             FShaderCompileOptions VisOptions; VisOptions.DebugName = MatName + " [VBM]";
-            ShaderCompiler->CompilerShaderRaw(VisSource, Move(VisOptions), [Material](const FShaderHeader& Header) mutable
-            {
-                Material->VisBufferMeshShaderBinaries.assign(Header.Binaries.begin(), Header.Binaries.end());
-                Material->VisBufferMeshShader = FShaderLibrary::Commit(FName((Material->GetGUID().ToString() + "_VBM").c_str()), ERHIShaderType::Mesh,
-                    TSpan<const uint32>(Header.Binaries.data(), Header.Binaries.size()));
-            });
+            ShaderCompiler->CompilerShaderRaw(VisSource, Move(VisOptions), CommitStage(EMaterialShaderStage::VisBufferMesh));
 
             const FString VisVSSource = Compiler.BuildVertexShaderFromTemplate(MeshShaderDir + "MeshletVisBufferVS.slang", EMaterialType::PBR);
             FShaderCompileOptions VisVSOptions; VisVSOptions.DebugName = MatName + " [VBV]";
-            ShaderCompiler->CompilerShaderRaw(VisVSSource, Move(VisVSOptions), [Material](const FShaderHeader& Header) mutable
-            {
-                Material->VisBufferVertexShaderBinaries.assign(Header.Binaries.begin(), Header.Binaries.end());
-                Material->VisBufferVertexShader = FShaderLibrary::Commit(FName((Material->GetGUID().ToString() + "_VBV").c_str()), ERHIShaderType::Vertex,
-                    TSpan<const uint32>(Header.Binaries.data(), Header.Binaries.size()));
-            });
+            ShaderCompiler->CompilerShaderRaw(VisVSSource, Move(VisVSOptions), CommitStage(EMaterialShaderStage::VisBufferVertex));
 
             // Masked-only VisBuffer PIXEL shaders: run the opacity graph + discard cut-out texels BEFORE they
             // write VisID/depth. The GEOMETRY stage is the SHARED VisBuffer VS/mesh above -- the VISBUFFER_MASKED
             // spec constant makes it emit interpolants for masked materials (no separate masked geometry shader).
             // Two PS variants: flat-VisID (VS path) + SV_PrimitiveID (mesh path). Cleared first so a
             // masked->opaque recompile drops the stale stages (never bound for non-masked).
-            Material->MaskedVisBufferPixelShaderBinaries.clear();
-            Material->MaskedVisBufferPixelShaderPrimBinaries.clear();
-            Material->MaskedVisBufferPixelShader       = nullptr;
-            Material->MaskedVisBufferPixelShaderPrim   = nullptr;
+            Material->ClearShaderStage(EMaterialShaderStage::MaskedVisBufferPixel);
+            Material->ClearShaderStage(EMaterialShaderStage::MaskedVisBufferPixelPrim);
             if (Material->GetBlendMode() == EBlendMode::Masked)
             {
                 const FString MaskedPSSource = Compiler.BuildPixelShaderFromTemplate(MeshShaderDir + "VisBufferMaskedPixel.slang");
                 FShaderCompileOptions MaskedPSOptions; MaskedPSOptions.DebugName = MatName + " [MVBP]";
-                ShaderCompiler->CompilerShaderRaw(MaskedPSSource, Move(MaskedPSOptions), [Material](const FShaderHeader& Header) mutable
-                {
-                    Material->MaskedVisBufferPixelShaderBinaries.assign(Header.Binaries.begin(), Header.Binaries.end());
-                    Material->MaskedVisBufferPixelShader = FShaderLibrary::Commit(FName((Material->GetGUID().ToString() + "_MVBP").c_str()), ERHIShaderType::Fragment,
-                        TSpan<const uint32>(Header.Binaries.data(), Header.Binaries.size()));
-                });
+                ShaderCompiler->CompilerShaderRaw(MaskedPSSource, Move(MaskedPSOptions), CommitStage(EMaterialShaderStage::MaskedVisBufferPixel));
 
                 // Mesh-path variant: same source compiled with VISBUFFER_PRIMID (VisID via SV_PrimitiveID).
                 FShaderCompileOptions MaskedPSPrimOptions; MaskedPSPrimOptions.DebugName = MatName + " [MVBPP]";
                 MaskedPSPrimOptions.MacroDefinitions.emplace_back("VISBUFFER_PRIMID");
-                ShaderCompiler->CompilerShaderRaw(MaskedPSSource, Move(MaskedPSPrimOptions), [Material](const FShaderHeader& Header) mutable
-                {
-                    Material->MaskedVisBufferPixelShaderPrimBinaries.assign(Header.Binaries.begin(), Header.Binaries.end());
-                    Material->MaskedVisBufferPixelShaderPrim = FShaderLibrary::Commit(FName((Material->GetGUID().ToString() + "_MVBPP").c_str()), ERHIShaderType::Fragment,
-                        TSpan<const uint32>(Header.Binaries.data(), Header.Binaries.size()));
-                });
+                ShaderCompiler->CompilerShaderRaw(MaskedPSSource, Move(MaskedPSPrimOptions), CommitStage(EMaterialShaderStage::MaskedVisBufferPixelPrim));
             }
 
             const FString DeferredSource = Compiler.BuildDeferredShaderFromTemplate(MeshShaderDir + "DeferredMaterial.slang", EMaterialType::PBR);
             FShaderCompileOptions DeferredOptions; DeferredOptions.DebugName = MatName + " [DM]";
-            ShaderCompiler->CompilerShaderRaw(DeferredSource, Move(DeferredOptions), [Material](const FShaderHeader& Header) mutable
-            {
-                Material->DeferredShaderBinaries.assign(Header.Binaries.begin(), Header.Binaries.end());
-                Material->DeferredShader = FShaderLibrary::Commit(FName((Material->GetGUID().ToString() + "_DM").c_str()), ERHIShaderType::Fragment,
-                    TSpan<const uint32>(Header.Binaries.data(), Header.Binaries.size()));
-            });
+            ShaderCompiler->CompilerShaderRaw(DeferredSource, Move(DeferredOptions), CommitStage(EMaterialShaderStage::Deferred));
         }
 
-        ShaderCompiler->CompilerShaderRaw(Result.PixelSource, Move(Options), [Material](const FShaderHeader& Header) mutable
-        {
-            Material->PixelShaderBinaries.assign(Header.Binaries.begin(), Header.Binaries.end());
-            Material->PixelShader = FShaderLibrary::Commit(FName((Material->GetGUID().ToString() + "_PS").c_str()), ERHIShaderType::Fragment,
-                TSpan<const uint32>(Header.Binaries.data(), Header.Binaries.size()));
-        });
+        ShaderCompiler->CompilerShaderRaw(Result.PixelSource, Move(Options), CommitStage(EMaterialShaderStage::Pixel));
 
         ShaderCompiler->Flush();
 
@@ -198,9 +169,57 @@ namespace Lumina
         Material->Parameters.clear();
         Compiler.GetParameters(Material->Parameters, Material->MaterialUniforms);
 
+        // Stamp the templates these stages were built from (serialized with the asset) BEFORE PostLoad,
+        // which compares it against the current hash to queue stale materials for auto-recompile.
+        Material->CompiledTemplateHash = CMaterial::GetShaderTemplateHash();
+
         Material->PostLoad();
 
         Result.bSuccess = true;
         return Result;
+    }
+
+    void ProcessStaleMaterialRecompiles()
+    {
+        // One material per call: each recompile runs the full multi-stage pipeline (ending in a compiler
+        // Flush), so spreading the work across frames avoids one long hitch when a template edit makes
+        // many materials stale at once.
+        TObjectPtr<CMaterial> Material = CMaterial::PopStaleTemplateMaterial();
+        if (!Material.IsValid())
+        {
+            return;
+        }
+
+        CPackage* Package = Material->GetPackage();
+        if (Package == nullptr)
+        {
+            return;
+        }
+
+        FString GraphName = "AssetMaterialGraph";
+        CMaterialNodeGraph* Graph = Cast<CMaterialNodeGraph>(Package->LoadObjectByName(GraphName));
+        if (Graph == nullptr)
+        {
+            LOG_WARN("Material '{0}' was compiled against older shader templates but has no saved graph to recompile from", Material->GetName().c_str());
+            return;
+        }
+
+        // Headless compile: node/pin wiring is already restored by the graph's PostLoad; skip Initialize()
+        // (it creates the ImGui node-editor context, only needed for drawing). Same flow as the importer.
+        Graph->SetMaterial(Material.Get());
+        Graph->ValidateGraph();
+
+        const FMaterialGraphCompileResult Result = CompileMaterialGraph(Material.Get(), Graph);
+        if (Result.bSuccess)
+        {
+            // Committed in memory; dirty the package so the user can save and stop paying the recompile
+            // on every session. Never auto-save.
+            Package->MarkDirty();
+            ImGuiX::Notifications::NotifyInfo("Material '{0}' recompiled (shader templates changed) - save to keep", Material->GetName().c_str());
+        }
+        else
+        {
+            ImGuiX::Notifications::NotifyError("Material '{0}' failed to recompile against the current shader templates", Material->GetName().c_str());
+        }
     }
 }

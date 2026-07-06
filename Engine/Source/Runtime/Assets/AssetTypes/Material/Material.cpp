@@ -3,8 +3,10 @@
 #include "Assets/AssetTypes/Material/MaterialInstance.h"
 #include "Assets/AssetTypes/Textures/Texture.h"
 #include "FileSystem/FileSystem.h"
+#include "Core/Math/Hash/Hash.h"
 #include "Memory/MemoryTracking.h"
 #include "Paths/Paths.h"
+#include "EASTL/sort.h"
 #include "Renderer/RenderManager.h"
 #include "Renderer/ShaderCompiler.h"
 #include "Renderer/ShaderLibrary.h"
@@ -14,6 +16,50 @@ namespace Lumina
 {
     static CMaterial* DefaultMaterial = nullptr;
     static CMaterial* DefaultTerrainMaterial = nullptr;
+
+    namespace
+    {
+        // The one description of every compiled material shader stage: which serialized SPIR-V blob
+        // feeds which library entry, plus the GUID-key suffix and pipeline type. PostLoad and the
+        // editor graph compile both walk this, so adding a stage is a one-line change here (plus the
+        // EMaterialShaderStage entry it's indexed by).
+        struct FMaterialStageDesc
+        {
+            TVector<uint32> CMaterial::*     Binaries;
+            const FShaderEntry* CMaterial::* Entry;
+            const char*                      Suffix;
+            ERHIShaderType                   Type;
+        };
+
+        // Indexed by EMaterialShaderStage.
+        const FMaterialStageDesc GMaterialStages[] =
+        {
+            { &CMaterial::PixelShaderBinaries,                    &CMaterial::PixelShader,                    "_PS",    ERHIShaderType::Fragment },
+            { &CMaterial::VertexShaderBinaries,                   &CMaterial::VertexShader,                   "_VS",    ERHIShaderType::Vertex   },
+            { &CMaterial::MeshShaderBinaries,                     &CMaterial::MeshShader,                     "_MS",    ERHIShaderType::Mesh     },
+            { &CMaterial::VisBufferMeshShaderBinaries,            &CMaterial::VisBufferMeshShader,            "_VBM",   ERHIShaderType::Mesh     },
+            { &CMaterial::VisBufferVertexShaderBinaries,          &CMaterial::VisBufferVertexShader,          "_VBV",   ERHIShaderType::Vertex   },
+            { &CMaterial::MaskedVisBufferPixelShaderBinaries,     &CMaterial::MaskedVisBufferPixelShader,     "_MVBP",  ERHIShaderType::Fragment },
+            { &CMaterial::MaskedVisBufferPixelShaderPrimBinaries, &CMaterial::MaskedVisBufferPixelShaderPrim, "_MVBPP", ERHIShaderType::Fragment },
+            { &CMaterial::DeferredShaderBinaries,                 &CMaterial::DeferredShader,                 "_DM",    ERHIShaderType::Fragment },
+        };
+        static_assert(sizeof(GMaterialStages) / sizeof(GMaterialStages[0]) == (size_t)EMaterialShaderStage::Count,
+            "GMaterialStages must cover every EMaterialShaderStage");
+
+#if USING(WITH_EDITOR)
+        // Materials whose serialized stages predate the current shader templates. Filled during the
+        // (parallel) PostLoad wave, drained on the editor's game thread -> mutex, TObjectPtr for safety
+        // against a material dying before the drain reaches it.
+        FMutex                        StaleTemplateMutex;
+        TVector<TObjectPtr<CMaterial>> StaleTemplateMaterials;
+
+        void QueueStaleTemplateMaterial(CMaterial* Material)
+        {
+            FScopeLock Lock(StaleTemplateMutex);
+            StaleTemplateMaterials.push_back(Material);
+        }
+#endif
+    }
 
     CMaterial::CMaterial()
     {
@@ -117,45 +163,29 @@ namespace Lumina
     {
         if (!PixelShaderBinaries.empty() && !VertexShaderBinaries.empty())
         {
-            // Library entries keyed by asset GUID: stable across reloads, refreshed in place on recompile.
-            const FString Guid = GetGUID().ToString();
-            VertexShader = FShaderLibrary::Commit(FName((Guid + "_VS").c_str()), ERHIShaderType::Vertex,
-                TSpan<const uint32>(VertexShaderBinaries.data(), VertexShaderBinaries.size()));
-            PixelShader  = FShaderLibrary::Commit(FName((Guid + "_PS").c_str()), ERHIShaderType::Fragment,
-                TSpan<const uint32>(PixelShaderBinaries.data(), PixelShaderBinaries.size()));
+            // Commit every serialized stage to the library (entries keyed by asset GUID + stage suffix:
+            // stable across reloads, refreshed in place on recompile). The merged VS (MeshletVertex.slang)
+            // serves base/depth/shadow via the EPass spec constant; mesh/VisBuffer/masked/deferred stages
+            // are optional and simply absent (empty) when not compiled for this material.
+            for (size_t i = 0; i < (size_t)EMaterialShaderStage::Count; ++i)
+            {
+                const TVector<uint32>& Binaries = this->*GMaterialStages[i].Binaries;
+                if (!Binaries.empty())
+                {
+                    CommitShaderStage((EMaterialShaderStage)i, TSpan<const uint32>(Binaries.data(), Binaries.size()));
+                }
+            }
 
-            // The single merged VS (MeshletVertex.slang) serves base/depth/shadow via the EPass spec constant.
-            // Optional mesh-shader geometry stage (same passes); the renderer picks it per r.MeshShaders.
-            if (!MeshShaderBinaries.empty())
+#if USING(WITH_EDITOR)
+            // The stage binaries bake whatever shader templates they were compiled from. If the templates
+            // changed since (hash mismatch, or a pre-hash legacy asset), queue an editor recompile from the
+            // saved graph. The package check skips the procedural default materials -- they compile fresh
+            // from source every run and have no graph to recompile.
+            if (GetPackage() != nullptr && CompiledTemplateHash != GetShaderTemplateHash())
             {
-                MeshShader = FShaderLibrary::Commit(FName((Guid + "_MS").c_str()), ERHIShaderType::Mesh,
-                    TSpan<const uint32>(MeshShaderBinaries.data(), MeshShaderBinaries.size()));
+                QueueStaleTemplateMaterial(this);
             }
-            if (!VisBufferMeshShaderBinaries.empty())
-            {
-                VisBufferMeshShader = FShaderLibrary::Commit(FName((Guid + "_VBM").c_str()), ERHIShaderType::Mesh,
-                    TSpan<const uint32>(VisBufferMeshShaderBinaries.data(), VisBufferMeshShaderBinaries.size()));
-            }
-            if (!VisBufferVertexShaderBinaries.empty())
-            {
-                VisBufferVertexShader = FShaderLibrary::Commit(FName((Guid + "_VBV").c_str()), ERHIShaderType::Vertex,
-                    TSpan<const uint32>(VisBufferVertexShaderBinaries.data(), VisBufferVertexShaderBinaries.size()));
-            }
-            if (!MaskedVisBufferPixelShaderBinaries.empty())
-            {
-                MaskedVisBufferPixelShader = FShaderLibrary::Commit(FName((Guid + "_MVBP").c_str()), ERHIShaderType::Fragment,
-                    TSpan<const uint32>(MaskedVisBufferPixelShaderBinaries.data(), MaskedVisBufferPixelShaderBinaries.size()));
-            }
-            if (!MaskedVisBufferPixelShaderPrimBinaries.empty())
-            {
-                MaskedVisBufferPixelShaderPrim = FShaderLibrary::Commit(FName((Guid + "_MVBPP").c_str()), ERHIShaderType::Fragment,
-                    TSpan<const uint32>(MaskedVisBufferPixelShaderPrimBinaries.data(), MaskedVisBufferPixelShaderPrimBinaries.size()));
-            }
-            if (!DeferredShaderBinaries.empty())
-            {
-                DeferredShader = FShaderLibrary::Commit(FName((Guid + "_DM").c_str()), ERHIShaderType::Fragment,
-                    TSpan<const uint32>(DeferredShaderBinaries.data(), DeferredShaderBinaries.size()));
-            }
+#endif
 
             // FMaterialUniforms isn't serialized; replay defaults from Parameters so authored values survive load.
             for (const FMaterialParameter& Param : Parameters)
@@ -552,4 +582,93 @@ namespace Lumina
 
         DefaultTerrainMaterial->PostLoad();
     }
+
+    void CMaterial::CommitShaderStage(EMaterialShaderStage Stage, TSpan<const uint32> Spirv)
+    {
+        const FMaterialStageDesc& Desc = GMaterialStages[(size_t)Stage];
+
+        TVector<uint32>& Binaries = this->*Desc.Binaries;
+        if (Binaries.data() != Spirv.data())
+        {
+            Binaries.assign(Spirv.data(), Spirv.data() + Spirv.size());
+        }
+
+        this->*Desc.Entry = FShaderLibrary::Commit(FName((GetGUID().ToString() + Desc.Suffix).c_str()),
+            Desc.Type, Spirv);
+    }
+
+    void CMaterial::ClearShaderStage(EMaterialShaderStage Stage)
+    {
+        const FMaterialStageDesc& Desc = GMaterialStages[(size_t)Stage];
+        (this->*Desc.Binaries).clear();
+        this->*Desc.Entry = nullptr;
+    }
+
+    const TVector<uint32>& CMaterial::GetShaderStageBinaries(EMaterialShaderStage Stage) const
+    {
+        return this->*GMaterialStages[(size_t)Stage].Binaries;
+    }
+
+    uint64 CMaterial::GetShaderTemplateHash()
+    {
+        // Computed once per run; template edits require a restart to be noticed, which matches how the
+        // shader library loads engine shaders. Deterministic: per-file content hashes folded in path order.
+        static const uint64 CachedHash = []() -> uint64
+        {
+            struct FEntry
+            {
+                FString Path;
+                uint64  ContentHash;
+            };
+            TVector<FEntry> Files;
+
+            auto Gather = [&Files](FStringView Directory)
+            {
+                VFS::RecursiveDirectoryIterator(Directory, [&Files](const VFS::FFileInfo& Info)
+                {
+                    if (Info.IsDirectory() || Info.GetExt() != ".slang")
+                    {
+                        return;
+                    }
+                    FString Source;
+                    if (VFS::ReadFile(Source, Info.VirtualPath.c_str()))
+                    {
+                        Files.push_back({ FString(Info.VirtualPath.c_str()), Hash::XXHash::GetHash64(Source) });
+                    }
+                });
+            };
+            // Everything a material template can reach: the templates themselves + the shared includes.
+            Gather("/Engine/Resources/Shaders/MaterialShader");
+            Gather("/Engine/Resources/Shaders/Includes");
+
+            eastl::sort(Files.begin(), Files.end(), [](const FEntry& A, const FEntry& B)
+            {
+                return A.Path < B.Path;
+            });
+
+            size_t Result = Files.size();
+            for (const FEntry& File : Files)
+            {
+                Hash::HashCombine(Result, (size_t)Hash::GetHash64(File.Path));
+                Hash::HashCombine(Result, (size_t)File.ContentHash);
+            }
+            // 0 is the serialized "legacy asset / never compiled" sentinel; never collide with it.
+            return Result != 0 ? (uint64)Result : 1ull;
+        }();
+        return CachedHash;
+    }
+
+#if USING(WITH_EDITOR)
+    TObjectPtr<CMaterial> CMaterial::PopStaleTemplateMaterial()
+    {
+        FScopeLock Lock(StaleTemplateMutex);
+        if (StaleTemplateMaterials.empty())
+        {
+            return nullptr;
+        }
+        TObjectPtr<CMaterial> Material = StaleTemplateMaterials.back();
+        StaleTemplateMaterials.pop_back();
+        return Material;
+    }
+#endif
 }

@@ -111,7 +111,7 @@ float3 ApplyContrast(float3 X, float Contrast)
 
 float3 ApplySaturation(float3 X, float Saturation)
 {
-    float Luma = dot(X, float3(0.2126, 0.7152, 0.0722));
+    float Luma = Luminance(X);
     return lerp(float3(Luma), X, Saturation);
 }
 
@@ -175,7 +175,7 @@ float3 Tonemap_AGX_Base(float3 X)
 // but before EOTF. Slope, power and offset are per-channel CDL-style.
 float3 AGX_Look(float3 X, float3 Slope, float3 Power, float Saturation)
 {
-    float Luma = dot(X, float3(0.2126, 0.7152, 0.0722));
+    float Luma = Luminance(X);
     X = pow(X * Slope, Power);
     return Luma + Saturation * (X - Luma);
 }
@@ -246,7 +246,7 @@ float3 ApplyFilmGrain(float3 X, float2 PixelPos, float Time, float Intensity, fl
     float  Noise = FilmGrainHash(Cell, Time) - 0.5;        // signed [-0.5, 0.5]
 
     // Brighter pixels get less grain when Response > 0 (film-stock shoulder behavior).
-    float Luma   = dot(X, float3(0.2126, 0.7152, 0.0722));
+    float Luma   = Luminance(X);
     float Falloff = lerp(1.0, 1.0 - smoothstep(0.0, 0.85, Luma), saturate(Response));
 
     return X * (1.0 + Noise * Intensity * Falloff);

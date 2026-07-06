@@ -79,6 +79,7 @@ void EnumRemoveFlags(Enum& Flags, Enum FlagsToRemove)
         SubStruct,
         Delegate,
         InstancedStruct,
+        Map,
     };
 
     /** Must be in-sync with EPropertyFlags in ObjectCore.h */

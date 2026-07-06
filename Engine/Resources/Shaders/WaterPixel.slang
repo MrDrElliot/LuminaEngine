@@ -203,7 +203,7 @@ float4 FragmentMain(PSInput Input) : SV_Target0
         // Blinn-Phong sun glint (cascade shadowing on water is a deferred enhancement).
         float  NdotH = saturate(dot(N, normalize(L + V)));
         float  Shine = lerp(2048.0, 16.0, saturate(Roughness));
-        float  Spec  = pow(NdotH, Shine) * (Shine + 8.0) / (8.0 * WATER_PI);
+        float  Spec  = pow(NdotH, Shine) * (Shine + 8.0) / (8.0 * PI);
         Color += SunRad * Spec * W.SSRSpecOpacity.z;
 
         // Subsurface scattering

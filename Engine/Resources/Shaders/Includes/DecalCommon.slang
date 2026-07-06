@@ -55,11 +55,3 @@ static const float3 kDecalCubeVerts[36] = {
     float3(-0.5,-0.5, 0.5), float3( 0.5, 0.5, 0.5), float3(-0.5, 0.5, 0.5),
     float3(-0.5,-0.5, 0.5), float3( 0.5,-0.5, 0.5), float3( 0.5, 0.5, 0.5),
 };
-
-// Raw reverse-Z NDC depth [0,1] -> view-space linear distance (matches PostProcessPixelPass).
-float DecalLinearizeDepth(float RawDepth)
-{
-    float ZNear = GetNearPlane();
-    float ZFar  = GetFarPlane();
-    return ZNear * ZFar / max(ZFar - RawDepth * (ZFar - ZNear), 1e-6);
-}

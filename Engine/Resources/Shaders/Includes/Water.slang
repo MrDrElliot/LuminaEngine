@@ -34,7 +34,6 @@ struct FWaterPushConstants
 };
 FWaterPushConstants* Pass() { return GetPassArgs<FWaterPushConstants>(); }
 
-static const float WATER_PI = 3.14159265;
 static const uint  WATER_INVALID_TEX = 0xFFFFFFFFu;
 
 struct FGerstnerResult
@@ -77,7 +76,7 @@ FGerstnerResult EvaluateGerstner(float2 WorldXZ, FGPUWater W, float Time)
         float  sa = sin(Angle);
         float2 D  = float2(WindDir.x * ca - WindDir.y * sa, WindDir.x * sa + WindDir.y * ca);
 
-        float k     = 2.0 * WATER_PI / Wavelength;
+        float k     = 2.0 * PI / Wavelength;
         float Speed = sqrt(9.81 / max(k, 1e-3)) * (0.5 + 0.5 * saturate(WindSpeed * 0.1)) * SpeedScale;
         float Phi   = k * dot(D, WorldXZ) + Time * Speed;
         float S     = sin(Phi);

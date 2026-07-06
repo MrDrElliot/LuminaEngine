@@ -18,6 +18,24 @@ namespace Lumina
 
 namespace Lumina
 {
+    // Compiled shader stages a material carries. Each stage pairs a serialized SPIR-V blob with a
+    // shader library entry; the (blob member, entry member, GUID suffix, type) tuple per stage lives
+    // in a single table in Material.cpp that PostLoad and the editor graph compile both walk, so
+    // adding a stage means touching exactly one place.
+    enum class EMaterialShaderStage : uint8
+    {
+        Pixel,
+        Vertex,
+        Mesh,                       // MeshletMesh.slang; bound only when the device has mesh shaders
+        VisBufferMesh,              // MeshletVisBuffer.slang; device-gated like Mesh
+        VisBufferVertex,            // MeshletVisBufferVS.slang; vertex-emulation fallback
+        MaskedVisBufferPixel,       // VisBufferMaskedPixel.slang (VS path); masked materials only
+        MaskedVisBufferPixelPrim,   // VisBufferMaskedPixel.slang + VISBUFFER_PRIMID (mesh path); masked only
+        Deferred,                   // DeferredMaterial.slang
+
+        Count,
+    };
+
     REFLECT()
     class RUNTIME_API CMaterial : public CMaterialInterface
     {
@@ -73,6 +91,26 @@ namespace Lumina
 
         static void CreateDefaultMaterial();
         static void CreateDefaultTerrainMaterial();
+
+        /** Copy Spirv into the stage's serialized blob (no-op self-copy safe) and (re)commit its
+            shader library entry. Shared by PostLoad and the editor material compile. */
+        void CommitShaderStage(EMaterialShaderStage Stage, TSpan<const uint32> Spirv);
+
+        /** Drop a stage's binaries and library pointer (e.g. masked-only stages on a masked->opaque recompile). */
+        void ClearShaderStage(EMaterialShaderStage Stage);
+
+        const TVector<uint32>& GetShaderStageBinaries(EMaterialShaderStage Stage) const;
+
+        /** Content hash of the material shader template sources (Shaders/MaterialShader + Shaders/Includes),
+            computed once per run. Serialized per material as CompiledTemplateHash so stale binaries are
+            detectable after template edits. */
+        static uint64 GetShaderTemplateHash();
+
+#if USING(WITH_EDITOR)
+        /** Next asset material whose serialized stages predate the current shader templates (queued during
+            PostLoad); null when none remain. The editor drains this and recompiles from the saved graph. */
+        static TObjectPtr<CMaterial> PopStaleTemplateMaterial();
+#endif
 
         EMaterialType GetMaterialType() const override { return MaterialType; }
         bool DoesCastShadows() const override { return bCastShadows; }
@@ -144,6 +182,11 @@ namespace Lumina
 
         PROPERTY()
         TVector<FMaterialParameter>             Parameters;
+
+        /** GetShaderTemplateHash() value the stage binaries were last compiled against. 0 = legacy asset
+            (predates hashing) -> treated as stale, so it auto-recompiles once in the editor and heals on save. */
+        PROPERTY()
+        uint64 CompiledTemplateHash = 0;
 
         FMaterialUniforms                       MaterialUniforms;
 

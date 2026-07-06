@@ -598,6 +598,10 @@ namespace Lumina
         void SSAOBlurPass(RHI::FCmdListH CL);
         void TransparentPass(RHI::FCmdListH CL);
         void OITResolvePass(RHI::FCmdListH CL);
+        // Additive translucents composite straight onto HDR after the resolve (they add light, never
+        // occlude); kept out of the WBOIT pass because their opaque-variant shader outputs (Color +
+        // Picker) misalign against its Accum/Revealage/Picker attachments.
+        void AdditiveTranslucentPass(RHI::FCmdListH CL);
         void FroxelInjectPass(RHI::FCmdListH CL);
         void FroxelIntegratePass(RHI::FCmdListH CL);
         void FroxelApplyPass(RHI::FCmdListH CL);

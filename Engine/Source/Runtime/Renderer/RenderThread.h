@@ -64,6 +64,10 @@ namespace Lumina
         void DrainLoop();
         static void DrainEntry(void* Arg, uint32 WorkerIndex);
 
+        // Hang-watchdog reporter (registered in Start): the drain has no dedicated OS thread, so a
+        // stall dump can't show it -- this logs the drain flags/counters and the in-flight command name.
+        static void ReportForHangWatchdog();
+
         struct FQueuedCommand
         {
             const char* DebugName;
@@ -74,8 +78,21 @@ namespace Lumina
 
         FMutex                      QueueMutex;
         TVector<FQueuedCommand>     PendingCommands;
-        TAtomic<bool>               bDrainActive = false;     // exactly one drain job at a time
+
+        // Drain-job spam control: true from ArmDrain's CAS until the armed job STARTS (DrainEntry).
+        // Deliberately not "until the drain finishes" -- if the scheduler ever strands an armed job,
+        // bDrainRunning stays false and a Flush/fence waiter can still become the drainer. (A stranded
+        // armed job previously held the single combined flag forever, locking out the waiter assist:
+        // main thread looping in WaitForCounter with nobody draining -- the large-scene-load watchdog hit.)
+        TAtomic<bool>               bDrainJobArmed = false;
+        // True while someone is actually executing DrainLoop: the armed job or an assisting waiter.
+        // Exactly one drainer at a time (FIFO + single-threaded recording/submit).
+        TAtomic<bool>               bDrainRunning = false;
         Jobs::FCounter*             DrainCounter = nullptr;   // tracks the in-flight drain job (for Stop)
+
+        // Debug-name of the command the drain is currently executing (null when idle). For the hang
+        // watchdog: a parked drain fiber has no visible thread stack, but this still names the culprit.
+        TAtomic<const char*>        ActiveCommandName = nullptr;
 
         FMutex                      IdleMutex;                // Flush waits here on CommandsCompleted
         std::condition_variable     IdleCV;

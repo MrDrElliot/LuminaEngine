@@ -7,6 +7,7 @@
 #include "Renderer/RenderManager.h"
 #include "Renderer/RenderThread.h"
 #include "Renderer/RHI.h"
+#include "Renderer/RHIUpload.h"
 #include "World/WorldTypes.h"
 #include "World/Entity/Components/CameraComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
@@ -68,6 +69,33 @@ namespace Lumina
         bInitialized = false;
     }
 
+    entt::entity FThumbnailScene::SpawnEntity(FName Name)
+    {
+        if (!bInitialized || !World.IsValid())
+        {
+            return entt::null;
+        }
+
+        const entt::entity Entity = World->ConstructEntity(Name);
+        SpawnedEntities.push_back(Entity);
+        return Entity;
+    }
+
+    void FThumbnailScene::ResetContents()
+    {
+        if (!bInitialized || !World.IsValid())
+        {
+            SpawnedEntities.clear();
+            return;
+        }
+
+        for (entt::entity Entity : SpawnedEntities)
+        {
+            World->DestroyEntity(Entity);
+        }
+        SpawnedEntities.clear();
+    }
+
     void FThumbnailScene::SetCameraTransform(const FVector3& Position, const FVector3& Target, float FOVDegrees)
     {
         if (!bInitialized || CameraEntity == entt::null)
@@ -115,6 +143,14 @@ namespace Lumina
         // swapchain frame. Capture is game-thread only, so EnqueueAndWait can't self-deadlock.
         auto RecordCapture = [&]()
         {
+            // This render bypasses the frame pipeline, and queued RHI uploads only become resident at
+            // the next Core::BeginFrame. A mesh that finished loading since the last frame (exactly the
+            // asset being thumbnailed, or scene meshes streaming in) still has its meshlet header/bounds
+            // copies pending -- rendering now would make CullMeshlets read uninitialized header memory
+            // and chase a null Bounds address (GPU MMU page fault at a near-zero VA). Flush them first;
+            // we run on the render drain (the sole graphics submitter), so the extra submit is ordered.
+            RHI::FlushUploadsAndWait();
+
             IRenderScene* Scene = World->GetRenderer();
             Scene->PrepareRender(FrameIndex);
             Scene->RenderView(FrameIndex);
@@ -134,8 +170,10 @@ namespace Lumina
             RHI::CmdBarrier(CL, RHI::EStageFlags::AllCommands, RHI::EStageFlags::Transfer);
             RHI::CmdCopyTextureToMemory(CL, Output.Texture, RHI::FTextureSlice{}, Readback, SourceWidth);
             RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
-            RHI::Submit(CL);
-            RHI::WaitDeviceIdle();
+            // Wait only on THIS copy's completion, not the whole device. A WaitDeviceIdle here (we run inside a
+            // render-thread command) stalls on unrelated in-flight frame work while holding the cooperative
+            // drain, which hangs the next FlushRenderingCommands -- e.g. opening a material editor.
+            RHI::SubmitAndWait(CL);
             RHI::ResetCommandList(CL);
 
             bCaptured = true;

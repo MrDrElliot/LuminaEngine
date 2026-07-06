@@ -10,6 +10,7 @@
 #include "Core/Object/SoftObjectPtr.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Reflection/Type/Properties/ArrayProperty.h"
+#include "Core/Reflection/Type/Properties/MapProperty.h"
 #include "Core/Reflection/Type/Properties/EnumProperty.h"
 #include "Core/Reflection/Type/Properties/InstancedStructProperty.h"
 #include "Core/Reflection/Type/Properties/SoftObjectProperty.h"
@@ -31,7 +32,7 @@ namespace Lumina
     struct CScriptStruct::FFieldPlan
     {
         const FScriptExportField*   Field = nullptr;
-        EScriptExportKind           Kind = EScriptExportKind::Nil;
+        EPropertyTypeFlags          Kind = EPropertyTypeFlags::None;
         uint32                      Size = 0;
         uint32                      Align = 1;
         EScriptElementKind          Life = EScriptElementKind::Trivial;
@@ -39,6 +40,8 @@ namespace Lumina
         const CScriptStruct*        Sub = nullptr;
         bool                        bArray = false;
         FScriptArrayElementDesc*    ArrayDesc = nullptr;
+        bool                        bMap = false;
+        FScriptMapElementDesc*      MapDesc = nullptr;
     };
 
     namespace
@@ -47,6 +50,7 @@ namespace Lumina
         thread_local CEnum*            GPendingEnum   = nullptr;
         thread_local CClass*           GPendingClass  = nullptr;
         thread_local const FVectorOps* GPendingOps    = nullptr;
+        thread_local const FMapOps*    GPendingMapOps = nullptr;
 
         FFieldOwner OwnerOf(CStruct* Owner)
         {
@@ -97,22 +101,21 @@ namespace Lumina
             return Memory::New<TPropertyType>(Owner, &Params);
         }
 
-        FProperty* MakeScalar(EScriptExportKind Kind, const FFieldOwner& Owner, const FName& Name, uint32 Offset)
+        FProperty* MakeScalar(EPropertyTypeFlags Kind, const FFieldOwner& Owner, const FName& Name, uint32 Offset)
         {
             switch (Kind)
             {
-            case EScriptExportKind::Bool: return MakeSimple<FBoolProperty,   EPropertyTypeFlags::Bool>  (Owner, Name, Offset);
-            case EScriptExportKind::I8:   return MakeSimple<FInt8Property,   EPropertyTypeFlags::Int8>  (Owner, Name, Offset);
-            case EScriptExportKind::I16:  return MakeSimple<FInt16Property,  EPropertyTypeFlags::Int16> (Owner, Name, Offset);
-            case EScriptExportKind::I32:  return MakeSimple<FInt32Property,  EPropertyTypeFlags::Int32> (Owner, Name, Offset);
-            case EScriptExportKind::I64:  return MakeSimple<FInt64Property,  EPropertyTypeFlags::Int64> (Owner, Name, Offset);
-            case EScriptExportKind::U8:   return MakeSimple<FUInt8Property,  EPropertyTypeFlags::UInt8> (Owner, Name, Offset);
-            case EScriptExportKind::U16:  return MakeSimple<FUInt16Property, EPropertyTypeFlags::UInt16>(Owner, Name, Offset);
-            case EScriptExportKind::U32:  return MakeSimple<FUInt32Property, EPropertyTypeFlags::UInt32>(Owner, Name, Offset);
-            case EScriptExportKind::U64:  return MakeSimple<FUInt64Property, EPropertyTypeFlags::UInt64>(Owner, Name, Offset);
-            case EScriptExportKind::F32:  return MakeSimple<FFloatProperty,  EPropertyTypeFlags::Float> (Owner, Name, Offset);
-            case EScriptExportKind::F64:  return MakeSimple<FDoubleProperty, EPropertyTypeFlags::Double>(Owner, Name, Offset);
-            case EScriptExportKind::Entity: return MakeSimple<FUInt32Property, EPropertyTypeFlags::UInt32>(Owner, Name, Offset);
+            case EPropertyTypeFlags::Bool:   return MakeSimple<FBoolProperty,   EPropertyTypeFlags::Bool>  (Owner, Name, Offset);
+            case EPropertyTypeFlags::Int8:   return MakeSimple<FInt8Property,   EPropertyTypeFlags::Int8>  (Owner, Name, Offset);
+            case EPropertyTypeFlags::Int16:  return MakeSimple<FInt16Property,  EPropertyTypeFlags::Int16> (Owner, Name, Offset);
+            case EPropertyTypeFlags::Int32:  return MakeSimple<FInt32Property,  EPropertyTypeFlags::Int32> (Owner, Name, Offset);
+            case EPropertyTypeFlags::Int64:  return MakeSimple<FInt64Property,  EPropertyTypeFlags::Int64> (Owner, Name, Offset);
+            case EPropertyTypeFlags::UInt8:  return MakeSimple<FUInt8Property,  EPropertyTypeFlags::UInt8> (Owner, Name, Offset);
+            case EPropertyTypeFlags::UInt16: return MakeSimple<FUInt16Property, EPropertyTypeFlags::UInt16>(Owner, Name, Offset);
+            case EPropertyTypeFlags::UInt32: return MakeSimple<FUInt32Property, EPropertyTypeFlags::UInt32>(Owner, Name, Offset);
+            case EPropertyTypeFlags::UInt64: return MakeSimple<FUInt64Property, EPropertyTypeFlags::UInt64>(Owner, Name, Offset);
+            case EPropertyTypeFlags::Float:  return MakeSimple<FFloatProperty,  EPropertyTypeFlags::Float> (Owner, Name, Offset);
+            case EPropertyTypeFlags::Double: return MakeSimple<FDoubleProperty, EPropertyTypeFlags::Double>(Owner, Name, Offset);
             default: return nullptr;
             }
         }
@@ -192,23 +195,22 @@ namespace Lumina
             return Property;
         }
 
-        bool ScalarSizeAlign(EScriptExportKind Kind, uint32& Size, uint32& Align)
+        bool ScalarSizeAlign(EPropertyTypeFlags Kind, uint32& Size, uint32& Align)
         {
             switch (Kind)
             {
-            case EScriptExportKind::Bool:   Size = sizeof(bool);   Align = alignof(bool);   return true;
-            case EScriptExportKind::I8:     Size = sizeof(int8);   Align = alignof(int8);   return true;
-            case EScriptExportKind::I16:    Size = sizeof(int16);  Align = alignof(int16);  return true;
-            case EScriptExportKind::I32:    Size = sizeof(int32);  Align = alignof(int32);  return true;
-            case EScriptExportKind::I64:    Size = sizeof(int64);  Align = alignof(int64);  return true;
-            case EScriptExportKind::U8:     Size = sizeof(uint8);  Align = alignof(uint8);  return true;
-            case EScriptExportKind::U16:    Size = sizeof(uint16); Align = alignof(uint16); return true;
-            case EScriptExportKind::U32:    Size = sizeof(uint32); Align = alignof(uint32); return true;
-            case EScriptExportKind::U64:    Size = sizeof(uint64); Align = alignof(uint64); return true;
-            case EScriptExportKind::F32:    Size = sizeof(float);  Align = alignof(float);  return true;
-            case EScriptExportKind::F64:    Size = sizeof(double); Align = alignof(double); return true;
-            case EScriptExportKind::Entity: Size = sizeof(uint32); Align = alignof(uint32); return true;
-            case EScriptExportKind::Enum:   Size = sizeof(int64);  Align = alignof(int64);  return true;
+            case EPropertyTypeFlags::Bool:   Size = sizeof(bool);   Align = alignof(bool);   return true;
+            case EPropertyTypeFlags::Int8:   Size = sizeof(int8);   Align = alignof(int8);   return true;
+            case EPropertyTypeFlags::Int16:  Size = sizeof(int16);  Align = alignof(int16);  return true;
+            case EPropertyTypeFlags::Int32:  Size = sizeof(int32);  Align = alignof(int32);  return true;
+            case EPropertyTypeFlags::Int64:  Size = sizeof(int64);  Align = alignof(int64);  return true;
+            case EPropertyTypeFlags::UInt8:  Size = sizeof(uint8);  Align = alignof(uint8);  return true;
+            case EPropertyTypeFlags::UInt16: Size = sizeof(uint16); Align = alignof(uint16); return true;
+            case EPropertyTypeFlags::UInt32: Size = sizeof(uint32); Align = alignof(uint32); return true;
+            case EPropertyTypeFlags::UInt64: Size = sizeof(uint64); Align = alignof(uint64); return true;
+            case EPropertyTypeFlags::Float:  Size = sizeof(float);  Align = alignof(float);  return true;
+            case EPropertyTypeFlags::Double: Size = sizeof(double); Align = alignof(double); return true;
+            case EPropertyTypeFlags::Enum:   Size = sizeof(int64);  Align = alignof(int64);  return true;
             default: return false;
             }
         }
@@ -324,6 +326,169 @@ namespace Lumina
             Ops.Reserve     = &ArrayReserve;
             Ops.Swap        = &ArraySwap;
             Ops.ElementSize = ElementSize;
+        }
+
+        // ---- Script dynamic map (type-erased pairs, linear find via the key property's Identical) ----
+
+        FProperty* MakeMap(const FFieldOwner& Owner, const FName& Name, uint32 Offset, const FMapOps* Ops)
+        {
+            GPendingMapOps = Ops;
+            const FString NameStr = Name.ToString();
+            FMapPropertyParams Params{};
+            FillBaseParams(Params, EPropertyTypeFlags::Map, Offset, NameStr.c_str());
+            Params.GetOpsFn      = +[]() -> const FMapOps* { return GPendingMapOps; };
+            Params.NumMetaData   = 0;
+            Params.MetaDataArray = nullptr;
+            FProperty* Property = Memory::New<FMapProperty>(Owner, &Params);
+            GPendingMapOps = nullptr;
+            return Property;
+        }
+
+        SIZE_T MapSize(const void* InMap)
+        {
+            const FScriptDynamicMap* Map = static_cast<const FScriptDynamicMap*>(InMap);
+            return (Map->Desc && Map->Desc->PairStride > 0) ? Map->Bytes.size() / Map->Desc->PairStride : 0;
+        }
+
+        void* MapFind(void* InMap, const void* KeyPtr)
+        {
+            FScriptDynamicMap* Map = static_cast<FScriptDynamicMap*>(InMap);
+            const FScriptMapElementDesc* Desc = Map->Desc;
+            if (Desc == nullptr || Desc->Key.Inner == nullptr || Desc->PairStride == 0) { return nullptr; }
+            const SIZE_T Count = Map->Bytes.size() / Desc->PairStride;
+            uint8* Data = Map->Bytes.data();
+            for (SIZE_T i = 0; i < Count; ++i)
+            {
+                void* Pair = Data + i * Desc->PairStride;
+                if (Desc->Key.Inner->Identical(Desc->KeyAt(Pair), KeyPtr))
+                {
+                    return Desc->ValueAt(Pair);
+                }
+            }
+            return nullptr;
+        }
+
+        void* MapInsert(void* InMap, const void* KeyPtr, const void* ValuePtr)
+        {
+            FScriptDynamicMap* Map = static_cast<FScriptDynamicMap*>(InMap);
+            const FScriptMapElementDesc* Desc = Map->Desc;
+            if (Desc == nullptr || Desc->PairStride == 0) { return nullptr; }
+
+            if (void* Existing = MapFind(InMap, KeyPtr))
+            {
+                if (ValuePtr != nullptr) { Desc->Value.CopyElement(Existing, ValuePtr); }
+                return Existing;
+            }
+
+            const SIZE_T Old = Map->Bytes.size();
+            Map->Bytes.resize(Old + Desc->PairStride);
+            uint8* Pair = Map->Bytes.data() + Old;
+            Desc->ConstructPair(Pair);
+            if (KeyPtr != nullptr)   { Desc->Key.CopyElement(Desc->KeyAt(Pair), KeyPtr); }
+            if (ValuePtr != nullptr) { Desc->Value.CopyElement(Desc->ValueAt(Pair), ValuePtr); }
+            return Desc->ValueAt(Pair);
+        }
+
+        bool MapRemoveByKey(void* InMap, const void* KeyPtr)
+        {
+            FScriptDynamicMap* Map = static_cast<FScriptDynamicMap*>(InMap);
+            const FScriptMapElementDesc* Desc = Map->Desc;
+            if (Desc == nullptr || Desc->Key.Inner == nullptr || Desc->PairStride == 0) { return false; }
+            const SIZE_T Count = Map->Bytes.size() / Desc->PairStride;
+            uint8* Data = Map->Bytes.data();
+            for (SIZE_T i = 0; i < Count; ++i)
+            {
+                void* Pair = Data + i * Desc->PairStride;
+                if (Desc->Key.Inner->Identical(Desc->KeyAt(Pair), KeyPtr))
+                {
+                    // Order-independent removal: overwrite the hole with the last pair, then shrink.
+                    void* Last = Data + (Count - 1) * Desc->PairStride;
+                    if (Pair != Last) { Desc->CopyPair(Pair, Last); }
+                    Desc->DestructPair(Last);
+                    Map->Bytes.resize((Count - 1) * Desc->PairStride);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        void MapClear(void* InMap)
+        {
+            FScriptDynamicMap* Map = static_cast<FScriptDynamicMap*>(InMap);
+            const FScriptMapElementDesc* Desc = Map->Desc;
+            if (Desc != nullptr && Desc->PairStride > 0)
+            {
+                const SIZE_T Count = Map->Bytes.size() / Desc->PairStride;
+                uint8* Data = Map->Bytes.data();
+                for (SIZE_T i = 0; i < Count; ++i)
+                {
+                    Desc->DestructPair(Data + i * Desc->PairStride);
+                }
+            }
+            Map->Bytes.clear();
+        }
+
+        void MapReserve(void* InMap, SIZE_T Count)
+        {
+            FScriptDynamicMap* Map = static_cast<FScriptDynamicMap*>(InMap);
+            if (Map->Desc && Map->Desc->PairStride > 0) { Map->Bytes.reserve(Count * Map->Desc->PairStride); }
+        }
+
+        void MapForEach(const void* InMap, void (*Visitor)(const void*, void*, void*), void* UserData)
+        {
+            const FScriptDynamicMap* Map = static_cast<const FScriptDynamicMap*>(InMap);
+            const FScriptMapElementDesc* Desc = Map->Desc;
+            if (Desc == nullptr || Desc->PairStride == 0) { return; }
+            const SIZE_T Count = Map->Bytes.size() / Desc->PairStride;
+            uint8* Data = const_cast<uint8*>(Map->Bytes.data());
+            for (SIZE_T i = 0; i < Count; ++i)
+            {
+                void* Pair = Data + i * Desc->PairStride;
+                Visitor(Desc->KeyAt(Pair), Desc->ValueAt(Pair), UserData);
+            }
+        }
+
+        void MapAt(void* InMap, SIZE_T Index, const void** OutKey, void** OutValue)
+        {
+            FScriptDynamicMap* Map = static_cast<FScriptDynamicMap*>(InMap);
+            const FScriptMapElementDesc* Desc = Map->Desc;
+            if (Desc != nullptr && Desc->PairStride > 0 && Index < Map->Bytes.size() / Desc->PairStride)
+            {
+                void* Pair = Map->Bytes.data() + Index * Desc->PairStride;
+                if (OutKey)   { *OutKey = Desc->KeyAt(Pair); }
+                if (OutValue) { *OutValue = Desc->ValueAt(Pair); }
+                return;
+            }
+            if (OutKey)   { *OutKey = nullptr; }
+            if (OutValue) { *OutValue = nullptr; }
+        }
+
+        void MapConstructKey(void* InMap, void* Dst)
+        {
+            const FScriptDynamicMap* Map = static_cast<const FScriptDynamicMap*>(InMap);
+            if (Map->Desc != nullptr) { Map->Desc->Key.ConstructElement(Dst); }
+        }
+
+        void MapDestructKey(void* InMap, void* Dst)
+        {
+            const FScriptDynamicMap* Map = static_cast<const FScriptDynamicMap*>(InMap);
+            if (Map->Desc != nullptr) { Map->Desc->Key.DestructElement(Dst); }
+        }
+
+        void FillMapOps(FMapOps& Ops, uint32 KeySize, uint32 ValueSize)
+        {
+            Ops.Size         = &MapSize;
+            Ops.Insert       = &MapInsert;
+            Ops.Find         = &MapFind;
+            Ops.RemoveByKey  = &MapRemoveByKey;
+            Ops.Clear        = &MapClear;
+            Ops.Reserve      = &MapReserve;
+            Ops.ForEach      = &MapForEach;
+            Ops.ConstructKey = &MapConstructKey;
+            Ops.DestructKey  = &MapDestructKey;
+            Ops.At           = &MapAt;
+            Ops.KeySize      = KeySize;
+            Ops.ValueSize    = ValueSize;
         }
     }
 
@@ -447,19 +612,19 @@ namespace Lumina
             Out.Kind = EScriptElementKind::Trivial;
             return true;
         }
-        if (Type.Kind == EScriptExportKind::String)
+        if (Type.Kind == EPropertyTypeFlags::String)
         {
             Out.Size = sizeof(FString);
             Out.Kind = EScriptElementKind::String;
             return true;
         }
-        if (Type.Kind == EScriptExportKind::AssetRef)
+        if (Type.Kind == EPropertyTypeFlags::SoftObject)
         {
             Out.Size = sizeof(FSoftObjectPath);
             Out.Kind = EScriptElementKind::AssetRef;
             return true;
         }
-        if (Type.Kind == EScriptExportKind::NativeStruct)
+        if (Type.Kind == EPropertyTypeFlags::Struct && !Type.NativeName.IsNone())
         {
             CStruct* Native = FindObject<CStruct>(Type.NativeName);
             if (Native == nullptr)
@@ -471,7 +636,7 @@ namespace Lumina
             Out.Size = Native->GetAlignedSize();
             return true;
         }
-        if (Type.Kind == EScriptExportKind::ScriptStruct)
+        if (Type.Kind == EPropertyTypeFlags::Struct)
         {
             CScriptStruct* Sub = MintSubStruct(Type);
             if (Sub == nullptr)
@@ -483,7 +648,7 @@ namespace Lumina
             Out.Size = Sub->GetAlignedSize();
             return true;
         }
-        if (Type.Kind == EScriptExportKind::Instance)
+        if (Type.Kind == EPropertyTypeFlags::InstancedStruct)
         {
             // A List<Instanced>/Instanced[] element. Mint the empty base plus one candidate sub-CScriptStruct
             // per selectable C# type, exactly as a single Instance field does; each element is an
@@ -510,7 +675,7 @@ namespace Lumina
         FFieldOwner Owner = OwnerOf(static_cast<FField*>(static_cast<FProperty*>(ArrayOwner)));
         const FName Element("Element");
 
-        if (Type.Kind == EScriptExportKind::Enum)
+        if (Type.Kind == EPropertyTypeFlags::Enum)
         {
             return MakeEnum(Owner, Element, 0, MintEnum(Type));
         }
@@ -520,22 +685,22 @@ namespace Lumina
         if (ScalarSizeAlign(Type.Kind, ScalarSize, ScalarAlign))
         {
             FProperty* Property = MakeScalar(Type.Kind, Owner, Element, 0);
-            if (Type.Kind == EScriptExportKind::Entity && Property != nullptr)
+            if (Type.bEntity && Property != nullptr)
             {
                 Property->Metadata.AddValue("Entity", "");
                 Property->OnMetadataFinalized();
             }
             return Property;
         }
-        if (Type.Kind == EScriptExportKind::String)
+        if (Type.Kind == EPropertyTypeFlags::String)
         {
             return MakeSimple<FStringProperty, EPropertyTypeFlags::String>(Owner, Element, 0);
         }
-        if (Type.Kind == EScriptExportKind::AssetRef)
+        if (Type.Kind == EPropertyTypeFlags::SoftObject)
         {
             return MakeSoftObject(Owner, Element, 0, FindObject<CClass>(Type.TargetClass));
         }
-        if (Type.Kind == EScriptExportKind::Instance)
+        if (Type.Kind == EPropertyTypeFlags::InstancedStruct)
         {
             // ScriptStruct holds the minted base (see ResolveElement); the inner is an FInstancedStructProperty.
             return MakeInstanced(Owner, Element, 0, const_cast<CScriptStruct*>(Desc.ScriptStruct));
@@ -560,7 +725,7 @@ namespace Lumina
         Out.Field = &Field;
         Out.Kind = Type.Kind;
 
-        if (Type.Kind == EScriptExportKind::Array && Type.ElementType)
+        if (Type.Kind == EPropertyTypeFlags::Vector && Type.ElementType)
         {
             FScriptArrayElementDesc* Desc = Memory::New<FScriptArrayElementDesc>();
             ElementDescs.push_back(Desc);
@@ -576,6 +741,25 @@ namespace Lumina
             return true;
         }
 
+        if (Type.Kind == EPropertyTypeFlags::Map && Type.KeyType && Type.ValueType)
+        {
+            FScriptMapElementDesc* Desc = Memory::New<FScriptMapElementDesc>();
+            MapDescs.push_back(Desc);
+            if (!ResolveElement(*Type.KeyType, Desc->Key) || !ResolveElement(*Type.ValueType, Desc->Value))
+            {
+                return false;
+            }
+            // 16-byte pair layout keeps any key/value aligned in the 16-aligned backing buffer.
+            Desc->ValueOffset = (uint32)Align(Desc->Key.Size, 16u);
+            Desc->PairStride  = (uint32)Align(Desc->ValueOffset + Desc->Value.Size, 16u);
+            FillMapOps(Desc->Ops, Desc->Key.Size, Desc->Value.Size);
+            Out.bMap = true;
+            Out.MapDesc = Desc;
+            Out.Size = sizeof(FScriptDynamicMap);
+            Out.Align = alignof(FScriptDynamicMap);
+            return true;
+        }
+
         uint32 ScalarSize = 0;
         uint32 ScalarAlign = 0;
         if (ScalarSizeAlign(Type.Kind, ScalarSize, ScalarAlign))
@@ -585,21 +769,21 @@ namespace Lumina
             Out.Life = EScriptElementKind::Trivial;
             return true;
         }
-        if (Type.Kind == EScriptExportKind::String)
+        if (Type.Kind == EPropertyTypeFlags::String)
         {
             Out.Size = sizeof(FString);
             Out.Align = alignof(FString);
             Out.Life = EScriptElementKind::String;
             return true;
         }
-        if (Type.Kind == EScriptExportKind::AssetRef)
+        if (Type.Kind == EPropertyTypeFlags::SoftObject)
         {
             Out.Size = sizeof(FSoftObjectPath);
             Out.Align = alignof(FSoftObjectPath);
             Out.Life = EScriptElementKind::AssetRef;
             return true;
         }
-        if (Type.Kind == EScriptExportKind::NativeStruct)
+        if (Type.Kind == EPropertyTypeFlags::Struct && !Type.NativeName.IsNone())
         {
             Out.Native = FindObject<CStruct>(Type.NativeName);
             if (Out.Native == nullptr)
@@ -613,7 +797,7 @@ namespace Lumina
             Out.Life = (Ops != nullptr && (Ops->HasConstruct() || Ops->HasDestruct())) ? EScriptElementKind::NativeStruct : EScriptElementKind::Trivial;
             return true;
         }
-        if (Type.Kind == EScriptExportKind::ScriptStruct)
+        if (Type.Kind == EPropertyTypeFlags::Struct)
         {
             CScriptStruct* Sub = MintSubStruct(Type);
             if (Sub == nullptr)
@@ -626,7 +810,7 @@ namespace Lumina
             Out.Life = !Sub->FieldInfos.empty() ? EScriptElementKind::ScriptStruct : EScriptElementKind::Trivial;
             return true;
         }
-        if (Type.Kind == EScriptExportKind::Instance)
+        if (Type.Kind == EPropertyTypeFlags::InstancedStruct)
         {
             // Mint an empty base plus one candidate sub-CScriptStruct per selectable C# type. The field
             // is an FInstancedStruct the editor picks into.
@@ -662,7 +846,19 @@ namespace Lumina
             ApplyMeta(Array, &Field.Meta, nullptr);
             return Array;
         }
-        if (Type.Kind == EScriptExportKind::Enum)
+        if (Plan.bMap)
+        {
+            FProperty* Map = MakeMap(Owner, Field.Name, Offset, &Plan.MapDesc->Ops);
+            // Key inner FIRST (FMapProperty::AddProperty assigns Key on the first call, Value on the second),
+            // then the Value inner. The dynamic-map ops use Key.Inner->Identical, so both must be set here.
+            FProperty* KeyInner   = CreateElement(Map, *Type.KeyType, Plan.MapDesc->Key);
+            FProperty* ValueInner = CreateElement(Map, *Type.ValueType, Plan.MapDesc->Value);
+            Plan.MapDesc->Key.Inner   = KeyInner;
+            Plan.MapDesc->Value.Inner = ValueInner;
+            ApplyMeta(Map, &Field.Meta, nullptr);
+            return Map;
+        }
+        if (Type.Kind == EPropertyTypeFlags::Enum)
         {
             FProperty* Property = MakeEnum(Owner, Field.Name, Offset, MintEnum(Type));
             ApplyMeta(Property, &Field.Meta, nullptr);
@@ -674,22 +870,22 @@ namespace Lumina
         if (ScalarSizeAlign(Type.Kind, ScalarSize, ScalarAlign))
         {
             FProperty* Property = MakeScalar(Type.Kind, Owner, Field.Name, Offset);
-            ApplyMeta(Property, &Field.Meta, Type.Kind == EScriptExportKind::Entity ? "Entity" : nullptr);
+            ApplyMeta(Property, &Field.Meta, Type.bEntity ? "Entity" : nullptr);
             return Property;
         }
-        if (Type.Kind == EScriptExportKind::String)
+        if (Type.Kind == EPropertyTypeFlags::String)
         {
             FProperty* Property = MakeSimple<FStringProperty, EPropertyTypeFlags::String>(Owner, Field.Name, Offset);
             ApplyMeta(Property, &Field.Meta, nullptr);
             return Property;
         }
-        if (Type.Kind == EScriptExportKind::AssetRef)
+        if (Type.Kind == EPropertyTypeFlags::SoftObject)
         {
             FProperty* Property = MakeSoftObject(Owner, Field.Name, Offset, FindObject<CClass>(Type.TargetClass));
             ApplyMeta(Property, &Field.Meta, nullptr);
             return Property;
         }
-        if (Type.Kind == EScriptExportKind::Instance)
+        if (Type.Kind == EPropertyTypeFlags::InstancedStruct)
         {
             FProperty* Property = MakeInstanced(Owner, Field.Name, Offset, const_cast<CScriptStruct*>(Plan.Sub));
             ApplyMeta(Property, &Field.Meta, nullptr);
@@ -730,7 +926,7 @@ namespace Lumina
             {
                 continue;
             }
-            if (Plan.bArray || Plan.Life != EScriptElementKind::Trivial)
+            if (Plan.bArray || Plan.bMap || Plan.Life != EScriptElementKind::Trivial)
             {
                 FFieldInfo Info;
                 Info.Offset = Offset;
@@ -739,6 +935,8 @@ namespace Lumina
                 Info.ScriptStruct = Plan.Sub;
                 Info.bArray = Plan.bArray;
                 Info.ArrayElement = Plan.ArrayDesc;
+                Info.bMap = Plan.bMap;
+                Info.MapDesc = Plan.MapDesc;
                 FieldInfos.push_back(Info);
             }
             RunningSize = Offset + Plan.Size;
@@ -775,6 +973,12 @@ namespace Lumina
             {
                 FScriptDynamicArray* Array = new (Field) FScriptDynamicArray();
                 Array->Element = Info.ArrayElement;
+                continue;
+            }
+            if (Info.bMap)
+            {
+                FScriptDynamicMap* Map = new (Field) FScriptDynamicMap();
+                Map->Desc = Info.MapDesc;
                 continue;
             }
             switch (Info.Kind)
@@ -814,6 +1018,11 @@ namespace Lumina
             if (Info.bArray)
             {
                 static_cast<FScriptDynamicArray*>(Field)->~FScriptDynamicArray();
+                continue;
+            }
+            if (Info.bMap)
+            {
+                static_cast<FScriptDynamicMap*>(Field)->~FScriptDynamicMap();
                 continue;
             }
             switch (Info.Kind)
@@ -904,6 +1113,12 @@ namespace Lumina
         }
         ElementDescs.clear();
 
+        for (FScriptMapElementDesc* Desc : MapDescs)
+        {
+            Memory::Delete(Desc);
+        }
+        MapDescs.clear();
+
         SubStructs.clear();
         MintedEnums.clear();
     }
@@ -984,6 +1199,38 @@ namespace Lumina::Scripting
             for (SIZE_T Index = 0; Index < Count; ++Index)
             {
                 Element->DestructElement(Data + Index * Element->Size);
+            }
+        }
+    }
+
+    void FScriptMapElementDesc::ConstructPair(void* Pair) const
+    {
+        Key.ConstructElement(KeyAt(Pair));
+        Value.ConstructElement(ValueAt(Pair));
+    }
+
+    void FScriptMapElementDesc::DestructPair(void* Pair) const
+    {
+        Value.DestructElement(ValueAt(Pair));
+        Key.DestructElement(KeyAt(Pair));
+    }
+
+    void FScriptMapElementDesc::CopyPair(void* Dst, const void* Src) const
+    {
+        void* SrcPair = const_cast<void*>(Src);
+        Key.CopyElement(KeyAt(Dst), KeyAt(SrcPair));
+        Value.CopyElement(ValueAt(Dst), ValueAt(SrcPair));
+    }
+
+    FScriptDynamicMap::~FScriptDynamicMap()
+    {
+        if (Desc != nullptr && Desc->PairStride > 0 && !Bytes.empty())
+        {
+            const SIZE_T Count = Bytes.size() / Desc->PairStride;
+            uint8* Data = Bytes.data();
+            for (SIZE_T Index = 0; Index < Count; ++Index)
+            {
+                Desc->DestructPair(Data + Index * Desc->PairStride);
             }
         }
     }

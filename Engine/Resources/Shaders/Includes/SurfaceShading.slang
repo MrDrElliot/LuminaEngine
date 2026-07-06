@@ -537,7 +537,7 @@ float3 CascadeDebugColor(float3 FragmentPos, float3 ViewPosition, float3 ShadedB
 
     // Blend with a luminance proxy from the lit shading so silhouettes stay
     // readable while the cascade color dominates.
-    float Luma = saturate(dot(ShadedBase, float3(0.299, 0.587, 0.114)));
+    float Luma = saturate(Luminance(ShadedBase));
     float3 Color = lerp(Tint * 0.4, Tint, 0.5 + 0.5 * Luma);
 
     if (!Inside)
@@ -646,12 +646,18 @@ struct FShadingContext
 
 // L: unit surface->light direction (caller supplies it for every light type, including the sun, so the
 // directional Light.Direction normalize happens once at the call site). Distance is unused for directional.
-float3 EvaluateLightContribution(FLight Light, FShadingContext S, float3 L, float Distance)
+// Diffuse and specular come back separately so the translucent path can keep reflections
+// un-premultiplied; opaque callers use the combined wrapper below (identical codegen once inlined).
+void EvaluateLightContributionSplit(FLight Light, FShadingContext S, float3 L, float Distance,
+                                    out float3 OutDiffuse, out float3 OutSpecular)
 {
+    OutDiffuse  = float3(0.0);
+    OutSpecular = float3(0.0);
+
     float NdotLf = max(dot(S.N, L), 0.0);
     if (NdotLf <= 0.0)
     {
-        return float3(0.0);
+        return;
     }
 
     float Attenuation = 1.0;
@@ -693,15 +699,29 @@ float3 EvaluateLightContribution(FLight Light, FShadingContext S, float3 L, floa
     float  SpecScale = NDF / (4.0 * S.NdotV * NdotLf);
     float3 Spec      = float3(SpecTint) * SpecScale;
 
-    return (float3(Diffuse) + Spec) * Radiance * NdotLf;
+    OutDiffuse  = float3(Diffuse) * Radiance * NdotLf;
+    OutSpecular = Spec * Radiance * NdotLf;
+}
+
+float3 EvaluateLightContribution(FLight Light, FShadingContext S, float3 L, float Distance)
+{
+    float3 Diffuse, Specular;
+    EvaluateLightContributionSplit(Light, S, L, Distance, Diffuse, Specular);
+    return Diffuse + Specular;
 }
 
 // Result of shading a surface: the lit HDR color plus the material alpha. Callers pack their own
 // render-target output (opaque -> Color/Picker, translucent -> weighted Accum/Revealage).
 struct FShadedSurface
 {
-    float3 Color;
+    float3 Color;       // opaque: full lit color. Translucent: transmission-modulated terms only (diffuse + ambient diffuse + emissive)
+    float3 Reflection;  // translucent only: specular from lights + IBL, kept out of Color so it isn't attenuated by alpha. Zero for opaque.
     float  Alpha;
+    // Translucent only: directional-hemisphere specular reflectance (split-sum single-scatter albedo),
+    // i.e. the fraction of incident light this surface reflects instead of transmitting. The WBOIT
+    // packing adds it to coverage: reflected energy never reaches what's behind, so stacked glass
+    // darkens the background like real glass instead of summing reflections toward white. Zero for opaque.
+    float  ReflectionCoverage;
 };
 
 // The complete opaque/translucent lighting sequence, given a fully populated FBaseVertexOutput (however it
@@ -764,6 +784,13 @@ FShadedSurface ShadeSurface(FBaseVertexOutput Input, FMaterialPixelInputs Materi
     // so colored metals get colored multi-bounce. Ess = single-scatter albedo (BRDF LUT scale+bias).
     float  NdotV_EC    = saturate(dot(N, V));
     float2 DFG_EC      = SampleBRDFLUT(NdotV_EC, Roughness);
+
+#ifdef TRANSLUCENT
+    // See FShadedSurface::ReflectionCoverage. Reuses the already-fetched BRDF LUT terms; the
+    // FresnelSchlickRoughness call CSEs with the identical one inside EvaluateIBLAmbientSplit.
+    float3 FssEssCov          = FresnelSchlickRoughness(NdotV_EC, F0, Roughness) * DFG_EC.x + DFG_EC.y;
+    float  ReflectionCoverage = saturate(Luminance(FssEssCov));
+#endif
     // EnergyComp is computed below, just before its only use, so this BRDF-LUT fetch's latency overlaps the
     // independent context ALU instead of stalling here.
 
@@ -784,25 +811,18 @@ FShadedSurface ShadeSurface(FBaseVertexOutput Input, FMaterialPixelInputs Materi
     float3 EnergyComp = 1.0 + F0 * (1.0 / max(DFG_EC.x + DFG_EC.y, 1e-4) - 1.0);
     Ctx.EnergyComp  = (half3)EnergyComp;
 
-    float  ZNear      = GetNearPlane();
-    float  ZFar       = GetFarPlane();
-    uint3  GridSize   = Scene().GridSize.xyz;
-    uint2  ScreenSize = Scene().ScreenSize.xy;
-
-    // Clamp to ZNear: edge fragments below it make log() negative, wrapping ZTile to a huge value
-    // that overflows Clusters() -> garbage light list and an MMU fault. Same hardening as TerrainBasePixelPass.
-    float  ZForTile     = max(abs(ViewPosition.z), ZNear);
-    float  ZTileF       = (log(ZForTile / ZNear) * float(GridSize.z)) / log(ZFar / ZNear);
-    uint   ZTile        = (uint)clamp(ZTileF, 0.0, float(GridSize.z) - 1.0);
-    float2 TileSize     = float2(ScreenSize) / float2(GridSize.xy);
-    uint2  TileXY       = (uint2)clamp(divide(Input.Position.xy, TileSize),
-                                       float2(0.0, 0.0),
-                                       float2(GridSize.xy) - float2(1.0, 1.0));
-    uint3  Tile         = uint3(TileXY, ZTile);
-    uint   TileIndex    = Tile.x + (Tile.y * GridSize.x) + (Tile.z * GridSize.x * GridSize.y);
-    uint   LightCount   = Clusters()[TileIndex].Count;
+    // Shared froxel-index math (SceneGlobals). It clamps to ZNear: edge fragments below it make log()
+    // negative, wrapping ZTile to a huge value that overflows Clusters() -> garbage light list and an
+    // MMU fault.
+    uint TileIndex  = ComputeClusterIndex(ViewPosition.z, Input.Position.xy);
+    uint LightCount = Clusters()[TileIndex].Count;
 
     float3 Lo = float3(0.0);
+#ifdef TRANSLUCENT
+    // Reflected specular is accumulated apart from transmission-modulated terms; the extra live
+    // accumulator is translucent-only so the opaque loop's register footprint is untouched.
+    float3 LoSpec = float3(0.0);
+#endif
 
     if (LightData().bHasSun != 0)
     {
@@ -815,7 +835,14 @@ FShadedSurface ShadeSurface(FBaseVertexOutput Input, FMaterialPixelInputs Materi
         if (SunNdotL > 0.0)
         {
             float Shadow = ComputeShadowFactor(Light, WorldPosition, N, ViewPosition, Input.Position.xy, bReceiveShadow);
+#ifdef TRANSLUCENT
+            float3 SunDiffuse, SunSpec;
+            EvaluateLightContributionSplit(Light, Ctx, SunL, 0.0, SunDiffuse, SunSpec);
+            Lo     += SunDiffuse * Shadow;
+            LoSpec += SunSpec * Shadow;
+#else
             Lo += EvaluateLightContribution(Light, Ctx, SunL, 0.0) * Shadow;
+#endif
         }
     }
 
@@ -864,18 +891,30 @@ FShadedSurface ShadeSurface(FBaseVertexOutput Input, FMaterialPixelInputs Materi
             Shadow = ComputeShadowFactor(Light, WorldPosition, N, ViewPosition, Input.Position.xy, bReceiveShadow);
         }
 
+#ifdef TRANSLUCENT
+        float3 LightDiffuse, LightSpec;
+        EvaluateLightContributionSplit(Light, Ctx, L, DistToLight, LightDiffuse, LightSpec);
+        Lo     += LightDiffuse * Shadow;
+        LoSpec += LightSpec * Shadow;
+#else
         Lo += EvaluateLightContribution(Light, Ctx, L, DistToLight) * Shadow;
+#endif
     }
 
     // Screen-space AO attenuates the ambient/IBL term only (direct light already has its own occlusion).
     // AOTextureIndex is ~0u for views that didn't run the SSAO pass (e.g. captures) -> treat as unoccluded.
     // Pipelines with no SSAO input (terrain) specialize SPEC_ENABLE_SSAO off so the fetch is dead-stripped.
+    // TRANSLUCENT surfaces skip it entirely: the SSAO texture is computed from OPAQUE depth, so at a glass
+    // pixel it holds the AO of whatever is BEHIND the glass -- modulating the glass's own ambient and
+    // reflections by the backdrop's occlusion is wrong and smears backdrop detail onto the surface.
     float SSAO = 1.0;
+#ifndef TRANSLUCENT
     if (SPEC_ENABLE_SSAO != 0 && Scene().SSAOSettings.AOTextureIndex != 0xFFFFFFFFu)
     {
         float2 ScreenUV = Input.Position.xy / float2(Scene().ScreenSize.xy);
         SSAO = SampleTexture2D(Scene().SSAOSettings.AOTextureIndex, SAMPLER_LINEAR_CLAMP, ScreenUV).r;
     }
+#endif
 
     float3 Ambient;
     if (HasIBL())
@@ -886,8 +925,15 @@ FShadedSurface ShadeSurface(FBaseVertexOutput Input, FMaterialPixelInputs Materi
         // need not stay register-resident across PCSS + the whole clustered-light loop just to feed this branch.
         float  NdotV_IBL  = saturate(dot(N, V));
         float2 DFG_IBL    = SampleBRDFLUT(NdotV_IBL, Roughness);
+#ifdef TRANSLUCENT
+        float3 IBLDiffuse, IBLSpec;
+        EvaluateIBLAmbientSplit(N, V, NdotV_IBL, DFG_IBL, Albedo, F0, Roughness, Metallic, AO, IBLDiffuse, IBLSpec);
+        Ambient = IBLDiffuse * GetAmbientLightIntensity() * SSAO;
+        LoSpec += IBLSpec * GetAmbientLightIntensity() * SSAO;
+#else
         float3 IBLAmbient = EvaluateIBLAmbient(N, V, NdotV_IBL, DFG_IBL, Albedo, F0, Roughness, Metallic, AO);
         Ambient = IBLAmbient * GetAmbientLightIntensity() * SSAO;
+#endif
     }
     else
     {
@@ -905,6 +951,10 @@ FShadedSurface ShadeSurface(FBaseVertexOutput Input, FMaterialPixelInputs Materi
     uint DebugMode = Scene().CullData.DebugMode;
     if (SPEC_ENABLE_DEBUG_VIEWS != 0 && DebugMode != DEBUG_MODE_NONE)
     {
+#if defined(TRANSLUCENT) && !defined(UNLIT)
+        // Debug views replace Color wholesale; don't composite reflections on top.
+        LoSpec = float3(0.0);
+#endif
         switch (DebugMode)
         {
             case DEBUG_MODE_UNLIT:
@@ -985,6 +1035,13 @@ FShadedSurface ShadeSurface(FBaseVertexOutput Input, FMaterialPixelInputs Materi
 
     FShadedSurface Out;
     Out.Color = Color;
+#if defined(TRANSLUCENT) && !defined(UNLIT)
+    Out.Reflection         = LoSpec;
+    Out.ReflectionCoverage = ReflectionCoverage;
+#else
+    Out.Reflection         = float3(0.0);
+    Out.ReflectionCoverage = 0.0;
+#endif
     Out.Alpha = Alpha;
     return Out;
 }

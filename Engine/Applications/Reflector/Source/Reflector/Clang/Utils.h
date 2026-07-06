@@ -282,6 +282,11 @@ namespace Lumina::ClangUtils
             QualifiedName = "Lumina::TVector";
         }
 
+        if (QualifiedName == "eastl::hash_map")
+        {
+            QualifiedName = "Lumina::THashMap";
+        }
+
         if (QualifiedName == "eastl::optional")
         {
             QualifiedName = "Lumina::TOptional";

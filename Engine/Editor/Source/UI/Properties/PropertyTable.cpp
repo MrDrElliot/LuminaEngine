@@ -9,6 +9,8 @@
 #include "Core/Reflection/PropertyCustomization/PropertyCustomization.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Reflection/Type/Properties/ArrayProperty.h"
+#include "Core/Reflection/Type/Properties/MapProperty.h"
+#include "Memory/Memory.h"
 #include "Core/Reflection/Type/Properties/InstancedStructProperty.h"
 #include "Core/Reflection/Type/Properties/OptionalProperty.h"
 #include "Core/Reflection/Type/Properties/StructProperty.h"
@@ -47,6 +49,7 @@ namespace Lumina
         {
         case EPropertyTypeFlags::Struct:
         case EPropertyTypeFlags::Vector:
+        case EPropertyTypeFlags::Map:
         case EPropertyTypeFlags::Optional:
         case EPropertyTypeFlags::InstancedStruct:
             return false;
@@ -61,6 +64,8 @@ namespace Lumina
         {
         case EPropertyTypeFlags::Vector:
             return MakeUnique<FArrayPropertyRow>(InPropHandle, InParentRow, InCallbacks);
+        case EPropertyTypeFlags::Map:
+            return MakeUnique<FMapPropertyRow>(InPropHandle, InParentRow, InCallbacks);
         case EPropertyTypeFlags::Struct:
             return MakeUnique<FStructPropertyRow>(InPropHandle, InParentRow, InCallbacks);
         case EPropertyTypeFlags::Optional:
@@ -328,77 +333,45 @@ namespace Lumina
         ImGuiX::WrappedTooltip_Internal(*Tooltip);
     }
 
+    // Leaf-property customization factory (numeric / bool / object / name / string / enum ...). Shared by the
+    // leaf property row and the map-entry key/value editors. Returns null for non-leaf types (struct/array/...),
+    // which have their own dedicated rows.
+    TSharedPtr<IPropertyTypeCustomization> MakeLeafPropertyCustomization(FProperty* Prop)
+    {
+        switch (Prop->GetType())
+        {
+        case EPropertyTypeFlags::Int8:   return FNumericPropertyCustomization<int8,   ImGuiDataType_S8>::MakeInstance();
+        case EPropertyTypeFlags::Int16:  return FNumericPropertyCustomization<int16,  ImGuiDataType_S16>::MakeInstance();
+        case EPropertyTypeFlags::Int32:  return FNumericPropertyCustomization<int32,  ImGuiDataType_S32>::MakeInstance();
+        case EPropertyTypeFlags::Int64:  return FNumericPropertyCustomization<int64,  ImGuiDataType_S64>::MakeInstance();
+        case EPropertyTypeFlags::UInt8:  return FNumericPropertyCustomization<uint8,  ImGuiDataType_U8>::MakeInstance();
+        case EPropertyTypeFlags::UInt16: return FNumericPropertyCustomization<uint16, ImGuiDataType_U16>::MakeInstance();
+        case EPropertyTypeFlags::UInt32:
+            // A uint32 tagged PROPERTY(Entity) is an entity reference: draw the picker instead of a raw number.
+            if (Prop->HasMetadata("Entity"))
+            {
+                return FEntityPropertyCustomization::MakeInstance();
+            }
+            return FNumericPropertyCustomization<uint32, ImGuiDataType_U32>::MakeInstance();
+        case EPropertyTypeFlags::UInt64: return FNumericPropertyCustomization<uint64, ImGuiDataType_U64>::MakeInstance();
+        case EPropertyTypeFlags::Float:  return FNumericPropertyCustomization<float,  ImGuiDataType_Float>::MakeInstance();
+        case EPropertyTypeFlags::Double: return FNumericPropertyCustomization<double, ImGuiDataType_Double>::MakeInstance();
+        case EPropertyTypeFlags::Bool:   return FBoolPropertyCustomization::MakeInstance();
+        case EPropertyTypeFlags::Object: return FCObjectPropertyCustomization::MakeInstance();
+        case EPropertyTypeFlags::SoftObject: return FSoftObjectPropertyCustomization::MakeInstance();
+        case EPropertyTypeFlags::Class:  return FClassPropertyCustomization::MakeInstance();
+        case EPropertyTypeFlags::SubStruct: return FSubStructPropertyCustomization::MakeInstance();
+        case EPropertyTypeFlags::Name:   return FNamePropertyCustomization::MakeInstance();
+        case EPropertyTypeFlags::String: return FStringPropertyCustomization::MakeInstance();
+        case EPropertyTypeFlags::Enum:   return FEnumPropertyCustomization::MakeInstance();
+        default: return nullptr;
+        }
+    }
+
     FPropertyPropertyRow::FPropertyPropertyRow(const TSharedPtr<FPropertyHandle>& InPropHandle, FPropertyRow* InParentRow, const FPropertyChangedEventCallbacks& InCallbacks)
         : FPropertyRow(InPropHandle, InParentRow, InCallbacks)
     {
-        switch (PropertyHandle->Property->GetType())
-        {
-        case EPropertyTypeFlags::Int8:
-            Customization = FNumericPropertyCustomization<int8, ImGuiDataType_S8>::MakeInstance();
-            break;
-        case EPropertyTypeFlags::Int16:
-            Customization = FNumericPropertyCustomization<int16, ImGuiDataType_S16>::MakeInstance();
-            break;
-        case EPropertyTypeFlags::Int32:
-            Customization = FNumericPropertyCustomization<int32, ImGuiDataType_S32>::MakeInstance();
-            break;
-        case EPropertyTypeFlags::Int64:
-            Customization = FNumericPropertyCustomization<int64, ImGuiDataType_S64>::MakeInstance();
-            break;
-        case EPropertyTypeFlags::UInt8:
-            Customization = FNumericPropertyCustomization<uint8, ImGuiDataType_U8>::MakeInstance();
-            break;
-        case EPropertyTypeFlags::UInt16:
-            Customization = FNumericPropertyCustomization<uint16, ImGuiDataType_U16>::MakeInstance();
-            break;
-        case EPropertyTypeFlags::UInt32:
-            // A uint32 tagged PROPERTY(Entity) is an entity reference: draw the picker
-            // instead of a raw number field.
-            if (PropertyHandle->Property->HasMetadata("Entity"))
-            {
-                Customization = FEntityPropertyCustomization::MakeInstance();
-            }
-            else
-            {
-                Customization = FNumericPropertyCustomization<uint32, ImGuiDataType_U32>::MakeInstance();
-            }
-            break;
-        case EPropertyTypeFlags::UInt64:
-            Customization = FNumericPropertyCustomization<uint64, ImGuiDataType_U64>::MakeInstance();
-            break;
-        case EPropertyTypeFlags::Float:
-            Customization = FNumericPropertyCustomization<float, ImGuiDataType_Float>::MakeInstance();
-            break;
-        case EPropertyTypeFlags::Double:
-            Customization = FNumericPropertyCustomization<double, ImGuiDataType_Double>::MakeInstance();
-            break;
-        case EPropertyTypeFlags::Bool:
-            Customization = FBoolPropertyCustomization::MakeInstance();
-            break;
-        case EPropertyTypeFlags::Object:
-            Customization = FCObjectPropertyCustomization::MakeInstance();
-            break;
-        case EPropertyTypeFlags::SoftObject:
-            Customization = FSoftObjectPropertyCustomization::MakeInstance();
-            break;
-        case EPropertyTypeFlags::Class:
-            Customization = FClassPropertyCustomization::MakeInstance();
-            break;
-        case EPropertyTypeFlags::SubStruct:
-            Customization = FSubStructPropertyCustomization::MakeInstance();
-            break;
-        case EPropertyTypeFlags::Name:
-            Customization = FNamePropertyCustomization::MakeInstance();
-            break;
-        case EPropertyTypeFlags::String:
-            Customization = FStringPropertyCustomization::MakeInstance();
-            break;
-        case EPropertyTypeFlags::Enum:
-            Customization = FEnumPropertyCustomization::MakeInstance();
-            break;
-        default:
-            break;
-        }
+        Customization = MakeLeafPropertyCustomization(PropertyHandle->Property);
     }
 
     void FPropertyPropertyRow::Update()
@@ -732,6 +705,318 @@ namespace Lumina
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
         {
             ImGuiX::TextTooltip_Internal("Remove all array elements");
+        }
+    }
+
+    // ---- Map property row ----
+
+    FMapPropertyRow::FMapPropertyRow(const TSharedPtr<FPropertyHandle>& InPropHandle, FPropertyRow* InParentRow, const FPropertyChangedEventCallbacks& InCallbacks)
+        : FPropertyRow(InPropHandle, InParentRow, InCallbacks)
+        , MapProperty(static_cast<FMapProperty*>(InPropHandle->Property))
+    {
+        RebuildChildren();
+    }
+
+    void FMapPropertyRow::Update()
+    {
+        ChangeOp = EPropertyChangeOp::None;
+
+        if (!PendingMutations.empty())
+        {
+            DispatchChange(EPropertyChangeOp::Started);
+            for (const TFunction<void()>& Mutation : PendingMutations)
+            {
+                Mutation();
+            }
+            PendingMutations.clear();
+            RebuildChildren();
+            DispatchChange(EPropertyChangeOp::Updated);
+            DispatchChange(EPropertyChangeOp::Finished);
+        }
+    }
+
+    void FMapPropertyRow::QueueMutation(TFunction<void()> Mutation)
+    {
+        PendingMutations.push_back(Move(Mutation));
+    }
+
+    void FMapPropertyRow::DrawHeader(float Offset)
+    {
+        ImGui::Dummy(ImVec2(Offset, 0));
+        ImGui::SameLine();
+
+        const size_t Count = MapProperty->GetNum(GetPropertyHandle()->GetValuePtr());
+
+        ImGui::SetNextItemOpen(bExpanded);
+        ImGui::PushStyleColor(ImGuiCol_Header, 0);
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, 0);
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, 0);
+        const ImGuiTreeNodeFlags Flags = Count ? 0 : ImGuiTreeNodeFlags_Leaf;
+        bExpanded = ImGui::CollapsingHeader(MapProperty->GetPropertyDisplayName().c_str(), Flags);
+        ImGui::PopStyleColor(3);
+
+        DrawPropertyTooltip(MapProperty);
+    }
+
+    void FMapPropertyRow::DrawEditor(bool bReadOnly)
+    {
+        const size_t Count = MapProperty->GetNum(GetPropertyHandle()->GetValuePtr());
+        ImGui::TextColored(EditorColors::TextMuted(), "%llu Entries", static_cast<unsigned long long>(Count));
+    }
+
+    float FMapPropertyRow::GetMeasuredHeaderTextWidth() const
+    {
+        return ImGui::GetTreeNodeToLabelSpacing() + ImGui::CalcTextSize(MapProperty->GetPropertyDisplayName().c_str()).x;
+    }
+
+    void FMapPropertyRow::RebuildChildren()
+    {
+        DestroyChildren();
+
+        void* Container = GetPropertyHandle()->GetValuePtr();
+        if (Container == nullptr || MapProperty == nullptr)
+        {
+            return;
+        }
+
+        const size_t Count = MapProperty->GetNum(Container);
+        Children.reserve(Count);
+        for (size_t i = 0; i < Count; ++i)
+        {
+            Children.push_back(MakeUnique<FMapEntryRow>(this, static_cast<int64>(i), Callbacks));
+        }
+    }
+
+    bool FMapPropertyRow::AllowResize() const
+    {
+        return MapProperty == nullptr || !MapProperty->HasMetadata("NoResize");
+    }
+
+    bool FMapPropertyRow::HasExtraControls() const
+    {
+        return AllowResize();
+    }
+
+    float FMapPropertyRow::GetExtraControlsSectionWidth()
+    {
+        return 18 * 2 + 4;
+    }
+
+    void FMapPropertyRow::DrawExtraControlsSection()
+    {
+        FMapProperty* Map = MapProperty;
+        void* Container = PropertyHandle->GetValuePtr();
+
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 4));
+        if (ImGuiX::FlatButton(LE_ICON_PLUS, ImVec2(18, 24), ArrayControlSeed))
+        {
+            QueueMutation([Map, Container]
+            {
+                // Default key + value; a colliding default key is a no-op (Insert is insert-or-assign).
+                const uint32 KeySize = Map->GetKeySize();
+                void* KeyScratch = Memory::Malloc(KeySize > 0 ? KeySize : 1, 16);
+                Map->ConstructKey(Container, KeyScratch);
+                Map->Insert(Container, KeyScratch, nullptr);
+                Map->DestructKey(Container, KeyScratch);
+                Memory::Free(KeyScratch);
+            });
+        }
+        ImGui::PopStyleVar();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+        {
+            ImGuiX::TextTooltip_Internal("Add map entry");
+        }
+
+        ImGui::SameLine();
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 4));
+        if (ImGuiX::FlatButton(LE_ICON_TRASH_CAN, ImVec2(18, 24), ArrayControlSeed))
+        {
+            QueueMutation([Map, Container] { Map->Clear(Container); });
+        }
+        ImGui::PopStyleVar();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+        {
+            ImGuiX::TextTooltip_Internal("Remove all map entries");
+        }
+    }
+
+    // ---- Map entry row ----
+
+    static TSharedPtr<FPropertyHandle> MakeMapValueHandle(FMapPropertyRow* MapRow, int64 Index)
+    {
+        FMapProperty* Map = MapRow->MapProperty;
+        void* Container = MapRow->GetPropertyHandle()->GetValuePtr();
+        void* DefaultContainer = MapRow->GetPropertyHandle()->GetDefaultValuePtr();
+        return MakeShared<FPropertyHandle>(Map, Container, DefaultContainer, Map->GetValueProperty(), Index, false);
+    }
+
+    FMapEntryRow::FMapEntryRow(FMapPropertyRow* InMapRow, int64 InIndex, const FPropertyChangedEventCallbacks& InCallbacks)
+        : FPropertyRow(MakeMapValueHandle(InMapRow, InIndex), InMapRow, InCallbacks)
+        , MapRow(InMapRow)
+        , Map(InMapRow->MapProperty)
+        , EntryIndex(InIndex)
+    {
+        void* Container = MapRow->GetPropertyHandle()->GetValuePtr();
+        void* DefaultContainer = MapRow->GetPropertyHandle()->GetDefaultValuePtr();
+        MapContainer = Container;
+
+        KeyHandle = MakeShared<FPropertyHandle>(Map, Container, DefaultContainer, Map->GetKeyProperty(), InIndex, true);
+        KeyCustomization = MakeLeafPropertyCustomization(Map->GetKeyProperty());
+
+        // Last unique key, to revert a duplicate edit to.
+        const uint32 KeySize = Map->GetKeySize();
+        PreviousKey = Memory::Malloc(KeySize > 0 ? KeySize : 1, 16);
+        Map->ConstructKey(MapContainer, PreviousKey);
+        CaptureKeySnapshot();
+
+        ValueRow = CreatePropertyRow(PropertyHandle, this, Callbacks);
+    }
+
+    FMapEntryRow::~FMapEntryRow()
+    {
+        if (PreviousKey != nullptr)
+        {
+            if (Map != nullptr)
+            {
+                Map->DestructKey(MapContainer, PreviousKey);
+            }
+            Memory::Free(PreviousKey);
+        }
+    }
+
+    void FMapEntryRow::CaptureKeySnapshot()
+    {
+        if (Map == nullptr || PreviousKey == nullptr)
+        {
+            return;
+        }
+        if (const void* Slot = KeyHandle->GetValuePtr())
+        {
+            Map->GetKeyProperty()->CopyCompleteValue(PreviousKey, Slot);
+        }
+    }
+
+    bool FMapEntryRow::KeyDuplicatesAnotherEntry() const
+    {
+        if (Map == nullptr || MapContainer == nullptr)
+        {
+            return false;
+        }
+        const void* MyKey = KeyHandle->GetValuePtr();
+        if (MyKey == nullptr)
+        {
+            return false;
+        }
+        FProperty* KeyProp = Map->GetKeyProperty();
+        const size_t Count = Map->GetNum(MapContainer);
+        for (size_t j = 0; j < Count; ++j)
+        {
+            if (static_cast<int64>(j) == EntryIndex)
+            {
+                continue;
+            }
+            const void* OtherKey = Map->GetKeyAt(MapContainer, j);
+            if (OtherKey != nullptr && KeyProp->Identical(MyKey, OtherKey))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void FMapEntryRow::Update()
+    {
+        if (ValueRow)
+        {
+            ValueRow->UpdateRow();
+        }
+
+        if (Map == nullptr)
+        {
+            return;
+        }
+
+        // While idle, track the committed key so a duplicate edit has a value to revert to.
+        if (KeyChangeOp == EPropertyChangeOp::None)
+        {
+            CaptureKeySnapshot();
+            return;
+        }
+
+        // Commit the in-flight key edit, then notify the map field. Keys are edited in place (entries are
+        // addressed by iteration index, and save/reload re-hashes).
+        const FPropertyChangedEvent Event{Callbacks.Type, Map, Map->Name};
+        if (KeyChangeOp == EPropertyChangeOp::Started && Callbacks.StartChangeCallback) { Callbacks.StartChangeCallback(Event); }
+        if (Callbacks.PreChangeCallback) { Callbacks.PreChangeCallback(Event); }
+
+        if (KeyCustomization) { KeyCustomization->UpdatePropertyValue(KeyHandle); }
+
+        // A key duplicating another entry silently collapses on reload; revert it and re-sync the widget.
+        if (KeyChangeOp == EPropertyChangeOp::Finished && KeyDuplicatesAnotherEntry())
+        {
+            if (void* Slot = KeyHandle->GetValuePtr())
+            {
+                Map->GetKeyProperty()->CopyCompleteValue(Slot, PreviousKey);
+            }
+            if (KeyCustomization) { KeyCustomization->HandleExternalUpdate(KeyHandle); }
+            ImGuiX::Notifications::NotifyWarning("Duplicate map key ignored; keys must be unique.");
+        }
+
+        if (Callbacks.PostChangeCallback) { Callbacks.PostChangeCallback(Event); }
+        if (KeyChangeOp == EPropertyChangeOp::Finished && Callbacks.FinishChangeCallback) { Callbacks.FinishChangeCallback(Event); }
+        KeyChangeOp = EPropertyChangeOp::None;
+    }
+
+    void FMapEntryRow::DrawHeader(float Offset)
+    {
+        ImGui::Dummy(ImVec2(Offset, 0));
+        ImGui::SameLine();
+
+        if (KeyCustomization)
+        {
+            KeyChangeOp = KeyCustomization->UpdateAndDraw(KeyHandle, IsReadOnly());
+        }
+        else
+        {
+            // Non-leaf key (e.g. a struct): read-only placeholder, edited via add/remove.
+            ImGui::TextDisabled("<key %lld>", static_cast<long long>(EntryIndex));
+        }
+    }
+
+    void FMapEntryRow::DrawEditor(bool bReadOnly)
+    {
+        if (ValueRow)
+        {
+            ValueRow->DrawEditor(bReadOnly);
+        }
+    }
+
+    float FMapEntryRow::GetMeasuredHeaderTextWidth() const
+    {
+        return 120.0f;
+    }
+
+    void FMapEntryRow::DrawExtraControlsSection()
+    {
+        FMapProperty* Map = MapRow->MapProperty;
+        void* Container = MapRow->GetPropertyHandle()->GetValuePtr();
+        const int64 Index = EntryIndex;
+
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 4));
+        if (ImGuiX::FlatButton(LE_ICON_TRASH_CAN, ImVec2(18, 24), ArrayControlSeed))
+        {
+            MapRow->QueueMutation([Map, Container, Index]
+            {
+                if (Container != nullptr && static_cast<size_t>(Index) < Map->GetNum(Container))
+                {
+                    Map->RemoveByKey(Container, Map->GetKeyAt(Container, static_cast<size_t>(Index)));
+                }
+            });
+        }
+        ImGui::PopStyleVar();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+        {
+            ImGuiX::TextTooltip_Internal("Remove entry");
         }
     }
 

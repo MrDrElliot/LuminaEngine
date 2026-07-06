@@ -81,7 +81,28 @@ public sealed class PropertyTestScript : EntityScript
     [Property(Category = "Arrays")] public List<FVector3> VectorList;
     [Property(Category = "Arrays")] public TestStats[] StatsArray;
     [Property(Category = "Arrays")] public List<TestStats> StatsList;
-    
+
+    // Dictionary<K,V> maps to a reflected THashMap; keys edit inline, values render in the editor column.
+    [Property(Category = "Maps")] public Dictionary<string, int> ScoresByName;
+    [Property(Category = "Maps")] public Dictionary<int, string> NamesById;
+    [Property(Category = "Maps")] public Dictionary<string, float> WeightsByName;
+    [Property(Category = "Maps")] public Dictionary<string, bool> FlagsByName;
+    [Property(Category = "Maps", Tooltip = "Unsigned integral key.")] public Dictionary<uint, int> CountsByU32;
+    [Property(Category = "Maps", Tooltip = "64-bit integral key.")] public Dictionary<long, string> LabelsByI64;
+    [Property(Category = "Maps")] public Dictionary<int, float> FloatByInt;
+    [Property(Category = "Maps", Tooltip = "Enum key.")] public Dictionary<ETestMode, int> CountsByMode;
+    [Property(Category = "Maps", Tooltip = "Enum value.")] public Dictionary<string, ETestPriority> PriorityByName;
+    [Property(Category = "Maps", Tooltip = "Vector value.")] public Dictionary<string, FVector3> ColorsByName;
+    [Property(Category = "Maps", Tooltip = "Entity-reference value.")] public Dictionary<string, Entity> EntitiesByName;
+    [Property(Category = "Maps", Tooltip = "Soft asset-path value.")] public Dictionary<string, FSoftObjectPath> PathsByName;
+    [Property(Category = "Maps", Tooltip = "Soft texture-pointer value.")] public Dictionary<string, TSoftObjectPtr<CTexture>> TexturesByName;
+
+    // Struct value: each entry's value expands to an inline nested table (TestStats has [Property] members).
+    [Property(Category = "Maps", Tooltip = "Struct value; expands to a nested table per entry.")] public Dictionary<string, TestStats> StatsByName;
+
+    // Instanced value: each entry independently picks a concrete ITestCommand and edits it inline.
+    [Property(Category = "Maps", Tooltip = "Instanced value; each entry picks a command type."), Instanced] public Dictionary<string, ITestCommand> CommandTable;
+
     [Button(Tooltip = "Reset the scalar fields to their defaults.")]
     public void ResetScalars()
     {
@@ -98,6 +119,19 @@ public sealed class PropertyTestScript : EntityScript
         Vec3.X += 1.0f;
         Vec3.Y += 1.0f;
         Vec3.Z += 1.0f;
+    }
+
+    [Button(Tooltip = "Fill a few maps from script to check external mutation reflects in the inspector.")]
+    public void PopulateMaps()
+    {
+        ScoresByName = new Dictionary<string, int> { ["alpha"] = 1, ["beta"] = 2, ["gamma"] = 3 };
+        CountsByMode = new Dictionary<ETestMode, int> { [ETestMode.Idle] = 0, [ETestMode.Running] = 5 };
+        ColorsByName = new Dictionary<string, FVector3>
+        {
+            ["red"] = new FVector3 { X = 1.0f, Y = 0.0f, Z = 0.0f },
+            ["green"] = new FVector3 { X = 0.0f, Y = 1.0f, Z = 0.0f },
+            ["blue"] = new FVector3 { X = 0.0f, Y = 0.0f, Z = 1.0f },
+        };
     }
 }
 
@@ -117,6 +151,7 @@ public sealed class TestContainer
     [Property] public FVector2 Offset;
     [Property] public TestStats Inner;
     [Property] public List<TestStats> Children;
+    [Property] public Dictionary<string, int> Tags;
 }
 
 // An instanced-object family. A field typed as ITestCommand offers these concrete types in a picker

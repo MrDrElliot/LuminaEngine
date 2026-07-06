@@ -14,6 +14,7 @@
 #include "Core/Math/Math.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Reflection/Type/Properties/ArrayProperty.h"
+#include "Core/Reflection/Type/Properties/MapProperty.h"
 #include "Core/Reflection/Type/Properties/ClassProperty.h"
 #include "Core/Reflection/Type/Properties/DelegateProperty.h"
 #include "Core/Reflection/Type/Properties/EnumProperty.h"
@@ -436,6 +437,15 @@ namespace Lumina
                 NewProperty = NewFProperty<FArrayProperty, FArrayPropertyParams>(FieldOwner, Param);
 
                 ReadMore = 1;
+            }
+            break;
+        case EPropertyTypeFlags::Map:
+            {
+                // Two inners follow (backward: Key first, then Value). The emitter lays them out as
+                // [Value, Key, Map] so the ReadMore=2 recursion attaches Key on the first pass, Value the second.
+                NewProperty = NewFProperty<FMapProperty, FMapPropertyParams>(FieldOwner, Param);
+
+                ReadMore = 2;
             }
             break;
         case EPropertyTypeFlags::Optional:

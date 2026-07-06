@@ -15,14 +15,6 @@ struct FSceneTex
     float4 SampleLevel(float2 uv, float l)  { return Tex.SampleLevel(Smp, uv, l); }
 };
 
-// Raw reverse-Z NDC depth [0,1] -> linear view-space distance (world units along view -Z).
-float LinearizeSceneDepth(float RawDepth)
-{
-    float ZNear = GetNearPlane();
-    float ZFar  = GetFarPlane();
-    return ZNear * ZFar / max(ZFar - RawDepth * (ZFar - ZNear), 1e-6);
-}
-
 struct PSInput
 {
     float4 Position : SV_Position;

@@ -156,38 +156,15 @@ namespace Lumina
 
     ENUM_CLASS_FLAGS(EPropertyFlags);
 
-    /** Must mirror EPropertyTypeFlags in ReflectedType.h. */
+    /** The reflected property-type taxonomy. Single-sourced from EPropertyTypeFlags.inl so the enum and its
+     *  name tables can never drift. Also mirrored by LuminaSharp.EPropertyType (validated at bootstrap) and by
+     *  the Reflector's isolated copy in ReflectedType.h/PropertyFlags.h. */
     enum class EPropertyTypeFlags : uint8
     {
         None = 0,
-
-        Int8,
-        Int16,
-        Int32,
-        Int64,
-
-        UInt8,
-        UInt16,
-        UInt32,
-        UInt64,
-
-        Float,
-        Double,
-
-        Bool,
-        Object,
-        SoftObject,
-        Class,
-        Name,
-        String,
-        Enum,
-        Vector,
-        Struct,
-        Optional,
-        SubStruct,
-        Delegate,
-        InstancedStruct,
-
+#define LE_PROPERTY_TYPE(Name) Name,
+#include "EPropertyTypeFlags.inl"
+#undef LE_PROPERTY_TYPE
         Count,
     };
 
@@ -196,35 +173,23 @@ namespace Lumina
     inline constexpr const char* PropertyTypeFlagNames[] =
     {
         "None",
-        "Int8Property",
-        "Int16Property",
-        "Int32Property",
-        "Int64Property",
-
-        "UInt8Property",
-        "UInt16Property",
-        "UInt32Property",
-        "UInt64Property",
-
-        "FloatProperty",
-        "DoubleProperty",
-
-        "BoolProperty",
-        "ObjectProperty",
-        "SoftObjectProperty",
-        "ClassProperty",
-        "NameProperty",
-        "StringProperty",
-        "EnumProperty",
-        "VectorProperty",
-        "StructProperty",
-        "OptionalProperty",
-        "SubStructProperty",
-        "DelegateProperty",
-        "InstancedStructProperty"
+#define LE_PROPERTY_TYPE(Name) #Name "Property",
+#include "EPropertyTypeFlags.inl"
+#undef LE_PROPERTY_TYPE
     };
 
-    static_assert(std::size(PropertyTypeFlagNames) == (size_t)EPropertyTypeFlags::Count, "PropertyTypeFlagStrings must match number of flags in EPropertyTypeFlags");
+    // Plain enum-member names ("Int8", "Struct", ...), parallel to the enum, for the C#/C++ interop validation
+    // (LuminaSharp.EPropertyType checks each name -> value against the native side at bootstrap).
+    inline constexpr const char* PropertyTypePlainNames[] =
+    {
+        "None",
+#define LE_PROPERTY_TYPE(Name) #Name,
+#include "EPropertyTypeFlags.inl"
+#undef LE_PROPERTY_TYPE
+    };
+
+    static_assert(std::size(PropertyTypeFlagNames) == (size_t)EPropertyTypeFlags::Count, "PropertyTypeFlagNames must match number of flags in EPropertyTypeFlags");
+    static_assert(std::size(PropertyTypePlainNames) == (size_t)EPropertyTypeFlags::Count, "PropertyTypePlainNames must match number of flags in EPropertyTypeFlags");
     
     inline const char* PropertyTypeToString(EPropertyTypeFlags Flag)
     {
@@ -266,6 +231,7 @@ namespace Lumina
     // The full operation set for a reflected TVector<T> is now a single shared ops table (Containers/
     // ContainerOps.h, also used by C# NativeList<T>) rather than per-property hand-rolled fn-ptrs.
     struct FVectorOps;
+    struct FMapOps;
 
     typedef bool (*OptionalHasValuePtr)(const void* InContainer);
     /** Only valid when HasValue returned true. */
@@ -376,6 +342,15 @@ namespace Lumina
     {
         // Returns the shared element-type ops table (GetVectorOps<T>). One forwarder per array property.
         const FVectorOps* (*GetOpsFn)();
+
+        uint16 NumMetaData;
+        const FMetaDataPairParam* MetaDataArray;
+    };
+
+    struct FMapPropertyParams : FPropertyParams
+    {
+        // Returns the shared key/value ops table (GetMapOps<K,V>). One forwarder per map property.
+        const FMapOps* (*GetOpsFn)();
 
         uint16 NumMetaData;
         const FMetaDataPairParam* MetaDataArray;

@@ -1507,13 +1507,14 @@ namespace Lumina::DotNet
         TSharedPtr<Scripting::FScriptExportType> ReadType(FBlobReader& R)
         {
             auto Type = MakeShared<Scripting::FScriptExportType>();
-            Type->Kind = static_cast<Scripting::EScriptExportKind>(R.U8());
+            Type->Kind = static_cast<EPropertyTypeFlags>(R.U8());
+            Type->bEntity = R.U8() != 0;
             switch (Type->Kind)
             {
-                case Scripting::EScriptExportKind::Enum:
+                case EPropertyTypeFlags::Enum:
                 {
                     Type->EnumName = FName(R.Str().c_str());
-                    Type->EnumUnderlying = static_cast<Scripting::EScriptExportKind>(R.U8());
+                    Type->EnumUnderlying = static_cast<EPropertyTypeFlags>(R.U8());
                     const int32 N = R.I32();
                     for (int32 i = 0; i < N; ++i)
                     {
@@ -1524,9 +1525,15 @@ namespace Lumina::DotNet
                     }
                     break;
                 }
-                case Scripting::EScriptExportKind::NativeStruct:
+                case EPropertyTypeFlags::Struct:
                 {
-                    Type->NativeName = FName(R.Str().c_str());
+                    // A native-struct mirror (NativeName set) and a C#-defined script struct (NativeName empty)
+                    // share one wire shape; the reader tells them apart by whether NativeName is present.
+                    const FString NativeName = R.Str();
+                    if (!NativeName.empty())
+                    {
+                        Type->NativeName = FName(NativeName.c_str());
+                    }
                     const int32 N = R.I32();
                     for (int32 i = 0; i < N; ++i)
                     {
@@ -1538,30 +1545,23 @@ namespace Lumina::DotNet
                     }
                     break;
                 }
-                case Scripting::EScriptExportKind::ScriptStruct:
-                {
-                    const int32 N = R.I32();
-                    for (int32 i = 0; i < N; ++i)
-                    {
-                        Scripting::FScriptExportField F;
-                        F.Name = FName(R.Str().c_str());
-                        ReadAliasesInto(R, F.Meta);
-                        F.Type = ReadType(R);
-                        Type->Fields.push_back(F);
-                    }
-                    break;
-                }
-                case Scripting::EScriptExportKind::AssetRef:
+                case EPropertyTypeFlags::SoftObject:
                 {
                     Type->TargetClass = FName(R.Str().c_str());
                     break;
                 }
-                case Scripting::EScriptExportKind::Array:
+                case EPropertyTypeFlags::Vector:
                 {
                     Type->ElementType = ReadType(R);
                     break;
                 }
-                case Scripting::EScriptExportKind::Instance:
+                case EPropertyTypeFlags::Map:
+                {
+                    Type->KeyType   = ReadType(R);
+                    Type->ValueType = ReadType(R);
+                    break;
+                }
+                case EPropertyTypeFlags::InstancedStruct:
                 {
                     Type->BaseName = FName(R.Str().c_str());
                     const int32 NumCandidates = R.I32();
@@ -1607,6 +1607,22 @@ namespace Lumina::DotNet
                         Scripting::FScriptPropertyValue E;
                         ReadValue(R, E);
                         Out.Items.push_back(E);
+                    }
+                    break;
+                }
+                case Scripting::EScriptValueKind::Map:
+                {
+                    // count pairs, each [key, value]; stored interleaved in Items (Items[2i]=key, [2i+1]=value).
+                    const int32 N = R.I32();
+                    Out.Items.reserve(N > 0 ? N * 2 : 0);
+                    for (int32 i = 0; i < N; ++i)
+                    {
+                        Scripting::FScriptPropertyValue K;
+                        ReadValue(R, K);
+                        Out.Items.push_back(eastl::move(K));
+                        Scripting::FScriptPropertyValue Val;
+                        ReadValue(R, Val);
+                        Out.Items.push_back(eastl::move(Val));
                     }
                     break;
                 }
@@ -1658,6 +1674,16 @@ namespace Lumina::DotNet
                 case Scripting::EScriptValueKind::Array:
                 {
                     W.I32((int32)V.Items.size());
+                    for (const Scripting::FScriptPropertyValue& E : V.Items)
+                    {
+                        WriteValue(W, E);
+                    }
+                    break;
+                }
+                case Scripting::EScriptValueKind::Map:
+                {
+                    // Items are the interleaved [key, value] pairs; the wire leads with the PAIR count.
+                    W.I32((int32)(V.Items.size() / 2));
                     for (const Scripting::FScriptPropertyValue& E : V.Items)
                     {
                         WriteValue(W, E);

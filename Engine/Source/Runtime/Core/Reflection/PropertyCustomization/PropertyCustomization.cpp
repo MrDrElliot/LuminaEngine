@@ -5,6 +5,7 @@
 #include "Core/Assertions/Assert.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Reflection/Type/Properties/ArrayProperty.h"
+#include "Core/Reflection/Type/Properties/MapProperty.h"
 
 namespace Lumina
 {
@@ -32,6 +33,26 @@ namespace Lumina
     {
     }
 
+    FPropertyHandle::FPropertyHandle(FMapProperty* InOwnerMap, void* InMapPtr, void* InDefaultMapPtr, FProperty* InProperty, int64 InIndex, bool bInIsKey)
+        : ContainerPtr(InMapPtr)
+        , DefaultContainerPtr(InDefaultMapPtr)
+        , Property(InProperty)
+        , Index(InIndex)
+        , OwnerMap(InOwnerMap)
+        , bMapKey(bInIsKey)
+    {
+    }
+
+    // Resolve the slot for a map entry (key or value) at iteration Index against the given map instance.
+    static void* ResolveMapSlot(FMapProperty* Map, void* Container, int64 Index, bool bKey)
+    {
+        if (Map == nullptr || Container == nullptr || Index < 0 || (size_t)Index >= Map->GetNum(Container))
+        {
+            return nullptr;
+        }
+        return bKey ? const_cast<void*>(Map->GetKeyAt(Container, (size_t)Index)) : Map->GetValueAt(Container, (size_t)Index);
+    }
+
     void* FPropertyHandle::GetValuePtr() const
     {
         if (ContainerPtr == nullptr || Property == nullptr)
@@ -42,6 +63,10 @@ namespace Lumina
         if (OwnerArray != nullptr)
         {
             return Index < (int64)OwnerArray->GetNum(ContainerPtr) ? OwnerArray->GetAt(ContainerPtr, (size_t)Index) : nullptr;
+        }
+        if (OwnerMap != nullptr)
+        {
+            return ResolveMapSlot(OwnerMap, ContainerPtr, Index, bMapKey);
         }
         return Property->GetValuePtr<void>(ContainerPtr, Index);
     }
@@ -55,6 +80,10 @@ namespace Lumina
         if (OwnerArray != nullptr)
         {
             return Index < (int64)OwnerArray->GetNum(DefaultContainerPtr) ? OwnerArray->GetAt(DefaultContainerPtr, (size_t)Index) : nullptr;
+        }
+        if (OwnerMap != nullptr)
+        {
+            return ResolveMapSlot(OwnerMap, DefaultContainerPtr, Index, bMapKey);
         }
         return Property->GetValuePtr<void>(DefaultContainerPtr, Index);
     }

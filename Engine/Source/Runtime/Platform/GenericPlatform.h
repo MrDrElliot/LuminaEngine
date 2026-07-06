@@ -14,6 +14,22 @@ using int16  = signed short int;
 using int32  = signed int;
 using int64  = signed long long;
 
+// Reflector workaround: the LRT amalgamation parse (libclang) mis-resolves the GLOBAL ::int32/::uint32 typedefs
+// when they appear as container template arguments (e.g. THashMap<int32, int32>), silently recovering the field
+// to `int` so the reflected property comes out wrong. Namespace-scoped mirrors make intN in Lumina code resolve
+// here, which libclang handles correctly. Same underlying types, so this is transparent to normal compilation.
+namespace Lumina
+{
+    using int8   = signed char;
+    using int16  = signed short int;
+    using int32  = signed int;
+    using int64  = signed long long;
+    using uint8  = unsigned char;
+    using uint16 = unsigned short int;
+    using uint32 = unsigned int;
+    using uint64 = unsigned long long;
+}
+
 using ANSICHAR = char;
 using WIDECHAR = wchar_t;
 using TCHAR = WIDECHAR; // Switchable character; either ANSICHAR or WIDECHAR.

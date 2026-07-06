@@ -14,9 +14,29 @@ namespace Lumina
 {
     RUNTIME_API FTaskSystem* GTaskSystem = nullptr;
 
+    uint32 Task::ComputeChunkCount(uint32 Num, uint32 MinRange)
+    {
+        const uint32 Grain = MinRange == 0 ? 1u : MinRange;
+        uint32 NumChunks = (Num + Grain - 1) / Grain;
+
+        uint32 MaxChunks = Jobs::GetNumWorkers() * 4u;
+        if (MaxChunks == 0)
+        {
+            MaxChunks = 1;
+        }
+        MaxChunks = std::min(MaxChunks, Task::kMaxChunks);
+        NumChunks = std::min(NumChunks, MaxChunks);
+
+        if (NumChunks == 0)
+        {
+            NumChunks = 1;
+        }
+        return NumChunks;
+    }
+
     namespace
     {
-        constexpr uint32 kMaxChunks = 256;
+        constexpr uint32 kMaxChunks = Task::kMaxChunks;
 
         using FRawThunk = void (*)(void* Ctx, uint32 Start, uint32 End, uint32 Thread);
 
@@ -32,27 +52,6 @@ namespace Lumina
         {
             FParChunk* C = static_cast<FParChunk*>(Arg);
             C->Thunk(C->Ctx, C->Start, C->End, Worker);
-        }
-
-        // Even split of [0, Num) into Count chunks; the first Remainder chunks get one extra element.
-        uint32 ComputeChunkCount(uint32 Num, uint32 MinRange)
-        {
-            const uint32 Grain = MinRange == 0 ? 1u : MinRange;
-            uint32 NumChunks = (Num + Grain - 1) / Grain;
-
-            uint32 MaxChunks = Jobs::GetNumWorkers() * 4u;
-            if (MaxChunks == 0)
-            {
-                MaxChunks = 1;
-            }
-            MaxChunks = std::min(MaxChunks, kMaxChunks);
-            NumChunks = std::min(NumChunks, MaxChunks);
-
-            if (NumChunks == 0)
-            {
-                NumChunks = 1;
-            }
-            return NumChunks;
         }
 
         // Fire-and-forget task backing Task::AsyncTask. Owns the user function + chunk storage and
@@ -94,7 +93,7 @@ namespace Lumina
 
             void Launch(uint32 Num, uint32 MinRange, ETaskPriority Priority)
             {
-                NumChunks = ComputeChunkCount(Num, MinRange);
+                NumChunks = Task::ComputeChunkCount(Num, MinRange);
                 Chunks    = static_cast<FChunk*>(Memory::Malloc(sizeof(FChunk) * NumChunks, alignof(FChunk)));
                 Counter   = Jobs::AllocCounter(0);
                 Jobs::SetCounterCompletion(Counter, &FAsyncContext::OnComplete, this);
@@ -152,7 +151,7 @@ namespace Lumina
 
     void FTaskSystem::ParallelForImpl(uint32 Num, uint32 MinRange, ETaskPriority Priority, FParallelThunk Thunk, void* Ctx)
     {
-        const uint32 NumChunks = ComputeChunkCount(Num, MinRange);
+        const uint32 NumChunks = Task::ComputeChunkCount(Num, MinRange);
 
         if (NumChunks == 1)
         {

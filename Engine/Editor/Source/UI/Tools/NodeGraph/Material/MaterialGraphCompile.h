@@ -24,4 +24,10 @@ namespace Lumina
     // with the errors and leaves the material not-ready. Editor-only (drives GShaderCompiler). Shared by the
     // material editor tool and the scene importer's procedural material generation.
     EDITOR_API FMaterialGraphCompileResult CompileMaterialGraph(CMaterial* Material, CMaterialNodeGraph* Graph);
+
+    // Editor-tick drain for CMaterial's stale-template queue (materials whose serialized shaders were
+    // built against older templates, detected in PostLoad by CompiledTemplateHash mismatch). Recompiles
+    // at most ONE material per call from its saved graph, marks the package dirty, and toasts the result;
+    // call once per frame (EditorUI::OnUpdate). No-op when the queue is empty.
+    EDITOR_API void ProcessStaleMaterialRecompiles();
 }

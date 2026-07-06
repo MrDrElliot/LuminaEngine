@@ -499,6 +499,14 @@ struct FCullData
 #define DEBUG_MODE_SSAO                 15u
 #define DEBUG_MODE_MATERIAL_ID          16u
 #define DEBUG_MODE_TRIANGLE_ID          17u
+// OIT target inspectors, consumed by OITResolve.slang (not the per-surface switch in SurfaceShading).
+// LAYER_COUNT additionally changes what the translucent BasePixelPass writes: exactly 1.0 per fragment
+// into accum.a, turning the weight channel into a raw per-pixel fragment count (fp16-exact to 2048) --
+// separates "the fragment SET strobes" from "the fragment VALUES strobe".
+#define DEBUG_MODE_OIT_ACCUM_COLOR      18u
+#define DEBUG_MODE_OIT_ACCUM_WEIGHT     19u
+#define DEBUG_MODE_OIT_REVEALAGE        20u
+#define DEBUG_MODE_OIT_LAYER_COUNT      21u
 
 struct FSceneGlobalData
 {
@@ -713,29 +721,8 @@ uint ToggleFlag(uint Value, uint Flag)
     return Value ^ Flag;
 }
 
-float3 ReconstructWorldPosition(float2 UV, float Depth, float4x4 InvProjection, float4x4 InvView)
+// Rec. 709 luma. The single luminance definition for the engine -- do not re-derive the dot inline.
+float Luminance(float3 C)
 {
-    float  Z            = Depth * 2.0 - 1.0;
-    float4 ClipSpacePos = float4(UV * 2.0 - 1.0, Z, 1.0);
-    float4 ViewSpacePos = mul(InvProjection, ClipSpacePos);
-    ViewSpacePos       /= ViewSpacePos.w;
-    float4 WorldPos     = mul(InvView, ViewSpacePos);
-    return WorldPos.xyz;
-}
-
-float3 ReconstructViewPosition(float2 UV, float Depth, float4x4 InvProjection)
-{
-    float4 ClipSpace = float4(UV * 2.0 - 1.0, Depth * 2.0 - 1.0, 1.0);
-    float4 ViewSpace = mul(InvProjection, ClipSpace);
-    return ViewSpace.xyz / ViewSpace.w;
-}
-
-float LinearizeDepth(float Depth, float Near, float Far)
-{
-    return (Near * Far) / (Far - Depth * (Far - Near)) / Far;
-}
-
-float LinearizeDepthReverseZ(float Depth, float Near, float Far)
-{
-    return Near * Far / (Far + Depth * (Near - Far));
+    return dot(C, float3(0.2126, 0.7152, 0.0722));
 }

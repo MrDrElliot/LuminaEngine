@@ -8,7 +8,9 @@
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Reflection/Type/Properties/ArrayProperty.h"
 #include "Core/Reflection/Type/Properties/InstancedStructProperty.h"
+#include "Core/Reflection/Type/Properties/MapProperty.h"
 #include "Core/Reflection/Type/Properties/StructProperty.h"
+#include "Memory/Memory.h"
 
 namespace Lumina::Scripting
 {
@@ -174,6 +176,23 @@ namespace Lumina::Scripting
                 }
                 break;
             }
+            case EPropertyTypeFlags::Map:
+            {
+                Value.Kind = EScriptValueKind::Map;
+                FMapProperty* Map = static_cast<FMapProperty*>(Property);
+                FProperty* KeyProp = Map->GetKeyProperty();
+                FProperty* ValueProp = Map->GetValueProperty();
+                if (KeyProp != nullptr && ValueProp != nullptr)
+                {
+                    Value.Items.reserve(Map->GetNum(ValuePtr) * 2);
+                    Map->ForEach(ValuePtr, [&](const void* KeyPtr, void* PairValuePtr)
+                    {
+                        Value.Items.push_back(ReadValue(KeyProp, KeyPtr));
+                        Value.Items.push_back(ReadValue(ValueProp, PairValuePtr));
+                    });
+                }
+                break;
+            }
             default:
                 break;
             }
@@ -244,6 +263,32 @@ namespace Lumina::Scripting
                     Array->PushBack(ValuePtr, nullptr);
                     WriteValue(Inner, Array->GetAt(ValuePtr, Index), Value.Items[Index]);
                 }
+                break;
+            }
+            case EPropertyTypeFlags::Map:
+            {
+                FMapProperty* Map = static_cast<FMapProperty*>(Property);
+                FProperty* KeyProp = Map->GetKeyProperty();
+                FProperty* ValueProp = Map->GetValueProperty();
+                Map->Clear(ValuePtr);
+                if (KeyProp == nullptr || ValueProp == nullptr) { break; }
+
+                // Items are the interleaved [key, value] pairs. Build a scratch key, write the key into it, insert
+                // to get the value slot, then write the value in place.
+                const uint32 KeySize = Map->GetKeySize();
+                void* KeyScratch = Memory::Malloc(KeySize > 0 ? KeySize : 1, 16);
+                for (SIZE_T Index = 0; Index + 1 < Value.Items.size(); Index += 2)
+                {
+                    Map->ConstructKey(ValuePtr, KeyScratch);
+                    WriteValue(KeyProp, KeyScratch, Value.Items[Index]);
+                    void* Slot = Map->Insert(ValuePtr, KeyScratch, nullptr);
+                    if (Slot != nullptr)
+                    {
+                        WriteValue(ValueProp, Slot, Value.Items[Index + 1]);
+                    }
+                    Map->DestructKey(ValuePtr, KeyScratch);
+                }
+                Memory::Free(KeyScratch);
                 break;
             }
             default:

@@ -2,7 +2,10 @@
 
 #include "TaskSystem/TaskSystem.h"
 #include "TaskSystem/TaskGraph.h"
+#include "TaskSystem/Task.h"
+#include "TaskSystem/Future.h"
 #include "TaskSystem/Scheduler/JobScheduler.h"
+#include "Core/Threading/Thread.h"
 #include "Containers/Array.h"
 
 #include <algorithm>
@@ -329,6 +332,104 @@ TEST(TaskBench, NestedParallelThroughput)
 
     ASSERT_EQ(Total.load(), (uint64)Outer * Inner);
     std::printf("[TaskBench] %-40s  %.3f ms  (%llu leaf tasks)\n", "nested parallel-for", Ms, (unsigned long long)Outer * Inner);
+    std::fflush(stdout);
+    SUCCEED();
+}
+
+// Coroutine fan-out then merge, the same shape as GraphFanOutMerge.
+namespace
+{
+    TTask<void> CoBenchProducer(uint32 Count, uint64 PerChunk, volatile double* Sink)
+    {
+        co_await Task::ParallelForAsync(Count, 1, [Sink, PerChunk](uint32 i)
+        {
+            *Sink = BusySpin(PerChunk, (double)i);
+        }, ETaskPriority::High);
+    }
+
+    TTask<double> CoBenchFanOutMerge(uint32 Workers, uint64 PerChunk, volatile double* Sink)
+    {
+        TVector<TTask<void>> Producers;
+        Producers.push_back(CoBenchProducer(Workers * 2u, PerChunk, Sink));
+        Producers.push_back(CoBenchProducer(Workers * 2u, PerChunk, Sink));
+        Producers.push_back(CoBenchProducer(Workers * 2u, PerChunk, Sink));
+        co_await WhenAll(Move(Producers));
+        *Sink = BusySpin(PerChunk, *Sink);
+        co_return *Sink;
+    }
+}
+
+TEST(TaskBench, CoroFanOutMerge_DrawCommandsShape)
+{
+    const uint32 Workers = GTaskSystem->GetNumWorkers();
+    constexpr uint64 PerChunk = 40000;
+    volatile double Sink = 0.0;
+
+    auto Run = [&]() -> double
+    {
+        const auto T0 = Clock::now();
+        Sink = SyncWait(CoBenchFanOutMerge(Workers, PerChunk, &Sink));
+        return MsSince(T0);
+    };
+
+    for (int i = 0; i < 100; ++i) Run(); // warm
+
+    constexpr int Runs = 240;
+    TVector<double> Samples;
+    Samples.reserve(Runs);
+    for (int r = 0; r < Runs; ++r) Samples.push_back(Run());
+    ReportDist("coro fan-out->merge", Samples);
+    SUCCEED();
+}
+
+// Many coroutines suspended in-flight at once, past the 256-fiber pool cap.
+namespace
+{
+    TTask<void> CoBenchWaitOn(TFuture<void> Gate)
+    {
+        co_await Move(Gate);
+        co_return;
+    }
+
+    TTask<int> CoBenchManyWaiters(int N, TFuture<void> Gate)
+    {
+        TVector<TTask<void>> Waiters;
+        Waiters.reserve(N);
+        for (int i = 0; i < N; ++i)
+        {
+            Waiters.push_back(CoBenchWaitOn(Gate)); // copies the shared future state
+        }
+        co_await WhenAll(Move(Waiters));
+        co_return N;
+    }
+}
+
+TEST(TaskBench, CoroManyInFlightWaiters)
+{
+    constexpr int N = 5000; // far past the 256-fiber cap
+
+    auto Run = [&]() -> double
+    {
+        TPromise<void> GateP;
+        TFuture<void>  Gate = GateP.GetFuture();
+        // Release the gate shortly after the waiters have all suspended.
+        Task::Async([P = Move(GateP)]() mutable { Threading::Sleep(2); P.SetValue(); });
+
+        const auto T0 = Clock::now();
+        const int Done = SyncWait(CoBenchManyWaiters(N, Move(Gate)));
+        const double Ms = MsSince(T0);
+        (void)Done;
+        return Ms;
+    };
+
+    for (int i = 0; i < 5; ++i) Run(); // warm
+
+    constexpr int Runs = 40;
+    TVector<double> Samples;
+    Samples.reserve(Runs);
+    for (int r = 0; r < Runs; ++r) Samples.push_back(Run());
+    ReportDist("coro 5000 in-flight waiters", Samples);
+    std::printf("[TaskBench] %-40s  %d coroutines suspended at once (fiber pool = 256)\n", "in-flight scale", N);
     std::fflush(stdout);
     SUCCEED();
 }

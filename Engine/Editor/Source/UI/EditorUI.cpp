@@ -35,6 +35,7 @@
 #include <Renderer/Shader.h>
 #include <Tools/Screenshot/ScreenshotCapture.h>
 #include <World/World.h>
+#include "UI/Tools/NodeGraph/Material/MaterialGraphCompile.h"
 #include "Config/EngineSettings.h"
 #include "Input/Key.h"
 #include "implot.h"
@@ -841,6 +842,15 @@ namespace Lumina
     void FEditorUI::OnUpdate(const FUpdateContext& UpdateContext)
     {
         LUMINA_PROFILE_SCOPE();
+
+        // Drain a budget of pending thumbnail renders before the UI draws this frame's tiles. The render
+        // itself is game-thread only (World::Extract + GPU readback); keeping the budget small avoids a
+        // hitch while cold thumbnails fill in a few per frame.
+        CThumbnailManager::Get().ProcessRenderQueue();
+
+        // Recompile one stale-template material per frame (queued in CMaterial::PostLoad when an asset's
+        // baked shaders predate the current shader templates).
+        ProcessStaleMaterialRecompiles();
 
         for (FEditorTool* Tool : EditorTools)
         {
