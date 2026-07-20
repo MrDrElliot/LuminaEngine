@@ -4,6 +4,7 @@
 
 namespace Lumina
 {
+    struct FPropertyChangedEvent;
     class FArchive;
     class FNetArchive;
 }
@@ -47,4 +48,20 @@ namespace Lumina::Concepts
     {
         { A < B } -> std::same_as<bool>;
     };
+    
+    #if USING(WITH_EDITOR)
+    
+    template<typename T>
+    concept THasPreEdit = requires(const T& A, const FPropertyChangedEvent& PropertyEvent)
+    {
+        { A.PreEditChange(PropertyEvent) } -> std::same_as<void>;
+    };
+    
+    template<typename T>
+    concept THasPostEdit = requires(const T& A, const FPropertyChangedEvent& PropertyEvent)
+    {
+        { A.PostEditChange(PropertyEvent) } -> std::same_as<void>;
+    };
+    
+    #endif
 }

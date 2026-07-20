@@ -58,6 +58,7 @@
 #include "World/Entity/Components/CharacterControllerComponent.h"
 #include "World/Entity/Components/DirtyComponent.h"
 #include "World/Entity/Components/PhysicsComponent.h"
+#include "World/Entity/Components/RagdollComponent.h"
 #include "World/Entity/Components/CSharpScriptComponent.h"
 #include "Scripting/DotNet/DotNetHost.h"
 #include "World/Entity/Components/StaticMeshComponent.h"
@@ -1641,6 +1642,33 @@ namespace Lumina::Physics
         return JPH::BodyID::cInvalidBodyID;
     }
 
+    int32 FJoltPhysicsScene::ResolveHitBoneIndex(entt::entity Entity, JPH::BodyID BodyID) const
+    {
+        entt::registry& Registry = ECS::GetWorldRegistry(*World);
+        if (!Registry.valid(Entity))
+        {
+            return INDEX_NONE;
+        }
+
+        const SRagdollComponent* RagdollComp = Registry.try_get<SRagdollComponent>(Entity);
+        if (RagdollComp == nullptr || !RagdollComp->Ragdoll || RagdollComp->Ragdoll->Ragdoll == nullptr)
+        {
+            return INDEX_NONE;
+        }
+
+        // Ragdolls are a handful of bodies; a linear scan beats maintaining a body->bone map.
+        const FJoltRagdollHandle& Handle = *RagdollComp->Ragdoll;
+        const int32 BodyCount = (int32)Handle.Ragdoll->GetBodyCount();
+        for (int32 j = 0; j < BodyCount && j < (int32)Handle.JointToBone.size(); ++j)
+        {
+            if (Handle.Ragdoll->GetBodyID(j) == BodyID)
+            {
+                return Handle.JointToBone[j];
+            }
+        }
+        return INDEX_NONE;
+    }
+
     TOptional<SRayResult> FJoltPhysicsScene::CastRay(const SRayCastSettings& Settings)
     {
         LUMINA_PROFILE_SCOPE();
@@ -1713,8 +1741,9 @@ namespace Lumina::Physics
             .Normal     = Math::Normalize(JoltUtils::FromJPHVec3(SurfaceNormal)),
             .Fraction   = Hit.mFraction,
             .Distance   = Hit.mFraction * Length,
+            .BoneIndex  = ResolveHitBoneIndex(static_cast<entt::entity>(static_cast<uint32>(Body->GetUserData())), Hit.mBodyID),
         };
-        
+
         return Result;
     }
 
@@ -1736,20 +1765,22 @@ namespace Lumina::Physics
         {
         public:
             
-            FMyCollector(TVector<SRayResult>& OutResults, const SSphereCastSettings& InSettings, const JPH::BodyLockInterfaceNoLock& NoLock)
-                : Out(OutResults)
+            FMyCollector(const FJoltPhysicsScene& InScene, TVector<SRayResult>& OutResults, const SSphereCastSettings& InSettings, const JPH::BodyLockInterfaceNoLock& NoLock)
+                : Scene(InScene)
+                , Out(OutResults)
                 , Settings(InSettings)
                 , Lock(NoLock)
             {}
-            
+
+            const FJoltPhysicsScene& Scene;
             TVector<SRayResult>& Out;
             const SSphereCastSettings& Settings;
             const JPH::BodyLockInterfaceNoLock& Lock;
-            
+
             void AddHit(const JPH::ShapeCastResult& Hit) override
             {
                 const JPH::Body* Body = Lock.TryGetBody(Hit.mBodyID2);
-                
+
                 SRayResult R;
                 R.BodyID   = Hit.mBodyID2.GetIndexAndSequenceNumber();
                 R.Entity   = (uint32)Body->GetUserData();
@@ -1758,15 +1789,16 @@ namespace Lumina::Physics
                 R.Location = JoltUtils::FromJPHVec3(Hit.mContactPointOn2);
                 R.Normal   = Math::Normalize(JoltUtils::FromJPHVec3(Hit.mPenetrationAxis.Normalized()));
                 R.Fraction = Hit.mFraction;
+                R.BoneIndex = Scene.ResolveHitBoneIndex(static_cast<entt::entity>(R.Entity), Hit.mBodyID2);
 
                 Out.emplace_back(Move(R));
             }
         };
-        
+
         const JPH::BodyLockInterfaceNoLock& Lock = JoltSystem->GetBodyLockInterfaceNoLock();
-        
-        
-        FMyCollector Collector(Results, Settings, Lock);
+
+
+        FMyCollector Collector(*this, Results, Settings, Lock);
         FIgnoreFilter Filter{Settings.IgnoreBodies};
         
         JPH::SphereShape QuerySphere(Settings.Radius);
@@ -1884,8 +1916,8 @@ namespace Lumina::Physics
         class FRayAllCollector : public JPH::CastRayCollector
         {
         public:
-            FRayAllCollector(TVector<SRayResult>& OutResults, const SRayCastSettings& InSettings, const JPH::RRayCast& InRay, float InLength, const JPH::BodyLockInterfaceNoLock& InLock)
-                : Out(OutResults), Settings(InSettings), Ray(InRay), Length(InLength), Lock(InLock)
+            FRayAllCollector(const FJoltPhysicsScene& InScene, TVector<SRayResult>& OutResults, const SRayCastSettings& InSettings, const JPH::RRayCast& InRay, float InLength, const JPH::BodyLockInterfaceNoLock& InLock)
+                : Scene(InScene), Out(OutResults), Settings(InSettings), Ray(InRay), Length(InLength), Lock(InLock)
             {}
 
             void AddHit(const JPH::RayCastResult& Hit) override
@@ -1907,9 +1939,11 @@ namespace Lumina::Physics
                 R.Normal   = Math::Normalize(JoltUtils::FromJPHVec3(Normal));
                 R.Fraction = Hit.mFraction;
                 R.Distance = Hit.mFraction * Length;
+                R.BoneIndex = Scene.ResolveHitBoneIndex(static_cast<entt::entity>(R.Entity), Hit.mBodyID);
                 Out.emplace_back(Move(R));
             }
 
+            const FJoltPhysicsScene&            Scene;
             TVector<SRayResult>&                Out;
             const SRayCastSettings&             Settings;
             const JPH::RRayCast&                Ray;
@@ -1917,7 +1951,7 @@ namespace Lumina::Physics
             const JPH::BodyLockInterfaceNoLock& Lock;
         };
 
-        FRayAllCollector Collector(Results, Settings, Ray, RayLength, Lock);
+        FRayAllCollector Collector(*this, Results, Settings, Ray, RayLength, Lock);
         FIgnoreFilter Filter{Settings.IgnoreBodies};
 
         // Default layer filters = test every body along the ray (the "penetrate everything" use case);

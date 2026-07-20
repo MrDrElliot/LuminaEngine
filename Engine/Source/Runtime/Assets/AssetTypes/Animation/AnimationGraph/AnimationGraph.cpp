@@ -15,6 +15,15 @@ namespace Lumina
         Ar << NumPoseRegisters;
         Ar << NumStateSlots;
 
+        if (Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::ANIM_GRAPH_SYNC_GROUPS)
+        {
+            Ar << NumSyncGroups;
+        }
+        if (Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::ANIM_GRAPH_BYTECODE_VERSION)
+        {
+            Ar << BytecodeVersion;
+        }
+
         ResolveTransitionParameters();
     }
 

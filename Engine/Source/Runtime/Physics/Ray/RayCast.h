@@ -33,9 +33,13 @@ namespace Lumina
         /** Normalized distance along ray (0 = start, 1 = end). */
         PROPERTY(Script)
         float Fraction;
-        
+
         PROPERTY(Script)
         float Distance;
+
+        /** Skeleton bone the hit body belongs to (ragdoll per-bone bodies); INDEX_NONE otherwise. */
+        PROPERTY(Script)
+        int32 BoneIndex = INDEX_NONE;
     };
 
     REFLECT()

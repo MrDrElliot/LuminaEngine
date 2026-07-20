@@ -12,6 +12,8 @@ internal sealed class TypeLibrary
 {
     private readonly Dictionary<string, TypeDescription> EntityScripts = new();
     private readonly Dictionary<string, Type> EntitySystems = new();
+    // C# world renderers (RenderScene subclasses); native drives one per Game world when present.
+    private readonly Dictionary<string, Type> RenderScenes = new();
     // C# subclasses of REFLECT(Scriptable) native CObjects, keyed by full name; the host mints a CClass per one.
     private readonly Dictionary<string, Type> Scriptables = new();
     private readonly Dictionary<Type, TypeDescription> ByType = new();
@@ -37,6 +39,10 @@ internal sealed class TypeLibrary
                      && Type.GetCustomAttribute<EntitySystemAttribute>() != null)
             {
                 EntitySystems[FullName] = Type;
+            }
+            else if (typeof(RenderScene).IsAssignableFrom(Type))
+            {
+                RenderScenes[FullName] = Type;
             }
             else if (IsScriptableSubclass(Type))
             {
@@ -91,6 +97,15 @@ internal sealed class TypeLibrary
 
     /// <summary>Every discovered EntitySystem type (carries [EntitySystem]); for the native scheduler.</summary>
     public IReadOnlyCollection<Type> EntitySystemTypes => EntitySystems.Values;
+
+    /// <summary>Every discovered RenderScene subclass; native picks one to render Game worlds with.</summary>
+    public IReadOnlyCollection<Type> RenderSceneTypes => RenderScenes.Values;
+
+    /// <summary>A RenderScene type by full name, or null if unknown.</summary>
+    public Type? GetRenderScene(string FullName)
+    {
+        return RenderScenes.TryGetValue(FullName, out Type? Type) ? Type : null;
+    }
 
     /// <summary>An EntitySystem type by full name, or null if unknown.</summary>
     public Type? GetEntitySystem(string FullName)

@@ -19,7 +19,11 @@
 #include "World/Scene/RenderScene/RenderScene.h"
 #include "World/Scene/RenderScene/SceneRenderTypes.h"
 #include "World/Entity/Components/StaticMeshComponent.h"
+#include "World/Entity/Components/SkeletalMeshComponent.h"
 #include "World/Entity/Traits.h"
+#include "Animation/SkeletalMeshUtils.h"
+#include "Assets/AssetTypes/Mesh/SkeletalMesh/SkeletalMesh.h"
+#include "Assets/AssetTypes/Mesh/Skeleton/Skeleton.h"
 #include "Tools/ComponentVisualizers/ComponentVisualizer.h"
 #include "Tools/Dialogs/Dialogs.h"
 #include "Tools/PrimitiveManager/PrimitiveManager.h"
@@ -392,9 +396,14 @@ namespace Lumina
 
             ImGui::Indent(8.0f);
 
-            // Make this component's world resolvable to any PROPERTY(Entity) picker in the table.
+            // Make this component's world resolvable to any PROPERTY(Entity) picker in the table, and
+            // the parent's mesh sockets/bones to any SocketPicker FName (e.g. SSocketAttachmentComponent).
             {
+                SocketPickerContext::FSocketPickerData SocketData;
+                BuildSocketPickerData(Entity, SocketData);
+
                 FScopedEntityPropertyContext EntityContext(World);
+                SocketPickerContext::FScope SocketScope(&SocketData);
                 Entry.Table->DrawTree();
             }
 
@@ -407,6 +416,39 @@ namespace Lumina
         }
 
         ImGui::PopID();
+    }
+
+    void FSceneEditorTool::BuildSocketPickerData(entt::entity Entity, SocketPickerContext::FSocketPickerData& Out)
+    {
+        FEntityRegistry& Registry = GetSceneRegistry();
+
+        const FRelationshipComponent* Relationship = Registry.try_get<FRelationshipComponent>(Entity);
+        if (Relationship == nullptr || Relationship->Parent == entt::null || !Registry.valid(Relationship->Parent))
+        {
+            return;
+        }
+
+        if (const SSkeletalMeshComponent* SkeletalMesh = Registry.try_get<SSkeletalMeshComponent>(Relationship->Parent))
+        {
+            if (CSkeleton* Skeleton = SkeletalUtils::GetSkeletonAsset(*SkeletalMesh))
+            {
+                for (const FMeshSocket& Socket : Skeleton->Sockets)
+                {
+                    Out.Sockets.push_back(Socket.SocketName);
+                }
+                Out.Skeleton = Skeleton->GetSkeletonResource();
+            }
+        }
+        else if (const SStaticMeshComponent* StaticMesh = Registry.try_get<SStaticMeshComponent>(Relationship->Parent))
+        {
+            if (StaticMesh->StaticMesh.IsValid())
+            {
+                for (const FMeshSocket& Socket : StaticMesh->StaticMesh->Sockets)
+                {
+                    Out.Sockets.push_back(Socket.SocketName);
+                }
+            }
+        }
     }
 
     void FSceneEditorTool::RemoveComponent(entt::entity Entity, const CStruct* ComponentType)

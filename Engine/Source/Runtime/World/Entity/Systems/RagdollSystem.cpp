@@ -137,6 +137,7 @@ namespace Lumina
                 }
 
                 Scene->ReadRagdollPose(*Ragdoll.Ragdoll, WorldToEntity, Skeleton, Mesh.BoneTransforms);
+                Mesh.bRenderBonesDirty = true;
             }
         }
     }

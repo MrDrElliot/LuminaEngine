@@ -155,6 +155,11 @@ namespace Lumina
             Callbacks.StartChangeCallback(Event);
         }
 
+        if (Callbacks.Type && Callbacks.Type->GetStructOps()->HasPreEdit())
+        {
+            Callbacks.Type->GetStructOps()->PreEdit(PropertyHandle->GetValuePtr(), Event);
+        }
+        
         if (Callbacks.PreChangeCallback)
         {
             Callbacks.PreChangeCallback(Event);
@@ -165,6 +170,11 @@ namespace Lumina
             Customization->UpdatePropertyValue(PropertyHandle);
         }
 
+        if (Callbacks.Type && Callbacks.Type->GetStructOps()->HasPostEdit())
+        {
+            Callbacks.Type->GetStructOps()->PostEdit(PropertyHandle->GetValuePtr(), Event);
+        }
+        
         if (Callbacks.PostChangeCallback)
         {
             Callbacks.PostChangeCallback(Event);
@@ -946,8 +956,20 @@ namespace Lumina
         // Commit the in-flight key edit, then notify the map field. Keys are edited in place (entries are
         // addressed by iteration index, and save/reload re-hashes).
         const FPropertyChangedEvent Event{Callbacks.Type, Map, Map->Name};
-        if (KeyChangeOp == EPropertyChangeOp::Started && Callbacks.StartChangeCallback) { Callbacks.StartChangeCallback(Event); }
-        if (Callbacks.PreChangeCallback) { Callbacks.PreChangeCallback(Event); }
+        if (KeyChangeOp == EPropertyChangeOp::Started && Callbacks.StartChangeCallback)
+        {
+            Callbacks.StartChangeCallback(Event);
+        }
+        
+        if (Callbacks.Type->GetStructOps()->HasPreEdit())
+        {
+            Callbacks.Type->GetStructOps()->PreEdit(PropertyHandle->GetValuePtr(), Event);
+        }
+        
+        if (Callbacks.PreChangeCallback)
+        {
+            Callbacks.PreChangeCallback(Event);
+        }
 
         if (KeyCustomization) { KeyCustomization->UpdatePropertyValue(KeyHandle); }
 
@@ -961,8 +983,16 @@ namespace Lumina
             if (KeyCustomization) { KeyCustomization->HandleExternalUpdate(KeyHandle); }
             ImGuiX::Notifications::NotifyWarning("Duplicate map key ignored; keys must be unique.");
         }
+        
+        if (Callbacks.Type->GetStructOps()->HasPostEdit())
+        {
+            Callbacks.Type->GetStructOps()->PostEdit(PropertyHandle->GetValuePtr(), Event);
+        }
 
-        if (Callbacks.PostChangeCallback) { Callbacks.PostChangeCallback(Event); }
+        if (Callbacks.PostChangeCallback)
+        {
+            Callbacks.PostChangeCallback(Event);
+        }
         if (KeyChangeOp == EPropertyChangeOp::Finished && Callbacks.FinishChangeCallback) { Callbacks.FinishChangeCallback(Event); }
         KeyChangeOp = EPropertyChangeOp::None;
     }
@@ -1561,6 +1591,11 @@ namespace Lumina
                 {
                     ChangeEventCallbacks.StartChangeCallback(Event);
                 }
+                
+                if (ChangeEventCallbacks.Type->GetStructOps()->HasPreEdit())
+                {
+                    ChangeEventCallbacks.Type->GetStructOps()->PreEdit(PropertyHandle->GetValuePtr(), Event);
+                }
 
                 if (ChangeEventCallbacks.PreChangeCallback)
                 {
@@ -1569,6 +1604,11 @@ namespace Lumina
 
                 Customization->UpdatePropertyValue(PropertyHandle);
 
+                if (ChangeEventCallbacks.Type->GetStructOps()->HasPostEdit())
+                {
+                    ChangeEventCallbacks.Type->GetStructOps()->PostEdit(PropertyHandle->GetValuePtr(), Event);
+                }
+                
                 if (ChangeEventCallbacks.PostChangeCallback)
                 {
                     ChangeEventCallbacks.PostChangeCallback(Event);

@@ -3,6 +3,7 @@
 
 #include "Renderer/MeshData.h"
 #include "Core/Math/SIMD/SIMD.h"
+#include "Memory/Memcpy.h"
 
 namespace Lumina
 {
@@ -140,7 +141,29 @@ namespace Lumina
         }
     }
 
-    void AnimPose::Blend(const FPose& A, const FPose& B, float Alpha, FPose& Out)
+    namespace Detail
+    {
+        // Skeleton-LOD tail passthrough: [Active, NumBones) copied from Src. No-op when Out aliases
+        // Src (the executor's buffer-steal path), which is the common case.
+        static void CopyPoseTail(FPose& Out, const FPose& Src, int32 Active, int32 NumBones)
+        {
+            if (Active >= NumBones || &Out == &Src)
+            {
+                return;
+            }
+            const SIZE_T Tail = (SIZE_T)(NumBones - Active);
+            Memory::Memcpy(Out.Translations.data() + Active, Src.Translations.data() + Active, Tail * sizeof(FVector3));
+            Memory::Memcpy(Out.Rotations.data() + Active,    Src.Rotations.data() + Active,    Tail * sizeof(FQuat));
+            Memory::Memcpy(Out.Scales.data() + Active,       Src.Scales.data() + Active,       Tail * sizeof(FVector3));
+        }
+
+        static FORCEINLINE int32 ResolveActiveBones(int32 NumActiveBones, int32 NumBones)
+        {
+            return (NumActiveBones >= 0 && NumActiveBones < NumBones) ? NumActiveBones : NumBones;
+        }
+    }
+
+    void AnimPose::Blend(const FPose& A, const FPose& B, float Alpha, FPose& Out, int32 NumActiveBones)
     {
         Alpha = Math::Clamp(Alpha, 0.0f, 1.0f);
 
@@ -164,8 +187,10 @@ namespace Lumina
             return;
         }
 
+        const int32 Active = Detail::ResolveActiveBones(NumActiveBones, NumBones);
+
         // Translation + scale lerp as flat float streams (8-wide); rotations slerp 4 quats at a time.
-        const int32 NumComponents = NumBones * 3;
+        const int32 NumComponents = Active * 3;
         SIMD::LerpArray(reinterpret_cast<float*>(Out.Translations.data()),
                         reinterpret_cast<const float*>(A.Translations.data()),
                         reinterpret_cast<const float*>(B.Translations.data()), NumComponents, Alpha);
@@ -173,10 +198,12 @@ namespace Lumina
                         reinterpret_cast<const float*>(A.Scales.data()),
                         reinterpret_cast<const float*>(B.Scales.data()), NumComponents, Alpha);
 
-        SIMD::BlendQuatArray(Out.Rotations.data(), A.Rotations.data(), B.Rotations.data(), NumBones, Alpha);
+        SIMD::BlendQuatArray(Out.Rotations.data(), A.Rotations.data(), B.Rotations.data(), Active, Alpha);
+
+        Detail::CopyPoseTail(Out, A, Active, NumBones);
     }
 
-    void AnimPose::BlendMasked(const FPose& A, const FPose& B, float Alpha, const TVector<float>& BoneWeights, FPose& Out)
+    void AnimPose::BlendMasked(const FPose& A, const FPose& B, float Alpha, const TVector<float>& BoneWeights, FPose& Out, int32 NumActiveBones)
     {
         Alpha = Math::Clamp(Alpha, 0.0f, 1.0f);
 
@@ -193,16 +220,18 @@ namespace Lumina
             return;
         }
 
+        const int32 Active = Detail::ResolveActiveBones(NumActiveBones, NumBones);
+
         // Expand per-bone alphas once; the SIMD kernels consume them per quat / per component.
         thread_local TVector<float> BoneAlphas;
         thread_local TVector<float> ComponentAlphas;
-        if ((int32)BoneAlphas.size() < NumBones)
+        if ((int32)BoneAlphas.size() < Active)
         {
-            BoneAlphas.resize(NumBones);
-            ComponentAlphas.resize(NumBones * 3);
+            BoneAlphas.resize(Active);
+            ComponentAlphas.resize(Active * 3);
         }
 
-        for (int32 i = 0; i < NumBones; ++i)
+        for (int32 i = 0; i < Active; ++i)
         {
             const float Weight = i < NumWeights ? BoneWeights[i] : 1.0f;
             const float BoneAlpha = Math::Clamp(Alpha * Weight, 0.0f, 1.0f);
@@ -212,7 +241,7 @@ namespace Lumina
             ComponentAlphas[i * 3 + 2] = BoneAlpha;
         }
 
-        const int32 NumComponents = NumBones * 3;
+        const int32 NumComponents = Active * 3;
         SIMD::LerpArrayVarAlpha(reinterpret_cast<float*>(Out.Translations.data()),
                                 reinterpret_cast<const float*>(A.Translations.data()),
                                 reinterpret_cast<const float*>(B.Translations.data()),
@@ -222,10 +251,26 @@ namespace Lumina
                                 reinterpret_cast<const float*>(B.Scales.data()),
                                 ComponentAlphas.data(), NumComponents);
 
-        SIMD::BlendQuatArrayVarAlpha(Out.Rotations.data(), A.Rotations.data(), B.Rotations.data(), BoneAlphas.data(), NumBones);
+        SIMD::BlendQuatArrayVarAlpha(Out.Rotations.data(), A.Rotations.data(), B.Rotations.data(), BoneAlphas.data(), Active);
+
+        Detail::CopyPoseTail(Out, A, Active, NumBones);
     }
 
-    void AnimPose::MakeAdditive(const FPose& Src, const FSkeletonResource* Skeleton, FPose& OutDelta)
+    namespace Detail
+    {
+        // Bones past the LOD cut carry the identity delta so ApplyAdditive's tail stays the base pose.
+        static void FillIdentityDeltaTail(FPose& OutDelta, int32 Active, int32 NumBones)
+        {
+            for (int32 i = Active; i < NumBones; ++i)
+            {
+                OutDelta.Translations[i] = FVector3(0.0f);
+                OutDelta.Rotations[i]    = FQuat(1.0f, 0.0f, 0.0f, 0.0f);
+                OutDelta.Scales[i]       = FVector3(1.0f);
+            }
+        }
+    }
+
+    void AnimPose::MakeAdditive(const FPose& Src, const FSkeletonResource* Skeleton, FPose& OutDelta, int32 NumActiveBones)
     {
         LUMINA_PROFILE_SCOPE();
 
@@ -237,23 +282,26 @@ namespace Lumina
             return;
         }
 
+        const int32 Active = Detail::ResolveActiveBones(NumActiveBones, NumBones);
+
         if (Skeleton->HasBindPoseCache())
         {
-            const int32 NumComponents = NumBones * 3;
+            const int32 NumComponents = Active * 3;
 
             // Delta := Src "relative to" Bind: T subtracts, R = Src * conj(Bind) (bind is unit),
             // S is the component-wise ratio with degenerate bind scales passing through.
             Detail::SubArray(reinterpret_cast<float*>(OutDelta.Translations.data()),
                              reinterpret_cast<const float*>(Src.Translations.data()),
                              reinterpret_cast<const float*>(Skeleton->BindLocalTranslations.data()), NumComponents);
-            Detail::MulConjQuatArray(OutDelta.Rotations.data(), Src.Rotations.data(), Skeleton->BindLocalRotations.data(), NumBones);
+            Detail::MulConjQuatArray(OutDelta.Rotations.data(), Src.Rotations.data(), Skeleton->BindLocalRotations.data(), Active);
             Detail::DivSafeArray(reinterpret_cast<float*>(OutDelta.Scales.data()),
                                  reinterpret_cast<const float*>(Src.Scales.data()),
                                  reinterpret_cast<const float*>(Skeleton->BindLocalScales.data()), NumComponents);
+            Detail::FillIdentityDeltaTail(OutDelta, Active, NumBones);
             return;
         }
 
-        for (int32 i = 0; i < NumBones; ++i)
+        for (int32 i = 0; i < Active; ++i)
         {
             FVector3 BindT, BindS;
             FQuat BindR;
@@ -268,9 +316,10 @@ namespace Lumina
                 BindS.z > 1e-8f ? 1.0f / BindS.z : 1.0f);
             OutDelta.Scales[i] = Src.Scales[i] * BindInv;
         }
+        Detail::FillIdentityDeltaTail(OutDelta, Active, NumBones);
     }
 
-    void AnimPose::ApplyAdditive(const FPose& Base, const FPose& Delta, float Alpha, FPose& Out)
+    void AnimPose::ApplyAdditive(const FPose& Base, const FPose& Delta, float Alpha, FPose& Out, int32 NumActiveBones)
     {
         LUMINA_PROFILE_SCOPE();
 
@@ -286,13 +335,15 @@ namespace Lumina
             return;
         }
 
+        const int32 Active = Detail::ResolveActiveBones(NumActiveBones, NumBones);
+
         // The SIMD slerp's sin approximation is only valid for alpha in [0,1]; overdriven
         // additives (alpha > 1) take the exact scalar path.
         if (Alpha <= 1.0f)
         {
             using namespace SIMD;
 
-            const int32 NumComponents = NumBones * 3;
+            const int32 NumComponents = Active * 3;
             Detail::AddScaledArray(reinterpret_cast<float*>(Out.Translations.data()),
                                    reinterpret_cast<const float*>(Base.Translations.data()),
                                    reinterpret_cast<const float*>(Delta.Translations.data()), Alpha, NumComponents);
@@ -307,12 +358,12 @@ namespace Lumina
             FQuat* OutR         = Out.Rotations.data();
 
             int32 i = 0;
-            for (; i + 4 <= NumBones; i += 4)
+            for (; i + 4 <= Active; i += 4)
             {
                 const VQuat4 Scaled = SlerpShortest(QuatIdentity4(), LoadQuat4(DeltaR + i), VAlpha);
                 StoreQuat4(OutR + i, Mul(Scaled, LoadQuat4(BaseR + i)));
             }
-            for (; i < NumBones; ++i)
+            for (; i < Active; ++i)
             {
                 FQuat ScaledDelta = DeltaR[i];
                 if (ScaledDelta.w < 0.0f)
@@ -322,11 +373,12 @@ namespace Lumina
                 ScaledDelta = Math::Slerp(FQuat::Identity(), ScaledDelta, Alpha);
                 OutR[i] = ScaledDelta * BaseR[i];
             }
+            Detail::CopyPoseTail(Out, Base, Active, NumBones);
             return;
         }
 
         const FQuat Identity = FQuat::Identity();
-        for (int32 i = 0; i < NumBones; ++i)
+        for (int32 i = 0; i < Active; ++i)
         {
             Out.Translations[i] = Base.Translations[i] + Alpha * Delta.Translations[i];
 
@@ -341,6 +393,7 @@ namespace Lumina
             const FVector3 ScaledScale = Math::Mix(FVector3(1.0f), Delta.Scales[i], Alpha);
             Out.Scales[i] = Base.Scales[i] * ScaledScale;
         }
+        Detail::CopyPoseTail(Out, Base, Active, NumBones);
     }
 
     namespace Detail

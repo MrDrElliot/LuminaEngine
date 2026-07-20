@@ -85,43 +85,8 @@ namespace Lumina
             uint16              _Pad;
         };
 
-        struct CACHE_ALIGN FLocalBatchEntry
-        {
-            FDrawBatchKey                       Key;
-            const FShaderEntry*                 VertexShader = nullptr;
-            const FShaderEntry*                 PixelShader  = nullptr;
-            const FShaderEntry*                 MeshShader   = nullptr;   // mesh-path geometry stage (optional)
-            const FShaderEntry*                 VisBufferMeshShader   = nullptr;
-            const FShaderEntry*                 VisBufferVertexShader = nullptr;
-            const FShaderEntry*                 MaskedVisBufferPixelShader  = nullptr;
-            const FShaderEntry*                 MaskedVisBufferPixelShaderPrim = nullptr;
-            const FShaderEntry*                 DeferredShader        = nullptr;
-            uint16                              MaterialIdx = 0;
-            TFrameVector<FDrawKey>              LocalDraws;
-            TFrameVector<uint32>                LocalDrawCounts;
-            TFrameVector<uint32>                LocalMeshletCounts;
-            TFrameHashMap<FDrawKey, uint16>     DrawIndexByKey;
-            uint32                              GlobalBatchIndex = ~0u;
-            TFrameVector<uint32>                LocalToGlobalDraw;
-            TFrameVector<uint32>                LocalDrawWriteBase;
-
-            // Homogeneity of this batch's instances; merged into FMeshDrawCommand to pick the SPEC_SKINNED variant.
-            bool                                bAnySkinned = false;
-            bool                                bAnyStatic  = false;
-            void AccumSkinned(EInstanceFlags F)
-            {
-                if (((uint32)F & (uint32)EInstanceFlags::Skinned) != 0u) { bAnySkinned = true; }
-                else                                                     { bAnyStatic  = true; }
-            }
-
-            FLocalBatchEntry() = default;
-            explicit FLocalBatchEntry(FFrameArenaAllocator A)
-                : LocalDraws(A), LocalDrawCounts(A), LocalMeshletCounts(A)
-                , DrawIndexByKey(A), LocalToGlobalDraw(A), LocalDrawWriteBase(A) {}
-        };
-
         // Material-pure portion of a resolved draw slot, cached per-thread keyed
-        // by material. Per-entity bits (CastShadow) added in ResolveSlot.
+        // by material. Per-entity bits (CastShadow) added at surface emit.
         struct FCachedMaterialResolve
         {
             const FShaderEntry* VertexShader;
@@ -147,12 +112,99 @@ namespace Lumina
             FCachedMaterialResolve  Resolve;
         };
 
+        struct CACHE_ALIGN FLocalBatchEntry
+        {
+            FDrawBatchKey                       Key;
+            FCachedMaterialResolve              Resolve = {};
+            TFrameVector<FDrawKey>              LocalDraws;
+            TFrameVector<uint32>                LocalDrawCounts;
+            TFrameVector<uint32>                LocalMeshletCounts;
+            TFrameHashMap<FDrawKey, uint16>     DrawIndexByKey;
+            uint32                              GlobalBatchIndex = ~0u;
+            TFrameVector<uint32>                LocalToGlobalDraw;
+            TFrameVector<uint32>                LocalDrawWriteBase;
+
+            // Homogeneity of this batch's instances; merged into FMeshDrawCommand to pick the SPEC_SKINNED variant.
+            bool                                bAnySkinned = false;
+            bool                                bAnyStatic  = false;
+            void AccumSkinned(EInstanceFlags F)
+            {
+                if (((uint32)F & (uint32)EInstanceFlags::Skinned) != 0u) { bAnySkinned = true; }
+                else                                                     { bAnyStatic  = true; }
+            }
+
+            FLocalBatchEntry() = default;
+            explicit FLocalBatchEntry(FFrameArenaAllocator A)
+                : LocalDraws(A), LocalDrawCounts(A), LocalMeshletCounts(A)
+                , DrawIndexByKey(A), LocalToGlobalDraw(A), LocalDrawWriteBase(A) {}
+        };
+
+        // Per-thread bone stream stored as fixed-size pages so no single arena allocation can exceed
+        // the frame-arena block: a flat vector's capacity doubling overran the block (silent heap
+        // corruption) once one gather thread accumulated a few MB of bones from a large visible
+        // crowd. Entity bone offsets index the logical concatenation; MergeMeshDrawData flattens
+        // the pages in order.
+        struct FBonePageArray
+        {
+            static constexpr uint32 kPageBones = 16u * 1024u; // 768 KB/page, well under the arena block
+
+            TFrameVector<TFrameVector<FBoneTransform>> Pages;
+            uint32 Count = 0;
+            FFrameArenaAllocator Allocator;
+
+            FBonePageArray() = default;
+            explicit FBonePageArray(FFrameArenaAllocator A)
+                : Pages(A), Allocator(A) {}
+
+            uint32 Size() const { return Count; }
+            bool IsEmpty() const { return Count == 0; }
+
+            void Append(const FBoneTransform* Src, uint32 Num)
+            {
+                while (Num > 0)
+                {
+                    TFrameVector<FBoneTransform>& Page = EnsureSpace();
+                    const uint32 Take = Math::Min(Num, kPageBones - (uint32)Page.size());
+                    Page.insert(Page.end(), Src, Src + Take);
+                    Src   += Take;
+                    Num   -= Take;
+                    Count += Take;
+                }
+            }
+
+            void AppendIdentity(uint32 Num)
+            {
+                static constexpr FBoneTransform IdentityBone{ FVector4(1,0,0,0), FVector4(0,1,0,0), FVector4(0,0,1,0) };
+                while (Num > 0)
+                {
+                    TFrameVector<FBoneTransform>& Page = EnsureSpace();
+                    const uint32 Take = Math::Min(Num, kPageBones - (uint32)Page.size());
+                    Page.resize(Page.size() + Take, IdentityBone);
+                    Num   -= Take;
+                    Count += Take;
+                }
+            }
+
+        private:
+
+            TFrameVector<FBoneTransform>& EnsureSpace()
+            {
+                if (Pages.empty() || (uint32)Pages.back().size() == kPageBones)
+                {
+                    TFrameVector<FBoneTransform>& Page = Pages.emplace_back(TFrameVector<FBoneTransform>(Allocator));
+                    Page.reserve(kPageBones);
+                    return Page;
+                }
+                return Pages.back();
+            }
+        };
+
         struct alignas(64) FThreadLocalDrawData
         {
             TFrameVector<FProcessedDrawItem>    Items;
             TFrameVector<FEntityRecord>         EntityRecords;
             TFrameVector<FLocalBatchEntry>      LocalBatches;
-            TFrameVector<FBoneTransform>        BonesData;
+            FBonePageArray                      BonesData;
             TFrameVector<FMaterialCacheEntry>   MaterialCache;
             FFrameArenaAllocator                Arena;
             FSceneRenderStats                   Stats = {};
@@ -167,7 +219,7 @@ namespace Lumina
                 Items            = TFrameVector<FProcessedDrawItem>(A);
                 EntityRecords    = TFrameVector<FEntityRecord>(A);
                 LocalBatches     = TFrameVector<FLocalBatchEntry>(A);
-                BonesData        = TFrameVector<FBoneTransform>(A);
+                BonesData        = FBonePageArray(A);
                 MaterialCache    = TFrameVector<FMaterialCacheEntry>(A);
                 Arena            = A;
                 Stats            = {};
@@ -289,6 +341,9 @@ namespace Lumina
             };
 
             FViewVolume                      ViewVolume = {};
+            // Camera frustum snapshot (CPU form of CullData.Frustum) so per-light / per-task
+            // consumers don't each rebuild it from the GPU representation.
+            FFrustum                         CameraFrustum = {};
             FSceneGlobalData                 SceneGlobalData = {};
             SDefaultWorldSettings            CachedWorldSettings = {};
             float                            CachedWorldDeltaTime = 0.0f;
@@ -316,14 +371,15 @@ namespace Lumina
                 TVector<FDeferredMaterialEntry>  DeferredMaterials;   // distinct opaque slots for the deferred pass
                 FSceneCullContext                SceneCullContext;
                 TVector<uint32>                  DrawMeshletStartOffsets;
-                TVector<uint32>                  InstanceMeshletPrefix;
+                // Per-instance meshlet prefix is GPU-built (BuildInstancePrefix.slang) into
+                // InstancePrefixRing; no CPU-side array exists anymore.
             } Geometry;
 
             struct FViews
             {
+                // Indirect-arg + mesh-task-arg seeds are GPU-generated (SeedIndirectArgs.slang) from
+                // Geometry.DrawMeshletStartOffsets; no CPU-side V*D arrays exist anymore.
                 TVector<FCullView>               CullViews;
-                TVector<RHI::FDrawIndirectArguments> IndirectArgs;
-                TVector<RHI::FDrawMeshTasksIndirectArguments> MeshDrawArgs;   // per-frame {0,1,1} seed; cull accumulates GroupCountX
                 uint32                           TotalMeshletBound   = 0;
                 uint32                           NumDrawsPerView     = 0;
                 uint32                           CameraLateViewIndex = ~0u;
@@ -473,9 +529,6 @@ namespace Lumina
         void Init() override;
         void Shutdown() override;
 
-        void BeginFrame() override { }
-        void EndFrame() override { }
-
         void Extract(const FViewVolume& ViewVolume, const SPostProcessSettings* PostProcess) override;
         void PrepareRender(uint8 FrameIndex) override;
         void RenderView(uint8 FrameIndex) override;
@@ -502,6 +555,7 @@ namespace Lumina
         FSceneBuffer GetDeferCount()       const { return DeferCountRing[CurrentFrameSlot]; }
         FSceneBuffer GetCullDispatchArgs() const { return CullDispatchArgsRing[CurrentFrameSlot]; }
         FSceneBuffer GetSpdCounter()       const { return SpdCounterRing[CurrentFrameSlot]; }
+        FSceneBuffer GetInstancePrefix()   const { return InstancePrefixRing[CurrentFrameSlot]; }
 
         // Deferred material-binning scratch (device-address only): per-tile material bitmask + per-pixel
         // owning MaterialIndex, both produced by ClassifyMaterialTiles and consumed by the deferred pass.
@@ -526,8 +580,6 @@ namespace Lumina
         const FSceneImage& GetDisplayImage() const { return SceneViews[0].Output; }
         const FSceneImage& GetPrimaryNamedImage(ENamedImage Image) const { return SceneViews[0].Images[(int)Image]; }
         FUIntVector2 GetRenderExtent() const override;
-        const FSceneRenderStats& GetRenderStats() const override;
-        FSceneRenderSettings& GetSceneRenderSettings() override;
         entt::entity GetEntityAtPixel(uint32 X, uint32 Y) const override;
         #if USING(WITH_EDITOR)
         void SetPickerCursor(uint32 X, uint32 Y, bool bOverViewport) override;
@@ -575,13 +627,10 @@ namespace Lumina
         void SpotShadowPass(RHI::FCmdListH CL);
         void CascadedShowPass(RHI::FCmdListH CL);
         void DecalPass(RHI::FCmdListH CL);
-        // VisBuffer geometry: rasterize one cull view's meshlets writing per-triangle visibility IDs + depth
-        // (VS-or-mesh). Phase 1 clears (early view); phase 2 loads + accumulates the disoccluded (late view).
         void VisBufferPass(RHI::FCmdListH CL, uint32 ViewIndex, bool bClear);
-        // Deferred material: per opaque material, reconstruct attributes from the VisBuffer and shade.
         void DeferredMaterialPass(RHI::FCmdListH CL);
-        // One shadow-map draw of a batch, VS-emulation or mesh path per r.MeshShaders. Shared by all shadow passes.
-        void DrawShadowBatch(RHI::FCmdListH CL, const FMeshDrawCommand& Batch, const FShaderEntry* PixelShader,
+        bool BindShadowBatchPipeline(RHI::FCmdListH CL, const FMeshDrawCommand& Batch, const FShaderEntry* PixelShader);
+        void DrawShadowBatch(RHI::FCmdListH CL, const FMeshDrawCommand& Batch, bool bUseMesh,
                              uint32 CullViewIndex, int32 ShadowDataIndex, int32 ShadowViewIndex);
         void BillboardPass(RHI::FCmdListH CL);
         void WidgetPass(RHI::FCmdListH CL);
@@ -598,9 +647,6 @@ namespace Lumina
         void SSAOBlurPass(RHI::FCmdListH CL);
         void TransparentPass(RHI::FCmdListH CL);
         void OITResolvePass(RHI::FCmdListH CL);
-        // Additive translucents composite straight onto HDR after the resolve (they add light, never
-        // occlude); kept out of the WBOIT pass because their opaque-variant shader outputs (Color +
-        // Picker) misalign against its Accum/Revealage/Picker attachments.
         void AdditiveTranslucentPass(RHI::FCmdListH CL);
         void FroxelInjectPass(RHI::FCmdListH CL);
         void FroxelIntegratePass(RHI::FCmdListH CL);
@@ -727,6 +773,7 @@ namespace Lumina
         TArray<uint32, RHI::kFramesInFlight>                MeshletDrawListRingLowUsage = {};
         TArray<uint32, RHI::kFramesInFlight>                MeshDrawArgsRingLowUsage = {};
         TArray<uint32, RHI::kFramesInFlight>                MeshletDeferListRingLowUsage = {};
+        TArray<uint32, RHI::kFramesInFlight>                InstancePrefixRingLowUsage = {};
         TArray<uint32, RHI::kFramesInFlight>                MaterialBinTileBitsRingLowUsage = {};
         TArray<uint32, RHI::kFramesInFlight>                MaterialBinPixelIdRingLowUsage = {};
         TArray<FSceneImage, (int)ENamedImage::Num>          NamedImages = {};
@@ -750,10 +797,6 @@ namespace Lumina
         uint32                                  CurrentCameraLateView  = ~0u;
 
         FDelegateHandle                         SwapchainResizedHandle;
-        CWorld*                                 World = nullptr;
-        
-        FSceneRenderStats                       RenderStats;
-        FSceneRenderSettings                    RenderSettings;
 
         // Froxel volume dimensions; set from CRendererSettings::FroxelResolutionScale at image creation
         // and reused by the inject/integrate/apply dispatches so they always match the allocated textures.
@@ -798,6 +841,8 @@ namespace Lumina
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          DeferCountRing = {};
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          CullDispatchArgsRing = {};   // {GroupCountX,Y,Z} for the late-cull indirect dispatch
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          SpdCounterRing = {};
+        // GPU-built exclusive prefix over per-instance meshlet counts (N+1 uints); the cull binary-searches it.
+        TArray<FSceneBuffer, RHI::kFramesInFlight>                          InstancePrefixRing = {};
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          MaterialBinTileBitsRing = {};
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          MaterialBinPixelIdRing = {};
         
@@ -856,8 +901,9 @@ namespace Lumina
         struct FLineChunk { const FLineBatcherComponent::FLineInstance* Data; uint32 Count; };
         TVector<FLineChunk>                     LineChunkScratch;
 
-        FTaskGraph                              DrawTaskGraph;
-        FTaskGraph                              DedupTaskGraph;
+        FTaskGraph                              DrawTaskGraph;   // mesh gather critical path; dispatched first
+        FTaskGraph                              EmitTaskGraph;   // lights/primitives/extract emitters; built while DrawTaskGraph runs
+        FTaskGraph                              DedupTaskGraph;  // nested inside MergeMeshDrawData
 
         TArray<FFrameData,      RHI::kFramesInFlight>   FrameRing;
         TArray<TAtomic<uint64>, RHI::kFramesInFlight>   SlotConsumedCount;

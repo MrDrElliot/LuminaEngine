@@ -25,7 +25,7 @@ public readonly unsafe partial struct Physics
         {
             return null;
         }
-        return new RaycastHit(new Entity(Result.Entity), Result.BodyId, Result.Point, Result.Normal, Result.Distance, Result.Fraction);
+        return new RaycastHit(new Entity(Result.Entity), Result.BodyId, Result.Point, Result.Normal, Result.Distance, Result.Fraction, Result.BoneIndex);
     }
 
     /// Largest overlap/sweep result set a single allocating query returns (extras are dropped).
@@ -66,7 +66,7 @@ public readonly unsafe partial struct Physics
         for (int i = 0; i < Count; ++i)
         {
             RaycastHitWire W = Buffer[i];
-            Out[i] = new RaycastHit(new Entity(W.Entity), W.BodyId, W.Point, W.Normal, W.Distance, W.Fraction);
+            Out[i] = new RaycastHit(new Entity(W.Entity), W.BodyId, W.Point, W.Normal, W.Distance, W.Fraction, W.BoneIndex);
         }
         return Out;
     }
@@ -82,7 +82,7 @@ public readonly unsafe partial struct Physics
         for (int i = 0; i < Count; ++i)
         {
             RaycastHitWire W = Buffer[i];
-            Out[i] = new RaycastHit(new Entity(W.Entity), W.BodyId, W.Point, W.Normal, W.Distance, W.Fraction);
+            Out[i] = new RaycastHit(new Entity(W.Entity), W.BodyId, W.Point, W.Normal, W.Distance, W.Fraction, W.BoneIndex);
         }
         return Out;
     }
@@ -96,7 +96,7 @@ public readonly unsafe partial struct Physics
         {
             return null;
         }
-        return new RaycastHit(new Entity(Result.Entity), Result.BodyId, Result.Point, Result.Normal, Result.Distance, Result.Fraction);
+        return new RaycastHit(new Entity(Result.Entity), Result.BodyId, Result.Point, Result.Normal, Result.Distance, Result.Fraction, Result.BoneIndex);
     }
 
     /// Every hit near-to-far, restricted by collision layer mask. See RaycastAll.
@@ -110,7 +110,7 @@ public readonly unsafe partial struct Physics
         for (int i = 0; i < Count; ++i)
         {
             RaycastHitWire W = Buffer[i];
-            Out[i] = new RaycastHit(new Entity(W.Entity), W.BodyId, W.Point, W.Normal, W.Distance, W.Fraction);
+            Out[i] = new RaycastHit(new Entity(W.Entity), W.BodyId, W.Point, W.Normal, W.Distance, W.Fraction, W.BoneIndex);
         }
         return Out;
     }

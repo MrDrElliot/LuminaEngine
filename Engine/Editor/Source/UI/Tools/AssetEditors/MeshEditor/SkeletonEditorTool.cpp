@@ -4,6 +4,7 @@
 #include "Core/Math/Math.h"
 #include "Tools/UI/ImGui/ImGuiFonts.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
+#include "UI/Properties/Customizations/BonePickerContext.h"
 #include "world/entity/components/environmentcomponent.h"
 #include "World/Entity/Components/SkyLightComponent.h"
 #include "World/Entity/Components/LightComponent.h"
@@ -27,6 +28,9 @@ namespace Lumina
         {
             CSkeleton* Skeleton = GetAsset<CSkeleton>();
             FSkeletonResource* SkeletonResource = Skeleton->GetSkeletonResource();
+
+            // Socket BoneName fields get the bone-tree popup.
+            BonePickerContext::FScope BonePickerScope(SkeletonResource);
 
             ImGuiX::Font::PushFont(ImGuiX::Font::EFont::Large);
             ImGui::SeparatorText("Asset Details");
@@ -88,7 +92,36 @@ namespace Lumina
                 
         BoneListContext.ItemContextMenuFunction = [this](FTreeListView& Tree, FTreeNodeID Item)
         {
+            if (!Item.IsValid())
+            {
+                return;
+            }
 
+            const FName BoneName = Tree.Get<FTreeNodeDisplay>(Item).DisplayName;
+
+            if (ImGui::MenuItem(LE_ICON_PLUS " Add Socket"))
+            {
+                CSkeleton* Skeleton = GetAsset<CSkeleton>();
+
+                FString Base(BoneName.c_str());
+                Base += "_Socket";
+                FName SocketName(Base.c_str());
+                int32 Suffix = 1;
+                while (Skeleton->FindSocket(SocketName) != nullptr)
+                {
+                    FString Numbered = Base;
+                    Numbered += "_";
+                    Numbered += eastl::to_string(Suffix++).c_str();
+                    SocketName = FName(Numbered.c_str());
+                }
+
+                FMeshSocket& Socket = Skeleton->Sockets.emplace_back();
+                Socket.SocketName = SocketName;
+                Socket.BoneName = BoneName;
+
+                Asset->GetPackage()->MarkDirty();
+                PropertyTable.MarkDirty();
+            }
         };
 
         BoneListContext.DragDropFunction = [this](FTreeListView& Tree, FTreeNodeID Item)
@@ -169,6 +202,7 @@ namespace Lumina
         SSkeletalMeshComponent& MeshComponent = World->EmplaceComponent<SSkeletalMeshComponent>(MeshEntity);
         MeshComponent.SkeletalMesh = Skeleton->PreviewMesh;
         Skeleton->ComputeBindPoseSkinningMatrices(MeshComponent.BoneTransforms);
+        MeshComponent.bRenderBonesDirty = true;
         
         STransformComponent& MeshTransform = World->GetComponent<STransformComponent>(MeshEntity);
         STransformComponent& EditorTransform = World->GetComponent<STransformComponent>(EditorEntity);
@@ -186,35 +220,58 @@ namespace Lumina
             return;
         }
         
-        if (SelectedBone != NAME_None)
+        CSkeleton* Skeleton = GetAsset<CSkeleton>();
+        FSkeletonResource* SkeletonResource = Skeleton->GetSkeletonResource();
+
+        const int32 SelectedIndex = (SelectedBone != NAME_None) ? SkeletonResource->FindBoneIndex(SelectedBone) : INDEX_NONE;
+        if (SelectedIndex == INDEX_NONE && Skeleton->Sockets.empty())
         {
-            CSkeleton* Skeleton = GetAsset<CSkeleton>();
-            int32 BoneIndex = Skeleton->GetSkeletonResource()->FindBoneIndex(SelectedBone);
+            return;
+        }
+
+        // Bind-pose world transforms; shared by the selected-bone overlay and the socket markers.
+        FMatrix4 EntityMatrix = FMatrix4(1.0f);
+        if (MeshEntity != entt::null)
+        {
+            EntityMatrix = World->GetComponent<STransformComponent>(MeshEntity).GetWorldMatrix();
+        }
+
+        TVector<FMatrix4> WorldTransforms;
+        WorldTransforms.resize(SkeletonResource->GetNumBones());
+        for (int i = 0; i < SkeletonResource->GetNumBones(); ++i)
+        {
+            const FSkeletonResource::FBoneInfo& Bone = SkeletonResource->GetBone(i);
+            if (Bone.ParentIndex == INDEX_NONE)
+            {
+                WorldTransforms[i] = EntityMatrix * Bone.LocalTransform;
+            }
+            else
+            {
+                WorldTransforms[i] = WorldTransforms[Bone.ParentIndex] * Bone.LocalTransform;
+            }
+        }
+
+        if (SelectedIndex != INDEX_NONE)
+        {
+            DrawBoneHierarchy(World, SkeletonResource, WorldTransforms, SelectedIndex);
+        }
+
+        for (const FMeshSocket& Socket : Skeleton->Sockets)
+        {
+            const int32 BoneIndex = SkeletonResource->FindBoneIndex(Socket.BoneName);
             if (BoneIndex == INDEX_NONE)
             {
-                return;
+                continue;
             }
-    
-            STransformComponent& Transform = World->GetComponent<STransformComponent>(MeshEntity);
-            FSkeletonResource* SkeletonResource = Skeleton->GetSkeletonResource();
-            TVector<FMatrix4> WorldTransforms;
-            WorldTransforms.resize(SkeletonResource->GetNumBones());
-            FMatrix4 EntityMatrix = Transform.GetWorldMatrix();
 
-            for (int i = 0; i < SkeletonResource->GetNumBones(); ++i)
-            {
-                const FSkeletonResource::FBoneInfo& Bone = SkeletonResource->GetBone(i);
-                if (Bone.ParentIndex == INDEX_NONE)
-                {
-                    WorldTransforms[i] = EntityMatrix * Bone.LocalTransform;
-                }
-                else
-                {
-                    WorldTransforms[i] = WorldTransforms[Bone.ParentIndex] * Bone.LocalTransform;
-                }
-            }
-    
-            DrawBoneHierarchy(World, SkeletonResource, WorldTransforms, BoneIndex);
+            const FMatrix4 SocketMatrix = WorldTransforms[BoneIndex] * Socket.RelativeTransform.GetMatrix();
+            const FVector3 Position = FVector3(SocketMatrix[3]);
+            constexpr float AxisLength = 0.18f;
+
+            World->DrawSphere(Position, 0.045f, FVector4(1.0f, 0.82f, 0.4f, 1.0f), 12, 2.5f, false);
+            World->DrawLine(Position, Position + Math::Normalize(FVector3(SocketMatrix[0])) * AxisLength, FVector4(1.0f, 0.2f, 0.2f, 1.0f), 3.0f, false);
+            World->DrawLine(Position, Position + Math::Normalize(FVector3(SocketMatrix[1])) * AxisLength, FVector4(0.2f, 1.0f, 0.2f, 1.0f), 3.0f, false);
+            World->DrawLine(Position, Position + Math::Normalize(FVector3(SocketMatrix[2])) * AxisLength, FVector4(0.2f, 0.4f, 1.0f, 1.0f), 3.0f, false);
         }
     }
 

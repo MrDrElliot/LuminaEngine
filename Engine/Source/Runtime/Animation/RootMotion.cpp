@@ -117,4 +117,20 @@ namespace Lumina::RootMotion
         Delta.bHasMotion  = true;
         return Delta;
     }
+
+    FRootMotionDelta RootMotion::BlendRootMotion(const FRootMotionDelta& A, const FRootMotionDelta& B, float Alpha)
+    {
+        if (!A.bHasMotion && !B.bHasMotion)
+        {
+            return FRootMotionDelta();
+        }
+
+        Alpha = Math::Clamp(Alpha, 0.0f, 1.0f);
+
+        FRootMotionDelta Out;
+        Out.Translation = Math::Mix(A.Translation, B.Translation, Alpha);
+        Out.Rotation    = Math::Normalize(Math::Slerp(A.Rotation, B.Rotation, Alpha));
+        Out.bHasMotion  = true;
+        return Out;
+    }
 }

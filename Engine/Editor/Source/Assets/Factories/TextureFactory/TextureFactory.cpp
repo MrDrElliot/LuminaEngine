@@ -175,12 +175,80 @@ namespace Lumina
         return true;
     }
 
+    // The Basis cook consumes RGBA8 only, but ImportTexture returns stbi's native layout: grayscale (R8),
+    // gray+alpha (RG8), and the 16-bit variants (R16/RG16/RGBA16). Expand those in place; anything already
+    // RGBA8 passes through. False = a layout the cook can't take (floats belong on the Environment path).
+    static bool NormalizeToRGBA8(Import::Textures::FTextureImportResult& Result)
+    {
+        const uint64 PixelCount = (uint64)Result.Dimensions.x * Result.Dimensions.y;
+        if (PixelCount == 0)
+        {
+            return false;
+        }
+
+        // Channel count + bytes-per-channel of the source layout; gray sources replicate into RGB.
+        uint32 Channels = 0;
+        uint32 BytesPerChannel = 1;
+        switch (Result.Format)
+        {
+            case EFormat::RGBA8_UNORM:
+            case EFormat::SRGBA8_UNORM:
+                return Result.Pixels.size() >= PixelCount * 4;
+            case EFormat::R8_UNORM:     Channels = 1; break;
+            case EFormat::RG8_UNORM:    Channels = 2; break;
+            case EFormat::R16_UNORM:    Channels = 1; BytesPerChannel = 2; break;
+            case EFormat::RG16_UNORM:   Channels = 2; BytesPerChannel = 2; break;
+            case EFormat::RGBA16_UNORM: Channels = 4; BytesPerChannel = 2; break;
+            default:
+                return false;
+        }
+
+        if (Result.Pixels.size() < PixelCount * Channels * BytesPerChannel)
+        {
+            return false;
+        }
+
+        TVector<uint8> Converted(PixelCount * 4);
+        for (uint64 i = 0; i < PixelCount; ++i)
+        {
+            uint8 Value[4];
+            for (uint32 c = 0; c < Channels; ++c)
+            {
+                // 16-bit sources keep the high byte (little-endian uint16).
+                const uint64 Offset = (i * Channels + c) * BytesPerChannel;
+                Value[c] = Result.Pixels[Offset + BytesPerChannel - 1];
+            }
+
+            uint8* Out = &Converted[i * 4];
+            switch (Channels)
+            {
+                case 1: Out[0] = Out[1] = Out[2] = Value[0]; Out[3] = 0xFF;      break;  // gray
+                case 2: Out[0] = Out[1] = Out[2] = Value[0]; Out[3] = Value[1];  break;  // gray + alpha
+                case 4: Out[0] = Value[0]; Out[1] = Value[1]; Out[2] = Value[2]; Out[3] = Value[3]; break;
+            }
+        }
+
+        Result.Pixels = Move(Converted);
+        Result.Format = EFormat::RGBA8_UNORM;
+        return true;
+    }
+
     // Encodes RGBA8 via Basis Universal; shared by initial import and Recook.
     // EncodeThreads = total basisu encode threads (basisu counts the calling thread, so 1 = single-threaded,
     // 0 new threads). 0 = auto (use the worker count). A batch importer cooking many textures in parallel
     // passes 1 so each texture doesn't spawn its own full pool and oversubscribe the cores.
     static bool CookTexturePixels(CTexture* Texture, const TVector<uint8>& Pixels, FUIntVector2 Dimensions, ETextureColorSpace ColorSpace, uint32 EncodeThreads = 0)
     {
+        // basisu's image::init memcpys Width*Height*4 with no bounds knowledge; a short buffer
+        // (e.g. an unconverted grayscale source) would read out of bounds and crash the import.
+        const uint64 RequiredBytes = (uint64)Dimensions.x * Dimensions.y * 4;
+        if (RequiredBytes == 0 || Pixels.size() < RequiredBytes)
+        {
+            LOG_ERROR("CookTexturePixels: '{0}' pixel buffer ({1} bytes) doesn't cover {2}x{3} RGBA8 ({4} bytes); refusing to cook.",
+                      Texture->GetName().c_str(), Pixels.size(), Dimensions.x, Dimensions.y, RequiredBytes);
+            return false;
+        }
+
         // basisu's encoder tables are per-DLL static; FEngine::Init's init runs in Runtime,
         // so init the Editor's copy here. Idempotent (mutex + g_library_initialized).
         basisu::basisu_encoder_init();
@@ -736,13 +804,18 @@ namespace Lumina
         {
             bCooked = CookEnvironmentTexture(NewTexture, Result);
         }
-        else
+        else if (Import::Textures::FTextureImportResult& Mutable = MaybeResult.value(); NormalizeToRGBA8(Mutable))
         {
             // Batch importers pass a per-texture encode-thread budget (1 = single-threaded) so many textures
             // cooking in parallel don't each spawn a full basisu pool. Direct/standalone imports leave it 0 (auto).
             const uint32 EncodeThreads = ImageSettings ? ImageSettings->EncodeThreadBudget : 0u;
-            TVector<uint8> Pixels = Move(Result.Pixels);
-            bCooked = CookTexturePixels(NewTexture, Pixels, Result.Dimensions, NewTexture->ColorSpace, EncodeThreads);
+            TVector<uint8> Pixels = Move(Mutable.Pixels);
+            bCooked = CookTexturePixels(NewTexture, Pixels, Mutable.Dimensions, NewTexture->ColorSpace, EncodeThreads);
+        }
+        else
+        {
+            LOG_ERROR("TextureFactory: '{0}' has an unsupported pixel layout for the Basis cook (format {1}, {2}x{3}); import skipped.",
+                      NewTexture->GetName().c_str(), (uint32)Result.Format, Result.Dimensions.x, Result.Dimensions.y);
         }
 
         if (!bCooked)
@@ -845,10 +918,15 @@ namespace Lumina
         {
             bCooked = CookEnvironmentTexture(Texture, Result);
         }
+        else if (Import::Textures::FTextureImportResult& Mutable = MaybeResult.value(); NormalizeToRGBA8(Mutable))
+        {
+            TVector<uint8> Pixels = Move(Mutable.Pixels);
+            bCooked = CookTexturePixels(Texture, Pixels, Mutable.Dimensions, Texture->ColorSpace);
+        }
         else
         {
-            TVector<uint8> Pixels = Move(Result.Pixels);
-            bCooked = CookTexturePixels(Texture, Pixels, Result.Dimensions, Texture->ColorSpace);
+            LOG_ERROR("TextureFactory::Recook: '{0}' has an unsupported pixel layout for the Basis cook (format {1}, {2}x{3}).",
+                      Texture->GetName().c_str(), (uint32)Result.Format, Result.Dimensions.x, Result.Dimensions.y);
         }
 
         if (!bCooked)

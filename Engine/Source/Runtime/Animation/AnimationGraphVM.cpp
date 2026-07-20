@@ -1,7 +1,6 @@
 #include "pch.h"
 #include "AnimationGraphVM.h"
 
-#include "Animation/RootMotion.h"
 #include "Assets/AssetTypes/Animation/AnimationGraph/AnimationGraph.h"
 #include "Assets/AssetTypes/Mesh/Animation/Animation.h"
 #include "Memory/Memcpy.h"
@@ -95,140 +94,6 @@ namespace Lumina
             }
             return 0.0f;
         }
-
-        // Quintic offset-decay (Bollo 2018) with x(0)=X0, x'(0)=V0, x''(0)=0 and x(t1)=x'(t1)=x''(t1)=0.
-        static float InertEval(float X0, float V0, float T1, float T)
-        {
-            if (T1 <= 1e-5f || X0 <= 1e-7f)
-            {
-                return 0.0f;
-            }
-            if (V0 < 0.0f)
-            {
-                T1 = Math::Min(T1, -5.0f * X0 / V0); // clamp duration so the curve never overshoots below zero
-                if (T1 <= 1e-5f)
-                {
-                    return 0.0f;
-                }
-            }
-            if (T >= T1)
-            {
-                return 0.0f;
-            }
-            const float t1_2 = T1 * T1; const float t1_3 = t1_2 * T1; const float t1_4 = t1_3 * T1; const float t1_5 = t1_4 * T1;
-            const float A = -(3.0f * V0 * T1 + 6.0f  * X0) / t1_5;
-            const float B =  (8.0f * V0 * T1 + 15.0f * X0) / t1_4;
-            const float C = -(6.0f * V0 * T1 + 10.0f * X0) / t1_3;
-            const float t2 = T * T; const float t3 = t2 * T; const float t4 = t3 * T; const float t5 = t4 * T;
-            const float X = A * t5 + B * t4 + C * t3 + V0 * T + X0;
-            return X > 0.0f ? X : 0.0f;
-        }
-
-        // Signed angle (rad) of quaternion Q about unit Axis.
-        static FORCEINLINE float QuatAngleAbout(const FQuat& Q, const FVector3& Axis)
-        {
-            return 2.0f * Math::Atan2(Math::Dot(FVector3(Q.x, Q.y, Q.z), Axis), Q.w);
-        }
-
-        // Capture the per-bone offset (Source vs Target) and its velocity (Source vs SourcePrev) at a seam.
-        static void InertCapture(FAnimInertializer& In, const FPose& Source, const FPose& SourcePrev,
-                                 const FPose& Target, float Duration, float Dt, bool bHasVel)
-        {
-            const int32 N = Target.GetNumBones();
-            In.Rot.resize(N);
-            In.Trans.resize(N);
-            In.Scale.resize(N);
-            In.Duration = Math::Max(Duration, 0.0f);
-            In.bActive  = In.Duration > 1e-5f;
-
-            const bool  bSrc  = Source.GetNumBones() == N;
-            const bool  bVel  = bHasVel && Dt > 1e-6f && bSrc && SourcePrev.GetNumBones() == N;
-            const float InvDt = bVel ? 1.0f / Dt : 0.0f;
-
-            for (int32 i = 0; i < N; ++i)
-            {
-                // Rotation: offset quaternion (Source relative to Target) as axis + angle.
-                {
-                    const FQuat Qs = bSrc ? Source.Rotations[i] : Target.Rotations[i];
-                    FQuat Q0 = Math::Normalize(Qs * Math::Inverse(Target.Rotations[i]));
-                    if (Q0.w < 0.0f)
-                    {
-                        Q0 = Q0 * -1.0f; // shortest arc
-                    }
-                    const FVector3 V(Q0.x, Q0.y, Q0.z);
-                    const float Len  = Math::Length(V);
-                    const float X0   = 2.0f * Math::Atan2(Len, Q0.w);
-                    const FVector3 Axis = Len > 1e-5f ? V * (1.0f / Len) : FVector3(0.0f, 0.0f, 1.0f);
-                    float V0 = 0.0f;
-                    if (InvDt > 0.0f)
-                    {
-                        const FQuat Qp = Math::Normalize(SourcePrev.Rotations[i] * Math::Inverse(Target.Rotations[i]));
-                        V0 = (X0 - QuatAngleAbout(Qp, Axis)) * InvDt;
-                    }
-                    In.Rot[i] = FInertChannel{ Axis, X0, V0 };
-                }
-                // Translation: vector offset, fixed direction, decaying length.
-                {
-                    const FVector3 Ps  = bSrc ? Source.Translations[i] : Target.Translations[i];
-                    const FVector3 Off = Ps - Target.Translations[i];
-                    const float    X0  = Math::Length(Off);
-                    const FVector3 Dir = X0 > 1e-6f ? Off * (1.0f / X0) : FVector3(0.0f);
-                    float V0 = 0.0f;
-                    if (InvDt > 0.0f)
-                    {
-                        V0 = (X0 - Math::Dot(SourcePrev.Translations[i] - Target.Translations[i], Dir)) * InvDt;
-                    }
-                    In.Trans[i] = FInertChannel{ Dir, X0, V0 };
-                }
-                // Scale: same vector treatment as translation.
-                {
-                    const FVector3 Ss  = bSrc ? Source.Scales[i] : Target.Scales[i];
-                    const FVector3 Off = Ss - Target.Scales[i];
-                    const float    X0  = Math::Length(Off);
-                    const FVector3 Dir = X0 > 1e-6f ? Off * (1.0f / X0) : FVector3(0.0f);
-                    float V0 = 0.0f;
-                    if (InvDt > 0.0f)
-                    {
-                        V0 = (X0 - Math::Dot(SourcePrev.Scales[i] - Target.Scales[i], Dir)) * InvDt;
-                    }
-                    In.Scale[i] = FInertChannel{ Dir, X0, V0 };
-                }
-            }
-        }
-
-        // Out := Target + the decaying offset at In.Elapsed. Out may alias Target.
-        static void InertApply(const FAnimInertializer& In, const FPose& Target, FPose& Out)
-        {
-            const int32 N  = Target.GetNumBones();
-            const int32 NR = (int32)In.Rot.size();
-            Out.SetNumBones(N);
-            const float T = In.Elapsed;
-
-            for (int32 i = 0; i < N; ++i)
-            {
-                if (i < NR)
-                {
-                    const float Xr = InertEval(In.Rot[i].X0,   In.Rot[i].V0,   In.Duration, T);
-                    const float Xt = InertEval(In.Trans[i].X0, In.Trans[i].V0, In.Duration, T);
-                    const float Xs = InertEval(In.Scale[i].X0, In.Scale[i].V0, In.Duration, T);
-
-                    FQuat R = Target.Rotations[i];
-                    if (Xr > 1e-6f)
-                    {
-                        R = Math::Normalize(Math::AngleAxis(Xr, In.Rot[i].Direction) * R);
-                    }
-                    Out.Rotations[i]    = R;
-                    Out.Translations[i] = Target.Translations[i] + In.Trans[i].Direction * Xt;
-                    Out.Scales[i]       = Target.Scales[i] + In.Scale[i].Direction * Xs;
-                }
-                else
-                {
-                    Out.Rotations[i]    = Target.Rotations[i];
-                    Out.Translations[i] = Target.Translations[i];
-                    Out.Scales[i]       = Target.Scales[i];
-                }
-            }
-        }
     }
 
     void FAnimationGraphVM::InitState(const CAnimationGraph* Graph, FAnimGraphVMState& State)
@@ -240,7 +105,6 @@ namespace Lumina
         }
 
         State.ScalarRegisters.assign(Graph->NumScalarRegisters, 0.0f);
-        State.PoseRegisters.assign(Graph->NumPoseRegisters, FPose());
         State.StateSlots.assign(Graph->NumStateSlots, 0.0f);
 
         State.Parameters.resize(Graph->Parameters.size());
@@ -266,17 +130,42 @@ namespace Lumina
         // One inertialization record per state machine (transition smoothing; rebuilt each init).
         State.Inertializers.assign(Graph->StateMachines.size(), FAnimInertializer());
 
+        State.SyncGroups.assign(Graph->NumSyncGroups, FAnimSyncGroup());
+
         State.SourceGraph  = Graph;
         State.bInitialized = true;
     }
 
-    void FAnimationGraphVM::Execute(const CAnimationGraph* Graph, FSkeletonResource* Skeleton, float DeltaTime, FAnimGraphVMState& State, TVector<FMatrix4>& OutMatrices, bool bLockRoot, int32 RootBoneIndex)
+    void FAnimationGraphVM::BuildTasks(const CAnimationGraph* Graph, FSkeletonResource* Skeleton, float DeltaTime, FAnimGraphVMState& State, FAnimTaskList& OutTasks, FAnimGraphRootMotion& RootMotionInOut, TVector<FAnimNotifyEvent>* OutEvents)
     {
         LUMINA_PROFILE_SCOPE();
 
+        OutTasks.Reset();
+        RootMotionInOut.Delta = FRootMotionDelta();
+
         if (Graph == nullptr || Skeleton == nullptr || Skeleton->GetNumBones() == 0)
         {
-            OutMatrices.clear();
+            return;
+        }
+
+        // A program compiled against an older opcode layout would misparse operands into garbage
+        // poses. Refuse it: bind pose + one warning per instance, until the graph is recompiled
+        // (opening it in the editor auto-compiles; save to persist).
+        if (Graph->BytecodeVersion != kAnimBytecodeVersion)
+        {
+            if (State.SourceGraph != Graph)
+            {
+                State.SourceGraph  = Graph;
+                State.bInitialized = false;
+                LOG_WARN("AnimationGraph '{}': compiled bytecode version {} does not match runtime version {}; "
+                         "showing bind pose. Open and re-save the graph in the editor to recompile.",
+                         Graph->GetName().c_str(), Graph->BytecodeVersion, kAnimBytecodeVersion);
+            }
+
+            FAnimTask Ref;
+            Ref.Type            = EAnimTaskType::ReferencePose;
+            OutTasks.Skeleton   = Skeleton;
+            OutTasks.OutputTask = OutTasks.Add(Ref);
             return;
         }
 
@@ -284,26 +173,158 @@ namespace Lumina
         if (!State.bInitialized ||
             State.SourceGraph != Graph ||
             (int32)State.ScalarRegisters.size() != Graph->NumScalarRegisters ||
-            (int32)State.PoseRegisters.size() != Graph->NumPoseRegisters ||
             (int32)State.StateSlots.size() != Graph->NumStateSlots ||
+            (int32)State.SyncGroups.size() != Graph->NumSyncGroups ||
             State.Parameters.size() != Graph->Parameters.size())
         {
             InitState(Graph, State);
         }
 
+        // Latch last update's blended durations and re-arm the shared phases for this update.
+        for (FAnimSyncGroup& Group : State.SyncGroups)
+        {
+            if (Group.bAdvanced)
+            {
+                Group.Duration  = Group.NextDuration;
+                Group.bAdvanced = false;
+            }
+        }
+
+        OutTasks.Skeleton = Skeleton;
+
         const SIZE_T NumScalar = State.ScalarRegisters.size();
-        const SIZE_T NumPose   = State.PoseRegisters.size();
         const SIZE_T NumState  = State.StateSlots.size();
         const SIZE_T NumClips  = Graph->Clips.size();
         const SIZE_T NumParams = State.Parameters.size();
+        const SIZE_T NumPose   = Graph->NumPoseRegisters;
 
         float* RESTRICT Scalars = State.ScalarRegisters.data();
+
+        // Pose registers now hold task indices: writing a register records which task produces that
+        // pose, reading one wires a dependency. Transient per call.
+        thread_local TVector<int16> PoseTasks;
+        PoseTasks.assign(NumPose, FAnimTask::NoTask);
+
+        // Root-motion deltas and notify-event ranges flow alongside the registers: AdvanceClock tags
+        // its clock scalar, SampleAnim adopts the tag onto its pose register, blends combine, the
+        // state machine keeps only the target branch, Output reports whatever survived.
+        struct FEventRange
+        {
+            uint16 Start = 0;
+            uint16 End = 0;
+            bool IsEmpty() const { return End <= Start; }
+        };
+
+        thread_local TVector<FRootMotionDelta> ClockDeltas;
+        thread_local TVector<FRootMotionDelta> PoseDeltas;
+        thread_local TVector<FEventRange> ClockEvents;
+        thread_local TVector<FEventRange> PoseEvents;
+        thread_local TVector<FAnimNotifyEvent> EventScratch;
+
+        const bool bExtractRootMotion = RootMotionInOut.Mode == ERootMotionLockMode::FromAsset &&
+                                        RootMotionInOut.RootBoneIndex != INDEX_NONE;
+
+        ClockDeltas.assign(NumScalar, FRootMotionDelta());
+        PoseDeltas.assign(NumPose, FRootMotionDelta());
+        ClockEvents.assign(NumScalar, FEventRange());
+        PoseEvents.assign(NumPose, FEventRange());
+        EventScratch.clear();
+
+        const auto UnionEvents = [](const FEventRange& A, const FEventRange& B) -> FEventRange
+        {
+            if (A.IsEmpty())
+            {
+                return B;
+            }
+            if (B.IsEmpty())
+            {
+                return A;
+            }
+            return FEventRange{ Math::Min(A.Start, B.Start), Math::Max(A.End, B.End) };
+        };
+
+        const auto ScaleEventWeights = [](const FEventRange& Range, float Mul)
+        {
+            for (uint16 i = Range.Start; i < Range.End && i < (uint16)EventScratch.size(); ++i)
+            {
+                EventScratch[i].Weight *= Mul;
+            }
+        };
+
+        const auto ReadScalar = [&](uint16 Reg, float Default) -> float
+        {
+            return Reg < NumScalar ? Scalars[Reg] : Default;
+        };
+
+        const auto DeltaOf = [&](uint16 Reg) -> FRootMotionDelta
+        {
+            return Reg < NumPose ? PoseDeltas[Reg] : FRootMotionDelta();
+        };
+
+        const auto EventsOf = [&](uint16 Reg) -> FEventRange
+        {
+            return Reg < NumPose ? PoseEvents[Reg] : FEventRange();
+        };
+
+        const auto SetPoseTags = [&](uint16 Reg, const FRootMotionDelta& Delta, const FEventRange& Events)
+        {
+            if (Reg < NumPose)
+            {
+                PoseDeltas[Reg] = Delta;
+                PoseEvents[Reg] = Events;
+            }
+        };
+
+        // Sync-group provenance: which group (and clip duration) produced a register, so blends can
+        // refine the group's blended duration from their alpha (consumed next update).
+        struct FSyncTag
+        {
+            int32 Group = -1;
+            float ClipDuration = 0.0f;
+        };
+
+        thread_local TVector<FSyncTag> ClockSync;
+        thread_local TVector<FSyncTag> PoseSync;
+        ClockSync.assign(NumScalar, FSyncTag());
+        PoseSync.assign(NumPose, FSyncTag());
+
+        const auto SyncOf = [&](uint16 Reg) -> FSyncTag
+        {
+            return Reg < NumPose ? PoseSync[Reg] : FSyncTag();
+        };
+
+        const auto SetPoseSync = [&](uint16 Reg, const FSyncTag& Tag)
+        {
+            if (Reg < NumPose)
+            {
+                PoseSync[Reg] = Tag;
+            }
+        };
+
+        // Reading a never-written pose register wires a bind-pose leaf, so malformed graphs degrade
+        // to the reference pose instead of blending garbage.
+        const auto PoseTaskFor = [&](uint16 Reg) -> int16
+        {
+            if (Reg < NumPose && PoseTasks[Reg] != FAnimTask::NoTask)
+            {
+                return PoseTasks[Reg];
+            }
+            FAnimTask Ref;
+            Ref.Type = EAnimTaskType::ReferencePose;
+            return OutTasks.Add(Ref);
+        };
+
+        const auto SetPoseTask = [&](uint16 Reg, int16 TaskIdx)
+        {
+            if (Reg < NumPose)
+            {
+                PoseTasks[Reg] = TaskIdx;
+            }
+        };
 
         Detail::FByteReader Reader;
         Reader.Data = Graph->Bytecode.data();
         Reader.Size = Graph->Bytecode.size();
-
-        bool bOutputWritten = false;
 
         while (!Reader.AtEnd())
         {
@@ -360,39 +381,66 @@ namespace Lumina
                 const uint16 LoopModeReg  = Reader.Read<uint16>();
                 const uint16 DstClock     = Reader.Read<uint16>();
                 const uint16 DstFinished  = Reader.Read<uint16>();
+                const uint16 SyncGroup    = Reader.Read<uint16>();
 
                 const EClipLoopMode Mode = Detail::ReadEnumReg<EClipLoopMode>(Scalars, NumScalar, LoopModeReg, (int32)EClipLoopMode::PlayOnce);
 
                 if (StateIdx < NumState)
                 {
-                    const float Speed = SpeedReg < NumScalar ? Scalars[SpeedReg] : 1.0f;
-                    float Clock = State.StateSlots[StateIdx] + DeltaTime * Speed;
-                    float Finished = 0.0f;
+                    CAnimation* Clip = (ClipIdx < NumClips && Graph->Clips[ClipIdx].IsValid())
+                        ? Graph->Clips[ClipIdx].Get()
+                        : nullptr;
 
-                    if (ClipIdx < NumClips && Graph->Clips[ClipIdx].IsValid())
+                    const float PrevClock = State.StateSlots[StateIdx];
+                    const float Speed = ReadScalar(SpeedReg, 1.0f);
+                    float Clock = PrevClock + DeltaTime * Speed;
+                    float PrevSampleTime = PrevClock;
+                    float Finished = 0.0f;
+                    bool bSynced = false;
+
+                    const float Duration = Clip ? Clip->GetDuration() : 0.0f;
+
+                    // A synced clip samples at the group's shared phase instead of its own clock, so
+                    // every member of the group sits at the same stride phase. The phase advances once
+                    // per update at the group's blended-duration rate; synced clips always loop.
+                    if (SyncGroup != kAnimNoSyncGroup && SyncGroup < State.SyncGroups.size() && Duration > 0.0f)
                     {
-                        const float Duration = Graph->Clips[ClipIdx]->GetDuration();
-                        if (Duration > 0.0f)
+                        FAnimSyncGroup& Group = State.SyncGroups[SyncGroup];
+                        if (!Group.bAdvanced)
                         {
-                            if (Mode == EClipLoopMode::Loop)
+                            Group.bAdvanced    = true;
+                            Group.PrevPhase    = Group.Phase;
+                            Group.NextDuration = Duration;
+
+                            const float GroupDuration = Group.Duration > 1e-4f ? Group.Duration : Duration;
+                            Group.Phase += (DeltaTime * Speed) / GroupDuration;
+                            Group.Phase -= Math::Floor(Group.Phase); // wrap 0..1, negative-safe
+                        }
+
+                        PrevSampleTime = Group.PrevPhase * Duration;
+                        Clock          = Group.Phase * Duration;
+                        bSynced        = true;
+                    }
+                    else if (Duration > 0.0f)
+                    {
+                        if (Mode == EClipLoopMode::Loop)
+                        {
+                            Clock = fmodf(Clock, Duration);
+                            if (Clock < 0.0f)
                             {
-                                Clock = fmodf(Clock, Duration);
-                                if (Clock < 0.0f)
-                                {
-                                    Clock += Duration;
-                                }
+                                Clock += Duration;
                             }
-                            else // PlayOnce -- clamp at the end and signal finished.
+                        }
+                        else // PlayOnce -- clamp at the end and signal finished.
+                        {
+                            if (Clock >= Duration)
                             {
-                                if (Clock >= Duration)
-                                {
-                                    Clock    = Duration;
-                                    Finished = 1.0f;
-                                }
-                                else if (Clock < 0.0f)
-                                {
-                                    Clock = 0.0f;
-                                }
+                                Clock    = Duration;
+                                Finished = 1.0f;
+                            }
+                            else if (Clock < 0.0f)
+                            {
+                                Clock = 0.0f;
                             }
                         }
                     }
@@ -401,36 +449,41 @@ namespace Lumina
                     if (DstClock < NumScalar)
                     {
                         Scalars[DstClock] = Clock;
+
+                        const bool bLooping = bSynced || Mode == EClipLoopMode::Loop;
+
+                        if (bSynced)
+                        {
+                            ClockSync[DstClock] = FSyncTag{ (int32)SyncGroup, Duration };
+                        }
+
+                        // Tag the clock scalar with this advance's root delta; SampleAnim adopts it
+                        // onto the pose register it feeds. bHasMotion stays set even on a paused
+                        // frame so the branch keeps reading as root-motion driven (stable pinning).
+                        if (bExtractRootMotion && Clip != nullptr && Clip->bEnableRootMotion && !Clip->bLockRootMotion)
+                        {
+                            FRootMotionDelta ClipDelta;
+                            if (Clock != PrevSampleTime)
+                            {
+                                ClipDelta = RootMotion::ExtractRootDelta(Clip, Skeleton, RootMotionInOut.RootBoneIndex,
+                                                                         PrevSampleTime, Clock, bLooping, Duration);
+                            }
+                            ClipDelta.bHasMotion   = true;
+                            ClockDeltas[DstClock] = ClipDelta;
+                        }
+
+                        // Point notifies crossed by this advance, tagged the same way.
+                        if (OutEvents != nullptr && Clip != nullptr && Clock != PrevSampleTime && Clip->HasNotifies())
+                        {
+                            const uint16 EventStart = (uint16)EventScratch.size();
+                            AnimEvents::CollectTriggeredNotifies(Clip, PrevSampleTime, Clock, bLooping, 1.0f, EventScratch);
+                            ClockEvents[DstClock] = { EventStart, (uint16)EventScratch.size() };
+                        }
                     }
                     if (DstFinished < NumScalar)
                     {
                         Scalars[DstFinished] = Finished;
                     }
-                }
-                break;
-            }
-
-            case EAnimOp::MakeAdditive:
-            {
-                const uint16 Src = Reader.Read<uint16>();
-                const uint16 Dst = Reader.Read<uint16>();
-                if (Src < NumPose && Dst < NumPose)
-                {
-                    AnimPose::MakeAdditive(State.PoseRegisters[Src], Skeleton, State.PoseRegisters[Dst]);
-                }
-                break;
-            }
-
-            case EAnimOp::ApplyAdditive:
-            {
-                const uint16 Base  = Reader.Read<uint16>();
-                const uint16 Delta = Reader.Read<uint16>();
-                const uint16 Alpha = Reader.Read<uint16>();
-                const uint16 Dst   = Reader.Read<uint16>();
-                if (Base < NumPose && Delta < NumPose && Dst < NumPose)
-                {
-                    const float AlphaValue = Alpha < NumScalar ? Scalars[Alpha] : 0.0f;
-                    AnimPose::ApplyAdditive(State.PoseRegisters[Base], State.PoseRegisters[Delta], AlphaValue, State.PoseRegisters[Dst]);
                 }
                 break;
             }
@@ -441,30 +494,35 @@ namespace Lumina
                 const uint16 TimeReg = Reader.Read<uint16>();
                 const uint16 Dst     = Reader.Read<uint16>();
 
-                if (Dst < NumPose)
+                FAnimTask Task;
+                if (ClipIdx < NumClips && Graph->Clips[ClipIdx].IsValid())
                 {
-                    FPose& OutPose = State.PoseRegisters[Dst];
-                    const float Time = TimeReg < NumScalar ? Scalars[TimeReg] : 0.0f;
-
-                    if (ClipIdx < NumClips && Graph->Clips[ClipIdx].IsValid())
-                    {
-                        Graph->Clips[ClipIdx]->SampleLocalPose(Time, Skeleton, OutPose);
-                    }
-                    else
-                    {
-                        OutPose.ResetToBindPose(Skeleton);
-                    }
+                    Task.Type = EAnimTaskType::SampleClip;
+                    Task.Clip = Graph->Clips[ClipIdx].Get();
+                    Task.Time = ReadScalar(TimeReg, 0.0f);
                 }
+                else
+                {
+                    Task.Type = EAnimTaskType::ReferencePose;
+                }
+                SetPoseTask(Dst, OutTasks.Add(Task));
+
+                // Adopt the clock's root-motion / event / sync tags onto the sampled pose.
+                SetPoseTags(Dst,
+                            TimeReg < NumScalar ? ClockDeltas[TimeReg] : FRootMotionDelta(),
+                            TimeReg < NumScalar ? ClockEvents[TimeReg] : FEventRange());
+                SetPoseSync(Dst, TimeReg < NumScalar ? ClockSync[TimeReg] : FSyncTag());
                 break;
             }
 
             case EAnimOp::RefPose:
             {
                 const uint16 Dst = Reader.Read<uint16>();
-                if (Dst < NumPose)
-                {
-                    State.PoseRegisters[Dst].ResetToBindPose(Skeleton);
-                }
+                FAnimTask Task;
+                Task.Type = EAnimTaskType::ReferencePose;
+                SetPoseTask(Dst, OutTasks.Add(Task));
+                SetPoseTags(Dst, FRootMotionDelta(), FEventRange());
+                SetPoseSync(Dst, FSyncTag());
                 break;
             }
 
@@ -475,10 +533,33 @@ namespace Lumina
                 const uint16 Alpha = Reader.Read<uint16>();
                 const uint16 Dst   = Reader.Read<uint16>();
 
-                if (A < NumPose && B < NumPose && Dst < NumPose)
+                FAnimTask Task;
+                Task.Type  = EAnimTaskType::Blend;
+                Task.DepA  = PoseTaskFor(A);
+                Task.DepB  = PoseTaskFor(B);
+                Task.Alpha = ReadScalar(Alpha, 0.0f);
+                SetPoseTask(Dst, OutTasks.Add(Task));
+
+                const float BlendAlpha = Math::Clamp(Task.Alpha, 0.0f, 1.0f);
+                ScaleEventWeights(EventsOf(A), 1.0f - BlendAlpha);
+                ScaleEventWeights(EventsOf(B), BlendAlpha);
+                SetPoseTags(Dst,
+                            RootMotion::BlendRootMotion(DeltaOf(A), DeltaOf(B), BlendAlpha),
+                            UnionEvents(EventsOf(A), EventsOf(B)));
+
+                // Both inputs from the same sync group: this blend's alpha refines the group's
+                // duration (consumed next update, so weights are one frame latent).
+                const FSyncTag SyncA = SyncOf(A);
+                const FSyncTag SyncB = SyncOf(B);
+                if (SyncA.Group >= 0 && SyncA.Group == SyncB.Group && SyncA.Group < (int32)State.SyncGroups.size())
                 {
-                    const float AlphaValue = Alpha < NumScalar ? Scalars[Alpha] : 0.0f;
-                    AnimPose::Blend(State.PoseRegisters[A], State.PoseRegisters[B], AlphaValue, State.PoseRegisters[Dst]);
+                    const float Blended = SyncA.ClipDuration + (SyncB.ClipDuration - SyncA.ClipDuration) * BlendAlpha;
+                    State.SyncGroups[SyncA.Group].NextDuration = Blended;
+                    SetPoseSync(Dst, FSyncTag{ SyncA.Group, Blended });
+                }
+                else
+                {
+                    SetPoseSync(Dst, SyncA.Group >= 0 ? SyncA : SyncB);
                 }
                 break;
             }
@@ -491,20 +572,55 @@ namespace Lumina
                 const uint16 MaskIdx = Reader.Read<uint16>();
                 const uint16 Dst     = Reader.Read<uint16>();
 
-                if (A < NumPose && B < NumPose && Dst < NumPose)
-                {
-                    const float AlphaValue = Alpha < NumScalar ? Scalars[Alpha] : 0.0f;
+                FAnimTask Task;
+                Task.Type  = EAnimTaskType::BlendMasked;
+                Task.DepA  = PoseTaskFor(A);
+                Task.DepB  = PoseTaskFor(B);
+                Task.Alpha = ReadScalar(Alpha, 0.0f);
+                // Out-of-range mask index falls back to a whole-skeleton blend (null weights).
+                Task.MaskWeights = MaskIdx < Graph->BoneMasks.size() ? &Graph->BoneMasks[MaskIdx].Weights : nullptr;
+                SetPoseTask(Dst, OutTasks.Add(Task));
 
-                    // Out-of-range mask index falls back to a whole-skeleton blend.
-                    if (MaskIdx < Graph->BoneMasks.size())
-                    {
-                        AnimPose::BlendMasked(State.PoseRegisters[A], State.PoseRegisters[B], AlphaValue, Graph->BoneMasks[MaskIdx].Weights, State.PoseRegisters[Dst]);
-                    }
-                    else
-                    {
-                        AnimPose::Blend(State.PoseRegisters[A], State.PoseRegisters[B], AlphaValue, State.PoseRegisters[Dst]);
-                    }
-                }
+                // A layered blend keeps the base's root motion (the layer shouldn't drive the entity);
+                // events from both layers fire at full weight (an upper-body attack still lands).
+                SetPoseTags(Dst, DeltaOf(A), UnionEvents(EventsOf(A), EventsOf(B)));
+                SetPoseSync(Dst, SyncOf(A));
+                break;
+            }
+
+            case EAnimOp::MakeAdditive:
+            {
+                const uint16 Src = Reader.Read<uint16>();
+                const uint16 Dst = Reader.Read<uint16>();
+
+                FAnimTask Task;
+                Task.Type = EAnimTaskType::MakeAdditive;
+                Task.DepA = PoseTaskFor(Src);
+                SetPoseTask(Dst, OutTasks.Add(Task));
+
+                // A delta pose carries no root motion of its own; its events ride along.
+                SetPoseTags(Dst, FRootMotionDelta(), EventsOf(Src));
+                SetPoseSync(Dst, SyncOf(Src));
+                break;
+            }
+
+            case EAnimOp::ApplyAdditive:
+            {
+                const uint16 Base  = Reader.Read<uint16>();
+                const uint16 Delta = Reader.Read<uint16>();
+                const uint16 Alpha = Reader.Read<uint16>();
+                const uint16 Dst   = Reader.Read<uint16>();
+
+                FAnimTask Task;
+                Task.Type  = EAnimTaskType::ApplyAdditive;
+                Task.DepA  = PoseTaskFor(Base);
+                Task.DepB  = PoseTaskFor(Delta);
+                Task.Alpha = ReadScalar(Alpha, 0.0f);
+                SetPoseTask(Dst, OutTasks.Add(Task));
+
+                ScaleEventWeights(EventsOf(Delta), Math::Clamp(Task.Alpha, 0.0f, 1.0f));
+                SetPoseTags(Dst, DeltaOf(Base), UnionEvents(EventsOf(Base), EventsOf(Delta)));
+                SetPoseSync(Dst, SyncOf(Base));
                 break;
             }
 
@@ -521,9 +637,14 @@ namespace Lumina
                 const FAnimGraphStateMachine& SM = Graph->StateMachines[SmIdx];
                 const int32 NumStates = (int32)SM.StatePoseRegisters.size();
 
+                FAnimTask RefTask;
+                RefTask.Type = EAnimTaskType::ReferencePose;
+
                 if (NumStates == 0)
                 {
-                    State.PoseRegisters[Dst].ResetToBindPose(Skeleton);
+                    SetPoseTask(Dst, OutTasks.Add(RefTask));
+                    SetPoseTags(Dst, FRootMotionDelta(), FEventRange());
+                    SetPoseSync(Dst, FSyncTag());
                     break;
                 }
 
@@ -531,7 +652,9 @@ namespace Lumina
                 if (SM.CurrentStateSlot >= NumState || SM.FromStateSlot >= NumState ||
                     SmIdx >= State.Inertializers.size())
                 {
-                    State.PoseRegisters[Dst].ResetToBindPose(Skeleton);
+                    SetPoseTask(Dst, OutTasks.Add(RefTask));
+                    SetPoseTags(Dst, FRootMotionDelta(), FEventRange());
+                    SetPoseSync(Dst, FSyncTag());
                     break;
                 }
 
@@ -572,26 +695,41 @@ namespace Lumina
 
                 if (CurReg >= NumPose)
                 {
-                    State.PoseRegisters[Dst].ResetToBindPose(Skeleton);
+                    SetPoseTask(Dst, OutTasks.Add(RefTask));
+                    SetPoseTags(Dst, FRootMotionDelta(), FEventRange());
+                    SetPoseSync(Dst, FSyncTag());
                     From = -1;
                 }
                 else
                 {
-                    // Inertialize the seam: capture the offset from the last shown pose (PrevOutput) to the
-                    // new target, then decay it onto the freshly-evaluated target each frame. Pop-free, and
-                    // only the target state contributes -- no cross-fade of two trees. An interrupt re-captures
-                    // from the currently-shown (already-inertializing) pose, so velocity stays continuous.
+                    // Inertialize the seam: the update pass owns the control state (start/expiry/elapsed);
+                    // the recorded task captures the offset from the last shown pose and decays it onto the
+                    // freshly-evaluated target at execute time. Only the target state's chain is wired, so
+                    // inactive states never evaluate. An interrupt re-captures from the currently-shown
+                    // (already-inertializing) pose, so velocity stays continuous.
                     if (bStart)
                     {
-                        Detail::InertCapture(Inert, Inert.PrevOutput, Inert.PrevPrevOutput,
-                                             State.PoseRegisters[CurReg], Inert.Duration, DeltaTime,
-                                             Inert.HistoryCount >= 2);
+                        Inert.bActive = Inert.Duration > 1e-5f;
                         Inert.Elapsed = 0.0f;
                     }
 
+                    FAnimTask Task;
+                    Task.Type      = EAnimTaskType::StateMachineOutput;
+                    Task.DepA      = PoseTaskFor(CurReg);
+                    Task.Inert     = &Inert;
+                    Task.bCapture  = bStart;
+                    Task.bApply    = Inert.bActive;
+                    Task.Time      = Inert.Elapsed; // pre-advance: the offset decays from this frame's time
+                    Task.DeltaTime = DeltaTime;
+                    SetPoseTask(Dst, OutTasks.Add(Task));
+
+                    // Only the target state's branch survives: its root motion drives the entity and
+                    // its events fire; inactive states' tags are simply never propagated.
+                    SetPoseTags(Dst, DeltaOf(CurReg), EventsOf(CurReg));
+                    SetPoseSync(Dst, SyncOf(CurReg));
+
                     if (Inert.bActive)
                     {
-                        Detail::InertApply(Inert, State.PoseRegisters[CurReg], State.PoseRegisters[Dst]);
                         Inert.Elapsed += DeltaTime;
                         if (Inert.Elapsed >= Inert.Duration)
                         {
@@ -601,18 +739,12 @@ namespace Lumina
                     }
                     else
                     {
-                        State.PoseRegisters[Dst] = State.PoseRegisters[CurReg];
                         From = -1;
                     }
                 }
 
                 State.StateSlots[SM.CurrentStateSlot] = (float)Current;
                 State.StateSlots[SM.FromStateSlot]    = (float)From;
-
-                // 2-frame output history for the next seam's velocity estimate.
-                Inert.PrevPrevOutput = Inert.PrevOutput;
-                Inert.PrevOutput     = State.PoseRegisters[Dst];
-                Inert.HistoryCount   = Math::Min(Inert.HistoryCount + 1, 2);
                 break;
             }
 
@@ -628,25 +760,22 @@ namespace Lumina
                 const FVector3 S      = Reader.Read<FVector3>();
                 const uint16 Dst      = Reader.Read<uint16>();
 
-                if (Src < NumPose && Dst < NumPose)
-                {
-                    const float AlphaValue = AlphaReg < NumScalar ? Scalars[AlphaReg] : 1.0f;
+                const EBoneTransformSpace Space = Detail::ReadEnumReg<EBoneTransformSpace>(Scalars, NumScalar, SpaceReg, (int32)EBoneTransformSpace::ComponentSpace);
+                const EBoneTransformMode  Mode  = Detail::ReadEnumReg<EBoneTransformMode>(Scalars, NumScalar, ModeReg, (int32)EBoneTransformMode::Replace);
 
-                    const EBoneTransformSpace Space = Detail::ReadEnumReg<EBoneTransformSpace>(Scalars, NumScalar, SpaceReg, (int32)EBoneTransformSpace::ComponentSpace);
-                    const EBoneTransformMode  Mode  = Detail::ReadEnumReg<EBoneTransformMode>(Scalars, NumScalar, ModeReg, (int32)EBoneTransformMode::Replace);
-
-                    if (Dst != Src)
-                    {
-                        State.PoseRegisters[Dst] = State.PoseRegisters[Src];
-                    }
-
-                    AnimPose::ApplyBoneTransform(State.PoseRegisters[Dst],
-                                                 Skeleton,
-                                                 (int32)BoneIdx,
-                                                 Space == EBoneTransformSpace::LocalBone ? AnimPose::EBoneSpace::LocalBone : AnimPose::EBoneSpace::ComponentSpace,
-                                                 Mode == EBoneTransformMode::Add ? AnimPose::EBoneApplyMode::Add : AnimPose::EBoneApplyMode::Replace,
-                                                 T, R, S, AlphaValue);
-                }
+                FAnimTask Task;
+                Task.Type  = EAnimTaskType::BoneTransform;
+                Task.DepA  = PoseTaskFor(Src);
+                Task.Alpha = ReadScalar(AlphaReg, 1.0f);
+                Task.T     = T;
+                Task.R     = R;
+                Task.S     = S;
+                Task.BoneA = BoneIdx;
+                Task.Space = (uint8)(Space == EBoneTransformSpace::LocalBone ? AnimPose::EBoneSpace::LocalBone : AnimPose::EBoneSpace::ComponentSpace);
+                Task.Mode  = (uint8)(Mode == EBoneTransformMode::Add ? AnimPose::EBoneApplyMode::Add : AnimPose::EBoneApplyMode::Replace);
+                SetPoseTask(Dst, OutTasks.Add(Task));
+                SetPoseTags(Dst, DeltaOf(Src), EventsOf(Src));
+                SetPoseSync(Dst, SyncOf(Src));
                 break;
             }
 
@@ -663,38 +792,46 @@ namespace Lumina
                 const FVector3 Pole   = Reader.Read<FVector3>();
                 const uint16 Dst      = Reader.Read<uint16>();
 
-                if (Src < NumPose && Dst < NumPose)
-                {
-                    const float AlphaValue = AlphaReg < NumScalar ? Scalars[AlphaReg] : 1.0f;
-                    const FVector3 Target(
-                        TX < NumScalar ? Scalars[TX] : 0.0f,
-                        TY < NumScalar ? Scalars[TY] : 0.0f,
-                        TZ < NumScalar ? Scalars[TZ] : 0.0f);
-
-                    if (Dst != Src)
-                    {
-                        State.PoseRegisters[Dst] = State.PoseRegisters[Src];
-                    }
-
-                    AnimPose::TwoBoneIK(State.PoseRegisters[Dst], Skeleton,
-                                        (int32)RootIdx, (int32)MidIdx, (int32)EndIdx,
-                                        Target, Pole, AlphaValue);
-                }
+                FAnimTask Task;
+                Task.Type  = EAnimTaskType::TwoBoneIK;
+                Task.DepA  = PoseTaskFor(Src);
+                Task.Alpha = ReadScalar(AlphaReg, 1.0f);
+                Task.T     = FVector3(ReadScalar(TX, 0.0f), ReadScalar(TY, 0.0f), ReadScalar(TZ, 0.0f));
+                Task.S     = Pole;
+                Task.BoneA = RootIdx;
+                Task.BoneB = MidIdx;
+                Task.BoneC = EndIdx;
+                SetPoseTask(Dst, OutTasks.Add(Task));
+                SetPoseTags(Dst, DeltaOf(Src), EventsOf(Src));
+                SetPoseSync(Dst, SyncOf(Src));
                 break;
             }
 
             case EAnimOp::Output:
             {
                 const uint16 Src = Reader.Read<uint16>();
-                if (Src < NumPose && State.PoseRegisters[Src].IsValid())
+                OutTasks.OutputTask = PoseTaskFor(Src);
+
+                RootMotionInOut.Delta = DeltaOf(Src);
+
+                // Pin the root when locked, or when the branch that reached the output is
+                // root-motion driven (its motion moves the entity; the pose must stay centered).
+                OutTasks.bLockRoot = RootMotionInOut.Mode == ERootMotionLockMode::ForceLock ||
+                                     (bExtractRootMotion && RootMotionInOut.Delta.bHasMotion);
+                OutTasks.RootBoneIndex = RootMotionInOut.RootBoneIndex;
+
+                if (OutEvents != nullptr)
                 {
-                    if (bLockRoot && RootBoneIndex != INDEX_NONE)
+                    const FEventRange Surviving = EventsOf(Src);
+                    for (uint16 i = Surviving.Start; i < Surviving.End && i < (uint16)EventScratch.size(); ++i)
                     {
-                        RootMotion::PinRootToBindPose(State.PoseRegisters[Src], Skeleton, RootBoneIndex);
+                        if (EventScratch[i].Weight > 0.01f)
+                        {
+                            OutEvents->push_back(EventScratch[i]);
+                        }
                     }
-                    AnimPose::ToSkinningMatrices(State.PoseRegisters[Src], Skeleton, OutMatrices);
-                    bOutputWritten = true;
                 }
+
                 Reader.Cursor = Reader.Size;
                 break;
             }
@@ -708,11 +845,13 @@ namespace Lumina
             }
         }
 
-        if (!bOutputWritten)
+        // A graph with no Output still yields a valid recipe (bind pose), so the executor always runs
+        // and the mesh never keeps stale matrices.
+        if (OutTasks.OutputTask == FAnimTask::NoTask)
         {
-            FPose BindPose;
-            BindPose.ResetToBindPose(Skeleton);
-            AnimPose::ToSkinningMatrices(BindPose, Skeleton, OutMatrices);
+            FAnimTask Ref;
+            Ref.Type = EAnimTaskType::ReferencePose;
+            OutTasks.OutputTask = OutTasks.Add(Ref);
         }
     }
 }

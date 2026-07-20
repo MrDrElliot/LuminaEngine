@@ -72,18 +72,22 @@ namespace Lumina
             OutR = Math::ToQuat(Rot);
         }
 
+        // NumActiveBones on the kernels below is the skeleton-LOD cut: bones past it pass through
+        // from the first input (A / Base) untouched instead of being blended. Negative = all bones.
+
         // Out = Lerp(A, B, Alpha). A, B and Out may alias. Alpha is clamped to [0,1].
-        RUNTIME_API void Blend(const FPose& A, const FPose& B, float Alpha, FPose& Out);
+        RUNTIME_API void Blend(const FPose& A, const FPose& B, float Alpha, FPose& Out, int32 NumActiveBones = -1);
 
         // Per-bone masked blend: the blend alpha for bone i is Alpha * BoneWeights[i].
         // BoneWeights shorter than the bone count treats missing entries as 1.0.
-        RUNTIME_API void BlendMasked(const FPose& A, const FPose& B, float Alpha, const TVector<float>& BoneWeights, FPose& Out);
+        RUNTIME_API void BlendMasked(const FPose& A, const FPose& B, float Alpha, const TVector<float>& BoneWeights, FPose& Out, int32 NumActiveBones = -1);
 
         // OutDelta := Src relative to bind pose (T/S differences/ratios, R = Src * inverse(Bind)). Pair with ApplyAdditive.
-        RUNTIME_API void MakeAdditive(const FPose& Src, const FSkeletonResource* Skeleton, FPose& OutDelta);
+        // Bones past the LOD cut get the identity delta.
+        RUNTIME_API void MakeAdditive(const FPose& Src, const FSkeletonResource* Skeleton, FPose& OutDelta, int32 NumActiveBones = -1);
 
         // Out := Base + Alpha * Delta (TRS-wise): T adds, S lerps from 1, R slerps from identity then post-multiplies base.
-        RUNTIME_API void ApplyAdditive(const FPose& Base, const FPose& Delta, float Alpha, FPose& Out);
+        RUNTIME_API void ApplyAdditive(const FPose& Base, const FPose& Delta, float Alpha, FPose& Out, int32 NumActiveBones = -1);
 
         // Resolves a local-space pose into GPU skinning matrices (Global * InvBind).
         RUNTIME_API void ToSkinningMatrices(const FPose& Pose, const FSkeletonResource* Skeleton, TVector<FMatrix4>& OutMatrices);

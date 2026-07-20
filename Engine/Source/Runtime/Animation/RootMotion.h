@@ -38,5 +38,10 @@ namespace Lumina
                                                       float CurTime,
                                                       bool bLooping,
                                                       float Duration);
+
+        // Blends two deltas by Alpha (translation lerp, rotation slerp); identity stands in for a
+        // motionless side so blending fades motion in/out. bHasMotion propagates if either side has
+        // it, marking the branch as root-motion driven through the graph.
+        RUNTIME_API FRootMotionDelta BlendRootMotion(const FRootMotionDelta& A, const FRootMotionDelta& B, float Alpha);
     }
 }

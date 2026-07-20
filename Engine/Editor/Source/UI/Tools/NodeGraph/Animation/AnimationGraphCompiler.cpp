@@ -75,7 +75,7 @@ namespace Lumina
         return Dst;
     }
 
-    uint16 FAnimationGraphCompiler::EmitAdvanceClock(uint16 StateSlot, uint16 SpeedReg, uint16 ClipIndex, uint16 LoopModeReg, uint16& OutFinishedReg)
+    uint16 FAnimationGraphCompiler::EmitAdvanceClock(uint16 StateSlot, uint16 SpeedReg, uint16 ClipIndex, uint16 LoopModeReg, uint16& OutFinishedReg, uint16 SyncGroup)
     {
         const uint16 DstClock    = AllocScalarReg();
         const uint16 DstFinished = AllocScalarReg();
@@ -86,8 +86,22 @@ namespace Lumina
         Write(LoopModeReg);
         Write(DstClock);
         Write(DstFinished);
+        Write(SyncGroup);
         OutFinishedReg = DstFinished;
         return DstClock;
+    }
+
+    uint16 FAnimationGraphCompiler::AddSyncGroup(const FName& Name)
+    {
+        for (SIZE_T i = 0; i < SyncGroupNames.size(); ++i)
+        {
+            if (SyncGroupNames[i] == Name)
+            {
+                return (uint16)i;
+            }
+        }
+        SyncGroupNames.push_back(Name);
+        return (uint16)(SyncGroupNames.size() - 1);
     }
 
     uint16 FAnimationGraphCompiler::EmitSampleAnim(uint16 ClipIndex, uint16 TimeReg)
@@ -380,6 +394,8 @@ namespace Lumina
         OutGraph->NumScalarRegisters = NextScalarReg;
         OutGraph->NumPoseRegisters   = NextPoseReg;
         OutGraph->NumStateSlots      = NextStateSlot;
+        OutGraph->NumSyncGroups      = (uint16)SyncGroupNames.size();
+        OutGraph->BytecodeVersion    = kAnimBytecodeVersion;
 
         OutGraph->ResolveTransitionParameters();
     }

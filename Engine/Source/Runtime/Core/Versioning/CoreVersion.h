@@ -9,6 +9,12 @@ enum class ELuminaEngineVersion : uint32
 {
 	INITIAL_VERSION = 1000,
 
+	// CAnimationGraph serializes NumSyncGroups (phase-matched blend sync groups).
+	ANIM_GRAPH_SYNC_GROUPS,
+
+	// CAnimationGraph serializes BytecodeVersion (stale programs refused instead of misparsed).
+	ANIM_GRAPH_BYTECODE_VERSION,
+
 	AUTOMATIC_VERSION_PLUS_ONE,
 	AUTOMATIC_VERSION = AUTOMATIC_VERSION_PLUS_ONE - 1
 };

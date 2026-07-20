@@ -42,6 +42,8 @@ internal sealed class ScriptManager
     /// <summary>The EntitySystem runtime for the current generation, or null when no scripts are loaded.</summary>
     public EntitySystemRuntime? EntitySystems { get; private set; }
 
+    public RenderSceneRuntime? RenderScenes { get; private set; }
+
     /// <summary>Hosts C# subclasses of REFLECT(Scriptable) native CObjects for the current generation.</summary>
     public ScriptableRuntime? Scriptables { get; private set; }
 
@@ -144,6 +146,7 @@ internal sealed class ScriptManager
         var Library = new TypeLibrary(AllTypes);
         EntityScripts = new EntityScriptRuntime(Library);
         EntitySystems = new EntitySystemRuntime(Library);
+        RenderScenes = new RenderSceneRuntime(Library);
         Scriptables = new ScriptableRuntime(Library);
 
         Native.Log(ELogLevel.Info,
@@ -270,6 +273,8 @@ internal sealed class ScriptManager
         EntityScripts = null;
         EntitySystems?.FreeAll();
         EntitySystems = null;
+        RenderScenes?.FreeAll();  // native destroys these pre-reload; this is the process-shutdown backstop
+        RenderScenes = null;
         Scriptables?.FreeAll();   // C# Scriptable subclass instances (GCHandles) -> teardown contract
         Scriptables = null;
 

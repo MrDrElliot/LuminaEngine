@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "ForwardRenderScene.h"
 #include <algorithm>
+#include "Animation/SkeletalMeshUtils.h"
 #include "Assets/AssetTypes/Material/Material.h"
 #include "Assets/AssetTypes/Mesh/SkeletalMesh/SkeletalMesh.h"
 #include "assets/assettypes/mesh/skeleton/skeleton.h"
@@ -93,7 +94,7 @@ namespace Lumina
     namespace Barriers = RHI::Barriers;
 
     FForwardRenderScene::FForwardRenderScene(CWorld* InWorld)
-        : World(InWorld)
+        : IRenderScene(InWorld)
         , ShadowAtlas(FShadowAtlasConfig())
     {
     }
@@ -344,6 +345,7 @@ namespace Lumina
             FreeBuffer(DeferCountRing[Slot]);
             FreeBuffer(CullDispatchArgsRing[Slot]);
             FreeBuffer(SpdCounterRing[Slot]);
+            FreeBuffer(InstancePrefixRing[Slot]);
             FreeBuffer(MaterialBinTileBitsRing[Slot]);
             FreeBuffer(MaterialBinPixelIdRing[Slot]);
         }
@@ -525,7 +527,8 @@ namespace Lumina
         SceneGlobalData.SSAOSettings.Radius             = Frame.CachedWorldSettings.SSAORadius;
         SceneGlobalData.SSAOSettings.Intensity          = Frame.CachedWorldSettings.SSAOIntensity;
         SceneGlobalData.SSAOSettings.Power              = Frame.CachedWorldSettings.SSAOPower;
-        SceneGlobalData.CullData.Frustum                = AsGPU(ViewVolume.GetFrustum());
+        Frame.CameraFrustum                             = ViewVolume.GetFrustum();
+        SceneGlobalData.CullData.Frustum                = AsGPU(Frame.CameraFrustum);
         SceneGlobalData.CullData.ShadowFrustum          = SceneGlobalData.CullData.Frustum; // Rebuilt after directional light is processed.
         SceneGlobalData.CullData.bHasDirectional        = 0u;
         SceneGlobalData.CullData.InstanceNum            = (uint32)Frame.Geometry.Instances.size();
@@ -1095,6 +1098,57 @@ namespace Lumina
         return Local;
     }
 
+    namespace
+    {
+        template <typename TStorage>
+        FORCEINLINE auto& PackedPayloadAt(TStorage& Storage, uint32 Index)
+        {
+            constexpr size_t PageSize = entt::component_traits<typename TStorage::value_type, entt::entity>::page_size;
+            return Storage.raw()[Index / PageSize][Index % PageSize];
+        }
+        
+        template <typename TStorage, typename TDisabledStorage, typename TTransformStorage, typename TFn>
+        void ForEachMeshInRange(TStorage& Storage, const TDisabledStorage& Disabled, TTransformStorage& Transforms,
+                                uint32 Start, uint32 End, TFn&& Fn)
+        {
+            constexpr uint32 kBatch = 64u;
+            using TComponent = typename TStorage::value_type;
+
+            const entt::entity* Ents = Storage.data();
+            for (uint32 Base = Start; Base < End; Base += kBatch)
+            {
+                const uint32 Stop = Math::Min(Base + kBatch, End);
+
+                entt::entity                Kept[kBatch];
+                TComponent*                 Comps[kBatch];
+                const STransformComponent*  Xforms[kBatch];
+                uint32 Count = 0;
+
+                for (uint32 i = Base; i < Stop; ++i)
+                {
+                    const entt::entity Entity = Ents[i];
+                    if (Entity == entt::tombstone || Disabled.contains(Entity))
+                    {
+                        continue;
+                    }
+
+                    const STransformComponent& Transform = Transforms.get(Entity);
+                    Memory::Prefetch(&Transform, sizeof(STransformComponent));
+
+                    Kept[Count]   = Entity;
+                    Comps[Count]  = &PackedPayloadAt(Storage, i);
+                    Xforms[Count] = &Transform;
+                    ++Count;
+                }
+
+                for (uint32 k = 0; k < Count; ++k)
+                {
+                    Fn(Kept[k], *Comps[k], *Xforms[k]);
+                }
+            }
+        }
+    }
+
     void FForwardRenderScene::CompileDrawCommands_GameThread()
     {
         LUMINA_PROFILE_SCOPE();
@@ -1130,10 +1184,7 @@ namespace Lumina
             auto EnvironmentView     = Registry.view<SEnvironmentComponent>(entt::exclude<SDisabledTag>);
             auto SkyLightView        = Registry.view<SSkyLightComponent>(entt::exclude<SDisabledTag>);
             auto FogView             = Registry.view<SExponentialHeightFogComponent>(entt::exclude<SDisabledTag>);
-            auto StaticView          = Registry.view<SStaticMeshComponent>(entt::exclude<SDisabledTag>);
-            auto DynamicMeshView     = Registry.view<SDynamicMeshComponent>(entt::exclude<SDisabledTag>);
             auto FoliageView         = Registry.view<SFoliageComponent>(entt::exclude<SDisabledTag>);
-            auto SkeletalView        = Registry.view<SSkeletalMeshComponent>(entt::exclude<SDisabledTag>);
             auto TerrainAllView      = Registry.view<STerrainComponent>();
             auto TerrainView         = Registry.view<STerrainComponent>(entt::exclude<SDisabledTag>);
             auto ParticleAllView     = Registry.view<SParticleSystemComponent>();
@@ -1141,13 +1192,20 @@ namespace Lumina
             auto DecalView           = Registry.view<SDecalComponent>(entt::exclude<SDisabledTag>);
             auto WaterView           = Registry.view<SWaterComponent>(entt::exclude<SDisabledTag>);
             auto& TransformStorage  = Registry.storage<STransformComponent>();
-            
+
+            // Mesh pools walked directly (packed payload + explicit tombstone/disabled checks) by
+            // ForEachMeshInRange instead of through view contains()+get() sparse walks per entity.
+            auto& StaticMeshStorage   = Registry.storage<SStaticMeshComponent>();
+            auto& DynamicMeshStorage  = Registry.storage<SDynamicMeshComponent>();
+            auto& SkeletalMeshStorage = Registry.storage<SSkeletalMeshComponent>();
+            const auto& DisabledStorage = Registry.storage<SDisabledTag>();
+
             ECS::Utils::ResolveAllDirtyTransforms(Registry);
 
             // Per-frame CPU reject volumes built before parallel gather so workers query lock-free.
             BuildSceneCullContext();
 
-            const size_t EntityCount       = StaticView.size_hint() + SkeletalView.size_hint();
+            const size_t EntityCount       = StaticMeshStorage.size() + SkeletalMeshStorage.size();
             const size_t EstimatedProxies  = EntityCount * 2;
 
             Instances.reserve(EstimatedProxies);
@@ -1186,123 +1244,49 @@ namespace Lumina
                 DefaultFont->GetAtlasResourceID();
             }
 
-            // Screen-space debug text (World::DrawDebugText): drain the queued lines and lay them out top-left
-            // in pixels (the debug pass converts to NDC). Default font, single batch. Dev/Debug only.
-            Frame.Primitives.DebugTextGlyphs.clear();
-            Frame.Primitives.DebugTextBatch = {};
-#if !defined(LE_SHIPPING)
-            {
-                TVector<FDebugTextLine> DebugLines;
-                World->DrainDebugTextLines(DebugLines);
-
-                CFont* DebugFont = CFontManager::Get().GetDefaultFont();
-                const int32 DebugAtlasID = DebugFont ? DebugFont->GetAtlasResourceID() : -1;
-                if (!DebugLines.empty() && DebugFont && DebugFont->HasAtlas() && DebugAtlasID >= 0)
-                {
-                    // Fixed pixel size in the (fixed-resolution) world RT, so the text is a consistent size
-                    // regardless of viewport aspect/size.
-                    const float PxSize = 32.0f;   // pixels per em
-                    const float Margin = 12.0f;
-                    float       PenY   = Margin;
-
-                    TVector<FShapedGlyph> DebugShaped;
-                    for (const FDebugTextLine& Line : DebugLines)
-                    {
-                        const uint32 Color = PackColor(Line.Color);
-                        if (DebugFont->ShapeText(Line.Text, 0.0f /*left*/, 0.0f, 1.0f, DebugShaped))
-                        {
-                            // ShapeText anchors the first line's top near em y=0 and stacks downward (em y<=0);
-                            // larger em y = higher on screen, so screen Y = PenY - em*PxSize.
-                            for (const FShapedGlyph& S : DebugShaped)
-                            {
-                                FGPUGlyph& G = Frame.Primitives.DebugTextGlyphs.emplace_back();
-                                G.PlaneMin  = FVector2(Margin + S.Min.x * PxSize, PenY - S.Max.y * PxSize);
-                                G.PlaneMax  = FVector2(Margin + S.Max.x * PxSize, PenY - S.Min.y * PxSize);
-                                G.UVRect    = S.UV;
-                                G.ColorPack = Color;
-                            }
-                        }
-
-                        int32 NumLines = 1;
-                        for (const char C : Line.Text)
-                        {
-                            if (C == '\n') ++NumLines;
-                        }
-                        PenY += (float)NumLines * DebugFont->GetLineHeight() * PxSize;
-                    }
-
-                    if (!Frame.Primitives.DebugTextGlyphs.empty())
-                    {
-                        FFrameData::FTextBatch& Batch = Frame.Primitives.DebugTextBatch;
-                        Batch.AtlasIndex    = (uint32)DebugAtlasID;
-                        Batch.AtlasWidth    = DebugFont->GetAtlasWidth();
-                        Batch.AtlasHeight   = DebugFont->GetAtlasHeight();
-                        Batch.DistanceRange = DebugFont->GetDistanceRange();
-                        Batch.FirstInstance = 0;
-                        Batch.Count         = (uint32)Frame.Primitives.DebugTextGlyphs.size();
-                    }
-                }
-            }
-#endif
+            // Debug text (World::DrawDebugText) is shaped after both graph dispatches below, so its
+            // serial cost overlaps the parallel gather instead of delaying it.
 
             DrawTaskGraph.Reset();   // reuse the persistent graph (allocator block + capacity)
             FTaskGraph& Graph = DrawTaskGraph;
 
-            FTaskGraph::FNodeHandle StaticNode = Graph.AddParallelFor((uint32)StaticView.handle()->size(), 64, [&](const Task::FParallelRange& Range)
+            FTaskGraph::FNodeHandle StaticNode = Graph.AddParallelFor((uint32)StaticMeshStorage.size(), 64, [&](const Task::FParallelRange& Range)
             {
                 LUMINA_PROFILE_SECTION("Process Static Mesh Range");
                 FThreadLocalDrawData& Local = AcquireThreadLocalDrawData(Range.Thread);
-                auto Handle = StaticView.handle();
-                for (uint32 i = Range.Start; i < Range.End; ++i)
-                {
-                    entt::entity Entity = (*Handle)[i];
-                    if (StaticView.contains(Entity))
+                ForEachMeshInRange(StaticMeshStorage, DisabledStorage, TransformStorage, Range.Start, Range.End,
+                    [&](entt::entity Entity, const SStaticMeshComponent& MeshComponent, const STransformComponent& TransformComponent)
                     {
-                        const SStaticMeshComponent& MeshComponent      = StaticView.get<SStaticMeshComponent>(Entity);
-                        const STransformComponent&  TransformComponent = TransformStorage.get(Entity);
                         ProcessStaticMeshEntityInternal(Entity, MeshComponent, TransformComponent, Local);
-                    }
-                }
+                    });
             }, ETaskPriority::High); // critical path: MergeNode waits on this, so it runs ahead of emitters
 
-            FTaskGraph::FNodeHandle DynamicNode = Graph.AddParallelFor((uint32)DynamicMeshView.handle()->size(), 64, [&](const Task::FParallelRange& Range)
+            FTaskGraph::FNodeHandle DynamicNode = Graph.AddParallelFor((uint32)DynamicMeshStorage.size(), 64, [&](const Task::FParallelRange& Range)
             {
                 LUMINA_PROFILE_SECTION("Process Dynamic Mesh Range");
                 FThreadLocalDrawData& Local = AcquireThreadLocalDrawData(Range.Thread);
-                auto Handle = DynamicMeshView.handle();
-                for (uint32 i = Range.Start; i < Range.End; ++i)
-                {
-                    entt::entity Entity = (*Handle)[i];
-                    if (DynamicMeshView.contains(Entity))
+                ForEachMeshInRange(DynamicMeshStorage, DisabledStorage, TransformStorage, Range.Start, Range.End,
+                    [&](entt::entity Entity, const SDynamicMeshComponent& MeshComponent, const STransformComponent& TransformComponent)
                     {
-                        const SDynamicMeshComponent& MeshComponent      = DynamicMeshView.get<SDynamicMeshComponent>(Entity);
-                        const STransformComponent&   TransformComponent = TransformStorage.get(Entity);
                         ProcessDynamicMeshEntityInternal(Entity, MeshComponent, TransformComponent, Local);
-                    }
-                }
+                    });
             }, ETaskPriority::High); // critical path (gates MergeNode)
 
-            FTaskGraph::FNodeHandle SkeletalNode = Graph.AddParallelFor((uint32)SkeletalView.handle()->size(), 32, [&](const Task::FParallelRange& Range)
+            FTaskGraph::FNodeHandle SkeletalNode = Graph.AddParallelFor((uint32)SkeletalMeshStorage.size(), 32, [&](const Task::FParallelRange& Range)
             {
                 LUMINA_PROFILE_SECTION("Process Skeletal Mesh Range");
                 FThreadLocalDrawData& Local = AcquireThreadLocalDrawData(Range.Thread);
-                auto Handle = SkeletalView.handle();
-                for (uint32 i = Range.Start; i < Range.End; ++i)
-                {
-                    entt::entity Entity = (*Handle)[i];
-                    if (SkeletalView.contains(Entity))
+                ForEachMeshInRange(SkeletalMeshStorage, DisabledStorage, TransformStorage, Range.Start, Range.End,
+                    [&](entt::entity Entity, SSkeletalMeshComponent& MeshComponent, const STransformComponent& TransformComponent)
                     {
-                        SSkeletalMeshComponent&     MeshComponent      = SkeletalView.get<SSkeletalMeshComponent>(Entity);
-                        const STransformComponent&  TransformComponent = TransformStorage.get(Entity);
                         ProcessSkeletalMeshEntityInternal(Entity, MeshComponent, TransformComponent, Local);
-                    }
-                }
+                    });
             }, ETaskPriority::High); // critical path (gates MergeNode)
 
             FTaskGraph::FNodeHandle MergeNode = Graph.Add([&]
             {
                 MergeMeshDrawData(ThreadLocal);
-            }, ETaskPriority::High); // tail of the critical path: grab a worker the instant its inputs are done
+            }, ETaskPriority::High);
 
             // Foliage: mostly-static instance soup. The heavy per-instance precompute (world transform +
             // bounds) lives in a persistent BakedInstances cache rebuilt ONLY when the foliage changes
@@ -1346,6 +1330,18 @@ namespace Lumina
                 Graph.AddDependency(MergeNode, FoliageNode);
             });
 
+            Graph.AddDependency(MergeNode, StaticNode);
+            Graph.AddDependency(MergeNode, DynamicNode);
+            Graph.AddDependency(MergeNode, SkeletalNode);
+
+            // Kick the mesh critical path NOW: the workers chew on the gather while the game thread
+            // builds the emitter graph below (lights/primitives/extract snapshots), whose tasks share
+            // no state with the mesh nodes. This pulls that build time off the serial window.
+            Graph.Dispatch();
+
+            EmitTaskGraph.Reset();
+            FTaskGraph& EmitGraph = EmitTaskGraph;
+
             FLineBatcherComponent* LineBatcher = nullptr;
             LineBatcherView.each([&](FLineBatcherComponent& C) { if (LineBatcher == nullptr)
                     {
@@ -1356,20 +1352,20 @@ namespace Lumina
 
             if (LineChunkCount > 0)
             {
-                FTaskGraph::FNodeHandle LineBatchNode = Graph.AddParallelFor(LineChunkCount, 1, [this](const Task::FParallelRange& Range)
+                FTaskGraph::FNodeHandle LineBatchNode = EmitGraph.AddParallelFor(LineChunkCount, 1, [this](const Task::FParallelRange& Range)
                 {
                     BatchLineChunks(Range);
                 });
-                FTaskGraph::FNodeHandle LineFinalizeNode = Graph.Add([this, LineBatcher]
+                FTaskGraph::FNodeHandle LineFinalizeNode = EmitGraph.Add([this, LineBatcher]
                 {
                     FinalizeBatchedLines(*LineBatcher);
                 });
-                Graph.AddDependency(LineFinalizeNode, LineBatchNode);
+                EmitGraph.AddDependency(LineFinalizeNode, LineBatchNode);
             }
 
             // Triangles are low-volume; one node, Medium priority so it overlaps the mesh fan-out without
             // stealing the first workers from the High critical-path nodes that gate MergeNode.
-            Graph.Add([&]
+            EmitGraph.Add([&]
             {
                 LUMINA_PROFILE_SECTION("Batched Triangle Processing");
 
@@ -1379,11 +1375,11 @@ namespace Lumina
                 });
             }, ETaskPriority::Medium);
 
-            Graph.Add([&]
+            EmitGraph.Add([&]
             {
                 LUMINA_PROFILE_SECTION("Process Widget Primitives");
 
-                const FFrustum WidgetFrustum = FromGPU(SceneGlobalData.CullData.Frustum);
+                const FFrustum& WidgetFrustum = Frame.CameraFrustum;
                 const bool      bCullWidgets   = SceneGlobalData.CullData.bFrustumCull != 0u;
 
                 WidgetView.each([&](entt::entity Entity, SWidgetComponent& WidgetComponent)
@@ -1414,11 +1410,11 @@ namespace Lumina
                 });
             }, ETaskPriority::High);
 
-            Graph.Add([&]
+            EmitGraph.Add([&]
             {
                 LUMINA_PROFILE_SECTION("Process Text Primitives");
 
-                const FFrustum TextFrustum = FromGPU(SceneGlobalData.CullData.Frustum);
+                const FFrustum& TextFrustum = Frame.CameraFrustum;
                 const bool      bCullText   = SceneGlobalData.CullData.bFrustumCull != 0u;
                 const FVector3  CamRight    = FVector3(SceneGlobalData.CameraData.Right);
                 const FVector3  CamUp       = FVector3(SceneGlobalData.CameraData.Up);
@@ -1557,7 +1553,7 @@ namespace Lumina
                 });
             }, ETaskPriority::Medium); // emitter, not on the mesh critical path: don't outrank Static/Skeletal/Foliage
 
-            Graph.Add([&]
+            EmitGraph.Add([&]
             {
                 LUMINA_PROFILE_SECTION("Process Billboard Primitives");
 
@@ -1634,7 +1630,7 @@ namespace Lumina
                 #endif
             }, ETaskPriority::High);
 
-            auto DLightTask = Graph.AddParallelFor(DirectionalView.handle()->size(), 32, [&](Task::FParallelRange Range)
+            auto DLightTask = EmitGraph.AddParallelFor(DirectionalView.handle()->size(), 32, [&](Task::FParallelRange Range)
             {
                 LUMINA_PROFILE_SECTION("Process Directional Light");
                 auto Handle = DirectionalView.handle();
@@ -1649,7 +1645,7 @@ namespace Lumina
                 }
             });
             
-            auto PointLightTask = Graph.AddParallelFor(PointLightView.handle()->size(), 32, [&](Task::FParallelRange Range)
+            auto PointLightTask = EmitGraph.AddParallelFor(PointLightView.handle()->size(), 32, [&](Task::FParallelRange Range)
             {
                 LUMINA_PROFILE_SECTION("Process Point Light Range");
 
@@ -1666,7 +1662,7 @@ namespace Lumina
                 }
             });
             
-            auto SpotLightTask = Graph.AddParallelFor(SpotLightView.handle()->size(), 32, [&](Task::FParallelRange Range)
+            auto SpotLightTask = EmitGraph.AddParallelFor(SpotLightView.handle()->size(), 32, [&](Task::FParallelRange Range)
             {
                 LUMINA_PROFILE_SECTION("Process Spot Light Range");
 
@@ -1683,7 +1679,7 @@ namespace Lumina
                 }
             });
             
-            Graph.Add([&]
+            EmitGraph.Add([&]
             {
                 LUMINA_PROFILE_SECTION("Extract Terrain");
 
@@ -1706,7 +1702,7 @@ namespace Lumina
                 }
             }, ETaskPriority::High);
 
-            Graph.Add([&]
+            EmitGraph.Add([&]
             {
                 LUMINA_PROFILE_SECTION("Extract Particles");
 
@@ -1758,7 +1754,7 @@ namespace Lumina
                 });
             }, ETaskPriority::High);
 
-            Graph.Add([&]
+            EmitGraph.Add([&]
             {
                 LUMINA_PROFILE_SECTION("Extract Decals");
 
@@ -1844,7 +1840,7 @@ namespace Lumina
                 }
             }, ETaskPriority::High);
 
-            Graph.Add([&]
+            EmitGraph.Add([&]
             {
                 LUMINA_PROFILE_SECTION("Extract Water");
 
@@ -1910,10 +1906,6 @@ namespace Lumina
                     Item.Flags             = 0;
 
                     Frame.Water.Surfaces.push_back(Item);
-
-                    // Underwater test: transform the camera into water-local space. Inside the XZ extent and
-                    // below the surface (local.y < 0) means the camera is submerged in this body; keep the
-                    // nearest surface overhead so the right body drives the underwater post-process.
                     const FVector4 LocalCam = Item.WorldToWater * FVector4(CameraPos, 1.0f);
                     if (Math::Abs(LocalCam.x) <= 0.5f && Math::Abs(LocalCam.z) <= 0.5f &&
                         LocalCam.y < 0.0f && LocalCam.y > BestUnderwaterLocalY)
@@ -1930,21 +1922,83 @@ namespace Lumina
                 });
             }, ETaskPriority::High);
 
-            Graph.Add([&]
+            EmitGraph.Add([&]
             {
                 LUMINA_PROFILE_SECTION("Extract Paint Ops");
                 Frame.Extracts.PaintOps.clear();
                 World->DrainRenderTargetPaints(Frame.Extracts.PaintOps);
             }, ETaskPriority::High);
 
-            Graph.AddDependency(PointLightTask, DLightTask);
-            Graph.AddDependency(SpotLightTask, DLightTask);
-            Graph.AddDependency(MergeNode, StaticNode);
-            Graph.AddDependency(MergeNode, DynamicNode);
-            Graph.AddDependency(MergeNode, SkeletalNode);
+            EmitGraph.AddDependency(PointLightTask, DLightTask);
+            EmitGraph.AddDependency(SpotLightTask, DLightTask);
 
-            Graph.Dispatch();
-            Graph.Wait();
+            EmitGraph.Dispatch();
+
+            // Screen-space debug text (World::DrawDebugText): drain the queued lines and lay them out top-left
+            // in pixels (the debug pass converts to NDC). Default font, single batch. Dev/Debug only. Runs here,
+            // after both dispatches, so the serial shaping overlaps the parallel gather.
+            Frame.Primitives.DebugTextGlyphs.clear();
+            Frame.Primitives.DebugTextBatch = {};
+#if !defined(LE_SHIPPING)
+            {
+                TVector<FDebugTextLine> DebugLines;
+                World->DrainDebugTextLines(DebugLines);
+
+                CFont* DebugFont = CFontManager::Get().GetDefaultFont();
+                const int32 DebugAtlasID = DebugFont ? DebugFont->GetAtlasResourceID() : -1;
+                if (!DebugLines.empty() && DebugFont && DebugFont->HasAtlas() && DebugAtlasID >= 0)
+                {
+                    // Fixed pixel size in the (fixed-resolution) world RT, so the text is a consistent size
+                    // regardless of viewport aspect/size.
+                    const float PxSize = 32.0f;   // pixels per em
+                    const float Margin = 12.0f;
+                    float       PenY   = Margin;
+
+                    TVector<FShapedGlyph> DebugShaped;
+                    for (const FDebugTextLine& Line : DebugLines)
+                    {
+                        const uint32 Color = PackColor(Line.Color);
+                        if (DebugFont->ShapeText(Line.Text, 0.0f /*left*/, 0.0f, 1.0f, DebugShaped))
+                        {
+                            // ShapeText anchors the first line's top near em y=0 and stacks downward (em y<=0);
+                            // larger em y = higher on screen, so screen Y = PenY - em*PxSize.
+                            for (const FShapedGlyph& S : DebugShaped)
+                            {
+                                FGPUGlyph& G = Frame.Primitives.DebugTextGlyphs.emplace_back();
+                                G.PlaneMin  = FVector2(Margin + S.Min.x * PxSize, PenY - S.Max.y * PxSize);
+                                G.PlaneMax  = FVector2(Margin + S.Max.x * PxSize, PenY - S.Min.y * PxSize);
+                                G.UVRect    = S.UV;
+                                G.ColorPack = Color;
+                            }
+                        }
+
+                        int32 NumLines = 1;
+                        for (const char C : Line.Text)
+                        {
+                            if (C == '\n') ++NumLines;
+                        }
+                        PenY += (float)NumLines * DebugFont->GetLineHeight() * PxSize;
+                    }
+
+                    if (!Frame.Primitives.DebugTextGlyphs.empty())
+                    {
+                        FFrameData::FTextBatch& Batch = Frame.Primitives.DebugTextBatch;
+                        Batch.AtlasIndex    = (uint32)DebugAtlasID;
+                        Batch.AtlasWidth    = DebugFont->GetAtlasWidth();
+                        Batch.AtlasHeight   = DebugFont->GetAtlasHeight();
+                        Batch.DistanceRange = DebugFont->GetDistanceRange();
+                        Batch.FirstInstance = 0;
+                        Batch.Count         = (uint32)Frame.Primitives.DebugTextGlyphs.size();
+                    }
+                }
+            }
+#endif
+
+            {
+                LUMINA_PROFILE_SECTION_COLORED("Wait Draw Graphs", tracy::Color::Crimson);
+                Graph.Wait();
+                EmitGraph.Wait();
+            }
 
 
             // LightCount can overshoot MAX_LIGHTS; clamp to match what Process*Light wrote.
@@ -2122,7 +2176,7 @@ namespace Lumina
         {
             const FVector3 SunDir = Math::Normalize(LightData.SunDirection);
             constexpr float ShadowSweepDistance = 2000.0f;
-            SceneGlobalData.CullData.ShadowFrustum   = AsGPU(FromGPU(SceneGlobalData.CullData.Frustum).Extruded(SunDir, ShadowSweepDistance));
+            SceneGlobalData.CullData.ShadowFrustum   = AsGPU(Frame.CameraFrustum.Extruded(SunDir, ShadowSweepDistance));
             SceneGlobalData.CullData.bHasDirectional = 1u;
         }
         else
@@ -2146,9 +2200,6 @@ namespace Lumina
         const auto& Instances            = Frame.Geometry.Instances;
         const auto& BonesData            = Frame.Geometry.BonesData;
         const auto& CullViews            = Frame.Views.CullViews;
-        const auto& IndirectArgs         = Frame.Views.IndirectArgs;
-        const auto& MeshDrawArgs         = Frame.Views.MeshDrawArgs;
-        const auto& InstanceMeshletPrefix= Frame.Geometry.InstanceMeshletPrefix;
         const auto& LightData            = Frame.Lighting.LightData;
         const auto& EnvironmentParams    = Frame.Volumetrics.EnvironmentParams;
         const int32 EnvironmentMapID     = Frame.Volumetrics.EnvironmentMapID;
@@ -2173,15 +2224,16 @@ namespace Lumina
             sizeof(uint32) * 2,
             (SIZE_T)NumCullViews * (SIZE_T)TotalMeshletBound * sizeof(uint32) * 2);
 
-        // Shared indirect args: NumViews * NumDraws FDrawIndirectArguments.
+        // Shared indirect args: NumViews * NumDraws FDrawIndirectArguments, GPU-seeded below.
+        const SIZE_T NumArgSlots = (SIZE_T)NumCullViews * (SIZE_T)NumDraws;
         const SIZE_T IndirectArgsSize = Math::Max<SIZE_T>(
             sizeof(RHI::FDrawIndirectArguments),
-            IndirectArgs.size() * sizeof(RHI::FDrawIndirectArguments));
+            NumArgSlots * sizeof(RHI::FDrawIndirectArguments));
 
-        // Mesh-task args: one FDrawMeshTasksIndirectArguments per IndirectArgs entry (same count, 12B stride).
+        // Mesh-task args: one FDrawMeshTasksIndirectArguments per arg slot (same count, 12B stride).
         const SIZE_T MeshDrawArgsSize = Math::Max<SIZE_T>(
             sizeof(RHI::FDrawMeshTasksIndirectArguments),
-            IndirectArgs.size() * sizeof(RHI::FDrawMeshTasksIndirectArguments));
+            NumArgSlots * sizeof(RHI::FDrawMeshTasksIndirectArguments));
 
         // Worst case: every camera meshlet HZB-occluded in phase 0 (first frame). Stride matches FMeshletDeferred.
         const SIZE_T DeferListSize = Math::Max<SIZE_T>(
@@ -2189,31 +2241,24 @@ namespace Lumina
             (SIZE_T)TotalMeshletBound * sizeof(uint32) * 4);
 
         // Buffers are reached only by device address; a resize swaps the allocation (old one
-        // retires on this slot's deferred-free list) with no descriptor work.
+        // retires on this slot's deferred-free list) with no descriptor work. Only the current
+        // frame slot is sized -- the others are untouched by this frame's GPU work and get
+        // sized to their own frame's needs when their turn comes around.
         ResizeBufferIfNeeded(PreSkinnedVerticesBuffer, PreSkinnedSize, 1.2f, PreSkinnedVerticesLowUsage);
-        for (uint32 Slot = 0; Slot < RHI::kFramesInFlight; ++Slot)
         {
+            const uint8 Slot = CurrentFrameSlot;
             ResizeBufferIfNeeded(IndirectArgsRing[Slot], IndirectArgsSize, 1.2f, IndirectArgsRingLowUsage[Slot]);
             ResizeBufferIfNeeded(MeshDrawArgsRing[Slot], MeshDrawArgsSize, 1.2f, MeshDrawArgsRingLowUsage[Slot]);
             ResizeBufferIfNeeded(MeshletDrawListRing[Slot], MeshletDrawListSize, 1.2f, MeshletDrawListRingLowUsage[Slot]);
             ResizeBufferIfNeeded(MeshletDeferListRing[Slot], DeferListSize, 1.2f, MeshletDeferListRingLowUsage[Slot]);
+
+            // GPU-built per-instance meshlet prefix: N+1 uints (last entry = total).
+            const SIZE_T InstancePrefixSize = Math::Max<SIZE_T>(sizeof(uint32), (Instances.size() + 1) * sizeof(uint32));
+            ResizeBufferIfNeeded(InstancePrefixRing[Slot], InstancePrefixSize, 1.2f, InstancePrefixRingLowUsage[Slot]);
         }
 
         {
             LUMINA_PROFILE_SECTION_COLORED("Write Scene Buffers", tracy::Color::OrangeRed3);
-
-            // The only CPU upload left to a persistent buffer: indirect args (GPU-consumed). Debug
-            // line/triangle geometry is ring-allocated at its draw site; everything else dynamic goes
-            // through the transient ring below.
-            // FirstInstance pre-seeded so each atomic append in CullMeshlets lands in its own slice.
-            if (!IndirectArgs.empty())
-            {
-                WriteBuffer(CL, GetIndirectArgs().Ptr, IndirectArgs.data(), IndirectArgs.size() * sizeof(RHI::FDrawIndirectArguments));
-                // Mesh-task args {0,1,1} seed: the cull accumulates GroupCountX into this (replacing the old
-                // ConvertMeshDrawArgs pass). One barrier orders both uploads before the cull reads/writes them.
-                WriteBuffer(CL, GetMeshDrawArgs().Ptr, MeshDrawArgs.data(), MeshDrawArgs.size() * sizeof(RHI::FDrawMeshTasksIndirectArguments));
-                Barriers::TransferToAll(CL);
-            }
 
             // Env/fog params are uploaded to the transient ring at their pass sites (Environment /
             // VolumetricFog*); here we only track changes to gate the costly IBL convolution below.
@@ -2300,9 +2345,10 @@ namespace Lumina
             {
                 SceneRootShared.Widgets = RHI::Core::CopyTransientArray(Frame.Primitives.WidgetInstances.data(), Frame.Primitives.WidgetInstances.size());
             }
-            if (!InstanceMeshletPrefix.empty())
+            if (!Instances.empty())
             {
-                SceneRootShared.InstanceMeshletPrefix = RHI::Core::CopyTransientArray(InstanceMeshletPrefix.data(), InstanceMeshletPrefix.size());
+                // GPU-built this frame (BuildInstancePrefix dispatch below), read by the cull's binary search.
+                SceneRootShared.InstanceMeshletPrefix = GetInstancePrefix().GetAddress();
             }
 
             SceneRootShared.Materials          = GRenderManager->GetMaterialManager().GetMaterialBuffer();
@@ -2313,27 +2359,80 @@ namespace Lumina
                 SceneGlobalData.SSAOSettings.AOTextureIndex = (uint32)CurrentView->Images[(int)ENamedImage::SSAOBlur].GetResourceID();
             }
             CurrentSceneRootAddr = BuildViewSceneRoot(*CurrentView, RHI::Core::CopyTransient(SceneGlobalData));
+
+            bool bPrepDispatched = false;
+
+            // Seed the per-view indirect + mesh-task args GPU-side (SeedIndirectArgs.slang): one thread per
+            // (view, draw) slot expands the D-entry per-draw meshlet prefix, replacing the CPU-built V*D
+            // upload. FirstInstance is pre-seeded so each atomic append in CullMeshlets lands in its own
+            // slice; mesh-task Y/Z seed to 1 and the cull accumulates GroupCountX (no ConvertMeshDrawArgs).
+            if (NumCullViews > 0u && NumDraws > 0u)
+            {
+                static const FShaderEntry* const SeedShader = FShaderLibrary::Get("SeedIndirectArgs.slang");
+                if (SeedShader)
+                {
+                    struct FSeedIndirectArgsPC
+                    {
+                        uint32 NumViews;
+                        uint32 NumDraws;
+                        uint32 TotalMeshletBound;
+                        uint32 Pad;
+                        uint64 IndirectArgsAddr;
+                        uint64 MeshDrawArgsAddr;
+                        uint64 DrawOffsetsAddr;
+                    };
+                    static_assert(sizeof(FSeedIndirectArgsPC) == 40, "FSeedIndirectArgsPC must match SeedIndirectArgs.slang.");
+
+                    FSeedIndirectArgsPC PC = {};
+                    PC.NumViews          = NumCullViews;
+                    PC.NumDraws          = NumDraws;
+                    PC.TotalMeshletBound = TotalMeshletBound;
+                    PC.IndirectArgsAddr  = GetIndirectArgs().GetAddress();
+                    PC.MeshDrawArgsAddr  = GetMeshDrawArgs().GetAddress();
+                    PC.DrawOffsetsAddr   = RHI::Core::CopyTransientArray(
+                        Frame.Geometry.DrawMeshletStartOffsets.data(), Frame.Geometry.DrawMeshletStartOffsets.size());
+
+                    RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(SeedShader));
+                    // 1D grid: even GMaxCullViews * thousands of draws stays far under the 65535-group X cap.
+                    const uint32 TotalSlots = NumCullViews * NumDraws;
+                    RHI::CmdDispatch(CL, MakeArgs(PC), (TotalSlots + 63u) / 64u, 1u, 1u);
+                    bPrepDispatched = true;
+                }
+            }
+
+            // Build the per-instance meshlet prefix GPU-side (BuildInstancePrefix.slang): a single-workgroup
+            // scan over the uploaded instances' SurfaceMeshletCount, replacing the serial CPU prefix in the
+            // merge and its per-frame N*4B upload. Independent of the seed pass; they share one barrier.
+            if (!Instances.empty())
+            {
+                static const FShaderEntry* const PrefixShader = FShaderLibrary::Get("BuildInstancePrefix.slang");
+                if (PrefixShader)
+                {
+                    struct FBuildInstancePrefixPC
+                    {
+                        uint32 NumInstances;
+                        uint32 Pad;
+                        uint64 OutPrefixAddr;
+                    };
+                    static_assert(sizeof(FBuildInstancePrefixPC) == 16, "FBuildInstancePrefixPC must match BuildInstancePrefix.slang.");
+
+                    FBuildInstancePrefixPC PC = {};
+                    PC.NumInstances  = (uint32)Instances.size();
+                    PC.OutPrefixAddr = GetInstancePrefix().GetAddress();
+
+                    RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(PrefixShader));
+                    RHI::CmdDispatch(CL, MakeArgs(PC), 1u, 1u, 1u);
+                    bPrepDispatched = true;
+                }
+            }
+
+            if (bPrepDispatched)
+            {
+                // Seeds + prefix must land before the cull's reads/atomics and the indirect-draw consumption.
+                Barriers::ComputeToAll(CL);
+            }
         }
     }
-
-    struct FResolvedSlot
-    {
-        const FShaderEntry*   VertexShader;
-        const FShaderEntry*    PixelShader;
-        const FShaderEntry*   MeshShader = nullptr;
-        const FShaderEntry*   VisBufferMeshShader = nullptr;
-        const FShaderEntry*   VisBufferVertexShader = nullptr;
-        const FShaderEntry*   MaskedVisBufferPixelShader = nullptr;
-        const FShaderEntry*   MaskedVisBufferPixelShaderPrim = nullptr;
-        const FShaderEntry*   DeferredShader = nullptr;
-        uint64              MaterialID;
-        EInstanceFlags      ExtraFlags;
-        uint16              MaterialIdx;
-        uint8               bTranslucent     : 1;
-        uint8               bMasked          : 1;
-        uint8               bAdditive        : 1;
-        uint8               bTwoSided        : 1;
-    };
 
     // Resolve the material-pure portion of a slot, cached per-thread by material so the
     // ~10 virtual calls below don't repeat for every surface sharing a material.
@@ -2397,49 +2496,7 @@ namespace Lumina
         return R;
     }
 
-    template <typename TComponent>
-    static FResolvedSlot ResolveSlot(FForwardRenderScene::FThreadLocalDrawData& Local, const TComponent& MeshComponent, int16 SlotIdx)
-    {
-        const FForwardRenderScene::FCachedMaterialResolve& M = ResolveMaterialCached(Local, MeshComponent, SlotIdx);
-
-        EInstanceFlags Extra = EInstanceFlags::None;
-        if (MeshComponent.bCastShadow && M.bMaterialCastsShadows)
-        {
-            Extra |= EInstanceFlags::CastShadow;
-        }
-        if (M.bTranslucent)
-        {
-            Extra |= EInstanceFlags::Translucent;
-        }
-        if (M.bMasked)
-        {
-            Extra |= EInstanceFlags::Masked;
-        }
-        if (M.bTwoSided)
-        {
-            Extra |= EInstanceFlags::TwoSided;
-        }
-
-        FResolvedSlot R;
-        R.VertexShader          = M.VertexShader;
-        R.PixelShader           = M.PixelShader;
-        R.MeshShader            = M.MeshShader;
-        R.VisBufferMeshShader   = M.VisBufferMeshShader;
-        R.VisBufferVertexShader = M.VisBufferVertexShader;
-        R.MaskedVisBufferPixelShader     = M.MaskedVisBufferPixelShader;
-        R.MaskedVisBufferPixelShaderPrim = M.MaskedVisBufferPixelShaderPrim;
-        R.DeferredShader        = M.DeferredShader;
-        R.MaterialID            = M.MaterialID;
-        R.ExtraFlags         = Extra;
-        R.MaterialIdx        = M.MaterialIdx;
-        R.bTranslucent       = M.bTranslucent;
-        R.bMasked            = M.bMasked;
-        R.bAdditive          = M.bAdditive;
-        R.bTwoSided          = M.bTwoSided;
-        return R;
-    }
-
-    static uint16 FindOrAddLocalBatch(FForwardRenderScene::FThreadLocalDrawData& Local, const FDrawBatchKey& Key, const FResolvedSlot& Slot)
+    static uint16 FindOrAddLocalBatch(FForwardRenderScene::FThreadLocalDrawData& Local, const FDrawBatchKey& Key, const FForwardRenderScene::FCachedMaterialResolve& Resolve)
     {
         // Linear scan: per-thread batch counts are tiny (typically <30).
         const uint32 Count = (uint32)Local.LocalBatches.size();
@@ -2453,16 +2510,8 @@ namespace Lumina
 
         // Pass arena explicitly so inner TFrameVectors bind to the same per-thread arena.
         FForwardRenderScene::FLocalBatchEntry& Entry = Local.LocalBatches.emplace_back(Local.Arena);
-        Entry.Key                  = Key;
-        Entry.VertexShader         = Slot.VertexShader;
-        Entry.PixelShader          = Slot.PixelShader;
-        Entry.MeshShader           = Slot.MeshShader;
-        Entry.VisBufferMeshShader  = Slot.VisBufferMeshShader;
-        Entry.VisBufferVertexShader = Slot.VisBufferVertexShader;
-        Entry.MaskedVisBufferPixelShader     = Slot.MaskedVisBufferPixelShader;
-        Entry.MaskedVisBufferPixelShaderPrim = Slot.MaskedVisBufferPixelShaderPrim;
-        Entry.DeferredShader       = Slot.DeferredShader;
-        Entry.MaterialIdx          = Slot.MaterialIdx;
+        Entry.Key     = Key;
+        Entry.Resolve = Resolve;
 
         return (uint16)Count;
     }
@@ -2534,13 +2583,116 @@ namespace Lumina
         return (uint32)Math::Clamp(Biased, 0, MaxLOD);
     }
 
-    void FForwardRenderScene::ProcessStaticMeshEntityInternal(entt::entity Entity, const SStaticMeshComponent& MeshComponent, const STransformComponent& TransformComponent, FThreadLocalDrawData& Local)
+    namespace
     {
-        const FFrameData& Frame = *ExtractFrame;
+        // Skinned meshlet span accumulated across the surface loop; drives the GPU pre-skinning slice.
+        struct FSkinSpanAccum
+        {
+            uint32 MinMeshlet    = ~0u;
+            uint32 MaxMeshletEnd = 0u;
+        };
+    }
+
+    // Per-surface half of the mesh gather, shared by the static / dynamic / foliage / skeletal paths:
+    // resolve the slot material, pick LODs, register the batch + draw, and emit the draw item.
+    template <typename TComponent>
+    static void EmitSurfaceDrawItems(FForwardRenderScene::FThreadLocalDrawData& Local,
+                                     const FMeshResource& Resource,
+                                     uint64 MeshletHeaderAddress,
+                                     const TComponent& MeshComponent,
+                                     EInstanceFlags BaseFlags,
+                                     uint32 EntityRecordIdx,
+                                     int32 ForcedLODIndex,
+                                     const FSceneRenderSettings& Settings,
+                                     float DistanceOverRadius,
+                                     FSkinSpanAccum* SkinSpan = nullptr)
+    {
+        for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
+        {
+            const FForwardRenderScene::FCachedMaterialResolve& M = ResolveMaterialCached(Local, MeshComponent, Surface.MaterialIndex);
+
+            EInstanceFlags Flags = BaseFlags;
+            if (MeshComponent.bCastShadow && M.bMaterialCastsShadows)
+            {
+                Flags |= EInstanceFlags::CastShadow;
+            }
+            if (M.bTranslucent)
+            {
+                Flags |= EInstanceFlags::Translucent;
+            }
+            if (M.bMasked)
+            {
+                Flags |= EInstanceFlags::Masked;
+            }
+            if (M.bTwoSided)
+            {
+                Flags |= EInstanceFlags::TwoSided;
+            }
+
+            FDrawBatchKey BatchKey
+            {
+                .MaterialID       = M.MaterialID,
+                .bTranslucent     = (M.bTranslucent ? 1u : 0u),
+                .bMasked          = (M.bMasked      ? 1u : 0u),
+                .bAdditive        = (M.bAdditive    ? 1u : 0u),
+                .bTwoSided        = (M.bTwoSided    ? 1u : 0u),
+            };
+            // CPU LOD pick replaces LOD 0; smaller ranges directly cut cull-pass cost.
+            const uint32 LODIndex       = ResolveSurfaceLOD(Surface, ForcedLODIndex, Settings.bUseLODs, DistanceOverRadius);
+            const uint32 ShadowLODIndex = ResolveShadowLOD(Surface, LODIndex, Settings.ShadowLODBias);
+
+            // Zero meshlet count gates the cull shader's MeshletHeader deref.
+            const uint32 SurfaceMeshletCount  = MeshletHeaderAddress ? Surface.LODMeshletCount[LODIndex]       : 0u;
+            const uint32 SurfaceMeshletOffset = Surface.LODMeshletOffset[LODIndex];
+            const uint32 ShadowMeshletCount   = MeshletHeaderAddress ? Surface.LODMeshletCount[ShadowLODIndex] : 0u;
+            const uint32 ShadowMeshletOffset  = Surface.LODMeshletOffset[ShadowLODIndex];
+
+            const uint16 LocalBatchIdx = FindOrAddLocalBatch(Local, BatchKey, M);
+            const uint16 LocalDrawIdx  = FindOrAddLocalDraw(Local.LocalBatches[LocalBatchIdx], FDrawKey{ Surface.StartIndex, Surface.IndexCount }, SurfaceMeshletCount);
+
+            FForwardRenderScene::FProcessedDrawItem& Item = Local.Items.emplace_back();
+            Item.EntityRecordIndex    = EntityRecordIdx;
+            Item.SurfaceMeshletOffset = SurfaceMeshletOffset;
+            Item.SurfaceMeshletCount  = SurfaceMeshletCount;
+            Item.ShadowMeshletOffset  = ShadowMeshletOffset;
+            Item.ShadowMeshletCount   = ShadowMeshletCount;
+            Item.Flags                = Flags;
+            Item.MaterialIndex        = M.MaterialIdx;
+            Item.LocalBatchIndex      = LocalBatchIdx;
+            Item.LocalDrawIndex       = LocalDrawIdx;
+            Local.LocalBatches[LocalBatchIdx].AccumSkinned(Flags);
+            Item._Pad                 = 0;
+
+            if (SkinSpan)
+            {
+                if (SurfaceMeshletCount > 0u)
+                {
+                    SkinSpan->MinMeshlet    = Math::Min(SkinSpan->MinMeshlet, SurfaceMeshletOffset);
+                    SkinSpan->MaxMeshletEnd = Math::Max(SkinSpan->MaxMeshletEnd, SurfaceMeshletOffset + SurfaceMeshletCount);
+                }
+                if (ShadowMeshletCount > 0u)
+                {
+                    SkinSpan->MinMeshlet    = Math::Min(SkinSpan->MinMeshlet, ShadowMeshletOffset);
+                    SkinSpan->MaxMeshletEnd = Math::Max(SkinSpan->MaxMeshletEnd, ShadowMeshletOffset + ShadowMeshletCount);
+                }
+            }
+        }
+    }
+
+    // Shared front half for rigid (non-skinned) mesh entities: world bounds, coarse cull, entity record,
+    // then the per-surface emit. The static and dynamic components differ only in the mesh field.
+    template <typename TComponent>
+    static void ProcessRigidMeshEntity(const FForwardRenderScene::FFrameData& Frame,
+                                       const FSceneRenderSettings& Settings,
+                                       CMesh* Mesh,
+                                       entt::entity Entity,
+                                       const TComponent& MeshComponent,
+                                       const STransformComponent& TransformComponent,
+                                       FForwardRenderScene::FThreadLocalDrawData& Local)
+    {
         const auto& SceneCullContext = Frame.Geometry.SceneCullContext;
         const auto& SceneGlobalData  = Frame.SceneGlobalData;
 
-        CMesh* Mesh = MeshComponent.StaticMesh;
         if (!IsValid(Mesh))
         {
             return;
@@ -2555,7 +2707,6 @@ namespace Lumina
         const FVector3  Center       = (BoundingBox.Min + BoundingBox.Max) * 0.5f;
         const FVector3  Extents      = BoundingBox.Max - Center;
         const float     Radius       = Math::Length(Extents) * CullScale;
-        const FVector4  SphereBounds = FVector4(Center, Radius);
 
         if (!SceneCullContext.ShouldKeep(
                 Center,
@@ -2569,15 +2720,11 @@ namespace Lumina
         }
 
         const FMeshResource& Resource = Mesh->GetMeshResource();
-        const FMeshResource::FMeshBuffers& MB = Mesh->GetMeshBuffers();
         // GPUPtr is the BDA; dead-mesh safety comes from Core::DeferredFree, no pinning needed.
-        const uint64 MeshletHeaderAddress = MB.MeshletHeaderBuffer;
+        const uint64 MeshletHeaderAddress = Mesh->GetMeshBuffers().MeshletHeaderBuffer;
 
-        const FVector3 CameraPos  = FVector3(SceneGlobalData.CameraData.Location);
-        const FVector3 ToCamera   = Center - CameraPos;
-        const float     DistSq     = Math::Dot(ToCamera, ToCamera);
-
-        const float DistanceOverRadius = (Radius > 0.0f) ? (Math::Sqrt(DistSq) / Radius) : 0.0f;
+        const FVector3 ToCamera = Center - FVector3(SceneGlobalData.CameraData.Location);
+        const float DistanceOverRadius = (Radius > 0.0f) ? (Math::Sqrt(Math::Dot(ToCamera, ToCamera)) / Radius) : 0.0f;
 
         EInstanceFlags BaseFlags = EInstanceFlags::None;
         if (MeshComponent.bReceiveShadow)
@@ -2590,172 +2737,38 @@ namespace Lumina
         }
 
         const uint32 EntityRecordIdx = (uint32)Local.EntityRecords.size();
-        FEntityRecord& EntityRecord = Local.EntityRecords.emplace_back();
-        EntityRecord.Transform              = TransformMatrix;
-        EntityRecord.SphereBounds           = SphereBounds;
-        EntityRecord.MeshletHeaderAddress   = MeshletHeaderAddress;
-        EntityRecord.CustomData             = MeshComponent.CustomPrimitiveData.Data.Packed;
-        EntityRecord.EntityID               = entt::to_integral(Entity);
-        EntityRecord.LocalBoneOffset        = ~0u;
-        EntityRecord.SkinMeshletStart       = 0u;
-        EntityRecord.SkinMeshletCount       = 0u;
-        EntityRecord.SkinSpanStart          = 0u;
-        EntityRecord.SkinSliceSize          = 0u;
-        EntityRecord.GlobalSkinnedBase      = 0u;
+        FForwardRenderScene::FEntityRecord& EntityRecord = Local.EntityRecords.emplace_back();
+        EntityRecord.Transform            = TransformMatrix;
+        EntityRecord.SphereBounds         = FVector4(Center, Radius);
+        EntityRecord.MeshletHeaderAddress = MeshletHeaderAddress;
+        EntityRecord.CustomData           = MeshComponent.CustomPrimitiveData.Data.Packed;
+        EntityRecord.EntityID             = entt::to_integral(Entity);
+        EntityRecord.LocalBoneOffset      = ~0u;
+        EntityRecord.SkinMeshletStart     = 0u;
+        EntityRecord.SkinMeshletCount     = 0u;
+        EntityRecord.SkinSpanStart        = 0u;
+        EntityRecord.SkinSliceSize        = 0u;
+        EntityRecord.GlobalSkinnedBase    = 0u;
 
-        for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
-        {
-            const FResolvedSlot Slot = ResolveSlot(Local, MeshComponent, Surface.MaterialIndex);
+        EmitSurfaceDrawItems(Local, Resource, MeshletHeaderAddress, MeshComponent, BaseFlags, EntityRecordIdx,
+                             MeshComponent.ForcedLODIndex, Settings, DistanceOverRadius);
+    }
 
-            const EInstanceFlags Flags = BaseFlags | Slot.ExtraFlags;
-
-            FDrawBatchKey BatchKey
-            {
-                .MaterialID       = Slot.MaterialID,
-                .bTranslucent     = (Slot.bTranslucent     ? 1u : 0u),
-                .bMasked          = (Slot.bMasked          ? 1u : 0u),
-                .bAdditive        = (Slot.bAdditive        ? 1u : 0u),
-                .bTwoSided        = (Slot.bTwoSided        ? 1u : 0u),
-            };
-            // CPU LOD pick replaces LOD 0; smaller ranges directly cut cull-pass cost.
-            const uint32 LODIndex       = ResolveSurfaceLOD(Surface, MeshComponent.ForcedLODIndex, RenderSettings.bUseLODs, DistanceOverRadius);
-            const uint32 ShadowLODIndex = ResolveShadowLOD(Surface, LODIndex, RenderSettings.ShadowLODBias);
-
-            // Zero meshlet count gates the cull shader's MeshletHeader deref.
-            const uint32 SurfaceMeshletCount  = MeshletHeaderAddress ? Surface.LODMeshletCount[LODIndex]       : 0u;
-            const uint32 SurfaceMeshletOffset = Surface.LODMeshletOffset[LODIndex];
-            const uint32 ShadowMeshletCount   = MeshletHeaderAddress ? Surface.LODMeshletCount[ShadowLODIndex] : 0u;
-            const uint32 ShadowMeshletOffset  = Surface.LODMeshletOffset[ShadowLODIndex];
-
-            const uint16 LocalBatchIdx = FindOrAddLocalBatch(Local, BatchKey, Slot);
-            const uint16 LocalDrawIdx  = FindOrAddLocalDraw(Local.LocalBatches[LocalBatchIdx], FDrawKey{ Surface.StartIndex, Surface.IndexCount }, SurfaceMeshletCount);
-
-            FProcessedDrawItem& Item  = Local.Items.emplace_back();
-            Item.EntityRecordIndex    = EntityRecordIdx;
-            Item.SurfaceMeshletOffset = SurfaceMeshletOffset;
-            Item.SurfaceMeshletCount  = SurfaceMeshletCount;
-            Item.ShadowMeshletOffset  = ShadowMeshletOffset;
-            Item.ShadowMeshletCount   = ShadowMeshletCount;
-            Item.Flags                = Flags;
-            Item.MaterialIndex        = Slot.MaterialIdx;
-            Item.LocalBatchIndex      = LocalBatchIdx;
-            Item.LocalDrawIndex       = LocalDrawIdx;
-            Local.LocalBatches[LocalBatchIdx].AccumSkinned(Flags);
-            Item._Pad                 = 0;
-        }
+    void FForwardRenderScene::ProcessStaticMeshEntityInternal(entt::entity Entity, const SStaticMeshComponent& MeshComponent, const STransformComponent& TransformComponent, FThreadLocalDrawData& Local)
+    {
+        ProcessRigidMeshEntity(*ExtractFrame, RenderSettings, MeshComponent.StaticMesh, Entity, MeshComponent, TransformComponent, Local);
     }
 
     // Mirror of the static path, but the mesh lives on the component itself (a runtime CStaticMesh built from
     // data) rather than referencing a shared asset. Same meshlet pipeline, culling, LODs and material resolve.
     void FForwardRenderScene::ProcessDynamicMeshEntityInternal(entt::entity Entity, const SDynamicMeshComponent& MeshComponent, const STransformComponent& TransformComponent, FThreadLocalDrawData& Local)
     {
-        const FFrameData& Frame = *ExtractFrame;
-        const auto& SceneCullContext = Frame.Geometry.SceneCullContext;
-        const auto& SceneGlobalData  = Frame.SceneGlobalData;
-
-        CMesh* Mesh = MeshComponent.DynamicMesh;
-        if (!IsValid(Mesh))
-        {
-            return;
-        }
-
-        const FMatrix4& TransformMatrix = TransformComponent.CachedMatrix;
-
-        const float     CullScale    = Math::Max(MeshComponent.BoundsScale, 1.0f);
-        const FAABB     BoundingBox  = Mesh->GetAABB().ToWorld(TransformMatrix);
-        const FVector3  Center       = (BoundingBox.Min + BoundingBox.Max) * 0.5f;
-        const FVector3  Extents      = BoundingBox.Max - Center;
-        const float     Radius       = Math::Length(Extents) * CullScale;
-        const FVector4  SphereBounds = FVector4(Center, Radius);
-
-        if (!SceneCullContext.ShouldKeep(
-                Center,
-                Radius,
-                MeshComponent.bCastShadow,
-                MeshComponent.MaxDrawDistance,
-                FVector3(SceneGlobalData.CameraData.Location)))
-        {
-            ++Local.Stats.NumInstancesCulled;
-            return;
-        }
-
-        const FMeshResource& Resource = Mesh->GetMeshResource();
-        const FMeshResource::FMeshBuffers& MB = Mesh->GetMeshBuffers();
-        const uint64 MeshletHeaderAddress = MB.MeshletHeaderBuffer;
-
-        const FVector3 CameraPos  = FVector3(SceneGlobalData.CameraData.Location);
-        const FVector3 ToCamera   = Center - CameraPos;
-        const float     DistSq     = Math::Dot(ToCamera, ToCamera);
-
-        const float DistanceOverRadius = (Radius > 0.0f) ? (Math::Sqrt(DistSq) / Radius) : 0.0f;
-
-        EInstanceFlags BaseFlags = EInstanceFlags::None;
-        if (MeshComponent.bReceiveShadow)
-        {
-            BaseFlags |= EInstanceFlags::ReceiveShadow;
-        }
-        if (MeshComponent.bIgnoreOcclusionCulling)
-        {
-            BaseFlags |= EInstanceFlags::IgnoreOcclusionCulling;
-        }
-
-        const uint32 EntityRecordIdx = (uint32)Local.EntityRecords.size();
-        FEntityRecord& EntityRecord = Local.EntityRecords.emplace_back();
-        EntityRecord.Transform              = TransformMatrix;
-        EntityRecord.SphereBounds           = SphereBounds;
-        EntityRecord.MeshletHeaderAddress   = MeshletHeaderAddress;
-        EntityRecord.CustomData             = MeshComponent.CustomPrimitiveData.Data.Packed;
-        EntityRecord.EntityID               = entt::to_integral(Entity);
-        EntityRecord.LocalBoneOffset        = ~0u;
-        EntityRecord.SkinMeshletStart       = 0u;
-        EntityRecord.SkinMeshletCount       = 0u;
-        EntityRecord.SkinSpanStart          = 0u;
-        EntityRecord.SkinSliceSize          = 0u;
-        EntityRecord.GlobalSkinnedBase      = 0u;
-
-        for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
-        {
-            const FResolvedSlot Slot = ResolveSlot(Local, MeshComponent, Surface.MaterialIndex);
-
-            const EInstanceFlags Flags = BaseFlags | Slot.ExtraFlags;
-
-            FDrawBatchKey BatchKey
-            {
-                .MaterialID       = Slot.MaterialID,
-                .bTranslucent     = (Slot.bTranslucent     ? 1u : 0u),
-                .bMasked          = (Slot.bMasked          ? 1u : 0u),
-                .bAdditive        = (Slot.bAdditive        ? 1u : 0u),
-                .bTwoSided        = (Slot.bTwoSided        ? 1u : 0u),
-            };
-            const uint32 LODIndex       = ResolveSurfaceLOD(Surface, MeshComponent.ForcedLODIndex, RenderSettings.bUseLODs, DistanceOverRadius);
-            const uint32 ShadowLODIndex = ResolveShadowLOD(Surface, LODIndex, RenderSettings.ShadowLODBias);
-
-            const uint32 SurfaceMeshletCount  = MeshletHeaderAddress ? Surface.LODMeshletCount[LODIndex]       : 0u;
-            const uint32 SurfaceMeshletOffset = Surface.LODMeshletOffset[LODIndex];
-            const uint32 ShadowMeshletCount   = MeshletHeaderAddress ? Surface.LODMeshletCount[ShadowLODIndex] : 0u;
-            const uint32 ShadowMeshletOffset  = Surface.LODMeshletOffset[ShadowLODIndex];
-
-            const uint16 LocalBatchIdx = FindOrAddLocalBatch(Local, BatchKey, Slot);
-            const uint16 LocalDrawIdx  = FindOrAddLocalDraw(Local.LocalBatches[LocalBatchIdx], FDrawKey{ Surface.StartIndex, Surface.IndexCount }, SurfaceMeshletCount);
-
-            FProcessedDrawItem& Item  = Local.Items.emplace_back();
-            Item.EntityRecordIndex    = EntityRecordIdx;
-            Item.SurfaceMeshletOffset = SurfaceMeshletOffset;
-            Item.SurfaceMeshletCount  = SurfaceMeshletCount;
-            Item.ShadowMeshletOffset  = ShadowMeshletOffset;
-            Item.ShadowMeshletCount   = ShadowMeshletCount;
-            Item.Flags                = Flags;
-            Item.MaterialIndex        = Slot.MaterialIdx;
-            Item.LocalBatchIndex      = LocalBatchIdx;
-            Item.LocalDrawIndex       = LocalDrawIdx;
-            Local.LocalBatches[LocalBatchIdx].AccumSkinned(Flags);
-            Item._Pad                 = 0;
-        }
+        ProcessRigidMeshEntity(*ExtractFrame, RenderSettings, MeshComponent.DynamicMesh, Entity, MeshComponent, TransformComponent, Local);
     }
 
     namespace
     {
-        // Adapts a foliage type to the ResolveSlot/ResolveMaterialCached template contract (the same surface
+        // Adapts a foliage type to the ResolveMaterialCached/EmitSurfaceDrawItems template contract (the same surface
         // a mesh component exposes), so foliage shares the exact material-resolution + batching path.
         struct FFoliageDrawProxy
         {
@@ -2799,13 +2812,10 @@ namespace Lumina
         }
 
         const FMeshResource& Resource = Mesh->GetMeshResource();
-        const FMeshResource::FMeshBuffers& MB = Mesh->GetMeshBuffers();
-        const uint64 MeshletHeaderAddress = MB.MeshletHeaderBuffer;
+        const uint64 MeshletHeaderAddress = Mesh->GetMeshBuffers().MeshletHeaderBuffer;
 
-        const FVector3 CameraPos  = FVector3(SceneGlobalData.CameraData.Location);
-        const FVector3 ToCamera   = Center - CameraPos;
-        const float     DistSq     = Math::Dot(ToCamera, ToCamera);
-        const float DistanceOverRadius = (Radius > 0.0f) ? (Math::Sqrt(DistSq) / Radius) : 0.0f;
+        const FVector3 ToCamera = Center - FVector3(SceneGlobalData.CameraData.Location);
+        const float DistanceOverRadius = (Radius > 0.0f) ? (Math::Sqrt(Math::Dot(ToCamera, ToCamera)) / Radius) : 0.0f;
 
         EInstanceFlags BaseFlags = EInstanceFlags::None;
         if (Type.bReceiveShadow)
@@ -2831,44 +2841,8 @@ namespace Lumina
         EntityRecord.SkinSliceSize          = 0u;
         EntityRecord.GlobalSkinnedBase      = 0u;
 
-        for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
-        {
-            const FResolvedSlot Slot = ResolveSlot(Local, Proxy, Surface.MaterialIndex);
-
-            const EInstanceFlags Flags = BaseFlags | Slot.ExtraFlags;
-
-            FDrawBatchKey BatchKey
-            {
-                .MaterialID       = Slot.MaterialID,
-                .bTranslucent     = (Slot.bTranslucent     ? 1u : 0u),
-                .bMasked          = (Slot.bMasked          ? 1u : 0u),
-                .bAdditive        = (Slot.bAdditive        ? 1u : 0u),
-                .bTwoSided        = (Slot.bTwoSided        ? 1u : 0u),
-            };
-            const uint32 LODIndex       = ResolveSurfaceLOD(Surface, -1, RenderSettings.bUseLODs, DistanceOverRadius);
-            const uint32 ShadowLODIndex = ResolveShadowLOD(Surface, LODIndex, RenderSettings.ShadowLODBias);
-
-            const uint32 SurfaceMeshletCount  = MeshletHeaderAddress ? Surface.LODMeshletCount[LODIndex]       : 0u;
-            const uint32 SurfaceMeshletOffset = Surface.LODMeshletOffset[LODIndex];
-            const uint32 ShadowMeshletCount   = MeshletHeaderAddress ? Surface.LODMeshletCount[ShadowLODIndex] : 0u;
-            const uint32 ShadowMeshletOffset  = Surface.LODMeshletOffset[ShadowLODIndex];
-
-            const uint16 LocalBatchIdx = FindOrAddLocalBatch(Local, BatchKey, Slot);
-            const uint16 LocalDrawIdx  = FindOrAddLocalDraw(Local.LocalBatches[LocalBatchIdx], FDrawKey{ Surface.StartIndex, Surface.IndexCount }, SurfaceMeshletCount);
-
-            FProcessedDrawItem& Item  = Local.Items.emplace_back();
-            Item.EntityRecordIndex    = EntityRecordIdx;
-            Item.SurfaceMeshletOffset = SurfaceMeshletOffset;
-            Item.SurfaceMeshletCount  = SurfaceMeshletCount;
-            Item.ShadowMeshletOffset  = ShadowMeshletOffset;
-            Item.ShadowMeshletCount   = ShadowMeshletCount;
-            Item.Flags                = Flags;
-            Item.MaterialIndex        = Slot.MaterialIdx;
-            Item.LocalBatchIndex      = LocalBatchIdx;
-            Item.LocalDrawIndex       = LocalDrawIdx;
-            Local.LocalBatches[LocalBatchIdx].AccumSkinned(Flags);
-            Item._Pad                 = 0;
-        }
+        EmitSurfaceDrawItems(Local, Resource, MeshletHeaderAddress, Proxy, BaseFlags, EntityRecordIdx,
+                             /*ForcedLODIndex*/ -1, RenderSettings, DistanceOverRadius);
     }
 
     void FForwardRenderScene::ProcessSkeletalMeshEntityInternal(entt::entity Entity, SSkeletalMeshComponent& MeshComponent, const STransformComponent& TransformComponent, FThreadLocalDrawData& Local)
@@ -2923,21 +2897,26 @@ namespace Lumina
         uint32 LocalBoneOffset = ~0u;
         if (SkeletonBoneCount > 0)
         {
-            LocalBoneOffset = (uint32)Local.BonesData.size();
+            LocalBoneOffset = Local.BonesData.Size();
             if ((uint32)MeshComponent.BoneTransforms.size() == SkeletonBoneCount)
             {
-                // Pack each mat4 down to its 3 rows (last row is always (0,0,0,1) for affine).
-                Local.BonesData.reserve(Local.BonesData.size() + SkeletonBoneCount);
-                for (const FMatrix4& M : MeshComponent.BoneTransforms)
+                // The animation system packs when it evaluates a pose; writers that bypass it
+                // (ragdoll readback, editor bind-pose fills) set the dirty flag and we repack here.
+                // Frozen/off-screen skeletons hit neither and just bulk-copy the cached rows.
+                if (MeshComponent.bRenderBonesDirty ||
+                    (uint32)MeshComponent.RenderBones.size() != SkeletonBoneCount * 3u)
                 {
-                    Local.BonesData.push_back(PackBoneTransform(M));
+                    SkeletalUtils::PackRenderBones(MeshComponent.BoneTransforms, MeshComponent.RenderBones);
+                    MeshComponent.bRenderBonesDirty = false;
                 }
+
+                const FBoneTransform* Packed = reinterpret_cast<const FBoneTransform*>(MeshComponent.RenderBones.data());
+                Local.BonesData.Append(Packed, SkeletonBoneCount);
             }
             else
             {
                 // No active animation: BoneWorld * InvBindMatrix collapses to identity for every bone.
-                static constexpr FBoneTransform IdentityBone{ FVector4(1,0,0,0), FVector4(0,1,0,0), FVector4(0,0,1,0) };
-                Local.BonesData.resize(Local.BonesData.size() + SkeletonBoneCount, IdentityBone);
+                Local.BonesData.AppendIdentity(SkeletonBoneCount);
             }
         }
 
@@ -2950,6 +2929,9 @@ namespace Lumina
         const float DistanceOverRadius = (Radius > 0.0f)
             ? (Math::Sqrt(DistSq) / Radius)
             : 0.0f;
+
+        // Screen-size proxy for the animation system's update-rate optimization.
+        MeshComponent.LastDistanceOverRadius = DistanceOverRadius;
 
         // Skeletal assets always carry FSkinnedVertex; flag is unconditional.
         EInstanceFlags BaseFlags = EInstanceFlags::Skinned;
@@ -2971,76 +2953,24 @@ namespace Lumina
         EntityRecord.LocalBoneOffset      = LocalBoneOffset;
         EntityRecord.GlobalSkinnedBase    = 0u;   // resolved during merge
 
-        // Skin-span accumulation folded into the draw-item loop below (it already computes the per-surface
+        // Skin-span accumulation folded into the shared surface emit (it already computes the per-surface
         // offsets/counts the span needs), avoiding a second pass over GeometrySurfaces that re-resolved every LOD.
+        // Skinned bounds are bind-pose; BoundsScale handles outliers.
         const bool bAccumulateSkinSpan = (LocalBoneOffset != ~0u && MeshletHeaderAddress != 0ull);
-        uint32 MinMeshlet    = ~0u;
-        uint32 MaxMeshletEnd = 0u;
-
-        for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
-        {
-            const FResolvedSlot Slot = ResolveSlot(Local, MeshComponent, Surface.MaterialIndex);
-
-            const EInstanceFlags Flags = BaseFlags | Slot.ExtraFlags;
-
-            FDrawBatchKey BatchKey
-            {
-                .MaterialID       = Slot.MaterialID,
-                .bTranslucent     = (uint32)(Slot.bTranslucent     ? 1u : 0u),
-                .bMasked          = (uint32)(Slot.bMasked          ? 1u : 0u),
-                .bAdditive        = (uint32)(Slot.bAdditive        ? 1u : 0u),
-                .bTwoSided        = (uint32)(Slot.bTwoSided        ? 1u : 0u),
-            };
-            // Skinned bounds are bind-pose; BoundsScale handles outliers.
-            const uint32 LODIndex       = ResolveSurfaceLOD(Surface, MeshComponent.ForcedLODIndex, RenderSettings.bUseLODs, DistanceOverRadius);
-            const uint32 ShadowLODIndex = ResolveShadowLOD(Surface, LODIndex, RenderSettings.ShadowLODBias);
-
-            const uint32 SurfaceMeshletCount  = MeshletHeaderAddress ? Surface.LODMeshletCount[LODIndex]       : 0u;
-            const uint32 SurfaceMeshletOffset = Surface.LODMeshletOffset[LODIndex];
-            const uint32 ShadowMeshletCount   = MeshletHeaderAddress ? Surface.LODMeshletCount[ShadowLODIndex] : 0u;
-            const uint32 ShadowMeshletOffset  = Surface.LODMeshletOffset[ShadowLODIndex];
-
-            const uint16 LocalBatchIdx = FindOrAddLocalBatch(Local, BatchKey, Slot);
-            const uint16 LocalDrawIdx  = FindOrAddLocalDraw(Local.LocalBatches[LocalBatchIdx], FDrawKey{ Surface.StartIndex, Surface.IndexCount }, SurfaceMeshletCount);
-
-            FProcessedDrawItem& Item = Local.Items.emplace_back();
-            Item.EntityRecordIndex    = EntityRecordIdx;
-            Item.SurfaceMeshletOffset = SurfaceMeshletOffset;
-            Item.SurfaceMeshletCount  = SurfaceMeshletCount;
-            Item.ShadowMeshletOffset  = ShadowMeshletOffset;
-            Item.ShadowMeshletCount   = ShadowMeshletCount;
-            Item.Flags                = Flags;
-            Item.MaterialIndex        = Slot.MaterialIdx;
-            Item.LocalBatchIndex      = LocalBatchIdx;
-            Item.LocalDrawIndex       = LocalDrawIdx;
-            Local.LocalBatches[LocalBatchIdx].AccumSkinned(Flags);
-            Item._Pad                 = 0;
-
-            // Same offsets/counts the dropped second pass recomputed; fold them into the span here.
-            if (bAccumulateSkinSpan)
-            {
-                if (SurfaceMeshletCount > 0u)
-                {
-                    MinMeshlet    = Math::Min(MinMeshlet, SurfaceMeshletOffset);
-                    MaxMeshletEnd = Math::Max(MaxMeshletEnd, SurfaceMeshletOffset + SurfaceMeshletCount);
-                }
-                if (ShadowMeshletCount > 0u)
-                {
-                    MinMeshlet    = Math::Min(MinMeshlet, ShadowMeshletOffset);
-                    MaxMeshletEnd = Math::Max(MaxMeshletEnd, ShadowMeshletOffset + ShadowMeshletCount);
-                }
-            }
-        }
+        FSkinSpanAccum SkinSpan;
+        EmitSurfaceDrawItems(Local, Resource, MeshletHeaderAddress, MeshComponent, BaseFlags, EntityRecordIdx,
+                             MeshComponent.ForcedLODIndex, RenderSettings, DistanceOverRadius,
+                             bAccumulateSkinSpan ? &SkinSpan : nullptr);
 
         // Meshlets are LOD-major so the span is contiguous; GlobalSkinnedBase = compacted base - span start.
         uint32 SkinSliceSize = 0u;
-        if (bAccumulateSkinSpan && MaxMeshletEnd > MinMeshlet)
+        if (bAccumulateSkinSpan && SkinSpan.MaxMeshletEnd > SkinSpan.MinMeshlet)
         {
             const TVector<FMeshlet>& Meshlets = Resource.MeshletData.Meshlets;
-            const FMeshlet& First = Meshlets[MinMeshlet];
-            const FMeshlet& Last  = Meshlets[MaxMeshletEnd - 1u];
-            EntityRecord.SkinMeshletStart = MinMeshlet;
-            EntityRecord.SkinMeshletCount = MaxMeshletEnd - MinMeshlet;
+            const FMeshlet& First = Meshlets[SkinSpan.MinMeshlet];
+            const FMeshlet& Last  = Meshlets[SkinSpan.MaxMeshletEnd - 1u];
+            EntityRecord.SkinMeshletStart = SkinSpan.MinMeshlet;
+            EntityRecord.SkinMeshletCount = SkinSpan.MaxMeshletEnd - SkinSpan.MinMeshlet;
             EntityRecord.SkinSpanStart    = First.VertexOffset;
             SkinSliceSize                 = (Last.VertexOffset + Last.VertexCount) - First.VertexOffset;
         }
@@ -3064,7 +2994,6 @@ namespace Lumina
         auto& OpaqueDrawList            = Frame.Geometry.OpaqueDrawList;
         auto& TranslucentDrawList       = Frame.Geometry.TranslucentDrawList;
         auto& DrawMeshletStartOffsets   = Frame.Geometry.DrawMeshletStartOffsets;
-        auto& InstanceMeshletPrefix     = Frame.Geometry.InstanceMeshletPrefix;
         auto& FrameStats                = Frame.FrameStats;
         uint32& TotalMeshletBound       = Frame.Views.TotalMeshletBound;
         uint32& NumDrawsPerView         = Frame.Views.NumDrawsPerView;
@@ -3081,7 +3010,19 @@ namespace Lumina
         {
             FThreadLocalDrawData& Local = ThreadLocal[t];
             ThreadBoneBase[t] = (uint32)BonesData.size();
-            BonesData.insert(BonesData.end(), Local.BonesData.begin(), Local.BonesData.end());
+            TotalInstances += (uint32)Local.Items.size();
+            TotalInstancesCulled += Local.Stats.NumInstancesCulled;
+
+            // A skinned record always appends bones, so a bone-less thread has no skinned
+            // records and its full EntityRecords scan below can be skipped.
+            if (Local.BonesData.IsEmpty())
+            {
+                continue;
+            }
+            for (const TFrameVector<FBoneTransform>& Page : Local.BonesData.Pages)
+            {
+                BonesData.insert(BonesData.end(), Page.begin(), Page.end());
+            }
 
             for (FEntityRecord& Rec : Local.EntityRecords)
             {
@@ -3110,14 +3051,14 @@ namespace Lumina
 
                 Frame.Geometry.TotalPreSkinnedVertices += Rec.SkinSliceSize;
             }
-
-            TotalInstances += (uint32)Local.Items.size();
-            TotalInstancesCulled += Local.Stats.NumInstancesCulled;
         }
         FrameStats.NumInstancesCulled += TotalInstancesCulled;
 
         if (TotalInstances == 0)
         {
+            // ResetPass leaves Instances at last frame's size (see there); consumers read size(),
+            // so an empty frame must drop it explicitly. clear() keeps capacity, no zero-fill.
+            Instances.clear();
             return;
         }
 
@@ -3156,16 +3097,17 @@ namespace Lumina
                     GlobalIdx = NumGlobal;
                     MergeGlobalBatchKeys.push_back(LocalBatch.Key);
 
+                    const FCachedMaterialResolve& R = LocalBatch.Resolve;
                     FMeshDrawCommand& NewCmd = DrawCommands.emplace_back();
-                    NewCmd.VertexShader        = LocalBatch.VertexShader;
-                    NewCmd.PixelShader         = LocalBatch.PixelShader;
-                    NewCmd.MeshShader          = LocalBatch.MeshShader;
-                    NewCmd.VisBufferMeshShader   = LocalBatch.VisBufferMeshShader;
-                    NewCmd.VisBufferVertexShader = LocalBatch.VisBufferVertexShader;
-                    NewCmd.MaskedVisBufferPixelShader     = LocalBatch.MaskedVisBufferPixelShader;
-                    NewCmd.MaskedVisBufferPixelShaderPrim = LocalBatch.MaskedVisBufferPixelShaderPrim;
-                    NewCmd.DeferredShader        = LocalBatch.DeferredShader;
-                    NewCmd.MaterialIndex         = LocalBatch.MaterialIdx;
+                    NewCmd.VertexShader        = R.VertexShader;
+                    NewCmd.PixelShader         = R.PixelShader;
+                    NewCmd.MeshShader          = R.MeshShader;
+                    NewCmd.VisBufferMeshShader   = R.VisBufferMeshShader;
+                    NewCmd.VisBufferVertexShader = R.VisBufferVertexShader;
+                    NewCmd.MaskedVisBufferPixelShader     = R.MaskedVisBufferPixelShader;
+                    NewCmd.MaskedVisBufferPixelShaderPrim = R.MaskedVisBufferPixelShaderPrim;
+                    NewCmd.DeferredShader        = R.DeferredShader;
+                    NewCmd.MaterialIndex         = R.MaterialIdx;
                     NewCmd.IndirectDrawOffset  = 0;
                     NewCmd.DrawCount           = 0;
                     NewCmd.bTranslucent        = LocalBatch.Key.bTranslucent;
@@ -3275,6 +3217,8 @@ namespace Lumina
         }
 
         DrawMeshletStartOffsets.resize(TotalDrawArgs);
+        // Never cleared upstream: every slot [0, TotalInstances) is overwritten by the parallel
+        // instance write below, so only growth beyond the previous frame's size pays value-init.
         Instances.resize(TotalInstances);
         NumDrawsPerView = TotalDrawArgs;
 
@@ -3391,20 +3335,8 @@ namespace Lumina
             else                { InstanceWriteBody(Task::FParallelRange{ 0u, NumThreads, 0u }); }
         }
 
-        // Inclusive prefix sum; cull pass binary-searches to recover (instance, meshletLocal).
-        {
-            const size_t NumInstancesLocal = Instances.size();
-            InstanceMeshletPrefix.resize(NumInstancesLocal + 1);
-            uint32 RunningInstanceMeshlets = 0u;
-            for (size_t i = 0; i < NumInstancesLocal; ++i)
-            {
-                InstanceMeshletPrefix[i] = RunningInstanceMeshlets;
-                RunningInstanceMeshlets += Instances[i].SurfaceMeshletCount;
-            }
-            InstanceMeshletPrefix[NumInstancesLocal] = RunningInstanceMeshlets;
-            // Both counts must agree (same meshlets counted differently).
-            DEBUG_ASSERT(RunningInstanceMeshlets == TotalMeshletBound);
-        }
+        // The per-instance meshlet prefix the cull binary-searches is GPU-built
+        // (BuildInstancePrefix.slang) from the uploaded instances; no CPU pass here.
 
         FrameStats.NumBatches = NumBatches;
         OpaqueDrawList.reserve(NumBatches);
@@ -3444,7 +3376,7 @@ namespace Lumina
 
     bool FForwardRenderScene::ShouldRequestShadow(const FVector3& LightPosition, float LightRadius) const
     {
-        return FromGPU(ExtractFrame->SceneGlobalData.CullData.Frustum).IntersectsSphere(LightPosition, LightRadius);
+        return ExtractFrame->CameraFrustum.IntersectsSphere(LightPosition, LightRadius);
     }
 
     void FForwardRenderScene::BuildSceneCullContext()
@@ -3457,7 +3389,7 @@ namespace Lumina
 
         SceneCullContext.Reset();
         SceneCullContext.bEnabled = RenderSettings.bCPUInstanceCull;
-        SceneCullContext.Frustum  = FromGPU(SceneGlobalData.CullData.Frustum);
+        SceneCullContext.Frustum  = Frame.CameraFrustum;
 
         if (!SceneCullContext.bEnabled)
         {
@@ -3927,9 +3859,6 @@ namespace Lumina
     {
         FFrameData& Frame = *ExtractFrame;
         auto& CullViews                = Frame.Views.CullViews;
-        auto& IndirectArgs             = Frame.Views.IndirectArgs;
-        auto& MeshDrawArgs             = Frame.Views.MeshDrawArgs;
-        auto& DrawMeshletStartOffsets  = Frame.Geometry.DrawMeshletStartOffsets;
         auto& LightData                = Frame.Lighting.LightData;
         auto& PackedShadows            = Frame.Lighting.PackedShadows;
         auto& PointShadowCullViewBases = Frame.Views.PointShadowCullViewBases;
@@ -3965,21 +3894,8 @@ namespace Lumina
             View.NumDraws           = NumDraws;
             CullViews.push_back(View);
 
-            // Seed this view's indirect slice; FirstInstance lands inside the view's
-            // draw-list slice so CullMeshlets' atomic-append can't overflow into another.
-            const uint32 ViewDrawListBase = ViewIndex * TotalMeshletBound;
-            for (uint32 d = 0; d < NumDraws; ++d)
-            {
-                RHI::FDrawIndirectArguments Arg;
-                Arg.VertexCount   = MESHLET_VERTICES_PER_DRAW;
-                Arg.InstanceCount = 0u;
-                Arg.FirstVertex   = 0u;
-                Arg.FirstInstance = ViewDrawListBase + DrawMeshletStartOffsets[d];
-                IndirectArgs.push_back(Arg);
-
-                // Mesh-task args seed: GroupCountX = 0 (the cull accumulates survivors atomically), Y = Z = 1.
-                MeshDrawArgs.push_back(RHI::FDrawMeshTasksIndirectArguments{ 0u, 1u, 1u });
-            }
+            // This view's indirect + mesh-task arg slice is seeded GPU-side
+            // (SeedIndirectArgs.slang) from Geometry.DrawMeshletStartOffsets.
             return ViewIndex;
         };
 
@@ -3996,8 +3912,6 @@ namespace Lumina
         ASSERT(NumViews <= (uint32)GMaxCullViews);
 
         CullViews.reserve(NumViews);
-        IndirectArgs.reserve((size_t)NumViews * (size_t)NumDraws);
-        MeshDrawArgs.reserve((size_t)NumViews * (size_t)NumDraws);
 
         CascadeViewBase = ~0u;
         CameraLateViewIndex = ~0u;
@@ -4402,8 +4316,8 @@ namespace Lumina
         using FLineInstance = FLineBatcherComponent::FLineInstance;
         constexpr uint32 kMaxBuckets = FLineBatchScratch::kMaxBuckets;
 
-        const float    Dt      = ExtractFrame->SceneGlobalData.DeltaTime;
-        FFrustum       Frustum = FromGPU(ExtractFrame->SceneGlobalData.CullData.Frustum);
+        const float     Dt      = ExtractFrame->SceneGlobalData.DeltaTime;
+        const FFrustum& Frustum = ExtractFrame->CameraFrustum;
         FLineBatchScratch&     S      = LineBatchScratch[Range.Thread];
         const FLineChunk* const Chunks = LineChunkScratch.data();
 
@@ -4685,15 +4599,14 @@ namespace Lumina
         Frame.Geometry.OpaqueDrawList.clear();
         Frame.Geometry.TranslucentDrawList.clear();
         Frame.Geometry.DrawMeshletStartOffsets.clear();
-        Frame.Views.IndirectArgs.clear();
-        Frame.Views.MeshDrawArgs.clear();
         Frame.Views.CullViews.clear();
         Frame.Views.CaptureViews.clear();
         Frame.Views.TotalMeshletBound = 0;
         Frame.Views.NumDrawsPerView   = 0;
         Frame.Views.CameraLateViewIndex = ~0u;
-        Frame.Geometry.Instances.clear();
-        Frame.Geometry.InstanceMeshletPrefix.clear();
+        // Instances is intentionally NOT cleared: the merge resizes it to the exact count and the
+        // parallel instance write overwrites every slot, so leaving the size in place means EASTL
+        // value-initializes (memsets) only growth beyond the previous frame, not the whole array.
         Memory::Memzero(&Frame.Lighting.LightData, sizeof(Frame.Lighting.LightData));
         Frame.Lighting.ShadowDataCount.store(0, std::memory_order_release);
         ShadowAtlas.FreeTiles();
@@ -5226,12 +5139,9 @@ namespace Lumina
         Barriers::ComputeToAll(CL);
     }
 
-    void FForwardRenderScene::DrawShadowBatch(RHI::FCmdListH CL, const FMeshDrawCommand& Batch, const FShaderEntry* PixelShader,
-        uint32 CullViewIndex, int32 ShadowDataIndex, int32 ShadowViewIndex)
+    bool FForwardRenderScene::BindShadowBatchPipeline(RHI::FCmdListH CL, const FMeshDrawCommand& Batch, const FShaderEntry* PixelShader)
     {
-        const FFrameData& Frame              = *RenderFrame;
-        const uint32 NumDrawsPerView         = Frame.Views.NumDrawsPerView;
-        const bool   bUseMesh = CVarMeshShaders.GetValue() && RHI::SupportsMeshShaders() && Batch.MeshShader != nullptr;
+        const bool bUseMesh = CVarMeshShaders.GetValue() && RHI::SupportsMeshShaders() && Batch.MeshShader != nullptr;
 
         FGraphicsPipelineKey Key;
         Key.VS          = bUseMesh ? nullptr : Batch.VertexShader;
@@ -5242,8 +5152,13 @@ namespace Lumina
         // SPEC_SKINNED: homogeneous batch -> dead-strip the unused vertex-load path; mixed -> runtime branch (2).
         Key.SkinnedMode = (Batch.bAnySkinned && Batch.bAnyStatic) ? 2u : (Batch.bAnySkinned ? 1u : 0u);
         RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
+        return bUseMesh;
+    }
 
-        const uint32 ViewBase = CullViewIndex * NumDrawsPerView;
+    void FForwardRenderScene::DrawShadowBatch(RHI::FCmdListH CL, const FMeshDrawCommand& Batch, bool bUseMesh,
+        uint32 CullViewIndex, int32 ShadowDataIndex, int32 ShadowViewIndex)
+    {
+        const uint32 ViewBase = CullViewIndex * RenderFrame->Views.NumDrawsPerView;
         if (bUseMesh)
         {
             struct { uint64 IndirectArgsAddr; uint32 ArgBase; int32 ShadowDataIndex; int32 ViewIndex; } MP;
@@ -5276,14 +5191,13 @@ namespace Lumina
         const auto& PackedShadows            = Frame.Lighting.PackedShadows;
         const auto& AtlasTiles               = Frame.Lighting.AtlasTiles;
         const auto& PointShadowCullViewBases = Frame.Views.PointShadowCullViewBases;
-        const uint32 NumDrawsPerView         = Frame.Views.NumDrawsPerView;
-
-        LUMINA_PROFILE_SECTION_COLORED("Point Light Shadow Pass", tracy::Color::DeepPink2);
 
         if (DrawCommands.empty() || PackedShadows[(uint32)ELightType::Point].empty())
         {
             return;
         }
+
+        LUMINA_PROFILE_SECTION_COLORED("Point Light Shadow Pass", tracy::Color::DeepPink2);
 
         static const FShaderEntry* const PixelShader = FShaderLibrary::Get("ShadowMappingPixel.slang");
         if (!PixelShader)
@@ -5309,36 +5223,38 @@ namespace Lumina
         RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(DepthDesc));
         RHI::CmdSetCullMode(CL, RHI::ECullMode::Back);
 
-        for (uint32 LightIdx = 0; LightIdx < PointShadows.size(); ++LightIdx)
+        // Batch-outer: the batch's pipeline binds once, then every light/face reuses it with just
+        // viewport/scissor (cheap dynamic state) changing per tile.
+        for (uint32 OpaqueIdx : OpaqueDrawList)
         {
-            const FLightShadow& LightShadow = PointShadows[LightIdx];
-            const uint32 ViewBase = PointShadowCullViewBases[LightIdx];
-            if (ViewBase == ~0u)
+            const FMeshDrawCommand& Batch = DrawCommands[OpaqueIdx];
+            const bool bUseMesh = BindShadowBatchPipeline(CL, Batch, PixelShader);
+
+            for (uint32 LightIdx = 0; LightIdx < PointShadows.size(); ++LightIdx)
             {
-                continue;
-            }
-
-            const FLightShadowData& ShadowData = LightData.Shadows[LightShadow.ShadowDataIndex];
-
-            for (int32 Face = 0; Face < 6; ++Face)
-            {
-                LUMINA_PROFILE_SECTION_COLORED("Point Shadow Face", tracy::Color::DeepPink2);
-
-                const FLightShadow& FaceShadow = ShadowData.Shadow[Face];
-                const FShadowTile& Tile = AtlasTiles[FaceShadow.ShadowMapIndex];
-                const int32 TilePixelX = (int32)(Tile.UVOffset.x * GShadowAtlasResolution);
-                const int32 TilePixelY = (int32)(Tile.UVOffset.y * GShadowAtlasResolution);
-                const int32 TileSize   = (int32)(Tile.UVScale.x * GShadowAtlasResolution);
-
-                const RHI::FRect TileRect{ TilePixelX, TilePixelX + TileSize, TilePixelY, TilePixelY + TileSize };
-                RHI::CmdSetViewport(CL, TileRect);
-                RHI::CmdSetScissor(CL, TileRect);
-
-                // ViewIndex indexes ShadowData.ViewProjection[]; here the cube face.
-                const uint32 FaceViewIndex = ViewBase + (uint32)Face;
-                for (uint32 OpaqueIdx : OpaqueDrawList)
+                const FLightShadow& LightShadow = PointShadows[LightIdx];
+                const uint32 ViewBase = PointShadowCullViewBases[LightIdx];
+                if (ViewBase == ~0u)
                 {
-                    DrawShadowBatch(CL, DrawCommands[OpaqueIdx], PixelShader, FaceViewIndex, LightShadow.ShadowDataIndex, Face);
+                    continue;
+                }
+
+                const FLightShadowData& ShadowData = LightData.Shadows[LightShadow.ShadowDataIndex];
+
+                for (int32 Face = 0; Face < 6; ++Face)
+                {
+                    const FLightShadow& FaceShadow = ShadowData.Shadow[Face];
+                    const FShadowTile& Tile = AtlasTiles[FaceShadow.ShadowMapIndex];
+                    const int32 TilePixelX = (int32)(Tile.UVOffset.x * GShadowAtlasResolution);
+                    const int32 TilePixelY = (int32)(Tile.UVOffset.y * GShadowAtlasResolution);
+                    const int32 TileSize   = (int32)(Tile.UVScale.x * GShadowAtlasResolution);
+
+                    const RHI::FRect TileRect{ TilePixelX, TilePixelX + TileSize, TilePixelY, TilePixelY + TileSize };
+                    RHI::CmdSetViewport(CL, TileRect);
+                    RHI::CmdSetScissor(CL, TileRect);
+
+                    // ViewIndex indexes ShadowData.ViewProjection[]; here the cube face.
+                    DrawShadowBatch(CL, Batch, bUseMesh, ViewBase + (uint32)Face, LightShadow.ShadowDataIndex, Face);
                 }
             }
         }
@@ -5355,7 +5271,6 @@ namespace Lumina
         const auto& PackedShadows            = Frame.Lighting.PackedShadows;
         const auto& AtlasTiles               = Frame.Lighting.AtlasTiles;
         const auto& SpotShadowCullViewBases  = Frame.Views.SpotShadowCullViewBases;
-        const uint32 NumDrawsPerView         = Frame.Views.NumDrawsPerView;
 
         if (PackedShadows[(uint32)ELightType::Spot].empty() || DrawCommands.empty())
         {
@@ -5390,30 +5305,32 @@ namespace Lumina
 
         const TVector<FLightShadow>& SpotShadows = PackedShadows[(uint32)ELightType::Spot];
 
-        for (uint32 SpotIdx = 0; SpotIdx < SpotShadows.size(); ++SpotIdx)
+        // Batch-outer: one pipeline bind per batch; per-spot tile viewports are cheap dynamic state.
+        for (uint32 OpaqueIdx : OpaqueDrawList)
         {
-            const FLightShadow& Shadow  = SpotShadows[SpotIdx];
-            const uint32 ViewIndex      = SpotShadowCullViewBases[SpotIdx];
-            if (ViewIndex == ~0u)
+            const FMeshDrawCommand& Batch = DrawCommands[OpaqueIdx];
+            const bool bUseMesh = BindShadowBatchPipeline(CL, Batch, PixelShader);
+
+            for (uint32 SpotIdx = 0; SpotIdx < SpotShadows.size(); ++SpotIdx)
             {
-                continue;
-            }
+                const FLightShadow& Shadow  = SpotShadows[SpotIdx];
+                const uint32 ViewIndex      = SpotShadowCullViewBases[SpotIdx];
+                if (ViewIndex == ~0u)
+                {
+                    continue;
+                }
 
-            LUMINA_PROFILE_SECTION_COLORED("Process Spot Light", tracy::Color::DeepPink);
+                const FShadowTile& Tile = AtlasTiles[Shadow.ShadowMapIndex];
+                const int32 TilePixelX = (int32)(Tile.UVOffset.x * GShadowAtlasResolution);
+                const int32 TilePixelY = (int32)(Tile.UVOffset.y * GShadowAtlasResolution);
+                const int32 TileSize   = (int32)(Tile.UVScale.x * GShadowAtlasResolution);
 
-            const FShadowTile& Tile = AtlasTiles[Shadow.ShadowMapIndex];
-            const int32 TilePixelX = (int32)(Tile.UVOffset.x * GShadowAtlasResolution);
-            const int32 TilePixelY = (int32)(Tile.UVOffset.y * GShadowAtlasResolution);
-            const int32 TileSize   = (int32)(Tile.UVScale.x * GShadowAtlasResolution);
+                const RHI::FRect TileRect{ TilePixelX, TilePixelX + TileSize, TilePixelY, TilePixelY + TileSize };
+                RHI::CmdSetViewport(CL, TileRect);
+                RHI::CmdSetScissor(CL, TileRect);
 
-            const RHI::FRect TileRect{ TilePixelX, TilePixelX + TileSize, TilePixelY, TilePixelY + TileSize };
-            RHI::CmdSetViewport(CL, TileRect);
-            RHI::CmdSetScissor(CL, TileRect);
-
-            // Spotlights only use ViewProjection[0], so the shadow ViewIndex is 0.
-            for (uint32 OpaqueIdx : OpaqueDrawList)
-            {
-                DrawShadowBatch(CL, DrawCommands[OpaqueIdx], PixelShader, ViewIndex, Shadow.ShadowDataIndex, 0);
+                // Spotlights only use ViewProjection[0], so the shadow ViewIndex is 0.
+                DrawShadowBatch(CL, Batch, bUseMesh, ViewIndex, Shadow.ShadowDataIndex, 0);
             }
         }
 
@@ -5427,7 +5344,6 @@ namespace Lumina
         const auto& DrawCommands     = Frame.Geometry.DrawCommands;
         const auto& OpaqueDrawList   = Frame.Geometry.OpaqueDrawList;
         const auto& LightData        = Frame.Lighting.LightData;
-        const uint32 NumDrawsPerView = Frame.Views.NumDrawsPerView;
         const uint32 CascadeViewBase = Frame.Views.CascadeViewBase;
 
         // No work without a shadow-casting sun or caster meshes; terrain-only scenes
@@ -5469,24 +5385,26 @@ namespace Lumina
         RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(DepthDesc));
         RHI::CmdSetCullMode(CL, RHI::ECullMode::Back);
 
-        for (uint32 c = 0; c < (uint32)NumCascades; ++c)
+        // Batch-outer: one depth-only pipeline bind per batch, then all four cascades draw with just
+        // the per-cascade tile viewport (GCSMCascadeOrigin/Sizes packing table) changing.
+        const int32 SunShadowDataIndex = LightData.Lights[0].ShadowDataIndex;
+        for (uint32 OpaqueIdx : OpaqueDrawList)
         {
-            // Per-cascade viewport: only this tile rasterizes; coords from the
-            // GCSMCascadeOrigin/Sizes packing table.
-            const int32 TileX = GCSMCascadeOriginX[c];
-            const int32 TileY = GCSMCascadeOriginY[c];
-            const int32 TileW = GCSMCascadeSizes[c];
+            const FMeshDrawCommand& Batch = DrawCommands[OpaqueIdx];
+            const bool bUseMesh = BindShadowBatchPipeline(CL, Batch, nullptr);
 
-            const RHI::FRect TileRect{ TileX, TileX + TileW, TileY, TileY + TileW };
-            RHI::CmdSetViewport(CL, TileRect);
-            RHI::CmdSetScissor(CL, TileRect);
-
-            // Cascade is depth-only (no pixel shader); ViewIndex indexes the cascade's ViewProjection.
-            const int32  SunShadowDataIndex = LightData.Lights[0].ShadowDataIndex;
-            const uint32 ViewIndex          = CascadeViewBase + c;
-            for (uint32 OpaqueIdx : OpaqueDrawList)
+            for (uint32 c = 0; c < (uint32)NumCascades; ++c)
             {
-                DrawShadowBatch(CL, DrawCommands[OpaqueIdx], nullptr, ViewIndex, SunShadowDataIndex, (int32)c);
+                const int32 TileX = GCSMCascadeOriginX[c];
+                const int32 TileY = GCSMCascadeOriginY[c];
+                const int32 TileW = GCSMCascadeSizes[c];
+
+                const RHI::FRect TileRect{ TileX, TileX + TileW, TileY, TileY + TileW };
+                RHI::CmdSetViewport(CL, TileRect);
+                RHI::CmdSetScissor(CL, TileRect);
+
+                // Cascade is depth-only (no pixel shader); ViewIndex indexes the cascade's ViewProjection.
+                DrawShadowBatch(CL, Batch, bUseMesh, CascadeViewBase + c, SunShadowDataIndex, (int32)c);
             }
         }
 
@@ -9396,6 +9314,9 @@ namespace Lumina
             // SPD hand-off counter: phase 1 (per-tile mips 0..5) to phase 2 (last workgroup,
             // mips 6..11). Zeroed before each dispatch; phase 2 resets it so it stays zero.
             SpdCounterRing[Slot] = CreateSceneBuffer(sizeof(uint32));
+
+            // Per-instance meshlet prefix (N+1 uints), GPU-built by BuildInstancePrefix.slang.
+            InstancePrefixRing[Slot] = CreateSceneBuffer(sizeof(uint32));
         }
     }
 
@@ -10010,16 +9931,6 @@ namespace Lumina
     FUIntVector2 FForwardRenderScene::GetRenderExtent() const
     {
         return SceneViews.empty() ? FUIntVector2(0) : SceneViews[0].Size;
-    }
-
-    const FSceneRenderStats& FForwardRenderScene::GetRenderStats() const
-    {
-        return RenderStats;
-    }
-
-    FSceneRenderSettings& FForwardRenderScene::GetSceneRenderSettings()
-    {
-        return RenderSettings;
     }
 
     entt::entity FForwardRenderScene::GetEntityAtPixel(uint32 X, uint32 Y) const

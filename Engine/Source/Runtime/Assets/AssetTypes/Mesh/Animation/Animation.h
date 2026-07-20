@@ -146,7 +146,9 @@ namespace Lumina
         void SamplePose(float Time, FSkeletonResource* RESTRICT InSkeleton, TVector<FMatrix4>& RESTRICT OutBoneTransforms) const;
 
         /** Samples the clip into a local-space TRS pose; bones without channels keep their bind-pose local transform. */
-        void SampleLocalPose(float Time, FSkeletonResource* RESTRICT InSkeleton, FPose& RESTRICT OutPose) const;
+        // MaxBones < 0 samples every animated bone; otherwise only channels targeting bones below
+        // MaxBones are sampled and the rest stay at bind pose (skeleton LOD for distant meshes).
+        void SampleLocalPose(float Time, FSkeletonResource* RESTRICT InSkeleton, FPose& RESTRICT OutPose, int32 MaxBones = -1) const;
 
         /** Samples a single bone's local TRS at Time, falling back to its bind-pose value for untouched channels. */
         void SampleBoneLocal(float Time, FSkeletonResource* RESTRICT InSkeleton, int32 BoneIndex,

@@ -38,8 +38,10 @@ namespace Lumina
             ? ResolveValueInput(LoopModePin, Compiler)
             : Compiler.EmitLoadConst((float)LoopMode);
 
+        const uint16 SyncGroupIndex = SyncGroup.IsNone() ? kAnimNoSyncGroup : Compiler.AddSyncGroup(SyncGroup);
+
         uint16 FinishedReg = 0;
-        const uint16 TimeReg = Compiler.EmitAdvanceClock(StateSlot, SpeedReg, ClipIndex, LoopModeReg, FinishedReg);
+        const uint16 TimeReg = Compiler.EmitAdvanceClock(StateSlot, SpeedReg, ClipIndex, LoopModeReg, FinishedReg, SyncGroupIndex);
         const uint16 PoseReg = Compiler.EmitSampleAnim(ClipIndex, TimeReg);
 
         Compiler.SetPinRegister(PosePin, PoseReg);

@@ -271,6 +271,40 @@ namespace Lumina
         FUNCTION(Script)
         entt::entity GetRootEntity(entt::entity Entity);
 
+        // --- Mesh sockets / bones. SocketOrBone accepts a socket name authored on the skeleton or
+        // --- static mesh asset, or (skeletal only) a raw bone name.
+
+        // Parent Child under Parent and keep it glued to the named socket/bone each frame
+        // (adds an SSocketAttachmentComponent; the socket attachment system drives the transform).
+        FUNCTION(Script)
+        void AttachEntityToSocket(entt::entity Child, entt::entity Parent, const FName& SocketOrBone);
+
+        // Stop following the socket and detach to the world root, preserving world transform.
+        FUNCTION(Script)
+        void DetachEntityFromSocket(entt::entity Entity);
+
+        FUNCTION(Script)
+        bool HasSocket(entt::entity Entity, const FName& SocketOrBone);
+
+        /** World-space socket/bone location on the entity's skeletal mesh; zero when it doesn't resolve. */
+        FUNCTION(Script)
+        FVector3 GetSocketLocation(entt::entity Entity, const FName& SocketOrBone);
+
+        /** World-space socket/bone rotation on the entity's skeletal mesh; identity when it doesn't resolve. */
+        FUNCTION(Script)
+        FQuat GetSocketRotation(entt::entity Entity, const FName& SocketOrBone);
+
+        /** Bone name for a skeleton bone index (e.g. a hit result's BoneIndex); NAME_None when out of range. */
+        FUNCTION(Script)
+        FName GetBoneName(entt::entity Entity, int32 BoneIndex);
+
+        FUNCTION(Script)
+        int32 GetBoneIndex(entt::entity Entity, const FName& BoneName);
+
+        /** Bone origin nearest WorldLocation; approximates the hit bone on single-body skeletal meshes. */
+        FUNCTION(Script)
+        FName FindClosestBone(entt::entity Entity, FVector3 WorldLocation);
+
         FUNCTION(Script)
         void DestroyEntity(entt::entity Entity);
         
@@ -320,6 +354,12 @@ namespace Lumina
         static CWorld* DuplicateWorld(CWorld* OwningWorld);
 
         IRenderScene* GetRenderer() const { return RenderScene.get(); }
+
+        // Creates/destroys this world's renderer (through RenderSceneFactory). Both are idempotent; the
+        // world lifecycle calls them itself, but renderer swaps (e.g. a C# RenderScene hot reload) may
+        // destroy and recreate on a live world.
+        void CreateRenderer();
+        void DestroyRenderer();
 
         // A world renders only when the process has a real RHI (not headless) and the world isn't a
         // dedicated server (which is invisible even in the editor). Gates RenderScene creation.
@@ -566,9 +606,6 @@ namespace Lumina
         const FEntityRegistry& GetEntityRegistry() const { return EntityRegistry; }
 
     private:
-        
-        void CreateRenderer();
-        void DestroyRenderer();
 
         void TickSystems(FSystemContext& Context);
 

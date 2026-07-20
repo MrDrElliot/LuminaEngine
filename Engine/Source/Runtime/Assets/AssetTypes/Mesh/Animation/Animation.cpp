@@ -122,9 +122,21 @@ namespace Lumina
         NewSet->Skeleton   = Skeleton;
         NewSet->Generation = Skeleton->BindPoseGeneration;
         NewSet->BoneIndices.reserve(Channels.size());
+        int32 NumUnmatched = 0;
         for (const FAnimationChannel& Channel : Channels)
         {
-            NewSet->BoneIndices.push_back(Skeleton->FindBoneIndex(Channel.TargetBone));
+            const int32 BoneIndex = Skeleton->FindBoneIndex(Channel.TargetBone);
+            NumUnmatched += BoneIndex < 0 ? 1 : 0;
+            NewSet->BoneIndices.push_back(BoneIndex);
+        }
+
+        // Unmatched channels silently freeze their bones at bind pose -- the telltale of an animation
+        // sampled against the wrong skeleton (or a bone-name mismatch at import). Once per (clip,
+        // skeleton) pairing, since sets are cached.
+        if (NumUnmatched > 0)
+        {
+            LOG_WARN("Animation '{}': {}/{} channels target bones missing from the skeleton (name mismatch or wrong skeleton)",
+                     Name.c_str(), NumUnmatched, (int32)Channels.size());
         }
 
         const FResolvedChannelSet* Result = NewSet.get();
@@ -253,7 +265,7 @@ namespace Lumina
         }
     }
 
-    void CAnimation::SampleLocalPose(float Time, FSkeletonResource* RESTRICT InSkeleton, FPose& RESTRICT OutPose) const
+    void CAnimation::SampleLocalPose(float Time, FSkeletonResource* RESTRICT InSkeleton, FPose& RESTRICT OutPose, int32 MaxBones) const
     {
         LUMINA_PROFILE_SCOPE();
 
@@ -265,8 +277,11 @@ namespace Lumina
             return;
         }
 
+        const int32 ActiveBones = (MaxBones >= 0 && MaxBones < NumBones) ? MaxBones : NumBones;
+
         // Start from the bind pose, then overwrite whatever the channels animate. With the skeleton's
-        // SoA bind cache this is three bulk copies instead of a per-bone decompose.
+        // SoA bind cache this is three bulk copies instead of a per-bone decompose. Bones past the
+        // LOD cut simply keep their bind-pose locals.
         OutPose.ResetToBindPose(InSkeleton);
 
         const FAnimationResource::FResolvedChannelSet* Resolved = AnimationResource->GetResolvedChannelSet(InSkeleton);
@@ -275,7 +290,7 @@ namespace Lumina
         for (SIZE_T c = 0; c < Channels.size(); ++c)
         {
             const int32 BoneIdx = Resolved->BoneIndices[c];
-            if (BoneIdx < 0 || BoneIdx >= NumBones)
+            if (BoneIdx < 0 || BoneIdx >= ActiveBones)
             {
                 continue;
             }

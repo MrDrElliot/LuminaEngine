@@ -15,6 +15,16 @@ namespace Lumina
         Ar << *SkeletonResource;
     }
 
+    int32 CSkeleton::FindSocketBoneIndex(const FName& SocketName) const
+    {
+        const FMeshSocket* Socket = FindSocket(SocketName);
+        if (Socket == nullptr || !SkeletonResource)
+        {
+            return INDEX_NONE;
+        }
+        return SkeletonResource->FindBoneIndex(Socket->BoneName);
+    }
+
     void CSkeleton::ComputeBindPoseSkinningMatrices(TVector<FMatrix4>& OutMatrices) const
     {
         const int32 NumBones = SkeletonResource->GetNumBones();

@@ -139,6 +139,10 @@ namespace Lumina::Physics
     	TOptional<SRayResult> CastRay(const SRayCastSettings& Settings) override;
 		TVector<SRayResult> CastSphere(const SSphereCastSettings& Settings) override;
 		TVector<SRayResult> CastRayAll(const SRayCastSettings& Settings) override;
+
+		// Skeleton bone index behind a hit body: ragdoll per-bone bodies map through the entity's
+		// ragdoll handle; every other body returns INDEX_NONE.
+		int32 ResolveHitBoneIndex(entt::entity Entity, JPH::BodyID BodyID) const;
 		void CollidePoint(const FVector3& Point, const TVector<uint32>& IgnoreBodies, TVector<entt::entity>& OutEntities) override;
 		void OverlapSphere(const FVector3& Center, float Radius, const TVector<uint32>& IgnoreBodies, TVector<entt::entity>& OutEntities) override;
 		void OverlapBox(const FVector3& Center, const FVector3& HalfExtents, const FQuat& Rotation, const TVector<uint32>& IgnoreBodies, TVector<entt::entity>& OutEntities) override;

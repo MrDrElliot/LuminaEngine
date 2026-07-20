@@ -1,6 +1,8 @@
 #pragma once
 
 #include "Animation/AnimationGraphVM.h"
+#include "Animation/AnimEvents.h"
+#include "Animation/RootMotion.h"
 #include "Animation/RootMotionTypes.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Object/ObjectHandleTyped.h"
@@ -22,15 +24,37 @@ namespace Lumina
         TObjectPtr<CAnimationGraph> Graph;
 
         /**
-         * Root-motion lock for the graph's final pose. ForceLock pins the root to the bind pose;
-         * FromAsset / ForceUnlock leave it unlocked (graphs have no single source asset, and
-         * root-motion extraction through a blend tree is not yet implemented).
+         * Root-motion policy for the graph's final pose. FromAsset extracts motion from clips with
+         * root motion enabled, blends it through the graph, and drives the entity transform with it.
+         * ForceLock pins the root without extraction; ForceUnlock leaves the root free in the pose.
          */
         PROPERTY(Script, Editable, Category = "Animation")
         ERootMotionLockMode RootMotionLock = ERootMotionLockMode::FromAsset;
 
         // Per-instance VM state (registers, playback clocks, parameter values). Sized lazily from Graph; not serialized.
         FAnimGraphVMState VMState;
+
+        // This frame's blended root-motion delta, extracted in the parallel update and applied to the
+        // entity transform in the serial pass. Transient.
+        FRootMotionDelta PendingRootMotion;
+
+        // Notify events that fired this frame from the graph's active branches, weighted by their
+        // branch's blend alpha. Cleared every update. Transient.
+        TVector<FAnimNotifyEvent> NotifyEvents;
+
+        /** True if the named point notify fired this frame (any weight). */
+        FUNCTION(Script)
+        bool WasNotifyTriggered(const FName& NotifyName) const
+        {
+            for (const FAnimNotifyEvent& Event : NotifyEvents)
+            {
+                if (Event.Name == NotifyName)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
 
         /** Sets a named float parameter. No-op if the graph has no such parameter. */
         FUNCTION(Script)

@@ -1,6 +1,9 @@
 #pragma once
 
-#include "Animation/Pose.h"
+#include "Animation/AnimEvents.h"
+#include "Animation/RootMotion.h"
+#include "Animation/RootMotionTypes.h"
+#include "Animation/TaskSystem/AnimTask.h"
 #include "Containers/Array.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Serialization/Archiver.h"
@@ -48,7 +51,7 @@ namespace Lumina
         LoadConst,       // imm:float, dst:sReg
         LoadParam,       // paramIdx:uint16, dst:sReg
         ScalarOp,        // op:uint8, a:sReg, b:sReg, dst:sReg
-        AdvanceClock,    // stateIdx:uint16, speed:sReg, clipIdx:uint16, loopMode:sReg, dstClock:sReg, dstFinished:sReg
+        AdvanceClock,    // stateIdx:uint16, speed:sReg, clipIdx:uint16, loopMode:sReg, dstClock:sReg, dstFinished:sReg, syncGroup:uint16
         SampleAnim,      // clipIdx:uint16, time:sReg, dst:pReg
         RefPose,         // dst:pReg
         Blend,           // a:pReg, b:pReg, alpha:sReg, dst:pReg
@@ -92,43 +95,39 @@ namespace Lumina
         Sign,        // -1 / 0 / 1
     };
 
-    // One channel's inertialization record (Bollo 2018): the offset decays along Direction from magnitude
-    // X0 (with initial velocity V0) to zero over the transition. Rotation: Direction = axis, X0 = angle
-    // (rad); translation/scale: Direction = unit offset, X0 = length.
-    struct FInertChannel
-    {
-        FVector3 Direction = FVector3(0.0f);
-        float    X0 = 0.0f;
-        float    V0 = 0.0f;
-    };
+    // AdvanceClock operand value for "not in a sync group".
+    inline constexpr uint16 kAnimNoSyncGroup = 0xFFFFu;
 
-    // Per-state-machine inertialization. At a transition seam the offset between the last shown pose and the
-    // new target is captured (with its velocity) and decayed to zero over the transition's BlendDuration,
-    // added onto the freshly-evaluated target each frame. Pop-free (C1-continuous) and only the target state
-    // contributes; replaces the old two-state cross-fade. PrevOutput/PrevPrevOutput hold the 2-frame output
-    // history the velocity estimate needs (so interrupts re-inertialize from the actual shown pose).
-    struct FAnimInertializer
+    // Stamped into CAnimationGraph by the compiler and checked by BuildTasks. Bump whenever an
+    // opcode's operand layout changes: a stale program would misparse operands into garbage poses,
+    // so the VM refuses it (bind pose + warning) until the graph is recompiled in the editor.
+    // 0 = compiled before versioning existed (pre-sync-group layout). 2 = AdvanceClock syncGroup operand.
+    inline constexpr uint16 kAnimBytecodeVersion = 2;
+
+    // Clips in a sync group advance one shared normalized phase instead of independent clocks, so a
+    // walk->run blend samples both clips at the same stride phase (no foot slide). The phase speed
+    // uses the group's blended duration, refined from blend alphas one frame behind (weights change
+    // smoothly, so the latency is invisible). Requires member clips to be phase-aligned by authoring
+    // (all starting on the same foot plant); synced clips always loop.
+    struct FAnimSyncGroup
     {
-        bool  bActive  = false;
-        float Elapsed  = 0.0f;
-        float Duration = 0.0f;
-        TVector<FInertChannel> Rot;
-        TVector<FInertChannel> Trans;
-        TVector<FInertChannel> Scale;
-        FPose PrevOutput;
-        FPose PrevPrevOutput;
-        int32 HistoryCount = 0; // 0/1/2 - velocity is only estimated once 2 frames of history exist
+        float Phase        = 0.0f; // shared normalized playhead, wraps 0..1
+        float PrevPhase    = 0.0f; // phase before this update's advance
+        float Duration     = 0.0f; // blended seconds driving the phase speed
+        float NextDuration = 0.0f; // accumulated from this update's blend provenance
+        bool  bAdvanced    = false;
     };
 
     // Per-instance mutable execution state. Persists across frames so playback
-    // clocks keep advancing; owned by SAnimationGraphComponent.
+    // clocks keep advancing; owned by SAnimationGraphComponent. Pose data no longer
+    // lives here -- poses come from the executor's per-thread buffer pool.
     struct FAnimGraphVMState
     {
         TVector<float> ScalarRegisters;
-        TVector<FPose> PoseRegisters;
         TVector<float> StateSlots;     // persistent playback clocks
         TVector<float> Parameters;     // current parameter values (editor / Lua driven)
         TVector<FAnimInertializer> Inertializers; // per state machine; transition smoothing state
+        TVector<FAnimSyncGroup> SyncGroups;       // shared phase per sync group
 
         // Graph this state was sized against; the VM re-initializes the state
         // when the component's graph asset changes underneath it.
@@ -137,7 +136,22 @@ namespace Lumina
         bool bInitialized = false;
     };
 
-    // Stateless executor.
+    // Root-motion policy in, blended delta out. FromAsset extracts per-clip deltas (clips with
+    // bEnableRootMotion) and blends them through the graph like the pose; the root is pinned iff the
+    // branch reaching the output is root-motion driven. ForceLock pins without extraction;
+    // ForceUnlock leaves the root free in the pose.
+    struct FAnimGraphRootMotion
+    {
+        ERootMotionLockMode Mode = ERootMotionLockMode::FromAsset;
+        int32 RootBoneIndex = INDEX_NONE;
+
+        // Out: this frame's blended entity-space delta (FromAsset only).
+        FRootMotionDelta Delta;
+    };
+
+    // Stateless graph-update pass. Interprets the bytecode's logic (scalars, clocks, state-machine
+    // transitions) immediately and records every pose operation into an FAnimTaskList for deferred
+    // execution by Anim::ExecuteTaskList. Cheap: no pose math runs here.
     class RUNTIME_API FAnimationGraphVM
     {
     public:
@@ -145,13 +159,16 @@ namespace Lumina
         // Sizes register files / state slots / parameters from the graph; call when the graph asset changes.
         static void InitState(const CAnimationGraph* Graph, FAnimGraphVMState& State);
 
-        // Executes the bytecode for one frame.
-        static void Execute(const CAnimationGraph* Graph,
-                            FSkeletonResource* Skeleton,
-                            float DeltaTime,
-                            FAnimGraphVMState& State,
-                            TVector<FMatrix4>& OutMatrices,
-                            bool bLockRoot = false,
-                            int32 RootBoneIndex = INDEX_NONE);
+        // Runs one frame's graph logic and records the frame's pose recipe. Always leaves a valid
+        // output task (bind pose when the graph produced none). Root-motion deltas and notify events
+        // flow alongside the pose registers: blends weight them, inactive state-machine branches drop
+        // them. OutEvents (optional) receives the surviving events, weighted by their branch's blend.
+        static void BuildTasks(const CAnimationGraph* Graph,
+                               FSkeletonResource* Skeleton,
+                               float DeltaTime,
+                               FAnimGraphVMState& State,
+                               FAnimTaskList& OutTasks,
+                               FAnimGraphRootMotion& RootMotionInOut,
+                               TVector<FAnimNotifyEvent>* OutEvents = nullptr);
     };
 }

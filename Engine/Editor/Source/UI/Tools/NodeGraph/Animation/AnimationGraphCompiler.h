@@ -50,7 +50,12 @@ namespace Lumina
 
         // Advances a persistent playback clock; returns the clock and writes a "finished" flag to
         // OutFinishedReg (stays 0 in Loop mode; PlayOnce sets it once the clip's duration is reached).
-        uint16 EmitAdvanceClock(uint16 StateSlot, uint16 SpeedReg, uint16 ClipIndex, uint16 LoopModeReg, uint16& OutFinishedReg);
+        // SyncGroup (kAnimNoSyncGroup = none) makes the clip sample at its group's shared phase.
+        uint16 EmitAdvanceClock(uint16 StateSlot, uint16 SpeedReg, uint16 ClipIndex, uint16 LoopModeReg, uint16& OutFinishedReg,
+                                uint16 SyncGroup = kAnimNoSyncGroup);
+
+        // Registers a named sync group and returns its index; dedups by name.
+        uint16 AddSyncGroup(const FName& Name);
 
         uint16 EmitSampleAnim(uint16 ClipIndex, uint16 TimeReg);
         uint16 EmitRefPose();
@@ -146,6 +151,7 @@ namespace Lumina
 
         TVector<uint8>                          Bytecode;
         TVector<TObjectPtr<CAnimation>>         Clips;
+        TVector<FName>                          SyncGroupNames;
         TVector<FAnimGraphParameter>            Parameters;
         TVector<FAnimGraphBoneMask>             BoneMasks;
         THashMap<FName, int32>                  BoneMaskNameToIndex;

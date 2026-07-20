@@ -701,6 +701,23 @@ namespace Lumina
                 }
             }
         }
+
+        if (IsValid(StaticMeshComponent.StaticMesh) && !StaticMeshComponent.StaticMesh->Sockets.empty())
+        {
+            const FMatrix4 EntityMatrix = Transform.GetWorldMatrix();
+            constexpr float AxisLength = 0.18f;
+
+            for (const FMeshSocket& Socket : StaticMeshComponent.StaticMesh->Sockets)
+            {
+                const FMatrix4 SocketMatrix = EntityMatrix * Socket.RelativeTransform.GetMatrix();
+                const FVector3 Position = FVector3(SocketMatrix[3]);
+
+                World->DrawSphere(Position, 0.045f, FVector4(1.0f, 0.82f, 0.4f, 1.0f), 12, 2.5f, false);
+                World->DrawLine(Position, Position + Math::Normalize(FVector3(SocketMatrix[0])) * AxisLength, FVector4(1.0f, 0.2f, 0.2f, 1.0f), 3.0f, false);
+                World->DrawLine(Position, Position + Math::Normalize(FVector3(SocketMatrix[1])) * AxisLength, FVector4(0.2f, 1.0f, 0.2f, 1.0f), 3.0f, false);
+                World->DrawLine(Position, Position + Math::Normalize(FVector3(SocketMatrix[2])) * AxisLength, FVector4(0.2f, 0.4f, 1.0f, 1.0f), 3.0f, false);
+            }
+        }
     }
 
     void FStaticMeshEditorTool::OnDeinitialize(const FUpdateContext& UpdateContext)
@@ -761,11 +778,39 @@ namespace Lumina
         if (ImGui::BeginMenu(LE_ICON_DEBUG_STEP_INTO " Mesh Debug"))
         {
             ImGui::Checkbox(LE_ICON_CUBE_OUTLINE " Show AABB", &bShowAABB);
-            
+
             if (ImGui::Button(LE_ICON_RELOAD " Reload Mesh Buffers"))
             {
                 Cast<CStaticMesh>(Asset.Get())->PostLoad();
             }
+
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu(LE_ICON_LINK " Sockets"))
+        {
+            if (ImGui::MenuItem(LE_ICON_PLUS " Add Socket"))
+            {
+                CStaticMesh* Mesh = Cast<CStaticMesh>(Asset.Get());
+
+                FString Base("Socket");
+                FName SocketName(Base.c_str());
+                int32 Suffix = 1;
+                while (Mesh->FindSocket(SocketName) != nullptr)
+                {
+                    FString Numbered = Base;
+                    Numbered += "_";
+                    Numbered += eastl::to_string(Suffix++).c_str();
+                    SocketName = FName(Numbered.c_str());
+                }
+
+                FMeshSocket& Socket = Mesh->Sockets.emplace_back();
+                Socket.SocketName = SocketName;
+
+                Asset->GetPackage()->MarkDirty();
+                PropertyTable.MarkDirty();
+            }
+            ImGuiX::TextTooltip("{}", "Add a named attach point; edit its name and offset in Mesh Properties");
 
             ImGui::EndMenu();
         }

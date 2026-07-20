@@ -560,6 +560,10 @@ namespace Lumina
         FinalClass->Size = Params.SizeOf;
         FinalClass->Alignment = Params.AlignOf;
         FinalClass->StructOps.reset(Params.StructOpsFn());
+        if (FinalClass->StructOps == nullptr)
+        {
+            FinalClass->StructOps = MakeUnique<FStructOps>();
+        }
         
         
         *OutStruct = FinalClass;

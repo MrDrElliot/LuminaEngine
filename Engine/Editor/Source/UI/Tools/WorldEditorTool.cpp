@@ -56,6 +56,7 @@
 #include "world/entity/components/entitytags.h"
 #include "World/Entity/Components/NameComponent.h"
 #include "World/Entity/Components/RelationshipComponent.h"
+#include "World/Entity/Components/SocketAttachmentComponent.h"
 #include "World/Entity/Components/CSharpScriptComponent.h"
 #include "world/entity/components/skeletalmeshcomponent.h"
 #include "World/Entity/Components/StaticMeshComponent.h"
@@ -447,6 +448,42 @@ namespace Lumina
                     ECS::Utils::RemoveFromParent(Registry, Data.Entity);
                     EndTransaction("Unparent");
                     ReparentEntityInOutliner(Data.Entity);
+                }
+
+                // Attach to a socket on the parent's mesh (one click; adds/retargets the attachment component).
+                SocketPickerContext::FSocketPickerData SocketData;
+                BuildSocketPickerData(Data.Entity, SocketData);
+                const SSocketAttachmentComponent* Attachment = Registry.try_get<SSocketAttachmentComponent>(Data.Entity);
+
+                if (!SocketData.Sockets.empty() && ImGui::BeginMenu(LE_ICON_LINK " Attach to Socket"))
+                {
+                    for (const FName& Socket : SocketData.Sockets)
+                    {
+                        const bool bCurrent = Attachment != nullptr && Attachment->SocketName == Socket;
+                        if (ImGui::MenuItem(Socket.c_str(), nullptr, bCurrent))
+                        {
+                            const FRelationshipComponent* Relationship = Registry.try_get<FRelationshipComponent>(Data.Entity);
+                            BeginTransaction();
+                            World->AttachEntityToSocket(Data.Entity, Relationship->Parent, Socket);
+                            EndTransaction("Attach to Socket");
+                            if (Data.Entity == DetailsEntity)
+                            {
+                                bDetailsDirty = true;
+                            }
+                        }
+                    }
+                    ImGui::EndMenu();
+                }
+
+                if (Attachment != nullptr && ImGui::MenuItem(LE_ICON_LINK_OFF " Clear Socket Attachment"))
+                {
+                    BeginTransaction();
+                    Registry.remove<SSocketAttachmentComponent>(Data.Entity);
+                    EndTransaction("Clear Socket Attachment");
+                    if (Data.Entity == DetailsEntity)
+                    {
+                        bDetailsDirty = true;
+                    }
                 }
             }
 
@@ -1019,7 +1056,8 @@ namespace Lumina
 
     void FWorldEditorTool::RegisterEditorActions()
     {
-        auto Hovered      = [this]() { return bViewportHovered; };
+        // Hotkeys are suppressed while right-mouse flying so W/E/R/Q act as fly keys, not mode switches.
+        auto Hovered      = [this]() { return bViewportHovered && !CameraState.bWasLooking; };
         auto EditorWorld  = [this]() { return World && World->GetWorldType() == EWorldType::Editor; };
 
         RegisterAction({"Translate Mode", "Gizmo", "Switch the gizmo to translate (move) mode",

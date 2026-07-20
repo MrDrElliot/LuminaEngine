@@ -1434,11 +1434,20 @@ namespace Lumina
             ImGui::GetWindowDrawList()->AddLine(WinMin, ImVec2(WinMin.x + ImGui::GetWindowWidth(), WinMin.y), HandleCol, 2.0f);
         }
 
-        // Toolbar child with a menu bar so the tool's own settings (DrawMainToolbar/
-        // DrawToolMenu) show as when docked, plus Dock-in-Layout + close on the right.
+        // Toolbar row: a menu-bar child for the tool's own settings (DrawMainToolbar/DrawToolMenu),
+        // then a fixed-width sibling child holding Dock-in-Layout + Close. The buttons live outside
+        // the menu bar on purpose: menu-bar cursor-pinning let a wide tool toolbar (or the menu
+        // bar's own clipping) cover or cull them, leaving the drawer impossible to dock or close.
         const ImGuiStyle& Style = ImGui::GetStyle();
         const float ToolbarHeight = ImGui::GetFrameHeight() + Style.FramePadding.y * 2.0f;
-        if (ImGui::BeginChild("##DrawerToolbar", ImVec2(0.0f, ToolbarHeight), false, ImGuiWindowFlags_MenuBar))
+
+        const char* DockLabel = LE_ICON_DOCK_BOTTOM " Dock";
+        const float DockWidth    = ImGui::CalcTextSize(DockLabel).x + Style.FramePadding.x * 2.0f;
+        const float CloseWidth   = ImGui::CalcTextSize(LE_ICON_CLOSE).x + Style.FramePadding.x * 2.0f;
+        const float ButtonsWidth = DockWidth + CloseWidth + Style.ItemSpacing.x * 3.0f;
+
+        const float ToolbarWidth = eastl::max(ImGui::GetContentRegionAvail().x - ButtonsWidth, 1.0f);
+        if (ImGui::BeginChild("##DrawerToolbar", ImVec2(ToolbarWidth, ToolbarHeight), false, ImGuiWindowFlags_MenuBar))
         {
             if (ImGui::BeginMenuBar())
             {
@@ -1453,33 +1462,34 @@ namespace Lumina
                     OpenDrawer->DrawMainToolbar(UpdateContext);
                 }
 
-                const char* DockLabel = LE_ICON_DOCK_BOTTOM " Dock";
-                const float DockWidth  = ImGui::CalcTextSize(DockLabel).x + Style.FramePadding.x * 2.0f;
-                const float CloseWidth = ImGui::CalcTextSize(LE_ICON_CLOSE).x + Style.FramePadding.x * 2.0f;
-                ImGui::SameLine();
-                // GetContentRegionAvail() is unreliable inside a menu bar, so pin the buttons
-                // to the right using the window width; clamp so a wide tool toolbar can't push
-                // the cursor backward and draw the toolbar items on top of Dock/Close.
-                const float RightEdgeX = ImGui::GetWindowWidth() - Style.FramePadding.x;
-                const float ButtonsX   = RightEdgeX - DockWidth - CloseWidth - Style.ItemSpacing.x;
-                ImGui::SetCursorPosX(eastl::max(ImGui::GetCursorPosX(), ButtonsX));
-
-                if (ImGui::MenuItem(DockLabel) && Drawer != nullptr)
-                {
-                    Drawer->bDocked = true;
-                    Drawer->Tool->DesiredDockID = MainDockspaceID;   // FEditorUI is a friend of FEditorTool
-                    FocusTargetWindowName = Drawer->Tool->GetToolName().c_str();
-                    OpenDrawer = nullptr;
-                }
-                ImGuiX::TextTooltip("Dock this panel into the main layout");
-
-                if (ImGui::MenuItem(LE_ICON_CLOSE))
-                {
-                    OpenDrawer = nullptr;
-                }
-
                 ImGui::EndMenuBar();
             }
+        }
+        ImGui::EndChild();
+
+        ImGui::SameLine(0.0f, 0.0f);
+        if (ImGui::BeginChild("##DrawerToolbarButtons", ImVec2(ButtonsWidth, ToolbarHeight), false,
+            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse))
+        {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+
+            if (ImGui::Button(DockLabel) && Drawer != nullptr)
+            {
+                Drawer->bDocked = true;
+                Drawer->Tool->DesiredDockID = MainDockspaceID;   // FEditorUI is a friend of FEditorTool
+                FocusTargetWindowName = Drawer->Tool->GetToolName().c_str();
+                OpenDrawer = nullptr;
+            }
+            ImGuiX::TextTooltip("Dock this panel into the main layout");
+
+            ImGui::SameLine();
+            if (ImGui::Button(LE_ICON_CLOSE))
+            {
+                OpenDrawer = nullptr;
+            }
+            ImGuiX::TextTooltip("Close the drawer");
+
+            ImGui::PopStyleColor();
         }
         ImGui::EndChild();
 

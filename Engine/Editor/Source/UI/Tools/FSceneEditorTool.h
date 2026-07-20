@@ -3,6 +3,7 @@
 #include "AssetEditors/AssetEditorTool.h"
 #include "ImGuizmo.h"
 #include "Tools/UI/ImGui/Widgets/TreeListView.h"
+#include "UI/Properties/Customizations/SocketPickerContext.h"
 
 namespace Lumina
 {
@@ -202,6 +203,8 @@ namespace Lumina
         // Draw every component row for Entity.
         void DrawComponentList(entt::entity Entity);
         void DrawComponentHeader(FComponentTableEntry& Entry, entt::entity Entity);
+        // Sockets/bones on Entity's parent's mesh, for SocketPicker FName properties in the details.
+        void BuildSocketPickerData(entt::entity Entity, SocketPickerContext::FSocketPickerData& Out);
         // Remove a reflected component from Entity (marks details dirty for rebuild).
         void RemoveComponent(entt::entity Entity, const CStruct* ComponentType);
         // Drain queued reflected-component removals inside one transaction. Call from Update.

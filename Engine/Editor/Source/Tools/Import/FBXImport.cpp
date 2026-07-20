@@ -154,33 +154,6 @@ namespace Lumina::Import::Mesh::FBX
                     continue;
                 }
         
-                auto EvalCurve = [](const ofbx::AnimationCurve* Curve, int64 Time) -> double
-                {
-                    if (!Curve)
-                    {
-                        return 0.0;
-                    }
-        
-                    int KeyCount = Curve->getKeyCount();
-                    const int64* KeyTimes = Curve->getKeyTime();
-                    const float* KeyValues = Curve->getKeyValue();
-                    
-                    for (int j = 0; j < KeyCount - 1; ++j)
-                    {
-                        if (Time >= KeyTimes[j] && Time <= KeyTimes[j + 1])
-                        {
-                            double t = (double)(Time - KeyTimes[j]) / (double)(KeyTimes[j + 1] - KeyTimes[j]);
-                            return KeyValues[j] + t * (KeyValues[j + 1] - KeyValues[j]);
-                        }
-                    }
-                    
-                    if (Time < KeyTimes[0])
-                    {
-                        return KeyValues[0];
-                    }
-                    return KeyValues[KeyCount - 1];
-                };
-        
                 TSet<int64> AllTimestamps;
                 
                 auto CollectTimestamps = [&](const ofbx::AnimationCurveNode* Node)
@@ -229,30 +202,28 @@ namespace Lumina::Import::Mesh::FBX
                 for (int64 FBXTime : SortedTimestamps)
                 {
                     float Time = static_cast<float>(ofbx::fbxTimeToSeconds(FBXTime));
-                    
+
                     ofbx::DVec3 AnimTranslation = Bone->getLocalTranslation();
                     ofbx::DVec3 AnimRotation = Bone->getLocalRotation();
                     ofbx::DVec3 AnimScale = Bone->getLocalScaling();
-                    
-                    if (TranslationNode) 
+
+                    // getNodeLocalTransform falls back to the curve node's authored per-axis default
+                    // (d|X/Y/Z) when an axis has no curve. Exporters routinely omit unanimated axes;
+                    // evaluating curves directly with a 0 default snapped those axes to zero (bones
+                    // scattered to axis planes, scale-0 collapses).
+                    if (TranslationNode)
                     {
-                        AnimTranslation.x = EvalCurve(TranslationNode->getCurve(0), FBXTime);
-                        AnimTranslation.y = EvalCurve(TranslationNode->getCurve(1), FBXTime);
-                        AnimTranslation.z = EvalCurve(TranslationNode->getCurve(2), FBXTime);
+                        AnimTranslation = TranslationNode->getNodeLocalTransform(Time);
                     }
-                    
+
                     if (RotationNode)
                     {
-                        AnimRotation.x = EvalCurve(RotationNode->getCurve(0), FBXTime);
-                        AnimRotation.y = EvalCurve(RotationNode->getCurve(1), FBXTime);
-                        AnimRotation.z = EvalCurve(RotationNode->getCurve(2), FBXTime);
+                        AnimRotation = RotationNode->getNodeLocalTransform(Time);
                     }
-                    
-                    if (ScaleNode) 
+
+                    if (ScaleNode)
                     {
-                        AnimScale.x = EvalCurve(ScaleNode->getCurve(0), FBXTime);
-                        AnimScale.y = EvalCurve(ScaleNode->getCurve(1), FBXTime);
-                        AnimScale.z = EvalCurve(ScaleNode->getCurve(2), FBXTime);
+                        AnimScale = ScaleNode->getNodeLocalTransform(Time);
                     }
                     
                     ofbx::DMatrix LocalMatrix = Bone->evalLocal(AnimTranslation, AnimRotation, AnimScale);

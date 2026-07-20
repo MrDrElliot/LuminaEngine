@@ -45,6 +45,7 @@ struct FLmRayHit
     FVector3 Normal;
     float    Distance;
     float    Fraction;
+    int32    BoneIndex;   // ragdoll per-bone bodies only; -1 otherwise
 };
 
 //================================================================================================
@@ -347,6 +348,7 @@ LUMINA_DOTNET_EXPORT(FLmRayHit, Physics_Raycast)(uint64 World, FVector3 Start, F
         Hit.Normal = R.Normal;
         Hit.Distance = R.Distance;
         Hit.Fraction = R.Fraction;
+        Hit.BoneIndex = R.BoneIndex;
     }
     return Hit;
 }
@@ -549,6 +551,7 @@ LUMINA_DOTNET_EXPORT(int32, Physics_SphereCast)(uint64 World, FVector3 Start, FV
         H.Normal   = R.Normal;
         H.Distance = R.Distance;
         H.Fraction = R.Fraction;
+        H.BoneIndex = R.BoneIndex;
     }
     return Count;
 }
@@ -682,6 +685,7 @@ LUMINA_DOTNET_EXPORT(int32, Physics_RaycastAll)(uint64 World, FVector3 Start, FV
         H.Normal   = R.Normal;
         H.Distance = R.Distance;
         H.Fraction = R.Fraction;
+        H.BoneIndex = R.BoneIndex;
     }
     return Count;
 }
@@ -713,6 +717,7 @@ LUMINA_DOTNET_EXPORT(FLmRayHit, Physics_RaycastFiltered)(uint64 World, FVector3 
         Hit.Normal   = R.Normal;
         Hit.Distance = R.Distance;
         Hit.Fraction = R.Fraction;
+        Hit.BoneIndex = R.BoneIndex;
     }
     return Hit;
 }
@@ -747,6 +752,7 @@ LUMINA_DOTNET_EXPORT(int32, Physics_RaycastAllFiltered)(uint64 World, FVector3 S
         H.Normal   = R.Normal;
         H.Distance = R.Distance;
         H.Fraction = R.Fraction;
+        H.BoneIndex = R.BoneIndex;
     }
     return Count;
 }

@@ -29,7 +29,7 @@ namespace Lumina
 
     struct FPropertyChangedEventCallbacks
     {
-        CStruct*                Type;
+        CStruct*                Type = nullptr;
         FPropertyChangedEventFn PreChangeCallback;
         FPropertyChangedEventFn PostChangeCallback;
         FPropertyChangedEventFn StartChangeCallback;

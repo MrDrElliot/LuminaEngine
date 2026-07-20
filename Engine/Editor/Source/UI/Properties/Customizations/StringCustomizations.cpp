@@ -1,6 +1,7 @@
 #include "CoreTypeCustomization.h"
 #include "BonePickerContext.h"
 #include "ParameterPickerContext.h"
+#include "SocketPickerContext.h"
 #include "Assets/AssetTypes/Animation/AnimationGraph/AnimationGraph.h"
 #include "Assets/AssetTypes/Blackboard/Blackboard.h"
 #include "Renderer/MeshData.h"
@@ -99,12 +100,14 @@ namespace Lumina
     {
         const bool bBonePicker = Property->Property->HasMetadata("BonePicker");
         const bool bParamPicker = Property->Property->HasMetadata("ParameterPicker");
+        const bool bSocketPicker = Property->Property->HasMetadata("SocketPicker");
         const FSkeletonResource* Skeleton = bBonePicker ? BonePickerContext::GetActiveSkeleton() : nullptr;
         CAnimationGraph* PickerGraph = bParamPicker ? ParameterPickerContext::GetActiveGraph() : nullptr;
+        const SocketPickerContext::FSocketPickerData* SocketData = bSocketPicker ? SocketPickerContext::GetActive() : nullptr;
 
         EPropertyChangeOp Result = EPropertyChangeOp::None;
 
-        const float ButtonWidth = (bBonePicker || bParamPicker) ? ImGui::GetFrameHeight() : 0.0f;
+        const float ButtonWidth = (bBonePicker || bParamPicker || bSocketPicker) ? ImGui::GetFrameHeight() : 0.0f;
 
         char Buffer[256];
         strncpy(Buffer, DisplayValue.c_str(), sizeof(Buffer));
@@ -227,6 +230,80 @@ namespace Lumina
                             }
                         }
                     }
+                    ImGui::PopStyleVar();
+                }
+                ImGui::EndChild();
+                ImGui::EndPopup();
+            }
+        }
+
+        if (bSocketPicker)
+        {
+            ImGui::SameLine(0, 0);
+            const bool bHasSockets = SocketData != nullptr &&
+                (!SocketData->Sockets.empty() || (SocketData->Skeleton != nullptr && SocketData->Skeleton->GetNumBones() > 0));
+            ImGui::BeginDisabled(!bHasSockets);
+            if (ImGui::Button(LE_ICON_MENU_DOWN "##SocketPick", ImVec2(ButtonWidth, 0)))
+            {
+                BoneFilter.Clear();
+                ImGui::OpenPopup("##SocketPicker");
+            }
+            ImGui::EndDisabled();
+
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+            {
+                ImGuiX::TextTooltip_Internal(bHasSockets ? "Pick a socket (or bone) on the parent's mesh"
+                                                         : "Parent has no mesh sockets");
+            }
+
+            if (ImGui::BeginPopup("##SocketPicker"))
+            {
+                BoneFilter.Draw("##Filter", 320.0f);
+
+                if (ImGui::BeginChild("##SocketList", ImVec2(340, 400), ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar))
+                {
+                    ImGui::PushStyleVar(ImGuiStyleVar_IndentSpacing, 14.0f);
+
+                    if (ImGui::Selectable("(none)", DisplayValue.IsNone()))
+                    {
+                        DisplayValue = FName();
+                        Result = EPropertyChangeOp::Updated;
+                        ImGui::CloseCurrentPopup();
+                    }
+
+                    if (SocketData != nullptr && !SocketData->Sockets.empty())
+                    {
+                        ImGui::SeparatorText("Sockets");
+                        for (const FName& Socket : SocketData->Sockets)
+                        {
+                            if (Socket.IsNone() || !BoneFilter.PassFilter(Socket.c_str()))
+                            {
+                                continue;
+                            }
+                            if (ImGui::Selectable(Socket.c_str(), Socket == DisplayValue))
+                            {
+                                DisplayValue = Socket;
+                                Result = EPropertyChangeOp::Updated;
+                                ImGui::CloseCurrentPopup();
+                            }
+                        }
+                    }
+
+                    if (SocketData != nullptr && SocketData->Skeleton != nullptr)
+                    {
+                        ImGui::SeparatorText("Bones");
+                        for (int32 Root : SocketData->Skeleton->GetRootBones())
+                        {
+                            FName Selected;
+                            if (DrawBoneTreeNode(*SocketData->Skeleton, Root, BoneFilter, DisplayValue, Selected))
+                            {
+                                DisplayValue = Selected;
+                                Result = EPropertyChangeOp::Updated;
+                                ImGui::CloseCurrentPopup();
+                            }
+                        }
+                    }
+
                     ImGui::PopStyleVar();
                 }
                 ImGui::EndChild();

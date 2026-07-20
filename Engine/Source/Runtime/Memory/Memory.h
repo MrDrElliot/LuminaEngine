@@ -5,6 +5,7 @@
 #endif
 #include <rpmalloc.h>
 #include <utility>
+#include <xmmintrin.h>
 #include <EASTL/type_traits.h>
 
 #include "Core/LuminaMacros.h"
@@ -49,6 +50,27 @@ namespace Lumina::Memory
     inline void Memset(void* Ptr, int Val, size_t Size)
     {
         std::memset(Ptr, Val, Size);
+    }
+
+    // Hint the cache to pull the line containing Ptr into every level. A pure scheduling hint:
+    // safe on any address (never faults), never required for correctness.
+    FORCEINLINE void Prefetch(const void* Ptr)
+    {
+#if defined(_MSC_VER) || defined(__SSE__)
+        _mm_prefetch(static_cast<const char*>(Ptr), _MM_HINT_T0);
+#else
+        __builtin_prefetch(Ptr);
+#endif
+    }
+
+    // Prefetch every cache line of [Ptr, Ptr + Size); Size is typically sizeof(*Ptr).
+    FORCEINLINE void Prefetch(const void* Ptr, size_t Size)
+    {
+        const char* Base = static_cast<const char*>(Ptr);
+        for (size_t Offset = 0; Offset < Size; Offset += 64)
+        {
+            Prefetch(Base + Offset);
+        }
     }
 
     RUNTIME_API void Initialize();

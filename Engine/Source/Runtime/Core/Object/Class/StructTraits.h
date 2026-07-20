@@ -6,6 +6,7 @@
 
 namespace Lumina
 {
+    struct FPropertyChangedEvent;
     class FArchive;
     class FNetArchive;
 
@@ -19,6 +20,11 @@ namespace Lumina
         using LessThanFn    = bool(*)(const void*, const void*);
         using ConstructFn   = void(*)(void*);
         using DestructFn    = void(*)(void*);
+        
+        #if USING(WITH_EDITOR)
+        using PreEditFn     = void(*)(const void*, const FPropertyChangedEvent&);
+        using PostEditFn    = void(*)(const void*, const FPropertyChangedEvent&);
+        #endif
 
         SerializeFn     Serialize    = nullptr;
         NetSerializeFn  NetSerialize = nullptr;
@@ -26,9 +32,12 @@ namespace Lumina
         EqualsFn        Equals      = nullptr;
         ToStringFn      ToString    = nullptr;
         LessThanFn      LessThan    = nullptr;
-        // Only set for default-constructible types; used by CStruct::GetDefaultInstance for editor diff/reset.
         ConstructFn     Construct   = nullptr;
         DestructFn      Destruct    = nullptr;
+        #if USING(WITH_EDITOR)
+        PreEditFn       PreEdit     = nullptr;
+        PostEditFn      PostEdit    = nullptr;
+        #endif
 
         bool HasSerializer()    const { return Serialize    != nullptr; }
         bool HasNetSerializer() const { return NetSerialize != nullptr; }
@@ -38,6 +47,10 @@ namespace Lumina
         bool HasLessThan()      const { return LessThan     != nullptr; }
         bool HasConstruct()     const { return Construct    != nullptr; }
         bool HasDestruct()      const { return Destruct     != nullptr; }
+        #if USING(WITH_EDITOR)
+        bool HasPreEdit()       const { return PreEdit      != nullptr; }
+        bool HasPostEdit()      const { return PostEdit     != nullptr; }
+        #endif
     };
 
     template<typename T>
@@ -109,6 +122,23 @@ namespace Lumina
             };
         }
         
+        #if USING(WITH_EDITOR)
+        if constexpr (Concepts::THasPreEdit<T>)
+        {
+            Ops->PreEdit = +[](const void* Data, const FPropertyChangedEvent& Event)
+            {
+                static_cast<T*>(Data)->PreEditChange(Event);
+            };
+        }
+        
+        if constexpr (Concepts::THasPostEdit<T>)
+        {
+            Ops->PreEdit = +[](const void* Data, const FPropertyChangedEvent& Event)
+            {
+                static_cast<T*>(Data)->PostEditChange(Event);
+            };
+        }
+        #endif
         return Ops;
     }
 }

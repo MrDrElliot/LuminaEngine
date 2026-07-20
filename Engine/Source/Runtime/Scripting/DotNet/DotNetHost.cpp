@@ -1,5 +1,6 @@
 #include "DotNetHost.h"
 #include "ManagedCall.h"
+#include "ManagedRenderScene.h"
 
 #include <filesystem>
 #include <fstream>
@@ -141,6 +142,15 @@ namespace Lumina::DotNet
         typedef void* (CORECLR_DELEGATE_CALLTYPE* CreateEntitySystemFn)(const char*, int32, uint64);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* TickEntitySystemFn)(void*, void*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* DestroyEntitySystemFn)(void*);
+        typedef void  (CORECLR_DELEGATE_CALLTYPE* EnumerateRenderScenesFn)(void*, void*);
+        typedef void* (CORECLR_DELEGATE_CALLTYPE* CreateRenderSceneFn)(const char*, int32, uint64);
+        typedef void  (CORECLR_DELEGATE_CALLTYPE* DestroyRenderSceneFn)(void*);
+        typedef void  (CORECLR_DELEGATE_CALLTYPE* RenderSceneExtractFn)(void*, const void*);
+        typedef void  (CORECLR_DELEGATE_CALLTYPE* RenderSceneRenderFn)(void*, int32);
+        typedef void  (CORECLR_DELEGATE_CALLTYPE* RenderSceneResizeFn)(void*, uint32, uint32);
+        typedef uint64 (CORECLR_DELEGATE_CALLTYPE* RenderSceneGetDisplayTextureFn)(void*);
+        typedef uint32 (CORECLR_DELEGATE_CALLTYPE* RenderSceneGetDisplayResourceIDFn)(void*);
+        typedef void  (CORECLR_DELEGATE_CALLTYPE* RenderSceneGetExtentFn)(void*, uint32*, uint32*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* DispatchInputFn)(void*, int32, int32, int32, int32, int32, double, double, double, double, double);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* OnNativeDelegateDestroyedFn)(void*);
         typedef int32 (CORECLR_DELEGATE_CALLTYPE* GetCallbackFlagsFn)(void*);
@@ -193,6 +203,16 @@ namespace Lumina::DotNet
             TickEntitySystemFn          TickEntitySystem;
             UpdateScriptsFn             UpdateScripts;
             FixedUpdateScriptsFn        FixedUpdateScripts;
+
+            EnumerateRenderScenesFn             EnumerateRenderScenes;
+            CreateRenderSceneFn                 CreateRenderScene;
+            DestroyRenderSceneFn                DestroyRenderScene;
+            RenderSceneExtractFn                RenderSceneExtract;
+            RenderSceneRenderFn                 RenderSceneRender;
+            RenderSceneResizeFn                 RenderSceneResize;
+            RenderSceneGetDisplayTextureFn      RenderSceneGetDisplayTexture;
+            RenderSceneGetDisplayResourceIDFn   RenderSceneGetDisplayResourceID;
+            RenderSceneGetExtentFn              RenderSceneGetExtent;
         };
 
         bool                                        bInitialized = false;
@@ -987,6 +1007,15 @@ namespace Lumina::DotNet
         LM_RESOLVE(TickEntitySystem,       TickEntitySystemFn);
         LM_RESOLVE(UpdateScripts,          UpdateScriptsFn);
         LM_RESOLVE(FixedUpdateScripts,     FixedUpdateScriptsFn);   // optional: null -> fixed update skipped
+        LM_RESOLVE(EnumerateRenderScenes,  EnumerateRenderScenesFn);
+        LM_RESOLVE(CreateRenderScene,      CreateRenderSceneFn);
+        LM_RESOLVE(DestroyRenderScene,     DestroyRenderSceneFn);
+        LM_RESOLVE(RenderSceneExtract,     RenderSceneExtractFn);
+        LM_RESOLVE(RenderSceneRender,      RenderSceneRenderFn);
+        LM_RESOLVE(RenderSceneResize,      RenderSceneResizeFn);
+        LM_RESOLVE(RenderSceneGetDisplayTexture,    RenderSceneGetDisplayTextureFn);
+        LM_RESOLVE(RenderSceneGetDisplayResourceID, RenderSceneGetDisplayResourceIDFn);
+        LM_RESOLVE(RenderSceneGetExtent,   RenderSceneGetExtentFn);
         #undef LM_RESOLVE
 
         // The core script entries are mandatory.
@@ -1139,6 +1168,11 @@ namespace Lumina::DotNet
 
         LOG_DISPLAY("C#: {} {} script unit(s), {} file(s)...",
             bEditorFollowups ? "compiling" : "loading", Units.size(), TotalFiles);
+
+        // Managed render scenes hold GCHandles into the generation about to unload; tear their worlds'
+        // renderers down first (flushes the render thread) so nothing dispatches into a dead ALC.
+        ManagedRenderScenes::PreScriptUnload();
+
         const int32 Result = GManaged.LoadScripts(Units.empty() ? nullptr : Units.data(), (int32)Units.size());
         // The compile runs synchronously on this (main) thread, so a live progress modal can't animate during
         // it; instead report the outcome as a toast (covers every reload trigger: hot-key, content-browser
@@ -1191,6 +1225,11 @@ namespace Lumina::DotNet
         // / NewObject / editor pickers see them like any native class (minted classes are reused by name across
         // reloads; the managed instance behind each rebinds via the per-instance FScriptableBridge generation gate).
         FScriptableRegistry::RefreshMintedClasses();
+
+        // Re-sync the renderer override against the new generation's RenderScene types and give the worlds
+        // PreScriptUnload tore down a renderer again. Runs even on a failed load so those worlds fall back
+        // to the engine renderer instead of staying black.
+        ManagedRenderScenes::PostScriptLoad();
 
         // Keep the IDE projects in lockstep with the scripts that just (re)loaded so an absent or deleted
         // .csproj self-heals on ANY reload, not only on a full project load (idempotent; no-op if unchanged).
@@ -1412,6 +1451,82 @@ namespace Lumina::DotNet
         if (bInitialized && GManaged.TickEntitySystem && Handle)
         {
             GManaged.TickEntitySystem(Handle, const_cast<void*>(reinterpret_cast<const void*>(Context)));
+        }
+    }
+
+    void GatherManagedRenderSceneTypes(TVector<FString>& Out)
+    {
+        Out.clear();
+        if (bInitialized && GManaged.EnumerateRenderScenes)
+        {
+            GManaged.EnumerateRenderScenes(reinterpret_cast<void*>(&LmScriptNameSink), &Out);
+        }
+    }
+
+    void* CreateManagedRenderScene(FStringView TypeName, uint64 World)
+    {
+        if (!bInitialized || GManaged.CreateRenderScene == nullptr)
+        {
+            return nullptr;
+        }
+        return GManaged.CreateRenderScene(TypeName.data(), (int32)TypeName.size(), World);
+    }
+
+    void DestroyManagedRenderScene(void* Handle)
+    {
+        if (bInitialized && GManaged.DestroyRenderScene && Handle)
+        {
+            GManaged.DestroyRenderScene(Handle);
+        }
+    }
+
+    void ManagedRenderSceneExtract(void* Handle, const void* View)
+    {
+        if (bInitialized && GManaged.RenderSceneExtract && Handle)
+        {
+            GManaged.RenderSceneExtract(Handle, View);
+        }
+    }
+
+    void ManagedRenderSceneRender(void* Handle, int32 FrameIndex)
+    {
+        if (bInitialized && GManaged.RenderSceneRender && Handle)
+        {
+            GManaged.RenderSceneRender(Handle, FrameIndex);
+        }
+    }
+
+    void ManagedRenderSceneResize(void* Handle, uint32 Width, uint32 Height)
+    {
+        if (bInitialized && GManaged.RenderSceneResize && Handle)
+        {
+            GManaged.RenderSceneResize(Handle, Width, Height);
+        }
+    }
+
+    uint64 ManagedRenderSceneGetDisplayTexture(void* Handle)
+    {
+        if (!bInitialized || GManaged.RenderSceneGetDisplayTexture == nullptr || Handle == nullptr)
+        {
+            return 0;
+        }
+        return GManaged.RenderSceneGetDisplayTexture(Handle);
+    }
+
+    uint32 ManagedRenderSceneGetDisplayResourceID(void* Handle)
+    {
+        if (!bInitialized || GManaged.RenderSceneGetDisplayResourceID == nullptr || Handle == nullptr)
+        {
+            return ~0u;
+        }
+        return GManaged.RenderSceneGetDisplayResourceID(Handle);
+    }
+
+    void ManagedRenderSceneGetExtent(void* Handle, uint32* OutWidth, uint32* OutHeight)
+    {
+        if (bInitialized && GManaged.RenderSceneGetExtent && Handle)
+        {
+            GManaged.RenderSceneGetExtent(Handle, OutWidth, OutHeight);
         }
     }
 

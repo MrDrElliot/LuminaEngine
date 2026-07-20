@@ -403,6 +403,7 @@ namespace Lumina
         }
 
         SkeletalMesh->Skeleton->ComputeBindPoseSkinningMatrices(MeshComponent.BoneTransforms);
+        MeshComponent.bRenderBonesDirty = true;
         
         STransformComponent& MeshTransform = World->GetComponent<STransformComponent>(MeshEntity);
 

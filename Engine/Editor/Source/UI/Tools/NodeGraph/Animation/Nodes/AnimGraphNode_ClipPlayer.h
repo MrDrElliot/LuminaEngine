@@ -33,6 +33,14 @@ namespace Lumina
         PROPERTY(Editable, Category = "Animation")
         EClipLoopMode LoopMode = EClipLoopMode::Loop;
 
+        /**
+         * Clips sharing a sync group name advance one shared normalized phase instead of independent
+         * clocks, so blends between them stay stride-aligned (no foot slide). Clips must be
+         * phase-aligned by authoring (all starting on the same foot plant). Synced clips always loop.
+         */
+        PROPERTY(Editable, Category = "Animation")
+        FName SyncGroup;
+
         CAnimGraphPin* SpeedPin = nullptr;
         CAnimGraphPin* LoopModePin = nullptr;
         CAnimGraphPin* PosePin = nullptr;

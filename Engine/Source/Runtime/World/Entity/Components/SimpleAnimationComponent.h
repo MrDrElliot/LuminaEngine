@@ -1,4 +1,5 @@
 #pragma once
+#include "Animation/AnimEvents.h"
 #include "Animation/RootMotion.h"
 #include "Animation/RootMotionTypes.h"
 #include "Containers/Array.h"
@@ -66,6 +67,28 @@ namespace Lumina
         // Indices (into the active clip's NotifyStates) currently under the playhead.
         // Diffed each frame to drive Begin/End transitions; cleared on clip change.
         TVector<int32> ActiveNotifyStates;
+
+        // Notify events that fired this frame: point Triggers plus notify-state Begin/Tick/End.
+        // Cleared every update. Transient.
+        TVector<FAnimNotifyEvent> NotifyEvents;
+
+        /** True if the named point notify fired this frame. */
+        FUNCTION(Script)
+        bool WasNotifyTriggered(const FName& NotifyName) const
+        {
+            for (const FAnimNotifyEvent& Event : NotifyEvents)
+            {
+                if (Event.Name == NotifyName && Event.Type == EAnimNotifyEventType::Trigger)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /** True while the playhead is inside the named notify-state window. */
+        FUNCTION(Script)
+        bool IsNotifyStateActive(const FName& NotifyName) const;
 
         /**
          * Fire-and-forget play. Resets time to 0, marks the clip dirty, and

@@ -24,8 +24,14 @@
 #include "Core/Serialization/MemoryArchiver.h"
 #include "Core/Serialization/ObjectArchiver.h"
 #include "EASTL/sort.h"
+#include "Animation/Pose.h"
+#include "Animation/SkeletalMeshUtils.h"
+#include "Assets/AssetTypes/Mesh/SkeletalMesh/SkeletalMesh.h"
+#include "Assets/AssetTypes/Mesh/Skeleton/Skeleton.h"
 #include "Entity/EntityUtils.h"
 #include "Entity/Components/CameraComponent.h"
+#include "Entity/Components/SkeletalMeshComponent.h"
+#include "Entity/Components/SocketAttachmentComponent.h"
 #include "Entity/Components/DestructibleComponent.h"
 #include "Entity/Components/DirtyComponent.h"
 #include "Entity/Components/EditorComponent.h"
@@ -50,7 +56,7 @@
 #include "Entity/Events/WorldEvents.h"
 #include "Physics/Physics.h"
 #include "Renderer/RenderThread.h"
-#include "Scene/RenderScene/Forward/ForwardRenderScene.h"
+#include "Scene/RenderScene/RenderSceneFactory.h"
 #include "Scripting/DotNet/DotNetHost.h"
 #include "World/Entity/Components/CSharpScriptComponent.h"
 #include "World/Entity/Components/LifetimeComponent.h"
@@ -1012,6 +1018,111 @@ namespace Lumina
         return ECS::Utils::GetRootEntity(EntityRegistry, Entity);
     }
 
+    void CWorld::AttachEntityToSocket(entt::entity Child, entt::entity Parent, const FName& SocketOrBone)
+    {
+        if (!EntityRegistry.valid(Child) || !EntityRegistry.valid(Parent) || Child == Parent)
+        {
+            return;
+        }
+
+        // Keep the local transform (bPreserveWorld false) -- the socket system overwrites it anyway,
+        // and the snap below avoids one frame at the stale local.
+        ECS::Utils::ReparentEntity(EntityRegistry, Child, Parent, /*bPreserveWorld*/ false);
+
+        SSocketAttachmentComponent& Attachment = EntityRegistry.emplace_or_replace<SSocketAttachmentComponent>(Child);
+        Attachment.SocketName = SocketOrBone;
+
+        FMatrix4 SocketTransform;
+        STransformComponent* Transform = EntityRegistry.try_get<STransformComponent>(Child);
+        if (Transform && SkeletalUtils::GetEntitySocketTransform(EntityRegistry, Parent, SocketOrBone, SocketTransform))
+        {
+            Transform->SetLocalTransform(FTransform(SocketTransform * Attachment.RelativeTransform.GetMatrix()));
+        }
+    }
+
+    void CWorld::DetachEntityFromSocket(entt::entity Entity)
+    {
+        if (!EntityRegistry.valid(Entity))
+        {
+            return;
+        }
+
+        EntityRegistry.remove<SSocketAttachmentComponent>(Entity);
+        ECS::Utils::ReparentEntity(EntityRegistry, Entity, entt::null, /*bPreserveWorld*/ true);
+    }
+
+    bool CWorld::HasSocket(entt::entity Entity, const FName& SocketOrBone)
+    {
+        return SkeletalUtils::EntityHasSocket(EntityRegistry, Entity, SocketOrBone);
+    }
+
+    FVector3 CWorld::GetSocketLocation(entt::entity Entity, const FName& SocketOrBone)
+    {
+        FMatrix4 SocketTransform;
+        if (!SkeletalUtils::GetSocketWorldTransform(EntityRegistry, Entity, SocketOrBone, SocketTransform))
+        {
+            return FVector3(0.0f);
+        }
+        return FVector3(SocketTransform[3]);
+    }
+
+    FQuat CWorld::GetSocketRotation(entt::entity Entity, const FName& SocketOrBone)
+    {
+        FMatrix4 SocketTransform;
+        if (!SkeletalUtils::GetSocketWorldTransform(EntityRegistry, Entity, SocketOrBone, SocketTransform))
+        {
+            return FQuat::Identity();
+        }
+
+        FVector3 Translation; FQuat Rotation; FVector3 Scale;
+        AnimPose::DecomposeTRS(SocketTransform, Translation, Rotation, Scale);
+        return Rotation;
+    }
+
+    FName CWorld::GetBoneName(entt::entity Entity, int32 BoneIndex)
+    {
+        if (!EntityRegistry.valid(Entity))
+        {
+            return FName();
+        }
+
+        const SSkeletalMeshComponent* Mesh = EntityRegistry.try_get<SSkeletalMeshComponent>(Entity);
+        if (Mesh == nullptr)
+        {
+            return FName();
+        }
+
+        const FSkeletonResource* Skeleton = SkeletalUtils::GetSkeleton(*Mesh);
+        if (Skeleton == nullptr || !Skeleton->IsBoneIndexValid(BoneIndex))
+        {
+            return FName();
+        }
+        return Skeleton->GetBone(BoneIndex).Name;
+    }
+
+    int32 CWorld::GetBoneIndex(entt::entity Entity, const FName& BoneName)
+    {
+        if (!EntityRegistry.valid(Entity))
+        {
+            return INDEX_NONE;
+        }
+
+        const SSkeletalMeshComponent* Mesh = EntityRegistry.try_get<SSkeletalMeshComponent>(Entity);
+        if (Mesh == nullptr)
+        {
+            return INDEX_NONE;
+        }
+
+        const FSkeletonResource* Skeleton = SkeletalUtils::GetSkeleton(*Mesh);
+        return Skeleton ? Skeleton->FindBoneIndex(BoneName) : INDEX_NONE;
+    }
+
+    FName CWorld::FindClosestBone(entt::entity Entity, FVector3 WorldLocation)
+    {
+        const int32 BoneIndex = SkeletalUtils::FindClosestBone(EntityRegistry, Entity, WorldLocation);
+        return GetBoneName(Entity, BoneIndex);
+    }
+
     void CWorld::DestroyEntity(entt::entity Entity)
     {
         EntityRegistry.destroy(Entity);
@@ -1122,7 +1233,7 @@ namespace Lumina
 
         if (!RenderScene)
         {
-            RenderScene = MakeUnique<FForwardRenderScene>(this);
+            RenderScene = RenderSceneFactory::Create(this);
             RenderScene->Init();
             EntityRegistry.ctx().emplace<IRenderScene*>(RenderScene.get());
         }

@@ -151,7 +151,12 @@ namespace Lumina
          
         void* Allocate(SIZE_T Size, SIZE_T Alignment) override
         {
-            ASSERT(Size < GetUsableBlockSize());
+            // An oversized request cannot fit any block; continuing would hand back a pointer whose
+            // write overruns the block (silent heap corruption). Fail loudly instead.
+            if (Size >= GetUsableBlockSize()) [[unlikely]]
+            {
+                LUMINA_PANIC("FBlockLinearAllocator: {}-byte allocation exceeds usable block size {}", Size, GetUsableBlockSize());
+            }
 
             SIZE_T CurrentPtr = reinterpret_cast<SIZE_T>(CurrentBlock->GetData() + CurrentOffset);
             SIZE_T AlignedPtr = (CurrentPtr + Alignment - 1) & ~(Alignment - 1);

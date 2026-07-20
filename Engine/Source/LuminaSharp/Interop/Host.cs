@@ -10,7 +10,7 @@ namespace LuminaSharp;
 public static unsafe partial class Host
 {
     // Must equal Lumina::DotNet::GAbiVersion. Bump on ABI breaks.
-    private const int AbiVersion = 7;
+    private const int AbiVersion = 8;
 
     // Logical name for the engine module hosting this assembly (Runtime); resolved to a native handle via ModuleHandle.
     public const string NativeLibrary = "LuminaNative";
@@ -602,6 +602,143 @@ public static unsafe partial class Host
         try
         {
             Scripts?.EntitySystems?.Destroy(Handle);
+        }
+        catch (Exception Exception)
+        {
+            Interop.LogException(Exception);
+        }
+    }
+
+    // RenderScene bridge: one instance drives one Game world's rendering through the native
+    // FManagedRenderScene proxy; the GCHandle is the proxy's Handle.
+
+    /// Reports every discovered RenderScene subclass to a native name sink. Once per type, sorted.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static void EnumerateRenderScenes(IntPtr Sink, IntPtr Context)
+    {
+        try
+        {
+            Scripts?.RenderScenes?.Enumerate(Sink, Context);
+        }
+        catch (Exception Exception)
+        {
+            Interop.LogException(Exception);
+        }
+    }
+
+    /// Instantiates a RenderScene for a world and runs OnInit; returns a strong GCHandle (as IntPtr), or IntPtr.Zero on failure.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static IntPtr CreateRenderScene(byte* TypeName, int TypeNameLength, ulong World)
+    {
+        try
+        {
+            return Scripts?.RenderScenes?.Create(Interop.GetString(TypeName, TypeNameLength), World) ?? IntPtr.Zero;
+        }
+        catch (Exception Exception)
+        {
+            Interop.LogException(Exception);
+            return IntPtr.Zero;
+        }
+    }
+
+    /// Runs OnShutdown and frees the instance's GCHandle.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static void DestroyRenderScene(IntPtr Handle)
+    {
+        try
+        {
+            Scripts?.RenderScenes?.Destroy(Handle);
+        }
+        catch (Exception Exception)
+        {
+            Interop.LogException(Exception);
+        }
+    }
+
+    /// Game-thread frame snapshot; View is a const FManagedSceneView*.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static void RenderSceneExtract(IntPtr Handle, IntPtr View)
+    {
+        try
+        {
+            Scripts?.RenderScenes?.Extract(Handle, View);
+        }
+        catch (Exception Exception)
+        {
+            Interop.LogException(Exception);
+        }
+    }
+
+    /// Render-thread record + submit for one frame slot.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static void RenderSceneRender(IntPtr Handle, int FrameIndex)
+    {
+        try
+        {
+            Scripts?.RenderScenes?.Render(Handle, FrameIndex);
+        }
+        catch (Exception Exception)
+        {
+            Interop.LogException(Exception);
+        }
+    }
+
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static void RenderSceneResize(IntPtr Handle, uint Width, uint Height)
+    {
+        try
+        {
+            Scripts?.RenderScenes?.Resize(Handle, Width, Height);
+        }
+        catch (Exception Exception)
+        {
+            Interop.LogException(Exception);
+        }
+    }
+
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static ulong RenderSceneGetDisplayTexture(IntPtr Handle)
+    {
+        try
+        {
+            return Scripts?.RenderScenes?.GetDisplayTexture(Handle) ?? 0;
+        }
+        catch (Exception Exception)
+        {
+            Interop.LogException(Exception);
+            return 0;
+        }
+    }
+
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static uint RenderSceneGetDisplayResourceID(IntPtr Handle)
+    {
+        try
+        {
+            return Scripts?.RenderScenes?.GetDisplayResourceID(Handle) ?? uint.MaxValue;
+        }
+        catch (Exception Exception)
+        {
+            Interop.LogException(Exception);
+            return uint.MaxValue;
+        }
+    }
+
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static void RenderSceneGetExtent(IntPtr Handle, uint* Width, uint* Height)
+    {
+        try
+        {
+            Scripts?.RenderScenes?.GetExtent(Handle, Width, Height);
         }
         catch (Exception Exception)
         {

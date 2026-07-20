@@ -27,7 +27,17 @@ public readonly struct RaycastHit
     /// <summary>Normalized distance along the ray, 0 (origin) to 1 (end).</summary>
     public readonly float Fraction;
 
-    internal RaycastHit(Entity Entity, long BodyId, FVector3 Point, FVector3 Normal, float Distance, float Fraction)
+    /// <summary>
+    /// Skeleton bone index behind the hit body, or -1. Only ragdoll per-bone bodies report a bone;
+    /// resolve the name with <see cref="Lumina.CWorld.GetBoneName"/>, or use
+    /// <see cref="Lumina.CWorld.FindClosestBone"/> at <see cref="Point"/> for single-body skeletal meshes.
+    /// </summary>
+    public readonly int BoneIndex;
+
+    /// <summary>True when the hit body maps to a skeleton bone (see <see cref="BoneIndex"/>).</summary>
+    public bool HasBone => BoneIndex >= 0;
+
+    internal RaycastHit(Entity Entity, long BodyId, FVector3 Point, FVector3 Normal, float Distance, float Fraction, int BoneIndex)
     {
         this.Entity = Entity;
         this.BodyId = BodyId;
@@ -35,6 +45,7 @@ public readonly struct RaycastHit
         this.Normal = Normal;
         this.Distance = Distance;
         this.Fraction = Fraction;
+        this.BoneIndex = BoneIndex;
     }
 }
 
@@ -49,4 +60,5 @@ internal struct RaycastHitWire
     public FVector3 Normal;
     public float Distance;
     public float Fraction;
+    public int BoneIndex;
 }

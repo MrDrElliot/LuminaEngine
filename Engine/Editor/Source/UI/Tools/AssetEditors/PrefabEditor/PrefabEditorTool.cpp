@@ -274,7 +274,8 @@ namespace Lumina
 
     void FPrefabEditorTool::RegisterEditorActions()
     {
-        auto Hovered = [this]() { return bViewportHovered; };
+        // Hotkeys are suppressed while right-mouse flying so W/E/R/Q act as fly keys, not mode switches.
+        auto Hovered = [this]() { return bViewportHovered && !CameraState.bWasLooking; };
         auto AlwaysOn = []() { return true; };
 
         RegisterAction({"Translate Mode", "Gizmo", "Switch the gizmo to translate (move) mode",

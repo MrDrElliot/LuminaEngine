@@ -904,21 +904,8 @@ namespace Lumina
         if (CameraState.bFocusInterp)
         {
             const bool bWheel = bAllowInput && Raw.GetMouseZ() != 0.0;
-            bool bMoveInput = false;
-            if (bAllowInput)
-            {
-                if (CameraState.Mode == EEditorCameraMode::Free)
-                {
-                    bMoveInput = bWantLook
-                        || ImGui::IsKeyDown(ImGuiKey_W) || ImGui::IsKeyDown(ImGuiKey_A)
-                        || ImGui::IsKeyDown(ImGuiKey_S) || ImGui::IsKeyDown(ImGuiKey_D)
-                        || ImGui::IsKeyDown(ImGuiKey_E) || ImGui::IsKeyDown(ImGuiKey_Q);
-                }
-                else
-                {
-                    bMoveInput = bWantLook || bWantPan;
-                }
-            }
+            // Fly keys only count while right-mouse looking, so bWantLook alone covers Free mode.
+            const bool bMoveInput = bAllowInput && (bWantLook || bWantPan);
 
             if (bMoveInput || bWheel)
             {
@@ -973,13 +960,18 @@ namespace Lumina
                 Speed *= 10.0f;
             }
 
+            // WASDQE flies only while the right mouse button is held (UE-style), so the
+            // W/E/R gizmo hotkeys and Q/E don't shove the camera around.
             FVector3 Acceleration(0.0f);
-            if (ImGui::IsKeyDown(ImGuiKey_W)) Acceleration += Forward;
-            if (ImGui::IsKeyDown(ImGuiKey_S)) Acceleration -= Forward;
-            if (ImGui::IsKeyDown(ImGuiKey_D)) Acceleration += Right;
-            if (ImGui::IsKeyDown(ImGuiKey_A)) Acceleration -= Right;
-            if (ImGui::IsKeyDown(ImGuiKey_E)) Acceleration += Up;
-            if (ImGui::IsKeyDown(ImGuiKey_Q)) Acceleration -= Up;
+            if (bWantLook)
+            {
+                if (ImGui::IsKeyDown(ImGuiKey_W)) Acceleration += Forward;
+                if (ImGui::IsKeyDown(ImGuiKey_S)) Acceleration -= Forward;
+                if (ImGui::IsKeyDown(ImGuiKey_D)) Acceleration += Right;
+                if (ImGui::IsKeyDown(ImGuiKey_A)) Acceleration -= Right;
+                if (ImGui::IsKeyDown(ImGuiKey_E)) Acceleration += Up;
+                if (ImGui::IsKeyDown(ImGuiKey_Q)) Acceleration -= Up;
+            }
 
             if (Math::Length(Acceleration) > 0.0f)
             {
