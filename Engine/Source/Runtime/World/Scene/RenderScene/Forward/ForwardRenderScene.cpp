@@ -1226,26 +1226,19 @@ namespace Lumina
                 }
             }
             CurrentReservePerThread = (uint32)((EstimatedProxies + NumThreads - 1) / std::max(1u, NumThreads));
-
-            // Clear last frame's binding from every slot so the merge reads empty (not stale) data for any
-            // worker that runs no gather chunk this frame. The arenas were reclaimed at frame-begin
-            // (ResetThreadFrameAllocators); a null arena here marks "unbound", rebound per worker on touch.
+            
             for (uint32 t = 0; t < NumThreads; ++t)
             {
                 ThreadLocal[t].ResetForFrame(FFrameArenaAllocator());
             }
             
             
-            // Ensure the engine default font's atlas is GPU-resident here, on the game thread, before the
-            // text task (a worker) reads it. Creating/uploading the image from inside the worker task leaves
-            // its pixels unready; doing it here matches the asset-load upload path that already works.
             if (CFont* DefaultFont = CFontManager::Get().GetDefaultFont())
             {
                 DefaultFont->GetAtlasResourceID();
             }
 
-            // Debug text (World::DrawDebugText) is shaped after both graph dispatches below, so its
-            // serial cost overlaps the parallel gather instead of delaying it.
+
 
             DrawTaskGraph.Reset();   // reuse the persistent graph (allocator block + capacity)
             FTaskGraph& Graph = DrawTaskGraph;

@@ -214,15 +214,23 @@ namespace Lumina
                 : Items(A), EntityRecords(A), LocalBatches(A), BonesData(A)
                 , MaterialCache(A), Arena(A) {}
 
+            FThreadLocalDrawData(FThreadLocalDrawData&&) = default;
+            FThreadLocalDrawData& operator=(FThreadLocalDrawData&&) = default;
+            
             void ResetForFrame(FFrameArenaAllocator A)
             {
-                Items            = TFrameVector<FProcessedDrawItem>(A);
-                EntityRecords    = TFrameVector<FEntityRecord>(A);
-                LocalBatches     = TFrameVector<FLocalBatchEntry>(A);
-                BonesData        = FBonePageArray(A);
-                MaterialCache    = TFrameVector<FMaterialCacheEntry>(A);
-                Arena            = A;
-                Stats            = {};
+                new (&Items)         TFrameVector<FProcessedDrawItem>(A);
+                new (&EntityRecords) TFrameVector<FEntityRecord>(A);
+                new (&LocalBatches)  TFrameVector<FLocalBatchEntry>(A);
+                new (&BonesData)     FBonePageArray(A);
+                new (&MaterialCache) TFrameVector<FMaterialCacheEntry>(A);
+                Arena = A;
+                Stats = {};
+            }
+            
+            ~FThreadLocalDrawData()
+            {
+                ResetForFrame(FFrameArenaAllocator());
             }
         };
 

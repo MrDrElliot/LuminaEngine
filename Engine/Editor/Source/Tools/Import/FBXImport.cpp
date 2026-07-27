@@ -34,6 +34,17 @@ namespace Lumina::Import::Mesh::FBX
             m.m[12], m.m[13], m.m[14], m.m[15]
         );
     }
+
+    // Conjugate by the X reflection (M' = R * M * R, R = diag(-1,1,1)).
+    static void ConjugateHandedness(FMatrix4& M)
+    {
+        M[0][1] = -M[0][1];
+        M[0][2] = -M[0][2];
+        M[0][3] = -M[0][3];
+        M[1][0] = -M[1][0];
+        M[2][0] = -M[2][0];
+        M[3][0] = -M[3][0];
+    }
     
     
     TExpected<FMeshImportData, FString> ImportFBX(const FMeshImportOptions& ImportOptions, FStringView FilePath, FScopedSlowTask* Progress)
@@ -68,17 +79,12 @@ namespace Lumina::Import::Mesh::FBX
         {
             Progress->UpdateMessage("Parsing FBX data...");
         }
-
-        // Blend shapes and bind-pose objects are never consumed by this importer; skipping
-        // their construction shaves work off ofbx::load for files that contain them.
+        
         ofbx::LoadFlags LoadFlags = ofbx::LoadFlags::IGNORE_CAMERAS
             | ofbx::LoadFlags::IGNORE_LIGHTS
             | ofbx::LoadFlags::IGNORE_BLEND_SHAPES
             | ofbx::LoadFlags::IGNORE_POSES;
-
-        // Video objects carry FBX's EMBEDDED texture bytes -- only skip parsing them (an optimization)
-        // when we're not importing textures/materials at all. Ignoring them is what made embedded
-        // textures vanish: m_videos stayed empty, so neither getEmbeddedData() nor the scene table saw them.
+        
         if (!ImportOptions.bImportTextures && !ImportOptions.bImportMaterials)
         {
             LoadFlags = LoadFlags | ofbx::LoadFlags::IGNORE_VIDEOS;
@@ -94,9 +100,7 @@ namespace Lumina::Import::Mesh::FBX
         LOG_INFO("[FBX] Parse (ofbx::load): {} ms",
             std::chrono::duration_cast<std::chrono::milliseconds>(TSceneStart - TParseStart).count());
 
-        // The engine is left-handed; FBX is normally right-handed (getGlobalSettings()->CoordAxis). Without a
-        // handedness conversion the entire scene imports mirrored (backwards text/geometry). Convert RH -> LH by
-        // reflecting one axis below; that reflection flips winding (handled per-mesh via bMirroredXform).
+        // The engine is left-handed.
         const ofbx::GlobalSettings* GlobalSettings = FBXScene->getGlobalSettings();
         const bool bConvertHandedness = (GlobalSettings == nullptr) || (GlobalSettings->CoordAxis == ofbx::CoordSystem_RightHanded);
 
@@ -228,16 +232,27 @@ namespace Lumina::Import::Mesh::FBX
                     
                     ofbx::DMatrix LocalMatrix = Bone->evalLocal(AnimTranslation, AnimRotation, AnimScale);
                     FMatrix4 Mat = ConvertMatrix(LocalMatrix);
-                    
+
+                    if (bConvertHandedness)
+                    {
+                        ConjugateHandedness(Mat);
+                    }
+
                     Mat[3][0] *= SceneScale;
                     Mat[3][1] *= SceneScale;
                     Mat[3][2] *= SceneScale;
                     
                     KeyframeData Keyframe;
                     Keyframe.Time = Time;
-                    Keyframe.Translation = FVector3(Mat[3][0], Mat[3][1], Mat[3][2]);
-                    Keyframe.Rotation = Math::ToQuat(Mat);
-                    Keyframe.Scale = FVector3(Math::Length(FVector3(Mat[0])), Math::Length(FVector3(Mat[1])), Math::Length(FVector3(Mat[2])));
+                    // Math::Decompose normalizes the basis before the quat extraction; ToQuat on the raw
+                    // matrix breaks whenever the rig carries non-unit bone scale (baked unit conversion,
+                    // squash-and-stretch).
+                    if (!Math::Decompose(Mat, Keyframe.Scale, Keyframe.Rotation, Keyframe.Translation))
+                    {
+                        Keyframe.Translation = FVector3(Mat[3][0], Mat[3][1], Mat[3][2]);
+                        Keyframe.Rotation    = FQuat(1.0f, 0.0f, 0.0f, 0.0f);
+                        Keyframe.Scale       = FVector3(1.0f);
+                    }
                     
                     Keyframes.push_back(Keyframe);
                 }
@@ -299,11 +314,7 @@ namespace Lumina::Import::Mesh::FBX
             Progress->UpdateMessage("Reading skeleton & materials...");
         }
 
-        // FBX stores embedded textures as scene-level Video objects. Texture::getEmbeddedData() only finds them
-        // when the texture carries a matching "Media" property, which many exporters omit -> it returns empty and
-        // the texture would be treated as an external file at the (now-missing) authoring path, falling back to the
-        // white default. Harvest the Video table up front, keyed by lower-cased filename leaf, so ExtractTexture
-        // can recover the embedded bytes (binary content directly, or base64-encoded ASCII-FBX content decoded).
+        // FBX stores embedded textures as scene-level Video objects.
         auto DecodeBase64 = [](const char* Data, size_t Len) -> TVector<uint8>
         {
             auto V = [](char C) -> int
@@ -393,10 +404,6 @@ namespace Lumina::Import::Mesh::FBX
 
         int MeshCount = FBXScene->getMeshCount();
 
-        // FBX materials are per-mesh and indexed by geometry partition, so partition indices collide across
-        // meshes. Build a global, de-duplicated material list and remap each mesh partition to a global slot;
-        // the geometry pass writes the global slot into FGeometrySurface::MaterialIndex. FBX is Phong, so the
-        // PBR mapping is an approximation (no native metallic; roughness derived from the shininess exponent).
         THashMap<const ofbx::Material*, int16> MaterialToGlobal;
         TVector<TVector<int16>> MeshPartitionToGlobal(MeshCount);
 
@@ -636,7 +643,12 @@ namespace Lumina::Import::Mesh::FBX
                     
                     ofbx::DMatrix TransformLinkMatrix = Cluster->getTransformLinkMatrix();
                     FMatrix4 JointWorldTransform = ConvertMatrix(TransformLinkMatrix);
-                    
+
+                    if (bConvertHandedness)
+                    {
+                        ConjugateHandedness(JointWorldTransform);
+                    }
+
                     JointWorldTransform[3][0] *= SceneScale;
                     JointWorldTransform[3][1] *= SceneScale;
                     JointWorldTransform[3][2] *= SceneScale;
@@ -667,7 +679,12 @@ namespace Lumina::Import::Mesh::FBX
     
                 ofbx::DMatrix LocalMatrix = BoneObj->getLocalTransform();
                 FMatrix4 LocalTransform = ConvertMatrix(LocalMatrix);
-                
+
+                if (bConvertHandedness)
+                {
+                    ConjugateHandedness(LocalTransform);
+                }
+
                 LocalTransform[3][0] *= SceneScale;
                 LocalTransform[3][1] *= SceneScale;
                 LocalTransform[3][2] *= SceneScale;
