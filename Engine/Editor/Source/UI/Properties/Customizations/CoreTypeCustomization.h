@@ -7,6 +7,7 @@
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Math/Math.h"
 #include "Input/Key.h"
+#include "Tools/UI/ImGui/Widgets/TreeListView.h"
 
 namespace Lumina
 {
@@ -321,6 +322,8 @@ namespace Lumina
         FName CachedValue;
         FName DisplayValue;
         ImGuiTextFilter BoneFilter;
+        FTreeListView   BoneTree;
+        int32           LastBuiltBoneCount = 0;
     };
 
     class FStringPropertyCustomization : public IPropertyTypeCustomization

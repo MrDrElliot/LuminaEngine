@@ -279,6 +279,14 @@ namespace Lumina
         return RerouteNode;
     }
 
+    void CEdNodeGraph::QueueNodePlacement(CEdGraphNode* Node, ImVec2 ScreenPos)
+    {
+        if (Node != nullptr)
+        {
+            PendingPlacements.push_back(FPendingPlacement{ Node, ScreenPos });
+        }
+    }
+
     void CEdNodeGraph::DrawGraph()
     {
         LUMINA_PROFILE_SCOPE();
@@ -302,6 +310,17 @@ namespace Lumina
                 NodeEditor::SetNodePosition(Node->GetNodeID(), ImVec2(Node->GridX, Node->GridY));
             }
         }
+
+        // Apply placements queued from outside the draw loop (drop handlers), now that the editor
+        // context is current and the screen->canvas transform is available.
+        for (const FPendingPlacement& Placement : PendingPlacements)
+        {
+            if (Placement.Node != nullptr)
+            {
+                NodeEditor::SetNodePosition(Placement.Node->GetNodeID(), NodeEditor::ScreenToCanvas(Placement.ScreenPos));
+            }
+        }
+        PendingPlacements.clear();
 
         uint32 Index = 0;
         for (CEdGraphNode* Node : Nodes)
@@ -554,7 +573,7 @@ namespace Lumina
                         NodeEditor::NodeId Selection = Selections[i];
                         auto NodeItr = eastl::find_if(Nodes.begin(), Nodes.end(), [&] (const TObjectPtr<CEdGraphNode>& A)
                         {
-                            return A->GetNodeID() == Selection.Get() && A->IsDeletable();
+                            return std::cmp_equal(A->GetNodeID(), Selection.Get()) && A->IsDeletable();
                         });
                     
                         if (NodeItr == Nodes.end())

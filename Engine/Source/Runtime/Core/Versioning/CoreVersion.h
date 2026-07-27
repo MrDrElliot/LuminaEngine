@@ -15,6 +15,10 @@ enum class ELuminaEngineVersion : uint32
 	// CAnimationGraph serializes BytecodeVersion (stale programs refused instead of misparsed).
 	ANIM_GRAPH_BYTECODE_VERSION,
 
+	// FName wire format: None serializes as the empty string. Older files stored the "NAME_None"
+	// display rendering, which round-tripped into a real name whose IsNone() was false.
+	FNAME_NONE_EMPTY_STRING,
+
 	AUTOMATIC_VERSION_PLUS_ONE,
 	AUTOMATIC_VERSION = AUTOMATIC_VERSION_PLUS_ONE - 1
 };

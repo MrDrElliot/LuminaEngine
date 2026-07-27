@@ -64,11 +64,17 @@ namespace Lumina
             if (PendingNode == nullptr) { return *this; }
             if (bLoading)
             {
-                if (PendingNode->is_string()) { Name = FName(PendingNode->get<std::string>().c_str()); }
+                if (PendingNode->is_string())
+                {
+                    const std::string Str = PendingNode->get<std::string>();
+                    // JSON carries no file version; files written before None's wire form became
+                    // the empty string stored its "NAME_None" display rendering.
+                    Name = Str == "NAME_None" ? FName() : FName(Str.c_str());
+                }
             }
             else
             {
-                *PendingNode = std::string(Name.c_str());
+                *PendingNode = std::string(Name.IsNone() ? "" : Name.c_str());
             }
             return *this;
         }

@@ -49,7 +49,9 @@ namespace Lumina
     public:
 
         FForwardRenderScene(CWorld* InWorld);
-        ~FForwardRenderScene() override = default;
+        // Releases every GPU resource the scene owns (drains the device first). RAII: destroying the
+        // scene IS the teardown -- there is no separate Shutdown() to forget to call.
+        ~FForwardRenderScene() override;
         LE_NO_COPYMOVE(FForwardRenderScene);
 
         // Per-entity shared data. FProcessedDrawItem carries an EntityRecordIndex
@@ -535,7 +537,6 @@ namespace Lumina
         };
 
         void Init() override;
-        void Shutdown() override;
 
         void Extract(const FViewVolume& ViewVolume, const SPostProcessSettings* PostProcess) override;
         void PrepareRender(uint8 FrameIndex) override;

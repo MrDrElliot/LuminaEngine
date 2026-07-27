@@ -93,6 +93,10 @@ namespace Lumina
         // Called once when a lazy-children node is first expanded; add children via CreateNode().
         // Must be idempotent (skip already-added children); explicit CreateNode doesn't mark built.
         TFunction<void(FTreeListView&, FTreeNodeID)>                    BuildChildrenFunction;
+
+        // Horizontal shift per tree depth. Deep hierarchies in narrow hosts (picker popups over
+        // 20+-level skeletons) want a tighter value than the outliner default.
+        float                                                           IndentPerDepth = 21.0f;
     };
 
     // Hierarchical list over a flat node pool for very large trees; Draw iterates a cached visible-row
@@ -122,6 +126,14 @@ namespace Lumina
         // Flag a node's children to be created on demand; BuildChildrenFunction fires the first time
         // it's expanded. Eager CreateNode on the parent beforehand still works.
         void MarkHasLazyChildren(FTreeNodeID Handle, bool bHasLazy = true);
+
+        // Expands Handle, materializing its lazy children through Context first so descendants have
+        // rows. Use to walk a path open before revealing something below a collapsed node.
+        void ExpandNode(FTreeNodeID Handle, const FTreeListViewContext& Context);
+
+        // Scrolls Handle's row into view on the next Draw, expanding its ancestors so the row is
+        // actually in the visible list. Ancestors must already be materialized (see ExpandNode).
+        void RequestScrollToNode(FTreeNodeID Handle);
 
         NODISCARD bool IsValid(FTreeNodeID Handle) const;
         NODISCARD int32 NumNodes() const { return AliveCount; }
@@ -207,6 +219,10 @@ namespace Lumina
 
         TVector<int32>      VisibleList;     // depth-first list of currently visible row indices
         int32               AliveCount = 0;
+
+        // Node to scroll into view on the next Draw (-1 = none); resolved to a row once the
+        // visible list is rebuilt, then cleared.
+        int32               PendingScrollNode = -1;
 
         bool                bVisibleListDirty = true;
         bool                bDirty = false;

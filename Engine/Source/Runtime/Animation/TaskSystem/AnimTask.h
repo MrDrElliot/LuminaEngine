@@ -2,6 +2,7 @@
 
 #include "Animation/Pose.h"
 #include "Containers/Array.h"
+#include "Containers/Name.h"
 
 namespace Lumina
 {
@@ -132,6 +133,69 @@ namespace Lumina
             bLockRoot       = false;
             RootBoneIndex   = INDEX_NONE;
             ActiveBoneCount = 0;
+        }
+    };
+
+    // One task's recorded parameters plus what the executor actually did with it. Filled only while a
+    // capture is armed (Anim::ArmTaskCapture), so tools can show the real execution rather than a
+    // re-derived guess. Everything here is a fact recorded at the point the executor made the decision.
+    struct FAnimTaskDebugEntry
+    {
+        EAnimTaskType  Type  = EAnimTaskType::ReferencePose;
+        EAnimTaskStage Stage = EAnimTaskStage::Any;
+
+        int16 DepA = FAnimTask::NoTask;
+        int16 DepB = FAnimTask::NoTask;
+
+        float Alpha = 1.0f;
+        float Time  = 0.0f;
+        FName ClipName;
+
+        // BlendMasked only: how many bones the mask actually weights, out of the skeleton's total.
+        int32 MaskWeightedBones = 0;
+        int32 MaskTotalBones    = 0;
+
+        // Ran this frame. False = unreachable from the output task (an inactive state-machine
+        // branch), so the executor skipped it entirely and it cost nothing.
+        bool  bReachable = false;
+
+        // Wrote its result in place into DepA's buffer (this task was DepA's last consumer) instead
+        // of taking a fresh one from the pool.
+        bool  bStoleBuffer = false;
+
+        int16 ExecOrder   = -1; // position in the executed sequence; -1 when skipped
+        int16 BufferIndex = -1; // pose-pool buffer holding this task's result
+        int16 Level       = 0;  // dependency depth: tasks sharing a level have no dependency between them
+        int16 LiveBuffers = 0;  // pool buffers in use immediately after this task ran
+    };
+
+    // One frame's execution record for a single mesh's task list.
+    struct FAnimTaskSnapshot
+    {
+        TVector<FAnimTaskDebugEntry> Entries;
+
+        int16 OutputTask      = FAnimTask::NoTask;
+        int32 NumBones        = 0;
+        int32 ActiveBoneCount = 0; // 0 = every bone (no skeleton-LOD cut this frame)
+        bool  bLockRoot       = false;
+
+        int32 ReachableCount  = 0;
+        int32 PeakLiveBuffers = 0;
+        int32 NumLevels       = 0;
+
+        bool bValid = false;
+
+        void Reset()
+        {
+            Entries.clear();
+            OutputTask      = FAnimTask::NoTask;
+            NumBones        = 0;
+            ActiveBoneCount = 0;
+            bLockRoot       = false;
+            ReachableCount  = 0;
+            PeakLiveBuffers = 0;
+            NumLevels       = 0;
+            bValid          = false;
         }
     };
 }

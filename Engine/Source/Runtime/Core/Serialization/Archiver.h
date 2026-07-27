@@ -262,11 +262,23 @@ namespace Lumina
             {
                 FString LoadedString;
                 *this << LoadedString;
-                Name = FName(LoadedString);
+
+                // Files older than FNAME_NONE_EMPTY_STRING stored None as its "NAME_None" display
+                // rendering; decode it back so those names don't load as real non-None names.
+                if (FileVersion < (int32)ELuminaEngineVersion::FNAME_NONE_EMPTY_STRING && LoadedString == "NAME_None")
+                {
+                    Name = FName();
+                }
+                else
+                {
+                    Name = FName(LoadedString);
+                }
             }
             else
             {
-                FString SavedString(Name.c_str());
+                // None's wire form is the empty string; c_str() renders "NAME_None", which is a
+                // display string and must not round-trip into a real name.
+                FString SavedString(Name.IsNone() ? "" : Name.c_str());
                 *this << SavedString;
             }
 

@@ -1,30 +1,9 @@
 #pragma once
 
-#define REGISTER_NAME(num, name) name = num,
-
-#define INTRINSIC_NAMES \
-    REGISTER_NAME(0, None) \
-    
 #include "Platform/GenericPlatform.h"
-
-enum class EName : uint32
-{
-    INTRINSIC_NAMES
-
-    NumIntrinsicName
-};
-#undef REGISTER_NAME
-
-#define REGISTER_NAME(num, name) inline constexpr EName NAME_##name = EName::name;
-    INTRINSIC_NAMES
-#undef REGISTER_NAME
 
 #define BIT(x) (1 << (x))
 #define BIT64(x) (1ULL << (x))
-
-#ifndef OFFSETOF
-    #define OFFSETOF(type, member) offsetof(type, member)
-#endif
 
 #define CAT(x, y) CAT_(x, y)
 #define CAT_(x, y) x##y

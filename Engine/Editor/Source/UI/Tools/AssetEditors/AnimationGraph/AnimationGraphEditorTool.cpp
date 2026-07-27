@@ -1,6 +1,15 @@
 #include "AnimationGraphEditorTool.h"
 
+#include <cfloat>
 #include <cstdio>
+#include <EASTL/algorithm.h>
+#include "Animation/TaskSystem/AnimTaskExecutor.h"
+#include "Assets/AssetRegistry/AssetData.h"
+#include "Assets/AssetRegistry/AssetRegistry.h"
+#include "Assets/AssetTypes/Mesh/Animation/Animation.h"
+#include "Tools/UI/ImGui/EditorColors.h"
+#include "Tools/UI/ImGui/ImGuiDragDrop.h"
+#include "UI/Tools/NodeGraph/Animation/Nodes/AnimGraphNode_ClipPlayer.h"
 #include "Assets/AssetTypes/Animation/AnimationGraph/AnimationGraph.h"
 #include "Assets/AssetTypes/Mesh/Skeleton/Skeleton.h"
 #include "Core/Math/Math.h"
@@ -33,6 +42,140 @@ namespace Lumina
     static const char* AnimationGraphWindowName = "Animation Graph";
     static const char* GraphPropertiesWindowName = "Graph Properties";
     static const char* GraphParametersWindowName = "Parameters";
+    static const char* GraphTasksWindowName = "Task Graph";
+    static const char* GraphClipsWindowName = "Animation Clips";
+
+    // Presentation helpers for the Task Graph window. Internal linkage: these names are generic
+    // enough to collide with other translation units' Detail helpers.
+    namespace
+    {
+        namespace Detail
+        {
+            const char* TaskTypeName(EAnimTaskType Type)
+            {
+                switch (Type)
+                {
+                case EAnimTaskType::ReferencePose:      return "Reference Pose";
+                case EAnimTaskType::SampleClip:         return "Sample Clip";
+                case EAnimTaskType::Blend:              return "Blend";
+                case EAnimTaskType::BlendMasked:        return "Layered Blend";
+                case EAnimTaskType::MakeAdditive:       return "Make Additive";
+                case EAnimTaskType::ApplyAdditive:      return "Apply Additive";
+                case EAnimTaskType::StateMachineOutput: return "State Machine";
+                case EAnimTaskType::BoneTransform:      return "Bone Transform";
+                case EAnimTaskType::TwoBoneIK:          return "Two Bone IK";
+                }
+                return "Unknown";
+            }
+
+            // Category hue so the shape of a recipe reads without parsing labels: pose sources green,
+            // blends blue, additive violet, state machine amber, bone ops teal.
+            ImVec4 TaskTypeColor(EAnimTaskType Type)
+            {
+                switch (Type)
+                {
+                case EAnimTaskType::ReferencePose:      return ImVec4(0.56f, 0.59f, 0.64f, 1.0f);
+                case EAnimTaskType::SampleClip:         return ImVec4(0.38f, 0.76f, 0.47f, 1.0f);
+                case EAnimTaskType::Blend:
+                case EAnimTaskType::BlendMasked:        return ImVec4(0.36f, 0.62f, 0.92f, 1.0f);
+                case EAnimTaskType::MakeAdditive:
+                case EAnimTaskType::ApplyAdditive:      return ImVec4(0.70f, 0.52f, 0.90f, 1.0f);
+                case EAnimTaskType::StateMachineOutput: return ImVec4(0.93f, 0.68f, 0.33f, 1.0f);
+                case EAnimTaskType::BoneTransform:
+                case EAnimTaskType::TwoBoneIK:          return ImVec4(0.40f, 0.80f, 0.80f, 1.0f);
+                }
+                return ImVec4(0.60f, 0.60f, 0.60f, 1.0f);
+            }
+
+            FString BuildTaskDetail(const FAnimTaskDebugEntry& Entry)
+            {
+                char Buffer[192] = {};
+                switch (Entry.Type)
+                {
+                case EAnimTaskType::SampleClip:
+                    // Time first: it's the per-frame liveness signal, and clip names are long enough
+                    // that the tail is what gets ellipsized on a narrow box.
+                    snprintf(Buffer, sizeof(Buffer), "t=%.3fs   %s",
+                             Entry.Time, Entry.ClipName.IsNone() ? "<no clip>" : Entry.ClipName.c_str());
+                    break;
+
+                case EAnimTaskType::BlendMasked:
+                    snprintf(Buffer, sizeof(Buffer), "alpha %.2f   mask %d/%d bones",
+                             Entry.Alpha, Entry.MaskWeightedBones, Entry.MaskTotalBones);
+                    break;
+
+                case EAnimTaskType::Blend:
+                case EAnimTaskType::ApplyAdditive:
+                case EAnimTaskType::BoneTransform:
+                case EAnimTaskType::TwoBoneIK:
+                    snprintf(Buffer, sizeof(Buffer), "alpha %.2f", Entry.Alpha);
+                    break;
+
+                case EAnimTaskType::StateMachineOutput:
+                    snprintf(Buffer, sizeof(Buffer), "inertialization t=%.3fs", Entry.Time);
+                    break;
+
+                case EAnimTaskType::MakeAdditive:
+                    snprintf(Buffer, sizeof(Buffer), "relative to bind pose");
+                    break;
+
+                case EAnimTaskType::ReferencePose:
+                    snprintf(Buffer, sizeof(Buffer), "skeleton bind pose");
+                    break;
+                }
+                return FString(Buffer);
+            }
+
+            // Trims Text to MaxWidth with a trailing ellipsis. Measured with the same font and size
+            // used to draw it, so boxes stay clean at any zoom or editor DPI scale rather than
+            // hard-clipping mid-glyph.
+            FString FitText(ImFont* Font, float FontSize, const char* Text, float MaxWidth)
+            {
+                if (Text == nullptr || Text[0] == '\0')
+                {
+                    return FString();
+                }
+                if (Font->CalcTextSizeA(FontSize, FLT_MAX, 0.0f, Text).x <= MaxWidth)
+                {
+                    return FString(Text);
+                }
+
+                const char* Ellipsis = "...";
+                const float Budget = MaxWidth - Font->CalcTextSizeA(FontSize, FLT_MAX, 0.0f, Ellipsis).x;
+                if (Budget <= 0.0f)
+                {
+                    return FString(Ellipsis);
+                }
+
+                FString Result(Text);
+                while (!Result.empty() &&
+                       Font->CalcTextSizeA(FontSize, FLT_MAX, 0.0f, Result.c_str()).x > Budget)
+                {
+                    Result.pop_back();
+                }
+                Result += Ellipsis;
+                return Result;
+            }
+
+            FString BuildDepText(const FAnimTaskDebugEntry& Entry)
+            {
+                char Buffer[64] = {};
+                if (Entry.DepA < 0 && Entry.DepB < 0)
+                {
+                    snprintf(Buffer, sizeof(Buffer), "none (source task)");
+                }
+                else if (Entry.DepB < 0)
+                {
+                    snprintf(Buffer, sizeof(Buffer), "task %d", (int32)Entry.DepA);
+                }
+                else
+                {
+                    snprintf(Buffer, sizeof(Buffer), "task %d, task %d", (int32)Entry.DepA, (int32)Entry.DepB);
+                }
+                return FString(Buffer);
+            }
+        }
+    }
 
     FAnimationGraphEditorTool::FAnimationGraphEditorTool(IEditorToolContext* Context, CObject* InAsset)
         : FAssetEditorTool(Context, InAsset->GetName().c_str(), InAsset, NewObject<CWorld>())
@@ -59,6 +202,16 @@ namespace Lumina
             DrawParametersWindow();
         });
 
+        CreateToolWindow(GraphTasksWindowName, [this](bool /*bFocused*/)
+        {
+            DrawTaskGraphWindow();
+        });
+
+        CreateToolWindow(GraphClipsWindowName, [this](bool /*bFocused*/)
+        {
+            DrawClipBrowserWindow();
+        });
+
         // Editor node graph is a sibling sub-object in the asset's package (like the
         // material editor); created on first open, reloaded thereafter.
         FString GraphName = "AssetAnimationGraph";
@@ -82,6 +235,9 @@ namespace Lumina
 
     void FAnimationGraphEditorTool::OnDeinitialize(const FUpdateContext& /*UpdateContext*/)
     {
+        // Never leave the runtime capture pointing at a component this tool no longer watches.
+        Anim::DisarmTaskCapture();
+
         // Tear down every node-editor context this tool created (the top graph
         // plus any nested state machine / blend-tree canvases that were opened).
         for (CEdNodeGraph* Graph : InitializedGraphs)
@@ -390,6 +546,10 @@ namespace Lumina
         ImGui::DockBuilderDockWindow(GetToolWindowName(GraphPropertiesWindowName).c_str(),     rightDockID);
         // Parameters share the right pane, tabbed behind Properties.
         ImGui::DockBuilderDockWindow(GetToolWindowName(GraphParametersWindowName).c_str(),     rightDockID);
+        // Task Graph tabs behind the node canvas: same "what is this graph doing" workspace.
+        ImGui::DockBuilderDockWindow(GetToolWindowName(GraphTasksWindowName).c_str(),          bottomDockID);
+        // Clips sit with the other pickers on the right so they can be dragged onto the canvas.
+        ImGui::DockBuilderDockWindow(GetToolWindowName(GraphClipsWindowName).c_str(),          rightDockID);
     }
 
     void FAnimationGraphEditorTool::DrawBreadcrumbBar()
@@ -423,7 +583,22 @@ namespace Lumina
 
         if (!GraphStack.empty() && GraphStack.back().Graph != nullptr)
         {
+            const ImVec2 CanvasMin = ImGui::GetCursorScreenPos();
+            const ImVec2 CanvasSize = ImGui::GetContentRegionAvail();
+            GraphCanvasCenter = ImVec2(CanvasMin.x + CanvasSize.x * 0.5f, CanvasMin.y + CanvasSize.y * 0.5f);
+
             GraphStack.back().Graph->DrawGraph();
+
+            // Clip drops onto the canvas. The node editor consumes the region itself, so the target
+            // is registered over the whole window rect (same pattern as the outliner's empty area).
+            if (ImGui::BeginDragDropTargetCustom(ImGui::GetCurrentWindow()->Rect(), ImGui::GetCurrentWindow()->ID))
+            {
+                if (CAnimation* DroppedClip = DragDrop::AcceptAsset<CAnimation>())
+                {
+                    SpawnClipPlayerNode(DroppedClip, ImGui::GetMousePos());
+                }
+                ImGui::EndDragDropTarget();
+            }
         }
     }
 
@@ -830,25 +1005,15 @@ namespace Lumina
             return;
         }
 
-        // Resolve the debug target: null world = editor preview, else a live entity from the
-        // dropdown. A stale target (world/entity gone, e.g. PIE ended) reverts to preview.
-        CWorld* TargetWorld = DebugTargetWorld.Get();
-        entt::entity TargetEntity = DebugTargetEntity;
-        if (TargetWorld == nullptr)
-        {
-            TargetWorld  = World.Get();
-            TargetEntity = MeshEntity;
-        }
+        CWorld* TargetWorld = nullptr;
+        entt::entity TargetEntity = entt::null;
 
         const FAnimGraphVMState* VMState = nullptr;
-        if (TargetWorld != nullptr && TargetEntity != entt::null)
+        if (ResolveDebugTarget(TargetWorld, TargetEntity))
         {
-            if (TargetWorld->IsValidEntity(TargetEntity))
+            if (SAnimationGraphComponent* Comp = TargetWorld->TryGetComponent<SAnimationGraphComponent>(TargetEntity))
             {
-                if (SAnimationGraphComponent* Comp = TargetWorld->TryGetComponent<SAnimationGraphComponent>(TargetEntity))
-                {
-                    VMState = &Comp->VMState;
-                }
+                VMState = &Comp->VMState;
             }
         }
 
@@ -969,6 +1134,544 @@ namespace Lumina
             DebugTargetWorld  = Targets[Picked].first;
             DebugTargetEntity = Targets[Picked].second;
         }
+    }
+
+    void FAnimationGraphEditorTool::SpawnClipPlayerNode(CAnimation* Clip, ImVec2 ScreenPos)
+    {
+        if (Clip == nullptr || GraphStack.empty())
+        {
+            return;
+        }
+
+        CEdNodeGraph* Canvas = GraphStack.back().Graph;
+        if (Canvas == nullptr)
+        {
+            return;
+        }
+
+        CEdGraphNode* Node = Canvas->CreateNode(CAnimGraphNode_ClipPlayer::StaticClass());
+        if (CAnimGraphNode_ClipPlayer* ClipNode = Cast<CAnimGraphNode_ClipPlayer>(Node))
+        {
+            ClipNode->Clip = Clip;
+        }
+
+        // Screen->canvas needs the node-editor context, which is only current inside DrawGraph.
+        Canvas->QueueNodePlacement(Node, ScreenPos);
+        Canvas->ValidateGraph();
+
+        if (Asset.IsValid() && Asset->GetPackage() != nullptr)
+        {
+            Asset->GetPackage()->MarkDirty();
+        }
+    }
+
+    void FAnimationGraphEditorTool::DrawClipBrowserWindow()
+    {
+        CAnimationGraph* Graph = Cast<CAnimationGraph>(Asset.Get());
+        CSkeleton* Skeleton = (Graph != nullptr && Graph->Skeleton.IsValid()) ? Graph->Skeleton.Get() : nullptr;
+
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Clips");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 140.0f);
+        ClipFilter.Draw("##ClipFilter");
+
+        ImGui::SameLine();
+        if (ImGui::Checkbox("Any skeleton", &bClipBrowserAnySkeleton))
+        {
+            ClipCacheAssetCount = -1; // force a rebuild with the new filter
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+        {
+            ImGuiX::TextTooltip_Internal("List every animation clip, not just the ones authored against this graph's skeleton");
+        }
+
+        if (Skeleton == nullptr && !bClipBrowserAnySkeleton)
+        {
+            ImGui::Separator();
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());
+            ImGui::TextWrapped("Assign a skeleton to this graph to list its clips, or tick \"Any skeleton\".");
+            ImGui::PopStyleColor();
+            return;
+        }
+
+        // Rebuild the list when the skeleton or the registry's asset count changes. Matching runs off
+        // the registry's dependency table, so clips are filtered without loading a single one.
+        TVector<FAssetData*> AllAssets = FAssetRegistry::Get().FindByPredicate([](const FAssetData&) { return true; });
+        if (ClipCacheSkeleton != Skeleton || ClipCacheAssetCount != (int32)AllAssets.size())
+        {
+            ClipCacheSkeleton   = Skeleton;
+            ClipCacheAssetCount = (int32)AllAssets.size();
+            ClipEntries.clear();
+
+            static const FName AnimationClassName = CAnimation::StaticClass()->GetName();
+            const FGuid SkeletonGUID = Skeleton != nullptr ? Skeleton->GetGUID() : FGuid();
+
+            for (const FAssetData* Data : AllAssets)
+            {
+                if (Data->AssetClass != AnimationClassName)
+                {
+                    continue;
+                }
+
+                if (!bClipBrowserAnySkeleton && Skeleton != nullptr)
+                {
+                    bool bReferencesSkeleton = false;
+                    for (const FAssetDependency& Dependency : Data->Dependencies)
+                    {
+                        if (Dependency.TargetGUID == SkeletonGUID)
+                        {
+                            bReferencesSkeleton = true;
+                            break;
+                        }
+                    }
+                    if (!bReferencesSkeleton)
+                    {
+                        continue;
+                    }
+                }
+
+                FClipEntry Entry;
+                Entry.Path        = Data->Path.c_str();
+                Entry.DisplayName = Data->AssetName.ToString();
+                ClipEntries.push_back(Move(Entry));
+            }
+
+            eastl::sort(ClipEntries.begin(), ClipEntries.end(),
+                        [](const FClipEntry& A, const FClipEntry& B) { return A.DisplayName < B.DisplayName; });
+        }
+
+        ImGui::Separator();
+
+        if (ClipEntries.empty())
+        {
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());
+            ImGui::TextWrapped(bClipBrowserAnySkeleton
+                ? "No animation clips found in the project."
+                : "No clips reference this skeleton. Import an animation against it, or tick \"Any skeleton\".");
+            ImGui::PopStyleColor();
+            return;
+        }
+
+        ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());
+        ImGui::TextWrapped("Drag a clip onto the graph canvas to add a Play Animation Clip node, or double-click to drop one in the middle.");
+        ImGui::PopStyleColor();
+        ImGui::Separator();
+
+        if (ImGui::BeginChild("##ClipList", ImVec2(0.0f, 0.0f)))
+        {
+            for (const FClipEntry& Entry : ClipEntries)
+            {
+                if (!ClipFilter.PassFilter(Entry.DisplayName.c_str()) && !ClipFilter.PassFilter(Entry.Path.c_str()))
+                {
+                    continue;
+                }
+
+                ImGui::PushID(Entry.Path.c_str());
+
+                FFixedString Label = LE_ICON_RUN_FAST "  ";
+                Label += Entry.DisplayName.c_str();
+                ImGui::Selectable(Label.c_str());
+
+                // Drag source: the shared LumDD asset channel, so this row also drops onto any
+                // CAnimation property slot in the details panel.
+                if (ImGui::BeginDragDropSource())
+                {
+                    const FStringView Path(Entry.Path.c_str(), Entry.Path.size());
+                    if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(Path))
+                    {
+                        DragDrop::SetAssetPayload(*Data);
+                    }
+                    ImGui::TextUnformatted(Entry.DisplayName.c_str());
+                    ImGui::EndDragDropSource();
+                }
+
+                if (ImGui::IsItemHovered())
+                {
+                    if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+                    {
+                        const FStringView Path(Entry.Path.c_str(), Entry.Path.size());
+                        if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(Path))
+                        {
+                            SpawnClipPlayerNode(LoadObject<CAnimation>(Data->AssetGUID), GraphCanvasCenter);
+                        }
+                    }
+                    else if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                    {
+                        ImGuiX::TextTooltip_Internal(Entry.Path.c_str());
+                    }
+                }
+
+                ImGui::PopID();
+            }
+        }
+        ImGui::EndChild();
+    }
+
+    bool FAnimationGraphEditorTool::ResolveDebugTarget(CWorld*& OutWorld, entt::entity& OutEntity) const
+    {
+        // Null selected world = the editor preview; a stale selection (world/entity gone, e.g. PIE
+        // ended) falls back to it too.
+        OutWorld  = DebugTargetWorld.Get();
+        OutEntity = DebugTargetEntity;
+
+        if (OutWorld == nullptr || !OutWorld->IsValidEntity(OutEntity))
+        {
+            OutWorld  = World.Get();
+            OutEntity = MeshEntity;
+        }
+
+        return OutWorld != nullptr && OutEntity != entt::null && OutWorld->IsValidEntity(OutEntity);
+    }
+
+    void FAnimationGraphEditorTool::DrawTaskGraphWindow()
+    {
+        const ImGuiStyle& Style = ImGui::GetStyle();
+
+        CWorld* TargetWorld = nullptr;
+        entt::entity TargetEntity = entt::null;
+        SSkeletalMeshComponent* MeshComp = nullptr;
+        if (ResolveDebugTarget(TargetWorld, TargetEntity))
+        {
+            MeshComp = TargetWorld->TryGetComponent<SSkeletalMeshComponent>(TargetEntity);
+        }
+
+        // Arm the runtime capture for exactly this component while the window is visible; the next
+        // animation tick fills the snapshot read below. Disarmed everywhere else, so populated
+        // worlds pay one null compare per mesh.
+        Anim::ArmTaskCapture(MeshComp);
+        if (MeshComp != nullptr)
+        {
+            Anim::GetTaskCapture(TaskSnapshot);
+        }
+        else
+        {
+            TaskSnapshot.Reset();
+        }
+
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Target");
+        DrawDebugTargetCombo();
+
+        ImGui::SameLine(0.0f, 16.0f);
+        ImGui::SetNextItemWidth(120.0f);
+        ImGui::SliderFloat("##TaskZoom", &TaskGraphZoom, 0.6f, 1.6f, "zoom %.2fx");
+
+        ImGui::SameLine(0.0f, 16.0f);
+        ImGui::Checkbox("Show skipped", &bTaskGraphShowSkipped);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+        {
+            ImGuiX::TextTooltip_Internal("Include tasks the executor skipped this frame (branches not reachable from the output)");
+        }
+
+        const FAnimTaskSnapshot& Snap = TaskSnapshot;
+
+        if (!Snap.bValid || Snap.Entries.empty())
+        {
+            ImGui::Separator();
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());
+            ImGui::TextWrapped(
+                MeshComp == nullptr
+                    ? "No debug target. Assign a skeleton so the preview mesh spawns, or pick a live entity above."
+                    : "No task list captured yet.\n\n"
+                      "The target only records tasks on frames it actually evaluates: the graph must be compiled, "
+                      "and the mesh must be visible (off-screen meshes freeze their pose, and distant ones "
+                      "evaluate every 2-4 frames).");
+            ImGui::PopStyleColor();
+            return;
+        }
+
+        // Summary line: what the recipe cost and how much of it was live.
+        const int32 SkippedCount = (int32)Snap.Entries.size() - Snap.ReachableCount;
+
+        ImGui::Separator();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(EditorColors::TextPrimary(), "%d tasks", (int32)Snap.Entries.size());
+        ImGui::SameLine(0.0f, 6.0f); ImGui::TextColored(EditorColors::TextMuted(), "|");
+        ImGui::SameLine(0.0f, 6.0f); ImGui::TextColored(EditorColors::Success(), "%d ran", Snap.ReachableCount);
+        if (SkippedCount > 0)
+        {
+            ImGui::SameLine(0.0f, 6.0f); ImGui::TextColored(EditorColors::TextMuted(), "|");
+            ImGui::SameLine(0.0f, 6.0f); ImGui::TextColored(EditorColors::Warning(), "%d skipped", SkippedCount);
+        }
+        ImGui::SameLine(0.0f, 6.0f); ImGui::TextColored(EditorColors::TextMuted(), "|");
+        ImGui::SameLine(0.0f, 6.0f); ImGui::TextColored(EditorColors::TextDim(), "%d levels", Snap.NumLevels);
+        ImGui::SameLine(0.0f, 6.0f); ImGui::TextColored(EditorColors::TextMuted(), "|");
+        ImGui::SameLine(0.0f, 6.0f); ImGui::TextColored(EditorColors::TextDim(), "peak %d pose buffers", Snap.PeakLiveBuffers);
+        ImGui::SameLine(0.0f, 6.0f); ImGui::TextColored(EditorColors::TextMuted(), "|");
+        ImGui::SameLine(0.0f, 6.0f);
+        if (Snap.ActiveBoneCount > 0 && Snap.ActiveBoneCount < Snap.NumBones)
+        {
+            ImGui::TextColored(EditorColors::Warning(), "%d/%d bones (LOD cut)", Snap.ActiveBoneCount, Snap.NumBones);
+        }
+        else
+        {
+            ImGui::TextColored(EditorColors::TextDim(), "%d bones", Snap.NumBones);
+        }
+        if (Snap.bLockRoot)
+        {
+            ImGui::SameLine(0.0f, 6.0f); ImGui::TextColored(EditorColors::TextMuted(), "|");
+            ImGui::SameLine(0.0f, 6.0f); ImGui::TextColored(EditorColors::TextDim(), "root pinned");
+        }
+
+        // The threading reality, stated where it can't be misread: one list = one thread.
+        ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());
+        ImGui::TextWrapped("This whole list runs start-to-finish on a single worker thread; the animation system's "
+                           "parallelism is across meshes, not within one graph. Columns are dependency levels: tasks "
+                           "in the same column have no dependency between them.");
+        ImGui::PopStyleColor();
+        ImGui::Separator();
+
+        // ---- Layout -------------------------------------------------------------------------
+
+        const float Scale = TaskGraphZoom;
+
+        // Box metrics derive from the font rather than fixed pixels: the editor's DPI scale changes
+        // the font size independently of zoom, and a hardcoded height clipped the last line.
+        ImFont*     Font      = ImGui::GetFont();
+        const float FontSize  = ImGui::GetFontSize() * Scale;
+        const float SmallFont = FontSize * 0.86f;
+
+        const float InnerPad = 10.0f * Scale;
+        const float PadY     = 8.0f * Scale;
+        const float LineGap  = 5.0f * Scale;
+
+        // Title row + detail row + buffer row, and wide enough that typical labels don't truncate.
+        const float NodeH   = PadY * 2.0f + FontSize + LineGap + SmallFont + LineGap + SmallFont;
+        const float NodeW   = Math::Max(190.0f * Scale, FontSize * 11.5f);
+        const float ColGap  = 56.0f * Scale;
+        const float RowGap  = 16.0f * Scale;
+        const float HeaderH = SmallFont + 10.0f * Scale;
+        const float Pad     = 14.0f * Scale;
+
+        const int32 NumEntries = (int32)Snap.Entries.size();
+        const int32 NumLevels  = Math::Max(Snap.NumLevels, 1);
+
+        TVector<TVector<int32>> Columns;
+        Columns.resize(NumLevels);
+        for (int32 i = 0; i < NumEntries; ++i)
+        {
+            const FAnimTaskDebugEntry& Entry = Snap.Entries[i];
+            if (!Entry.bReachable && !bTaskGraphShowSkipped)
+            {
+                continue;
+            }
+            const int32 Level = Math::Clamp((int32)Entry.Level, 0, NumLevels - 1);
+            Columns[Level].push_back(i);
+        }
+
+        float MaxColumnHeight = 0.0f;
+        for (const TVector<int32>& Column : Columns)
+        {
+            const float Height = Column.empty()
+                ? 0.0f
+                : (float)Column.size() * NodeH + (float)(Column.size() - 1) * RowGap;
+            MaxColumnHeight = Math::Max(MaxColumnHeight, Height);
+        }
+
+        // Column-local positions (canvas space); each column is vertically centered.
+        TVector<ImVec2> Positions;
+        Positions.resize(NumEntries, ImVec2(0.0f, 0.0f));
+        for (int32 L = 0; L < NumLevels; ++L)
+        {
+            const TVector<int32>& Column = Columns[L];
+            if (Column.empty())
+            {
+                continue;
+            }
+            const float Height = (float)Column.size() * NodeH + (float)(Column.size() - 1) * RowGap;
+            float Y = (MaxColumnHeight - Height) * 0.5f;
+            for (int32 Index : Column)
+            {
+                Positions[Index] = ImVec2((float)L * (NodeW + ColGap), Y);
+                Y += NodeH + RowGap;
+            }
+        }
+
+        const float TotalW = (float)NumLevels * NodeW + (float)(NumLevels - 1) * ColGap;
+        const float TotalH = MaxColumnHeight;
+
+        // ---- Canvas -------------------------------------------------------------------------
+
+        ImGui::BeginChild("##TaskCanvas", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
+
+        const ImVec2 CanvasCursor = ImGui::GetCursorScreenPos();
+        const ImVec2 Origin(CanvasCursor.x + Pad, CanvasCursor.y + Pad + HeaderH);
+        ImDrawList* DL = ImGui::GetWindowDrawList();
+        const bool bWindowHovered = ImGui::IsWindowHovered();
+
+        // Column bands + level headers: the visual answer to "what is grouped with what".
+        for (int32 L = 0; L < NumLevels; ++L)
+        {
+            const float BandX = Origin.x + (float)L * (NodeW + ColGap);
+            const ImVec2 BandMin(BandX - RowGap * 0.5f, Origin.y - HeaderH);
+            const ImVec2 BandMax(BandX + NodeW + RowGap * 0.5f, Origin.y + TotalH + Pad * 0.5f);
+
+            DL->AddRectFilled(BandMin, BandMax,
+                              EditorColors::U32(EditorColors::WithAlpha(EditorColors::PanelBg(), (L % 2) ? 0.55f : 0.28f)),
+                              6.0f * Scale);
+
+            char Header[64];
+            const int32 Count = (int32)Columns[L].size();
+            snprintf(Header, sizeof(Header), "Level %d  -  %d task%s", L, Count, Count == 1 ? "" : "s");
+            DL->AddText(Font, SmallFont, ImVec2(BandMin.x + 8.0f * Scale, Origin.y - HeaderH + 4.0f * Scale),
+                        EditorColors::U32(EditorColors::TextMuted()), Header);
+        }
+
+        // Dependency links behind the boxes. Curves flow left (producer) to right (consumer),
+        // matching the node canvas's reading direction.
+        for (int32 i = 0; i < NumEntries; ++i)
+        {
+            const FAnimTaskDebugEntry& Entry = Snap.Entries[i];
+            if (!Entry.bReachable && !bTaskGraphShowSkipped)
+            {
+                continue;
+            }
+
+            const int16 Deps[2] = { Entry.DepA, Entry.DepB };
+            for (int32 D = 0; D < 2; ++D)
+            {
+                const int16 Dep = Deps[D];
+                if (Dep < 0 || Dep >= NumEntries)
+                {
+                    continue;
+                }
+                const FAnimTaskDebugEntry& DepEntry = Snap.Entries[Dep];
+                if (!DepEntry.bReachable && !bTaskGraphShowSkipped)
+                {
+                    continue;
+                }
+
+                const ImVec2 From(Origin.x + Positions[Dep].x + NodeW, Origin.y + Positions[Dep].y + NodeH * 0.5f);
+                const ImVec2 To(Origin.x + Positions[i].x, Origin.y + Positions[i].y + NodeH * 0.5f);
+                const float Curve = (To.x - From.x) * 0.5f;
+
+                // A stolen buffer means this consumer writes in place over the producer's pose:
+                // draw it solid and accented, since that edge is where the zero-copy path happens.
+                const bool bLive  = Entry.bReachable && DepEntry.bReachable;
+                const bool bSteal = bLive && Entry.bStoleBuffer && D == 0;
+
+                ImVec4 LinkColor = bSteal ? EditorColors::AccentAlt() : EditorColors::TextDim();
+                LinkColor = EditorColors::WithAlpha(LinkColor, bLive ? (bSteal ? 0.95f : 0.55f) : 0.18f);
+
+                DL->AddBezierCubic(From, ImVec2(From.x + Curve, From.y), ImVec2(To.x - Curve, To.y), To,
+                                   EditorColors::U32(LinkColor), (bSteal ? 2.6f : 1.8f) * Scale);
+            }
+        }
+
+        // Task boxes.
+        for (int32 i = 0; i < NumEntries; ++i)
+        {
+            const FAnimTaskDebugEntry& Entry = Snap.Entries[i];
+            if (!Entry.bReachable && !bTaskGraphShowSkipped)
+            {
+                continue;
+            }
+
+            const ImVec2 Min(Origin.x + Positions[i].x, Origin.y + Positions[i].y);
+            const ImVec2 Max(Min.x + NodeW, Min.y + NodeH);
+            const bool bIsOutput = i == (int32)Snap.OutputTask;
+            const float Alpha    = Entry.bReachable ? 1.0f : 0.34f;
+            const float Rounding = 6.0f * Scale;
+
+            const ImVec4 Category = Detail::TaskTypeColor(Entry.Type);
+
+            DL->AddRectFilled(Min, Max,
+                              EditorColors::U32(EditorColors::WithAlpha(EditorColors::FrameBg(), Alpha)), Rounding);
+            DL->AddRect(Min, Max,
+                        EditorColors::U32(EditorColors::WithAlpha(bIsOutput ? EditorColors::Success() : Category, Alpha)),
+                        Rounding, 0, (bIsOutput ? 2.4f : 1.4f) * Scale);
+
+            // Clip is a safety net only; every string below is measured and ellipsized to fit.
+            DL->PushClipRect(Min, Max, true);
+
+            const float TextX     = Min.x + InnerPad;
+            const float DotOffset = 13.0f * Scale;
+            const float BodyMaxW  = NodeW - InnerPad * 2.0f;
+            float TextY = Min.y + PadY;
+
+            // Execution order (or "skipped"), right-aligned; measured first so the title can
+            // reserve room for it instead of running underneath.
+            char Order[32];
+            if (Entry.bReachable)
+            {
+                snprintf(Order, sizeof(Order), "#%d", (int32)Entry.ExecOrder);
+            }
+            else
+            {
+                snprintf(Order, sizeof(Order), "skipped");
+            }
+            const ImVec2 OrderSize = Font->CalcTextSizeA(SmallFont, FLT_MAX, 0.0f, Order);
+
+            // Category dot + title.
+            DL->AddCircleFilled(ImVec2(TextX + 3.0f * Scale, TextY + FontSize * 0.5f), 3.5f * Scale,
+                                EditorColors::U32(EditorColors::WithAlpha(Category, Alpha)));
+
+            const float TitleMaxW = BodyMaxW - DotOffset - OrderSize.x - 6.0f * Scale;
+            const FString Title = Detail::FitText(Font, FontSize, Detail::TaskTypeName(Entry.Type), TitleMaxW);
+            DL->AddText(Font, FontSize, ImVec2(TextX + DotOffset, TextY),
+                        EditorColors::U32(EditorColors::WithAlpha(EditorColors::TextPrimary(), Alpha)), Title.c_str());
+
+            DL->AddText(Font, SmallFont, ImVec2(Max.x - InnerPad - OrderSize.x, TextY + 1.0f * Scale),
+                        EditorColors::U32(EditorColors::WithAlpha(
+                            Entry.bReachable ? EditorColors::TextMuted() : EditorColors::Warning(), Alpha)), Order);
+
+            TextY += FontSize + LineGap;
+
+            const FString DetailText = Detail::FitText(Font, SmallFont, Detail::BuildTaskDetail(Entry).c_str(), BodyMaxW);
+            DL->AddText(Font, SmallFont, ImVec2(TextX, TextY),
+                        EditorColors::U32(EditorColors::WithAlpha(EditorColors::TextDim(), Alpha)), DetailText.c_str());
+
+            TextY += SmallFont + LineGap;
+
+            // Buffer chip: where this task's pose lives, and whether it reused its input's buffer.
+            if (Entry.bReachable && Entry.BufferIndex >= 0)
+            {
+                char Buffer[64];
+                snprintf(Buffer, sizeof(Buffer), Entry.bStoleBuffer ? "buffer %d  (in place)" : "buffer %d  (new)",
+                         (int32)Entry.BufferIndex);
+                const FString Chip = Detail::FitText(Font, SmallFont, Buffer, BodyMaxW);
+                DL->AddText(Font, SmallFont, ImVec2(TextX, TextY),
+                            EditorColors::U32(EditorColors::WithAlpha(
+                                Entry.bStoleBuffer ? EditorColors::AccentAlt() : EditorColors::TextMuted(), Alpha)),
+                            Chip.c_str());
+            }
+
+            DL->PopClipRect();
+
+            if (bWindowHovered && ImGui::IsMouseHoveringRect(Min, Max))
+            {
+                ImGui::BeginTooltip();
+                ImGui::TextColored(Category, "%s", Detail::TaskTypeName(Entry.Type));
+                ImGui::Separator();
+                ImGui::Text("Task index    %d%s", i, bIsOutput ? "   (graph output)" : "");
+                ImGui::Text("Level         %d", (int32)Entry.Level);
+                ImGui::Text("Dependencies  %s", Detail::BuildDepText(Entry).c_str());
+                ImGui::Separator();
+                if (Entry.bReachable)
+                {
+                    ImGui::Text("Executed      yes, position %d", (int32)Entry.ExecOrder);
+                    ImGui::Text("Pose buffer   %d %s", (int32)Entry.BufferIndex,
+                                Entry.bStoleBuffer ? "(reused its input's, zero copy)" : "(fresh from the pool)");
+                    ImGui::Text("Buffers live  %d", (int32)Entry.LiveBuffers);
+                }
+                else
+                {
+                    ImGui::TextColored(EditorColors::Warning(), "Skipped: not reachable from the output task.");
+                    ImGui::TextColored(EditorColors::TextMuted(), "Inactive branches cost nothing to evaluate.");
+                }
+                const FString DetailLine = Detail::BuildTaskDetail(Entry);
+                if (!DetailLine.empty())
+                {
+                    ImGui::Separator();
+                    ImGui::TextColored(EditorColors::TextDim(), "%s", DetailLine.c_str());
+                }
+                ImGui::EndTooltip();
+            }
+        }
+
+        ImGui::Dummy(ImVec2(TotalW + Pad * 2.0f, TotalH + HeaderH + Pad * 2.0f));
+        ImGui::EndChild();
     }
 
     void FAnimationGraphEditorTool::OnSave()

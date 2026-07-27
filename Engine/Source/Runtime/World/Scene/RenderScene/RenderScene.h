@@ -36,8 +36,10 @@ namespace Lumina
 
         //~ Required core -------------------------------------------------------------------
 
+        // Two-phase construction is required here (and only here): Init runs virtual calls and hands
+        // `this` to systems, neither of which works from a constructor. Teardown has no such excuse --
+        // each class's destructor releases what it owns, so there is no Shutdown() to pair with it.
         virtual void Init() = 0;
-        virtual void Shutdown() = 0;
 
         // Game thread, populate the frame slot's snapshot. N-buffered so Extract and RenderView run
         // concurrently; Extract back-pressures on the slot's consumed fence.

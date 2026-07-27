@@ -16,11 +16,10 @@ namespace Lumina
 {
     RUNTIME_API FApplication* GApp;
 
-    // Out-of-line so unique_ptr<FInputViewport> can see the full type.
     FApplication::FApplication() = default;
     FApplication::~FApplication() = default;
 
-    int32 FApplication::Run(int argc, char** argv)
+    int32 FApplication::Run([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
     {
         LUMINA_PROFILE_SCOPE();
 
@@ -130,9 +129,6 @@ namespace Lumina
         InitializeCObjectSystem();
 
         Paths::InitializePaths();
-
-        // --Project= load deferred to FEngine::Init(): the game DLL's reflected types
-        // touch the Lua VM, which isn't initialized until GEngine->Init() (null-deref).
     }
 
     bool FApplication::CreateApplicationWindow()
@@ -148,7 +144,6 @@ namespace Lumina
 
     bool FApplication::ShouldExit() const
     {
-        // No window to poll for a close request when headless; exit is request-driven only.
         if (GIsHeadless)
         {
             return bExitRequested;

@@ -1243,9 +1243,9 @@ namespace Lumina
     {
         if (RenderScene)
         {
+            // Flush first so nothing in flight still references the scene's resources; the
+            // destructor then releases everything it owns.
             FlushRenderingCommands();
-
-            RenderScene->Shutdown();
             RenderScene.reset();
         }
     }

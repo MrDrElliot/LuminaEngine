@@ -300,7 +300,7 @@ namespace Lumina
         #endif
     }
 
-    void FForwardRenderScene::Shutdown()
+    FForwardRenderScene::~FForwardRenderScene()
     {
         RHI::WaitDeviceIdle();
 
@@ -319,12 +319,16 @@ namespace Lumina
         SceneViews.clear();
         CurrentView = nullptr;
 
-        // Scene-owned shared images (cascade atlas, sky cubes). The other NamedImages slots
-        // alias manager-owned shared resources and are not released here.
-        ReleaseSceneImage(NamedImages[(int)ENamedImage::Cascade]);
-        ReleaseSceneImage(NamedImages[(int)ENamedImage::SkyCube]);
-        ReleaseSceneImage(NamedImages[(int)ENamedImage::SkyIrradiance]);
-        ReleaseSceneImage(NamedImages[(int)ENamedImage::SkyPrefilter]);
+        // Scene-owned shared images (cascade atlas, sky cubes). Slots that merely alias
+        // manager-owned resources carry bOwned = false and are skipped, so this releases exactly
+        // what the scene created -- and keeps releasing it when new shared images are added.
+        for (FSceneImage& Image : NamedImages)
+        {
+            if (Image.bOwned)
+            {
+                ReleaseSceneImage(Image);
+            }
+        }
 
         // Persistent GPU buffers + rings.
         auto FreeBuffer = [](FSceneBuffer& Buffer)
@@ -9381,40 +9385,18 @@ namespace Lumina
         }
     }
 
-    // ENamedImage slots owned by each view (created in InitViewImages, released in
-    // ReleaseViewImages); the remaining slots alias scene-shared images.
-    static constexpr FForwardRenderScene::ENamedImage GPerViewImageSlots[] =
-    {
-        FForwardRenderScene::ENamedImage::HDR,
-        FForwardRenderScene::ENamedImage::LDR,
-        FForwardRenderScene::ENamedImage::PostProcessScratch,
-        FForwardRenderScene::ENamedImage::SMAAEdges,
-        FForwardRenderScene::ENamedImage::SMAABlend,
-        FForwardRenderScene::ENamedImage::SSAO,
-        FForwardRenderScene::ENamedImage::SSAODenoise,
-        FForwardRenderScene::ENamedImage::SSAOBlur,
-        FForwardRenderScene::ENamedImage::DepthAttachment,
-        FForwardRenderScene::ENamedImage::DepthPyramid,
-        FForwardRenderScene::ENamedImage::Picker,
-        FForwardRenderScene::ENamedImage::Accum,
-        FForwardRenderScene::ENamedImage::Revealage,
-        FForwardRenderScene::ENamedImage::WaterRefraction,
-        FForwardRenderScene::ENamedImage::DBufferA,
-        FForwardRenderScene::ENamedImage::DBufferB,
-        FForwardRenderScene::ENamedImage::DBufferC,
-        FForwardRenderScene::ENamedImage::AdaptedLuminance,
-        FForwardRenderScene::ENamedImage::FroxelScatter,
-        FForwardRenderScene::ENamedImage::FroxelIntegrated,
-        FForwardRenderScene::ENamedImage::HDR_MS,
-        FForwardRenderScene::ENamedImage::Depth_MS,
-        FForwardRenderScene::ENamedImage::Picker_MS,
-    };
-
     void FForwardRenderScene::ReleaseViewImages(FSceneView& View)
     {
-        for (ENamedImage Slot : GPerViewImageSlots)
+        // Ownership-driven: release exactly what this view created and leave aliases to their owner.
+        // This replaced a hand-maintained list of per-view ENamedImage slots, which silently leaked
+        // the texture AND its bindless slot whenever a new per-view image was added to
+        // InitViewImages without also being added to the list (VisBuffer was missing that way).
+        for (FSceneImage& Image : View.Images)
         {
-            ReleaseSceneImage(View.Images[(int)Slot]);
+            if (Image.bOwned)
+            {
+                ReleaseSceneImage(Image);
+            }
         }
         ReleaseSceneImage(View.Output);
         ReleaseSceneImage(View.BloomChainImage);
@@ -9430,6 +9412,14 @@ namespace Lumina
         // Seed with the scene's shared images (BRDF LUT, sky cubes, SMAA LUTs, cascade atlas, icons) so
         // GetNamedImage() reads them uniformly through CurrentView; the per-view slots below override.
         View.Images = NamedImages;
+
+        // Those seeded entries are BORROWED -- the scene (or the render manager) owns and releases
+        // them. Clearing ownership on the copies is what stops ReleaseViewImages from double-freeing
+        // the cascade atlas / sky cubes, which the scene releases itself.
+        for (FSceneImage& Seeded : View.Images)
+        {
+            Seeded.bOwned = false;
+        }
 
         RHI::FTextureDesc Desc;
         Desc.Type      = RHI::ETextureType::Tex2D;
@@ -9685,9 +9675,11 @@ namespace Lumina
         // IBL slots in every view so GetNamedImage / BuildViewSceneRoot pick up the new cubes.
         for (FSceneView& View : SceneViews)
         {
-            View.Images[(int)ENamedImage::SkyCube]      = NamedImages[(int)ENamedImage::SkyCube];
-            View.Images[(int)ENamedImage::SkyIrradiance] = NamedImages[(int)ENamedImage::SkyIrradiance];
-            View.Images[(int)ENamedImage::SkyPrefilter]  = NamedImages[(int)ENamedImage::SkyPrefilter];
+            // Borrowed: the scene owns these cubes and releases them itself, so the view's copies
+            // must not be picked up by ReleaseViewImages' owned-image sweep.
+            View.Images[(int)ENamedImage::SkyCube]       = BorrowSceneImage(NamedImages[(int)ENamedImage::SkyCube]);
+            View.Images[(int)ENamedImage::SkyIrradiance] = BorrowSceneImage(NamedImages[(int)ENamedImage::SkyIrradiance]);
+            View.Images[(int)ENamedImage::SkyPrefilter]  = BorrowSceneImage(NamedImages[(int)ENamedImage::SkyPrefilter]);
         }
 
         // The freshly-sized cubes have undefined contents, but the game thread set bIBLDirty +

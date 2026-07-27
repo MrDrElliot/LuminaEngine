@@ -14,7 +14,6 @@ public:
         Lumina::Memory::Initialize();
 
         Lumina::Threading::Initialize("Main Thread");
-        Lumina::FName::Initialize();
         Lumina::Logging::Init();
         Lumina::Task::Initialize();
 
@@ -25,7 +24,6 @@ public:
     {
         Lumina::Task::Shutdown();
         Lumina::Logging::Shutdown();
-        Lumina::FName::Shutdown();
         Lumina::Threading::Shutdown();
         Lumina::ShutdownCObjectSystem();
 

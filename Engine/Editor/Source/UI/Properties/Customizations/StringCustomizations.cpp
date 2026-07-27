@@ -16,84 +16,46 @@ namespace Lumina
 {
     namespace
     {
-        // Recursive draw of a single bone node and its children. Returns true if
-        // a bone was clicked, with OutSelected set to its name.
-        bool DrawBoneTreeNode(const FSkeletonResource& Skeleton, int32 BoneIndex, ImGuiTextFilter& Filter, const FName& Current, FName& OutSelected)
+        // Rebuilds the picker tree from a skeleton. While the filter is active, matches are added
+        // as a flat list (a deep hierarchy under a filter is all indentation and no information);
+        // otherwise the full hierarchy is built expanded, with the current value's row selected.
+        int32 BuildBoneTree(FTreeListView& Tree, const FSkeletonResource& Skeleton, const ImGuiTextFilter& Filter, const FName& Current)
         {
-            const FSkeletonResource::FBoneInfo& Bone = Skeleton.GetBone(BoneIndex);
-            const char* Label = Bone.Name.c_str();
-            const TVector<int32> Children = Skeleton.GetChildBones(BoneIndex);
+            const int32 NumBones = Skeleton.GetNumBones();
+            const bool bFiltering = Filter.IsActive();
+            int32 Count = 0;
 
-            // The filter hides non-matching leaves but keeps a node visible if
-            // any descendant matches, so users can drill down by partial name.
-            const bool bSelfMatches = Filter.PassFilter(Label);
-            bool bAnyChildVisible = false;
-            for (int32 Child : Children)
+            TVector<FTreeNodeID> BoneNodes;
+            BoneNodes.resize(NumBones, InvalidTreeNode);
+
+            for (int32 i = 0; i < NumBones; ++i)
             {
-                if (Filter.PassFilter(Skeleton.GetBone(Child).Name.c_str()))
+                const FSkeletonResource::FBoneInfo& Bone = Skeleton.GetBone(i);
+                if (bFiltering && !Filter.PassFilter(Bone.Name.c_str()))
                 {
-                    bAnyChildVisible = true;
-                    break;
+                    continue;
                 }
-            }
-            if (!bSelfMatches && !bAnyChildVisible && Filter.IsActive())
-            {
-                bool bDeepMatch = false;
-                for (int32 Child : Children)
-                {
-                    FName Throwaway;
-                    if (DrawBoneTreeNode(Skeleton, Child, Filter, Current, Throwaway))
-                    {
-                        bDeepMatch = true;
-                        OutSelected = Throwaway;
-                    }
-                }
-                return bDeepMatch;
+
+                // Bones are parents-before-children, so a parent's node exists before its children's.
+                const FTreeNodeID Parent = (!bFiltering && Bone.ParentIndex != INDEX_NONE)
+                    ? BoneNodes[Bone.ParentIndex]
+                    : InvalidTreeNode;
+
+                const FTreeNodeID Node = Tree.CreateNode(Parent, Bone.Name.c_str());
+                BoneNodes[i] = Node;
+
+                FTreeNodeState& State = Tree.Get<FTreeNodeState>(Node);
+                State.bExpanded = true;
+                State.bSelected = Bone.Name == Current;
+                ++Count;
             }
 
-            ImGuiTreeNodeFlags Flags =  ImGuiTreeNodeFlags_OpenOnArrow | 
-                                        ImGuiTreeNodeFlags_OpenOnDoubleClick | 
-                                        ImGuiTreeNodeFlags_SpanAvailWidth | 
-                                        ImGuiTreeNodeFlags_DefaultOpen;
-            
-            if (Children.empty())
-            {
-                Flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
-            }
-            if (Bone.Name == Current)
-            {
-                Flags |= ImGuiTreeNodeFlags_Selected;
-            }
-            if (Filter.IsActive())
-            {
-                ImGui::SetNextItemOpen(true, ImGuiCond_Always);
-            }
-
-            const bool bOpen = ImGui::TreeNodeEx((const void*)(intptr_t)BoneIndex, Flags, "%s", Label);
-
-            bool bClicked = false;
-            if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !ImGui::IsItemToggledOpen())
-            {
-                OutSelected = Bone.Name;
-                bClicked = true;
-            }
-
-            if (bOpen && !(Flags & ImGuiTreeNodeFlags_NoTreePushOnOpen))
-            {
-                for (int32 Child : Children)
-                {
-                    FName ChildSelected;
-                    if (DrawBoneTreeNode(Skeleton, Child, Filter, Current, ChildSelected))
-                    {
-                        OutSelected = ChildSelected;
-                        bClicked = true;
-                    }
-                }
-                ImGui::TreePop();
-            }
-
-            return bClicked;
+            return Count;
         }
+
+        // Compact indent for picker popups; the outliner default pushes 20+-deep skeleton
+        // chains past the popup's edge.
+        constexpr float kBonePickerIndent = 12.0f;
     }
 
     EPropertyChangeOp FNamePropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property)
@@ -202,37 +164,60 @@ namespace Lumina
 
             if (ImGui::BeginPopup("##BonePicker"))
             {
-                BoneFilter.Draw("##Filter", 320.0f);
-
-                if (ImGui::BeginChild("##BoneTree", ImVec2(340, 400), ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar))
+                if (ImGui::IsWindowAppearing())
                 {
-                    ImGui::PushStyleVar(ImGuiStyleVar_IndentSpacing, 14.0f);
-                    if (Skeleton != nullptr)
-                    {
-                        // None entry first: lets the user clear the selection.
-                        if (ImGui::Selectable("(none)", DisplayValue.IsNone()))
-                        {
-                            DisplayValue = FName();
-                            Result = EPropertyChangeOp::Updated;
-                            ImGui::CloseCurrentPopup();
-                        }
-                        ImGui::Separator();
+                    BoneTree.MarkTreeDirty();
+                    ImGui::SetKeyboardFocusHere();
+                }
+                if (BoneFilter.Draw("##Filter", 320.0f))
+                {
+                    BoneTree.MarkTreeDirty();
+                }
 
-                        const TVector<int32> Roots = Skeleton->GetRootBones();
-                        for (int32 Root : Roots)
+                if (Skeleton != nullptr)
+                {
+                    // None entry first: lets the user clear the selection.
+                    if (ImGui::Selectable("(none)", DisplayValue.IsNone()))
+                    {
+                        DisplayValue = FName();
+                        Result = EPropertyChangeOp::Updated;
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::Separator();
+
+                    bool bPicked = false;
+
+                    FTreeListViewContext TreeContext;
+                    TreeContext.IndentPerDepth = kBonePickerIndent;
+                    TreeContext.RebuildTreeFunction = [&](FTreeListView& Tree)
+                    {
+                        LastBuiltBoneCount = BuildBoneTree(Tree, *Skeleton, BoneFilter, DisplayValue);
+                    };
+                    TreeContext.ItemSelectedFunction = [&](FTreeListView& Tree, FTreeNodeID Item, bool)
+                    {
+                        if (Tree.IsValid(Item))
                         {
-                            FName Selected;
-                            if (DrawBoneTreeNode(*Skeleton, Root, BoneFilter, DisplayValue, Selected))
-                            {
-                                DisplayValue = Selected;
-                                Result = EPropertyChangeOp::Updated;
-                                ImGui::CloseCurrentPopup();
-                            }
+                            DisplayValue = FName(Tree.Get<FTreeNodeDisplay>(Item).DisplayName.c_str());
+                            bPicked = true;
+                        }
+                    };
+
+                    if (ImGui::BeginChild("##BoneTree", ImVec2(360, 400)))
+                    {
+                        BoneTree.Draw(TreeContext);
+                        if (LastBuiltBoneCount == 0)
+                        {
+                            ImGui::TextDisabled("No matching bones.");
                         }
                     }
-                    ImGui::PopStyleVar();
+                    ImGui::EndChild();
+
+                    if (bPicked)
+                    {
+                        Result = EPropertyChangeOp::Updated;
+                        ImGui::CloseCurrentPopup();
+                    }
                 }
-                ImGui::EndChild();
                 ImGui::EndPopup();
             }
         }
@@ -258,55 +243,78 @@ namespace Lumina
 
             if (ImGui::BeginPopup("##SocketPicker"))
             {
-                BoneFilter.Draw("##Filter", 320.0f);
-
-                if (ImGui::BeginChild("##SocketList", ImVec2(340, 400), ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar))
+                if (ImGui::IsWindowAppearing())
                 {
-                    ImGui::PushStyleVar(ImGuiStyleVar_IndentSpacing, 14.0f);
+                    BoneTree.MarkTreeDirty();
+                    ImGui::SetKeyboardFocusHere();
+                }
+                if (BoneFilter.Draw("##Filter", 320.0f))
+                {
+                    BoneTree.MarkTreeDirty();
+                }
 
-                    if (ImGui::Selectable("(none)", DisplayValue.IsNone()))
+                if (ImGui::Selectable("(none)", DisplayValue.IsNone()))
+                {
+                    DisplayValue = FName();
+                    Result = EPropertyChangeOp::Updated;
+                    ImGui::CloseCurrentPopup();
+                }
+
+                if (SocketData != nullptr && !SocketData->Sockets.empty())
+                {
+                    ImGui::SeparatorText("Sockets");
+                    for (const FName& Socket : SocketData->Sockets)
                     {
-                        DisplayValue = FName();
+                        if (Socket.IsNone() || !BoneFilter.PassFilter(Socket.c_str()))
+                        {
+                            continue;
+                        }
+                        if (ImGui::Selectable(Socket.c_str(), Socket == DisplayValue))
+                        {
+                            DisplayValue = Socket;
+                            Result = EPropertyChangeOp::Updated;
+                            ImGui::CloseCurrentPopup();
+                        }
+                    }
+                }
+
+                if (SocketData != nullptr && SocketData->Skeleton != nullptr)
+                {
+                    ImGui::SeparatorText("Bones");
+
+                    bool bPicked = false;
+
+                    FTreeListViewContext TreeContext;
+                    TreeContext.IndentPerDepth = kBonePickerIndent;
+                    TreeContext.RebuildTreeFunction = [&](FTreeListView& Tree)
+                    {
+                        LastBuiltBoneCount = BuildBoneTree(Tree, *SocketData->Skeleton, BoneFilter, DisplayValue);
+                    };
+                    TreeContext.ItemSelectedFunction = [&](FTreeListView& Tree, FTreeNodeID Item, bool)
+                    {
+                        if (Tree.IsValid(Item))
+                        {
+                            DisplayValue = FName(Tree.Get<FTreeNodeDisplay>(Item).DisplayName.c_str());
+                            bPicked = true;
+                        }
+                    };
+
+                    if (ImGui::BeginChild("##SocketBoneTree", ImVec2(360, 400)))
+                    {
+                        BoneTree.Draw(TreeContext);
+                        if (LastBuiltBoneCount == 0)
+                        {
+                            ImGui::TextDisabled("No matching bones.");
+                        }
+                    }
+                    ImGui::EndChild();
+
+                    if (bPicked)
+                    {
                         Result = EPropertyChangeOp::Updated;
                         ImGui::CloseCurrentPopup();
                     }
-
-                    if (SocketData != nullptr && !SocketData->Sockets.empty())
-                    {
-                        ImGui::SeparatorText("Sockets");
-                        for (const FName& Socket : SocketData->Sockets)
-                        {
-                            if (Socket.IsNone() || !BoneFilter.PassFilter(Socket.c_str()))
-                            {
-                                continue;
-                            }
-                            if (ImGui::Selectable(Socket.c_str(), Socket == DisplayValue))
-                            {
-                                DisplayValue = Socket;
-                                Result = EPropertyChangeOp::Updated;
-                                ImGui::CloseCurrentPopup();
-                            }
-                        }
-                    }
-
-                    if (SocketData != nullptr && SocketData->Skeleton != nullptr)
-                    {
-                        ImGui::SeparatorText("Bones");
-                        for (int32 Root : SocketData->Skeleton->GetRootBones())
-                        {
-                            FName Selected;
-                            if (DrawBoneTreeNode(*SocketData->Skeleton, Root, BoneFilter, DisplayValue, Selected))
-                            {
-                                DisplayValue = Selected;
-                                Result = EPropertyChangeOp::Updated;
-                                ImGui::CloseCurrentPopup();
-                            }
-                        }
-                    }
-
-                    ImGui::PopStyleVar();
                 }
-                ImGui::EndChild();
                 ImGui::EndPopup();
             }
         }

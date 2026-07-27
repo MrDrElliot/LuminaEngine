@@ -3,6 +3,8 @@
 
 #include "Animation/RootMotion.h"
 #include "Assets/AssetTypes/Mesh/Animation/Animation.h"
+#include "Core/Threading/Atomic.h"
+#include "Core/Threading/Thread.h"
 #include "Renderer/MeshData.h"
 
 namespace Lumina
@@ -16,6 +18,17 @@ namespace Lumina
         {
             TVector<FPose> Buffers;
             TVector<uint8> Used;
+
+            // Buffers currently checked out. Only walked while a debug capture is armed.
+            int32 LiveCount() const
+            {
+                int32 Live = 0;
+                for (uint8 U : Used)
+                {
+                    Live += U ? 1 : 0;
+                }
+                return Live;
+            }
 
             int16 Acquire()
             {
@@ -191,7 +204,52 @@ namespace Lumina
         }
     }
 
-    void Anim::ExecuteTaskList(FAnimTaskList& List, TVector<FMatrix4>& OutMatrices)
+    namespace
+    {
+        // Debug capture target + the last published snapshot. Tools arm one component; the animation
+        // system checks the atomic once per mesh (relaxed load, null in the common case) and only
+        // pays for a snapshot on the single matching entity.
+        TAtomic<const void*> GCaptureOwner{ nullptr };
+        FMutex               GCaptureMutex;
+        FAnimTaskSnapshot    GCaptureSnapshot;
+    }
+
+    void Anim::ArmTaskCapture(const void* Owner)
+    {
+        GCaptureOwner.store(Owner, std::memory_order_relaxed);
+    }
+
+    void Anim::DisarmTaskCapture()
+    {
+        GCaptureOwner.store(nullptr, std::memory_order_relaxed);
+
+        FScopeLock Lock(GCaptureMutex);
+        GCaptureSnapshot.Reset();
+    }
+
+    bool Anim::IsTaskCaptureArmed(const void* Owner)
+    {
+        return Owner != nullptr && GCaptureOwner.load(std::memory_order_relaxed) == Owner;
+    }
+
+    void Anim::StoreTaskCapture(const FAnimTaskSnapshot& Snapshot)
+    {
+        FScopeLock Lock(GCaptureMutex);
+        GCaptureSnapshot = Snapshot;
+    }
+
+    bool Anim::GetTaskCapture(FAnimTaskSnapshot& OutSnapshot)
+    {
+        FScopeLock Lock(GCaptureMutex);
+        if (!GCaptureSnapshot.bValid)
+        {
+            return false;
+        }
+        OutSnapshot = GCaptureSnapshot;
+        return true;
+    }
+
+    void Anim::ExecuteTaskList(FAnimTaskList& List, TVector<FMatrix4>& OutMatrices, FAnimTaskSnapshot* OutSnapshot)
     {
         LUMINA_PROFILE_SCOPE();
 
@@ -212,6 +270,55 @@ namespace Lumina
         const int32 ActiveBones = (List.ActiveBoneCount > 0 && List.ActiveBoneCount < NumBones)
             ? List.ActiveBoneCount
             : NumBones;
+
+        // Record the recipe before executing it; the loops below then stamp in what actually ran.
+        if (OutSnapshot != nullptr)
+        {
+            OutSnapshot->Reset();
+            OutSnapshot->OutputTask      = List.OutputTask;
+            OutSnapshot->NumBones        = NumBones;
+            OutSnapshot->ActiveBoneCount = List.ActiveBoneCount;
+            OutSnapshot->bLockRoot       = List.bLockRoot;
+            OutSnapshot->Entries.resize(NumTasks);
+            OutSnapshot->bValid          = true;
+
+            for (int32 i = 0; i < NumTasks; ++i)
+            {
+                const FAnimTask& Task = List.Tasks[i];
+                FAnimTaskDebugEntry& Entry = OutSnapshot->Entries[i];
+
+                Entry.Type     = Task.Type;
+                Entry.Stage    = Task.Stage;
+                Entry.DepA     = Task.DepA;
+                Entry.DepB     = Task.DepB;
+                Entry.Alpha    = Task.Alpha;
+                Entry.Time     = Task.Time;
+                Entry.ClipName = Task.Clip != nullptr ? Task.Clip->GetName() : FName();
+
+                if (Task.MaskWeights != nullptr)
+                {
+                    Entry.MaskTotalBones = (int32)Task.MaskWeights->size();
+                    for (float Weight : *Task.MaskWeights)
+                    {
+                        Entry.MaskWeightedBones += Weight > 0.0f ? 1 : 0;
+                    }
+                }
+
+                // Dependency depth. Deps always precede their consumer, so one forward pass resolves
+                // it; tasks sharing a level have no dependency path between them.
+                int16 Level = 0;
+                if (Task.DepA >= 0 && Task.DepA < i)
+                {
+                    Level = Math::Max<int16>(Level, (int16)(OutSnapshot->Entries[Task.DepA].Level + 1));
+                }
+                if (Task.DepB >= 0 && Task.DepB < i)
+                {
+                    Level = Math::Max<int16>(Level, (int16)(OutSnapshot->Entries[Task.DepB].Level + 1));
+                }
+                Entry.Level = Level;
+                OutSnapshot->NumLevels = Math::Max(OutSnapshot->NumLevels, (int32)Level + 1);
+            }
+        }
 
         // Empty/invalid recipe resolves to the bind pose (same fallback the old inline VM had).
         if (List.OutputTask < 0 || List.OutputTask >= NumTasks)
@@ -255,6 +362,16 @@ namespace Lumina
                 ++UseCount[Task.DepB];
             }
         }
+
+        if (OutSnapshot != nullptr)
+        {
+            for (int32 i = 0; i < NumTasks; ++i)
+            {
+                OutSnapshot->Entries[i].bReachable = Needed[i] != 0;
+                OutSnapshot->ReachableCount += Needed[i] ? 1 : 0;
+            }
+        }
+        int16 ExecOrderCounter = 0;
 
         for (int32 i = 0; i <= List.OutputTask; ++i)
         {
@@ -429,6 +546,18 @@ namespace Lumina
             if (Task.DepB >= 0 && Task.DepB < i && --UseCount[Task.DepB] == 0 && BufB != Dst && BufB != FAnimTask::NoTask)
             {
                 Pool.Release(BufB);
+            }
+
+            // Stamped after the retire above so LiveBuffers reflects the pool's steady-state
+            // occupancy between tasks rather than the transient peak inside one kernel.
+            if (OutSnapshot != nullptr)
+            {
+                FAnimTaskDebugEntry& Entry = OutSnapshot->Entries[i];
+                Entry.ExecOrder    = ExecOrderCounter++;
+                Entry.BufferIndex  = Dst;
+                Entry.bStoleBuffer = Dst != FAnimTask::NoTask && Dst == BufA;
+                Entry.LiveBuffers  = (int16)Pool.LiveCount();
+                OutSnapshot->PeakLiveBuffers = Math::Max(OutSnapshot->PeakLiveBuffers, (int32)Entry.LiveBuffers);
             }
         }
 

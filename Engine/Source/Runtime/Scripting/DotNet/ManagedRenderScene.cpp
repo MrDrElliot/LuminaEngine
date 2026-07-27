@@ -40,6 +40,11 @@ namespace Lumina::DotNet
 
     FManagedRenderScene::~FManagedRenderScene()
     {
+        // Destroying the proxy releases the managed instance; the caller (CWorld::DestroyRenderer)
+        // has already flushed the render thread, so nothing is still referencing the handle.
+        DestroyManagedRenderScene(Handle);
+        Handle = nullptr;
+
         auto It = eastl::find(GLiveScenes.begin(), GLiveScenes.end(), this);
         if (It != GLiveScenes.end())
         {
@@ -54,12 +59,6 @@ namespace Lumina::DotNet
         {
             LOG_ERROR("C# RenderScene '{}' failed to create; the world will render nothing.", TypeName.c_str());
         }
-    }
-
-    void FManagedRenderScene::Shutdown()
-    {
-        DestroyManagedRenderScene(Handle);
-        Handle = nullptr;
     }
 
     void FManagedRenderScene::Extract(const FViewVolume& ViewVolume, const SPostProcessSettings* PostProcess)

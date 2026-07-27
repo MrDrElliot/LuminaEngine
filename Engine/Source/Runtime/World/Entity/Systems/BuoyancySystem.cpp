@@ -13,6 +13,11 @@ namespace Lumina
         .Read<SWaterComponent, STransformComponent, SBuoyancyComponent, SRigidBodyComponent>()
         .Write<SystemResource::PhysicsQuery>();
 
+    void SBuoyancySystem::Startup(const FSystemContext& Context) noexcept
+    {
+        (void)Context.CreateView<SWaterComponent, STransformComponent>();
+    }
+
     static float WaterGerstnerHeight(const SWaterComponent& W, float WorldX, float WorldZ, float Time)
     {
         float WindLen = Math::Sqrt(W.WindDirection.x * W.WindDirection.x + W.WindDirection.y * W.WindDirection.y);

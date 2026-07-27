@@ -1,8 +1,6 @@
 #include "pch.h"
 #include "Name.h"
 
-#include <iostream>
-
 #include "Core/Threading/Thread.h"
 #include "Memory/Memory.h"
 
@@ -130,8 +128,13 @@ namespace Lumina
     {
         return Pool.GetUsedBytes();
     }
-
-    static FNameTable* GNameTable = nullptr;
+    
+    static FNameTable& GetNameTable()
+    {
+        alignas(FNameTable) static uint8 Storage[sizeof(FNameTable)];
+        static FNameTable* Table = new (Storage) FNameTable{};
+        return *Table;
+    }
 
     FStringPool::Chunk* FStringPool::AllocateChunk(size_t Capacity)
     {
@@ -182,19 +185,6 @@ namespace Lumina
         Head = nullptr;
     }
 
-    void FName::Initialize()
-    {
-        GNameTable = Memory::New<FNameTable>();
-        std::cout << "[Lumina] - String ID (FName) System Initialized\n";
-        std::cout.flush();
-    }
-
-    void FName::Shutdown()
-    {
-        Memory::Delete(GNameTable);
-        GNameTable = nullptr;
-    }
-
     namespace
     {
         // Split a trailing "_<digits>" suffix off Str.
@@ -242,11 +232,6 @@ namespace Lumina
         }
     }
 
-    FName::FName(EName Name)
-        : ID((uint64)Name)
-    {
-    }
-
     FName::FName(const char* Str)
     {
         if (!Str || !Str[0])
@@ -261,14 +246,14 @@ namespace Lumina
             Number = ExternalNumber + 1;
         }
 
-        ID = GNameTable->GetOrCreateID(Str, Length);
+        ID = GetNameTable().GetOrCreateID(Str, Length);
     }
 
     FName::FName(const char* Str, uint32 InNumber)
     {
         if (Str && Str[0])
         {
-            ID = GNameTable->GetOrCreateID(Str, strlen(Str));
+            ID = GetNameTable().GetOrCreateID(Str, strlen(Str));
         }
 
         Number = InNumber + 1;
@@ -276,9 +261,9 @@ namespace Lumina
 
     const char* FName::c_str() const
     {
-        const char* Base = GNameTable->GetString(ID);
+        const char* Base = GetNameTable().GetString(ID);
 
-        if (Number == NAME_NO_NUMBER)
+        if (Number == FName::kNoNumber)
         {
             return Base ? Base : "";
         }
@@ -299,13 +284,13 @@ namespace Lumina
 
     void FName::AppendString(FString& Out) const
     {
-        const char* Base = GNameTable->GetString(ID);
+        const char* Base = GetNameTable().GetString(ID);
         if (Base)
         {
             Out.append(Base);
         }
 
-        if (Number != NAME_NO_NUMBER)
+        if (Number != FName::kNoNumber)
         {
             Out.push_back('_');
             Out.append(eastl::to_string(Number - 1));
@@ -327,10 +312,10 @@ namespace Lumina
 
     size_t FName::Length() const
     {
-        const char* Base = GNameTable->GetString(ID);
+        const char* Base = GetNameTable().GetString(ID);
         size_t Len = Base ? strlen(Base) : 0;
 
-        if (Number != NAME_NO_NUMBER)
+        if (Number != FName::kNoNumber)
         {
             uint32 Display = Number - 1;
             Len += 2; // underscore + at least one digit
@@ -346,9 +331,9 @@ namespace Lumina
 
     char FName::At(size_t Pos) const
     {
-        if (Number == NAME_NO_NUMBER)
+        if (Number == FName::kNoNumber)
         {
-            const char* Str = GNameTable->GetString(ID);
+            const char* Str = GetNameTable().GetString(ID);
             size_t Len = Str ? strlen(Str) : 0;
             return (Pos < Len) ? Str[Pos] : '\0';
         }

@@ -15,20 +15,14 @@
 
 using namespace Lumina;
 
-// Lumina.exe links Runtime.dll but is its own module: without this, plain new/delete
-// in the exe's own TUs (and any exe-only third-party C++) hit the CRT allocator and
-// escape the tracker. Routes them to Memory::Malloc like every other module.
+
 DECLARE_MODULE_ALLOCATOR_OVERRIDES();
 
 
 int LuminaMain(int ArgC, char** ArgV)  // NOLINT(misc-use-internal-linkage)
 {
-    // Must come before anything else so an early-init fault still produces a
-    // dump and a modal.
     CrashHandler::Install();
-
-    // Watches the main-thread heartbeat (bumped each frame in FEngine::Update) and dumps every
-    // thread's call stack on a stall. No-op in Shipping / non-Windows.
+    
     HangWatchdog::Start();
 
     int Result = 0;
@@ -48,8 +42,6 @@ int LuminaMain(int ArgC, char** ArgV)  // NOLINT(misc-use-internal-linkage)
     GEditorEngine = &EdEngine;
     GEngine = GEditorEngine;
     #else
-    // -server boots a packaged dedicated server: no window, no RHI, no audio, no UI. Must be set
-    // before the window is created and before GEngine->Init().
     GIsHeadless = Parsed.Has("server");
 
     FEngine Engine{};

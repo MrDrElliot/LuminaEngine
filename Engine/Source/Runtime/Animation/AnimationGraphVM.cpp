@@ -3,11 +3,20 @@
 
 #include "Assets/AssetTypes/Animation/AnimationGraph/AnimationGraph.h"
 #include "Assets/AssetTypes/Mesh/Animation/Animation.h"
+#include "Core/Console/ConsoleVariable.h"
 #include "Memory/Memcpy.h"
 #include "Renderer/MeshData.h"
 
 namespace Lumina
 {
+    // Diagnostic companion to anim.DumpGraphTasks: logs each AdvanceClock execution with the speed
+    // it actually read from the bytecode, discriminating a stale/incorrect compiled constant from a
+    // clock-advance bug.
+    static TConsoleVar<bool> CVarDumpGraphClocks(
+        "anim.DumpGraphClocks",
+        false,
+        "Log every animation graph AdvanceClock execution (state slot, speed register and value, resulting clock) each frame while enabled.");
+
     namespace Detail
     {
         // Linear cursor over the flat bytecode array. Operand widths are fixed
@@ -443,6 +452,14 @@ namespace Lumina
                                 Clock = 0.0f;
                             }
                         }
+                    }
+
+                    if (CVarDumpGraphClocks.GetValue())
+                    {
+                        LOG_INFO("[AnimClock] state={} speedReg={} speed={} clip={} prev={} clock={} sync={}",
+                                 StateIdx, SpeedReg, Speed,
+                                 Clip != nullptr ? Clip->GetName().c_str() : "<null>",
+                                 PrevClock, Clock, SyncGroup == kAnimNoSyncGroup ? -1 : (int32)SyncGroup);
                     }
 
                     State.StateSlots[StateIdx] = Clock;

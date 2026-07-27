@@ -39,6 +39,14 @@ namespace Lumina
         false,
         "Re-evaluate single-clip animation recipes directly and compare against the task executor's skinning matrices; logs mismatches.");
 
+    // Diagnostic: log the task recipe each graph-driven mesh records. Answers "what did the graph
+    // actually build?" when a blend looks wrong -- shared clocks, refpose fallbacks on a wired pin,
+    // and dead mask weights all show up directly in the dump.
+    static TConsoleVar<bool> CVarDumpGraphTasks(
+        "anim.DumpGraphTasks",
+        false,
+        "Log every graph-driven mesh's recorded animation task list (types, deps, clips, times, alphas, masks) each frame while enabled.");
+
 
     // The frame is split Esoterica-style: a cheap parallel UPDATE phase runs graph/playback logic and
     // records each entity's pose recipe (FAnimTaskList), then a parallel EXECUTE phase runs only the
@@ -372,6 +380,42 @@ namespace Lumina
                                           GraphRootMotion, &AnimGraph.NotifyEvents);
             Mesh.AnimTasks.ActiveBoneCount = ComputeActiveBoneCount(Mesh, Skeleton);
 
+            if (CVarDumpGraphTasks.GetValue())
+            {
+                static const char* TaskTypeNames[] =
+                {
+                    "RefPose", "SampleClip", "Blend", "BlendMasked", "MakeAdditive",
+                    "ApplyAdditive", "SMOutput", "BoneTransform", "TwoBoneIK",
+                };
+
+                FString Dump;
+                Dump.append_sprintf("[AnimTasks] entity %u output=%d",
+                                    (uint32)entt::to_integral(Entity), (int32)Mesh.AnimTasks.OutputTask);
+                for (SIZE_T t = 0; t < Mesh.AnimTasks.Tasks.size(); ++t)
+                {
+                    const FAnimTask& Task = Mesh.AnimTasks.Tasks[t];
+                    Dump.append_sprintf("\n  [%u] %-13s depA=%-3d depB=%-3d alpha=%.3f",
+                                        (uint32)t, TaskTypeNames[(int32)Task.Type],
+                                        (int32)Task.DepA, (int32)Task.DepB, Task.Alpha);
+                    if (Task.Type == EAnimTaskType::SampleClip)
+                    {
+                        Dump.append_sprintf(" clip=%s time=%.4f",
+                                            Task.Clip != nullptr ? Task.Clip->GetName().c_str() : "<null>",
+                                            Task.Time);
+                    }
+                    if (Task.MaskWeights != nullptr)
+                    {
+                        int32 NumWeighted = 0;
+                        for (float Weight : *Task.MaskWeights)
+                        {
+                            NumWeighted += Weight > 0.5f ? 1 : 0;
+                        }
+                        Dump.append_sprintf(" mask=%d/%d bones", NumWeighted, (int32)Task.MaskWeights->size());
+                    }
+                }
+                LOG_INFO("{}", Dump.c_str());
+            }
+
             AnimGraph.PendingRootMotion = GraphRootMotion.Delta;
         }
     }
@@ -479,7 +523,22 @@ namespace Lumina
                         ValidateRoot  = Mesh.AnimTasks.RootBoneIndex;
                     }
 
-                    Anim::ExecuteTaskList(Mesh.AnimTasks, Mesh.BoneTransforms);
+                    // Debug capture (anim graph editor's task view): armed for at most one component,
+                    // so this is a null atomic compare for every other mesh.
+                    FAnimTaskSnapshot* Snapshot = nullptr;
+                    thread_local FAnimTaskSnapshot CaptureScratch;
+                    if (Anim::IsTaskCaptureArmed(&Mesh))
+                    {
+                        CaptureScratch.Reset();
+                        Snapshot = &CaptureScratch;
+                    }
+
+                    Anim::ExecuteTaskList(Mesh.AnimTasks, Mesh.BoneTransforms, Snapshot);
+
+                    if (Snapshot != nullptr)
+                    {
+                        Anim::StoreTaskCapture(*Snapshot);
+                    }
 
                     // Reference evaluation the pre-refactor way; any divergence is a playback-logic
                     // bug, agreement means the animation data itself is wrong.

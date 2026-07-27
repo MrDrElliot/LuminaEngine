@@ -1783,6 +1783,7 @@ namespace Lumina
                         if (EntityHandle != entt::null && !IsEntitySelected(EntityHandle))
                         {
                             SetSingleSelectedEntity(EntityHandle);
+                            RevealEntityInOutliner(EntityHandle);
                         }
 
                         const entt::entity MenuTarget = (EntityHandle != entt::null)
@@ -1831,6 +1832,13 @@ namespace Lumina
                         else
                         {
                             SetSingleSelectedEntity(EntityHandle);
+                        }
+
+                        // Bring the outliner to whatever was just picked, so clicking something in
+                        // the world doesn't mean scrolling the tree to find it.
+                        if (EntityHandle != entt::null && IsEntitySelected(EntityHandle))
+                        {
+                            RevealEntityInOutliner(EntityHandle);
                         }
                     }
                     else

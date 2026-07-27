@@ -193,6 +193,14 @@ namespace Lumina
         TVector<uint32>     MipUAVSlots;
         RHI::FTextureDesc   Desc;
 
+        // True only on the instance that created the texture (CreateSceneImage). Copies that alias
+        // someone else's image leave it false, so a bulk "release everything I own" sweep can never
+        // double-free a borrowed one. This is what makes ownership explicit on a freely-copied
+        // handle type -- FSceneImage deliberately is NOT self-releasing, because the renderer copies
+        // it around (view seeding, aliases, deferred-release queues) and a destructor-owns model
+        // would need move-only semantics throughout.
+        bool                bOwned = false;
+
         bool IsValid() const { return RHI::IsValid(Texture); }
         explicit operator bool() const { return IsValid(); }
 
@@ -210,6 +218,7 @@ namespace Lumina
         FSceneImage Out;
         Out.Desc    = Desc;
         Out.Texture = RHI::CreateTexture(Desc);
+        Out.bOwned  = true;
         if (bSampled)
         {
             Out.SampledSlot = RHI::HeapWriteTexture(RHI::Core::GetGlobalHeap(), Out.Texture);
@@ -223,6 +232,16 @@ namespace Lumina
             }
         }
         return Out;
+    }
+
+    // A non-owning copy of an image owned elsewhere. Use this whenever an image is handed to a second
+    // holder (e.g. a view snapshotting the scene's shared IBL cubes): the copy reads identically but
+    // is skipped by ownership-driven release, so only the real owner ever frees it.
+    NODISCARD inline FSceneImage BorrowSceneImage(const FSceneImage& Owner)
+    {
+        FSceneImage Copy = Owner;
+        Copy.bOwned = false;
+        return Copy;
     }
 
     // Immediate release: caller guarantees no in-flight GPU use (WaitIdle or frame-deferred externally).

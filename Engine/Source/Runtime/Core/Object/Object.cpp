@@ -108,13 +108,15 @@ namespace Lumina
                 {
                     void* ValuePtr = bContainer ? this : Current->GetValuePtr<void>(this);
                     FMemoryWriter Writer(Bytes);
-                    Current->Serialize(Writer, ValuePtr);
+                    FObjectProxyArchiver Proxy(Writer, true);
+                    Current->Serialize(Proxy, ValuePtr);
                 }
 
                 {
                     void* ValuePtr = bContainer ? Other : Current->GetValuePtr<void>(Other);
                     FMemoryReader Reader(Bytes);
-                    Current->Serialize(Reader, ValuePtr);
+                    FObjectProxyArchiver Proxy(Reader, true);
+                    Current->Serialize(Proxy, ValuePtr);
                 }
             }
         }

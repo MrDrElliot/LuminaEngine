@@ -15,10 +15,7 @@ namespace Lumina
     class IRenderScene;
     struct FPropertyChangedEvent;
 
-    // Shared base for ECS scene editors (world + prefab). A prefab is a mini-scene, so both
-    // tools run on the same editing/play logic; subclasses add only their extras (the world
-    // editor adds travel/world-settings/terrain+navmesh modes, the prefab editor adds the
-    // CPrefab load/commit layer + single-root invariant).
+    // Shared base for ECS scene editors (world + prefab).
     class FSceneEditorTool : public FAssetEditorTool
     {
         using Super = FAssetEditorTool;
@@ -32,10 +29,7 @@ namespace Lumina
         FSceneEditorTool(IEditorToolContext* Context, const FString& DisplayName, CWorld* InWorld);
 
         ~FSceneEditorTool() override = default;
-
-        // Save = commit the scene back to its asset, then the standard asset save. Subclasses
-        // that need extra save-time behavior (e.g. the world editor's "Save As" for an unsaved
-        // transient world) override and call Super at the right point.
+        
         void OnSave() override;
 
     protected:
@@ -50,18 +44,12 @@ namespace Lumina
 
         // Mark the scene's package dirty (guards the transient no-package case).
         void MarkSceneDirty();
-
-        // Hook: the package the scene persists into. Base = the FAssetEditorTool Asset's package
-        // (prefab editor → the CPrefab). The world editor overrides it to the live CWorld's package,
-        // since its world is not held as Asset.
+        
         virtual CPackage* GetScenePackage() const;
 
         // Routes FAssetEditorTool's asset-loaded broadcast to OnSceneLoaded.
         void OnAssetLoadFinished() final;
-
-        // --- Selection ------------------------------------------------------------------
-        // Canonical multi-select model, mirrored on the registry as FSelectedInEditorComponent
-        // (+ FLastSelectedTag for the focused entity). LastSelectedEntity is cached for O(1) reads.
+        
 
         // Replace the selection with a single entity (implicit clear); the common "click" path.
         void SetSingleSelectedEntity(entt::entity Entity);
@@ -99,16 +87,18 @@ namespace Lumina
         // Mirror a row's selected visual into the outliner tree.
         void SyncOutlinerRowSelection(entt::entity Entity, bool bSelected);
 
+    public:
+
+        // Scrolls the outliner to Entity's row.
+        void RevealEntityInOutliner(entt::entity Entity);
+
+    protected:
+
         // Hook: the selection focus changed. The world editor marks its details panel dirty.
         virtual void OnSelectionChanged() {}
 
         THashSet<entt::entity>  SelectedEntities;
         entt::entity            LastSelectedEntity = entt::null;
-
-        // --- Scene outliner (incremental tree) -----------------------------------------
-        // EntityToTreeNode maps a live entity to its row; the world drives this incrementally
-        // through EnTT construct/destroy observers, the prefab through MarkTreeDirty rebuilds.
-        // Both share the same node-building code, gated by IsOutlinerEntityVisible.
 
         struct FEntityListViewItemData
         {
@@ -157,10 +147,7 @@ namespace Lumina
         void DrawAddToEntityOrWorldPopup(entt::entity Entity = entt::null);
         ImGuiTextFilter AddEntityComponentFilter;
 
-        // Hook: a content-browser asset dropped on the empty tree area (world: instantiate; prefab: spawn under root).
         virtual void HandleOutlinerEmptyAreaDrop() {}
-        // Hook: instantiate/spawn a content asset (e.g. a prefab) at VirtualPath under DropTarget.
-        // Used by the shared Add menu's Prefabs section and by content-browser drops.
         virtual void HandlePrefabContentDrop(FStringView VirtualPath, entt::entity DropTarget) {}
 
         struct FEntityListFilterState
@@ -177,13 +164,7 @@ namespace Lumina
         FTreeListViewContext                OutlinerContext;
         THashMap<entt::entity, FTreeNodeID> EntityToTreeNode;
         TVector<entt::entity>               PendingOutlinerAdds;
-        // Parents whose expander arrow may be stale after a child row was removed; re-evaluated
-        // on the next FlushOutlinerPending once the destroy has settled (see OnOutlinerEntityDestroyed).
         TVector<entt::entity>               PendingExpanderRefresh;
-
-        // --- Component details / property tables ---------------------------------------
-        // Canonical (world) model: one FPropertyTable row per reflected component, plus
-        // multi-edit across the whole selection.
 
         struct FComponentDestroyRequest
         {
@@ -216,11 +197,7 @@ namespace Lumina
         // Hook: components that should never appear in the details panel. Base hides STagComponent
         // (rendered separately as chips); the prefab editor also hides its SPrefabComponent.
         virtual bool IsComponentHiddenInDetails(const CStruct* Type) const;
-
-        // --- Entity / component creation -----------------------------------------------
-
-        // Create an empty entity (or one carrying Component / a primitive mesh), select it, and
-        // give subclasses a post-create hook. All wrapped in one transaction.
+        
         void CreateEntity();
         void CreateEntityWithComponent(const CStruct* Component);
         void CreatePrimitiveEntity(CStaticMesh* PrimitiveMesh, const char* DisplayName);
@@ -233,16 +210,10 @@ namespace Lumina
         // Filterable, categorized list of addable reflected components.
         // Fills OutMetaType/OutStruct and returns true on click.
         bool DrawAddableComponentList(const ImGuiTextFilter& Filter, entt::meta_type& OutMetaType, CStruct*& OutStruct);
-
-        // Hook: called right after a new entity is constructed in the scene (still inside the
-        // create transaction). The prefab editor tags it with SPrefabComponent + parents it under root.
+        
         virtual void OnEntityCreatedInScene(entt::entity Entity) {}
-        // Hook: world transform for a newly-created entity. World = in front of the camera;
-        // the prefab editor overrides to identity (it reparents under the root).
         virtual FTransform GetNewEntitySpawnTransform() const;
-
-        // --- Clipboard + visualizers ---------------------------------------------------
-
+        
         // Entity clipboard (mirrored on the registry as FCopiedTag).
         void AddEntityToCopies(entt::entity Entity);
         void RemoveEntityFromCopies(entt::entity Entity);
@@ -254,10 +225,7 @@ namespace Lumina
         void EndFrame() override;
 
         bool bShowComponentVisualizers = true;
-
-        // --- Gizmo state (shared) ------------------------------------------------------
-        // Manipulation happens in each tool's DrawViewportOverlayElements (world adds editor-mode
-        // gating + vertex-snap); the operation/space/snap state and the cycle/toggle helpers are shared.
+        
         void CycleGuizmoOp();
         void ToggleGuizmoMode();
 
@@ -281,12 +249,6 @@ namespace Lumina
 
         ImGuizmo::OPERATION GuizmoOp = ImGuizmo::TRANSLATE;
         ImGuizmo::MODE      GuizmoMode = ImGuizmo::WORLD;
-
-        // --- Selected-camera preview (shared) --------------------------------------------
-        // When the focused selection holds a camera, the render scene shades it into a capture
-        // view (UpdateCameraPreview, call every Update) and DrawCameraPreviewOverlay composites
-        // it as a corner PiP. Drag the free corner grip to resize; the scale persists through
-        // PersistCameraPreviewScale into the tool's settings object.
 
         void UpdateCameraPreview();
         void DrawCameraPreviewOverlay(const ImVec2& ViewportOrigin, const ImVec2& ViewportSize);

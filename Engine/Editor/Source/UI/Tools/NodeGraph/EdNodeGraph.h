@@ -64,6 +64,11 @@ namespace Lumina
         virtual void HandleQuickPlace(int Digit, ImVec2 CanvasPos) {}
         virtual void HandleQuickPlace(char Key, ImVec2 CanvasPos) {}
 
+        // Positions Node at a screen point on the next draw. Screen->canvas conversion needs the
+        // node-editor context, which is only current inside DrawGraph, so callers outside it (drop
+        // handlers, external spawners) queue the placement instead of computing it themselves.
+        void QueueNodePlacement(CEdGraphNode* Node, ImVec2 ScreenPos);
+
         // When non-null, instantiated on double-clicking a wire: inserted at the click and the wire
         // reroutes through it. Default null; graphs wanting this UX (e.g. material) override.
         virtual CClass* GetRerouteNodeClass() const { return nullptr; }
@@ -121,6 +126,14 @@ namespace Lumina
         // Draws a pin's live debug value (when the debug context supplies one) as a
         // small colored token inline in the pin row. No-op when debug is off.
         void DrawPinDebugValue(CEdNodeGraphPin* Pin);
+
+        // Placements requested outside the draw loop, applied (and cleared) on the next DrawGraph.
+        struct FPendingPlacement
+        {
+            TObjectPtr<CEdGraphNode> Node;
+            ImVec2                   ScreenPos;
+        };
+        TVector<FPendingPlacement> PendingPlacements;
         
     public:
 

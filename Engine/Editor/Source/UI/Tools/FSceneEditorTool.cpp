@@ -1033,6 +1033,54 @@ namespace Lumina
         OutlinerListView.MarkHasLazyChildren(It->second, bHasChildren);
     }
 
+    void FSceneEditorTool::RevealEntityInOutliner(entt::entity Entity)
+    {
+        if (Entity == entt::null)
+        {
+            return;
+        }
+
+        FEntityRegistry& Registry = GetSceneRegistry();
+        if (!Registry.valid(Entity) || !IsOutlinerEntityVisible(Entity))
+        {
+            return;
+        }
+
+        // Newly-spawned rows are queued; without this a select-on-spawn would find no node.
+        FlushOutlinerPending();
+
+        // Ancestor chain, entity first. Children are lazy, so a row under a never-expanded parent
+        // doesn't exist yet -- each level has to be opened top-down before the next one has a node.
+        TVector<entt::entity> Chain;
+        for (entt::entity Cursor = Entity; Cursor != entt::null && Chain.size() < 64; )
+        {
+            Chain.push_back(Cursor);
+
+            const FRelationshipComponent* Rel = Registry.try_get<FRelationshipComponent>(Cursor);
+            Cursor = (Rel != nullptr) ? Rel->Parent : entt::null;
+            if (Cursor != entt::null && !Registry.valid(Cursor))
+            {
+                break;
+            }
+        }
+
+        // Root-down, skipping the entity itself (index 0).
+        for (int32 i = (int32)Chain.size() - 1; i >= 1; --i)
+        {
+            auto It = EntityToTreeNode.find(Chain[i]);
+            if (It != EntityToTreeNode.end())
+            {
+                OutlinerListView.ExpandNode(It->second, OutlinerContext);
+            }
+        }
+
+        auto It = EntityToTreeNode.find(Entity);
+        if (It != EntityToTreeNode.end())
+        {
+            OutlinerListView.RequestScrollToNode(It->second);
+        }
+    }
+
     void FSceneEditorTool::BuildEntityChildren(FTreeListView& Tree, FTreeNodeID Item)
     {
         FEntityListViewItemData& Data = Tree.Get<FEntityListViewItemData>(Item);

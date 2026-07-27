@@ -39,7 +39,6 @@ namespace Lumina::DotNet
         LE_NO_COPYMOVE(FManagedRenderScene);
 
         void Init() override;
-        void Shutdown() override;
 
         void Extract(const FViewVolume& ViewVolume, const SPostProcessSettings* PostProcess) override;
         void RenderView(uint8 FrameIndex) override;

@@ -9,7 +9,6 @@ namespace Lumina
     namespace
     {
         constexpr float kRowHeight = 15.0f;
-        constexpr float kIndentPerDepth = 21.0f;
 
         // Styled hover tooltip for a node: an accent title, a dim subtitle, and a wrapped row of
         // rounded "chip" pills. Falls back to the plain TooltipText when no rich fields are set.
@@ -128,6 +127,22 @@ namespace Lumina
             RebuildVisibleList();
         }
 
+        // Resolve a pending reveal to a row index now the visible list is final. Consumed either
+        // way: if the node ended up filtered or collapsed out, the request simply lapses.
+        int32 ScrollToRow = -1;
+        if (PendingScrollNode >= 0)
+        {
+            for (int32 i = 0; i < (int32)VisibleList.size(); ++i)
+            {
+                if (VisibleList[i] == PendingScrollNode)
+                {
+                    ScrollToRow = i;
+                    break;
+                }
+            }
+            PendingScrollNode = -1;
+        }
+
         ImGuiTableFlags TableFlags = ImGuiTableFlags_Resizable | ImGuiTableFlags_NoPadOuterX | ImGuiTableFlags_ScrollY | ImGuiTableFlags_ScrollX
         | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersOuterH | ImGuiTableFlags_NoBordersInBody | ImGuiTableFlags_BordersV;
 
@@ -141,6 +156,14 @@ namespace Lumina
 
             ImGuiListClipper Clipper;
             Clipper.Begin(static_cast<int>(VisibleList.size()));
+
+            // The target row is almost always off-screen (that's the point), so force the clipper
+            // to submit it -- SetScrollHereY needs the row's real item rect.
+            if (ScrollToRow != -1)
+            {
+                Clipper.IncludeItemByIndex(ScrollToRow);
+            }
+
             while (Clipper.Step())
             {
                 for (int i = Clipper.DisplayStart; i < Clipper.DisplayEnd; ++i)
@@ -158,6 +181,11 @@ namespace Lumina
                     ImGui::TableNextRow();
                     ImGui::TableSetColumnIndex(0);
                     DrawSingleRow(NodeIdx, Context, bAnyRowExpansionChanged);
+
+                    if (i == ScrollToRow)
+                    {
+                        ImGui::SetScrollHereY(0.5f);
+                    }
                 }
             }
 
@@ -280,6 +308,7 @@ namespace Lumina
         FTreeNodeDisplay& Display = Node.Display;
         FTreeNodeState& State = Node.State;
         const bool bDeclaresChildren = !Node.Children.empty() || Node.bHasLazyChildren;
+        const float kIndentPerDepth = Context.IndentPerDepth;
 
         ImGui::PushID(NodeIdx);
 
@@ -623,6 +652,48 @@ namespace Lumina
         }
 
         ImGui::PopID();
+    }
+
+    void FTreeListView::ExpandNode(FTreeNodeID Handle, const FTreeListViewContext& Context)
+    {
+        if (!IsValid(Handle))
+        {
+            return;
+        }
+
+        // Index-based throughout: EnsureChildrenBuilt calls back into CreateNode, which can
+        // reallocate Nodes and invalidate any reference held across it.
+        if (!Nodes[Handle.Index].bChildrenBuilt && Nodes[Handle.Index].bHasLazyChildren)
+        {
+            EnsureChildrenBuilt(Handle.Index, Context);
+        }
+
+        if (!Nodes[Handle.Index].State.bExpanded)
+        {
+            Nodes[Handle.Index].State.bExpanded = true;
+            bVisibleListDirty = true;
+        }
+    }
+
+    void FTreeListView::RequestScrollToNode(FTreeNodeID Handle)
+    {
+        if (!IsValid(Handle))
+        {
+            return;
+        }
+
+        // Ancestors are already materialized (the node exists under them), so they only need
+        // expanding for the row to make it into the visible list.
+        for (int32 Cursor = Nodes[Handle.Index].ParentIdx; Cursor >= 0; Cursor = Nodes[Cursor].ParentIdx)
+        {
+            if (!Nodes[Cursor].State.bExpanded)
+            {
+                Nodes[Cursor].State.bExpanded = true;
+                bVisibleListDirty = true;
+            }
+        }
+
+        PendingScrollNode = Handle.Index;
     }
 
     void FTreeListView::EnsureChildrenBuilt(int32 NodeIdx, const FTreeListViewContext& Context)

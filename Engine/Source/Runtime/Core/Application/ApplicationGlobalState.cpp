@@ -1,7 +1,6 @@
 #include "pch.h"
 #include "ApplicationGlobalState.h"
 
-#include "Containers/Name.h"
 #include "Core/Assertions/Assert.h"
 #include "Core/Threading/Thread.h"
 #include "Log/Log.h"
@@ -19,7 +18,6 @@ namespace Lumina
         ASSERT(!bGlobalStateInitialize);
         
         Threading::Initialize(MainThreadName == nullptr ? "Main Thread" : MainThreadName);
-        FName::Initialize();
         Logging::Init();
 
         bGlobalStateInitialize = true;
@@ -31,7 +29,6 @@ namespace Lumina
         bGlobalStateInitialize = false;
 
         Logging::Shutdown();
-        FName::Shutdown();
         Threading::Shutdown();
     }
 }

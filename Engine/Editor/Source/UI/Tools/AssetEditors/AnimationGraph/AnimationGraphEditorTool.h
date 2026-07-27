@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Animation/TaskSystem/AnimTask.h"
 #include "Containers/Array.h"
 #include "Containers/Name.h"
 #include "Containers/String.h"
@@ -80,7 +81,23 @@ namespace Lumina
         // entity (across worlds) whose anim component uses this graph asset.
         void DrawDebugTargetCombo();
 
+        // Visualizes the pose task list the debug target's graph compiled into this frame: the
+        // dependency DAG laid out by level, what executed vs. what was skipped, and pose-buffer
+        // ownership. Arms the runtime capture while the window is open.
+        void DrawTaskGraphWindow();
+
+        // Browser of animation clips authored against this graph's skeleton. Rows drag onto the
+        // canvas (or double-click) to spawn a Play Animation Clip node with the clip assigned.
+        void DrawClipBrowserWindow();
+
+        // Spawns a Play Animation Clip node for Clip on the active canvas, positioned at ScreenPos.
+        void SpawnClipPlayerNode(CAnimation* Clip, ImVec2 ScreenPos);
+
     private:
+
+        // Resolves the debug target (dropdown selection, or the editor preview when unset) to a
+        // live world + entity. False when neither is valid.
+        bool ResolveDebugTarget(CWorld*& OutWorld, entt::entity& OutEntity) const;
 
         // One level of the graph navigation stack: the graph being drawn and the
         // label shown for it in the breadcrumb bar.
@@ -147,6 +164,29 @@ namespace Lumina
         // members so the pointers in FGraphDebugContext stay valid during draw.
         THashMap<CEdNodeGraphPin*, FString>      DebugPinValues;
         THashSet<const CEdGraphNode*>            DebugActiveNodes;
+
+        // Clip browser: asset paths of clips matching the graph's skeleton, rebuilt when the
+        // skeleton changes or the registry reports a different asset count.
+        struct FClipEntry
+        {
+            FString Path;
+            FString DisplayName;
+        };
+        TVector<FClipEntry>                     ClipEntries;
+        const CObject*                          ClipCacheSkeleton = nullptr;
+        int32                                   ClipCacheAssetCount = -1;
+        ImGuiTextFilter                         ClipFilter;
+        bool                                    bClipBrowserAnySkeleton = false;
+
+        // Screen-space center of the graph canvas, refreshed each draw; double-clicking a clip in
+        // the browser drops its node here (there's no cursor position to spawn at).
+        ImVec2                                  GraphCanvasCenter = ImVec2(0.0f, 0.0f);
+
+        // Last task list captured from the debug target, refreshed each frame the Task Graph
+        // window is visible. Copied out of the runtime under its capture lock.
+        FAnimTaskSnapshot                       TaskSnapshot;
+        float                                   TaskGraphZoom = 1.0f;
+        bool                                    bTaskGraphShowSkipped = true;
 
         entt::entity                            MeshEntity = entt::null;
         entt::entity                            DirectionalLightEntity = entt::null;
