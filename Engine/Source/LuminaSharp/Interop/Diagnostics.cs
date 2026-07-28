@@ -5,6 +5,7 @@ namespace LuminaSharp;
 /// <summary>
 /// Snapshot of C# runtime state for the editor's C# Diagnostics tool.
 /// </summary>
+[NativeLayout("FScriptDiagnostics")]
 [StructLayout(LayoutKind.Sequential)]
 internal struct FScriptDiagnostics
 {

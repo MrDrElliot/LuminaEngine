@@ -15,6 +15,7 @@
 #include "Core/Templates/Align.h"
 #include "Memory/Memory.h"
 #include "Core/Math/Math.h"
+#include "Log/Log.h"
 
 namespace Lumina
 {

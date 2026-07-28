@@ -8,6 +8,7 @@
 #include "Paths/Paths.h"
 #include "TaskSystem/TaskSystem.h"
 #include "Tools/Import/ImportHelpers.h"
+#include "Log/Log.h"
 
 namespace Lumina
 {

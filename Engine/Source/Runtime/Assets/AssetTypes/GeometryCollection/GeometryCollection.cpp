@@ -10,6 +10,7 @@
 #include "Memory/SmartPtr.h"
 #include "Renderer/MeshData.h"
 #include "Renderer/Vertex.h"
+#include "Log/Log.h"
 
 namespace Lumina
 {

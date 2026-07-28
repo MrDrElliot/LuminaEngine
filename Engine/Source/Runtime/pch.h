@@ -79,3 +79,20 @@
 #include "Core/Math/Scalar.h"
 #include "Core/Math/Packing.h"
 #include "Core/Math/MathString.h"
+
+// Engine headers below this line declare RUNTIME_API, and the build force-includes this file
+// BEFORE ModuleAPI.h, so the macro has to be defined here first (same reason EditorPCH.h does it).
+#include "ModuleAPI.h"
+
+// Core headers already reached by 87-95% of TUs. Parsing them here once instead of ~400 times is
+// nearly free in cascade terms: editing one already dirties almost every TU, so routing it through
+// the PCH trades "rebuild ~400 TUs" for "rebuild 456", and buys back the per-TU parse.
+// Anything below 85% fan-in does NOT belong here - it would start dirtying TUs that don't use it.
+#include "Memory/Memory.h"
+#include "Core/Assertions/Assert.h"
+#include "Containers/String.h"
+#include "Containers/Array.h"
+#include "Containers/Name.h"
+#include "Core/Math/Hash/Hash.h"
+#include "Core/Threading/Thread.h"
+#include "Log/Log.h"

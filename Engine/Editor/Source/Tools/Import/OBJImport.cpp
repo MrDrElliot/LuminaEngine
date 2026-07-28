@@ -7,6 +7,7 @@
 #include "FileSystem/FileSystem.h"
 #include "Paths/Paths.h"
 #include "Renderer/MeshData.h"
+#include "Log/Log.h"
 
 
 namespace Lumina::Import::Mesh::OBJ

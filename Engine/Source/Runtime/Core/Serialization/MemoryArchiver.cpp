@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "MemoryArchiver.h"
+#include "Log/Log.h"
 
 namespace Lumina
 {

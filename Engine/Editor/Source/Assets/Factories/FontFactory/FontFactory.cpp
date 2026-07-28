@@ -6,6 +6,7 @@
 #include "Platform/Filesystem/FileHelper.h"
 
 #include <ft2build.h>
+#include "Log/Log.h"
 #include FT_FREETYPE_H
 
 namespace Lumina

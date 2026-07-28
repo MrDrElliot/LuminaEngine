@@ -55,6 +55,7 @@
 #include "Renderer/SMAA/AreaTex.h"
 #include "Renderer/SMAA/SearchTex.h"
 #include "TaskSystem/FiberSync.h"
+#include "Log/Log.h"
 
 namespace Lumina
 {

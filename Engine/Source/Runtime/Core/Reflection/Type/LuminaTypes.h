@@ -5,6 +5,7 @@
 #include "Core/Serialization/Structured/StructuredArchive.h"
 #include "Metadata/PropertyMetadata.h"
 #include "Platform/GenericPlatform.h"
+#include "Log/Log.h"
 
 
 namespace Lumina

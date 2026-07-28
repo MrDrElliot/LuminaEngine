@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "ArrayProperty.h"
 #include "Core/Serialization/NetArchive.h"
+#include "Log/Log.h"
 
 namespace Lumina
 {

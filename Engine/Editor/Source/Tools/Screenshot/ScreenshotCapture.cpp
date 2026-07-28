@@ -15,6 +15,7 @@
 #include "World/WorldManager.h"
 #include "World/Scene/RenderScene/RenderScene.h"
 #include "World/Scene/RenderScene/Forward/ForwardRenderScene.h"
+#include "Log/Log.h"
 
 
 namespace Lumina::Screenshot

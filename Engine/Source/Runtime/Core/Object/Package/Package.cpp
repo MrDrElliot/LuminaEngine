@@ -13,6 +13,7 @@
 #include "TaskSystem/TaskSystem.h"
 #include "Thumbnail/PackageThumbnail.h"
 #include "miniz.h"
+#include "Log/Log.h"
 
 
 namespace Lumina

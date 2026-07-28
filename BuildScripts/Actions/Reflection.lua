@@ -156,12 +156,23 @@ newaction
 
         -- A fresh stamp only means no input changed; it says nothing about the outputs still being on disk.
         -- Wiping Intermediates leaves the stamp intact elsewhere, so verify what we'd skip regenerating
-        -- actually exists -- otherwise the build fails later on a missing ReflectionUnity.gen.cpp.
+        -- actually exists -- otherwise the build fails later on a missing unity shard. Every shard the
+        -- vcxproj lists has to be there, not just the first: premake bakes the full fixed list in.
+        local ShardCount = (LuminaConfig and LuminaConfig.ReflectionUnityShardCount) or 8
         local bOutputsPresent = true
         for Name, _ in pairs(ProjectFiles) do
-            local Unity = path.join(_MAIN_SCRIPT_DIR, "Intermediates", "Reflection", Name, "ReflectionUnity.gen.cpp")
-            if not os.isfile(Unity) then
-                bOutputsPresent = false
+            for Shard = 0, ShardCount - 1 do
+                local Unity = path.join(_MAIN_SCRIPT_DIR, "Intermediates", "Reflection", Name,
+                    "ReflectionUnity_" .. Shard .. ".gen.cpp")
+                -- A zero-byte shard is a half-finished write from an aborted Reflector run; treat it as absent.
+                local Stat = os.stat(Unity)
+                if not Stat or (Stat.size or 0) == 0 then
+                    bOutputsPresent = false
+                    break
+                end
+            end
+
+            if not bOutputsPresent then
                 break
             end
         end

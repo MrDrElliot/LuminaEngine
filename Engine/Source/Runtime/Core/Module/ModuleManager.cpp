@@ -8,6 +8,7 @@
 #include "Platform/Platform.h"
 #include "Platform/Process/PlatformProcess.h"
 #include <cstring>
+#include "Log/Log.h"
 
 
 namespace Lumina

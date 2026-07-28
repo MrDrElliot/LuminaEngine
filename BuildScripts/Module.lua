@@ -171,7 +171,10 @@ function LuminaModule(Def)
     end
 
     if Def.Reflection then
-        table.insert(FilePatterns, LuminaConfig.GetReflectionFiles())
+        -- GetReflectionFiles returns one path per unity shard.
+        for _, ReflectionFile in ipairs(LuminaConfig.GetReflectionFiles()) do
+            table.insert(FilePatterns, ReflectionFile)
+        end
     end
 
     for _, Pattern in ipairs(Def.ExtraFiles) do

@@ -12,6 +12,7 @@
 #include "Renderer/ShaderLibrary.h"
 #include "World/Scene/RenderScene/MeshResolveCache.h"
 #include "Types/Byte.h"
+#include "Log/Log.h"
 
 namespace Lumina
 {

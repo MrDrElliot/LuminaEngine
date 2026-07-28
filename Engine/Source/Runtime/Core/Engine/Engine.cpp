@@ -57,6 +57,7 @@
 
 #if USING(WITH_EDITOR)
 #include "Tools/UI/ImGui/ImGuiX.h"   // editor toast for a refused project module (NotifyError)
+#include "Log/Log.h"
 #endif
 
 namespace Lumina

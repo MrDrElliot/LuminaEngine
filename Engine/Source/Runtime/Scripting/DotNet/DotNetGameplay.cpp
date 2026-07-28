@@ -1,4 +1,5 @@
 #include "Platform/GenericPlatform.h"
+#include "Scripting/DotNet/LayoutRegistry.h"
 #include "Containers/String.h"
 #include "Containers/Name.h"
 #include "World/World.h"
@@ -47,6 +48,7 @@ struct FLmRayHit
     float    Fraction;
     int32    BoneIndex;   // ragdoll per-bone bodies only; -1 otherwise
 };
+LE_REGISTER_LAYOUT("RaycastHitWire", FLmRayHit);
 
 //================================================================================================
 // World (FName-keyed spawn/find + ECS::Utils rotation/scale. The entity transform/time/destroy/count
@@ -280,6 +282,7 @@ struct FLmCameraShake
     float    BlendInTime;
     float    BlendOutTime;
 };
+LE_REGISTER_LAYOUT("FCameraShakeWire", FLmCameraShake);
 
 LUMINA_DOTNET_EXPORT(uint32, Camera_PlayShake)(uint64 World, FLmCameraShake Wire)
 {
@@ -579,6 +582,7 @@ struct FLmConstraintDesc
     float    MotorTorqueLimit;
     float    BreakForce;
 };
+LE_REGISTER_LAYOUT("FConstraintDescWire", FLmConstraintDesc);
 
 LUMINA_DOTNET_EXPORT(uint32, Physics_CreateConstraint)(uint64 World, FLmConstraintDesc Desc)
 {
@@ -890,6 +894,7 @@ struct FLmNavPath
     int32 bValid;
     int32 bPartial;
 };
+LE_REGISTER_LAYOUT("NavPathWire", FLmNavPath);
 
 // Blittable point result mirrored by LuminaSharp.NavPointWire, shared by ProjectPoint / Raycast /
 // FindRandomReachablePoint. bFound == 0 means the query missed (Point is zero).
@@ -898,6 +903,7 @@ struct FLmNavPoint
     int32    bFound;
     FVector3 Point;
 };
+LE_REGISTER_LAYOUT("NavPointWire", FLmNavPoint);
 
 LUMINA_DOTNET_EXPORT(int32, Nav_IsReady)(uint64 World)
 {

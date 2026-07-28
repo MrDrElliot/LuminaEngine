@@ -14,40 +14,69 @@ local DefaultGameDependencies =
     "Tracy",
 }
 
+local Configurations = { "Debug", "Development", "Shipping" }
+local Platforms      = { "Editor", "Game" }
+
+
+local function Append(Dest, Src)
+    for _, Value in ipairs(Src) do
+        table.insert(Dest, Value)
+    end
+    return Dest
+end
+
+
+-- The engine suffixes every .lib per-config ("Runtime-Debug.lib"), so link names are emitted suffixed.
+local function WithSuffix(Libs, Suffix)
+    local Out = {}
+    for _, Lib in ipairs(Libs) do
+        table.insert(Out, Lib .. Suffix)
+    end
+    return Out
+end
+
+
+local function WithoutTracy(Libs)
+    local Out = {}
+    for _, Lib in ipairs(Libs) do
+        if Lib ~= "Tracy" then
+            table.insert(Out, Lib)
+        end
+    end
+    return Out
+end
+
 
 local function SetupProject(Def)
+    -- Not LuminaConfig.EngineDirectory: its "%{wks.location}" fallback resolves to the game, not the
+    -- engine. The prebuild and the F5 launch both need the real env var, or to be skipped entirely.
+    local EngineDir = os.getenv("LUMINA_DIR")
+
     project(Def.Name)
         kind "SharedLib"
         rtti "off"
         staticruntime "Off"
         vectorextensions "AVX" -- keep in sync with Workspace.lua/Jolt; AVX2 #UD-crashes on CPUs without it.
+        linkoptions { "/NODEFAULTLIB:LIBCMT" }
 
         -- Force-include the API header first so ModuleAPI.h (RUNTIME_API/EDITOR_API) is defined.
         forceincludes { Def.Name .. "API.h" }
 
-        -- Build matching-config engine libs first; avoids "Runtime-Debug.lib not found" on a first build against an unbuilt config.
-        local LuminaDirForBat = os.getenv("LUMINA_DIR")
-        if LuminaDirForBat then
-            local EnsureBat = '"' .. path.translate(path.join(LuminaDirForBat, "BuildScripts", "EnsureEngineBuilt.bat"), "\\") .. '"'
+        -- Prebuild, in declaration order: engine libs, then reflection.
+        -- "call" is required on both -- a .bat invoked without it transfers control and never returns,
+        -- so whatever follows silently never runs.
+        if EngineDir then
+            -- Build matching-config engine libs first; avoids "Runtime-Debug.lib not found" on a first build against an unbuilt config.
+            local EnsureBat = '"' .. path.translate(path.join(EngineDir, "BuildScripts", "EnsureEngineBuilt.bat"), "\\") .. '"'
 
             -- Can't pass $(Platform) to EnsureEngineBuilt: premake folds Editor/Game platforms into the config name, leaving $(Platform)="x64". Scope per (config, platform) and emit the literal token.
-            for _, Cfg in ipairs({ "Debug", "Development", "Shipping" }) do
-                for _, Plat in ipairs({ "Editor", "Game" }) do
+            for _, Cfg in ipairs(Configurations) do
+                for _, Plat in ipairs(Platforms) do
                     filter { "configurations:" .. Cfg, "platforms:" .. Plat }
-                        prebuildcommands { EnsureBat .. ' ' .. Cfg .. ' ' .. Plat }
+                        prebuildcommands { "call " .. EnsureBat .. " " .. Cfg .. " " .. Plat }
                 end
             end
             filter {}
-        end
-
-        if Def.Reflection then
-            enablereflection "true"
-            -- Route generated C# bindings into the game script assembly (not LuminaSharp.dll), mirroring plugin routing.
-            csharpbindingsdir(path.join(_MAIN_SCRIPT_DIR, "Game", "Scripts", "Generated"))
-            prebuildcommands
-            {
-                "\"%{wks.location}\\Tools\\ReflectionRunner.bat\""
-            }
         end
 
         local FilePatterns =
@@ -60,174 +89,70 @@ local function SetupProject(Def)
         }
 
         if Def.Reflection then
-            table.insert(FilePatterns, LuminaConfig.GetReflectionFiles())
+            enablereflection "true"
+            -- Route generated C# bindings into the game script assembly (not LuminaSharp.dll), mirroring plugin routing.
+            csharpbindingsdir(path.join(_MAIN_SCRIPT_DIR, "Game", "Scripts", "Generated"))
+            prebuildcommands { "call \"%{wks.location}\\Tools\\ReflectionRunner.bat\"" }
+
+            -- One generated source per unity shard.
+            Append(FilePatterns, LuminaConfig.GetReflectionFiles())
         end
 
-        for _, Pattern in ipairs(Def.ExtraFiles or {}) do
-            table.insert(FilePatterns, Pattern)
-        end
-
+        Append(FilePatterns, Def.ExtraFiles or {})
         -- Each image needs one EASTLImpl.cpp copy so eastl::allocator gets the right dllimport decoration here.
         table.insert(FilePatterns, LuminaConfig.GetEASTLImplFile())
-
         files(FilePatterns)
 
-        local AllIncludes = { "Source" }
-        table.insert(AllIncludes, path.join("%{wks.location}", "Intermediates/Reflection", Def.Name))
-        for _, Dir in ipairs(LuminaConfig.GetEngineRuntimeIncludes()) do
-            table.insert(AllIncludes, Dir)
-        end
-        for _, Dir in ipairs(LuminaThirdParty.IncludesOf(LuminaThirdParty.RuntimePublicDeps)) do
-            table.insert(AllIncludes, Dir)
-        end
-        for _, Dir in ipairs(LuminaThirdParty.IncludesOf(Def.Dependencies)) do
-            table.insert(AllIncludes, Dir)
-        end
-        includedirs(AllIncludes)
+        local Includes = { "Source", path.join("%{wks.location}", "Intermediates/Reflection", Def.Name) }
+        Append(Includes, LuminaConfig.GetEngineRuntimeIncludes())
+        Append(Includes, LuminaThirdParty.IncludesOf(LuminaThirdParty.RuntimePublicDeps))
+        Append(Includes, LuminaThirdParty.IncludesOf(Def.Dependencies))
+        includedirs(Includes)
 
-        if Def.PrivateDefines and #Def.PrivateDefines > 0 then
-            defines(Def.PrivateDefines)
-        end
+        defines(Def.PrivateDefines or {})
+        libdirs(Append({ LuminaConfig.GetTargetDirectory() }, Def.ExtraLibDirs or {}))
 
-        local AllLibDirs =
-        {
-            LuminaConfig.GetTargetDirectory(),
-        }
-        for _, Dir in ipairs(Def.ExtraLibDirs or {}) do
-            table.insert(AllLibDirs, Dir)
-        end
-        libdirs(AllLibDirs)
-
-        -- Engine suffixes every .lib per-config ("-Debug" etc.), so we emit suffixed names.
         local _, _, ThirdPartyLinks = LuminaThirdParty.Resolve(Def.Dependencies)
 
         local BaseLinks = { "Runtime" }
-        for _, Mod in ipairs(Def.ModuleDependencies or {}) do
-            table.insert(BaseLinks, Mod)
-        end
-        for _, Lib in ipairs(ThirdPartyLinks) do
-            table.insert(BaseLinks, Lib)
-        end
+        Append(BaseLinks, Def.ModuleDependencies or {})
+        Append(BaseLinks, ThirdPartyLinks)
 
-        local function WithSuffix(Libs, Suffix)
-            local Out = {}
-            for _, Lib in ipairs(Libs) do
-                table.insert(Out, Lib .. Suffix)
-            end
-            return Out
-        end
+        -- Editor platform additionally links the Editor module and exposes its headers.
+        local EditorLinks = { "Editor" }
+        Append(EditorLinks, Def.EditorModuleDependencies or {})
 
-        -- Link Tracy only where profiling is active; strip it elsewhere.
-        local function StripTracy(Libs)
-            local Out = {}
-            for _, Lib in ipairs(Libs) do
-                if Lib ~= "Tracy" then
-                    table.insert(Out, Lib)
-                end
-            end
-            return Out
-        end
+        for _, Cfg in ipairs(Configurations) do
+            -- Link Tracy only where profiling is active; strip it elsewhere.
+            local Links = LuminaOptions.IsActive("Tracy", Cfg) and BaseLinks or WithoutTracy(BaseLinks)
 
-        for _, Cfg in ipairs({ "Debug", "Development", "Shipping" }) do
-            local Links = BaseLinks
-            if not LuminaOptions.IsActive("Tracy", Cfg) then
-                Links = StripTracy(BaseLinks)
-            end
-            filter("configurations:" .. Cfg)
+            filter { "configurations:" .. Cfg }
                 links(WithSuffix(Links, "-" .. Cfg))
-            filter {}
+            filter { "configurations:" .. Cfg, "platforms:Editor" }
+                links(WithSuffix(EditorLinks, "-" .. Cfg))
         end
-
-        if Def.ExtraLinks and #Def.ExtraLinks > 0 then
-            links(Def.ExtraLinks)
-        end
-
-        -- F5 launches the editor with this project pre-loaded; engine binaries resolved at generate time via LUMINA_DIR.
-        local LuminaDir = os.getenv("LUMINA_DIR")
-        if LuminaDir then
-            local EngineBin = path.join(LuminaDir, "Binaries", "Windows64")
-            local LprojPath = path.join("%{wks.location}", Def.Name .. ".lproject")
-
-            debugdir(EngineBin)
-            debugargs { "--Project=\"" .. LprojPath .. "\"" }
-
-            filter "configurations:Debug"
-                debugcommand(path.join(EngineBin, "Lumina-Debug.exe"))
-            filter "configurations:Development"
-                debugcommand(path.join(EngineBin, "Lumina-Development.exe"))
-            filter "configurations:Shipping"
-                debugcommand(path.join(EngineBin, "Lumina-Shipping.exe"))
-            filter {}
-        end
-
-        -- Editor platform: link the Editor module (+ extras) and expose its headers + editor-only third-party.
-        local EditorBaseLinks = { "Editor" }
-        for _, Mod in ipairs(Def.EditorModuleDependencies or {}) do
-            table.insert(EditorBaseLinks, Mod)
-        end
-
-        filter { "platforms:Editor", "configurations:Debug" }
-            links(WithSuffix(EditorBaseLinks, "-Debug"))
-        filter { "platforms:Editor", "configurations:Development" }
-            links(WithSuffix(EditorBaseLinks, "-Development"))
-        filter { "platforms:Editor", "configurations:Shipping" }
-            links(WithSuffix(EditorBaseLinks, "-Shipping"))
         filter {}
+
+        links(Def.ExtraLinks or {})
 
         filter "platforms:Editor"
-            local EditorIncludes = LuminaConfig.GetEngineEditorIncludes()
-            for _, Dir in ipairs(LuminaThirdParty.IncludesOf(LuminaThirdParty.EditorPublicDeps)) do
-                table.insert(EditorIncludes, Dir)
-            end
-            includedirs(EditorIncludes)
+            includedirs(Append(LuminaConfig.GetEngineEditorIncludes(),
+                LuminaThirdParty.IncludesOf(LuminaThirdParty.EditorPublicDeps)))
         filter {}
 
-        linkoptions { "/NODEFAULTLIB:LIBCMT" }
-end
+        -- F5 launches the editor with this project pre-loaded; engine binaries resolved at generate time via LUMINA_DIR.
+        if EngineDir then
+            local EngineBin = path.join(EngineDir, "Binaries", "Windows64")
 
+            debugdir(EngineBin)
+            debugargs { "--Project=\"" .. path.join("%{wks.location}", Def.Name .. ".lproject") .. "\"" }
 
--- Browse-only view of the engine tree. A game workspace links the engine as pre-built libs, so its
--- solution used to contain nothing but the game itself -- engine headers resolved for the compiler via
--- includedirs, but were invisible in the IDE. These are Utility projects: the files show up for
--- navigation, search and Go-To-Definition, and nothing is compiled here (EnsureEngineBuilt still owns
--- building the engine). Opt out with IncludeEngineSource = false.
-local function SetupEngineBrowseProjects(Def)
-    if Def.IncludeEngineSource == false then
-        return
-    end
-
-    local EngineDir = LuminaConfig.EngineDirectory
-    if not EngineDir then
-        return
-    end
-
-    -- Split per module so either half can be unloaded independently, and a Game-only project isn't
-    -- forced to carry the editor tree.
-    local BrowseModules =
-    {
-        { Name = "Engine.Runtime", Root = "Engine/Source/Runtime" },
-        { Name = "Engine.Editor",  Root = "Engine/Editor/Source"  },
-    }
-
-    group "Engine"
-        for _, Module in ipairs(BrowseModules) do
-            local RootDir = path.join(EngineDir, Module.Root)
-
-            project(Module.Name)
-                kind "Utility"
-
-                files
-                {
-                    path.join(RootDir, "**.h"),
-                    path.join(RootDir, "**.hpp"),
-                    path.join(RootDir, "**.inl"),
-                    path.join(RootDir, "**.cpp"),
-                }
-
-                -- Mirror the on-disk tree instead of one flat list under the absolute engine path.
-                vpaths { ["*"] = RootDir }
+            for _, Cfg in ipairs(Configurations) do
+                filter { "configurations:" .. Cfg }
+                    debugcommand(path.join(EngineBin, "Lumina-" .. Cfg .. ".exe"))
+            end
+            filter {}
         end
-    group ""
 end
 
 
@@ -256,6 +181,4 @@ function LuminaGameProject(Def)
     group "Plugins"
         LuminaDiscoverPlugins(path.join(_MAIN_SCRIPT_DIR, "Plugins"))
     group ""
-
-    SetupEngineBrowseProjects(Def)
 end

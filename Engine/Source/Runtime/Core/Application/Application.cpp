@@ -11,6 +11,7 @@
 #include "Input/InputContext.h"
 #include "Input/InputViewport.h"
 #include "Paths/Paths.h"
+#include "Log/Log.h"
 
 namespace Lumina
 {

@@ -8,6 +8,7 @@
 #include "Core/Reflection/Type/Properties/PropertyTag.h"
 #include "Core/Serialization/NetArchive.h"
 #include "Memory/Memory.h"
+#include "Log/Log.h"
 
 IMPLEMENT_INTRINSIC_CLASS(CStruct, CField, RUNTIME_API)
 

@@ -29,7 +29,8 @@ namespace Lumina::Reflection
         // Returns true if any C#-exposed type was emitted (so the .cs file is only written when non-empty).
         bool WriteCSharpContent(FCodeWriter& Writer, FReflectedHeader* Header);
 
-        void WriteUnityBuildFile(FReflectedProject* Project, const eastl::string& Contents);
+        // Distributes the project's .generated.cpp names over the fixed set of unity shards.
+        void WriteUnityBuildFiles(FReflectedProject* Project, const eastl::vector<eastl::string>& SourceNames);
 
     private:
 

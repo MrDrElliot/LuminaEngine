@@ -91,6 +91,7 @@ public readonly struct FPhysicsConstraint
 /// <summary>Blittable mirror of the native FLmConstraintDesc (DotNetGameplay.cpp); the wire form of a
 /// constraint creation request. Built by the <c>World.Physics.Create*</c> helpers, not used directly.</summary>
 [StructLayout(LayoutKind.Sequential)]
+[NativeLayout("FConstraintDescWire")]
 internal struct FConstraintDescWire
 {
     public int Type;            // FPhysicsConstraint.Type* constant.

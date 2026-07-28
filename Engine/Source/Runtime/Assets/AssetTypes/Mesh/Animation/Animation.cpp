@@ -4,6 +4,7 @@
 #include "Animation/Pose.h"
 #include "Memory/Memcpy.h"
 #include "Renderer/MeshData.h"
+#include "Log/Log.h"
 
 
 namespace Lumina

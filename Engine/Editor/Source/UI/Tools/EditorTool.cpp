@@ -32,6 +32,7 @@
 #include "World/Entity/Components/InputComponent.h"
 #include "World/Entity/Components/StaticMeshComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
+#include "Log/Log.h"
 
 namespace Lumina
 {

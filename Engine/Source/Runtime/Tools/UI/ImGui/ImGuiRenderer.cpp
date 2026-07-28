@@ -25,6 +25,7 @@
 #include "Events/EventProcessor.h"
 #include "Containers/Array.h"
 #include "backends/imgui_impl_glfw.h"
+#include "Log/Log.h"
 
 namespace Lumina
 {

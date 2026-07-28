@@ -4,6 +4,7 @@
 #include "SystemAccess.h"
 #include "Core/Engine/Engine.h"
 #include "Core/Engine/EngineMetaContext.h"
+#include "Core/UpdateStage.h"
 #include "World/Entity/Traits.h"
 
 

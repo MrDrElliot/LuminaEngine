@@ -22,6 +22,7 @@
 #include "Renderer/Vertex.h"
 #include "Renderer/ViewVolume.h"
 #include "TaskSystem/TaskSystem.h"
+#include "Log/Log.h"
 
 namespace Lumina::Import::Mesh::GLTF
 {

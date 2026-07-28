@@ -5,6 +5,7 @@
 #include "Core/Engine/Engine.h"
 #include "Renderer/RenderManager.h"
 #include "World/Scene/RenderScene/MeshResolveCache.h"
+#include "Log/Log.h"
 
 
 namespace Lumina

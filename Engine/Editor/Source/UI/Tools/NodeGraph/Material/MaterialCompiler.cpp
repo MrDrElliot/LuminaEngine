@@ -6,6 +6,7 @@
 #include "Platform/Filesystem/FileHelper.h"
 #include "UI/Tools/NodeGraph/EdGraphNode.h"
 #include "UI/Tools/NodeGraph/EdNode_Reroute.h"
+#include "Log/Log.h"
 
 namespace Lumina
 {

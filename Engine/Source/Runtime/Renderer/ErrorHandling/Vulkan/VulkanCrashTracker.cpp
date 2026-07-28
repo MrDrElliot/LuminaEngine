@@ -4,6 +4,8 @@
 #include <fstream>
 #include <volk/volk.h>
 #if WITH_AFTERMATH
+// MessageBoxA in the Aftermath error macro; previously reached us only via spdlog's windows.h leak.
+#include <windows.h>
 #include "NvidiaAftermath/GFSDK_Aftermath.h"
 #include "NvidiaAftermath/GFSDK_Aftermath_GpuCrashDumpDecoding.h"
 #include <NvidiaAftermath/GFSDK_Aftermath_GpuCrashDump.h>

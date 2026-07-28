@@ -10,123 +10,123 @@ namespace Lumina
     public:
 
         constexpr static uint8 MaxFlags = 32;
-        FORCEINLINE static uint32_t GetFlagMask(uint8 flag) { return (1u << flag); }
+        constexpr static uint32 GetFlagMask(uint8 Flag) { return (1u << Flag); }
 
     public:
 
-        inline FBitFlags() = default;
-        inline explicit FBitFlags(uint32 flags) : Flags(flags) {}
+        constexpr FBitFlags() = default;
+        constexpr explicit FBitFlags(uint32 InFlags) : Flags(InFlags) {}
 
-        FORCEINLINE uint32 Get() const { return Flags; }
-        FORCEINLINE void Set(uint32 InFlags) { Flags = InFlags; }
-        inline operator uint32() const { return Flags; }
+        constexpr uint32 Get() const { return Flags; }
+        constexpr void Set(uint32 InFlags) { Flags = InFlags; }
+        constexpr operator uint32() const { return Flags; }
 
-        FORCEINLINE bool HasNoFlagsSet() const { return Flags == 0; }
-        FORCEINLINE bool IsAnyFlagSet() const { return Flags != 0; }
+        constexpr bool HasNoFlagsSet() const { return Flags == 0; }
+        constexpr bool IsAnyFlagSet() const { return Flags != 0; }
 
-        FORCEINLINE bool IsFlagSet( uint8_t flag ) const
+        constexpr bool IsFlagSet(uint8 Flag) const
         {
-            DEBUG_ASSERT(flag < MaxFlags);
-            return (Flags & GetFlagMask(flag)) > 0;
+            DEBUG_ASSERT(Flag < MaxFlags);
+            return (Flags & GetFlagMask(Flag)) > 0;
         }
 
         template<typename T>
         requires(eastl::is_enum_v<T>)
-        FORCEINLINE bool IsFlagSet(T enumValue) const
+        constexpr bool IsFlagSet(T EnumValue) const
         {
-            return IsFlagSet((uint8) enumValue);
+            return IsFlagSet((uint8) EnumValue);
         }
 
-        FORCEINLINE void SetFlag(uint8 flag)
+        constexpr void SetFlag(uint8 Flag)
         {
-            Flags |= GetFlagMask(flag);
-        }
-
-        template<typename T>
-        requires(eastl::is_enum_v<T>)
-        FORCEINLINE void SetFlag(T enumValue)
-        {
-            SetFlag( (uint8_t)enumValue );
-        }
-
-        FORCEINLINE void SetFlag(uint8 flag, bool value)
-        {
-            DEBUG_ASSERT(flag < MaxFlags);
-            value ? SetFlag(flag) : ClearFlag(flag);
+            Flags |= GetFlagMask(Flag);
         }
 
         template<typename T>
         requires(eastl::is_enum_v<T>)
-        FORCEINLINE void SetFlag(T enumValue, bool value)
+        constexpr void SetFlag(T EnumValue)
         {
-            SetFlag((uint8)enumValue, value);
+            SetFlag((uint8)EnumValue);
         }
 
-        FORCEINLINE void SetAllFlags()
+        constexpr void SetFlag(uint8 Flag, bool bValue)
+        {
+            DEBUG_ASSERT(Flag < MaxFlags);
+            bValue ? SetFlag(Flag) : ClearFlag(Flag);
+        }
+
+        template<typename T>
+        requires(eastl::is_enum_v<T>)
+        constexpr void SetFlag(T EnumValue, bool bValue)
+        {
+            SetFlag((uint8)EnumValue, bValue);
+        }
+
+        constexpr void SetAllFlags()
         {
             Flags = 0xFFFFFFFF;
         }
 
-        FORCEINLINE bool IsFlagCleared(uint8 flag) const
+        constexpr bool IsFlagCleared(uint8 Flag) const
         {
-            DEBUG_ASSERT(flag < MaxFlags);
-            return (Flags & GetFlagMask(flag)) == 0;
+            DEBUG_ASSERT(Flag < MaxFlags);
+            return (Flags & GetFlagMask(Flag)) == 0;
         }
 
         template<typename T>
         requires(eastl::is_enum_v<T>)
-        FORCEINLINE bool IsFlagCleared(T enumValue)
+        constexpr bool IsFlagCleared(T EnumValue)
         {
-            return IsFlagCleared((uint8)enumValue);
+            return IsFlagCleared((uint8)EnumValue);
         }
 
-        FORCEINLINE void ClearFlag(uint8 flag)
+        constexpr void ClearFlag(uint8 Flag)
         {
-            DEBUG_ASSERT(flag < MaxFlags);
-            Flags &= ~GetFlagMask(flag);
+            DEBUG_ASSERT(Flag < MaxFlags);
+            Flags &= ~GetFlagMask(Flag);
         }
 
         template<typename T>
-        FORCEINLINE void ClearFlag(T enumValue)
+        constexpr void ClearFlag(T EnumValue)
         {
-            ClearFlag((uint8)enumValue);
+            ClearFlag((uint8)EnumValue);
         }
 
-        FORCEINLINE void ClearAllFlags()
+        constexpr void ClearAllFlags()
         {
             Flags = 0;
         }
 
-        FORCEINLINE void FlipFlag(uint8 flag)
+        constexpr void FlipFlag(uint8 Flag)
         {
-            DEBUG_ASSERT(flag >= 0 && flag < MaxFlags);
-            Flags ^= GetFlagMask( flag );
+            DEBUG_ASSERT(Flag < MaxFlags);
+            Flags ^= GetFlagMask(Flag);
         }
 
         template<typename T>
         requires std::is_enum_v<T>
-        FORCEINLINE void FlipFlag(T enumValue)
+        constexpr void FlipFlag(T EnumValue)
         {
-            FlipFlag((uint8)enumValue);
+            FlipFlag((uint8)EnumValue);
         }
 
 
-        FORCEINLINE void FlipAllFlags()
+        constexpr void FlipAllFlags()
         {
             Flags = ~Flags;
         }
 
-        FORCEINLINE FBitFlags& operator | ( uint8_t flag )
+        constexpr FBitFlags& operator | (uint8 Flag)
         {
-            DEBUG_ASSERT(flag < MaxFlags);
-            Flags |= GetFlagMask( flag );
+            DEBUG_ASSERT(Flag < MaxFlags);
+            Flags |= GetFlagMask(Flag);
             return *this;
         }
 
-        FORCEINLINE FBitFlags& operator & ( uint8_t flag )
+        constexpr FBitFlags& operator & (uint8 Flag)
         {
-            DEBUG_ASSERT(flag < MaxFlags);
-            Flags &= GetFlagMask(flag);
+            DEBUG_ASSERT(Flag < MaxFlags);
+            Flags &= GetFlagMask(Flag);
             return *this;
         }
         
@@ -144,61 +144,61 @@ namespace Lumina
 
         using FBitFlags::FBitFlags;
 
-        explicit TBitFlags(T value) 
-            : FBitFlags(static_cast<uint32>(value))
+        explicit constexpr TBitFlags(T Value) 
+            : FBitFlags(static_cast<uint32>(Value))
         {
-            DEBUG_ASSERT((uint32) value < MaxFlags);
+            DEBUG_ASSERT((uint32)Value < MaxFlags);
         }
 
-        TBitFlags(uint32 i)
-            : FBitFlags(i)
+        constexpr TBitFlags(uint32 Int)
+            : FBitFlags(Int)
         {}
 
-        TBitFlags(const TBitFlags<T>& flags)
-            : FBitFlags( flags.Flags )
+        constexpr TBitFlags(const TBitFlags<T>& Flags)
+            : FBitFlags(Flags.Flags)
         {}
 
         template<typename... Args>
         requires(... && eastl::is_convertible_v<Args, T>)
-        TBitFlags(Args&&... args)
+        constexpr TBitFlags(Args&&... args)
         {
             ((Flags |= 1u << (uint8)std::forward<Args>(args)), ...);
         }
 
-        TBitFlags& operator=( TBitFlags const& rhs ) = default;
+        constexpr TBitFlags& operator=(const TBitFlags& RHS) = default;
 
-        FORCEINLINE bool IsFlagSet( T flag ) const { return FBitFlags::IsFlagSet( (uint8_t) flag ); }
-        FORCEINLINE bool IsFlagCleared( T flag ) const { return FBitFlags::IsFlagCleared( (uint8_t) flag ); }
-        FORCEINLINE void SetFlag( T flag ) { FBitFlags::SetFlag( (uint8_t) flag ); }
-        FORCEINLINE void SetFlag( T flag, bool value ) { FBitFlags::SetFlag( (uint8_t) flag, value ); }
-        FORCEINLINE void FlipFlag( T flag ) { FBitFlags::FlipFlag( (uint8_t) flag ); }
-        FORCEINLINE void ClearFlag( T flag ) { FBitFlags::ClearFlag( (uint8_t) flag ); }
+        constexpr bool IsFlagSet(T Flag) const { return FBitFlags::IsFlagSet((uint8)Flag); }
+        constexpr bool IsFlagCleared(T Flag) const { return FBitFlags::IsFlagCleared((uint8)Flag); }
+        constexpr void SetFlag(T Flag) { FBitFlags::SetFlag((uint8)Flag); }
+        constexpr void SetFlag(T Flag, bool bValue) { FBitFlags::SetFlag((uint8)Flag, bValue); }
+        constexpr void FlipFlag(T Flag) { FBitFlags::FlipFlag((uint8)Flag); }
+        constexpr void ClearFlag(T Flag) { FBitFlags::ClearFlag((uint8)Flag); }
 
-        template<typename... Args>
-        FORCEINLINE void SetMultipleFlags(Args&&... args)
+        template<typename... TArgs>
+        constexpr void SetMultipleFlags(TArgs&&... Args)
         {
-            ((Flags |= 1u << (uint8) eastl::forward<Args>(args)), ...);
+            ((Flags |= 1u << (uint8)eastl::forward<TArgs>(Args)), ...);
         }
 
-        template<typename... Args>
-        FORCEINLINE bool AreAnyFlagsSet(Args&&... args) const
+        template<typename... TArgs>
+        constexpr bool AreAnyFlagsSet(TArgs&&... Args) const
         {
-            uint32 mask = 0;
-            ((mask |= 1u << (uint8) eastl::forward<Args>(args)), ...);
-            return (Flags & mask) != 0;
+            uint32 Mask = 0;
+            ((Mask |= 1u << (uint8)eastl::forward<Args>(Args)), ...);
+            return (Flags & Mask) != 0;
         }
 
-        FORCEINLINE TBitFlags& operator| ( T flag )
+        constexpr TBitFlags& operator | (T Flag)
         {
-            DEBUG_ASSERT((uint8) flag < MaxFlags);
-            Flags |= GetFlagMask(flag);
+            DEBUG_ASSERT((uint8) Flag < MaxFlags);
+            Flags |= GetFlagMask(Flag);
             return *this;
         }
 
-        FORCEINLINE TBitFlags& operator& ( T flag )
+        constexpr TBitFlags& operator & (T Flag)
         {
-            DEBUG_ASSERT((uint8) flag < MaxFlags);
-            Flags &= GetFlagMask(flag);
+            DEBUG_ASSERT((uint8) Flag < MaxFlags);
+            Flags &= GetFlagMask(Flag);
             return *this;
         }
         

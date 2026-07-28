@@ -1,6 +1,7 @@
 #include <algorithm>
 
 #include "Platform/GenericPlatform.h"
+#include "Scripting/DotNet/LayoutRegistry.h"
 #include "Containers/String.h"
 #include "Containers/Name.h"
 #include "Core/Math/Math.h"
@@ -36,6 +37,7 @@ namespace
         FVector3 Point;
     };
 }
+LE_REGISTER_LAYOUT("PerceptionPointWire", FLmPerceptionPoint);
 
 // Fills OutEntities (entt ids) with the perceiver's currently-tracked targets; returns the count (<= Max).
 LUMINA_DOTNET_EXPORT(int32, Perception_GetPerceivedTargets)(uint64 World, uint32 Perceiver, uint32* OutEntities, int32 Max)

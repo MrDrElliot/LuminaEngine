@@ -9,6 +9,7 @@ namespace LuminaSharp;
 /// <c>World.Audio.Play*</c> calls and passed back to control or stop that voice. A default/invalid handle
 /// is safe to pass to every control call (they no-op).
 /// </summary>
+[NativeLayout("AudioHandle")]
 [StructLayout(LayoutKind.Sequential)]
 public readonly struct AudioHandle
 {

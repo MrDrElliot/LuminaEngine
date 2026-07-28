@@ -64,6 +64,7 @@
 #include "World/Scene/RenderScene/RenderScene.h"
 #include "World/Scene/RenderScene/SceneRenderTypes.h"
 #include "World/Subsystems/WorldSettings.h"
+#include "Log/Log.h"
 
 
 namespace Lumina

@@ -1,4 +1,5 @@
 #include "Platform/GenericPlatform.h"
+#include "Scripting/DotNet/LayoutRegistry.h"
 #include "Core/Math/Math.h"
 #include "Core/Object/ObjectCore.h"
 #include "Memory/SmartPtr.h"
@@ -382,3 +383,6 @@ LUMINA_DOTNET_EXPORT(void, Audio_SaveMixSettings)(uint64 World)
 
     GConfig->SaveSettings(CAudioSettings::StaticClass());
 }
+
+// Bootstrap size check against the C# AudioHandle mirror; a drift here silently misreads voice slots.
+LE_REGISTER_LAYOUT("AudioHandle", Lumina::FAudioHandle);

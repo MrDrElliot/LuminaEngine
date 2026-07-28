@@ -1,3 +1,4 @@
+#include "LayoutRegistry.h"
 #include "DotNetHost.h"
 #include "ManagedCall.h"
 #include "ManagedRenderScene.h"
@@ -2480,3 +2481,6 @@ LUMINA_DOTNET_EXPORT(void*, ResolveModuleHandle)(const char* Name, int Len)
     return Ctx.Result;
 #endif
 }
+
+// Bootstrap size check against the C# FScriptDiagnostics mirror (Diagnostics.cs).
+LE_REGISTER_LAYOUT("FScriptDiagnostics", Lumina::DotNet::FScriptDiagnostics);

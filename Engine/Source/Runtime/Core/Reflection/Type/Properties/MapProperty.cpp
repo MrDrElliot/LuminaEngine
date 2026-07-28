@@ -2,6 +2,7 @@
 #include "MapProperty.h"
 #include "Core/Serialization/NetArchive.h"
 #include "Memory/Memory.h"
+#include "Log/Log.h"
 
 namespace Lumina
 {

@@ -8,7 +8,8 @@ LuminaModule({
     ModuleDependencies = { "Runtime" },
     Dependencies =
     {
-        "ImGui", "RPMalloc", "EA", "Tracy", "FreeType",
+        -- SPDLog is a compiled lib now, so every module whose TUs expand LOG_* must link it.
+        "ImGui", "RPMalloc", "EA", "Tracy", "FreeType", "SPDLog",
         -- Model-format parsers: MeshOptimizer used by the GLTF importer, BasicUniversal by the texture cooker.
         "TinyOBJLoader", "OpenFBX", "FastGLTF", "MeshOptimizer", "BasicUniversal",
     },

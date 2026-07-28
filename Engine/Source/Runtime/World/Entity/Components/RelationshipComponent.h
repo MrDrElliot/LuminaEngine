@@ -1,5 +1,7 @@
 #pragma once
 
+#include <entt/entt.hpp>
+
 #include "Core/Serialization/Archiver.h"
 
 

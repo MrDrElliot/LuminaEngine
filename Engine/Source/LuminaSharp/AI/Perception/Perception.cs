@@ -118,6 +118,7 @@ public readonly unsafe partial struct Perception
 
 /// <summary>Blittable mirror of the native FLmPerceptionPoint; the GetLastKnownLocation thunk return.</summary>
 [StructLayout(LayoutKind.Sequential)]
+[NativeLayout("PerceptionPointWire")]
 internal struct PerceptionPointWire
 {
     public int Found;

@@ -12,6 +12,7 @@
 #include "Memory/MemoryTracking.h"
 #include "Physics/API/Jolt/JoltUtils.h"
 #include "World/World.h"
+#include "Log/Log.h"
 
 static_assert(sizeof(JPH::ObjectLayer) == 4);
 

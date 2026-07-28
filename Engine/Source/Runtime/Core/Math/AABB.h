@@ -1,6 +1,9 @@
 #pragma once
 #include "Core/Math/Vector/Vector.h"
 #include "Core/Math/Matrix/Matrix.h"
+// Math::Min/Max are used below. The Reflector parses headers as one PCH-less amalgamation, so a
+// header that leans on a transitively-provided include mis-parses the moment that path changes.
+#include "Core/Math/Math.h"
 #include "Platform/Platform.h"
 #include "Core/Object/ObjectMacros.h"
 #include "AABB.generated.h"

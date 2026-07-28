@@ -15,6 +15,7 @@
 #include "World/Entity/EntityUtils.h"
 #include "World/World.h"
 #include "World/WorldManager.h"
+#include "Log/Log.h"
 
 namespace Lumina
 {

@@ -20,6 +20,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include "Log/Log.h"
 
 namespace Lumina
 {

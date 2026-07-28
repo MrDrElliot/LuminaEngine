@@ -20,6 +20,7 @@
 #include "World/Entity/Components/SkeletalMeshComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/Entity/Systems/SystemResources.h"
+#include "Log/Log.h"
 
 namespace Lumina
 {

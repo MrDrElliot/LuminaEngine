@@ -5,6 +5,7 @@
 #include "Core/Console/ConsoleVariable.h"
 #include "EASTL/sort.h"
 #include "Log/LogMessage.h"
+#include "Log/Log.h"
 
 namespace Lumina
 {

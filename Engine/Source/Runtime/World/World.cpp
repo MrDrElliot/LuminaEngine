@@ -72,6 +72,7 @@
 #include "UI/RmlUiBridge.h"
 #include "World/Entity/Components/RelationshipComponent.h"
 #include "World/entity/systems/EntitySystem.h"
+#include "Log/Log.h"
 
 namespace Lumina
 {

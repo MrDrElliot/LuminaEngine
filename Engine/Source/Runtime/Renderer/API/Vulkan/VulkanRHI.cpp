@@ -20,6 +20,7 @@
 // GPU timing for Tracy. Self-stubs to no-ops when Tracy is inactive; all usage below
 // is additionally guarded by TRACY_ENABLE so it compiles out cleanly in non-profiled builds.
 #include "tracy/TracyVulkan.hpp"
+#include "Log/Log.h"
 
 namespace Lumina
 {

@@ -6,6 +6,7 @@
 #include "FileInfo.h"
 #include "Paths/Paths.h"
 #include "Platform/Process/PlatformProcess.h"
+#include "Log/Log.h"
 
 
 namespace Lumina::VFS

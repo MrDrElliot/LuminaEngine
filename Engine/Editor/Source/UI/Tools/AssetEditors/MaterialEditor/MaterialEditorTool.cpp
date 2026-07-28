@@ -29,6 +29,7 @@
 #include "World/Entity/Components/SkyLightComponent.h"
 #include "World/entity/components/lightcomponent.h"
 #include "World/entity/components/staticmeshcomponent.h"
+#include "Log/Log.h"
 
 namespace Lumina
 {

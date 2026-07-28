@@ -7,6 +7,7 @@
 #include "Core/Object/Package/Thumbnail/PackageThumbnail.h"
 #include "Platform/Filesystem/FileHelper.h"
 #include "Thumbnails/ThumbnailUtils.h"
+#include "Log/Log.h"
 
 namespace Lumina
 {

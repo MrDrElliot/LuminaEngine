@@ -1,5 +1,7 @@
 ﻿#pragma once
 
+#include <entt/entt.hpp>
+
 #include "Platform/GenericPlatform.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Physics/PhysicsTypes.h"

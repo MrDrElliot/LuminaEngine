@@ -214,6 +214,7 @@ public sealed class NavPath
 
 /// <summary>Blittable mirror of the native FLmNavPath (DotNetGameplay.cpp); the FindPath thunk's ABI return.</summary>
 [StructLayout(LayoutKind.Sequential)]
+[NativeLayout("NavPathWire")]
 internal struct NavPathWire
 {
     public int Count;
@@ -223,6 +224,7 @@ internal struct NavPathWire
 
 /// <summary>Blittable mirror of the native FLmNavPoint; the project/raycast/random thunk return.</summary>
 [StructLayout(LayoutKind.Sequential)]
+[NativeLayout("NavPointWire")]
 internal struct NavPointWire
 {
     public int Found;

@@ -485,19 +485,14 @@ inline auto get_data(Container& c) -> typename Container::value_type* {
   return c.data();
 }
 
-#if defined(_SECURE_SCL) && _SECURE_SCL
-// Make a checked iterator to avoid MSVC warnings.
-template <typename T> using checked_ptr = stdext::checked_array_iterator<T*>;
-template <typename T>
-constexpr auto make_checked(T* p, size_t size) -> checked_ptr<T> {
-  return {p, size};
-}
-#else
+// LUMINA PATCH: fmt 9.1 used stdext::checked_array_iterator here under _SECURE_SCL (i.e. any
+// _ITERATOR_DEBUG_LEVEL != 0 build). MSVC 14.51 (VS2026) removed stdext::checked_array_iterator
+// outright, so that branch no longer compiles. Upstream fmt 10 dropped checked_ptr for the same
+// reason; this mirrors that. Reapply when the bundled fmt is upgraded below v10.
 template <typename T> using checked_ptr = T*;
 template <typename T> constexpr auto make_checked(T* p, size_t) -> T* {
   return p;
 }
-#endif
 
 // Attempts to reserve space for n extra characters in the output range.
 // Returns a pointer to the reserved range or a reference to it.

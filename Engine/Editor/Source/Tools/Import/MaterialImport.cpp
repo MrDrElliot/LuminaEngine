@@ -20,6 +20,7 @@
 #include "UI/Tools/NodeGraph/Material/Nodes/MaterialNode_Math.h"
 #include "UI/Tools/NodeGraph/Material/Nodes/MaterialNode_TextureSample.h"
 #include "UI/Tools/NodeGraph/Material/Nodes/MaterialOutputNode.h"
+#include "Log/Log.h"
 
 namespace Lumina
 {

@@ -1,10 +1,12 @@
 #include "CodeGenerator.h"
 
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 
 #include <EASTL/hash_map.h>
 #include <EASTL/hash_set.h>
+#include <EASTL/sort.h>
 #include <EASTL/string.h>
 #include <EASTL/vector.h>
 
@@ -112,9 +114,39 @@ namespace Lumina::Reflection
             return WorkspacePath + R"(\Intermediates\CSharpBindings\)" + Header.Project->Name + R"(\)" + Header.FileName + ".generated.cs";
         }
 
-        eastl::string MakeUnityPath(const eastl::string& WorkspacePath, const FReflectedProject& Project)
+        // One unity TU per project was a 52s serial spike on Runtime's critical path (more than the
+        // ~43s ideal parallel time of every other Runtime TU combined), and every edit to any reflected
+        // header paid all 52s. Sharding spreads the generated bodies over TUs that compile concurrently.
+        //
+        // kUnityShardCount is the number of shard FILES, and MUST match
+        // LuminaConfig.ReflectionUnityShardCount in BuildScripts/Dependencies.lua: premake bakes the
+        // shard paths into the vcxproj at generation time (deliberately a fixed list, not a glob, so
+        // Visual Studio never has to re-detect generated sources), so a mismatch drops shards silently.
+        //
+        // How many of those files actually carry content is chosen per project below. Sharding is not
+        // free: each shard re-parses the PCH and its includes' headers, so a project with a handful of
+        // reflected types is better off in one TU. Unused shards are written as stubs (~0.05s each).
+        constexpr int kUnityShardCount = 8;
+
+        // Generated sources per shard. Runtime (~132) lands on the 8-shard cap; a plugin with 10 stays
+        // at 1 and compiles exactly as it did before sharding.
+        constexpr size_t kGeneratedSourcesPerShard = 20;
+
+        int ShardCountFor(size_t SourceCount)
         {
-            return WorkspacePath + R"(\Intermediates\Reflection\)" + Project.Name + R"(\ReflectionUnity.gen.cpp)";
+            if (SourceCount <= kGeneratedSourcesPerShard)
+            {
+                return 1;
+            }
+
+            const size_t Wanted = (SourceCount + kGeneratedSourcesPerShard - 1) / kGeneratedSourcesPerShard;
+            return static_cast<int>(Wanted < kUnityShardCount ? Wanted : kUnityShardCount);
+        }
+
+        eastl::string MakeUnityPath(const eastl::string& WorkspacePath, const FReflectedProject& Project, int Shard)
+        {
+            return WorkspacePath + R"(\Intermediates\Reflection\)" + Project.Name
+                 + R"(\ReflectionUnity_)" + eastl::to_string(Shard) + ".gen.cpp";
         }
 
         eastl::string MakeProjectIntermediateDir(const eastl::string& WorkspacePath, const FReflectedProject& Project)
@@ -156,6 +188,31 @@ namespace Lumina::Reflection
                 Stream.write(Contents.c_str(), static_cast<std::streamsize>(Contents.size()));
             }
         }
+
+        // Skips the write when the contents already match, so an unchanged unity shard keeps its
+        // timestamp and MSBuild doesn't recompile it just because the Reflector ran.
+        void WriteTextFileIfChanged(const eastl::string& PathUtf8, const eastl::string& Contents)
+        {
+            std::filesystem::path OutputPath(PathUtf8.c_str());
+
+            std::error_code Ec;
+            const auto Existing = std::filesystem::file_size(OutputPath, Ec);
+            if (!Ec && Existing == Contents.size())
+            {
+                std::ifstream In(OutputPath, std::ios::binary);
+                if (In.is_open())
+                {
+                    std::string Current((std::istreambuf_iterator<char>(In)), std::istreambuf_iterator<char>());
+                    if (Current.size() == Contents.size()
+                        && std::memcmp(Current.data(), Contents.c_str(), Contents.size()) == 0)
+                    {
+                        return;
+                    }
+                }
+            }
+
+            WriteTextFile(PathUtf8, Contents);
+        }
     }
 
     FCodeGenerator::FCodeGenerator(FReflectedWorkspace* InWorkspace, const FReflectionDatabase& Database)
@@ -166,9 +223,11 @@ namespace Lumina::Reflection
 
     void FCodeGenerator::GenerateCode()
     {
-        // Per-project accumulator: unity cpp pools every dirty header's
-        // .generated.cpp include.
-        eastl::hash_map<FReflectedProject*, eastl::string>                  UnityPerProject;
+        // Per-project accumulator: every reflected header's .generated.cpp name. Sorted and
+        // distributed over the unity shards at write time, so shard contents stay deterministic
+        // (ReflectedTypes is a hash_map; its iteration order is not stable across runs, and an
+        // unstable order would rewrite the unity files and dirty the build for no reason).
+        eastl::hash_map<FReflectedProject*, eastl::vector<eastl::string>>   UnityPerProject;
         eastl::hash_set<FReflectedProject*>                                 DirtyProjects;
         eastl::hash_map<FReflectedProject*, eastl::hash_set<eastl::string>> ExpectedArtifacts;
         // .generated.cs routed into a project's Scripts/Generated (free-function-only headers); used to sweep
@@ -177,12 +236,7 @@ namespace Lumina::Reflection
 
         for (const auto& [Header, _] : ReflectionDatabase->ReflectedTypes)
         {
-            eastl::string& Unity = UnityPerProject[Header->Project];
-            if (Unity.empty())
-            {
-                Unity += "#include \"pch.h\"\n";
-            }
-            Unity += "#include \"" + Header->FileName + ".generated.cpp\"\n";
+            UnityPerProject[Header->Project].push_back(Header->FileName + ".generated.cpp");
 
             auto& Expected = ExpectedArtifacts[Header->Project];
             Expected.insert(Header->FileName + ".generated.cpp");
@@ -209,12 +263,7 @@ namespace Lumina::Reflection
                 continue; // empty, or already handled by the types loop (it emits free functions too)
             }
 
-            eastl::string& Unity = UnityPerProject[Header->Project];
-            if (Unity.empty())
-            {
-                Unity += "#include \"pch.h\"\n";
-            }
-            Unity += "#include \"" + Header->FileName + ".generated.cpp\"\n";
+            UnityPerProject[Header->Project].push_back(Header->FileName + ".generated.cpp");
 
             auto& Expected = ExpectedArtifacts[Header->Project];
             Expected.insert(Header->FileName + ".generated.cpp");
@@ -297,25 +346,32 @@ namespace Lumina::Reflection
         for (auto* DirtyProject : DirtyProjects)
         {
             // A project that lost its last reflected type has no UnityPerProject entry;
-            // fall back to the stub so the vcxproj still compiles cleanly.
+            // WriteUnityBuildFiles then stubs out every shard so the vcxproj still compiles cleanly.
             auto It = UnityPerProject.find(DirtyProject);
-            const bool bHasContent = It != UnityPerProject.end() && !It->second.empty();
-            WriteUnityBuildFile(DirtyProject, bHasContent ? It->second : eastl::string(kUnityStubContents));
+            static const eastl::vector<eastl::string> Empty;
+            WriteUnityBuildFiles(DirtyProject, It != UnityPerProject.end() ? It->second : Empty);
         }
 
-        // Stub guard: ReflectionUnity.gen.cpp must exist even for projects with zero reflected types.
-        // Only write when missing (keeps incremental builds fast); the __has_include stub works PCH or not.
+        // Stub guard: every shard must exist even for projects with zero reflected types, or premake's
+        // static shard list points at missing files. Only write when one is missing (keeps incremental
+        // builds fast); the __has_include stub works PCH or not.
         for (auto& Project : Workspace->ReflectedProjects)
         {
-            const eastl::string Path = MakeUnityPath(Workspace->GetPath(), *Project);
-            if (std::filesystem::exists(std::filesystem::path(Path.c_str())))
+            bool bAnyMissing = false;
+            for (int Shard = 0; Shard < kUnityShardCount && !bAnyMissing; ++Shard)
+            {
+                const eastl::string Path = MakeUnityPath(Workspace->GetPath(), *Project, Shard);
+                bAnyMissing = !std::filesystem::exists(std::filesystem::path(Path.c_str()));
+            }
+
+            if (!bAnyMissing)
             {
                 continue;
             }
 
             auto It = UnityPerProject.find(Project.get());
-            const bool bHasContent = It != UnityPerProject.end() && !It->second.empty();
-            WriteTextFile(Path, bHasContent ? It->second : eastl::string(kUnityStubContents));
+            static const eastl::vector<eastl::string> Empty;
+            WriteUnityBuildFiles(Project.get(), It != UnityPerProject.end() ? It->second : Empty);
         }
     }
 
@@ -555,6 +611,9 @@ namespace Lumina::Reflection
         Writer.Linef("#include \"%s\"", ComputeSourceHeaderInclude(*Header).c_str());
         Writer.Line("#include \"World/Entity/Components/Component.h\"");
         Writer.Line("#include \"World/Entity/Events/ECSEvent.h\"");
+        // REFLECT(System) emits Meta::RegisterECSSystem<T>(). Engine modules got this transitively
+        // through their pch; a game project's pch chain doesn't reach it, so declare it explicitly.
+        Writer.Line("#include \"World/Entity/Systems/EntitySystem.h\"");
         Writer.Line("#include \"Core/Profiler/Profile.h\"");
         Writer.Line("#include \"Core/Math/Hash/Hash.h\"");
         Writer.Line("#include \"Core/Object/Class.h\"");
@@ -644,8 +703,34 @@ namespace Lumina::Reflection
         Writer.Line("#endif");
     }
 
-    void FCodeGenerator::WriteUnityBuildFile(FReflectedProject* Project, const eastl::string& Contents)
+    void FCodeGenerator::WriteUnityBuildFiles(FReflectedProject* Project, const eastl::vector<eastl::string>& SourceNames)
     {
-        WriteTextFile(MakeUnityPath(Workspace->GetPath(), *Project), Contents);
+        // Sort first: the caller collected these by walking hash containers, so the order varies
+        // run to run. Sorted input keeps each shard's contents byte-stable, which is what lets the
+        // "unchanged file" case avoid dirtying the build.
+        eastl::vector<eastl::string> Sorted = SourceNames;
+        eastl::sort(Sorted.begin(), Sorted.end());
+
+        const int ActiveShards = ShardCountFor(Sorted.size());
+
+        eastl::vector<eastl::string> Shards(kUnityShardCount);
+        for (size_t Index = 0; Index < Sorted.size(); ++Index)
+        {
+            // Round-robin rather than contiguous chunks: adjacent generated files tend to come from
+            // the same subsystem and pull the same heavy headers, so striping balances the shards.
+            Shards[Index % ActiveShards] += "#include \"" + Sorted[Index] + "\"\n";
+        }
+
+        for (int Shard = 0; Shard < kUnityShardCount; ++Shard)
+        {
+            const eastl::string Path = MakeUnityPath(Workspace->GetPath(), *Project, Shard);
+            if (Shards[Shard].empty())
+            {
+                WriteTextFileIfChanged(Path, eastl::string(kUnityStubContents));
+                continue;
+            }
+
+            WriteTextFileIfChanged(Path, "#include \"pch.h\"\n" + Shards[Shard]);
+        }
     }
 }

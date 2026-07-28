@@ -50,6 +50,7 @@ public readonly struct RaycastHit
 }
 
 /// <summary>Blittable mirror of the native FLmRayHit (DotNetGameplay.cpp); the raycast thunk's ABI return.</summary>
+[NativeLayout("RaycastHitWire")]
 [StructLayout(LayoutKind.Sequential)]
 internal struct RaycastHitWire
 {

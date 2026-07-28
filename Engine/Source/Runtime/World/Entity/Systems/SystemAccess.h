@@ -1,9 +1,10 @@
 #pragma once
 
+#include <entt/entt.hpp>
+
 #include "ModuleAPI.h"
 #include "Containers/Array.h"
 #include "Containers/String.h"
-// entt (entt::type_hash) is provided via the precompiled header, like the rest of the World module.
 
 namespace Lumina
 {

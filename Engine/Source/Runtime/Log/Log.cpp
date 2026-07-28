@@ -1,4 +1,4 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "Log.h"
 
 #include "Core/Console/ConsoleVariable.h"
@@ -13,6 +13,11 @@ PRAGMA_DISABLE_ALL_WARNINGS
 PRAGMA_ENABLE_ALL_WARNINGS
 
 #include "Platform/Process/PlatformProcess.h"
+
+// LogMessage.h can't name spdlog's enumerators (it only forward-declares the enum to keep spdlog
+// out of every TU that reaches Log.h), so verify its hardcoded default here where spdlog is complete.
+static_assert(Lumina::GDefaultConsoleMessageLevel == static_cast<int>(spdlog::level::info),
+              "GDefaultConsoleMessageLevel is out of sync with spdlog::level::info");
 
 namespace Lumina::Logging
 {

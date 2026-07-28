@@ -16,6 +16,7 @@
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/World.h"
 #include "World/WorldTypes.h"
+#include "Log/Log.h"
 
 namespace Lumina
 {

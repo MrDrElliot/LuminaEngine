@@ -12,6 +12,7 @@
     #include <DetourNavMesh.h>
     #include <DetourNavMeshBuilder.h>
     #include <DetourAlloc.h>
+#include "Log/Log.h"
 #endif
 
 namespace Lumina::NavMeshBuilder

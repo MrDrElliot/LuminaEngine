@@ -31,6 +31,7 @@
 #include "World/Net/NetReplication.h"
 #include <atomic>
 #include <EASTL/hash_map.h>
+#include "Log/Log.h"
 
 namespace Lumina
 {

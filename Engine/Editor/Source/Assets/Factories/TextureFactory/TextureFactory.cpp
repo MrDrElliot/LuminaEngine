@@ -14,6 +14,7 @@
 #include "Tools/Import/ImportHelpers.h"
 #include "Thumbnails/ThumbnailUtils.h"
 #include "Core/Math/Math.h"
+#include "Log/Log.h"
 
 namespace Lumina
 {

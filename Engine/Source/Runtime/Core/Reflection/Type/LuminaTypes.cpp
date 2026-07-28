@@ -3,6 +3,7 @@
 #include "Core/Object/Field.h"
 #include "Core/Object/Class.h"
 #include "Core/Serialization/NetArchive.h"
+#include "Log/Log.h"
 
 namespace Lumina
 {

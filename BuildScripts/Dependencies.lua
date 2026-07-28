@@ -135,8 +135,20 @@ function LuminaConfig.ProjectPath(Subpath)
     return path.join("%{prj.location}", Subpath)
 end
 
+-- MUST match kUnityShardCount in Reflector/CodeGeneration/CodeGenerator.cpp. The Reflector emits
+-- exactly this many shards per reflected project (stubbing the empty ones), and these paths are
+-- baked into the vcxproj at generation time, so the two counts have to agree.
+LuminaConfig.ReflectionUnityShardCount = 8
+
+-- One unity TU per project was a ~52s serial spike on Runtime's critical path; sharding lets the
+-- generated reflection bodies compile in parallel with each other.
 function LuminaConfig.GetReflectionFiles()
-    return path.join(LuminaConfig.ReflectionDirectory, "ReflectionUnity.gen.cpp")
+    local Files = {}
+    for Shard = 0, LuminaConfig.ReflectionUnityShardCount - 1 do
+        table.insert(Files, path.join(LuminaConfig.ReflectionDirectory,
+            "ReflectionUnity_" .. Shard .. ".gen.cpp"))
+    end
+    return Files
 end
 
 -- EASTL allocator binding; every EASTL-using image needs its own compiled copy (one eastl::allocator def per image).

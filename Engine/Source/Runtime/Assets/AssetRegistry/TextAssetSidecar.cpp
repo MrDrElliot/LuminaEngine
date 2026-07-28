@@ -5,6 +5,7 @@
 #include "Core/Plugin/PluginManager.h"
 #include "Core/Serialization/MemoryArchiver.h"
 #include "FileSystem/FileSystem.h"
+#include "Log/Log.h"
 
 namespace Lumina::TextAssetSidecar
 {

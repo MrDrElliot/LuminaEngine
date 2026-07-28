@@ -6,6 +6,7 @@
 #include "Core/Object/Package/Package.h"
 #include "Paths/Paths.h"
 #include "Platform/Filesystem/FileHelper.h"
+#include "Log/Log.h"
 
 namespace Lumina
 {

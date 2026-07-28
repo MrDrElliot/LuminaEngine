@@ -1,3 +1,4 @@
+#include "DotNetExport.h"
 #include "Containers/Array.h"
 #include "Memory/Memory.h"
 #include "World/World.h"
@@ -16,7 +17,7 @@ namespace
 {
     FEntityRegistry* LmViewRegistryFromWorld(uint64 World)
     {
-        CWorld* W = reinterpret_cast<CWorld*>(World);
+        CWorld* W = DotNet::AsWorld(World);
         return W ? &ECS::GetWorldRegistry(*W) : nullptr;
     }
 
@@ -38,7 +39,7 @@ namespace
 // SNAPSHOTS the matching entity ids into the returned opaque state (null if any include storage is missing
 // -> empty view). IncludeOps / ExcludeOps are arrays of const FComponentOps* tokens (resolved C#-side via
 // FindComponentOps). The runtime_view is consumed here and not retained; only the snapshot + storages live on.
-extern "C" LUMINA_SCRIPT_API void* LuminaSharp_ViewBegin(uint64 World, const void* const* IncludeOps, int NInc, const void* const* ExcludeOps, int NExc)
+LUMINA_DOTNET_EXPORT(void*, ViewBegin)(uint64 World, const void* const* IncludeOps, int NInc, const void* const* ExcludeOps, int NExc)
 {
     FEntityRegistry* Registry = LmViewRegistryFromWorld(World);
     if (Registry == nullptr || IncludeOps == nullptr || NInc <= 0)
@@ -91,7 +92,7 @@ extern "C" LUMINA_SCRIPT_API void* LuminaSharp_ViewBegin(uint64 World, const voi
 // against the live storages (skipped if it lost an include or gained an exclude since ViewBegin) and its
 // pointers are resolved fresh, so a storage realloc between chunks is harmless. Returns the count emitted
 // (0 when the snapshot is exhausted). One crossing per chunk.
-extern "C" LUMINA_SCRIPT_API int LuminaSharp_ViewNextChunk(void* StatePtr, uint32* OutEntities, void** OutPtrs, int MaxCount, int NInclude)
+LUMINA_DOTNET_EXPORT(int, ViewNextChunk)(void* StatePtr, uint32* OutEntities, void** OutPtrs, int MaxCount, int NInclude)
 {
     FViewState* State = static_cast<FViewState*>(StatePtr);
     if (State == nullptr || OutEntities == nullptr || OutPtrs == nullptr || MaxCount <= 0)
@@ -135,7 +136,7 @@ extern "C" LUMINA_SCRIPT_API int LuminaSharp_ViewNextChunk(void* StatePtr, uint3
 }
 
 // Frees the per-call view state allocated by ViewBegin.
-extern "C" LUMINA_SCRIPT_API void LuminaSharp_ViewEnd(void* StatePtr)
+LUMINA_DOTNET_EXPORT(void, ViewEnd)(void* StatePtr)
 {
     FViewState* State = static_cast<FViewState*>(StatePtr);
     if (State != nullptr)
@@ -147,7 +148,7 @@ extern "C" LUMINA_SCRIPT_API void LuminaSharp_ViewEnd(void* StatePtr)
 
 // The C# system reaches its registry through the system context: returns the CWorld* (as uint64) the
 // FSystemContext is bound to, so SystemContext.Registry can build an EntityRegistry / View over it.
-extern "C" LUMINA_SCRIPT_API uint64 LuminaSharp_SystemContext_GetWorld(const FSystemContext* Ctx)
+LUMINA_DOTNET_EXPORT(uint64, SystemContext_GetWorld)(const FSystemContext* Ctx)
 {
     if (Ctx == nullptr)
     {

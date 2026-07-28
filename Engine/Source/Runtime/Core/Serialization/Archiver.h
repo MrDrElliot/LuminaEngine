@@ -26,8 +26,6 @@ enum class EArchiverFlags : uint8
     Compress    = 3,
     Encrypt     = 4,
     NoFields    = 5,
-    // Saver is producing cooked (shipping) output. Property serializers
-    // honor this to strip EditorOnly properties.
     Cooking     = 6,
 };
 
@@ -41,7 +39,9 @@ namespace Lumina
     
         FArchive() = default;
         FArchive(const FArchive&) = delete;
+        FArchive(FArchive&&) = default;
         FArchive& operator=(const FArchive& ArchiveToCopy) = delete;
+        FArchive& operator=(FArchive&&) = default;
         virtual ~FArchive() = default;
 
     

@@ -5,10 +5,13 @@
 #include "Containers/String.h"
 #include "Paths/Paths.h"
 #include "Platform/Process/PlatformProcess.h"
+// windows.h must be included unconditionally: WIN32_LEAN_AND_MEAN is already defined
+// workspace-wide, so guarding the include on it skipped it entirely and the file only
+// compiled because spdlog's header-only chain leaked windows.h in.
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
-#include <windows.h>
 #endif
+#include <windows.h>
 #include <shellapi.h>
 #include <shobjidl.h>
 #include <commdlg.h>
@@ -18,6 +21,7 @@
 #include <Shlwapi.h>
 
 #include <timeapi.h>
+#include "Log/Log.h"
 
 #pragma comment(lib, "Shlwapi.lib")
 #pragma comment(lib, "PathCch.lib")

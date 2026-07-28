@@ -68,6 +68,7 @@
 #include "World/Entity/Events/CollisionEvent.h"
 #include "World/Entity/Events/ImpulseEvent.h"
 #include "World/Subsystems/WorldSettings.h"
+#include "Log/Log.h"
 
 using namespace JPH::literals;
 

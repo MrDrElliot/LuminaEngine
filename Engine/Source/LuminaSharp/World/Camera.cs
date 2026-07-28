@@ -96,6 +96,7 @@ public readonly struct FCameraShake
 
 /// <summary>Blittable mirror of native FLmCameraShake (DotNetGameplay.cpp).</summary>
 [StructLayout(LayoutKind.Sequential)]
+[NativeLayout("FCameraShakeWire")]
 internal struct FCameraShakeWire
 {
     public FVector3 LocationAmplitude;

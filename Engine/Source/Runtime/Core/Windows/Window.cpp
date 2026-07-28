@@ -6,6 +6,7 @@
 #include "Events/Event.h"
 #include "Paths/Paths.h"
 #include "Platform/Platform.h"
+#include "Log/Log.h"
 
 namespace
 {

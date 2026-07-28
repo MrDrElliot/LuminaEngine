@@ -15,6 +15,7 @@
 #include "Memory/Memory.h"
 #include "Paths/Paths.h"
 #include "TaskSystem/TaskSystem.h"
+#include "Log/Log.h"
 
 namespace Lumina
 {

@@ -13,6 +13,7 @@
 #include "stb_image.h"
 #include "stb_image_resize2.h"
 #include "FileSystem/FileSystem.h"
+#include "Log/Log.h"
 
 namespace Lumina::Import::Textures
 {

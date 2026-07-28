@@ -42,3 +42,18 @@ using UTF32CHAR = char32_t;
 
 // Width of a single WIDECHAR in bytes: 2 on Windows (UTF-16), 4 on most Unix platforms (UTF-32).
 #define PLATFORM_WIDECHAR_SIZE sizeof(WIDECHAR)
+
+// TEXT() used to arrive only because <windows.h> leaked in transitively (spdlog's header-only
+// chain pulled it into nearly every TU). DECLARE_CLASS depends on it, so own it here instead.
+// Token-for-token identical to winnt.h's definition, so windows.h redefining it later is a
+// legal identical redefinition rather than a C4005 conflict.
+#ifndef __TEXT
+    #ifdef UNICODE
+        #define __TEXT(quote) L##quote
+    #else
+        #define __TEXT(quote) quote
+    #endif
+#endif
+#ifndef TEXT
+    #define TEXT(quote) __TEXT(quote)
+#endif

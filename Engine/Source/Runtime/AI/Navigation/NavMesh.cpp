@@ -8,6 +8,7 @@
     #include <DetourNavMesh.h>
     #include <DetourNavMeshQuery.h>
     #include <DetourCommon.h>
+#include "Log/Log.h"
 #endif
 
 namespace Lumina

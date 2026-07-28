@@ -145,6 +145,7 @@
 #include "World/Entity/Components/LightComponent.h"
 #include "World/Entity/Components/SkyLightComponent.h"
 #include "World/Scene/RenderScene/RenderScene.h"
+#include "Log/Log.h"
 
 namespace Lumina
 {

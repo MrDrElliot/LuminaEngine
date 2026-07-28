@@ -1,5 +1,8 @@
 ﻿#pragma once
 #include "EditorTool.h"
+// Names spdlog::level enumerators in its filter/switch code, so it needs the full enum, not just
+// LogMessage.h's forward declaration.
+#include "Log/Log.h"
 
 namespace Lumina
 {

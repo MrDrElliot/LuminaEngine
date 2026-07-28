@@ -29,6 +29,7 @@
 #include "Paths/Paths.h"
 #include "TaskSystem/TaskSystem.h"
 #include "TaskSystem/ThreadedCallback.h"
+#include "Log/Log.h"
 
 namespace Lumina
 {

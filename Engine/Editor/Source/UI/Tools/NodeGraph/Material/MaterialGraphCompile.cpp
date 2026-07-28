@@ -9,6 +9,7 @@
 #include "Renderer/ShaderCompiler.h"
 #include "Renderer/ShaderLibrary.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
+#include "Log/Log.h"
 
 namespace Lumina
 {
