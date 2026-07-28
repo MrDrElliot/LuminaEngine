@@ -9,6 +9,6 @@ LuminaPluginModule({
     ModuleDependencies = { "Runtime" },
     Dependencies =
     {
-        "ImGui", "RPMalloc", "EA", "Tracy", "SPDLog",
+        "ImGui", "RPMalloc", "EA", "Tracy",
     },
 })

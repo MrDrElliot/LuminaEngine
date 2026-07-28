@@ -249,10 +249,7 @@ namespace Lumina::HangWatchdog
             }
 
             LOG_ERROR("================== END HANG WATCHDOG ==================");
-            if (Logging::IsInitialized())
-            {
-                Logging::GetLogger()->flush();
-            }
+            Logging::Flush();
         }
 
         void WatchdogMain()

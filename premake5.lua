@@ -126,7 +126,6 @@ LuminaWorkspaceSettings({
             include "Engine/Source/ThirdParty/Tracy"
         end
         include "Engine/Source/ThirdParty/MiniAudio"
-        include "Engine/Source/ThirdParty/SPDLog"
         include "Engine/Source/ThirdParty/JoltPhysics"
         include "Engine/Source/ThirdParty/Recast"
         include "Engine/Source/ThirdParty/enet"

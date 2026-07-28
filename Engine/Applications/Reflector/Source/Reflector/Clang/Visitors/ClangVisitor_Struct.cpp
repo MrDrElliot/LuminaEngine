@@ -6,7 +6,6 @@
 #include <EASTL/vector.h>
 #include <string>
 #include <Reflector/Types/ReflectedType.h>
-#include <spdlog/spdlog.h>
 #include "Reflector/Clang/ClangParserContext.h"
 #include "Reflector/Clang/Utils.h"
 #include "Reflector/Diagnostics/LRTDiagnostics.h"

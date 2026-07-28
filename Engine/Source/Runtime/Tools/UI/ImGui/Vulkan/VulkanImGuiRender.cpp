@@ -281,10 +281,12 @@ namespace Lumina
             return;
         }
 
-        // The swapchain is created lazily on the render thread (first RenderCapturedViewport); here we
-        // only record the window the platform backend just created.
+        // The swapchain is created lazily on the render thread (first RenderCapturedViewport), but the
+        // window-system surface is created here: GLFW's window calls are main-thread only, and the
+        // render thread must not touch a GLFWwindow the platform backend may be creating or destroying.
         FImGuiViewportData* Data = IM_NEW(FImGuiViewportData)();
-        Data->Window = Viewport->PlatformHandle;
+        Data->Window  = Viewport->PlatformHandle;
+        Data->Surface = RHI::CreateSurface(Data->Window);
         Viewport->RendererUserData = Data;
     }
 
@@ -296,13 +298,36 @@ namespace Lumina
             return;
         }
 
-        // ImGui destroys the GLFW window (and its surface) right after this hook, so the swapchain must
-        // go first. Drain the render thread + GPU so no in-flight frame still references it.
+        // ImGui destroys the GLFW window (and its surface) right after this hook, so nothing on the
+        // render thread may still reference this viewport. Captures hold a raw FImGuiViewportData* and
+        // a torn-out window can be closed in the very frame it was first captured -- before its
+        // swapchain was ever built -- so the drain is unconditional, not gated on a valid swapchain.
+        // (Gating it left the render thread to read freed FImGuiViewportData and hand a dangling
+        // GLFWwindow* to glfwCreateWindowSurface inside RHI::CreateSwapchain.)
+        FlushRenderingCommands();
+
+        // Captured but not yet consumed: the capture happens before the frame's render command is
+        // enqueued, so a flush alone does not guarantee the slot was drained. Scrub explicitly.
+        if (GImGuiBackend != nullptr)
+        {
+            FRecursiveScopeLock Lock(GImGuiBackend->Mutex);
+            for (TVector<FCapturedViewport>& Slot : GImGuiBackend->SecondaryCaptures)
+            {
+                Slot.erase(std::remove_if(Slot.begin(), Slot.end(),
+                    [Data](const FCapturedViewport& Cap) { return Cap.Data == Data; }), Slot.end());
+            }
+        }
+
         if (RHI::IsValid(Data->Swapchain))
         {
-            FlushRenderingCommands();
             RHI::WaitDeviceIdle();
             RHI::FreeH(Data->Swapchain);
+        }
+        else
+        {
+            // Never reached the render thread: the surface is still ours to destroy. (CreateSwapchain
+            // consumes the handle, so this must not run once a swapchain exists.)
+            RHI::FreeH(Data->Surface);
         }
 
         IM_DELETE(Data);
@@ -410,10 +435,16 @@ namespace Lumina
 
         // Create / resize the secondary swapchain on the render thread (the only thread that touches
         // the swapchain pool during a frame), tracking the built extent so a clamped surface doesn't
-        // thrash recreation every frame.
+        // thrash recreation every frame. The surface itself came from the game thread; consuming it
+        // here means no window-system call happens off the window's own thread.
         if (!RHI::IsValid(Data->Swapchain))
         {
-            Data->Swapchain   = RHI::CreateSwapchain(Data->Window, Cap.Extent);
+            if (!RHI::IsValid(Data->Surface))
+            {
+                return;
+            }
+            Data->Swapchain   = RHI::CreateSwapchain(Data->Surface, Cap.Extent);
+            Data->Surface     = RHI::FSurfaceH{};
             Data->BuiltExtent = Cap.Extent;
         }
         else if (Data->BuiltExtent != Cap.Extent)

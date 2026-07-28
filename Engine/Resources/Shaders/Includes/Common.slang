@@ -252,6 +252,11 @@ struct FMeshletHeader
     uint*           Triangles;
 };
 
+// FGPUInstance::SkinnedVertexBase sentinel: this entity was not pre-skinned this frame (it fell
+// outside r.Skinning.MaxVertices), so the draw path blends bones inline instead. The CPU reserves
+// the value, so a legitimately wrapped base can never collide with it.
+static const uint kNoPreSkinBase = 0xFFFFFFFFu;
+
 // Mirror of Lumina::FSkinDescriptor. One per rendered-LOD meshlet; drives the skinning dispatch.
 struct FSkinDescriptor
 {
@@ -312,9 +317,15 @@ struct FGPUInstance
     uint                    BoneOffset;
     uint                    MaterialIndex;
     uint                    EntityID;
-    // Base into PreSkinnedVertices() for this instance's entity (skinning compute writes,
-    // draw VS reads). 0 for static instances.
+    // Bases into PreSkinnedVertices() for this instance's surface-LOD and shadow-LOD meshlet blocks
+    // (skinning compute writes, draw VS reads). Equal when both resolved to the same block. 0 for
+    // static instances, kNoPreSkinBase when the entity lost the pre-skin budget and the draw path
+    // must blend bones itself.
     uint                    SkinnedVertexBase;
+    uint                    ShadowSkinnedVertexBase;
+    uint                    _Pad0;
+    uint                    _Pad1;
+    uint                    _Pad2;
 
     bool HasFlag(EInstanceFlags Flag)
     {

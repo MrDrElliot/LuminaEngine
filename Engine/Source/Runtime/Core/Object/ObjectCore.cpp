@@ -199,34 +199,15 @@ namespace Lumina
         return Result;
     }
 
+    // Lifetime only.
     bool IsValid(const CObjectBase* Obj)
     {
-        if (Obj == nullptr)
-        {
-            return false;
-        }
-
-        if (Obj->HasAnyFlag(OF_NeedsLoad))
-        {
-            return false;
-        }
-
-        return true;
+        return Obj != nullptr && !Obj->HasAnyFlag(OF_MarkedDestroy);
     }
 
     bool IsValid(CObjectBase* Obj)
     {
-        if (Obj == nullptr)
-        {
-            return false;
-        }
-
-        if (Obj->HasAnyFlag(OF_NeedsLoad) || Obj->HasAnyFlag(OF_MarkedDestroy))
-        {
-            return false;
-        }
-
-        return true;
+        return IsValid(static_cast<const CObjectBase*>(Obj));
     }
     
     CObject* NewObject(CClass* InClass, CPackage* Package, const FName& Name, const FGuid& GUID, EObjectFlags Flags)

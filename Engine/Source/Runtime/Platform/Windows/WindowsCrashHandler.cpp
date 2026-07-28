@@ -277,7 +277,7 @@ namespace Lumina::CrashHandler
                         LOG_CRITICAL("Stack trace:\n{}", StackBuffer);
                     }
                     LOG_CRITICAL("Minidump: {}", Paths.LogPath);
-                    Logging::GetLogger()->flush();
+                    Logging::Flush();
                 }
             }
             __except (EXCEPTION_EXECUTE_HANDLER)

@@ -10,7 +10,6 @@
 #include <filesystem>
 #include <system_error>
 #include "xxhash.h"
-#include "spdlog/spdlog.h"
 
 
 namespace Lumina::ClangUtils

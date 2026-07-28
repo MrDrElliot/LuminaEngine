@@ -130,7 +130,7 @@ namespace Lumina
         ShaderCompiler->Initialize();
 
         FWindow* Window = Windowing::GetPrimaryWindowHandle();
-        Swapchain = RHI::CreateSwapchain(Window->GetWindow(), Window->GetExtent());
+        Swapchain = RHI::CreateSwapchain(RHI::CreateSurface(Window->GetWindow()), Window->GetExtent());
 
         WindowResizedHandle = FWindow::OnWindowResized.AddMember(this, &FRenderManager::OnWindowResized);
 

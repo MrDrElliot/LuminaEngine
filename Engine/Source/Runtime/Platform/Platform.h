@@ -81,6 +81,29 @@
 #define UTF16TEXT(x) UTF16TEXT_PASTE(x)
 #define WIDETEXT(str) WIDETEXT_PASTE(str)
 
+#else // REFLECTION_PARSER
+
+// libclang parses declarations, not code generation, so the attribute spellings above are noise to it
+// - but the macro names still appear in reflected declarations and must expand to something, or a
+// member like "FORCEINLINE FVector3 GetSize()" error-recovers into a bogus int property.
+
+#define LIKELY(x)   (x)
+#define UNLIKELY(x) (x)
+#define LE_CONSTEVAL constexpr
+#define NODISCARD
+#define ALIGNOF(type) alignof(type)
+#define ALIGN(n)
+#define CACHE_LINE_SIZE 64
+#define LUMINA_NOVTABLE
+#define FORCEINLINE inline
+#define FORCENOINLINE
+
+#define UTF8TEXT_PASTE(x)  u8 ## x
+#define UTF16TEXT_PASTE(x) u ## x
+#define WIDETEXT_PASTE(x)  L ## x
+#define UTF16TEXT(x) UTF16TEXT_PASTE(x)
+#define WIDETEXT(str) WIDETEXT_PASTE(str)
+
 #endif
 
 #ifndef RESTRICT

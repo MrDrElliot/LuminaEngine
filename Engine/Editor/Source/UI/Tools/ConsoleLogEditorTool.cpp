@@ -440,16 +440,16 @@ namespace Lumina
         bFocusInput = true;
     }
 
-    ImVec4 FConsoleLogEditorTool::GetColorForLevel(spdlog::level::level_enum Level)
+    ImVec4 FConsoleLogEditorTool::GetColorForLevel(ELogLevel Level)
     {
         switch (Level)
         {
-            case spdlog::level::err:      return ImVec4(0.95f, 0.25f, 0.25f, 1.0f);
-            case spdlog::level::warn:     return ImVec4(1.00f, 0.70f, 0.20f, 1.0f);
-            case spdlog::level::info:     return ImVec4(0.90f, 0.90f, 0.90f, 1.0f);
-            case spdlog::level::debug:    return ImVec4(0.45f, 0.80f, 1.00f, 1.0f);
-            case spdlog::level::trace:    return ImVec4(0.55f, 0.55f, 0.55f, 1.0f);
-            case spdlog::level::critical: return ImVec4(1.00f, 0.10f, 0.10f, 1.0f);
+            case ELogLevel::Error:      return ImVec4(0.95f, 0.25f, 0.25f, 1.0f);
+            case ELogLevel::Warn:     return ImVec4(1.00f, 0.70f, 0.20f, 1.0f);
+            case ELogLevel::Info:     return ImVec4(0.90f, 0.90f, 0.90f, 1.0f);
+            case ELogLevel::Debug:    return ImVec4(0.45f, 0.80f, 1.00f, 1.0f);
+            case ELogLevel::Trace:    return ImVec4(0.55f, 0.55f, 0.55f, 1.0f);
+            case ELogLevel::Critical: return ImVec4(1.00f, 0.10f, 0.10f, 1.0f);
             default:                      return ImVec4(0.80f, 0.80f, 0.80f, 1.0f);
         }
     }
@@ -796,7 +796,7 @@ namespace Lumina
         return 0.0f;
     }
     
-    const char* FConsoleLogEditorTool::GetLevelIcon(spdlog::level::level_enum Level) const
+    const char* FConsoleLogEditorTool::GetLevelIcon(ELogLevel Level) const
     {
         if (!Settings.bShowIcons)
         {
@@ -805,26 +805,26 @@ namespace Lumina
 
         switch (Level)
         {
-            case spdlog::level::err:      return LE_ICON_ALERT_CIRCLE;
-            case spdlog::level::warn:     return LE_ICON_ALERT;
-            case spdlog::level::info:     return LE_ICON_INFORMATION;
-            case spdlog::level::debug:    return LE_ICON_BUG;
-            case spdlog::level::trace:    return LE_ICON_DOTS_HORIZONTAL;
-            case spdlog::level::critical: return LE_ICON_ALERT_OCTAGON;
+            case ELogLevel::Error:      return LE_ICON_ALERT_CIRCLE;
+            case ELogLevel::Warn:     return LE_ICON_ALERT;
+            case ELogLevel::Info:     return LE_ICON_INFORMATION;
+            case ELogLevel::Debug:    return LE_ICON_BUG;
+            case ELogLevel::Trace:    return LE_ICON_DOTS_HORIZONTAL;
+            case ELogLevel::Critical: return LE_ICON_ALERT_OCTAGON;
             default:                      return LE_ICON_INFORMATION;
         }
     }
 
-    const char* FConsoleLogEditorTool::GetLevelLabel(spdlog::level::level_enum Level) const
+    const char* FConsoleLogEditorTool::GetLevelLabel(ELogLevel Level) const
     {
         switch (Level)
         {
-            case spdlog::level::err:      return "Error";
-            case spdlog::level::warn:     return "Warning";
-            case spdlog::level::info:     return "Info";
-            case spdlog::level::debug:    return "Debug";
-            case spdlog::level::trace:    return "Trace";
-            case spdlog::level::critical: return "Critical";
+            case ELogLevel::Error:      return "Error";
+            case ELogLevel::Warn:     return "Warning";
+            case ELogLevel::Info:     return "Info";
+            case ELogLevel::Debug:    return "Debug";
+            case ELogLevel::Trace:    return "Trace";
+            case ELogLevel::Critical: return "Critical";
             default:                      return "Unknown";
         }
     }

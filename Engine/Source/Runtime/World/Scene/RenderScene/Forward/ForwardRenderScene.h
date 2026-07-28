@@ -64,15 +64,24 @@ namespace Lumina
             uint32                  CustomData;
             uint32                  EntityID;
             uint32                  LocalBoneOffset;            // ~0u for static meshes.
-            // GPU pre-skinning: only the rendered-LOD meshlet span is skinned (0 for static).
-            // SpanStart = first rendered vertex, SliceSize = extent; GlobalSkinnedBase resolved in merge.
-            uint32                  SkinMeshletStart;
-            uint32                  SkinMeshletCount;
-            uint32                  SkinSpanStart;
+            // GPU pre-skinning. SkinSliceSize is the sum of the entity's distinct rendered meshlet
+            // blocks (per surface, per LOD) rather than one span across them, so unrendered surfaces
+            // and intermediate LODs cost nothing. Merge grants GlobalSkinnedBase for the whole
+            // entity (kNoPreSkinBase when it lost the budget); SkinCursor sub-allocates the blocks.
             uint32                  SkinSliceSize;
             uint32                  GlobalSkinnedBase;
+            uint32                  SkinCursor;
+            uint32                  SkinBoneOffset;             // global; resolved during merge.
         };
-        
+
+        // One skinned entity competing for the per-frame pre-skin budget. Ranked by a screen-size
+        // proxy so the biggest on-screen meshes keep the compute path when the budget is short.
+        struct FSkinCandidate
+        {
+            FEntityRecord*          Record;
+            float                   Priority;
+        };
+
         struct FProcessedDrawItem
         {
             uint32              EntityRecordIndex;
@@ -80,6 +89,13 @@ namespace Lumina
             uint32              SurfaceMeshletCount;
             uint32              ShadowMeshletOffset;
             uint32              ShadowMeshletCount;
+            // Vertex extent of the two meshlet blocks this item draws (skinned only; 0 otherwise).
+            // Merge overwrites the *Offset fields in place with the resolved pre-skin bases, which is
+            // what FGPUInstance carries -- the offsets are only needed to derive them.
+            uint32              SurfaceVertexOffset;
+            uint32              SurfaceVertexCount;
+            uint32              ShadowVertexOffset;
+            uint32              ShadowVertexCount;
             EInstanceFlags      Flags;
             uint16              MaterialIndex;
             uint16              LocalBatchIndex;
@@ -695,6 +711,10 @@ namespace Lumina
         // Serial pre-pass so the parallel gather is pure reads; skipped when nothing changed.
         void ResolveDirtyMeshComponents();
 
+        // Last FMeshResolveCache pending generation this scene resolved against. Per scene because the
+        // cache is shared across every world but each world resolves only its own components.
+        uint32 LastResolvedPendingGeneration = 0;
+
         // Reused to flatten a component's material overrides; keeps capacity.
         TVector<CMaterialInterface*> ResolveOverrideScratch;
 
@@ -705,6 +725,9 @@ namespace Lumina
         
         void BuildSceneCullContext();
         void MergeMeshDrawData(TVector<FThreadLocalDrawData>& ThreadLocal);
+        void AssignPreSkinSlices(FFrameData& Frame,
+                                 TVector<FSkinCandidate>& Candidates,
+                                 TVector<FThreadLocalDrawData>& ThreadLocal);
 
         // Bind this worker's draw-data slot to its thread frame arena on the first touch of a gather pass,
         // then accumulate. Must be called from inside a parallel-for body (Slot == Range.Thread); the arena
@@ -889,6 +912,8 @@ namespace Lumina
         TVector<uint32>                         MergeDrawInstanceOffsets;
         TVector<uint32>                         MergeDrawCursor;
         TVector<uint32>                         MergeThreadBoneBase;
+        TVector<FSkinCandidate>                 MergeSkinCandidates;
+        uint32                                  LastPreSkinDeferredCount = 0;
 
         // Deferred material-binning scratch (rebuilt each DeferredMaterialPass; capacity reused):
         // dense slot -> master DeferredShader, and global MaterialIndex -> dense slot.

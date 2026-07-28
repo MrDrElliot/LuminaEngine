@@ -7,6 +7,7 @@
 struct FPushConstants
 {
     uint DescriptorCount;
+    uint VertexCapacity;    // elements in PreSkinnedVertices(); a store past it would page-fault
 };
 
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
@@ -31,6 +32,12 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
     if (Lane < M.VertexCount)
     {
         uint OutIndex = Desc.SkinnedVertexBase + M.VertexOffset + Lane;
-        PreSkinnedVertices()[OutIndex] = SkinVertex(Header, M, Lane, Desc.BoneOffset);
+
+        // The CPU budget should keep every index in range; this is the backstop that turns a
+        // sizing bug into a missing mesh instead of a device-lost page fault.
+        if (OutIndex < Pass().VertexCapacity)
+        {
+            PreSkinnedVertices()[OutIndex] = SkinVertex(Header, M, Lane, Desc.BoneOffset);
+        }
     }
 }

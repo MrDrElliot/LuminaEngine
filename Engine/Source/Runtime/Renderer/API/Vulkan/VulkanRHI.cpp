@@ -486,6 +486,14 @@ namespace Lumina::RHI
 #endif
     };
 
+    // A window-system surface awaiting a swapchain. Lives only between CreateSurface (window thread)
+    // and CreateSwapchain (render thread), which moves the VkSurfaceKHR into the swapchain.
+    struct FSurface
+    {
+        VkSurfaceKHR Surface = VK_NULL_HANDLE;
+        void*        Window  = nullptr;   // GLFWwindow*
+    };
+
     struct FSwapchain
     {
         VkSurfaceKHR            Surface;
@@ -543,6 +551,7 @@ namespace Lumina::RHI
         TSegmentMap<FTextureHeap>       TextureHeaps;
         TSegmentMap<FDepthStencilState> DepthStates;
         TSegmentMap<FSwapchain>         Swapchains;
+        TSegmentMap<FSurface>           Surfaces;
 
         TArray<TVector<FCmdListH>, 3>   FreeCommandLists;
         TVector<FTextureH>              UninitializedTextures;
@@ -1603,6 +1612,14 @@ namespace Lumina::RHI
 
             Swapchain->~FSwapchain();
         });
+
+        GDevice->Surfaces.SetDtor([](FSurface* Surface)
+        {
+            // Null once CreateSwapchain has taken ownership; vkDestroySurfaceKHR accepts VK_NULL_HANDLE.
+            vkDestroySurfaceKHR(GDevice->Instance, Surface->Surface, nullptr);
+
+            Surface->~FSurface();
+        });
     }
 
     void FreeDevice()
@@ -1627,6 +1644,7 @@ namespace Lumina::RHI
         }
 
         GDevice->Swapchains.Clear();
+        GDevice->Surfaces.Clear();
         GDevice->Semaphores.Clear();
         GDevice->Pipelines.Clear();
         GDevice->Textures.Clear();
@@ -2980,12 +2998,36 @@ namespace Lumina::RHI
         SC.AcquireSemaphores.clear();
     }
 
-    FSwapchainH CreateSwapchain(void* WindowHandle, const FUIntVector2& Extent)
+    FSurfaceH CreateSurface(void* WindowHandle)
     {
-        FSwapchain SC{};
-        SC.Window = WindowHandle;
+        FSurface Surface{};
+        Surface.Window = WindowHandle;
 
-        VK_CHECK(glfwCreateWindowSurface(GDevice->Instance, static_cast<GLFWwindow*>(WindowHandle), nullptr, &SC.Surface));
+        VK_CHECK(glfwCreateWindowSurface(GDevice->Instance, static_cast<GLFWwindow*>(WindowHandle), nullptr, &Surface.Surface));
+
+        return GDevice->Surfaces.Emplace(Move(Surface));
+    }
+
+    void FreeH(FSurfaceH Surface)
+    {
+        if (GDevice != nullptr)
+        {
+            GDevice->Surfaces.Erase(Surface);
+        }
+    }
+
+    FSwapchainH CreateSwapchain(FSurfaceH SurfaceHandle, const FUIntVector2& Extent)
+    {
+        FSurface& Source = GDevice->Surfaces[SurfaceHandle];
+
+        FSwapchain SC{};
+        SC.Window  = Source.Window;
+        SC.Surface = Source.Surface;
+
+        // Ownership moves to the swapchain: null it out so erasing the surface entry does not destroy
+        // the VkSurfaceKHR we just took.
+        Source.Surface = VK_NULL_HANDLE;
+        GDevice->Surfaces.Erase(SurfaceHandle);
 
         BuildSwapchainImages(SC, Extent, VK_NULL_HANDLE);
         SC.AcquireIndex = 0;

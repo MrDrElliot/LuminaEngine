@@ -113,6 +113,11 @@ namespace Lumina::Jobs
     // Make a previously parked fiber runnable again. Callable from any thread.
     RUNTIME_API void ResumeFiber(FFiberHandle Handle);
 
+    // Identity of the fiber currently executing, or a null handle on an external (non-worker) thread.
+    // Use this instead of a thread_local for any "am I still the same logical execution?" flag: a
+    // fiber can park and resume on a different worker, so thread identity does not survive a yield.
+    RUNTIME_API FFiberHandle GetCurrentFiberHandle();
+
     // Mark the calling THREAD as running a serial pump that must never yield to the scheduler (the
     // render drain). While set, any fiber park on this thread logs a loud error naming the guard:
     // the park strands the pump until the wait resolves, and the fiber can resume on a different

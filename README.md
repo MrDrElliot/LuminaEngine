@@ -338,7 +338,6 @@ Listed alphabetically.
 | RenderDoc | Graphics debugger integration for frame capture and analysis |
 | RPMalloc | Lock-free, thread-caching memory allocator |
 | Slang | Modern shader language and compiler with SPIR-V / HLSL output |
-| SPDLog | Fast C++ logging library with async mode and multiple sinks |
 | stb_image | Single-header image loading library |
 | TinyObjLoader | Lightweight OBJ parser with MTL material support |
 | Tracy | Real-time frame profiler with sampling, GPU zones, and lock contention tracking |

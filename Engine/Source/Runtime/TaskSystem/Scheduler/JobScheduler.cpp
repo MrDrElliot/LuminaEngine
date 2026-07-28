@@ -54,6 +54,10 @@ namespace Lumina::Jobs
         {
             Fibers::FFiber Handle = nullptr;
             FQueuedJob     Job{};   // bound by the scheduler immediately before switching in
+            // No-park guard name, saved here while this fiber is parked. The guard is conceptually
+            // per-fiber, but has to live in a thread_local to be readable at the park site; without
+            // this save/restore it would leak onto whatever fiber ran next on the same worker.
+            const char*    NoParkGuard = nullptr;
 #if USING(WITH_EDITOR)
             // Editor-only live state for the Task System profiler (the fiber grid / by-fiber timeline).
             uint16          Index       = 0;                 // pool index, stable
@@ -766,6 +770,10 @@ namespace Lumina::Jobs
                 Job.Function(Job.Argument, TLS.WorkerIndex);
                 OnJobComplete(Job.Counter, TLS.WorkerIndex);
 
+                // A job that returns without clearing its guard must not leak it onto the next fiber.
+                GNoParkGuardName  = nullptr;
+                Self->NoParkGuard = nullptr;
+
                 TLS.Pending = FPendingSwitch{ EPending::Free, Self, nullptr, nullptr };
                 Fibers::Switch(TLS.SchedulerFiber);
                 // Resumes here when the scheduler binds a new job to this fiber and switches back in.
@@ -1178,8 +1186,12 @@ namespace Lumina::Jobs
             }
 #endif
             TLS.Pending = FPendingSwitch{ EPending::Park, TLS.CurrentFiber, Counter, &Node };
+            FWorkFiber* Self = TLS.CurrentFiber;
+            Self->NoParkGuard = GNoParkGuardName;
+            GNoParkGuardName  = nullptr;
             Fibers::Switch(TLS.SchedulerFiber);
             // Resumed here once satisfied, possibly on a different worker thread.
+            GNoParkGuardName = TLS.CurrentFiber->NoParkGuard;
             return;
         }
 
@@ -1253,8 +1265,13 @@ namespace Lumina::Jobs
         TLS.Pending.Fiber   = TLS.CurrentFiber;
         TLS.Pending.ParkFn  = OnPark;
         TLS.Pending.ParkCtx = Ctx;
+
+        FWorkFiber* Self = TLS.CurrentFiber;
+        Self->NoParkGuard = GNoParkGuardName;
+        GNoParkGuardName  = nullptr;
         Fibers::Switch(TLS.SchedulerFiber);
         // Resumed here once ResumeFiber was called for us, possibly on a different worker thread.
+        GNoParkGuardName = TLS.CurrentFiber->NoParkGuard;
     }
 
     void ResumeFiber(FFiberHandle Handle)
@@ -1264,6 +1281,11 @@ namespace Lumina::Jobs
             return;
         }
         PushReady(static_cast<FWorkFiber*>(Handle.Fiber));
+    }
+
+    FFiberHandle GetCurrentFiberHandle()
+    {
+        return TLS.bIsWorker ? FFiberHandle{ TLS.CurrentFiber } : FFiberHandle{};
     }
 
     void SetThreadNoParkGuard(const char* GuardName)

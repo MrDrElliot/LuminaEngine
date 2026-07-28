@@ -275,9 +275,13 @@ namespace Lumina
         explicit operator bool() const { return Ptr != 0; }
     };
 
+    // Size is only recorded when the allocation actually landed. Reporting the requested size for a
+    // null pointer makes every later ResizeBufferIfNeeded think the buffer is big enough, so nothing
+    // retries and the GPU writes off a null base.
     inline FSceneBuffer CreateSceneBuffer(uint64 Size)
     {
-        return FSceneBuffer{ RHI::Malloc(Size, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly), Size };
+        const RHI::GPUPtr Ptr = RHI::Malloc(Size, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
+        return FSceneBuffer{ Ptr, Ptr != 0 ? Size : 0 };
     }
 
     struct FShadowAtlasConfig
@@ -662,7 +666,7 @@ namespace Lumina
         FUIntVector4 GridSize;
     };
 
-    // 128B per-instance descriptor. Empty ctor skips zero-init on resize() (parallel writer overwrites everything).
+    // 144B per-instance descriptor. Empty ctor skips zero-init on resize() (parallel writer overwrites everything).
     struct alignas(16) FGPUInstance
     {
         FGPUInstance() noexcept {}
@@ -684,12 +688,19 @@ namespace Lumina
         uint32          BoneOffset;
         uint32          MaterialIndex;
         uint32          EntityID;
-        // Base index into the pre-skinned vertex buffer; the skinning pass writes there, the draw VS
-        // reads instead of re-skinning. 0 for static instances.
+        // Base index into the pre-skinned vertex buffer for this instance's surface-LOD meshlet block;
+        // the skinning pass writes there, the draw VS reads instead of re-skinning. 0 for static
+        // instances, kNoPreSkinBase when the entity lost the pre-skin budget.
         uint32          SkinnedVertexBase;
+        // Same, for the shadow-LOD block. Equal to SkinnedVertexBase when the shadow LOD resolved to
+        // the same block, which is the common case; the two differ only when the LODs diverge.
+        uint32          ShadowSkinnedVertexBase;
+        // Declared, not implied: under scalar layout the shader's array stride comes from the
+        // declared members, so trailing padding has to exist on both sides or the strides diverge.
+        uint32          _Pad[3];
     };
 
-    static_assert(sizeof(FGPUInstance) == 128, "FGPUInstance layout must match shader");
+    static_assert(sizeof(FGPUInstance) == 144, "FGPUInstance layout must match shader");
     VERIFY_SSBO_ALIGNMENT(FGPUInstance)
 
     // One per skinned vertex, produced by the skinning pass and read by every draw VS. Holds the COMPLETE
@@ -705,6 +716,11 @@ namespace Lumina
         uint32      Color;
     };
     static_assert(sizeof(FPreSkinnedVertex) == 28, "FPreSkinnedVertex must match shader");
+
+    // FGPUInstance::SkinnedVertexBase sentinel for "not pre-skinned this frame; blend in the draw
+    // path". Mirrors kNoPreSkinBase in Common.slang. Reserved during merge so a wrapped base
+    // (base = compacted base - span start) can never produce it by accident.
+    constexpr uint32 kNoPreSkinBase = 0xFFFFFFFFu;
 
     // One per rendered-LOD meshlet; drives the skinning compute dispatch (one workgroup each).
     // Flattened from per-entity so every meshlet skins concurrently (no serial meshlet loop).

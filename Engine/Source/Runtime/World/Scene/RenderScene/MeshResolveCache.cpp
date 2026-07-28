@@ -8,7 +8,7 @@
 namespace Lumina
 {
     std::atomic<uint32> FMeshResolveCache::Epoch{1};
-    std::atomic<bool>   FMeshResolveCache::bPendingWork{true};
+    std::atomic<uint32> FMeshResolveCache::PendingGeneration{1};
 
     FMeshResolveCache& FMeshResolveCache::Get()
     {
@@ -76,11 +76,11 @@ namespace Lumina
 
                 if (bSame)
                 {
-                    // Retry until every material finishes compiling.
-                    if (!Candidate.bAllMaterialsReady)
+                    // Retry until the mesh has loaded and every material has finished compiling.
+                    if (!Candidate.bResolved)
                     {
                         ResolveSurfaces(*Entries[Handle], Mesh, Overrides);
-                        if (!Entries[Handle]->bAllMaterialsReady)
+                        if (!Entries[Handle]->bResolved)
                         {
                             MarkPendingWork();
                         }
@@ -102,7 +102,7 @@ namespace Lumina
         }
 
         ResolveSurfaces(Entry, Mesh, Overrides);
-        if (!Entry.bAllMaterialsReady)
+        if (!Entry.bResolved)
         {
             MarkPendingWork();
         }
@@ -113,6 +113,18 @@ namespace Lumina
 
     void FMeshResolveCache::ResolveSurfaces(FResolvedMesh& Out, CMesh* Mesh, const TVector<CMaterialInterface*>& Overrides)
     {
+        // IsValid covers lifetime only, so an asset still in its load phase reaches here. Its properties
+        // are all at defaults, so resolving now would cache an empty entry; leave it unresolved and the
+        // caller re-arms until the data phase lands.
+        if (Mesh->HasAnyFlag(OF_NeedsLoad))
+        {
+            Out.Surfaces.clear();
+            Out.MeshletHeaderAddress = 0;
+            Out.bAllMaterialsReady   = false;
+            Out.bResolved            = false;
+            return;
+        }
+
         const FMeshResource& Resource = Mesh->GetMeshResource();
 
         const FAABB& LocalBounds = Mesh->GetAABB();
@@ -134,6 +146,7 @@ namespace Lumina
 
             R.DrawKey = FDrawKey{ Surface.StartIndex, Surface.IndexCount };
             R.NumLODs = Surface.NumLODs;
+
             for (uint32 LOD = 0; LOD < MAX_MESH_LODS; ++LOD)
             {
                 R.LODMeshletOffset[LOD]  = Surface.LODMeshletOffset[LOD];
@@ -207,6 +220,9 @@ namespace Lumina
                 .bTwoSided    = (bTwoSided    ? 1u : 0u),
             };
         }
+
+        // MeshletHeaderAddress is 0 until the GPU buffers exist, which can lag the property data.
+        Out.bResolved = Out.MeshletHeaderAddress != 0ull && Out.bAllMaterialsReady;
     }
 }
 

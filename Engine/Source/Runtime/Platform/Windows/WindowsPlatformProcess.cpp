@@ -6,8 +6,7 @@
 #include "Paths/Paths.h"
 #include "Platform/Process/PlatformProcess.h"
 // windows.h must be included unconditionally: WIN32_LEAN_AND_MEAN is already defined
-// workspace-wide, so guarding the include on it skipped it entirely and the file only
-// compiled because spdlog's header-only chain leaked windows.h in.
+// workspace-wide, so guarding the include on it would skip it entirely.
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif

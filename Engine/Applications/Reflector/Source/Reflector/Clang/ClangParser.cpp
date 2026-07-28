@@ -1,5 +1,4 @@
 ﻿#include "ClangParser.h"
-#include <spdlog/spdlog.h>
 #include <filesystem>
 #include <fstream>
 #include <clang-c/Index.h>

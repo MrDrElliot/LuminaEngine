@@ -104,6 +104,13 @@ namespace Lumina
             512,
             "Baked instances per task in the foliage gather.");
 
+        static TConsoleVar<int32> CVarMaxPreSkinnedVertices(
+            "r.Skinning.MaxVertices",
+            12 * 1024 * 1024,
+            "Per-frame budget for the GPU pre-skinning buffer, in vertices (28 B each). Skinned entities "
+            "past the budget blend bones in the draw path instead. Without a cap a large skinned crowd "
+            "asks for tens of GB and the skinning compute writes off the end of the allocation.");
+
         // A zero grain would ask for an unbounded task split; floor it.
         FORCEINLINE uint32 ResolveGrain(const TConsoleVar<int32>& CVar)
         {
@@ -1208,8 +1215,19 @@ namespace Lumina
                 Component.CachedLocalRadius          = 0.0f;
                 Component.CachedMeshletHeaderAddress = 0;
                 Component.CachedBaseFlags            = EInstanceFlags::None;
-                // "No mesh" is settled, so stamp it rather than rescanning every frame.
-                Component.CachedEpoch = Epoch;
+
+                // Resolve rejects a mesh that is null AND one that is merely still loading (IsValid is
+                // false while OF_NeedsLoad is set). Only the former is settled. Stamping the epoch for a
+                // loading mesh retires the component permanently: the pre-pass skips it from then on and
+                // the gather drops it on the invalid handle, so it never draws until an epoch bump.
+                if (Mesh == nullptr)
+                {
+                    Component.CachedEpoch = Epoch;
+                }
+                else
+                {
+                    FMeshResolveCache::MarkPendingWork();
+                }
                 return;
             }
 
@@ -1224,7 +1242,7 @@ namespace Lumina
             Component.CachedBaseFlags = BaseFlags;
 
             // Only stamp when final; anything still loading re-arms the scan instead.
-            if (Entry.bAllMaterialsReady && Entry.MeshletHeaderAddress != 0ull)
+            if (Entry.bResolved)
             {
                 Component.CachedEpoch = Epoch;
             }
@@ -1250,12 +1268,18 @@ namespace Lumina
                 }
 
                 TComponent& Component = PackedPayloadAt(Storage, i);
-                if (Component.CachedEpoch == Epoch)
+
+                // The epoch alone is not enough to call a component resolved: the gather refuses to draw
+                // anything whose CachedMeshKey does not match its live mesh, so a mesh swapped after a
+                // successful resolve leaves the two disagreeing. Skipping here would strand it -- the
+                // gather bails every frame and only an epoch bump (loading any other asset) frees it.
+                CMesh* Mesh = GetMesh(Component);
+                if (Component.CachedEpoch == Epoch && Component.CachedMeshKey == (const void*)Mesh)
                 {
                     continue;
                 }
 
-                ResolveMeshComponent(Component, GetMesh(Component), Epoch, SeedFlags, OverrideScratch);
+                ResolveMeshComponent(Component, Mesh, Epoch, SeedFlags, OverrideScratch);
             }
         }
     }
@@ -1263,15 +1287,19 @@ namespace Lumina
     // Serial, game-thread: runs before the parallel gather so workers only read the resolve table.
     void FForwardRenderScene::ResolveDirtyMeshComponents()
     {
-        if (!FMeshResolveCache::HasPendingWork())
+        // Per-scene watermark, not a shared flag: this scene owns one world, and every other world's
+        // scene runs this same pass. Consuming a global flag here starved theirs (see MarkPendingWork).
+        const uint32 PendingGeneration = FMeshResolveCache::GetPendingGeneration();
+        if (PendingGeneration == LastResolvedPendingGeneration)
         {
             return;
         }
 
         LUMINA_PROFILE_SCOPE();
 
-        // Cleared up front; anything that fails to fully resolve below re-marks it.
-        FMeshResolveCache::ClearPendingWork();
+        // Sampled up front; anything that fails to fully resolve below re-marks, pushing the generation
+        // past this value so the next frame runs again.
+        LastResolvedPendingGeneration = PendingGeneration;
 
         FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
         const uint32 Epoch = FMeshResolveCache::GetEpoch();
@@ -1293,7 +1321,8 @@ namespace Lumina
         {
             for (SFoliageType& Type : Foliage.Types)
             {
-                if (Type.CachedEpoch == Epoch)
+                // Same key check as ResolveMeshPool; the foliage gather gates on CachedMeshKey too.
+                if (Type.CachedEpoch == Epoch && Type.CachedMeshKey == (const void*)Type.Mesh.Get())
                 {
                     continue;
                 }
@@ -1307,7 +1336,16 @@ namespace Lumina
                 {
                     Type.CachedMeshletHeaderAddress = 0;
                     Type.CachedBaseFlags            = EInstanceFlags::None;
-                    Type.CachedEpoch                = Epoch;
+
+                    // Same distinction as ResolveMeshComponent: only a null mesh is settled.
+                    if (Type.Mesh.Get() == nullptr)
+                    {
+                        Type.CachedEpoch = Epoch;
+                    }
+                    else
+                    {
+                        FMeshResolveCache::MarkPendingWork();
+                    }
                     continue;
                 }
 
@@ -1315,7 +1353,7 @@ namespace Lumina
                 Type.CachedMeshletHeaderAddress = Entry.MeshletHeaderAddress;
                 Type.CachedBaseFlags = Type.bReceiveShadow ? EInstanceFlags::ReceiveShadow : EInstanceFlags::None;
 
-                if (Entry.bAllMaterialsReady && Entry.MeshletHeaderAddress != 0ull)
+                if (Entry.bResolved)
                 {
                     Type.CachedEpoch = Epoch;
                 }
@@ -2766,11 +2804,11 @@ namespace Lumina
 
     namespace
     {
-        // Skinned meshlet span accumulated across the surface loop; drives the GPU pre-skinning slice.
-        struct FSkinSpanAccum
+        // Running total of the entity's distinct rendered meshlet blocks, accumulated across the
+        // surface loop; drives the GPU pre-skinning slice.
+        struct FSkinSizeAccum
         {
-            uint32 MinMeshlet    = ~0u;
-            uint32 MaxMeshletEnd = 0u;
+            uint32 SliceSize = 0u;
         };
     }
 
@@ -2785,8 +2823,32 @@ namespace Lumina
                                      const FSceneRenderSettings& Settings,
                                      float DistSq,
                                      float RadiusSq,
-                                     FSkinSpanAccum* SkinSpan = nullptr)
+                                     FSkinSizeAccum* SkinSize = nullptr,
+                                     const TVector<FMeshlet>* Meshlets = nullptr)
     {
+        // Block vertex extents come from the live meshlet table, never from anything cached at mesh-resolve
+        // time: a mesh can resolve while its surfaces are populated but the meshlet array is not yet
+        // resident, and a cached zero there silently turns into base 0 -- a valid-looking index into
+        // unwritten pre-skin memory. Contiguous per (surface, LOD) because packing is meshlet-ordered.
+        auto BlockExtent = [Meshlets](uint32 MeshletOffset, uint32 MeshletCount,
+                                      uint32& OutVertexOffset, uint32& OutVertexCount) -> bool
+        {
+            OutVertexOffset = 0u;
+            OutVertexCount  = 0u;
+
+            if (MeshletCount == 0u || Meshlets == nullptr
+                || (SIZE_T)MeshletOffset + MeshletCount > Meshlets->size())
+            {
+                return false;
+            }
+
+            const FMeshlet& First = (*Meshlets)[MeshletOffset];
+            const FMeshlet& Last  = (*Meshlets)[MeshletOffset + MeshletCount - 1u];
+            OutVertexOffset = First.VertexOffset;
+            OutVertexCount  = (Last.VertexOffset + Last.VertexCount) - First.VertexOffset;
+            return OutVertexCount > 0u;
+        };
+
         for (const FResolvedSurface& Surface : Resolved.Surfaces)
         {
             EInstanceFlags Flags = BaseFlags | Surface.MaterialFlags;
@@ -2823,26 +2885,47 @@ namespace Lumina
             Local.LocalBatches[LocalBatchIdx].AccumSkinned(Flags);
             Item._Pad                 = 0;
 
-            if (SkinSpan)
+            // Skinned items start at the sentinel, not 0: anything that fails to get a real slice below
+            // then falls back to the in-draw blend and still renders, instead of silently reading
+            // whatever sits at index 0 of the pre-skin buffer.
+            Item.SurfaceVertexOffset = SkinSize ? kNoPreSkinBase : 0u;
+            Item.SurfaceVertexCount  = 0u;
+            Item.ShadowVertexOffset  = SkinSize ? kNoPreSkinBase : 0u;
+            Item.ShadowVertexCount   = 0u;
+
+            if (SkinSize)
             {
-                if (SurfaceMeshletCount > 0u)
+                // Each rendered (surface, LOD) meshlet block gets its own compacted slice. The shadow
+                // block is free when it resolved to the same LOD, which is the common case.
+                if (BlockExtent(SurfaceMeshletOffset, SurfaceMeshletCount,
+                                Item.SurfaceVertexOffset, Item.SurfaceVertexCount))
                 {
-                    SkinSpan->MinMeshlet    = Math::Min(SkinSpan->MinMeshlet, SurfaceMeshletOffset);
-                    SkinSpan->MaxMeshletEnd = Math::Max(SkinSpan->MaxMeshletEnd, SurfaceMeshletOffset + SurfaceMeshletCount);
+                    SkinSize->SliceSize += Item.SurfaceVertexCount;
                 }
-                if (ShadowMeshletCount > 0u)
+                else
                 {
-                    SkinSpan->MinMeshlet    = Math::Min(SkinSpan->MinMeshlet, ShadowMeshletOffset);
-                    SkinSpan->MaxMeshletEnd = Math::Max(SkinSpan->MaxMeshletEnd, ShadowMeshletOffset + ShadowMeshletCount);
+                    Item.SurfaceVertexOffset = kNoPreSkinBase;
+                }
+
+                // Non-casters never reach a shadow view (the cull gates them on the same flag), so a
+                // shadow slice for one would be written and never read.
+                const bool bNeedsShadowBlock = ShadowMeshletOffset != SurfaceMeshletOffset
+                                            && EnumHasAnyFlags(Flags, EInstanceFlags::CastShadow);
+                if (bNeedsShadowBlock
+                    && BlockExtent(ShadowMeshletOffset, ShadowMeshletCount,
+                                   Item.ShadowVertexOffset, Item.ShadowVertexCount))
+                {
+                    SkinSize->SliceSize += Item.ShadowVertexCount;
+                }
+                else
+                {
+                    Item.ShadowVertexOffset = kNoPreSkinBase;
+                    Item.ShadowVertexCount  = 0u;
                 }
             }
         }
     }
-
-    // Shared front half for rigid (non-skinned) mesh entities: world bounds, coarse cull, entity record,
-    // then the per-surface emit. The static and dynamic components differ only in the mesh field.
-    // GetLiveMeshKey is a callable rather than a value so the derived component's mesh pointer -- which
-    // lives past the first cache line -- is only read once an entity survives culling.
+    
     template <typename TComponent, typename TGetLiveMeshKey>
     static void ProcessRigidMeshEntity(const FForwardRenderScene::FFrameData& Frame,
                                        const FSceneRenderSettings& Settings,
@@ -2915,11 +2998,9 @@ namespace Lumina
         EntityRecord.CustomData           = MeshComponent.CustomPrimitiveData.Data.Packed;
         EntityRecord.EntityID             = entt::to_integral(Entity);
         EntityRecord.LocalBoneOffset      = ~0u;
-        EntityRecord.SkinMeshletStart     = 0u;
-        EntityRecord.SkinMeshletCount     = 0u;
-        EntityRecord.SkinSpanStart        = 0u;
         EntityRecord.SkinSliceSize        = 0u;
         EntityRecord.GlobalSkinnedBase    = 0u;
+        EntityRecord.SkinCursor           = 0u;
 
         EmitSurfaceDrawItems(Local, Resolved, MeshletHeaderAddress, MeshComponent.bCastShadow, BaseFlags,
                              EntityRecordIdx, MeshComponent.ForcedLODIndex, Settings, DistSq, RadiusSq);
@@ -2994,11 +3075,9 @@ namespace Lumina
         EntityRecord.CustomData             = 0u;
         EntityRecord.EntityID               = OwnerEntityID;
         EntityRecord.LocalBoneOffset        = ~0u;
-        EntityRecord.SkinMeshletStart       = 0u;
-        EntityRecord.SkinMeshletCount       = 0u;
-        EntityRecord.SkinSpanStart          = 0u;
         EntityRecord.SkinSliceSize          = 0u;
         EntityRecord.GlobalSkinnedBase      = 0u;
+        EntityRecord.SkinCursor             = 0u;
 
         EmitSurfaceDrawItems(Local, Resolved, MeshletHeaderAddress, Type.bCastShadow, BaseFlags,
                              EntityRecordIdx, /*ForcedLODIndex*/ -1, RenderSettings, DistSq, RadiusSq);
@@ -3130,33 +3209,156 @@ namespace Lumina
         EntityRecord.LocalBoneOffset      = LocalBoneOffset;
         EntityRecord.GlobalSkinnedBase    = 0u;   // resolved during merge
 
-        // Skin-span accumulation folded into the shared surface emit (it already computes the per-surface
-        // offsets/counts the span needs), avoiding a second pass over GeometrySurfaces that re-resolved every LOD.
+        // Skin-slice sizing folded into the shared surface emit (it already resolves the per-surface LOD the
+        // blocks are keyed on), avoiding a second pass over GeometrySurfaces that re-resolved every LOD.
         // Skinned bounds are bind-pose; BoundsScale handles outliers.
-        const bool bAccumulateSkinSpan = (LocalBoneOffset != ~0u && MeshletHeaderAddress != 0ull);
-        FSkinSpanAccum SkinSpan;
+        const bool bAccumulateSkinSize = (LocalBoneOffset != ~0u && MeshletHeaderAddress != 0ull);
+        FSkinSizeAccum SkinSize;
         EmitSurfaceDrawItems(Local, Resolved, MeshletHeaderAddress, MeshComponent.bCastShadow, BaseFlags,
                              EntityRecordIdx, MeshComponent.ForcedLODIndex, RenderSettings, DistSq, RadiusSq,
-                             bAccumulateSkinSpan ? &SkinSpan : nullptr);
+                             bAccumulateSkinSize ? &SkinSize : nullptr,
+                             &Resource.MeshletData.Meshlets);
 
-        // Meshlets are LOD-major so the span is contiguous; GlobalSkinnedBase = compacted base - span start.
-        uint32 SkinSliceSize = 0u;
-        if (bAccumulateSkinSpan && SkinSpan.MaxMeshletEnd > SkinSpan.MinMeshlet)
+        EntityRecord.SkinSliceSize = SkinSize.SliceSize;
+    }
+
+    // Hands out compacted pre-skin slices under the r.Skinning.MaxVertices budget, biggest-on-screen
+    // first. Entities that do not fit keep kNoPreSkinBase and blend bones in the draw path instead.
+    // Without the budget the demand is the sum over every CPU-visible skinned entity's meshlet span,
+    // which a large crowd drives into the tens of GB -- past what the allocation can back, so the
+    // skinning compute writes off the end of the buffer.
+    void FForwardRenderScene::AssignPreSkinSlices(FFrameData& Frame,
+                                                  TVector<FSkinCandidate>& Candidates,
+                                                  TVector<FThreadLocalDrawData>& ThreadLocal)
+    {
+        if (Candidates.empty())
         {
-            const TVector<FMeshlet>& Meshlets = Resource.MeshletData.Meshlets;
-            const FMeshlet& First = Meshlets[SkinSpan.MinMeshlet];
-            const FMeshlet& Last  = Meshlets[SkinSpan.MaxMeshletEnd - 1u];
-            EntityRecord.SkinMeshletStart = SkinSpan.MinMeshlet;
-            EntityRecord.SkinMeshletCount = SkinSpan.MaxMeshletEnd - SkinSpan.MinMeshlet;
-            EntityRecord.SkinSpanStart    = First.VertexOffset;
-            SkinSliceSize                 = (Last.VertexOffset + Last.VertexCount) - First.VertexOffset;
+            return;
         }
-        EntityRecord.SkinSliceSize = SkinSliceSize;
-        if (SkinSliceSize == 0u)
+
+        LUMINA_PROFILE_SECTION("Assign Pre-Skin Slices");
+
+        const uint32 Budget = (uint32)Math::Max(0, CVarMaxPreSkinnedVertices.GetValue());
+
+        uint64 TotalDemand = 0;
+        for (const FSkinCandidate& Candidate : Candidates)
         {
-            EntityRecord.SkinMeshletStart = 0u;
-            EntityRecord.SkinMeshletCount = 0u;
-            EntityRecord.SkinSpanStart    = 0u;
+            TotalDemand += Candidate.Record->SkinSliceSize;
+        }
+
+        // Ranking only matters once someone has to lose; the common case keeps merge order.
+        if (TotalDemand > Budget)
+        {
+            eastl::sort(Candidates.begin(), Candidates.end(),
+                        [](const FSkinCandidate& A, const FSkinCandidate& B) { return A.Priority > B.Priority; });
+        }
+
+        // Grant whole entities, largest on screen first, so one is never half pre-skinned.
+        uint32 Total       = Frame.Geometry.TotalPreSkinnedVertices;
+        uint32 NumDeferred = 0;
+
+        for (const FSkinCandidate& Candidate : Candidates)
+        {
+            FEntityRecord& Rec = *Candidate.Record;
+
+            if ((uint64)Total + Rec.SkinSliceSize > Budget)
+            {
+                Rec.GlobalSkinnedBase = kNoPreSkinBase;
+                Rec.SkinCursor        = kNoPreSkinBase;
+                ++NumDeferred;
+                continue;
+            }
+
+            Rec.GlobalSkinnedBase = Total;
+            Rec.SkinCursor        = Total;
+            Total                += Rec.SkinSliceSize;
+        }
+
+        Frame.Geometry.TotalPreSkinnedVertices = Total;
+
+        // Sub-allocate each granted entity's blocks and emit their descriptors. Serial because the
+        // descriptor list and the per-entity cursor are shared; the walk order only has to be stable,
+        // not meaningful. Resolved block bases are written back over the item's *VertexOffset fields.
+        for (FThreadLocalDrawData& Local : ThreadLocal)
+        {
+            if (Local.BonesData.IsEmpty())
+            {
+                continue;
+            }
+
+            for (FProcessedDrawItem& Item : Local.Items)
+            {
+                FEntityRecord& Rec = Local.EntityRecords[Item.EntityRecordIndex];
+                if (Rec.LocalBoneOffset == ~0u || Rec.SkinSliceSize == 0u)
+                {
+                    continue;
+                }
+
+                if (Rec.GlobalSkinnedBase == kNoPreSkinBase)
+                {
+                    Item.SurfaceVertexOffset = kNoPreSkinBase;
+                    Item.ShadowVertexOffset  = kNoPreSkinBase;
+                    continue;
+                }
+
+                // A block's base folds in its vertex-span start so Base + M.VertexOffset lands inside
+                // the compacted slice (unsigned wrap; every meshlet in the block is at or past it).
+                auto AllocateBlock = [&](uint32 VertexOffset, uint32 VertexCount,
+                                         uint32 MeshletOffset, uint32 MeshletCount) -> uint32
+                {
+                    const uint32 Base = Rec.SkinCursor - VertexOffset;
+                    Rec.SkinCursor   += VertexCount;
+
+                    // One descriptor per meshlet -> the dispatch runs one workgroup per meshlet,
+                    // so meshlets skin concurrently instead of looping serially within one group.
+                    const uint32 MeshletEnd = MeshletOffset + MeshletCount;
+                    for (uint32 m = MeshletOffset; m < MeshletEnd; ++m)
+                    {
+                        FSkinDescriptor& Desc     = Frame.Geometry.SkinDescriptors.emplace_back();
+                        Desc.MeshletHeaderAddress = Rec.MeshletHeaderAddress;
+                        Desc.BoneOffset           = Rec.SkinBoneOffset;
+                        Desc.SkinnedVertexBase    = Base;
+                        Desc.MeshletIndex         = m;
+                        Desc.Pad                  = 0u;
+                    }
+                    return Base;
+                };
+
+                const uint32 SurfaceBase = Item.SurfaceVertexCount > 0u
+                    ? AllocateBlock(Item.SurfaceVertexOffset, Item.SurfaceVertexCount,
+                                    Item.SurfaceMeshletOffset, Item.SurfaceMeshletCount)
+                    : kNoPreSkinBase;
+
+                uint32 ShadowBase;
+                if (Item.ShadowVertexCount > 0u)
+                {
+                    ShadowBase = AllocateBlock(Item.ShadowVertexOffset, Item.ShadowVertexCount,
+                                               Item.ShadowMeshletOffset, Item.ShadowMeshletCount);
+                }
+                else if (Item.ShadowMeshletOffset == Item.SurfaceMeshletOffset)
+                {
+                    // Shadow LOD resolved to the surface block; same vertices, same base.
+                    ShadowBase = SurfaceBase;
+                }
+                else
+                {
+                    ShadowBase = kNoPreSkinBase;
+                }
+
+                Item.SurfaceVertexOffset = SurfaceBase;
+                Item.ShadowVertexOffset  = ShadowBase;
+            }
+        }
+
+        if (NumDeferred != LastPreSkinDeferredCount)
+        {
+            LastPreSkinDeferredCount = NumDeferred;
+            if (NumDeferred > 0)
+            {
+                LOG_WARN("Skinning: {} of {} skinned entities exceed the {}-vertex pre-skin budget and fall back to "
+                         "in-draw skinning. Raise r.Skinning.MaxVertices or reduce the visible skinned set.",
+                         NumDeferred, Candidates.size(), Budget);
+            }
         }
     }
 
@@ -3181,6 +3383,11 @@ namespace Lumina
         // Persistent member; assign keeps capacity across frames.
         TVector<uint32>& ThreadBoneBase = MergeThreadBoneBase;
         ThreadBoneBase.assign(NumThreads, 0u);
+
+        TVector<FSkinCandidate>& SkinCandidates = MergeSkinCandidates;
+        SkinCandidates.clear();
+        const FVector3 CameraPos = FVector3(Frame.SceneGlobalData.CameraData.Location);
+
         uint32 TotalInstances = 0;
         uint64 TotalInstancesCulled = 0;
         for (uint32 t = 0; t < NumThreads; ++t)
@@ -3201,35 +3408,29 @@ namespace Lumina
                 BonesData.insert(BonesData.end(), Page.begin(), Page.end());
             }
 
+            // Bases are not assigned here: the pre-skin buffer is budgeted, so which entities get a
+            // slice depends on all of them. Collect now, rank and hand out slices after the bone pass.
             for (FEntityRecord& Rec : Local.EntityRecords)
             {
                 if (Rec.LocalBoneOffset == ~0u || Rec.SkinSliceSize == 0u)
                 {
                     continue;
                 }
-                // Combined base folds in the span start so SkinnedVertexBase + M.VertexOffset
-                // lands in the compacted slice (unsigned wrap; rendered M.VertexOffset >= span start).
-                const uint32 CompactedBase = Frame.Geometry.TotalPreSkinnedVertices;
-                Rec.GlobalSkinnedBase      = CompactedBase - Rec.SkinSpanStart;
 
-                // One descriptor per meshlet -> the dispatch runs one workgroup per meshlet,
-                // so meshlets skin concurrently instead of looping serially within one group.
-                const uint32 BoneOffset = ThreadBoneBase[t] + Rec.LocalBoneOffset;
-                const uint32 MeshletEnd = Rec.SkinMeshletStart + Rec.SkinMeshletCount;
-                for (uint32 m = Rec.SkinMeshletStart; m < MeshletEnd; ++m)
-                {
-                    FSkinDescriptor& Desc     = Frame.Geometry.SkinDescriptors.emplace_back();
-                    Desc.MeshletHeaderAddress = Rec.MeshletHeaderAddress;
-                    Desc.BoneOffset           = BoneOffset;
-                    Desc.SkinnedVertexBase    = Rec.GlobalSkinnedBase;
-                    Desc.MeshletIndex         = m;
-                    Desc.Pad                  = 0u;
-                }
+                Rec.SkinBoneOffset = ThreadBoneBase[t] + Rec.LocalBoneOffset;
 
-                Frame.Geometry.TotalPreSkinnedVertices += Rec.SkinSliceSize;
+                const FVector3 ToCamera = FVector3(Rec.SphereBounds) - CameraPos;
+                const float    DistSq   = Math::Dot(ToCamera, ToCamera);
+                const float    RadiusSq = Rec.SphereBounds.w * Rec.SphereBounds.w;
+
+                FSkinCandidate& Candidate = SkinCandidates.emplace_back();
+                Candidate.Record   = &Rec;
+                Candidate.Priority = RadiusSq / Math::Max(DistSq, 1e-4f);
             }
         }
         FrameStats.NumInstancesCulled += TotalInstancesCulled;
+
+        AssignPreSkinSlices(Frame, SkinCandidates, ThreadLocal);
 
         if (TotalInstances == 0)
         {
@@ -3523,7 +3724,9 @@ namespace Lumina
                         Out.BoneOffset                 = GlobalBoneOffset;
                         Out.MaterialIndex              = Item.MaterialIndex;
                         Out.EntityID                   = Entity.EntityID;
-                        Out.SkinnedVertexBase          = Entity.GlobalSkinnedBase;
+                        // Per-block bases, resolved in AssignPreSkinSlices and stashed on the item.
+                        Out.SkinnedVertexBase          = Item.SurfaceVertexOffset;
+                        Out.ShadowSkinnedVertexBase    = Item.ShadowVertexOffset;
                     }
                 }
             };
@@ -4978,7 +5181,13 @@ namespace Lumina
 
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(SkinShader));
 
-        struct FSkinningPushConstants { uint32 DescriptorCount; } PC{ DescriptorCount };
+        // Capacity comes from the allocation, not from the demand that sized it: if the allocation
+        // came back short (or failed outright) the shader drops those stores instead of faulting.
+        const uint32 VertexCapacity = (uint32)Math::Min<uint64>(
+            GetPreSkinnedVerticesBuffer().GetSize() / sizeof(FPreSkinnedVertex), 0xFFFFFFFFull);
+
+        struct FSkinningPushConstants { uint32 DescriptorCount; uint32 VertexCapacity; }
+        PC{ DescriptorCount, VertexCapacity };
 
         // One workgroup per skinned entity; fold across X/Y past the 65535 per-axis cap.
         constexpr uint32 MaxDispatchAxis = 65535u;
@@ -10060,6 +10269,14 @@ namespace Lumina
             }
             Buffer = CreateSceneBuffer((uint64)((double)NeededSize * SlackFactor));
             LowUsageCounter = 0;
+
+            // Buffer.Size stays 0 on failure so the next frame retries rather than trusting a
+            // capacity that was never backed. Passes read GetSize() and clamp accordingly.
+            if (!Buffer)
+            {
+                LOG_ERROR("RenderScene: scene buffer allocation of {} MiB failed; the pass using it will run degraded this frame.",
+                          NeededSize / (1024ull * 1024ull));
+            }
             return;
         }
 

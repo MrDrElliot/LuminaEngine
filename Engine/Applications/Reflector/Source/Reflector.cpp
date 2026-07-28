@@ -8,7 +8,7 @@
 #include "Reflector/Clang/ClangParser.h"
 #include "Reflector/CodeGeneration/CodeGenerator.h"
 #include "Reflector/ReflectionCore/ReflectedProject.h"
-#include <spdlog/spdlog.h>
+#include <cstdio>
 
 
 using json = nlohmann::json;
@@ -18,9 +18,9 @@ int main(int argc, char* argv[])
 {    
     Lumina::FStringHash::Initialize();
     
-    spdlog::info("===============================================");
-    spdlog::info("======== Lumina Reflection Tool (LRT) =========");
-    spdlog::info("===============================================");
+    std::puts("===============================================");
+    std::puts("======== Lumina Reflection Tool (LRT) =========");
+    std::puts("===============================================");
     
 #if 0
     

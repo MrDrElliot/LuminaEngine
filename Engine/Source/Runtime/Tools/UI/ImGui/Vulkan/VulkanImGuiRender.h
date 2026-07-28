@@ -42,10 +42,11 @@ namespace Lumina
         void RecordDrawData_NewRHI(RHI::FCmdListH CL, ImDrawData* DrawData, RHI::FTextureH Target, const FUIntVector2& Extent);
 
         // Multi-viewport window-lifecycle hooks (ImGuiPlatformIO::Renderer_*), game thread, run from
-        // ImGui::UpdatePlatformWindows. CreateWindow records the window; the swapchain itself is created
-        // lazily on the render thread (the new RHI pools swapchains, so creating one off-thread could
-        // realloc the pool under the render thread). DestroyWindow drains the GPU and tears it down here
-        // because ImGui kills the GLFW surface immediately after.
+        // ImGui::UpdatePlatformWindows. CreateWindow records the window and creates its window-system
+        // surface (GLFW window calls are main-thread only); the swapchain itself is built lazily on the
+        // render thread, which pools swapchains and so must own that allocation. DestroyWindow drains
+        // the render thread and the GPU and tears everything down here, because ImGui destroys the GLFW
+        // window immediately after it returns.
         static void OnRendererCreateWindow(ImGuiViewport* Viewport);
         static void OnRendererDestroyWindow(ImGuiViewport* Viewport);
 
@@ -53,6 +54,9 @@ namespace Lumina
         struct FImGuiViewportData
         {
             void*            Window = nullptr;       // GLFWwindow*
+            // Created on the game thread alongside the window (GLFW window calls are main-thread only)
+            // and consumed by the render thread when it builds the swapchain.
+            RHI::FSurfaceH   Surface;
             RHI::FSwapchainH Swapchain;              // created lazily on the render thread
             FUIntVector2     BuiltExtent{0, 0};      // extent the swapchain was last built for
         };

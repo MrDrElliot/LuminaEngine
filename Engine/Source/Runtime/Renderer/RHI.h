@@ -31,6 +31,7 @@ namespace Lumina::RHI
     struct FCommandList;
     struct FDepthStencilState;
     struct FSwapchain;
+    struct FSurface;
 
     using GPUPtr            = uint64;
     using FPipelineH        = THandle<FPipeline>;
@@ -40,6 +41,7 @@ namespace Lumina::RHI
     using FDepthStencilH    = THandle<FDepthStencilState>;
     using FCmdListH         = THandle<FCommandList>;
     using FSwapchainH       = THandle<FSwapchain>;
+    using FSurfaceH         = THandle<FSurface>;
     using FDevice           = struct FDeviceImpl*;
     
     // @TODO Setup all platform agnostic dispatches
@@ -491,8 +493,14 @@ namespace Lumina::RHI
     RUNTIME_API void        FreeH(FTextureHeapH Heap);
     RUNTIME_API void        FreeH(FDepthStencilH DepthStencil);
     RUNTIME_API void        FreeH(FSwapchainH Swapchain);
+    RUNTIME_API void        FreeH(FSurfaceH Surface);
 
-    RUNTIME_API FSwapchainH  CreateSwapchain(void* WindowHandle, const FUIntVector2& Extent);
+    // Window-system surface. MUST be created on the thread that owns the window (GLFW's window calls
+    // are main-thread only), then handed to the render thread to build a swapchain on. CreateSwapchain
+    // consumes the handle and takes ownership of the surface; FreeH is for a surface whose window died
+    // before a swapchain was ever built.
+    RUNTIME_API FSurfaceH    CreateSurface(void* WindowHandle);
+    RUNTIME_API FSwapchainH  CreateSwapchain(FSurfaceH Surface, const FUIntVector2& Extent);
     RUNTIME_API void         RecreateSwapchain(FSwapchainH Swapchain, const FUIntVector2& Extent);
     
     RUNTIME_API void         SetVSync(bool bEnabled);

@@ -101,12 +101,8 @@ FVertexData LoadStaticVertex(FMeshletHeader* Header, FMeshlet M, uint VertexLoca
     return Data;
 }
 
-// Skinned reads come entirely from the pre-skinned buffer (Skinning.slang did the blend this frame)
-// -- a single structured load like the static path, no per-pass skinning.
-FVertexData LoadSkinnedVertex(FMeshlet M, uint VertexLocalIdx, uint SkinnedVertexBase)
+FVertexData DecodePreSkinnedVertex(FPreSkinnedVertex S)
 {
-    FPreSkinnedVertex S = PreSkinnedVertices()[SkinnedVertexBase + M.VertexOffset + VertexLocalIdx];
-
     FVertexData Data;
     Data.Position = float3(S.Px, S.Py, S.Pz);
     Data.Normal   = UnpackNormal(S.Normal);
@@ -114,6 +110,13 @@ FVertexData LoadSkinnedVertex(FMeshlet M, uint VertexLocalIdx, uint SkinnedVerte
     Data.UV       = UnpackUV(S.UV);
     Data.Color    = UnpackColor(S.Color);
     return Data;
+}
+
+// Skinned reads come entirely from the pre-skinned buffer (Skinning.slang did the blend this frame)
+// -- a single structured load like the static path, no per-pass skinning.
+FVertexData LoadSkinnedVertex(FMeshlet M, uint VertexLocalIdx, uint SkinnedVertexBase)
+{
+    return DecodePreSkinnedVertex(PreSkinnedVertices()[SkinnedVertexBase + M.VertexOffset + VertexLocalIdx]);
 }
 
 float3 LoadStaticPosition(FMeshletHeader* Header, FMeshlet M, uint VertexLocalIdx)

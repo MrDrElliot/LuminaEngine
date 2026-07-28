@@ -85,9 +85,6 @@ end
 -- Foundation: headers the engine's public API exposes pervasively; linkable ones are linked by whichever module references their symbols.
 LuminaThirdParty.Register({ Name = "EA",            IncludeDirs = { "EA/EASTL/include", "EA/EABase/include/Common" } })
 LuminaThirdParty.Register({ Name = "Entt",          IncludeDirs = { "entt" },               Link = false })
--- SPDLOG_COMPILED_LIB must be public: without it spdlog's headers switch to header-only
--- and every dependent TU re-parses fmt's format-inl.h (~0.8s each).
-LuminaThirdParty.Register({ Name = "SPDLog",        IncludeDirs = { "spdlog/include" },     Defines = { "SPDLOG_COMPILED_LIB" } })
 LuminaThirdParty.Register({ Name = "NlohmannJson",  IncludeDirs = { "json" },               Link = false })
 LuminaThirdParty.Register({ Name = "StbImage",      IncludeDirs = { "stb_image" },          Link = false })
 LuminaThirdParty.Register({ Name = "RenderDoc",     IncludeDirs = { "RenderDoc" },          Link = false })
@@ -142,7 +139,7 @@ LuminaThirdParty.Register({ Name = "FastGLTF",      IncludeDirs = { "fastgltf/in
 -- Everything Runtime links or exposes through its public headers.
 LuminaThirdParty.RuntimePublicDeps =
 {
-    "EA", "Entt", "SPDLog", "NlohmannJson", "StbImage", "RenderDoc",
+    "EA", "Entt", "NlohmannJson", "StbImage", "RenderDoc",
     "ConcurrentQueue", "RPMalloc", "XXHash", "Miniz", "Tracy",
     "GLFW", "ImGui", "FreeType", "RmlUi",
     "Vulkan", "Volk", "VMA", "SLang",

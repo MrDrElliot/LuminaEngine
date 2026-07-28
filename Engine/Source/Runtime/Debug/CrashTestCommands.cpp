@@ -12,7 +12,7 @@ namespace Lumina
         []()
         {
             LOG_CRITICAL("crash.cpu: triggering deliberate CPU access violation");
-            Logging::GetLogger()->flush();
+            Logging::Flush();
 
             volatile int* Null = nullptr;
             *Null = 0xDEADBEEF;
@@ -24,7 +24,7 @@ namespace Lumina
         []()
         {
             LOG_CRITICAL("crash.gpu: invoking HandleDeviceLost() to exercise GPU crash pipeline");
-            Logging::GetLogger()->flush();
+            Logging::Flush();
 
             RHI::HandleDeviceLost();
         });

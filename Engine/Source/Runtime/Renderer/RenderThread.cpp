@@ -5,6 +5,7 @@
 #include "Core/Diagnostics/HangWatchdog.h"
 #include "Core/Profiler/Profile.h"
 #include "Core/Templates/LuminaTemplate.h"
+#include "Core/Threading/Thread.h"
 #include "Log/Log.h"
 #include "TaskSystem/TaskSystem.h"
 #include "TaskSystem/Scheduler/JobScheduler.h"
@@ -16,14 +17,25 @@ namespace Lumina
 {
     RUNTIME_API FRenderThread* GRenderThread = nullptr;
 
-    // True while the calling worker is running the render drain (and therefore a render command). The
-    // drain is serial and does not yield to the scheduler, so it never migrates off its worker, a
-    // thread_local is correct. See FRenderThread::IsInRenderStage().
-    static thread_local bool GbInRenderDrain = false;
+    // Identity of the execution context currently inside DrainLoop, published while it drains. Keyed on
+    // the FIBER (not the thread): a render command that parks -- which it must not, but the no-park
+    // guard is only a tripwire -- resumes on a different worker, and a thread_local flag would then
+    // both follow the wrong thread and answer true for whatever unrelated fiber inherited it. That
+    // false positive is silent and severe: IsInRenderStage() gates EnqueueAndWait/Flush, so an
+    // unrelated fiber would run render commands inline, concurrently with the real drain, and skip the
+    // flushes that keep GPU resources alive (see FVulkanImGuiRender::OnRendererDestroyWindow).
+    // External (non-fiber) drainers -- the assist path off the main thread -- key on thread id instead.
+    static TAtomic<void*>  GDrainOwnerFiber  = nullptr;
+    static TAtomic<uint64> GDrainOwnerThread = 0;
 
     bool FRenderThread::IsInRenderStage()
     {
-        return GbInRenderDrain;
+        if (const Jobs::FFiberHandle Fiber = Jobs::GetCurrentFiberHandle())
+        {
+            return GDrainOwnerFiber.load(Atomic::MemoryOrderAcquire) == Fiber.Fiber;
+        }
+        const uint64 ThisThread = Threading::GetThreadID();
+        return ThisThread != 0 && GDrainOwnerThread.load(Atomic::MemoryOrderAcquire) == ThisThread;
     }
 
     FRenderThread& FRenderThread::Get()
@@ -105,7 +117,9 @@ namespace Lumina
         bool Expected = false;
         if (bDrainJobArmed.compare_exchange_strong(Expected, true, Atomic::MemoryOrderAcqRel))
         {
-            Jobs::RunJob(&FRenderThread::DrainEntry, this, Jobs::EJobPriority::High, DrainCounter, "RenderFrame");
+            // Named distinctly from the RenderFrame render command so a no-park report can tell the
+            // drain fiber apart from the command it was running.
+            Jobs::RunJob(&FRenderThread::DrainEntry, this, Jobs::EJobPriority::High, DrainCounter, "RenderDrain");
         }
     }
 
@@ -206,9 +220,17 @@ namespace Lumina
     // Callers must own bDrainRunning (won the CAS); DrainLoop releases it on exit.
     void FRenderThread::DrainLoop()
     {
-        GbInRenderDrain = true;
-        // Tripwire: render commands must never fiber-park (the drain is serial; a park strands every
-        // Flush waiter, and the fiber can resume on another thread, breaking GbInRenderDrain).
+        const Jobs::FFiberHandle SelfFiber = Jobs::GetCurrentFiberHandle();
+        const uint64             SelfThread = Threading::GetThreadID();
+
+        // Nested drains are impossible (bDrainRunning admits exactly one), so a plain store is enough;
+        // the previous owner is always null.
+        GDrainOwnerFiber.store(SelfFiber.Fiber, Atomic::MemoryOrderRelease);
+        GDrainOwnerThread.store(SelfFiber ? 0 : SelfThread, Atomic::MemoryOrderRelease);
+
+        // Tripwire: render commands must never fiber-park (the drain is serial, so a park strands every
+        // Flush waiter until the wait resolves). RunCommand narrows the guard name to the command that
+        // is actually running, so a violation names the offender rather than just "the drain".
         Jobs::SetThreadNoParkGuard("render drain");
 
         TVector<FQueuedCommand> Batch;
@@ -254,7 +276,8 @@ namespace Lumina
         }
 
         Jobs::SetThreadNoParkGuard(nullptr);
-        GbInRenderDrain = false;
+        GDrainOwnerFiber.store(nullptr, Atomic::MemoryOrderRelease);
+        GDrainOwnerThread.store(0, Atomic::MemoryOrderRelease);
     }
 
     void FRenderThread::RunCommand(const char* DebugName, FCommand& Cmd)
@@ -262,7 +285,22 @@ namespace Lumina
         LUMINA_PROFILE_SCOPE_COLORED(tracy::Color::SteelBlue);
         LUMINA_PROFILE_TAG(DebugName);
         ActiveCommandName.store(DebugName, Atomic::MemoryOrderRelease);
+
+        // Point the no-park guard at this command while it runs, so a park inside it is reported by
+        // name. Inline runs (boot / shutdown / re-entrant) have no guard set and must not gain one.
+        const bool bGuarded = IsInRenderStage();
+        if (bGuarded)
+        {
+            Jobs::SetThreadNoParkGuard(DebugName);
+        }
+
         Cmd();
+
+        if (bGuarded)
+        {
+            Jobs::SetThreadNoParkGuard("render drain");
+        }
+
         ActiveCommandName.store(nullptr, Atomic::MemoryOrderRelease);
     }
 

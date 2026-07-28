@@ -1,7 +1,5 @@
 ﻿#pragma once
 #include "EditorTool.h"
-// Names spdlog::level enumerators in its filter/switch code, so it needs the full enum, not just
-// LogMessage.h's forward declaration.
 #include "Log/Log.h"
 
 namespace Lumina
@@ -29,12 +27,12 @@ namespace Lumina
         {
             switch (Entry.Level)
             {
-                case spdlog::level::trace:    if (!bShowTrace) return false; break;
-                case spdlog::level::debug:    if (!bShowDebug) return false; break;
-                case spdlog::level::info:     if (!bShowInfo) return false; break;
-                case spdlog::level::warn:     if (!bShowWarning) return false; break;
-                case spdlog::level::err:      if (!bShowError) return false; break;
-                case spdlog::level::critical: if (!bShowCritical) return false; break;
+                case ELogLevel::Trace:    if (!bShowTrace) return false; break;
+                case ELogLevel::Debug:    if (!bShowDebug) return false; break;
+                case ELogLevel::Info:     if (!bShowInfo) return false; break;
+                case ELogLevel::Warn:     if (!bShowWarning) return false; break;
+                case ELogLevel::Error:      if (!bShowError) return false; break;
+                case ELogLevel::Critical: if (!bShowCritical) return false; break;
                 default: break;
             }
 
@@ -98,9 +96,9 @@ namespace Lumina
         static int InputTextCallbackStub(ImGuiInputTextCallbackData* Data);
         int InputTextCallback(ImGuiInputTextCallbackData* Data);
 
-        const char* GetLevelIcon(spdlog::level::level_enum Level) const;
-        const char* GetLevelLabel(spdlog::level::level_enum Level) const;
-        static ImVec4 GetColorForLevel(spdlog::level::level_enum Level);
+        const char* GetLevelIcon(ELogLevel Level) const;
+        const char* GetLevelLabel(ELogLevel Level) const;
+        static ImVec4 GetColorForLevel(ELogLevel Level);
 
         size_t PreviousMessageSize = 0;
         TDeque<FString> CommandHistory;

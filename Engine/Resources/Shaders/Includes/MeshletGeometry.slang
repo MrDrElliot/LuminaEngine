@@ -25,6 +25,9 @@ struct FMeshletRef
     FMeshlet        M;
     uint            InstanceID;
     uint            GlobalMeshletIdx;
+    // Pre-skin base for the block this ref resolved into. Surface and shadow LODs get separate
+    // compacted slices, so the base has to be picked alongside the meshlet range, not at load time.
+    uint            SkinnedVertexBase;
 };
 
 // bShadow selects the instance's shadow meshlet range instead of the surface (base/depth) range.
@@ -36,9 +39,10 @@ FMeshletRef ResolveMeshlet(uint MeshletSlot, bool bShadow)
     Ref.Inst       = GetInstance(Draw.InstanceID);
     Ref.InstanceID = Draw.InstanceID;
 
-    uint BaseOffset      = bShadow ? Ref.Inst.ShadowMeshletOffset : Ref.Inst.SurfaceMeshletOffset;
-    Ref.GlobalMeshletIdx = BaseOffset + Draw.MeshletLocalIndex;
-    Ref.M                = Ref.Inst.MeshletHeader.Meshlets[Ref.GlobalMeshletIdx];
+    uint BaseOffset          = bShadow ? Ref.Inst.ShadowMeshletOffset : Ref.Inst.SurfaceMeshletOffset;
+    Ref.SkinnedVertexBase    = bShadow ? Ref.Inst.ShadowSkinnedVertexBase : Ref.Inst.SkinnedVertexBase;
+    Ref.GlobalMeshletIdx     = BaseOffset + Draw.MeshletLocalIndex;
+    Ref.M                    = Ref.Inst.MeshletHeader.Meshlets[Ref.GlobalMeshletIdx];
     return Ref;
 }
 
@@ -62,7 +66,13 @@ FVertexData LoadMeshletVertexData(FMeshletRef Ref, uint LocalVertIdx)
 
     if (bSkinned)
     {
-        return LoadSkinnedVertex(Ref.M, LocalVertIdx, Ref.Inst.SkinnedVertexBase);
+        // Entities the pre-skin budget could not cover blend here instead. Costs the blend per
+        // pass rather than once per frame, which is the point: it is the overflow path.
+        if (Ref.SkinnedVertexBase == kNoPreSkinBase)
+        {
+            return DecodePreSkinnedVertex(SkinVertex(Ref.Inst.MeshletHeader, Ref.M, LocalVertIdx, Ref.Inst.BoneOffset));
+        }
+        return LoadSkinnedVertex(Ref.M, LocalVertIdx, Ref.SkinnedVertexBase);
     }
     return LoadStaticVertex(Ref.Inst.MeshletHeader, Ref.M, LocalVertIdx);
 }
