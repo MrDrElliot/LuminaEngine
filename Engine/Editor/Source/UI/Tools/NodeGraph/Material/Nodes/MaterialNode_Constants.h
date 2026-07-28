@@ -35,8 +35,8 @@ namespace Lumina
 
         CMaterialExpression_ConstantFloat() { ValueType = EMaterialInputType::Float; }
 
-        FString GetNodeDisplayName() const override { return "Float"; }
-        FString GetNodeTooltip() const override { return "Scalar constant. Right-click to expose as a runtime parameter."; }
+        FStringView GetNodeDisplayName() const override { return "Float"; }
+        FStringView GetNodeTooltip() const override { return "Scalar constant. Right-click to expose as a runtime parameter."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
         void DrawNodeBody() override;
     };
@@ -49,8 +49,8 @@ namespace Lumina
 
         CMaterialExpression_ConstantFloat2() { ValueType = EMaterialInputType::Float2; }
 
-        FString GetNodeDisplayName() const override { return "Float2"; }
-        FString GetNodeTooltip() const override { return "Two-component constant (X, Y). Right-click to expose as a runtime parameter."; }
+        FStringView GetNodeDisplayName() const override { return "Float2"; }
+        FStringView GetNodeTooltip() const override { return "Two-component constant (X, Y). Right-click to expose as a runtime parameter."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
         void DrawNodeBody() override;
     };
@@ -63,8 +63,8 @@ namespace Lumina
 
         CMaterialExpression_ConstantFloat3() { ValueType = EMaterialInputType::Float3; }
 
-        FString GetNodeDisplayName() const override { return "Float3"; }
-        FString GetNodeTooltip() const override { return "Three-component constant (R, G, B). Right-click to expose as a runtime parameter."; }
+        FStringView GetNodeDisplayName() const override { return "Float3"; }
+        FStringView GetNodeTooltip() const override { return "Three-component constant (R, G, B). Right-click to expose as a runtime parameter."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
         void DrawNodeBody() override;
     };
@@ -77,8 +77,8 @@ namespace Lumina
 
         CMaterialExpression_ConstantFloat4() { ValueType = EMaterialInputType::Float4; }
 
-        FString GetNodeDisplayName() const override { return "Float4"; }
-        FString GetNodeTooltip() const override { return "Four-component constant (R, G, B, A). Right-click to expose as a runtime parameter."; }
+        FStringView GetNodeDisplayName() const override { return "Float4"; }
+        FStringView GetNodeTooltip() const override { return "Four-component constant (R, G, B, A). Right-click to expose as a runtime parameter."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
         void DrawNodeBody() override;
     };
@@ -105,8 +105,8 @@ namespace Lumina
     public:
 
         FFixedString GetNodeCategory() const override { return "Constants"; }
-        FString GetNodeDisplayName() const override;
-        FString GetNodeTooltip() const override { return "Built-in mathematical constant (Pi, Tau, Half-Pi, e, etc)."; }
+        FStringView GetNodeDisplayName() const override;
+        FStringView GetNodeTooltip() const override { return "Built-in mathematical constant (Pi, Tau, Half-Pi, e, etc)."; }
         void BuildNode() override;
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
 

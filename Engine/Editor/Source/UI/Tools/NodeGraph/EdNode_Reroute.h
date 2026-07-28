@@ -24,9 +24,9 @@ namespace Lumina
         bool WantsTitlebar() const override { return false; }
         bool IsRerouteNode() const override { return true; }
 
-        FString GetNodeDisplayName() const override { return "Reroute"; }
+        FStringView GetNodeDisplayName() const override { return "Reroute"; }
         FFixedString GetNodeCategory() const override { return "Utility"; }
-        FString GetNodeTooltip() const override { return "Reroute -- visual wire passthrough."; }
+        FStringView GetNodeTooltip() const override { return "Reroute -- visual wire passthrough."; }
 
         ImVec2 GetMinNodeBodySize() const override { return ImVec2(0, 0); }
         ImVec2 GetMinNodeTitleBarSize() const override { return ImVec2(0, 0); }

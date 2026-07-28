@@ -13,8 +13,8 @@ namespace Lumina
         
         CMaterialOutputNode() = default;
 
-        FString GetNodeDisplayName() const override;
-        FString GetNodeTooltip() const override;
+        FStringView GetNodeDisplayName() const override;
+        FStringView GetNodeTooltip() const override;
         uint32 GetNodeTitleColor() const override { return IM_COL32(35, 35, 200, 255); }
 
         void BuildNode() override;

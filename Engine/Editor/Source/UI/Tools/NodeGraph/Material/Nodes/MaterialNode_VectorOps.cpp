@@ -15,14 +15,16 @@ namespace Lumina
         InputPin->SetComponentMask(EComponentMask::RGBA);
     }
 
-    FString CMaterialExpression_ComponentMask::GetNodeDisplayName() const
+    FStringView CMaterialExpression_ComponentMask::GetNodeDisplayName() const
     {
-        FString Builder = "ComponentMask_";
-        if (R) Builder.append("R");
-        if (G) Builder.append("G");
-        if (B) Builder.append("B");
-        if (A) Builder.append("A");
-        return Builder;
+        // The only display name that varies with node state. Rebuilt into an inline-storage member
+        // (no heap) rather than returned by value, so the view stays valid after we return.
+        CachedDisplayName = "ComponentMask_";
+        if (R) CachedDisplayName.append("R");
+        if (G) CachedDisplayName.append("G");
+        if (B) CachedDisplayName.append("B");
+        if (A) CachedDisplayName.append("A");
+        return FStringView(CachedDisplayName.c_str(), CachedDisplayName.size());
     }
 
     void CMaterialExpression_ComponentMask::GenerateDefinition(FMaterialCompiler& Compiler) { Compiler.ComponentMask(InputPin); }

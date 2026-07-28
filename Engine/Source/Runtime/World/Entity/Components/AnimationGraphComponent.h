@@ -56,6 +56,11 @@ namespace Lumina
             return false;
         }
 
+        // Parameter access below writes the VM's own register table. When the entity also has an
+        // SBlackboardComponent, SAnimationSystem refills those registers from the blackboard before every
+        // evaluation, so the blackboard - not this - is the value that survives. Write through the
+        // blackboard (or World.Animation, which routes there automatically) on such entities.
+
         /** Sets a named float parameter. No-op if the graph has no such parameter. */
         FUNCTION(Script)
         void SetFloat(const FName& ParameterName, float Value);

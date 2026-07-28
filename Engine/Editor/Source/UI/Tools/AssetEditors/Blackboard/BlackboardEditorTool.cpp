@@ -13,7 +13,8 @@ namespace Lumina
 {
     static const char* BlackboardWindowName = "Blackboard";
 
-    static const char* KeyTypeLabels[] = { "Float", "Int", "Bool", "Enum", "Vector", "Object" };
+    // Index-aligned with EBlackboardKeyType.
+    static const char* KeyTypeLabels[] = { "Float", "Int", "Bool", "Enum", "Vector", "Object", "Entity" };
 
     // Per-type accent so the list reads at a glance.
     static ImU32 KeyTypeColor(EBlackboardKeyType Type)
@@ -26,6 +27,7 @@ namespace Lumina
         case EBlackboardKeyType::Enum:   return IM_COL32(200, 160, 240, 255);
         case EBlackboardKeyType::Vector: return IM_COL32(240, 210, 110, 255);
         case EBlackboardKeyType::Object: return IM_COL32(235, 130, 150, 255);
+        case EBlackboardKeyType::Entity: return IM_COL32(120, 220, 220, 255);
         }
         return IM_COL32(200, 200, 200, 255);
     }
@@ -192,6 +194,14 @@ namespace Lumina
             }
             break;
         }
+
+        case EBlackboardKeyType::Entity:
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("Set at runtime");
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                ImGuiX::TextTooltip_Internal("An entity handle only means something inside a live world, "
+                    "so Entity keys start unset and are written by scripts or systems.");
+            break;
         }
     }
 

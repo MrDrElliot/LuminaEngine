@@ -15,7 +15,7 @@ namespace Lumina
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "Textures"; }
         void* GetNodeDefaultValue() override { return &Texture; }
-        FString GetNodeDisplayName() const override { return "TextureSample"; }
+        FStringView GetNodeDisplayName() const override { return "TextureSample"; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
         void SetNodeValue(void* Value) override;
         void DrawNodeBody() override;

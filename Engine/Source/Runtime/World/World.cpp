@@ -37,6 +37,9 @@
 #include "Entity/Components/EditorComponent.h"
 #include "Entity/Components/LifetimeComponent.h"
 #include "Entity/Components/StaticMeshComponent.h"
+#include "Entity/Components/DynamicMeshComponent.h"
+#include "Entity/Components/FoliageComponent.h"
+#include "World/Scene/RenderScene/MeshResolveCache.h"
 #include "Entity/Events/ImpulseEvent.h"
 #include "entity/components/entitytags.h"
 #include "Entity/Components/LineBatcherComponent.h"
@@ -79,6 +82,25 @@ namespace Lumina
         FEntityRegistry& GetWorldRegistry(CWorld& World)
         {
             return World.GetEntityRegistry();
+        }
+    }
+
+    namespace
+    {
+        // Clearing the component's stamp is what makes the resolve pre-pass revisit it.
+        template <typename TComponent>
+        void MarkMeshResolveDirty(FEntityRegistry& Registry, entt::entity Entity)
+        {
+            Registry.get<TComponent>(Entity).InvalidateRenderResolve();
+        }
+
+        void MarkFoliageResolveDirty(FEntityRegistry& Registry, entt::entity Entity)
+        {
+            for (SFoliageType& Type : Registry.get<SFoliageComponent>(Entity).Types)
+            {
+                Type.CachedEpoch = 0;
+            }
+            FMeshResolveCache::MarkPendingWork();
         }
     }
 
@@ -344,6 +366,19 @@ namespace Lumina
         EntityRegistry.on_destroy   <SWidgetComponent>()            .connect<&ThisClass::OnWidgetComponentDestroyed>(this);
         EntityRegistry.on_construct <SInputComponent>()             .connect<&ThisClass::OnInputComponentConstruct>(this);
         SystemContext.EventSink     <FSwitchActiveCameraEvent>()    .connect<&ThisClass::OnChangeCameraEvent>(this);
+
+        // on_construct catches spawns/prefabs/loads; on_update catches registry.patch<T> edits.
+        EntityRegistry.on_construct <SStaticMeshComponent>()  .connect<&MarkMeshResolveDirty<SStaticMeshComponent>>();
+        EntityRegistry.on_update    <SStaticMeshComponent>()  .connect<&MarkMeshResolveDirty<SStaticMeshComponent>>();
+        EntityRegistry.on_construct <SDynamicMeshComponent>() .connect<&MarkMeshResolveDirty<SDynamicMeshComponent>>();
+        EntityRegistry.on_update    <SDynamicMeshComponent>() .connect<&MarkMeshResolveDirty<SDynamicMeshComponent>>();
+        EntityRegistry.on_construct <SSkeletalMeshComponent>().connect<&MarkMeshResolveDirty<SSkeletalMeshComponent>>();
+        EntityRegistry.on_update    <SSkeletalMeshComponent>().connect<&MarkMeshResolveDirty<SSkeletalMeshComponent>>();
+        EntityRegistry.on_construct <SFoliageComponent>()     .connect<&MarkFoliageResolveDirty>();
+        EntityRegistry.on_update    <SFoliageComponent>()     .connect<&MarkFoliageResolveDirty>();
+
+        // Components loaded before these hooks connected never saw on_construct.
+        FMeshResolveCache::MarkPendingWork();
 
         ECS::Utils::FTransformDirtyState* DirtyState = ECS::Utils::EnsureTransformDirtyState(EntityRegistry);
         auto TransformView = EntityRegistry.view<STransformComponent>();
@@ -1906,12 +1941,6 @@ namespace Lumina
         const TVector<TVector<uint16>> Batches = ComputeSystemBatches(Systems);
         for (const TVector<uint16>& Batch : Batches)
         {
-            // Transform-resolve BARRIER: resolve all dirty transforms once on the game thread before the batch
-            // runs. This empties the dirty queue and clears bAnyDirty, so every GetWorld* the batch's systems
-            // make takes the guard-free fast path (a pure cached read -- no resolve-guard, no cache mutation),
-            // which is what lets multiple transform-reading systems actually run in PARALLEL instead of
-            // serializing on the resolve guard. A writer batch re-dirties; the next batch's barrier resolves it,
-            // so readers still see prior writers' results (priority order preserved). Cheap when nothing moved.
             if (ECS::Utils::AnyTransformsDirty(EntityRegistry))
             {
                 ECS::Utils::ResolveAllDirtyTransforms(EntityRegistry);
@@ -1923,8 +1952,6 @@ namespace Lumina
             }
             else
             {
-                // One system per job; the game thread assist-waits, nested ParallelFor inside a system
-                // nests fine on fibers.
                 Task::ParallelFor(static_cast<uint32>(Batch.size()), [&](uint32 Index)
                 {
                     DEBUG_ASSERT(!Systems[Batch[Index]].Access.bExclusive); // scheduler invariant: batched => not exclusive

@@ -108,12 +108,18 @@ namespace Lumina
         bInitialized = true;
     }
 
+    void FCObjectArray::BeginShutdown()
+    {
+        FRecursiveScopeLock Lock(Mutex);
+        bShuttingDown = true;
+    }
+
     void FCObjectArray::Shutdown()
     {
         FRecursiveScopeLock Lock(Mutex);
 
         bShuttingDown = true;
-            
+
         ForEachObject([](CObjectBase* Object, int32)
         {
             Object->ForceDestroyNow();

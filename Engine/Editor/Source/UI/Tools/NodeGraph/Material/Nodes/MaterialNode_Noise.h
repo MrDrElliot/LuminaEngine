@@ -11,8 +11,8 @@ namespace Lumina
     public:
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "Noise"; }
-        FString GetNodeDisplayName() const override { return "Hash11"; }
-        FString GetNodeTooltip() const override { return "Cheap 1D -> 1D pseudo-random hash."; }
+        FStringView GetNodeDisplayName() const override { return "Hash11"; }
+        FStringView GetNodeTooltip() const override { return "Cheap 1D -> 1D pseudo-random hash."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
         CMaterialInput* X = nullptr;
     };
@@ -24,8 +24,8 @@ namespace Lumina
     public:
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "Noise"; }
-        FString GetNodeDisplayName() const override { return "Hash21"; }
-        FString GetNodeTooltip() const override { return "Cheap 2D -> 1D pseudo-random hash."; }
+        FStringView GetNodeDisplayName() const override { return "Hash21"; }
+        FStringView GetNodeTooltip() const override { return "Cheap 2D -> 1D pseudo-random hash."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
         CMaterialInput* UV = nullptr;
     };
@@ -37,8 +37,8 @@ namespace Lumina
     public:
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "Noise"; }
-        FString GetNodeDisplayName() const override { return "Hash22"; }
-        FString GetNodeTooltip() const override { return "Cheap 2D -> 2D pseudo-random hash."; }
+        FStringView GetNodeDisplayName() const override { return "Hash22"; }
+        FStringView GetNodeTooltip() const override { return "Cheap 2D -> 2D pseudo-random hash."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
         CMaterialInput* UV = nullptr;
     };
@@ -50,8 +50,8 @@ namespace Lumina
     public:
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "Noise"; }
-        FString GetNodeDisplayName() const override { return "Hash33"; }
-        FString GetNodeTooltip() const override { return "Cheap 3D -> 3D pseudo-random hash."; }
+        FStringView GetNodeDisplayName() const override { return "Hash33"; }
+        FStringView GetNodeTooltip() const override { return "Cheap 3D -> 3D pseudo-random hash."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
         CMaterialInput* P = nullptr;
     };
@@ -63,8 +63,8 @@ namespace Lumina
     public:
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "Noise"; }
-        FString GetNodeDisplayName() const override { return "ValueNoise"; }
-        FString GetNodeTooltip() const override { return "Smooth-interpolated 2D value noise in [0,1]."; }
+        FStringView GetNodeDisplayName() const override { return "ValueNoise"; }
+        FStringView GetNodeTooltip() const override { return "Smooth-interpolated 2D value noise in [0,1]."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
         CMaterialInput* UV = nullptr;
     };
@@ -76,8 +76,8 @@ namespace Lumina
     public:
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "Noise"; }
-        FString GetNodeDisplayName() const override { return "GradientNoise"; }
-        FString GetNodeTooltip() const override { return "2D gradient noise in [0,1] (Perlin-like)."; }
+        FStringView GetNodeDisplayName() const override { return "GradientNoise"; }
+        FStringView GetNodeTooltip() const override { return "2D gradient noise in [0,1] (Perlin-like)."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
         CMaterialInput* UV = nullptr;
     };
@@ -89,8 +89,8 @@ namespace Lumina
     public:
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "Noise"; }
-        FString GetNodeDisplayName() const override { return "PerlinNoise"; }
-        FString GetNodeTooltip() const override { return "2D Perlin gradient noise in [0,1]."; }
+        FStringView GetNodeDisplayName() const override { return "PerlinNoise"; }
+        FStringView GetNodeTooltip() const override { return "2D Perlin gradient noise in [0,1]."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
         CMaterialInput* UV = nullptr;
     };
@@ -102,8 +102,8 @@ namespace Lumina
     public:
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "Noise"; }
-        FString GetNodeDisplayName() const override { return "VoronoiNoise"; }
-        FString GetNodeTooltip() const override { return "2D Voronoi/Worley noise, distance to the closest cell point."; }
+        FStringView GetNodeDisplayName() const override { return "VoronoiNoise"; }
+        FStringView GetNodeTooltip() const override { return "2D Voronoi/Worley noise, distance to the closest cell point."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
         CMaterialInput* UV = nullptr;
     };
@@ -115,8 +115,8 @@ namespace Lumina
     public:
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "Noise"; }
-        FString GetNodeDisplayName() const override { return "SimpleNoise"; }
-        FString GetNodeTooltip() const override { return "Cheapest pseudo-random noise, a single sin-hash. High-frequency sparkle."; }
+        FStringView GetNodeDisplayName() const override { return "SimpleNoise"; }
+        FStringView GetNodeTooltip() const override { return "Cheapest pseudo-random noise, a single sin-hash. High-frequency sparkle."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
         CMaterialInput* UV = nullptr;
     };
@@ -128,8 +128,8 @@ namespace Lumina
     public:
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "Noise"; }
-        FString GetNodeDisplayName() const override { return "Checkerboard"; }
-        FString GetNodeTooltip() const override { return "Returns a 0/1 checkerboard pattern based on UV cells."; }
+        FStringView GetNodeDisplayName() const override { return "Checkerboard"; }
+        FStringView GetNodeTooltip() const override { return "Returns a 0/1 checkerboard pattern based on UV cells."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
         CMaterialInput* UV = nullptr;
     };

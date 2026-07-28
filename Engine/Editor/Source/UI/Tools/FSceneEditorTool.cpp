@@ -2483,14 +2483,17 @@ namespace Lumina
 
     size_t FSceneEditorTool::CountOutlinerEntities() const
     {
-        size_t Count = 0;
-        GetSceneRegistry().view<SNameComponent>().each([&](entt::entity E, const SNameComponent&)
+        FEntityRegistry& Registry = GetSceneRegistry();
+        const auto& NameStorage = Registry.storage<SNameComponent>();
+        
+        size_t Count = NameStorage.size();
+        for (entt::entity Hidden : Registry.view<FHideInSceneOutliner>())
         {
-            if (IsOutlinerEntityVisible(E))
+            if (NameStorage.contains(Hidden))
             {
-                ++Count;
+                --Count;
             }
-        });
+        }
         return Count;
     }
 
@@ -2562,10 +2565,7 @@ namespace Lumina
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
 
             const float ButtonWidth = ImGui::GetFrameHeight(); // square, matches the search field height
-
-            // Shared "Add" menu (empty / primitives / components / prefabs), identical in both tools.
-            // Disabled while inspecting a foreign world -- spawning would author into that world using this
-            // tool's editor camera, which is inspect-only here.
+            
             const bool bForeign = IsInspectingForeignWorld();
             ImGui::BeginDisabled(bForeign);
             ImGui::PushStyleColor(ImGuiCol_Button, EditorColors::WithAlpha(EditorColors::Success(), 0.8f));
@@ -2644,6 +2644,7 @@ namespace Lumina
             ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 4.0f);
             if (ImGui::BeginChild("EntityList", ImVec2(0, 0), true, ImGuiWindowFlags_NoScrollbar))
             {
+                LUMINA_PROFILE_SECTION("Draw Entity List");
                 FlushOutlinerPending();
                 OutlinerListView.Draw(OutlinerContext);
 

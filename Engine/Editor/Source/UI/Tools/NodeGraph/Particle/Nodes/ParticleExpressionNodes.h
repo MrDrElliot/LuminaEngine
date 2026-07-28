@@ -12,8 +12,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
-        FString GetNodeDisplayName() const override { return "ConstantFloat"; }
-        FString GetNodeTooltip() const override { return "Outputs a constant float value."; }
+        FStringView GetNodeDisplayName() const override { return "ConstantFloat"; }
+        FStringView GetNodeTooltip() const override { return "Outputs a constant float value."; }
         FFixedString GetNodeCategory() const override { return "Constants"; }
 
         void BuildNode() override;
@@ -31,8 +31,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
-        FString GetNodeDisplayName() const override { return "ConstantFloat3"; }
-        FString GetNodeTooltip() const override { return "Outputs a constant float3 value."; }
+        FStringView GetNodeDisplayName() const override { return "ConstantFloat3"; }
+        FStringView GetNodeTooltip() const override { return "Outputs a constant float3 value."; }
         FFixedString GetNodeCategory() const override { return "Constants"; }
 
         void BuildNode() override;
@@ -50,8 +50,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
-        FString GetNodeDisplayName() const override { return "ConstantFloat4"; }
-        FString GetNodeTooltip() const override { return "Outputs a constant float4 value."; }
+        FStringView GetNodeDisplayName() const override { return "ConstantFloat4"; }
+        FStringView GetNodeTooltip() const override { return "Outputs a constant float4 value."; }
         FFixedString GetNodeCategory() const override { return "Constants"; }
 
         void BuildNode() override;
@@ -69,8 +69,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
-        FString GetNodeDisplayName() const override { return "Time"; }
-        FString GetNodeTooltip() const override { return "Outputs the total simulation time in seconds."; }
+        FStringView GetNodeDisplayName() const override { return "Time"; }
+        FStringView GetNodeTooltip() const override { return "Outputs the total simulation time in seconds."; }
         FFixedString GetNodeCategory() const override { return "Inputs"; }
 
         void BuildNode() override;
@@ -85,8 +85,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
-        FString GetNodeDisplayName() const override { return "ParticleAge"; }
-        FString GetNodeTooltip() const override { return "Current age of the particle in seconds."; }
+        FStringView GetNodeDisplayName() const override { return "ParticleAge"; }
+        FStringView GetNodeTooltip() const override { return "Current age of the particle in seconds."; }
         FFixedString GetNodeCategory() const override { return "Inputs"; }
 
         void BuildNode() override;
@@ -101,8 +101,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
-        FString GetNodeDisplayName() const override { return "LifeRatio"; }
-        FString GetNodeTooltip() const override { return "Normalized particle age from 0 (born) to 1 (about to die)."; }
+        FStringView GetNodeDisplayName() const override { return "LifeRatio"; }
+        FStringView GetNodeTooltip() const override { return "Normalized particle age from 0 (born) to 1 (about to die)."; }
         FFixedString GetNodeCategory() const override { return "Inputs"; }
 
         void BuildNode() override;
@@ -135,8 +135,8 @@ namespace Lumina
     {
         GENERATED_BODY()
     public:
-        FString GetNodeDisplayName() const override { return "Add"; }
-        FString GetNodeTooltip() const override { return "Component-wise addition."; }
+        FStringView GetNodeDisplayName() const override { return "Add"; }
+        FStringView GetNodeTooltip() const override { return "Component-wise addition."; }
         FFixedString GetNodeCategory() const override { return "Math"; }
         void GenerateDefinition(FParticleCompiler& Compiler) override { EmitBinary(Compiler, "+"); }
     };
@@ -146,8 +146,8 @@ namespace Lumina
     {
         GENERATED_BODY()
     public:
-        FString GetNodeDisplayName() const override { return "Subtract"; }
-        FString GetNodeTooltip() const override { return "Component-wise subtraction."; }
+        FStringView GetNodeDisplayName() const override { return "Subtract"; }
+        FStringView GetNodeTooltip() const override { return "Component-wise subtraction."; }
         FFixedString GetNodeCategory() const override { return "Math"; }
         void GenerateDefinition(FParticleCompiler& Compiler) override { EmitBinary(Compiler, "-"); }
     };
@@ -157,8 +157,8 @@ namespace Lumina
     {
         GENERATED_BODY()
     public:
-        FString GetNodeDisplayName() const override { return "Multiply"; }
-        FString GetNodeTooltip() const override { return "Component-wise multiplication."; }
+        FStringView GetNodeDisplayName() const override { return "Multiply"; }
+        FStringView GetNodeTooltip() const override { return "Component-wise multiplication."; }
         FFixedString GetNodeCategory() const override { return "Math"; }
         void GenerateDefinition(FParticleCompiler& Compiler) override { EmitBinary(Compiler, "*"); }
     };
@@ -168,8 +168,8 @@ namespace Lumina
     {
         GENERATED_BODY()
     public:
-        FString GetNodeDisplayName() const override { return "Divide"; }
-        FString GetNodeTooltip() const override { return "Component-wise division."; }
+        FStringView GetNodeDisplayName() const override { return "Divide"; }
+        FStringView GetNodeTooltip() const override { return "Component-wise division."; }
         FFixedString GetNodeCategory() const override { return "Math"; }
         void GenerateDefinition(FParticleCompiler& Compiler) override { EmitBinary(Compiler, "/"); }
     };
@@ -180,8 +180,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
-        FString GetNodeDisplayName() const override { return "Lerp"; }
-        FString GetNodeTooltip() const override { return "Linear interpolation: A + (B - A) * Alpha."; }
+        FStringView GetNodeDisplayName() const override { return "Lerp"; }
+        FStringView GetNodeTooltip() const override { return "Linear interpolation: A + (B - A) * Alpha."; }
         FFixedString GetNodeCategory() const override { return "Math"; }
 
         void BuildNode() override;
@@ -199,8 +199,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
-        FString GetNodeDisplayName() const override { return "Saturate"; }
-        FString GetNodeTooltip() const override { return "Clamps each component to [0, 1]."; }
+        FStringView GetNodeDisplayName() const override { return "Saturate"; }
+        FStringView GetNodeTooltip() const override { return "Clamps each component to [0, 1]."; }
         FFixedString GetNodeCategory() const override { return "Math"; }
 
         void BuildNode() override;
@@ -216,8 +216,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
-        FString GetNodeDisplayName() const override { return "Sin"; }
-        FString GetNodeTooltip() const override { return "Sine of the input (radians)."; }
+        FStringView GetNodeDisplayName() const override { return "Sin"; }
+        FStringView GetNodeTooltip() const override { return "Sine of the input (radians)."; }
         FFixedString GetNodeCategory() const override { return "Math"; }
 
         void BuildNode() override;
@@ -233,8 +233,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
-        FString GetNodeDisplayName() const override { return "Cos"; }
-        FString GetNodeTooltip() const override { return "Cosine of the input (radians)."; }
+        FStringView GetNodeDisplayName() const override { return "Cos"; }
+        FStringView GetNodeTooltip() const override { return "Cosine of the input (radians)."; }
         FFixedString GetNodeCategory() const override { return "Math"; }
 
         void BuildNode() override;
@@ -250,8 +250,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
-        FString GetNodeDisplayName() const override { return "Normalize"; }
-        FString GetNodeTooltip() const override { return "Normalizes a vector to unit length."; }
+        FStringView GetNodeDisplayName() const override { return "Normalize"; }
+        FStringView GetNodeTooltip() const override { return "Normalizes a vector to unit length."; }
         FFixedString GetNodeCategory() const override { return "Math"; }
 
         void BuildNode() override;
@@ -267,8 +267,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
-        FString GetNodeDisplayName() const override { return "MakeFloat3"; }
-        FString GetNodeTooltip() const override { return "Packs three scalars into a float3."; }
+        FStringView GetNodeDisplayName() const override { return "MakeFloat3"; }
+        FStringView GetNodeTooltip() const override { return "Packs three scalars into a float3."; }
         FFixedString GetNodeCategory() const override { return "Vector"; }
 
         void BuildNode() override;
@@ -286,8 +286,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
-        FString GetNodeDisplayName() const override { return "MakeFloat4"; }
-        FString GetNodeTooltip() const override { return "Packs four scalars into a float4."; }
+        FStringView GetNodeDisplayName() const override { return "MakeFloat4"; }
+        FStringView GetNodeTooltip() const override { return "Packs four scalars into a float4."; }
         FFixedString GetNodeCategory() const override { return "Vector"; }
 
         void BuildNode() override;

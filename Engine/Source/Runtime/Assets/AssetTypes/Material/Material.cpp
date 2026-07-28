@@ -10,6 +10,7 @@
 #include "Renderer/RenderManager.h"
 #include "Renderer/ShaderCompiler.h"
 #include "Renderer/ShaderLibrary.h"
+#include "World/Scene/RenderScene/MeshResolveCache.h"
 #include "Types/Byte.h"
 
 namespace Lumina
@@ -264,12 +265,18 @@ namespace Lumina
             Drop(DeferredShaderBinaries);
 #endif
         }
+
+        // Recompile chokepoint; the material editor calls PostLoad() after committing new stages.
+        FMeshResolveCache::BumpEpoch();
     }
 
     void CMaterial::OnDestroy()
     {
         CMaterialInterface::OnDestroy();
-        
+
+        // Resolves are keyed partly on this pointer; drop them before it can be recycled.
+        FMeshResolveCache::BumpEpoch();
+
         if (GetMaterialIndex() != -1)
         {
             GRenderManager->GetMaterialManager().RemoveMaterial(this);

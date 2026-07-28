@@ -13,8 +13,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
-        FString GetNodeDisplayName() const override { return "Make Additive"; }
-        FString GetNodeTooltip() const override { return "Converts a pose into an additive delta relative to the skeleton's bind pose."; }
+        FStringView GetNodeDisplayName() const override { return "Make Additive"; }
+        FStringView GetNodeTooltip() const override { return "Converts a pose into an additive delta relative to the skeleton's bind pose."; }
         FFixedString GetNodeCategory() const override { return "Animation"; }
 
         void BuildNode() override;
@@ -32,8 +32,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
-        FString GetNodeDisplayName() const override { return "Apply Additive"; }
-        FString GetNodeTooltip() const override { return "Adds a delta pose (produced by Make Additive or an additive clip) on top of a base pose."; }
+        FStringView GetNodeDisplayName() const override { return "Apply Additive"; }
+        FStringView GetNodeTooltip() const override { return "Adds a delta pose (produced by Make Additive or an additive clip) on top of a base pose."; }
         FFixedString GetNodeCategory() const override { return "Animation"; }
 
         void BuildNode() override;

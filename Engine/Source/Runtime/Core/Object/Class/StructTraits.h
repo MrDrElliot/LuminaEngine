@@ -127,15 +127,15 @@ namespace Lumina
         {
             Ops->PreEdit = +[](const void* Data, const FPropertyChangedEvent& Event)
             {
-                static_cast<T*>(Data)->PreEditChange(Event);
+                static_cast<const T*>(Data)->PreEditChange(Event);
             };
         }
         
         if constexpr (Concepts::THasPostEdit<T>)
         {
-            Ops->PreEdit = +[](const void* Data, const FPropertyChangedEvent& Event)
+            Ops->PostEdit = +[](const void* Data, const FPropertyChangedEvent& Event)
             {
-                static_cast<T*>(Data)->PostEditChange(Event);
+                static_cast<const T*>(Data)->PostEditChange(Event);
             };
         }
         #endif

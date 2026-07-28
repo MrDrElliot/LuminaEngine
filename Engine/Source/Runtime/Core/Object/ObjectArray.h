@@ -174,6 +174,10 @@ namespace Lumina
 
         void AllocateObjectPool(int32 InMaxCObjects);
 
+        // Arms the shutdown guard without tearing anything down, so releasing the root set stops
+        // destroying objects individually and Shutdown() can do one ordered pass. Idempotent.
+        void BeginShutdown();
+
         void Shutdown();
 
         FObjectHandle AllocateObject(CObjectBase* Object);

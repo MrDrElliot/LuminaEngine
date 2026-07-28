@@ -55,8 +55,8 @@ namespace Lumina
         void SetNodeFullName(const FString& In) { FullName = In; }
 
         virtual bool WantsTitlebar() const { return true; }
-        virtual FString GetNodeDisplayName() const { return "Node"; }
-        virtual FString GetNodeTooltip() const { return "No Tooltip"; }
+        virtual FStringView GetNodeDisplayName() const { return "Node"; }
+        virtual FStringView GetNodeTooltip() const { return "No Tooltip"; }
         virtual uint32 GetNodeTitleColor() const { return IM_COL32(200, 35, 35, 255); }
         virtual ImVec2 GetMinNodeBodySize() const { return ImVec2(80, 150); }
         virtual ImVec2 GetMinNodeTitleBarSize() const;

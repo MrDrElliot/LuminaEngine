@@ -13,6 +13,11 @@ namespace Lumina
 			return;
 		}
 
+		if (GAudioContext == nullptr)
+		{
+			return;
+		}
+
 		if (!Stream)
 		{
 			Stream = GAudioContext->CreateProceduralStream(SampleRate, ChannelCount, BufferFrames);
@@ -22,18 +27,21 @@ namespace Lumina
 			}
 		}
 
-		ActiveHandle = GAudioContext->PlayProceduralStream(
-			Stream,
-			bSpatialized,
-			FVector3(0.0f), // Updated each tick by SAudioSystem.
-			Volume, Pitch, MinDistance, MaxDistance);
+		FAudioPlayParams Params;
+		Params.Volume       = Volume;
+		Params.Pitch        = Pitch;
+		Params.bSpatialized = bSpatialized;
+		Params.Bus          = Bus;
+		Params.Attenuation  = Attenuation;
 
-		bPlaying = true;
+		ActiveHandle = GAudioContext->PlayProceduralStream(Stream, Params);
+
+		bPlaying = ActiveHandle.IsValid();
 	}
 
 	void SProceduralAudioComponent::Stop()
 	{
-		if (bPlaying && ActiveHandle.IsValid())
+		if (GAudioContext != nullptr && bPlaying && ActiveHandle.IsValid())
 		{
 			GAudioContext->StopSound(ActiveHandle, EAudioStopMode::Immediate);
 			ActiveHandle = FAudioHandle::Invalid();

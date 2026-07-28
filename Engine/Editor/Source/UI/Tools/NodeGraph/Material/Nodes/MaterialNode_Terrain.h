@@ -12,8 +12,8 @@ namespace Lumina
         void BuildNode() override;
         uint32 GetNodeTitleColor() const override { return IM_COL32(55, 125, 55, 255); }
         FFixedString GetNodeCategory() const override { return "Terrain"; }
-        FString GetNodeDisplayName() const override { return "TerrainLayerWeight"; }
-        FString GetNodeTooltip() const override { return "Returns the painted weight for the specified terrain layer (0-3) at the current fragment."; }
+        FStringView GetNodeDisplayName() const override { return "TerrainLayerWeight"; }
+        FStringView GetNodeTooltip() const override { return "Returns the painted weight for the specified terrain layer (0-3) at the current fragment."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
 
         PROPERTY(Editable, Category = "Layer") uint32 LayerIndex = 0;
@@ -27,8 +27,8 @@ namespace Lumina
         void BuildNode() override;
         uint32 GetNodeTitleColor() const override { return IM_COL32(55, 125, 55, 255); }
         FFixedString GetNodeCategory() const override { return "Terrain"; }
-        FString GetNodeDisplayName() const override { return "TerrainLayerWeights"; }
-        FString GetNodeTooltip() const override { return "Returns all four terrain layer weights as a float4."; }
+        FStringView GetNodeDisplayName() const override { return "TerrainLayerWeights"; }
+        FStringView GetNodeTooltip() const override { return "Returns all four terrain layer weights as a float4."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
 
@@ -40,8 +40,8 @@ namespace Lumina
         void BuildNode() override;
         uint32 GetNodeTitleColor() const override { return IM_COL32(55, 125, 55, 255); }
         FFixedString GetNodeCategory() const override { return "Terrain"; }
-        FString GetNodeDisplayName() const override { return "TerrainLayerBlend"; }
-        FString GetNodeTooltip() const override { return "Blends up to 4 per-layer float3 inputs by the painted layer weights."; }
+        FStringView GetNodeDisplayName() const override { return "TerrainLayerBlend"; }
+        FStringView GetNodeTooltip() const override { return "Blends up to 4 per-layer float3 inputs by the painted layer weights."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
 
         CMaterialInput* Layer0 = nullptr;

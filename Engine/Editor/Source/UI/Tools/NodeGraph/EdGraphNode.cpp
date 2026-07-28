@@ -23,7 +23,7 @@ namespace Lumina
 
     ImVec2 CEdGraphNode::GetMinNodeTitleBarSize() const
     {
-        return ImVec2(ImGui::CalcTextSize(GetNodeDisplayName().c_str()).x, 28);
+        { const FStringView Name = GetNodeDisplayName(); return ImVec2(ImGui::CalcTextSize(Name.data(), Name.data() + Name.size()).x, 28); }
     }
 
     void CEdGraphNode::PushNodeStyle()
@@ -56,11 +56,11 @@ namespace Lumina
     {
         if (HasError())
         {
-            ImGui::TextColored(ImVec4(255.0f, 0.0f, 0.0f, 255.f), LE_ICON_EXCLAMATION_THICK " %s", GetNodeDisplayName().c_str());
+            ImGui::TextColored(ImVec4(255.0f, 0.0f, 0.0f, 255.f), LE_ICON_EXCLAMATION_THICK " %s", GetNodeDisplayName().data());
         }
         else
         {
-            ImGui::TextUnformatted(GetNodeDisplayName().c_str());
+            ImGui::TextUnformatted(GetNodeDisplayName().data());
         }
     }
 

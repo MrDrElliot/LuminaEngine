@@ -12,8 +12,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Add"; }
-        FString GetNodeTooltip() const override { return "Returns A + B, per component."; }
+        FStringView GetNodeDisplayName() const override { return "Add"; }
+        FStringView GetNodeTooltip() const override { return "Returns A + B, per component."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -24,8 +24,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Subtract"; }
-        FString GetNodeTooltip() const override { return "Returns A - B, per component."; }
+        FStringView GetNodeDisplayName() const override { return "Subtract"; }
+        FStringView GetNodeTooltip() const override { return "Returns A - B, per component."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -36,8 +36,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Multiply"; }
-        FString GetNodeTooltip() const override { return "Returns A * B, per component."; }
+        FStringView GetNodeDisplayName() const override { return "Multiply"; }
+        FStringView GetNodeTooltip() const override { return "Returns A * B, per component."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -48,8 +48,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Divide"; }
-        FString GetNodeTooltip() const override { return "Returns A / B, per component. Beware division by zero."; }
+        FStringView GetNodeDisplayName() const override { return "Divide"; }
+        FStringView GetNodeTooltip() const override { return "Returns A / B, per component. Beware division by zero."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -60,8 +60,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Power"; }
-        FString GetNodeTooltip() const override { return "Returns A raised to the B-th power (pow(A, B))."; }
+        FStringView GetNodeDisplayName() const override { return "Power"; }
+        FStringView GetNodeTooltip() const override { return "Returns A raised to the B-th power (pow(A, B))."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -72,8 +72,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Mod"; }
-        FString GetNodeTooltip() const override { return "Returns the floating-point remainder of A / B."; }
+        FStringView GetNodeDisplayName() const override { return "Mod"; }
+        FStringView GetNodeTooltip() const override { return "Returns the floating-point remainder of A / B."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -84,8 +84,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Min"; }
-        FString GetNodeTooltip() const override { return "Returns the component-wise minimum of A and B."; }
+        FStringView GetNodeDisplayName() const override { return "Min"; }
+        FStringView GetNodeTooltip() const override { return "Returns the component-wise minimum of A and B."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -96,8 +96,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Max"; }
-        FString GetNodeTooltip() const override { return "Returns the component-wise maximum of A and B."; }
+        FStringView GetNodeDisplayName() const override { return "Max"; }
+        FStringView GetNodeTooltip() const override { return "Returns the component-wise maximum of A and B."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -108,8 +108,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Step"; }
-        FString GetNodeTooltip() const override { return "Returns 0 if A < B, 1 otherwise. Hard threshold."; }
+        FStringView GetNodeDisplayName() const override { return "Step"; }
+        FStringView GetNodeTooltip() const override { return "Returns 0 if A < B, 1 otherwise. Hard threshold."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -120,8 +120,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Atan2"; }
-        FString GetNodeTooltip() const override { return "Returns atan2(Y, X), angle of the (X, Y) vector in radians."; }
+        FStringView GetNodeDisplayName() const override { return "Atan2"; }
+        FStringView GetNodeTooltip() const override { return "Returns atan2(Y, X), angle of the (X, Y) vector in radians."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -134,8 +134,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Sin"; }
-        FString GetNodeTooltip() const override { return "Returns the sine of A. A is expected to be in radians."; }
+        FStringView GetNodeDisplayName() const override { return "Sin"; }
+        FStringView GetNodeTooltip() const override { return "Returns the sine of A. A is expected to be in radians."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -146,8 +146,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Cosin"; }
-        FString GetNodeTooltip() const override { return "Returns the cosine of A. A is expected to be in radians."; }
+        FStringView GetNodeDisplayName() const override { return "Cosin"; }
+        FStringView GetNodeTooltip() const override { return "Returns the cosine of A. A is expected to be in radians."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -158,8 +158,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Tan"; }
-        FString GetNodeTooltip() const override { return "Returns the tangent of A (radians)."; }
+        FStringView GetNodeDisplayName() const override { return "Tan"; }
+        FStringView GetNodeTooltip() const override { return "Returns the tangent of A (radians)."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -170,8 +170,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Asin"; }
-        FString GetNodeTooltip() const override { return "Returns the arcsine of A. Result in radians."; }
+        FStringView GetNodeDisplayName() const override { return "Asin"; }
+        FStringView GetNodeTooltip() const override { return "Returns the arcsine of A. Result in radians."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -182,8 +182,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Acos"; }
-        FString GetNodeTooltip() const override { return "Returns the arccosine of A. Result in radians."; }
+        FStringView GetNodeDisplayName() const override { return "Acos"; }
+        FStringView GetNodeTooltip() const override { return "Returns the arccosine of A. Result in radians."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -194,8 +194,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Atan"; }
-        FString GetNodeTooltip() const override { return "Returns the arctangent of A. Result in radians."; }
+        FStringView GetNodeDisplayName() const override { return "Atan"; }
+        FStringView GetNodeTooltip() const override { return "Returns the arctangent of A. Result in radians."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -206,8 +206,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Sinh"; }
-        FString GetNodeTooltip() const override { return "Returns the hyperbolic sine of A."; }
+        FStringView GetNodeDisplayName() const override { return "Sinh"; }
+        FStringView GetNodeTooltip() const override { return "Returns the hyperbolic sine of A."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -218,8 +218,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Cosh"; }
-        FString GetNodeTooltip() const override { return "Returns the hyperbolic cosine of A."; }
+        FStringView GetNodeDisplayName() const override { return "Cosh"; }
+        FStringView GetNodeTooltip() const override { return "Returns the hyperbolic cosine of A."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -230,8 +230,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Tanh"; }
-        FString GetNodeTooltip() const override { return "Returns the hyperbolic tangent of A. Useful for soft clamping."; }
+        FStringView GetNodeDisplayName() const override { return "Tanh"; }
+        FStringView GetNodeTooltip() const override { return "Returns the hyperbolic tangent of A. Useful for soft clamping."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -242,8 +242,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Sqrt"; }
-        FString GetNodeTooltip() const override { return "Returns the square root of A. Negative inputs yield undefined."; }
+        FStringView GetNodeDisplayName() const override { return "Sqrt"; }
+        FStringView GetNodeTooltip() const override { return "Returns the square root of A. Negative inputs yield undefined."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -254,8 +254,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Rsqrt"; }
-        FString GetNodeTooltip() const override { return "Returns 1/sqrt(A), fast reciprocal square root."; }
+        FStringView GetNodeDisplayName() const override { return "Rsqrt"; }
+        FStringView GetNodeTooltip() const override { return "Returns 1/sqrt(A), fast reciprocal square root."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -266,8 +266,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Log"; }
-        FString GetNodeTooltip() const override { return "Returns the natural logarithm of A."; }
+        FStringView GetNodeDisplayName() const override { return "Log"; }
+        FStringView GetNodeTooltip() const override { return "Returns the natural logarithm of A."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -278,8 +278,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Log2"; }
-        FString GetNodeTooltip() const override { return "Returns the base-2 logarithm of A."; }
+        FStringView GetNodeDisplayName() const override { return "Log2"; }
+        FStringView GetNodeTooltip() const override { return "Returns the base-2 logarithm of A."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -290,8 +290,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Log10"; }
-        FString GetNodeTooltip() const override { return "Returns the base-10 logarithm of A."; }
+        FStringView GetNodeDisplayName() const override { return "Log10"; }
+        FStringView GetNodeTooltip() const override { return "Returns the base-10 logarithm of A."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -302,8 +302,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Exp"; }
-        FString GetNodeTooltip() const override { return "Returns e^A."; }
+        FStringView GetNodeDisplayName() const override { return "Exp"; }
+        FStringView GetNodeTooltip() const override { return "Returns e^A."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -314,8 +314,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Exp2"; }
-        FString GetNodeTooltip() const override { return "Returns 2^A."; }
+        FStringView GetNodeDisplayName() const override { return "Exp2"; }
+        FStringView GetNodeTooltip() const override { return "Returns 2^A."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -326,8 +326,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Sign"; }
-        FString GetNodeTooltip() const override { return "Returns -1 if A<0, 0 if A==0, 1 if A>0."; }
+        FStringView GetNodeDisplayName() const override { return "Sign"; }
+        FStringView GetNodeTooltip() const override { return "Returns -1 if A<0, 0 if A==0, 1 if A>0."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -338,8 +338,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "OneMinus"; }
-        FString GetNodeTooltip() const override { return "Returns 1.0 - A."; }
+        FStringView GetNodeDisplayName() const override { return "OneMinus"; }
+        FStringView GetNodeTooltip() const override { return "Returns 1.0 - A."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -350,8 +350,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Reciprocal"; }
-        FString GetNodeTooltip() const override { return "Returns 1.0 / A. Guarded against zero."; }
+        FStringView GetNodeDisplayName() const override { return "Reciprocal"; }
+        FStringView GetNodeTooltip() const override { return "Returns 1.0 / A. Guarded against zero."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -362,8 +362,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Round"; }
-        FString GetNodeTooltip() const override { return "Rounds A to the nearest integer."; }
+        FStringView GetNodeDisplayName() const override { return "Round"; }
+        FStringView GetNodeTooltip() const override { return "Rounds A to the nearest integer."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -374,8 +374,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Truncate"; }
-        FString GetNodeTooltip() const override { return "Drops the fractional part of A toward zero."; }
+        FStringView GetNodeDisplayName() const override { return "Truncate"; }
+        FStringView GetNodeTooltip() const override { return "Drops the fractional part of A toward zero."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -386,8 +386,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Negate"; }
-        FString GetNodeTooltip() const override { return "Returns -A."; }
+        FStringView GetNodeDisplayName() const override { return "Negate"; }
+        FStringView GetNodeTooltip() const override { return "Returns -A."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -398,8 +398,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Square"; }
-        FString GetNodeTooltip() const override { return "Returns A * A."; }
+        FStringView GetNodeDisplayName() const override { return "Square"; }
+        FStringView GetNodeTooltip() const override { return "Returns A * A."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -410,8 +410,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "DegToRad"; }
-        FString GetNodeTooltip() const override { return "Converts degrees to radians."; }
+        FStringView GetNodeDisplayName() const override { return "DegToRad"; }
+        FStringView GetNodeTooltip() const override { return "Converts degrees to radians."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -422,8 +422,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "RadToDeg"; }
-        FString GetNodeTooltip() const override { return "Converts radians to degrees."; }
+        FStringView GetNodeDisplayName() const override { return "RadToDeg"; }
+        FStringView GetNodeTooltip() const override { return "Converts radians to degrees."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -434,8 +434,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Floor"; }
-        FString GetNodeTooltip() const override { return "Returns the largest integer <= A."; }
+        FStringView GetNodeDisplayName() const override { return "Floor"; }
+        FStringView GetNodeTooltip() const override { return "Returns the largest integer <= A."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -446,8 +446,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Fract"; }
-        FString GetNodeTooltip() const override { return "Returns the fractional part of A (A - floor(A)). Useful for tiling/wrapping."; }
+        FStringView GetNodeDisplayName() const override { return "Fract"; }
+        FStringView GetNodeTooltip() const override { return "Returns the fractional part of A (A - floor(A)). Useful for tiling/wrapping."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -458,8 +458,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Ceil"; }
-        FString GetNodeTooltip() const override { return "Returns the smallest integer >= A."; }
+        FStringView GetNodeDisplayName() const override { return "Ceil"; }
+        FStringView GetNodeTooltip() const override { return "Returns the smallest integer >= A."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -470,8 +470,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Abs"; }
-        FString GetNodeTooltip() const override { return "Returns the absolute value of A, per component."; }
+        FStringView GetNodeDisplayName() const override { return "Abs"; }
+        FStringView GetNodeTooltip() const override { return "Returns the absolute value of A, per component."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -482,8 +482,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Saturate"; }
-        FString GetNodeTooltip() const override { return "Clamps the input to the [0, 1] range."; }
+        FStringView GetNodeDisplayName() const override { return "Saturate"; }
+        FStringView GetNodeTooltip() const override { return "Clamps the input to the [0, 1] range."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -496,8 +496,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Lerp"; }
-        FString GetNodeTooltip() const override { return "Linearly interpolates between A and B by alpha C. Returns A when C=0, B when C=1."; }
+        FStringView GetNodeDisplayName() const override { return "Lerp"; }
+        FStringView GetNodeTooltip() const override { return "Linearly interpolates between A and B by alpha C. Returns A when C=0, B when C=1."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
 
@@ -514,8 +514,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "Clamp"; }
-        FString GetNodeTooltip() const override { return "Clamps X to the inclusive range [A, B]."; }
+        FStringView GetNodeDisplayName() const override { return "Clamp"; }
+        FStringView GetNodeTooltip() const override { return "Clamps X to the inclusive range [A, B]."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
 
@@ -528,8 +528,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "SmoothStep"; }
-        FString GetNodeTooltip() const override { return "Hermite-interpolates between 0 and 1 as X moves from A to B."; }
+        FStringView GetNodeDisplayName() const override { return "SmoothStep"; }
+        FStringView GetNodeTooltip() const override { return "Hermite-interpolates between 0 and 1 as X moves from A to B."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
 
@@ -547,8 +547,8 @@ namespace Lumina
     public:
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "Math"; }
-        FString GetNodeDisplayName() const override { return "Remap"; }
-        FString GetNodeTooltip() const override { return "Remaps X from [InMin, InMax] to [OutMin, OutMax]."; }
+        FStringView GetNodeDisplayName() const override { return "Remap"; }
+        FStringView GetNodeTooltip() const override { return "Remaps X from [InMin, InMax] to [OutMin, OutMax]."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
 
         CMaterialInput* X = nullptr;

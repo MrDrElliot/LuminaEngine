@@ -4,18 +4,38 @@
 #include "World/World.h"
 #include "World/Entity/Components/SimpleAnimationComponent.h"
 #include "World/Entity/Components/AnimationGraphComponent.h"
+#include "World/Entity/Components/BlackboardComponent.h"
 #include "Scripting/DotNet/DotNetExport.h"
 
 //================================================================================================
 // World.Animation: drive an entity's animation from script (LuminaSharp.Animation). Two backends share one
 // facade: SSimpleAnimationComponent (single-clip play/pause/stop/scrub) and SAnimationGraphComponent
-// (named float/bool parameters that gate the graph's state machine). Play auto-adds the simple component;
+// (named float/bool parameters that gate the graph's state machine, stored on the entity's
+// SBlackboardComponent when it has one). Play auto-adds the simple component;
 // every other call is a safe no-op when the relevant component is absent. The clip is a CAnimation* passed
 // as a uint64 (the loaded asset handle). Game thread only.
 //================================================================================================
 
 using namespace Lumina;
 using namespace Lumina::DotNet;
+
+namespace
+{
+    // Where a graph parameter really lives. When the entity has a blackboard, SAnimationSystem refills the
+    // VM's parameter registers from it every evaluation, so writing the graph component directly would be
+    // overwritten before the next tick - the blackboard is the source of truth. Without one the graph
+    // component's own parameter table is authoritative. Returns null when the parameter isn't the graph's
+    // (keeping the documented "setting an undeclared parameter is a no-op" behavior).
+    SBlackboardComponent* ResolveParameterStore(CWorld* World, entt::entity Entity, const FName& Name)
+    {
+        const SAnimationGraphComponent* Graph = World->TryGetComponent<SAnimationGraphComponent>(Entity);
+        if (Graph == nullptr || !Graph->HasParameter(Name))
+        {
+            return nullptr;
+        }
+        return World->TryGetComponent<SBlackboardComponent>(Entity);
+    }
+}
 
 LUMINA_DOTNET_EXPORT(void, Animation_Play)(uint64 World, uint32 Entity, void* AnimationPtr, int32 bLoop, float Speed)
 {
@@ -137,9 +157,15 @@ LUMINA_DOTNET_EXPORT(void, Animation_SetFloat)(uint64 World, uint32 Entity, cons
     {
         return;
     }
+    const FName Key(FStringView(Name, (size_t)Length));
+    if (SBlackboardComponent* Blackboard = ResolveParameterStore(W, AsEntity(Entity), Key))
+    {
+        Blackboard->SetFloat(Key, Value);
+        return;
+    }
     if (SAnimationGraphComponent* Comp = W->TryGetComponent<SAnimationGraphComponent>(AsEntity(Entity)))
     {
-        Comp->SetFloat(FName(FStringView(Name, (size_t)Length)), Value);
+        Comp->SetFloat(Key, Value);
     }
 }
 
@@ -150,8 +176,13 @@ LUMINA_DOTNET_EXPORT(float, Animation_GetFloat)(uint64 World, uint32 Entity, con
     {
         return Default;
     }
+    const FName Key(FStringView(Name, (size_t)Length));
+    if (const SBlackboardComponent* Blackboard = ResolveParameterStore(W, AsEntity(Entity), Key))
+    {
+        return Blackboard->GetFloat(Key, Default);
+    }
     const SAnimationGraphComponent* Comp = W->TryGetComponent<SAnimationGraphComponent>(AsEntity(Entity));
-    return Comp != nullptr ? Comp->GetFloat(FName(FStringView(Name, (size_t)Length)), Default) : Default;
+    return Comp != nullptr ? Comp->GetFloat(Key, Default) : Default;
 }
 
 LUMINA_DOTNET_EXPORT(void, Animation_SetBool)(uint64 World, uint32 Entity, const char* Name, int32 Length, int32 bValue)
@@ -161,9 +192,15 @@ LUMINA_DOTNET_EXPORT(void, Animation_SetBool)(uint64 World, uint32 Entity, const
     {
         return;
     }
+    const FName Key(FStringView(Name, (size_t)Length));
+    if (SBlackboardComponent* Blackboard = ResolveParameterStore(W, AsEntity(Entity), Key))
+    {
+        Blackboard->SetBool(Key, bValue != 0);
+        return;
+    }
     if (SAnimationGraphComponent* Comp = W->TryGetComponent<SAnimationGraphComponent>(AsEntity(Entity)))
     {
-        Comp->SetBool(FName(FStringView(Name, (size_t)Length)), bValue != 0);
+        Comp->SetBool(Key, bValue != 0);
     }
 }
 
@@ -174,12 +211,17 @@ LUMINA_DOTNET_EXPORT(int32, Animation_GetBool)(uint64 World, uint32 Entity, cons
     {
         return bDefault;
     }
+    const FName Key(FStringView(Name, (size_t)Length));
+    if (const SBlackboardComponent* Blackboard = ResolveParameterStore(W, AsEntity(Entity), Key))
+    {
+        return Blackboard->GetBool(Key, bDefault != 0) ? 1 : 0;
+    }
     const SAnimationGraphComponent* Comp = W->TryGetComponent<SAnimationGraphComponent>(AsEntity(Entity));
     if (Comp == nullptr)
     {
         return bDefault;
     }
-    return Comp->GetBool(FName(FStringView(Name, (size_t)Length)), bDefault != 0) ? 1 : 0;
+    return Comp->GetBool(Key, bDefault != 0) ? 1 : 0;
 }
 
 LUMINA_DOTNET_EXPORT(int32, Animation_HasParameter)(uint64 World, uint32 Entity, const char* Name, int32 Length)

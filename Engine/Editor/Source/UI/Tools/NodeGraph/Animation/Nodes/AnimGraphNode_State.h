@@ -16,8 +16,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
-        FString GetNodeDisplayName() const override { return "State"; }
-        FString GetNodeTooltip() const override { return "A named animation state. Double-click to edit its blend tree."; }
+        FStringView GetNodeDisplayName() const override { return "State"; }
+        FStringView GetNodeTooltip() const override { return "A named animation state. Double-click to edit its blend tree."; }
         FFixedString GetNodeCategory() const override { return "State Machine"; }
         uint32 GetNodeTitleColor() const override { return IM_COL32(95, 80, 150, 255); }
 
@@ -55,8 +55,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
-        FString GetNodeDisplayName() const override { return "Entry"; }
-        FString GetNodeTooltip() const override { return "The state the machine starts in. Wire it to one State."; }
+        FStringView GetNodeDisplayName() const override { return "Entry"; }
+        FStringView GetNodeTooltip() const override { return "The state the machine starts in. Wire it to one State."; }
         FFixedString GetNodeCategory() const override { return "State Machine"; }
         uint32 GetNodeTitleColor() const override { return IM_COL32(60, 130, 90, 255); }
         bool IsDeletable() const override { return false; }

@@ -311,10 +311,14 @@ namespace Lumina
 
     void ShutdownCObjectSystem()
     {
+        // Must precede the root clear. Otherwise dropping the last ref on each rooted object destroys it
+        // immediately.
+        GObjectArray.BeginShutdown();
+
         GRootedObjects.clear();
-        
+
         GObjectArray.Shutdown();
-        
+
         FObjectHashTables::Get().Clear();
     }
 

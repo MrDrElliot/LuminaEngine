@@ -10,17 +10,8 @@ namespace Lumina
 {
     class CMaterialInput;
 
-    // EMaterialValueType and EMaterialInputType share Float..Float4 ordering, so conversion is a cast.
-    // Texture-typed function I/O is unsupported, so a Texture input type clamps to Float4 on the way back.
-    inline EMaterialInputType ToMaterialInputType(EMaterialValueType Type)
-    {
-        return static_cast<EMaterialInputType>(Type);
-    }
-
-    inline EMaterialValueType ToMaterialValueType(EMaterialInputType Type)
-    {
-        return (Type == EMaterialInputType::Texture) ? EMaterialValueType::Float4 : static_cast<EMaterialValueType>(Type);
-    }
+    // ToMaterialInputType / ToMaterialValueType / FullMaskForType / ZeroLiteral live in
+    // MaterialGraphTypes.h so any node can use them without including this header.
 
     // Declares one input of the owning material function (function graph only). Its output feeds the body;
     // on inline the call node binds it to the caller's argument, so GenerateDefinition only runs in validation.
@@ -32,8 +23,8 @@ namespace Lumina
 
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "Function"; }
-        FString GetNodeDisplayName() const override { return "FunctionInput"; }
-        FString GetNodeTooltip() const override { return "An input parameter of this material function."; }
+        FStringView GetNodeDisplayName() const override { return "FunctionInput"; }
+        FStringView GetNodeTooltip() const override { return "An input parameter of this material function."; }
         uint32 GetNodeTitleColor() const override { return IM_COL32(35, 140, 90, 255); }
         void DrawNodeBody() override;
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
@@ -70,8 +61,8 @@ namespace Lumina
 
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "Function"; }
-        FString GetNodeDisplayName() const override { return "FunctionOutput"; }
-        FString GetNodeTooltip() const override { return "An output of this material function."; }
+        FStringView GetNodeDisplayName() const override { return "FunctionOutput"; }
+        FStringView GetNodeTooltip() const override { return "An output of this material function."; }
         uint32 GetNodeTitleColor() const override { return IM_COL32(140, 70, 35, 255); }
         bool IsDeletable() const override { return true; }
         void DrawNodeBody() override;
@@ -104,8 +95,8 @@ namespace Lumina
 
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "Function"; }
-        FString GetNodeDisplayName() const override { return "MaterialFunction"; }
-        FString GetNodeTooltip() const override { return "Inlines a Material Function asset, exposing its inputs and outputs as pins."; }
+        FStringView GetNodeDisplayName() const override { return "MaterialFunction"; }
+        FStringView GetNodeTooltip() const override { return "Inlines a Material Function asset, exposing its inputs and outputs as pins."; }
         uint32 GetNodeTitleColor() const override { return IM_COL32(80, 110, 170, 255); }
         ImVec2 GetMinNodeBodySize() const override { return ImVec2(120, 60); }
 

@@ -1879,6 +1879,7 @@ namespace Lumina
 
                     if (DrawToolWindow)
                     {
+                        LUMINA_PROFILE_TAG(Window->Name.c_str());
                         const bool bToolWindowFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows | ImGuiFocusedFlags_DockHierarchy);
                         Window->DrawFunction(bToolWindowFocused);
                     }

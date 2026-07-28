@@ -185,11 +185,7 @@ namespace Lumina
             return;
         }
 
-        const bool bScalar = Key->Type == EBlackboardKeyType::Float
-                          || Key->Type == EBlackboardKeyType::Int
-                          || Key->Type == EBlackboardKeyType::Bool
-                          || Key->Type == EBlackboardKeyType::Enum;
-        if (!bScalar)
+        if (!IsScalarBlackboardKey(Key->Type))
         {
             EdNodeGraph::FError Warning;
             Warning.Name        = "Blackboard Key Type";

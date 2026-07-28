@@ -11,8 +11,8 @@ namespace Lumina
     public:
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "Conditional"; }
-        FString GetNodeDisplayName() const override { return "If"; }
-        FString GetNodeTooltip() const override { return "Selects between three values based on the relation of X and Y. AGreater used when X > Y, AEqual when |X-Y|<Threshold, ALess when X < Y."; }
+        FStringView GetNodeDisplayName() const override { return "If"; }
+        FStringView GetNodeTooltip() const override { return "Selects between three values based on the relation of X and Y. AGreater used when X > Y, AEqual when |X-Y|<Threshold, ALess when X < Y."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
 
         CMaterialInput* X = nullptr;
@@ -43,8 +43,8 @@ namespace Lumina
     public:
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "Conditional"; }
-        FString GetNodeDisplayName() const override { return "Compare"; }
-        FString GetNodeTooltip() const override { return "Returns 1.0 if the comparison succeeds, 0.0 otherwise."; }
+        FStringView GetNodeDisplayName() const override { return "Compare"; }
+        FStringView GetNodeTooltip() const override { return "Returns 1.0 if the comparison succeeds, 0.0 otherwise."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
 
         CMaterialInput* A = nullptr;

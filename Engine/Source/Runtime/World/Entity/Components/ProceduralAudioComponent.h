@@ -35,11 +35,13 @@ namespace Lumina
 		PROPERTY(Script, Editable)
 		float Pitch = 1.0f;
 
+		/** Mix group this stream routes through. */
 		PROPERTY(Script, Editable)
-		float MinDistance = 1.0f;
+		EAudioBus Bus = EAudioBus::SFX;
 
+		/** Distance falloff, cone and doppler behavior. */
 		PROPERTY(Script, Editable)
-		float MaxDistance = 50.0f;
+		SAudioAttenuation Attenuation;
 
 		/** When true, the sound is positioned in 3D space using the entity's transform. */
 		PROPERTY(Script, Editable)

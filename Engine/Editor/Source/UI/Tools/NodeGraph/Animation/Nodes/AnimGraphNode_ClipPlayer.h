@@ -17,8 +17,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
-        FString GetNodeDisplayName() const override { return "Play Animation Clip"; }
-        FString GetNodeTooltip() const override { return "Samples an animation clip on a looping playback clock."; }
+        FStringView GetNodeDisplayName() const override { return "Play Animation Clip"; }
+        FStringView GetNodeTooltip() const override { return "Samples an animation clip on a looping playback clock."; }
 
         void BuildNode() override;
         void GenerateBytecode(FAnimationGraphCompiler& Compiler) override;

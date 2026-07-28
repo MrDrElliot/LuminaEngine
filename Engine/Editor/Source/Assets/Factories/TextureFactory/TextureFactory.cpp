@@ -22,6 +22,28 @@ namespace Lumina
         return NewObject<CTexture>(Package, Name);
     }
 
+    // Enforces the texture group's mip policy on an already-cooked resource. Applied after EVERY cook
+    // path (Basis, DDS, environment) rather than inside one of them: DDS arrives with mips baked into
+    // the source file, so suppressing generation alone would not catch it.
+    static void ApplyTextureGroupMipPolicy(CTexture* Texture)
+    {
+        if (Texture == nullptr || Texture->TextureResource == nullptr)
+        {
+            return;
+        }
+        if (TextureGroupGeneratesMips(Texture->Group))
+        {
+            return;
+        }
+
+        FTextureResource& Resource = *Texture->TextureResource;
+        if (Resource.Mips.size() > 1)
+        {
+            Resource.Mips.resize(1);
+        }
+        Resource.ImageDescription.NumMips = 1;
+    }
+
     // Box-downsamples an RGBA-float32 image to half dimensions (min 1px). Plain 2x2 average in linear
     // radiance, which is correct for HDR -- no gamma to undo.
     static void DownsampleEnvironmentMip(const TVector<float>& Src, uint32 SrcW, uint32 SrcH,
@@ -159,14 +181,19 @@ namespace Lumina
         }
 
         // New RHI: create + upload from the CPU mips (same path as CTexture::PostLoad).
+        // Trim to the group's mip policy BEFORE the GPU texture is created, so the allocation
+        // itself is single-mip rather than a full chain we then ignore.
+        ApplyTextureGroupMipPolicy(Texture);
+        const uint32 UploadMips = (uint32)Texture->TextureResource->Mips.size();
+
         Texture->TextureResource->NewTexture = RHI::Textures::Create(RHI::FTexture2DDesc
         {
             .Width  = Width,
             .Height = Height,
-            .Mips   = NumMips,
+            .Mips   = UploadMips,
             .Format = EFormat::RGBA16_FLOAT,
         });
-        for (uint32 i = 0; i < NumMips; ++i)
+        for (uint32 i = 0; i < UploadMips; ++i)
         {
             const FTextureResource::FMip& Mip = Texture->TextureResource->Mips[i];
             RHI::Textures::Upload(Texture->TextureResource->NewTexture, i, Mip.Pixels.data(), Mip.Pixels.size(), Mip.Width);
@@ -270,7 +297,9 @@ namespace Lumina
         Params.m_uastc                      = true;
         Params.m_print_stats                = false;
         Params.m_status_output              = false;   // silence per-slice "Slice: N, alpha: ..." spam during cook
-        Params.m_mip_gen                    = true;
+        // Groups drawn at a fixed on-screen size never sample a minified mip, so don't spend encode
+        // time producing a chain that ApplyTextureGroupMipPolicy would discard anyway.
+        Params.m_mip_gen                    = TextureGroupGeneratesMips(Texture->Group);
         Params.m_mip_fast                   = true;
         Params.m_multithreading             = (TotalEncodeThreads > 1);
         Params.m_create_ktx2_file           = false;
@@ -381,14 +410,19 @@ namespace Lumina
 
         // New RHI: create + upload the (block-compressed) mips into the global heap.
         const FUIntVector2 Extent = Texture->TextureResource->ImageDescription.Extent;
+        // Trim to the group's mip policy BEFORE the GPU texture is created, so the allocation
+        // itself is single-mip rather than a full chain we then ignore.
+        ApplyTextureGroupMipPolicy(Texture);
+        const uint32 UploadMips = (uint32)Texture->TextureResource->Mips.size();
+
         Texture->TextureResource->NewTexture = RHI::Textures::Create(RHI::FTexture2DDesc
         {
             .Width  = Extent.x,
             .Height = Extent.y,
-            .Mips   = NumMips,
+            .Mips   = UploadMips,
             .Format = StoredFormat,
         });
-        for (uint32 i = 0; i < NumMips; ++i)
+        for (uint32 i = 0; i < UploadMips; ++i)
         {
             const FTextureResource::FMip& Mip = Texture->TextureResource->Mips[i];
             if (!Mip.Pixels.empty())
@@ -531,14 +565,19 @@ namespace Lumina
         Desc.NumMips = (uint8)StoredMips;
         Texture->TextureResource->ImageDescription = Desc;
 
+        // Trim to the group's mip policy BEFORE the GPU texture is created, so the allocation
+        // itself is single-mip rather than a full chain we then ignore.
+        ApplyTextureGroupMipPolicy(Texture);
+        const uint32 UploadMips = (uint32)Texture->TextureResource->Mips.size();
+
         Texture->TextureResource->NewTexture = RHI::Textures::Create(RHI::FTexture2DDesc
         {
             .Width  = Width,
             .Height = Height,
-            .Mips   = StoredMips,
+            .Mips   = UploadMips,
             .Format = Format,
         });
-        for (uint32 i = 0; i < StoredMips; ++i)
+        for (uint32 i = 0; i < UploadMips; ++i)
         {
             const FTextureResource::FMip& Mip = Texture->TextureResource->Mips[i];
             if (!Mip.Pixels.empty())

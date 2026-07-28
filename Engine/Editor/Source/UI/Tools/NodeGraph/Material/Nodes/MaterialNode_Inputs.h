@@ -12,8 +12,8 @@ namespace Lumina
         
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "Inputs"; }
-        FString GetNodeDisplayName() const override { return "TexCoords"; }
-        FString GetNodeTooltip() const override { return "Returns the mesh's UV coordinates from the given texcoord set, scaled by the tiling factors. Connect Tiling to drive the scale from another node; otherwise the UTiling/VTiling defaults are used."; }
+        FStringView GetNodeDisplayName() const override { return "TexCoords"; }
+        FStringView GetNodeTooltip() const override { return "Returns the mesh's UV coordinates from the given texcoord set, scaled by the tiling factors. Connect Tiling to drive the scale from another node; otherwise the UTiling/VTiling defaults are used."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
 
         /** Optional float2 tiling multiplier. Overrides UTiling/VTiling when connected. */
@@ -40,8 +40,8 @@ namespace Lumina
         void BuildNode() override;
         
         FFixedString GetNodeCategory() const override { return "Inputs"; }
-        FString GetNodeDisplayName() const override { return "Panner"; }
-        FString GetNodeTooltip() const override { return "Offsets UV coordinates over time. UV += Time * Speed."; }
+        FStringView GetNodeDisplayName() const override { return "Panner"; }
+        FStringView GetNodeTooltip() const override { return "Offsets UV coordinates over time. UV += Time * Speed."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
 
         CMaterialInput* UV = nullptr;
@@ -63,8 +63,8 @@ namespace Lumina
         void BuildNode() override;
         uint32 GetNodeTitleColor() const override { return IM_COL32(25, 25, 255, 255); }
         FFixedString GetNodeCategory() const override { return "Inputs"; }
-        FString GetNodeDisplayName() const override { return "WorldPosition"; }
-        FString GetNodeTooltip() const override { return "Returns the current fragment's world-space position (float3)."; }
+        FStringView GetNodeDisplayName() const override { return "WorldPosition"; }
+        FStringView GetNodeTooltip() const override { return "Returns the current fragment's world-space position (float3)."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
 
@@ -76,8 +76,8 @@ namespace Lumina
         void BuildNode() override;
         uint32 GetNodeTitleColor() const override { return IM_COL32(25, 25, 255, 255); }
         FFixedString GetNodeCategory() const override { return "Inputs"; }
-        FString GetNodeDisplayName() const override { return "CameraPosition"; }
-        FString GetNodeTooltip() const override { return "Returns the world-space position of the active camera (float3)."; }
+        FStringView GetNodeDisplayName() const override { return "CameraPosition"; }
+        FStringView GetNodeTooltip() const override { return "Returns the world-space position of the active camera (float3)."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
 
@@ -89,8 +89,8 @@ namespace Lumina
         void BuildNode() override;
         uint32 GetNodeTitleColor() const override { return IM_COL32(25, 25, 255, 255); }
         FFixedString GetNodeCategory() const override { return "Inputs"; }
-        FString GetNodeDisplayName() const override { return "ObjectScale"; }
-        FString GetNodeTooltip() const override { return "Returns the world-space scale of the object being rendered (float3). Useful for keeping UV/texel density constant under non-uniform scaling."; }
+        FStringView GetNodeDisplayName() const override { return "ObjectScale"; }
+        FStringView GetNodeTooltip() const override { return "Returns the world-space scale of the object being rendered (float3). Useful for keeping UV/texel density constant under non-uniform scaling."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
 
@@ -102,8 +102,8 @@ namespace Lumina
         void BuildNode() override;
         uint32 GetNodeTitleColor() const override { return IM_COL32(25, 25, 255, 255); }
         FFixedString GetNodeCategory() const override { return "Inputs"; }
-        FString GetNodeDisplayName() const override { return "ObjectPosition"; }
-        FString GetNodeTooltip() const override { return "Returns the world-space position of the object's origin (float3)."; }
+        FStringView GetNodeDisplayName() const override { return "ObjectPosition"; }
+        FStringView GetNodeTooltip() const override { return "Returns the world-space position of the object's origin (float3)."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
 
@@ -115,8 +115,8 @@ namespace Lumina
         void BuildNode() override;
         uint32 GetNodeTitleColor() const override { return IM_COL32(25, 25, 255, 255); }
         FFixedString GetNodeCategory() const override { return "Inputs"; }
-        FString GetNodeDisplayName() const override { return "EntityID"; }
-        FString GetNodeTooltip() const override { return "Returns the ID of the entity being rendered. Useful for per-entity effects."; }
+        FStringView GetNodeDisplayName() const override { return "EntityID"; }
+        FStringView GetNodeTooltip() const override { return "Returns the ID of the entity being rendered. Useful for per-entity effects."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
 
@@ -128,8 +128,8 @@ namespace Lumina
         void BuildNode() override;
         uint32 GetNodeTitleColor() const override { return IM_COL32(25, 25, 255, 255); }
         FFixedString GetNodeCategory() const override { return "Inputs"; }
-        FString GetNodeDisplayName() const override { return "VertexNormal"; }
-        FString GetNodeTooltip() const override { return "Returns the interpolated world-space vertex normal (float3)."; }
+        FStringView GetNodeDisplayName() const override { return "VertexNormal"; }
+        FStringView GetNodeTooltip() const override { return "Returns the interpolated world-space vertex normal (float3)."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
 
@@ -141,8 +141,8 @@ namespace Lumina
         void BuildNode() override;
         uint32 GetNodeTitleColor() const override { return IM_COL32(25, 25, 255, 255); }
         FFixedString GetNodeCategory() const override { return "Inputs"; }
-        FString GetNodeDisplayName() const override { return "VertexTangent"; }
-        FString GetNodeTooltip() const override { return "Returns the interpolated world-space vertex tangent (float3)."; }
+        FStringView GetNodeDisplayName() const override { return "VertexTangent"; }
+        FStringView GetNodeTooltip() const override { return "Returns the interpolated world-space vertex tangent (float3)."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
 
@@ -154,8 +154,8 @@ namespace Lumina
         void BuildNode() override;
         uint32 GetNodeTitleColor() const override { return IM_COL32(25, 25, 255, 255); }
         FFixedString GetNodeCategory() const override { return "Inputs"; }
-        FString GetNodeDisplayName() const override { return "VertexBitangent"; }
-        FString GetNodeTooltip() const override { return "Returns the world-space vertex bitangent (float3, derived from normal x tangent * sign)."; }
+        FStringView GetNodeDisplayName() const override { return "VertexBitangent"; }
+        FStringView GetNodeTooltip() const override { return "Returns the world-space vertex bitangent (float3, derived from normal x tangent * sign)."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
 
@@ -167,8 +167,8 @@ namespace Lumina
         void BuildNode() override;
         uint32 GetNodeTitleColor() const override { return IM_COL32(25, 25, 255, 255); }
         FFixedString GetNodeCategory() const override { return "Inputs"; }
-        FString GetNodeDisplayName() const override { return "VertexColor"; }
-        FString GetNodeTooltip() const override { return "Returns the interpolated per-vertex color (float4)."; }
+        FStringView GetNodeDisplayName() const override { return "VertexColor"; }
+        FStringView GetNodeTooltip() const override { return "Returns the interpolated per-vertex color (float4)."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
 }

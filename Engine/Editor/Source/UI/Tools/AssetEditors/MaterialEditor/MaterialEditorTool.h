@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Core/Object/ObjectHandleTyped.h"
+#include "UI/ColorTextEdit/TextEditor.h"
 #include "UI/Tools/AssetEditors/AssetEditorTool.h"
 #include "UI/Tools/NodeGraph/EdGraphNode.h"
 #include "UI/Tools/NodeGraph/Material/MaterialCompiler.h"
@@ -63,6 +64,10 @@ namespace Lumina
         void Compile();
         void ApplyMaterialToPreview();
         void FocusGraphNode(CEdGraphNode* Node);
+
+        // Syntax-highlighted editor for the selected Custom Slang node's body. Bound lazily to the
+        // selection; edits write straight back to the node (auto-compile picks them up).
+        void DrawCustomCodeEditor();
         void OnSave() override;
         void InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& InDockspaceSize) const override;
 
@@ -86,6 +91,14 @@ namespace Lumina
         size_t                          ReplacementStart = 0;
         size_t                          ReplacementEnd = 0;
         CEdGraphNode*                   SelectedNode = nullptr;
+
+        // Custom Slang code editor state. CodeEditorBoundNode tracks which node the buffer currently
+        // holds, so switching selection reloads instead of writing one node's text into another.
+        TextEditor                      CodeEditor;
+        CEdGraphNode*                   CodeEditorBoundNode = nullptr;
+        // Undo cursor at the last write-back; a change means the user actually edited the buffer,
+        // so we don't rewrite (and dirty) the package every frame.
+        size_t                          LastCodeEditorUndoIndex = 0;
         FCompilationResultInfo          CompilationResult;
         
         

@@ -13,8 +13,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
-        FString GetNodeDisplayName() const override { return "Remap"; }
-        FString GetNodeTooltip() const override { return "Remaps a value from [In Min, In Max] to [Out Min, Out Max]."; }
+        FStringView GetNodeDisplayName() const override { return "Remap"; }
+        FStringView GetNodeTooltip() const override { return "Remaps a value from [In Min, In Max] to [Out Min, Out Max]."; }
 
         void BuildNode() override;
         void GenerateBytecode(FAnimationGraphCompiler& Compiler) override;

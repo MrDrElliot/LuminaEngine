@@ -155,11 +155,14 @@ namespace Lumina
             Callbacks.StartChangeCallback(Event);
         }
 
-        if (Callbacks.Type && Callbacks.Type->GetStructOps()->HasPreEdit())
+        // Null for script-defined structs, which carry no compile-time struct ops.
+        FStructOps* Ops = Callbacks.Type ? Callbacks.Type->GetStructOps() : nullptr;
+
+        if (Ops && Ops->HasPreEdit())
         {
-            Callbacks.Type->GetStructOps()->PreEdit(PropertyHandle->GetValuePtr(), Event);
+            Ops->PreEdit(PropertyHandle->GetValuePtr(), Event);
         }
-        
+
         if (Callbacks.PreChangeCallback)
         {
             Callbacks.PreChangeCallback(Event);
@@ -170,9 +173,9 @@ namespace Lumina
             Customization->UpdatePropertyValue(PropertyHandle);
         }
 
-        if (Callbacks.Type && Callbacks.Type->GetStructOps()->HasPostEdit())
+        if (Ops && Ops->HasPostEdit())
         {
-            Callbacks.Type->GetStructOps()->PostEdit(PropertyHandle->GetValuePtr(), Event);
+            Ops->PostEdit(PropertyHandle->GetValuePtr(), Event);
         }
         
         if (Callbacks.PostChangeCallback)
@@ -961,11 +964,14 @@ namespace Lumina
             Callbacks.StartChangeCallback(Event);
         }
         
-        if (Callbacks.Type->GetStructOps()->HasPreEdit())
+        // Null for script-defined structs; see FPropertyRow::DispatchChange.
+        FStructOps* Ops = Callbacks.Type ? Callbacks.Type->GetStructOps() : nullptr;
+
+        if (Ops && Ops->HasPreEdit())
         {
-            Callbacks.Type->GetStructOps()->PreEdit(PropertyHandle->GetValuePtr(), Event);
+            Ops->PreEdit(PropertyHandle->GetValuePtr(), Event);
         }
-        
+
         if (Callbacks.PreChangeCallback)
         {
             Callbacks.PreChangeCallback(Event);
@@ -984,9 +990,9 @@ namespace Lumina
             ImGuiX::Notifications::NotifyWarning("Duplicate map key ignored; keys must be unique.");
         }
         
-        if (Callbacks.Type->GetStructOps()->HasPostEdit())
+        if (Ops && Ops->HasPostEdit())
         {
-            Callbacks.Type->GetStructOps()->PostEdit(PropertyHandle->GetValuePtr(), Event);
+            Ops->PostEdit(PropertyHandle->GetValuePtr(), Event);
         }
 
         if (Callbacks.PostChangeCallback)
@@ -1028,18 +1034,18 @@ namespace Lumina
 
     void FMapEntryRow::DrawExtraControlsSection()
     {
-        FMapProperty* Map = MapRow->MapProperty;
+        FMapProperty* MapProperty = MapRow->MapProperty;
         void* Container = MapRow->GetPropertyHandle()->GetValuePtr();
         const int64 Index = EntryIndex;
 
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 4));
         if (ImGuiX::FlatButton(LE_ICON_TRASH_CAN, ImVec2(18, 24), ArrayControlSeed))
         {
-            MapRow->QueueMutation([Map, Container, Index]
+            MapRow->QueueMutation([MapProperty, Container, Index]
             {
-                if (Container != nullptr && static_cast<size_t>(Index) < Map->GetNum(Container))
+                if (Container != nullptr && static_cast<size_t>(Index) < MapProperty->GetNum(Container))
                 {
-                    Map->RemoveByKey(Container, Map->GetKeyAt(Container, static_cast<size_t>(Index)));
+                    MapProperty->RemoveByKey(Container, MapProperty->GetKeyAt(Container, static_cast<size_t>(Index)));
                 }
             });
         }
@@ -1592,9 +1598,12 @@ namespace Lumina
                     ChangeEventCallbacks.StartChangeCallback(Event);
                 }
                 
-                if (ChangeEventCallbacks.Type->GetStructOps()->HasPreEdit())
+                // Null for script-defined structs; see FPropertyRow::DispatchChange.
+                FStructOps* Ops = ChangeEventCallbacks.Type ? ChangeEventCallbacks.Type->GetStructOps() : nullptr;
+
+                if (Ops && Ops->HasPreEdit())
                 {
-                    ChangeEventCallbacks.Type->GetStructOps()->PreEdit(PropertyHandle->GetValuePtr(), Event);
+                    Ops->PreEdit(PropertyHandle->GetValuePtr(), Event);
                 }
 
                 if (ChangeEventCallbacks.PreChangeCallback)
@@ -1604,9 +1613,9 @@ namespace Lumina
 
                 Customization->UpdatePropertyValue(PropertyHandle);
 
-                if (ChangeEventCallbacks.Type->GetStructOps()->HasPostEdit())
+                if (Ops && Ops->HasPostEdit())
                 {
-                    ChangeEventCallbacks.Type->GetStructOps()->PostEdit(PropertyHandle->GetValuePtr(), Event);
+                    Ops->PostEdit(PropertyHandle->GetValuePtr(), Event);
                 }
                 
                 if (ChangeEventCallbacks.PostChangeCallback)

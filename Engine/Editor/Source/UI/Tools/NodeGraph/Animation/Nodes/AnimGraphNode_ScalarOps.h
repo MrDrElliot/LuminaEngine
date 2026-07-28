@@ -55,8 +55,8 @@ namespace Lumina
     {
         GENERATED_BODY()
     public:
-        FString GetNodeDisplayName() const override { return "Add"; }
-        FString GetNodeTooltip() const override { return "Returns A + B."; }
+        FStringView GetNodeDisplayName() const override { return "Add"; }
+        FStringView GetNodeTooltip() const override { return "Returns A + B."; }
         EAnimScalarOp GetScalarOp() const override { return EAnimScalarOp::Add; }
     };
 
@@ -65,8 +65,8 @@ namespace Lumina
     {
         GENERATED_BODY()
     public:
-        FString GetNodeDisplayName() const override { return "Subtract"; }
-        FString GetNodeTooltip() const override { return "Returns A - B."; }
+        FStringView GetNodeDisplayName() const override { return "Subtract"; }
+        FStringView GetNodeTooltip() const override { return "Returns A - B."; }
         EAnimScalarOp GetScalarOp() const override { return EAnimScalarOp::Sub; }
     };
 
@@ -75,8 +75,8 @@ namespace Lumina
     {
         GENERATED_BODY()
     public:
-        FString GetNodeDisplayName() const override { return "Multiply"; }
-        FString GetNodeTooltip() const override { return "Returns A * B."; }
+        FStringView GetNodeDisplayName() const override { return "Multiply"; }
+        FStringView GetNodeTooltip() const override { return "Returns A * B."; }
         EAnimScalarOp GetScalarOp() const override { return EAnimScalarOp::Mul; }
         float GetDefaultA() const override { return 1.0f; }
         float GetDefaultB() const override { return 1.0f; }
@@ -87,8 +87,8 @@ namespace Lumina
     {
         GENERATED_BODY()
     public:
-        FString GetNodeDisplayName() const override { return "Divide"; }
-        FString GetNodeTooltip() const override { return "Returns A / B. Division by zero yields 0."; }
+        FStringView GetNodeDisplayName() const override { return "Divide"; }
+        FStringView GetNodeTooltip() const override { return "Returns A / B. Division by zero yields 0."; }
         EAnimScalarOp GetScalarOp() const override { return EAnimScalarOp::Div; }
         float GetDefaultB() const override { return 1.0f; }
     };
@@ -98,8 +98,8 @@ namespace Lumina
     {
         GENERATED_BODY()
     public:
-        FString GetNodeDisplayName() const override { return "Min"; }
-        FString GetNodeTooltip() const override { return "Returns the lesser of A and B."; }
+        FStringView GetNodeDisplayName() const override { return "Min"; }
+        FStringView GetNodeTooltip() const override { return "Returns the lesser of A and B."; }
         EAnimScalarOp GetScalarOp() const override { return EAnimScalarOp::Min; }
     };
 
@@ -108,8 +108,8 @@ namespace Lumina
     {
         GENERATED_BODY()
     public:
-        FString GetNodeDisplayName() const override { return "Max"; }
-        FString GetNodeTooltip() const override { return "Returns the greater of A and B."; }
+        FStringView GetNodeDisplayName() const override { return "Max"; }
+        FStringView GetNodeTooltip() const override { return "Returns the greater of A and B."; }
         EAnimScalarOp GetScalarOp() const override { return EAnimScalarOp::Max; }
     };
 
@@ -118,8 +118,8 @@ namespace Lumina
     {
         GENERATED_BODY()
     public:
-        FString GetNodeDisplayName() const override { return "Clamp 01"; }
-        FString GetNodeTooltip() const override { return "Clamps A into the [0, 1] range."; }
+        FStringView GetNodeDisplayName() const override { return "Clamp 01"; }
+        FStringView GetNodeTooltip() const override { return "Clamps A into the [0, 1] range."; }
         EAnimScalarOp GetScalarOp() const override { return EAnimScalarOp::Clamp01; }
     };
 
@@ -128,8 +128,8 @@ namespace Lumina
     {
         GENERATED_BODY()
     public:
-        FString GetNodeDisplayName() const override { return "One Minus"; }
-        FString GetNodeTooltip() const override { return "Returns 1 - A. Handy for inverting a blend alpha."; }
+        FStringView GetNodeDisplayName() const override { return "One Minus"; }
+        FStringView GetNodeTooltip() const override { return "Returns 1 - A. Handy for inverting a blend alpha."; }
         EAnimScalarOp GetScalarOp() const override { return EAnimScalarOp::OneMinus; }
     };
 
@@ -138,8 +138,8 @@ namespace Lumina
     {
         GENERATED_BODY()
     public:
-        FString GetNodeDisplayName() const override { return "Absolute Value"; }
-        FString GetNodeTooltip() const override { return "Returns the absolute value of A."; }
+        FStringView GetNodeDisplayName() const override { return "Absolute Value"; }
+        FStringView GetNodeTooltip() const override { return "Returns the absolute value of A."; }
         EAnimScalarOp GetScalarOp() const override { return EAnimScalarOp::Abs; }
     };
 
@@ -148,8 +148,8 @@ namespace Lumina
     {
         GENERATED_BODY()
     public:
-        FString GetNodeDisplayName() const override { return "Sine"; }
-        FString GetNodeTooltip() const override { return "Returns sin(A), with A in radians."; }
+        FStringView GetNodeDisplayName() const override { return "Sine"; }
+        FStringView GetNodeTooltip() const override { return "Returns sin(A), with A in radians."; }
         EAnimScalarOp GetScalarOp() const override { return EAnimScalarOp::Sin; }
     };
 
@@ -158,8 +158,8 @@ namespace Lumina
     {
         GENERATED_BODY()
     public:
-        FString GetNodeDisplayName() const override { return "Cosine"; }
-        FString GetNodeTooltip() const override { return "Returns cos(A), with A in radians."; }
+        FStringView GetNodeDisplayName() const override { return "Cosine"; }
+        FStringView GetNodeTooltip() const override { return "Returns cos(A), with A in radians."; }
         EAnimScalarOp GetScalarOp() const override { return EAnimScalarOp::Cos; }
     };
 
@@ -168,8 +168,8 @@ namespace Lumina
     {
         GENERATED_BODY()
     public:
-        FString GetNodeDisplayName() const override { return "Modulo"; }
-        FString GetNodeTooltip() const override { return "Returns A mod B (fmod). B of zero yields 0."; }
+        FStringView GetNodeDisplayName() const override { return "Modulo"; }
+        FStringView GetNodeTooltip() const override { return "Returns A mod B (fmod). B of zero yields 0."; }
         EAnimScalarOp GetScalarOp() const override { return EAnimScalarOp::Mod; }
         float GetDefaultB() const override { return 1.0f; }
     };
@@ -179,8 +179,8 @@ namespace Lumina
     {
         GENERATED_BODY()
     public:
-        FString GetNodeDisplayName() const override { return "Power"; }
-        FString GetNodeTooltip() const override { return "Returns A raised to the power B."; }
+        FStringView GetNodeDisplayName() const override { return "Power"; }
+        FStringView GetNodeTooltip() const override { return "Returns A raised to the power B."; }
         EAnimScalarOp GetScalarOp() const override { return EAnimScalarOp::Pow; }
         float GetDefaultA() const override { return 1.0f; }
         float GetDefaultB() const override { return 1.0f; }
@@ -191,8 +191,8 @@ namespace Lumina
     {
         GENERATED_BODY()
     public:
-        FString GetNodeDisplayName() const override { return "Atan2"; }
-        FString GetNodeTooltip() const override { return "Returns atan2(A, B) in radians. Useful for aim angles."; }
+        FStringView GetNodeDisplayName() const override { return "Atan2"; }
+        FStringView GetNodeTooltip() const override { return "Returns atan2(A, B) in radians. Useful for aim angles."; }
         EAnimScalarOp GetScalarOp() const override { return EAnimScalarOp::Atan2; }
     };
 
@@ -201,8 +201,8 @@ namespace Lumina
     {
         GENERATED_BODY()
     public:
-        FString GetNodeDisplayName() const override { return "Less"; }
-        FString GetNodeTooltip() const override { return "Returns 1 when A < B, else 0. Feeds blend alphas and transition parameters."; }
+        FStringView GetNodeDisplayName() const override { return "Less"; }
+        FStringView GetNodeTooltip() const override { return "Returns 1 when A < B, else 0. Feeds blend alphas and transition parameters."; }
         EAnimScalarOp GetScalarOp() const override { return EAnimScalarOp::Less; }
     };
 
@@ -211,8 +211,8 @@ namespace Lumina
     {
         GENERATED_BODY()
     public:
-        FString GetNodeDisplayName() const override { return "Greater"; }
-        FString GetNodeTooltip() const override { return "Returns 1 when A > B, else 0. Feeds blend alphas and transition parameters."; }
+        FStringView GetNodeDisplayName() const override { return "Greater"; }
+        FStringView GetNodeTooltip() const override { return "Returns 1 when A > B, else 0. Feeds blend alphas and transition parameters."; }
         EAnimScalarOp GetScalarOp() const override { return EAnimScalarOp::Greater; }
     };
 
@@ -221,8 +221,8 @@ namespace Lumina
     {
         GENERATED_BODY()
     public:
-        FString GetNodeDisplayName() const override { return "Floor"; }
-        FString GetNodeTooltip() const override { return "Rounds A down to the nearest integer."; }
+        FStringView GetNodeDisplayName() const override { return "Floor"; }
+        FStringView GetNodeTooltip() const override { return "Rounds A down to the nearest integer."; }
         EAnimScalarOp GetScalarOp() const override { return EAnimScalarOp::Floor; }
     };
 
@@ -231,8 +231,8 @@ namespace Lumina
     {
         GENERATED_BODY()
     public:
-        FString GetNodeDisplayName() const override { return "Ceil"; }
-        FString GetNodeTooltip() const override { return "Rounds A up to the nearest integer."; }
+        FStringView GetNodeDisplayName() const override { return "Ceil"; }
+        FStringView GetNodeTooltip() const override { return "Rounds A up to the nearest integer."; }
         EAnimScalarOp GetScalarOp() const override { return EAnimScalarOp::Ceil; }
     };
 
@@ -241,8 +241,8 @@ namespace Lumina
     {
         GENERATED_BODY()
     public:
-        FString GetNodeDisplayName() const override { return "Frac"; }
-        FString GetNodeTooltip() const override { return "Returns the fractional part of A (A - floor(A))."; }
+        FStringView GetNodeDisplayName() const override { return "Frac"; }
+        FStringView GetNodeTooltip() const override { return "Returns the fractional part of A (A - floor(A))."; }
         EAnimScalarOp GetScalarOp() const override { return EAnimScalarOp::Frac; }
     };
 
@@ -251,8 +251,8 @@ namespace Lumina
     {
         GENERATED_BODY()
     public:
-        FString GetNodeDisplayName() const override { return "Square Root"; }
-        FString GetNodeTooltip() const override { return "Returns sqrt(A). Negative A yields 0."; }
+        FStringView GetNodeDisplayName() const override { return "Square Root"; }
+        FStringView GetNodeTooltip() const override { return "Returns sqrt(A). Negative A yields 0."; }
         EAnimScalarOp GetScalarOp() const override { return EAnimScalarOp::Sqrt; }
     };
 
@@ -261,8 +261,8 @@ namespace Lumina
     {
         GENERATED_BODY()
     public:
-        FString GetNodeDisplayName() const override { return "Negate"; }
-        FString GetNodeTooltip() const override { return "Returns -A."; }
+        FStringView GetNodeDisplayName() const override { return "Negate"; }
+        FStringView GetNodeTooltip() const override { return "Returns -A."; }
         EAnimScalarOp GetScalarOp() const override { return EAnimScalarOp::Negate; }
     };
 
@@ -271,8 +271,8 @@ namespace Lumina
     {
         GENERATED_BODY()
     public:
-        FString GetNodeDisplayName() const override { return "Sign"; }
-        FString GetNodeTooltip() const override { return "Returns -1, 0, or 1 depending on the sign of A."; }
+        FStringView GetNodeDisplayName() const override { return "Sign"; }
+        FStringView GetNodeTooltip() const override { return "Returns -1, 0, or 1 depending on the sign of A."; }
         EAnimScalarOp GetScalarOp() const override { return EAnimScalarOp::Sign; }
     };
 }

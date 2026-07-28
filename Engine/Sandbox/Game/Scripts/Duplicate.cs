@@ -14,12 +14,12 @@ public sealed class NewScript : EntityScript
 
     public override void OnUpdate(float deltaTime)
     {
-        if (World.GetNumEntities() >= 1000) return;
+        if (World.GetNumEntities() >= 10000) return;
         
-        for (var i = 0; i < 10; i++)
+        for (var i = 0; i < 1000; i++)
         {
             var newEntity = World.DuplicateEntity(TargetEntity);
-            World.SetEntityLocation(newEntity, new FVector3(Random.Shared.Next(-100, 100), Random.Shared.Next(-100, 100), Random.Shared.Next(-100, 100)));
+            World.SetEntityLocation(newEntity, new FVector3(Random.Shared.Next(-100, 100), 0, Random.Shared.Next(-100, 100)));
         }
     }
 }

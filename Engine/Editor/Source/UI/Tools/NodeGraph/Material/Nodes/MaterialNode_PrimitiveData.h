@@ -15,8 +15,8 @@ namespace Lumina
         
         ImVec2 GetMinNodeTitleBarSize() const override { return ImVec2(60, 28); }
         FFixedString GetNodeCategory() const override { return "Utility"; }
-        FString GetNodeDisplayName() const override { return "CustomPrimitiveData"; }
-        FString GetNodeTooltip() const override;
+        FStringView GetNodeDisplayName() const override { return "CustomPrimitiveData"; }
+        FStringView GetNodeTooltip() const override;
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
         
         /** Data type of the custom primitive data slot to read from the instance. */

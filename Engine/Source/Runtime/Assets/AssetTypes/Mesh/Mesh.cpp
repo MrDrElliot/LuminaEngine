@@ -6,6 +6,7 @@
 #include "Memory/MemoryTracking.h"
 #include "Renderer/Vertex.h"
 #include "Tools/Import/ImportHelpers.h"
+#include "World/Scene/RenderScene/MeshResolveCache.h"
 
 
 namespace Lumina
@@ -58,7 +59,9 @@ namespace Lumina
         else
         {
             Materials[Slot] = NewMaterial;
-        }  
+        }
+
+        FMeshResolveCache::BumpEpoch();
     }
 
     void CMesh::SetMeshResource(TUniquePtr<FMeshResource>&& NewResource)
@@ -176,6 +179,9 @@ namespace Lumina
 
             MB.MeshletHeaderBuffer = CreateAndUpload(&Header, sizeof(FMeshletHeaderGPU));
         }
+
+        // Reimport, procedural rebuild and dynamic mesh Commit all land here.
+        FMeshResolveCache::BumpEpoch();
 
         // Drop import-time scratch.
         MeshResources->ClearVertices();

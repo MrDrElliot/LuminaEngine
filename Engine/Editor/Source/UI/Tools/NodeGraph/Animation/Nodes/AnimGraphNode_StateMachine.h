@@ -16,8 +16,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
-        FString GetNodeDisplayName() const override { return "State Machine"; }
-        FString GetNodeTooltip() const override { return "A state machine. Double-click to edit its states and transitions."; }
+        FStringView GetNodeDisplayName() const override { return "State Machine"; }
+        FStringView GetNodeTooltip() const override { return "A state machine. Double-click to edit its states and transitions."; }
         FFixedString GetNodeCategory() const override { return "State Machine"; }
         uint32 GetNodeTitleColor() const override { return IM_COL32(120, 70, 150, 255); }
 

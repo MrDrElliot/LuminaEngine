@@ -167,6 +167,9 @@ namespace Lumina
 
     void FEditorTool::Update(const FUpdateContext& UpdateContext)
     {
+        LUMINA_PROFILE_SCOPE();
+        LUMINA_PROFILE_TAG(GetToolName().c_str());
+        
         TickEditorCamera(UpdateContext.GetDeltaTime());
         TickEditorActions();
 
@@ -177,6 +180,8 @@ namespace Lumina
 
     void FEditorTool::DrawDrawerContent(bool bFocused)
     {
+        LUMINA_PROFILE_SCOPE();
+
         for (const TUniquePtr<FToolWindow>& Window : ToolWindows)
         {
             if (Window && Window->DrawFunction)

@@ -16,12 +16,12 @@ namespace Lumina
     {
         if (bDynamic)
         {
-            ImGui::Text(LE_ICON_MATERIAL_DESIGN " %s", GetNodeDisplayName().c_str());
+            ImGui::Text(LE_ICON_MATERIAL_DESIGN " %s", GetNodeDisplayName().data());
             ImGuiX::TextTooltip("{}", "Edit this parameter in in the \"Material Properties\" window.");
         }
         else
         {
-            ImGui::TextUnformatted(GetNodeDisplayName().c_str());
+            ImGui::TextUnformatted(GetNodeDisplayName().data());
         }
     }
 

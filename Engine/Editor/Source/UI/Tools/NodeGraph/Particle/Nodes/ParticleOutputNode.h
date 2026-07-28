@@ -17,8 +17,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
-        FString GetNodeDisplayName() const override { return "Particle Output"; }
-        FString GetNodeTooltip() const override { return "Final output parameters for spawn and simulation."; }
+        FStringView GetNodeDisplayName() const override { return "Particle Output"; }
+        FStringView GetNodeTooltip() const override { return "Final output parameters for spawn and simulation."; }
         uint32 GetNodeTitleColor() const override { return IM_COL32(30, 130, 200, 255); }
         bool IsDeletable() const override { return false; }
         FFixedString GetNodeCategory() const override { return "Output"; }

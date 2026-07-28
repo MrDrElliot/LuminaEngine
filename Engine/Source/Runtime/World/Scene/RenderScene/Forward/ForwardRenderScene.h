@@ -87,8 +87,7 @@ namespace Lumina
             uint16              _Pad;
         };
 
-        // Material-pure portion of a resolved draw slot, cached per-thread keyed
-        // by material. Per-entity bits (CastShadow) added at surface emit.
+        // Copied out of the shared FResolvedSurface when a local batch is first created.
         struct FCachedMaterialResolve
         {
             const FShaderEntry* VertexShader;
@@ -108,10 +107,11 @@ namespace Lumina
             bool                bMaterialCastsShadows;
         };
 
-        struct FMaterialCacheEntry
+        // One distinct GPU material slot a worker emitted; merged into Geometry::DeferredMaterials.
+        struct FLocalDeferredMaterial
         {
-            CMaterialInterface*     Key;
-            FCachedMaterialResolve  Resolve;
+            uint16              MaterialIndex;
+            const FShaderEntry* DeferredShader;
         };
 
         struct CACHE_ALIGN FLocalBatchEntry
@@ -207,14 +207,20 @@ namespace Lumina
             TFrameVector<FEntityRecord>         EntityRecords;
             TFrameVector<FLocalBatchEntry>      LocalBatches;
             FBonePageArray                      BonesData;
-            TFrameVector<FMaterialCacheEntry>   MaterialCache;
+            TFrameVector<FLocalDeferredMaterial> DeferredMaterials;
+            // Batch key hash -> LocalBatches index, so batch lookup stays O(1) as material count grows.
+            TFrameHashMap<uint64, uint16>       BatchIndexByKey;
             FFrameArenaAllocator                Arena;
             FSceneRenderStats                   Stats = {};
+
+            // Surfaces of one mesh usually share a material; check the last hit before the map.
+            uint16                              LastBatchIndex = 0xFFFFu;
+            uint64                              LastBatchHash  = 0u;
 
             FThreadLocalDrawData() = default;
             explicit FThreadLocalDrawData(FFrameArenaAllocator A)
                 : Items(A), EntityRecords(A), LocalBatches(A), BonesData(A)
-                , MaterialCache(A), Arena(A) {}
+                , DeferredMaterials(A), BatchIndexByKey(A), Arena(A) {}
 
             FThreadLocalDrawData(FThreadLocalDrawData&&) = default;
             FThreadLocalDrawData& operator=(FThreadLocalDrawData&&) = default;
@@ -225,9 +231,12 @@ namespace Lumina
                 new (&EntityRecords) TFrameVector<FEntityRecord>(A);
                 new (&LocalBatches)  TFrameVector<FLocalBatchEntry>(A);
                 new (&BonesData)     FBonePageArray(A);
-                new (&MaterialCache) TFrameVector<FMaterialCacheEntry>(A);
+                new (&DeferredMaterials) TFrameVector<FLocalDeferredMaterial>(A);
+                new (&BatchIndexByKey)   TFrameHashMap<uint64, uint16>(A);
                 Arena = A;
                 Stats = {};
+                LastBatchIndex = 0xFFFFu;
+                LastBatchHash  = 0u;
             }
             
             ~FThreadLocalDrawData()
@@ -683,6 +692,12 @@ namespace Lumina
         // Render-thread half: buffer resize + upload commands; reads game-thread state.
         void CompileDrawCommands_RenderThread(RHI::FCmdListH CL);
 
+        // Serial pre-pass so the parallel gather is pure reads; skipped when nothing changed.
+        void ResolveDirtyMeshComponents();
+
+        // Reused to flatten a component's material overrides; keeps capacity.
+        TVector<CMaterialInterface*> ResolveOverrideScratch;
+
         void ProcessStaticMeshEntityInternal(entt::entity Entity, const SStaticMeshComponent& MeshComponent, const STransformComponent& TransformComponent, FThreadLocalDrawData& Local);
         void ProcessDynamicMeshEntityInternal(entt::entity Entity, const SDynamicMeshComponent& MeshComponent, const STransformComponent& TransformComponent, FThreadLocalDrawData& Local);
         void ProcessFoliageBakedInstance(const SFoliageType& Type, const FFoliageBakedInstance& Baked, uint32 OwnerEntityID, FThreadLocalDrawData& Local);
@@ -864,6 +879,8 @@ namespace Lumina
         THashMap<entt::entity, FParticleGPUState> ParticleGPUStates;
 
         TVector<FDrawBatchKey>                  MergeGlobalBatchKeys;
+        // Batch key hash -> global batch index; keeps the merge linear in total batches, not quadratic.
+        THashMap<uint64, uint32>                MergeGlobalBatchIndexByKey;
         TVector<TVector<FLocalBatchEntry*>>     MergeBatchToLocals;
         TVector<TVector<FDrawKey>>              MergeGlobalDrawsPerBatch;
         TVector<uint32>                         MergeBatchDrawArgBase;

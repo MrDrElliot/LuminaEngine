@@ -13,8 +13,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
-        FString GetNodeDisplayName() const override { return "Get Parameter"; }
-        FString GetNodeTooltip() const override { return "Reads a named graph parameter as a scalar value."; }
+        FStringView GetNodeDisplayName() const override { return "Get Parameter"; }
+        FStringView GetNodeTooltip() const override { return "Reads a named graph parameter as a scalar value."; }
 
         void BuildNode() override;
         void GenerateBytecode(FAnimationGraphCompiler& Compiler) override;

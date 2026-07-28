@@ -1087,7 +1087,7 @@ namespace Lumina
             NodeID = Math::RandRange(0u, UINT32_MAX);
         }
         
-        InNode->FullName = InNode->GetNodeDisplayName() + "_" + eastl::to_string(NodeID);
+        InNode->FullName = FString(InNode->GetNodeDisplayName()) + "_" + eastl::to_string(NodeID);
         InNode->NodeID = NodeID;
         InNode->OwningGraph = this;
 

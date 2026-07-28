@@ -297,7 +297,7 @@ namespace Lumina
             }
             if (CEdNodeGraph* SubGraph = Node->GetEnterableSubGraph())
             {
-                FString Label = Node->GetNodeDisplayName();
+                FString Label = FString(Node->GetNodeDisplayName());
                 if (CAnimGraphNode_State* StateNode = Cast<CAnimGraphNode_State>(Node))
                 {
                     Label = StateNode->StateName.IsNone() ? FString("State") : StateNode->StateName.ToString();
@@ -831,12 +831,11 @@ namespace Lumina
                 continue;
             }
 
-            // Numeric keys (Float / Int / Bool / Enum) drive the animation VM and
-            // are live-editable here. Vector / Object exist for the AI system.
-            if (Key.Type == EBlackboardKeyType::Vector || Key.Type == EBlackboardKeyType::Object)
+            // Numeric keys (Float / Int / Bool / Enum) drive the animation VM and are live-editable
+            // here. Vector / Object / Entity carry no scalar and exist for the AI system.
+            if (!IsScalarBlackboardKey(Key.Type))
             {
-                ImGui::TextDisabled("%s (%s)", Key.Name.c_str(),
-                    Key.Type == EBlackboardKeyType::Vector ? "Vector" : "Object");
+                ImGui::TextDisabled("%s (%s)", Key.Name.c_str(), BlackboardKeyTypeLabel(Key.Type));
                 continue;
             }
 

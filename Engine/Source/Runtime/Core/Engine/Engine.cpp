@@ -3,6 +3,7 @@
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Core/Diagnostics/HangWatchdog.h"
 #include "Audio/AudioContext.h"
+#include "Audio/AudioSettings.h"
 #include "Networking/NetworkGlobals.h"
 #include "Config/Config.h"
 #include "Config/EngineSettings.h"
@@ -188,6 +189,10 @@ namespace Lumina
             if (Class == CInputSettings::StaticClass())
             {
                 FInputActionMap::Get().RebuildFromSettings();
+            }
+            else if (Class == CAudioSettings::StaticClass())
+            {
+                Audio::ApplySettings();
             }
         });
 

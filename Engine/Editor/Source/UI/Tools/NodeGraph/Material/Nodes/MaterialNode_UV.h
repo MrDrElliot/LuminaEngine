@@ -11,8 +11,8 @@ namespace Lumina
     public:
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "UV"; }
-        FString GetNodeDisplayName() const override { return "RotateUV"; }
-        FString GetNodeTooltip() const override { return "Rotates UV around Center by Rotation (radians)."; }
+        FStringView GetNodeDisplayName() const override { return "RotateUV"; }
+        FStringView GetNodeTooltip() const override { return "Rotates UV around Center by Rotation (radians)."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
 
         CMaterialInput* UV = nullptr;
@@ -27,8 +27,8 @@ namespace Lumina
     public:
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "UV"; }
-        FString GetNodeDisplayName() const override { return "TilingAndOffset"; }
-        FString GetNodeTooltip() const override { return "Returns UV * Tiling + Offset."; }
+        FStringView GetNodeDisplayName() const override { return "TilingAndOffset"; }
+        FStringView GetNodeTooltip() const override { return "Returns UV * Tiling + Offset."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
 
         CMaterialInput* UV = nullptr;
@@ -43,8 +43,8 @@ namespace Lumina
     public:
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "UV"; }
-        FString GetNodeDisplayName() const override { return "FlipBook"; }
-        FString GetNodeTooltip() const override { return "Animated sprite-sheet UV, slices the input UV into NumColumns x NumRows tiles, advances at FPS frames per second."; }
+        FStringView GetNodeDisplayName() const override { return "FlipBook"; }
+        FStringView GetNodeTooltip() const override { return "Animated sprite-sheet UV, slices the input UV into NumColumns x NumRows tiles, advances at FPS frames per second."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
 
         CMaterialInput* UV = nullptr;
@@ -61,8 +61,8 @@ namespace Lumina
     public:
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "UV"; }
-        FString GetNodeDisplayName() const override { return "PolarCoordinates"; }
-        FString GetNodeTooltip() const override { return "Converts UV to polar coordinates (radius, angle) around Center."; }
+        FStringView GetNodeDisplayName() const override { return "PolarCoordinates"; }
+        FStringView GetNodeTooltip() const override { return "Converts UV to polar coordinates (radius, angle) around Center."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
 
         CMaterialInput* UV = nullptr;
@@ -76,8 +76,8 @@ namespace Lumina
     public:
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "UV"; }
-        FString GetNodeDisplayName() const override { return "TwirlUV"; }
-        FString GetNodeTooltip() const override { return "Twists UV around Center by Strength * radius."; }
+        FStringView GetNodeDisplayName() const override { return "TwirlUV"; }
+        FStringView GetNodeTooltip() const override { return "Twists UV around Center by Strength * radius."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
 
         CMaterialInput* UV = nullptr;

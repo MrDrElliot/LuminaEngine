@@ -14,11 +14,12 @@ namespace Lumina
         case EBlackboardKeyType::Enum:   Value.Scalar = (float)Key.DefaultInt;         break;
         case EBlackboardKeyType::Vector: Value.Vector = Key.DefaultVector;             break;
         case EBlackboardKeyType::Object: Value.Object = Key.DefaultObject;             break;
+        case EBlackboardKeyType::Entity: Value.Entity = NullEntity;                    break;
         }
         return Value;
     }
 
-    void SBlackboardComponent::EnsureInitialized()
+    void SBlackboardComponent::EnsureInitialized() const
     {
         const CBlackboard* Schema = Blackboard.Get();
 
@@ -52,6 +53,7 @@ namespace Lumina
 
     float SBlackboardComponent::GetFloat(const FName& Key, float Default) const
     {
+        EnsureInitialized();
         auto It = Values.find(Key);
         return It == Values.end() ? Default : It->second.Scalar;
     }
@@ -64,6 +66,7 @@ namespace Lumina
 
     int32 SBlackboardComponent::GetInt(const FName& Key, int32 Default) const
     {
+        EnsureInitialized();
         auto It = Values.find(Key);
         return It == Values.end() ? Default : (int32)Math::Round(It->second.Scalar);
     }
@@ -78,18 +81,6 @@ namespace Lumina
         return GetFloat(Key, Default ? 1.0f : 0.0f) != 0.0f;
     }
 
-    void SBlackboardComponent::SetObjectValue(const FName& Key, CObject* Value)
-    {
-        EnsureInitialized();
-        Values[Key].Object = Value;
-    }
-
-    CObject* SBlackboardComponent::GetObjectValue(const FName& Key) const
-    {
-        auto It = Values.find(Key);
-        return It == Values.end() ? nullptr : It->second.Object.Get();
-    }
-
     void SBlackboardComponent::SetVector(const FName& Key, const FVector3& Value)
     {
         EnsureInitialized();
@@ -98,12 +89,68 @@ namespace Lumina
 
     FVector3 SBlackboardComponent::GetVector(const FName& Key, const FVector3& Default) const
     {
+        EnsureInitialized();
         auto It = Values.find(Key);
         return It == Values.end() ? Default : It->second.Vector;
     }
 
+    void SBlackboardComponent::SetObjectValue(const FName& Key, CObject* Value)
+    {
+        EnsureInitialized();
+        Values[Key].Object = Value;
+    }
+
+    CObject* SBlackboardComponent::GetObjectValue(const FName& Key) const
+    {
+        EnsureInitialized();
+        auto It = Values.find(Key);
+        return It == Values.end() ? nullptr : It->second.Object.Get();
+    }
+
+    void SBlackboardComponent::SetEntity(const FName& Key, entt::entity Value)
+    {
+        EnsureInitialized();
+        Values[Key].Entity = Value;
+    }
+
+    entt::entity SBlackboardComponent::GetEntity(const FName& Key) const
+    {
+        EnsureInitialized();
+        auto It = Values.find(Key);
+        return It == Values.end() ? NullEntity : It->second.Entity;
+    }
+
     bool SBlackboardComponent::HasKey(const FName& Key) const
     {
-        return Blackboard.IsValid() && Blackboard->FindKeyIndex(Key) != INDEX_NONE;
+        return Blackboard.IsValid() && Blackboard->HasKey(Key);
+    }
+
+    EBlackboardKeyType SBlackboardComponent::GetKeyType(const FName& Key, EBlackboardKeyType Fallback) const
+    {
+        return Blackboard.IsValid() ? Blackboard->GetKeyType(Key, Fallback) : Fallback;
+    }
+
+    bool SBlackboardComponent::ClearValue(const FName& Key)
+    {
+        EnsureInitialized();
+
+        const CBlackboard* Schema = Blackboard.Get();
+        const FBlackboardKey* Declared = Schema != nullptr ? Schema->FindKey(Key) : nullptr;
+        if (Declared == nullptr)
+        {
+            // Not in the schema: it can only be a scratch value, so drop it entirely.
+            Values.erase(Key);
+            return false;
+        }
+
+        Values[Key] = MakeDefaultValue(*Declared);
+        return true;
+    }
+
+    void SBlackboardComponent::ResetToDefaults()
+    {
+        Values.clear();
+        SeededSchema = nullptr;
+        EnsureInitialized();
     }
 }

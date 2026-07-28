@@ -20,4 +20,15 @@ namespace Lumina
         const int32 Index = FindKeyIndex(Name);
         return Index == INDEX_NONE ? nullptr : &Keys[Index];
     }
+
+    EBlackboardKeyType CBlackboard::GetKeyType(const FName& Name, EBlackboardKeyType Fallback) const
+    {
+        const FBlackboardKey* Key = FindKey(Name);
+        return Key == nullptr ? Fallback : Key->Type;
+    }
+
+    FName CBlackboard::GetKeyName(int32 Index) const
+    {
+        return (Index >= 0 && Index < (int32)Keys.size()) ? Keys[Index].Name : FName();
+    }
 }

@@ -11,8 +11,14 @@ namespace Lumina
     public:
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "Vector"; }
-        FString GetNodeDisplayName() const override;
-        FString GetNodeTooltip() const override { return "Selects a subset of the input vector's channels (R/G/B/A)."; }
+        FStringView GetNodeDisplayName() const override;
+
+    private:
+        // Backing store for the state-dependent display name above; mutable so the const getter can
+        // refresh it. FFixedString = inline storage, so this costs no allocation per frame.
+        mutable FFixedString CachedDisplayName;
+    public:
+        FStringView GetNodeTooltip() const override { return "Selects a subset of the input vector's channels (R/G/B/A)."; }
         void* GetNodeDefaultValue() override { return nullptr; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
         ImVec2 GetMinNodeTitleBarSize() const override;
@@ -32,8 +38,8 @@ namespace Lumina
     public:
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "Vector"; }
-        FString GetNodeDisplayName() const override { return "Append"; }
-        FString GetNodeTooltip() const override { return "Concatenates the channels of A and B into a wider vector (max 4)."; }
+        FStringView GetNodeDisplayName() const override { return "Append"; }
+        FStringView GetNodeTooltip() const override { return "Concatenates the channels of A and B into a wider vector (max 4)."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
 
         CMaterialInput* InputA = nullptr;
@@ -47,8 +53,8 @@ namespace Lumina
     public:
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "Vector"; }
-        FString GetNodeDisplayName() const override { return "MakeFloat2"; }
-        FString GetNodeTooltip() const override { return "Combines two scalars into a float2 (R, G)."; }
+        FStringView GetNodeDisplayName() const override { return "MakeFloat2"; }
+        FStringView GetNodeTooltip() const override { return "Combines two scalars into a float2 (R, G)."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
 
         CMaterialInput* R = nullptr;
@@ -62,8 +68,8 @@ namespace Lumina
     public:
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "Vector"; }
-        FString GetNodeDisplayName() const override { return "MakeFloat3"; }
-        FString GetNodeTooltip() const override { return "Combines three scalars into a float3 (R, G, B)."; }
+        FStringView GetNodeDisplayName() const override { return "MakeFloat3"; }
+        FStringView GetNodeTooltip() const override { return "Combines three scalars into a float3 (R, G, B)."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
 
         CMaterialInput* R = nullptr;
@@ -78,8 +84,8 @@ namespace Lumina
     public:
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "Vector"; }
-        FString GetNodeDisplayName() const override { return "MakeFloat4"; }
-        FString GetNodeTooltip() const override { return "Combines four scalars into a float4 (R, G, B, A)."; }
+        FStringView GetNodeDisplayName() const override { return "MakeFloat4"; }
+        FStringView GetNodeTooltip() const override { return "Combines four scalars into a float4 (R, G, B, A)."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
 
         CMaterialInput* R = nullptr;
@@ -95,8 +101,8 @@ namespace Lumina
     public:
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "Vector"; }
-        FString GetNodeDisplayName() const override { return "BreakFloat2"; }
-        FString GetNodeTooltip() const override { return "Splits a float2 into its R and G scalar components."; }
+        FStringView GetNodeDisplayName() const override { return "BreakFloat2"; }
+        FStringView GetNodeTooltip() const override { return "Splits a float2 into its R and G scalar components."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
 
         CMaterialInput* InputPin = nullptr;
@@ -110,8 +116,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "BreakFloat3"; }
-        FString GetNodeTooltip() const override { return "Splits a float3 into its R, G and B scalar components."; }
+        FStringView GetNodeDisplayName() const override { return "BreakFloat3"; }
+        FStringView GetNodeTooltip() const override { return "Splits a float3 into its R, G and B scalar components."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
 
         CMaterialOutput* B = nullptr;
@@ -123,8 +129,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
         void BuildNode() override;
-        FString GetNodeDisplayName() const override { return "BreakFloat4"; }
-        FString GetNodeTooltip() const override { return "Splits a float4 into its R, G, B and A scalar components."; }
+        FStringView GetNodeDisplayName() const override { return "BreakFloat4"; }
+        FStringView GetNodeTooltip() const override { return "Splits a float4 into its R, G, B and A scalar components."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
 
         CMaterialOutput* A = nullptr;
@@ -137,8 +143,8 @@ namespace Lumina
     public:
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "Vector"; }
-        FString GetNodeDisplayName() const override { return "Normalize"; }
-        FString GetNodeTooltip() const override { return "Returns a vector with the same direction as the input and length 1."; }
+        FStringView GetNodeDisplayName() const override { return "Normalize"; }
+        FStringView GetNodeTooltip() const override { return "Returns a vector with the same direction as the input and length 1."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -150,8 +156,8 @@ namespace Lumina
     public:
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "Vector"; }
-        FString GetNodeDisplayName() const override { return "Distance"; }
-        FString GetNodeTooltip() const override { return "Returns the scalar distance between points A and B."; }
+        FStringView GetNodeDisplayName() const override { return "Distance"; }
+        FStringView GetNodeTooltip() const override { return "Returns the scalar distance between points A and B."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -163,8 +169,8 @@ namespace Lumina
     public:
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "Vector"; }
-        FString GetNodeDisplayName() const override { return "Length"; }
-        FString GetNodeTooltip() const override { return "Returns the length of vector A."; }
+        FStringView GetNodeDisplayName() const override { return "Length"; }
+        FStringView GetNodeTooltip() const override { return "Returns the length of vector A."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -176,8 +182,8 @@ namespace Lumina
     public:
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "Vector"; }
-        FString GetNodeDisplayName() const override { return "Dot"; }
-        FString GetNodeTooltip() const override { return "Returns the dot product of A and B (scalar)."; }
+        FStringView GetNodeDisplayName() const override { return "Dot"; }
+        FStringView GetNodeTooltip() const override { return "Returns the dot product of A and B (scalar)."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -189,8 +195,8 @@ namespace Lumina
     public:
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "Vector"; }
-        FString GetNodeDisplayName() const override { return "Cross"; }
-        FString GetNodeTooltip() const override { return "Returns the cross product of A and B (float3)."; }
+        FStringView GetNodeDisplayName() const override { return "Cross"; }
+        FStringView GetNodeTooltip() const override { return "Returns the cross product of A and B (float3)."; }
         void* GetNodeDefaultValue() override { return &ConstA; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
     };
@@ -202,8 +208,8 @@ namespace Lumina
     public:
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "Vector"; }
-        FString GetNodeDisplayName() const override { return "Reflect"; }
-        FString GetNodeTooltip() const override { return "Reflects incident vector I across normal N. Result direction is I - 2*dot(N,I)*N."; }
+        FStringView GetNodeDisplayName() const override { return "Reflect"; }
+        FStringView GetNodeTooltip() const override { return "Reflects incident vector I across normal N. Result direction is I - 2*dot(N,I)*N."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
 
         CMaterialInput* I = nullptr;
@@ -217,8 +223,8 @@ namespace Lumina
     public:
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "Vector"; }
-        FString GetNodeDisplayName() const override { return "Refract"; }
-        FString GetNodeTooltip() const override { return "Snell-law refraction of I through normal N at relative IOR Eta."; }
+        FStringView GetNodeDisplayName() const override { return "Refract"; }
+        FStringView GetNodeTooltip() const override { return "Snell-law refraction of I through normal N at relative IOR Eta."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
 
         CMaterialInput* I = nullptr;
@@ -233,8 +239,8 @@ namespace Lumina
     public:
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "Vector"; }
-        FString GetNodeDisplayName() const override { return "RotateAboutAxis"; }
-        FString GetNodeTooltip() const override { return "Rotates Position around Axis by Angle (radians) using Rodrigues' formula."; }
+        FStringView GetNodeDisplayName() const override { return "RotateAboutAxis"; }
+        FStringView GetNodeTooltip() const override { return "Rotates Position around Axis by Angle (radians) using Rodrigues' formula."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
 
         CMaterialInput* Position = nullptr;

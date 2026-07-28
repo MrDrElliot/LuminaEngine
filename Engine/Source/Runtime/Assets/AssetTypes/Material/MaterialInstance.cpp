@@ -4,6 +4,7 @@
 #include "Assets/AssetTypes/Textures/Texture.h"
 #include "Core/Engine/Engine.h"
 #include "Renderer/RenderManager.h"
+#include "World/Scene/RenderScene/MeshResolveCache.h"
 
 
 namespace Lumina
@@ -387,11 +388,16 @@ namespace Lumina
         }
 
         SetReadyForRender(true);
+
+        FMeshResolveCache::BumpEpoch();
     }
 
     void CMaterialInstance::OnDestroy()
     {
         CMaterialInterface::OnDestroy();
+
+        // Resolves are keyed partly on this pointer; drop them before it can be recycled.
+        FMeshResolveCache::BumpEpoch();
 
         if (Material)
         {

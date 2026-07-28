@@ -10,12 +10,12 @@
 
 namespace Lumina
 {
-    FString CMaterialOutputNode::GetNodeDisplayName() const
+    FStringView CMaterialOutputNode::GetNodeDisplayName() const
     {
         return "Material Output";
     }
     
-    FString CMaterialOutputNode::GetNodeTooltip() const
+    FStringView CMaterialOutputNode::GetNodeTooltip() const
     {
         return "The final output to the shader";
     }

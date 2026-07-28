@@ -9,7 +9,8 @@
 
 namespace Lumina
 {
-    // Blackboard key value type; anim system uses the scalar-carried numerics, Vector/Object are for AI.
+    // Blackboard key value type; anim system uses the scalar-carried numerics, Vector/Object/Entity are
+    // for AI. Append new types at the end: the value is what assets serialize.
     REFLECT()
     enum class EBlackboardKeyType : uint8
     {
@@ -19,6 +20,7 @@ namespace Lumina
         Enum,
         Vector,
         Object,
+        Entity,
     };
 
     // Per-key behavior flags.
@@ -77,7 +79,36 @@ namespace Lumina
         /** Default for Object keys. */
         PROPERTY(Editable, Category = "Blackboard")
         TObjectPtr<CObject> DefaultObject;
+
+        // Entity keys have no authorable default: an entity id is only meaningful inside a live world,
+        // so they always start unset and are written at runtime.
     };
+
+    // True for the key types the animation VM reads as a float register. Vector/Object/Entity keys carry
+    // no scalar, so they can't drive a graph parameter.
+    constexpr bool IsScalarBlackboardKey(EBlackboardKeyType Type)
+    {
+        return Type == EBlackboardKeyType::Float
+            || Type == EBlackboardKeyType::Int
+            || Type == EBlackboardKeyType::Bool
+            || Type == EBlackboardKeyType::Enum;
+    }
+
+    // Display name for a key type, for editor UI and compile diagnostics.
+    constexpr const char* BlackboardKeyTypeLabel(EBlackboardKeyType Type)
+    {
+        switch (Type)
+        {
+        case EBlackboardKeyType::Float:  return "Float";
+        case EBlackboardKeyType::Int:    return "Int";
+        case EBlackboardKeyType::Bool:   return "Bool";
+        case EBlackboardKeyType::Enum:   return "Enum";
+        case EBlackboardKeyType::Vector: return "Vector";
+        case EBlackboardKeyType::Object: return "Object";
+        case EBlackboardKeyType::Entity: return "Entity";
+        }
+        return "Unknown";
+    }
 
     // Reusable blackboard schema asset (typed keys + defaults), shared read-only. Live values are per-entity
     // in SBlackboardComponent, so entities sharing a schema keep independent values.
@@ -92,6 +123,22 @@ namespace Lumina
 
         int32 FindKeyIndex(const FName& Name) const;
         const FBlackboardKey* FindKey(const FName& Name) const;
+
+        /** Number of keys declared by this schema. */
+        FUNCTION(Script)
+        int32 NumKeys() const { return (int32)Keys.size(); }
+
+        /** True if this schema declares a key called Name. */
+        FUNCTION(Script)
+        bool HasKey(const FName& Name) const { return FindKeyIndex(Name) != INDEX_NONE; }
+
+        /** Type declared for Name, or Fallback when the schema has no such key. */
+        FUNCTION(Script)
+        EBlackboardKeyType GetKeyType(const FName& Name, EBlackboardKeyType Fallback = EBlackboardKeyType::Float) const;
+
+        /** Name of the key at Index, or None when out of range. */
+        FUNCTION(Script)
+        FName GetKeyName(int32 Index) const;
 
         /** Key declarations that make up this blackboard's schema. */
         PROPERTY(Editable, Category = "Blackboard")

@@ -3,7 +3,7 @@
 
 namespace Lumina
 {
-    FString CMaterialExpression_CustomPrimitiveData::GetNodeTooltip() const
+    FStringView CMaterialExpression_CustomPrimitiveData::GetNodeTooltip() const
     {
         return "Retrieves custom primitive data and interprets it as the selected type";
     }

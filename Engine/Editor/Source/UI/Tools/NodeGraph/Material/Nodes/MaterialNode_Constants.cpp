@@ -15,7 +15,7 @@ namespace Lumina
             bDynamic = !bDynamic;
             if (bDynamic)
             {
-                ParameterName = GetNodeDisplayName() + "_Param";
+                ParameterName = FString(GetNodeDisplayName()) + "_Param";
             }
         }
     }
@@ -188,7 +188,7 @@ namespace Lumina
         Output->SetComponentMask(EComponentMask::R);
     }
 
-    FString CMaterialExpression_NumericConstant::GetNodeDisplayName() const
+    FStringView CMaterialExpression_NumericConstant::GetNodeDisplayName() const
     {
         switch (Constant)
         {

@@ -234,9 +234,9 @@ namespace Lumina
 
             FGraphAction Action;
             Action.NodeClass   = NodeClass;
-            Action.DisplayName = CDO->GetNodeDisplayName();
+            Action.DisplayName = FString(CDO->GetNodeDisplayName());
             Action.Category    = CDO->GetNodeCategory().c_str();
-            Action.Tooltip     = CDO->GetNodeTooltip();
+            Action.Tooltip     = FString(CDO->GetNodeTooltip());
             Actions.push_back(Move(Action));
         }
 

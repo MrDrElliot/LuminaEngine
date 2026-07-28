@@ -132,6 +132,15 @@ namespace Lumina
                         {
                             continue;
                         }
+
+                        // Only scalar keys can drive a value parameter; list the rest disabled so a
+                        // missing key reads as "wrong type" rather than "gone".
+                        if (!IsScalarBlackboardKey(Key.Type))
+                        {
+                            ImGui::TextDisabled("%s (%s)", Key.Name.c_str(), BlackboardKeyTypeLabel(Key.Type));
+                            continue;
+                        }
+
                         const bool bSelected = (Key.Name == DisplayValue);
                         if (ImGui::Selectable(Key.Name.c_str(), bSelected))
                         {

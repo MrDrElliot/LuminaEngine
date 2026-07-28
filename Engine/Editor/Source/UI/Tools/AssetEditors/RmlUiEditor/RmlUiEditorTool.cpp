@@ -29,9 +29,19 @@ namespace Lumina
 {
     namespace
     {
-        const char* RmlEditorWindowName      = "RmlEditor";
-        const char* RmlPreviewWindowName     = "RmlPreview";
-        const char* RmlCompositionWindowName = "RmlComposition";
+        const char* RmlEditorWindowName    = "RmlEditor";
+        const char* RmlPreviewWindowName   = "RmlPreview";
+        const char* RmlHierarchyWindowName = "RmlHierarchy";
+        const char* RmlInspectorWindowName = "RmlInspector";
+        const char* RmlPaletteWindowName   = "RmlPalette";
+
+        // Section headings were an ImVec4 literal repeated at every call site.
+        constexpr ImVec4 kSectionHeader{0.60f, 0.85f, 1.00f, 1.00f};
+
+        void SectionHeader(const char* Icon, const char* Label)
+        {
+            ImGui::TextColored(kSectionHeader, "%s %s", Icon, Label);
+        }
 
         FString DisplayNameFromPath(FStringView Path)
         {
@@ -1171,9 +1181,19 @@ namespace Lumina
             DrawPreviewCanvas();
         });
 
-        CreateToolWindow(RmlCompositionWindowName, [this](bool bFocused)
+        CreateToolWindow(RmlHierarchyWindowName, [this](bool bFocused)
         {
-            DrawCompositionPanel();
+            DrawHierarchyPanel();
+        });
+
+        CreateToolWindow(RmlInspectorWindowName, [this](bool bFocused)
+        {
+            DrawInspectorPanel();
+        });
+
+        CreateToolWindow(RmlPaletteWindowName, [this](bool bFocused)
+        {
+            DrawPalettePanel();
         });
 
         RefreshWidgetLibrary();
@@ -1253,13 +1273,21 @@ namespace Lumina
         ImGuiID LeftDockID = 0, RightDockID = 0;
         ImGui::DockBuilderSplitNode(InDockspaceID, ImGuiDir_Right, 0.6f, &RightDockID, &LeftDockID);
 
-        // Carve the composition panel off the far right of the preview half.
-        ImGuiID CompositionDockID = 0, PreviewDockID = 0;
-        ImGui::DockBuilderSplitNode(RightDockID, ImGuiDir_Right, 0.34f, &CompositionDockID, &PreviewDockID);
+        // Carve the designer column off the far right of the preview half.
+        ImGuiID DesignerDockID = 0, PreviewDockID = 0;
+        ImGui::DockBuilderSplitNode(RightDockID, ImGuiDir_Right, 0.34f, &DesignerDockID, &PreviewDockID);
+
+        // Hierarchy and Inspector stack so both stay visible -- selecting an element used to reflow the
+        // panel because the inspector was inline. The Palette tabs behind the Hierarchy: it's used in
+        // bursts when adding content, not continuously while tweaking a selection.
+        ImGuiID HierarchyDockID = 0, InspectorDockID = 0;
+        ImGui::DockBuilderSplitNode(DesignerDockID, ImGuiDir_Down, 0.45f, &InspectorDockID, &HierarchyDockID);
 
         ImGui::DockBuilderDockWindow(GetToolWindowName(RmlEditorWindowName).c_str(), LeftDockID);
         ImGui::DockBuilderDockWindow(GetToolWindowName(RmlPreviewWindowName).c_str(), PreviewDockID);
-        ImGui::DockBuilderDockWindow(GetToolWindowName(RmlCompositionWindowName).c_str(), CompositionDockID);
+        ImGui::DockBuilderDockWindow(GetToolWindowName(RmlHierarchyWindowName).c_str(), HierarchyDockID);
+        ImGui::DockBuilderDockWindow(GetToolWindowName(RmlPaletteWindowName).c_str(), HierarchyDockID);
+        ImGui::DockBuilderDockWindow(GetToolWindowName(RmlInspectorWindowName).c_str(), InspectorDockID);
     }
 
     void FRmlUiEditorTool::ApplyEditorSettings()
@@ -2427,38 +2455,132 @@ namespace Lumina
             [](const FCompWidget& A, const FCompWidget& B) { return A.DisplayName < B.DisplayName; });
     }
 
-    void FRmlUiEditorTool::DrawCompositionPanel()
+    const FRmlUiEditorTool::FCompSlot* FRmlUiEditorTool::FindSlot(const FString& Id) const
     {
-        if (bWidgetLibraryDirty)
+        for (const FCompSlot& Slot : CompSlots)
         {
-            RefreshWidgetLibrary();
+            if (Slot.Id == Id)
+            {
+                return &Slot;
+            }
+        }
+        return nullptr;
+    }
+
+    void FRmlUiEditorTool::DrawElementContextMenu(const std::string& Tag, const std::string& Id, size_t OpenLt, bool bAssigned)
+    {
+        if (!ImGui::BeginPopupContextItem())
+        {
+            return;
         }
 
+        if (!Id.empty()) ImGui::TextDisabled("#%s  <%s>", Id.c_str(), Tag.c_str());
+        else             ImGui::TextDisabled("<%s>", Tag.c_str());
+        ImGui::Separator();
+
+        if (ImGui::BeginMenu(LE_ICON_PLUS_BOX " Add child"))
+        {
+            const int Count = (int)(sizeof(kElementPrimitives) / sizeof(kElementPrimitives[0]));
+            for (const char* Cat : kElementCategories)
+            {
+                if (!ImGui::BeginMenu(Cat))
+                {
+                    continue;
+                }
+                for (int p = 0; p < Count; ++p)
+                {
+                    if (std::strcmp(kElementPrimitives[p].Category, Cat) != 0)
+                    {
+                        continue;
+                    }
+                    if (ImGui::MenuItem(kElementPrimitives[p].Label))
+                    {
+                        AddElement(EnsureElementId(Tag, OpenLt, Id), p);
+                    }
+                }
+                ImGui::EndMenu();
+            }
+            ImGui::EndMenu();
+        }
+
+        ImGui::BeginDisabled(!bAssigned);
+        if (ImGui::MenuItem(LE_ICON_CLOSE " Clear widget"))
+        {
+            ClearSlotAssignment(FString(Id.c_str(), Id.size()));
+        }
+        ImGui::EndDisabled();
+
+        ImGui::Separator();
+        if (ImGui::MenuItem(LE_ICON_ARROW_UP " Move up"))
+        {
+            MoveElement(EnsureElementId(Tag, OpenLt, Id), true);
+        }
+        if (ImGui::MenuItem(LE_ICON_ARROW_DOWN " Move down"))
+        {
+            MoveElement(EnsureElementId(Tag, OpenLt, Id), false);
+        }
+
+        ImGui::Separator();
+        if (ImGui::MenuItem(LE_ICON_TRASH_CAN_OUTLINE " Delete element"))
+        {
+            RemoveElement(EnsureElementId(Tag, OpenLt, Id));
+        }
+        ImGui::EndPopup();
+    }
+
+    void FRmlUiEditorTool::DrawHierarchyPanel()
+    {
         if (ImGui::Button(LE_ICON_REFRESH " Rescan"))
         {
             bWidgetLibraryDirty = true;
         }
         ImGuiX::TextTooltip("Re-scan this document's folder for <template> widgets.");
+
         ImGui::SameLine();
         ImGui::Checkbox("Overlays", &bShowSlotOverlays);
-        ImGuiX::TextTooltip("Draw slot drop-targets over the preview canvas. Ctrl+drag a slot to position it.");
+        ImGuiX::TextTooltip("Draw slot outlines over the preview canvas. Ctrl+drag a slot to position it.");
+
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!bShowSlotOverlays);
+        ImGui::SetNextItemWidth(110.0f);
+        const char* kDetailLabels[] = { "All", "Assigned", "Selection" };
+        int DetailIdx = (int)OverlayDetail;
+        if (ImGui::Combo("##overlay_detail", &DetailIdx, kDetailLabels, IM_ARRAYSIZE(kDetailLabels)))
+        {
+            OverlayDetail = (EOverlayDetail)DetailIdx;
+        }
+        ImGuiX::TextTooltip("How much of the document to outline. Selection-only keeps a busy layout readable.");
+        ImGui::EndDisabled();
+
+        ImGui::SetNextItemWidth(-1.0f);
+        ImGui::InputTextWithHint("##hierarchy_search", LE_ICON_MAGNIFY " Filter elements", HierarchySearch, sizeof(HierarchySearch));
         ImGui::Separator();
 
-        // ---- Hierarchy ----
-        // The full authored tree, parsed from the SOURCE so EVERY element shows (id'd or not) and can be
-        // selected / built into. Acting on an id-less element auto-assigns it an id (EnsureElementId).
-        ImGui::TextColored(ImVec4(0.6f, 0.85f, 1.0f, 1.0f), LE_ICON_VIEW_GRID " Hierarchy");
-
+        // Parsed from the SOURCE so every element shows, id'd or not. Acting on an id-less element assigns
+        // it an id (EnsureElementId), which is also what makes it collapsible and selectable.
         std::vector<FSourceNode> Nodes;
         ParseSourceElements(CompAssignText, Nodes);
 
-        // Root row: selecting it targets the document body (new elements land at the top level).
+        // Scroll region so a deep document can't push the rest of the panel off-screen.
+        if (!ImGui::BeginChild("##hierarchy_tree", ImVec2(0.0f, 0.0f), true))
+        {
+            ImGui::EndChild();
+            return;
+        }
+
         if (ImGui::Selectable(LE_ICON_FOLDER " body (root)", SelectedSlotId.empty()))
         {
             SelectedSlotId = FString();
         }
+        ImGuiX::TextTooltip("The document body. New elements land here when nothing else is selected.");
 
         const std::string SelId(SelectedSlotId.c_str(), SelectedSlotId.size());
+        const bool bFiltering = HierarchySearch[0] != '\0';
+
+        // Collapse is depth-driven: once a subtree is folded, skip rows until depth returns to its level.
+        // Filtering bypasses folding entirely so a match is never hidden behind a collapsed parent.
+        int SkipBelowDepth = -1;
+
         for (int n = 0; n < (int)Nodes.size(); ++n)
         {
             const FSourceNode& Node = Nodes[n];
@@ -2467,11 +2589,53 @@ namespace Lumina
                 continue; // an assignment directive -> shown via its parent's badge, not as its own row
             }
 
+            if (SkipBelowDepth >= 0)
+            {
+                if (Node.Depth > SkipBelowDepth)
+                {
+                    continue;
+                }
+                SkipBelowDepth = -1;
+            }
+
+            const bool bHasId = !Node.Id.empty();
+            const FString NodeId = bHasId ? FString(Node.Id.c_str(), Node.Id.size()) : FString();
+
+            if (bFiltering)
+            {
+                const bool bMatch = ContainsCI(FString(Node.Tag.c_str(), Node.Tag.size()), HierarchySearch)
+                                 || (bHasId && ContainsCI(NodeId, HierarchySearch));
+                if (!bMatch)
+                {
+                    continue;
+                }
+            }
+
+            const bool bHasChildren = (n + 1 < (int)Nodes.size()) && (Nodes[n + 1].Depth > Node.Depth);
+            const bool bCollapsed   = bHasId && CollapsedNodes.find(NodeId) != CollapsedNodes.end();
+
             ImGui::PushID(n);
             const float Indent = float(Node.Depth + 1) * 12.0f;
             ImGui::Indent(Indent);
 
-            const bool bHasId = !Node.Id.empty();
+            // Fold arrow. Drawn only for real parents, and only outside filtering (where folding is off).
+            if (bHasChildren && !bFiltering)
+            {
+                if (ImGui::ArrowButton("##fold", bCollapsed ? ImGuiDir_Right : ImGuiDir_Down))
+                {
+                    const FString Id = bHasId ? NodeId : EnsureElementId(Node.Tag, Node.OpenLt, Node.Id);
+                    if (CollapsedNodes.find(Id) != CollapsedNodes.end()) CollapsedNodes.erase(Id);
+                    else                                                 CollapsedNodes.insert(Id);
+                }
+                ImGui::SameLine(0.0f, 4.0f);
+            }
+            else
+            {
+                // Keep leaf rows aligned with their siblings' arrows.
+                ImGui::Dummy(ImVec2(ImGui::GetFrameHeight(), 0.0f));
+                ImGui::SameLine(0.0f, 4.0f);
+            }
+
             const std::string Assigned = bHasId ? ParseSlotAssignment(CompAssignText, Node.Id) : std::string();
             const bool bAssigned = !Assigned.empty();
             const bool bSel = bHasId && (Node.Id == SelId);
@@ -2481,12 +2645,25 @@ namespace Lumina
             if (bHasId) std::snprintf(Row, sizeof(Row), "%s  #%s", Icon, Node.Id.c_str());
             else        std::snprintf(Row, sizeof(Row), "%s  <%s>", Icon, Node.Tag.c_str());
 
-            if (ImGui::Selectable(Row, bSel))
+            if (ImGui::Selectable(Row, bSel, ImGuiSelectableFlags_SpanAvailWidth))
             {
-                SelectedSlotId = bHasId ? FString(Node.Id.c_str(), Node.Id.size())
-                                        : EnsureElementId(Node.Tag, Node.OpenLt, Node.Id);
+                SelectedSlotId = bHasId ? NodeId : EnsureElementId(Node.Tag, Node.OpenLt, Node.Id);
             }
-            if (ImGui::IsItemHovered() && bHasId) HoveredSlotId = FString(Node.Id.c_str(), Node.Id.size());
+            if (ImGui::IsItemHovered() && bHasId)
+            {
+                HoveredSlotId = NodeId;
+            }
+
+            if (ImGui::BeginDragDropTarget())
+            {
+                if (const ImGuiPayload* Payload = ImGui::AcceptDragDropPayload("RML_WIDGET"))
+                {
+                    AssignWidgetToSlot(EnsureElementId(Node.Tag, Node.OpenLt, Node.Id), *(const int*)Payload->Data);
+                }
+                ImGui::EndDragDropTarget();
+            }
+
+            DrawElementContextMenu(Node.Tag, Node.Id, Node.OpenLt, bAssigned);
 
             if (bAssigned)
             {
@@ -2494,72 +2671,33 @@ namespace Lumina
                 ImGui::TextColored(ImVec4(0.45f, 0.75f, 1.0f, 1.0f), LE_ICON_PUZZLE " %s", Assigned.c_str());
             }
 
-            if (ImGui::BeginDragDropTarget())
-            {
-                if (const ImGuiPayload* Payload = ImGui::AcceptDragDropPayload("RML_WIDGET"))
-                {
-                    const FString Id = EnsureElementId(Node.Tag, Node.OpenLt, Node.Id);
-                    AssignWidgetToSlot(Id, *(const int*)Payload->Data);
-                }
-                ImGui::EndDragDropTarget();
-            }
-
-            if (ImGui::BeginPopupContextItem())
-            {
-                if (bHasId) ImGui::TextDisabled("#%s  <%s>", Node.Id.c_str(), Node.Tag.c_str());
-                else        ImGui::TextDisabled("<%s>", Node.Tag.c_str());
-                ImGui::Separator();
-                if (ImGui::BeginMenu(LE_ICON_PLUS_BOX " Add child"))
-                {
-                    const int Count = (int)(sizeof(kElementPrimitives) / sizeof(kElementPrimitives[0]));
-                    for (const char* Cat : kElementCategories)
-                    {
-                        if (!ImGui::BeginMenu(Cat)) continue;
-                        for (int p = 0; p < Count; ++p)
-                        {
-                            if (std::strcmp(kElementPrimitives[p].Category, Cat) != 0) continue;
-                            if (ImGui::MenuItem(kElementPrimitives[p].Label))
-                            {
-                                AddElement(EnsureElementId(Node.Tag, Node.OpenLt, Node.Id), p);
-                            }
-                        }
-                        ImGui::EndMenu();
-                    }
-                    ImGui::EndMenu();
-                }
-                ImGui::BeginDisabled(!bAssigned);
-                if (ImGui::MenuItem(LE_ICON_CLOSE " Clear widget"))
-                {
-                    ClearSlotAssignment(FString(Node.Id.c_str(), Node.Id.size()));
-                }
-                ImGui::EndDisabled();
-                ImGui::Separator();
-                if (ImGui::MenuItem(LE_ICON_ARROW_UP " Move up"))
-                {
-                    MoveElement(EnsureElementId(Node.Tag, Node.OpenLt, Node.Id), true);
-                }
-                if (ImGui::MenuItem(LE_ICON_ARROW_DOWN " Move down"))
-                {
-                    MoveElement(EnsureElementId(Node.Tag, Node.OpenLt, Node.Id), false);
-                }
-                ImGui::Separator();
-                if (ImGui::MenuItem(LE_ICON_TRASH_CAN_OUTLINE " Delete element"))
-                {
-                    RemoveElement(EnsureElementId(Node.Tag, Node.OpenLt, Node.Id));
-                }
-                ImGui::EndPopup();
-            }
-
             ImGui::Unindent(Indent);
             ImGui::PopID();
+
+            if (bCollapsed && bHasChildren && !bFiltering)
+            {
+                SkipBelowDepth = Node.Depth;
+            }
         }
 
-        DrawSlotInspector();
+        ImGui::EndChild();
 
-        // ---- Add element ----
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::TextColored(ImVec4(0.6f, 0.85f, 1.0f, 1.0f), LE_ICON_PLUS_BOX " Add element");
+        // Delete clears the selected slot's widget (ignored while typing in a field).
+        if (!SelectedSlotId.empty() && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)
+            && !ImGui::IsAnyItemActive() && ImGui::IsKeyPressed(ImGuiKey_Delete))
+        {
+            ClearSlotAssignment(SelectedSlotId);
+        }
+    }
+
+    void FRmlUiEditorTool::DrawPalettePanel()
+    {
+        if (bWidgetLibraryDirty)
+        {
+            RefreshWidgetLibrary();
+        }
+
+        SectionHeader(LE_ICON_PLUS_BOX, "Add element");
         if (SelectedSlotId.empty())
         {
             ImGui::TextDisabled("Into: body  (select a container to nest)");
@@ -2568,6 +2706,7 @@ namespace Lumina
         {
             ImGui::TextDisabled("Into: #%s", SelectedSlotId.c_str());
         }
+
         {
             const int Count = (int)(sizeof(kElementPrimitives) / sizeof(kElementPrimitives[0]));
             const float BtnW = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
@@ -2580,8 +2719,14 @@ namespace Lumina
                 int Col = 0;
                 for (int i = 0; i < Count; ++i)
                 {
-                    if (std::strcmp(kElementPrimitives[i].Category, Cat) != 0) continue;
-                    if (Col % 2 != 0) ImGui::SameLine();
+                    if (std::strcmp(kElementPrimitives[i].Category, Cat) != 0)
+                    {
+                        continue;
+                    }
+                    if (Col % 2 != 0)
+                    {
+                        ImGui::SameLine();
+                    }
                     if (ImGui::Button(kElementPrimitives[i].Label, ImVec2(BtnW, 0.0f)))
                     {
                         AddElement(SelectedSlotId, i);
@@ -2594,8 +2739,7 @@ namespace Lumina
         ImGui::Spacing();
         ImGui::Separator();
 
-        // ---- Widget palette ----
-        ImGui::TextColored(ImVec4(0.6f, 0.85f, 1.0f, 1.0f), LE_ICON_CARDS " Widgets");
+        SectionHeader(LE_ICON_CARDS, "Widgets");
         ImGui::SetNextItemWidth(-1.0f);
         ImGui::InputTextWithHint("##widget_search", LE_ICON_MAGNIFY " Filter", WidgetSearch, sizeof(WidgetSearch));
 
@@ -2635,14 +2779,8 @@ namespace Lumina
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::TextDisabled("Drag a widget onto a slot, or select a slot then double-click a widget.");
-
-        // Delete clears the selected slot's widget (ignored while typing in a field).
-        if (!SelectedSlotId.empty() && ImGui::IsWindowFocused() && !ImGui::IsAnyItemActive()
-            && ImGui::IsKeyPressed(ImGuiKey_Delete))
-        {
-            ClearSlotAssignment(SelectedSlotId);
-        }
     }
+
 
     void FRmlUiEditorTool::DrawSlotOverlays(const ImVec2& CanvasMin, float ScalePx)
     {
@@ -2697,6 +2835,22 @@ namespace Lumina
             const bool bSel = (Slot.Id == SelectedSlotId);
             const bool bHov = (Slot.Id == HoveredSlotId);
             const bool bTiny = (TMax.x - TMin.x) < 6.0f || (TMax.y - TMin.y) < 6.0f;
+
+            // Selection and hover always draw in full; everything else is filtered by the detail mode, and
+            // context slots degrade to a thin unlabelled outline so a real document stays readable.
+            const bool bFocus = bSel || bHov;
+            if (!bFocus)
+            {
+                if (OverlayDetail == EOverlayDetail::SelectionOnly)
+                {
+                    continue;
+                }
+                if (OverlayDetail == EOverlayDetail::Assigned && !bAssigned)
+                {
+                    DL->AddRect(TMin, TMax, IM_COL32(150, 160, 175, 55), 3.0f, 0, 1.0f);
+                    continue;
+                }
+            }
 
             ImU32 Line = bAssigned ? IM_COL32(55, 138, 221, 255) : IM_COL32(93, 202, 165, 255);
             const ImU32 Fill = bAssigned ? IM_COL32(55, 138, 221, 38) : IM_COL32(29, 158, 117, 26);
@@ -3297,11 +3451,7 @@ namespace Lumina
 
     void FRmlUiEditorTool::CommitSlotMove(const FString& SlotId, ImVec2 DeltaPx)
     {
-        const FCompSlot* Slot = nullptr;
-        for (const FCompSlot& S : CompSlots)
-        {
-            if (S.Id == SlotId) { Slot = &S; break; }
-        }
+        const FCompSlot* Slot = FindSlot(SlotId);
         if (Slot == nullptr)
         {
             return;
@@ -3312,11 +3462,7 @@ namespace Lumina
 
     void FRmlUiEditorTool::CommitSlotVisual(const FString& SlotId, ImVec2 TargetVisualPx, bool bSnapToGrid)
     {
-        const FCompSlot* Slot = nullptr;
-        for (const FCompSlot& S : CompSlots)
-        {
-            if (S.Id == SlotId) { Slot = &S; break; }
-        }
+        const FCompSlot* Slot = FindSlot(SlotId);
         if (Slot == nullptr)
         {
             return;
@@ -3346,26 +3492,27 @@ namespace Lumina
         SetSlotInlineStyle(SlotId, { { "transform", Buf } });
     }
 
-    void FRmlUiEditorTool::DrawSlotInspector()
+    void FRmlUiEditorTool::DrawInspectorPanel()
     {
         if (SelectedSlotId.empty())
         {
-            return;
-        }
-        const FCompSlot* Slot = nullptr;
-        for (const FCompSlot& S : CompSlots)
-        {
-            if (S.Id == SelectedSlotId) { Slot = &S; break; }
-        }
-        if (Slot == nullptr)
-        {
+            ImGui::TextDisabled("Select an element in the Hierarchy.");
             return;
         }
 
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::TextColored(ImVec4(0.6f, 0.85f, 1.0f, 1.0f), LE_ICON_COG " Inspector");
+        const FCompSlot* Slot = FindSlot(SelectedSlotId);
+        if (Slot == nullptr)
+        {
+            // Selected in the source tree but not yet in the live DOM (just added, or inside a collapsed
+            // template). Say so rather than rendering an empty panel.
+            ImGui::TextDisabled("#%s", SelectedSlotId.c_str());
+            ImGui::TextWrapped("Not present in the live preview yet. It will appear once the document reloads.");
+            return;
+        }
+
+        SectionHeader(LE_ICON_COG, "Inspector");
         ImGui::Text("#%s  <%s>", Slot->Id.c_str(), Slot->Tag.c_str());
+        ImGui::Separator();
 
         // Text block for text-leaf elements (Text / Button / headings / ...): inner text + font size +
         // color. Caches are owned by their widget while active and synced to the live value otherwise.

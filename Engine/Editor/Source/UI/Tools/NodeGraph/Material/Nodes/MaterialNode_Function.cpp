@@ -13,19 +13,6 @@
 
 namespace Lumina
 {
-    static EComponentMask FullMaskForType(EMaterialInputType Type)
-    {
-        switch (Type)
-        {
-            case EMaterialInputType::Float:   return EComponentMask::R;
-            case EMaterialInputType::Float2:  return EComponentMask::RG;
-            case EMaterialInputType::Float3:  return EComponentMask::RGB;
-            case EMaterialInputType::Float4:
-            case EMaterialInputType::Texture: return EComponentMask::RGBA;
-            default:                          return EComponentMask::R;
-        }
-    }
-
     // HLSL literal for a value of the given width, e.g. Float3 -> "float3(x, y, z)".
     static FString VecLiteral(EMaterialValueType Type, const FVector4& V)
     {
@@ -36,19 +23,6 @@ namespace Lumina
             case EMaterialValueType::Float3: return "float3(" + eastl::to_string(V.x) + ", " + eastl::to_string(V.y) + ", " + eastl::to_string(V.z) + ")";
             case EMaterialValueType::Float4: return "float4(" + eastl::to_string(V.x) + ", " + eastl::to_string(V.y) + ", " + eastl::to_string(V.z) + ", " + eastl::to_string(V.w) + ")";
             default:                         return "0.0";
-        }
-    }
-
-    static FString ZeroLiteral(EMaterialInputType Type)
-    {
-        switch (Type)
-        {
-            case EMaterialInputType::Float:   return "0.0";
-            case EMaterialInputType::Float2:  return "float2(0.0, 0.0)";
-            case EMaterialInputType::Float3:  return "float3(0.0, 0.0, 0.0)";
-            case EMaterialInputType::Float4:
-            case EMaterialInputType::Texture: return "float4(0.0, 0.0, 0.0, 0.0)";
-            default:                          return "0.0";
         }
     }
 

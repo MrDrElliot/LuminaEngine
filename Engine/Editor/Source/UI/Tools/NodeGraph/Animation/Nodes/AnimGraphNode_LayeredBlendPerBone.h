@@ -13,8 +13,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
-        FString GetNodeDisplayName() const override { return "Layered Blend Per Bone"; }
-        FString GetNodeTooltip() const override { return "Blends Overlay onto Base over a bone's subtree (pick a bone) or a named bone mask."; }
+        FStringView GetNodeDisplayName() const override { return "Layered Blend Per Bone"; }
+        FStringView GetNodeTooltip() const override { return "Blends Overlay onto Base over a bone's subtree (pick a bone) or a named bone mask."; }
         FFixedString GetNodeCategory() const override { return "Animation"; }
 
         void BuildNode() override;

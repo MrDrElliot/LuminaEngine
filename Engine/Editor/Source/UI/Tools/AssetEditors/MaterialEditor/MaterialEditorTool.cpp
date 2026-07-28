@@ -6,6 +6,10 @@
 #include "Core/Object/Cast.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/Package/Package.h"
+#include "Tools/UI/ImGui/EditorColors.h"
+#include "Tools/UI/ImGui/ImGuiFonts.h"
+#include "Tools/UI/ImGui/ImGuiDesignIcons.h"
+#include "UI/Tools/NodeGraph/Material/Nodes/MaterialNode_CustomSlang.h"
 #include "Paths/Paths.h"
 #include "Platform/Filesystem/FileHelper.h"
 #include "Renderer/MaterialTypes.h"
@@ -31,6 +35,7 @@ namespace Lumina
     static const char* MaterialGraphName           = "Material Graph";
     static const char* MaterialPropertiesName      = "Material Properties";
     static const char* ShaderStatsName             = "Shader Stats";
+    static const char* CustomCodeName              = "Custom Code";
 
     FMaterialEditorTool::FMaterialEditorTool(IEditorToolContext* Context, CObject* InAsset)
         : FAssetEditorTool(Context, InAsset->GetName().c_str(), InAsset, NewObject<CWorld>())
@@ -60,6 +65,11 @@ namespace Lumina
         CreateToolWindow(ShaderStatsName, [&](bool bFocused)
         {
             DrawShaderStats();
+        });
+
+        CreateToolWindow(CustomCodeName, [&](bool bFocused)
+        {
+            DrawCustomCodeEditor();
         });
 
         FString GraphName = "AssetMaterialGraph";
@@ -385,6 +395,87 @@ namespace Lumina
         }
     }
     
+    void FMaterialEditorTool::DrawCustomCodeEditor()
+    {
+        CMaterialExpression_CustomSlang* Node = Cast<CMaterialExpression_CustomSlang>(SelectedNode);
+
+        if (Node == nullptr)
+        {
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());
+            ImGui::TextWrapped("Select a Custom Slang node to edit its code.\n\n"
+                               "Declare the node's inputs and outputs in Material Properties; they become pins "
+                               "and named locals your code can read and assign.");
+            ImGui::PopStyleColor();
+            CodeEditorBoundNode = nullptr;
+            return;
+        }
+
+        // (Re)bind on selection change. Only pull from the node here -- pulling every frame would
+        // fight the editor's own undo history and cursor state.
+        if (CodeEditorBoundNode != Node)
+        {
+            CodeEditorBoundNode = Node;
+            CodeEditor.SetText(std::string_view(Node->Code.c_str(), Node->Code.size()));
+        }
+
+        // Signature reference: what the body can actually read and must assign.
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(EditorColors::Accent(), "%s", Node->Title.c_str());
+        ImGui::SameLine(0.0f, 12.0f);
+
+        FFixedString Signature;
+        for (const FCustomSlangPin& In : Node->Inputs)
+        {
+            Signature += (Signature.empty() ? "in: " : ", ");
+            Signature += In.Name.c_str();
+        }
+        if (!Node->Outputs.empty())
+        {
+            Signature += Signature.empty() ? "out: " : "  |  out: ";
+            bool bFirst = true;
+            for (const FCustomSlangPin& Out : Node->Outputs)
+            {
+                if (!bFirst) { Signature += ", "; }
+                Signature += Out.Name.c_str();
+                bFirst = false;
+            }
+        }
+        ImGui::TextColored(EditorColors::TextDim(), "%s", Signature.empty() ? "no pins declared" : Signature.c_str());
+
+        // Live validation, so a stray brace is caught here rather than as a wall of shader errors.
+        TVector<FString> Problems;
+        const bool bValid = Node->Validate(Problems);
+        if (!bValid)
+        {
+            for (const FString& Problem : Problems)
+            {
+                ImGui::TextColored(EditorColors::Warning(), LE_ICON_EXCLAMATION_THICK " %s", Problem.c_str());
+            }
+        }
+
+        ImGui::Separator();
+
+        // Same monospaced face the RmlUi code editor uses -- column alignment is the whole point of a
+        // code view, and the proportional UI font makes indented shader code unreadable.
+        ImGuiX::Font::PushFont(ImGuiX::Font::EFont::Mono);
+        CodeEditor.Render("##CustomSlangCode", ImGui::GetContentRegionAvail(), false);
+        ImGuiX::Font::PopFont();
+
+        // Write back only on a real edit; the graph's auto-compile picks it up on the next frame.
+        if (CodeEditor.GetUndoIndex() != LastCodeEditorUndoIndex)
+        {
+            LastCodeEditorUndoIndex = CodeEditor.GetUndoIndex();
+
+            const std::string Text = CodeEditor.GetText();
+            Node->Code.assign(Text.c_str(), Text.size());
+
+            if (CPackage* Package = Node->GetPackage())
+            {
+                Package->MarkDirty();
+            }
+        }
+    }
+
     void FMaterialEditorTool::DrawShaderStats()
     {
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 8));
@@ -670,5 +761,7 @@ namespace Lumina
         ImGui::DockBuilderDockWindow(GetToolWindowName(ViewportWindowName).c_str(),      rightDockID);
         ImGui::DockBuilderDockWindow(GetToolWindowName(ShaderStatsName).c_str(),         rightBottomDockID);
         ImGui::DockBuilderDockWindow(GetToolWindowName(MaterialPropertiesName).c_str(),  rightBottomDockID);
+        // Tabs behind the graph: editing a node's code is the same task as editing the graph.
+        ImGui::DockBuilderDockWindow(GetToolWindowName(CustomCodeName).c_str(),          leftDockID);
     }
 }

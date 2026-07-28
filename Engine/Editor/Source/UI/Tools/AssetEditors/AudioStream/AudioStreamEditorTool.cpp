@@ -142,7 +142,14 @@ namespace Lumina
             return 0.0f;
         }
 
-        // No position feedback from the audio thread; the playhead is wall-clock driven.
+        if (GAudioContext != nullptr && GAudioContext->GetVoiceState(PreviewHandle) != EAudioVoiceState::Free)
+        {
+            // Real cursor from the mixer, so the playhead can't drift from what's audible.
+            const float Elapsed = (float)((double)GAudioContext->GetPlaybackFrame(PreviewHandle) / (double)Info.SampleRate);
+            return bPreviewLoop ? fmodf(Elapsed, Duration) : Math::Min(Elapsed, Duration);
+        }
+
+        // Falls back to the wall clock for the frame or two before the pump starts the voice.
         float Elapsed = (float)(ImGui::GetTime() - PreviewStartTime);
         if (bPreviewLoop)
         {

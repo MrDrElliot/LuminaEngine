@@ -5,6 +5,7 @@
 #include "Core/Math/Math.h"
 #include "Core/Math/Transform.h"
 #include "Core/Object/ObjectHandleTyped.h"
+#include "World/Scene/RenderScene/SceneRenderTypes.h"
 #include "FoliageComponent.generated.h"
 
 namespace Lumina
@@ -91,6 +92,13 @@ namespace Lumina
 
         PROPERTY(Editable, Category = "Rendering")
         bool bReceiveShadow = true;
+
+        // Transient resolve cache (not serialized); refreshed by ResolveDirtyMeshComponents.
+        uint64          CachedMeshletHeaderAddress = 0;
+        EInstanceFlags  CachedBaseFlags = EInstanceFlags::None;
+        uint32          ResolveHandle = ~0u;
+        mutable uint32  CachedEpoch = 0;
+        const void*     CachedMeshKey = nullptr;
     };
 
     // Render-ready instance, baked once when the foliage changes (not per frame). Holds the composed world

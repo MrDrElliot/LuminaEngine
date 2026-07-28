@@ -13,8 +13,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
-        FString GetNodeDisplayName() const override { return "Blend"; }
-        FString GetNodeTooltip() const override { return "Blends pose A and pose B by a scalar alpha."; }
+        FStringView GetNodeDisplayName() const override { return "Blend"; }
+        FStringView GetNodeTooltip() const override { return "Blends pose A and pose B by a scalar alpha."; }
 
         void BuildNode() override;
         void GenerateBytecode(FAnimationGraphCompiler& Compiler) override;

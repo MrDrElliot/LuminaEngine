@@ -13,8 +13,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
-        FString GetNodeDisplayName() const override { return "Two-Bone IK"; }
-        FString GetNodeTooltip() const override { return "Analytical IK for a 3-joint chain (e.g. shoulder/elbow/wrist or hip/knee/ankle)."; }
+        FStringView GetNodeDisplayName() const override { return "Two-Bone IK"; }
+        FStringView GetNodeTooltip() const override { return "Analytical IK for a 3-joint chain (e.g. shoulder/elbow/wrist or hip/knee/ankle)."; }
         FFixedString GetNodeCategory() const override { return "Animation|IK"; }
         uint32 GetNodeTitleColor() const override { return IM_COL32(160, 100, 60, 255); }
 

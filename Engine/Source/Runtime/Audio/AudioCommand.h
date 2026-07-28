@@ -6,164 +6,115 @@
 
 namespace Lumina
 {
-	// Tagged-union command from game thread to audio thread; avoids per-command heap alloc.
+	// Game thread to audio pump control message. Flat rather than a union so payloads with default
+	// member initializers (SAudioAttenuation) can live here.
 	struct FAudioCommand
 	{
-		EAudioCommandType Type;
+		EAudioCommandType Type = EAudioCommandType::StopSound;
 		FAudioHandle Handle;
 
-		union
-		{
-			struct
-			{
-				// Inline path (up to 255 chars) to avoid heap alloc.
-				char Path[256];
-				float Volume;
-				float Pitch;
-				float MinDistance;
-				float MaxDistance;
-				FVector3 Position;
-				bool bSpatialized;
-				bool bLooping;
-			} Play;
+		float ValueA = 0.0f;
+		float ValueB = 0.0f;
+		float ValueC = 0.0f;
+		bool bValue = false;
+		uint8 ByteValue = 0;
+		uint64 FrameValue = 0;
 
-			struct
-			{
-				EAudioStopMode Mode;
-			} Stop;
+		FVector3 Vector = FVector3(0.0f);
+		FVector3 VectorB = FVector3(0.0f);
+		FQuat Rotation = FQuat(1.0f, 0.0f, 0.0f, 0.0f);
+		EAudioBus Bus = EAudioBus::SFX;
+		EAudioStopMode StopMode = EAudioStopMode::Immediate;
+		SAudioAttenuation Attenuation;
 
-			struct
-			{
-				float Value;
-			} SetFloat;
-
-			struct
-			{
-				bool Value;
-			} SetBool;
-
-			struct
-			{
-				FVector3 Position;
-			} SetPosition;
-
-			struct
-			{
-				float MinDistance;
-				float MaxDistance;
-			} SetMinMax;
-
-			struct
-			{
-				uint64 Frame;
-			} Seek;
-
-			struct
-			{
-				FVector3 Position;
-				FQuat Rotation;
-			} Listener;
-		};
-		
-		static FAudioCommand MakePlay(FAudioHandle InHandle, FStringView Path, bool bSpatialized,
-			FVector3 Position, float Volume, float Pitch, float MinDistance, float MaxDistance, bool bLooping)
+		static FAudioCommand Make(EAudioCommandType Type, FAudioHandle Handle)
 		{
 			FAudioCommand Cmd;
-			Cmd.Type   = EAudioCommandType::PlaySound;
-			Cmd.Handle = InHandle;
-
-			size_t Len = Path.size() < 255 ? Path.size() : 255;
-			memcpy(Cmd.Play.Path, Path.data(), Len);
-			Cmd.Play.Path[Len]     = '\0';
-			Cmd.Play.Volume        = Volume;
-			Cmd.Play.Pitch         = Pitch;
-			Cmd.Play.MinDistance    = MinDistance;
-			Cmd.Play.MaxDistance    = MaxDistance;
-			Cmd.Play.Position      = Position;
-			Cmd.Play.bSpatialized  = bSpatialized;
-			Cmd.Play.bLooping      = bLooping;
+			Cmd.Type   = Type;
+			Cmd.Handle = Handle;
 			return Cmd;
 		}
 
-		static FAudioCommand MakeStop(FAudioHandle InHandle, EAudioStopMode Mode = EAudioStopMode::Immediate)
+		static FAudioCommand MakeStop(FAudioHandle Handle, EAudioStopMode Mode, float FadeSeconds)
 		{
-			FAudioCommand Cmd;
-			Cmd.Type        = EAudioCommandType::StopSound;
-			Cmd.Handle      = InHandle;
-			Cmd.Stop.Mode   = Mode;
+			FAudioCommand Cmd = Make(EAudioCommandType::StopSound, Handle);
+			Cmd.StopMode = Mode;
+			Cmd.ValueA   = FadeSeconds;
 			return Cmd;
 		}
 
-		static FAudioCommand MakeStopAll()
+		static FAudioCommand MakeStopAll(EAudioStopMode Mode, float FadeSeconds)
 		{
-			FAudioCommand Cmd;
-			Cmd.Type   = EAudioCommandType::StopAll;
-			Cmd.Handle = FAudioHandle::Invalid();
+			FAudioCommand Cmd = Make(EAudioCommandType::StopAll, FAudioHandle::Invalid());
+			Cmd.StopMode = Mode;
+			Cmd.ValueA   = FadeSeconds;
 			return Cmd;
 		}
 
-		static FAudioCommand MakeSetVolume(FAudioHandle InHandle, float Volume)
+		static FAudioCommand MakeFloat(EAudioCommandType Type, FAudioHandle Handle, float Value)
 		{
-			FAudioCommand Cmd;
-			Cmd.Type            = EAudioCommandType::SetVolume;
-			Cmd.Handle          = InHandle;
-			Cmd.SetFloat.Value  = Volume;
+			FAudioCommand Cmd = Make(Type, Handle);
+			Cmd.ValueA = Value;
 			return Cmd;
 		}
 
-		static FAudioCommand MakeSetPitch(FAudioHandle InHandle, float Pitch)
+		static FAudioCommand MakeFloat2(EAudioCommandType Type, FAudioHandle Handle, float A, float B)
 		{
-			FAudioCommand Cmd;
-			Cmd.Type            = EAudioCommandType::SetPitch;
-			Cmd.Handle          = InHandle;
-			Cmd.SetFloat.Value  = Pitch;
+			FAudioCommand Cmd = Make(Type, Handle);
+			Cmd.ValueA = A;
+			Cmd.ValueB = B;
 			return Cmd;
 		}
 
-		static FAudioCommand MakeSetLooping(FAudioHandle InHandle, bool bLooping)
+		static FAudioCommand MakeBool(EAudioCommandType Type, FAudioHandle Handle, bool Value)
 		{
-			FAudioCommand Cmd;
-			Cmd.Type           = EAudioCommandType::SetLooping;
-			Cmd.Handle         = InHandle;
-			Cmd.SetBool.Value  = bLooping;
+			FAudioCommand Cmd = Make(Type, Handle);
+			Cmd.bValue = Value;
 			return Cmd;
 		}
 
-		static FAudioCommand MakeSetPosition(FAudioHandle InHandle, FVector3 Position)
+		static FAudioCommand MakeVector(EAudioCommandType Type, FAudioHandle Handle, const FVector3& Value)
 		{
-			FAudioCommand Cmd;
-			Cmd.Type                 = EAudioCommandType::SetPosition;
-			Cmd.Handle               = InHandle;
-			Cmd.SetPosition.Position = Position;
+			FAudioCommand Cmd = Make(Type, Handle);
+			Cmd.Vector = Value;
 			return Cmd;
 		}
 
-		static FAudioCommand MakeSetMinMaxDistance(FAudioHandle InHandle, float MinDistance, float MaxDistance)
+		static FAudioCommand MakeAttenuation(FAudioHandle Handle, const SAudioAttenuation& Value)
 		{
-			FAudioCommand Cmd;
-			Cmd.Type                = EAudioCommandType::SetMinMaxDistance;
-			Cmd.Handle              = InHandle;
-			Cmd.SetMinMax.MinDistance = MinDistance;
-			Cmd.SetMinMax.MaxDistance = MaxDistance;
+			FAudioCommand Cmd = Make(EAudioCommandType::SetAttenuation, Handle);
+			Cmd.Attenuation = Value;
 			return Cmd;
 		}
 
-		static FAudioCommand MakeSeekToFrame(FAudioHandle InHandle, uint64 Frame)
+		static FAudioCommand MakeSeekToFrame(FAudioHandle Handle, uint64 Frame)
 		{
-			FAudioCommand Cmd;
-			Cmd.Type       = EAudioCommandType::SeekToFrame;
-			Cmd.Handle     = InHandle;
-			Cmd.Seek.Frame = Frame;
+			FAudioCommand Cmd = Make(EAudioCommandType::SeekToFrame, Handle);
+			Cmd.FrameValue = Frame;
 			return Cmd;
 		}
 
-		static FAudioCommand MakeUpdateListener(FVector3 Position, FQuat Rotation)
+		static FAudioCommand MakeSetBus(FAudioHandle Handle, EAudioBus Bus)
 		{
-			FAudioCommand Cmd;
-			Cmd.Type                = EAudioCommandType::UpdateListener;
-			Cmd.Handle              = FAudioHandle::Invalid();
-			Cmd.Listener.Position   = Position;
-			Cmd.Listener.Rotation   = Rotation;
+			FAudioCommand Cmd = Make(EAudioCommandType::SetBus, Handle);
+			Cmd.Bus = Bus;
+			return Cmd;
+		}
+
+		static FAudioCommand MakeSetPriority(FAudioHandle Handle, uint8 Priority)
+		{
+			FAudioCommand Cmd = Make(EAudioCommandType::SetPriority, Handle);
+			Cmd.ByteValue = Priority;
+			return Cmd;
+		}
+
+		static FAudioCommand MakeUpdateListener(uint32 ListenerIndex, const FVector3& Position, const FQuat& Rotation, const FVector3& Velocity)
+		{
+			FAudioCommand Cmd = Make(EAudioCommandType::UpdateListener, FAudioHandle::Invalid());
+			Cmd.ByteValue = (uint8)ListenerIndex;
+			Cmd.Vector    = Position;
+			Cmd.VectorB   = Velocity;
+			Cmd.Rotation  = Rotation;
 			return Cmd;
 		}
 	};

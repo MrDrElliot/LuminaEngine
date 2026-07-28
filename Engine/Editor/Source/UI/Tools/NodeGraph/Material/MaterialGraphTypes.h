@@ -4,6 +4,11 @@
 
 namespace Lumina
 {
+    // Declared, not defined: the conversions below are pure casts, which an opaque enum declaration
+    // fully supports. Keeps this header free of the MaterialFunction asset include, so a node needing
+    // the shared type helpers doesn't drag in (or include another node's header for) that dependency.
+    enum class EMaterialValueType : uint8;
+
     enum class EMaterialInputType : uint8
     {
         Float,
@@ -25,6 +30,46 @@ namespace Lumina
         GB,
         RGB,
     };
+
+    // EMaterialValueType and EMaterialInputType share Float..Float4 ordering, so conversion is a cast.
+    // Texture-typed signature I/O is unsupported, so a Texture input type clamps to Float4 on the way back.
+    inline EMaterialInputType ToMaterialInputType(EMaterialValueType Type)
+    {
+        return static_cast<EMaterialInputType>(Type);
+    }
+
+    inline EMaterialValueType ToMaterialValueType(EMaterialInputType Type)
+    {
+        return static_cast<EMaterialValueType>(Type == EMaterialInputType::Texture ? EMaterialInputType::Float4 : Type);
+    }
+
+    // The mask covering every component of a type ("all of a float3" = RGB).
+    inline EComponentMask FullMaskForType(EMaterialInputType Type)
+    {
+        switch (Type)
+        {
+        case EMaterialInputType::Float:   return EComponentMask::R;
+        case EMaterialInputType::Float2:  return EComponentMask::RG;
+        case EMaterialInputType::Float3:  return EComponentMask::RGB;
+        case EMaterialInputType::Float4:
+        case EMaterialInputType::Texture: return EComponentMask::RGBA;
+        default:                          return EComponentMask::R;
+        }
+    }
+
+    // Zero literal of the matching width; the neutral value nodes emit for unconnected or errored slots.
+    inline FString ZeroLiteral(EMaterialInputType Type)
+    {
+        switch (Type)
+        {
+        case EMaterialInputType::Float:   return "0.0";
+        case EMaterialInputType::Float2:  return "float2(0.0, 0.0)";
+        case EMaterialInputType::Float3:  return "float3(0.0, 0.0, 0.0)";
+        case EMaterialInputType::Float4:
+        case EMaterialInputType::Texture: return "float4(0.0, 0.0, 0.0, 0.0)";
+        default:                          return "0.0";
+        }
+    }
 
     inline FString GetSwizzleForMask(EComponentMask Mask)
     {

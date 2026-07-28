@@ -89,11 +89,23 @@ namespace Lumina
 
         void RefreshCompositionSlots();     // pull live-DOM slots, then stamp buffer-parsed assignments
         void RefreshWidgetLibrary();        // scan the document's folder tree for <template> widgets
-        void DrawCompositionPanel();
-        void DrawSlotInspector();           // numeric Left/Top/Width/Height fields for the selected slot
+
+        // The designer is three docked panels rather than one stacked column: selecting in the tree used to
+        // reflow everything below it, because the inspector was drawn inline between the hierarchy and the
+        // palette. Hierarchy and Inspector are visible together; the Palette tabs alongside the Hierarchy.
+        void DrawHierarchyPanel();
+        void DrawInspectorPanel();
+        void DrawPalettePanel();
         void DrawSlotOverlays(const ImVec2& CanvasMin, float ScalePx);
+
+        // Right-click menu for a tree row. Takes the element's source facts directly so it doesn't depend on
+        // the .cpp-local parse node type.
+        void DrawElementContextMenu(const std::string& Tag, const std::string& Id, size_t OpenLt, bool bAssigned);
+
         void AssignWidgetToSlot(const FString& SlotId, int WidgetIndex);
         void ClearSlotAssignment(const FString& SlotId);
+
+        const FCompSlot* FindSlot(const FString& Id) const;
 
         // UMG-style authoring: insert a new building block (kElementPrimitives) as the last child of
         // TargetSlotId (empty = the document body), auto-id'd so it's immediately a manipulable slot;
@@ -117,13 +129,23 @@ namespace Lumina
         void CommitSlotVisual(const FString& SlotId, ImVec2 TargetVisualPx, bool bSnapToGrid);
         void SetSlotInlineStyle(const FString& SlotId, const std::vector<std::pair<std::string, std::string>>& Sets);
 
+        // Canvas overlay density. Drawing a filled, labelled box for every slot buries a real document in
+        // overlapping rectangles, so the default keeps context slots as thin outlines.
+        enum class EOverlayDetail : uint8 { All, Assigned, SelectionOnly };
+
         TVector<FCompSlot>   CompSlots;
         TVector<FCompWidget> CompWidgets;
         FString              SelectedSlotId;
         FString              HoveredSlotId;          // recomputed each frame (tree or canvas hover)
         bool                 bShowSlotOverlays = true;
+        EOverlayDetail       OverlayDetail = EOverlayDetail::Assigned;
         bool                 bWidgetLibraryDirty = true;
         char                 WidgetSearch[64] = {};
+        char                 HierarchySearch[64] = {};
+
+        // Collapsed subtrees, keyed by element id. An id-less element gets one assigned the moment its
+        // arrow is clicked, matching how every other action in the tree treats id-less elements.
+        TSet<FString>        CollapsedNodes;
 
         bool                 bDraggingSlot = false;
         FString              DraggingSlotId;

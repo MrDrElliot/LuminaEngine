@@ -13,8 +13,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
-        FString GetNodeDisplayName() const override { return "Output Pose"; }
-        FString GetNodeTooltip() const override { return "Final pose evaluated by the animation graph."; }
+        FStringView GetNodeDisplayName() const override { return "Output Pose"; }
+        FStringView GetNodeTooltip() const override { return "Final pose evaluated by the animation graph."; }
         uint32 GetNodeTitleColor() const override { return IM_COL32(35, 35, 200, 255); }
         bool IsDeletable() const override { return false; }
 

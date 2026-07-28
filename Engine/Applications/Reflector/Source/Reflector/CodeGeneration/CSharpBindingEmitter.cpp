@@ -338,6 +338,13 @@ namespace Lumina::Reflection
             return true;
         }
 
+        // The CObject root, which is declared by hand (DECLARE_CLASS) rather than REFLECT'd, so it has no
+        // database entry and no generated wrapper - C# models it as LuminaSharp.NativeObject.
+        bool IsObjectRootType(const eastl::string& Qualified)
+        {
+            return Qualified == "Lumina::CObject" || Qualified == "CObject";
+        }
+
         // The C# base for an opaque wrapper: the reflected parent's wrapper when it's an opaque type,
         // otherwise the given Native* root. Mirrors the C++ single-inheritance chain so e.g. a
         // CStaticMesh wrapper derives the CObject wrapper and inherits its bound members.
@@ -1016,6 +1023,16 @@ namespace Lumina::Reflection
                     B.Kind = EBind::Object;
                     B.TargetCpp = F.TypeName;
                     B.CSharp = GlobalCSharp(F.TypeName);
+                    return true;
+                }
+                // CObject itself is hand-declared (DECLARE_CLASS, no REFLECT) so it never enters the
+                // database. A CObject* marshals as the untyped NativeObject root, matching how a
+                // TObjectPtr<CObject> property is surfaced; without this the whole function is dropped.
+                if (F.Flags == EPropertyTypeFlags::Object && IsObjectRootType(F.TypeName))
+                {
+                    B.Kind = EBind::Object;
+                    B.TargetCpp = "Lumina::CObject";
+                    B.CSharp = "global::LuminaSharp.NativeObject";
                     return true;
                 }
                 return false; // any other pointer in/out -> ambiguous marshaling

@@ -14,8 +14,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
-        FString GetNodeDisplayName() const override { return "Bone Transform"; }
-        FString GetNodeTooltip() const override { return "Applies a translation/rotation/scale to a named bone, in the bone's local space or in component space."; }
+        FStringView GetNodeDisplayName() const override { return "Bone Transform"; }
+        FStringView GetNodeTooltip() const override { return "Applies a translation/rotation/scale to a named bone, in the bone's local space or in component space."; }
         FFixedString GetNodeCategory() const override { return "Animation"; }
         uint32 GetNodeTitleColor() const override { return IM_COL32(150, 90, 70, 255); }
 

@@ -181,6 +181,7 @@ namespace Lumina
         RegisterGraphNode(CMaterialExpression_TerrainLayerBlend::StaticClass());
 
         RegisterGraphNode(CMaterialExpression_MaterialFunctionCall::StaticClass());
+        RegisterGraphNode(CMaterialExpression_CustomSlang::StaticClass());
 
         RegisterGraphNode(CMaterialReroute::StaticClass());
     }

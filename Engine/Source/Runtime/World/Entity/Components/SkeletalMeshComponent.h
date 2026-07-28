@@ -24,8 +24,10 @@ namespace Lumina
         TickWhenRendered,
     };
 
+    // CACHE_ALIGN: the gather writes LastRenderedTime / LastDistanceOverRadius / the render-bone cache from
+    // worker threads, so unaligned components would false-share at parallel range boundaries.
     REFLECT(Component, Category = "Rendering")
-    struct RUNTIME_API SSkeletalMeshComponent : SMeshComponent
+    struct RUNTIME_API CACHE_ALIGN SSkeletalMeshComponent : SMeshComponent
     {
         GENERATED_BODY()
 

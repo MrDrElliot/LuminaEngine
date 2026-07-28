@@ -13,8 +13,8 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
-        FString GetNodeDisplayName() const override { return "Float Constant"; }
-        FString GetNodeTooltip() const override { return "Emits a constant scalar value."; }
+        FStringView GetNodeDisplayName() const override { return "Float Constant"; }
+        FStringView GetNodeTooltip() const override { return "Emits a constant scalar value."; }
 
         void BuildNode() override;
         void GenerateBytecode(FAnimationGraphCompiler& Compiler) override;
