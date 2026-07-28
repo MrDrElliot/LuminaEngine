@@ -2530,6 +2530,13 @@ namespace Lumina
 
     void FRmlUiEditorTool::DrawHierarchyPanel()
     {
+        if (!SupportsElementAuthoring())
+        {
+            ImGui::TextWrapped(LE_ICON_INFORMATION_OUTLINE
+                " Stylesheets have no document tree. Open the .rml that links this sheet to author elements.");
+            return;
+        }
+
         if (ImGui::Button(LE_ICON_REFRESH " Rescan"))
         {
             bWidgetLibraryDirty = true;
@@ -2692,6 +2699,13 @@ namespace Lumina
 
     void FRmlUiEditorTool::DrawPalettePanel()
     {
+        if (!SupportsElementAuthoring())
+        {
+            ImGui::TextWrapped(LE_ICON_INFORMATION_OUTLINE
+                " Stylesheets have no elements to place. Open the .rml that links this sheet.");
+            return;
+        }
+
         if (bWidgetLibraryDirty)
         {
             RefreshWidgetLibrary();
@@ -3114,6 +3128,74 @@ namespace Lumina
         ReloadDocument();
     }
 
+    bool FRmlUiEditorTool::EnsureDocumentBody()
+    {
+        if (!SupportsElementAuthoring())
+        {
+            ImGuiX::Notifications::NotifyError("Stylesheets have no document body -- open the .rml that uses this sheet.");
+            return false;
+        }
+
+        std::string Text = CodeEditor.GetText();
+        if (Text.rfind("</body>") != std::string::npos)
+        {
+            return true;
+        }
+
+        const int TabSize = CodeEditor.GetTabSize();
+        int L0, C0, L1, C1;
+
+        // Locate the open tag the same way the rest of the file does, then look at how it terminates.
+        const size_t BodyOpen = Text.find("<body");
+        const size_t BodyGt   = (BodyOpen == std::string::npos) ? std::string::npos : Text.find('>', BodyOpen);
+        const bool   bFound   = (BodyGt != std::string::npos);
+        const bool   bSelfClosing = bFound && BodyGt > 0 && Text[BodyGt - 1] == '/';
+
+        // A self-closed <body/> parses fine but gives nothing to insert into; widen it into a real pair.
+        if (bSelfClosing)
+        {
+            OffsetToLineCol(Text, BodyGt - 1, TabSize, L0, C0);
+            OffsetToLineCol(Text, BodyGt + 1, TabSize, L1, C1);
+            CodeEditor.ReplaceSectionText(L0, C0, L1, C1, ">\n</body>");
+            bBufferDirty = true;
+            bCompAssignDirty = true;
+            return true;
+        }
+
+        if (bFound)
+        {
+            // Open tag with no close: the document is malformed and blind repair could land the close in
+            // the wrong place, so leave it to the text editor rather than guessing.
+            ImGuiX::Notifications::NotifyError("<body> is never closed -- fix the markup, then add elements.");
+            return false;
+        }
+
+        // No body at all (new or hand-trimmed file). Scaffold one inside the document root so authoring
+        // works immediately instead of dead-ending on an error.
+        static const char* kRoots[] = { "</rml>", "</template>" };
+        size_t InsertAt = std::string::npos;
+        for (const char* Root : kRoots)
+        {
+            const size_t At = Text.rfind(Root);
+            if (At != std::string::npos)
+            {
+                InsertAt = At;
+                break;
+            }
+        }
+        if (InsertAt == std::string::npos)
+        {
+            InsertAt = Text.size();
+        }
+
+        OffsetToLineCol(Text, InsertAt, TabSize, L0, C0);
+        CodeEditor.ReplaceSectionText(L0, C0, L0, C0, "<body>\n</body>\n");
+        bBufferDirty = true;
+        bCompAssignDirty = true;
+        ImGuiX::Notifications::NotifyInfo("Added a <body> to host elements.");
+        return true;
+    }
+
     void FRmlUiEditorTool::AddElement(const FString& TargetSlotId, int PrimitiveIndex)
     {
         if (PrimitiveIndex < 0 || PrimitiveIndex >= (int)(sizeof(kElementPrimitives) / sizeof(kElementPrimitives[0])))
@@ -3133,11 +3215,21 @@ namespace Lumina
 
         if (TargetId.empty())
         {
-            // No container selected -> append to the document body.
+            // No container selected -> append to the document body, scaffolding one if this document
+            // doesn't have it yet (rather than dead-ending on an error).
+            if (Text.rfind("</body>") == std::string::npos)
+            {
+                if (!EnsureDocumentBody())
+                {
+                    return;
+                }
+                // The scaffold was a buffer edit, so re-read and re-derive the insertion point.
+                Text = CodeEditor.GetText();
+            }
+
             const size_t BodyClose = Text.rfind("</body>");
             if (BodyClose == std::string::npos)
             {
-                ImGuiX::Notifications::NotifyError("Document has no <body> to add into.");
                 return;
             }
             EditStart = EditEnd = BodyClose;
@@ -3494,6 +3586,12 @@ namespace Lumina
 
     void FRmlUiEditorTool::DrawInspectorPanel()
     {
+        if (!SupportsElementAuthoring())
+        {
+            ImGui::TextWrapped(LE_ICON_INFORMATION_OUTLINE " Stylesheets have no elements to inspect.");
+            return;
+        }
+
         if (SelectedSlotId.empty())
         {
             ImGui::TextDisabled("Select an element in the Hierarchy.");

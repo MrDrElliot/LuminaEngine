@@ -112,6 +112,14 @@ namespace Lumina
         // RemoveElement deletes a slot's element (open..close) from the buffer entirely.
         void AddElement(const FString& TargetSlotId, int PrimitiveIndex);
         void RemoveElement(const FString& SlotId);
+
+        // True when this document can host elements at all. False for .rcss, which has no DOM -- the
+        // designer panels explain that instead of offering authoring controls that can only fail.
+        bool SupportsElementAuthoring() const { return !bIsStylesheet; }
+
+        // Makes sure the buffer has a `</body>` to insert before, writing the scaffold when the document
+        // lacks one (new/empty file) or expanding a self-closed `<body/>`. False = can't author here.
+        bool EnsureDocumentBody();
         // Reorder: swap a slot's element with its previous/next sibling. Inline text: replace a text-leaf
         // element's inner text (no child elements) from the inspector.
         void MoveElement(const FString& SlotId, bool bUp);
