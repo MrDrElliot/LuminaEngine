@@ -125,7 +125,10 @@ newaction
         end
 
         -- Skip the libclang parse when no reflected input is newer than the stamp.
-        local StampFile = path.join(LuminaDir, "Intermediates", "Reflection", ".stamp")
+        -- Workspace-local: a game project generates into its own Intermediates, so keying off the engine's
+        -- stamp made every game look up-to-date the moment the engine had reflected, and its outputs were
+        -- never produced. _MAIN_SCRIPT_DIR is the engine root for Lumina.slnx, so that side is unchanged.
+        local StampFile = path.join(_MAIN_SCRIPT_DIR, "Intermediates", "Reflection", ".stamp")
         local function FileTime(P)
             local Stat = os.stat(P)
             return (Stat and Stat.mtime) or 0
@@ -151,7 +154,19 @@ newaction
             end
         end
 
-        if StampTime > 0 and LatestInput > 0 and LatestInput <= StampTime then
+        -- A fresh stamp only means no input changed; it says nothing about the outputs still being on disk.
+        -- Wiping Intermediates leaves the stamp intact elsewhere, so verify what we'd skip regenerating
+        -- actually exists -- otherwise the build fails later on a missing ReflectionUnity.gen.cpp.
+        local bOutputsPresent = true
+        for Name, _ in pairs(ProjectFiles) do
+            local Unity = path.join(_MAIN_SCRIPT_DIR, "Intermediates", "Reflection", Name, "ReflectionUnity.gen.cpp")
+            if not os.isfile(Unity) then
+                bOutputsPresent = false
+                break
+            end
+        end
+
+        if StampTime > 0 and LatestInput > 0 and LatestInput <= StampTime and bOutputsPresent then
             Logger.Success("Reflection up-to-date - skipping Reflector exec.")
             os.remove("Reflection_Files.json")
             return

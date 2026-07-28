@@ -186,6 +186,51 @@ local function SetupProject(Def)
 end
 
 
+-- Browse-only view of the engine tree. A game workspace links the engine as pre-built libs, so its
+-- solution used to contain nothing but the game itself -- engine headers resolved for the compiler via
+-- includedirs, but were invisible in the IDE. These are Utility projects: the files show up for
+-- navigation, search and Go-To-Definition, and nothing is compiled here (EnsureEngineBuilt still owns
+-- building the engine). Opt out with IncludeEngineSource = false.
+local function SetupEngineBrowseProjects(Def)
+    if Def.IncludeEngineSource == false then
+        return
+    end
+
+    local EngineDir = LuminaConfig.EngineDirectory
+    if not EngineDir then
+        return
+    end
+
+    -- Split per module so either half can be unloaded independently, and a Game-only project isn't
+    -- forced to carry the editor tree.
+    local BrowseModules =
+    {
+        { Name = "Engine.Runtime", Root = "Engine/Source/Runtime" },
+        { Name = "Engine.Editor",  Root = "Engine/Editor/Source"  },
+    }
+
+    group "Engine"
+        for _, Module in ipairs(BrowseModules) do
+            local RootDir = path.join(EngineDir, Module.Root)
+
+            project(Module.Name)
+                kind "Utility"
+
+                files
+                {
+                    path.join(RootDir, "**.h"),
+                    path.join(RootDir, "**.hpp"),
+                    path.join(RootDir, "**.inl"),
+                    path.join(RootDir, "**.cpp"),
+                }
+
+                -- Mirror the on-disk tree instead of one flat list under the absolute engine path.
+                vpaths { ["*"] = RootDir }
+        end
+    group ""
+end
+
+
 ---@param Def table Game project definition
 function LuminaGameProject(Def)
     assert(Def.Name, "LuminaGameProject: Name is required")
@@ -211,4 +256,6 @@ function LuminaGameProject(Def)
     group "Plugins"
         LuminaDiscoverPlugins(path.join(_MAIN_SCRIPT_DIR, "Plugins"))
     group ""
+
+    SetupEngineBrowseProjects(Def)
 end

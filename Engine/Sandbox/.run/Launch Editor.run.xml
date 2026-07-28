@@ -1,11 +1,3 @@
-<!--
-  Default Rider run configuration: builds and launches the editor in
-  Development. Named "Launch Editor" (no suffix) so it sorts alphabetically
-  before "Launch Editor (Debug)" AND has a higher AUTO_SELECT_PRIORITY so
-  Rider picks this one by default. Keeps build config and editor exe in
-  sync (both Development), picking the wrong one is the easiest way to
-  end up with a Development DLL trying to load into a Debug editor.
--->
 <component name="ProjectRunConfigurationManager">
   <configuration default="false" name="Launch Editor" type="CppProject" factoryName="C++ Project">
     <configuration_1 setup="1">
@@ -20,6 +12,18 @@
       <option name="TERMINAL_INTERACTION_BEHAVIOR" value="AUTO_DETECT" />
       <option name="PROJECT_FILE_PATH" value="$PROJECT_DIR$/Sandbox.vcxproj" />
     </configuration_1>
+    <configuration_2 setup="1">
+      <option name="CONFIGURATION" value="Debug Editor" />
+      <option name="PLATFORM" value="x64" />
+      <option name="CURRENT_LAUNCH_PROFILE" value="Local" />
+      <option name="EXE_PATH" value="$(LocalDebuggerCommand)" />
+      <option name="PROGRAM_PARAMETERS" value="$(LocalDebuggerCommandArguments)" />
+      <option name="WORKING_DIRECTORY" value="$(LocalDebuggerWorkingDirectory)" />
+      <option name="PASS_PARENT_ENVS" value="1" />
+      <option name="USE_EXTERNAL_CONSOLE" value="0" />
+      <option name="TERMINAL_INTERACTION_BEHAVIOR" value="AUTO_DETECT" />
+      <option name="PROJECT_FILE_PATH" value="$PROJECT_DIR$/Sandbox.vcxproj" />
+    </configuration_2>
     <option name="DEFAULT_PROJECT_PATH" value="$PROJECT_DIR$/Sandbox.vcxproj" />
     <option name="PROJECT_FILE_PATH" value="$PROJECT_DIR$/Sandbox.vcxproj" />
     <option name="AUTO_SELECT_PRIORITY" value="1000" />

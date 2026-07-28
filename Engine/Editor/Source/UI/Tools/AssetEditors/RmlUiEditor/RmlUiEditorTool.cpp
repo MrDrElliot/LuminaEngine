@@ -396,6 +396,41 @@ namespace Lumina
         }
 
         // Byte offset -> (line, visual column). Columns are tab-expanded to match TextEditor coordinates.
+        // Leading whitespace of the line containing Offset -- the indent a new sibling should match.
+        std::string LineIndentAt(const std::string& Text, size_t Offset)
+        {
+            if (Offset > Text.size())
+            {
+                Offset = Text.size();
+            }
+            const size_t Prev = (Offset == 0) ? std::string::npos : Text.rfind('\n', Offset - 1);
+            const size_t LineStart = (Prev == std::string::npos) ? 0 : Prev + 1;
+
+            size_t i = LineStart;
+            while (i < Text.size() && (Text[i] == ' ' || Text[i] == '\t'))
+            {
+                ++i;
+            }
+            return Text.substr(LineStart, i - LineStart);
+        }
+
+        // Start of the whitespace run immediately before Offset. Insertions swallow it and re-emit their
+        // own, so a child lands on its own line whether or not the close tag was already broken out.
+        size_t TrimWhitespaceBefore(const std::string& Text, size_t Offset)
+        {
+            size_t i = Math::Min(Offset, Text.size());
+            while (i > 0)
+            {
+                const char C = Text[i - 1];
+                if (C != ' ' && C != '\t' && C != '\n' && C != '\r')
+                {
+                    break;
+                }
+                --i;
+            }
+            return i;
+        }
+
         void OffsetToLineCol(const std::string& Text, size_t Offset, int TabSize, int& OutLine, int& OutCol)
         {
             if (TabSize < 1) TabSize = 4;
@@ -3213,6 +3248,11 @@ namespace Lumina
         std::string Replacement;
         const std::string TargetId(TargetSlotId.c_str(), TargetSlotId.size());
 
+        // Every branch below re-emits the whitespace around its insertion point rather than appending
+        // inline, so a new child always lands on its own line at the right depth instead of extending
+        // the parent's line. Spaces (not tabs) to match the authored content, sized to the tab setting.
+        const std::string IndentUnit((size_t)Math::Max(1, CodeEditor.GetTabSize()), ' ');
+
         if (TargetId.empty())
         {
             // No container selected -> append to the document body, scaffolding one if this document
@@ -3232,8 +3272,12 @@ namespace Lumina
             {
                 return;
             }
-            EditStart = EditEnd = BodyClose;
-            Replacement = std::string("    ") + Markup + "\n";
+            const std::string BodyIndent  = LineIndentAt(Text, BodyClose);
+            const std::string ChildIndent = BodyIndent + IndentUnit;
+
+            EditStart   = TrimWhitespaceBefore(Text, BodyClose);
+            EditEnd     = BodyClose;
+            Replacement = "\n" + ChildIndent + Markup + "\n" + BodyIndent;
         }
         else
         {
@@ -3243,12 +3287,15 @@ namespace Lumina
                 ImGuiX::Notifications::NotifyError("Container '#{0}' not found.", TargetSlotId.c_str());
                 return;
             }
+            const std::string ContainerIndent = LineIndentAt(Text, Open.TagStart);
+            const std::string ChildIndent     = ContainerIndent + IndentUnit;
+
             if (Open.bSelfClosing)
             {
-                // <div id=.../>  ->  <div id=...>\n    markup\n</div>
+                // <div id=.../>  ->  <div id=...>\n  markup\n</div>
                 EditStart   = Open.TagEnd - 1;
                 EditEnd     = Open.TagEnd + 1;
-                Replacement = ">\n        " + std::string(Markup) + "\n    </" + Open.TagName + ">";
+                Replacement = ">\n" + ChildIndent + Markup + "\n" + ContainerIndent + "</" + Open.TagName + ">";
             }
             else
             {
@@ -3258,9 +3305,12 @@ namespace Lumina
                     ImGuiX::Notifications::NotifyError("Couldn't find the end of '#{0}'.", TargetSlotId.c_str());
                     return;
                 }
-                // Append as the last child, just before the close tag.
-                EditStart = EditEnd = Close.Start;
-                Replacement = std::string(Markup) + "\n        ";
+                // Append as the last child. The whitespace before the close tag is absorbed and re-emitted
+                // so the child gets its own line and the close tag returns to the container's indent --
+                // inserting at Close.Start alone left the child glued to the parent's open tag.
+                EditStart   = TrimWhitespaceBefore(Text, Close.Start);
+                EditEnd     = Close.Start;
+                Replacement = "\n" + ChildIndent + Markup + "\n" + ContainerIndent;
             }
         }
 
