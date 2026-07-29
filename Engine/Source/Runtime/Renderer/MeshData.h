@@ -149,13 +149,23 @@ namespace Lumina
             RHI::GPUPtr MeshletTriangleBuffer = 0;
             RHI::GPUPtr MeshletHeaderBuffer = 0;
 
+            // Extra frames beyond the render pipeline depth, because these addresses outlive the free
+            // request on the GAME thread too. SetMeshResource frees this set immediately, but the meshlet
+            // header address is cached per component (SMeshComponent::CachedMeshletHeaderAddress) and is
+            // only refreshed by the next ResolveDirtyMeshComponents pass -- so the extract running later in
+            // this same tick still hands the old address to the GPU. That frame is then submitted and
+            // executes up to kFramesInFlight later, i.e. after a plain kFramesInFlight countdown would
+            // already have unmapped the memory. Committing a dynamic mesh while it is on screen is exactly
+            // that sequence, and it faults in the mesh shader's vertex/triangle fetch.
+            static constexpr uint32 kResolveLagFrames = 2;
+
             ~FMeshBuffers()
             {
-                RHI::Core::DeferredFree(MeshletBuffer);
-                RHI::Core::DeferredFree(MeshletBoundsBuffer);
-                RHI::Core::DeferredFree(MeshletVertexBuffer);
-                RHI::Core::DeferredFree(MeshletTriangleBuffer);
-                RHI::Core::DeferredFree(MeshletHeaderBuffer);
+                RHI::Core::DeferredFree(MeshletBuffer,         kResolveLagFrames);
+                RHI::Core::DeferredFree(MeshletBoundsBuffer,   kResolveLagFrames);
+                RHI::Core::DeferredFree(MeshletVertexBuffer,   kResolveLagFrames);
+                RHI::Core::DeferredFree(MeshletTriangleBuffer, kResolveLagFrames);
+                RHI::Core::DeferredFree(MeshletHeaderBuffer,   kResolveLagFrames);
             }
         };
 
@@ -179,6 +189,17 @@ namespace Lumina
 
         // Source scene-graph world transform; baked into vertices at merge time.
         FMatrix4                   ImportTransform = FMatrix4(1.0f);
+
+        // How many LOD levels GenerateMeshlets should build, clamped to [1, MAX_MESH_LODS]. A build input
+        // like ImportTransform, so it is deliberately not serialized -- the baked result is what persists.
+        // Runtime-generated meshes usually want far fewer than the import default; every extra level is
+        // another full meshopt_simplify pass over the source index range.
+        uint32                      MaxLODs = MAX_MESH_LODS;
+
+        // False replaces the MikkTSpace pass with a cheap arbitrary per-vertex tangent basis. Also a build
+        // input, also not serialized. Worth it only for geometry whose materials never sample a normal map,
+        // since the substitute basis is valid but arbitrarily oriented.
+        bool                        bGenerateTangents = true;
 
         FORCEINLINE size_t GetNumSurfaces() const { return GeometrySurfaces.size(); }
 

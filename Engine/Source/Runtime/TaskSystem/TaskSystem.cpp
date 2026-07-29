@@ -198,7 +198,6 @@ namespace Lumina
 
     void FTaskSystem::WaitForAll()
     {
-        LUMINA_PROFILE_SCOPE();
         Jobs::WaitForAll();
     }
 

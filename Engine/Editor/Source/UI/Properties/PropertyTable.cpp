@@ -28,6 +28,29 @@ namespace Lumina
     static constexpr uint32     ArrayControlSeed = 428768833;
     static constexpr float      ResetColumnWidth = 22.0f;
     static ImU32 ModifiedMarkerColor() { return EditorColors::U32(EditorColors::Warning()); }
+
+    // EPropertyChangeOp::Updated means two different things depending on the widget. Ones with an
+    // activate/deactivate lifecycle (numeric drag or type-in, asset pickers) emit
+    // Started -> Updated ... Updated -> Finished, so every keystroke and every drag frame is an Updated and
+    // only Finished is the commit. Ones without a lifecycle (enum and tag dropdowns, text committed on
+    // deactivate) emit a lone Updated as their commit and never send Finished at all.
+    //
+    // The struct edit hooks want the commit. So inside a session the Updateds are suppressed and only its
+    // Finished counts; outside one, a lone Updated fires immediately. That keeps PostEditChange from running
+    // per keystroke while still reaching the widgets that have no Finished to wait for.
+    static bool IsCommitOp(EPropertyChangeOp Op, bool bSessionActive)
+    {
+        return Op == EPropertyChangeOp::Finished
+            || (Op == EPropertyChangeOp::Updated && !bSessionActive);
+    }
+
+    // PreEditChange wants the value as it stood before the edit. For a session that is its Started -- by the
+    // commit the interactive writes have already landed and the original is gone.
+    static bool IsPreEditOp(EPropertyChangeOp Op, bool bSessionActive)
+    {
+        return Op == EPropertyChangeOp::Started
+            || (Op == EPropertyChangeOp::Updated && !bSessionActive);
+    }
     static ImU32 CategoryBgColor()     { return EditorColors::U32(EditorColors::RowBg()); }
 
     // Caller passes explicit Y bounds; the table row's bottom isn't queryable until after row finalization.
@@ -158,9 +181,20 @@ namespace Lumina
         // Null for script-defined structs, which carry no compile-time struct ops.
         FStructOps* Ops = Callbacks.Type ? Callbacks.Type->GetStructOps() : nullptr;
 
-        if (Ops && Ops->HasPreEdit())
+        if (Op == EPropertyChangeOp::Started)
         {
-            Ops->PreEdit(PropertyHandle->GetValuePtr(), Event);
+            bEditSessionActive = true;
+        }
+        const bool bFirePreEdit  = IsPreEditOp(Op, bEditSessionActive);
+        const bool bFirePostEdit = IsCommitOp(Op, bEditSessionActive);
+        if (Op == EPropertyChangeOp::Finished)
+        {
+            bEditSessionActive = false;
+        }
+
+        if (Ops && Ops->HasPreEdit() && Callbacks.Instance && bFirePreEdit)
+        {
+            Ops->PreEdit(Callbacks.Instance, Event);
         }
 
         if (Callbacks.PreChangeCallback)
@@ -173,9 +207,9 @@ namespace Lumina
             Customization->UpdatePropertyValue(PropertyHandle);
         }
 
-        if (Ops && Ops->HasPostEdit())
+        if (Ops && Ops->HasPostEdit() && Callbacks.Instance && bFirePostEdit)
         {
-            Ops->PostEdit(PropertyHandle->GetValuePtr(), Event);
+            Ops->PostEdit(Callbacks.Instance, Event);
         }
         
         if (Callbacks.PostChangeCallback)
@@ -198,9 +232,7 @@ namespace Lumina
         const bool bIsCategory = IsCategory();
         const bool bHasDefault = !bIsCategory && PropertyHandle && PropertyHandle->HasDefault();
         const bool bDiffers = bHasDefault && PropertyHandle->DiffersFromDefault();
-
-        // Multi-edit: a top-level property whose value disagrees across the selected objects is shown
-        // as a non-editable "(Multiple Values)" row. Only top-level rows (direct category children) qualify.
+        
         const bool bTopLevel = ParentRow && ParentRow->IsCategory();
         const bool bMultipleValues = bTopLevel && PropertyHandle && PropertyHandle->Property
             && Callbacks.IsMultiValueFn && Callbacks.IsMultiValueFn(PropertyHandle->Property);
@@ -967,9 +999,20 @@ namespace Lumina
         // Null for script-defined structs; see FPropertyRow::DispatchChange.
         FStructOps* Ops = Callbacks.Type ? Callbacks.Type->GetStructOps() : nullptr;
 
-        if (Ops && Ops->HasPreEdit())
+        if (KeyChangeOp == EPropertyChangeOp::Started)
         {
-            Ops->PreEdit(PropertyHandle->GetValuePtr(), Event);
+            bKeyEditSessionActive = true;
+        }
+        const bool bFirePreEdit  = IsPreEditOp(KeyChangeOp, bKeyEditSessionActive);
+        const bool bFirePostEdit = IsCommitOp(KeyChangeOp, bKeyEditSessionActive);
+        if (KeyChangeOp == EPropertyChangeOp::Finished)
+        {
+            bKeyEditSessionActive = false;
+        }
+
+        if (Ops && Ops->HasPreEdit() && Callbacks.Instance && bFirePreEdit)
+        {
+            Ops->PreEdit(Callbacks.Instance, Event);
         }
 
         if (Callbacks.PreChangeCallback)
@@ -990,9 +1033,9 @@ namespace Lumina
             ImGuiX::Notifications::NotifyWarning("Duplicate map key ignored; keys must be unique.");
         }
         
-        if (Ops && Ops->HasPostEdit())
+        if (Ops && Ops->HasPostEdit() && Callbacks.Instance && bFirePostEdit)
         {
-            Ops->PostEdit(PropertyHandle->GetValuePtr(), Event);
+            Ops->PostEdit(Callbacks.Instance, Event);
         }
 
         if (Callbacks.PostChangeCallback)
@@ -1464,6 +1507,7 @@ namespace Lumina
         , Object(InObject)
     {
         ChangeEventCallbacks.Type = InType;
+        ChangeEventCallbacks.Instance = InObject;
         if (InType != nullptr && InObject != nullptr)
         {
             void* MaybeDefault = InType->GetDefaultInstance();
@@ -1481,6 +1525,7 @@ namespace Lumina
         , DefaultObject(InDefaultObject)
     {
         ChangeEventCallbacks.Type = InType;
+        ChangeEventCallbacks.Instance = InObject;
     }
 
     FPropertyTable::FPropertyTable(CObject* InObject)
@@ -1492,6 +1537,7 @@ namespace Lumina
             CClass* Class = InObject->GetClass();
             Struct = Class;
             ChangeEventCallbacks.Type = Class;
+            ChangeEventCallbacks.Instance = InObject;
 
             // Don't plumb a default when we are the CDO; avoids a misleading
             // "modified" indicator on the rare CDO-edit flow.
@@ -1601,9 +1647,20 @@ namespace Lumina
                 // Null for script-defined structs; see FPropertyRow::DispatchChange.
                 FStructOps* Ops = ChangeEventCallbacks.Type ? ChangeEventCallbacks.Type->GetStructOps() : nullptr;
 
-                if (Ops && Ops->HasPreEdit())
+                if (ChangeOp == EPropertyChangeOp::Started)
                 {
-                    Ops->PreEdit(PropertyHandle->GetValuePtr(), Event);
+                    bObjectEditSessionActive = true;
+                }
+                const bool bFirePreEdit  = IsPreEditOp(ChangeOp, bObjectEditSessionActive);
+                const bool bFirePostEdit = IsCommitOp(ChangeOp, bObjectEditSessionActive);
+                if (ChangeOp == EPropertyChangeOp::Finished)
+                {
+                    bObjectEditSessionActive = false;
+                }
+
+                if (Ops && Ops->HasPreEdit() && ChangeEventCallbacks.Instance && bFirePreEdit)
+                {
+                    Ops->PreEdit(ChangeEventCallbacks.Instance, Event);
                 }
 
                 if (ChangeEventCallbacks.PreChangeCallback)
@@ -1613,9 +1670,9 @@ namespace Lumina
 
                 Customization->UpdatePropertyValue(PropertyHandle);
 
-                if (Ops && Ops->HasPostEdit())
+                if (Ops && Ops->HasPostEdit() && ChangeEventCallbacks.Instance && bFirePostEdit)
                 {
-                    Ops->PostEdit(PropertyHandle->GetValuePtr(), Event);
+                    Ops->PostEdit(ChangeEventCallbacks.Instance, Event);
                 }
                 
                 if (ChangeEventCallbacks.PostChangeCallback)
@@ -1672,6 +1729,9 @@ namespace Lumina
     {
         Object = InObject;
         Struct = StructType;
+        // Kept in lockstep with the object; a stale Type here would type-pun the edit hooks.
+        ChangeEventCallbacks.Type = StructType;
+        ChangeEventCallbacks.Instance = InObject;
         DefaultObject = nullptr;
         if (StructType != nullptr && InObject != nullptr)
         {
@@ -1689,6 +1749,8 @@ namespace Lumina
     {
         Object = InObject;
         Struct = StructType;
+        ChangeEventCallbacks.Type = StructType;
+        ChangeEventCallbacks.Instance = InObject;
         DefaultObject = InDefaultObject;
 
         RebuildTree();

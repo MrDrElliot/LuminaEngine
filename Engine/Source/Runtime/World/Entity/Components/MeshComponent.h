@@ -72,7 +72,7 @@ namespace Lumina
         const void*     CachedMeshKey = nullptr;
 
         // 0 never matches a live epoch, so a fresh component always resolves.
-        mutable uint32  CachedEpoch = 0;
+        uint32  CachedEpoch = 0;
 
         FUNCTION(Script)
         void SetMaterialAtSlot(CMaterialInterface* Material, uint32 Slot)
@@ -88,11 +88,10 @@ namespace Lumina
             InvalidateRenderResolve();
         }
 
-        // Const because the resolve state is a cache and the struct-ops path invokes it on a const struct.
-        void InvalidateRenderResolve() const;
+        void InvalidateRenderResolve();
 
         #if USING(WITH_EDITOR)
-        void PostEditChange(const FPropertyChangedEvent& Event) const { InvalidateRenderResolve(); }
+        void PostEditChange(const FPropertyChangedEvent& Event) { InvalidateRenderResolve(); }
         #endif
     };
 }

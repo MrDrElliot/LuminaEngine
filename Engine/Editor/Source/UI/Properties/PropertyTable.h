@@ -29,7 +29,11 @@ namespace Lumina
 
     struct FPropertyChangedEventCallbacks
     {
+        // Type and Instance travel together: the struct-ops edit hooks are typed on Type, so they must be
+        // handed the instance OF that type -- not the changed property's address, which is what a
+        // PropertyHandle yields and is a different object entirely for any non-root property.
         CStruct*                Type = nullptr;
+        void*                   Instance = nullptr;
         FPropertyChangedEventFn PreChangeCallback;
         FPropertyChangedEventFn PostChangeCallback;
         FPropertyChangedEventFn StartChangeCallback;
@@ -108,6 +112,8 @@ namespace Lumina
         TVector<TUniquePtr<FPropertyRow>>       Children;
         
         EPropertyChangeOp                       ChangeOp = EPropertyChangeOp::None;
+        // True between a widget's Started and its Finished. See IsCommitOp in the .cpp.
+        bool                                    bEditSessionActive = false;
         bool                                    bArrayElement = false;
         bool                                    bExpanded = true;
     };
@@ -226,6 +232,7 @@ namespace Lumina
         TSharedPtr<IPropertyTypeCustomization>  KeyCustomization;
         TUniquePtr<FPropertyRow>                ValueRow;
         EPropertyChangeOp                       KeyChangeOp = EPropertyChangeOp::None;
+        bool                                    bKeyEditSessionActive = false;
     };
 
     class FStructPropertyRow : public FPropertyRow
@@ -366,6 +373,7 @@ namespace Lumina
         FCategoryPropertyRow* FindOrCreateCategoryRow(const FName& CategoryName);
 
         FPropertyChangedEventCallbacks ChangeEventCallbacks;
+        bool                           bObjectEditSessionActive = false;
         
     protected:
         

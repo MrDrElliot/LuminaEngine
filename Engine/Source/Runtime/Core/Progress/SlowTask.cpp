@@ -48,6 +48,7 @@ namespace Lumina
 
     void FScopedSlowTask::EnterProgressFrame(float ExpectedWork, FStringView Message)
     {
+        #if USING(WITH_EDITOR)
         FScopeLock Lock(GSlowTaskMutex);
         CompletedWork += ExpectedWork;
         if (!Message.empty())
@@ -55,13 +56,16 @@ namespace Lumina
             CurrentMessage.assign(Message.begin(), Message.end());
         }
         Publish();
+        #endif
     }
 
     void FScopedSlowTask::UpdateMessage(FStringView Message)
     {
+        #if USING(WITH_EDITOR)
         FScopeLock Lock(GSlowTaskMutex);
         CurrentMessage.assign(Message.begin(), Message.end());
         Publish();
+        #endif
     }
 
     void FScopedSlowTask::Publish()

@@ -2,22 +2,32 @@
 
 
 #include "MeshComponent.h"
-#include "Assets/AssetTypes/Mesh/StaticMesh/StaticMesh.h"
 #include "Core/Math/AABB.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Memory/SmartPtr.h"
+#include "Renderer/MeshData.h"
+#include "World/Scene/RenderScene/MeshResolveCache.h"
 #include "DynamicMeshComponent.generated.h"
 
 namespace Lumina
 {
-    // CPU-side staging the build API fills before Commit; defined in the .cpp so the component header
-    // stays light. Held behind a shared pointer so the component itself stays small and trivially movable.
     struct FDynamicMeshBuildData;
+    
+    struct FDynamicMeshRenderData
+    {
+        FMeshResource               Resource;
+        TVector<FResolvedSurface>   Surfaces;
 
-    // A mesh built entirely from data at runtime (from C# or C++) rather than loaded from an asset. Fill the
-    // vertex streams and indices, optionally carve out per-material sections, then Commit() to upload it. The
-    // result renders through the normal meshlet pipeline, so it supports materials, shadows and culling like a
-    // static mesh. Rebuild as often as you like (e.g. voxel chunks) - each Commit re-uploads the GPU buffers.
+        FVector3                    LocalCenter          = FVector3(0.0f);
+        float                       LocalRadius          = 0.0f;
+        uint64                      MeshletHeaderAddress = 0;
+
+        // Materials can still be compiling when Commit runs; the resolve pass re-runs the material half
+        // until they settle, exactly as the asset path does.
+        bool                        bAllMaterialsReady   = false;
+    };
+
+    // A mesh built entirely from data at runtime (from C# or C++) rather than loaded from an asset.
     REFLECT(Component, Category = "Rendering")
     struct RUNTIME_API CACHE_ALIGN SDynamicMeshComponent : SMeshComponent
     {
@@ -66,8 +76,27 @@ namespace Lumina
         void SetColorsPackedData(const uint32* Data, int32 Count);
         void SetIndicesData(const uint32* Data, int32 Count);
 
-        // Runtime-built mesh; transient, never serialized. The TObjectPtr keeps it alive (refcounted).
-        TObjectPtr<CStaticMesh> DynamicMesh;
+        /** How many LOD levels Commit() builds, 1 meaning LOD 0 only. Each extra level is another full
+         *  simplify pass over the whole index range, so a mesh that is rebuilt often (voxel chunks,
+         *  procedural terrain) usually wants 1-2; geometry that is built once and viewed at range wants
+         *  more. Clamped to MAX_MESH_LODS. */
+        PROPERTY(Editable, Category = "Rendering")
+        int32 MaxLODs = (int32)MAX_MESH_LODS;
+
+        /** Generate proper MikkTSpace tangents at Commit. This is the slowest single stage of a commit and
+         *  it does not parallelize across a mesh with one section, so turning it off is the biggest saving
+         *  available for procedural geometry. Off substitutes a cheap arbitrary tangent basis: shading stays
+         *  valid, but any material sampling a normal map will orient it arbitrarily. Leave on if this mesh
+         *  uses normal maps. */
+        PROPERTY(Editable, Category = "Rendering")
+        bool bGenerateTangents = true;
+
+        /// Committed geometry + resolved surfaces. Null until the first successful Commit.
+        TSharedPtr<FDynamicMeshRenderData> RenderData;
+
+        /// Re-runs the material half of the resolve against the current MaterialOverrides. Called by the
+        /// render scene's resolve pass while a material is still compiling, and after an override changes.
+        void RefreshResolvedMaterials();
 
     private:
 

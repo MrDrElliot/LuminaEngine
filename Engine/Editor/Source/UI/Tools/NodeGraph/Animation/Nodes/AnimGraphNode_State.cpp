@@ -33,8 +33,18 @@ namespace Lumina
         return GetOrCreateBlendTree();
     }
 
+    FString CAnimGraphNode_State::GetStateLabel() const
+    {
+        return StateName.IsNone() ? FString("Unnamed State") : StateName.ToString();
+    }
+
     void CAnimGraphNode_StateEntry::BuildNode()
     {
         OutPin = CreateAnimPin("Entry", ENodePinDirection::Output, EAnimPinType::StateFlow);
+    }
+
+    void CAnimGraphNode_StateAny::BuildNode()
+    {
+        OutPin = CreateAnimPin("Any", ENodePinDirection::Output, EAnimPinType::StateFlow);
     }
 }

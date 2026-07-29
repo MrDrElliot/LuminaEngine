@@ -515,6 +515,25 @@ namespace Lumina
         return Raw;
     }
 
+    // Field defaults -> the entry list BuildFromSchema writes into a struct's default buffer. Without this a
+    // minted sub-struct or instanced candidate is only default-constructed, i.e. all zeroes.
+    static TVector<FScriptPropertyEntry> CollectFieldDefaults(const TVector<FScriptExportField>& Fields)
+    {
+        TVector<FScriptPropertyEntry> Defaults;
+        Defaults.reserve(Fields.size());
+        for (const FScriptExportField& Field : Fields)
+        {
+            if (Field.Default.Kind == EScriptValueKind::Nil)
+            {
+                continue;
+            }
+            FScriptPropertyEntry& Entry = Defaults.emplace_back();
+            Entry.Name  = Field.Name;
+            Entry.Value = Field.Default;
+        }
+        return Defaults;
+    }
+
     CScriptStruct* CScriptStruct::MintSubStruct(const FScriptExportType& Type)
     {
         static TAtomic<uint64> Serial{ 0 };
@@ -532,7 +551,8 @@ namespace Lumina
 
         FScriptExportSchema SubSchema;
         SubSchema.Fields = Type.Fields;
-        if (!Sub->BuildFromSchema(SubSchema))
+        const TVector<FScriptPropertyEntry> FieldDefaults = CollectFieldDefaults(SubSchema.Fields);
+        if (!Sub->BuildFromSchema(SubSchema, &FieldDefaults))
         {
             return nullptr;
         }
@@ -587,7 +607,8 @@ namespace Lumina
 
         FScriptExportSchema Schema;
         Schema.Fields = Candidate.Fields;
-        if (!Sub->BuildFromSchema(Schema))
+        const TVector<FScriptPropertyEntry> FieldDefaults = CollectFieldDefaults(Schema.Fields);
+        if (!Sub->BuildFromSchema(Schema, &FieldDefaults))
         {
             return nullptr;
         }

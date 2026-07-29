@@ -1225,8 +1225,8 @@ namespace Lumina::Jobs
         {
             return;
         }
-        // A worker fiber busy-spinning here would block its own scheduler from running the very jobs it
-        // waits on. WaitForAll is an external-thread (main) drain point.
+        
+        LUMINA_PROFILE_SCOPE();
         ASSERT(!TLS.bIsWorker);
         while (G->InFlight.load(std::memory_order_acquire) > 0)
         {

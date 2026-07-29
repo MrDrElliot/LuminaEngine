@@ -26,8 +26,18 @@ namespace Lumina
 
     private:
 
+        // One (stage, batch) run of Schedule, drawn as a column on the schedule canvas.
+        struct FScheduleColumn
+        {
+            uint8 Stage = 0;
+            uint8 Batch = 0;
+            int32 First = 0;
+            int32 Count = 0;
+        };
+
         void DrawWindow(bool bIsFocused);
         void DrawSchedule();
+        void DrawScheduleCanvas();
         void DrawStats();
         void DrawDetail();
 
@@ -36,13 +46,24 @@ namespace Lumina
         CWorld* ResolveWorld() const;
         void    RefreshSchedule();
 
+        // Index into Schedule for the selected system, re-found by name so a reschedule doesn't move
+        // the selection onto an unrelated system. INDEX_NONE when nothing is selected.
+        int32 ResolveSelection() const;
+
+        const FGameplayProfileEntry* FindStat(const char* Name) const;
+
         // Display copies, refreshed each frame unless frozen, so Freeze holds a stable frame to inspect.
         FGameplayProfileFrame         DisplayFrame;   // aggregate scope timings (scripts + Sample + C# systems)
         TVector<FSystemScheduleEntry> Schedule;       // batch/access snapshot from the active world
+        TVector<FScheduleColumn>      ScheduleColumns;
 
-        char    Filter[64]  = {};
-        bool    bFrozen     = false;
-        uint32  DrawTicks   = 0;
-        FName   Selected;               // system selected in the Schedule tab (drives Detail)
+        char    Filter[64]      = {};
+        bool    bFrozen         = false;
+        bool    bShowEdges      = true;
+        float   ScheduleZoom    = 1.0f;
+        uint32  DrawTicks       = 0;
+
+        int32   SelectedIndex   = INDEX_NONE;
+        FName   SelectedName;           // None for a managed system; index is the only handle we have
     };
 }

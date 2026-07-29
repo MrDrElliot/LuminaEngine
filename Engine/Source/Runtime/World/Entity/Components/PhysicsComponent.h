@@ -403,6 +403,37 @@ namespace Lumina
     };
 
     /** Static collider built from an STerrainComponent's heightmap (Jolt HeightFieldShape). Requires both components on the same entity. */
+    // Collision built from an SDynamicMeshComponent's committed geometry on the same entity. The mesh has
+    // no CMesh to point at (it owns its render data outright), so unlike SMeshColliderComponent there is no
+    // asset reference -- the shape is rebuilt from whatever that component last committed.
+    REFLECT(Component, Category = "Physics")
+    struct RUNTIME_API SDynamicMeshColliderComponent
+    {
+        GENERATED_BODY()
+
+        /** Build a convex hull (allows dynamic bodies). False builds a concave triangle mesh: static/kinematic only,
+            which is what terrain wants. */
+        PROPERTY(Script, Editable)
+        bool bConvex = false;
+
+        /** Physics material driving friction/restitution. Null falls back to the rigid body's *Override fields. */
+        PROPERTY(Script, Editable)
+        TObjectPtr<CPhysicsMaterial> PhysicsMaterial;
+
+        /** When true, the body produces overlap events but no contact response (trigger volume). */
+        PROPERTY(Script, Editable)
+        bool bIsTrigger = false;
+
+        /** When true, this collider contributes its shape to NavMesh bakes. */
+        PROPERTY(Script, Editable, Category = "Navigation")
+        bool bAffectsNavigation = true;
+
+        /** Bumped by SDynamicMeshComponent::Commit so the physics scene knows the geometry changed and
+            rebuilds the body. Not authored. */
+        PROPERTY(Script, ReadOnly)
+        uint32 GeometryVersion = 0;
+    };
+
     REFLECT(Component, Category = "Physics")
     struct RUNTIME_API STerrainColliderComponent
     {

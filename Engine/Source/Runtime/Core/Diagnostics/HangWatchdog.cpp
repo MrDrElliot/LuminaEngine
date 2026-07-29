@@ -30,6 +30,10 @@ namespace Lumina::HangWatchdog
         std::atomic<bool>   GRunning{false};
         FThread             GThread;
         float               GTimeoutSeconds   = 8.0f;
+
+        // Boot and project load block the main thread legitimately (asset discovery, script compile, shader
+        // warmup), so the pre-first-frame window gets a far looser bound than a steady-state frame stall.
+        constexpr float     kBootTimeoutScale = 5.0f;
         DWORD               GMainThreadId     = 0;
         DWORD               GWatchdogThreadId = 0;
 
@@ -276,16 +280,26 @@ namespace Lumina::HangWatchdog
                     continue;
                 }
 
-                // Beat == 0 means the frame loop hasn't started yet (boot/init can legitimately block
-                // the main thread for seconds); only arm once we've seen real forward progress.
-                if (Beat == 0 || bDumped)
+                if (bDumped)
                 {
                     continue;
                 }
 
+                // Beat == 0 means the frame loop hasn't started yet. Boot and project load can legitimately
+                // block the main thread for seconds, so this window gets a much longer grace -- but it does
+                // get one. Skipping it entirely made every pre-first-frame hang (asset discovery, script
+                // compile, a blocking drain in project load) completely undiagnosable: the process just sat
+                // there and the watchdog stayed silent by construction.
+                const float Timeout = (Beat == 0) ? GTimeoutSeconds * kBootTimeoutScale : GTimeoutSeconds;
+
                 const float Elapsed = std::chrono::duration<float>(Now - LastChange).count();
-                if (Elapsed >= GTimeoutSeconds)
+                if (Elapsed >= Timeout)
                 {
+                    if (Beat == 0)
+                    {
+                        LOG_ERROR("HangWatchdog: main thread has not reached its first frame after {:.0f}s "
+                                  "(still in boot / project load).", Elapsed);
+                    }
                     DumpAllThreads();
                     bDumped = true; // one dump per stall; re-arms if the main thread ever advances
                 }

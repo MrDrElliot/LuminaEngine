@@ -1,55 +1,176 @@
 #include "GameplayInsightsEditorTool.h"
 
 #include <cfloat>
+#include <cstdio>
+#include <cstring>
 #include <EASTL/algorithm.h>
 
 #include "imgui.h"
+#include "Core/Math/Math.h"
 #include "Core/Profiler/GameplayProfiler.h"
 #include "Core/UpdateStage.h"
+#include "Tools/UI/ImGui/EditorColors.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
+#include "Tools/UI/ImGui/ImGuiX.h"
 #include "World/Entity/Systems/SystemAccess.h"
 #include "World/WorldManager.h"
 #include "World/WorldContext.h"
 
 namespace Lumina
 {
+    // Presentation helpers for the schedule canvas. Internal linkage: these names are generic
+    // enough to collide with other translation units' Detail helpers.
     namespace
     {
-        const char* StageName(uint8 Stage)
+        namespace Detail
         {
-            static const char* Names[] = { "FrameStart", "PrePhysics", "DuringPhysics", "PostPhysics", "FrameEnd", "Paused" };
-            return Stage < (uint8)EUpdateStage::Max ? Names[Stage] : "?";
-        }
-
-        // Distinct, stable tint per stage so a span/row is readable at a glance.
-        ImU32 StageColor(uint8 Stage)
-        {
-            switch ((EUpdateStage)Stage)
+            const char* StageName(uint8 Stage)
             {
-                case EUpdateStage::FrameStart:    return IM_COL32( 92, 148, 220, 255);
-                case EUpdateStage::PrePhysics:    return IM_COL32( 96, 188, 132, 255);
-                case EUpdateStage::DuringPhysics: return IM_COL32(208, 168,  72, 255);
-                case EUpdateStage::PostPhysics:   return IM_COL32(196, 120,  92, 255);
-                case EUpdateStage::FrameEnd:      return IM_COL32(168, 124, 208, 255);
-                case EUpdateStage::Paused:        return IM_COL32(132, 132, 140, 255);
-                default:                          return IM_COL32(120, 120, 128, 255);
+                return Stage < (uint8)EUpdateStage::Max ? GUpdateStageNames[Stage] : "?";
             }
-        }
 
-        // Comma-joined display names for a set of access ids (entt::type_hash), resolved via the runtime registry.
-        FString AccessList(const TVector<uint32>& Ids)
-        {
-            FString Out;
-            for (uint32 Id : Ids)
+            // Distinct, stable hue per stage so the shape of a frame reads without parsing labels.
+            ImVec4 StageColor(uint8 Stage)
             {
-                const char* Name = GetAccessTypeName(Id);
-                if (!Out.empty())
+                switch ((EUpdateStage)Stage)
                 {
-                    Out += ", ";
+                case EUpdateStage::FrameStart:    return ImVec4(0.36f, 0.58f, 0.86f, 1.0f);
+                case EUpdateStage::PrePhysics:    return ImVec4(0.38f, 0.74f, 0.52f, 1.0f);
+                case EUpdateStage::DuringPhysics: return ImVec4(0.82f, 0.66f, 0.28f, 1.0f);
+                case EUpdateStage::PostPhysics:   return ImVec4(0.77f, 0.47f, 0.36f, 1.0f);
+                case EUpdateStage::FrameEnd:      return ImVec4(0.66f, 0.49f, 0.82f, 1.0f);
+                case EUpdateStage::Paused:        return ImVec4(0.52f, 0.52f, 0.55f, 1.0f);
+                default:                          break;
                 }
-                Out += Name ? Name : "<unknown>";
+                return ImVec4(0.47f, 0.47f, 0.50f, 1.0f);
             }
-            return Out;
+
+            // Comma-joined display names for a set of access ids (entt::type_hash), resolved via the runtime registry.
+            FString AccessList(const TVector<uint32>& Ids)
+            {
+                FString Out;
+                for (uint32 Id : Ids)
+                {
+                    const char* Name = GetAccessTypeName(Id);
+                    if (!Out.empty())
+                    {
+                        Out += ", ";
+                    }
+                    Out += Name ? Name : "<unknown>";
+                }
+                return Out;
+            }
+
+            bool Contains(const TVector<uint32>& Ids, uint32 Id)
+            {
+                for (uint32 Existing : Ids)
+                {
+                    if (Existing == Id)
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            // Same rule the scheduler batches with (FSystemAccess::Conflicts), against the snapshot.
+            bool Conflicts(const FSystemScheduleEntry& A, const FSystemScheduleEntry& B)
+            {
+                if (A.bExclusive || B.bExclusive)
+                {
+                    return true;
+                }
+                return FSystemAccess::Intersects(A.Writes, B.Writes)
+                    || FSystemAccess::Intersects(A.Writes, B.Reads)
+                    || FSystemAccess::Intersects(B.Writes, A.Reads);
+            }
+
+            // The access ids that actually force A and B apart.
+            FString SharedAccessList(const FSystemScheduleEntry& A, const FSystemScheduleEntry& B)
+            {
+                if (A.bExclusive || B.bExclusive)
+                {
+                    return FString("exclusive (declares everything)");
+                }
+
+                TVector<uint32> Shared;
+                for (uint32 Id : A.Writes)
+                {
+                    if ((Contains(B.Writes, Id) || Contains(B.Reads, Id)) && !Contains(Shared, Id))
+                    {
+                        Shared.push_back(Id);
+                    }
+                }
+                for (uint32 Id : B.Writes)
+                {
+                    if (Contains(A.Reads, Id) && !Contains(Shared, Id))
+                    {
+                        Shared.push_back(Id);
+                    }
+                }
+                return AccessList(Shared);
+            }
+
+            FString SystemLabel(const FSystemScheduleEntry& Entry, int32 Index)
+            {
+                if (!Entry.bManaged)
+                {
+                    return Entry.Name.ToString();
+                }
+                char Buffer[48] = {};
+                snprintf(Buffer, sizeof(Buffer), LE_ICON_LANGUAGE_CSHARP " C# system %d", Index);
+                return FString(Buffer);
+            }
+
+            // Trims Text to MaxWidth with a trailing ellipsis, measured with the font and size it will be
+            // drawn at so boxes stay clean at any zoom or editor DPI scale.
+            FString FitText(ImFont* Font, float FontSize, const char* Text, float MaxWidth)
+            {
+                if (Text == nullptr || Text[0] == '\0')
+                {
+                    return FString();
+                }
+                if (Font->CalcTextSizeA(FontSize, FLT_MAX, 0.0f, Text).x <= MaxWidth)
+                {
+                    return FString(Text);
+                }
+
+                const char* Ellipsis = "...";
+                const float Budget = MaxWidth - Font->CalcTextSizeA(FontSize, FLT_MAX, 0.0f, Ellipsis).x;
+                if (Budget <= 0.0f)
+                {
+                    return FString(Ellipsis);
+                }
+
+                FString Result(Text);
+                while (!Result.empty() &&
+                       Font->CalcTextSizeA(FontSize, FLT_MAX, 0.0f, Result.c_str()).x > Budget)
+                {
+                    Result.pop_back();
+                }
+                Result += Ellipsis;
+                return Result;
+            }
+
+            ImVec4 CostColor(double Share)
+            {
+                if (Share > 0.25)
+                {
+                    return EditorColors::Danger();
+                }
+                if (Share > 0.10)
+                {
+                    return EditorColors::Warning();
+                }
+                return EditorColors::TextMuted();
+            }
+
+            void StripSeparator()
+            {
+                ImGui::SameLine(0.0f, 6.0f);
+                ImGui::TextColored(EditorColors::TextMuted(), "|");
+                ImGui::SameLine(0.0f, 6.0f);
+            }
         }
     }
 
@@ -102,31 +223,107 @@ namespace Lumina
         {
             Schedule.clear();
         }
+
+        // The snapshot is emitted stage -> batch -> member, so columns are a run-length pass.
+        ScheduleColumns.clear();
+        for (int32 Index = 0; Index < (int32)Schedule.size(); ++Index)
+        {
+            const FSystemScheduleEntry& Entry = Schedule[Index];
+            if (ScheduleColumns.empty() || ScheduleColumns.back().Stage != Entry.Stage || ScheduleColumns.back().Batch != Entry.Batch)
+            {
+                FScheduleColumn& Column = ScheduleColumns.emplace_back();
+                Column.Stage = Entry.Stage;
+                Column.Batch = Entry.Batch;
+                Column.First = Index;
+                Column.Count = 0;
+            }
+            ++ScheduleColumns.back().Count;
+        }
+    }
+
+    int32 FGameplayInsightsEditorTool::ResolveSelection() const
+    {
+        const int32 Count = (int32)Schedule.size();
+        if (SelectedIndex == INDEX_NONE)
+        {
+            return INDEX_NONE;
+        }
+
+        if (SelectedName.IsNone())
+        {
+            return SelectedIndex < Count ? SelectedIndex : INDEX_NONE;
+        }
+
+        if (SelectedIndex < Count && Schedule[SelectedIndex].Name == SelectedName)
+        {
+            return SelectedIndex;
+        }
+        for (int32 Index = 0; Index < Count; ++Index)
+        {
+            if (Schedule[Index].Name == SelectedName)
+            {
+                return Index;
+            }
+        }
+        return INDEX_NONE;
+    }
+
+    const FGameplayProfileEntry* FGameplayInsightsEditorTool::FindStat(const char* Name) const
+    {
+        if (Name == nullptr || Name[0] == '\0')
+        {
+            return nullptr;
+        }
+        for (const FGameplayProfileEntry& Entry : DisplayFrame.Entries)
+        {
+            if (strcmp(Entry.Name.c_str(), Name) == 0)
+            {
+                return &Entry;
+            }
+        }
+        return nullptr;
     }
 
     void FGameplayInsightsEditorTool::DrawWindow(bool)
     {
         FGameplayProfiler& Prof = FGameplayProfiler::Get();
 
-        // ---- Controls -----------------------------------------------------------------------------
-        ImGui::Checkbox("Freeze", &bFrozen);
-        if (bFrozen)
-        {
-            ImGui::SameLine();
-            ImGui::TextColored(ImVec4(0.95f, 0.65f, 0.30f, 1.0f), LE_ICON_PAUSE " FROZEN");
-        }
-        ImGui::SameLine();
-        ImGui::TextDisabled("|");
-        ImGui::SameLine();
-        ++DrawTicks;
-        const char Spinner[] = { '|', '/', '-', '\\' };
-        ImGui::TextColored(ImVec4(0.45f, 0.80f, 0.55f, 1.0f), "live %c", Spinner[(DrawTicks / 6) % 4]);
-
         if (!bFrozen)
         {
             DisplayFrame = Prof.GetLatest();
             RefreshSchedule();
         }
+
+        ImGui::AlignTextToFramePadding();
+        ImGui::Checkbox("Freeze", &bFrozen);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+        {
+            ImGuiX::TextTooltip_Internal("Hold the last capture so it can be read without it moving under the cursor");
+        }
+
+        ImGui::SameLine(0.0f, 16.0f);
+        ++DrawTicks;
+        if (bFrozen)
+        {
+            ImGui::TextColored(EditorColors::Warning(), LE_ICON_PAUSE " frozen");
+        }
+        else
+        {
+            const char Spinner[] = { '|', '/', '-', '\\' };
+            ImGui::TextColored(EditorColors::Success(), "live %c", Spinner[(DrawTicks / 6) % 4]);
+        }
+
+        Detail::StripSeparator();
+        ImGui::TextColored(EditorColors::TextDim(), "%d systems", (int32)Schedule.size());
+        Detail::StripSeparator();
+        ImGui::TextColored(EditorColors::TextDim(), "%d batches", (int32)ScheduleColumns.size());
+        Detail::StripSeparator();
+
+        constexpr double BudgetMs = 16.667;
+        const double Share = DisplayFrame.TotalMs / BudgetMs;
+        const ImVec4 HotColor = Share > 1.0 ? EditorColors::Danger()
+            : (Share > 0.6 ? EditorColors::Warning() : EditorColors::Success());
+        ImGui::TextColored(HotColor, "%.3f ms gameplay", DisplayFrame.TotalMs);
 
         if (ImGui::BeginTabBar("##insights"))
         {
@@ -149,81 +346,408 @@ namespace Lumina
         }
     }
 
-    // ---- Schedule: parallel batches per stage with each system's declared access -----------------------
+    // ---- Schedule: the frame's parallel batches as a dependency canvas ---------------------------------
     void FGameplayInsightsEditorTool::DrawSchedule()
     {
-        CWorld* World = ResolveWorld();
-        if (World == nullptr || Schedule.empty())
+        if (Schedule.empty())
         {
-            ImGui::TextDisabled("No active world with registered systems.");
+            ImGui::Spacing();
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());
+            ImGui::TextWrapped(ResolveWorld() == nullptr
+                ? "No active world. Open a level, or enter Play, to inspect a system schedule."
+                : "The active world has no registered systems.");
+            ImGui::PopStyleColor();
             return;
         }
 
-        ImGui::TextDisabled("Systems within one batch run concurrently; the next batch waits for it. Order is by stage, then priority.");
-        ImGui::Spacing();
+        ImGui::AlignTextToFramePadding();
+        ImGui::SetNextItemWidth(120.0f);
+        ImGui::SliderFloat("##ScheduleZoom", &ScheduleZoom, 0.6f, 1.6f, "zoom %.2fx");
 
-        int8_t LastStage = -1;
-        int    LastBatch = -1;
-        for (const FSystemScheduleEntry& E : Schedule)
+        ImGui::SameLine(0.0f, 16.0f);
+        ImGui::Checkbox("Conflict edges", &bShowEdges);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
         {
-            if ((int8_t)E.Stage != LastStage)
+            ImGuiX::TextTooltip_Internal("Link each system to the systems in the previous batch whose declared access it conflicts with: the reason it could not run any earlier");
+        }
+
+        const int32 Selection = ResolveSelection();
+        if (Selection != INDEX_NONE)
+        {
+            ImGui::SameLine(0.0f, 16.0f);
+            if (ImGui::SmallButton("Clear selection"))
             {
-                LastStage = (int8_t)E.Stage;
-                LastBatch = -1;
-                ImGui::Spacing();
-                ImU32 C = StageColor(E.Stage);
-                ImGui::PushStyleColor(ImGuiCol_Text, C);
-                ImGui::SeparatorText(StageName(E.Stage));
-                ImGui::PopStyleColor();
+                SelectedIndex = INDEX_NONE;
+                SelectedName  = FName();
+            }
+        }
+
+        int32 WidestBatch = 0;
+        int32 ExclusiveCount = 0;
+        int32 ParallelCount = 0;
+        for (const FSystemScheduleEntry& Entry : Schedule)
+        {
+            if (Entry.bExclusive)
+            {
+                ++ExclusiveCount;
+            }
+            else if (Entry.BatchSize > 1)
+            {
+                ++ParallelCount;
+            }
+        }
+        for (const FScheduleColumn& Column : ScheduleColumns)
+        {
+            WidestBatch = Math::Max(WidestBatch, Column.Count);
+        }
+
+        ImGui::Separator();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(EditorColors::TextPrimary(), "%d systems", (int32)Schedule.size());
+        Detail::StripSeparator();
+        ImGui::TextColored(EditorColors::Success(), "%d run in parallel", ParallelCount);
+        if (ExclusiveCount > 0)
+        {
+            Detail::StripSeparator();
+            ImGui::TextColored(EditorColors::Warning(), "%d exclusive", ExclusiveCount);
+        }
+        Detail::StripSeparator();
+        ImGui::TextColored(EditorColors::TextDim(), "%d batches", (int32)ScheduleColumns.size());
+        Detail::StripSeparator();
+        ImGui::TextColored(EditorColors::TextDim(), "widest x%d", WidestBatch);
+
+        ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());
+        ImGui::TextWrapped("Columns are parallel batches: everything in one column runs concurrently on job-system workers, "
+                           "and the next column waits for all of it. Stage bands are hard barriers. Click a system to see "
+                           "every system in its stage it can never share a batch with.");
+        ImGui::PopStyleColor();
+        ImGui::Separator();
+
+        DrawScheduleCanvas();
+    }
+
+    void FGameplayInsightsEditorTool::DrawScheduleCanvas()
+    {
+        const float Scale = ScheduleZoom;
+
+        // Box metrics derive from the font rather than fixed pixels: the editor's DPI scale changes the
+        // font size independently of zoom, and a hardcoded height clips the last line.
+        ImFont*     Font      = ImGui::GetFont();
+        const float FontSize  = ImGui::GetFontSize() * Scale;
+        const float SmallFont = FontSize * 0.86f;
+
+        const float InnerPad = 10.0f * Scale;
+        const float PadY     = 8.0f * Scale;
+        const float LineGap  = 5.0f * Scale;
+
+        const float NodeH        = PadY * 2.0f + FontSize + LineGap + SmallFont + LineGap + SmallFont;
+        const float NodeW        = Math::Max(250.0f * Scale, FontSize * 15.0f);
+        const float ColGap       = 54.0f * Scale;
+        const float RowGap       = 16.0f * Scale;
+        const float BatchHeaderH = SmallFont + 8.0f * Scale;
+        const float StageHeaderH = SmallFont + 10.0f * Scale;
+        const float HeaderH      = StageHeaderH + BatchHeaderH;
+        const float Pad          = 14.0f * Scale;
+
+        const int32 NumColumns = (int32)ScheduleColumns.size();
+        const int32 NumEntries = (int32)Schedule.size();
+
+        float MaxColumnHeight = 0.0f;
+        for (const FScheduleColumn& Column : ScheduleColumns)
+        {
+            const float Height = (float)Column.Count * NodeH + (float)(Column.Count - 1) * RowGap;
+            MaxColumnHeight = Math::Max(MaxColumnHeight, Height);
+        }
+
+        // Column-local positions (canvas space); each column is vertically centered.
+        TVector<ImVec2> Positions;
+        TVector<int32>  ColumnOf;
+        Positions.resize(NumEntries, ImVec2(0.0f, 0.0f));
+        ColumnOf.resize(NumEntries, 0);
+        for (int32 L = 0; L < NumColumns; ++L)
+        {
+            const FScheduleColumn& Column = ScheduleColumns[L];
+            const float Height = (float)Column.Count * NodeH + (float)(Column.Count - 1) * RowGap;
+            float Y = (MaxColumnHeight - Height) * 0.5f;
+            for (int32 Row = 0; Row < Column.Count; ++Row)
+            {
+                const int32 Index = Column.First + Row;
+                Positions[Index] = ImVec2((float)L * (NodeW + ColGap), Y);
+                ColumnOf[Index]  = L;
+                Y += NodeH + RowGap;
+            }
+        }
+
+        const float TotalW = (float)NumColumns * NodeW + (float)(NumColumns - 1) * ColGap;
+        const float TotalH = MaxColumnHeight;
+
+        ImGui::BeginChild("##ScheduleCanvas", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
+
+        const ImVec2 CanvasCursor = ImGui::GetCursorScreenPos();
+        const ImVec2 Origin(CanvasCursor.x + Pad + ColGap * 0.35f, CanvasCursor.y + Pad + HeaderH);
+        ImDrawList* DL = ImGui::GetWindowDrawList();
+        const bool bWindowHovered = ImGui::IsWindowHovered();
+
+        const int32 Selection = ResolveSelection();
+
+        // Stage bands span every batch of a stage: the visual answer to "where are the hard barriers".
+        for (int32 L = 0; L < NumColumns; )
+        {
+            const uint8 Stage = ScheduleColumns[L].Stage;
+            int32 Last = L;
+            while (Last + 1 < NumColumns && ScheduleColumns[Last + 1].Stage == Stage)
+            {
+                ++Last;
             }
 
-            if ((int)E.Batch != LastBatch)
+            const ImVec4 StageTint = Detail::StageColor(Stage);
+            const ImVec2 BandMin(Origin.x + (float)L * (NodeW + ColGap) - ColGap * 0.35f, Origin.y - HeaderH);
+            const ImVec2 BandMax(Origin.x + (float)Last * (NodeW + ColGap) + NodeW + ColGap * 0.35f, Origin.y + TotalH + Pad * 0.75f);
+
+            DL->AddRectFilled(BandMin, BandMax, EditorColors::U32(EditorColors::WithAlpha(StageTint, 0.09f)), 8.0f * Scale);
+            DL->AddRect(BandMin, BandMax, EditorColors::U32(EditorColors::WithAlpha(StageTint, 0.32f)), 8.0f * Scale, 0, 1.0f * Scale);
+
+            int32 StageSystems = 0;
+            for (int32 C = L; C <= Last; ++C)
             {
-                LastBatch = (int)E.Batch;
-                if (E.bExclusive || E.BatchSize <= 1)
-                {
-                    ImGui::TextDisabled("  Batch %u  [serial]", E.Batch);
-                }
-                else
-                {
-                    ImGui::TextColored(ImVec4(0.55f, 0.82f, 0.60f, 1.0f), "  Batch %u  (x%u parallel)", E.Batch, E.BatchSize);
-                }
+                StageSystems += ScheduleColumns[C].Count;
             }
-            
-            const FString NameStr = E.bManaged ? FString("<C# system>") : E.Name.ToString();
-            ImGui::PushID(&E);
-            const bool bSel = Selected == E.Name && !E.bManaged;
-            if (ImGui::Selectable("##row", bSel, ImGuiSelectableFlags_SpanAllColumns, ImVec2(0, 0)) && !E.bManaged)
+
+            const int32 StageBatches = Last - L + 1;
+            char Header[128];
+            snprintf(Header, sizeof(Header), "%s   %d system%s  /  %d batch%s",
+                     Detail::StageName(Stage), StageSystems, StageSystems == 1 ? "" : "s",
+                     StageBatches, StageBatches == 1 ? "" : "es");
+            DL->AddText(Font, SmallFont, ImVec2(BandMin.x + 10.0f * Scale, BandMin.y + 4.0f * Scale),
+                        EditorColors::U32(StageTint), Header);
+
+            L = Last + 1;
+        }
+
+        // Per-batch bands inside the stage band.
+        for (int32 L = 0; L < NumColumns; ++L)
+        {
+            const FScheduleColumn& Column = ScheduleColumns[L];
+            const float BandX = Origin.x + (float)L * (NodeW + ColGap);
+            const ImVec2 BandMin(BandX - RowGap * 0.5f, Origin.y - BatchHeaderH);
+            const ImVec2 BandMax(BandX + NodeW + RowGap * 0.5f, Origin.y + TotalH + Pad * 0.35f);
+
+            DL->AddRectFilled(BandMin, BandMax,
+                              EditorColors::U32(EditorColors::WithAlpha(EditorColors::PanelBg(), (L % 2) ? 0.55f : 0.28f)),
+                              6.0f * Scale);
+
+            char Header[64];
+            if (Column.Count > 1)
             {
-                Selected = E.Name;
-            }
-            ImGui::SameLine(28.0f);
-            ImGui::TextUnformatted(NameStr.c_str());
-            ImGui::SameLine(280.0f);
-            if (E.bExclusive)
-            {
-                ImGui::TextDisabled("exclusive");
+                snprintf(Header, sizeof(Header), "Batch %d   x%d parallel", (int32)Column.Batch, Column.Count);
             }
             else
             {
-                const FString W = AccessList(E.Writes);
-                const FString R = AccessList(E.Reads);
-                if (!W.empty())
+                snprintf(Header, sizeof(Header), "Batch %d   serial", (int32)Column.Batch);
+            }
+            DL->AddText(Font, SmallFont, ImVec2(BandMin.x + 8.0f * Scale, Origin.y - BatchHeaderH + 2.0f * Scale),
+                        EditorColors::U32(Column.Count > 1 ? EditorColors::Success() : EditorColors::TextMuted()), Header);
+        }
+
+        // Conflict links behind the boxes. Only within a stage: across a stage boundary the barrier
+        // already serializes everything, so an edge there would claim a cause that isn't there.
+        if (bShowEdges)
+        {
+            for (int32 Index = 0; Index < NumEntries; ++Index)
+            {
+                const int32 L = ColumnOf[Index];
+                if (L == 0 || ScheduleColumns[L].Stage != ScheduleColumns[L - 1].Stage)
                 {
-                    ImGui::TextColored(ImVec4(0.92f, 0.55f, 0.45f, 1.0f), "W: %s", W.c_str());
+                    continue;
                 }
-                if (!R.empty())
+
+                const FScheduleColumn& Prev = ScheduleColumns[L - 1];
+                for (int32 Row = 0; Row < Prev.Count; ++Row)
                 {
-                    if (!W.empty()) ImGui::SameLine();
-                    ImGui::TextColored(ImVec4(0.55f, 0.72f, 0.92f, 1.0f), "R: %s", R.c_str());
-                }
-                if (W.empty() && R.empty())
-                {
-                    ImGui::TextDisabled("(no component access)");
+                    const int32 Other = Prev.First + Row;
+                    if (!Detail::Conflicts(Schedule[Index], Schedule[Other]))
+                    {
+                        continue;
+                    }
+
+                    const ImVec2 From(Origin.x + Positions[Other].x + NodeW, Origin.y + Positions[Other].y + NodeH * 0.5f);
+                    const ImVec2 To(Origin.x + Positions[Index].x, Origin.y + Positions[Index].y + NodeH * 0.5f);
+                    const float Curve = (To.x - From.x) * 0.5f;
+
+                    const bool bTouchesSelection = Selection != INDEX_NONE && (Index == Selection || Other == Selection);
+                    const bool bDimmed = Selection != INDEX_NONE && !bTouchesSelection;
+
+                    ImVec4 LinkColor = bTouchesSelection ? EditorColors::Danger() : EditorColors::TextDim();
+                    LinkColor = EditorColors::WithAlpha(LinkColor, bDimmed ? 0.10f : (bTouchesSelection ? 0.95f : 0.38f));
+
+                    DL->AddBezierCubic(From, ImVec2(From.x + Curve, From.y), ImVec2(To.x - Curve, To.y), To,
+                                       EditorColors::U32(LinkColor), (bTouchesSelection ? 2.6f : 1.6f) * Scale);
                 }
             }
-            ImGui::PopID();
         }
+
+        int32 HoveredIndex = INDEX_NONE;
+
+        for (int32 Index = 0; Index < NumEntries; ++Index)
+        {
+            const FSystemScheduleEntry& Entry = Schedule[Index];
+
+            const bool bIsSelected = Index == Selection;
+            const bool bConflicts  = Selection != INDEX_NONE && !bIsSelected && Detail::Conflicts(Entry, Schedule[Selection]);
+            const float Alpha      = (Selection == INDEX_NONE || bIsSelected || bConflicts) ? 1.0f : 0.26f;
+
+            const ImVec2 Min(Origin.x + Positions[Index].x, Origin.y + Positions[Index].y);
+            const ImVec2 Max(Min.x + NodeW, Min.y + NodeH);
+            const float  Rounding = 6.0f * Scale;
+
+            const ImVec4 StageTint = Detail::StageColor(Entry.Stage);
+
+            ImVec4 BorderColor = StageTint;
+            float  BorderWidth = 1.4f;
+            if (bIsSelected)
+            {
+                BorderColor = EditorColors::Accent();
+                BorderWidth = 2.6f;
+            }
+            else if (bConflicts)
+            {
+                BorderColor = EditorColors::Danger();
+                BorderWidth = 2.0f;
+            }
+            else if (Entry.bExclusive)
+            {
+                BorderColor = EditorColors::Warning();
+            }
+
+            DL->AddRectFilled(Min, Max, EditorColors::U32(EditorColors::WithAlpha(EditorColors::FrameBg(), Alpha)), Rounding);
+            DL->AddRect(Min, Max, EditorColors::U32(EditorColors::WithAlpha(BorderColor, Alpha)), Rounding, 0, BorderWidth * Scale);
+
+            // Clip is a safety net only; every string below is measured and ellipsized to fit.
+            DL->PushClipRect(Min, Max, true);
+
+            const float TextX     = Min.x + InnerPad;
+            const float DotOffset = 13.0f * Scale;
+            const float BodyMaxW  = NodeW - InnerPad * 2.0f;
+            float TextY = Min.y + PadY;
+
+            const FString Label = Detail::SystemLabel(Entry, Index);
+            const FGameplayProfileEntry* Stat = Entry.bManaged ? nullptr : FindStat(Label.c_str());
+
+            // Cost (or the exclusivity marker) right-aligned; measured first so the title can reserve
+            // room for it instead of running underneath.
+            char Badge[40] = {};
+            ImVec4 BadgeColor = EditorColors::TextMuted();
+            if (Stat != nullptr)
+            {
+                snprintf(Badge, sizeof(Badge), "%.3f ms", Stat->InclusiveMs);
+                BadgeColor = Detail::CostColor(DisplayFrame.TotalMs > 0.0 ? Stat->InclusiveMs / DisplayFrame.TotalMs : 0.0);
+            }
+            else if (Entry.bExclusive)
+            {
+                snprintf(Badge, sizeof(Badge), "%s", LE_ICON_LOCK " alone");
+                BadgeColor = EditorColors::Warning();
+            }
+            const ImVec2 BadgeSize = Badge[0] != '\0'
+                ? Font->CalcTextSizeA(SmallFont, FLT_MAX, 0.0f, Badge)
+                : ImVec2(0.0f, 0.0f);
+
+            DL->AddCircleFilled(ImVec2(TextX + 3.0f * Scale, TextY + FontSize * 0.5f), 3.5f * Scale,
+                                EditorColors::U32(EditorColors::WithAlpha(StageTint, Alpha)));
+
+            const float TitleMaxW = BodyMaxW - DotOffset - BadgeSize.x - 6.0f * Scale;
+            const FString Title = Detail::FitText(Font, FontSize, Label.c_str(), TitleMaxW);
+            DL->AddText(Font, FontSize, ImVec2(TextX + DotOffset, TextY),
+                        EditorColors::U32(EditorColors::WithAlpha(EditorColors::TextPrimary(), Alpha)), Title.c_str());
+
+            if (Badge[0] != '\0')
+            {
+                DL->AddText(Font, SmallFont, ImVec2(Max.x - InnerPad - BadgeSize.x, TextY + 1.0f * Scale),
+                            EditorColors::U32(EditorColors::WithAlpha(BadgeColor, Alpha)), Badge);
+            }
+
+            TextY += FontSize + LineGap;
+
+            if (Entry.bExclusive)
+            {
+                const FString ExclusiveLine = Detail::FitText(Font, SmallFont, "exclusive: conflicts with everything", BodyMaxW);
+                DL->AddText(Font, SmallFont, ImVec2(TextX, TextY),
+                            EditorColors::U32(EditorColors::WithAlpha(EditorColors::Warning(), Alpha)), ExclusiveLine.c_str());
+            }
+            else
+            {
+                const FString Writes = Detail::AccessList(Entry.Writes);
+                FString WriteLine = "W  ";
+                WriteLine += Writes.empty() ? "-" : Writes.c_str();
+                const FString Fitted = Detail::FitText(Font, SmallFont, WriteLine.c_str(), BodyMaxW);
+                DL->AddText(Font, SmallFont, ImVec2(TextX, TextY),
+                            EditorColors::U32(EditorColors::WithAlpha(
+                                Writes.empty() ? EditorColors::TextMuted() : EditorColors::Danger(), Alpha)), Fitted.c_str());
+
+                TextY += SmallFont + LineGap;
+
+                const FString Reads = Detail::AccessList(Entry.Reads);
+                FString ReadLine = "R  ";
+                ReadLine += Reads.empty() ? "-" : Reads.c_str();
+                const FString FittedReads = Detail::FitText(Font, SmallFont, ReadLine.c_str(), BodyMaxW);
+                DL->AddText(Font, SmallFont, ImVec2(TextX, TextY),
+                            EditorColors::U32(EditorColors::WithAlpha(
+                                Reads.empty() ? EditorColors::TextMuted() : EditorColors::Accent(), Alpha)), FittedReads.c_str());
+            }
+
+            DL->PopClipRect();
+
+            if (bWindowHovered && ImGui::IsMouseHoveringRect(Min, Max))
+            {
+                HoveredIndex = Index;
+                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+                {
+                    SelectedIndex = Index;
+                    SelectedName  = Entry.Name;
+                }
+
+                ImGui::BeginTooltip();
+                ImGui::TextColored(StageTint, "%s", Label.c_str());
+                ImGui::Separator();
+                ImGui::Text("Stage       %s", Detail::StageName(Entry.Stage));
+                ImGui::Text("Batch       %d   (%d system%s)", (int32)Entry.Batch, (int32)Entry.BatchSize,
+                            Entry.BatchSize == 1 ? "" : "s");
+                ImGui::Text("Priority    %d", (int32)Entry.Priority);
+                ImGui::Separator();
+                if (Entry.bExclusive)
+                {
+                    ImGui::TextColored(EditorColors::Warning(), "Exclusive: declares everything, so it runs alone.");
+                    ImGui::TextColored(EditorColors::TextMuted(), "A system with no Access member defaults to this.");
+                }
+                else
+                {
+                    const FString Writes = Detail::AccessList(Entry.Writes);
+                    const FString Reads  = Detail::AccessList(Entry.Reads);
+                    ImGui::TextColored(EditorColors::Danger(), "Writes      %s", Writes.empty() ? "(none)" : Writes.c_str());
+                    ImGui::TextColored(EditorColors::Accent(), "Reads       %s", Reads.empty() ? "(none)" : Reads.c_str());
+                }
+                if (Stat != nullptr)
+                {
+                    ImGui::Separator();
+                    ImGui::TextColored(EditorColors::TextDim(), "%.3f ms over %d call%s", Stat->InclusiveMs,
+                                       (int32)Stat->Calls, Stat->Calls == 1 ? "" : "s");
+                }
+                if (Entry.bManaged)
+                {
+                    ImGui::Separator();
+                    ImGui::TextColored(EditorColors::TextMuted(), "C# systems schedule without a native name; find this one\nby its type name in the Stats tab.");
+                }
+                ImGui::EndTooltip();
+            }
+        }
+
+        if (bWindowHovered && HoveredIndex == INDEX_NONE && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+        {
+            SelectedIndex = INDEX_NONE;
+            SelectedName  = FName();
+        }
+
+        ImGui::Dummy(ImVec2(TotalW + Pad * 2.0f + ColGap, TotalH + HeaderH + Pad * 2.0f));
+        ImGui::EndChild();
     }
 
     // ---- Stats: aggregate per-scope CPU timings (scripts, C# systems, Profiler.Sample scopes) ----------
@@ -232,21 +756,36 @@ namespace Lumina
         FGameplayProfiler& Prof = FGameplayProfiler::Get();
 
         const double TotalMs = DisplayFrame.TotalMs;
-        constexpr float BudgetMs = 16.667f;
-        const ImVec4 HotColor = (TotalMs > BudgetMs) ? ImVec4(0.96f, 0.45f, 0.35f, 1.0f) : ImVec4(0.55f, 0.86f, 0.62f, 1.0f);
-        ImGui::TextUnformatted("Gameplay total");
-        ImGui::SameLine();
-        ImGui::TextColored(HotColor, "%.3f ms", TotalMs);
-        ImGui::SameLine();
-        ImGui::TextDisabled("(%.0f%% of 16.7 ms)", static_cast<float>(TotalMs / BudgetMs) * 100.0f);
+        constexpr double BudgetMs = 16.667;
+        const double Share = TotalMs / BudgetMs;
+        const ImVec4 HotColor = Share > 1.0 ? EditorColors::Danger()
+            : (Share > 0.6 ? EditorColors::Warning() : EditorColors::Success());
+
+        uint32 TotalCalls = 0;
+        for (const FGameplayProfileEntry& Entry : DisplayFrame.Entries)
+        {
+            TotalCalls += Entry.Calls;
+        }
+
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(EditorColors::TextPrimary(), "%.3f ms", TotalMs);
+        Detail::StripSeparator();
+        ImGui::TextColored(HotColor, "%.0f%% of 16.7 ms", Share * 100.0);
+        Detail::StripSeparator();
+        ImGui::TextColored(EditorColors::TextDim(), "%d scopes", (int32)DisplayFrame.Entries.size());
+        Detail::StripSeparator();
+        ImGui::TextColored(EditorColors::TextDim(), "%d calls", (int32)TotalCalls);
 
         const TVector<float>& History = Prof.GetFrameTotalHistory();
         if (!History.empty())
         {
-            ImGui::PlotLines("##frametotals", History.data(), static_cast<int>(History.size()), 0, nullptr, 0.0f, FLT_MAX, ImVec2(-1.0f, 40.0f));
+            ImGui::PushStyleColor(ImGuiCol_PlotLines, EditorColors::Accent());
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, EditorColors::WithAlpha(EditorColors::PanelBg(), 0.55f));
+            ImGui::PlotLines("##frametotals", History.data(), (int)History.size(), 0, nullptr, 0.0f, FLT_MAX, ImVec2(-1.0f, 44.0f));
+            ImGui::PopStyleColor(2);
         }
 
-        ImGui::SetNextItemWidth(220.0f);
+        ImGui::SetNextItemWidth(240.0f);
         ImGui::InputTextWithHint("##filter", LE_ICON_MAGNIFY " Filter scopes", Filter, sizeof(Filter));
 
         const ImGuiTableFlags Flags = ImGuiTableFlags_Sortable | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV
@@ -260,7 +799,7 @@ namespace Lumina
             ImGui::TableSetupColumn("Total ms", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_PreferSortDescending | ImGuiTableColumnFlags_DefaultSort, 72.0f);
             ImGui::TableSetupColumn("Self ms",  ImGuiTableColumnFlags_WidthFixed,  72.0f);
             ImGui::TableSetupColumn("Avg ms",   ImGuiTableColumnFlags_WidthFixed,  72.0f);
-            ImGui::TableSetupColumn("%",        ImGuiTableColumnFlags_WidthFixed,  48.0f);
+            ImGui::TableSetupColumn("Share",    ImGuiTableColumnFlags_WidthFixed,  72.0f);
             ImGui::TableSetupColumn("History",  ImGuiTableColumnFlags_WidthStretch | ImGuiTableColumnFlags_NoSort, 1.4f);
             ImGui::TableHeadersRow();
 
@@ -302,22 +841,37 @@ namespace Lumina
 
             for (const FGameplayProfileEntry* Entry : Rows)
             {
+                const double RowShare = (TotalMs > 0.0) ? (Entry->InclusiveMs / TotalMs) : 0.0;
+                const ImVec4 RowColor = Detail::CostColor(RowShare);
+
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn(); ImGui::TextUnformatted(Entry->Name.c_str());
-                ImGui::TableNextColumn(); ImGui::Text("%u", Entry->Calls);
-                ImGui::TableNextColumn(); ImGui::Text("%.3f", Entry->InclusiveMs);
+                ImGui::TableNextColumn(); ImGui::Text("%d", (int32)Entry->Calls);
+                ImGui::TableNextColumn(); ImGui::TextColored(RowColor, "%.3f", Entry->InclusiveMs);
                 ImGui::TableNextColumn(); ImGui::Text("%.3f", Entry->ExclusiveMs);
                 ImGui::TableNextColumn(); ImGui::Text("%.3f", Avg(Entry));
+
+                // Share reads as a bar first, a number second: the outlier should be findable without reading.
                 ImGui::TableNextColumn();
-                const float RowPct = (TotalMs > 0.0) ? static_cast<float>(Entry->InclusiveMs / TotalMs * 100.0) : 0.0f;
-                ImGui::Text("%.0f%%", RowPct);
+                const ImVec2 BarMin = ImGui::GetCursorScreenPos();
+                const float  BarW   = ImGui::GetContentRegionAvail().x;
+                const float  BarH   = ImGui::GetTextLineHeight();
+                ImGui::GetWindowDrawList()->AddRectFilled(
+                    BarMin,
+                    ImVec2(BarMin.x + BarW * Math::Clamp((float)RowShare, 0.0f, 1.0f), BarMin.y + BarH),
+                    EditorColors::U32(EditorColors::WithAlpha(RowColor, 0.30f)), 2.0f);
+                ImGui::Text("%.0f%%", RowShare * 100.0);
+
                 ImGui::TableNextColumn();
                 if (const TVector<float>* EntryHistory = Prof.GetEntryHistory(Entry->Hash))
                 {
                     if (!EntryHistory->empty())
                     {
                         ImGui::PushID(Entry);
+                        ImGui::PushStyleColor(ImGuiCol_PlotLines, EditorColors::WithAlpha(RowColor, 0.9f));
+                        ImGui::PushStyleColor(ImGuiCol_FrameBg, EditorColors::WithAlpha(EditorColors::PanelBg(), 0.45f));
                         ImGui::PlotLines("##h", EntryHistory->data(), static_cast<int>(EntryHistory->size()), 0, nullptr, 0.0f, FLT_MAX, ImVec2(-1.0f, 18.0f));
+                        ImGui::PopStyleColor(2);
                         ImGui::PopID();
                     }
                 }
@@ -329,61 +883,157 @@ namespace Lumina
         if (DisplayFrame.Entries.empty())
         {
             ImGui::Spacing();
-            ImGui::TextDisabled("No gameplay scopes yet. Enter Play to capture script/system updates, or");
-            ImGui::TextDisabled("instrument C# with  using (Profiler.Sample(\"Name\")) { ... }");
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());
+            ImGui::TextWrapped("No gameplay scopes yet. Enter Play to capture script and system updates, or instrument "
+                               "C# with  using (Profiler.Sample(\"Name\")) { ... }");
+            ImGui::PopStyleColor();
         }
     }
 
-    // ---- Detail: full info for the system selected in the Schedule tab ---------------------------------
+    // ---- Detail: full info for the system selected on the Schedule canvas ------------------------------
     void FGameplayInsightsEditorTool::DrawDetail()
     {
-        if (Selected.IsNone())
+        const int32 Selection = ResolveSelection();
+        if (Selection == INDEX_NONE)
         {
-            ImGui::TextDisabled("Select a system in the Schedule tab to inspect it here.");
+            ImGui::Spacing();
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());
+            ImGui::TextWrapped("Select a system on the Schedule canvas to inspect it here.");
+            ImGui::PopStyleColor();
             return;
         }
 
-        const FSystemScheduleEntry* Entry = nullptr;
-        for (const FSystemScheduleEntry& E : Schedule)
-        {
-            if (E.Name == Selected)
-            {
-                Entry = &E;
-                break;
-            }
-        }
-        if (Entry == nullptr)
-        {
-            ImGui::TextDisabled("'%s' is no longer scheduled.", Selected.ToString().c_str());
-            return;
-        }
+        const FSystemScheduleEntry& Entry = Schedule[Selection];
+        const FString Label     = Detail::SystemLabel(Entry, Selection);
+        const ImVec4  StageTint = Detail::StageColor(Entry.Stage);
 
-        ImGui::SeparatorText(Selected.ToString().c_str());
-        ImGui::Text("Stage:      %s", StageName(Entry->Stage));
-        ImGui::Text("Priority:   %u", Entry->Priority);
-        ImGui::Text("Scheduling: %s", Entry->bExclusive ? "Exclusive (runs alone)"
-            : (Entry->BatchSize > 1 ? "Parallel (batched)" : "Parallel-capable (alone this frame)"));
+        ImGui::PushStyleColor(ImGuiCol_Text, StageTint);
+        ImGui::SeparatorText(Label.c_str());
+        ImGui::PopStyleColor();
+
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(StageTint, "%s", Detail::StageName(Entry.Stage));
+        Detail::StripSeparator();
+        ImGui::TextColored(EditorColors::TextDim(), "batch %d", (int32)Entry.Batch);
+        Detail::StripSeparator();
+        ImGui::TextColored(EditorColors::TextDim(), "priority %d", (int32)Entry.Priority);
+        Detail::StripSeparator();
+        if (Entry.bExclusive)
+        {
+            ImGui::TextColored(EditorColors::Warning(), LE_ICON_LOCK " runs alone");
+        }
+        else if (Entry.BatchSize > 1)
+        {
+            ImGui::TextColored(EditorColors::Success(), LE_ICON_LIGHTNING_BOLT " parallel with %d other%s",
+                               (int32)Entry.BatchSize - 1, Entry.BatchSize == 2 ? "" : "s");
+        }
+        else
+        {
+            ImGui::TextColored(EditorColors::TextMuted(), "parallel-capable, alone this frame");
+        }
 
         ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.92f, 0.55f, 0.45f, 1.0f), "Writes");
-        const FString W = AccessList(Entry->Writes);
-        ImGui::TextUnformatted(Entry->bExclusive ? "(everything, exclusive)" : (W.empty() ? "(none)" : W.c_str()));
+        ImGui::SeparatorText("Declared access");
+        if (Entry.bExclusive)
+        {
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());
+            ImGui::TextWrapped("This system declares no FSystemAccess, so the scheduler treats it as writing everything. "
+                               "Declaring reads and writes lets it batch with other systems.");
+            ImGui::PopStyleColor();
+        }
+        else
+        {
+            const FString Writes = Detail::AccessList(Entry.Writes);
+            const FString Reads  = Detail::AccessList(Entry.Reads);
+            ImGui::TextColored(EditorColors::Danger(), "Writes");
+            ImGui::TextUnformatted(Writes.empty() ? "(none)" : Writes.c_str());
+            ImGui::Spacing();
+            ImGui::TextColored(EditorColors::Accent(), "Reads");
+            ImGui::TextUnformatted(Reads.empty() ? "(none)" : Reads.c_str());
+        }
+
+        // Everything in the same stage that can never share a batch with this system, and the access
+        // that forces it. Cross-stage pairs are omitted: a stage barrier already serializes those.
+        TVector<int32> ConflictIndices;
+        for (int32 Index = 0; Index < (int32)Schedule.size(); ++Index)
+        {
+            if (Index != Selection && Schedule[Index].Stage == Entry.Stage && Detail::Conflicts(Entry, Schedule[Index]))
+            {
+                ConflictIndices.push_back(Index);
+            }
+        }
 
         ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.55f, 0.72f, 0.92f, 1.0f), "Reads");
-        const FString R = AccessList(Entry->Reads);
-        ImGui::TextUnformatted(Entry->bExclusive ? "(everything, exclusive)" : (R.empty() ? "(none)" : R.c_str()));
+        ImGui::SeparatorText("Serialization");
 
-        // Aggregate timing for this system, if it shows up in the scope table (C# systems do).
-        for (const FGameplayProfileEntry& Stat : DisplayFrame.Entries)
+        if (ConflictIndices.empty())
         {
-            if (Selected.ToString() == Stat.Name.c_str())
+            ImGui::TextColored(EditorColors::Success(), "Nothing in %s conflicts with this system.", Detail::StageName(Entry.Stage));
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());
+            ImGui::TextWrapped("It can run in the stage's first batch alongside everything else.");
+            ImGui::PopStyleColor();
+        }
+        else
+        {
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());
+            ImGui::TextWrapped("These %d system%s can never share a batch with this one. Each row is a serialization point.",
+                               (int32)ConflictIndices.size(), ConflictIndices.size() == 1 ? "" : "s");
+            ImGui::PopStyleColor();
+
+            const ImGuiTableFlags Flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV
+                | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_Resizable;
+
+            if (ImGui::BeginTable("##conflicts", 3, Flags))
             {
-                ImGui::Spacing();
-                ImGui::SeparatorText("Timing (last frame)");
-                ImGui::Text("Calls: %u   Inclusive: %.3f ms   Self: %.3f ms", Stat.Calls, Stat.InclusiveMs, Stat.ExclusiveMs);
-                break;
+                ImGui::TableSetupColumn("System",        ImGuiTableColumnFlags_WidthStretch, 1.6f);
+                ImGui::TableSetupColumn("Batch",         ImGuiTableColumnFlags_WidthFixed, 88.0f);
+                ImGui::TableSetupColumn("Shared access", ImGuiTableColumnFlags_WidthStretch, 2.0f);
+                ImGui::TableHeadersRow();
+
+                for (int32 Index : ConflictIndices)
+                {
+                    const FSystemScheduleEntry& Other = Schedule[Index];
+
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::PushID(Index);
+                    if (ImGui::Selectable(Detail::SystemLabel(Other, Index).c_str(), false, ImGuiSelectableFlags_SpanAllColumns))
+                    {
+                        SelectedIndex = Index;
+                        SelectedName  = Other.Name;
+                    }
+                    ImGui::PopID();
+
+                    ImGui::TableNextColumn();
+                    if (Other.Batch == Entry.Batch)
+                    {
+                        ImGui::TextColored(EditorColors::Danger(), "%d (!)", (int32)Other.Batch);
+                    }
+                    else
+                    {
+                        ImGui::TextColored(EditorColors::TextDim(), "%d %s", (int32)Other.Batch,
+                                           Other.Batch < Entry.Batch ? "before" : "after");
+                    }
+
+                    ImGui::TableNextColumn();
+                    const FString SharedList = Detail::SharedAccessList(Entry, Other);
+                    ImGui::TextColored(EditorColors::Warning(), "%s", SharedList.empty() ? "(none)" : SharedList.c_str());
+                }
+
+                ImGui::EndTable();
             }
+        }
+
+        if (const FGameplayProfileEntry* Stat = Entry.bManaged ? nullptr : FindStat(Label.c_str()))
+        {
+            ImGui::Spacing();
+            ImGui::SeparatorText("Timing (last frame)");
+            ImGui::TextColored(EditorColors::TextDim(), "%d call%s", (int32)Stat->Calls, Stat->Calls == 1 ? "" : "s");
+            Detail::StripSeparator();
+            ImGui::TextColored(Detail::CostColor(DisplayFrame.TotalMs > 0.0 ? Stat->InclusiveMs / DisplayFrame.TotalMs : 0.0),
+                               "%.3f ms inclusive", Stat->InclusiveMs);
+            Detail::StripSeparator();
+            ImGui::TextColored(EditorColors::TextDim(), "%.3f ms self", Stat->ExclusiveMs);
         }
     }
 }

@@ -60,11 +60,37 @@ namespace Lumina::Scripting
         int64 Value = 0;
     };
 
+    struct FScriptPropertyEntry;
+
+    // Transient per-field value bridging the native CScriptStruct buffer to and from the managed instance.
+    struct FScriptPropertyValue
+    {
+        EScriptValueKind            Kind = EScriptValueKind::Nil;
+
+        bool                        AsBool   = false;
+        int64                       AsInt    = 0;
+        double                      AsDouble = 0.0;
+        FString                     AsString;
+
+        TVector<FScriptPropertyValue> Items;             ///< When Kind == Array.
+        TVector<FScriptPropertyEntry> StructFields;      ///< When Kind == Nested.
+    };
+
+    struct FScriptPropertyEntry
+    {
+        FName                       Name;
+        FScriptPropertyValue        Value;
+    };
+
     struct FScriptExportField
     {
         FName                         Name;
         TSharedPtr<FScriptExportType> Type;
-        FScriptExportMeta             Meta;   ///< Editor display data, rebuilt per load.
+        FScriptExportMeta             Meta;      ///< Editor display data, rebuilt per load.
+        // The C# field initializer. Only the TOP-LEVEL schema used to carry defaults, so a nested struct or
+        // an instanced candidate minted its sub-CScriptStruct with a zero-filled default buffer and every
+        // authored initializer was lost. Carried per field so any depth starts at the author's values.
+        FScriptPropertyValue          Default;
     };
 
     // One selectable concrete type for an Instance field. Its stable C# type name plus the [Property]
@@ -112,25 +138,4 @@ namespace Lumina::Scripting
         FString Tooltip;   ///< Optional hover help.
     };
 
-    struct FScriptPropertyEntry;
-
-    // Transient per-field value bridging the native CScriptStruct buffer to and from the managed instance.
-    struct FScriptPropertyValue
-    {
-        EScriptValueKind            Kind = EScriptValueKind::Nil;
-
-        bool                        AsBool   = false;
-        int64                       AsInt    = 0;
-        double                      AsDouble = 0.0;
-        FString                     AsString;
-
-        TVector<FScriptPropertyValue> Items;             ///< When Kind == Array.
-        TVector<FScriptPropertyEntry> StructFields;      ///< When Kind == Nested.
-    };
-
-    struct FScriptPropertyEntry
-    {
-        FName                       Name;
-        FScriptPropertyValue        Value;
-    };
 }

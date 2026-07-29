@@ -22,8 +22,8 @@ namespace Lumina
         using DestructFn    = void(*)(void*);
         
         #if USING(WITH_EDITOR)
-        using PreEditFn     = void(*)(const void*, const FPropertyChangedEvent&);
-        using PostEditFn    = void(*)(const void*, const FPropertyChangedEvent&);
+        using PreEditFn     = void(*)(void*, const FPropertyChangedEvent&);
+        using PostEditFn    = void(*)(void*, const FPropertyChangedEvent&);
         #endif
 
         SerializeFn     Serialize    = nullptr;
@@ -125,17 +125,17 @@ namespace Lumina
         #if USING(WITH_EDITOR)
         if constexpr (Concepts::THasPreEdit<T>)
         {
-            Ops->PreEdit = +[](const void* Data, const FPropertyChangedEvent& Event)
+            Ops->PreEdit = +[](void* Data, const FPropertyChangedEvent& Event)
             {
-                static_cast<const T*>(Data)->PreEditChange(Event);
+                static_cast<T*>(Data)->PreEditChange(Event);
             };
         }
         
         if constexpr (Concepts::THasPostEdit<T>)
         {
-            Ops->PostEdit = +[](const void* Data, const FPropertyChangedEvent& Event)
+            Ops->PostEdit = +[](void* Data, const FPropertyChangedEvent& Event)
             {
-                static_cast<const T*>(Data)->PostEditChange(Event);
+                static_cast<T*>(Data)->PostEditChange(Event);
             };
         }
         #endif

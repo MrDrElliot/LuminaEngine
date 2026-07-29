@@ -81,7 +81,11 @@ namespace Lumina::RHI
         }
 
         // Frees the memory once every in-flight frame has retired. Thread-safe.
-        RUNTIME_API void DeferredFree(GPUPtr Memory);
+        //
+        // ExtraFrames holds it longer, for memory whose address can still be referenced by work submitted
+        // AFTER the free was queued. kFramesInFlight only covers frames already in flight; a game-thread
+        // cache that hands out the old address for another tick needs that tick counted too.
+        RUNTIME_API void DeferredFree(GPUPtr Memory, uint32 ExtraFrames = 0);
 
         // Pipelines from the engine shader library ("MyShader.slang" keys); the
         // library compiles/caches through the existing slang path.

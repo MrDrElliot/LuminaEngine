@@ -39,6 +39,16 @@ FMeshletRef ResolveMeshlet(uint MeshletSlot, bool bShadow)
     Ref.Inst       = GetInstance(Draw.InstanceID);
     Ref.InstanceID = Draw.InstanceID;
 
+    // Same invariant as the cull: a null header means this instance has nothing to draw. Clamping to
+    // meshlet 0 of a null header would still fault, so callers get a zeroed meshlet instead.
+    if (Ref.Inst.MeshletHeader == nullptr)
+    {
+        Ref.SkinnedVertexBase = kNoPreSkinBase;
+        Ref.GlobalMeshletIdx  = 0u;
+        Ref.M                 = (FMeshlet)0;
+        return Ref;
+    }
+
     uint BaseOffset          = bShadow ? Ref.Inst.ShadowMeshletOffset : Ref.Inst.SurfaceMeshletOffset;
     Ref.SkinnedVertexBase    = bShadow ? Ref.Inst.ShadowSkinnedVertexBase : Ref.Inst.SkinnedVertexBase;
     Ref.GlobalMeshletIdx     = BaseOffset + Draw.MeshletLocalIndex;

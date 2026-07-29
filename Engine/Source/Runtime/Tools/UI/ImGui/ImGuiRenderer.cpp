@@ -433,20 +433,15 @@ namespace Lumina
 
         ImGuiX::Notifications::Render();
         ImGui::Render();
+    	
+        ProcessTextureUpdates_GameThread();
 
-        // Multi-viewport: create/destroy the OS windows for dragged-out tools (UpdatePlatformWindows
-        // is what actually spawns the secondary GLFW window + its swapchain), forward their input,
-        // then deep-copy each secondary viewport's draw data into this frame slot for the render thread.
-        // ImGui strips ViewportsEnable unless the renderer set RendererHasViewports, so this is a no-op
-        // in builds that don't support it.
         if (Io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
         {
             ImGui::UpdatePlatformWindows();
             ForwardSecondaryPlatformWindowInput();
             CaptureSecondaryViewports_GameThread(FrameIndex);
         }
-
-        ProcessTextureUpdates_GameThread();
 
         FImDrawDataSnapshot& Snapshot = Snapshots[Slot];
         Snapshot.SnapUsingSwap(ImGui::GetDrawData(), ImGui::GetTime());

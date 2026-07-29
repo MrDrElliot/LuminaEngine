@@ -1,7 +1,7 @@
 {
     "ProjectSettings": {
         "CookRoots": [],
-        "EditorStartupMap": "",
+        "EditorStartupMap": "/Game/Content/Foobar.lasset",
         "GameInstanceClass": "CGameInstance",
         "GameStartupMap": ""
     }

@@ -109,10 +109,15 @@ namespace Lumina
         RUNTIME_API void ConstructInto(void* Buffer) const;
         RUNTIME_API void DestructIn(void* Buffer) const;
         RUNTIME_API void CopyInto(void* Dst, const void* Src) const;
-
-        // CStruct lifetime overrides so an FInstancedStruct can own a script-defined instance (a minted
-        // CScriptStruct has no FStructOps).
-        void InitializeStruct(void* Dest) const override { ConstructInto(Dest); }
+        
+        void InitializeStruct(void* Dest) const override
+        {
+            ConstructInto(Dest);
+            if (Defaults != nullptr)
+            {
+                CopyInto(Dest, Defaults);
+            }
+        }
         void DestroyStruct(void* Dest) const override { DestructIn(Dest); }
         void CopyStruct(void* Dest, const void* Src) const override { CopyInto(Dest, Src); }
 

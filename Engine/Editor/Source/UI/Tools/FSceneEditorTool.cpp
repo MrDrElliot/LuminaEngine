@@ -854,7 +854,7 @@ namespace Lumina
         {
             Name.append(LE_ICON_CUBE).append(" ");
         }
-        Name.append(NameComponent.Name.c_str()).append_convert(FString(" - (" + eastl::to_string(entt::to_integral(Entity)) + ")"));
+        Name.append(NameComponent.Name.c_str()).append(" (").append_convert(eastl::to_string(entt::to_integral(Entity)) + ")");
 
         FTreeNodeID ItemEntity = OutlinerListView.CreateNode(ParentNode, FStringView(Name.data(), Name.length()));
         EntityToTreeNode[Entity] = ItemEntity;

@@ -43,6 +43,9 @@ namespace Lumina
         PROPERTY()
         TObjectPtr<CAnimationGraphNodeGraph> BlendTree;
 
+        // StateName, or a placeholder when unnamed. What the canvas and transition lists label it with.
+        FString GetStateLabel() const;
+
         CAnimGraphPin* InPin = nullptr;
         CAnimGraphPin* OutPin = nullptr;
     };
@@ -60,6 +63,25 @@ namespace Lumina
         FFixedString GetNodeCategory() const override { return "State Machine"; }
         uint32 GetNodeTitleColor() const override { return IM_COL32(60, 130, 90, 255); }
         bool IsDeletable() const override { return false; }
+
+        void BuildNode() override;
+        void GenerateBytecode(FAnimationGraphCompiler& Compiler) override {}
+
+        CAnimGraphPin* OutPin = nullptr;
+    };
+
+    // Source of transitions that are checked no matter which state is active (compiles to
+    // FAnimGraphTransition::FromState = -1). Wire it to any State to add a global escape edge.
+    REFLECT()
+    class CAnimGraphNode_StateAny : public CAnimGraphNode
+    {
+        GENERATED_BODY()
+    public:
+
+        FStringView GetNodeDisplayName() const override { return "Any State"; }
+        FStringView GetNodeTooltip() const override { return "Transitions out of this are checked from every state, not just one."; }
+        FFixedString GetNodeCategory() const override { return "State Machine"; }
+        uint32 GetNodeTitleColor() const override { return IM_COL32(150, 110, 60, 255); }
 
         void BuildNode() override;
         void GenerateBytecode(FAnimationGraphCompiler& Compiler) override {}

@@ -51,14 +51,18 @@ namespace Lumina::Concepts
     
     #if USING(WITH_EDITOR)
     
+    // Non-const on purpose: reacting to an edit means mutating -- invalidating a cache, clamping a
+    // value, recomputing derived state. Requiring a const hook would force every implementation into
+    // mutable members or a const_cast, and because these are `if constexpr` tested, a non-const hook
+    // silently fails the concept and is never wired up rather than failing to compile.
     template<typename T>
-    concept THasPreEdit = requires(const T& A, const FPropertyChangedEvent& PropertyEvent)
+    concept THasPreEdit = requires(T& A, const FPropertyChangedEvent& PropertyEvent)
     {
         { A.PreEditChange(PropertyEvent) } -> std::same_as<void>;
     };
     
     template<typename T>
-    concept THasPostEdit = requires(const T& A, const FPropertyChangedEvent& PropertyEvent)
+    concept THasPostEdit = requires(T& A, const FPropertyChangedEvent& PropertyEvent)
     {
         { A.PostEditChange(PropertyEvent) } -> std::same_as<void>;
     };

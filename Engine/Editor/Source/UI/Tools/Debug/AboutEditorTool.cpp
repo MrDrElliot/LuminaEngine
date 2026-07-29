@@ -146,7 +146,7 @@ namespace Lumina
 
         if (ImGui::Button("Documentation", ImVec2(buttonWidth, 0)))
         {
-            Platform::LaunchURL(TEXT("https://github.com/MrDrElliot/LuminaEngine"));
+            Platform::LaunchURL(TEXT("https://luminagameengine.com/"));
         }
 
         ImGui::SameLine();

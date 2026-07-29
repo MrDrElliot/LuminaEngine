@@ -68,6 +68,21 @@ public unsafe partial class CWorld
         return Spawned;
     }
 
+    /// <summary>
+    /// Creates a new named entity with a transform and no other components. Add what it needs with
+    /// <see cref="Emplace{T}"/> -- e.g. a mesh: <c>World.Emplace&lt;SDynamicMeshComponent&gt;(E)</c>.
+    /// Destroy it with <see cref="DestroyEntity(Entity)"/>.
+    ///
+    /// This is the world-level counterpart to SystemContext.Create, so an EntityScript can spawn
+    /// entities without needing to be an ECS system.
+    /// </summary>
+    public Entity CreateEntity(string Name, FVector3 Location = default, FQuat? Rotation = null, FVector3? Scale = null)
+        => ConstructEntity(Name, new FTransform(Location, Rotation ?? FQuat.Identity, Scale ?? FVector3.One));
+
+    /// <summary>Creates a new named entity at the origin.</summary>
+    public Entity CreateEntity(string Name, FTransform Transform)
+        => ConstructEntity(Name, Transform);
+
     /// <summary>Spawn a projectile at <paramref name="position"/> moving at <paramref name="velocity"/>
     /// (world m/s). It sweeps forward each frame, reports its first hit, and auto-despawns after
     /// <paramref name="lifetime"/> seconds. Read or bind its hit via

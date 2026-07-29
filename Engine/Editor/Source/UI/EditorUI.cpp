@@ -541,6 +541,10 @@ namespace Lumina
                 OpenProjectDialog();
             }
         }
+        else
+        {
+            OnProjectLoaded();
+        }
     }
 
     void FEditorUI::Deinitialize(const FUpdateContext& UpdateContext)
@@ -2522,7 +2526,7 @@ namespace Lumina
         {
             if (ImGui::MenuItem(LE_ICON_GROUP " Lumina"))
             {
-                Platform::LaunchURL(TEXT("https://discord.gg/UhTmzB8UdY"));
+                Platform::LaunchURL(TEXT("https://luminagameengine.com/"));
             }
 
             ImGui::EndMenu();
@@ -2530,7 +2534,7 @@ namespace Lumina
     
         if (ImGui::MenuItem(LE_ICON_ACCOUNT_QUESTION " Tutorials"))
         {
-            Platform::LaunchURL(TEXT("https://discord.gg/UhTmzB8UdY"));
+            Platform::LaunchURL(TEXT("https://luminagameengine.com"));
         }
     
         ImGui::Separator();
@@ -2985,22 +2989,57 @@ namespace Lumina
         }, /*bBlocking=*/true, /*bCloseable=*/false);
     }
 
+    bool FEditorUI::TryOpenEditorStartupMap()
+    {
+        const FStringView EditorMapView = GetDefault<CProjectSettings>()->EditorStartupMap.GetPath();
+        const FString RawEditorStartupMap(EditorMapView.data(), EditorMapView.size());
+        if (RawEditorStartupMap.empty())
+        {
+            LOG_INFO("No Project.EditorStartupMap set; opening no map.");
+            return true;   // settled: nothing to wait for
+        }
+
+        // Tolerate legacy absolute paths from before the path resolver, same as FEngine::LoadStartupMap.
+        const FFixedString EditorStartupMapFixed = VFS::ResolveToVirtualPath(RawEditorStartupMap);
+        const FString EditorStartupMap(EditorStartupMapFixed.c_str(), EditorStartupMapFixed.size());
+
+        // Unlike the game path, this one needs a registry hit rather than loading the object directly, so
+        // a map that exists on disk is simply not visible until discovery has walked it. Not an error --
+        // the caller retries when the registry updates.
+        if (FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(EditorStartupMap))
+        {
+            LOG_DISPLAY("Opening editor startup map '{}' (resolved '{}').",
+                        RawEditorStartupMap.c_str(), EditorStartupMap.c_str());
+            OpenAssetEditor(Data->AssetGUID);
+            return true;
+        }
+
+        return false;
+    }
+
     void FEditorUI::OnProjectLoaded()
     {
         ContentBrowser->RefreshContentBrowser();
         
-        //@TODO TEMP, maybe just wait until finished to load startup.
-        GTaskSystem->WaitForAll();
-        
-        const FStringView EditorMapView = GetDefault<CProjectSettings>()->EditorStartupMap.GetPath();
-        const FString RawEditorStartupMap(EditorMapView.data(), EditorMapView.size());
-        const FFixedString EditorStartupMapFixed = VFS::ResolveToVirtualPath(RawEditorStartupMap);
-        const FString EditorStartupMap(EditorStartupMapFixed.c_str(), EditorStartupMapFixed.size());
-        if (FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(EditorStartupMap))
+        if (!TryOpenEditorStartupMap())
         {
-            OpenAssetEditor(Data->AssetGUID);
+            if (PendingStartupMapHandle.IsValid())
+            {
+                FAssetRegistry::Get().GetOnAssetRegistryUpdated().Remove(PendingStartupMapHandle);
+                PendingStartupMapHandle = {};
+            }
+
+            PendingStartupMapHandle = FAssetRegistry::Get().GetOnAssetRegistryUpdated().AddLambda([this]
+            {
+                // One-shot: stop retrying once the map opens (or turns out not to be configured at all).
+                if (TryOpenEditorStartupMap() && PendingStartupMapHandle.IsValid())
+                {
+                    FAssetRegistry::Get().GetOnAssetRegistryUpdated().Remove(PendingStartupMapHandle);
+                    PendingStartupMapHandle = {};
+                }
+            });
         }
-        
+
         // Reconstruct the .lproject path and record it as a recent + Editor.StartupProject
         // (auto-loaded on the next bare launch). Normalize: the join can double the slash.
         const FStringView ProjectDir  = GEngine->GetProjectPath();

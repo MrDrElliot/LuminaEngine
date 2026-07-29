@@ -9,6 +9,8 @@
 #include "UI/Tools/NodeGraph/Animation/AnimationGraphCompiler.h"
 #include "UI/Tools/NodeGraph/Animation/AnimationGraphNodeGraph.h"
 
+#include <EASTL/algorithm.h>
+
 namespace Lumina
 {
     void CAnimGraphNode_StateMachine::BuildNode()
@@ -58,10 +60,16 @@ namespace Lumina
         // Compile every State's blend tree into the shared register space and
         // record which pose register each state resolved to.
         THashMap<int64, int32> NodeIDToStateIndex;
+        THashSet<int64> AnyStateNodeIDs;
         TVector<TPair<CEdGraphNode*, int32>> StateNodesForDebug;
 
         for (CEdGraphNode* Node : SMGraph->Nodes)
         {
+            if (Node->IsA<CAnimGraphNode_StateAny>())
+            {
+                AnyStateNodeIDs.insert(Node->GetNodeID());
+            }
+
             CAnimGraphNode_State* StateNode = Cast<CAnimGraphNode_State>(Node);
             if (StateNode == nullptr)
             {
@@ -127,25 +135,56 @@ namespace Lumina
             break;
         }
 
-        // Transitions: resolve each transition object's endpoint node IDs to
-        // state indices and copy the condition through.
+        // Transitions: resolve each transition object's endpoint node IDs to state indices and copy
+        // the condition through. The VM takes the first passing edge, so author Priority decides the
+        // emission order; without it the order would follow the reconcile pass's hash iteration.
+        TVector<CAnimStateTransition*> SortedTransitions;
+        SortedTransitions.reserve(SMGraph->GetTransitions().size());
         for (const TObjectPtr<CAnimStateTransition>& Transition : SMGraph->GetTransitions())
         {
-            if (!Transition.IsValid())
+            if (Transition.IsValid())
             {
-                continue;
+                SortedTransitions.push_back(Transition.Get());
             }
+        }
+        eastl::stable_sort(SortedTransitions.begin(), SortedTransitions.end(),
+            [](const CAnimStateTransition* A, const CAnimStateTransition* B)
+        {
+            if (A->Priority != B->Priority)
+            {
+                return A->Priority < B->Priority;
+            }
+            if (A->FromStateNodeID != B->FromStateNodeID)
+            {
+                return A->FromStateNodeID < B->FromStateNodeID;
+            }
+            return A->ToStateNodeID < B->ToStateNodeID;
+        });
 
-            auto FromIt = NodeIDToStateIndex.find(Transition->FromStateNodeID);
-            auto ToIt   = NodeIDToStateIndex.find(Transition->ToStateNodeID);
-            if (FromIt == NodeIDToStateIndex.end() || ToIt == NodeIDToStateIndex.end())
+        for (CAnimStateTransition* Transition : SortedTransitions)
+        {
+            auto ToIt = NodeIDToStateIndex.find(Transition->ToStateNodeID);
+            if (ToIt == NodeIDToStateIndex.end())
             {
                 // Endpoint state missing -- skip rather than emit a bad index.
                 continue;
             }
 
+            // An Any State source compiles to the runtime's from-anywhere edge (FromState < 0),
+            // checked no matter which state is active.
+            int32 FromIndex = -1;
+            if (AnyStateNodeIDs.find(Transition->FromStateNodeID) == AnyStateNodeIDs.end())
+            {
+                auto FromIt = NodeIDToStateIndex.find(Transition->FromStateNodeID);
+                if (FromIt == NodeIDToStateIndex.end())
+                {
+                    continue;
+                }
+                FromIndex = FromIt->second;
+            }
+
             FAnimGraphTransition Runtime;
-            Runtime.FromState          = FromIt->second;
+            Runtime.FromState          = FromIndex;
             Runtime.ToState            = ToIt->second;
             Runtime.ConditionParameter = Transition->ConditionParameter;
             Runtime.Compare            = Transition->Compare;

@@ -59,7 +59,8 @@ namespace Lumina
             {
                 const FResolvedMesh& Candidate = *Entries[Handle];
 
-                if (Candidate.MeshKey != Mesh || Candidate.OverrideKey.size() != Overrides.size())
+                if (Candidate.MeshKey != Mesh || Candidate.MeshGuid != Mesh->GetGUID()
+                    || Candidate.OverrideKey.size() != Overrides.size())
                 {
                     continue;
                 }
@@ -94,7 +95,8 @@ namespace Lumina
         Entries.push_back(Memory::New<FResolvedMesh>());
         FResolvedMesh& Entry = *Entries.back();
 
-        Entry.MeshKey = Mesh;
+        Entry.MeshKey  = Mesh;
+        Entry.MeshGuid = Mesh->GetGUID();
         Entry.OverrideKey.reserve(Overrides.size());
         for (CMaterialInterface* Override : Overrides)
         {
@@ -109,6 +111,67 @@ namespace Lumina
 
         HandlesByHash[KeyHash].push_back(NewHandle);
         return NewHandle;
+    }
+
+    bool MeshResolve::ResolveSurfaceMaterial(FResolvedSurface& R, CMaterialInterface* RawMaterial)
+    {
+        bool bReady = true;
+
+        CMaterialInterface* Material = RawMaterial;
+        if (IsValid(Material) && Material->GetMaterialType() != EMaterialType::PBR)
+        {
+            Material = nullptr;
+        }
+
+        if (!IsValid(Material) || !IsValid(Material->GetMaterial()) || !Material->IsReadyForRender())
+        {
+            if (IsValid(RawMaterial) && !RawMaterial->IsReadyForRender())
+            {
+                bReady = false;
+            }
+            Material = CMaterial::GetDefaultMaterial();
+        }
+
+        CMaterial* ConcreteMaterial = Material->GetMaterial();
+
+        const EBlendMode BlendMode    = Material->GetBlendMode();
+        const bool       bTranslucent = BlendMode == EBlendMode::Translucent || BlendMode == EBlendMode::Additive;
+        const bool       bMasked      = BlendMode == EBlendMode::Masked;
+        const bool       bAdditive    = BlendMode == EBlendMode::Additive;
+        const bool       bTwoSided    = bTranslucent || Material->IsTwoSided();
+
+        R.VertexShader                   = Material->GetVertexShader();
+        R.PixelShader                    = Material->GetPixelShader();
+        R.MeshShader                     = ConcreteMaterial ? ConcreteMaterial->GetMeshShader() : nullptr;
+        R.VisBufferMeshShader            = ConcreteMaterial ? ConcreteMaterial->GetVisBufferMeshShader() : nullptr;
+        R.VisBufferVertexShader          = ConcreteMaterial ? ConcreteMaterial->GetVisBufferVertexShader() : nullptr;
+        R.MaskedVisBufferPixelShader     = ConcreteMaterial ? ConcreteMaterial->GetMaskedVisBufferPixelShader() : nullptr;
+        R.MaskedVisBufferPixelShaderPrim = ConcreteMaterial ? ConcreteMaterial->GetMaskedVisBufferPixelShaderPrim() : nullptr;
+        R.DeferredShader                 = ConcreteMaterial ? ConcreteMaterial->GetDeferredShader() : nullptr;
+
+        // Batch by the master material so instances sharing it collapse into one draw. This is why a
+        // dynamic mesh still batches with every other mesh using the same material: the key is the
+        // material, never the geometry.
+        R.MaterialID            = (uint64)ConcreteMaterial;
+        R.MaterialIdx           = (uint16)Material->GetMaterialIndex();
+        R.bMaterialCastsShadows = Material->DoesCastShadows();
+
+        EInstanceFlags MaterialFlags = EInstanceFlags::None;
+        if (bTranslucent) { MaterialFlags |= EInstanceFlags::Translucent; }
+        if (bMasked)      { MaterialFlags |= EInstanceFlags::Masked; }
+        if (bTwoSided)    { MaterialFlags |= EInstanceFlags::TwoSided; }
+        R.MaterialFlags = MaterialFlags;
+
+        R.BatchKey = FDrawBatchKey
+        {
+            .MaterialID   = R.MaterialID,
+            .bTranslucent = (bTranslucent ? 1u : 0u),
+            .bMasked      = (bMasked      ? 1u : 0u),
+            .bAdditive    = (bAdditive    ? 1u : 0u),
+            .bTwoSided    = (bTwoSided    ? 1u : 0u),
+        };
+
+        return bReady;
     }
 
     void FMeshResolveCache::ResolveSurfaces(FResolvedMesh& Out, CMesh* Mesh, const TVector<CMaterialInterface*>& Overrides)
@@ -168,57 +231,10 @@ namespace Lumina
                 RawMaterial = Mesh->GetMaterialAtSlot(Slot);
             }
 
-            CMaterialInterface* Material = RawMaterial;
-            if (IsValid(Material) && Material->GetMaterialType() != EMaterialType::PBR)
+            if (!MeshResolve::ResolveSurfaceMaterial(R, RawMaterial))
             {
-                Material = nullptr;
+                Out.bAllMaterialsReady = false;
             }
-
-            if (!IsValid(Material) || !IsValid(Material->GetMaterial()) || !Material->IsReadyForRender())
-            {
-                if (IsValid(RawMaterial) && !RawMaterial->IsReadyForRender())
-                {
-                    Out.bAllMaterialsReady = false;
-                }
-                Material = CMaterial::GetDefaultMaterial();
-            }
-
-            CMaterial* ConcreteMaterial = Material->GetMaterial();
-
-            const EBlendMode BlendMode    = Material->GetBlendMode();
-            const bool       bTranslucent = BlendMode == EBlendMode::Translucent || BlendMode == EBlendMode::Additive;
-            const bool       bMasked      = BlendMode == EBlendMode::Masked;
-            const bool       bAdditive    = BlendMode == EBlendMode::Additive;
-            const bool       bTwoSided    = bTranslucent || Material->IsTwoSided();
-
-            R.VertexShader                   = Material->GetVertexShader();
-            R.PixelShader                    = Material->GetPixelShader();
-            R.MeshShader                     = ConcreteMaterial ? ConcreteMaterial->GetMeshShader() : nullptr;
-            R.VisBufferMeshShader            = ConcreteMaterial ? ConcreteMaterial->GetVisBufferMeshShader() : nullptr;
-            R.VisBufferVertexShader          = ConcreteMaterial ? ConcreteMaterial->GetVisBufferVertexShader() : nullptr;
-            R.MaskedVisBufferPixelShader     = ConcreteMaterial ? ConcreteMaterial->GetMaskedVisBufferPixelShader() : nullptr;
-            R.MaskedVisBufferPixelShaderPrim = ConcreteMaterial ? ConcreteMaterial->GetMaskedVisBufferPixelShaderPrim() : nullptr;
-            R.DeferredShader                 = ConcreteMaterial ? ConcreteMaterial->GetDeferredShader() : nullptr;
-
-            // Batch by the master material so instances sharing it collapse into one draw.
-            R.MaterialID            = (uint64)ConcreteMaterial;
-            R.MaterialIdx           = (uint16)Material->GetMaterialIndex();
-            R.bMaterialCastsShadows = Material->DoesCastShadows();
-
-            EInstanceFlags MaterialFlags = EInstanceFlags::None;
-            if (bTranslucent) { MaterialFlags |= EInstanceFlags::Translucent; }
-            if (bMasked)      { MaterialFlags |= EInstanceFlags::Masked; }
-            if (bTwoSided)    { MaterialFlags |= EInstanceFlags::TwoSided; }
-            R.MaterialFlags = MaterialFlags;
-
-            R.BatchKey = FDrawBatchKey
-            {
-                .MaterialID   = R.MaterialID,
-                .bTranslucent = (bTranslucent ? 1u : 0u),
-                .bMasked      = (bMasked      ? 1u : 0u),
-                .bAdditive    = (bAdditive    ? 1u : 0u),
-                .bTwoSided    = (bTwoSided    ? 1u : 0u),
-            };
         }
 
         // MeshletHeaderAddress is 0 until the GPU buffers exist, which can lag the property data.

@@ -5,7 +5,7 @@
 
 namespace Lumina
 {
-    void SMeshComponent::InvalidateRenderResolve() const
+    void SMeshComponent::InvalidateRenderResolve()
     {
         // 0 never matches a live epoch (the cache starts at 1), so the next gather re-resolves this one.
         CachedEpoch = 0;

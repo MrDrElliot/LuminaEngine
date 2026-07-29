@@ -108,7 +108,7 @@ internal static class Serializer
             case EPropertyType.Struct:
             {
                 WriteString(Writer, Type.NativeName ?? "");
-                WriteFields(Writer, Type.Fields);
+                WriteFields(Writer, Type.Fields, Type.Clr);
                 break;
             }
             case EPropertyType.SoftObject:
@@ -135,22 +135,51 @@ internal static class Serializer
                 foreach (ScriptInstanceCandidate Candidate in Candidates)
                 {
                     WriteString(Writer, Candidate.TypeName);
-                    WriteFields(Writer, Candidate.Fields);
+                    WriteFields(Writer, Candidate.Fields, Candidate.Clr);
                 }
                 break;
             }
         }
     }
 
-    private static void WriteFields(BinaryWriter Writer, IReadOnlyList<ScriptProperty>? Fields)
+    // Nested fields carry their default alongside the type, exactly as the top-level schema does. Without
+    // it a minted sub-struct or instanced candidate is only default-constructed on the native side, so every
+    // C# field initializer is lost and the inspector shows zeroes.
+    private static void WriteFields(BinaryWriter Writer, IReadOnlyList<ScriptProperty>? Fields, Type? Owner)
     {
         IReadOnlyList<ScriptProperty> List = Fields ?? Array.Empty<ScriptProperty>();
+        object? Defaults = TryCreateDefaults(Owner);
+
         Writer.Write(List.Count);
         foreach (ScriptProperty Field in List)
         {
             WriteString(Writer, Field.Name);
             WriteAliases(Writer, Field.Aliases);
+            WriteMeta(Writer, Field.Meta);
             WriteType(Writer, Field.Type);
+            WriteValue(Writer, Field.Type, Defaults != null ? Field.Get(Defaults) : null);
+        }
+    }
+
+    // A throwaway instance purely to read field initializers off. Instanced candidates are filtered to
+    // default-constructible types, and script structs are value types or classes with a parameterless ctor,
+    // so this normally succeeds; a type that resists it just falls back to zeroes as before.
+    private static object? TryCreateDefaults(Type? Owner)
+    {
+        if (Owner == null)
+        {
+            return null;
+        }
+        try
+        {
+            return Activator.CreateInstance(Owner);
+        }
+        catch (Exception Ex)
+        {
+            Native.Log(ELogLevel.Warn,
+                $"Serializer: could not instantiate '{Owner.Name}' to read its defaults ({Ex.GetType().Name}); "
+                + "its fields will start at zero.");
+            return null;
         }
     }
 

@@ -143,6 +143,8 @@ namespace Lumina::Import::Mesh
             return;
         }
 
+        LUMINA_PROFILE_SCOPE();
+        
         SMikkTSpaceInterface Interface = {};
         Interface.m_getNumFaces          = Mikk_GetNumFaces;
         Interface.m_getNumVerticesOfFace = Mikk_GetNumVerticesOfFace;
@@ -171,6 +173,41 @@ namespace Lumina::Import::Mesh
                 Progress->EnterProgressFrame(StepPerSurface);
             }
         });
+    }
+
+    // Stand-in for MikkTSpace: an arbitrary unit vector perpendicular to each normal. One parallel pass over
+    // the vertices instead of MikkTSpace's serial per-surface adjacency build.
+    //
+    // Note this is NOT the same as leaving the tangents zeroed. Zero decodes (see UnpackTangent) to a constant
+    // object-space +Z, and the pixel shader re-orthogonalizes the basis per pixel -- so every vertex whose
+    // normal is parallel to +Z would produce normalize(0), i.e. a NaN basis. A flat floor is exactly that
+    // case. Materials that never sample a normal map are unaffected by the arbitrary orientation.
+    void GenerateFallbackTangents(FMeshResource& MeshResource)
+    {
+        const size_t NumVertices = MeshResource.GetNumVertices();
+        if (NumVertices == 0 || MeshResource.Normals.size() != NumVertices)
+        {
+            return;
+        }
+
+        MeshResource.Tangents.resize(NumVertices);
+
+        const uint32* Normals  = MeshResource.Normals.data();
+        uint32*       Tangents = MeshResource.Tangents.data();
+
+        Task::ParallelFor((uint32)NumVertices, [=](const Task::FParallelRange& Range)
+        {
+            for (uint32 i = Range.Start; i < Range.End; ++i)
+            {
+                const FVector3 N = UnpackNormal(Normals[i]);
+
+                // Cross against whichever axis is least parallel to N, so the result never degenerates.
+                const FVector3 Axis = (Math::Abs(N.z) < 0.9f) ? FVector3(0.0f, 0.0f, 1.0f)
+                                                              : FVector3(1.0f, 0.0f, 0.0f);
+                const FVector3 T = Math::Normalize(Math::Cross(Axis, N));
+                Tangents[i] = PackTangent(T, 1.0f);
+            }
+        }, 4096);
     }
 
     // MUST run before meshlet/LOD generation, regardless of the "optimize" option: meshopt_simplify allocates
@@ -410,6 +447,8 @@ namespace Lumina::Import::Mesh
 
     void GenerateMeshlets(FMeshResource& MeshResource, FScopedSlowTask* Progress, float StepPerSurface)
     {
+        LUMINA_PROFILE_SCOPE();
+        
         MeshResource.MeshletData.Clear();
 
         // Split each surface's progress budget between tangent generation and meshlet building.
@@ -421,7 +460,18 @@ namespace Lumina::Import::Mesh
         {
             Progress->UpdateMessage("Generating tangents...");
         }
-        ComputeMikkTSpaceTangents(MeshResource, Progress, TangentStep);
+        if (MeshResource.bGenerateTangents)
+        {
+            ComputeMikkTSpaceTangents(MeshResource, Progress, TangentStep);
+        }
+        else
+        {
+            GenerateFallbackTangents(MeshResource);
+            if (Progress)
+            {
+                Progress->EnterProgressFrame(TangentStep * (float)MeshResource.GeometrySurfaces.size());
+            }
+        }
 
         const size_t NumVertices = MeshResource.GetNumVertices();
         const size_t NumIndices  = MeshResource.Indices.size();
@@ -456,46 +506,115 @@ namespace Lumina::Import::Mesh
 
         const uint32 NumSurfaces = (uint32)MeshResource.GeometrySurfaces.size();
 
+        // Callers that rebuild often (dynamic meshes) trade distant-draw quality for build time here.
+        const uint32 LODCount = Math::Clamp(MeshResource.MaxLODs, 1u, MAX_MESH_LODS);
+
         if (Progress)
         {
             Progress->UpdateMessage("Building meshlets & LODs...");
         }
 
-        // Phase 1: per-(LOD,Surface) parallel build; each cell owned by one worker.
-        TVector<FSurfaceMeshletResult> Results(MAX_MESH_LODS * NumSurfaces);
-        TVector<uint32> PerSurfaceNumLODs(NumSurfaces, 0u);
+        // Phase 1: every (LOD, Surface) cell is independent, so the whole grid runs at once rather than one
+        // task per surface with a serial LOD chain inside it. Each LOD simplifies from the surface's ORIGINAL
+        // index range with its own ratio -- not from the previous LOD -- so nothing here actually depends on
+        // the level before it; only the accept/break bookkeeping did, and that is replayed serially below.
+        // For the common single-surface case (every dynamic mesh with no declared sections) this is the
+        // difference between one busy thread and MAX_MESH_LODS of them.
+        //
+        // The tradeoff: cells past the point where the serial chain would have broken are computed and then
+        // thrown away. meshopt_simplify costs scale with the SOURCE index count rather than the target, so a
+        // discarded cell is not cheap -- but the cheap break (target below kLODMinIndices) is still taken
+        // before any simplification, and wall-clock wins whenever the chain would have run more than one LOD.
+        TVector<FSurfaceMeshletResult> Results(LODCount * NumSurfaces);
+        TVector<size_t> CellIndexCount(LODCount * NumSurfaces, 0u);
 
-        Task::ParallelFor(NumSurfaces, [&](uint32 SurfaceIdx)
+        Task::ParallelFor(LODCount * NumSurfaces, [&](uint32 Cell)
         {
+            const uint32 lod        = Cell / NumSurfaces;
+            const uint32 SurfaceIdx = Cell % NumSurfaces;
+
             const FGeometrySurface& Section = MeshResource.GeometrySurfaces[SurfaceIdx];
             if (Section.IndexCount == 0)
             {
-                PerSurfaceNumLODs[SurfaceIdx] = 0;
-                if (Progress)
-                {
-                    Progress->EnterProgressFrame(MeshletStep);
-                }
                 return;
             }
 
-            const uint32* SurfaceIndices = &MeshResource.Indices[Section.StartIndex];
+            const uint32*          SurfaceIndices = &MeshResource.Indices[Section.StartIndex];
+            FSurfaceMeshletResult& Out            = Results[Cell];
 
-            FSurfaceMeshletResult& LOD0 = Results[0 * NumSurfaces + SurfaceIdx];
-            BuildLODMeshletsForRange(
-                SurfaceIndices, Section.IndexCount,
-                VertexPositions, NumVertices, PositionStride,
-                ReadPosition, LOD0);
+            if (lod == 0)
+            {
+                BuildLODMeshletsForRange(
+                    SurfaceIndices, Section.IndexCount,
+                    VertexPositions, NumVertices, PositionStride,
+                    ReadPosition, Out);
+                CellIndexCount[Cell] = Section.IndexCount;
+                return;
+            }
 
-            uint32 LODsBuilt = LOD0.bHasData ? 1u : 0u;
+            const FLODSettings& Cfg = kLODs[lod];
 
+            // Snap to whole triangles; floor at kLODMinIndices so sloppy LODs don't degenerate.
+            size_t TargetIndices = (size_t)((float)Section.IndexCount * Cfg.Ratio);
+            TargetIndices = (TargetIndices / 3u) * 3u;
+            if (TargetIndices < kLODMinIndices)
+            {
+                return;
+            }
+
+            // Scratch is per cell now that cells run concurrently.
             TVector<uint32> Simplified(Section.IndexCount);
+
+            float        ResultError = 0.0f;
+            const size_t NewCount    = Cfg.bSloppy
+                ? meshopt_simplifySloppy(
+                    Simplified.data(),
+                    SurfaceIndices, Section.IndexCount,
+                    VertexPositions, NumVertices, PositionStride,
+                    nullptr,
+                    TargetIndices, Cfg.TargetError,
+                    &ResultError)
+                : meshopt_simplify(
+                    Simplified.data(),
+                    SurfaceIndices, Section.IndexCount,
+                    VertexPositions, NumVertices, PositionStride,
+                    TargetIndices, Cfg.TargetError,
+                    meshopt_SimplifyLockBorder,
+                    &ResultError);
+
+            CellIndexCount[Cell] = NewCount;
+            if (NewCount < kLODMinIndices)
+            {
+                return;
+            }
+
+            // Restore vertex-cache locality after simplifiers reorder by collapse/cluster priority.
+            meshopt_optimizeVertexCache(
+                Simplified.data(),
+                Simplified.data(),
+                NewCount, NumVertices);
+
+            BuildLODMeshletsForRange(
+                Simplified.data(), NewCount,
+                VertexPositions, NumVertices, PositionStride,
+                ReadPosition, Out);
+        });
+
+        // Phase 2: replay the accept/break chain that used to be interleaved with the work. Identical rules,
+        // just evaluated after the fact -- and cells beyond the accepted run are dropped, because the pack
+        // below keys purely off bHasData and would otherwise fold in a level the serial version never built.
+        for (uint32 SurfaceIdx = 0; SurfaceIdx < NumSurfaces; ++SurfaceIdx)
+        {
+            const FGeometrySurface& Section = MeshResource.GeometrySurfaces[SurfaceIdx];
+
+            uint32 LODsBuilt      = Results[0 * NumSurfaces + SurfaceIdx].bHasData ? 1u : 0u;
             size_t LastIndexCount = Section.IndexCount;
 
-            for (uint32 lod = 1; lod < MAX_MESH_LODS; ++lod)
+            for (uint32 lod = 1; lod < LODCount; ++lod)
             {
-                const FLODSettings& Cfg = kLODs[lod];
+                const uint32        Cell = lod * NumSurfaces + SurfaceIdx;
+                const FLODSettings& Cfg  = kLODs[lod];
 
-                // Snap to whole triangles; floor at kLODMinIndices so sloppy LODs don't degenerate.
                 size_t TargetIndices = (size_t)((float)Section.IndexCount * Cfg.Ratio);
                 TargetIndices = (TargetIndices / 3u) * 3u;
                 if (TargetIndices < kLODMinIndices)
@@ -503,23 +622,7 @@ namespace Lumina::Import::Mesh
                     break;
                 }
 
-                float        ResultError = 0.0f;
-                const size_t NewCount    = Cfg.bSloppy
-                    ? meshopt_simplifySloppy(
-                        Simplified.data(),
-                        SurfaceIndices, Section.IndexCount,
-                        VertexPositions, NumVertices, PositionStride,
-                        nullptr,
-                        TargetIndices, Cfg.TargetError,
-                        &ResultError)
-                    : meshopt_simplify(
-                        Simplified.data(),
-                        SurfaceIndices, Section.IndexCount,
-                        VertexPositions, NumVertices, PositionStride,
-                        TargetIndices, Cfg.TargetError,
-                        meshopt_SimplifyLockBorder,
-                        &ResultError);
-
+                const size_t NewCount = CellIndexCount[Cell];
                 if (NewCount < kLODMinIndices)
                 {
                     break;
@@ -532,32 +635,23 @@ namespace Lumina::Import::Mesh
                 }
                 LastIndexCount = NewCount;
 
-                // Restore vertex-cache locality after simplifiers reorder by collapse/cluster priority.
-                meshopt_optimizeVertexCache(
-                    Simplified.data(),
-                    Simplified.data(),
-                    NewCount, NumVertices);
-
-                FSurfaceMeshletResult& LODi = Results[lod * NumSurfaces + SurfaceIdx];
-                BuildLODMeshletsForRange(
-                    Simplified.data(), NewCount,
-                    VertexPositions, NumVertices, PositionStride,
-                    ReadPosition, LODi);
-
-                if (!LODi.bHasData)
+                if (!Results[Cell].bHasData)
                 {
                     break;
                 }
                 LODsBuilt = lod + 1u;
             }
 
-            PerSurfaceNumLODs[SurfaceIdx] = LODsBuilt;
+            for (uint32 lod = LODsBuilt; lod < LODCount; ++lod)
+            {
+                Results[lod * NumSurfaces + SurfaceIdx] = FSurfaceMeshletResult{};
+            }
 
             if (Progress)
             {
                 Progress->EnterProgressFrame(MeshletStep);
             }
-        });
+        }
 
         // Positions are stored as full mesh-local float3 in the vertex buffer -- no quantization grid,
         // so no per-meshlet/per-LOD precision tradeoff and no boundary cracks (shared verts are bit-identical).
@@ -604,7 +698,7 @@ namespace Lumina::Import::Mesh
         }
 
         // Phase 3: serial pack, LOD-major so LOD 0 is contiguous at the front of the buffer.
-        for (uint32 lod = 0; lod < MAX_MESH_LODS; ++lod)
+        for (uint32 lod = 0; lod < LODCount; ++lod)
         {
             for (uint32 SurfaceIdx = 0; SurfaceIdx < NumSurfaces; ++SurfaceIdx)
             {

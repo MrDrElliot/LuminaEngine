@@ -1215,11 +1215,7 @@ namespace Lumina
                 Component.CachedLocalRadius          = 0.0f;
                 Component.CachedMeshletHeaderAddress = 0;
                 Component.CachedBaseFlags            = EInstanceFlags::None;
-
-                // Resolve rejects a mesh that is null AND one that is merely still loading (IsValid is
-                // false while OF_NeedsLoad is set). Only the former is settled. Stamping the epoch for a
-                // loading mesh retires the component permanently: the pre-pass skips it from then on and
-                // the gather drops it on the invalid handle, so it never draws until an epoch bump.
+                
                 if (Mesh == nullptr)
                 {
                     Component.CachedEpoch = Epoch;
@@ -1309,8 +1305,30 @@ namespace Lumina
         ResolveMeshPool(Registry.storage<SStaticMeshComponent>(), Epoch, EInstanceFlags::None, Scratch,
             [](const SStaticMeshComponent& C) -> CMesh* { return C.StaticMesh; });
 
-        ResolveMeshPool(Registry.storage<SDynamicMeshComponent>(), Epoch, EInstanceFlags::None, Scratch,
-            [](const SDynamicMeshComponent& C) -> CMesh* { return C.DynamicMesh; });
+        // Dynamic meshes own their resolve outright, so they skip the cache entirely. All that is left is
+        // re-running the material half while a material is still compiling, which is what the asset path
+        // uses bAllMaterialsReady for.
+        {
+            auto& Storage = Registry.storage<SDynamicMeshComponent>();
+            const uint32 Count = (uint32)Storage.size();
+            for (uint32 i = 0; i < Count; ++i)
+            {
+                if (Storage.data()[i] == entt::tombstone)
+                {
+                    continue;
+                }
+
+                SDynamicMeshComponent& Component = PackedPayloadAt(Storage, i);
+                if (Component.RenderData && !Component.RenderData->bAllMaterialsReady)
+                {
+                    Component.RefreshResolvedMaterials();
+                    if (!Component.RenderData->bAllMaterialsReady)
+                    {
+                        FMeshResolveCache::MarkPendingWork();
+                    }
+                }
+            }
+        }
 
         // Skeletal assets always carry FSkinnedVertex, so Skinned is unconditional here.
         ResolveMeshPool(Registry.storage<SSkeletalMeshComponent>(), Epoch, EInstanceFlags::Skinned, Scratch,
@@ -2814,7 +2832,7 @@ namespace Lumina
 
     // Per-surface half of the mesh gather, shared by the static / dynamic / foliage / skeletal paths.
     static void EmitSurfaceDrawItems(FForwardRenderScene::FThreadLocalDrawData& Local,
-                                     const FResolvedMesh& Resolved,
+                                     const TVector<FResolvedSurface>& Surfaces,
                                      uint64 MeshletHeaderAddress,
                                      bool bComponentCastsShadow,
                                      EInstanceFlags BaseFlags,
@@ -2849,7 +2867,7 @@ namespace Lumina
             return OutVertexCount > 0u;
         };
 
-        for (const FResolvedSurface& Surface : Resolved.Surfaces)
+        for (const FResolvedSurface& Surface : Surfaces)
         {
             EInstanceFlags Flags = BaseFlags | Surface.MaterialFlags;
             if (bComponentCastsShadow && Surface.bMaterialCastsShadows)
@@ -3002,7 +3020,7 @@ namespace Lumina
         EntityRecord.GlobalSkinnedBase    = 0u;
         EntityRecord.SkinCursor           = 0u;
 
-        EmitSurfaceDrawItems(Local, Resolved, MeshletHeaderAddress, MeshComponent.bCastShadow, BaseFlags,
+        EmitSurfaceDrawItems(Local, Resolved.Surfaces, MeshletHeaderAddress, MeshComponent.bCastShadow, BaseFlags,
                              EntityRecordIdx, MeshComponent.ForcedLODIndex, Settings, DistSq, RadiusSq);
     }
 
@@ -3013,13 +3031,71 @@ namespace Lumina
                                Entity, MeshComponent, TransformComponent, Local);
     }
 
-    // Mirror of the static path, but the mesh lives on the component itself (a runtime CStaticMesh built from
-    // data) rather than referencing a shared asset. Same meshlet pipeline, culling, LODs and material resolve.
+    // Same meshlet pipeline, culling and LODs as the asset path, but the geometry and its resolved surfaces
+    // live on the component. No resolve handle, no cache lookup, no CachedMeshKey staleness check: Commit
+    // publishes RenderData synchronously, so whatever is here is current as of this tick.
     void FForwardRenderScene::ProcessDynamicMeshEntityInternal(entt::entity Entity, const SDynamicMeshComponent& MeshComponent, const STransformComponent& TransformComponent, FThreadLocalDrawData& Local)
     {
-        ProcessRigidMeshEntity(*ExtractFrame, RenderSettings,
-                               [&] { return (const void*)MeshComponent.DynamicMesh.Get(); },
-                               Entity, MeshComponent, TransformComponent, Local);
+        const FFrameData& Frame = *ExtractFrame;
+        const auto& SceneCullContext = Frame.Geometry.SceneCullContext;
+        const auto& SceneGlobalData  = Frame.SceneGlobalData;
+
+        const FDynamicMeshRenderData* Data = MeshComponent.RenderData.get();
+        if (Data == nullptr || Data->MeshletHeaderAddress == 0 || Data->Surfaces.empty())
+        {
+            return;
+        }
+
+        const FMatrix4& TransformMatrix = TransformComponent.CachedMatrix;
+
+        const FVector3& C = Data->LocalCenter;
+        const FVector3  Center = FVector3(TransformMatrix[0]) * C.x
+                               + FVector3(TransformMatrix[1]) * C.y
+                               + FVector3(TransformMatrix[2]) * C.z
+                               + FVector3(TransformMatrix[3]);
+
+        const float ScaleSq = Math::Max(Math::Max(
+            Math::Dot(FVector3(TransformMatrix[0]), FVector3(TransformMatrix[0])),
+            Math::Dot(FVector3(TransformMatrix[1]), FVector3(TransformMatrix[1]))),
+            Math::Dot(FVector3(TransformMatrix[2]), FVector3(TransformMatrix[2])));
+
+        const float CullScale = Math::Max(MeshComponent.BoundsScale, 1.0f);
+        const float Radius    = Data->LocalRadius * Math::Sqrt(ScaleSq) * CullScale;
+
+        if (!SceneCullContext.ShouldKeep(
+                Center,
+                Radius,
+                MeshComponent.bCastShadow,
+                MeshComponent.MaxDrawDistance,
+                FVector3(SceneGlobalData.CameraData.Location)))
+        {
+            ++Local.Stats.NumInstancesCulled;
+            return;
+        }
+
+        const FVector3 ToCamera = Center - FVector3(SceneGlobalData.CameraData.Location);
+        const float DistSq   = Math::Dot(ToCamera, ToCamera);
+        const float RadiusSq = Radius * Radius;
+
+        EInstanceFlags BaseFlags = EInstanceFlags::None;
+        if (MeshComponent.bReceiveShadow)          { BaseFlags |= EInstanceFlags::ReceiveShadow; }
+        if (MeshComponent.bIgnoreOcclusionCulling) { BaseFlags |= EInstanceFlags::IgnoreOcclusionCulling; }
+
+        const uint32 EntityRecordIdx = (uint32)Local.EntityRecords.size();
+        FEntityRecord& EntityRecord = Local.EntityRecords.emplace_back();
+        EntityRecord.Transform            = TransformMatrix;
+        EntityRecord.SphereBounds         = FVector4(Center, Radius);
+        EntityRecord.MeshletHeaderAddress = Data->MeshletHeaderAddress;
+        EntityRecord.CustomData           = MeshComponent.CustomPrimitiveData.Data.Packed;
+        EntityRecord.EntityID             = entt::to_integral(Entity);
+        EntityRecord.LocalBoneOffset      = ~0u;
+        EntityRecord.SkinSliceSize        = 0u;
+        EntityRecord.GlobalSkinnedBase    = 0u;
+        EntityRecord.SkinCursor           = 0u;
+
+        EmitSurfaceDrawItems(Local, Data->Surfaces, Data->MeshletHeaderAddress, MeshComponent.bCastShadow,
+                             BaseFlags, EntityRecordIdx, MeshComponent.ForcedLODIndex, RenderSettings,
+                             DistSq, RadiusSq);
     }
 
     void FForwardRenderScene::ProcessFoliageBakedInstance(const SFoliageType& Type, const FFoliageBakedInstance& Baked, uint32 OwnerEntityID, FThreadLocalDrawData& Local)
@@ -3079,7 +3155,7 @@ namespace Lumina
         EntityRecord.GlobalSkinnedBase      = 0u;
         EntityRecord.SkinCursor             = 0u;
 
-        EmitSurfaceDrawItems(Local, Resolved, MeshletHeaderAddress, Type.bCastShadow, BaseFlags,
+        EmitSurfaceDrawItems(Local, Resolved.Surfaces, MeshletHeaderAddress, Type.bCastShadow, BaseFlags,
                              EntityRecordIdx, /*ForcedLODIndex*/ -1, RenderSettings, DistSq, RadiusSq);
     }
 
@@ -3214,7 +3290,7 @@ namespace Lumina
         // Skinned bounds are bind-pose; BoundsScale handles outliers.
         const bool bAccumulateSkinSize = (LocalBoneOffset != ~0u && MeshletHeaderAddress != 0ull);
         FSkinSizeAccum SkinSize;
-        EmitSurfaceDrawItems(Local, Resolved, MeshletHeaderAddress, MeshComponent.bCastShadow, BaseFlags,
+        EmitSurfaceDrawItems(Local, Resolved.Surfaces, MeshletHeaderAddress, MeshComponent.bCastShadow, BaseFlags,
                              EntityRecordIdx, MeshComponent.ForcedLODIndex, RenderSettings, DistSq, RadiusSq,
                              bAccumulateSkinSize ? &SkinSize : nullptr,
                              &Resource.MeshletData.Meshlets);

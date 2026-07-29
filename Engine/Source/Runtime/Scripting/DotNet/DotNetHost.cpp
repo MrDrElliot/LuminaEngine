@@ -1620,6 +1620,24 @@ namespace Lumina::DotNet
             }
         }
 
+        // The editor display block a [Property] carries: category, tooltip, units, clamps, colour flag.
+        // Shared by the top-level schema and by every nested / instanced-candidate field so the two can
+        // never drift -- they read the identical bytes WriteMeta wrote.
+        void ReadMetaInto(FBlobReader& R, Scripting::FScriptExportMeta& Meta)
+        {
+            const FString Category = R.Str();
+            const FString Tooltip  = R.Str();
+            const FString Units    = R.Str();
+            if (!Category.empty()) { Meta.Set("Category", Category); }
+            if (!Tooltip.empty())  { Meta.Set("ToolTip", Tooltip); }
+            if (!Units.empty())    { Meta.Set("Units", Units); }
+            if (R.U8()) { Meta.Set("ClampMin", NumberToString(R.F64())); }
+            if (R.U8()) { Meta.Set("ClampMax", NumberToString(R.F64())); }
+            if (R.U8()) { Meta.Set("Color", FString()); }
+        }
+
+        void ReadValue(FBlobReader& R, Scripting::FScriptPropertyValue& Out);
+
         TSharedPtr<Scripting::FScriptExportType> ReadType(FBlobReader& R)
         {
             auto Type = MakeShared<Scripting::FScriptExportType>();
@@ -1656,7 +1674,9 @@ namespace Lumina::DotNet
                         Scripting::FScriptExportField F;
                         F.Name = FName(R.Str().c_str());
                         ReadAliasesInto(R, F.Meta);
+                        ReadMetaInto(R, F.Meta);
                         F.Type = ReadType(R);
+                        ReadValue(R, F.Default);
                         Type->Fields.push_back(F);
                     }
                     break;
@@ -1691,7 +1711,9 @@ namespace Lumina::DotNet
                             Scripting::FScriptExportField F;
                             F.Name = FName(R.Str().c_str());
                             ReadAliasesInto(R, F.Meta);
+                            ReadMetaInto(R, F.Meta);
                             F.Type = ReadType(R);
+                            ReadValue(R, F.Default);
                             Candidate.Fields.push_back(F);
                         }
                         Type->Candidates.push_back(eastl::move(Candidate));
@@ -1706,6 +1728,7 @@ namespace Lumina::DotNet
         // Recursive self-describing value reader; each value leads with its kind byte.
         void ReadValue(FBlobReader& R, Scripting::FScriptPropertyValue& Out)
         {
+            // (forward-declared above ReadType, which reads a default for every nested field)
             Out = Scripting::FScriptPropertyValue{};
             Out.Kind = static_cast<Scripting::EScriptValueKind>(R.U8());
             switch (Out.Kind)
@@ -2039,34 +2062,10 @@ namespace Lumina::DotNet
             Scripting::FScriptExportField Field;
             Field.Name = FName(R.Str().c_str());
             ReadAliasesInto(R, Field.Meta);
+            ReadMetaInto(R, Field.Meta);
 
-            const FString Category = R.Str();
-            const FString Tooltip = R.Str();
-            const FString Units = R.Str();
-            if (!Category.empty())
-            {
-                Field.Meta.Set("Category", Category);
-            }
-            if (!Tooltip.empty())
-            {
-                Field.Meta.Set("ToolTip", Tooltip);
-            }
-            if (!Units.empty())
-            {
-                Field.Meta.Set("Units", Units);
-            }
-            if (R.U8())
-            {
-                Field.Meta.Set("ClampMin", NumberToString(R.F64()));
-            }
-            if (R.U8())
-            {
-                Field.Meta.Set("ClampMax", NumberToString(R.F64()));
-            }
-            if (R.U8())
-            {
-                Field.Meta.Set("Color", FString());
-            }
+            // Top level only: nested fields have no hot-reload identity of their own, so WriteFields
+            // does not emit this byte and nothing here may consume one.
             if (R.U8())
             {
                 Field.Meta.Set("SkipHotReload", FString());

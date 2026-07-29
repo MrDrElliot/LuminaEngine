@@ -32,8 +32,25 @@ public static unsafe class NativeBindings
     // Property resolve helpers for the generated bindings: a blittable property caches a byte offset
     // (PropertyOffset), a non-blittable one an FProperty* token (FindProperty), resolved once per property.
 
-    /// <summary>Byte offset of Type.Prop within its container; 0 if unresolved.</summary>
-    public static int PropertyOffset(string Type, string Prop) => CallWithStringArgs(Type, Prop, PropertyOffsetByName);
+    /// <summary>Byte offset of Type.Prop within its container.</summary>
+    /// <remarks>
+    /// A failed resolve returns -1 natively, and the generated accessors add the offset to the container
+    /// pointer unconditionally -- so an unresolved property silently reads and writes the byte *before* the
+    /// component instead of the field, leaving the field at its default and corrupting whatever sits there.
+    /// That is invisible at the call site, so say so loudly and clamp to 0 rather than let it scribble.
+    /// </remarks>
+    public static int PropertyOffset(string Type, string Prop)
+    {
+        int Offset = CallWithStringArgs(Type, Prop, PropertyOffsetByName);
+        if (Offset < 0)
+        {
+            Native.Log(ELogLevel.Error,
+                $"NativeBindings: property '{Type}.{Prop}' did not resolve; its C# accessor will not reach the "
+                + "native field. The reflected type or property name is missing or does not match.");
+            return 0;
+        }
+        return Offset;
+    }
 
     /// <summary>FProperty* token for Type.Prop (opaque); IntPtr.Zero on miss.</summary>
     public static IntPtr FindProperty(string Type, string Prop) => CallWithStringArgs(Type, Prop, FindPropertyExport);

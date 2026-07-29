@@ -111,6 +111,14 @@ void RunEarlyPhase(uint3 GlobalID, uint3 GroupID, uint NumViews)
     	return;
     }
 
+    // A null header with a non-zero meshlet count should be impossible -- the gather forces the count to
+    // zero whenever the address is null -- but it is only an invariant, and violating it dereferences
+    // address 0 below and loses the device. Cheap enough to enforce here rather than trust it.
+    if (Inst.MeshletHeader == nullptr)
+    {
+        return;
+    }
+
     // Per-instance / per-meshlet data reused across every view.
     bool bSkinned  = Inst.HasFlag(EInstanceFlags::Skinned);
     bool bNoCull   = Inst.HasFlag(EInstanceFlags::NoCull);

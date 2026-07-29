@@ -324,9 +324,11 @@ namespace Lumina
             CEdNodeGraphPin* InPin  = PinA->bInputPin ? PinA : PinB;
             CEdNodeGraphPin* OutPin = PinA->bInputPin ? PinB : PinA;
 
-            CAnimGraphNode_State* ToState   = Cast<CAnimGraphNode_State>(InPin->GetOwningNode());
-            CAnimGraphNode_State* FromState = Cast<CAnimGraphNode_State>(OutPin->GetOwningNode());
-            if (ToState == nullptr || FromState == nullptr)
+            CAnimGraphNode_State* ToState = Cast<CAnimGraphNode_State>(InPin->GetOwningNode());
+            CEdGraphNode* FromNode = OutPin->GetOwningNode();
+            const bool bTransitionSource = FromNode != nullptr &&
+                (FromNode->IsA<CAnimGraphNode_State>() || FromNode->IsA<CAnimGraphNode_StateAny>());
+            if (ToState == nullptr || !bTransitionSource)
             {
                 // Not a transition wire (e.g. the Entry link) -- leave as-is.
                 return;
@@ -340,7 +342,7 @@ namespace Lumina
                 return;
             }
 
-            CAnimStateTransition* Transition = SMGraph->FindTransition(FromState->GetNodeID(), ToState->GetNodeID());
+            CAnimStateTransition* Transition = SMGraph->FindTransition(FromNode->GetNodeID(), ToState->GetNodeID());
             if (Transition != nullptr && Transition != SelectedTransition)
             {
                 SelectedTransition = Transition;
@@ -668,12 +670,15 @@ namespace Lumina
         ImGui::Separator();
 
         // Contextual hint: on the state machine canvas, transitions are edited
-        // by selecting their wire -- not obvious without a nudge.
+        // by selecting their arrow -- not obvious without a nudge.
         if (SelectedNode == nullptr && SelectedTransition == nullptr &&
             !GraphStack.empty() && Cast<CAnimStateMachineGraph>(GraphStack.back().Graph) != nullptr)
         {
-            ImGui::TextWrapped("Tip: click a transition wire between two States to edit its "
-                "condition here. Click a State node to rename it; double-click to edit its blend tree.");
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());
+            ImGui::TextWrapped("Click a transition's condition badge to edit it here. Drag from a State's right band "
+                "onto another State's left band to add one. Click a State to rename it, double-click to edit its "
+                "blend tree, and right-click the canvas to add a State or an Any State source.");
+            ImGui::PopStyleColor();
             ImGui::Separator();
         }
 
@@ -707,13 +712,7 @@ namespace Lumina
         }
 
         TVector<CAnimStateTransition*> Outgoing;
-        for (const TObjectPtr<CAnimStateTransition>& T : SMGraph->GetTransitions())
-        {
-            if (T.IsValid() && T->FromStateNodeID == State->GetNodeID())
-            {
-                Outgoing.push_back(T.Get());
-            }
-        }
+        SMGraph->GetOutgoingTransitions(State->GetNodeID(), Outgoing);
 
         // Drop cached property tables whose backing transition was removed.
         for (auto It = TransitionTables.begin(); It != TransitionTables.end(); )
@@ -729,39 +728,44 @@ namespace Lumina
             }
         }
 
-        ImGui::Separator();
-        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(220, 220, 222, 255));
-        ImGui::TextUnformatted(LE_ICON_ARROW_RIGHT_BOLD " Outgoing Transitions");
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::SectionHeader());
+        ImGui::SeparatorText(LE_ICON_ARROW_RIGHT_BOLD " Outgoing Transitions");
         ImGui::PopStyleColor();
 
         if (Outgoing.empty())
         {
-            ImGui::TextDisabled("Drag from this State's Out pin to another State to create one.");
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());
+            ImGui::TextWrapped("None. Drag from this State's right edge onto another State to add one.");
+            ImGui::PopStyleColor();
             return;
         }
 
-        for (CAnimStateTransition* Transition : Outgoing)
+        ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());
+        ImGui::TextWrapped("Tested top to bottom while this state is active; the first passing condition wins. "
+                           "Reorder with Priority.");
+        ImGui::PopStyleColor();
+
+        for (int32 Index = 0; Index < (int32)Outgoing.size(); ++Index)
         {
+            CAnimStateTransition* Transition = Outgoing[Index];
             ImGui::PushID(Transition);
 
-            CAnimGraphNode_State* ToState = nullptr;
-            for (CEdGraphNode* N : SMGraph->Nodes)
-            {
-                CAnimGraphNode_State* S = Cast<CAnimGraphNode_State>(N);
-                if (S != nullptr && S->GetNodeID() == Transition->ToStateNodeID)
-                {
-                    ToState = S;
-                    break;
-                }
-            }
-
-            const FString ToLabel = (ToState != nullptr && !ToState->StateName.IsNone())
-                ? ToState->StateName.ToString()
-                : FString("(unnamed)");
-            const FString Header = FString("\xE2\x86\x92 ") + ToLabel;
+            const FString ToLabel = SMGraph->GetEndpointLabel(Transition->ToStateNodeID);
+            const FString Header = FString(LE_ICON_ARROW_RIGHT_BOLD " ") + ToLabel;
 
             ImGui::SetNextItemOpen(true, ImGuiCond_Once);
-            if (ImGui::CollapsingHeader(Header.c_str()))
+            const bool bOpen = ImGui::CollapsingHeader(Header.c_str());
+
+            // Condition and blend length on the header row: the two things worth scanning without
+            // expanding every entry.
+            ImGui::SameLine();
+            ImGui::TextColored(Transition->ConditionParameter.IsNone() ? EditorColors::Warning() : EditorColors::TextDim(),
+                               "   %s", Transition->GetConditionText().c_str());
+            ImGui::SameLine();
+            ImGui::TextColored(EditorColors::TextMuted(), "   %.2fs", Transition->BlendDuration);
+
+            if (bOpen)
             {
                 auto It = TransitionTables.find(Transition);
                 if (It == TransitionTables.end())

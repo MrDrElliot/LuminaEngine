@@ -154,6 +154,16 @@ namespace Lumina
 
         void OnProjectLoaded();
 
+        // Opens Project.EditorStartupMap if asset discovery has already found it. Returns false when the
+        // map is configured but not in the registry yet, which is the caller's cue to wait for discovery
+        // rather than to report an error.
+        bool TryOpenEditorStartupMap();
+
+        // Live only between a project load and the startup map opening. Discovery runs asynchronously, so
+        // the map usually is not in the registry yet when the project finishes loading; this retries on
+        // each registry update instead of blocking the main thread until the scan drains.
+        FDelegateHandle PendingStartupMapHandle;
+
         void HandleUserInput(const FUpdateContext& UpdateContext);
 
     private:

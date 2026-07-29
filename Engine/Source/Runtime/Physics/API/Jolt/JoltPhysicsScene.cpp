@@ -58,6 +58,7 @@
 #include "World/Entity/Components/CharacterControllerComponent.h"
 #include "World/Entity/Components/DirtyComponent.h"
 #include "World/Entity/Components/PhysicsComponent.h"
+#include "World/Entity/Components/DynamicMeshComponent.h"
 #include "World/Entity/Components/RagdollComponent.h"
 #include "World/Entity/Components/CSharpScriptComponent.h"
 #include "Scripting/DotNet/DotNetHost.h"
@@ -2166,10 +2167,13 @@ namespace Lumina::Physics
         
     }
 
-    static JPH::ShapeRefC BuildMeshColliderShape(const CMesh* Mesh, const FVector3& Scale, bool bConvex)
+    // Collision geometry comes from LOD 0's meshlets, which every mesh keeps after upload (the raw index and
+    // vertex streams are dropped). Sourced from the resource rather than a CMesh so the dynamic-mesh path --
+    // which owns an FMeshResource without owning a CMesh -- shares exactly this builder.
+    static JPH::ShapeRefC BuildMeshColliderShape(const FMeshResource& Resource, FStringView DebugName,
+                                                 const FVector3& Scale, bool bConvex)
     {
-        const FMeshResource& Resource = Mesh->GetMeshResource();
-        const FMeshletData&  MD       = Resource.MeshletData;
+        const FMeshletData& MD = Resource.MeshletData;
 
         if (MD.IsEmpty() || Resource.bSkinnedMesh)
         {
@@ -2179,7 +2183,7 @@ namespace Lumina::Physics
         JPH::VertexList         Vertices;
         JPH::IndexedTriangleList Triangles;
 
-        Mesh->ForEachSurface([&](const FGeometrySurface& Surface, uint32)
+        for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
         {
             const uint32 Offset = Surface.LODMeshletOffset[0];
             const uint32 Count  = Surface.LODMeshletCount[0];
@@ -2204,7 +2208,7 @@ namespace Lumina::Physics
                     Triangles.emplace_back(BaseVertex + i0, BaseVertex + i1, BaseVertex + i2, 0);
                 }
             }
-        });
+        }
 
         if (Vertices.empty() || Triangles.empty())
         {
@@ -2225,7 +2229,7 @@ namespace Lumina::Physics
             auto Result = Settings.Create();
             if (Result.HasError())
             {
-                LOG_ERROR("Failed to build convex hull from mesh '{}': {}", Mesh->GetName().ToString(), Result.GetError());
+                LOG_ERROR("Failed to build convex hull from mesh '{}': {}", DebugName, Result.GetError());
                 return nullptr;
             }
             return Result.Get();
@@ -2236,7 +2240,7 @@ namespace Lumina::Physics
         auto Result = Settings.Create();
         if (Result.HasError())
         {
-            LOG_ERROR("Failed to build triangle mesh from mesh '{}': {}", Mesh->GetName().ToString(), Result.GetError());
+            LOG_ERROR("Failed to build triangle mesh from mesh '{}': {}", DebugName, Result.GetError());
             return nullptr;
         }
         return Result.Get();
@@ -2505,6 +2509,31 @@ namespace Lumina::Physics
             }
 
             bIsTriangleMesh = !MC->bConvex;
+        }
+        else if (const SDynamicMeshColliderComponent* DMC = Registry.try_get<SDynamicMeshColliderComponent>(Entity))
+        {
+            bColliderIsTrigger = DMC->bIsTrigger;
+            ResolvedMaterial   = DMC->PhysicsMaterial.Get();
+
+            const SDynamicMeshComponent* DM = Registry.try_get<SDynamicMeshComponent>(Entity);
+            if (DM == nullptr || !DM->RenderData || DM->RenderData->Resource.MeshletData.IsEmpty())
+            {
+                // Nothing committed yet. Defer rather than error: a streamed chunk builds its geometry a
+                // frame or more after the entity exists, and the pending list retries.
+                return EBodyBuildStatus::Defer;
+            }
+
+            // Deliberately uncached: a dynamic mesh is unique per component and rebuilt on every commit, so
+            // the CMesh-keyed shape cache has nothing to reuse.
+            Shape = BuildMeshColliderShape(DM->RenderData->Resource, "DynamicMesh",
+                                           TransformComponent->GetScale(), DMC->bConvex);
+            if (Shape == nullptr)
+            {
+                LOG_ERROR("Failed to create DynamicMeshCollider Shape for Entity: {}", entt::to_integral(Entity));
+                return EBodyBuildStatus::Error;
+            }
+
+            bIsTriangleMesh = !DMC->bConvex;
         }
         else if (const STerrainColliderComponent* TC = Registry.try_get<STerrainColliderComponent>(Entity))
         {
@@ -3886,7 +3915,7 @@ namespace Lumina::Physics
 
         // Build outside the lock so parallel QuickHull on distinct meshes isn't serialized; the
         // try_emplace below only guards the rare same-key race.
-        JPH::ShapeRefC Shape = BuildMeshColliderShape(Mesh, Scale, bConvex);
+        JPH::ShapeRefC Shape = BuildMeshColliderShape(Mesh->GetMeshResource(), Mesh->GetName().ToString(), Scale, bConvex);
         if (Shape == nullptr)
         {
             return {};

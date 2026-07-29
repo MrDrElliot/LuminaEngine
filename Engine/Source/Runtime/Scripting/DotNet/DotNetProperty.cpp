@@ -25,16 +25,13 @@ using namespace Lumina;
 
 namespace
 {
-    // Resolves a reflected struct OR class by its simple (DisplayName) name. FindObject filters by the
-    // exact CClass bucket, so a struct (a CStruct instance) and a class (a CClass instance) live in
-    // different buckets; try both. Mirrors the type-by-name lookup the component ops use.
     const CStruct* FindReflectedType(const char* Type, int TLen)
     {
         if (Type == nullptr || TLen <= 0)
         {
             return nullptr;
         }
-        const FName Name(Type, (size_t)TLen);
+        const FName Name{FStringView(Type, (size_t)TLen)};
         if (CStruct* AsStruct = FindObject<CStruct>(Name))
         {
             return AsStruct;
@@ -50,9 +47,26 @@ LUMINA_DOTNET_EXPORT(const void*, FindProperty)(const char* Type, int TLen, cons
     const CStruct* Struct = FindReflectedType(Type, TLen);
     if (Struct == nullptr || Prop == nullptr || PLen <= 0)
     {
+        LOG_ERROR("FindProperty: reflected type '{}' not found.", FStringView(Type ? Type : "", (size_t)Math::Max(TLen, 0)));
         return nullptr;
     }
-    return Struct->GetProperty(FName(FStringView(Prop, (size_t)PLen)));
+
+    const FName PropName(FStringView(Prop, (size_t)PLen));
+    if (FProperty* Found = Struct->GetProperty(PropName))
+    {
+        return Found;
+    }
+    
+    for (const CStruct* Super = Struct->GetSuperStruct(); Super != nullptr; Super = Super->GetSuperStruct())
+    {
+        if (FProperty* Found = Super->GetProperty(PropName))
+        {
+            return Found;
+        }
+    }
+
+    LOG_ERROR("FindProperty: '{}' has no reflected property '{}'.", Struct->GetName(), PropName);
+    return nullptr;
 }
 
 // The property's byte offset within its container. Resolved once per blittable property on the C# side,
@@ -68,11 +82,6 @@ LUMINA_DOTNET_EXPORT(int32, PropertyOffsetByName)(const char* Type, int TLen, co
     const void* Property = LuminaSharp_FindProperty(Type, TLen, Prop, PLen);
     return LuminaSharp_PropertyOffset(Property);
 }
-
-//================================================================================================
-// Generic per-type exporters. C is the container (component/object) pointer; Prop the cached token.
-// Each views the field at the property offset via the FProperty's typed pointer API.
-//================================================================================================
 
 // FString get: fills a caller buffer (UTF-8 bytes) and returns the full length. Two-pass protocol matching
 // LuminaSharp_GetObjectPath: a first call with a null/0 buffer queries the length, the second copies.
@@ -148,9 +157,7 @@ LUMINA_DOTNET_EXPORT(void, PropSetName)(void* C, const void* Prop, const char* U
     Value = (Len > 0) ? FName(FStringView(Utf8, (size_t)Len)) : FName();
 }
 
-// Object/TObjectPtr get/set. The member is a pointer-sized TObjectPtr<T>; read its raw CObject* and write
-// via the type-erased setter (which views it as TObjectPtr<CObject> for correct refcounting). Mirrors the
-// old per-property object thunk.
+// Object/TObjectPtr get/set.
 LUMINA_DOTNET_EXPORT(void, SetObjectPtr)(void*, void*); // defined in DotNetHost.cpp
 
 LUMINA_DOTNET_EXPORT(void*, PropGetObject)(void* C, const void* Prop)

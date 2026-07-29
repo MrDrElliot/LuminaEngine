@@ -16,6 +16,15 @@ namespace Lumina
 
 namespace Lumina
 {
+    namespace MeshBuffers
+    {
+        // Creates the meshlet/bounds/vertex/triangle buffers plus the header that indexes them, and stores
+        // the addresses on Resource.MeshBuffers. Split out of CMesh because the dynamic-mesh component owns
+        // a resource without owning a CMesh -- and unlike CMesh::GenerateGPUBuffers this does NOT bump the
+        // resolve epoch or drop the CPU scratch, which are the asset path's concerns.
+        RUNTIME_API void CreateForResource(FMeshResource& Resource);
+    }
+
     REFLECT()
     class RUNTIME_API CMesh : public CObject
     {

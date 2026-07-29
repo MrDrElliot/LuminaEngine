@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include "Containers/Array.h"
 #include "Core/Math/AABB.h"
 #include "Memory/SmartPtr.h"
@@ -7,7 +8,6 @@
 #include "Renderer/RHIFwd.h"
 #include "World/Scene/RenderScene/MeshDrawCommand.h"
 #include "World/Scene/RenderScene/SceneRenderTypes.h"
-#include <atomic>
 
 namespace Lumina
 {
@@ -39,36 +39,30 @@ namespace Lumina
         uint32  NumLODs                             = 1;
         uint32  LODMeshletOffset[MAX_MESH_LODS]     = {};
         uint32  LODMeshletCount[MAX_MESH_LODS]      = {};
-        // NOTE: do not cache meshlet vertex extents here. A mesh can resolve while its surfaces are
-        // populated but MeshletData is not yet resident, and the zero would be cached for the entity's
-        // lifetime. Pre-skin sizing reads the live meshlet table at extract instead.
-        // Squared so LOD selection compares DistSq against Threshold^2 * RadiusSq, with no per-entity sqrt.
         float   LODScreenThresholdSq[MAX_MESH_LODS] = {};
     };
+
+    namespace MeshResolve
+    {
+        RUNTIME_API bool ResolveSurfaceMaterial(FResolvedSurface& Out, CMaterialInterface* RawMaterial);
+    }
 
     // Interned per (mesh, material assignment), so every instance of a mesh shares one entry.
     struct FResolvedMesh
     {
         TVector<FResolvedSurface>   Surfaces;
-
-        // Local bounding sphere rather than the AABB: transforming a sphere is cheaper than rebuilding a
-        // world AABB, and stays tight under rotation instead of inflating by up to sqrt(3).
+        
         FVector3                    LocalCenter;
         float                       LocalRadius = 0.0f;
 
         uint64                      MeshletHeaderAddress = 0;
-
-        // Re-checked on hash hit so a collision can't return another mesh's materials.
+        
         const void*                 MeshKey = nullptr;
+        FGuid                       MeshGuid;
         TVector<const void*>        OverrideKey;
 
         // False while a slot's material is still compiling.
         bool                        bAllMaterialsReady = false;
-
-        // The single "this entry is finished" test: mesh data loaded, GPU meshlet header built, and every
-        // material ready. Anything less is a transient state, so the owner keeps re-resolving. Materials
-        // alone are not enough -- an unloaded mesh has no surfaces, so the material loop trivially passes
-        // and would otherwise cache an empty entry as complete, forever.
         bool                        bResolved = false;
     };
 
@@ -78,6 +72,14 @@ namespace Lumina
     public:
 
         static FMeshResolveCache& Get();
+        
+        FMeshResolveCache() = default;
+        FMeshResolveCache(const FMeshResolveCache&) = default;
+        FMeshResolveCache(FMeshResolveCache&&) = default;
+        FMeshResolveCache& operator = (const FMeshResolveCache&) = default;
+        FMeshResolveCache& operator = (FMeshResolveCache&&) = default;
+        ~FMeshResolveCache() { Flush(); }
+
 
         // Game thread only; mutates the table.
         uint32 Resolve(CMesh* Mesh, const TVector<CMaterialInterface*>& Overrides);
@@ -90,21 +92,13 @@ namespace Lumina
 
         // Invalidates every cached resolve; entries re-resolve lazily, once each.
         static void BumpEpoch();
-
-        // Bumped whenever anything needs (re-)resolving. This is a generation counter and NOT a flag a
-        // consumer may clear: the cache is process-wide but the resolve pre-pass is per render scene, and
-        // there is one scene per world -- the level editor plus a world for every open asset editor,
-        // thumbnail capture and PIE session. A shared bool was consumed by whichever scene ticked first,
-        // so every other world silently skipped its pre-pass and its components kept an invalid handle.
-        // Each scene compares this against its own last-seen value, so no scene can consume another's work.
+        
         static FORCEINLINE uint32 GetPendingGeneration() { return PendingGeneration.load(std::memory_order_acquire); }
         static FORCEINLINE void MarkPendingWork() { PendingGeneration.fetch_add(1, std::memory_order_acq_rel); }
 
         // Only safe between frames; handles held by components go stale.
         void Flush();
-
-        ~FMeshResolveCache() { Flush(); }
-
+    
     private:
 
         static uint64 HashKey(const void* Mesh, const TVector<CMaterialInterface*>& Overrides);

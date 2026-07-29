@@ -101,6 +101,7 @@ namespace Lumina
 
         void SetDebugContext(const FGraphDebugContext& InContext) { DebugContext = InContext; }
         void ClearDebugContext() { DebugContext = FGraphDebugContext(); }
+        const FGraphDebugContext& GetDebugContext() const { return DebugContext; }
 
         // Schema that governs what connections are allowed in this graph.
         virtual const FEdGraphSchema& GetSchema() const { return GetDefaultEdGraphSchema(); }
@@ -108,6 +109,28 @@ namespace Lumina
         // When true, the draw loop calls DrawPin() on each unconnected input pin so pins can render
         // inline editors (default values, enum combos) on the node face.
         virtual bool ShouldDrawInlinePinEditors() const { return false; }
+
+        // Node-editor style pushed around the whole editor pass, popped by the matching hook. The
+        // state machine canvas straightens links and hides their default decoration here.
+        virtual void PushGraphStyle() const {}
+        virtual void PopGraphStyle() const {}
+
+        // Draws Node's visual in place of the default header/pin builder. Return true when handled;
+        // link collection stays with the draw loop either way.
+        virtual bool DrawCustomNode(CEdGraphNode* Node) { return false; }
+
+        // Color and thickness of an emitted link. A graph that renders its own wires returns a
+        // transparent color and keeps the editor's link purely for hit-testing and deletion.
+        virtual void GetLinkStyle(CEdNodeGraphPin* InputPin, CEdNodeGraphPin* OutputPin, ImVec4& OutColor, float& OutThickness) const
+        {
+            OutColor = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+            OutThickness = 1.0f;
+        }
+
+        // Draws the graph's wires itself. Called before any node is submitted, so coordinates are
+        // canvas space and the drawing lands under the nodes. Links are indexed by (link id - 1).
+        // Suspend the editor around any ImGui window (tooltip, popup) opened from here.
+        virtual void DrawGraphOverlay(const TVector<TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>>& Links) {}
 
         // Package under which newly constructed nodes are allocated. Defaults to this graph's package,
         // so nodes live alongside the asset that owns the graph.
@@ -119,9 +142,8 @@ namespace Lumina
         static bool GraphSaveSettings(const char* data, size_t size, ax::NodeEditor::SaveReasonFlags reason, void* userPointer);
         static size_t GraphLoadSettings(char* data, void* userPointer);
 
-        // Compact reroute renderer (single dot, no header). Pushes the node's connections into OutLinks
-        // like the regular loop so the downstream link pass picks up wires through this reroute.
-        void DrawRerouteNode(CEdGraphNode* Node, TVector<TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>>& OutLinks);
+        // Compact reroute renderer (single dot, no header).
+        void DrawRerouteNode(CEdGraphNode* Node);
 
         // Draws a pin's live debug value (when the debug context supplies one) as a
         // small colored token inline in the pin row. No-op when debug is off.

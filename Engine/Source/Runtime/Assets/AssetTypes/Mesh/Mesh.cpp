@@ -147,40 +147,48 @@ namespace Lumina
         }
     }
 
+    void MeshBuffers::CreateForResource(FMeshResource& Resource)
+    {
+        if (Resource.MeshletData.IsEmpty())
+        {
+            return;
+        }
+        
+        LUMINA_PROFILE_SCOPE();
+
+        const FMeshletData& MData = Resource.MeshletData;
+        const bool bSkinned       = Resource.bSkinnedMesh;
+        FMeshResource::FMeshBuffers& MB = Resource.MeshBuffers;
+
+        auto CreateAndUpload = [](const void* Data, uint64 Size) -> RHI::GPUPtr
+        {
+            const RHI::GPUPtr Memory = RHI::Malloc(Size, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
+            RHI::UploadBuffer(Memory, Data, Size);
+            return Memory;
+        };
+
+        MB.MeshletBuffer       = CreateAndUpload(MData.Meshlets.data(), sizeof(FMeshlet) * MData.Meshlets.size());
+        MB.MeshletBoundsBuffer = CreateAndUpload(MData.MeshletBounds.data(), sizeof(FMeshletBounds) * MData.MeshletBounds.size());
+
+        const void*  VertSrc    = bSkinned ? (const void*)MData.MeshletSkinnedVertices.data() : (const void*)MData.MeshletVertices.data();
+        const uint64 VertStride = bSkinned ? sizeof(FMeshletSkinnedVertex) : sizeof(FMeshletVertex);
+        const uint64 VertCount  = bSkinned ? MData.MeshletSkinnedVertices.size() : MData.MeshletVertices.size();
+        MB.MeshletVertexBuffer   = CreateAndUpload(VertSrc, VertCount * VertStride);
+        MB.MeshletTriangleBuffer = CreateAndUpload(MData.MeshletTriangles.data(), sizeof(uint32) * MData.MeshletTriangles.size());
+
+        FMeshletHeaderGPU Header;
+        Header.MeshletsAddress    = MB.MeshletBuffer;
+        Header.BoundsAddress      = MB.MeshletBoundsBuffer;
+        Header.VerticesAddress    = MB.MeshletVertexBuffer;
+        Header.TrianglesAddress   = MB.MeshletTriangleBuffer;
+
+        MB.MeshletHeaderBuffer = CreateAndUpload(&Header, sizeof(FMeshletHeaderGPU));
+    }
+
     void CMesh::GenerateGPUBuffers()
     {
-        if (!MeshResources->MeshletData.IsEmpty())
-        {
-            const FMeshletData& MData = MeshResources->MeshletData;
-            const bool bSkinned       = MeshResources->bSkinnedMesh;
-            FMeshResource::FMeshBuffers& MB = MeshResources->MeshBuffers;
-
-            auto CreateAndUpload = [](const void* Data, uint64 Size) -> RHI::GPUPtr
-            {
-                const RHI::GPUPtr Memory = RHI::Malloc(Size, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
-                RHI::UploadBuffer(Memory, Data, Size);
-                return Memory;
-            };
-
-            MB.MeshletBuffer       = CreateAndUpload(MData.Meshlets.data(), sizeof(FMeshlet) * MData.Meshlets.size());
-            MB.MeshletBoundsBuffer = CreateAndUpload(MData.MeshletBounds.data(), sizeof(FMeshletBounds) * MData.MeshletBounds.size());
-
-            const void*  VertSrc    = bSkinned ? (const void*)MData.MeshletSkinnedVertices.data() : (const void*)MData.MeshletVertices.data();
-            const uint64 VertStride = bSkinned ? sizeof(FMeshletSkinnedVertex) : sizeof(FMeshletVertex);
-            const uint64 VertCount  = bSkinned ? MData.MeshletSkinnedVertices.size() : MData.MeshletVertices.size();
-            MB.MeshletVertexBuffer   = CreateAndUpload(VertSrc, VertCount * VertStride);
-            MB.MeshletTriangleBuffer = CreateAndUpload(MData.MeshletTriangles.data(), sizeof(uint32) * MData.MeshletTriangles.size());
-
-            FMeshletHeaderGPU Header;
-            Header.MeshletsAddress    = MB.MeshletBuffer;
-            Header.BoundsAddress      = MB.MeshletBoundsBuffer;
-            Header.VerticesAddress    = MB.MeshletVertexBuffer;
-            Header.TrianglesAddress   = MB.MeshletTriangleBuffer;
-
-            MB.MeshletHeaderBuffer = CreateAndUpload(&Header, sizeof(FMeshletHeaderGPU));
-        }
-
-        // Reimport, procedural rebuild and dynamic mesh Commit all land here.
+        MeshBuffers::CreateForResource(*MeshResources);
+        
         FMeshResolveCache::BumpEpoch();
 
         // Drop import-time scratch.

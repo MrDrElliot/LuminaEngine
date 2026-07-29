@@ -159,7 +159,7 @@ namespace Lumina
         ImGui::TextColored(ImVec4(0.45f, 0.9f, 1.0f, 1.0f), "%s", It->second.c_str());
     }
 
-    void CEdNodeGraph::DrawRerouteNode(CEdGraphNode* Node, TVector<TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>>& OutLinks)
+    void CEdNodeGraph::DrawRerouteNode(CEdGraphNode* Node)
     {
         using namespace ax;
 
@@ -195,11 +195,6 @@ namespace Lumina
         // same pivot point at the centre so wires visually meet at a single dot.
         if (CEdNodeGraphPin* InputPin = Node->GetInputPins().empty() ? nullptr : Node->GetInputPins()[0].Get())
         {
-            for (CEdNodeGraphPin* Connection : InputPin->GetConnections())
-            {
-                OutLinks.emplace_back(InputPin, Connection);
-            }
-
             NodeEditor::PushStyleVar(NodeEditor::StyleVar_PivotAlignment, ImVec2(0.5f, 0.5f));
             NodeEditor::PushStyleVar(NodeEditor::StyleVar_PivotSize,      ImVec2(0, 0));
             NodeEditor::PushStyleVar(NodeEditor::StyleVar_PinRadius,      DotRadius);
@@ -294,7 +289,9 @@ namespace Lumina
         
         NodeEditor::SetCurrentEditor(Context);
         NodeEditor::Begin(GetName().c_str());
-    
+
+        PushGraphStyle();
+
         Graph::GraphNodeBuilder NodeBuilder;
         
         TVector<TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>> Links;
@@ -322,6 +319,22 @@ namespace Lumina
         }
         PendingPlacements.clear();
 
+        // Collected before anything is submitted so a graph drawing its own wires (the state machine
+        // canvas) can lay them out under the nodes. Order matches the node/pin/connection walk the
+        // rest of the pass assumes when mapping a link id back to its pins.
+        for (CEdGraphNode* Node : Nodes)
+        {
+            for (CEdNodeGraphPin* InputPin : Node->GetInputPins())
+            {
+                for (CEdNodeGraphPin* Connection : InputPin->GetConnections())
+                {
+                    Links.emplace_back(InputPin, Connection);
+                }
+            }
+        }
+
+        DrawGraphOverlay(Links);
+
         uint32 Index = 0;
         for (CEdGraphNode* Node : Nodes)
         {
@@ -331,7 +344,13 @@ namespace Lumina
 
             if (Node->IsRerouteNode())
             {
-                DrawRerouteNode(Node, Links);
+                DrawRerouteNode(Node);
+                ++Index;
+                continue;
+            }
+
+            if (DrawCustomNode(Node))
+            {
                 ++Index;
                 continue;
             }
@@ -375,11 +394,6 @@ namespace Lumina
             
             for (CEdNodeGraphPin* InputPin : Node->GetInputPins())
             {
-                for (CEdNodeGraphPin* Connection : InputPin->GetConnections())
-                {
-                    Links.emplace_back(InputPin, Connection);
-                }
-                
                 NodeBuilder.Input(InputPin->GetPinGUID());
     
                 ImGui::PushID(InputPin);
@@ -737,7 +751,12 @@ namespace Lumina
         for (auto& [Start, End] : Links)
         {
             const uint32 ThisLinkID = LinkID++;
-            NodeEditor::Link(ThisLinkID, Start->GetPinGUID(), End->GetPinGUID());
+
+            ImVec4 LinkColor(1.0f, 1.0f, 1.0f, 1.0f);
+            float  LinkThickness = 1.0f;
+            GetLinkStyle(Start, End, LinkColor, LinkThickness);
+
+            NodeEditor::Link(ThisLinkID, Start->GetPinGUID(), End->GetPinGUID(), LinkColor, LinkThickness);
 
             // Debug: animate flow along every wire so the running graph reads as
             // "live". Re-issued each frame to keep the animation looping.
@@ -941,7 +960,9 @@ namespace Lumina
         }
         
         NodeEditor::EndDelete();
-        
+
+        PopGraphStyle();
+
         NodeEditor::End();
         NodeEditor::SetCurrentEditor(nullptr);
 

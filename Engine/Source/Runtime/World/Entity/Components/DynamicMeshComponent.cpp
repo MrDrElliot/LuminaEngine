@@ -2,11 +2,15 @@
 #include "DynamicMeshComponent.h"
 
 #include "Assets/AssetTypes/Material/MaterialInterface.h"
+#include "Assets/AssetTypes/Mesh/Mesh.h"
 #include "Core/Object/ObjectCore.h"
 #include "Core/Object/Package/Package.h"
 #include "Renderer/MeshData.h"
 #include "Renderer/Vertex.h"
 #include "Tools/Import/ImportHelpers.h"
+#include "TaskSystem/TaskSystem.h"
+
+#include <atomic>
 
 namespace Lumina
 {
@@ -31,36 +35,113 @@ namespace Lumina
 
     namespace
     {
-        // Area-weighted smooth normals, used when the caller didn't supply any (common for procedural/voxel
-        // geometry where the engine can derive them).
+        constexpr uint32 kCommitGrain = 4096;
+        
         void ComputeSmoothNormals(const TVector<FVector3>& Positions, const TVector<uint32>& Indices, TVector<FVector3>& OutNormals)
         {
-            OutNormals.assign(Positions.size(), FVector3(0.0f));
+            LUMINA_PROFILE_SCOPE();
 
-            for (size_t i = 0; i + 2 < Indices.size(); i += 3)
+            const uint32 VertexCount   = (uint32)Positions.size();
+            const uint32 TriangleCount = (uint32)(Indices.size() / 3);
+
+            OutNormals.assign(VertexCount, FVector3(0.0f));
+            if (VertexCount == 0)
             {
-                const uint32 I0 = Indices[i];
-                const uint32 I1 = Indices[i + 1];
-                const uint32 I2 = Indices[i + 2];
-                if (I0 >= Positions.size() || I1 >= Positions.size() || I2 >= Positions.size())
+                return;
+            }
+
+            const FVector3* Pos = Positions.data();
+            const uint32*   Idx = Indices.data();
+
+            // A triangle with an out-of-range index contributes nothing, and must not reach the counting
+            // sort either (it would index the count array out of bounds), so one test gates every phase.
+            auto IsTriangleValid = [Idx, VertexCount](uint32 Tri)
+            {
+                return Idx[Tri * 3 + 0] < VertexCount
+                    && Idx[Tri * 3 + 1] < VertexCount
+                    && Idx[Tri * 3 + 2] < VertexCount;
+            };
+            
+            TVector<FVector3> FaceNormals;
+            FaceNormals.resize(TriangleCount);
+            Task::ParallelFor(TriangleCount, [&](const Task::FParallelRange& Range)
+            {
+                for (uint32 Tri = Range.Start; Tri < Range.End; ++Tri)
                 {
-                    continue;
+                    if (!IsTriangleValid(Tri))
+                    {
+                        FaceNormals[Tri] = FVector3(0.0f);
+                        continue;
+                    }
+
+                    const FVector3& P0 = Pos[Idx[Tri * 3 + 0]];
+                    const FVector3& P1 = Pos[Idx[Tri * 3 + 1]];
+                    const FVector3& P2 = Pos[Idx[Tri * 3 + 2]];
+                    FaceNormals[Tri] = Math::Cross(P1 - P0, P2 - P0);
                 }
+            }, kCommitGrain);
 
-                const FVector3 Edge1 = Positions[I1] - Positions[I0];
-                const FVector3 Edge2 = Positions[I2] - Positions[I0];
-                const FVector3 FaceNormal = Math::Cross(Edge1, Edge2); // length encodes 2x triangle area
-
-                OutNormals[I0] += FaceNormal;
-                OutNormals[I1] += FaceNormal;
-                OutNormals[I2] += FaceNormal;
-            }
-
-            for (FVector3& N : OutNormals)
+            TVector<uint32> Offsets;
+            Offsets.assign(VertexCount + 1u, 0u);
+            Task::ParallelFor(TriangleCount, [&](const Task::FParallelRange& Range)
             {
-                const float Len = Math::Length(N);
-                N = (Len > 1e-8f) ? (N / Len) : FVector3(0.0f, 1.0f, 0.0f);
+                for (uint32 Tri = Range.Start; Tri < Range.End; ++Tri)
+                {
+                    if (!IsTriangleValid(Tri))
+                    {
+                        continue;
+                    }
+                    for (uint32 Corner = 0; Corner < 3u; ++Corner)
+                    {
+                        (void)std::atomic_ref<uint32>(Offsets[Idx[Tri * 3 + Corner]]).fetch_add(1u, std::memory_order_relaxed);
+                    }
+                }
+            }, kCommitGrain);
+            
+            uint32 Running = 0;
+            for (uint32 Vertex = 0; Vertex <= VertexCount; ++Vertex)
+            {
+                const uint32 Count = Offsets[Vertex];
+                Offsets[Vertex] = Running;
+                Running += Count;
             }
+
+            TVector<uint32> Cursor(Offsets.begin(), Offsets.begin() + VertexCount);
+            TVector<uint32> Adjacency;
+            Adjacency.resize(Running);
+            Task::ParallelFor(TriangleCount, [&](const Task::FParallelRange& Range)
+            {
+                for (uint32 Tri = Range.Start; Tri < Range.End; ++Tri)
+                {
+                    if (!IsTriangleValid(Tri))
+                    {
+                        continue;
+                    }
+                    for (uint32 Corner = 0; Corner < 3u; ++Corner)
+                    {
+                        const uint32 Slot = std::atomic_ref<uint32>(Cursor[Idx[Tri * 3 + Corner]]).fetch_add(1u, std::memory_order_relaxed);
+                        Adjacency[Slot] = Tri;
+                    }
+                }
+            }, kCommitGrain);
+
+            // Phase 3: gather. Each vertex owns its own output slot, so there is no sharing at all.
+            Task::ParallelFor(VertexCount, [&](const Task::FParallelRange& Range)
+            {
+                for (uint32 Vertex = Range.Start; Vertex < Range.End; ++Vertex)
+                {
+                    FVector3 Sum(0.0f);
+                    const uint32 Begin = Offsets[Vertex];
+                    const uint32 End   = Offsets[Vertex + 1u];
+                    for (uint32 Entry = Begin; Entry < End; ++Entry)
+                    {
+                        Sum += FaceNormals[Adjacency[Entry]];
+                    }
+
+                    const float Len = Math::Length(Sum);
+                    OutNormals[Vertex] = (Len > 1e-8f) ? (Sum / Len) : FVector3(0.0f, 1.0f, 0.0f);
+                }
+            }, kCommitGrain);
         }
     }
 
@@ -75,25 +156,47 @@ namespace Lumina
 
     CMaterialInterface* SDynamicMeshComponent::GetMaterialForSlot(size_t Slot) const
     {
+        // MaterialOverrides is the only source now. The runtime CStaticMesh this used to fall back to only
+        // ever had its Materials array resized to nulls -- it never carried a material -- so nothing is lost.
         if (Slot < MaterialOverrides.size())
         {
-            if (CMaterialInterface* Interface = MaterialOverrides[Slot])
-            {
-                return Interface;
-            }
+            return MaterialOverrides[Slot];
         }
-
-        if (DynamicMesh.IsValid())
-        {
-            return DynamicMesh->GetMaterialAtSlot(Slot);
-        }
-
         return nullptr;
     }
 
     FAABB SDynamicMeshComponent::GetAABB() const
     {
-        return DynamicMesh.IsValid() ? DynamicMesh->GetAABB() : FAABB();
+        if (!RenderData)
+        {
+            return FAABB();
+        }
+
+        const FVector3 Extent(RenderData->LocalRadius);
+        return FAABB(RenderData->LocalCenter - Extent, RenderData->LocalCenter + Extent);
+    }
+
+    void SDynamicMeshComponent::RefreshResolvedMaterials()
+    {
+        if (!RenderData)
+        {
+            return;
+        }
+
+        bool bAllReady = true;
+        const TVector<FGeometrySurface>& Geometry = RenderData->Resource.GeometrySurfaces;
+
+        for (size_t i = 0; i < RenderData->Surfaces.size() && i < Geometry.size(); ++i)
+        {
+            // -1 means unassigned; widening keeps it out of range so it falls through to the default.
+            const size_t Slot = (size_t)Geometry[i].MaterialIndex;
+            if (!MeshResolve::ResolveSurfaceMaterial(RenderData->Surfaces[i], GetMaterialForSlot(Slot)))
+            {
+                bAllReady = false;
+            }
+        }
+
+        RenderData->bAllMaterialsReady = bAllReady;
     }
 
     void SDynamicMeshComponent::AddSection(int32 MaterialSlot, int32 StartIndex, int32 IndexCount)
@@ -107,14 +210,14 @@ namespace Lumina
     void SDynamicMeshComponent::ClearMesh()
     {
         BuildData.reset();
-        DynamicMesh = nullptr;
+        RenderData.reset();     // GPU buffers retire through ~FMeshBuffers' deferred free
         CommittedVertexCount   = 0;
         CommittedTriangleCount = 0;
     }
 
     bool SDynamicMeshComponent::IsBuilt() const
     {
-        return DynamicMesh.IsValid();
+        return RenderData && RenderData->MeshletHeaderAddress != 0;
     }
 
     int32 SDynamicMeshComponent::GetVertexCount() const
@@ -190,16 +293,18 @@ namespace Lumina
             return false;
         }
 
+        LUMINA_PROFILE_SCOPE();
+
         FDynamicMeshBuildData& BD = *BuildData;
         const size_t VertexCount = BD.Positions.size();
 
         TUniquePtr<FMeshResource> Resource = MakeUnique<FMeshResource>();
         Resource->bSkinnedMesh = false;
+        Resource->MaxLODs      = (uint32)Math::Clamp(MaxLODs, 1, (int32)MAX_MESH_LODS);
+        Resource->bGenerateTangents = bGenerateTangents;
 
-        // Positions.
-        Resource->Positions = BD.Positions;
-
-        // Normals (derive when absent), packed octahedral.
+        // Normals are derived first because deriving them is the only stage that reads Positions and
+        // Indices; once it is done both streams can be moved into the resource rather than copied.
         const TVector<FVector3>* SourceNormals = &BD.Normals;
         TVector<FVector3> DerivedNormals;
         if (BD.Normals.size() != VertexCount)
@@ -207,34 +312,38 @@ namespace Lumina
             ComputeSmoothNormals(BD.Positions, BD.Indices, DerivedNormals);
             SourceNormals = &DerivedNormals;
         }
+
         Resource->Normals.resize(VertexCount);
-        for (size_t i = 0; i < VertexCount; ++i)
-        {
-            Resource->Normals[i] = PackNormal((*SourceNormals)[i]);
-        }
+        Resource->UVs.resize(VertexCount);
+        Resource->Colors.resize(VertexCount);
 
         // Tangents are generated by MikkTSpace inside GenerateMeshlets; start them zeroed.
         Resource->Tangents.assign(VertexCount, 0u);
-
-        // UVs (zeroed when absent), packed half2.
-        Resource->UVs.resize(VertexCount);
-        const bool bHasUVs = BD.UVs.size() == VertexCount;
-        for (size_t i = 0; i < VertexCount; ++i)
+        
         {
-            Resource->UVs[i] = Math::PackHalf2x16(bHasUVs ? BD.UVs[i] : FVector2(0.0f));
+            LUMINA_PROFILE_SECTION("Pack Normals");
+            const FVector3* InNormals = SourceNormals->data();
+            const FVector2* InUVs     = (BD.UVs.size()    == VertexCount) ? BD.UVs.data()    : nullptr;
+            const uint32*   InColors  = (BD.Colors.size() == VertexCount) ? BD.Colors.data() : nullptr;
+
+            uint32* OutNormals = Resource->Normals.data();
+            uint32* OutUVs     = Resource->UVs.data();
+            uint32* OutColors  = Resource->Colors.data();
+
+            Task::ParallelFor((uint32)VertexCount, [=](const Task::FParallelRange& Range)
+            {
+                for (uint32 i = Range.Start; i < Range.End; ++i)
+                {
+                    OutNormals[i] = PackNormal(InNormals[i]);
+                    OutUVs[i]     = Math::PackHalf2x16(InUVs ? InUVs[i] : FVector2(0.0f));
+                    OutColors[i]  = InColors ? InColors[i] : 0xFFFFFFFFu;
+                }
+            }, kCommitGrain);
         }
+        
+        Resource->Positions = eastl::move(BD.Positions);
+        Resource->Indices   = eastl::move(BD.Indices);
 
-        // Colors (white when absent).
-        Resource->Colors.resize(VertexCount);
-        const bool bHasColors = BD.Colors.size() == VertexCount;
-        for (size_t i = 0; i < VertexCount; ++i)
-        {
-            Resource->Colors[i] = bHasColors ? BD.Colors[i] : 0xFFFFFFFFu;
-        }
-
-        Resource->Indices = BD.Indices;
-
-        // Sections -> geometry surfaces. With none declared, one section covers the whole index buffer.
         int32 MaterialSlotCount = 1;
         if (BD.Sections.empty())
         {
@@ -258,25 +367,54 @@ namespace Lumina
             }
         }
 
-        if (!DynamicMesh.IsValid())
-        {
-            // NAME_None auto-generates a unique name; identity is GUID-based, so per-entity meshes never collide.
-            DynamicMesh = NewObject<CStaticMesh>(CPackage::GetTransientPackage());
-        }
-
-        // Keep the material array sized to the slots the sections reference; the render path falls back to the
-        // engine default material for any null slot, and per-component MaterialOverrides win regardless.
-        if ((int32)DynamicMesh->Materials.size() < MaterialSlotCount)
-        {
-            DynamicMesh->Materials.resize((size_t)MaterialSlotCount);
-        }
+        (void)MaterialSlotCount;   // slots come from MaterialOverrides; nothing to size here anymore
 
         CommittedVertexCount   = (int32)VertexCount;
         CommittedTriangleCount = (int32)(Resource->Indices.size() / 3);
 
-        // SetMeshResource runs GenerateMeshlets (tangents + LODs), uploads the GPU buffers and rebuilds the
-        // bounding box; it also drops the CPU scratch streams.
-        DynamicMesh->SetMeshResource(eastl::move(Resource));
+        // Local bounds from the staged positions, before GenerateMeshlets drops the scratch streams.
+        FVector3 Min(FLT_MAX), Max(-FLT_MAX);
+        for (const FVector3& P : Resource->Positions)
+        {
+            Min = Math::Min(Min, P);
+            Max = Math::Max(Max, P);
+        }
+
+        TSharedPtr<FDynamicMeshRenderData> NewData = MakeShared<FDynamicMeshRenderData>();
+        NewData->LocalCenter = (Min + Max) * 0.5f;
+        NewData->LocalRadius = Math::Length(Max - NewData->LocalCenter);
+
+        Import::Mesh::GenerateMeshlets(*Resource);
+        NewData->Resource = eastl::move(*Resource);
+        MeshBuffers::CreateForResource(NewData->Resource);
+        NewData->MeshletHeaderAddress = NewData->Resource.MeshBuffers.MeshletHeaderBuffer;
+
+        // Geometry half of each surface, straight off the built resource; the material half follows.
+        const TVector<FGeometrySurface>& Geometry = NewData->Resource.GeometrySurfaces;
+        NewData->Surfaces.resize(Geometry.size());
+        for (size_t i = 0; i < Geometry.size(); ++i)
+        {
+            FResolvedSurface& R = NewData->Surfaces[i];
+            R.DrawKey = FDrawKey{ Geometry[i].StartIndex, Geometry[i].IndexCount };
+            R.NumLODs = Geometry[i].NumLODs;
+            for (uint32 LOD = 0; LOD < MAX_MESH_LODS; ++LOD)
+            {
+                R.LODMeshletOffset[LOD] = Geometry[i].LODMeshletOffset[LOD];
+                R.LODMeshletCount[LOD]  = Geometry[i].LODMeshletCount[LOD];
+                const float Threshold   = Geometry[i].LODScreenThreshold[LOD];
+                R.LODScreenThresholdSq[LOD] = Threshold * Threshold;
+            }
+        }
+
+        // Published before the materials resolve: the old data (and its GPU buffers) drop here, and the
+        // extract later this tick already reads the new addresses -- no resolve-cache tick of lag.
+        RenderData = eastl::move(NewData);
+        RefreshResolvedMaterials();
+
+        // Scratch streams are dead once the meshlets and GPU buffers exist.
+        RenderData->Resource.ClearVertices();
+        RenderData->Resource.Indices.clear();
+        RenderData->Resource.Indices.shrink_to_fit();
 
         // Staging is consumed; the next edit re-stages from scratch.
         BuildData.reset();

@@ -163,7 +163,7 @@ namespace Lumina::RHI::Core
         GCore.bInitialized = false;
     }
 
-    void DeferredFree(GPUPtr Memory)
+    void DeferredFree(GPUPtr Memory, uint32 ExtraFrames)
     {
         if (Memory == 0)
         {
@@ -177,7 +177,7 @@ namespace Lumina::RHI::Core
         }
 
         FScopeLock Lock(GCore.PendingFreeMutex);
-        GCore.PendingFrees.push_back(FPendingFree{ Memory, kFramesInFlight });
+        GCore.PendingFrees.push_back(FPendingFree{ Memory, kFramesInFlight + ExtraFrames });
     }
 
     void BeginFrame(uint32 SlotIndex)
