@@ -38,7 +38,7 @@ namespace Lumina
         //      EnergyComp sunk to its use, Sky atmosphere/optical-depth marches [unroll]->[loop].
         // v15: spot/point atlas PCF loop [unroll]->[loop] (SurfaceShading ComputeShadowFactor) -- the prior
         //      pass missed it; constant SHADOW_SAMPLE_COUNT unrolled it, inflating whole-shader PS regs.
-        constexpr uint32 SHADER_CACHE_VERSION = 15;
+        constexpr uint32 SHADER_CACHE_VERSION = 16;
 
         constexpr const char* CACHE_DIR = "/Intermediates/ShaderCache";
 

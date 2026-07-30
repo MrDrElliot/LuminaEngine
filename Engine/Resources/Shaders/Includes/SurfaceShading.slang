@@ -265,13 +265,6 @@ float SampleDirectionalCascade(FLight Light, int CascadeIndex, float3 FragmentPo
         }
     }
 
-    if (NumBlockers == 0)
-    {
-        return 1.0;
-    }
-
-    float AvgBlockerDepth = BlockerDepthSum / float(NumBlockers);
-
     // Filter bounds in shadow texels (per-cascade): a floor so contact shadows still get multi-tap PCF
     // (smooth near edges), and a ceiling the max tap count covers gap-free (no far stipple). Texel units
     // keep softening screen-consistent across cascades, so no explicit CascadeScale is needed here.
@@ -279,16 +272,28 @@ float SampleDirectionalCascade(FLight Light, int CascadeIndex, float3 FragmentPo
     float MinRadius      = PCSS_MinFilterTexels * CascadeTexelUV;
     float MaxRadius      = PCSS_MaxFilterTexels * CascadeTexelUV;
 
-    // Stage 2: penumbra grows with receiver-to-blocker depth (ortho NDC-z delta) scaled by per-light
-    // softness (ShadowParams.z), clamped between the texel floor and ceiling.
-    float DepthDelta   = max(CurrentDepth - AvgBlockerDepth, 0.0);
-    float Penumbra     = DepthDelta * LightData().ShadowParams.z;
-    float FilterRadius = clamp(Penumbra, MinRadius, MaxRadius);
+    // NO early-out on an empty blocker search. The search is 8 sparse taps of POINT-sampled depth on a FIXED
+    // rotation, so whether it finds an occluder is quantized to shadow-map texels; returning a hard 1.0 here
+    // skipped the PCF entirely and stamped crisp, fully-lit, texel-shaped rectangles into the penumbra
+    // wherever the sparse pattern missed a real occluder. Falling through at MinRadius still resolves those
+    // pixels correctly (the PCF compares against the actual shadow map) and costs a few taps where there
+    // genuinely is nothing, which returns 1.0 anyway.
+    float FilterRadius = MinRadius;
+    if (NumBlockers > 0)
+    {
+        float AvgBlockerDepth = BlockerDepthSum / float(NumBlockers);
 
-    // Low blocker coverage means partial occlusion, so pull the filter in slightly -- but never below
-    // the texel floor, or contact-hardened edges go blocky again.
-    float BlockerCoverage = float(NumBlockers) / float(PCSS_BLOCKER_SEARCH_TAPS);
-    FilterRadius = max(FilterRadius * lerp(0.75, 1.0, BlockerCoverage), MinRadius);
+        // Stage 2: penumbra grows with receiver-to-blocker depth (ortho NDC-z delta) scaled by per-light
+        // softness (ShadowParams.z), clamped between the texel floor and ceiling.
+        float DepthDelta = max(CurrentDepth - AvgBlockerDepth, 0.0);
+        float Penumbra   = DepthDelta * LightData().ShadowParams.z;
+        FilterRadius     = clamp(Penumbra, MinRadius, MaxRadius);
+
+        // Low blocker coverage means partial occlusion, so pull the filter in slightly -- but never below
+        // the texel floor, or contact-hardened edges go blocky again.
+        float BlockerCoverage = float(NumBlockers) / float(PCSS_BLOCKER_SEARCH_TAPS);
+        FilterRadius = max(FilterRadius * lerp(0.75, 1.0, BlockerCoverage), MinRadius);
+    }
 
     // Stage 3: scale tap count with penumbra width so sample density (and thus smoothness) stays roughly
     // constant; at MaxRadius this reaches SHADOW_MAX_SAMPLE_COUNT -> ~1-texel Vogel spacing, gap-free.

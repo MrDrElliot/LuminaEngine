@@ -15,26 +15,6 @@ namespace Lumina
 	};
 
 
-	struct FDrawKey
-	{
-		uint32 StartIndex;
-		uint32 IndexCount;
-
-		bool operator == (const FDrawKey& Key) const
-		{
-			return StartIndex == Key.StartIndex && IndexCount == Key.IndexCount;
-		}
-	};
-
-	static uint64 GetTypeHash(const FDrawKey& K)
-	{
-		size_t Seed = 0;
-		Hash::HashCombine(Seed, K.StartIndex);
-		Hash::HashCombine(Seed, K.IndexCount);
-		return Seed;
-	}
-
-
 	struct FDrawBatchKey
 	{
 		uint64 MaterialID;

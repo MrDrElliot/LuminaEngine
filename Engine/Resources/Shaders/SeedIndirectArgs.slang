@@ -16,12 +16,15 @@ struct FDrawMeshTasksIndirectArguments
 struct FSeedIndirectArgs
 {
     uint NumViews;
-    uint NumDraws;
-    uint TotalMeshletBound;   // per-view draw-list slice stride
-    uint _Pad;
+    uint NumDraws;            // = batch count; CPU-known, since a draw is a PSO bucket
+    uint _Pad0;
+    uint _Pad1;
     FDrawIndirectArguments*          IndirectArgs;
     FDrawMeshTasksIndirectArguments* MeshDrawArgs;
-    uint*                            DrawMeshletStartOffsets;   // per-draw meshlet prefix (NumDraws entries)
+    // Per-(view, draw) start offset into the meshlet draw list, GPU-built by BuildDrawPrefix from the
+    // exact emit bounds. There is no per-view stride any more -- regions are packed, so a view that culls
+    // heavily takes almost no space instead of reserving an equal share of the worst case.
+    uint*                            ViewDrawOffsets;
 };
 FSeedIndirectArgs* Pass() { return GetPassArgs<FSeedIndirectArgs>(); }
 
@@ -37,16 +40,15 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
         return;
     }
 
-    const uint View = Idx / NumDraws;
-    const uint Draw = Idx - View * NumDraws;
-
-    // FirstInstance lands inside the view's draw-list slice so the cull's atomic append can't
-    // overflow into another view's slice (matches FCullView.DrawListOffset).
+    // FirstInstance is this (view, draw)'s base in the meshlet draw list. Both raster paths read it: the VS
+    // path through gl_InstanceIndex (= FirstInstance + instance), the mesh path by loading
+    // IndirectArgs[ArgBase].FirstInstance directly. So writing the packed offset here is all it takes to
+    // move the whole renderer off equal per-view slices.
     FDrawIndirectArguments Args;
     Args.VertexCount   = MESHLET_VERTICES_PER_DRAW;
     Args.InstanceCount = 0u;
     Args.VertexOffset  = 0u;
-    Args.FirstInstance = View * Pass().TotalMeshletBound + Pass().DrawMeshletStartOffsets[Draw];
+    Args.FirstInstance = Pass().ViewDrawOffsets[Idx];
     Pass().IndirectArgs[Idx] = Args;
 
     FDrawMeshTasksIndirectArguments MeshArgs;

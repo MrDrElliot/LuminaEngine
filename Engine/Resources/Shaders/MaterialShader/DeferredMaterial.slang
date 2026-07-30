@@ -1,10 +1,10 @@
 #include "Includes/SurfaceShading.slang"
 
-// Deferred VisBuffer material pass. A fullscreen pixel shader: read this pixel's triangle ID from the
-// VisBuffer, re-fetch the meshlet triangle, reconstruct perspective-correct attributes + analytic UV
-// derivatives via barycentric coordinates, run the material graph, and shade through the shared
-// ShadeSurface (identical lighting to the forward base pass). Replaces the forward base pass entirely:
-// every visible pixel is owned by exactly one triangle and shaded exactly once.
+// Deferred VisBuffer material pass. Runs over the tiles this material covers (see DeferredMaterialTileVS):
+// read this pixel's triangle ID from the VisBuffer, re-fetch the meshlet triangle, reconstruct
+// perspective-correct attributes + analytic UV derivatives via barycentric coordinates, run the material
+// graph, and shade through the shared ShadeSurface (identical lighting to the forward base pass). Replaces
+// the forward base pass entirely: every visible pixel is owned by exactly one triangle and shaded once.
 //
 // Per-material because the geometry reconstruction re-applies the material's WorldPositionOffset (so the
 // reconstructed triangle matches what the VisBuffer geometry pass rasterized) and runs the material's
@@ -13,23 +13,23 @@
 
 // Layout overlays FDBufferPushConstants (DBuffer.slang) on its first 16 bytes so the shared ShadeSurface ->
 // ApplyDBuffer reads the decal indices from the same push constant: offset 0 is read by ApplyDBuffer as an
-// (unused) MeshletBase, and the three DBuffer indices sit at offsets 4/8/12. MaterialIndex follows at 16.
+// (unused) MeshletBase, and the three DBuffer indices sit at offsets 4/8/12.
+//
+// Shared with DeferredMaterialTileVS.slang (same pipeline, same push block) -- the fields from SlotIndex on
+// are the vertex shader's; keep both declarations and the C++ FDeferredPushConstants byte-identical.
 struct FDeferredPassArgs
 {
     uint  VisBufferIndex;   // 0   bindless R32_UINT visibility target
     uint  DBufferAIndex;    // 4   overlaid by FDBufferPushConstants in ApplyDBuffer
     uint  DBufferBIndex;    // 8
     uint  DBufferCIndex;    // 12
-    uint  MaterialIndex;    // 16  unused: superseded by SlotIndex as the per-pixel reject key
-    uint  DrawListCount;    // 20  total MeshletDrawList entries (NumViews * TotalMeshletBound); slot bound
-    uint  SlotIndex;        // 24  dense deferred-draw slot (tile-bitmask bit + per-pixel reject key)
-    uint  TileCountX;       // 28
-    uint  TileSizePx;       // 32
-    uint  TileWordCount;    // 36
-    uint  ScreenW;          // 40
-    uint  ScreenH;          // 44
-    uint* TileBits;         // 48  per-tile slot bitmask (read by the tile-quad VS)
-    uint* MaterialId;       // 56  per-pixel owning SLOT (classify output; cheap reject here)
+    uint  DrawListCount;    // 16  total MeshletDrawList entries; slot bound
+    uint  SlotIndex;        // 20  dense deferred-draw slot (VS: encodes this draw's depth)
+    uint  TileCountX;       // 24  VS
+    uint  TileSizePx;       // 28  VS
+    uint  ScreenW;          // 32  VS
+    uint  ScreenH;          // 36  VS
+    uint* TileList;         // 40  VS: compacted per-slot tile list
 };
 FDeferredPassArgs* Pass() { return GetPassArgs<FDeferredPassArgs>(); }
 
@@ -110,17 +110,11 @@ PSOutput FragmentMain(float4 SvPosition : SV_Position)
     Output.Color  = float4(0.0, 0.0, 0.0, 0.0);
     Output.Picker = 0u;
 
-    // Material binning: the classify pass tagged every covered pixel with its owning deferred SLOT, and the
-    // tile-quad VS already skipped the tiles this slot doesn't touch. This draw owns one slot (one master
-    // DeferredShader); keep only its pixels. The shading below re-reads each pixel's own per-instance
-    // MaterialIndex (Ref.Inst.MaterialIndex), so instances sharing this master shade correctly in this one draw.
-    uint PixelIdx = (uint)Texel.y * Pass().ScreenW + (uint)Texel.x;
-    if (Pass().MaterialId[PixelIdx] != Pass().SlotIndex)
-    {
-        discard;
-        return Output;
-    }
-
+    // No binning reject here. Every pixel that reaches this shader was already proven to belong to this
+    // draw's slot: MaterialDepth stamped each covered pixel with its owning slot's encoded depth, the tile
+    // quad is emitted at this slot's encoded depth, and the pipeline tests DEPTH_EQUAL -- so foreign pixels
+    // are killed by fixed-function hardware before a shader launches. The shading below reads each pixel's
+    // own per-instance MaterialIndex, so all instances of this master shade correctly in this one draw.
     uint Raw   = LoadTexture2DUInt(Pass().VisBufferIndex, Texel);
 
     uint SlotCount = Pass().DrawListCount;          // covers both camera views (early + late slices)
@@ -130,14 +124,16 @@ PSOutput FragmentMain(float4 SvPosition : SV_Position)
     uint MeshletSlot = VisID >> 7u;
     uint TriId       = VisID & 0x7Fu;
 
-    // Indices are still clamped fault-safe (the id match above already implies a valid resolve, since the
-    // classify pass produced MaterialIndex from this same VisBuffer texel -- this is belt-and-suspenders so a
-    // speculated buffer-device-address load can never page-fault).
+    // Indices are still clamped fault-safe. The depth test reaching this shader already implies a valid
+    // resolve -- MaterialDepth derived this pixel's slot from this same VisBuffer texel and discarded if it
+    // could not -- so this is belt-and-suspenders against a speculated buffer-device-address load faulting on
+    // a stale draw-list gap. Cheap, and this pass has crashed the GPU on exactly that shape before.
     bool bValid   = (Raw != 0u) && (SlotCount != 0u) && (MeshletSlot < SlotCount);
     uint SafeSlot = bValid ? MeshletSlot : 0u;
 
     FMeshletDraw Draw = MeshletDrawList()[SafeSlot];
-    bValid = bValid && (Draw.InstanceID < InstCount);
+    // See MaterialDepth: reject entries this frame did not write instead of shading stale ones.
+    bValid = bValid && Draw.IsFromFrame(Scene().CullData.MeshletDrawTag) && (Draw.InstanceID < InstCount);
     uint SafeInst = (Draw.InstanceID < InstCount) ? Draw.InstanceID : 0u;
 
     // Build the meshlet ref with clamped indices (mirrors ResolveSurfaceMeshlet, but fault-proof against a

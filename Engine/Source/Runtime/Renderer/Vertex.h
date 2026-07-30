@@ -125,6 +125,71 @@ namespace Lumina
         }
     };
 
+    /** Normalizes a vertex's four blend weights and quantizes them to u8 summing to EXACTLY 255.
+     *
+     *  Both parts matter. The GPU divides by 255 and blends the bone rows, so the quantized quartet IS the
+     *  weight set -- and an unnormalized set scales the whole blended affine matrix, translation row
+     *  included, dragging the vertex toward the model origin by (1 - sum). Plain `FU8Vector4(W * 255.0f)`
+     *  truncates each component, so even a perfectly normalized input lands at a sum of 252-255: a silent
+     *  ~1% shrink toward the root on every skinned vertex. Rounding alone still misses by +/-2.
+     *
+     *  Largest-remainder: floor each scaled weight, then hand the leftover units to the components with the
+     *  biggest discarded fractions. Exact by construction and stable.
+     *
+     *  A zero-sum input (no usable influence -- e.g. a mesh whose skin data never bound) becomes rigid to
+     *  joint 0 rather than all-zeroes, so it renders in bind pose instead of collapsing onto the origin.
+     */
+    inline FU8Vector4 PackSkinWeights(FVector4 Weights)
+    {
+        float W[4] = { Weights.x, Weights.y, Weights.z, Weights.w };
+
+        float Sum = 0.0f;
+        for (int32 i = 0; i < 4; ++i)
+        {
+            // A negative weight would make the blend leave the bones' convex hull; clamp rather than trust.
+            W[i] = (W[i] > 0.0f) ? W[i] : 0.0f;
+            Sum += W[i];
+        }
+
+        if (Sum <= 0.0f)
+        {
+            return FU8Vector4(255, 0, 0, 0);
+        }
+
+        const float Scale = 255.0f / Sum;
+
+        int32 Quantized[4];
+        float Remainder[4];
+        int32 Total = 0;
+        for (int32 i = 0; i < 4; ++i)
+        {
+            // Non-negative, so a truncating cast IS floor -- no Math::Floor dependency in this header.
+            const float Scaled = W[i] * Scale;
+            Quantized[i] = (int32)Scaled;
+            Remainder[i] = Scaled - (float)Quantized[i];
+            Total += Quantized[i];
+        }
+
+        // Hand out the shortfall (0..3 units) to the largest discarded fractions.
+        for (int32 Unit = Total; Unit < 255; ++Unit)
+        {
+            int32 Best = 0;
+            for (int32 i = 1; i < 4; ++i)
+            {
+                if (Remainder[i] > Remainder[Best])
+                {
+                    Best = i;
+                }
+            }
+            Quantized[Best] += 1;
+            Remainder[Best] = -1.0f;   // each component can only win one unit
+        }
+
+        // Each component is in [0,255] by construction (non-negative floors of values summing to 255, plus at
+        // most one extra unit each), so no clamp is needed.
+        return FU8Vector4((uint8)Quantized[0], (uint8)Quantized[1], (uint8)Quantized[2], (uint8)Quantized[3]);
+    }
+
     struct FSkinnedVertex : FVertex
     {
         FU8Vector4     JointIndices;

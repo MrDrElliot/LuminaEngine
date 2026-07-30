@@ -101,6 +101,9 @@ namespace Lumina
 
         CEdNodeGraphPin* CreatePin(CClass* InClass, const FString& Name, ENodePinDirection Direction);
 
+        // True when a pin on this node already uses this id, in either direction.
+        bool IsPinIDTaken(uint32 ID) const;
+
         // Owning graph; populated by CEdNodeGraph::AddNode. Lets nodes reach up for graph-wide
         // context (e.g. material domain on CMaterialOutputNode).
         CEdNodeGraph* GetOwningGraph() const { return OwningGraph; }

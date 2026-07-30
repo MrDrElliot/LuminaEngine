@@ -309,16 +309,20 @@ namespace Lumina
             CustomOutputPins.push_back(Pin);
         }
 
-        // Restore surviving wires by (direction, name).
+        // Restore surviving wires by (direction, name). Names are not necessarily unique (a duplicate is
+        // reported by Validate, not prevented), so a pin only takes one snapshot: without that, two pins
+        // sharing a name would pile both wire sets onto the first of them.
+        THashSet<CEdNodeGraphPin*> Restored;
         for (const FConnSnapshot& Snap : Snapshots)
         {
             const TVector<TObjectPtr<CEdNodeGraphPin>>& Pins = Snap.bInput ? GetInputPins() : GetOutputPins();
             for (const TObjectPtr<CEdNodeGraphPin>& Pin : Pins)
             {
-                if (!Pin.IsValid() || Pin->GetPinName() != Snap.Name)
+                if (!Pin.IsValid() || Pin->GetPinName() != Snap.Name || Restored.count(Pin.Get()) != 0)
                 {
                     continue;
                 }
+                Restored.insert(Pin.Get());
                 for (CEdNodeGraphPin* Remote : Snap.Remotes)
                 {
                     if (Remote != nullptr)

@@ -76,6 +76,17 @@ namespace Lumina::ECS::Utils
 	// re-sync; pass false for bodiless entities to skip that queue (and its drain) entirely.
 	RUNTIME_API void QueueDirtyTransform(FTransformDirtyState* State, entt::entity Entity, bool bQueueBody);
 
+	// Start recording which entities the resolve actually moved, so a downstream cache (the render
+	// scene's persistent primitive table) can refresh just those instead of rescanning every entity.
+	// Off by default: nothing accumulates until a consumer opts in.
+	//
+	// The resolve is what clears bWorldDirty, so this is the only point where "who moved" is still
+	// observable. It reports the resolve's own output rather than duplicating its bookkeeping.
+	RUNTIME_API void SetPublishMovedTransforms(FEntityRegistry& Registry, bool bEnable);
+
+	// Appends every entity moved since the last drain. Game thread. False when none.
+	RUNTIME_API bool DrainMovedTransforms(FEntityRegistry& Registry, TVector<entt::entity>& Out);
+
 	// Tag the entity's body (if any) for the physics sync. Single-threaded; for external (non-setter) paths.
 	RUNTIME_API void MarkPhysicsBodyDirtyIfBodied(FEntityRegistry& Registry, entt::entity Entity);
 

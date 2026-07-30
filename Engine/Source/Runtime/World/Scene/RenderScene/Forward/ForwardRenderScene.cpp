@@ -84,25 +84,26 @@ namespace Lumina
             true,
             "Reject instances on the CPU before upload. Disable to leave all culling to the GPU.");
         
-        static TConsoleVar<int32> CVarStaticMeshGrain(
-            "r.Scene.StaticMeshGrain",
-            64,
-            "Entities per task in the static mesh gather.");
+        // One grain for the whole gather: static, dynamic, skeletal and foliage primitives share a
+        // single dense array now, so there is nothing left to tune per source.
+        static TConsoleVar<int32> CVarPrimitiveGrain(
+            "r.Scene.PrimitiveGrain",
+            256,
+            "Scene primitives per task in the cull/emit gather.");
 
-        static TConsoleVar<int32> CVarDynamicMeshGrain(
-            "r.Scene.DynamicMeshGrain",
-            64,
-            "Entities per task in the dynamic mesh gather.");
-
-        static TConsoleVar<int32> CVarSkeletalMeshGrain(
-            "r.Scene.SkeletalMeshGrain",
-            32,
-            "Entities per task in the skeletal mesh gather.");
-
-        static TConsoleVar<int32> CVarFoliageGrain(
-            "r.Scene.FoliageGrain",
-            512,
-            "Baked instances per task in the foliage gather.");
+        // Opt-in diagnostic for the pre-skin slice arithmetic. Every base is an UNSIGNED WRAP
+        // (Base = SkinCursor - BlockVertexOffset) that only lands back in range if each meshlet the GPU
+        // resolves sits inside the block the descriptor covered -- and the GPU read (LoadSkinnedVertex) has
+        // no bounds check to catch it when that fails. These checks assert the invariant on the CPU, where
+        // the numbers can actually be printed.
+        //
+        // OFF by default: the span check walks every meshlet of every rendered block for every skinned
+        // entity, every frame, on the gather's critical path. Turn it on when pre-skinned geometry looks
+        // wrong; leave it off otherwise.
+        static TConsoleVar<int32> CVarValidateSkinSlices(
+            "r.Skinning.Validate",
+            0,
+            "Validate GPU pre-skinning slice arithmetic on the CPU and log violations (1 = on).");
 
         static TConsoleVar<int32> CVarMaxPreSkinnedVertices(
             "r.Skinning.MaxVertices",
@@ -197,6 +198,19 @@ namespace Lumina
         AddSceneView(Windowing::GetPrimaryWindowHandle()->GetExtent(), /*bPrimary*/ true);
 
         SwapchainResizedHandle = FRenderManager::OnSwapchainResized.AddMember(this, &FForwardRenderScene::SwapchainResized);
+
+        if (World != nullptr)
+        {
+            FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
+
+            // Opt in to the resolve publishing which entities it moved. Nothing accumulates until this
+            // is on, so worlds without a render scene pay nothing.
+            ECS::Utils::SetPublishMovedTransforms(Registry, true);
+
+            // The world's components were loaded before this scene existed, so their construct hooks
+            // fired into a tracker nobody was reading. Rescan once.
+            ScenePrimitives.Reset(&Registry);
+        }
     }
 
     FForwardRenderScene::FSceneView& FForwardRenderScene::AddSceneView(const FUIntVector2& Size, bool bPrimary)
@@ -344,10 +358,25 @@ namespace Lumina
 
         FRenderManager::OnSwapchainResized.Remove(SwapchainResizedHandle);
 
+        // Stop the resolve recording who moved; this scene was its only consumer, and an unread queue
+        // would grow for as long as the world outlives its renderer.
+        if (World != nullptr)
+        {
+            FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
+            ECS::Utils::SetPublishMovedTransforms(Registry, false);
+            MovedTransformScratch.clear();
+            ECS::Utils::DrainMovedTransforms(Registry, MovedTransformScratch);
+            MovedTransformScratch.clear();
+
+            // Primitives hold entity keys and refs into the resolve table; a later scene on this world
+            // must rebuild rather than inherit them.
+            ScenePrimitives.Reset(&Registry);
+        }
+
         // Per-view images + cluster buffers.
         for (FSceneView& View : SceneViews)
         {
-            ReleaseViewImages(View);
+            ReleaseViewImages(View, /*bDeferRelease*/ false);
             if (View.ClusterBuffer)
             {
                 RHI::Free(View.ClusterBuffer.Ptr);
@@ -378,6 +407,15 @@ namespace Lumina
             }
         };
         FreeBuffer(PreSkinnedVerticesBuffer);
+
+        // Retained GPU scene. NOT ringed (uploads are ordered on the GPU timeline), so these are freed once
+        // rather than per slot. RetainedInstanceBuffer alone is 128 B per primitive surface -- at ~900k
+        // entities that is well over 100 MB, and every one of these was leaking a full copy on every scene
+        // teardown because the GPU-driven cutover added them without adding them here.
+        FreeBuffer(RetainedInstanceBuffer);
+        FreeBuffer(RetainedCullDataBuffer);
+        FreeBuffer(SurfaceDescBuffer);
+
         for (uint32 Slot = 0; Slot < RHI::kFramesInFlight; ++Slot)
         {
             FreeBuffer(IndirectArgsRing[Slot]);
@@ -389,7 +427,26 @@ namespace Lumina
             FreeBuffer(SpdCounterRing[Slot]);
             FreeBuffer(InstancePrefixRing[Slot]);
             FreeBuffer(MaterialBinTileBitsRing[Slot]);
-            FreeBuffer(MaterialBinPixelIdRing[Slot]);
+            FreeBuffer(MaterialTileListRing[Slot]);
+            FreeBuffer(MaterialTileArgsRing[Slot]);
+
+            // GPU-driven scene per-frame outputs.
+            FreeBuffer(VisibleInstanceRing[Slot]);
+            FreeBuffer(CullCounterRing[Slot]);
+            FreeBuffer(BatchMeshletCountRing[Slot]);
+            FreeBuffer(ViewDrawCountRing[Slot]);
+            FreeBuffer(ViewDrawOffsetRing[Slot]);
+            FreeBuffer(EarlyCullDispatchArgsRing[Slot]);
+            FreeBuffer(TotalsRing[Slot]);
+            FreeBuffer(ScanBlockSumRing[Slot]);
+            FreeBuffer(ScanDispatchArgsRing[Slot]);
+
+            // Raw GPUPtr rather than an FSceneBuffer (CPURead allocation, persistently mapped).
+            if (MeshletBoundReadback[Slot] != 0)
+            {
+                RHI::Free(MeshletBoundReadback[Slot]);
+                MeshletBoundReadback[Slot] = 0;
+            }
         }
 
         // Render-thread-owned terrain / particle GPU state.
@@ -573,7 +630,8 @@ namespace Lumina
         SceneGlobalData.CullData.Frustum                = AsGPU(Frame.CameraFrustum);
         SceneGlobalData.CullData.ShadowFrustum          = SceneGlobalData.CullData.Frustum; // Rebuilt after directional light is processed.
         SceneGlobalData.CullData.bHasDirectional        = 0u;
-        SceneGlobalData.CullData.InstanceNum            = (uint32)Frame.Geometry.Instances.size();
+        // InstanceNum / MeshletDrawListCapacity are published by CompileDrawCommands_RenderThread, which
+        // is where the buffers they bound are actually sized. Nothing on this thread knows either value.
         SceneGlobalData.CullData.bFrustumCull           = RenderSettings.bFrustumCull;
         SceneGlobalData.CullData.bOcclusionCull         = RenderSettings.bOcclusionCull;
         // Fallback; ProcessDirectionalLight overrides this from the active sun's
@@ -582,10 +640,15 @@ namespace Lumina
         SceneGlobalData.CullData.bShadowOcclusionCull   = RenderSettings.bShadowOcclusionCull;
         SceneGlobalData.CullData.DebugMode              = (uint32)RenderSettings.Flags;
 
-        if (GShaderCompiler->HasPendingRequests())
+
+        CMaterial* FallbackMaterial = CMaterial::GetDefaultMaterial();
+        if (!IsValid(FallbackMaterial) || !FallbackMaterial->IsReadyForRender())
         {
-            SlotProducedCount[Slot] = NextProduce;
+            SlotHasPendingConsume[Slot].store(false, std::memory_order_release);
             ExtractFrame = nullptr;
+
+            // Nothing rendered, so next frame's HZB is not this frame's depth.
+            bDepthPyramidValid.store(false, std::memory_order_release);
             return;
         }
 
@@ -704,6 +767,9 @@ namespace Lumina
         // Publish this frame's stats for the editor-side GetRenderStats() reader.
         RenderStats = Frame.FrameStats;
 
+        // From here the frame is submitted, so the pyramid this frame builds is usable next frame.
+        bDepthPyramidValid.store(true, std::memory_order_release);
+
         RHI::FCmdListH CL = RHI::OpenCommandList();
         RHI::CmdSetTextureHeap(CL, RHI::Core::GetGlobalHeap());
         // Projection bakes the Vulkan Y-flip, so CCW-wound geometry lands clockwise in framebuffer space.
@@ -722,8 +788,19 @@ namespace Lumina
                 RmlUi::RenderWorldWidgets(World, CL);
             }
 
-            ResetPass_RenderThread(CL);
-            CompileDrawCommands_RenderThread(CL);
+            {
+                SCENE_GPU_SCOPE(CL, "Reset Pass");
+                ResetPass_RenderThread(CL);
+            }
+
+            {
+                // Everything the GPU-driven scene does before the first raster lives in here: the retained
+                // uploads and the CullInstances / BuildDrawPrefix / SeedIndirectArgs / ScanPrefix*
+                // dispatches. It had no GPU marker, so on the GPU timeline it was an unlabelled gap between
+                // "RmlUi Widgets" and "Cull Early" -- which is where the frame was actually going.
+                SCENE_GPU_SCOPE(CL, "Compile Draw Commands");
+                CompileDrawCommands_RenderThread(CL);
+            }
 
             {
                 SCENE_GPU_SCOPE(CL, "Texture Paint");
@@ -854,8 +931,10 @@ namespace Lumina
                     SSAOBlurPass(CL);
                 }
 
+                // Stamp each covered pixel's owning material slot into MaterialDepth and bin the tiles, then
+                // shade one indirect tile draw per material against it. Both passes emit their own GPU marker.
                 {
-                    SCENE_GPU_SCOPE(CL, "Deferred Material");
+                    MaterialDepthPass(CL);
                     DeferredMaterialPass(CL);
                 }
 
@@ -1056,6 +1135,7 @@ namespace Lumina
         LightCullPass(CL);
         EnvironmentPass(CL);
         DecalPass(CL);
+        MaterialDepthPass(CL);
         DeferredMaterialPass(CL);
         TerrainRenderPass(CL);
         WaterPass(CL);
@@ -1094,6 +1174,9 @@ namespace Lumina
         Primary.Size = FUIntVector2(Math::Max((uint32)NewSize.x, 1u), Math::Max((uint32)NewSize.y, 1u));
 
         InitFrameResources();
+
+        // New depth targets: whatever the pyramid holds is from the old extent.
+        bDepthPyramidValid.store(false, std::memory_order_release);
 
         #if USING(WITH_EDITOR)
         // Drop old readback slots; sized to previous extent so pixel grid no longer matches clicks.
@@ -1136,9 +1219,132 @@ namespace Lumina
         {
             Local.ResetForFrame(FFrameArenaAllocator(&GetThreadFrameAllocator(), "RenderGather"));
             Local.Items.reserve(CurrentReservePerThread);
+
+            // Clears only the slots this worker touched last time it ran a gather. A worker that emitted
+            // into 40 draws pays for 40 entries, not for the scene's whole slot space.
+            Local.PrepareCounters(ScenePrimitives.GetBatches().Num());
+            Local.bTouched = true;
         }
         return Local;
     }
+
+    // Routes this frame's transform + component changes into the persistent primitive table.
+    void FForwardRenderScene::SyncScenePrimitives()
+    {
+        FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
+
+        // The transform resolve above published exactly the entities whose world matrix it rewrote
+        // (including descendants dragged along by a parent). Route them to the primitives that mirror
+        // that transform -- the only per-frame link between the ECS and the render scene.
+        MovedTransformScratch.clear();
+        if (ECS::Utils::DrainMovedTransforms(Registry, MovedTransformScratch))
+        {
+            FRenderDirtyTracker& Tracker = FRenderDirtyTracker::Ensure(Registry);
+            for (entt::entity Entity : MovedTransformScratch)
+            {
+                Tracker.MarkAllSources(Entity, EPrimitiveDirty::Transform);
+            }
+        }
+
+        ScenePrimitives.Sync(*World);
+
+        PublishRetainedUpload();
+    }
+
+    // Hands the retained scene to the render thread while the game thread still owns it.
+    void FForwardRenderScene::PublishRetainedUpload()
+    {
+        FFrameData::FGeometry::FRetainedUpload& Out = ExtractFrame->Geometry.RetainedUpload;
+
+        const uint32 SlotCount = ScenePrimitives.GetRetainedSlotCount();
+        Out.SlotCount = SlotCount;
+
+        Out.FullInstances.clear();
+        Out.FullCullData.clear();
+        Out.DirtySlots.clear();
+        Out.DirtyInstances.clear();
+        Out.DirtyCullData.clear();
+        Out.SurfaceDescs.clear();
+
+        // A full re-send is needed exactly when the device allocation is about to be replaced, because a
+        // replacement loses the accumulated contents. That happens when the slot count outgrows the capacity
+        // the render thread last published -- reading that value stale is safe, it only ever grows.
+        const uint32 DeviceCapacity = RetainedDeviceCapacity.load(std::memory_order_acquire);
+        Out.bFull = ScenePrimitives.NeedsFullInstanceUpload() || SlotCount > DeviceCapacity;
+
+        const FGPUInstance*      SrcInstances = ScenePrimitives.GetRetainedInstances();
+        const FInstanceCullData* SrcCullData  = ScenePrimitives.GetRetainedCullData();
+
+        if (Out.bFull)
+        {
+            if (SlotCount > 0)
+            {
+                Out.FullInstances.assign(SrcInstances, SrcInstances + SlotCount);
+                Out.FullCullData.assign(SrcCullData, SrcCullData + SlotCount);
+            }
+        }
+        else
+        {
+            // Sort and dedupe so the render thread can coalesce runs of adjacent slots into ONE copy each.
+            // The channel legitimately repeats a slot (a re-bind frees then re-stamps it) and hands them out
+            // in whatever order the sweep hit them.
+            DirtySlotSortScratch.clear();
+            for (uint32 DirtySlot : ScenePrimitives.GetDirtyInstanceSlots())
+            {
+                if (DirtySlot < SlotCount)   // a slot freed after being marked is simply dropped
+                {
+                    DirtySlotSortScratch.push_back(DirtySlot);
+                }
+            }
+            std::sort(DirtySlotSortScratch.begin(), DirtySlotSortScratch.end());
+            DirtySlotSortScratch.erase(std::unique(DirtySlotSortScratch.begin(), DirtySlotSortScratch.end()),
+                                       DirtySlotSortScratch.end());
+
+            // Past a quarter of the scene, one contiguous upload beats scattered per-run copies outright.
+            // This matters because "incremental" is badly named for a material edit: the resolve entry is
+            // shared, so invalidating one mesh dirties EVERY primitive drawing it. Uploading that as
+            // thousands of separate ranges was O(dirty) transient allocations, each one an insert into the
+            // RHI's block list -- which is quadratic and hung the render thread outright.
+            if (DirtySlotSortScratch.size() * 4 >= (SIZE_T)SlotCount)
+            {
+                Out.bFull = true;
+                DirtySlotSortScratch.clear();
+                if (SlotCount > 0)
+                {
+                    Out.FullInstances.assign(SrcInstances, SrcInstances + SlotCount);
+                    Out.FullCullData.assign(SrcCullData, SrcCullData + SlotCount);
+                }
+            }
+            else
+            {
+                Out.DirtySlots.reserve(DirtySlotSortScratch.size());
+                Out.DirtyInstances.reserve(DirtySlotSortScratch.size());
+                Out.DirtyCullData.reserve(DirtySlotSortScratch.size());
+                for (uint32 DirtySlot : DirtySlotSortScratch)
+                {
+                    Out.DirtySlots.push_back(DirtySlot);
+                    Out.DirtyInstances.push_back(SrcInstances[DirtySlot]);
+                    Out.DirtyCullData.push_back(SrcCullData[DirtySlot]);
+                }
+            }
+        }
+
+        // Interned and small; copied whole on the rare frames a new distinct LOD table appears. A full
+        // instance re-send also re-sends these, since a replaced device buffer loses them too.
+        Out.SurfaceDescCount     = ScenePrimitives.GetSurfaceDescCount();
+        Out.bSurfaceDescsChanged = ScenePrimitives.AreSurfaceDescsDirty() || Out.bFull;
+        if (Out.bSurfaceDescsChanged && Out.SurfaceDescCount > 0)
+        {
+            const FSurfaceDescGPU* SrcDescs = ScenePrimitives.GetSurfaceDescs();
+            Out.SurfaceDescs.assign(SrcDescs, SrcDescs + Out.SurfaceDescCount);
+        }
+
+        // Channel consumed: everything above is now owned by this frame's snapshot.
+        ScenePrimitives.ClearDirtyInstanceSlots();
+        ScenePrimitives.ClearFullInstanceUpload();
+        ScenePrimitives.ClearSurfaceDescsDirty();
+    }
+
 
     namespace
     {
@@ -1149,46 +1355,6 @@ namespace Lumina
             return Storage.raw()[Index / PageSize][Index % PageSize];
         }
         
-        template <typename TStorage, typename TDisabledStorage, typename TTransformStorage, typename TFn>
-        void ForEachMeshInRange(TStorage& Storage, const TDisabledStorage& Disabled, TTransformStorage& Transforms,
-                                uint32 Start, uint32 End, TFn&& Fn)
-        {
-            constexpr uint32 kBatch = 64u;
-            using TComponent = typename TStorage::value_type;
-
-            const entt::entity* Ents = Storage.data();
-            for (uint32 Base = Start; Base < End; Base += kBatch)
-            {
-                const uint32 Stop = Math::Min(Base + kBatch, End);
-
-                entt::entity                Kept[kBatch];
-                TComponent*                 Comps[kBatch];
-                const STransformComponent*  Xforms[kBatch];
-                uint32 Count = 0;
-
-                for (uint32 i = Base; i < Stop; ++i)
-                {
-                    const entt::entity Entity = Ents[i];
-                    if (Entity == entt::tombstone || Disabled.contains(Entity))
-                    {
-                        continue;
-                    }
-
-                    const STransformComponent& Transform = Transforms.get(Entity);
-                    Memory::Prefetch(&Transform, sizeof(STransformComponent));
-
-                    Kept[Count]   = Entity;
-                    Comps[Count]  = &PackedPayloadAt(Storage, i);
-                    Xforms[Count] = &Transform;
-                    ++Count;
-                }
-
-                for (uint32 k = 0; k < Count; ++k)
-                {
-                    Fn(Kept[k], *Comps[k], *Xforms[k]);
-                }
-            }
-        }
     }
 
     namespace
@@ -1250,7 +1416,8 @@ namespace Lumina
 
         template <typename TStorage, typename TGetMesh>
         void ResolveMeshPool(TStorage& Storage, uint32 Epoch, EInstanceFlags SeedFlags,
-                             TVector<CMaterialInterface*>& OverrideScratch, TGetMesh&& GetMesh)
+                             TVector<CMaterialInterface*>& OverrideScratch, TGetMesh&& GetMesh,
+                             FRenderDirtyTracker& Tracker, EPrimitiveSource Source)
         {
             using TComponent = typename TStorage::value_type;
 
@@ -1276,11 +1443,85 @@ namespace Lumina
                 }
 
                 ResolveMeshComponent(Component, Mesh, Epoch, SeedFlags, OverrideScratch);
+
+                // This pass visits exactly the components whose resolve was stale, for every reason the
+                // cache tracks (material recompiled, mesh GPU buffers landed, slot override edited, epoch
+                // bumped, mesh assigned directly). Routing them here is what keeps those invalidations
+                // flowing into the render scene without a second change-detection mechanism.
+                Tracker.Mark(Entity, Source, EPrimitiveDirty::Data);
             }
         }
     }
 
     // Serial, game-thread: runs before the parallel gather so workers only read the resolve table.
+    // Dynamic meshes own their resolve outright, so they never go through FMeshResolveCache and its
+    // pending-work generation. That is why this is NOT part of ResolveDirtyMeshComponents: that pass
+    // early-returns unless the generation moved, so anything routed through it only runs when the cache
+    // says so -- and a material swapped for an already-compiled one moves nothing.
+    //
+    // Detection is by CONTENT, not by notification. The signals (PostEditChange, SetMaterialAtSlot,
+    // MarkRenderStateDirty) all work, but this has to hold even when nothing signals: a direct field write
+    // from C++ or C#, or an editor path that reports the edit against the array element rather than the
+    // owning component. Comparing the resolved materials against what the component last resolved with
+    // costs O(surfaces) per dynamic mesh per frame, and dynamic meshes are counted in the tens.
+    void FForwardRenderScene::ResolveDynamicMeshMaterials(FEntityRegistry& Registry, FRenderDirtyTracker& Tracker)
+    {
+        auto& Storage = Registry.storage<SDynamicMeshComponent>();
+        const uint32 Count = (uint32)Storage.size();
+
+        for (uint32 i = 0; i < Count; ++i)
+        {
+            const entt::entity Entity = Storage.data()[i];
+            if (Entity == entt::tombstone)
+            {
+                continue;
+            }
+
+            SDynamicMeshComponent& Component = PackedPayloadAt(Storage, i);
+            if (!Component.RenderData)
+            {
+                continue;
+            }
+
+            // FNV-1a over the material each surface would resolve to right now. GetMaterialForSlot folds in
+            // the override AND the fallback, so this changes exactly when the outcome would change.
+            const TVector<FGeometrySurface>& Geometry = Component.RenderData->Resource.GeometrySurfaces;
+            uint32 Hash = 2166136261u;
+            for (SIZE_T s = 0; s < Component.RenderData->Surfaces.size() && s < Geometry.size(); ++s)
+            {
+                const void* Material = Component.GetMaterialForSlot((size_t)Geometry[s].MaterialIndex);
+                const uint64 Bits    = (uint64)(uintptr_t)Material;
+                for (uint32 b = 0; b < 8u; ++b)
+                {
+                    Hash ^= (uint32)((Bits >> (b * 8u)) & 0xFFull);
+                    Hash *= 16777619u;
+                }
+            }
+            // 0 is the never-resolved sentinel, so a real hash must not collide with it.
+            Hash |= 1u;
+
+            if (Hash == Component.CachedMaterialHash && Component.RenderData->bAllMaterialsReady)
+            {
+                continue;
+            }
+
+            Component.RefreshResolvedMaterials();
+            Component.CachedMaterialHash = Hash;
+
+            // RefreshResolvedMaterials rewrites RenderData->Surfaces IN PLACE, so the Surfaces pointer that
+            // PollUnhookedSources compares is unchanged and cannot see this. Without an explicit mark the
+            // primitive is never re-bound and the retained instance keeps its original MaterialIndex/batch.
+            Tracker.Mark(Entity, EPrimitiveSource::DynamicMesh, EPrimitiveDirty::Data);
+
+            if (!Component.RenderData->bAllMaterialsReady)
+            {
+                // Still compiling: come back next frame. The hash is already stored, so the retry is driven
+                // by bAllMaterialsReady rather than by the hash differing again.
+                FMeshResolveCache::MarkPendingWork();
+            }
+        }
+    }
+
     void FForwardRenderScene::ResolveDirtyMeshComponents()
     {
         // Per-scene watermark, not a shared flag: this scene owns one world, and every other world's
@@ -1297,42 +1538,25 @@ namespace Lumina
         // past this value so the next frame runs again.
         LastResolvedPendingGeneration = PendingGeneration;
 
+        // Shared resolve entries may be rebuilt below. Marking each visited component is not enough --
+        // one entry backs every instance of that mesh, and only the individually-stale ones are visited.
+        ScenePrimitives.NotifyResolveTableChanged();
+
         FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
         const uint32 Epoch = FMeshResolveCache::GetEpoch();
 
         TVector<CMaterialInterface*>& Scratch = ResolveOverrideScratch;
+        FRenderDirtyTracker& Tracker = FRenderDirtyTracker::Ensure(Registry);
 
         ResolveMeshPool(Registry.storage<SStaticMeshComponent>(), Epoch, EInstanceFlags::None, Scratch,
-            [](const SStaticMeshComponent& C) -> CMesh* { return C.StaticMesh; });
-
-        // Dynamic meshes own their resolve outright, so they skip the cache entirely. All that is left is
-        // re-running the material half while a material is still compiling, which is what the asset path
-        // uses bAllMaterialsReady for.
-        {
-            auto& Storage = Registry.storage<SDynamicMeshComponent>();
-            const uint32 Count = (uint32)Storage.size();
-            for (uint32 i = 0; i < Count; ++i)
-            {
-                if (Storage.data()[i] == entt::tombstone)
-                {
-                    continue;
-                }
-
-                SDynamicMeshComponent& Component = PackedPayloadAt(Storage, i);
-                if (Component.RenderData && !Component.RenderData->bAllMaterialsReady)
-                {
-                    Component.RefreshResolvedMaterials();
-                    if (!Component.RenderData->bAllMaterialsReady)
-                    {
-                        FMeshResolveCache::MarkPendingWork();
-                    }
-                }
-            }
-        }
+            [](const SStaticMeshComponent& C) -> CMesh* { return C.StaticMesh; },
+            Tracker, EPrimitiveSource::StaticMesh);
+        
 
         // Skeletal assets always carry FSkinnedVertex, so Skinned is unconditional here.
         ResolveMeshPool(Registry.storage<SSkeletalMeshComponent>(), Epoch, EInstanceFlags::Skinned, Scratch,
-            [](const SSkeletalMeshComponent& C) -> CMesh* { return C.SkeletalMesh; });
+            [](const SSkeletalMeshComponent& C) -> CMesh* { return C.SkeletalMesh; },
+            Tracker, EPrimitiveSource::SkeletalMesh);
 
         // Foliage types carry no material overrides.
         for (auto&& [Entity, Foliage] : Registry.view<SFoliageComponent>().each())
@@ -1344,6 +1568,9 @@ namespace Lumina
                 {
                     continue;
                 }
+
+                // Every instance of this type re-binds; see ResolveMeshPool for why this belongs here.
+                Tracker.Mark(Entity, EPrimitiveSource::Foliage, EPrimitiveDirty::Data);
 
                 Scratch.clear();
                 const uint32 Handle = FMeshResolveCache::Get().Resolve(Type.Mesh.Get(), Scratch);
@@ -1391,7 +1618,6 @@ namespace Lumina
         FFrameData& Frame = *ExtractFrame;
         auto& Instances              = Frame.Geometry.Instances;
         auto& DrawCommands           = Frame.Geometry.DrawCommands;
-        auto& DrawMeshletStartOffsets= Frame.Geometry.DrawMeshletStartOffsets;
         auto& LightData              = Frame.Lighting.LightData;
         auto& EnvironmentParams      = Frame.Volumetrics.EnvironmentParams;
         auto& SceneGlobalData        = Frame.SceneGlobalData;
@@ -1418,7 +1644,6 @@ namespace Lumina
             auto EnvironmentView     = Registry.view<SEnvironmentComponent>(entt::exclude<SDisabledTag>);
             auto SkyLightView        = Registry.view<SSkyLightComponent>(entt::exclude<SDisabledTag>);
             auto FogView             = Registry.view<SExponentialHeightFogComponent>(entt::exclude<SDisabledTag>);
-            auto FoliageView         = Registry.view<SFoliageComponent>(entt::exclude<SDisabledTag>);
             auto TerrainAllView      = Registry.view<STerrainComponent>();
             auto TerrainView         = Registry.view<STerrainComponent>(entt::exclude<SDisabledTag>);
             auto ParticleAllView     = Registry.view<SParticleSystemComponent>();
@@ -1427,25 +1652,39 @@ namespace Lumina
             auto WaterView           = Registry.view<SWaterComponent>(entt::exclude<SDisabledTag>);
             auto& TransformStorage  = Registry.storage<STransformComponent>();
 
-            // Mesh pools walked directly (packed payload + explicit tombstone/disabled checks) by
-            // ForEachMeshInRange instead of through view contains()+get() sparse walks per entity.
-            auto& StaticMeshStorage   = Registry.storage<SStaticMeshComponent>();
-            auto& DynamicMeshStorage  = Registry.storage<SDynamicMeshComponent>();
-            auto& SkeletalMeshStorage = Registry.storage<SSkeletalMeshComponent>();
-            const auto& DisabledStorage = Registry.storage<SDisabledTag>();
+            // The mesh pools are no longer walked here at all: membership lives in ScenePrimitives and
+            // is maintained from the dirty channel (see SyncScenePrimitives).
 
             ECS::Utils::ResolveAllDirtyTransforms(Registry);
 
-            ResolveDirtyMeshComponents();
+            // Unconditional: dynamic-mesh materials are polled by content, not gated on the resolve
+        // cache's generation (see ResolveDynamicMeshMaterials).
+        {
+            FEntityRegistry& DynRegistry = ECS::GetWorldRegistry(*World);
+            ResolveDynamicMeshMaterials(DynRegistry, FRenderDirtyTracker::Ensure(DynRegistry));
+        }
+
+        ResolveDirtyMeshComponents();
+
+            // Apply this frame's changes to the persistent primitive table. O(changed): on a frame where
+            // nothing moved and nothing was added or removed, this is one atomic load and a return.
+            SyncScenePrimitives();
 
             // Per-frame CPU reject volumes built before parallel gather so workers query lock-free.
             BuildSceneCullContext();
 
-            const size_t EntityCount       = StaticMeshStorage.size() + SkeletalMeshStorage.size();
-            const size_t EstimatedProxies  = EntityCount * 2;
+            // Geometry is recompiled every frame now. It used to be gated on a serial that hashed the
+            // camera matrices to detect "nothing changed, reuse this slot" -- which only made sense while
+            // the CPU culled. The gather is skinned-only (rigid primitives are culled and compacted on the
+            // GPU) and the serial force-disabled reuse whenever any skinned primitive existed, so it could
+            // only ever skip work that was already empty, while hashing two 4x4 matrices a byte at a time
+            // every frame to decide that.
+            ResetGeometry_GameThread();
+
+            const uint32 NumPrimitives     = ScenePrimitives.Num();
+            const size_t EstimatedProxies  = (size_t)NumPrimitives * 2;
 
             Instances.reserve(EstimatedProxies);
-            DrawMeshletStartOffsets.reserve(EstimatedProxies);
             DrawCommands.reserve(EstimatedProxies);
 
             const uint32 NumThreads = GTaskSystem->GetNumTaskThreads();
@@ -1479,84 +1718,24 @@ namespace Lumina
             DrawTaskGraph.Reset();   // reuse the persistent graph (allocator block + capacity)
             FTaskGraph& Graph = DrawTaskGraph;
 
-            FTaskGraph::FNodeHandle StaticNode = Graph.AddParallelFor((uint32)StaticMeshStorage.size(), ResolveGrain(CVarStaticMeshGrain), [&](const Task::FParallelRange& Range)
+            // One fan-out over the whole persistent primitive array, replacing the four per-pool passes.
+            // Static, dynamic, skeletal and foliage primitives are interleaved in one dense array, so the
+            // work balances by itself and the reject path streams two tightly packed arrays.
             {
-                LUMINA_PROFILE_SECTION("Process Static Mesh Range");
-                FThreadLocalDrawData& Local = AcquireThreadLocalDrawData(Range.Thread);
-                ForEachMeshInRange(StaticMeshStorage, DisabledStorage, TransformStorage, Range.Start, Range.End,
-                    [&](entt::entity Entity, const SStaticMeshComponent& MeshComponent, const STransformComponent& TransformComponent)
-                    {
-                        ProcessStaticMeshEntityInternal(Entity, MeshComponent, TransformComponent, Local);
-                    });
-            }, ETaskPriority::High); // critical path: MergeNode waits on this, so it runs ahead of emitters
-
-            FTaskGraph::FNodeHandle DynamicNode = Graph.AddParallelFor((uint32)DynamicMeshStorage.size(), ResolveGrain(CVarDynamicMeshGrain), [&](const Task::FParallelRange& Range)
-            {
-                LUMINA_PROFILE_SECTION("Process Dynamic Mesh Range");
-                FThreadLocalDrawData& Local = AcquireThreadLocalDrawData(Range.Thread);
-                ForEachMeshInRange(DynamicMeshStorage, DisabledStorage, TransformStorage, Range.Start, Range.End,
-                    [&](entt::entity Entity, const SDynamicMeshComponent& MeshComponent, const STransformComponent& TransformComponent)
-                    {
-                        ProcessDynamicMeshEntityInternal(Entity, MeshComponent, TransformComponent, Local);
-                    });
-            }, ETaskPriority::High); // critical path (gates MergeNode)
-
-            FTaskGraph::FNodeHandle SkeletalNode = Graph.AddParallelFor((uint32)SkeletalMeshStorage.size(), ResolveGrain(CVarSkeletalMeshGrain), [&](const Task::FParallelRange& Range)
-            {
-                LUMINA_PROFILE_SECTION("Process Skeletal Mesh Range");
-                FThreadLocalDrawData& Local = AcquireThreadLocalDrawData(Range.Thread);
-                ForEachMeshInRange(SkeletalMeshStorage, DisabledStorage, TransformStorage, Range.Start, Range.End,
-                    [&](entt::entity Entity, SSkeletalMeshComponent& MeshComponent, const STransformComponent& TransformComponent)
-                    {
-                        ProcessSkeletalMeshEntityInternal(Entity, MeshComponent, TransformComponent, Local);
-                    });
-            }, ETaskPriority::High); // critical path (gates MergeNode)
-
-            FTaskGraph::FNodeHandle MergeNode = Graph.Add([&]
-            {
-                MergeMeshDrawData(ThreadLocal);
-            }, ETaskPriority::High);
-            
-            FoliageView.each([&](entt::entity FoliageEntity, SFoliageComponent& Foliage)
-            {
-                if (Foliage.Types.empty() || Foliage.Instances.empty())
+                FTaskGraph::FNodeHandle CullNode = Graph.AddParallelFor(NumPrimitives, ResolveGrain(CVarPrimitiveGrain), [&](const Task::FParallelRange& Range)
                 {
-                    return;
-                }
-
-                Foliage.EnsureRenderCache();
-
-                const uint32 BakedCount = (uint32)Foliage.BakedInstances.size();
-                if (BakedCount == 0)
-                {
-                    return;
-                }
-
-                SFoliageComponent* FoliagePtr = &Foliage;
-                const uint32 OwnerID = entt::to_integral(FoliageEntity);
-
-                FTaskGraph::FNodeHandle FoliageNode = Graph.AddParallelFor(BakedCount, ResolveGrain(CVarFoliageGrain), [this, FoliagePtr, OwnerID](const Task::FParallelRange& Range)
-                {
-                    LUMINA_PROFILE_SECTION("Process Foliage Range");
+                    LUMINA_PROFILE_SECTION("Cull And Emit Primitives");
                     FThreadLocalDrawData& Local = AcquireThreadLocalDrawData(Range.Thread);
-                    const TVector<SFoliageType>&          Types = FoliagePtr->Types;
-                    const TVector<FFoliageBakedInstance>& Baked = FoliagePtr->BakedInstances;
-                    for (uint32 i = Range.Start; i < Range.End; ++i)
-                    {
-                        const FFoliageBakedInstance& B = Baked[i];
-                        if (B.TypeIndex < 0 || B.TypeIndex >= (int32)Types.size())
-                        {
-                            continue;
-                        }
-                        ProcessFoliageBakedInstance(Types[B.TypeIndex], B, OwnerID, Local);
-                    }
-                }, ETaskPriority::High); // critical path (gates MergeNode)
-                Graph.AddDependency(MergeNode, FoliageNode);
-            });
+                    CullAndEmitPrimitives(Range, Local);
+                }, ETaskPriority::High); // critical path: MergeNode waits on this, so it runs ahead of emitters
 
-            Graph.AddDependency(MergeNode, StaticNode);
-            Graph.AddDependency(MergeNode, DynamicNode);
-            Graph.AddDependency(MergeNode, SkeletalNode);
+                FTaskGraph::FNodeHandle MergeNode = Graph.Add([&]
+                {
+                    MergeMeshDrawData(ThreadLocal);
+                }, ETaskPriority::High);
+
+                Graph.AddDependency(MergeNode, CullNode);
+            }
 
             // Kick the mesh critical path NOW: the workers chew on the gather while the game thread
             // builds the emitter graph below (lights/primitives/extract snapshots), whose tasks share
@@ -2394,8 +2573,6 @@ namespace Lumina
         }
 
 
-        SceneGlobalData.CullData.InstanceNum = (uint32)Instances.size();
-
         if (LightData.bHasSun)
         {
             const FVector3 SunDir = Math::Normalize(LightData.SunDirection);
@@ -2428,25 +2605,38 @@ namespace Lumina
         const auto& EnvironmentParams    = Frame.Volumetrics.EnvironmentParams;
         const int32 EnvironmentMapID     = Frame.Volumetrics.EnvironmentMapID;
         const auto& BillboardInstances   = Frame.Primitives.BillboardInstances;
-        const uint32 TotalMeshletBound   = Frame.Views.TotalMeshletBound;
         const uint32 NumDrawsPerView     = Frame.Views.NumDrawsPerView;
         bool& bIBLDirty                  = Frame.Volumetrics.bIBLDirty;
         bool& bIBLConvolutionDirty       = Frame.Volumetrics.bIBLConvolutionDirty;
 
         const uint32 NumCullViews                  = (uint32)CullViews.size();
         const uint32 NumDraws                      = NumDrawsPerView;
-        SceneGlobalData.CullData.NumDraws          = NumDraws;
-        SceneGlobalData.CullData.TotalMeshletBound = TotalMeshletBound;
+        // Frame tag stamped into every meshlet draw-list entry this frame (see FMeshletDraw). Cycles through
+        // 1..4095 -- never 0, because a freshly allocated draw list is zeroed and untouched memory must
+        // never pass the check. A monotonic counter rather than CurrentFrameSlot: a stale entry sitting in
+        // this slot is from kFramesInFlight frames ago and would carry the slot's own value.
+        SceneGlobalData.CullData.MeshletDrawTag    = (MeshletDrawTagCounter++ % 4095u) + 1u;
 
         // Sizes for the persistent per-frame buffers (all other CPU-dynamic data is transient): the
         // GPU-written pre-skinned vertex buffer. Debug line/triangle geometry is ring-allocated at draw time.
         const SIZE_T PreSkinnedSize       = Math::Max<SIZE_T>(sizeof(FPreSkinnedVertex),
                                             (SIZE_T)Frame.Geometry.TotalPreSkinnedVertices * sizeof(FPreSkinnedVertex));
 
-        // Shared draw list: NumViews * TotalMeshletBound FMeshletDraw; views own disjoint slices via FCullView.DrawListOffset.
+        // Shared draw list. Regions are packed per (view, draw), each sized on the GPU to exactly what that
+        // pair can emit, so the requirement is the SUM over views of what each view really needs -- not
+        // NumViews copies of the global worst case. BuildDrawPrefix publishes that sum as Totals[2] and this
+        // sizes from the value fed back kFramesInFlight frames ago.
+        //
+        // The NumCullViews multiply that used to be here is exactly what made this allocation enormous: a
+        // shadow cascade that rejects almost everything was reserving as much room as the camera.
+        UpdateMeshletBoundFeedback(CurrentFrameSlot);
+        // Lead the measured requirement by 50%: undershooting costs a frame of dropped meshlets,
+        // overshooting only costs address space, so the asymmetry says bias high.
+        const uint32 PredictedBound    = Math::Max(LastMeshletBound + LastMeshletBound / 2u, 65536u);
+        const uint32 PredictedDrawList = Math::Max(LastDrawListRequired + LastDrawListRequired / 2u, 65536u);
         const SIZE_T MeshletDrawListSize = Math::Max<SIZE_T>(
             sizeof(uint32) * 2,
-            (SIZE_T)NumCullViews * (SIZE_T)TotalMeshletBound * sizeof(uint32) * 2);
+            (SIZE_T)PredictedDrawList * sizeof(uint32) * 2);
 
         // Shared indirect args: NumViews * NumDraws FDrawIndirectArguments, GPU-seeded below.
         const SIZE_T NumArgSlots = (SIZE_T)NumCullViews * (SIZE_T)NumDraws;
@@ -2459,10 +2649,16 @@ namespace Lumina
             sizeof(RHI::FDrawMeshTasksIndirectArguments),
             NumArgSlots * sizeof(RHI::FDrawMeshTasksIndirectArguments));
 
-        // Worst case: every camera meshlet HZB-occluded in phase 0 (first frame). Stride matches FMeshletDeferred.
+        // Deferred meshlets, sized from measured demand (Totals[6]) with the meshlet work domain as the
+        // ceiling -- a meshlet can only be deferred once, so it can never exceed the domain. Sizing this
+        // purely off PredictedBound was what let a stale HZB (every meshlet occluded, e.g. resuming after a
+        // shader-compile stall) overflow it, and the append had no bound to catch it.
+        const uint32 PredictedDefer = Math::Min(
+            Math::Max(LastDeferRequested + LastDeferRequested / 2u, 65536u),
+            Math::Max(PredictedBound, 65536u));
         const SIZE_T DeferListSize = Math::Max<SIZE_T>(
             sizeof(uint32) * 4,
-            (SIZE_T)TotalMeshletBound * sizeof(uint32) * 4);
+            (SIZE_T)PredictedDefer * sizeof(uint32) * 4);
 
         // Buffers are reached only by device address; a resize swaps the allocation (old one
         // retires on this slot's deferred-free list) with no descriptor work. Only the current
@@ -2473,13 +2669,127 @@ namespace Lumina
             const uint8 Slot = CurrentFrameSlot;
             ResizeBufferIfNeeded(IndirectArgsRing[Slot], IndirectArgsSize, 1.2f, IndirectArgsRingLowUsage[Slot]);
             ResizeBufferIfNeeded(MeshDrawArgsRing[Slot], MeshDrawArgsSize, 1.2f, MeshDrawArgsRingLowUsage[Slot]);
+            const RHI::GPUPtr PrevDrawList = MeshletDrawListRing[Slot].Ptr;
             ResizeBufferIfNeeded(MeshletDrawListRing[Slot], MeshletDrawListSize, 1.2f, MeshletDrawListRingLowUsage[Slot]);
-            ResizeBufferIfNeeded(MeshletDeferListRing[Slot], DeferListSize, 1.2f, MeshletDeferListRingLowUsage[Slot]);
+            if (MeshletDrawListRing[Slot] && MeshletDrawListRing[Slot].Ptr != PrevDrawList)
+            {
+                // A new allocation holds undefined bytes, which could pass the frame-tag check by chance
+                // (1 in 4095 per entry). Zeroing once on (re)allocation makes tag 0 mean "never written"
+                // for the life of the buffer, so the check is exact rather than probabilistic. Rare enough
+                // to be free -- only growth, and growth is geometric.
+                RHI::CmdMemset(CL, MeshletDrawListRing[Slot].Ptr, MeshletDrawListRing[Slot].GetSize(), 0u);
+            }
+            // From the allocation we got, not the size we asked for: a failed or short allocation must
+            // shrink the clamp, not be trusted.
+            DrawListCapacity = (uint32)Math::Min<uint64>(MeshletDrawListRing[Slot].GetSize() / (sizeof(uint32) * 2), 0xFFFFFFFFull);
 
-            // GPU-built per-instance meshlet prefix: N+1 uints (last entry = total).
-            const SIZE_T InstancePrefixSize = Math::Max<SIZE_T>(sizeof(uint32), (Instances.size() + 1) * sizeof(uint32));
+            // Draw-list overflow, reported by the GPU itself rather than inferred: BuildDrawPrefix sets
+            // Totals[3] when the packed requirement exceeded the allocation it was given, which is the only
+            // condition that can still drop a meshlet now that each region is exactly sized.
+            if (LastVisibleOverflowed != 0u)
+            {
+                static uint32 InstanceOverflowLogCounter = 0;
+                if ((InstanceOverflowLogCounter++ % 60u) == 0u)
+                {
+                    LOG_WARN("RenderScene: visible-instance buffer too small -- {} instances requested, "
+                             "capacity {}. Whole instances were dropped; the next allocation grows.",
+                             LastVisibleInstances, FrameVisibleInstanceCapacity);
+                }
+            }
+
+            if (LastDrawListOverflowed != 0u)
+            {
+                static uint32 OverflowLogCounter = 0;
+                if ((OverflowLogCounter++ % 60u) == 0u)
+                {
+                    LOG_WARN("RenderScene: meshlet draw list too small -- required {} entries, allocation holds {} "
+                             "({} views x {} draws). Meshlets were dropped; the next allocation grows.",
+                             LastDrawListRequired, DrawListCapacity, NumCullViews, NumDraws);
+                }
+            }
+            ResizeBufferIfNeeded(MeshletDeferListRing[Slot], DeferListSize, 1.2f, MeshletDeferListRingLowUsage[Slot]);
+            // From the allocation we got, not the size asked for -- the shader bounds its append with this.
+            DeferListCapacity = (uint32)Math::Min<uint64>(MeshletDeferListRing[Slot].GetSize() / (sizeof(uint32) * 4), 0xFFFFFFFFull);
+
+            if (LastDeferOverflowed != 0u)
+            {
+                static uint32 DeferOverflowLogCounter = 0;
+                if ((DeferOverflowLogCounter++ % 60u) == 0u)
+                {
+                    LOG_WARN("RenderScene: meshlet defer list too small -- {} deferred, capacity {}. Those "
+                             "meshlets skip the late HZB re-test for one frame; the next allocation grows.",
+                             LastDeferRequested, DeferListCapacity);
+                }
+            }
+
+            // Visible-instance capacity, derived ONCE here and reused everywhere for the rest of the
+            // frame so the buffer, the prefix allocation and the GPU-side clamps cannot disagree.
+            //
+            // This used to be "every retained slot could survive" -- 64 MB per frame slot at 500k
+            // primitives, for a buffer that in practice holds the visible set. It is now sized from the
+            // demand BuildDrawPrefix measured (Totals[4], which counts past the cap on an overflow frame,
+            // so it is real demand and not just what fit), on the same feedback the draw list uses.
+            const uint32 NumSkinnedHead = (uint32)Instances.size();
+            // Lead the measurement by 50%. Undershooting drops whole instances, which is far more visible
+            // than dropping meshlets, so bias high.
+            const uint32 PredictedVisible = LastVisibleInstances + LastVisibleInstances / 2u;
+            // Floors: the CPU-written skinned head is copied in unconditionally, so capacity must always
+            // cover it, plus headroom for a scene that is only just starting to populate.
+            uint32 VisibleCapacityWanted = Math::Max(PredictedVisible,
+                                                     Math::Max(NumSkinnedHead + 1024u, 4096u));
+
+            // Ceiling: the cull appends at most one survivor per active retained slot, so the old
+            // worst-case figure becomes the upper bound rather than the default.
+            const uint32 VisibleCapacityMax = Math::Max(Frame.Geometry.RetainedUpload.SlotCount + NumSkinnedHead, 1u);
+
+            // Until a measurement exists, start AT the ceiling rather than at the floor. Feedback lags by
+            // kFramesInFlight frames, so guessing low on a freshly loaded 500k-primitive scene would drop
+            // most of it for the first few frames -- a visible pop-in. Starting high and letting the
+            // low-usage reclaim shrink it converges from the correct side.
+            if (LastVisibleInstances == 0u)
+            {
+                VisibleCapacityWanted = VisibleCapacityMax;
+            }
+
+            FrameVisibleInstanceCapacity = Math::Min(VisibleCapacityWanted, VisibleCapacityMax);
+
+            // The visible-instance buffer is sized HERE, not in DispatchGPUSceneCull, because the SceneRoot
+            // published below bakes in its device address. ResizeBufferIfNeeded swaps the allocation on
+            // growth and retires the old one, so sizing it after the publish left every shader dereferencing
+            // a freed address the moment the scene grew -- an MMU read fault in whichever pass touched
+            // Instances() first. Anything the SceneRoot points at must reach its final size before the
+            // publish; nothing downstream may resize it again.
+            ResizeBufferIfNeeded(VisibleInstanceRing[Slot],
+                                 (SIZE_T)FrameVisibleInstanceCapacity * sizeof(FGPUInstance), 1.25f,
+                                 VisibleInstanceLowUsage[Slot]);
+
+            // GPU-built per-instance meshlet prefix: N+1 uints (last entry = total). N is the GPU's
+            // survivor count, so this has to cover the whole capacity CullInstances may append into --
+            // sizing it from the CPU-written skinned head would be a guaranteed overrun.
+            const SIZE_T InstancePrefixSize = Math::Max<SIZE_T>(
+                sizeof(uint32),
+                ((SIZE_T)FrameVisibleInstanceCapacity + 1) * sizeof(uint32));
             ResizeBufferIfNeeded(InstancePrefixRing[Slot], InstancePrefixSize, 1.2f, InstancePrefixRingLowUsage[Slot]);
+
+            // Per-block sums for the hierarchical scan: one per 256-element block, plus the grand total.
+            // Must match SCAN_BLOCK in the ScanPrefix* shaders.
+            constexpr uint32 kScanBlock = 256u;
+            const SIZE_T ScanBlockSumSize = Math::Max<SIZE_T>(
+                sizeof(uint32) * 2,
+                ((SIZE_T)((FrameVisibleInstanceCapacity + kScanBlock - 1u) / kScanBlock) + 1) * sizeof(uint32));
+            ResizeBufferIfNeeded(ScanBlockSumRing[Slot], ScanBlockSumSize, 1.2f, ScanBlockSumLowUsage[Slot]);
         }
+
+        // The VisBuffer resolve (MaterialDepth / DeferredMaterial) recovers a meshlet-draw slot
+        // and an instance id from each covered texel, and bounds-checks both so a stale draw-list gap can
+        // never page-fault a device-address load. Both bounds used to be exact per-frame counts the CPU
+        // computed during the gather. The GPU owns those counts now, so the bound becomes the CAPACITY of
+        // the allocation the index addresses -- which is both the correct meaning of "past the end" and
+        // the only version the CPU still knows. Publishing the stale CPU counts here (zero, and the
+        // skinned-only instance head) is what made the resolve classify every covered pixel as background:
+        // geometry rastered into depth and the VisBuffer, then nothing shaded it.
+        SceneGlobalData.CullData.MeshletDrawListCapacity = DrawListCapacity;
+        SceneGlobalData.CullData.InstanceNum             = FrameVisibleInstanceCapacity;
 
         {
             LUMINA_PROFILE_SECTION_COLORED("Write Scene Buffers", tracy::Color::OrangeRed3);
@@ -2544,10 +2854,12 @@ namespace Lumina
             }
             SceneRootShared = FSceneRoot{};
             SceneRootShared.Lights = RHI::Core::CopyTransient(LightData);
-            DEBUG_ASSERT(Frame.Geometry.DrawCommands.empty() || !Instances.empty());
-            if (!Instances.empty())
+            // Instances are GPU-produced now: CullInstances writes the compacted survivors into this
+            // slot's visible buffer (past the CPU-written skinned head), so there is nothing to upload
+            // and nothing whose size the CPU knows.
+            if (VisibleInstanceRing[CurrentFrameSlot])
             {
-                SceneRootShared.Instances = RHI::Core::CopyTransientArray(Instances.data(), Instances.size());
+                SceneRootShared.Instances = VisibleInstanceRing[CurrentFrameSlot].GetAddress();
             }
             if (!BonesData.empty())
             {
@@ -2559,6 +2871,9 @@ namespace Lumina
             }
             if (!CullViews.empty())
             {
+                // No per-view draw-list slice is patched in here any more. Each (view, draw) gets its own
+                // packed region, whose offset BuildDrawPrefix computes and SeedIndirectArgs writes straight
+                // into FirstInstance, so FCullView carries no draw-list geometry at all.
                 SceneRootShared.CullViews = RHI::Core::CopyTransientArray(CullViews.data(), CullViews.size());
             }
             if (!Frame.Geometry.SkinDescriptors.empty())
@@ -2569,11 +2884,8 @@ namespace Lumina
             {
                 SceneRootShared.Widgets = RHI::Core::CopyTransientArray(Frame.Primitives.WidgetInstances.data(), Frame.Primitives.WidgetInstances.size());
             }
-            if (!Instances.empty())
-            {
-                // GPU-built this frame (BuildInstancePrefix dispatch below), read by the cull's binary search.
-                SceneRootShared.InstanceMeshletPrefix = GetInstancePrefix().GetAddress();
-            }
+            // GPU-built this frame (ScanPrefix* dispatches below), read by the cull's binary search.
+            SceneRootShared.InstanceMeshletPrefix = GetInstancePrefix().GetAddress();
 
             SceneRootShared.Materials          = GRenderManager->GetMaterialManager().GetMaterialBuffer();
             SceneRootShared.MeshletDrawList    = GetMeshletDrawList().GetAddress();
@@ -2584,37 +2896,44 @@ namespace Lumina
             }
             CurrentSceneRootAddr = BuildViewSceneRoot(*CurrentView, RHI::Core::CopyTransient(SceneGlobalData));
 
+            // Cull, LOD-select and compact the retained scene, then build the draw-argument layout --
+            // all GPU-side. This is what produces the totals SeedIndirectArgs, the prefix scan and
+            // CullMeshlets read; the CPU no longer computes any of them.
+            DispatchGPUSceneCull(CL, Frame);
+
             bool bPrepDispatched = false;
 
             // Seed the per-view indirect + mesh-task args GPU-side (SeedIndirectArgs.slang): one thread per
             // (view, draw) slot expands the D-entry per-draw meshlet prefix, replacing the CPU-built V*D
             // upload. FirstInstance is pre-seeded so each atomic append in CullMeshlets lands in its own
             // slice; mesh-task Y/Z seed to 1 and the cull accumulates GroupCountX (no ConvertMeshDrawArgs).
-            if (NumCullViews > 0u && NumDraws > 0u)
+            if (NumCullViews > 0u && NumDraws > 0u && GetViewDrawOffsets())
             {
                 static const FShaderEntry* const SeedShader = FShaderLibrary::Get("SeedIndirectArgs.slang");
                 if (SeedShader)
                 {
+                    LUMINA_PROFILE_SECTION_COLORED("Seed Indirect Args", tracy::Color::Purple);
+                    SCENE_GPU_SCOPE(CL, "Seed Indirect Args");
+
                     struct FSeedIndirectArgsPC
                     {
                         uint32 NumViews;
                         uint32 NumDraws;
-                        uint32 TotalMeshletBound;
-                        uint32 Pad;
+                        uint32 Pad0;
+                        uint32 Pad1;
                         uint64 IndirectArgsAddr;
                         uint64 MeshDrawArgsAddr;
-                        uint64 DrawOffsetsAddr;
+                        uint64 ViewDrawOffsetsAddr;
                     };
                     static_assert(sizeof(FSeedIndirectArgsPC) == 40, "FSeedIndirectArgsPC must match SeedIndirectArgs.slang.");
 
                     FSeedIndirectArgsPC PC = {};
                     PC.NumViews          = NumCullViews;
                     PC.NumDraws          = NumDraws;
-                    PC.TotalMeshletBound = TotalMeshletBound;
                     PC.IndirectArgsAddr  = GetIndirectArgs().GetAddress();
                     PC.MeshDrawArgsAddr  = GetMeshDrawArgs().GetAddress();
-                    PC.DrawOffsetsAddr   = RHI::Core::CopyTransientArray(
-                        Frame.Geometry.DrawMeshletStartOffsets.data(), Frame.Geometry.DrawMeshletStartOffsets.size());
+                    // GPU-built by BuildDrawPrefix; there is no CPU array to upload any more.
+                    PC.ViewDrawOffsetsAddr = GetViewDrawOffsets().GetAddress();
 
                     RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(SeedShader));
                     // 1D grid: even GMaxCullViews * thousands of draws stays far under the 65535-group X cap.
@@ -2624,28 +2943,66 @@ namespace Lumina
                 }
             }
 
-            // Build the per-instance meshlet prefix GPU-side (BuildInstancePrefix.slang): a single-workgroup
-            // scan over the uploaded instances' SurfaceMeshletCount, replacing the serial CPU prefix in the
-            // merge and its per-frame N*4B upload. Independent of the seed pass; they share one barrier.
-            if (!Instances.empty())
+            // Per-instance meshlet prefix, hierarchical three-pass scan.
+            //
+            // This was one workgroup walking every 256-element chunk in sequence, which measured 1.94 ms of
+            // GPU self time at ~500k instances -- ~2000 dependent iterations pinned to a single SM. Split
+            // into scan-blocks / scan-the-block-sums / add-offsets-back, only the middle pass is serial and
+            // its domain is block COUNT rather than element count (~2000 elements -> ~8 iterations).
+            //
+            // Passes 1 and 3 dispatch indirectly off BuildDrawPrefix's scan args, so the domain follows the
+            // GPU-side survivor count with no readback and no dispatching over the worst case.
+            if (NumDraws > 0u)
             {
-                static const FShaderEntry* const PrefixShader = FShaderLibrary::Get("BuildInstancePrefix.slang");
-                if (PrefixShader)
+                static const FShaderEntry* const ScanBlocksShader = FShaderLibrary::Get("ScanPrefixBlocks.slang");
+                static const FShaderEntry* const ScanSumsShader   = FShaderLibrary::Get("ScanPrefixSums.slang");
+                static const FShaderEntry* const ScanAddShader    = FShaderLibrary::Get("ScanPrefixAdd.slang");
+                if (ScanBlocksShader && ScanSumsShader && ScanAddShader)
                 {
-                    struct FBuildInstancePrefixPC
+                    LUMINA_PROFILE_SECTION_COLORED("Build Instance Prefix", tracy::Color::Purple2);
+                    SCENE_GPU_SCOPE(CL, "Build Instance Prefix");
+
+                    // Shared by all three passes; the trailing pointer is unused by pass 2.
+                    struct FScanPC
                     {
-                        uint32 NumInstances;
-                        uint32 Pad;
-                        uint64 OutPrefixAddr;
+                        uint32 Pad0;
+                        uint32 Pad1;
+                        uint64 CountAddr;        // [1] of the totals block: surviving instance count
+                        uint64 PrefixAddr;
+                        uint64 BlockSumsAddr;
                     };
-                    static_assert(sizeof(FBuildInstancePrefixPC) == 16, "FBuildInstancePrefixPC must match BuildInstancePrefix.slang.");
+                    static_assert(sizeof(FScanPC) == 32, "FScanPC must match the ScanPrefix* shaders.");
 
-                    FBuildInstancePrefixPC PC = {};
-                    PC.NumInstances  = (uint32)Instances.size();
-                    PC.OutPrefixAddr = GetInstancePrefix().GetAddress();
+                    FScanPC PC = {};
+                    // +4 bytes: the count is the SECOND uint of the totals block, read through a pointer so
+                    // BuildDrawPrefix can produce it GPU-side.
+                    PC.CountAddr     = GetTotals().GetAddress() + sizeof(uint32);
+                    PC.PrefixAddr    = GetInstancePrefix().GetAddress();
+                    PC.BlockSumsAddr = GetScanBlockSums().GetAddress();
 
-                    RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(PrefixShader));
-                    RHI::CmdDispatch(CL, MakeArgs(PC), 1u, 1u, 1u);
+                    {
+                        SCENE_GPU_SCOPE(CL, "Scan Blocks");
+                        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(ScanBlocksShader));
+                        RHI::CmdDispatchIndirect(CL, MakeArgs(PC), GetScanDispatchArgs().Ptr, 0);
+                    }
+
+                    // Pass 2 reads every block sum pass 1 wrote, and pass 3 reads pass 2's output.
+                    Barriers::ComputeToAll(CL);
+
+                    {
+                        SCENE_GPU_SCOPE(CL, "Scan Block Sums");
+                        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(ScanSumsShader));
+                        RHI::CmdDispatch(CL, MakeArgs(PC), 1u, 1u, 1u);
+                    }
+
+                    Barriers::ComputeToAll(CL);
+
+                    {
+                        SCENE_GPU_SCOPE(CL, "Scan Add Offsets");
+                        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(ScanAddShader));
+                        RHI::CmdDispatchIndirect(CL, MakeArgs(PC), GetScanDispatchArgs().Ptr, 0);
+                    }
+
                     bPrepDispatched = true;
                 }
             }
@@ -2656,113 +3013,6 @@ namespace Lumina
                 Barriers::ComputeToAll(CL);
             }
         }
-    }
-
-    // Runs only when a thread meets a batch key for the first time (<30 per thread).
-    static void FillBatchResolve(FForwardRenderScene::FCachedMaterialResolve& R, const FResolvedSurface& S)
-    {
-        R.VertexShader                   = S.VertexShader;
-        R.PixelShader                    = S.PixelShader;
-        R.MeshShader                     = S.MeshShader;
-        R.VisBufferMeshShader            = S.VisBufferMeshShader;
-        R.VisBufferVertexShader          = S.VisBufferVertexShader;
-        R.MaskedVisBufferPixelShader     = S.MaskedVisBufferPixelShader;
-        R.MaskedVisBufferPixelShaderPrim = S.MaskedVisBufferPixelShaderPrim;
-        R.DeferredShader                 = S.DeferredShader;
-        R.MaterialID                     = S.MaterialID;
-        R.MaterialIdx                    = S.MaterialIdx;
-        R.bTranslucent                   = S.BatchKey.bTranslucent != 0u;
-        R.bMasked                        = S.BatchKey.bMasked      != 0u;
-        R.bAdditive                      = S.BatchKey.bAdditive    != 0u;
-        R.bTwoSided                      = S.BatchKey.bTwoSided    != 0u;
-        R.bMaterialCastsShadows          = S.bMaterialCastsShadows;
-    }
-
-    // Linear scan over a per-thread list that stays tiny (one entry per distinct material instance).
-    static void NoteDeferredMaterial(FForwardRenderScene::FThreadLocalDrawData& Local, const FResolvedSurface& S)
-    {
-        if (S.DeferredShader == nullptr || S.MaterialIdx == (uint16)-1 ||
-            (S.BatchKey.bTranslucent != 0u))
-        {
-            return;
-        }
-
-        for (const FForwardRenderScene::FLocalDeferredMaterial& Existing : Local.DeferredMaterials)
-        {
-            if (Existing.MaterialIndex == S.MaterialIdx && Existing.DeferredShader == S.DeferredShader)
-            {
-                return;
-            }
-        }
-
-        Local.DeferredMaterials.push_back({ S.MaterialIdx, S.DeferredShader });
-    }
-
-    static uint16 FindOrAddLocalBatch(FForwardRenderScene::FThreadLocalDrawData& Local, const FResolvedSurface& Surface)
-    {
-        const uint64 KeyHash = GetTypeHash(Surface.BatchKey);
-
-        // Consecutive surfaces almost always share a material, so this hits far more often than it misses.
-        if (KeyHash == Local.LastBatchHash && Local.LastBatchIndex != 0xFFFFu &&
-            Local.LocalBatches[Local.LastBatchIndex].Key == Surface.BatchKey)
-        {
-            return Local.LastBatchIndex;
-        }
-
-        auto It = Local.BatchIndexByKey.find(KeyHash);
-        if (It != Local.BatchIndexByKey.end() && Local.LocalBatches[It->second].Key == Surface.BatchKey)
-        {
-            Local.LastBatchHash  = KeyHash;
-            Local.LastBatchIndex = It->second;
-            return It->second;
-        }
-
-        // Hash collision between distinct keys: fall back to the exhaustive scan so we never split a batch.
-        if (It != Local.BatchIndexByKey.end())
-        {
-            const uint32 Count = (uint32)Local.LocalBatches.size();
-            for (uint32 i = 0; i < Count; ++i)
-            {
-                if (Local.LocalBatches[i].Key == Surface.BatchKey)
-                {
-                    return (uint16)i;
-                }
-            }
-        }
-
-        const uint16 NewIndex = (uint16)Local.LocalBatches.size();
-
-        // Pass arena explicitly so inner TFrameVectors bind to the same per-thread arena.
-        FForwardRenderScene::FLocalBatchEntry& Entry = Local.LocalBatches.emplace_back(Local.Arena);
-        Entry.Key = Surface.BatchKey;
-        FillBatchResolve(Entry.Resolve, Surface);
-
-        if (It == Local.BatchIndexByKey.end())
-        {
-            Local.BatchIndexByKey.emplace(KeyHash, NewIndex);
-        }
-        Local.LastBatchHash  = KeyHash;
-        Local.LastBatchIndex = NewIndex;
-        return NewIndex;
-    }
-
-    static uint16 FindOrAddLocalDraw(FForwardRenderScene::FLocalBatchEntry& Batch, const FDrawKey& Key, uint32 MeshletCount)
-    {
-        auto It = Batch.DrawIndexByKey.find(Key);
-        if (It != Batch.DrawIndexByKey.end())
-        {
-            const uint16 Idx = It->second;
-            Batch.LocalDrawCounts[Idx]++;
-            Batch.LocalMeshletCounts[Idx] += MeshletCount;
-            return Idx;
-        }
-
-        const uint16 NewIdx = (uint16)Batch.LocalDraws.size();
-        Batch.LocalDraws.push_back(Key);
-        Batch.LocalDrawCounts.push_back(1);
-        Batch.LocalMeshletCounts.push_back(MeshletCount);
-        Batch.DrawIndexByKey.emplace(Key, NewIdx);
-        return NewIdx;
     }
 
     // Compares DistSq against Threshold^2 * RadiusSq, which is the squared form of the old
@@ -2830,19 +3080,20 @@ namespace Lumina
         };
     }
 
-    // Per-surface half of the mesh gather, shared by the static / dynamic / foliage / skeletal paths.
-    static void EmitSurfaceDrawItems(FForwardRenderScene::FThreadLocalDrawData& Local,
-                                     const TVector<FResolvedSurface>& Surfaces,
-                                     uint64 MeshletHeaderAddress,
-                                     bool bComponentCastsShadow,
-                                     EInstanceFlags BaseFlags,
-                                     uint32 EntityRecordIdx,
-                                     int32 ForcedLODIndex,
-                                     const FSceneRenderSettings& Settings,
-                                     float DistSq,
-                                     float RadiusSq,
-                                     FSkinSizeAccum* SkinSize = nullptr,
-                                     const TVector<FMeshlet>* Meshlets = nullptr)
+    // Per-surface emit, shared by every primitive source.
+    //
+    // Unlike the old gather this does no identity work: the batch each surface belongs to was resolved
+    // once when the primitive was bound and is read straight out of FSurfaceBinding. All that is left
+    // here is the camera-dependent part -- the LOD pick and the per-instance flags.
+    static void EmitPrimitiveSurfaces(FForwardRenderScene::FThreadLocalDrawData& Local,
+                                      const FScenePrimitive& Prim,
+                                      const FSurfaceBinding* Bindings,
+                                      uint32 EntityRecordIdx,
+                                      const FSceneRenderSettings& Settings,
+                                      float DistSq,
+                                      float RadiusSq,
+                                      FSkinSizeAccum* SkinSize = nullptr,
+                                      const TVector<FMeshlet>* Meshlets = nullptr)
     {
         // Block vertex extents come from the live meshlet table, never from anything cached at mesh-resolve
         // time: a mesh can resolve while its surfaces are populated but the meshlet array is not yet
@@ -2864,19 +3115,57 @@ namespace Lumina
             const FMeshlet& Last  = (*Meshlets)[MeshletOffset + MeshletCount - 1u];
             OutVertexOffset = First.VertexOffset;
             OutVertexCount  = (Last.VertexOffset + Last.VertexCount) - First.VertexOffset;
+
+            // The span is derived from FIRST and LAST only, which is correct exactly when the block's
+            // meshlets are vertex-contiguous and monotonically ordered. That is what the import's
+            // LOD-major pack is supposed to guarantee, and it is what makes the pre-skin base's unsigned
+            // wrap land back in range. Verify it rather than assume it: if any meshlet sits outside the
+            // span, its vertices are skinned to -- and read from -- an address outside the granted slice,
+            // which is unbounded on the GPU side and reads as wildly displaced vertices.
+            if (CVarValidateSkinSlices.GetValue() != 0)
+            {
+                for (uint32 m = 0; m < MeshletCount; ++m)
+                {
+                    const FMeshlet& M = (*Meshlets)[MeshletOffset + m];
+                    const bool bInside = (M.VertexOffset >= OutVertexOffset)
+                                      && ((M.VertexOffset + M.VertexCount) <= (OutVertexOffset + OutVertexCount));
+                    if (!bInside)
+                    {
+                        static uint32 SpanViolationLogCount = 0;
+                        if (SpanViolationLogCount++ < 16u)
+                        {
+                            LOG_ERROR("Skinning: meshlet {} of block [{}, {}) is OUTSIDE the block's vertex span. "
+                                      "Meshlet verts [{}, {}), span [{}, {}). The pre-skin base for this block is a "
+                                      "wrap around the span start, so this meshlet skins and reads out of slice.",
+                                      MeshletOffset + m, MeshletOffset, MeshletOffset + MeshletCount,
+                                      M.VertexOffset, M.VertexOffset + M.VertexCount,
+                                      OutVertexOffset, OutVertexOffset + OutVertexCount);
+                        }
+                        break;
+                    }
+                }
+            }
+
             return OutVertexCount > 0u;
         };
 
-        for (const FResolvedSurface& Surface : Surfaces)
+        const TVector<FResolvedSurface>& Surfaces = *Prim.Surfaces;
+        const uint64 MeshletHeaderAddress = Prim.MeshletHeaderAddress;
+        const uint32 NumSurfaces = Math::Min((uint32)Surfaces.size(), Prim.SurfaceCount);
+
+        for (uint32 s = 0; s < NumSurfaces; ++s)
         {
-            EInstanceFlags Flags = BaseFlags | Surface.MaterialFlags;
-            if (bComponentCastsShadow && Surface.bMaterialCastsShadows)
+            const FResolvedSurface& Surface = Surfaces[s];
+            const FSurfaceBinding&  Binding = Bindings[s];
+
+            EInstanceFlags Flags = Prim.BaseFlags | Binding.MaterialFlags;
+            if (Prim.bCastShadow && Binding.bMaterialCastsShadows)
             {
                 Flags |= EInstanceFlags::CastShadow;
             }
 
             // CPU LOD pick replaces LOD 0; smaller ranges directly cut cull-pass cost.
-            const uint32 LODIndex       = ResolveSurfaceLOD(Surface, ForcedLODIndex, Settings.bUseLODs, DistSq, RadiusSq);
+            const uint32 LODIndex       = ResolveSurfaceLOD(Surface, Prim.ForcedLODIndex, Settings.bUseLODs, DistSq, RadiusSq);
             const uint32 ShadowLODIndex = ResolveShadowLOD(Surface, LODIndex, Settings.ShadowLODBias);
 
             // Zero meshlet count gates the cull shader's MeshletHeader deref.
@@ -2885,22 +3174,29 @@ namespace Lumina
             const uint32 ShadowMeshletCount   = MeshletHeaderAddress ? Surface.LODMeshletCount[ShadowLODIndex] : 0u;
             const uint32 ShadowMeshletOffset  = Surface.LODMeshletOffset[ShadowLODIndex];
 
-            const uint16 LocalBatchIdx = FindOrAddLocalBatch(Local, Surface);
-            const uint16 LocalDrawIdx  = FindOrAddLocalDraw(Local.LocalBatches[LocalBatchIdx], Surface.DrawKey, SurfaceMeshletCount);
+            const uint32 BatchIndex = Binding.BatchIndex;
 
-            NoteDeferredMaterial(Local, Surface);
+            if (Local.DrawInstanceCounts[BatchIndex]++ == 0u)
+            {
+                Local.TouchedSlots.push_back(BatchIndex);
+            }
+            // max, matching ScanPrefixBlocks and CullInstances: a shadow view walks the SHADOW LOD, whose
+            // MAX_SHADOW_LOD cap can make it finer -- and larger -- than the camera LOD. This seeds the
+            // cull's dispatch domain for the CPU-fed skinned instances, and the prefix that indexes into
+            // that domain is computed from the same max on the GPU, so the two must agree.
+            Local.DrawMeshletCounts[BatchIndex] += Math::Max(SurfaceMeshletCount, ShadowMeshletCount);
+            Local.BatchSkinFlags[Binding.BatchIndex] |=
+                EnumHasAnyFlags(Flags, EInstanceFlags::Skinned) ? 1u : 2u;
 
             FForwardRenderScene::FProcessedDrawItem& Item = Local.Items.emplace_back();
             Item.EntityRecordIndex    = EntityRecordIdx;
+            Item.BatchIndex           = BatchIndex;
             Item.SurfaceMeshletOffset = SurfaceMeshletOffset;
             Item.SurfaceMeshletCount  = SurfaceMeshletCount;
             Item.ShadowMeshletOffset  = ShadowMeshletOffset;
             Item.ShadowMeshletCount   = ShadowMeshletCount;
             Item.Flags                = Flags;
-            Item.MaterialIndex        = Surface.MaterialIdx;
-            Item.LocalBatchIndex      = LocalBatchIdx;
-            Item.LocalDrawIndex       = LocalDrawIdx;
-            Local.LocalBatches[LocalBatchIdx].AccumSkinned(Flags);
+            Item.MaterialIndex        = Binding.MaterialIndex;
             Item._Pad                 = 0;
 
             // Skinned items start at the sentinel, not 0: anything that fails to get a real slice below
@@ -2943,366 +3239,167 @@ namespace Lumina
             }
         }
     }
-    
-    template <typename TComponent, typename TGetLiveMeshKey>
-    static void ProcessRigidMeshEntity(const FForwardRenderScene::FFrameData& Frame,
-                                       const FSceneRenderSettings& Settings,
-                                       TGetLiveMeshKey&& GetLiveMeshKey,
-                                       entt::entity Entity,
-                                       const TComponent& MeshComponent,
-                                       const STransformComponent& TransformComponent,
-                                       FForwardRenderScene::FThreadLocalDrawData& Local)
+
+    /**
+     * The whole per-frame mesh gather.
+     *
+     * Walks the persistent primitive arrays, not the ECS. The reject path touches exactly two dense
+     * arrays -- the world sphere and 8 bytes of cull data -- so a culled primitive costs one streamed
+     * cache line and nothing else: no component fetch, no sparse transform lookup, no resolve-table
+     * deref, no hash lookup. Everything the survivors need beyond the camera was derived when their
+     * dirty state last fired.
+     *
+     * Skinned survivors are the one exception: the pose changes every frame by definition, so their
+     * component is read here (after the cull) for bone rows and the animation system's feedback.
+     */
+    void FForwardRenderScene::CullAndEmitPrimitives(const Task::FParallelRange& Range, FThreadLocalDrawData& Local)
     {
-        const auto& SceneCullContext = Frame.Geometry.SceneCullContext;
-        const auto& SceneGlobalData  = Frame.SceneGlobalData;
+        const FFrameData&        Frame           = *ExtractFrame;
+        const FSceneCullContext& SceneCull       = Frame.Geometry.SceneCullContext;
+        const FSceneGlobalData&  SceneGlobalData = Frame.SceneGlobalData;
+        const FVector3           CameraPos       = FVector3(SceneGlobalData.CameraData.Location);
 
-        const uint32 Handle = MeshComponent.ResolveHandle;
-        if (Handle == INVALID_MESH_RESOLVE_HANDLE)
+        const FScenePrimitive*      Prims    = ScenePrimitives.GetPrimitives();
+        const FVector4*             Spheres  = ScenePrimitives.GetBounds();
+        const FPrimitiveCullData*   Culls    = ScenePrimitives.GetCullData();
+        const FSurfaceBinding*      Bindings = ScenePrimitives.GetBindings();
+
+        FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
+        auto& SkeletalStorage = Registry.storage<SSkeletalMeshComponent>();
+
+        const double WorldTime = World->GetTimeSinceWorldCreation();
+
+        for (uint32 i = Range.Start; i < Range.End; ++i)
         {
-            return;
-        }
-
-        const FMatrix4& TransformMatrix = TransformComponent.CachedMatrix;
-
-        // Transform the cached local sphere instead of rebuilding a world AABB: fewer ops, and it stays
-        // tight under rotation. BoundsScale inflates it for animation/displacement past the asset bounds.
-        const FVector3& C = MeshComponent.CachedLocalCenter;
-        const FVector3  Center = FVector3(TransformMatrix[0]) * C.x
-                               + FVector3(TransformMatrix[1]) * C.y
-                               + FVector3(TransformMatrix[2]) * C.z
-                               + FVector3(TransformMatrix[3]);
-
-        const float ScaleSq = Math::Max(Math::Max(
-            Math::Dot(FVector3(TransformMatrix[0]), FVector3(TransformMatrix[0])),
-            Math::Dot(FVector3(TransformMatrix[1]), FVector3(TransformMatrix[1]))),
-            Math::Dot(FVector3(TransformMatrix[2]), FVector3(TransformMatrix[2])));
-
-        const float CullScale = Math::Max(MeshComponent.BoundsScale, 1.0f);
-        const float Radius    = MeshComponent.CachedLocalRadius * Math::Sqrt(ScaleSq) * CullScale;
-
-        if (!SceneCullContext.ShouldKeep(
-                Center,
-                Radius,
-                MeshComponent.bCastShadow,
-                MeshComponent.MaxDrawDistance,
-                FVector3(SceneGlobalData.CameraData.Location)))
-        {
-            ++Local.Stats.NumInstancesCulled;
-            return;
-        }
-
-        // Checked after the cull so a rejected entity never reads the derived mesh pointer (second cache
-        // line). A directly-assigned mesh sits out one frame rather than drawing against a stale resolve.
-        if (MeshComponent.CachedMeshKey != GetLiveMeshKey())
-        {
-            FMeshResolveCache::MarkPendingWork();
-            return;
-        }
-
-        const FResolvedMesh& Resolved = FMeshResolveCache::Get().GetEntry(Handle);
-        const uint64 MeshletHeaderAddress = MeshComponent.CachedMeshletHeaderAddress;
-
-        const FVector3 ToCamera = Center - FVector3(SceneGlobalData.CameraData.Location);
-        const float DistSq   = Math::Dot(ToCamera, ToCamera);
-        const float RadiusSq = Radius * Radius;
-
-        const EInstanceFlags BaseFlags = MeshComponent.CachedBaseFlags;
-
-        const uint32 EntityRecordIdx = (uint32)Local.EntityRecords.size();
-        FForwardRenderScene::FEntityRecord& EntityRecord = Local.EntityRecords.emplace_back();
-        EntityRecord.Transform            = TransformMatrix;
-        EntityRecord.SphereBounds         = FVector4(Center, Radius);
-        EntityRecord.MeshletHeaderAddress = MeshletHeaderAddress;
-        EntityRecord.CustomData           = MeshComponent.CustomPrimitiveData.Data.Packed;
-        EntityRecord.EntityID             = entt::to_integral(Entity);
-        EntityRecord.LocalBoneOffset      = ~0u;
-        EntityRecord.SkinSliceSize        = 0u;
-        EntityRecord.GlobalSkinnedBase    = 0u;
-        EntityRecord.SkinCursor           = 0u;
-
-        EmitSurfaceDrawItems(Local, Resolved.Surfaces, MeshletHeaderAddress, MeshComponent.bCastShadow, BaseFlags,
-                             EntityRecordIdx, MeshComponent.ForcedLODIndex, Settings, DistSq, RadiusSq);
-    }
-
-    void FForwardRenderScene::ProcessStaticMeshEntityInternal(entt::entity Entity, const SStaticMeshComponent& MeshComponent, const STransformComponent& TransformComponent, FThreadLocalDrawData& Local)
-    {
-        ProcessRigidMeshEntity(*ExtractFrame, RenderSettings,
-                               [&] { return (const void*)MeshComponent.StaticMesh.Get(); },
-                               Entity, MeshComponent, TransformComponent, Local);
-    }
-
-    // Same meshlet pipeline, culling and LODs as the asset path, but the geometry and its resolved surfaces
-    // live on the component. No resolve handle, no cache lookup, no CachedMeshKey staleness check: Commit
-    // publishes RenderData synchronously, so whatever is here is current as of this tick.
-    void FForwardRenderScene::ProcessDynamicMeshEntityInternal(entt::entity Entity, const SDynamicMeshComponent& MeshComponent, const STransformComponent& TransformComponent, FThreadLocalDrawData& Local)
-    {
-        const FFrameData& Frame = *ExtractFrame;
-        const auto& SceneCullContext = Frame.Geometry.SceneCullContext;
-        const auto& SceneGlobalData  = Frame.SceneGlobalData;
-
-        const FDynamicMeshRenderData* Data = MeshComponent.RenderData.get();
-        if (Data == nullptr || Data->MeshletHeaderAddress == 0 || Data->Surfaces.empty())
-        {
-            return;
-        }
-
-        const FMatrix4& TransformMatrix = TransformComponent.CachedMatrix;
-
-        const FVector3& C = Data->LocalCenter;
-        const FVector3  Center = FVector3(TransformMatrix[0]) * C.x
-                               + FVector3(TransformMatrix[1]) * C.y
-                               + FVector3(TransformMatrix[2]) * C.z
-                               + FVector3(TransformMatrix[3]);
-
-        const float ScaleSq = Math::Max(Math::Max(
-            Math::Dot(FVector3(TransformMatrix[0]), FVector3(TransformMatrix[0])),
-            Math::Dot(FVector3(TransformMatrix[1]), FVector3(TransformMatrix[1]))),
-            Math::Dot(FVector3(TransformMatrix[2]), FVector3(TransformMatrix[2])));
-
-        const float CullScale = Math::Max(MeshComponent.BoundsScale, 1.0f);
-        const float Radius    = Data->LocalRadius * Math::Sqrt(ScaleSq) * CullScale;
-
-        if (!SceneCullContext.ShouldKeep(
-                Center,
-                Radius,
-                MeshComponent.bCastShadow,
-                MeshComponent.MaxDrawDistance,
-                FVector3(SceneGlobalData.CameraData.Location)))
-        {
-            ++Local.Stats.NumInstancesCulled;
-            return;
-        }
-
-        const FVector3 ToCamera = Center - FVector3(SceneGlobalData.CameraData.Location);
-        const float DistSq   = Math::Dot(ToCamera, ToCamera);
-        const float RadiusSq = Radius * Radius;
-
-        EInstanceFlags BaseFlags = EInstanceFlags::None;
-        if (MeshComponent.bReceiveShadow)          { BaseFlags |= EInstanceFlags::ReceiveShadow; }
-        if (MeshComponent.bIgnoreOcclusionCulling) { BaseFlags |= EInstanceFlags::IgnoreOcclusionCulling; }
-
-        const uint32 EntityRecordIdx = (uint32)Local.EntityRecords.size();
-        FEntityRecord& EntityRecord = Local.EntityRecords.emplace_back();
-        EntityRecord.Transform            = TransformMatrix;
-        EntityRecord.SphereBounds         = FVector4(Center, Radius);
-        EntityRecord.MeshletHeaderAddress = Data->MeshletHeaderAddress;
-        EntityRecord.CustomData           = MeshComponent.CustomPrimitiveData.Data.Packed;
-        EntityRecord.EntityID             = entt::to_integral(Entity);
-        EntityRecord.LocalBoneOffset      = ~0u;
-        EntityRecord.SkinSliceSize        = 0u;
-        EntityRecord.GlobalSkinnedBase    = 0u;
-        EntityRecord.SkinCursor           = 0u;
-
-        EmitSurfaceDrawItems(Local, Data->Surfaces, Data->MeshletHeaderAddress, MeshComponent.bCastShadow,
-                             BaseFlags, EntityRecordIdx, MeshComponent.ForcedLODIndex, RenderSettings,
-                             DistSq, RadiusSq);
-    }
-
-    void FForwardRenderScene::ProcessFoliageBakedInstance(const SFoliageType& Type, const FFoliageBakedInstance& Baked, uint32 OwnerEntityID, FThreadLocalDrawData& Local)
-    {
-        const FFrameData& Frame = *ExtractFrame;
-        const auto& SceneCullContext = Frame.Geometry.SceneCullContext;
-        const auto& SceneGlobalData  = Frame.SceneGlobalData;
-
-        const uint32 Handle = Type.ResolveHandle;
-        if (Handle == INVALID_MESH_RESOLVE_HANDLE)
-        {
-            return;
-        }
-
-        // Transform + cull sphere were baked when the foliage last changed; no per-frame matrix/AABB work.
-        const FMatrix4& TransformMatrix = Baked.Transform;
-        const FVector4  SphereBounds    = Baked.SphereBounds;
-        const FVector3  Center          = FVector3(SphereBounds);
-        const float     Radius          = SphereBounds.w;
-
-        if (!SceneCullContext.ShouldKeep(
-                Center,
-                Radius,
-                Type.bCastShadow,
-                Type.CullDistance,
-                FVector3(SceneGlobalData.CameraData.Location)))
-        {
-            ++Local.Stats.NumInstancesCulled;
-            return;
-        }
-
-        // Checked after the cull; a rejected instance draws nothing, so a stale resolve can't matter.
-        if (Type.CachedMeshKey != (const void*)Type.Mesh.Get())
-        {
-            FMeshResolveCache::MarkPendingWork();
-            return;
-        }
-
-        const FResolvedMesh& Resolved = FMeshResolveCache::Get().GetEntry(Handle);
-        const uint64 MeshletHeaderAddress = Type.CachedMeshletHeaderAddress;
-
-        const FVector3 ToCamera = Center - FVector3(SceneGlobalData.CameraData.Location);
-        const float DistSq   = Math::Dot(ToCamera, ToCamera);
-        const float RadiusSq = Radius * Radius;
-
-        const EInstanceFlags BaseFlags = Type.CachedBaseFlags;
-
-        const uint32 EntityRecordIdx = (uint32)Local.EntityRecords.size();
-        FEntityRecord& EntityRecord = Local.EntityRecords.emplace_back();
-        EntityRecord.Transform              = TransformMatrix;
-        EntityRecord.SphereBounds           = SphereBounds;
-        EntityRecord.MeshletHeaderAddress   = MeshletHeaderAddress;
-        EntityRecord.CustomData             = 0u;
-        EntityRecord.EntityID               = OwnerEntityID;
-        EntityRecord.LocalBoneOffset        = ~0u;
-        EntityRecord.SkinSliceSize          = 0u;
-        EntityRecord.GlobalSkinnedBase      = 0u;
-        EntityRecord.SkinCursor             = 0u;
-
-        EmitSurfaceDrawItems(Local, Resolved.Surfaces, MeshletHeaderAddress, Type.bCastShadow, BaseFlags,
-                             EntityRecordIdx, /*ForcedLODIndex*/ -1, RenderSettings, DistSq, RadiusSq);
-    }
-
-    void FForwardRenderScene::ProcessSkeletalMeshEntityInternal(entt::entity Entity, SSkeletalMeshComponent& MeshComponent, const STransformComponent& TransformComponent, FThreadLocalDrawData& Local)
-    {
-        const FFrameData& Frame = *ExtractFrame;
-        const auto& SceneCullContext = Frame.Geometry.SceneCullContext;
-        const auto& SceneGlobalData  = Frame.SceneGlobalData;
-
-        const uint32 Handle = MeshComponent.ResolveHandle;
-        if (Handle == INVALID_MESH_RESOLVE_HANDLE)
-        {
-            return;
-        }
-
-        const FMatrix4& TransformMatrix = TransformComponent.CachedMatrix;
-
-        // Same cached-sphere transform as the rigid path; skinned bounds are bind-pose, BoundsScale covers
-        // poses that push past them.
-        const FVector3& C = MeshComponent.CachedLocalCenter;
-        const FVector3  Center = FVector3(TransformMatrix[0]) * C.x
-                               + FVector3(TransformMatrix[1]) * C.y
-                               + FVector3(TransformMatrix[2]) * C.z
-                               + FVector3(TransformMatrix[3]);
-
-        const float ScaleSq = Math::Max(Math::Max(
-            Math::Dot(FVector3(TransformMatrix[0]), FVector3(TransformMatrix[0])),
-            Math::Dot(FVector3(TransformMatrix[1]), FVector3(TransformMatrix[1]))),
-            Math::Dot(FVector3(TransformMatrix[2]), FVector3(TransformMatrix[2])));
-
-        const float     CullScale    = Math::Max(MeshComponent.BoundsScale, 1.0f);
-        const float     Radius       = MeshComponent.CachedLocalRadius * Math::Sqrt(ScaleSq) * CullScale;
-        const FVector4  SphereBounds = FVector4(Center, Radius);
-
-        if (!SceneCullContext.ShouldKeep(
-                Center,
-                Radius,
-                MeshComponent.bCastShadow,
-                MeshComponent.MaxDrawDistance,
-                FVector3(SceneGlobalData.CameraData.Location)))
-        {
-            ++Local.Stats.NumInstancesCulled;
-            return;
-        }
-
-        // Shadow-only casters intentionally excluded.
-        if (SceneCullContext.IsCameraVisible(
-                Center,
-                Radius,
-                MeshComponent.MaxDrawDistance,
-                FVector3(SceneGlobalData.CameraData.Location)))
-        {
-            MeshComponent.LastRenderedTime = World->GetTimeSinceWorldCreation();
-        }
-
-        CMesh* Mesh = MeshComponent.SkeletalMesh;
-        if (!IsValid(Mesh))
-        {
-            return;
-        }
-
-        // Checked after the cull; the skinned span below needs the meshlet table anyway, so the mesh deref
-        // is deferred rather than removed.
-        if (MeshComponent.CachedMeshKey != (const void*)Mesh)
-        {
-            FMeshResolveCache::MarkPendingWork();
-            return;
-        }
-
-        const FResolvedMesh&  Resolved = FMeshResolveCache::Get().GetEntry(Handle);
-        const FMeshResource&  Resource = Mesh->GetMeshResource();
-
-        const CSkeletalMesh*     SkelMesh = MeshComponent.SkeletalMesh.Get();
-        const FSkeletonResource* SkelRes  = (SkelMesh && SkelMesh->Skeleton.IsValid())
-            ? SkelMesh->Skeleton->GetSkeletonResource()
-            : nullptr;
-        const uint32 SkeletonBoneCount = SkelRes ? (uint32)SkelRes->GetNumBones() : 0u;
-
-        uint32 LocalBoneOffset = ~0u;
-        if (SkeletonBoneCount > 0)
-        {
-            LocalBoneOffset = Local.BonesData.Size();
-            if ((uint32)MeshComponent.BoneTransforms.size() == SkeletonBoneCount)
+            const FScenePrimitive& Prim = Prims[i];
+            
+            if (Prim.Source != EPrimitiveSource::SkeletalMesh)
             {
-                // The animation system packs when it evaluates a pose; writers that bypass it
-                // (ragdoll readback, editor bind-pose fills) set the dirty flag and we repack here.
-                // Frozen/off-screen skeletons hit neither and just bulk-copy the cached rows.
-                if (MeshComponent.bRenderBonesDirty ||
-                    (uint32)MeshComponent.RenderBones.size() != SkeletonBoneCount * 3u)
+                continue;
+            }
+
+            const FVector4&           Sphere = Spheres[i];
+            const FPrimitiveCullData& Cull   = Culls[i];
+
+            const FVector3 Center = FVector3(Sphere);
+            const float    Radius = Sphere.w;
+
+            if (!SceneCull.ShouldKeep(Center, Radius, Cull.bCastShadow != 0u, Cull.MaxDrawDistance, CameraPos))
+            {
+                ++Local.Stats.NumInstancesCulled;
+                continue;
+            }
+
+            if (Prim.Surfaces == nullptr || Prim.SurfaceCount == 0u)
+            {
+                continue;   // parked awaiting resolve; the sync pass retries it
+            }
+
+            const FVector3 ToCamera = Center - CameraPos;
+            const float    DistSq   = Math::Dot(ToCamera, ToCamera);
+            const float    RadiusSq = Radius * Radius;
+
+            const uint32 EntityRecordIdx = (uint32)Local.EntityRecords.size();
+            FEntityRecord& EntityRecord = Local.EntityRecords.emplace_back();
+            EntityRecord.Transform            = Prim.Transform;
+            EntityRecord.SphereBounds         = Sphere;
+            EntityRecord.MeshletHeaderAddress = Prim.MeshletHeaderAddress;
+            EntityRecord.CustomData           = Prim.CustomData;
+            EntityRecord.EntityID             = Prim.EntityID;
+            EntityRecord.LocalBoneOffset      = ~0u;
+            EntityRecord.SkinSliceSize        = 0u;
+            EntityRecord.GlobalSkinnedBase    = 0u;
+            EntityRecord.SkinCursor           = 0u;
+
+            //~ Everything below needs the live component.
+
+            if (!SkeletalStorage.contains(Prim.Entity))
+            {
+                continue;
+            }
+            SSkeletalMeshComponent& MeshComponent = SkeletalStorage.get(Prim.Entity);
+
+            // Shadow-only casters intentionally excluded: a mesh that only reaches a shadow view isn't
+            // "rendered", so the anim system may stop ticking its pose.
+            if (SceneCull.IsCameraVisible(Center, Radius, Cull.MaxDrawDistance, CameraPos))
+            {
+                MeshComponent.LastRenderedTime = WorldTime;
+            }
+
+            CMesh* Mesh = MeshComponent.SkeletalMesh;
+            if (!IsValid(Mesh))
+            {
+                continue;
+            }
+
+            const FMeshResource&     Resource = Mesh->GetMeshResource();
+            const CSkeletalMesh*     SkelMesh = MeshComponent.SkeletalMesh.Get();
+            const FSkeletonResource* SkelRes  = (SkelMesh && SkelMesh->Skeleton.IsValid())
+                ? SkelMesh->Skeleton->GetSkeletonResource()
+                : nullptr;
+            const uint32 SkeletonBoneCount = SkelRes ? (uint32)SkelRes->GetNumBones() : 0u;
+
+            // The mesh bakes u8 joint indices at import; the bone slice is sized from the SKELETON at
+            // runtime. Those are separate assets and nothing on the GPU bounds
+            // Bones()[BoneOffset + JointIndices.x], so if the mesh references more bones than the skeleton
+            // provides, every vertex weighted to the excess reads past this entity's slice -- garbage
+            // matrices, wildly displaced vertices. A rig's highest indices are its leaf bones, so it shows
+            // up on fingers and toes first while the torso stays correct.
+            if (Resource.RequiredBoneCount > SkeletonBoneCount)
+            {
+                static uint32 BoneRangeLogCount = 0;
+                if (BoneRangeLogCount++ < 8u)
                 {
-                    SkeletalUtils::PackRenderBones(MeshComponent.BoneTransforms, MeshComponent.RenderBones);
-                    MeshComponent.bRenderBonesDirty = false;
+                    LOG_ERROR("Skinning: mesh '{}' references {} bones but its skeleton provides {}. Vertices "
+                              "weighted to joints >= {} read PAST the bone slice (the GPU fetch is unbounded) "
+                              "and will be wildly displaced. Mesh and skeleton are out of sync -- reimport both.",
+                              Mesh->GetName(), Resource.RequiredBoneCount, SkeletonBoneCount, SkeletonBoneCount);
                 }
-
-                const FBoneTransform* Packed = reinterpret_cast<const FBoneTransform*>(MeshComponent.RenderBones.data());
-                Local.BonesData.Append(Packed, SkeletonBoneCount);
             }
-            else
+
+            uint32 LocalBoneOffset = ~0u;
+            if (SkeletonBoneCount > 0)
             {
-                // No active animation: BoneWorld * InvBindMatrix collapses to identity for every bone.
-                Local.BonesData.AppendIdentity(SkeletonBoneCount);
+                LocalBoneOffset = Local.BonesData.Size();
+                if ((uint32)MeshComponent.BoneTransforms.size() == SkeletonBoneCount)
+                {
+                    // The animation system packs when it evaluates a pose; writers that bypass it
+                    // (ragdoll readback, editor bind-pose fills) set the dirty flag and we repack here.
+                    // Frozen/off-screen skeletons hit neither and just bulk-copy the cached rows.
+                    if (MeshComponent.bRenderBonesDirty ||
+                        (uint32)MeshComponent.RenderBones.size() != SkeletonBoneCount * 3u)
+                    {
+                        SkeletalUtils::PackRenderBones(MeshComponent.BoneTransforms, MeshComponent.RenderBones);
+                        MeshComponent.bRenderBonesDirty = false;
+                    }
+
+                    const FBoneTransform* Packed = reinterpret_cast<const FBoneTransform*>(MeshComponent.RenderBones.data());
+                    Local.BonesData.Append(Packed, SkeletonBoneCount);
+                }
+                else
+                {
+                    // No active animation: BoneWorld * InvBindMatrix collapses to identity for every bone.
+                    Local.BonesData.AppendIdentity(SkeletonBoneCount);
+                }
             }
+
+            EntityRecord.LocalBoneOffset = LocalBoneOffset;
+
+            // Screen-size proxy for the animation system's update-rate optimization. The sqrt survives only
+            // here because the anim system wants the real ratio; LOD selection uses the squared form.
+            MeshComponent.LastDistanceOverRadius = (Radius > 0.0f) ? (Math::Sqrt(DistSq) / Radius) : 0.0f;
+
+            const bool bAccumulateSkinSize = (LocalBoneOffset != ~0u && Prim.MeshletHeaderAddress != 0ull);
+            FSkinSizeAccum SkinSize;
+            EmitPrimitiveSurfaces(Local, Prim, Bindings + Prim.BindingBase,
+                                  EntityRecordIdx, RenderSettings, DistSq, RadiusSq,
+                                  bAccumulateSkinSize ? &SkinSize : nullptr,
+                                  &Resource.MeshletData.Meshlets);
+
+            EntityRecord.SkinSliceSize = SkinSize.SliceSize;
         }
-
-        const uint32 NumBones = SkeletonBoneCount;
-
-        const FVector3 CameraPos  = FVector3(SceneGlobalData.CameraData.Location);
-        const FVector3 ToCamera   = Center - CameraPos;
-        const float     DistSq     = Math::Dot(ToCamera, ToCamera);
-
-        const float RadiusSq = Radius * Radius;
-
-        // Screen-size proxy for the animation system's update-rate optimization. The sqrt survives only
-        // here because the anim system wants the real ratio; LOD selection below uses the squared form.
-        MeshComponent.LastDistanceOverRadius = (Radius > 0.0f) ? (Math::Sqrt(DistSq) / Radius) : 0.0f;
-
-        const EInstanceFlags BaseFlags = MeshComponent.CachedBaseFlags;
-        const uint64 MeshletHeaderAddress = MeshComponent.CachedMeshletHeaderAddress;
-
-        const uint32 EntityRecordIdx = (uint32)Local.EntityRecords.size();
-        FEntityRecord& EntityRecord = Local.EntityRecords.emplace_back();
-        EntityRecord.Transform            = TransformMatrix;
-        EntityRecord.SphereBounds         = SphereBounds;
-        EntityRecord.MeshletHeaderAddress = MeshletHeaderAddress;
-        EntityRecord.CustomData           = MeshComponent.CustomPrimitiveData.Data.Packed;
-        EntityRecord.EntityID             = entt::to_integral(Entity);
-        EntityRecord.LocalBoneOffset      = LocalBoneOffset;
-        EntityRecord.GlobalSkinnedBase    = 0u;   // resolved during merge
-
-        // Skin-slice sizing folded into the shared surface emit (it already resolves the per-surface LOD the
-        // blocks are keyed on), avoiding a second pass over GeometrySurfaces that re-resolved every LOD.
-        // Skinned bounds are bind-pose; BoundsScale handles outliers.
-        const bool bAccumulateSkinSize = (LocalBoneOffset != ~0u && MeshletHeaderAddress != 0ull);
-        FSkinSizeAccum SkinSize;
-        EmitSurfaceDrawItems(Local, Resolved.Surfaces, MeshletHeaderAddress, MeshComponent.bCastShadow, BaseFlags,
-                             EntityRecordIdx, MeshComponent.ForcedLODIndex, RenderSettings, DistSq, RadiusSq,
-                             bAccumulateSkinSize ? &SkinSize : nullptr,
-                             &Resource.MeshletData.Meshlets);
-
-        EntityRecord.SkinSliceSize = SkinSize.SliceSize;
     }
 
-    // Hands out compacted pre-skin slices under the r.Skinning.MaxVertices budget, biggest-on-screen
-    // first. Entities that do not fit keep kNoPreSkinBase and blend bones in the draw path instead.
-    // Without the budget the demand is the sum over every CPU-visible skinned entity's meshlet span,
-    // which a large crowd drives into the tens of GB -- past what the allocation can back, so the
-    // skinning compute writes off the end of the buffer.
     void FForwardRenderScene::AssignPreSkinSlices(FFrameData& Frame,
                                                   TVector<FSkinCandidate>& Candidates,
                                                   TVector<FThreadLocalDrawData>& ThreadLocal)
@@ -3383,6 +3480,29 @@ namespace Lumina
                                          uint32 MeshletOffset, uint32 MeshletCount) -> uint32
                 {
                     const uint32 Base = Rec.SkinCursor - VertexOffset;
+
+                    // The block must fit inside the slice this entity was granted. Overrunning it walks into
+                    // the NEXT entity's slice, so two entities skin and read the same vertices -- one of them
+                    // renders with the other's pose.
+                    if (CVarValidateSkinSlices.GetValue() != 0)
+                    {
+                        const uint32 SliceBegin = Rec.GlobalSkinnedBase;
+                        const uint32 SliceEnd   = Rec.GlobalSkinnedBase + Rec.SkinSliceSize;
+                        if (Rec.SkinCursor < SliceBegin || (uint64)Rec.SkinCursor + VertexCount > SliceEnd)
+                        {
+                            static uint32 SliceViolationLogCount = 0;
+                            if (SliceViolationLogCount++ < 16u)
+                            {
+                                LOG_ERROR("Skinning: block [{}, {}) escapes its entity slice [{}, {}). "
+                                          "MeshletRange [{}, {}), BlockVertexOffset {}, Base {}. Grant is "
+                                          "SkinSliceSize {} -- the per-block consumption and the grant disagree.",
+                                          Rec.SkinCursor, Rec.SkinCursor + VertexCount, SliceBegin, SliceEnd,
+                                          MeshletOffset, MeshletOffset + MeshletCount, VertexOffset, Base,
+                                          Rec.SkinSliceSize);
+                            }
+                        }
+                    }
+
                     Rec.SkinCursor   += VertexCount;
 
                     // One descriptor per meshlet -> the dispatch runs one workgroup per meshlet,
@@ -3426,6 +3546,39 @@ namespace Lumina
             }
         }
 
+        // Closing the loop on the grant: every granted entity must have consumed EXACTLY the slice it was
+        // budgeted. Under-consumption means the size accumulation counted a block the allocation pass then
+        // skipped (or vice versa) -- the two run under separate conditions in separate passes, so they can
+        // drift silently; over-consumption is the same drift in the direction that corrupts the next entity.
+        if (CVarValidateSkinSlices.GetValue() != 0)
+        {
+            for (FThreadLocalDrawData& Local : ThreadLocal)
+            {
+                for (FEntityRecord& Rec : Local.EntityRecords)
+                {
+                    if (Rec.LocalBoneOffset == ~0u || Rec.SkinSliceSize == 0u
+                        || Rec.GlobalSkinnedBase == kNoPreSkinBase)
+                    {
+                        continue;
+                    }
+
+                    const uint32 Expected = Rec.GlobalSkinnedBase + Rec.SkinSliceSize;
+                    if (Rec.SkinCursor != Expected)
+                    {
+                        static uint32 CursorMismatchLogCount = 0;
+                        if (CursorMismatchLogCount++ < 16u)
+                        {
+                            LOG_ERROR("Skinning: entity slice consumption mismatch -- cursor ended at {} but the "
+                                      "grant [{}, {}) expected {}. Delta {} vertices. The size pass and the "
+                                      "allocation pass disagree about which blocks exist.",
+                                      Rec.SkinCursor, Rec.GlobalSkinnedBase, Expected, Expected,
+                                      (int64)Rec.SkinCursor - (int64)Expected);
+                        }
+                    }
+                }
+            }
+        }
+
         if (NumDeferred != LastPreSkinDeferredCount)
         {
             LastPreSkinDeferredCount = NumDeferred;
@@ -3438,6 +3591,15 @@ namespace Lumina
         }
     }
 
+    /**
+     * Collapses the per-thread gather output into this frame's GPU-facing arrays.
+     *
+     * The old merge had to *discover* the draw structure every frame: union the per-thread batch maps,
+     * dedup draws inside each batch, then lay out draw args. None of that happens now -- the (batch,
+     * draw) slot space is persistent scene state, so this is pure arithmetic over per-slot counters plus
+     * one scatter of the visible instances. Everything here is O(visible instances + draw slots), with no
+     * hashing and no allocation.
+     */
     void FForwardRenderScene::MergeMeshDrawData(TVector<FThreadLocalDrawData>& ThreadLocal)
     {
         LUMINA_PROFILE_SECTION("Merge Mesh Draw Data");
@@ -3448,12 +3610,14 @@ namespace Lumina
         auto& DrawCommands              = Frame.Geometry.DrawCommands;
         auto& OpaqueDrawList            = Frame.Geometry.OpaqueDrawList;
         auto& TranslucentDrawList       = Frame.Geometry.TranslucentDrawList;
-        auto& DrawMeshletStartOffsets   = Frame.Geometry.DrawMeshletStartOffsets;
+        auto& DeferredMaterials         = Frame.Geometry.DeferredMaterials;
         auto& FrameStats                = Frame.FrameStats;
-        uint32& TotalMeshletBound       = Frame.Views.TotalMeshletBound;
         uint32& NumDrawsPerView         = Frame.Views.NumDrawsPerView;
 
         const uint32 NumThreads = (uint32)ThreadLocal.size();
+        const uint32 NumSlots   = ScenePrimitives.GetBatches().Num();   // one draw per batch
+
+        DeferredMaterials.clear();
 
         // Bones merged serially: skinned meshes reference by absolute index.
         // Persistent member; assign keeps capacity across frames.
@@ -3508,263 +3672,139 @@ namespace Lumina
 
         AssignPreSkinSlices(Frame, SkinCandidates, ThreadLocal);
 
+        // ResetPass leaves Instances at last frame's size (see there); consumers read size(), so a frame
+        // with no skinned meshes must drop it explicitly. It does NOT return early any more: the draw
+        // list below covers the rigid instances the GPU appends, which exist regardless.
         if (TotalInstances == 0)
         {
-            // ResetPass leaves Instances at last frame's size (see there); consumers read size(),
-            // so an empty frame must drop it explicitly. clear() keeps capacity, no zero-fill.
             Instances.clear();
-            return;
         }
 
-        // Scheduling dominates the merge for typical scenes (tens of batches, bookkeeping passes), so each
-        // dispatch+join costs more than the work. Fan out only above the threshold; below it runs inline.
-        const bool bParallelMerge = TotalInstances > 4096;
+        // Sum the per-thread slot counters and, in the same pass, record where each thread's instances
+        // for that slot will start. Threads that never ran a gather chunk have empty counter arrays.
+        // Sized by batch count, which is what the draw-slot space collapsed to. Max(1) so an empty
+        // scene still has addressable storage for the guards below.
+        const uint32 SlotCapacity = Math::Max(NumSlots, 1u);
+        MergeDrawInstanceCounts.assign(SlotCapacity, 0u);
+        MergeMeshletCountsPerDraw.assign(SlotCapacity, 0u);
+        MergeDrawInstanceOffsets.assign(SlotCapacity, 0u);
 
-        // Scratch lives on scene members so capacity is reused across frames.
-        MergeGlobalBatchKeys.clear();
-        MergeGlobalBatchIndexByKey.clear();
-        if (MergeGlobalBatchKeys.capacity() < 64)
+        for (uint32 t = 0; t < NumThreads; ++t)
         {
-            MergeGlobalBatchKeys.reserve(64);
-        }
-        if (DrawCommands.capacity() < 64)
-        {
-            DrawCommands.reserve(64);
-        }
-
-        for (FThreadLocalDrawData& Local : ThreadLocal)
-        {
-            for (FLocalBatchEntry& LocalBatch : Local.LocalBatches)
+            FThreadLocalDrawData& Local = ThreadLocal[t];
+            if (!Local.bTouched)
             {
-                const uint64 KeyHash = GetTypeHash(LocalBatch.Key);
-                uint32 GlobalIdx = ~0u;
+                continue;
+            }
 
-                auto It = MergeGlobalBatchIndexByKey.find(KeyHash);
-                if (It != MergeGlobalBatchIndexByKey.end())
-                {
-                    // Verify: on a hash collision between distinct keys, scan rather than merge them.
-                    if (MergeGlobalBatchKeys[It->second] == LocalBatch.Key)
-                    {
-                        GlobalIdx = It->second;
-                    }
-                    else
-                    {
-                        const uint32 NumGlobal = (uint32)MergeGlobalBatchKeys.size();
-                        for (uint32 g = 0; g < NumGlobal; ++g)
-                        {
-                            if (MergeGlobalBatchKeys[g] == LocalBatch.Key)
-                            {
-                                GlobalIdx = g;
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                if (GlobalIdx == ~0u)
-                {
-                    GlobalIdx = (uint32)MergeGlobalBatchKeys.size();
-                    MergeGlobalBatchKeys.push_back(LocalBatch.Key);
-                    if (It == MergeGlobalBatchIndexByKey.end())
-                    {
-                        MergeGlobalBatchIndexByKey.emplace(KeyHash, GlobalIdx);
-                    }
-
-                    const FCachedMaterialResolve& R = LocalBatch.Resolve;
-                    FMeshDrawCommand& NewCmd = DrawCommands.emplace_back();
-                    NewCmd.VertexShader        = R.VertexShader;
-                    NewCmd.PixelShader         = R.PixelShader;
-                    NewCmd.MeshShader          = R.MeshShader;
-                    NewCmd.VisBufferMeshShader   = R.VisBufferMeshShader;
-                    NewCmd.VisBufferVertexShader = R.VisBufferVertexShader;
-                    NewCmd.MaskedVisBufferPixelShader     = R.MaskedVisBufferPixelShader;
-                    NewCmd.MaskedVisBufferPixelShaderPrim = R.MaskedVisBufferPixelShaderPrim;
-                    NewCmd.DeferredShader        = R.DeferredShader;
-                    NewCmd.MaterialIndex         = R.MaterialIdx;
-                    NewCmd.IndirectDrawOffset  = 0;
-                    NewCmd.DrawCount           = 0;
-                    NewCmd.bTranslucent        = LocalBatch.Key.bTranslucent;
-                    NewCmd.bMasked             = LocalBatch.Key.bMasked;
-                    NewCmd.bAdditive           = LocalBatch.Key.bAdditive;
-                    NewCmd.bTwoSided           = LocalBatch.Key.bTwoSided;
-                    NewCmd.bAnySkinned         = 0u;
-                    NewCmd.bAnyStatic          = 0u;
-                }
-                // A global batch unions many per-thread LocalBatches; OR their homogeneity (covers new + existing).
-                FMeshDrawCommand& MergedCmd = DrawCommands[GlobalIdx];
-                MergedCmd.bAnySkinned |= LocalBatch.bAnySkinned ? 1u : 0u;
-                MergedCmd.bAnyStatic  |= LocalBatch.bAnyStatic  ? 1u : 0u;
-                LocalBatch.GlobalBatchIndex = GlobalIdx;
+            // Only the slots this thread actually emitted into, so a scene with thousands of distinct
+            // materials but few visible ones doesn't pay a dense sweep per thread. DrawWriteBase is
+            // already sized by PrepareCounters and is written before it is read, so it needs no clear.
+            for (uint32 Slot : Local.TouchedSlots)
+            {
+                // Running total so far == this thread's offset within the slot's instance block.
+                Local.DrawWriteBase[Slot]        = MergeDrawInstanceCounts[Slot];
+                MergeDrawInstanceCounts[Slot]   += Local.DrawInstanceCounts[Slot];
+                MergeMeshletCountsPerDraw[Slot] += Local.DrawMeshletCounts[Slot];
             }
         }
 
-        const uint32 NumBatches = (uint32)MergeGlobalBatchKeys.size();
+        // Draws come from the persistent batch registry now, not from this frame's visible set: a draw
+        // is one PSO bucket, and which of them have instances is a GPU-side answer. A batch the cull
+        // finds empty simply gets InstanceCount = 0 and rasterizes nothing.
+        FSceneBatchRegistry& Registry = ScenePrimitives.GetBatches();
+        const uint32 NumBatches = Registry.Num();
 
-        // Group LocalBatches by global batch. Outer vector resized up only;
-        // inner vectors clear() in place to keep their heap capacity warm.
-        if (MergeBatchToLocals.size() < NumBatches)
-        {
-            MergeBatchToLocals.resize(NumBatches);
-        }
+        DrawCommands.clear();
+        Frame.Geometry.BatchMeshletSeed.assign(Math::Max(NumBatches, 1u), 0u);
+
+        uint32 InstanceRunning = 0u;
+
         for (uint32 b = 0; b < NumBatches; ++b)
         {
-            MergeBatchToLocals[b].clear();
-        }
-        for (FThreadLocalDrawData& Local : ThreadLocal)
-        {
-            for (FLocalBatchEntry& LocalBatch : Local.LocalBatches)
+            // Counters are indexed by batch directly now, so there is no cached layout that can lag
+            // behind the registry and no stale-slot guard to get wrong.
+            if (b < SlotCapacity)
             {
-                MergeBatchToLocals[LocalBatch.GlobalBatchIndex].push_back(&LocalBatch);
+                // Skinned instances occupy the head of the visible buffer in emission order, so their
+                // per-batch offsets are just a running total; the GPU appends after them.
+                MergeDrawInstanceOffsets[b] = InstanceRunning;
+                InstanceRunning += MergeDrawInstanceCounts[b];
 
-                const uint32 NumLocal = (uint32)LocalBatch.LocalDraws.size();
-                LocalBatch.LocalToGlobalDraw.resize(NumLocal);
-                LocalBatch.LocalDrawWriteBase.resize(NumLocal);
+                Frame.Geometry.BatchMeshletSeed[b] = MergeMeshletCountsPerDraw[b];
             }
-        }
-        
-        if (MergeGlobalDrawsPerBatch.size() < NumBatches)
-        {
-            MergeGlobalDrawsPerBatch.resize(NumBatches);
-        }
-        for (uint32 b = 0; b < NumBatches; ++b)
-        {
-            MergeGlobalDrawsPerBatch[b].clear();
-        }
-        {
-            auto DedupBody = [&](const Task::FParallelRange& Range)
+
+            const FSceneBatchRegistry::FBatch& Batch = Registry.Get(b);
+
+            uint8 SkinFlags = 0u;
+            for (uint32 t = 0; t < NumThreads; ++t)
             {
-                // Per-batch dedup scratch on this worker's frame arena (8 MB blocks fit the bucket array;
-                // reclaimed at the next frame-begin reset like the gathered data it sits beside).
-                TFrameHashMap<uint64, uint32> Dedupe(FFrameArenaAllocator(&GetThreadFrameAllocator(), "DrawDedupe"));
-                for (uint32 b = Range.Start; b < Range.End; ++b)
+                if (ThreadLocal[t].bTouched)
                 {
-                    Dedupe.clear();
-                    TVector<FDrawKey>& Globals = MergeGlobalDrawsPerBatch[b];
-                    for (FLocalBatchEntry* LB : MergeBatchToLocals[b])
-                    {
-                        const uint32 NumLocal = (uint32)LB->LocalDraws.size();
-                        for (uint32 ld = 0; ld < NumLocal; ++ld)
-                        {
-                            const FDrawKey& K = LB->LocalDraws[ld];
-                            const uint64 PackedKey = ((uint64)K.StartIndex << 32) | (uint64)K.IndexCount;
-                            uint32 GlobalDraw;
-                            auto It = Dedupe.find(PackedKey);
-                            if (It != Dedupe.end())
-                            {
-                                GlobalDraw = It->second;
-                            }
-                            else
-                            {
-                                GlobalDraw = (uint32)Globals.size();
-                                Globals.push_back(K);
-                                Dedupe.emplace(PackedKey, GlobalDraw);
-                            }
-                            LB->LocalToGlobalDraw[ld] = GlobalDraw;
-                        }
-                    }
+                    SkinFlags |= ThreadLocal[t].BatchSkinFlags[b];
                 }
-            };
-            if (bParallelMerge)
-            {
-                DedupTaskGraph.Reset();   // reuse the persistent graph (allocator block + capacity)
-                FTaskGraph& DedupGraph = DedupTaskGraph;
-                DedupGraph.AddParallelFor(NumBatches, 1, DedupBody);
-                DedupGraph.Dispatch();
-                DedupGraph.Wait();
             }
-            else
+            // A batch with no CPU-side instances can still receive rigid ones from the cull, so it must
+            // advertise a static variant rather than nothing.
+            if (SkinFlags == 0u)
             {
-                DedupBody(Task::FParallelRange{ 0u, NumBatches, 0u });
+                SkinFlags = 2u;
+            }
+
+            FMeshDrawCommand& Cmd = DrawCommands.emplace_back();
+            Cmd.VertexShader                   = Batch.VertexShader;
+            Cmd.PixelShader                    = Batch.PixelShader;
+            Cmd.MeshShader                     = Batch.MeshShader;
+            Cmd.VisBufferMeshShader            = Batch.VisBufferMeshShader;
+            Cmd.VisBufferVertexShader          = Batch.VisBufferVertexShader;
+            Cmd.MaskedVisBufferPixelShader     = Batch.MaskedVisBufferPixelShader;
+            Cmd.MaskedVisBufferPixelShaderPrim = Batch.MaskedVisBufferPixelShaderPrim;
+            Cmd.DeferredShader                 = Batch.DeferredShader;
+            Cmd.MaterialIndex                  = Batch.MaterialIdx;
+            Cmd.IndirectDrawOffset             = b;
+            Cmd.DrawCount                      = 1u;
+            Cmd.bTranslucent                   = Batch.Key.bTranslucent;
+            Cmd.bMasked                        = Batch.Key.bMasked;
+            Cmd.bAdditive                      = Batch.Key.bAdditive;
+            Cmd.bTwoSided                      = Batch.Key.bTwoSided;
+            Cmd.bAnySkinned                    = (SkinFlags & 1u) ? 1u : 0u;
+            Cmd.bAnyStatic                     = (SkinFlags & 2u) ? 1u : 0u;
+
+            if (!Batch.Key.bTranslucent)
+            {
+                for (const FSceneBatchRegistry::FDeferredMaterialSlot& MatSlot : Batch.DeferredMaterials)
+                {
+                    DeferredMaterials.push_back({ (uint32)MatSlot.MaterialIndex, MatSlot.DeferredShader });
+                }
             }
         }
 
-        // Each batch gets a contiguous block of draw args.
-        MergeBatchDrawArgBase.resize(NumBatches);
-        uint32 TotalDrawArgs = 0;
-        for (uint32 b = 0; b < NumBatches; ++b)
-        {
-            MergeBatchDrawArgBase[b]            = TotalDrawArgs;
-            DrawCommands[b].IndirectDrawOffset  = TotalDrawArgs;
-            DrawCommands[b].DrawCount           = (uint32)MergeGlobalDrawsPerBatch[b].size();
-            TotalDrawArgs                       += (uint32)MergeGlobalDrawsPerBatch[b].size();
-        }
+        // The per-draw meshlet prefix is GPU-built by BuildDrawPrefix; the CPU only publishes the count.
+        NumDrawsPerView   = NumBatches;
 
-        DrawMeshletStartOffsets.resize(TotalDrawArgs);
-        // Never cleared upstream: every slot [0, TotalInstances) is overwritten by the parallel
-        // instance write below, so only growth beyond the previous frame's size pays value-init.
+        DEBUG_ASSERT(InstanceRunning == TotalInstances);
+
+        // Skinned instances only; the GPU appends the rigid survivors after them.
         Instances.resize(TotalInstances);
-        NumDrawsPerView = TotalDrawArgs;
 
-        MergeDrawInstanceCounts.assign(TotalDrawArgs, 0u);
-        MergeMeshletCountsPerDraw.assign(TotalDrawArgs, 0u);
-
-        // Per-batch GlobalDraw ranges are disjoint, so writes don't race.
+        // Fold each slot's global instance offset into the per-thread bases, so the scatter is a plain
+        // post-increment with no indirection.
+        for (uint32 t = 0; t < NumThreads; ++t)
         {
-            auto CountBody = [&](const Task::FParallelRange& Range)
+            FThreadLocalDrawData& Local = ThreadLocal[t];
+            if (!Local.bTouched)
             {
-                for (uint32 b = Range.Start; b < Range.End; ++b)
-                {
-                    const uint32 BatchBase = MergeBatchDrawArgBase[b];
-                    for (FLocalBatchEntry* LB : MergeBatchToLocals[b])
-                    {
-                        const uint32 NumLocal = (uint32)LB->LocalDrawCounts.size();
-                        for (uint32 ld = 0; ld < NumLocal; ++ld)
-                        {
-                            const uint32 GlobalDraw = BatchBase + LB->LocalToGlobalDraw[ld];
-                            MergeDrawInstanceCounts[GlobalDraw]   += LB->LocalDrawCounts[ld];
-                            MergeMeshletCountsPerDraw[GlobalDraw] += LB->LocalMeshletCounts[ld];
-                        }
-                    }
-                }
-            };
-            if (bParallelMerge) { Task::ParallelFor(NumBatches, CountBody, 1); }
-            else                { CountBody(Task::FParallelRange{ 0u, NumBatches, 0u }); }
-        }
-
-        // Prefix sum for instance offsets (serial; data dependency).
-        MergeDrawInstanceOffsets.resize(TotalDrawArgs);
-        {
-            uint32 Running = 0;
-            for (uint32 d = 0; d < TotalDrawArgs; ++d)
-            {
-                MergeDrawInstanceOffsets[d] = Running;
-                Running += MergeDrawInstanceCounts[d];
+                continue;
             }
-            DEBUG_ASSERT(Running == TotalInstances);
-        }
-
-        // Per-batch DrawCursor slices are disjoint; race-free.
-        MergeDrawCursor.assign(MergeDrawInstanceOffsets.begin(), MergeDrawInstanceOffsets.begin() + TotalDrawArgs);
-        {
-            auto CursorBody = [&](const Task::FParallelRange& Range)
+            for (uint32 Slot : Local.TouchedSlots)
             {
-                for (uint32 b = Range.Start; b < Range.End; ++b)
-                {
-                    const uint32 BatchBase = MergeBatchDrawArgBase[b];
-                    for (FLocalBatchEntry* LB : MergeBatchToLocals[b])
-                    {
-                        const uint32 NumLocal = (uint32)LB->LocalDrawCounts.size();
-                        for (uint32 ld = 0; ld < NumLocal; ++ld)
-                        {
-                            const uint32 GlobalDraw = BatchBase + LB->LocalToGlobalDraw[ld];
-                            LB->LocalDrawWriteBase[ld] = MergeDrawCursor[GlobalDraw];
-                            MergeDrawCursor[GlobalDraw] += LB->LocalDrawCounts[ld];
-                        }
-                    }
-                }
-            };
-            if (bParallelMerge) { Task::ParallelFor(NumBatches, CursorBody, 1); }
-            else                { CursorBody(Task::FParallelRange{ 0u, NumBatches, 0u }); }
+                Local.DrawWriteBase[Slot] += MergeDrawInstanceOffsets[Slot];
+            }
         }
 
-        // Per-draw meshlet prefix sum; CullMeshlets atomically appends into per-view disjoint slices.
-        uint32 MeshletRunning = 0u;
-        for (uint32 d = 0; d < TotalDrawArgs; ++d)
-        {
-            DrawMeshletStartOffsets[d] = MeshletRunning;
-            MeshletRunning            += MergeMeshletCountsPerDraw[d];
-        }
-        TotalMeshletBound = MeshletRunning;
+        // Scheduling dominates the merge for typical scenes, so each dispatch+join costs more than the
+        // work below it. Fan out only above the threshold; below it runs inline.
+        const bool bParallelMerge = TotalInstances > 4096;
 
         // Each worker only touches its own Local data; in-place cursor advance needs no sync.
         {
@@ -3775,16 +3815,18 @@ namespace Lumina
                 for (uint32 t = Range.Start; t < Range.End; ++t)
                 {
                     FThreadLocalDrawData& Local = ThreadLocal[t];
+                    if (!Local.bTouched)
+                    {
+                        continue;
+                    }
                     const uint32 BoneBase = ThreadBoneBase[t];
 
                     for (FProcessedDrawItem& Item : Local.Items)
                     {
-                        FLocalBatchEntry& LocalBatch = Local.LocalBatches[Item.LocalBatchIndex];
-                        const uint32 GlobalDraw = MergeBatchDrawArgBase[LocalBatch.GlobalBatchIndex] + LocalBatch.LocalToGlobalDraw[Item.LocalDrawIndex];
+                        const uint32 WriteIdx   = Local.DrawWriteBase[Item.BatchIndex]++;
+                        const uint32 GlobalDraw = Item.BatchIndex;   // DrawCommands is filled one per batch
 
-                        const uint32 WriteIdx = LocalBatch.LocalDrawWriteBase[Item.LocalDrawIndex]++;
                         const FEntityRecord& Entity = Local.EntityRecords[Item.EntityRecordIndex];
-
                         const uint32 GlobalBoneOffset = Entity.LocalBoneOffset != ~0u ? (BoneBase + Entity.LocalBoneOffset) : 0u;
 
                         FGPUInstance& Out = Instances[WriteIdx];
@@ -3811,36 +3853,21 @@ namespace Lumina
         }
 
         // The per-instance meshlet prefix the cull binary-searches is GPU-built
-        // (BuildInstancePrefix.slang) from the uploaded instances; no CPU pass here.
+        // (ScanPrefix* passes) from the uploaded instances; no CPU pass here.
 
-        FrameStats.NumBatches = NumBatches;
-        OpaqueDrawList.reserve(NumBatches);
-        TranslucentDrawList.reserve(NumBatches);
-        for (uint32 i = 0; i < NumBatches; ++i)
+        const uint32 NumEmittedBatches = (uint32)DrawCommands.size();
+        FrameStats.NumBatches = NumEmittedBatches;
+        OpaqueDrawList.reserve(NumEmittedBatches);
+        TranslucentDrawList.reserve(NumEmittedBatches);
+        for (uint32 i = 0; i < NumEmittedBatches; ++i)
         {
-            const FMeshDrawCommand& Cmd = DrawCommands[i];
-            if (Cmd.bTranslucent)
+            if (DrawCommands[i].bTranslucent)
             {
                 TranslucentDrawList.push_back(i);
             }
             else
             {
                 OpaqueDrawList.push_back(i);
-            }
-        }
-
-        // Distinct opaque material slots for the deferred pass. The per-thread resolve caches hold one entry
-        // per material instance (with its master DeferredShader), so this is the one place that carries the
-        // PER-INSTANCE MaterialIndex alongside the shader -- the geometry batches above collapse instances of a
-        // shared master to one draw and only keep a single representative index. Duplicates across threads (and
-        // the shared default-material fallback) are fine; the deferred pass dedupes by DeferredShader.
-        auto& DeferredMaterials = Frame.Geometry.DeferredMaterials;
-        DeferredMaterials.clear();
-        for (const FThreadLocalDrawData& Local : ThreadLocal)
-        {
-            for (const FLocalDeferredMaterial& Entry : Local.DeferredMaterials)
-            {
-                DeferredMaterials.push_back({ (uint32)Entry.MaterialIndex, Entry.DeferredShader });
             }
         }
     }
@@ -4336,10 +4363,10 @@ namespace Lumina
         auto& SpotShadowCullViewBases  = Frame.Views.SpotShadowCullViewBases;
         uint32& CascadeViewBase        = Frame.Views.CascadeViewBase;
         uint32& CameraLateViewIndex    = Frame.Views.CameraLateViewIndex;
-        const uint32 TotalMeshletBound = Frame.Views.TotalMeshletBound;
 
-        // Per-view: DrawList slice v = [v*TotalMeshletBound, (v+1)*TotalMeshletBound),
         // IndirectArgs slot (v,d) = v*NumDraws + d. CullMeshlets owns all atomic appends.
+        // There is no per-view draw-list slice: each (view, draw) owns a packed region whose offset
+        // BuildDrawPrefix computes on the GPU and SeedIndirectArgs writes into FirstInstance.
         const uint32 NumDraws = Frame.Views.NumDrawsPerView;
 
         auto PushView = [&](const FMatrix4& ViewProjection, const FVector3& Origin, uint32 Flags)
@@ -4359,14 +4386,12 @@ namespace Lumina
             float FlagsAsFloat;
             std::memcpy(&FlagsAsFloat, &Flags, sizeof(float));
             View.ViewOriginAndFlags = FVector4(Origin, FlagsAsFloat);
-            View.DrawListOffset     = ViewIndex * TotalMeshletBound;
-            View.DrawListCapacity   = TotalMeshletBound;
             View.IndirectArgsOffset = ViewIndex * NumDraws;
             View.NumDraws           = NumDraws;
             CullViews.push_back(View);
 
             // This view's indirect + mesh-task arg slice is seeded GPU-side
-            // (SeedIndirectArgs.slang) from Geometry.DrawMeshletStartOffsets.
+            // (SeedIndirectArgs.slang) from the GPU-built per-draw meshlet prefix.
             return ViewIndex;
         };
 
@@ -4400,7 +4425,12 @@ namespace Lumina
             {
                 CameraFlags |= ECullViewFlags::Frustum;
             }
-            if (RenderSettings.bOcclusionCull)
+            // Occlusion culling reads LAST frame's depth pyramid. If the previous frame did not render
+            // (engine shaders still coming up, a resize) the pyramid is arbitrary, and phase 0 would defer
+            // essentially the whole scene against it -- which is what overflowed the defer list. Skipping
+            // the test for one frame emits everything, defers nothing, and rebuilds the pyramid from this
+            // frame's depth so the next frame is back to normal.
+            if (RenderSettings.bOcclusionCull && bDepthPyramidValid.load(std::memory_order_acquire))
             {
                 CameraFlags |= ECullViewFlags::Occlusion;
             }
@@ -5066,26 +5096,14 @@ namespace Lumina
         Frame.Primitives.LineBatches.clear();
         Frame.Primitives.SolidVertices.clear();
         Frame.Primitives.SolidBatches.clear();
-        Frame.Geometry.DrawCommands.clear();
-        Frame.Geometry.OpaqueDrawList.clear();
-        Frame.Geometry.TranslucentDrawList.clear();
-        Frame.Geometry.DrawMeshletStartOffsets.clear();
         Frame.Views.CullViews.clear();
         Frame.Views.CaptureViews.clear();
-        Frame.Views.TotalMeshletBound = 0;
-        Frame.Views.NumDrawsPerView   = 0;
         Frame.Views.CameraLateViewIndex = ~0u;
-        // Instances is intentionally NOT cleared: the merge resizes it to the exact count and the
-        // parallel instance write overwrites every slot, so leaving the size in place means EASTL
-        // value-initializes (memsets) only growth beyond the previous frame, not the whole array.
         Memory::Memzero(&Frame.Lighting.LightData, sizeof(Frame.Lighting.LightData));
         Frame.Lighting.ShadowDataCount.store(0, std::memory_order_release);
         ShadowAtlas.FreeTiles();
         Frame.Lighting.ShadowRequests.clear();
         Frame.Lighting.AtlasTiles.clear();
-        Frame.Geometry.BonesData.clear();
-        Frame.Geometry.SkinDescriptors.clear();
-        Frame.Geometry.TotalPreSkinnedVertices = 0;
         Frame.Primitives.BillboardInstances.clear();
         Frame.Primitives.WidgetInstances.clear();
         Frame.Primitives.GlyphInstances.clear();
@@ -5096,6 +5114,23 @@ namespace Lumina
         {
             Frame.Lighting.PackedShadows[i].clear();
         }
+    }
+
+    // Split out of ResetPass: a frame that reuses this slot's compiled geometry must not clear it.
+    void FForwardRenderScene::ResetGeometry_GameThread()
+    {
+        FFrameData& Frame = *ExtractFrame;
+
+        Frame.Geometry.DrawCommands.clear();
+        Frame.Geometry.OpaqueDrawList.clear();
+        Frame.Geometry.TranslucentDrawList.clear();
+        Frame.Geometry.BonesData.clear();
+        Frame.Geometry.SkinDescriptors.clear();
+        Frame.Geometry.TotalPreSkinnedVertices = 0;
+        Frame.Views.NumDrawsPerView   = 0;
+        // Instances is intentionally NOT cleared: the merge resizes it to the exact count and the
+        // parallel instance write overwrites every slot, so leaving the size in place means EASTL
+        // value-initializes (memsets) only growth beyond the previous frame, not the whole array.
     }
 
     void FForwardRenderScene::ResetPass_RenderThread(RHI::FCmdListH CL)
@@ -5130,17 +5165,22 @@ namespace Lumina
         uint64 DeferListAddr;
         uint64 DeferCountAddr;
         uint64 MeshDrawArgsAddr;   // GroupCountX accumulated here (mesh path; replaces ConvertMeshDrawArgs)
+        uint64 TotalsAddr;          // {MeshletWork, InstanceCount, DrawListRequired, Overflowed}
+        uint64 ViewDrawCountsAddr;  // per-(view, draw) region length; EmitMeshlet exact bound
+        uint64 ViewDrawOffsetsAddr; // per-(view, draw) region base; read-only, off the contended args line
+        uint32 DrawListCapacity;    // entries in the whole allocation; outer backstop
+        uint32 DeferListCapacity;   // entries the defer list holds; bounds the unbounded defer append
     };
+    static_assert(sizeof(FCullMeshletPushConstants) == 80, "FCullMeshletPushConstants must match CullMeshlets.slang FPushConstants.");
 
     void FForwardRenderScene::CullPassEarly(RHI::FCmdListH CL)
     {
         const FFrameData& Frame = *RenderFrame;
         const auto& DrawCommands     = Frame.Geometry.DrawCommands;
         const auto& CullViews        = Frame.Views.CullViews;
-        const uint32 TotalMeshletBound = Frame.Views.TotalMeshletBound;
         const uint32 CameraLateViewIndex = Frame.Views.CameraLateViewIndex;
 
-        if (DrawCommands.empty() || CullViews.empty() || TotalMeshletBound == 0u)
+        if (DrawCommands.empty() || CullViews.empty())
         {
             return;
         }
@@ -5166,13 +5206,16 @@ namespace Lumina
         PC.DeferListAddr       = GetMeshletDeferList().GetAddress();
         PC.DeferCountAddr      = GetDeferCount().GetAddress();
         PC.MeshDrawArgsAddr    = GetMeshDrawArgs().GetAddress();
+        PC.TotalsAddr          = GetTotals().GetAddress();
+        PC.ViewDrawCountsAddr  = GetViewDrawCounts().GetAddress();
+        PC.ViewDrawOffsetsAddr = GetViewDrawOffsets().GetAddress();
+        PC.DrawListCapacity    = DrawListCapacity;
+        PC.DeferListCapacity   = DeferListCapacity;
 
-        // Flat thread-per-meshlet; workgroups beyond the 65535 X cap fold into Y.
-        const uint32 NumWorkgroups = (TotalMeshletBound + 63u) / 64u;
-        constexpr uint32 MaxDispatchAxis = 65535u;
-        const uint32 DispatchX = NumWorkgroups < MaxDispatchAxis ? NumWorkgroups : MaxDispatchAxis;
-        const uint32 DispatchY = (NumWorkgroups + MaxDispatchAxis - 1u) / MaxDispatchAxis;
-        RHI::CmdDispatch(CL, MakeArgs(PC), DispatchX, DispatchY, 1u);
+        // Indirect: the domain is TotalMeshletBound, which only exists on the GPU now. BuildDrawPrefix
+        // wrote {ceil(Total/64) folded into X/Y, 1} for exactly this dispatch, and the in-shader
+        // flat_idx >= Total guard backstops the fold's rounding.
+        RHI::CmdDispatchIndirect(CL, MakeArgs(PC), GetEarlyCullDispatchArgs().Ptr, 0);
 
         // Draw list + indirect args feed the phase-1 VisBuffer raster.
         Barriers::ComputeToAll(CL);
@@ -5183,13 +5226,74 @@ namespace Lumina
         static const FShaderEntry* const DispatchArgsShader = FShaderLibrary::Get("BuildCullDispatchArgs.slang");
         if (DispatchArgsShader && CameraLateViewIndex != ~0u)
         {
-            struct FBuildCullDispatchArgsPC { uint64 DeferCountAddr; uint64 DispatchArgsAddr; } DPC;
-            DPC.DeferCountAddr   = GetDeferCount().GetAddress();
-            DPC.DispatchArgsAddr = GetCullDispatchArgs().GetAddress();
+            struct FBuildCullDispatchArgsPC
+            {
+                uint32 DeferListCapacity;
+                uint32 Pad0;
+                uint64 DeferCountAddr;
+                uint64 DispatchArgsAddr;
+                uint64 OutTotalsAddr;
+            } DPC = {};
+            static_assert(sizeof(FBuildCullDispatchArgsPC) == 32, "FBuildCullDispatchArgsPC must match BuildCullDispatchArgs.slang.");
+            DPC.DeferListCapacity = DeferListCapacity;
+            DPC.DeferCountAddr    = GetDeferCount().GetAddress();
+            DPC.DispatchArgsAddr  = GetCullDispatchArgs().GetAddress();
+            DPC.OutTotalsAddr     = GetTotals().GetAddress();
             RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(DispatchArgsShader));
             RHI::CmdDispatch(CL, MakeArgs(DPC), 1u, 1u, 1u);
             Barriers::ComputeToAll(CL);   // orders the args write before the late CmdDispatchIndirect reads it
         }
+
+        // The EARLY raster is issued before the late cull runs, so its args have to be trimmed here.
+        ClampDrawArgs(CL);
+    }
+
+    void FForwardRenderScene::ClampDrawArgs(RHI::FCmdListH CL)
+    {
+        const FFrameData& Frame = *RenderFrame;
+        const uint32 NumCullViews = (uint32)Frame.Views.CullViews.size();
+        const uint32 NumDraws     = Frame.Views.NumDrawsPerView;
+        if (NumCullViews == 0u || NumDraws == 0u)
+        {
+            return;
+        }
+
+        static const FShaderEntry* const ClampShader = FShaderLibrary::Get("ClampDrawArgs.slang");
+        if (!ClampShader)
+        {
+            return;
+        }
+
+        LUMINA_PROFILE_SECTION_COLORED("Clamp Draw Args", tracy::Color::Pink4);
+        SCENE_GPU_SCOPE(CL, "Clamp Draw Args");
+
+        struct FClampDrawArgsPC
+        {
+            uint32 NumViews;
+            uint32 NumDraws;
+            uint32 Pad0;
+            uint32 DrawListCapacityArg;
+            uint64 IndirectArgsAddr;
+            uint64 MeshDrawArgsAddr;
+            uint64 ViewDrawCountsAddr;
+            uint64 ViewDrawOffsetsAddr;
+        } PC = {};
+        static_assert(sizeof(FClampDrawArgsPC) == 48, "FClampDrawArgsPC must match ClampDrawArgs.slang.");
+
+        PC.NumViews         = NumCullViews;
+        PC.NumDraws         = NumDraws;
+        PC.DrawListCapacityArg = DrawListCapacity;
+        PC.IndirectArgsAddr    = GetIndirectArgs().GetAddress();
+        PC.MeshDrawArgsAddr    = GetMeshDrawArgs().GetAddress();
+        PC.ViewDrawCountsAddr  = GetViewDrawCounts().GetAddress();
+        PC.ViewDrawOffsetsAddr = GetViewDrawOffsets().GetAddress();
+
+        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(ClampShader));
+        const uint32 TotalSlots = NumCullViews * NumDraws;
+        RHI::CmdDispatch(CL, MakeArgs(PC), (TotalSlots + 63u) / 64u, 1u, 1u);
+
+        // The indirect args are consumed by the raster right after this.
+        Barriers::ComputeToAll(CL);
     }
 
     void FForwardRenderScene::CullPassLate(RHI::FCmdListH CL)
@@ -5197,10 +5301,9 @@ namespace Lumina
         const FFrameData& Frame = *RenderFrame;
         const auto& DrawCommands     = Frame.Geometry.DrawCommands;
         const auto& CullViews        = Frame.Views.CullViews;
-        const uint32 TotalMeshletBound = Frame.Views.TotalMeshletBound;
         const uint32 CameraLateViewIndex = Frame.Views.CameraLateViewIndex;
 
-        if (DrawCommands.empty() || CullViews.empty() || TotalMeshletBound == 0)
+        if (DrawCommands.empty() || CullViews.empty())
         {
             return;
         }
@@ -5228,6 +5331,11 @@ namespace Lumina
         PC.DeferListAddr       = GetMeshletDeferList().GetAddress();
         PC.DeferCountAddr      = GetDeferCount().GetAddress();
         PC.MeshDrawArgsAddr    = GetMeshDrawArgs().GetAddress();
+        PC.TotalsAddr          = GetTotals().GetAddress();
+        PC.ViewDrawCountsAddr  = GetViewDrawCounts().GetAddress();
+        PC.ViewDrawOffsetsAddr = GetViewDrawOffsets().GetAddress();
+        PC.DrawListCapacity    = DrawListCapacity;
+        PC.DeferListCapacity   = DeferListCapacity;
 
         // Indirect dispatch sized to the deferred set (BuildCullDispatchArgs wrote {ceil(DeferCount/64),1,1} from
         // DeferCount after the early cull). The 1D grid keeps RunLatePhase's flat-index = GlobalID.x; the
@@ -5235,6 +5343,9 @@ namespace Lumina
         RHI::CmdDispatchIndirect(CL, MakeArgs(PC), GetCullDispatchArgs().Ptr, 0);
 
         Barriers::ComputeToAll(CL);
+
+        // Late phase appended into the camera-late slice; trim before that slice is rasterized.
+        ClampDrawArgs(CL);
     }
 
 
@@ -5466,9 +5577,9 @@ namespace Lumina
 
             if (bUseMesh)
             {
-                struct { uint64 IndirectArgsAddr; uint32 ArgBase; } VisArgs;
-                VisArgs.IndirectArgsAddr = GetIndirectArgs().GetAddress();
-                VisArgs.ArgBase          = ViewBase + Batch.IndirectDrawOffset;
+                struct { uint64 ViewDrawOffsetsAddr; uint32 ArgBase; } VisArgs;
+                VisArgs.ViewDrawOffsetsAddr = GetViewDrawOffsets().GetAddress();
+                VisArgs.ArgBase             = ViewBase + Batch.IndirectDrawOffset;
                 RHI::CmdDrawMeshTasksIndirect(CL, MakeArgs(VisArgs),
                     GetMeshDrawArgs().Ptr, (ViewBase + Batch.IndirectDrawOffset) * sizeof(RHI::FDrawMeshTasksIndirectArguments),
                     Batch.DrawCount, sizeof(RHI::FDrawMeshTasksIndirectArguments));
@@ -5638,9 +5749,9 @@ namespace Lumina
         const uint32 ViewBase = CullViewIndex * RenderFrame->Views.NumDrawsPerView;
         if (bUseMesh)
         {
-            struct { uint64 IndirectArgsAddr; uint32 ArgBase; int32 ShadowDataIndex; int32 ViewIndex; } MP;
-            MP.IndirectArgsAddr = GetIndirectArgs().GetAddress();
-            MP.ArgBase          = ViewBase + Batch.IndirectDrawOffset;
+            struct { uint64 ViewDrawOffsetsAddr; uint32 ArgBase; int32 ShadowDataIndex; int32 ViewIndex; } MP;
+            MP.ViewDrawOffsetsAddr = GetViewDrawOffsets().GetAddress();
+            MP.ArgBase             = ViewBase + Batch.IndirectDrawOffset;
             MP.ShadowDataIndex  = ShadowDataIndex;
             MP.ViewIndex        = ShadowViewIndex;
             RHI::CmdDrawMeshTasksIndirect(CL, MakeArgs(MP),
@@ -5985,38 +6096,29 @@ namespace Lumina
         Barriers::RasterToRead(CL);
     }
 
-    void FForwardRenderScene::DeferredMaterialPass(RHI::FCmdListH CL)
+    // Mirrors of the shader-side contract in Includes/MaterialTiles.slang. C++ cannot include the slang
+    // header, so these are the one duplicated pair; if either moves, both move.
+    static constexpr uint32 GMaterialTileSizePx = 16u;   // MATERIAL_TILE_SIZE_PX
+    static constexpr uint32 GMaterialMaxSlots   = 64u;   // MATERIAL_MAX_SLOTS
+
+    bool FForwardRenderScene::BuildDeferredMaterialBinning()
     {
-        const FFrameData& Frame    = *RenderFrame;
-        const auto& DrawCommands   = Frame.Geometry.DrawCommands;
+        const FFrameData& Frame = *RenderFrame;
 
-        if (DrawCommands.empty())
+        // Cleared up front so a bail-out leaves NumSlots == 0, which is what DeferredMaterialPass reads to
+        // decide it has nothing to draw. Never leave last frame's layout standing.
+        MaterialBinLayout = FMaterialBinLayout{};
+
+        const FUIntVector2 Extent = GetNamedImage(ENamedImage::HDR).GetExtent();
+        if (Extent.x == 0u || Extent.y == 0u)
         {
-            return;
+            return false;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Deferred Material Pass", tracy::Color::Red);
-
-        static const FShaderEntry* const TileVS    = FShaderLibrary::Get("DeferredMaterialTileVS.slang");
-        static const FShaderEntry* const ClassifyCS = FShaderLibrary::Get("ClassifyMaterialTiles.slang");
-        if (!TileVS || !ClassifyCS)
-        {
-            return;
-        }
-
-        const FSceneImage& VisRT    = GetNamedImage(ENamedImage::VisBuffer);
-        const FSceneImage& ColorRT  = GetSceneColorRT();
-        const FUIntVector2 Extent   = GetNamedImage(ENamedImage::HDR).GetExtent();
-        const uint32 ScreenW = Extent.x;
-        const uint32 ScreenH = Extent.y;
-
-        // Material binning. Each distinct master DeferredShader gets ONE dense slot (0..N-1); EVERY opaque
-        // material instance that shares that shader maps its own GPU MaterialIndex to the same slot. The
-        // classify pass writes each covered pixel's owning slot and sets that slot's bit in the pixel's tile
-        // bitmask. One shading draw per slot then rasterizes ONLY the tiles its bit is set in (the tile-quad
-        // VS self-culls the rest), keeps the pixels whose recorded slot matches, and shades each with its own
-        // per-instance MaterialIndex. So instances of one master share both the geometry batch AND this
-        // shading draw -- O(distinct visible master shaders) tile-binned draws, not per-instance, not fullscreen.
+        // Each distinct master DeferredShader gets ONE dense slot (0..N-1); EVERY opaque material instance
+        // that shares that shader maps its own GPU MaterialIndex to the same slot. So instances of one master
+        // share both the geometry batch AND the shading draw -- O(distinct visible master shaders) draws,
+        // not per-instance and not fullscreen.
         const auto& DeferredMaterials = Frame.Geometry.DeferredMaterials;
 
         BinnedDeferredSlotShaders.clear();
@@ -6036,6 +6138,7 @@ namespace Lumina
             {
                 continue;
             }
+
             // Dense slot per distinct DeferredShader (linear scan: distinct visible masters per frame are few).
             uint32 Slot = 0xFFFFFFFFu;
             for (uint32 s = 0; s < (uint32)BinnedDeferredSlotShaders.size(); ++s)
@@ -6046,20 +6149,254 @@ namespace Lumina
                     break;
                 }
             }
+
             if (Slot == 0xFFFFFFFFu)
             {
+                // The cap bounds the bitmask width, the compacted tile list (TotalTiles entries per slot) and
+                // the depth encoding's usable range. Past it a material simply gets no deferred draw:
+                // MaterialDepth discards its pixels, so they keep the background instead of shading. Visible
+                // and logged, rather than indexing off the end of the bitmask.
+                if ((uint32)BinnedDeferredSlotShaders.size() >= GMaterialMaxSlots)
+                {
+                    static bool bWarnedSlotCap = false;
+                    if (!bWarnedSlotCap)
+                    {
+                        bWarnedSlotCap = true;
+                        LOG_WARN("More than {} distinct deferred material shaders are visible; the excess will not shade.",
+                            GMaterialMaxSlots);
+                    }
+                    continue;
+                }
+
                 Slot = (uint32)BinnedDeferredSlotShaders.size();
                 BinnedDeferredSlotShaders.push_back(M.DeferredShader);
             }
+
             BinnedDeferredSlotByMaterial[M.MaterialIndex] = Slot;
         }
 
         const uint32 NumSlots = (uint32)BinnedDeferredSlotShaders.size();
+        if (NumSlots == 0u)
+        {
+            return false;
+        }
 
-        const FSceneImage& ColorImg  = ColorRT;
+        MaterialBinLayout.ScreenW       = Extent.x;
+        MaterialBinLayout.ScreenH       = Extent.y;
+        MaterialBinLayout.NumSlots      = NumSlots;
+        MaterialBinLayout.TileCountX    = (Extent.x + GMaterialTileSizePx - 1u) / GMaterialTileSizePx;
+        MaterialBinLayout.TotalTiles    = MaterialBinLayout.TileCountX
+                                        * ((Extent.y + GMaterialTileSizePx - 1u) / GMaterialTileSizePx);
+        MaterialBinLayout.TileWordCount = (NumSlots + 31u) / 32u;
+
+        // Binning scratch: device-address only, per-frame ring. The tile list is strided by TotalTiles per
+        // slot, which is the exact worst case (the bitmask holds one bit per (tile, slot), so a slot can be
+        // appended at most once per tile) and so needs no prefix sum and no feedback sizing.
+        const uint64 TileBitsSize = Math::Max<uint64>(sizeof(uint32),
+            (uint64)MaterialBinLayout.TotalTiles * (uint64)MaterialBinLayout.TileWordCount * sizeof(uint32));
+        const uint64 TileListSize = Math::Max<uint64>(sizeof(uint32),
+            (uint64)MaterialBinLayout.TotalTiles * (uint64)NumSlots * sizeof(uint32));
+        const uint64 TileArgsSize = Math::Max<uint64>(sizeof(RHI::FDrawIndirectArguments),
+            (uint64)NumSlots * sizeof(RHI::FDrawIndirectArguments));
+
+        ResizeBufferIfNeeded(MaterialBinTileBitsRing[CurrentFrameSlot], TileBitsSize, 1.2f, MaterialBinTileBitsRingLowUsage[CurrentFrameSlot]);
+        ResizeBufferIfNeeded(MaterialTileListRing[CurrentFrameSlot],    TileListSize, 1.2f, MaterialTileListRingLowUsage[CurrentFrameSlot]);
+        ResizeBufferIfNeeded(MaterialTileArgsRing[CurrentFrameSlot],    TileArgsSize, 1.2f, MaterialTileArgsRingLowUsage[CurrentFrameSlot]);
+
+        return true;
+    }
+
+    // Stamps every covered pixel's owning material slot into MaterialDepth as an encoded depth value, then
+    // compacts the per-tile slot bitmask it also produces into one packed tile list per slot.
+    //
+    // Both outputs exist so the material draws that follow can be exact. The depth lets FIXED-FUNCTION
+    // hardware reject pixels owned by other materials, before any pixel shader launches and at coarse
+    // depth-block granularity; the tile list makes each draw's instance count its own tile count instead of
+    // every tile on screen. Between them they replace a per-pixel buffer load plus `discard` in every
+    // material shader, and a full-screen instanced draw per material.
+    void FForwardRenderScene::MaterialDepthPass(RHI::FCmdListH CL)
+    {
+        const FFrameData& Frame = *RenderFrame;
+
+        // Zeroed before ANY early return, not just inside BuildDeferredMaterialBinning: DeferredMaterialPass
+        // reads NumSlots to decide whether it has draws, so bailing here on a missing shader while leaving the
+        // previous frame's layout standing would have it issue draws against a tile grid nothing built.
+        MaterialBinLayout = FMaterialBinLayout{};
+
+        if (Frame.Geometry.DrawCommands.empty())
+        {
+            return;
+        }
+
+        LUMINA_PROFILE_SECTION_COLORED("Material Depth + Tile Bin", tracy::Color::Orange3);
+
+        static const FShaderEntry* const FullscreenVS   = FShaderLibrary::Get("FullscreenQuad.slang");
+        static const FShaderEntry* const StampPS        = FShaderLibrary::Get("MaterialDepth.slang");
+        static const FShaderEntry* const BuildTileListCS = FShaderLibrary::Get("BuildMaterialTileList.slang");
+        if (!FullscreenVS || !StampPS || !BuildTileListCS)
+        {
+            return;
+        }
+
+        if (!BuildDeferredMaterialBinning())
+        {
+            return;
+        }
+
+        SCENE_GPU_SCOPE(CL, "Material Depth");
+
+        const FMaterialBinLayout Layout = MaterialBinLayout;
+        const uint32 NumSlots = Layout.NumSlots;
+
+        const FSceneImage& VisRT    = GetNamedImage(ENamedImage::VisBuffer);
+        const FSceneImage& MatDepth = GetNamedImage(ENamedImage::MaterialDepth);
+        const FUIntVector2 Extent   = FUIntVector2(Layout.ScreenW, Layout.ScreenH);
+
+        const FSceneBuffer TileBits = GetMaterialBinTileBits();
+        const FSceneBuffer TileList = GetMaterialTileList();
+        const FSceneBuffer TileArgs = GetMaterialTileArgs();
+
+        // MaterialIndex -> dense slot; uploaded to the transient ring and read by device address.
+        const RHI::GPUPtr SlotByMaterialAddr =
+            RHI::Core::CopyTransientArray(BinnedDeferredSlotByMaterial.data(), BinnedDeferredSlotByMaterial.size());
+
+        // Exactly the region the shaders address: indices are Tile * TileWordCount + word with THIS frame's
+        // word count, so anything beyond it in a larger prior allocation is unreachable.
+        const uint64 TileBitsSize = (uint64)Layout.TotalTiles * (uint64)Layout.TileWordCount * sizeof(uint32);
+
+        // Seed one indirect draw per slot: 6 vertices (the tile quad), instance count filled by the
+        // compaction below, FirstInstance = this slot's base in the tile list. The compaction recomputes that
+        // base arithmetically rather than reading it back, so it never loads from the 16 bytes it is
+        // atomically incrementing.
+        RHI::FDrawIndirectArguments ArgSeed[GMaterialMaxSlots] = {};
+        for (uint32 Slot = 0; Slot < NumSlots; ++Slot)
+        {
+            ArgSeed[Slot].VertexCount   = 6u;
+            ArgSeed[Slot].InstanceCount = 0u;
+            ArgSeed[Slot].FirstVertex   = 0u;
+            ArgSeed[Slot].FirstInstance = Slot * Layout.TotalTiles;
+        }
+
+        RHI::CmdMemset(CL, TileBits.Ptr, TileBitsSize, 0u);
+        RHI::CmdWriteMemory(CL, TileArgs.GetAddress(), ArgSeed, (uint64)NumSlots * sizeof(RHI::FDrawIndirectArguments));
+        Barriers::TransferToAll(CL);
+
+        // Depth-only: no color attachments. The slot goes out through SV_Depth and the tile bits through
+        // buffer atomics.
+        RHI::FRenderPassDesc StampPass;
+        StampPass.DepthAttachment.Texture  = MatDepth.Texture;
+        StampPass.DepthAttachment.LoadOp   = RHI::ELoadOp::Clear;
+        StampPass.DepthAttachment.StoreOp  = RHI::EStoreOp::Store;
+        StampPass.DepthAttachment.Color[0] = 0.0f;   // 0 is what "no material owns this pixel" encodes to
+        StampPass.RenderArea               = Extent;
+
+        RHI::CmdBeginRenderPass(CL, StampPass);
+        SetViewportScissor(CL, Extent);
+
+        // Test ALWAYS but with the test *enabled*: Vulkan does not write depth when depthTestEnable is false,
+        // so EDepthFlags::Read has to be set for the stamp to land even though nothing is being compared.
+        RHI::FDepthStencilDesc StampDepth;
+        StampDepth.DepthMode = RHI::EDepthFlags::Read | RHI::EDepthFlags::Write;
+        StampDepth.DepthTest = RHI::EOp::Always;
+        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(StampDepth));
+        RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
+
+        struct FMaterialDepthPC
+        {
+            uint32      VisBufferIndex;
+            uint32      TileCountX;
+            uint32      TileSizePx;
+            uint32      TileWordCount;
+            uint32      DrawListCount;
+            uint32      SlotByMaterialCount;
+            uint32      _Pad0;
+            uint32      _Pad1;
+            RHI::GPUPtr TileBitsAddr;
+            RHI::GPUPtr SlotByMaterialAddr;
+        } StampPC = {};
+        static_assert(sizeof(FMaterialDepthPC) == 48, "FMaterialDepthPC must match MaterialDepth.slang FMaterialDepthArgs.");
+        StampPC.VisBufferIndex      = (uint32)VisRT.GetResourceID();
+        StampPC.TileCountX          = Layout.TileCountX;
+        StampPC.TileSizePx          = GMaterialTileSizePx;
+        StampPC.TileWordCount       = Layout.TileWordCount;
+        // Absolute bound on a MeshletDrawList() index: the whole allocation across every view's slice.
+        // Not a per-frame meshlet total -- see FCullData::MeshletDrawListCapacity.
+        StampPC.DrawListCount       = DrawListCapacity;
+        StampPC.SlotByMaterialCount = (uint32)BinnedDeferredSlotByMaterial.size();
+        StampPC.TileBitsAddr        = TileBits.GetAddress();
+        StampPC.SlotByMaterialAddr  = SlotByMaterialAddr;
+
+        FGraphicsPipelineKey StampKey;
+        StampKey.VS          = FullscreenVS;
+        StampKey.PS          = StampPS;
+        StampKey.DepthFormat = EFormat::D32;
+        RHI::CmdSetPipeline(CL, GetOrCreatePipeline(StampKey));
+
+        RHI::CmdDraw(CL, MakeArgs(StampPC), 3, 1, 0, 0);
+        RHI::CmdEndRenderPass(CL);
+
+        // The tile-bit atomics are PIXEL-SHADER writes, not color-attachment writes, so Barriers::RasterToRead
+        // would not order them against the compaction below -- its source stage set is RasterColorOut |
+        // FragmentTests. Name both real producers: PixelShader for the atomics, FragmentTests for the depth
+        // stamp the material draws will test against.
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::PixelShader | RHI::EStageFlags::FragmentTests,
+            RHI::EStageFlags::Compute | RHI::EStageFlags::FragmentTests | RHI::EStageFlags::IndirectArguments);
+
+        struct FBuildTileListPC
+        {
+            RHI::GPUPtr ArgsAddr;
+            RHI::GPUPtr TileListAddr;
+            RHI::GPUPtr TileBitsAddr;
+            uint32      TotalTiles;
+            uint32      NumSlots;
+            uint32      TileWordCount;
+            uint32      _Pad0;
+        } BuildPC = {};
+        static_assert(sizeof(FBuildTileListPC) == 40, "FBuildTileListPC must match BuildMaterialTileList.slang FBuildTileListArgs.");
+        BuildPC.ArgsAddr      = TileArgs.GetAddress();
+        BuildPC.TileListAddr  = TileList.GetAddress();
+        BuildPC.TileBitsAddr  = TileBits.GetAddress();
+        BuildPC.TotalTiles    = Layout.TotalTiles;
+        BuildPC.NumSlots      = NumSlots;
+        BuildPC.TileWordCount = Layout.TileWordCount;
+
+        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(BuildTileListCS));
+        RHI::CmdDispatch(CL, MakeArgs(BuildPC), RenderUtils::GetGroupCount(Layout.TotalTiles, 64u), 1u, 1u);
+
+        // Compaction feeds both the indirect argument fetch and the tile-quad vertex shader.
+        Barriers::ComputeToAll(CL);
+    }
+
+    void FForwardRenderScene::DeferredMaterialPass(RHI::FCmdListH CL)
+    {
+        const FFrameData& Frame    = *RenderFrame;
+        const auto& DrawCommands   = Frame.Geometry.DrawCommands;
+
+        if (DrawCommands.empty())
+        {
+            return;
+        }
+
+        LUMINA_PROFILE_SECTION_COLORED("Deferred Material Pass", tracy::Color::Red);
+
+        static const FShaderEntry* const TileVS = FShaderLibrary::Get("DeferredMaterialTileVS.slang");
+        if (!TileVS)
+        {
+            return;
+        }
+
+        const FSceneImage& VisRT    = GetNamedImage(ENamedImage::VisBuffer);
+        const FSceneImage& MatDepth = GetNamedImage(ENamedImage::MaterialDepth);
+        const FSceneImage& ColorImg = GetSceneColorRT();
+        const FUIntVector2 Extent   = GetNamedImage(ENamedImage::HDR).GetExtent();
+
+        // Set by MaterialDepthPass, which runs immediately before this and zeroes the layout on any bail-out.
+        const FMaterialBinLayout Layout = MaterialBinLayout;
+        const uint32 NumSlots = Layout.NumSlots;
 
         // Sky/environment already populated HDR for background pixels; the deferred draws overwrite the
-        // covered pixels and discard the rest.
+        // covered pixels and leave the rest.
         RHI::FRenderAttachment Colors[2];
         uint32 NumColors = 1;
         Colors[0].Texture        = ColorImg.Texture;
@@ -6080,9 +6417,9 @@ namespace Lumina
         Pass.ColorAttachments = TSpan<const RHI::FRenderAttachment>(Colors, NumColors);
         Pass.RenderArea       = Extent;
 
-        // No deferred-drawing materials (e.g. terrain-only scene): still run the clear-only pass so Picker
-        // is cleared and HDR keeps its background/sky.
-        if (NumSlots == 0u || ScreenW == 0u || ScreenH == 0u)
+        // No deferred-drawing materials (e.g. a terrain-only scene), or MaterialDepthPass bailed: still run
+        // the clear-only pass so Picker is cleared and HDR keeps its background/sky.
+        if (NumSlots == 0u)
         {
             RHI::CmdBeginRenderPass(CL, Pass);
             RHI::CmdEndRenderPass(CL);
@@ -6090,98 +6427,46 @@ namespace Lumina
             return;
         }
 
-        // 16x16 pixel tiles: coarse enough to keep the instanced tile count and bitmask small, fine enough
-        // that per-tile material over-inclusion (a tile drawn for a material that only borders it) stays cheap.
-        constexpr uint32 TileSizePx = 16u;
-        const uint32 TileCountX   = (ScreenW + TileSizePx - 1u) / TileSizePx;
-        const uint32 TileCountY   = (ScreenH + TileSizePx - 1u) / TileSizePx;
-        const uint32 TotalTiles   = TileCountX * TileCountY;
-        const uint32 TileWordCount = (NumSlots + 31u) / 32u;
+        SCENE_GPU_SCOPE(CL, "Deferred Material");
 
-        // MaterialIndex -> dense slot (built above; every instance of a master maps to the master's slot).
-        // Uploaded to the transient ring; the classify shader reads it by device address.
-        const RHI::GPUPtr SlotByMaterialAddr =
-            RHI::Core::CopyTransientArray(BinnedDeferredSlotByMaterial.data(), BinnedDeferredSlotByMaterial.size());
-
-        // Size the binning scratch (device-address only, per-frame ring).
-        const uint64 TileBitsSize = Math::Max<uint64>(sizeof(uint32), (uint64)TotalTiles * (uint64)TileWordCount * sizeof(uint32));
-        const uint64 PixelIdSize  = Math::Max<uint64>(sizeof(uint32), (uint64)ScreenW * (uint64)ScreenH * sizeof(uint32));
-        ResizeBufferIfNeeded(MaterialBinTileBitsRing[CurrentFrameSlot], TileBitsSize, 1.2f, MaterialBinTileBitsRingLowUsage[CurrentFrameSlot]);
-        ResizeBufferIfNeeded(MaterialBinPixelIdRing[CurrentFrameSlot], PixelIdSize, 1.2f, MaterialBinPixelIdRingLowUsage[CurrentFrameSlot]);
-
-        const FSceneBuffer TileBits = GetMaterialBinTileBits();
-        const FSceneBuffer PixelId  = GetMaterialBinPixelId();
-
-        const uint32 DrawListCount = (uint32)Frame.Views.CullViews.size() * Frame.Views.TotalMeshletBound;
-
-        // Classify: zero the bitmask, then one thread per pixel resolves + records ownership and tiles.
-        RHI::CmdMemset(CL, TileBits.Ptr, TileBitsSize, 0u);
-        Barriers::TransferToAll(CL);
-
-        struct FClassifyPC
-        {
-            uint32      VisBufferIndex;
-            uint32      TileCountX;
-            uint32      TileSizePx;
-            uint32      TileWordCount;
-            uint32      DrawListCount;
-            uint32      ScreenW;
-            uint32      ScreenH;
-            uint32      SlotByMaterialCount;
-            RHI::GPUPtr TileBitsAddr;
-            RHI::GPUPtr MaterialIdAddr;
-            RHI::GPUPtr SlotByMaterialAddr;
-        } ClassifyPC = {};
-        static_assert(sizeof(FClassifyPC) == 56, "FClassifyPC must match ClassifyMaterialTiles.slang FClassifyArgs.");
-        ClassifyPC.VisBufferIndex      = (uint32)VisRT.GetResourceID();
-        ClassifyPC.TileCountX          = TileCountX;
-        ClassifyPC.TileSizePx          = TileSizePx;
-        ClassifyPC.TileWordCount       = TileWordCount;
-        ClassifyPC.DrawListCount       = DrawListCount;
-        ClassifyPC.ScreenW             = ScreenW;
-        ClassifyPC.ScreenH             = ScreenH;
-        ClassifyPC.SlotByMaterialCount = (uint32)BinnedDeferredSlotByMaterial.size();
-        ClassifyPC.TileBitsAddr        = TileBits.GetAddress();
-        ClassifyPC.MaterialIdAddr      = PixelId.GetAddress();
-        ClassifyPC.SlotByMaterialAddr  = SlotByMaterialAddr;
-
-        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(ClassifyCS));
-        const uint32 ClassifyX = RenderUtils::GetGroupCount(ScreenW, 8u);
-        const uint32 ClassifyY = RenderUtils::GetGroupCount(ScreenH, 8u);
-        RHI::CmdDispatch(CL, MakeArgs(ClassifyPC), ClassifyX, ClassifyY, 1u);
-
-        // Tile bitmask + per-pixel ids feed the raster draws below.
-        Barriers::ComputeToAll(CL);
+        // MaterialDepth carries each covered pixel's owning slot as an encoded depth value. Bound read-only
+        // and tested EQUAL against the depth each tile quad is emitted at, so hardware rejects every pixel
+        // this draw does not own.
+        Pass.DepthAttachment.Texture = MatDepth.Texture;
+        Pass.DepthAttachment.LoadOp  = RHI::ELoadOp::Load;
+        Pass.DepthAttachment.StoreOp = RHI::EStoreOp::Store;
 
         RHI::CmdBeginRenderPass(CL, Pass);
         SetViewportScissor(CL, Extent);
-        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(RHI::FDepthStencilDesc{}));
+
+        RHI::FDepthStencilDesc MatchDepth;
+        MatchDepth.DepthMode = RHI::EDepthFlags::Read;   // test only: the stamp is the single writer
+        MatchDepth.DepthTest = RHI::EOp::Equal;
+        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(MatchDepth));
         RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
 
+        const FSceneBuffer TileList = GetMaterialTileList();
+        const FSceneBuffer TileArgs = GetMaterialTileArgs();
+
         // Layout overlays FDBufferPushConstants on offsets 0-12 so ShadeSurface's ApplyDBuffer reads the
-        // decal indices from this same push constant. The per-pixel reject now keys on SlotIndex (MaterialIdAddr
-        // stores the owning SLOT, see classify), so MaterialIndex is unused-but-kept for byte-identical layout
-        // with DeferredMaterial.slang/DeferredMaterialTileVS.slang.
+        // decal indices from this same push constant. Shared with the tile-quad vertex shader (same
+        // pipeline, same push block): the fields from SlotIndex on are the VS's.
         struct FDeferredPushConstants
         {
             uint32      VisBufferIndex;
             uint32      DBufferAIndex;
             uint32      DBufferBIndex;
             uint32      DBufferCIndex;
-            uint32      MaterialIndex;    // unused: superseded by SlotIndex as the per-pixel reject key
             uint32      DrawListCount;
             uint32      SlotIndex;
             uint32      TileCountX;
             uint32      TileSizePx;
-            uint32      TileWordCount;
             uint32      ScreenW;
             uint32      ScreenH;
-            RHI::GPUPtr TileBitsAddr;
-            RHI::GPUPtr MaterialIdAddr;   // per-pixel owning deferred slot (classify output)
+            RHI::GPUPtr TileListAddr;
         } PC = {};
-        static_assert(sizeof(FDeferredPushConstants) == 64, "FDeferredPushConstants must match DeferredMaterial.slang FDeferredPassArgs.");
+        static_assert(sizeof(FDeferredPushConstants) == 48, "FDeferredPushConstants must match DeferredMaterial.slang FDeferredPassArgs.");
         PC.VisBufferIndex = (uint32)VisRT.GetResourceID();
-        PC.DrawListCount  = DrawListCount;
         if (Frame.Primitives.DecalExtracts.empty())
         {
             PC.DBufferAIndex = 0xFFFFFFFFu;
@@ -6194,23 +6479,22 @@ namespace Lumina
             PC.DBufferBIndex = (uint32)GetNamedImage(ENamedImage::DBufferB).GetResourceID();
             PC.DBufferCIndex = (uint32)GetNamedImage(ENamedImage::DBufferC).GetResourceID();
         }
-        PC.TileCountX     = TileCountX;
-        PC.TileSizePx     = TileSizePx;
-        PC.TileWordCount  = TileWordCount;
-        PC.ScreenW        = ScreenW;
-        PC.ScreenH        = ScreenH;
-        PC.TileBitsAddr   = TileBits.GetAddress();
-        PC.MaterialIdAddr = PixelId.GetAddress();
+        PC.DrawListCount = DrawListCapacity;
+        PC.TileCountX    = Layout.TileCountX;
+        PC.TileSizePx    = GMaterialTileSizePx;
+        PC.ScreenW       = Layout.ScreenW;
+        PC.ScreenH       = Layout.ScreenH;
+        PC.TileListAddr  = TileList.GetAddress();
 
-        // One tile-quad instanced draw per master DeferredShader; the VS self-culls tiles this slot doesn't
-        // cover, so a shader only touches the pixels its instances own. The pixel shader reads each pixel's
-        // own MaterialIndex for instance uniforms, so all instances of the master shade in this one draw.
+        // One indirect tile-quad draw per master DeferredShader, over exactly the tiles that shader covers.
+        // The pixel shader reads each pixel's own MaterialIndex for its instance uniforms, so every instance
+        // of the master shades in this one draw.
         for (uint32 Slot = 0; Slot < NumSlots; ++Slot)
         {
             FGraphicsPipelineKey Key;
             Key.VS          = TileVS;
             Key.PS          = BinnedDeferredSlotShaders[Slot];
-            Key.SampleCount = MSAASampleCount;
+            Key.DepthFormat = EFormat::D32;
             Key.ColorTargets.push_back({ ColorImg.Desc.Format, {} });
             #if USING(WITH_EDITOR)
             Key.ColorTargets.push_back({ PickerImg.Desc.Format, {} });
@@ -6218,7 +6502,9 @@ namespace Lumina
             RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
             PC.SlotIndex = Slot;
-            RHI::CmdDraw(CL, MakeArgs(PC), 6, TotalTiles, 0, 0);
+            RHI::CmdDrawIndirect(CL, MakeArgs(PC),
+                TileArgs.Ptr, (uint64)Slot * sizeof(RHI::FDrawIndirectArguments),
+                1, sizeof(RHI::FDrawIndirectArguments));
         }
 
         RHI::CmdEndRenderPass(CL);
@@ -9770,7 +10056,7 @@ namespace Lumina
         for (uint32 Slot = 0; Slot < RHI::kFramesInFlight; ++Slot)
         {
             // Unified meshlet draw list (NumViews * TotalMeshletBound); CullMeshlets appends
-            // surviving meshlets into each view's slice via FCullView.DrawListOffset.
+            // surviving meshlets into packed per-(view, draw) regions laid out by BuildDrawPrefix.
             MeshletDrawListRing[Slot] = CreateSceneBuffer(sizeof(uint32) * 2);
 
             // Unified indirect draw args (NumViews * NumDraws), manually ringed: GPU-atomic-written
@@ -9792,10 +10078,358 @@ namespace Lumina
             // mips 6..11). Zeroed before each dispatch; phase 2 resets it so it stays zero.
             SpdCounterRing[Slot] = CreateSceneBuffer(sizeof(uint32));
 
-            // Per-instance meshlet prefix (N+1 uints), GPU-built by BuildInstancePrefix.slang.
+            // Per-instance meshlet prefix (N+1 uints), GPU-built by the ScanPrefix* three-pass scan.
             InstancePrefixRing[Slot] = CreateSceneBuffer(sizeof(uint32));
+
+            // {TotalMeshletBound, InstanceCount}: the meshlet cull's dispatch domain and its
+            // binary-search bound. GPU-resident so they can be produced GPU-side.
+            TotalsRing[Slot] = CreateSceneBuffer(sizeof(uint32) * kTotalsSlots);
+            // CreateSceneBuffer is a bare device allocation; the zero happens on this slot's first
+            // dispatch, where there is a command list to do it with.
+            TotalsZeroed[Slot] = false;
+
+            // GPU-driven scene per-frame outputs. Sized for real in CompileDrawCommands_RenderThread.
+            VisibleInstanceRing[Slot]       = CreateSceneBuffer(sizeof(FGPUInstance));
+            CullCounterRing[Slot]           = CreateSceneBuffer(sizeof(uint32) * 2);
+            BatchMeshletCountRing[Slot]     = CreateSceneBuffer(sizeof(uint32));
+            ViewDrawCountRing[Slot]         = CreateSceneBuffer(sizeof(uint32));
+            ViewDrawOffsetRing[Slot]        = CreateSceneBuffer(sizeof(uint32));
+            EarlyCullDispatchArgsRing[Slot] = CreateSceneBuffer(sizeof(uint32) * 3);
+            ScanBlockSumRing[Slot]          = CreateSceneBuffer(sizeof(uint32) * 2);
+            ScanDispatchArgsRing[Slot]      = CreateSceneBuffer(sizeof(uint32) * 3);
+
+            // CPU-visible copy of the whole Totals block, picked up kFramesInFlight frames later to size
+            // the next meshlet draw list, defer list and visible-instance buffer. Sized off kTotalsSlots
+            // like the ring it mirrors -- this held 2 uints while the copy and the read both moved 8.
+            if (MeshletBoundReadback[Slot] == 0)
+            {
+                MeshletBoundReadback[Slot] = RHI::Malloc(sizeof(uint32) * kTotalsSlots, RHI::kDefaultAlign, RHI::EMemoryType::CPURead);
+
+                // A new allocation holds undefined bytes, and this slot is read once before its first
+                // copy has ever landed. Zeroing makes that first read a real "no measurement yet",
+                // rather than heap junk that sizes buffers off nonsense demand and trips the overflow
+                // warnings on startup. Once per slot for the life of the scene.
+                if (void* Host = RHI::ToHost(MeshletBoundReadback[Slot]))
+                {
+                    Memory::Memzero(Host, sizeof(uint32) * kTotalsSlots);
+                }
+            }
         }
     }
+
+    // Picks up the GPU meshlet total this slot recorded on its previous turn. kFramesInFlight frames of
+    // latency is exactly what makes the read safe without a stall, and the value only needs to be
+    // approximately right -- the in-shader clamp covers the frames where it isn't.
+    void FForwardRenderScene::UpdateMeshletBoundFeedback(uint8 Slot)
+    {
+        const RHI::GPUPtr Readback = MeshletBoundReadback[Slot];
+        if (Readback == 0)
+        {
+            return;
+        }
+        // CPURead allocations are persistently mapped. Zeroed on allocation, so a slot that has not
+        // completed a frame yet reads 0 everywhere -- which every consumer already treats as
+        // "no measurement", falling back to its floor instead of a garbage demand.
+        static_assert(FForwardRenderScene::kTotalsSlots >= 8, "Totals[7] is read below.");
+        if (const uint32* Mapped = static_cast<const uint32*>(RHI::ToHost(Readback)))
+        {
+            LastMeshletBound         = Mapped[0];
+            LastDrawListRequired     = Mapped[2];
+            LastDrawListOverflowed   = Mapped[3];
+            LastVisibleInstances     = Mapped[4];
+            LastVisibleOverflowed    = Mapped[5];
+            LastDeferRequested       = Mapped[6];
+            LastDeferOverflowed      = Mapped[7];
+        }
+    }
+
+    /**
+     * The GPU half of the scene: uploads whatever the retained set changed, then hands culling, LOD
+     * selection and the draw-argument layout to the GPU.
+     *
+     * Nothing here is proportional to the scene. The uploads are proportional to what changed, and the
+     * dispatches are fixed-cost from the CPU's side -- which is the whole point: moving the camera no
+     * longer touches the CPU at all.
+     */
+    void FForwardRenderScene::DispatchGPUSceneCull(RHI::FCmdListH CL, const FFrameData& Frame)
+    {
+        static const FShaderEntry* const CullInstancesShader = FShaderLibrary::Get("CullInstances.slang");
+        static const FShaderEntry* const DrawPrefixShader    = FShaderLibrary::Get("BuildDrawPrefix.slang");
+        if (CullInstancesShader == nullptr || DrawPrefixShader == nullptr)
+        {
+            return;
+        }
+
+        LUMINA_PROFILE_SECTION_COLORED("GPU Scene Cull", tracy::Color::Magenta);
+        SCENE_GPU_SCOPE(CL, "GPU Scene Cull");
+
+        // Everything about the retained scene comes from the frame's own snapshot. ScenePrimitives is
+        // game-thread state and is deliberately NOT touched here -- see FGeometry::FRetainedUpload.
+        const FFrameData::FGeometry::FRetainedUpload& Upload = Frame.Geometry.RetainedUpload;
+
+        const uint8  Slot          = CurrentFrameSlot;
+        const uint32 RetainedSlots = Upload.SlotCount;
+        const uint32 NumBatches    = Math::Max(Frame.Views.NumDrawsPerView, 1u);
+        const uint32 NumCullViews  = (uint32)Frame.Views.CullViews.size();
+        const uint32 NumSkinned    = (uint32)Frame.Geometry.Instances.size();
+
+        // First GPU work of the frame to touch Totals, so this is where the one-time zero belongs.
+        // BuildDrawPrefix below overwrites [0..5] unconditionally, but [6]/[7] are not produced until
+        // the view culls run later in the frame -- after the feedback copy at the bottom of this
+        // function has already sampled them. Without this, that first copy feeds undefined bytes back
+        // as a defer demand, which is what reported ~1.8 billion deferred meshlets on startup.
+        if (!TotalsZeroed[Slot] && GetTotals())
+        {
+            RHI::CmdMemset(CL, GetTotals().Ptr, GetTotals().GetSize(), 0u);
+            Barriers::TransferToAll(CL);
+            TotalsZeroed[Slot] = true;
+        }
+
+        //~ Retained uploads. Ordered on the GPU timeline against every earlier frame's reads because
+        //  they are CmdMemcpy from the transient ring, not CPU writes into memory the GPU is reading --
+        //  which is what lets the retained buffers be single-instanced rather than ringed.
+        {
+            LUMINA_PROFILE_SECTION_COLORED("Retained Upload", tracy::Color::Magenta4);
+            SCENE_GPU_SCOPE(CL, "Retained Upload");
+
+            const SIZE_T InstanceBytes = Math::Max<SIZE_T>(sizeof(FGPUInstance), (SIZE_T)RetainedSlots * sizeof(FGPUInstance));
+            const SIZE_T CullBytes     = Math::Max<SIZE_T>(sizeof(FInstanceCullData), (SIZE_T)RetainedSlots * sizeof(FInstanceCullData));
+
+            // Shrink is gated on a full-snapshot frame: reclaiming the allocation drops the accumulated
+            // contents, and only a frame carrying the whole array can put them back. Growth is always
+            // accompanied by a full snapshot, because the game thread sets bFull precisely when the slot
+            // count outgrew the capacity published below.
+            ResizeBufferIfNeeded(RetainedInstanceBuffer, InstanceBytes, 1.5f, RetainedInstanceLowUsage, Upload.bFull);
+            ResizeBufferIfNeeded(RetainedCullDataBuffer, CullBytes,     1.5f, RetainedCullDataLowUsage, Upload.bFull);
+
+            if (RetainedInstanceBuffer && RetainedCullDataBuffer && RetainedSlots > 0)
+            {
+                if (Upload.bFull)
+                {
+                    // O(primitives). Expected only on frames that grow the allocation -- if this zone
+                    // shows up every frame, the dirty channel is not being consumed or something is
+                    // forcing a resync. See FGeometry::FRetainedUpload.
+                    LUMINA_PROFILE_SECTION_COLORED("FULL resend", tracy::Color::Red3);
+
+                    WriteBuffer(CL, RetainedInstanceBuffer.GetAddress(),
+                                Upload.FullInstances.data(), (SIZE_T)RetainedSlots * sizeof(FGPUInstance));
+                    WriteBuffer(CL, RetainedCullDataBuffer.GetAddress(),
+                                Upload.FullCullData.data(), (SIZE_T)RetainedSlots * sizeof(FInstanceCullData));
+                }
+                else
+                {
+                    // One copy per CONTIGUOUS RUN of slots, not per slot. Every WriteBuffer is a transient
+                    // allocation, and each allocation inserts into the RHI's memory-block vector -- so a
+                    // copy per slot is quadratic in the dirty count and will hang the render thread on a
+                    // large invalidation. The snapshot arrives sorted and deduped precisely so this can
+                    // walk runs; in the steady state the list is empty and this loop does not execute.
+                    const SIZE_T NumDirty = Upload.DirtySlots.size();
+                    for (SIZE_T i = 0; i < NumDirty; )
+                    {
+                        SIZE_T j = i + 1;
+                        while (j < NumDirty && Upload.DirtySlots[j] == Upload.DirtySlots[j - 1] + 1u)
+                        {
+                            ++j;
+                        }
+
+                        const uint32 First = Upload.DirtySlots[i];
+                        const SIZE_T Run   = j - i;
+
+                        WriteBuffer(CL, RetainedInstanceBuffer.GetAddress() + (uint64)First * sizeof(FGPUInstance),
+                                    &Upload.DirtyInstances[i], Run * sizeof(FGPUInstance));
+                        WriteBuffer(CL, RetainedCullDataBuffer.GetAddress() + (uint64)First * sizeof(FInstanceCullData),
+                                    &Upload.DirtyCullData[i], Run * sizeof(FInstanceCullData));
+                        i = j;
+                    }
+                }
+            }
+            // Publish the capacity the game thread uses to decide whether the NEXT frame needs a full
+            // re-send. Derived from the allocation we actually got, and from the smaller of the two so a
+            // partial failure cannot advertise room that isn't there.
+            const uint32 InstanceCap = (uint32)Math::Min<uint64>(RetainedInstanceBuffer.GetSize() / sizeof(FGPUInstance), 0xFFFFFFFFull);
+            const uint32 CullCap     = (uint32)Math::Min<uint64>(RetainedCullDataBuffer.GetSize() / sizeof(FInstanceCullData), 0xFFFFFFFFull);
+            RetainedDeviceCapacity.store(Math::Min(InstanceCap, CullCap), std::memory_order_release);
+        }
+
+        // Surface descriptors: interned, so this moves only when a new distinct LOD table appears.
+        const uint32 NumDescs = Upload.SurfaceDescCount;
+        {
+            const SIZE_T DescBytes = Math::Max<SIZE_T>(sizeof(FSurfaceDescGPU), (SIZE_T)NumDescs * sizeof(FSurfaceDescGPU));
+            const RHI::GPUPtr PrevDescs = SurfaceDescBuffer.Ptr;
+            // Same reasoning as above: a reclaim would drop descriptors this frame may not be re-sending.
+            ResizeBufferIfNeeded(SurfaceDescBuffer, DescBytes, 1.5f, SurfaceDescLowUsage, Upload.bSurfaceDescsChanged);
+
+            // Only writable when this frame actually carries the payload. A reallocation or a count change
+            // on a frame that did NOT bring one cannot be serviced here, so ask for a re-send instead of
+            // writing a short buffer -- forcing bFull next frame also re-copies the descriptors.
+            const bool bNeedsDescWrite = SurfaceDescBuffer && NumDescs > 0
+                                      && (SurfaceDescBuffer.Ptr != PrevDescs || Upload.bSurfaceDescsChanged
+                                          || UploadedSurfaceDescs != NumDescs);
+            if (bNeedsDescWrite)
+            {
+                if (Upload.SurfaceDescs.size() == (SIZE_T)NumDescs)
+                {
+                    WriteBuffer(CL, SurfaceDescBuffer.GetAddress(),
+                                Upload.SurfaceDescs.data(), (SIZE_T)NumDescs * sizeof(FSurfaceDescGPU));
+                    UploadedSurfaceDescs = NumDescs;
+                }
+                else
+                {
+                    RetainedDeviceCapacity.store(0, std::memory_order_release);
+                }
+            }
+        }
+
+        //~ Per-frame outputs. VisibleInstanceRing is deliberately NOT sized here: the SceneRoot published
+        //  before this call already baked in its device address, so a resize at this point would retire the
+        //  allocation every shader is pointing at. CompileDrawCommands_RenderThread sizes it up front and
+        //  hands the capacity over in FrameVisibleInstanceCapacity -- one value, sampled once, so the
+        //  buffer, the prefix allocation and the clamps below cannot disagree.
+        const uint32 VisibleCapacity = FrameVisibleInstanceCapacity;
+        const uint32 SeedViews       = Math::Max(NumCullViews, 1u);
+        const SIZE_T ViewDrawEntries = (SIZE_T)SeedViews * (SIZE_T)NumBatches;
+        ResizeBufferIfNeeded(BatchMeshletCountRing[Slot],
+                             (SIZE_T)NumBatches * sizeof(uint32), 1.5f, BatchMeshletCountLowUsage[Slot]);
+        ResizeBufferIfNeeded(ViewDrawCountRing[Slot],
+                             ViewDrawEntries * sizeof(uint32), 1.5f, ViewDrawCountLowUsage[Slot]);
+        ResizeBufferIfNeeded(ViewDrawOffsetRing[Slot],
+                             ViewDrawEntries * sizeof(uint32), 1.5f, ViewDrawOffsetLowUsage[Slot]);
+
+        // Skinned instances are produced on the CPU (their pose changes every frame with nothing to
+        // observe it by) and land at the head of the buffer; the cull's append cursor starts past them.
+        if (NumSkinned > 0 && VisibleInstanceRing[Slot])
+        {
+            WriteBuffer(CL, VisibleInstanceRing[Slot].GetAddress(),
+                        Frame.Geometry.Instances.data(), (SIZE_T)NumSkinned * sizeof(FGPUInstance));
+        }
+
+        {
+            const uint32 Counters[2] = { NumSkinned, 0u };   // {append cursor, overflow}
+            WriteBuffer(CL, GetCullCounters().GetAddress(), Counters, sizeof(Counters));
+
+            // Seeded with the skinned contribution so the prefix covers both producers.
+            const SIZE_T SeedCount = Math::Min<SIZE_T>(NumBatches, Frame.Geometry.BatchMeshletSeed.size());
+            WriteBuffer(CL, GetBatchMeshletCounts().GetAddress(),
+                        Frame.Geometry.BatchMeshletSeed.data(), SeedCount * sizeof(uint32));
+
+            // The per-(view, draw) counts take the same seed replicated into every view. Skinned instances
+            // are CPU-produced and never pass through the instance cull, so which views see them is not
+            // known here. Crediting every view over-reserves slightly (the skinned count is small) and,
+            // unlike under-reserving, cannot drop a meshlet.
+            ViewDrawSeedScratch.assign(ViewDrawEntries, 0u);
+            for (uint32 v = 0; v < SeedViews; ++v)
+            {
+                for (SIZE_T d = 0; d < SeedCount; ++d)
+                {
+                    ViewDrawSeedScratch[(SIZE_T)v * NumBatches + d] = Frame.Geometry.BatchMeshletSeed[d];
+                }
+            }
+            WriteBuffer(CL, GetViewDrawCounts().GetAddress(),
+                        ViewDrawSeedScratch.data(), ViewDrawSeedScratch.size() * sizeof(uint32));
+        }
+
+        Barriers::TransferToAll(CL);
+
+        //~ Cull + LOD + compaction.
+        if (RetainedSlots > 0 && NumCullViews > 0 && NumDescs > 0 && VisibleInstanceRing[Slot])
+        {
+            LUMINA_PROFILE_SECTION_COLORED("Cull Instances", tracy::Color::Magenta2);
+            SCENE_GPU_SCOPE(CL, "Cull Instances");
+
+            struct FCullInstancesPC
+            {
+                uint32 NumRetained;
+                uint32 NumViews;
+                uint32 NumBatches;
+                int32  ShadowLODBias;
+                uint32 bUseLODs;
+                uint32 MaxVisibleInstances;
+                uint32 Pad0;
+                uint32 Pad1;
+                uint64 RetainedInstancesAddr;
+                uint64 RetainedCullDataAddr;
+                uint64 SurfaceDescsAddr;
+                uint64 OutInstancesAddr;
+                uint64 OutInstanceCountAddr;
+                uint64 OutBatchMeshletCountAddr;
+                uint64 OutViewDrawCountAddr;
+                uint64 OutOverflowFlagAddr;
+            };
+            static_assert(sizeof(FCullInstancesPC) == 96, "FCullInstancesPC must match CullInstances.slang.");
+
+            FCullInstancesPC PC = {};
+            PC.NumRetained              = RetainedSlots;
+            PC.NumViews                 = NumCullViews;
+            PC.NumBatches               = NumBatches;
+            PC.ShadowLODBias            = RenderSettings.ShadowLODBias;
+            PC.bUseLODs                 = RenderSettings.bUseLODs ? 1u : 0u;
+            PC.MaxVisibleInstances      = VisibleCapacity;
+            PC.RetainedInstancesAddr    = RetainedInstanceBuffer.GetAddress();
+            PC.RetainedCullDataAddr     = RetainedCullDataBuffer.GetAddress();
+            PC.SurfaceDescsAddr         = SurfaceDescBuffer.GetAddress();
+            PC.OutInstancesAddr         = VisibleInstanceRing[Slot].GetAddress();
+            PC.OutInstanceCountAddr     = GetCullCounters().GetAddress();
+            PC.OutBatchMeshletCountAddr = GetBatchMeshletCounts().GetAddress();
+            PC.OutViewDrawCountAddr     = GetViewDrawCounts().GetAddress();
+            PC.OutOverflowFlagAddr      = GetCullCounters().GetAddress() + sizeof(uint32);
+
+            RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(CullInstancesShader));
+            constexpr uint32 MaxDispatchAxis = 65535u;
+            const uint32 Groups   = (RetainedSlots + 63u) / 64u;
+            const uint32 GroupsX  = Math::Min(Groups, MaxDispatchAxis);
+            const uint32 GroupsY  = (Groups + MaxDispatchAxis - 1u) / MaxDispatchAxis;
+            RHI::CmdDispatch(CL, MakeArgs(PC), GroupsX, GroupsY, 1u);
+
+            Barriers::ComputeToAll(CL);
+        }
+
+        //~ Draw-argument layout, from counts the CPU never sees.
+        {
+            LUMINA_PROFILE_SECTION_COLORED("Build Draw Prefix", tracy::Color::Magenta3);
+            SCENE_GPU_SCOPE(CL, "Build Draw Prefix");
+
+            struct FBuildDrawPrefixPC
+            {
+                uint32 NumViews;
+                uint32 NumDraws;
+                uint32 MaxVisibleInstances;
+                uint32 DrawListCapacityArg;
+                uint64 BatchMeshletCountsAddr;
+                uint64 ViewDrawCountsAddr;
+                uint64 InstanceCountAddr;
+                uint64 OutViewDrawOffsetsAddr;
+                uint64 OutTotalsAddr;
+                uint64 OutCullDispatchArgsAddr;
+                uint64 OutScanDispatchArgsAddr;
+            };
+            static_assert(sizeof(FBuildDrawPrefixPC) == 72, "FBuildDrawPrefixPC must match BuildDrawPrefix.slang.");
+
+            FBuildDrawPrefixPC PC = {};
+            PC.NumViews                  = SeedViews;
+            PC.NumDraws                  = NumBatches;
+            PC.MaxVisibleInstances       = VisibleCapacity;
+            PC.DrawListCapacityArg       = DrawListCapacity;
+            PC.BatchMeshletCountsAddr    = GetBatchMeshletCounts().GetAddress();
+            PC.ViewDrawCountsAddr        = GetViewDrawCounts().GetAddress();
+            PC.InstanceCountAddr         = GetCullCounters().GetAddress();
+            PC.OutViewDrawOffsetsAddr    = GetViewDrawOffsets().GetAddress();
+            PC.OutTotalsAddr             = GetTotals().GetAddress();
+            PC.OutCullDispatchArgsAddr   = GetEarlyCullDispatchArgs().GetAddress();
+            PC.OutScanDispatchArgsAddr   = GetScanDispatchArgs().GetAddress();
+
+            RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(DrawPrefixShader));
+            RHI::CmdDispatch(CL, MakeArgs(PC), 1u, 1u, 1u);
+            Barriers::ComputeToAll(CL);
+        }
+
+        // Feedback for next time this slot comes around: copy the total the GPU just produced into the
+        // CPU-visible buffer that sizes the meshlet draw list.
+        if (MeshletBoundReadback[Slot] != 0)
+        {
+            RHI::CmdMemcpy(CL, MeshletBoundReadback[Slot], GetTotals().GetAddress(), sizeof(uint32) * kTotalsSlots);
+        }
+    }
+
 
     static uint32 PreviousPow2(uint32 v)
     {
@@ -9865,21 +10499,33 @@ namespace Lumina
         }
     }
 
-    void FForwardRenderScene::ReleaseViewImages(FSceneView& View)
+    void FForwardRenderScene::ReleaseViewImages(FSceneView& View, bool bDeferRelease)
     {
         // Ownership-driven: release exactly what this view created and leave aliases to their owner.
         // This replaced a hand-maintained list of per-view ENamedImage slots, which silently leaked
         // the texture AND its bindless slot whenever a new per-view image was added to
         // InitViewImages without also being added to the list (VisBuffer was missing that way).
+        auto Release = [this, bDeferRelease](FSceneImage& Image)
+        {
+            if (bDeferRelease)
+            {
+                DeferRelease(Image);
+            }
+            else
+            {
+                ReleaseSceneImage(Image);
+            }
+        };
+
         for (FSceneImage& Image : View.Images)
         {
             if (Image.bOwned)
             {
-                ReleaseSceneImage(Image);
+                Release(Image);
             }
         }
-        ReleaseSceneImage(View.Output);
-        ReleaseSceneImage(View.BloomChainImage);
+        Release(View.Output);
+        Release(View.BloomChainImage);
 
         // Shared aliases: just drop the copies, the owners release them.
         View.Images.fill(FSceneImage{});
@@ -9974,6 +10620,13 @@ namespace Lumina
         Desc.Format = EFormat::R32_UINT;
         Desc.Usage  = RHI::EImageUsageFlags::ColorAttachment | RHI::EImageUsageFlags::Sampled;
         View.Images[(int)ENamedImage::VisBuffer] = CreateSceneImage(Desc);
+
+        // MaterialDepth: each covered pixel's owning deferred material slot, encoded as a depth value by
+        // MaterialDepthPass. Not scene depth -- it exists purely so the material draws can reject pixels they
+        // do not own with a hardware DEPTH_EQUAL test instead of a per-pixel load and `discard`.
+        Desc.Format = EFormat::D32;
+        Desc.Usage  = RHI::EImageUsageFlags::DepthAttachment | RHI::EImageUsageFlags::Sampled;
+        View.Images[(int)ENamedImage::MaterialDepth] = CreateSceneImage(Desc);
 
         AllocateMSAAImages(View, Extent);
 
@@ -10173,7 +10826,12 @@ namespace Lumina
         // Resize: rebuild the primary view's image chain at the new size. The per-view
         // cluster buffer is size-independent and persists across resize.
         FSceneView& Primary = SceneViews[0];
-        ReleaseViewImages(Primary);
+        // DEFERRED, not immediate. SwapchainResized drains the GPU first, which is enough for in-flight
+        // GPU work but not for ImGui: the editor hands the viewport image to ImGui as a BINDLESS SLOT
+        // INDEX, and that snapshot is submitted after this release runs. Freeing the slot here left the
+        // descriptor pointing at a destroyed texture, and the ImGui pixel shader faulted on it -- which is
+        // why the repro was resizing the viewport, and why draining the device never prevented it.
+        ReleaseViewImages(Primary, /*bDeferRelease*/ true);
         InitViewImages(Primary);
     }
 
@@ -10333,9 +10991,12 @@ namespace Lumina
         RHI::CmdMemcpy(CL, Dst, Staging.Gpu, Size);
     }
 
-    void FForwardRenderScene::ResizeBufferIfNeeded(FSceneBuffer& Buffer, uint64 NeededSize, float SlackFactor, uint32& LowUsageCounter)
+    void FForwardRenderScene::ResizeBufferIfNeeded(FSceneBuffer& Buffer, uint64 NeededSize, float SlackFactor, uint32& LowUsageCounter,
+                                                   bool bAllowShrink)
     {
         NeededSize = Math::Max<uint64>(NeededSize, 16ull);
+        
+        auto AlignUp16 = [](uint64 Size) { return (Size + 15ull) & ~15ull; };
 
         if (NeededSize > Buffer.Size)
         {
@@ -10343,7 +11004,7 @@ namespace Lumina
             {
                 DeferFree(Buffer.Ptr);
             }
-            Buffer = CreateSceneBuffer((uint64)((double)NeededSize * SlackFactor));
+            Buffer = CreateSceneBuffer(AlignUp16((uint64)((double)NeededSize * SlackFactor)));
             LowUsageCounter = 0;
 
             // Buffer.Size stays 0 on failure so the next frame retries rather than trusting a
@@ -10357,12 +11018,12 @@ namespace Lumina
         }
 
         // Shrink after sustained low usage (<25% of capacity).
-        if (NeededSize * 4ull < Buffer.Size)
+        if (bAllowShrink && NeededSize * 4ull < Buffer.Size)
         {
             if (++LowUsageCounter >= 120u)
             {
                 DeferFree(Buffer.Ptr);
-                Buffer = CreateSceneBuffer((uint64)((double)NeededSize * SlackFactor));
+                Buffer = CreateSceneBuffer(AlignUp16((uint64)((double)NeededSize * SlackFactor)));
                 LowUsageCounter = 0;
             }
         }

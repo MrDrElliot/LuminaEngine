@@ -277,11 +277,16 @@ namespace Lumina
                 Anim.ActiveNotifyStates.assign(NowActive.begin(), NowActive.end());
             }
 
-            const int32 RootIdx = RootMotion::ResolveRootBoneIndex(Skeleton, Asset->RootBoneName);
-
             const bool bLock = (Anim.RootMotionLock == ERootMotionLockMode::ForceLock) ||
                                (Anim.RootMotionLock == ERootMotionLockMode::FromAsset && Asset->bLockRootMotion);
             const bool bExtract = !bLock && Asset->bEnableRootMotion;
+
+            // Resolved only when something actually consumes it. A named RootBoneName costs an FName hash
+            // and a random probe into the skeleton's name map -- a cache miss per entity per frame that the
+            // overwhelmingly common clip (no lock, no root motion) was paying for a value it never read.
+            const int32 RootIdx = (bLock || bExtract)
+                ? RootMotion::ResolveRootBoneIndex(Skeleton, Asset->RootBoneName)
+                : INDEX_NONE;
 
             Anim.PendingRootMotion.bHasMotion = false;
 
@@ -444,6 +449,11 @@ namespace Lumina
         const float  DeltaTime = (float)SystemContext.GetDeltaTime();
         const double Now       = SystemContext.GetTime();
 
+        // Set by the parallel passes when any entity extracts a root delta. Root motion is opt-in per clip,
+        // so for a crowd this stays false and the serial apply below is skipped outright -- see there for
+        // why that matters. Relaxed throughout: the TaskGraph::Wait() before the read is the ordering edge.
+        std::atomic<bool> bAnyRootMotion{ false };
+
         FTaskGraph TaskGraph;
 
         // Update phase: record each entity's pose recipe. The graph pass runs after the simple pass so
@@ -463,8 +473,15 @@ namespace Lumina
                     {
                         continue;
                     }
-                    UpdateSimple(SimpleView.get<SSimpleAnimationComponent>(Entity),
-                                 SimpleView.get<SSkeletalMeshComponent>(Entity), Entity, DeltaTime, Now);
+                    SSimpleAnimationComponent& Anim = SimpleView.get<SSimpleAnimationComponent>(Entity);
+                    UpdateSimple(Anim, SimpleView.get<SSkeletalMeshComponent>(Entity), Entity, DeltaTime, Now);
+
+                    // Root motion is opt-in per clip and rare in a crowd; recording that ANY entity
+                    // produced some is what lets the serial apply below skip its whole sweep.
+                    if (Anim.PendingRootMotion.bHasMotion)
+                    {
+                        bAnyRootMotion.store(true, std::memory_order_relaxed);
+                    }
                 }
             });
         }
@@ -480,9 +497,14 @@ namespace Lumina
                     {
                         continue;
                     }
-                    UpdateGraph(SystemContext, Entity,
-                                GraphView.get<SAnimationGraphComponent>(Entity),
+                    SAnimationGraphComponent& AnimGraph = GraphView.get<SAnimationGraphComponent>(Entity);
+                    UpdateGraph(SystemContext, Entity, AnimGraph,
                                 GraphView.get<SSkeletalMeshComponent>(Entity), DeltaTime, Now);
+
+                    if (AnimGraph.PendingRootMotion.bHasMotion)
+                    {
+                        bAnyRootMotion.store(true, std::memory_order_relaxed);
+                    }
                 }
             });
 
@@ -599,6 +621,14 @@ namespace Lumina
         TaskGraph.Dispatch();
         TaskGraph.Wait();
 
+        // Nothing moved: everything below is dead work. This is the common case for a crowd -- root motion
+        // is opt-in per clip -- and skipping it is what makes the system scale, because the sweep below is
+        // the only O(entities) SERIAL work in the frame while every other phase fans out across the workers.
+        if (!bAnyRootMotion.load(std::memory_order_relaxed))
+        {
+            return;
+        }
+
         // Serial: applying root motion marks the transform dirty (a structural registry change, not
         // ParallelFor-safe).
         auto&& TransformStorage = SystemContext.GetStorage<STransformComponent>();
@@ -626,26 +656,33 @@ namespace Lumina
             Transform.SetLocalTransform(Transform.LocalTransform * DeltaTransform);
         };
 
+        // Walked DENSELY over the component storage rather than through the view. The view form cost a
+        // sparse-set probe for contains() plus another for get() on every entity, every frame -- two
+        // dependent random accesses each, which at crowd scale is a serial wall of cache misses. The dense
+        // scan is one sequential pass the prefetcher handles, and the bHasMotion test rejects almost
+        // everything before any sparse lookup happens.
+        //
+        // A disabled entity is not filtered here (that check is itself a sparse probe). It cannot have
+        // produced a delta this frame -- the update passes skip it -- so at worst it applies one delta
+        // extracted before it was disabled, which ApplyRootMotion then clears for good.
         if (bHasSimple)
         {
-            for (size_t i = 0; i < SimpleHandle->size(); ++i)
+            for (auto&& [Entity, Anim] : SystemContext.GetStorage<SSimpleAnimationComponent>().each())
             {
-                entt::entity Entity = (*SimpleHandle)[i];
-                if (SimpleView.contains(Entity))
+                if (Anim.PendingRootMotion.bHasMotion)
                 {
-                    ApplyRootMotion(Entity, SimpleView.get<SSimpleAnimationComponent>(Entity).PendingRootMotion);
+                    ApplyRootMotion(Entity, Anim.PendingRootMotion);
                 }
             }
         }
 
         if (bHasGraph)
         {
-            for (size_t i = 0; i < GraphHandle->size(); ++i)
+            for (auto&& [Entity, AnimGraph] : SystemContext.GetStorage<SAnimationGraphComponent>().each())
             {
-                entt::entity Entity = (*GraphHandle)[i];
-                if (GraphView.contains(Entity))
+                if (AnimGraph.PendingRootMotion.bHasMotion)
                 {
-                    ApplyRootMotion(Entity, GraphView.get<SAnimationGraphComponent>(Entity).PendingRootMotion);
+                    ApplyRootMotion(Entity, AnimGraph.PendingRootMotion);
                 }
             }
         }

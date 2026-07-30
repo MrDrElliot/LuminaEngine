@@ -144,16 +144,45 @@ FPreSkinnedVertex SkinVertex(FMeshletHeader* Header, FMeshlet M, uint VertexLoca
     uint4  JointIndices = UnpackUIntToUVec4(V.JointIndices);
     float4 Weights      = unpack_u8u32(V.JointWeights) / float4(255.0);
 
-    FBoneTransform B0 = Bones()[BoneOffset + JointIndices.x];
-    FBoneTransform B1 = Bones()[BoneOffset + JointIndices.y];
-    FBoneTransform B2 = Bones()[BoneOffset + JointIndices.z];
-    FBoneTransform B3 = Bones()[BoneOffset + JointIndices.w];
+    // RENORMALIZE. The stored four weights rarely sum to exactly 1: importers quantize them to u8 (a
+    // rounding shortfall of up to ~4/255) and keep only four influences per vertex, dropping the rest.
+    // An unnormalized weight set scales the whole blended AFFINE matrix -- including its translation row --
+    // so the vertex is dragged toward the MODEL ORIGIN by a factor of (1 - sum). A 1.6% shortfall is a
+    // visible wobble; a vertex that lost its dominant influence retains almost no weight and collapses onto
+    // the root outright, which rasterizes as a sliver from the mesh to the origin whose normalize(0,0,0)
+    // normal is NaN and shades black. Dense-influence regions -- fingers, crotch, toes -- go first.
+    const float WeightSum = dot(Weights, float4(1.0, 1.0, 1.0, 1.0));
 
-    // Linear blend of the row-stored skinning matrices, then transform by explicit row dots.
-    // Rigid per bone, so the same 3x3 rows rotate Tangent and its handedness sign is preserved.
-    float4 R0 = B0.Row0 * Weights.x + B1.Row0 * Weights.y + B2.Row0 * Weights.z + B3.Row0 * Weights.w;
-    float4 R1 = B0.Row1 * Weights.x + B1.Row1 * Weights.y + B2.Row1 * Weights.z + B3.Row1 * Weights.w;
-    float4 R2 = B0.Row2 * Weights.x + B1.Row2 * Weights.y + B2.Row2 * Weights.z + B3.Row2 * Weights.w;
+    float4 R0;
+    float4 R1;
+    float4 R2;
+
+    if (WeightSum > 1e-5f)
+    {
+        Weights /= WeightSum;
+
+        FBoneTransform B0 = Bones()[BoneOffset + JointIndices.x];
+        FBoneTransform B1 = Bones()[BoneOffset + JointIndices.y];
+        FBoneTransform B2 = Bones()[BoneOffset + JointIndices.z];
+        FBoneTransform B3 = Bones()[BoneOffset + JointIndices.w];
+
+        // Linear blend of the row-stored skinning matrices, then transform by explicit row dots.
+        // Rigid per bone, so the same 3x3 rows rotate Tangent and its handedness sign is preserved.
+        R0 = B0.Row0 * Weights.x + B1.Row0 * Weights.y + B2.Row0 * Weights.z + B3.Row0 * Weights.w;
+        R1 = B0.Row1 * Weights.x + B1.Row1 * Weights.y + B2.Row1 * Weights.z + B3.Row1 * Weights.w;
+        R2 = B0.Row2 * Weights.x + B1.Row2 * Weights.y + B2.Row2 * Weights.z + B3.Row2 * Weights.w;
+    }
+    else
+    {
+        // No usable influence at all (all four weights zero). Identity rows leave the vertex in BIND POSE,
+        // which makes every expression below correct with no special-casing: dot(R0, P) == LocalPos.x, and
+        // the 3x3 part passes Normal/Tangent through unchanged, so nothing can produce a zero vector to
+        // normalize. Previously this path multiplied by an all-zero matrix and emitted a NaN-normal vertex
+        // at the origin.
+        R0 = float4(1.0, 0.0, 0.0, 0.0);
+        R1 = float4(0.0, 1.0, 0.0, 0.0);
+        R2 = float4(0.0, 0.0, 1.0, 0.0);
+    }
 
     float4 P = float4(LocalPos, 1.0);
     float3 SkinnedPos     = float3(dot(R0, P), dot(R1, P), dot(R2, P));

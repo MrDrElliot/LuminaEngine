@@ -94,6 +94,24 @@ namespace Lumina
         /// Committed geometry + resolved surfaces. Null until the first successful Commit.
         TSharedPtr<FDynamicMeshRenderData> RenderData;
 
+        /// Bumped every time RenderData is replaced or cleared.
+        ///
+        /// This component has no registry access, so it cannot signal the render scene's dirty channel --
+        /// it gets POLLED instead, once per component per frame. That poll used to hash the entity into the
+        /// primitive table and compare the stored surface pointer, which is a hash probe plus two random
+        /// memory accesses for every dynamic mesh in the world, every frame, whether or not anything moved.
+        /// Comparing these two adjacent fields instead keeps the poll a dense sequential scan.
+        ///
+        /// A counter rather than the old pointer compare also closes a real hole: the allocator can hand a
+        /// fresh FDynamicMeshRenderData back at the address the previous one just freed, and the pointer
+        /// compare would read that as "unchanged". Transient, never serialized.
+        uint32 RenderDataVersion = 0;
+
+        /// Last RenderDataVersion the render scene's primitive sync observed. Owned by that pass, not by
+        /// this component. Equal to RenderDataVersion means "the scene is up to date with this mesh".
+        /// Transient, never serialized.
+        uint32 SyncedRenderDataVersion = 0;
+
         /// Re-runs the material half of the resolve against the current MaterialOverrides. Called by the
         /// render scene's resolve pass while a material is still compiling, and after an override changes.
         void RefreshResolvedMaterials();

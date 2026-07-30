@@ -341,6 +341,7 @@ namespace Lumina
 
     private:
 
+        FString CachedValue;
         FString DisplayValue;
         ImGuiTextFilter SearchFilter;
     };

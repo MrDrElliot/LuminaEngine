@@ -3495,8 +3495,15 @@ namespace Lumina::RHI
             DestOffset = Dest - DestIt->Device;
         }
 
+        // vkCmdFillBuffer requires a 4-multiple size (VUID-vkCmdFillBuffer-size-00028).
+        const uint64 FillSize = Size & ~3ull;
+        if (FillSize == 0)
+        {
+            return;
+        }
+
         auto* VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
-        vkCmdFillBuffer(VkCmdBuf, DestBuffer, DestOffset, Size, Value);
+        vkCmdFillBuffer(VkCmdBuf, DestBuffer, DestOffset, FillSize, Value);
     }
 
     void CmdMemzero(FCmdListH CL, GPUPtr Dest, uint64 Size)

@@ -16,18 +16,21 @@
 // [6:0] local triangle index; stored as VisID + 1 so clear-to-0 marks empty.
 
 // One CmdDrawMeshTasksIndirect covers a whole batch; SV_DrawIndex selects the sub-draw. The per-draw meshlet
-// base is the cull's FDrawIndirectArguments.FirstInstance (the same value the VS path consumes) -- read it from
-// the raw uint array (4 uints/arg, FirstInstance = element 3) instead of a per-sub-draw push constant.
+// base comes from ViewDrawOffsets, the same GPU-built array SeedIndirectArgs seeds FirstInstance from (so the
+// mesh and VS paths consume the same value). It used to be hand-indexed out of FDrawIndirectArguments as raw
+// uints ([arg*4 + 3]), which meant the mesh-task path reached into a struct belonging to the graphics
+// indirect path and read a cacheline other lanes were atomically incrementing (InstanceCount is element 1 of
+// the same 16 bytes).
 struct FVisPassArgs
 {
-    uint* IndirectArgs;   // FDrawIndirectArguments[] as raw uints; [arg*4 + 3] = arg's FirstInstance = MeshletBase
-    uint  ArgBase;        // first arg index for this batch: ViewIndex*NumDrawsPerView + IndirectDrawOffset
+    uint* ViewDrawOffsets;   // per-(view, draw) base into MeshletDrawList()
+    uint  ArgBase;           // first arg index for this batch: ViewIndex*NumDrawsPerView + IndirectDrawOffset
 };
 FVisPassArgs* Pass() { return GetPassArgs<FVisPassArgs>(); }
 
 uint LoadMeshletBase(uint DrawIndex)
 {
-    return Pass().IndirectArgs[(Pass().ArgBase + DrawIndex) * 4u + 3u];
+    return Pass().ViewDrawOffsets[Pass().ArgBase + DrawIndex];
 }
 
 struct FVisPrimitive

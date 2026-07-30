@@ -82,11 +82,36 @@ namespace Lumina
         return NodePins[uint32(Direction)][Index];
     }
 
+    // True when any pin already on this node (either direction) owns this id. Two live pins sharing an
+    // id are begun as the same node-editor pin object, which self-links its m_PreviousPin chain and
+    // hangs the editor's pin walks. Nodes with user-named pins (Custom Slang) can produce that, so the
+    // id is salted until it is unique instead of trusting the name to be.
+    bool CEdGraphNode::IsPinIDTaken(uint32 ID) const
+    {
+        for (const TVector<TObjectPtr<CEdNodeGraphPin>>& Pins : NodePins)
+        {
+            for (const TObjectPtr<CEdNodeGraphPin>& Pin : Pins)
+            {
+                if (Pin.IsValid() && Pin->PinID == ID)
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     CEdNodeGraphPin* CEdGraphNode::CreatePin(CClass* InClass, const FString& Name, ENodePinDirection Direction)
     {
         CEdNodeGraphPin* NewPin = NewObject<CEdNodeGraphPin>(InClass);
         NewPin->SetPinName(Name);
-        NewPin->PinID = HashPinID(FullName, Name, Direction);
+
+        uint32 ID = HashPinID(FullName, Name, Direction);
+        for (uint32 Salt = 1; IsPinIDTaken(ID); ++Salt)
+        {
+            ID = HashPinID(FullName, Name + "#" + eastl::to_string(Salt), Direction);
+        }
+        NewPin->PinID = ID;
         NewPin->bInputPin = (Direction == ENodePinDirection::Input);
         NewPin->OwningNode = this;
         

@@ -40,6 +40,7 @@
 #include "Entity/Components/DynamicMeshComponent.h"
 #include "Entity/Components/FoliageComponent.h"
 #include "World/Scene/RenderScene/MeshResolveCache.h"
+#include "World/Scene/RenderScene/ScenePrimitiveSet.h"
 #include "Entity/Events/ImpulseEvent.h"
 #include "entity/components/entitytags.h"
 #include "Entity/Components/LineBatcherComponent.h"
@@ -88,11 +89,29 @@ namespace Lumina
 
     namespace
     {
-        // Clearing the component's stamp is what makes the resolve pre-pass revisit it.
+        template <typename TComponent> constexpr EPrimitiveSource PrimitiveSourceFor();
+        template <> constexpr EPrimitiveSource PrimitiveSourceFor<SStaticMeshComponent>()   { return EPrimitiveSource::StaticMesh; }
+        template <> constexpr EPrimitiveSource PrimitiveSourceFor<SDynamicMeshComponent>()  { return EPrimitiveSource::DynamicMesh; }
+        template <> constexpr EPrimitiveSource PrimitiveSourceFor<SSkeletalMeshComponent>() { return EPrimitiveSource::SkeletalMesh; }
+
+        // Clearing the component's stamp is what makes the resolve pre-pass revisit it; the tracker entry
+        // is what makes the render scene's primitive for it re-read the component. Both are needed: the
+        // first fixes the shared resolve, the second fixes this entity's cached render state.
         template <typename TComponent>
         void MarkMeshResolveDirty(FEntityRegistry& Registry, entt::entity Entity)
         {
             Registry.get<TComponent>(Entity).InvalidateRenderResolve();
+            FRenderDirtyTracker::Ensure(Registry).Mark(Entity, PrimitiveSourceFor<TComponent>(),
+                                                       EPrimitiveDirty::Data | EPrimitiveDirty::Membership);
+        }
+
+        // Component (or its entity) going away. The resolve stamp is irrelevant now; only the render
+        // scene needs telling, so its primitive is dropped instead of dangling.
+        template <typename TComponent>
+        void MarkMeshRemoved(FEntityRegistry& Registry, entt::entity Entity)
+        {
+            FRenderDirtyTracker::Ensure(Registry).Mark(Entity, PrimitiveSourceFor<TComponent>(),
+                                                       EPrimitiveDirty::Membership);
         }
 
         void MarkFoliageResolveDirty(FEntityRegistry& Registry, entt::entity Entity)
@@ -102,6 +121,20 @@ namespace Lumina
                 Type.CachedEpoch = 0;
             }
             FMeshResolveCache::MarkPendingWork();
+            FRenderDirtyTracker::Ensure(Registry).Mark(Entity, EPrimitiveSource::Foliage,
+                                                       EPrimitiveDirty::Data | EPrimitiveDirty::Membership);
+        }
+
+        void MarkFoliageRemoved(FEntityRegistry& Registry, entt::entity Entity)
+        {
+            FRenderDirtyTracker::Ensure(Registry).Mark(Entity, EPrimitiveSource::Foliage, EPrimitiveDirty::Membership);
+        }
+
+        // Enable/disable is a membership change for every renderable component the entity might carry;
+        // the sync pass drops the sources it doesn't actually have.
+        void MarkRenderVisibilityDirty(FEntityRegistry& Registry, entt::entity Entity)
+        {
+            FRenderDirtyTracker::Ensure(Registry).MarkAllSources(Entity, EPrimitiveDirty::Visibility | EPrimitiveDirty::Membership);
         }
     }
 
@@ -368,18 +401,29 @@ namespace Lumina
         EntityRegistry.on_construct <SInputComponent>()             .connect<&ThisClass::OnInputComponentConstruct>(this);
         SystemContext.EventSink     <FSwitchActiveCameraEvent>()    .connect<&ThisClass::OnChangeCameraEvent>(this);
 
-        // on_construct catches spawns/prefabs/loads; on_update catches registry.patch<T> edits.
+        // on_construct catches spawns/prefabs/loads; on_update catches registry.patch<T> edits;
+        // on_destroy catches component removal and entity destruction, which is what keeps the render
+        // scene's persistent primitive table from outliving what it was built from.
         EntityRegistry.on_construct <SStaticMeshComponent>()  .connect<&MarkMeshResolveDirty<SStaticMeshComponent>>();
         EntityRegistry.on_update    <SStaticMeshComponent>()  .connect<&MarkMeshResolveDirty<SStaticMeshComponent>>();
+        EntityRegistry.on_destroy   <SStaticMeshComponent>()  .connect<&MarkMeshRemoved<SStaticMeshComponent>>();
         EntityRegistry.on_construct <SDynamicMeshComponent>() .connect<&MarkMeshResolveDirty<SDynamicMeshComponent>>();
         EntityRegistry.on_update    <SDynamicMeshComponent>() .connect<&MarkMeshResolveDirty<SDynamicMeshComponent>>();
+        EntityRegistry.on_destroy   <SDynamicMeshComponent>() .connect<&MarkMeshRemoved<SDynamicMeshComponent>>();
         EntityRegistry.on_construct <SSkeletalMeshComponent>().connect<&MarkMeshResolveDirty<SSkeletalMeshComponent>>();
         EntityRegistry.on_update    <SSkeletalMeshComponent>().connect<&MarkMeshResolveDirty<SSkeletalMeshComponent>>();
+        EntityRegistry.on_destroy   <SSkeletalMeshComponent>().connect<&MarkMeshRemoved<SSkeletalMeshComponent>>();
         EntityRegistry.on_construct <SFoliageComponent>()     .connect<&MarkFoliageResolveDirty>();
         EntityRegistry.on_update    <SFoliageComponent>()     .connect<&MarkFoliageResolveDirty>();
+        EntityRegistry.on_destroy   <SFoliageComponent>()     .connect<&MarkFoliageRemoved>();
+        EntityRegistry.on_construct <SDisabledTag>()          .connect<&MarkRenderVisibilityDirty>();
+        EntityRegistry.on_destroy   <SDisabledTag>()          .connect<&MarkRenderVisibilityDirty>();
 
         // Components loaded before these hooks connected never saw on_construct.
         FMeshResolveCache::MarkPendingWork();
+        // Same reason, for the primitive table: a full rescan is the only way to pick up what predates
+        // the hooks (world load, level swap, editor world duplication).
+        FRenderDirtyTracker::Ensure(EntityRegistry).RequestFullRescan();
 
         ECS::Utils::FTransformDirtyState* DirtyState = ECS::Utils::EnsureTransformDirtyState(EntityRegistry);
         auto TransformView = EntityRegistry.view<STransformComponent>();

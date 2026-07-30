@@ -755,6 +755,21 @@ namespace Lumina::ECS::Utils
         TVector<entt::entity>          DrainScratch;
         TVector<TVector<entt::entity>> HierBySlot;
 
+        // Published "who moved" channel, off until a consumer opts in (SetPublishMovedTransforms).
+        // Written from the resolve's ParallelFor bodies and from the lazy chain resolve, hence the
+        // concurrent queue; drained on the game thread. Duplicates are fine -- the consumer is
+        // idempotent per entity, and dedup here would cost more than it saves.
+        std::atomic<bool> bPublishMoved{ false };
+        FDirtyQueue       MovedTransforms;
+
+        FORCEINLINE void PublishMoved(entt::entity Entity)
+        {
+            if (bPublishMoved.load(std::memory_order_relaxed))
+            {
+                MovedTransforms.enqueue(Entity);
+            }
+        }
+
         FTransformDirtyState()
         {
             const uint32 Slots = Jobs::IsInitialized() ? Jobs::GetNumThreadSlots() : 1;
@@ -866,7 +881,8 @@ namespace Lumina::ECS::Utils
     // Recompute world = parentWorld * local for every descendant of Root. Walks the child links via the
     // cached relationship storage (no per-node try_get through the registry's type map).
     template<typename TTransformStorage, typename TRelStorage>
-    static void PropagateTransformsToDescendants(TTransformStorage& TransformStorage, TRelStorage& RelStorage, entt::entity Root, bool bClearDirty)
+    static void PropagateTransformsToDescendants(TTransformStorage& TransformStorage, TRelStorage& RelStorage, entt::entity Root, bool bClearDirty,
+                                                 FTransformDirtyState* PublishState = nullptr)
     {
         TFixedVector<entt::entity, 64> Stack;
         Stack.push_back(Root);
@@ -894,6 +910,13 @@ namespace Lumina::ECS::Utils
                 if (bClearDirty)
                 {
                     ChildTransform.bWorldDirty = false;
+                }
+
+                // A descendant moved because its ancestor did; its own bWorldDirty was never set, so
+                // this is the only place a downstream cache can learn about it.
+                if (PublishState != nullptr)
+                {
+                    PublishState->PublishMoved(Child);
                 }
 
                 Stack.push_back(Child);
@@ -975,10 +998,37 @@ namespace Lumina::ECS::Utils
             }
 
             Transform.CachedMatrix = Transform.WorldTransform.GetMatrix();
+            DirtyState.PublishMoved(Ancestor);
         }
 
         // Propagate to the full subtree. Compute-only (no flag clearing), so no lock needed.
-        PropagateTransformsToDescendants(XFormStorage, RelStorage, AncestorChain[TopmostDirtyIndex], /*bClearDirty*/ false);
+        PropagateTransformsToDescendants(XFormStorage, RelStorage, AncestorChain[TopmostDirtyIndex], /*bClearDirty*/ false, &DirtyState);
+    }
+
+    void SetPublishMovedTransforms(FEntityRegistry& Registry, bool bEnable)
+    {
+        EnsureTransformDirtyState(Registry)->bPublishMoved.store(bEnable, std::memory_order_release);
+    }
+
+    bool DrainMovedTransforms(FEntityRegistry& Registry, TVector<entt::entity>& Out)
+    {
+        TUniquePtr<FTransformDirtyState>* Holder = Registry.ctx().find<TUniquePtr<FTransformDirtyState>>();
+        FTransformDirtyState* State = Holder ? Holder->get() : nullptr;
+        if (State == nullptr)
+        {
+            return false;
+        }
+
+        const SIZE_T Before = Out.size();
+
+        entt::entity Batch[256];
+        std::size_t Count;
+        while ((Count = State->MovedTransforms.try_dequeue_bulk(Batch, 256)) != 0)
+        {
+            Out.insert(Out.end(), Batch, Batch + Count);
+        }
+
+        return Out.size() != Before;
     }
 
     void ResolveAllDirtyTransforms(FEntityRegistry& Registry)
@@ -1065,6 +1115,7 @@ namespace Lumina::ECS::Utils
             T.WorldTransform = T.LocalTransform;
             T.CachedMatrix   = T.WorldTransform.GetMatrix();
             T.bWorldDirty    = false;
+            DirtyState.PublishMoved(E);
         };
 
         if (Raw.size() > 1000)
@@ -1118,7 +1169,8 @@ namespace Lumina::ECS::Utils
             }
 
             DirtyTransform.CachedMatrix = DirtyTransform.WorldTransform.GetMatrix();
-            PropagateTransformsToDescendants(TransformStorage, RelStorage, DirtyEntity, /*bClearDirty*/ false);
+            DirtyState.PublishMoved(DirtyEntity);
+            PropagateTransformsToDescendants(TransformStorage, RelStorage, DirtyEntity, /*bClearDirty*/ false, &DirtyState);
         };
 
         if (HierEntities.size() > 1000)

@@ -211,6 +211,7 @@ namespace Lumina
     {
         BuildData.reset();
         RenderData.reset();     // GPU buffers retire through ~FMeshBuffers' deferred free
+        ++RenderDataVersion;    // the primitive sync polls this; see the field
         CommittedVertexCount   = 0;
         CommittedTriangleCount = 0;
     }
@@ -395,7 +396,6 @@ namespace Lumina
         for (size_t i = 0; i < Geometry.size(); ++i)
         {
             FResolvedSurface& R = NewData->Surfaces[i];
-            R.DrawKey = FDrawKey{ Geometry[i].StartIndex, Geometry[i].IndexCount };
             R.NumLODs = Geometry[i].NumLODs;
             for (uint32 LOD = 0; LOD < MAX_MESH_LODS; ++LOD)
             {
@@ -409,6 +409,7 @@ namespace Lumina
         // Published before the materials resolve: the old data (and its GPU buffers) drop here, and the
         // extract later this tick already reads the new addresses -- no resolve-cache tick of lag.
         RenderData = eastl::move(NewData);
+        ++RenderDataVersion;    // the primitive sync polls this; see the field
         RefreshResolvedMaterials();
 
         // Scratch streams are dead once the meshlets and GPU buffers exist.

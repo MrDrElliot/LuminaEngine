@@ -74,6 +74,13 @@ namespace Lumina
         // 0 never matches a live epoch, so a fresh component always resolves.
         uint32  CachedEpoch = 0;
 
+        // Hash of the materials this component last RESOLVED with. Compared against the live materials every
+        // frame, so a material change is detected from its effect rather than from a notification. Belt and
+        // braces on purpose: the editor's PostEditChange, SetMaterialAtSlot and MarkRenderStateDirty all
+        // signal correctly, but a direct write from C++ or C# signals nothing, and a retained renderer bakes
+        // the material into a GPU record that is only rewritten when something reports a change.
+        uint32  CachedMaterialHash = 0;
+
         FUNCTION(Script)
         void SetMaterialAtSlot(CMaterialInterface* Material, uint32 Slot)
         {
@@ -87,6 +94,20 @@ namespace Lumina
             }
             InvalidateRenderResolve();
         }
+
+        /** Tells the renderer this component's render state changed and has to be re-read.
+         *
+         *  Call this after writing ANY render-facing property directly rather than through a setter --
+         *  ForcedLODIndex, CustomPrimitiveData, MaterialOverrides, bCastShadow, MaxDrawDistance. The
+         *  renderer keeps a RETAINED per-primitive GPU record and only rewrites it for primitives that
+         *  report a change, so a direct write with no mark is simply never picked up. It used to be free
+         *  because the old renderer re-read every component every frame; it is not any more.
+         *
+         *  Editor property edits route here through PostEditChange, so this is only needed from gameplay
+         *  code (C++ or C#).
+         */
+        FUNCTION(Script)
+        void MarkRenderStateDirty() { InvalidateRenderResolve(); }
 
         void InvalidateRenderResolve();
 

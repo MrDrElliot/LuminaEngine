@@ -1,12 +1,18 @@
 #include "Includes/SceneGlobals.slang"
+#include "Includes/MaterialTiles.slang"
 
-// Tile-quad vertex shader for the binned deferred material pass. Each instance is one screen tile; this
-// shader emits a 2-triangle quad covering the tile, but ONLY if this material's bit is set in the tile's
-// bitmask (otherwise it collapses to a degenerate off-screen triangle the rasterizer drops). Replaces the
-// single fullscreen triangle, so a material only rasterizes the tiles the classify pass found it in.
+// Tile-quad vertex shader for the binned deferred material pass. Each instance is one tile this material
+// actually covers, read straight out of the compacted list BuildMaterialTileList produced -- so there is no
+// self-culling and no degenerate output. The draw is indirect and its instance count IS the material's tile
+// count, so a material that covers 30 tiles launches 30 instances, not one per tile on screen.
 //
-// Pairs with the per-material DeferredMaterial pixel shader; the layout below MUST match FDeferredPassArgs
-// there and the C++ FDeferredPushConstants byte-for-byte (offsets 0-16 are the DBuffer overlay).
+// The quad is emitted at the material's encoded slot depth. Paired with a DEPTH_EQUAL test against the
+// MaterialDepth target, that is what rejects pixels owned by other materials -- in fixed-function hardware,
+// before any pixel shader launches, at coarse depth-block granularity. The pixel shader has no reject of
+// its own and never discards.
+//
+// The layout below MUST match FDeferredPassArgs in DeferredMaterial.slang and the C++
+// FDeferredPushConstants byte-for-byte (offsets 0-12 are the DBuffer overlay).
 
 struct FDeferredPassArgs
 {
@@ -14,30 +20,22 @@ struct FDeferredPassArgs
     uint  DBufferAIndex;    // 4
     uint  DBufferBIndex;    // 8
     uint  DBufferCIndex;    // 12
-    uint  MaterialIndex;    // 16  unused: superseded by SlotIndex as the per-pixel reject key
-    uint  DrawListCount;    // 20
-    uint  SlotIndex;        // 24  dense deferred-draw slot (bitmask bit + per-pixel reject key)
-    uint  TileCountX;       // 28
-    uint  TileSizePx;       // 32
-    uint  TileWordCount;    // 36
-    uint  ScreenW;          // 40
-    uint  ScreenH;          // 44
-    uint* TileBits;         // 48  per-tile slot bitmask
-    uint* MaterialId;       // 56  per-pixel owning slot (classify output)
+    uint  DrawListCount;    // 16
+    uint  SlotIndex;        // 20  dense deferred-draw slot; encodes this draw's depth
+    uint  TileCountX;       // 24
+    uint  TileSizePx;       // 28
+    uint  ScreenW;          // 32
+    uint  ScreenH;          // 36
+    uint* TileList;         // 40  compacted per-slot tile list (Slot * TotalTiles strided)
 };
 FDeferredPassArgs* Pass() { return GetPassArgs<FDeferredPassArgs>(); }
 
 [shader("vertex")]
-float4 VertexMain(uint VertexIndex : SV_VulkanVertexID, uint TileIndex : SV_VulkanInstanceID) : SV_Position
+float4 VertexMain(uint VertexIndex : SV_VulkanVertexID, uint ListIndex : SV_VulkanInstanceID) : SV_Position
 {
-    const uint Slot = Pass().SlotIndex;
-    const uint Word = Pass().TileBits[TileIndex * Pass().TileWordCount + (Slot >> 5u)];
-    if (((Word >> (Slot & 31u)) & 1u) == 0u)
-    {
-        // This material does not cover this tile: degenerate off-screen triangle (produces no pixels).
-        const float NaN = 0.0f / 0.0f;
-        return float4(NaN, NaN, NaN, 1.0);
-    }
+    // SV_VulkanInstanceID includes the draw's FirstInstance, which the args carry as Slot * TotalTiles, so
+    // this indexes the global list directly with no per-slot offset math here.
+    const uint TileIndex = Pass().TileList[ListIndex];
 
     const uint TileX = TileIndex % Pass().TileCountX;
     const uint TileY = TileIndex / Pass().TileCountX;
@@ -63,5 +61,9 @@ float4 VertexMain(uint VertexIndex : SV_VulkanVertexID, uint TileIndex : SV_Vulk
     float2 Ndc;
     Ndc.x = (Px / (float)Pass().ScreenW) * 2.0 - 1.0;
     Ndc.y = (Py / (float)Pass().ScreenH) * 2.0 - 1.0;
-    return float4(Ndc, 0.0, 1.0);
+
+    // w = 1 so the encoded depth survives the perspective divide unchanged and reaches the depth test as the
+    // exact value MaterialDepth stamped. Both sides call MaterialSlotToDepth on the same integer, so the
+    // DEPTH_EQUAL comparison is bit-exact rather than approximately equal.
+    return float4(Ndc, MaterialSlotToDepth(Pass().SlotIndex), 1.0);
 }

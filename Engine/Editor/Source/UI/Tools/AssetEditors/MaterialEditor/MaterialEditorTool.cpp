@@ -417,6 +417,7 @@ namespace Lumina
         {
             CodeEditorBoundNode = Node;
             CodeEditor.SetText(std::string_view(Node->Code.c_str(), Node->Code.size()));
+            LastCodeEditorUndoIndex = CodeEditor.GetUndoIndex();
         }
 
         // Signature reference: what the body can actually read and must assign.
@@ -462,17 +463,22 @@ namespace Lumina
         CodeEditor.Render("##CustomSlangCode", ImGui::GetContentRegionAvail(), false);
         ImGuiX::Font::PopFont();
 
-        // Write back only on a real edit; the graph's auto-compile picks it up on the next frame.
+        // Write back only on a real edit; the graph's auto-compile picks it up on the next frame. The
+        // undo cursor is just a cheap gate -- the text is compared before writing, because the cursor
+        // also moves on undo/redo (and back onto a value we already stored).
         if (CodeEditor.GetUndoIndex() != LastCodeEditorUndoIndex)
         {
             LastCodeEditorUndoIndex = CodeEditor.GetUndoIndex();
 
             const std::string Text = CodeEditor.GetText();
-            Node->Code.assign(Text.c_str(), Text.size());
-
-            if (CPackage* Package = Node->GetPackage())
+            if (Node->Code.size() != Text.size() || memcmp(Node->Code.data(), Text.data(), Text.size()) != 0)
             {
-                Package->MarkDirty();
+                Node->Code.assign(Text.c_str(), Text.size());
+
+                if (CPackage* Package = Node->GetPackage())
+                {
+                    Package->MarkDirty();
+                }
             }
         }
     }

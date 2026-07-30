@@ -87,6 +87,17 @@ void ComputeMain(
 
         const uint Slot = Pass().TerrainIndirect[0].FirstInstance + OldCount;
 
+        // Bounded even though it is currently safe by construction: the args are reseeded every frame with
+        // FirstInstance = 0 / InstanceCount = 0, and one append per (chunk, meshlet) pair cannot exceed
+        // MeshletCount, which is what sized VisibleMeshlets. That is three separate unwritten invariants
+        // holding up an unbounded atomic used directly as a write index -- the exact shape that took out the
+        // meshlet defer list. MeshletCount is already in the push block, so the guard is free.
+        // continue, not return: this is a grid-stride loop, so the thread still owns further meshlets.
+        if (Slot >= Pass().MeshletCount)
+        {
+            continue;
+        }
+
         FTerrainVisibleMeshlet Out;
         Out.ChunkIndex   = ChunkIndex;
         Out.MeshletIndex = MeshletIndex;

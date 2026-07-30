@@ -7,6 +7,7 @@
 #include "Core/Math/Color.h"
 #include "Core/Threading/Thread.h"
 #include "Platform/GenericPlatform.h"
+#include "Renderer/MeshData.h"
 #include "Renderer/RenderResource.h"
 #include "Renderer/ViewVolume.h"
 #include "Renderer/RHI.h"
@@ -64,6 +65,13 @@ namespace Lumina
     template<typename T>
     using TRenderVector = TFixedVector<T, 100>;
     
+    // Mirror of MESHLET_DRAW_INDEX_BITS in Common.slang. FMeshletDraw packs the meshlet-local index into
+    // this many bits and spends the rest on the frame tag, so no single surface LOD may hold more meshlets
+    // than the field can address -- past it the index wraps and silently resolves the wrong meshlet, which
+    // is the precise failure mode the tag exists to prevent.
+    constexpr uint32 MESHLET_DRAW_INDEX_BITS   = 20;
+    constexpr uint32 MAX_MESHLETS_PER_SURFACE_LOD = (1u << MESHLET_DRAW_INDEX_BITS);
+
     // Mutually-exclusive debug viz; values must match DEBUG_MODE_* in Common.slang.
     enum class ERenderSceneDebugFlags : uint8
     {
@@ -666,6 +674,26 @@ namespace Lumina
         FUIntVector4 GridSize;
     };
 
+    /**
+     * Per-surface LOD table, so LOD selection can run on the GPU instead of the CPU gather.
+     *
+     * Interned per distinct resolved surface: every instance of one rock shares a single entry, so the
+     * table is sized by the scene's distinct (mesh, material) surfaces rather than by instance count.
+     * Retained -- uploaded when a surface is bound, never per frame.
+     */
+    struct alignas(16) FSurfaceDescGPU
+    {
+        uint32  LODMeshletOffset[MAX_MESH_LODS];
+        uint32  LODMeshletCount[MAX_MESH_LODS];
+        // Squared, matching the CPU's SelectLODIndex: compares DistSq against Threshold^2 * RadiusSq,
+        // so neither side needs a square root.
+        float   LODScreenThresholdSq[MAX_MESH_LODS];
+        uint32  NumLODs;
+        uint32  _Pad;
+    };
+    static_assert(sizeof(FSurfaceDescGPU) == 80, "FSurfaceDescGPU layout must match shader");
+    VERIFY_SSBO_ALIGNMENT(FSurfaceDescGPU)
+
     // 144B per-instance descriptor. Empty ctor skips zero-init on resize() (parallel writer overwrites everything).
     struct alignas(16) FGPUInstance
     {
@@ -702,6 +730,24 @@ namespace Lumina
 
     static_assert(sizeof(FGPUInstance) == 144, "FGPUInstance layout must match shader");
     VERIFY_SSBO_ALIGNMENT(FGPUInstance)
+
+    /**
+     * The cull inputs an FGPUInstance has no room for, held in a parallel retained array.
+     *
+     * The scene keeps a RETAINED FGPUInstance array (one stable slot per primitive surface, written only
+     * when that primitive changes) alongside one of these. CullInstances.slang reads both, resolves the
+     * LOD, and appends a compacted copy into the per-frame instance buffer every downstream pass already
+     * consumes -- so the GPU takes over culling and LOD selection without any other shader changing.
+     */
+    struct alignas(16) FInstanceCullData
+    {
+        uint32  SurfaceDescIndex;
+        float   MaxDrawDistance;    // 0 = never distance-culled
+        int32   ForcedLODIndex;     // -1 = automatic (distance / radius)
+        uint32  bActive;            // 0 = free slot; the cull skips it without touching the instance
+    };
+    static_assert(sizeof(FInstanceCullData) == 16, "FInstanceCullData layout must match shader");
+    VERIFY_SSBO_ALIGNMENT(FInstanceCullData)
 
     // One per skinned vertex, produced by the skinning pass and read by every draw VS. Holds the COMPLETE
     // vertex so the VS never touches the source. Position full-precision; normal/tangent octahedral. 28 B.
@@ -803,10 +849,15 @@ namespace Lumina
         float  ShadowMaxDistance;
         uint32 bShadowOcclusionCull;
 
-        uint32 NumDraws;
+        // Tag the meshlet draw list is stamped with this frame; see FMeshletDraw in Common.slang.
+        // Never 0, so an unwritten (zeroed) entry can never be mistaken for a live one.
+        uint32 MeshletDrawTag;
         uint32 DebugMode;
-        // Total meshlets this frame; flat thread-per-meshlet dispatch reads this.
-        uint32 TotalMeshletBound;
+        // Entries in the shared meshlet draw list. This is the ALLOCATION's capacity, not the frame's
+        // actual meshlet total -- that total is produced by BuildDrawPrefix and never reaches the CPU.
+        // Consumers want it as a fault-safe upper bound on a draw-list index, which is exactly what a
+        // capacity is.
+        uint32 MeshletDrawListCapacity;
         // Bindless ResourceID of the depth pyramid; HZB tap goes through uBindlessTex2D.
         uint32 DepthPyramidIndex;
     };
@@ -842,8 +893,11 @@ namespace Lumina
     {
         FVector4   FrustumPlanes[6];           // 96 B
         FVector4   ViewOriginAndFlags;         // 16 B: xyz=origin, w=asfloat(flags)
-        uint32      DrawListOffset;             // Into uMeshletDrawList
-        uint32      DrawListCapacity;           // Max FMeshletDraw entries this view may emit
+        // Draw-list geometry used to live here as an equal per-view slice. It is now a packed
+        // per-(view, draw) region computed on the GPU, so these two are reserved padding. Kept rather than
+        // removed to preserve the 128-byte stride CullViews()[v] indexes with in both mirrors.
+        uint32      _ReservedA;
+        uint32      _ReservedB;
         uint32      IndirectArgsOffset;         // v * NumDraws
         uint32      NumDraws;                   // Number of indirect slots owned by this view
     };

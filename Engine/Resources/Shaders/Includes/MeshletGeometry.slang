@@ -39,9 +39,11 @@ FMeshletRef ResolveMeshlet(uint MeshletSlot, bool bShadow)
     Ref.Inst       = GetInstance(Draw.InstanceID);
     Ref.InstanceID = Draw.InstanceID;
 
-    // Same invariant as the cull: a null header means this instance has nothing to draw. Clamping to
-    // meshlet 0 of a null header would still fault, so callers get a zeroed meshlet instead.
-    if (Ref.Inst.MeshletHeader == nullptr)
+    // A slot this frame never wrote resolves to a plausible-looking instance from an earlier frame, so
+    // reject on the tag before anything reads the instance. Post-packed-regions the raster only draws
+    // slots the cull filled, so this should never fire -- it is here so that if that ever stops being
+    // true the result is missing geometry rather than the wrong geometry.
+    if (!Draw.IsFromFrame(Scene().CullData.MeshletDrawTag) || Ref.Inst.MeshletHeader == nullptr)
     {
         Ref.SkinnedVertexBase = kNoPreSkinBase;
         Ref.GlobalMeshletIdx  = 0u;

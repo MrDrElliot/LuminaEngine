@@ -170,6 +170,28 @@ namespace Lumina
         MB.MeshletBuffer       = CreateAndUpload(MData.Meshlets.data(), sizeof(FMeshlet) * MData.Meshlets.size());
         MB.MeshletBoundsBuffer = CreateAndUpload(MData.MeshletBounds.data(), sizeof(FMeshletBounds) * MData.MeshletBounds.size());
 
+        // Highest joint index the packed vertices actually reference. Checked at resolve against the
+        // skeleton's bone count -- the GPU bone fetch is unbounded, so a mesh that outruns its skeleton
+        // reads garbage matrices for its leaf bones.
+        if (bSkinned)
+        {
+            uint32 MaxJoint = 0;
+            for (const FMeshletSkinnedVertex& V : MData.MeshletSkinnedVertices)
+            {
+                const uint32 Packed = V.JointIndices;
+                for (uint32 b = 0; b < 4u; ++b)
+                {
+                    // Only influences with a non-zero weight can actually be fetched.
+                    const uint32 Weight = (V.JointWeights >> (b * 8u)) & 0xFFu;
+                    if (Weight != 0u)
+                    {
+                        MaxJoint = Math::Max(MaxJoint, ((Packed >> (b * 8u)) & 0xFFu) + 1u);
+                    }
+                }
+            }
+            Resource.RequiredBoneCount = MaxJoint;
+        }
+
         const void*  VertSrc    = bSkinned ? (const void*)MData.MeshletSkinnedVertices.data() : (const void*)MData.MeshletVertices.data();
         const uint64 VertStride = bSkinned ? sizeof(FMeshletSkinnedVertex) : sizeof(FMeshletVertex);
         const uint64 VertCount  = bSkinned ? MData.MeshletSkinnedVertices.size() : MData.MeshletVertices.size();

@@ -187,6 +187,16 @@ namespace Lumina
         FMeshBuffers                MeshBuffers;
         bool                        bSkinnedMesh = false;
 
+        // Highest joint index any skinned vertex references, +1 (0 when not skinned). Computed from the
+        // packed meshlet vertices at GPU-buffer creation, before the import scratch is dropped.
+        //
+        // Runtime-only and deliberately NOT serialized: it exists to be checked against the SKELETON'S bone
+        // count, which is a separate asset that can change independently of the mesh. Nothing bounds
+        // `Bones()[BoneOffset + JointIndices.x]` on the GPU, so a mesh whose baked indices outrun its
+        // skeleton reads past its bone slice into whatever follows -- and since a rig's highest indices are
+        // its leaf bones (fingers, toes), that surfaces as wildly displaced vertices exactly there.
+        uint32                      RequiredBoneCount = 0;
+
         // Source scene-graph world transform; baked into vertices at merge time.
         FMatrix4                   ImportTransform = FMatrix4(1.0f);
 

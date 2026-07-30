@@ -220,6 +220,53 @@ struct FCustomPrimitiveData
 #define MESHLET_MAX_TRIANGLES 124
 #define MESHLET_VERTICES_PER_DRAW (MESHLET_MAX_TRIANGLES * 3)  // 372
 #define MESHLET_MAX_LODS      6
+// Matches Lumina::MAX_SHADOW_LOD: shadow views never take a LOD past this, however far the bias pushes.
+#define MESHLET_MAX_SHADOW_LOD 3
+
+// Mirror of Lumina::FSurfaceDescGPU (80 B). Per-surface LOD table, interned per distinct resolved
+// surface, so CullInstances can pick the LOD the CPU gather used to pick.
+struct FSurfaceDesc
+{
+    uint  LODMeshletOffset[MESHLET_MAX_LODS];
+    uint  LODMeshletCount[MESHLET_MAX_LODS];
+    float LODScreenThresholdSq[MESHLET_MAX_LODS];
+    uint  NumLODs;
+    uint  _Pad;
+
+    // Squared form of the CPU's (distance / radius >= threshold) test. Monotonic in LOD, so the first
+    // threshold that fails ends the walk.
+    uint SelectLOD(float DistSq, float RadiusSq)
+    {
+        if (RadiusSq <= 0.0 || NumLODs <= 1u)
+        {
+            return 0u;
+        }
+        uint Picked  = 0u;
+        uint LastLOD = NumLODs - 1u;
+        for (uint i = 1u; i <= LastLOD; ++i)
+        {
+            if (DistSq >= LODScreenThresholdSq[i] * RadiusSq)
+            {
+                Picked = i;
+            }
+            else
+            {
+                break;
+            }
+        }
+        return Picked;
+    }
+}
+
+// Mirror of Lumina::FInstanceCullData (16 B). Parallel to the RETAINED instance array; holds what the
+// cull needs and FGPUInstance has no room for.
+struct FInstanceCullData
+{
+    uint  SurfaceDescIndex;
+    float MaxDrawDistance;   // 0 = never distance-culled
+    int   ForcedLODIndex;    // -1 = automatic
+    uint  bActive;           // 0 = free slot
+}
 
 // Mirror of Lumina::FMeshlet. Positions are full float3 in the vertex buffer (no quantization). LODIndex
 // kept for LOD selection.
@@ -277,10 +324,35 @@ struct FBoneTransform
 };
 
 // One entry per surviving meshlet emitted by MeshletCull.slang.
+// Draw-list entry, stamped with the frame that wrote it.
+//
+// The bounds every consumer used to check were allocation CAPACITIES, which makes them fault-safe but not
+// correctness-safe: a slot inside the allocation that this frame never wrote reads as a perfectly plausible
+// instance from an earlier frame, and the resolve happily rasterizes it. That is exactly how a draw-count
+// bug surfaced as wrong geometry rather than as nothing. The tag makes "not written this frame" detectable,
+// so a stale entry is a clean reject instead of silent garbage.
+//
+// 20 bits of local index (a surface LOD never has a million meshlets) leaves 12 for the tag. The CPU never
+// issues tag 0, and a freshly allocated draw list is zeroed, so untouched memory always fails the check.
+#define MESHLET_DRAW_INDEX_BITS  20u
+#define MESHLET_DRAW_INDEX_MASK  ((1u << MESHLET_DRAW_INDEX_BITS) - 1u)
+#define MESHLET_DRAW_TAG_INVALID 0u
+
 struct FMeshletDraw
 {
-    uint InstanceID;         // Into Instances()
-    uint MeshletLocalIndex;  // Local offset inside instance's surface range
+    uint InstanceID;          // Into Instances()
+    uint PackedIndexAndTag;   // [19:0] local offset inside the instance's surface range, [31:20] frame tag
+
+    property uint MeshletLocalIndex { get { return PackedIndexAndTag & MESHLET_DRAW_INDEX_MASK; } }
+    property uint Tag               { get { return PackedIndexAndTag >> MESHLET_DRAW_INDEX_BITS; } }
+
+    // Written this frame? Compare against Scene().CullData.MeshletDrawTag.
+    bool IsFromFrame(uint ExpectedTag) { return Tag == ExpectedTag && ExpectedTag != MESHLET_DRAW_TAG_INVALID; }
+
+    static uint Pack(uint LocalIndex, uint FrameTag)
+    {
+        return (FrameTag << MESHLET_DRAW_INDEX_BITS) | (LocalIndex & MESHLET_DRAW_INDEX_MASK);
+    }
 };
 
 // Camera meshlets the early pass deferred via Hi-Z; the late pass re-tests
@@ -456,13 +528,15 @@ struct FFrustum
 
 // Per-view cull descriptor. One per render view (main camera, each cascade,
 // each point face, each spot). Each view owns a slice of MeshletDrawList /
-// IndirectArgs via DrawListOffset / IndirectArgsOffset.
+// IndirectArgs via IndirectArgsOffset; draw-list regions are packed per (view, draw) on the GPU.
 struct FCullView
 {
     float4 FrustumPlanes[6];   // 96B
     float4 ViewOriginAndFlags; // 16B: xyz=origin (camera / light pos), w=asuint(flags)
-    uint   DrawListOffset;     // Into MeshletDrawList()
-    uint   DrawListCapacity;   // Max FMeshletDraw entries this view may emit
+    // Reserved padding: the draw list is no longer sliced per view, so nothing reads these. Kept to
+    // preserve the struct stride shared with FCullView in SceneRenderTypes.h.
+    uint   _ReservedA;
+    uint   _ReservedB;
     uint   IndirectArgsOffset; // Into uIndirectArgs (v * NumDraws)
     uint   NumDraws;           // Number of indirect slots owned by this view
 
@@ -485,9 +559,10 @@ struct FCullData
     float    PyramidHeight;
     float    ShadowMaxDistance;
     uint     bShadowOcclusionCull;
-    uint     NumDraws;
+    // Tag the meshlet draw list is stamped with this frame; see FMeshletDraw. Never 0.
+    uint     MeshletDrawTag;
     uint     DebugMode;
-    uint     TotalMeshletBound;
+    uint     MeshletDrawListCapacity;   // entries in MeshletDrawList(); an index bound, not a frame total
     uint     DepthPyramidIndex;
 };
 

@@ -16,6 +16,19 @@ namespace Lumina
 {
     namespace
     {
+        // Grows the backing FString as the user types, so a multiline field isn't capped by a fixed
+        // buffer (a shader body outgrows any reasonable one, and the overflow would be dropped).
+        int StringResizeCallback(ImGuiInputTextCallbackData* Data)
+        {
+            if (Data->EventFlag == ImGuiInputTextFlags_CallbackResize)
+            {
+                FString* Str = static_cast<FString*>(Data->UserData);
+                Str->resize(Data->BufTextLen);
+                Data->Buf = Str->data();
+            }
+            return 0;
+        }
+
         // Rebuilds the picker tree from a skeleton. While the filter is active, matches are added
         // as a flat list (a deep hierarchy under a filter is all indentation and no information);
         // otherwise the full hierarchy is built expanded, with the current value's row selected.
@@ -365,10 +378,10 @@ namespace Lumina
         if (bMultiline)
         {
             const ImVec2 Size(ImGui::GetContentRegionAvail().x, ImGui::GetTextLineHeight() * 4.0f + ImGui::GetStyle().FramePadding.y * 2.0f);
-            if (ImGui::InputTextMultiline("##ParamName", Buffer, sizeof(Buffer), Size))
-            {
-                DisplayValue = Buffer;
-            }
+            // Edited in place through the resize callback rather than a stack buffer -- the text can be
+            // arbitrarily long, and the callback keeps the string sized to it.
+            ImGui::InputTextMultiline("##ParamName", DisplayValue.data(), DisplayValue.capacity() + 1, Size,
+                                      ImGuiInputTextFlags_CallbackResize, StringResizeCallback, &DisplayValue);
         }
         else
         {
@@ -429,6 +442,7 @@ namespace Lumina
     
     void FStringPropertyCustomization::UpdatePropertyValue(const TSharedPtr<FPropertyHandle>& Property)
     {
+        CachedValue = DisplayValue;
         Property->SetValue(DisplayValue);
     }
 
@@ -436,7 +450,13 @@ namespace Lumina
     {
         FString ActualValue;
         Property->GetValue(&ActualValue);
-        
-        DisplayValue = ActualValue;
+
+        // Only adopt the property's value when it changed behind our back. This runs every frame, and an
+        // unconditional copy would throw away the in-progress edit -- the commit only happens when the
+        // field is deactivated, several frames after the last keystroke wrote DisplayValue.
+        if (CachedValue != ActualValue)
+        {
+            CachedValue = DisplayValue = ActualValue;
+        }
     }
 }

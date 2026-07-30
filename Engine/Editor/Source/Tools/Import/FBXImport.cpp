@@ -811,6 +811,14 @@ namespace Lumina::Import::Mesh::FBX
                         }
                         else
                         {
+                            // Keep the four strongest influences: find the weakest slot FIRST, then replace
+                            // it at most once. The replacement used to sit inside this search loop, which
+                            // both mutated the array mid-scan and let a single incoming influence overwrite
+                            // two or three slots with itself -- so a >4-influence vertex ended up with the
+                            // same bone duplicated across its slots and its real influences discarded. After
+                            // the normalize below the weights still summed to 1, so it did not blow up; it
+                            // just bound the vertex to the wrong bone and dragged it along, which is what
+                            // stretched geometry out of dense-influence regions (fingers, crotch, toes).
                             int Min = 0;
                             for (int M = 1; M < 4; ++M)
                             {
@@ -818,12 +826,12 @@ namespace Lumina::Import::Mesh::FBX
                                 {
                                     Min = M;
                                 }
+                            }
 
-                                if (Skin.Weights[Min] < Weight)
-                                {
-                                    Skin.Weights[Min] = Weight;
-                                    Skin.Joints[Min]  = BoneIndex;
-                                }
+                            if (Skin.Weights[Min] < Weight)
+                            {
+                                Skin.Weights[Min] = Weight;
+                                Skin.Joints[Min]  = BoneIndex;
                             }
                         }
                     }
@@ -839,9 +847,20 @@ namespace Lumina::Import::Mesh::FBX
 
                     if (Sum == 0.0f)
                     {
+                        // No cluster ever referenced this control point. Bind it rigidly to joint 0 so it at
+                        // least follows the root instead of having no transform at all.
                         Skin.Weights[0] = 1.0f;
                         Skin.Weights[1] = Skin.Weights[2] = Skin.Weights[3] = 0.0f;
                         Skin.Joints[0] = Skin.Joints[1] = Skin.Joints[2] = Skin.Joints[3] = 0;
+
+                        // Count MUST be updated with the weights. The per-vertex copy below is bounded by
+                        // Count, so leaving it at 0 meant this fallback was written here and then never
+                        // copied to the vertex -- unweighted control points shipped with all-zero weights.
+                        // On the GPU that blends an ALL-ZERO matrix: the vertex lands on the model origin and
+                        // its normal is normalize(0,0,0) = NaN, which rasterizes as a black sliver from the
+                        // mesh down to the root. Auto-rigged extremities (fingertips, toes) are where
+                        // unreferenced control points show up, which is exactly where the slivers came from.
+                        Skin.Count = 1;
                     }
                     else
                     {
@@ -935,18 +954,23 @@ namespace Lumina::Import::Mesh::FBX
                                 if (Positions.indices)
                                 {
                                     const FSkin& Skin = Skins[Positions.indices[Index]];
-                                    for (int j = 0; j < Skin.Count; ++j)
-                                    {
-                                        uint8 BoneIndex = (uint8)Skin.Joints[j];
-                                        float Weight    = Skin.Weights[j];
 
-                                        JointIndices[j] = BoneIndex;
-                                        JointWeights[j] = Weight;
+                                    // All four slots, not Skin.Count of them. The arrays are fixed 4-wide and
+                                    // zero-initialized, and the pass above normalized every slot, so copying
+                                    // the full width is always correct -- and it removes the whole class of
+                                    // bug where Count disagrees with the slots it is supposed to describe.
+                                    for (int j = 0; j < 4; ++j)
+                                    {
+                                        JointIndices[j] = (uint8)Skin.Joints[j];
+                                        JointWeights[j] = Skin.Weights[j];
                                     }
                                 }
 
                                 Vertex.JointIndices = JointIndices;
-                                Vertex.JointWeights = FU8Vector4(JointWeights * 255.0f);
+                                // Weights are already normalized per control point above; this re-normalizes
+                                // (harmless) and, crucially, quantizes to a quartet summing to exactly 255
+                                // instead of truncating each component down to a 252-255 sum.
+                                Vertex.JointWeights = PackSkinWeights(JointWeights);
 
                                 VertexIdx = (uint32)Result.SkinnedVerts.size();
                                 Result.SkinnedVerts.push_back(Vertex);

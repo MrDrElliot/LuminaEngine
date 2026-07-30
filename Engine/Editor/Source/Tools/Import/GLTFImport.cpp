@@ -705,9 +705,15 @@ namespace Lumina::Import::Mesh::GLTF
                     {
                         NewResource->JointIndices[InitialVert + Index] = Value;
                     });
+                    // Normalize + exact-sum quantize. Unlike the FBX path there was no normalization step
+                    // here at all: glTF only guarantees WEIGHTS_0 is normalized ACROSS ALL weight sets, so a
+                    // mesh using WEIGHTS_1 for influences 5-8 (which this importer does not read) leaves the
+                    // four retained weights summing to well under 1 -- and the old truncating
+                    // `FU8Vector4(Value * 255.0f)` never corrected it. An unnormalized set scales the blended
+                    // affine matrix, so those vertices were pulled toward the model origin.
                     fastgltf::iterateAccessorWithIndex<FVector4>(Asset, Asset.accessors[Weights->second], [&](FVector4 Value, size_t Index)
                     {
-                        NewResource->JointWeights[InitialVert + Index] = FU8Vector4(Value * 255.0f);
+                        NewResource->JointWeights[InitialVert + Index] = PackSkinWeights(Value);
                     });
                 }
 

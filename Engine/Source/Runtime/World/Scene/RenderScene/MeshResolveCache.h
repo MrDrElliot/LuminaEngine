@@ -29,7 +29,6 @@ namespace Lumina
         const FShaderEntry* DeferredShader                 = nullptr;
 
         FDrawBatchKey   BatchKey    = {};
-        FDrawKey        DrawKey     = {};
 
         EInstanceFlags  MaterialFlags = EInstanceFlags::None;
         uint64          MaterialID    = 0;
@@ -60,6 +59,11 @@ namespace Lumina
         const void*                 MeshKey = nullptr;
         FGuid                       MeshGuid;
         TVector<const void*>        OverrideKey;
+
+        // Bumped every time Surfaces is rebuilt. Consumers that cache anything derived from a surface
+        // (the render scene's batch/draw bindings) compare this instead of the surface addresses, which
+        // move when the vector reallocates.
+        uint32                      Generation = 0;
 
         // False while a slot's material is still compiling.
         bool                        bAllMaterialsReady = false;

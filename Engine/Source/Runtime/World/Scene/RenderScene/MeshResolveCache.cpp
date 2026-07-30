@@ -179,6 +179,8 @@ namespace Lumina
         // IsValid covers lifetime only, so an asset still in its load phase reaches here. Its properties
         // are all at defaults, so resolving now would cache an empty entry; leave it unresolved and the
         // caller re-arms until the data phase lands.
+        ++Out.Generation;
+
         if (Mesh->HasAnyFlag(OF_NeedsLoad))
         {
             Out.Surfaces.clear();
@@ -207,7 +209,6 @@ namespace Lumina
         {
             FResolvedSurface& R = Out.Surfaces.emplace_back();
 
-            R.DrawKey = FDrawKey{ Surface.StartIndex, Surface.IndexCount };
             R.NumLODs = Surface.NumLODs;
 
             for (uint32 LOD = 0; LOD < MAX_MESH_LODS; ++LOD)
