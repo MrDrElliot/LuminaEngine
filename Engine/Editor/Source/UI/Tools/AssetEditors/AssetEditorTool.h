@@ -52,6 +52,7 @@ namespace Lumina
         void OnSave() override;
 
         bool IsAssetEditorTool() const override;
+        FFixedString GetAssetVirtualPath() const override;
         FPropertyTable* GetPropertyTable() { return &PropertyTable; }
 
         bool HasAsset() const { return Asset.IsValid(); }

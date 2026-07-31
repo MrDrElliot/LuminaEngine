@@ -10531,7 +10531,7 @@ namespace Lumina
         View.Images.fill(FSceneImage{});
     }
 
-    void FForwardRenderScene::InitViewImages(FSceneView& View)
+    void FForwardRenderScene::InitViewImages(FSceneView& View, uint32 ReuseOutputSlot)
     {
         const FUIntVector2 Extent = View.Size;
 
@@ -10556,7 +10556,7 @@ namespace Lumina
         Desc.Format = EFormat::RGBA8_UNORM;
         Desc.Usage  = RHI::EImageUsageFlags::ColorAttachment | RHI::EImageUsageFlags::Sampled |
                       RHI::EImageUsageFlags::TransferDst | RHI::EImageUsageFlags::TransferSrc;
-        View.Output = CreateSceneImage(Desc);
+        View.Output = CreateSceneImage(Desc, /*bSampled*/ true, /*bMipUAVs*/ false, ReuseOutputSlot);
 
         // HDR scene color; copy source for the water/underwater refraction snapshot.
         Desc.Format = EFormat::RGBA16_FLOAT;
@@ -10826,13 +10826,13 @@ namespace Lumina
         // Resize: rebuild the primary view's image chain at the new size. The per-view
         // cluster buffer is size-independent and persists across resize.
         FSceneView& Primary = SceneViews[0];
-        // DEFERRED, not immediate. SwapchainResized drains the GPU first, which is enough for in-flight
-        // GPU work but not for ImGui: the editor hands the viewport image to ImGui as a BINDLESS SLOT
-        // INDEX, and that snapshot is submitted after this release runs. Freeing the slot here left the
-        // descriptor pointing at a destroyed texture, and the ImGui pixel shader faulted on it -- which is
-        // why the repro was resizing the viewport, and why draining the device never prevented it.
+
+        // Output's heap slot survives the resize; only the texture behind it is replaced.
+        const uint32 OutputSlot = DetachSampledSlot(Primary.Output);
+
+        // Still DEFERRED: the textures themselves can be named by GPU work already submitted.
         ReleaseViewImages(Primary, /*bDeferRelease*/ true);
-        InitViewImages(Primary);
+        InitViewImages(Primary, OutputSlot);
     }
 
     uint64 FForwardRenderScene::BuildViewSceneRoot(FSceneView& View, uint64 SceneDataAddr)

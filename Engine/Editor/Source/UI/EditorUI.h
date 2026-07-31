@@ -56,6 +56,7 @@ namespace Lumina
 
         void OpenAssetEditor(const FGuid& AssetGUID) override;
         void OpenFileEditor(FStringView VirtualPath) override;
+        void BrowseToAsset(FStringView VirtualPath) override;
         void OnDestroyAsset(CObject* InAsset) override;
 
 
@@ -138,6 +139,9 @@ namespace Lumina
 
         // Footer-button / shortcut action: focus when docked, else toggle the drawer.
         void ActivateDrawer(FFooterDrawer& Drawer);
+
+        // Makes a drawer visible without ever closing it: focus when docked, else open.
+        void ShowDrawer(FFooterDrawer& Drawer);
 
         FFooterDrawer* FindDrawerForTool(const FEditorTool* Tool);
         void DrawFileMenu();

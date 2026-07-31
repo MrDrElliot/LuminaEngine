@@ -523,8 +523,14 @@ namespace Lumina::RHI
     RUNTIME_API FTextureDesc    GetTextureDesc(FTextureH Texture);
 
     RUNTIME_API uint32      HeapWriteTexture(FTextureHeapH Heap, FTextureH Texture);
+    // Point an already-allocated sampled slot at a different texture. This is what makes a slot a
+    // stable published identity: anything holding the index (ImGui carries bindless indices in draw
+    // data built a frame or more before it is submitted) keeps resolving to a live texture across a
+    // resize, instead of naming a slot that was freed out from under it.
+    RUNTIME_API void        HeapRepointTexture(FTextureHeapH Heap, uint32 Slot, FTextureH Texture);
     RUNTIME_API uint32      HeapWriteRWTexture(FTextureHeapH Heap, FTextureH Texture, uint32 Mip = 0);
     RUNTIME_API uint32      HeapWriteSampler(FTextureHeapH Heap, const FSamplerDesc& Desc);
+    RUNTIME_API void        HeapSetFallbackTexture(FTextureHeapH Heap, FTextureH Texture);
     RUNTIME_API void        HeapFreeTexture(FTextureHeapH Heap, uint32 Slot);
     RUNTIME_API void        HeapFreeRWTexture(FTextureHeapH Heap, uint32 Slot);
     RUNTIME_API void        HeapFreeSampler(FTextureHeapH Heap, uint32 Slot);
@@ -541,11 +547,7 @@ namespace Lumina::RHI
     RUNTIME_API void        ResetCommandList(FCmdListH CommandList);
     RUNTIME_API void        Submit(EQueueType Queue, TSpan<const FCmdListH> CommandLists, TSpan<const FSemaphoreInfo> Waits = {}, TSpan<const FSemaphoreInfo> Signals = {});
     RUNTIME_API void        Submit(FCmdListH CommandList, EQueueType Type = EQueueType::Default);
-
-    // Submit CommandList on the graphics queue and block until ONLY this submission has completed (waits on
-    // its own frame-timeline value), NOT the whole device. Use this for one-off captures instead of
-    // Submit()+WaitDeviceIdle(): a WaitDeviceIdle issued from inside a render-thread command blocks on
-    // unrelated in-flight frame work while holding the cooperative drain, which hangs the next FlushRenderingCommands.
+    
     RUNTIME_API void        SubmitAndWait(FCmdListH CommandList);
 
 
@@ -596,9 +598,7 @@ namespace Lumina::RHI
         {
             CmdBarrier(CL, EStageFlags::Transfer, EStageFlags::AllCommands);
         }
-
-        // Orders prior transfer writes before subsequent transfer writes (e.g. two copies/clears to
-        // the same image in one batch -> resolves SYNC-HAZARD-WRITE-AFTER-WRITE).
+        
         inline void TransferToTransfer(FCmdListH CL)
         {
             CmdBarrier(CL, EStageFlags::Transfer, EStageFlags::Transfer);

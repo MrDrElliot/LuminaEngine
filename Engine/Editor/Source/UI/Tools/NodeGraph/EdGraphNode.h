@@ -129,6 +129,11 @@ namespace Lumina
 
 
         FString                             FullName;
+
+        // Raw "DisplayName_NodeID". Pin IDs hash this rather than FullName, so sanitizing the emitted
+        // identifier never shifts pin IDs and drops the serialized links of existing graphs.
+        FString                             PinHashName;
+
         TOptional<EdNodeGraph::FError>      Error;
         bool                                bWasBuild = false;
 

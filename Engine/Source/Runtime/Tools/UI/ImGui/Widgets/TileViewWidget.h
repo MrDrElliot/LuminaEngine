@@ -97,6 +97,9 @@ namespace Lumina
         /** Called when a key is pressed while hovering the tile item, return true to absorb. */
         TFunction<bool(FTileViewItem&, ImGuiKey)>               KeyPressedFunction;
 
+        /** Called when an inline rename is committed with the new name. */
+        TFunction<void(FTileViewItem*, const char*)>            ItemRenamedFunction;
+
     };
 
     class RUNTIME_API FTileViewWidget
@@ -115,16 +118,32 @@ namespace Lumina
         
         template<typename T, typename... Args>
         requires (eastl::is_base_of_v<FTileViewItem, T> && eastl::is_constructible_v<T, Args...>)
-        void AddItemToTree(Args&&... args);
+        T* AddItemToTree(Args&&... args);
 
         void ClearSelections();
+
+        // Makes Item the sole selection and scrolls it into view on the next Draw. Safe to call from
+        // inside a rebuild: the target is stored as an index, so ClearTree cannot leave it dangling.
+        void SelectAndScrollTo(FTileViewItem* Item);
         
         const TVector<FTileViewItem*>& GetSelections() const { return Selections; }
 
 		float GetTileSize() const { return TileSize; }
 		void SetTileSize(float Size) { TileSize = Size; }
 
+        /** Turns the item's label into an in-place text field, focused with the text selected. */
+        void BeginInlineRename(FTileViewItem* Item);
+        void CancelInlineRename();
+
+        FORCEINLINE bool IsRenaming() const { return RenamingItem != nullptr; }
+
     private:
+
+        void CommitInlineRename(const FTileViewContext& Context);
+
+        // Draws the label band as an in-place text field. Returns the same height a normal label
+        // band occupies so the clipper's row height never changes mid-edit.
+        void DrawInlineRename(const FTileViewContext& Context);
 
         bool HandleKeyPressed(const FTileViewContext& Context, FTileViewItem& Item, ImGuiKey Key);
         
@@ -146,20 +165,31 @@ namespace Lumina
 
         /** Root nodes */
         TVector<FTileViewItem*>                 ListItems;
-        
+
+        /** Item currently being renamed in place. Owned by Allocator, so ClearTree must null it. */
+        FTileViewItem*                          RenamingItem = nullptr;
+
+        /** Index into ListItems to select and scroll to on the next Draw (-1 = none). */
+        int32                                   PendingRevealIndex = -1;
+
+        char                                    RenameBuffer[128] = {};
+
 		float                                   TileSize = 84.0f;
 
         uint8                                   bDirty:1 = false;
+        uint8                                   bRenameFocusPending:1 = false;
+        uint8                                   bRenameWasActive:1 = false;
     };
 
     
     
     
-    template <typename T, typename ... Args> 
+    template <typename T, typename ... Args>
     requires (eastl::is_base_of_v<FTileViewItem, T> && eastl::is_constructible_v<T, Args...>)
-    void FTileViewWidget::AddItemToTree(Args&&... args)
+    T* FTileViewWidget::AddItemToTree(Args&&... args)
     {
         T* New = Allocator.TAlloc<T>(eastl::forward<Args>(args)...);
         ListItems.push_back(New);
+        return New;
     }
 }

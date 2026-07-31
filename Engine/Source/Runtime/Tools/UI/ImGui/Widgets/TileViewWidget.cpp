@@ -21,6 +21,20 @@ namespace Lumina
             RebuildTree(Context);
         }
 
+        // Apply a pending reveal now the tree is final. Consumed either way, so a target that no
+        // longer exists (the folder changed under us) simply lapses.
+        int32 RevealIndex = PendingRevealIndex;
+        PendingRevealIndex = -1;
+        if (RevealIndex >= 0 && RevealIndex < (int32)ListItems.size())
+        {
+            ClearSelections();
+            ToggleSelection(ListItems[RevealIndex], Context);
+        }
+        else
+        {
+            RevealIndex = -1;
+        }
+
         const int ItemCount = (int)ListItems.size();
         if (ItemCount == 0)
         {
@@ -34,10 +48,20 @@ namespace Lumina
 
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(GTileSpacing, GTileSpacing));
 
+        const int ScrollToRow = (RevealIndex >= 0) ? (RevealIndex / ItemsPerRow) : -1;
+
         // Virtualize by row: the clipper measures one row's height and only submits visible rows,
         // so a folder with thousands of files costs the same as one screenful.
         ImGuiListClipper Clipper;
         Clipper.Begin(RowCount);
+
+        // The revealed row is almost always off-screen (that's the point), so force the clipper to
+        // submit it -- SetScrollHereY needs the row's real item rect.
+        if (ScrollToRow != -1)
+        {
+            Clipper.IncludeItemByIndex(ScrollToRow);
+        }
+
         while (Clipper.Step())
         {
             for (int Row = Clipper.DisplayStart; Row < Clipper.DisplayEnd; ++Row)
@@ -53,6 +77,11 @@ namespace Lumina
                     }
                     DrawTile(ListItems[Index], Context);
                 }
+
+                if (Row == ScrollToRow)
+                {
+                    ImGui::SetScrollHereY(0.5f);
+                }
             }
         }
         Clipper.End();
@@ -66,6 +95,16 @@ namespace Lumina
         ImGui::BeginGroup();
 
         DrawItem(Item, Context, ImVec2(TileSize, TileSize));
+
+        if (Item == RenamingItem)
+        {
+            ImGui::Dummy(ImVec2(0.0f, GLabelGap));
+            DrawInlineRename(Context);
+
+            ImGui::EndGroup();
+            ImGui::PopID();
+            return;
+        }
 
         // Draw the label as a raw draw-list primitive (not an ImGui item) so the cell's logical
         // height stays fixed regardless of name length, keeping the row clipper aligned.
@@ -95,8 +134,128 @@ namespace Lumina
         ImGui::PopID();
     }
     
+    void FTileViewWidget::DrawInlineRename(const FTileViewContext& Context)
+    {
+        if (bRenameFocusPending)
+        {
+            ImGui::SetKeyboardFocusHere();
+            bRenameFocusPending = false;
+        }
+
+        ImGui::SetNextItemWidth(TileSize);
+
+        constexpr ImGuiInputTextFlags Flags = ImGuiInputTextFlags_EnterReturnsTrue
+            | ImGuiInputTextFlags_AutoSelectAll
+            | ImGuiInputTextFlags_CharsNoBlank;
+
+        const bool bSubmitted = ImGui::InputText("##InlineRename", RenameBuffer, sizeof(RenameBuffer), Flags);
+
+        const bool bActive        = ImGui::IsItemActive();
+        const bool bDeactivated   = ImGui::IsItemDeactivated();
+        const bool bEscapePressed = ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+        const float FrameHeight   = ImGui::GetItemRectSize().y;
+
+        // Match the fixed label band exactly: the field, one item spacing, then filler.
+        const float Spacing = ImGui::GetStyle().ItemSpacing.y;
+        const float Filler  = std::max(1.0f, GLabelHeight - Spacing - FrameHeight);
+        ImGui::Dummy(ImVec2(TileSize, Filler));
+
+        if (bActive)
+        {
+            bRenameWasActive = true;
+        }
+
+        if (bSubmitted)
+        {
+            CommitInlineRename(Context);
+        }
+        else if (bDeactivated)
+        {
+            // Escape reverts and deactivates; anything else (click away) commits.
+            if (bEscapePressed)
+            {
+                CancelInlineRename();
+            }
+            else
+            {
+                CommitInlineRename(Context);
+            }
+        }
+        else if (bRenameWasActive && !bActive)
+        {
+            // Focus was lost without a deactivation event (the tile was clipped out mid-edit).
+            CancelInlineRename();
+        }
+    }
+
+    void FTileViewWidget::BeginInlineRename(FTileViewItem* Item)
+    {
+        RenamingItem = Item;
+        bRenameFocusPending = true;
+        bRenameWasActive = false;
+        RenameBuffer[0] = 0;
+
+        if (Item != nullptr)
+        {
+            const FStringView Name = Item->GetCachedDisplayName();
+            const size_t Length = std::min(Name.size(), sizeof(RenameBuffer) - 1);
+            memcpy(RenameBuffer, Name.data(), Length);
+            RenameBuffer[Length] = 0;
+        }
+    }
+
+    void FTileViewWidget::CancelInlineRename()
+    {
+        RenamingItem = nullptr;
+        bRenameFocusPending = false;
+        bRenameWasActive = false;
+        RenameBuffer[0] = 0;
+    }
+
+    void FTileViewWidget::CommitInlineRename(const FTileViewContext& Context)
+    {
+        FTileViewItem* Item = RenamingItem;
+
+        // Clear first: the callback usually dirties the tree, which frees every item.
+        RenamingItem = nullptr;
+        bRenameFocusPending = false;
+        bRenameWasActive = false;
+
+        if (Item != nullptr && Context.ItemRenamedFunction)
+        {
+            Context.ItemRenamedFunction(Item, RenameBuffer);
+        }
+
+        RenameBuffer[0] = 0;
+    }
+
+    void FTileViewWidget::SelectAndScrollTo(FTileViewItem* Item)
+    {
+        PendingRevealIndex = -1;
+
+        if (Item == nullptr)
+        {
+            return;
+        }
+
+        for (int32 Index = 0; Index < (int32)ListItems.size(); ++Index)
+        {
+            if (ListItems[Index] == Item)
+            {
+                PendingRevealIndex = Index;
+                return;
+            }
+        }
+    }
+
     void FTileViewWidget::ClearTree()
     {
+        // Items live in Allocator, so any in-flight rename target dies here.
+        CancelInlineRename();
+
+        // Indices refer to the list being thrown away.
+        PendingRevealIndex = -1;
+
         Allocator.Reset();
         ListItems.clear();
     }
@@ -181,7 +340,8 @@ namespace Lumina
             ImGui::OpenPopup("ItemContextMenu");
         }
 
-        if (ImGui::IsItemHovered())
+        // Never scan keys for the tile being renamed, or typing would fire item actions.
+        if (ImGui::IsItemHovered() && ItemToDraw != RenamingItem)
         {
             for (int Key = ImGuiKey_NamedKey_BEGIN; Key < ImGuiKey_NamedKey_END; Key++)
             {

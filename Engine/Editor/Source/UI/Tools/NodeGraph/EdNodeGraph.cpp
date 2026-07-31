@@ -15,6 +15,27 @@
 
 namespace Lumina
 {
+    // Display names may carry spaces or punctuation ("Curve Sample", "Two-Bone IK"), but FullName becomes
+    // the emitted shader variable, so anything outside [A-Za-z0-9_] has to collapse to an underscore.
+    static FString SanitizeNodeIdentifier(const FString& In)
+    {
+        FString Out = In;
+        for (char& Char : Out)
+        {
+            const bool bLegal = (Char >= 'A' && Char <= 'Z')
+                             || (Char >= 'a' && Char <= 'z')
+                             || (Char >= '0' && Char <= '9')
+                             || Char == '_';
+
+            if (!bLegal)
+            {
+                Char = '_';
+            }
+        }
+
+        return Out;
+    }
+
     static void DrawPinIcon(bool bConnected, int Alpha, ImVec4 Color)
     {
         EIconType iconType = EIconType::Circle;
@@ -1108,7 +1129,8 @@ namespace Lumina
             NodeID = Math::RandRange(0u, UINT32_MAX);
         }
         
-        InNode->FullName = FString(InNode->GetNodeDisplayName()) + "_" + eastl::to_string(NodeID);
+        InNode->PinHashName = FString(InNode->GetNodeDisplayName()) + "_" + eastl::to_string(NodeID);
+        InNode->FullName = SanitizeNodeIdentifier(InNode->PinHashName);
         InNode->NodeID = NodeID;
         InNode->OwningGraph = this;
 

@@ -440,6 +440,8 @@ namespace Lumina::RHI
         TVector<VkImageView> RWImageViews;
         // Which texture occupies each sampled slot; debug introspection only.
         TVector<FTextureH>   SampledOwners;
+        // Written into every freed sampled slot so the descriptor never names a destroyed view.
+        VkImageView          FallbackView = VK_NULL_HANDLE;
     };
     
     struct FSemaphore
@@ -2645,17 +2647,10 @@ namespace Lumina::RHI
         vkUpdateDescriptorSets(*GDevice, 1, &Write, 0, nullptr);
     }
 
-    uint32 HeapWriteTexture(FTextureHeapH Heap, FTextureH Texture)
+    // Caller holds HeapMutex. Slot must already be marked occupied.
+    static void PointSampledSlotAt(FTextureHeap& HeapData, uint32 Slot, FTextureH Texture)
     {
-        FTextureHeap& HeapData = GDevice->TextureHeaps[Heap];
         const FTexture& TextureData = GDevice->Textures[Texture];
-
-        FScopeLock Lock(GDevice->HeapMutex);
-        const uint32 Slot = AllocateHeapSlot(HeapData.SampledImagesBitset);
-        if (Slot == kInvalidHeapSlot)
-        {
-            return kInvalidHeapSlot;
-        }
 
         HeapData.ImageViews[Slot] = TextureData.DefaultImageView;
         HeapData.SampledOwners[Slot] = Texture;
@@ -2668,8 +2663,36 @@ namespace Lumina::RHI
         };
 
         WriteHeapDescriptor(HeapData.DescriptorSet, kImageBindingSlot, Slot, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, ImageInfo);
+    }
+
+    uint32 HeapWriteTexture(FTextureHeapH Heap, FTextureH Texture)
+    {
+        FTextureHeap& HeapData = GDevice->TextureHeaps[Heap];
+
+        FScopeLock Lock(GDevice->HeapMutex);
+        const uint32 Slot = AllocateHeapSlot(HeapData.SampledImagesBitset);
+        if (Slot == kInvalidHeapSlot)
+        {
+            return kInvalidHeapSlot;
+        }
+
+        PointSampledSlotAt(HeapData, Slot, Texture);
 
         return Slot;
+    }
+
+    void HeapRepointTexture(FTextureHeapH Heap, uint32 Slot, FTextureH Texture)
+    {
+        FTextureHeap& HeapData = GDevice->TextureHeaps[Heap];
+
+        FScopeLock Lock(GDevice->HeapMutex);
+        if (Slot >= HeapData.SampledImagesBitset.size())
+        {
+            return;
+        }
+
+        HeapData.SampledImagesBitset[Slot] = true;
+        PointSampledSlotAt(HeapData, Slot, Texture);
     }
 
     uint32 HeapWriteRWTexture(FTextureHeapH Heap, FTextureH Texture, uint32 Mip)
@@ -2784,6 +2807,14 @@ namespace Lumina::RHI
         return Slot;
     }
 
+    void HeapSetFallbackTexture(FTextureHeapH Heap, FTextureH Texture)
+    {
+        FTextureHeap& HeapData = GDevice->TextureHeaps[Heap];
+
+        FScopeLock Lock(GDevice->HeapMutex);
+        HeapData.FallbackView = IsValid(Texture) ? GDevice->Textures[Texture].DefaultImageView : VK_NULL_HANDLE;
+    }
+
     void HeapFreeTexture(FTextureHeapH Heap, uint32 Slot)
     {
         FTextureHeap& HeapData = GDevice->TextureHeaps[Heap];
@@ -2792,6 +2823,23 @@ namespace Lumina::RHI
         HeapData.SampledImagesBitset[Slot] = false;
         HeapData.ImageViews[Slot] = VK_NULL_HANDLE;
         HeapData.SampledOwners[Slot] = {};
+
+        // Clearing the bookkeeping does not clear the DESCRIPTOR: without this write the slot keeps
+        // naming the caller's image view, which the caller destroys immediately after. The heap is
+        // PARTIALLY_BOUND + UPDATE_AFTER_BIND, so nothing validates the read -- a shader indexing the
+        // stale slot just page-faults on freed memory. UPDATE_UNUSED_WHILE_PENDING makes repointing a
+        // bound-but-unused slot legal, so this is safe to do while the set is bound.
+        if (HeapData.FallbackView != VK_NULL_HANDLE)
+        {
+            const VkDescriptorImageInfo ImageInfo
+            {
+                .sampler        = VK_NULL_HANDLE,
+                .imageView      = HeapData.FallbackView,
+                .imageLayout    = VK_IMAGE_LAYOUT_GENERAL
+            };
+
+            WriteHeapDescriptor(HeapData.DescriptorSet, kImageBindingSlot, Slot, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, ImageInfo);
+        }
     }
 
     void GetTextureHeapTextures(FTextureHeapH Heap, TVector<FHeapTextureInfo>& OutTextures)
@@ -4276,7 +4324,7 @@ namespace Lumina::RHI
             if (GTracyGPUContext != nullptr && List.GPUZoneDepth < kMaxGPUZoneDepth)
             {
                 void* Slot = &List.GPUZoneStack[List.GPUZoneDepth * sizeof(tracy::VkCtxScope)];
-                reinterpret_cast<tracy::VkCtxScope*>(Slot)->~VkCtxScope();
+                static_cast<tracy::VkCtxScope*>(Slot)->~VkCtxScope();
             }
         }
         #endif

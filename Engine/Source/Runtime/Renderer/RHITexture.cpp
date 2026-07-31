@@ -49,6 +49,10 @@ namespace Lumina::RHI::Textures
         const uint8 Magenta[4] = { 255, 0, 255, 255 };
         Upload(GState.Default, 0, Magenta, sizeof(Magenta), 1);
         FlushUploadsAndWait();
+
+        // Every slot the heap hands back gets repointed here, so a stale ResourceID held past its
+        // texture's death samples magenta instead of faulting on freed memory.
+        HeapSetFallbackTexture(Core::GetGlobalHeap(), GState.Default.Texture);
     }
 
     void Shutdown()
@@ -59,6 +63,10 @@ namespace Lumina::RHI::Textures
         }
 
         WaitDeviceIdle();
+
+        // Drop the fallback before the texture backing it dies, or the frees below would repoint
+        // slots at a view this function is about to destroy.
+        HeapSetFallbackTexture(Core::GetGlobalHeap(), FTextureH{});
 
         // Flush every deferred release immediately; the device is idle.
         {

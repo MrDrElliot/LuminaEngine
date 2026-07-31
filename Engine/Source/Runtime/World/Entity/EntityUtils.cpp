@@ -799,8 +799,9 @@ namespace Lumina::ECS::Utils
                 State->DirtyTransforms.enqueue(Entity);
             }
             
-            if (Registry.any_of<SRigidBodyComponent, SCharacterPhysicsComponent>(Entity))
+            if (!Transform->bBodyDirtyQueued && Registry.any_of<SRigidBodyComponent, SCharacterPhysicsComponent>(Entity))
             {
+                Transform->bBodyDirtyQueued = true;
                 State->DirtyBodies.enqueue(Entity);
             }
         }
@@ -819,7 +820,7 @@ namespace Lumina::ECS::Utils
         return &State;
     }
 
-    void QueueDirtyTransform(FTransformDirtyState* State, entt::entity Entity, bool bQueueBody)
+    void QueueDirtyTransform(FTransformDirtyState* State, entt::entity Entity, bool bQueueTransform, bool bQueueBody)
     {
         if (State == nullptr)
         {
@@ -834,7 +835,10 @@ namespace Lumina::ECS::Utils
             const uint32 Slot = Jobs::GetWorkerIndex();
             if (Slot < State->TransformTokens.size())
             {
-                State->DirtyTransforms.enqueue(State->TransformTokens[Slot], Entity);
+                if (bQueueTransform)
+                {
+                    State->DirtyTransforms.enqueue(State->TransformTokens[Slot], Entity);
+                }
                 if (bQueueBody)   // only bodied entities need the physics re-sync; skip the queue + drain otherwise
                 {
                     State->DirtyBodies.enqueue(State->BodyTokens[Slot], Entity);
@@ -844,7 +848,10 @@ namespace Lumina::ECS::Utils
             }
         }
 
-        State->DirtyTransforms.enqueue(Entity);
+        if (bQueueTransform)
+        {
+            State->DirtyTransforms.enqueue(Entity);
+        }
         if (bQueueBody)
         {
             State->DirtyBodies.enqueue(Entity);
@@ -870,7 +877,18 @@ namespace Lumina::ECS::Utils
             for (std::size_t i = 0; i < Count; ++i)
             {
                 const entt::entity E = Batch[i];
-                if (Registry.valid(E) && Registry.any_of<SRigidBodyComponent, SCharacterPhysicsComponent>(E))
+                if (!Registry.valid(E))
+                {
+                    continue;
+                }
+
+                // Release the enqueue guard as the entry is consumed, so a setter after this drain re-queues.
+                if (STransformComponent* Transform = Registry.try_get<STransformComponent>(E))
+                {
+                    Transform->bBodyDirtyQueued = false;
+                }
+
+                if (Registry.any_of<SRigidBodyComponent, SCharacterPhysicsComponent>(E))
                 {
                     Registry.emplace_or_replace<FNeedsPhysicsBodyUpdate>(E);
                 }
@@ -1396,5 +1414,20 @@ namespace Lumina::ECS::Utils
     {
         Registry.emplace_or_replace<FNeedsTransformUpdate>(Entity);
         MarkPhysicsBodyDirtyIfBodied(Registry, Entity);
+    }
+
+    void MarkTransformDirtyNoBody(FEntityRegistry& Registry, entt::entity Entity)
+    {
+        FTransformDirtyState* State = EnsureTransformDirtyState(Registry);
+
+        if (STransformComponent* Transform = Registry.try_get<STransformComponent>(Entity))
+        {
+            if (!Transform->bWorldDirty)
+            {
+                Transform->bWorldDirty = true;
+                State->DirtyTransforms.enqueue(Entity);
+            }
+        }
+        State->bAnyDirty.store(true, std::memory_order_release);
     }
 }

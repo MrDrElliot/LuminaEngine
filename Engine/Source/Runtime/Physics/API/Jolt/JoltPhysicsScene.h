@@ -12,6 +12,7 @@
 #include "Core/Threading/Atomic.h"
 #include "Memory/SmartPtr.h"
 #include "Physics/PhysicsScene.h"
+#include "World/Entity/Components/DirtyComponent.h"
 #include "World/Entity/Events/ImpulseEvent.h"
 
 
@@ -310,17 +311,14 @@ namespace Lumina::Physics
     	};
     	FMutex												ShapeCacheMutex;
     	THashMap<FShapeKey, JPH::ShapeRefC, FShapeKeyHash>	ShapeCache;
-
-    	// Mesh-collider shape cache, keyed by mesh pointer + scale + convexity. Pointer-keyed: valid
-    	// because piece meshes outlive their bodies; cleared with the (per-world) scene on teardown.
+    	
     	struct FMeshShapeKey
     	{
     		const void*	Mesh;
-    		float		SX, SY, SZ;
     		uint8		Convex;
     		bool operator==(const FMeshShapeKey& Other) const
     		{
-    			return Mesh == Other.Mesh && SX == Other.SX && SY == Other.SY && SZ == Other.SZ && Convex == Other.Convex;
+    			return Mesh == Other.Mesh && Convex == Other.Convex;
     		}
     	};
     	struct FMeshShapeKeyHash
@@ -330,14 +328,21 @@ namespace Lumina::Physics
     			size_t Hash = 1469598103934665603ull;
     			auto Mix = [&Hash](uint64 Value) { Hash = (Hash ^ Value) * 1099511628211ull; };
     			Mix(reinterpret_cast<uint64>(Key.Mesh));
-    			auto MixF = [&](float Value) { uint32 Bits; std::memcpy(&Bits, &Value, sizeof(Bits)); Mix(Bits); };
-    			MixF(Key.SX); MixF(Key.SY); MixF(Key.SZ);
     			Mix(Key.Convex);
     			return Hash;
     		}
     	};
     	FMutex													MeshShapeCacheMutex;
     	THashMap<FMeshShapeKey, JPH::ShapeRefC, FMeshShapeKeyHash>	MeshShapeCache;
+
+    	// Body-move requests ApplyDirtyTransforms could not apply because the body did not exist yet; re-tagged
+    	// after the consume so the next step retries them. Game/physics-step thread only, reused across frames.
+    	struct FDeferredBodyUpdate
+    	{
+    		entt::entity				Entity;
+    		FNeedsPhysicsBodyUpdate		Update;
+    	};
+    	TVector<FDeferredBodyUpdate>				RetryBodyUpdates;
 
     	FMutex										PendingRigidBodyMutex;
     	TQueue<entt::entity>						PendingRigidBodyCreations;
@@ -359,19 +364,15 @@ namespace Lumina::Physics
     	TUniquePtr<FJoltCharacterContactListener>	CharacterContactListener;
     	// Sleep/wake listener; records transitions for the game-thread script dispatch.
     	TUniquePtr<FJoltBodyActivationListener>		ActivationListener;
-
-    	// Brute-force character-vs-character collision (mutual pushing). Characters that opt in are registered
-    	// here; their inner-body ids go in CharacterProxyBodies so each character's MOVEMENT collision skips
-    	// the others' inner bodies (char-char then runs purely through this interface, no double-collision).
-    	// Not thread-safe -> the character update runs serially whenever the list is non-empty.
+    	
     	TUniquePtr<JPH::CharacterVsCharacterCollisionSimple>	CharacterVsCharacter;
     	THashSet<uint32>							CharacterProxyBodies;
 
         TUniquePtr<JPH::PhysicsSystem>				JoltSystem;
         CWorld*										World = nullptr;
     	
-    	FMutex										ContactQueueMutex;
-    	TVector<FContactRecord>						PendingContacts;
+    	TConcurrentQueue<FContactRecord>			PendingContacts;
+    	TVector<FContactRecord>						ContactDrainScratch;   // game thread, reused across frames
 
     	// Sleep/wake transitions staged by the activation listener (physics thread), drained game-thread.
     	struct FActivationRecord
@@ -379,8 +380,8 @@ namespace Lumina::Physics
     		entt::entity	Entity;
     		bool			bActivated;     // true = woke / spawned active, false = went to sleep
     	};
-    	FMutex										ActivationQueueMutex;
-    	TVector<FActivationRecord>					PendingActivations;
+    	TConcurrentQueue<FActivationRecord>			PendingActivations;
+    	TVector<FActivationRecord>					ActivationDrainScratch;
 
     	// Material side table indexed by BodyID, sized once to MaxPhysicsBodies so the listener reads lock-free;
     	// writes are game-thread-only between steps.
@@ -429,20 +430,30 @@ namespace Lumina::Physics
     		TVector<entt::entity>	Entities;
     		TVector<EInterpFlag>	Flags;
 
+    		// Curr* is the simulated pose at the last completed step and stays untouched by the interp pass:
+    		// it is the authoritative value written back into the ECS. Lerp* is the display-time blend, which
+    		// is render-only and must never feed back into the body.
     		TVector<FVector3>		PrevPos;
-    		TVector<FVector3>		CurrPos;   // overwritten with the interpolated result
+    		TVector<FVector3>		CurrPos;
+    		TVector<FVector3>		LerpPos;
 
     		TVector<float>			PrevQx, PrevQy, PrevQz, PrevQw;
-    		TVector<float>			CurrQx, CurrQy, CurrQz, CurrQw;  // overwritten with result
+    		TVector<float>			CurrQx, CurrQy, CurrQz, CurrQw;
+    		TVector<float>			LerpQx, LerpQy, LerpQz, LerpQw;
 
     		void Resize(uint32 N)
     		{
     			Entities.resize(N); Flags.resize(N);
-    			PrevPos.resize(N);  CurrPos.resize(N);
+    			PrevPos.resize(N);  CurrPos.resize(N);  LerpPos.resize(N);
     			PrevQx.resize(N); PrevQy.resize(N); PrevQz.resize(N); PrevQw.resize(N);
     			CurrQx.resize(N); CurrQy.resize(N); CurrQz.resize(N); CurrQw.resize(N);
+    			LerpQx.resize(N); LerpQy.resize(N); LerpQz.resize(N); LerpQw.resize(N);
     		}
     	};
     	FInterpStaging								InterpStaging;
+
+    	// Staging slots the writeback actually applied this frame; the render-matrix pass revisits them
+    	// after the transform resolve. Game thread only, reused across frames.
+    	TVector<uint32>								InterpApplied;
     };
 }

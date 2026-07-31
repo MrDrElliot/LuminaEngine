@@ -853,6 +853,60 @@ namespace Lumina
         return ParentIdx >= 0 ? FTreeNodeID{ParentIdx} : InvalidTreeNode;
     }
 
+    int32 FTreeListView::NumChildNodes(FTreeNodeID Handle) const
+    {
+        if (!Handle.IsValid())
+        {
+            return (int32)Roots.size();
+        }
+
+        if (!IsValid(Handle))
+        {
+            return 0;
+        }
+
+        return (int32)Nodes[Handle.Index].Children.size();
+    }
+
+    FTreeNodeID FTreeListView::GetChildNode(FTreeNodeID Handle, int32 ChildIndex) const
+    {
+        if (ChildIndex < 0)
+        {
+            return InvalidTreeNode;
+        }
+
+        if (!Handle.IsValid())
+        {
+            return ChildIndex < (int32)Roots.size() ? FTreeNodeID{Roots[ChildIndex]} : InvalidTreeNode;
+        }
+
+        if (!IsValid(Handle))
+        {
+            return InvalidTreeNode;
+        }
+
+        const TVector<int32>& Children = Nodes[Handle.Index].Children;
+        return ChildIndex < (int32)Children.size() ? FTreeNodeID{Children[ChildIndex]} : InvalidTreeNode;
+    }
+
+    void FTreeListView::SetSelectionSilent(FTreeNodeID Handle)
+    {
+        if (!IsValid(Handle))
+        {
+            return;
+        }
+
+        for (FNode& Node : Nodes)
+        {
+            if (Node.bAlive)
+            {
+                Node.State.bSelected = false;
+            }
+        }
+
+        Nodes[Handle.Index].State.bSelected = true;
+    }
+
     void FTreeListView::SetSelection(FTreeNodeID Item, const FTreeListViewContext& Context, bool bShouldClear)
     {
         // true = plain-click (replace); false = Ctrl-click (toggle). Single-select consumers ignore bShouldClear.

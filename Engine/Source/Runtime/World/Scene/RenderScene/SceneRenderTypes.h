@@ -221,7 +221,10 @@ namespace Lumina
     };
 
     // bSampled registers an SRV heap slot; bMipUAVs registers one storage slot per mip.
-    inline FSceneImage CreateSceneImage(const RHI::FTextureDesc& Desc, bool bSampled = true, bool bMipUAVs = false)
+    // ReuseSampledSlot adopts a slot detached from a retiring image (see DetachSampledSlot) rather
+    // than allocating a fresh one, so the index stays valid for anyone who cached it.
+    inline FSceneImage CreateSceneImage(const RHI::FTextureDesc& Desc, bool bSampled = true, bool bMipUAVs = false,
+                                        uint32 ReuseSampledSlot = RHI::kInvalidHeapSlot)
     {
         FSceneImage Out;
         Out.Desc    = Desc;
@@ -229,7 +232,15 @@ namespace Lumina
         Out.bOwned  = true;
         if (bSampled)
         {
-            Out.SampledSlot = RHI::HeapWriteTexture(RHI::Core::GetGlobalHeap(), Out.Texture);
+            if (ReuseSampledSlot != RHI::kInvalidHeapSlot)
+            {
+                RHI::HeapRepointTexture(RHI::Core::GetGlobalHeap(), ReuseSampledSlot, Out.Texture);
+                Out.SampledSlot = ReuseSampledSlot;
+            }
+            else
+            {
+                Out.SampledSlot = RHI::HeapWriteTexture(RHI::Core::GetGlobalHeap(), Out.Texture);
+            }
         }
         if (bMipUAVs)
         {
@@ -250,6 +261,22 @@ namespace Lumina
         FSceneImage Copy = Owner;
         Copy.bOwned = false;
         return Copy;
+    }
+
+    // Take the sampled slot off a retiring image so its release destroys the texture only. The slot
+    // then belongs to the caller, who is expected to hand it straight to the replacement image via
+    // CreateSceneImage's ReuseSampledSlot -- dropping it on the floor leaks a heap slot.
+    //
+    // This exists because a bindless ResourceID is a bare uint32 with no ownership: once it has been
+    // published outside the renderer (the editor puts the view's Output index into ImGui draw data),
+    // the renderer can no longer tell when the last holder is done with it. Keeping the slot alive
+    // across a resize sidesteps the question entirely -- a stale index resolves to the NEW image
+    // rather than to a freed one.
+    NODISCARD inline uint32 DetachSampledSlot(FSceneImage& Image)
+    {
+        const uint32 Slot = Image.SampledSlot;
+        Image.SampledSlot = RHI::kInvalidHeapSlot;
+        return Slot;
     }
 
     // Immediate release: caller guarantees no in-flight GPU use (WaitIdle or frame-deferred externally).

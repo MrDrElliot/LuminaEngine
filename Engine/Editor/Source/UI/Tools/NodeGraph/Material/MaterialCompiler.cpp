@@ -1,5 +1,6 @@
 #include "MaterialCompiler.h"
 
+#include "Assets/AssetTypes/Curve/CurveAsset.h"
 #include "Assets/AssetTypes/Textures/Texture.h"
 #include "Nodes/MaterialNodes.h"
 #include "Paths/Paths.h"
@@ -879,6 +880,156 @@ namespace Lumina
 		}
 
 		GetActiveChunk().append("float4 " + ID + " = SampleTexture2D(GetMaterialTexture(MaterialIndex, " + eastl::to_string(Index) + "), SAMPLER_LINEAR_WRAP, " + UVStr + ");\n");
+	}
+
+	namespace
+	{
+		// Curve constants are emitted as plain literals; matches the formatting the other emitters use.
+		FString CurveFloat(float Value)
+		{
+			return eastl::to_string(Value);
+		}
+	}
+
+	void FMaterialCompiler::CurveSample(const FString& ID, const SKeyedCurve& Curve, CMaterialInput* TimeInput)
+	{
+		SetOwningOutputType(TimeInput, EMaterialInputType::Float);
+
+		FString& Chunk = GetActiveChunk();
+
+		const int32 NumKeys = Curve.NumKeys();
+		if (NumKeys == 0)
+		{
+			Chunk.append("float " + ID + " = 0.0;\n");
+			return;
+		}
+
+		if (NumKeys == 1)
+		{
+			Chunk.append("float " + ID + " = " + CurveFloat(Curve.Keys[0].Value) + ";\n");
+			return;
+		}
+
+		TVector<FCurveSegment> Segments;
+		Curve.BakeSegments(Segments);
+		if (Segments.empty())
+		{
+			Chunk.append("float " + ID + " = " + CurveFloat(Curve.Keys[0].Value) + ";\n");
+			return;
+		}
+
+		const FInputValue TimeValue = GetTypedInputValue(TimeInput, "0.0");
+		const FString TimeStr = TimeValue.ComponentCount >= 2 ? ("(" + TimeValue.Value + ").x") : TimeValue.Value;
+
+		const float FirstTime  = Curve.Keys.front().Time;
+		const float LastTime   = Curve.Keys.back().Time;
+		const float FirstValue = Curve.Keys.front().Value;
+		const float LastValue  = Curve.Keys.back().Value;
+		const float Span       = LastTime - FirstTime;
+
+		Chunk.append("float " + ID + "_T = " + TimeStr + ";\n");
+
+		if (Span <= 1e-6f)
+		{
+			// Every key shares a time, so only the two end values are reachable.
+			Chunk.append("float " + ID + " = (" + ID + "_T > " + CurveFloat(LastTime) + ") ? " + CurveFloat(LastValue) + " : " + CurveFloat(FirstValue) + ";\n");
+			return;
+		}
+
+		float PreSlope = 0.0f;
+		float PostSlope = 0.0f;
+		Curve.GetExtrapolationSlopes(PreSlope, PostSlope);
+
+		// _L is the sample time remapped into the keyed range, _O an additive offset for the
+		// extrapolation modes that shift the result rather than the time.
+		Chunk.append("float " + ID + "_L = clamp(" + ID + "_T, " + CurveFloat(FirstTime) + ", " + CurveFloat(LastTime) + ");\n");
+		Chunk.append("float " + ID + "_O = 0.0;\n");
+
+		// The two guards are mutually exclusive, so each side can declare its own locals.
+		auto EmitExtrapolation = [&](ECurveExtrapolation Mode, bool bBefore)
+		{
+			const FString Guard = bBefore
+				? (ID + "_T < " + CurveFloat(FirstTime))
+				: (ID + "_T > " + CurveFloat(LastTime));
+
+			switch (Mode)
+			{
+			case ECurveExtrapolation::Linear:
+				{
+					const float Slope = bBefore ? PreSlope : PostSlope;
+					const float Anchor = bBefore ? FirstTime : LastTime;
+					Chunk.append("if (" + Guard + ") { " + ID + "_O = " + CurveFloat(Slope) + " * (" + ID + "_T - " + CurveFloat(Anchor) + "); }\n");
+				}
+				break;
+
+			case ECurveExtrapolation::Cycle:
+			case ECurveExtrapolation::CycleWithOffset:
+			case ECurveExtrapolation::Oscillate:
+				{
+					FString Body;
+					Body.append("float " + ID + "_D = " + ID + "_T - " + CurveFloat(FirstTime) + "; ");
+					Body.append("float " + ID + "_C = floor(" + ID + "_D / " + CurveFloat(Span) + "); ");
+					Body.append("float " + ID + "_W = " + ID + "_D - " + ID + "_C * " + CurveFloat(Span) + "; ");
+
+					if (Mode == ECurveExtrapolation::Oscillate)
+					{
+						Body.append("if (abs(fmod(" + ID + "_C, 2.0)) >= 0.5) { " + ID + "_W = " + CurveFloat(Span) + " - " + ID + "_W; } ");
+					}
+
+					Body.append(ID + "_L = " + CurveFloat(FirstTime) + " + " + ID + "_W; ");
+
+					if (Mode == ECurveExtrapolation::CycleWithOffset)
+					{
+						Body.append(ID + "_O = " + ID + "_C * " + CurveFloat(LastValue - FirstValue) + "; ");
+					}
+
+					Chunk.append("if (" + Guard + ") { " + Body + "}\n");
+				}
+				break;
+
+			case ECurveExtrapolation::Clamp:
+			default:
+				break;   // the clamp() above already covers it.
+			}
+		};
+
+		EmitExtrapolation(Curve.PreExtrapolation, true);
+		EmitExtrapolation(Curve.PostExtrapolation, false);
+
+		const int32 NumSegments = (int32)Segments.size();
+		FString Coefficients = "float4 " + ID + "_K[" + eastl::to_string(NumSegments) + "] = { ";
+		FString Ranges       = "float2 " + ID + "_R[" + eastl::to_string(NumSegments) + "] = { ";
+
+		for (int32 Index = 0; Index < NumSegments; ++Index)
+		{
+			const FCurveSegment& Segment = Segments[Index];
+			const float InvDuration = Segment.Duration > 0.0f ? (1.0f / Segment.Duration) : 0.0f;
+
+			if (Index > 0)
+			{
+				Coefficients.append(", ");
+				Ranges.append(", ");
+			}
+
+			Coefficients.append("float4(" + CurveFloat(Segment.A) + ", " + CurveFloat(Segment.B) + ", " + CurveFloat(Segment.C) + ", " + CurveFloat(Segment.D) + ")");
+			Ranges.append("float2(" + CurveFloat(Segment.StartTime) + ", " + CurveFloat(InvDuration) + ")");
+		}
+
+		Coefficients.append(" };\n");
+		Ranges.append(" };\n");
+		Chunk.append(Coefficients);
+		Chunk.append(Ranges);
+
+		// _L is clamped into the range, so the last segment whose start is behind it is the right one.
+		const FString Loop = ID + "_i";
+		Chunk.append("float " + ID + "_V = " + CurveFloat(FirstValue) + ";\n");
+		Chunk.append("for (int " + Loop + " = 0; " + Loop + " < " + eastl::to_string(NumSegments) + "; ++" + Loop + ")\n");
+		Chunk.append("{\n");
+		Chunk.append("\tfloat " + ID + "_U = saturate((" + ID + "_L - " + ID + "_R[" + Loop + "].x) * " + ID + "_R[" + Loop + "].y);\n");
+		Chunk.append("\tfloat " + ID + "_E = " + ID + "_K[" + Loop + "].x + " + ID + "_U * (" + ID + "_K[" + Loop + "].y + " + ID + "_U * (" + ID + "_K[" + Loop + "].z + " + ID + "_U * " + ID + "_K[" + Loop + "].w));\n");
+		Chunk.append("\t" + ID + "_V = (" + ID + "_L >= " + ID + "_R[" + Loop + "].x) ? " + ID + "_E : " + ID + "_V;\n");
+		Chunk.append("}\n");
+		Chunk.append("float " + ID + " = " + ID + "_V + " + ID + "_O;\n");
 	}
 
 	namespace

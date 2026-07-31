@@ -1024,6 +1024,10 @@ namespace Lumina
             if (STransformComponent* NewTransform = EntityRegistry.try_get<STransformComponent>(NewEntity))
             {
                 NewTransform->Bind(EntityRegistry, NewEntity);
+                // The copied dirty guards describe the source's queue state; the duplicate is in neither
+                // queue, so leaving them set would suppress its own enqueues (transform never resolves,
+                // body never teleports).
+                NewTransform->ResetDirtyState();
                 EntityRegistry.emplace_or_replace<FNeedsTransformUpdate>(NewEntity);
             }
 

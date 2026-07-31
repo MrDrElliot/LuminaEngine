@@ -4,6 +4,7 @@
 #include <Tools/PrimitiveManager/PrimitiveManager.h>
 
 #include "imgui_internal.h"
+#include "EditorToolContext.h"
 #include "ToolFlags.h"
 #include "Animation/SkeletonDebugDraw.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
@@ -462,6 +463,17 @@ namespace Lumina
             {
                 OnSave();
             }
+        }
+
+        const FFixedString AssetVirtualPath = GetAssetVirtualPath();
+        if (!AssetVirtualPath.empty())
+        {
+            if (ImGui::MenuItem(LE_ICON_MAGNIFY"##BrowseToAsset"))
+            {
+                ToolContext->BrowseToAsset(FStringView(AssetVirtualPath.c_str(), AssetVirtualPath.size()));
+            }
+
+            ImGuiX::TextTooltip("Browse to asset in Content Browser");
         }
 
         ImGui::BeginDisabled(!AllowsUndoRedo() || !CanUndo());

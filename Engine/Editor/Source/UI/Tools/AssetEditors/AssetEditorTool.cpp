@@ -102,4 +102,22 @@ namespace Lumina
     {
         return true;
     }
+
+    FFixedString FAssetEditorTool::GetAssetVirtualPath() const
+    {
+        if (!Asset.IsValid())
+        {
+            return {};
+        }
+
+        CPackage* Package = Asset->GetPackage();
+        if (Package == nullptr)
+        {
+            return {};
+        }
+
+        // Package path is the mount-relative virtual path with the .lasset extension, the same form
+        // the content browser's tile items carry.
+        return Package->GetPackagePath();
+    }
 }

@@ -22,7 +22,7 @@ public sealed class NewScript : EntityScript
         for (var i = 0; i < Chunk; i++)
         {
             var newEntity = World.DuplicateEntity(TargetEntity);
-            World.SetEntityLocation(newEntity, new FVector3(Random.Shared.Next(-1000, 1000), Random.Shared.Next(-100, 100), Random.Shared.Next(-1000, 1000)));
+            World.SetEntityLocation(newEntity, new FVector3(Random.Shared.Next(-200, 200), Random.Shared.Next(-10, 10), Random.Shared.Next(-200, 200)));
         }
     }
 }

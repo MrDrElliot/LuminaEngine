@@ -267,9 +267,13 @@ Regenerating prints the resolved feature set, e.g.
 >   intermittent issue with a font file.
 > - **"Application control policy blocked this file"?** Disable Windows 11
 >   Smart App Control.
+> - **`error NETSDK1004` / "Assets file ... project.assets.json not found"?** The
+>   managed projects' NuGet restore lives under `Intermediates/`, so deleting that
+>   folder removes it. Run `GenerateProjectFiles.bat` (it restores at the end), or
+>   pass `-restore` to MSBuild.
 > - **"C# scripting disabled: managed bootstrap missing"?** The `LuminaSharp`
->   managed project didn't build. Reopen `Lumina.slnx` so Visual Studio restores
->   its NuGet packages, then rebuild (the `Lumina` app now builds it as a
+>   managed project didn't build, usually the restore above. Run
+>   `GenerateProjectFiles.bat` and rebuild (the `Lumina` app builds it as a
 >   dependency). From the command line, pass `-restore` to MSBuild.
 > - **Build still failing?**
 >   [Submit an issue](https://github.com/mrdrelliot/LuminaEngine/issues) or

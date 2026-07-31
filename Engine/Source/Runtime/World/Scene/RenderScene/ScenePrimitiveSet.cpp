@@ -642,6 +642,15 @@ namespace Lumina
         }
     }
 
+    // Physics interpolates simulated bodies to display time and parks the result in FRenderTransform;
+    // STransformComponent holds the simulated pose, which is a fixed step behind what should be on screen.
+    // Everything without an override renders straight off the resolved world matrix.
+    static const FMatrix4& ReadRenderMatrix(FEntityRegistry& Registry, entt::entity Entity, const STransformComponent& Transform)
+    {
+        const auto& RenderStorage = Registry.storage<FRenderTransform>();
+        return RenderStorage.contains(Entity) ? RenderStorage.get(Entity).Matrix : Transform.CachedMatrix;
+    }
+
     void FScenePrimitiveSet::RefreshTransform(FEntityRegistry& Registry, uint32 Index)
     {
         FScenePrimitive& Prim = Primitives[Index];
@@ -659,7 +668,7 @@ namespace Lumina
             return;
         }
 
-        Prim.Transform = TransformStorage.get(Prim.Entity).CachedMatrix;
+        Prim.Transform = ReadRenderMatrix(Registry, Prim.Entity, TransformStorage.get(Prim.Entity));
         RebuildWorldBounds(Index);
         ++StructureGeneration;
     }
@@ -866,7 +875,7 @@ namespace Lumina
                 return;
             }
 
-            Primitives[Index].Transform = Pools.Transform->get(Entity).CachedMatrix;
+            Primitives[Index].Transform = ReadRenderMatrix(Registry, Entity, Pools.Transform->get(Entity));
             RebuildWorldBounds(Index);
             RefreshInstances(Index);
             ++StructureGeneration;
@@ -908,7 +917,7 @@ namespace Lumina
         // here required bShouldExist, which already established the transform pool holds this entity.
         if (EnumHasAnyFlags(Flags, EPrimitiveDirty::Transform))
         {
-            Primitives[Index].Transform = Pools.Transform->get(Entity).CachedMatrix;
+            Primitives[Index].Transform = ReadRenderMatrix(Registry, Entity, Pools.Transform->get(Entity));
         }
 
         if (EnumHasAnyFlags(Flags, EPrimitiveDirty::Data | EPrimitiveDirty::Membership | EPrimitiveDirty::Visibility))

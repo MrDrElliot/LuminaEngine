@@ -141,6 +141,15 @@ namespace Lumina
         // Parent node of Handle, or InvalidTreeNode if it's a root or invalid.
         NODISCARD FTreeNodeID GetParentNode(FTreeNodeID Handle) const;
 
+        // Child enumeration; pass InvalidTreeNode to walk the root nodes. Lets callers resolve a node
+        // by walking a path down from a root, expanding as they go.
+        NODISCARD int32 NumChildNodes(FTreeNodeID Handle) const;
+        NODISCARD FTreeNodeID GetChildNode(FTreeNodeID Handle, int32 ChildIndex) const;
+
+        // Marks Handle as the sole selection without firing ItemSelectedFunction; for programmatic
+        // reveals where the caller has already applied whatever the selection would have done.
+        void SetSelectionSilent(FTreeNodeID Handle);
+
         // Get<FTreeNodeState>, Get<FTreeNodeDisplay>, or Get<UserDataT> (the type previously
         // installed via EmplaceUserData on this node).
         template<typename T>

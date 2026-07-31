@@ -44,6 +44,7 @@
 #include "Assets/AssetTypes/Animation/AnimationGraph/AnimationGraph.h"
 #include "Assets/AssetTypes/Audio/AudioStream.h"
 #include "Assets/AssetTypes/Blackboard/Blackboard.h"
+#include "Assets/AssetTypes/Curve/CurveAsset.h"
 #include "Assets/AssetTypes/DataAsset/DataAsset.h"
 #include "Assets/AssetTypes/Font/Font.h"
 #include "Assets/AssetTypes/PhysicsMaterial/PhysicsMaterial.h"
@@ -120,6 +121,7 @@
 #include "Tools/AssetEditors/Animation/AnimationEditorTool.h"
 #include "Tools/AssetEditors/AnimationGraph/AnimationGraphEditorTool.h"
 #include "Tools/AssetEditors/Blackboard/BlackboardEditorTool.h"
+#include "Tools/AssetEditors/CurveEditor/CurveAssetEditorTool.h"
 #include "Tools/AssetEditors/DataAsset/DataAssetEditorTool.h"
 #include "Tools/AssetEditors/AudioStream/AudioStreamEditorTool.h"
 #include "Tools/AssetEditors/PhysicsMaterial/PhysicsMaterialEditorTool.h"
@@ -1115,6 +1117,7 @@ namespace Lumina
         Registry.RegisterAssetEditor<CDataAssetSchema,    FDataAssetSchemaEditorTool>();
         Registry.RegisterAssetEditor<CDataAsset,          FDataAssetEditorTool>();
         Registry.RegisterAssetEditor<CPhysicsMaterial,    FPhysicsMaterialEditorTool>();
+        Registry.RegisterAssetEditor<CCurveAsset,         FCurveAssetEditorTool>();
         Registry.RegisterAssetEditor<CAudioStream,        FAudioStreamEditorTool>();
         Registry.RegisterAssetEditor<CGeometryCollection, FGeometryCollectionEditorTool>();
         Registry.RegisterAssetEditor<CTexture,            FTextureEditorTool>();
@@ -1202,6 +1205,25 @@ namespace Lumina
         }
 
         ActiveFileTools.insert_or_assign(Move(Key), NewTool);
+    }
+
+    void FEditorUI::BrowseToAsset(FStringView VirtualPath)
+    {
+        if (ContentBrowser == nullptr || VirtualPath.empty())
+        {
+            return;
+        }
+
+        if (FFooterDrawer* Drawer = FindDrawerForTool(ContentBrowser))
+        {
+            ShowDrawer(*Drawer);
+        }
+        else
+        {
+            FocusTargetWindowName = ContentBrowser->GetToolName().c_str();
+        }
+
+        ContentBrowser->BrowseToAsset(VirtualPath);
     }
 
     void FEditorUI::OnDestroyAsset(CObject* InAsset)
@@ -1292,7 +1314,7 @@ namespace Lumina
         return nullptr;
     }
 
-    void FEditorUI::ActivateDrawer(FFooterDrawer& Drawer)
+    void FEditorUI::ShowDrawer(FFooterDrawer& Drawer)
     {
         bDrawerActivatedThisFrame = true;
 
@@ -1303,12 +1325,24 @@ namespace Lumina
             return;
         }
 
-        const bool bWasOpen = (OpenDrawer == Drawer.Tool);
-        OpenDrawer = bWasOpen ? nullptr : Drawer.Tool;
-        if (!bWasOpen)
+        if (OpenDrawer != Drawer.Tool)
         {
+            OpenDrawer = Drawer.Tool;
             DrawerOpenAmount = 0.0f;   // restart the slide
         }
+    }
+
+    void FEditorUI::ActivateDrawer(FFooterDrawer& Drawer)
+    {
+        // Toggle only applies to a genuinely open drawer; everything else is a plain show.
+        if (!Drawer.bDocked && OpenDrawer == Drawer.Tool)
+        {
+            bDrawerActivatedThisFrame = true;
+            OpenDrawer = nullptr;
+            return;
+        }
+
+        ShowDrawer(Drawer);
     }
 
     void FEditorUI::DrawStatusBar(const FUpdateContext& UpdateContext)

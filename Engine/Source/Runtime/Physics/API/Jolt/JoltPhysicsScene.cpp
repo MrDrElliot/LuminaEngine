@@ -33,6 +33,7 @@
 #include "Jolt/Physics/Collision/CollidePointResult.h"
 #include "Jolt/Physics/Collision/Shape/MeshShape.h"
 #include "Jolt/Physics/Collision/Shape/ConvexHullShape.h"
+#include "Jolt/Physics/Collision/Shape/ScaledShape.h"
 #include "Jolt/Physics/Collision/Shape/HeightFieldShape.h"
 #include "Jolt/Physics/Collision/Shape/OffsetCenterOfMassShape.h"
 #include "Jolt/Physics/Collision/Shape/StaticCompoundShape.h"
@@ -352,14 +353,29 @@ namespace Lumina::Physics
 
     void FJoltPhysicsScene::EnqueueContactRecord(const FContactRecord& Record)
     {
-        FScopeLock Lock(ContactQueueMutex);
-        PendingContacts.push_back(Record);
+        PendingContacts.enqueue(Record);
     }
 
     void FJoltPhysicsScene::EnqueueActivation(entt::entity Entity, bool bActivated)
     {
-        FScopeLock Lock(ActivationQueueMutex);
-        PendingActivations.push_back({ Entity, bActivated });
+        PendingActivations.enqueue(FActivationRecord{ Entity, bActivated });
+    }
+
+    // Bulk-drain a staging queue into a reusable game-thread vector. Records are POD, so the stack batch
+    // costs nothing beyond the copy the queue would do anyway.
+    template <typename TRecord, typename TQueueType>
+    static bool DrainRecords(TQueueType& Queue, TVector<TRecord>& Out)
+    {
+        Out.clear();
+
+        TRecord     Batch[128];
+        std::size_t Count;
+        while ((Count = Queue.try_dequeue_bulk(Batch, 128)) != 0)
+        {
+            Out.insert(Out.end(), Batch, Batch + Count);
+        }
+
+        return !Out.empty();
     }
 
     namespace
@@ -396,14 +412,9 @@ namespace Lumina::Physics
 
     void FJoltPhysicsScene::DispatchContactEvents()
     {
-        TVector<FContactRecord> Drain;
+        if (!DrainRecords(PendingContacts, ContactDrainScratch))
         {
-            FScopeLock Lock(ContactQueueMutex);
-            if (PendingContacts.empty())
-            {
-                return;
-            }
-            Drain.swap(PendingContacts);
+            return;
         }
 
         FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
@@ -436,7 +447,7 @@ namespace Lumina::Physics
             Delegate.Broadcast(Event);
         };
 
-        for (const FContactRecord& Record : Drain)
+        for (const FContactRecord& Record : ContactDrainScratch)
         {
             const bool bAdded = (Record.Type == EContactEventType::Added);
             const bool bOverlap = Record.bSensorA || Record.bSensorB;
@@ -450,18 +461,13 @@ namespace Lumina::Physics
 
     void FJoltPhysicsScene::DispatchActivationEvents()
     {
-        TVector<FActivationRecord> Drain;
+        if (!DrainRecords(PendingActivations, ActivationDrainScratch))
         {
-            FScopeLock Lock(ActivationQueueMutex);
-            if (PendingActivations.empty())
-            {
-                return;
-            }
-            Drain.swap(PendingActivations);
+            return;
         }
 
         FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
-        for (const FActivationRecord& Record : Drain)
+        for (const FActivationRecord& Record : ActivationDrainScratch)
         {
             if (Record.Entity == entt::null || !Registry.valid(Record.Entity))
             {
@@ -732,6 +738,22 @@ namespace Lumina::Physics
         DispatchActivationEvents();
     }
 
+    // Remove the display-time override so the entity renders off its resolved world matrix again.
+    // Erase only: this also runs from on_destroy hooks, where dirtying a dying entity would outlive it.
+    static void DropRenderTransform(entt::registry& Registry, entt::entity Entity)
+    {
+        if (!Registry.valid(Entity))
+        {
+            return;
+        }
+
+        auto& Storage = Registry.storage<FRenderTransform>();
+        if (Storage.contains(Entity))
+        {
+            Storage.erase(Entity);
+        }
+    }
+
     void FJoltPhysicsScene::ApplyDirtyTransforms(float FixedDt)
     {
         LUMINA_PROFILE_SCOPE();
@@ -824,8 +846,33 @@ namespace Lumina::Physics
             }
             
         });
-        
+
+        // Consume the requests. A blanket clear used to drop the ones this pass could not apply: an entity
+        // whose body does not exist yet (creation deferred behind a still-loading collider asset) was skipped
+        // above and then had its request wiped, so a spawn-then-SetLocation silently never reached the body.
+        // Carry those forward instead, payload intact, and let the next step retry.
+        //
+        // Only entities in this view are candidates. A tag on an entity with no SRigidBodyComponent -- the
+        // character path tags them too, but moves them through SCharacterMovementComponent::bPendingTeleport
+        // instead -- is still consumed here, or it would pin that entity's transform writeback forever.
+        RetryBodyUpdates.clear();
+        for (auto [Entity, BodyComponent, Update] : BodySyncView.each())
+        {
+            if (JPH::BodyID(BodyComponent.BodyID).IsInvalid())
+            {
+                RetryBodyUpdates.push_back({ Entity, Update });
+            }
+        }
+
         Registry.clear<FNeedsPhysicsBodyUpdate>();
+
+        for (const FDeferredBodyUpdate& Retry : RetryBodyUpdates)
+        {
+            if (Registry.valid(Retry.Entity))
+            {
+                Registry.emplace<FNeedsPhysicsBodyUpdate>(Retry.Entity, Retry.Update);
+            }
+        }
     }
     
 
@@ -1260,17 +1307,22 @@ namespace Lumina::Physics
                           CharacterComponent.LastBodyRotation, JoltUtils::FromJPHQuat(CharacterComponent.Character->Ref->GetRotation()));
         });
 
-        // Interp: one SIMD pass over the whole batch -- position lerp + quat nlerp,
-        // both in place (Curr* become the result).
+        // Interp: one SIMD pass over the whole batch -- position lerp + quat nlerp, out-of-place into Lerp*.
+        // Curr* must survive as the simulated pose; it is what gets written back to the ECS.
         if (Total > 0)
         {
-            SIMD::LerpArray(reinterpret_cast<float*>(InterpStaging.CurrPos.data()),
+            SIMD::LerpArray(reinterpret_cast<float*>(InterpStaging.LerpPos.data()),
                             reinterpret_cast<const float*>(InterpStaging.PrevPos.data()),
                             reinterpret_cast<const float*>(InterpStaging.CurrPos.data()),
                             int(Total) * 3, Alpha);
 
-            NlerpQuatsSoA(InterpStaging.CurrQx.data(), InterpStaging.CurrQy.data(),
-                          InterpStaging.CurrQz.data(), InterpStaging.CurrQw.data(),
+            eastl::copy(InterpStaging.CurrQx.begin(), InterpStaging.CurrQx.end(), InterpStaging.LerpQx.begin());
+            eastl::copy(InterpStaging.CurrQy.begin(), InterpStaging.CurrQy.end(), InterpStaging.LerpQy.begin());
+            eastl::copy(InterpStaging.CurrQz.begin(), InterpStaging.CurrQz.end(), InterpStaging.LerpQz.begin());
+            eastl::copy(InterpStaging.CurrQw.begin(), InterpStaging.CurrQw.end(), InterpStaging.LerpQw.begin());
+
+            NlerpQuatsSoA(InterpStaging.LerpQx.data(), InterpStaging.LerpQy.data(),
+                          InterpStaging.LerpQz.data(), InterpStaging.LerpQw.data(),
                           InterpStaging.PrevQx.data(), InterpStaging.PrevQy.data(),
                           InterpStaging.PrevQz.data(), InterpStaging.PrevQw.data(),
                           Total, Alpha);
@@ -1289,12 +1341,16 @@ namespace Lumina::Physics
 
         entt::registry& Registry = ECS::GetWorldRegistry(*World);
         auto& TransformStorage = Registry.storage<STransformComponent>();
+        auto& RenderStorage    = Registry.storage<FRenderTransform>();
 
-        // A pending FNeedsPhysicsBodyUpdate is a game-authored teleport (e.g. SetLocation right after a
-        // runtime spawn) that ApplyDirtyTransforms hasn't pushed to the body yet. Writing the body's current
-        // (pre-teleport) pose back here would clobber the authored target, and the teleport would then re-read
-        // the clobbered value -- so the body snaps back to where it spawned. Skip those until the teleport lands.
+        ECS::Utils::FlushDirtyPhysicsBodies(Registry);
+
         const auto& PendingTeleport = Registry.storage<FNeedsPhysicsBodyUpdate>();
+
+        // Slots written this pass; the render matrix needs the resolved world scale, so it is built after
+        // the resolve below rather than inline.
+        InterpApplied.clear();
+        InterpApplied.reserve(Count);
 
         for (uint32 i = 0; i < Count; ++i)
         {
@@ -1303,6 +1359,13 @@ namespace Lumina::Physics
 
             if (Flag == EInterpFlag::Skip || !Registry.valid(Entity))
             {
+                // Body went static or vanished: drop the override and republish so the primitive picks the
+                // resolved matrix back up instead of freezing on the last blend.
+                if (Registry.valid(Entity) && RenderStorage.contains(Entity))
+                {
+                    RenderStorage.erase(Entity);
+                    ECS::Utils::MarkTransformDirtyNoBody(Registry, Entity);
+                }
                 continue;
             }
 
@@ -1312,18 +1375,56 @@ namespace Lumina::Physics
                 continue;
             }
 
-            if (!TransformStorage.contains(Entity) || PendingTeleport.contains(Entity))
+            if (!TransformStorage.contains(Entity))
             {
                 continue;
             }
 
+            // An authored move that hasn't reached the body yet outranks the body's own pose; drop the render
+            // override too so the visual shows the authored target instead of a stale blend.
+            if (PendingTeleport.contains(Entity))
+            {
+                if (RenderStorage.contains(Entity))
+                {
+                    RenderStorage.erase(Entity);
+                }
+                continue;
+            }
+
+            // The SIMULATED pose, not the blend: this is the value gameplay reads and the body re-sync writes
+            // back, so the round trip is a no-op instead of dragging the body onto a display-time pose.
             STransformComponent& TransformComponent = TransformStorage.get(Entity);
             TransformComponent.SetRaw(InterpStaging.CurrPos[i],
                 FQuat(InterpStaging.CurrQw[i], InterpStaging.CurrQx[i], InterpStaging.CurrQy[i], InterpStaging.CurrQz[i]));
-            Registry.emplace_or_replace<FNeedsTransformUpdate>(Entity);
+
+            // Unconditional: on a frame with no fixed step the simulated pose is unchanged but the blend still
+            // advanced, and the resolve's moved-publish is what refreshes the render primitive.
+            ECS::Utils::MarkTransformDirtyNoBody(Registry, Entity);
+
+            InterpApplied.push_back(i);
         }
 
         ECS::Utils::ResolveAllDirtyTransforms(Registry);
+
+        // Render pose = blended location/rotation on the resolved world scale.
+        for (uint32 i : InterpApplied)
+        {
+            const entt::entity Entity = InterpStaging.Entities[i];
+
+            FTransform RenderPose = TransformStorage.get(Entity).WorldTransform;
+            RenderPose.SetLocation(InterpStaging.LerpPos[i]);
+            RenderPose.SetRotation(FQuat(InterpStaging.LerpQw[i], InterpStaging.LerpQx[i],
+                                         InterpStaging.LerpQy[i], InterpStaging.LerpQz[i]));
+
+            if (RenderStorage.contains(Entity))
+            {
+                RenderStorage.get(Entity).Matrix = RenderPose.GetMatrix();
+            }
+            else
+            {
+                RenderStorage.emplace(Entity, FRenderTransform{ RenderPose.GetMatrix() });
+            }
+        }
     }
 
     void FJoltPhysicsScene::LatchCharacterInput()
@@ -2145,6 +2246,8 @@ namespace Lumina::Physics
         {
             Transform->SetHasPhysicsBody(Registry.any_of<SRigidBodyComponent>(Entity));
         }
+
+        DropRenderTransform(Registry, Entity);
 
         // Drop the character from the char-vs-char registry before its CharacterVirtual is released (the
         // shared list holds raw pointers). The proxy set is the source of truth for membership, so this is
@@ -3902,29 +4005,70 @@ namespace Lumina::Physics
         }
     }
 
+    // Decorate a cached unscaled shape for one scaled instance. ScaledShape is a refcounted wrapper holding a
+    // ref plus a Vec3, so instances share the one baked BVH/hull instead of each owning a copy.
+    static JPH::ShapeRefC MakeScaledShape(const JPH::ShapeRefC& Base, const FVector3& Scale, FStringView DebugName)
+    {
+        if (Base == nullptr)
+        {
+            return Base;
+        }
+
+        const JPH::Vec3 JoltScale = JoltUtils::ToJPHVec3(Scale);
+        if (JoltScale.IsClose(JPH::Vec3::sOne()))
+        {
+            return Base;   // unscaled instances use the cached shape directly
+        }
+
+        // Jolt rejects scales a given shape type can't represent (zero on an axis, shear on a rotated
+        // compound child). MakeScaleValid drops the offending components; warn rather than silently
+        // building a collider that doesn't match the mesh.
+        const JPH::Vec3 ValidScale = Base->MakeScaleValid(JoltScale);
+        if (!ValidScale.IsClose(JoltScale))
+        {
+            LOG_WARN("Mesh collider '{}' cannot take scale ({}, {}, {}); clamped to ({}, {}, {}).",
+                     DebugName, Scale.x, Scale.y, Scale.z,
+                     ValidScale.GetX(), ValidScale.GetY(), ValidScale.GetZ());
+        }
+
+        if (ValidScale.IsClose(JPH::Vec3::sOne()))
+        {
+            return Base;
+        }
+
+        return JPH::ShapeRefC(new JPH::ScaledShape(Base, ValidScale));
+    }
+
     JPH::ShapeRefC FJoltPhysicsScene::GetOrCreateMeshShape(const CMesh* Mesh, const FVector3& Scale, bool bConvex)
     {
-        const FMeshShapeKey Key{ Mesh, Scale.x, Scale.y, Scale.z, (uint8)(bConvex ? 1 : 0) };
+        const FMeshShapeKey Key{ Mesh, (uint8)(bConvex ? 1 : 0) };
 
+        JPH::ShapeRefC Base;
         {
             FScopeLock Lock(MeshShapeCacheMutex);
             auto It = MeshShapeCache.find(Key);
             if (It != MeshShapeCache.end())
             {
-                return It->second;
+                Base = It->second;
             }
         }
 
-        // Build outside the lock so parallel QuickHull on distinct meshes isn't serialized; the
-        // try_emplace below only guards the rare same-key race.
-        JPH::ShapeRefC Shape = BuildMeshColliderShape(Mesh->GetMeshResource(), Mesh->GetName().ToString(), Scale, bConvex);
-        if (Shape == nullptr)
+        if (Base == nullptr)
         {
-            return {};
+            // Build outside the lock so parallel QuickHull on distinct meshes isn't serialized; the
+            // try_emplace below only guards the rare same-key race. Always built at unit scale.
+            JPH::ShapeRefC Built = BuildMeshColliderShape(Mesh->GetMeshResource(), Mesh->GetName().ToString(),
+                                                          FVector3(1.0f), bConvex);
+            if (Built == nullptr)
+            {
+                return {};
+            }
+
+            FScopeLock Lock(MeshShapeCacheMutex);
+            Base = MeshShapeCache.try_emplace(Key, Built).first->second;
         }
 
-        FScopeLock Lock(MeshShapeCacheMutex);
-        return MeshShapeCache.try_emplace(Key, Shape).first->second;
+        return MakeScaledShape(Base, Scale, Mesh->GetName().ToString());
     }
 
     void FJoltPhysicsScene::BulkCreateRigidBodies(entt::registry& Registry)
@@ -4018,6 +4162,8 @@ namespace Lumina::Physics
         {
             Transform->SetHasPhysicsBody(Registry.any_of<SCharacterPhysicsComponent>(Entity));
         }
+
+        DropRenderTransform(Registry, Entity);
 
         SRigidBodyComponent& RigidBodyComponent = Registry.get<SRigidBodyComponent>(Entity);
         JPH::BodyInterface& BodyInterface = JoltSystem->GetBodyInterface();

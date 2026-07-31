@@ -269,26 +269,37 @@ namespace Lumina
         // Set by setters, cleared by the resolver. Component-local so writes are ParallelFor-safe.
         mutable bool bWorldDirty = false;
 
-        // Maintained on the game thread by the physics on_construct/on_destroy hooks (and seeded at
-        // StartSimulate). MarkDirty reads it -- possibly from a worker fiber -- to skip the DirtyBodies
-        // enqueue for bodiless entities. A plain bool: a one-frame stale value at most over/under-queues a
-        // single body re-sync (self-healing), which is cheaper than a registry query on the setter path.
+        // Maintained on the game thread by the physics on_construct/on_destroy hooks.
         bool bHasPhysicsBody = false;
         void SetHasPhysicsBody(bool bInHasBody) { bHasPhysicsBody = bInHasBody; }
 
-    private:
+        // Dedup guard for the DirtyBodies queue
+        mutable bool bBodyDirtyQueued = false;
 
-        // Writes only this component + a lock-free enqueue into the dirty queue (no registry mutation), so
-        // setters are concurrency-safe across entities and stay SuppressGCTransition-clean. The bWorldDirty
-        // 0->1 transition is the dedup guard, so an entity is queued once per dirty episode. Bodiless
-        // entities skip the DirtyBodies queue (the common case: rotators, movers, animated transforms).
+        // Clear both dirty guards without touching the queues. For a freshly bit-copied component, whose flags
+        // describe the *source* entity's queue state and would otherwise suppress the copy's own enqueues.
+        void ResetDirtyState()
+        {
+            bWorldDirty      = false;
+            bBodyDirtyQueued = false;
+        }
+
+    private:
+        
         void MarkDirty() const
         {
-            if (!bWorldDirty)
+            const bool bQueueTransform = !bWorldDirty;
+            const bool bQueueBody      = bHasPhysicsBody && !bBodyDirtyQueued;
+
+            if (!bQueueTransform && !bQueueBody)
             {
-                bWorldDirty = true;
-                ECS::Utils::QueueDirtyTransform(DirtyState, Entity, bHasPhysicsBody);
+                return;
             }
+
+            bWorldDirty       = true;
+            bBodyDirtyQueued |= bQueueBody;
+
+            ECS::Utils::QueueDirtyTransform(DirtyState, Entity, bQueueTransform, bQueueBody);
         }
 
         void ResolveIfDirty() const
@@ -302,6 +313,15 @@ namespace Lumina
         FEntityRegistry*              Registry = nullptr;
         entt::entity                  Entity   = entt::null;
         ECS::Utils::FTransformDirtyState* DirtyState = nullptr;
+    };
+
+    // Display-time world matrix, present only on entities the physics step interpolates. Render reads it in
+    // preference to STransformComponent::CachedMatrix; nothing else may. STransformComponent holds the
+    // simulated pose, so gameplay, queries and the body re-sync all agree with what Jolt believes, while the
+    // visual is free to sit between two fixed steps. Not reflected: pure per-frame render state.
+    struct FRenderTransform
+    {
+        FMatrix4 Matrix = FMatrix4(1.0f);
     };
     
 }

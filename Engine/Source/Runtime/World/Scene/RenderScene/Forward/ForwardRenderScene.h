@@ -653,11 +653,12 @@ namespace Lumina
     private:
         
         void InitBuffers();
-        void InitViewImages(FSceneView& View);
+        // ReuseOutputSlot adopts the heap slot detached from the previous Output image, keeping the
+        // view's published ResourceID stable across a resize. See InitFrameResources.
+        void InitViewImages(FSceneView& View, uint32 ReuseOutputSlot = RHI::kInvalidHeapSlot);
         // bDeferRelease routes the images through this slot's deferred-free list instead of freeing them
-        // outright. Required for a resize: draining the GPU is NOT sufficient, because ImGui snapshots hold
-        // BINDLESS SLOT INDICES on the CPU and are submitted after the release runs. Pass false only at
-        // shutdown, where nothing will ever process the deferred list.
+        // outright, so in-flight GPU work finishes first. Pass false only at shutdown, where nothing will
+        // ever process the deferred list.
         void ReleaseViewImages(FSceneView& View, bool bDeferRelease);
         void InitFrameResources();
 

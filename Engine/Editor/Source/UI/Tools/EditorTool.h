@@ -230,6 +230,9 @@ namespace Lumina
 
         /** Is this editor tool for editing assets? */
         NODISCARD virtual bool IsAssetEditorTool() const { return false; }
+
+        /** VFS path of the asset this tool edits, or empty when the tool is not backed by one. */
+        NODISCARD virtual FFixedString GetAssetVirtualPath() const { return {}; }
         
         /** Can there only ever be one of this tool? */
         NODISCARD virtual bool IsSingleton() const { return HasFlag(EEditorToolFlags::Tool_Singleton); }

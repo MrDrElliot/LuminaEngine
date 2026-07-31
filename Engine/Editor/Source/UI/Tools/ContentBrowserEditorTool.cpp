@@ -728,27 +728,6 @@ namespace Lumina
         ImGui::PopTextWrapPos();
     }
 
-    template<size_t BufferSize = 42>
-    class FRenameModalState
-    {
-    public:
-        
-        void Initialize(FStringView CurrentName)
-        {
-            Buffer.assign(CurrentName.begin(), CurrentName.end());
-        }
-
-        
-        // ReSharper disable once CppMemberFunctionMayBeStatic
-        NODISCARD constexpr size_t Capacity() const { return BufferSize; }
-        FORCEINLINE NODISCARD char* CStr() { return Buffer.data(); }
-        FORCEINLINE NODISCARD bool IsValid() const { return !Buffer.empty(); }
-        
-    private:
-        
-        TFixedString<BufferSize> Buffer;
-    };
-
     bool FContentBrowserEditorTool::OnEvent(FEvent& Event)
     {
         if (Event.IsA<FFileDropEvent>())
@@ -772,6 +751,27 @@ namespace Lumina
     {
         ContentBrowserTileView.MarkTreeDirty();
         DirectoryListView.MarkTreeDirty();
+    }
+
+    void FContentBrowserEditorTool::BrowseToAsset(FStringView VirtualPath)
+    {
+        if (VirtualPath.empty())
+        {
+            return;
+        }
+
+        const FStringView ParentPath = VFS::Parent(VirtualPath, true);
+        if (ParentPath.empty())
+        {
+            return;
+        }
+
+        SelectedPath.assign(ParentPath.data(), ParentPath.size());
+        PendingBrowseToPath.assign(VirtualPath.data(), VirtualPath.size());
+        PendingDirectoryReveal = SelectedPath;
+
+        // Force a rebuild even when the folder is already the selected one, the tile still has to be found.
+        RefreshContentBrowser();
     }
 
     void FContentBrowserEditorTool::OnInitialize()
@@ -1089,10 +1089,27 @@ namespace Lumina
                 return LHS.Name < RHS.Name;
             });
             
+            // Extension-insensitive so a package path ("/Game/Foo.lasset") still matches however the
+            // VFS spelled the entry.
+            const FStringView BrowseTarget = VFS::RemoveExtension(FStringView(PendingBrowseToPath.c_str(), PendingBrowseToPath.size()));
+            FTileViewItem* BrowseItem = nullptr;
+
             for (const VFS::FFileInfo& Info : SortedPaths)
             {
                 const bool bProtected = IsProtectedRoot(FStringView(Info.VirtualPath.c_str(), Info.VirtualPath.size()));
-                ContentBrowserTileView.AddItemToTree<FContentBrowserTileViewItem>(nullptr, Info, bProtected);
+                FContentBrowserTileViewItem* NewItem = ContentBrowserTileView.AddItemToTree<FContentBrowserTileViewItem>(nullptr, Info, bProtected);
+
+                if (!BrowseTarget.empty() && VFS::RemoveExtension(NewItem->GetVirtualPath()) == BrowseTarget)
+                {
+                    BrowseItem = NewItem;
+                }
+            }
+
+            PendingBrowseToPath.clear();
+
+            if (BrowseItem != nullptr)
+            {
+                Tree->SelectAndScrollTo(BrowseItem);
             }
         };
 
@@ -1101,7 +1118,13 @@ namespace Lumina
             if (Key == ImGuiKey_F2)
             {
                 FContentBrowserTileViewItem* ContentItem = static_cast<FContentBrowserTileViewItem*>(&Item);
-                PushRenameModal(ContentItem);
+                if (ContentItem->IsProtected())
+                {
+                    ImGuiX::Notifications::NotifyError("Cannot rename a core directory");
+                    return true;
+                }
+
+                ContentBrowserTileView.BeginInlineRename(ContentItem);
                 return true;
             }
 
@@ -1120,7 +1143,35 @@ namespace Lumina
 
             return false;
         };
-        
+
+        ContentBrowserTileViewContext.ItemRenamedFunction = [this] (FTileViewItem* Item, const char* NewName)
+        {
+            FContentBrowserTileViewItem* ContentItem = static_cast<FContentBrowserTileViewItem*>(Item);
+
+            // Empty or unchanged: just drop the edit, no error spam.
+            if (NewName == nullptr || NewName[0] == 0)
+            {
+                return;
+            }
+
+            if (ContentItem->GetName() == FStringView(NewName))
+            {
+                return;
+            }
+
+            FStringView PathNoExt = VFS::RemoveExtension(ContentItem->GetVirtualPath());
+            FFixedString TestPath = Paths::Combine(VFS::Parent(PathNoExt), NewName);
+            TestPath.append_convert(ContentItem->GetExtension());
+
+            if (VFS::Exists(TestPath))
+            {
+                ImGuiX::Notifications::NotifyError("Rename Failed, path already exists: {0}", TestPath);
+                return;
+            }
+
+            ActionRegistry.EnqueueAction<FPendingRename>(FPendingRename{ FFixedString(ContentItem->GetVirtualPath().data(), ContentItem->GetVirtualPath().length()), TestPath });
+        };
+
         DirectoryContext.ItemContextMenuFunction = [this](FTreeListView& Tree, FTreeNodeID Item)
         {
 
@@ -1514,7 +1565,7 @@ namespace Lumina
         DrawHelpTextRow("Filter",
             "Filter menu hides asset classes you don't want to see. View Options changes tile size.");
         DrawHelpTextRow("Rename / Delete",
-            "F2 renames; Delete removes. Renames update inbound references via redirectors.");
+            "F2 renames the tile in place; Delete removes. Renames update inbound references via redirectors.");
     }
 
     void FContentBrowserEditorTool::DrawToolMenu(const FUpdateContext& UpdateContext)
@@ -1815,201 +1866,85 @@ namespace Lumina
         }
     }
 
-    void FContentBrowserEditorTool::PushRenameModal(FContentBrowserTileViewItem* ContentItem)
-    {
-        ToolContext->PushModal("Rename", ImVec2(480.0f, 300.0f), [this, ContentItem, RenameState = MakeUnique<FRenameModalState<>>()]
-        {
-            if (!RenameState->IsValid())
-            {
-                RenameState->Initialize(ContentItem->GetName());
-            }
-            
-            const ImGuiStyle& style = ImGui::GetStyle();
-            const float ContentWidth = ImGui::GetContentRegionAvail().x;
-            
-            ImGuiX::Font::PushFont(ImGuiX::Font::EFont::MediumBold);
-            ImGuiX::TextColored(ImVec4(0.9f, 0.9f, 0.95f, 1.0f), LE_ICON_ARCHIVE_EDIT " Rename {0}", ContentItem->IsDirectory() ? "Folder" : "Asset");
-            ImGuiX::Font::PopFont();
-            
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-            ImGui::Spacing();
-            
-            ImGuiX::TextColored(ImVec4(0.6f, 0.6f, 0.65f, 1.0f), "Current name:");
-            
-            ImGui::SameLine();
-            
-            ImGuiX::TextColored(ImVec4(0.85f, 0.85f, 0.9f, 1.0f), "{0}", ContentItem->GetName());
-            
-            ImGui::Spacing();
-            ImGui::Spacing();
-            
-            ImGuiX::TextColoredUnformatted(ImVec4(0.6f, 0.6f, 0.65f, 1.0f), "New name:");
-            
-            ImGui::Spacing();
-            
-            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.15f, 0.15f, 0.18f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.2f, 0.2f, 0.25f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0.25f, 0.25f, 0.3f, 1.0f));
-            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12.0f, 8.0f));
-            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
-            
-            ImGui::SetNextItemWidth(-1);
-            
-            bool bSubmitted = ImGui::InputText("##RenameInput", RenameState->CStr(), RenameState->Capacity(), ImGuiInputTextFlags_CharsNoBlank | ImGuiInputTextFlags_EnterReturnsTrue);
-            
-            ImGui::PopStyleVar(2);
-            ImGui::PopStyleColor(3);
-            
-            ImGui::Spacing();
-            ImGui::Spacing();
-            
-            bool bIsValid = RenameState->IsValid();
-            bool bNameUnchanged = strcmp(RenameState->CStr(), ContentItem->GetName().data()) == 0;
-            FString ValidationMessage;
-            bool bHasError = false;
-            
-            if (RenameState->IsValid())
-            {
-                if (bNameUnchanged)
-                {
-                    ValidationMessage = "Name unchanged - please enter a different name";
-                    bHasError = true;
-                    bIsValid = false;
-                }
-                else
-                {
-                    FStringView Extension = ContentItem->GetExtension();
-                    FStringView PathNoExt = VFS::RemoveExtension(ContentItem->GetVirtualPath());
-                    FFixedString TestPath = Paths::Combine(PathNoExt, RenameState->CStr());
-                    TestPath.append_convert(Extension.data(), Extension.length());
-                    
-                    if (VFS::Exists(TestPath))
-                    {
-                        ValidationMessage = std::format("Path already exists: {}", TestPath.c_str()).c_str();
-                        bHasError = true;
-                        bIsValid = false;
-                    }
-                }
-            }
-            
-            if (bHasError && !ValidationMessage.empty())
-            {
-                ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.3f, 0.1f, 0.1f, 0.3f));
-                ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 4.0f);
-                ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
-                ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.8f, 0.2f, 0.2f, 0.4f));
-                
-                ImGui::BeginChild("##ValidationError", ImVec2(-1, 45.0f), true);
-                
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
-                ImGui::Text(LE_ICON_ALERT_OCTAGON);
-                ImGui::SameLine();
-                ImGui::TextWrapped("%s", ValidationMessage.c_str());
-                ImGui::PopStyleColor();
-                
-                ImGui::EndChild();
-                ImGui::PopStyleColor(2);
-                ImGui::PopStyleVar(2);
-                
-                ImGui::Spacing();
-            }
-            
-            if (bSubmitted && bIsValid)
-            {
-                FStringView PathNoExt = VFS::RemoveExtension(ContentItem->GetVirtualPath());
-                FFixedString TestPath = Paths::Combine(VFS::Parent(PathNoExt), RenameState->CStr());
-                TestPath.append_convert(ContentItem->GetExtension());
-                
-                ActionRegistry.EnqueueAction<FPendingRename>(FPendingRename{ FFixedString(ContentItem->GetVirtualPath().data(), ContentItem->GetVirtualPath().length()), TestPath });
-                return true;
-            }
-            
-            ImGui::Spacing();
-            
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            constexpr float ButtonHeight = 32.0f;
-            const float ButtonWidth = (ContentWidth - style.ItemSpacing.x) * 0.5f;
-            
-            if (!bIsValid)
-            {
-                ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.5f);
-                ImGui::PushItemFlag(ImGuiItemFlags_Disabled, true);
-            }
-            else
-            {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.5f, 0.9f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.6f, 1.0f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.45f, 0.85f, 1.0f));
-            }
-            
-            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
-            
-            if (ImGui::Button(LE_ICON_CHECK " Rename", ImVec2(ButtonWidth, ButtonHeight)))
-            {
-                if (bIsValid)
-                {
-                    ImGui::PopStyleColor(3);
-                    ImGui::PopStyleVar();
-
-                    FStringView PathNoExt = VFS::RemoveExtension(ContentItem->GetVirtualPath());
-                    FFixedString TestPath = Paths::Combine(VFS::Parent(PathNoExt), RenameState->CStr());
-                    TestPath.append_convert(ContentItem->GetExtension());
-                
-                    ActionRegistry.EnqueueAction<FPendingRename>(FPendingRename{ FFixedString(ContentItem->GetVirtualPath().data(), ContentItem->GetVirtualPath().length()), TestPath });
-                    return true;
-                }
-            }
-            
-            ImGui::PopStyleVar();
-            
-            if (!bIsValid)
-            {
-                ImGui::PopItemFlag();
-                ImGui::PopStyleVar();
-            }
-            else
-            {
-                ImGui::PopStyleColor(3);
-            }
-            
-            ImGui::SameLine();
-            
-            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.2f, 0.22f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.25f, 0.27f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.15f, 0.17f, 1.0f));
-            
-            if (ImGui::Button(LE_ICON_CANCEL " Cancel", ImVec2(ButtonWidth, ButtonHeight)))
-            {
-                ImGui::PopStyleColor(3);
-                ImGui::PopStyleVar();
-                
-                return true;
-            }
-            
-            ImGui::PopStyleColor(3);
-            ImGui::PopStyleVar();
-            
-            if (ImGui::IsKeyPressed(ImGuiKey_Escape))
-            {
-                return true;
-            }
-            
-            return false;
-        });
-    }
-
     void FContentBrowserEditorTool::DrawDirectoryBrowser(bool bIsFocused, ImVec2 Size)
     {
         ImGui::BeginChild("Directories", Size, ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
 
         DirectoryListView.Draw(DirectoryContext);
-        
+
+        // After Draw, so the tree has been rebuilt and the nodes we walk actually exist. The scroll
+        // request lands on the next Draw.
+        RevealPendingDirectory();
+
         ImGui::EndChild();
+    }
+
+    void FContentBrowserEditorTool::RevealPendingDirectory()
+    {
+        if (PendingDirectoryReveal.empty() || DirectoryListView.IsDirty())
+        {
+            return;
+        }
+
+        const FStringView Target(PendingDirectoryReveal.c_str(), PendingDirectoryReveal.size());
+        PendingDirectoryReveal.clear();
+
+        // True when NodePath is Target itself or one of its ancestors.
+        auto LeadsToTarget = [Target](FStringView NodePath)
+        {
+            if (NodePath.empty() || !Target.starts_with(NodePath))
+            {
+                return false;
+            }
+
+            return Target.size() == NodePath.size() || Target[NodePath.size()] == '/';
+        };
+
+        // Node paths are full virtual paths, so a prefix walk finds the branch without segment math.
+        auto FindChildLeadingToTarget = [&](FTreeNodeID Parent)
+        {
+            const int32 NumChildren = DirectoryListView.NumChildNodes(Parent);
+            for (int32 Index = 0; Index < NumChildren; ++Index)
+            {
+                const FTreeNodeID Child = DirectoryListView.GetChildNode(Parent, Index);
+                const FContentBrowserListViewItemData& Data = DirectoryListView.Get<FContentBrowserListViewItemData>(Child);
+                if (LeadsToTarget(FStringView(Data.Path.c_str(), Data.Path.size())))
+                {
+                    return Child;
+                }
+            }
+
+            return InvalidTreeNode;
+        };
+
+        FTreeNodeID Current = FindChildLeadingToTarget(InvalidTreeNode);
+        if (!Current.IsValid())
+        {
+            return;
+        }
+
+        while (true)
+        {
+            // Copied, not referenced: ExpandNode creates nodes and can reallocate the node pool.
+            const FFixedString CurrentPath = DirectoryListView.Get<FContentBrowserListViewItemData>(Current).Path;
+            if (FStringView(CurrentPath.c_str(), CurrentPath.size()) == Target)
+            {
+                break;
+            }
+
+            DirectoryListView.ExpandNode(Current, DirectoryContext);
+
+            const FTreeNodeID Next = FindChildLeadingToTarget(Current);
+            if (!Next.IsValid())
+            {
+                break;
+            }
+
+            Current = Next;
+        }
+
+        DirectoryListView.SetSelectionSilent(Current);
+        DirectoryListView.RequestScrollToNode(Current);
     }
 
     void FContentBrowserEditorTool::DrawContentBrowser(bool bIsFocused, ImVec2 Size)
@@ -2237,7 +2172,7 @@ namespace Lumina
 
         if (ImGui::MenuItem(LE_ICON_RENAME " Rename", "F2", false, !bIsProtected))
         {
-            PushRenameModal(ContentItem);
+            ContentBrowserTileView.BeginInlineRename(ContentItem);
         }
 
         DrawMenuSection("CLIPBOARD");

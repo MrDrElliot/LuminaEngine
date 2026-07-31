@@ -127,6 +127,7 @@ namespace Lumina
         RegisterGraphNode(CMaterialExpression_NumericConstant::StaticClass());
 
         RegisterGraphNode(CMaterialExpression_TextureSample::StaticClass());
+        RegisterGraphNode(CMaterialExpression_CurveSample::StaticClass());
 
         RegisterGraphNode(CMaterialExpression_Luminance::StaticClass());
         RegisterGraphNode(CMaterialExpression_Desaturate::StaticClass());

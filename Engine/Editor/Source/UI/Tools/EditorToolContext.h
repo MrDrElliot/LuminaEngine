@@ -30,6 +30,10 @@ namespace Lumina
 
         virtual void OpenScriptEditor(FStringView ScriptPath) = 0;
 
+        /** Reveals a VFS path in the Content Browser: shows the panel, navigates to the containing
+         *  folder, then selects and scrolls to the item. */
+        virtual void BrowseToAsset(FStringView VirtualPath) = 0;
+
         /** Called just before an asset is marked for destroy, mostly to close any asset editors that may be using it */
         virtual void OnDestroyAsset(CObject* InAsset) = 0;
         

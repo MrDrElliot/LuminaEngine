@@ -137,6 +137,9 @@ namespace Lumina
         bool OnEvent(FEvent& Event) override;
         
         void RefreshContentBrowser();
+
+        /** Navigates to the folder holding VirtualPath, then selects and scrolls to its tile. */
+        void BrowseToAsset(FStringView VirtualPath);
         bool IsSingleWindowTool() const override { return true; }
         const char* GetTitlebarIcon() const override { return LE_ICON_FORMAT_LIST_BULLETED_TYPE; }
         void OnInitialize() override;
@@ -159,9 +162,12 @@ namespace Lumina
 
         void TryImport(const FFixedString& Path);
         
-        void PushRenameModal(FContentBrowserTileViewItem* ContentItem);
-        
         void DrawDirectoryBrowser(bool bIsFocused, ImVec2 Size);
+
+        // Walks the left tree down to PendingDirectoryReveal, expanding lazily-built nodes on the way,
+        // then selects and scrolls to it. Runs after the tree has been rebuilt for the frame.
+        void RevealPendingDirectory();
+
         void DrawContentBrowser(bool bIsFocused, ImVec2 Size);
         
         void DrawAssetContextMenu(FContentBrowserTileViewItem* ContentItem);
@@ -189,6 +195,11 @@ namespace Lumina
         FTileViewContext            ContentBrowserTileViewContext;
 
         FFixedString                SelectedPath;
+
+        // One-shot browse-to targets, consumed by the next tile rebuild / directory tree draw.
+        FFixedString                PendingBrowseToPath;
+        FFixedString                PendingDirectoryReveal;
+
         THashMap<FName, bool>       FilterState;
     };
 }

@@ -1,6 +1,11 @@
 -- Premake extension: post-process generated C# csproj XML to add analyzer/source-gen refs, raw SDK props/targets, and blank inherited C++ defines.
 -- String post-processing (not premake's internal call-array, which differs across versions).
 
+-- Fall back to _MAIN_SCRIPT_DIR so this loads before Setup.bat sets LUMINA_DIR.
+local LuminaDir = os.getenv("LUMINA_DIR") or _MAIN_SCRIPT_DIR
+
+include (path.join(LuminaDir, "BuildScripts/Logger"))
+
 local p = premake
 
 -- Project-scope fields; values are raw XML lines emitted verbatim.
@@ -45,9 +50,47 @@ local function EmitDirectoryBuildProps(prj)
     end
 end
 
+-- BaseIntermediateOutputPath above puts the NuGet restore obj under Intermediates, so wiping
+-- Intermediates strands the next build with NETSDK1004 (missing project.assets.json) until
+-- something restores again -- VS only restores on solution open, and a plain MSBuild never does.
+-- Regenerating is already the documented step after a wipe, so restore here and close the gap.
+local ManagedProjects = {}
+
+local function RestoreManagedProjects()
+    if #ManagedProjects == 0 then return end
+
+    Logger.Info("Restoring NuGet packages for managed projects...")
+
+    for _, ProjectFile in ipairs(ManagedProjects) do
+        local Ok, _, Code = os.execute(string.format('dotnet restore "%s" --nologo --verbosity quiet', ProjectFile))
+        if not Ok then
+            Logger.Warning("Restore failed for " .. path.getname(ProjectFile) .. " (exit " .. tostring(Code) .. ").")
+            Logger.Warning("Install the .NET SDK and re-run, or build once with `MSBuild Lumina.slnx -restore`.")
+            return
+        end
+    end
+
+    Logger.Success("NuGet restore complete.")
+end
+
+-- Only generate actions populate ManagedProjects, so clean/setup skip this untouched.
+local CurrentAction = p.action.get(_ACTION)
+if CurrentAction then
+    local BaseOnEnd = CurrentAction.onEnd
+
+    CurrentAction.onEnd = function()
+        if BaseOnEnd then
+            BaseOnEnd()
+        end
+
+        RestoreManagedProjects()
+    end
+end
+
 p.override(dn, "generate", function(base, prj)
     if IsManaged(prj) then
         EmitDirectoryBuildProps(prj)
+        ManagedProjects[#ManagedProjects + 1] = p.filename(prj, ".csproj")
     end
 
     local xml = p.capture(function() base(prj) end)

@@ -106,10 +106,10 @@ namespace Lumina
         CEdNodeGraphPin* NewPin = NewObject<CEdNodeGraphPin>(InClass);
         NewPin->SetPinName(Name);
 
-        uint32 ID = HashPinID(FullName, Name, Direction);
+        uint32 ID = HashPinID(PinHashName, Name, Direction);
         for (uint32 Salt = 1; IsPinIDTaken(ID); ++Salt)
         {
-            ID = HashPinID(FullName, Name + "#" + eastl::to_string(Salt), Direction);
+            ID = HashPinID(PinHashName, Name + "#" + eastl::to_string(Salt), Direction);
         }
         NewPin->PinID = ID;
         NewPin->bInputPin = (Direction == ENodePinDirection::Input);

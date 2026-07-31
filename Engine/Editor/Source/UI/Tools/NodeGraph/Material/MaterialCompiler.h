@@ -19,6 +19,7 @@ namespace Lumina
     class CMaterialOutput;
     struct FMaterialUniforms;
     struct FMaterialParameter;
+    struct SKeyedCurve;
 }
 
 
@@ -163,6 +164,10 @@ namespace Lumina
         void DefineTextureSample(const FString& ID);
         void TextureSample(const FString& ID, CTexture* Texture, CMaterialInput* Input);
         void TextureSampleParameter(const FString& ID, const FName& ParamID, CTexture* Texture, CMaterialInput* Input);
+
+        // Curve operations. The curve is baked into shader constants at compile time, so no bindings
+        // are involved and an edited curve only takes effect on the next material recompile.
+        void CurveSample(const FString& ID, const SKeyedCurve& Curve, CMaterialInput* TimeInput);
 
         // Built-in inputs
         void VertexNormal(const FString& ID, CMaterialGraphNode* Node = nullptr);

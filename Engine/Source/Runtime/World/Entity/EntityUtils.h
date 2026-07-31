@@ -72,9 +72,10 @@ namespace Lumina::ECS::Utils
 	RUNTIME_API FTransformDirtyState* EnsureTransformDirtyState(FEntityRegistry& Registry);
 
 	// Enqueue an entity whose local transform changed (lock-free, any thread); raises the dirty signal.
-	// Dedup is the caller's bWorldDirty 0->1 guard. bQueueBody also enqueues it for the physics body
-	// re-sync; pass false for bodiless entities to skip that queue (and its drain) entirely.
-	RUNTIME_API void QueueDirtyTransform(FTransformDirtyState* State, entt::entity Entity, bool bQueueBody);
+	// The two queues are independent, each deduped by its own guard on the caller (bWorldDirty /
+	// bBodyDirtyQueued): bQueueTransform feeds the resolve, bQueueBody feeds the physics body re-sync.
+	// Bodiless entities pass bQueueBody=false to skip that queue (and its drain) entirely.
+	RUNTIME_API void QueueDirtyTransform(FTransformDirtyState* State, entt::entity Entity, bool bQueueTransform, bool bQueueBody);
 
 	// Start recording which entities the resolve actually moved, so a downstream cache (the render
 	// scene's persistent primitive table) can refresh just those instead of rescanning every entity.
@@ -97,6 +98,11 @@ namespace Lumina::ECS::Utils
 	// External (non-setter) dirtying; the bridge hook converts the tag to the component flag. Single-threaded.
 	// Per-frame gameplay uses the component setters instead (ParallelFor-safe).
 	RUNTIME_API void MarkTransformDirty(FEntityRegistry& Registry, entt::entity Entity);
+
+	// Transform-only dirty: queues the resolve, never the physics body re-sync. For the physics writeback,
+	// whose pose came out of the body -- the ordinary paths would queue every simulated body for a teleport
+	// back onto its own interpolated (one-step-stale) transform, which drags the simulation backwards.
+	RUNTIME_API void MarkTransformDirtyNoBody(FEntityRegistry& Registry, entt::entity Entity);
 
 	//-------------------------------------------------------------------------
 	// Entity transform accessors
