@@ -112,10 +112,56 @@ namespace Lumina
         const char* NameBegin  = Name.data();
         const char* NameEnd    = Name.data() + Name.size();
 
+        // Long names get an ellipsis rather than being sliced mid-glyph by the clip rect below. The
+        // buffer must outlive the AddText call, so it lives out here.
+        char Truncated[256];
+
         ImGuiX::Font::PushFont(ImGuiX::Font::EFont::SmallBold);
         ImFont*      LabelFont = ImGui::GetFont();
         const float  FontSize  = ImGui::GetFontSize();
-        const ImVec2 TextSize  = ImGui::CalcTextSize(NameBegin, NameEnd, false, TileSize);
+        ImVec2       TextSize  = ImGui::CalcTextSize(NameBegin, NameEnd, false, TileSize);
+
+        if (TextSize.y > GLabelHeight)
+        {
+            static constexpr char Ellipsis[]  = "...";
+            constexpr size_t      EllipsisLen = sizeof(Ellipsis) - 1;
+
+            // Longest prefix that still fits the band once the ellipsis is appended. Bisected rather
+            // than walked, and measured through CalcTextSize so ImGui's own wrapping decides the fit --
+            // reproducing its line breaks by hand is what gets this subtly wrong. Only names that
+            // actually overflow pay for the handful of extra measurements.
+            size_t Low  = 0;
+            size_t High = std::min(Name.size(), sizeof(Truncated) - EllipsisLen - 1);
+            while (Low < High)
+            {
+                const size_t Mid = (Low + High + 1) / 2;
+                memcpy(Truncated, NameBegin, Mid);
+                memcpy(Truncated + Mid, Ellipsis, EllipsisLen);
+
+                if (ImGui::CalcTextSize(Truncated, Truncated + Mid + EllipsisLen, false, TileSize).y <= GLabelHeight)
+                {
+                    Low = Mid;
+                }
+                else
+                {
+                    High = Mid - 1;
+                }
+            }
+
+            // Never cut inside a multi-byte sequence; a split UTF-8 codepoint renders as a broken glyph.
+            while (Low > 0 && ((uint8)NameBegin[Low] & 0xC0) == 0x80)
+            {
+                --Low;
+            }
+
+            memcpy(Truncated, NameBegin, Low);
+            memcpy(Truncated + Low, Ellipsis, EllipsisLen);
+
+            NameBegin = Truncated;
+            NameEnd   = Truncated + Low + EllipsisLen;
+            TextSize  = ImGui::CalcTextSize(NameBegin, NameEnd, false, TileSize);
+        }
+
         ImGuiX::Font::PopFont();
 
         ImGui::Dummy(ImVec2(0.0f, GLabelGap));

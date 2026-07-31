@@ -1,5 +1,6 @@
 ﻿#include "EdGraphNode.h"
 
+#include "EdNodeGraph.h"
 #include "EdNodeGraphPin.h"
 #include "Core/Math/Hash/Hash.h"
 #include "Core/Object/ObjectAllocator.h"
@@ -50,6 +51,14 @@ namespace Lumina
 
         NodeEditor::PopStyleColor(4);
         NodeEditor::PopStyleVar(7);
+    }
+
+    void CEdGraphNode::NotifyValueEdited()
+    {
+        if (OwningGraph != nullptr)
+        {
+            OwningGraph->NotifyContentChanged();
+        }
     }
 
     void CEdGraphNode::DrawNodeTitleBar()

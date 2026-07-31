@@ -77,8 +77,12 @@ namespace Lumina
 
                 if (bSame)
                 {
-                    // Retry until the mesh has loaded and every material has finished compiling.
-                    if (!Candidate.bResolved)
+                    // Rebuild when the mesh/material data has moved on (ResolvedEpoch), as well as while
+                    // still waiting for it to arrive (!bResolved). Without the epoch test a resolved
+                    // entry was frozen forever: assigning a mesh's default materials keeps the key
+                    // identical, so every instance in every world kept drawing the old assignment until
+                    // something perturbed the override list into a different key.
+                    if (!Candidate.bResolved || Candidate.ResolvedEpoch != GetEpoch())
                     {
                         ResolveSurfaces(*Entries[Handle], Mesh, Overrides);
                         if (!Entries[Handle]->bResolved)
@@ -113,6 +117,40 @@ namespace Lumina
         return NewHandle;
     }
 
+    namespace
+    {
+        // Shaders a surface must actually have to be VISIBLE, as opposed to merely compiled.
+        //
+        // Translucency takes the forward/WBOIT path and needs no deferred shader. Everything opaque
+        // rasterizes into the VisBuffer and is then shaded by a tile pass that bins one slot per
+        // distinct deferred shader -- and that binning SKIPS any material whose deferred shader is
+        // null. So an opaque surface missing it rasterizes correctly, occupies the VisBuffer, and is
+        // then never shaded: the geometry is "drawn" and completely invisible, indistinguishable from
+        // a missing mesh. Same for the VisBuffer geometry shaders, one step earlier.
+        bool HasRequiredPassShaders(CMaterialInterface* Material)
+        {
+            CMaterial* Concrete = IsValid(Material) ? Material->GetMaterial() : nullptr;
+            if (Concrete == nullptr)
+            {
+                return false;
+            }
+
+            // Either geometry path is fine; the pass picks whichever is present.
+            if (Concrete->GetVisBufferVertexShader() == nullptr && Concrete->GetVisBufferMeshShader() == nullptr)
+            {
+                return false;
+            }
+
+            const EBlendMode Blend = Material->GetBlendMode();
+            if (Blend == EBlendMode::Translucent || Blend == EBlendMode::Additive)
+            {
+                return true;
+            }
+
+            return Concrete->GetDeferredShader() != nullptr;
+        }
+    }
+
     bool MeshResolve::ResolveSurfaceMaterial(FResolvedSurface& R, CMaterialInterface* RawMaterial)
     {
         bool bReady = true;
@@ -129,6 +167,17 @@ namespace Lumina
             {
                 bReady = false;
             }
+            Material = CMaterial::GetDefaultMaterial();
+        }
+
+        // Second gate. IsReadyForRender reports that the material finished COMPILING, not that the
+        // shaders the passes bind exist -- the two disagree while a material is part-way through, and a
+        // surface cached in that window is resolved, "ready", and permanently invisible. Fall back to
+        // the default material so the mesh at least draws, and report not-ready so the resolve retries
+        // and swaps the real material in once its shaders land.
+        if (!HasRequiredPassShaders(Material))
+        {
+            bReady   = false;
             Material = CMaterial::GetDefaultMaterial();
         }
 
@@ -180,6 +229,11 @@ namespace Lumina
         // are all at defaults, so resolving now would cache an empty entry; leave it unresolved and the
         // caller re-arms until the data phase lands.
         ++Out.Generation;
+
+        // Stamped up front, including on the early-out below: this entry now reflects the epoch it was
+        // last examined at, so a mesh that is still loading is retried through bResolved rather than by
+        // re-running the whole resolve on every lookup.
+        Out.ResolvedEpoch = GetEpoch();
 
         if (Mesh->HasAnyFlag(OF_NeedsLoad))
         {

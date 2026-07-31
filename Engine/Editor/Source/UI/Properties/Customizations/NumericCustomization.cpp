@@ -34,7 +34,9 @@ namespace Lumina
 
         // One labeled row: leading category icon + three color-tagged XYZ drag fields.
         // Clicking an axis tag zeroes that component and sets bResetClicked.
-        EPropertyChangeOp DrawAxisRow(const char* ID, const char* Icon, const ImVec4& IconColor, const char* Tooltip, float* Values, float Speed, bool& bResetClicked, float ResetValue = 0.0f, const char* Format = "%.3f")
+        // UniformLock, when non-null, adds a trailing toggle to the row and reserves width for it. The
+        // caller owns what "uniform" means for its values; this only draws and stores the flag.
+        EPropertyChangeOp DrawAxisRow(const char* ID, const char* Icon, const ImVec4& IconColor, const char* Tooltip, float* Values, float Speed, bool& bResetClicked, float ResetValue = 0.0f, const char* Format = "%.3f", bool* UniformLock = nullptr)
         {
             EPropertyChangeOp Op = EPropertyChangeOp::None;
             const ImGuiStyle& Style = ImGui::GetStyle();
@@ -52,8 +54,9 @@ namespace Lumina
             ImGui::SameLine(IconColumnW);
 
             const float TagW = LineHeight;
+            const float LockW = UniformLock != nullptr ? LineHeight + Style.ItemInnerSpacing.x : 0.0f;
             const float Avail = ImGui::GetContentRegionAvail().x;
-            const float FieldW = Math::Max((Avail - 3.0f * (TagW + Style.ItemInnerSpacing.x)) / 3.0f, 1.0f);
+            const float FieldW = Math::Max((Avail - LockW - 3.0f * (TagW + Style.ItemInnerSpacing.x)) / 3.0f, 1.0f);
 
             for (int32 Axis = 0; Axis < 3; ++Axis)
             {
@@ -87,6 +90,21 @@ namespace Lumina
                 }
                 AccumulateOp(Op);
                 ImGui::PopID();
+            }
+
+            if (UniformLock != nullptr)
+            {
+                ImGui::SameLine(0.0f, Style.ItemInnerSpacing.x);
+                if (ImGui::Button(*UniformLock ? LE_ICON_LOCK : LE_ICON_LOCK_OPEN_VARIANT, ImVec2(LineHeight, LineHeight)))
+                {
+                    *UniformLock = !*UniformLock;
+                }
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                {
+                    ImGui::SetTooltip("%s", *UniformLock
+                        ? "Uniform: dragging one axis scales the others by the same ratio."
+                        : "Non-uniform: each axis is independent.");
+                }
             }
 
             ImGui::PopID();
@@ -385,7 +403,45 @@ namespace Lumina
         bReset |= bRotationReset;
 
         FVector3 ScaleVec = DisplayValue.GetScale();
-        Merge(DrawAxisRow("S", LE_ICON_ARROW_TOP_RIGHT_BOTTOM_LEFT, ImVec4(1.0f, 0.70f, 0.40f, 1.0f), "Scale (multiplier)", Math::ValuePtr(ScaleVec), 0.01f, bReset, 1.0f, "%.3f\xc3\x97"));
+        const FVector3 PrevScale = ScaleVec;
+        bool bScaleReset = false;
+        const EPropertyChangeOp ScaleOp = DrawAxisRow("S", LE_ICON_ARROW_TOP_RIGHT_BOTTOM_LEFT, ImVec4(1.0f, 0.70f, 0.40f, 1.0f),
+            "Scale (multiplier)", Math::ValuePtr(ScaleVec), 0.01f, bScaleReset, 1.0f, "%.3f\xc3\x97", &bUniformScale);
+
+        if (bUniformScale && ScaleOp == EPropertyChangeOp::Updated)
+        {
+            // Propagate by RATIO, not by delta: scale is a multiplier, so dragging X from 1 to 2 should
+            // double the other two, not add 1 to them. A previous value of zero has no ratio to carry,
+            // so those axes take the edited value outright rather than staying stuck at zero.
+            float* Scale = Math::ValuePtr(ScaleVec);
+            const float* Prev = Math::ValuePtr(PrevScale);
+            for (int32 Axis = 0; Axis < 3; ++Axis)
+            {
+                if (Scale[Axis] == Prev[Axis])
+                {
+                    continue;
+                }
+
+                const float Ratio = Prev[Axis] != 0.0f ? (Scale[Axis] / Prev[Axis]) : 0.0f;
+                for (int32 Other = 0; Other < 3; ++Other)
+                {
+                    if (Other != Axis)
+                    {
+                        Scale[Other] = Ratio != 0.0f ? Prev[Other] * Ratio : Scale[Axis];
+                    }
+                }
+                break;   // only one axis can be dragged at a time
+            }
+        }
+
+        // Locked, an axis reset means "reset the scale", since the axes are not independent.
+        if (bUniformScale && bScaleReset)
+        {
+            ScaleVec = FVector3(1.0f);
+        }
+
+        Merge(ScaleOp);
+        bReset |= bScaleReset;
         DisplayValue.SetScale(ScaleVec);
 
         // A reset writes the value this frame: open the undo transaction now (Started),

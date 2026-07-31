@@ -190,17 +190,54 @@ namespace Lumina
                 ImGui::EndCombo();
             }
         
-            ImGui::BeginDisabled(Object == nullptr);
-            if (ImGui::Button(LE_ICON_CONTENT_COPY "##Copy", GButtonSize))
+            FEditorUI* EditorUI = static_cast<FEditorUI*>(GEditorEngine->GetDevelopmentToolsUI());
+
+            // "Use the asset selected in the Content Browser". Outside the disabled block below on
+            // purpose: this is most useful when the slot is EMPTY, which is exactly when everything
+            // else here is greyed out. Enabled only for a selection this property could actually hold.
+            const FAssetData* BrowserSelection = EditorUI != nullptr ? EditorUI->GetContentBrowserSelectedAsset() : nullptr;
+            bool bSelectionFits = false;
+            if (BrowserSelection != nullptr)
             {
-                ImGui::SetClipboardText(HardObject->GetName().c_str());
+                CClass* SelectedClass = FindObject<CClass>(BrowserSelection->AssetClass);
+                bSelectionFits = SelectedClass != nullptr && SelectedClass->IsChildOf(ObjectProperty->GetPropertyClass());
             }
+
+            ImGui::BeginDisabled(!bSelectionFits);
+            if (ImGui::Button(LE_ICON_ARROW_LEFT_CIRCLE "##UseSelected", GButtonSize))
+            {
+                if (CObject* Loaded = LoadObject<CObject>(BrowserSelection->AssetGUID))
+                {
+                    Object = Loaded;
+                    bWasChanged = true;
+                }
+            }
+            ImGui::EndDisabled();
+
+            ImGuiX::TextTooltip("{}", bSelectionFits
+                ? "Use the asset selected in the Content Browser."
+                : "Select a compatible asset in the Content Browser to use it here.");
 
             ImGui::SameLine();
 
-            if (ImGui::Button(LE_ICON_COG "##Options", GButtonSize))
+            ImGui::BeginDisabled(Object == nullptr);
+
+            // Reveal in the Content Browser -- the inverse of the button above.
+            if (ImGui::Button(LE_ICON_MAGNIFY "##Browse", GButtonSize))
             {
-                
+                if (HardObject && HardObject->GetPackage() && EditorUI != nullptr)
+                {
+                    const FString PackageName = HardObject->GetPackage()->GetName().ToString();
+                    EditorUI->BrowseToAsset(FStringView(PackageName.c_str(), PackageName.size()));
+                }
+            }
+            ImGuiX::TextTooltip("{}", "Show this asset in the Content Browser.");
+
+            ImGui::SameLine();
+
+            if (ImGui::Button(LE_ICON_CONTENT_COPY "##Copy", GButtonSize))
+            {
+                ImGui::SetClipboardText(HardObject->GetName().c_str());
             }
 
             ImGui::SameLine();

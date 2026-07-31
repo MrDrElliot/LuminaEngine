@@ -95,6 +95,41 @@ namespace Lumina
         FString CustomEditorPath;
     };
 
+    // Which tool tabs this project had open. Per-project (lives in the project's own /Config), and
+    // written through on every open and close rather than at shutdown -- a crash must not lose it.
+    //
+    // Entries are "<kind>:<key>" strings kept in the order the tabs were opened:
+    //   asset:<guid>   an asset editor, keyed by GUID so a moved or renamed asset still resolves
+    //   file:<path>    a raw-file editor (.rml, ...), keyed by VFS path
+    // A stringly-typed key rather than a reflected struct keeps FEditorUI from having to hand every
+    // tool subclass a restore interface, and leaves the JSON readable.
+    REFLECT(MinimalAPI, ConfigFile = "/Config/EditorSession.json", DisplayName = "Session", Category = "Editor")
+    class CEditorSessionSettings : public CDeveloperSettings
+    {
+        GENERATED_BODY()
+    public:
+
+        /** Reopen the asset and file tabs that were open the last time this project was loaded. */
+        PROPERTY(Editable, Category = "Startup")
+        bool bRestoreOpenTabs = true;
+
+        /** Open tabs, oldest first. Maintained by the editor; not meant to be hand-edited. */
+        PROPERTY()
+        TVector<FString> OpenTabs;
+    };
+
+    // Material editor preferences.
+    REFLECT(MinimalAPI, ConfigFile = "/Editor/Config/EditorPreferences.json", DisplayName = "Material Editor", Category = "Editor")
+    class CMaterialEditorSettings : public CDeveloperSettings
+    {
+        GENERATED_BODY()
+    public:
+
+        /** Compile the graph automatically when the material is saved, if it has changed since the last compile. */
+        PROPERTY(Editable, Category = "Compilation")
+        bool bCompileOnSave = true;
+    };
+
     // Content browser preferences.
     REFLECT(MinimalAPI, ConfigFile = "/Editor/Config/EditorPreferences.json", DisplayName = "Content Browser", Category = "Editor")
     class CContentBrowserSettings : public CDeveloperSettings

@@ -3300,7 +3300,7 @@ namespace Lumina::RHI
                 CommandList.GPUZoneDepth = 0;
 #endif
 
-                VK_CHECK(vkResetCommandPool(*GDevice, CommandList.Pool, 0));
+                // Already in the initial state: ResetCommandList reset the pool when it recycled the list.
                 vkBeginCommandBuffer(CommandList.CommandBuffer, &BeginInfo);
 
                 return Reused;
@@ -3344,6 +3344,9 @@ namespace Lumina::RHI
         FCommandList& List = GDevice->CommandLists[CommandList];
 
         FScopeLock Lock(GDevice->CommandPoolMutex);
+        
+        VK_CHECK(vkResetCommandPool(*GDevice, List.Pool, 0));
+
         GDevice->FreeCommandLists[(uint32)List.Queue].push_back(CommandList);
     }
 

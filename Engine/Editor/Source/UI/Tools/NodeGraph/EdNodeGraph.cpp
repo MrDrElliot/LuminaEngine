@@ -6,6 +6,7 @@
 #include <Core/Reflection/Type/LuminaTypes.h>
 #include "Drawing.h"
 #include "imgui_internal.h"
+#include "Core/Math/Math.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/Package/Package.h"
 #include "Core/Profiler/Profile.h"
@@ -295,6 +296,248 @@ namespace Lumina
         return RerouteNode;
     }
 
+    // Pins are matched by name rather than by index: a node whose pins are built from its properties
+    // (the material function-call node) can rebuild them lazily after the clone is constructed, and an
+    // index match would then silently attach the wrong pin. Missing a link is recoverable; mis-wiring
+    // one is not.
+    static CEdNodeGraphPin* FindPinByName(CEdGraphNode* Node, const FString& Name, ENodePinDirection Direction)
+    {
+        if (Node == nullptr)
+        {
+            return nullptr;
+        }
+
+        const TVector<TObjectPtr<CEdNodeGraphPin>>& Pins = Direction == ENodePinDirection::Input
+            ? Node->GetInputPins()
+            : Node->GetOutputPins();
+
+        for (const TObjectPtr<CEdNodeGraphPin>& Pin : Pins)
+        {
+            if (Pin.IsValid() && Pin->GetPinName() == Name)
+            {
+                return Pin.Get();
+            }
+        }
+        return nullptr;
+    }
+
+    void CEdNodeGraph::CloneNodes(const TVector<CEdGraphNode*>& SourceNodes, ImVec2 Delta)
+    {
+        using namespace ax;
+
+        // Source -> clone, so the link pass can map an original endpoint onto its copy.
+        THashMap<CEdGraphNode*, CEdGraphNode*> Clones;
+        Clones.reserve(SourceNodes.size());
+
+        for (CEdGraphNode* Source : SourceNodes)
+        {
+            if (Source == nullptr)
+            {
+                continue;
+            }
+
+            CEdGraphNode* Clone = CreateNode(Source->GetClass());
+            if (Clone == nullptr)
+            {
+                continue;
+            }
+
+            Source->CopyPropertiesTo(Clone);
+            Clones.emplace(Source, Clone);
+
+            NodeEditor::SetNodePosition(Clone->GetNodeID(), NodeEditor::GetNodePosition(Source->GetNodeID()) + Delta);
+            NodeEditor::SelectNode(Clone->GetNodeID(), true);
+        }
+
+        // Second pass, once every clone exists: a link can point forwards in the list as easily as
+        // backwards. Walking INPUT pins only visits each link exactly once (same traversal the draw
+        // loop uses to collect them), so nothing gets connected twice.
+        for (CEdGraphNode* Source : SourceNodes)
+        {
+            const auto CloneItr = Clones.find(Source);
+            if (CloneItr == Clones.end())
+            {
+                continue;
+            }
+
+            for (const TObjectPtr<CEdNodeGraphPin>& SourceInput : Source->GetInputPins())
+            {
+                if (!SourceInput.IsValid())
+                {
+                    continue;
+                }
+
+                for (CEdNodeGraphPin* Upstream : SourceInput->GetConnections())
+                {
+                    if (Upstream == nullptr)
+                    {
+                        continue;
+                    }
+
+                    // Only when the far end was copied too. A link to a node outside the set would
+                    // otherwise hang the clone off the original's neighbour, quietly editing a part of
+                    // the graph the user never selected.
+                    const auto UpstreamItr = Clones.find(Upstream->GetOwningNode());
+                    if (UpstreamItr == Clones.end())
+                    {
+                        continue;
+                    }
+
+                    CEdNodeGraphPin* CloneInput  = FindPinByName(CloneItr->second, SourceInput->GetPinName(), ENodePinDirection::Input);
+                    CEdNodeGraphPin* CloneOutput = FindPinByName(UpstreamItr->second, Upstream->GetPinName(), ENodePinDirection::Output);
+                    if (CloneInput == nullptr || CloneOutput == nullptr)
+                    {
+                        continue;
+                    }
+
+                    CloneOutput->AddConnection(CloneInput);
+                    CloneInput->AddConnection(CloneOutput);
+                }
+            }
+        }
+
+        ValidateGraph();
+    }
+
+    void CEdNodeGraph::AlignSelectedNodes(ENodeAlignment Alignment)
+    {
+        using namespace ax;
+
+        // GetSelectedObjectCount counts links too, so it is an upper bound rather than the node count;
+        // GetSelectedNodes reports how many it actually wrote.
+        const int32 SelectionBound = NodeEditor::GetSelectedObjectCount();
+        if (SelectionBound < 2)
+        {
+            return;
+        }
+
+        TVector<NodeEditor::NodeId> Selected;
+        Selected.resize(SelectionBound);
+        const int32 Count = NodeEditor::GetSelectedNodes(Selected.data(), SelectionBound);
+        if (Count < 2)
+        {
+            return;
+        }
+
+        struct FEntry
+        {
+            NodeEditor::NodeId Id;
+            ImVec2             Pos;
+            ImVec2             Size;
+        };
+
+        TVector<FEntry> Entries;
+        Entries.reserve(Count);
+        for (int32 i = 0; i < Count; ++i)
+        {
+            Entries.push_back(FEntry{ Selected[i], NodeEditor::GetNodePosition(Selected[i]), NodeEditor::GetNodeSize(Selected[i]) });
+        }
+
+        float MinLeft = FLT_MAX, MaxRight = -FLT_MAX, MinTop = FLT_MAX, MaxBottom = -FLT_MAX;
+        float SumCenterX = 0.0f, SumCenterY = 0.0f, SumWidth = 0.0f, SumHeight = 0.0f;
+        for (const FEntry& Entry : Entries)
+        {
+            MinLeft    = Math::Min(MinLeft,   Entry.Pos.x);
+            MaxRight   = Math::Max(MaxRight,  Entry.Pos.x + Entry.Size.x);
+            MinTop     = Math::Min(MinTop,    Entry.Pos.y);
+            MaxBottom  = Math::Max(MaxBottom, Entry.Pos.y + Entry.Size.y);
+            SumCenterX += Entry.Pos.x + Entry.Size.x * 0.5f;
+            SumCenterY += Entry.Pos.y + Entry.Size.y * 0.5f;
+            SumWidth   += Entry.Size.x;
+            SumHeight  += Entry.Size.y;
+        }
+
+        const float CenterX = SumCenterX / (float)Count;
+        const float CenterY = SumCenterY / (float)Count;
+
+        // Distribute walks the selection in screen order rather than selection order, otherwise the
+        // nodes get shuffled into whatever order they happened to be clicked in.
+        const bool bDistributeX = Alignment == ENodeAlignment::DistributeX;
+        const bool bDistributeY = Alignment == ENodeAlignment::DistributeY;
+        if (bDistributeX || bDistributeY)
+        {
+            if (Count < 3)
+            {
+                return;   // two nodes are already evenly spaced; nothing to solve
+            }
+
+            eastl::sort(Entries.begin(), Entries.end(), [bDistributeX](const FEntry& A, const FEntry& B)
+            {
+                return bDistributeX ? (A.Pos.x < B.Pos.x) : (A.Pos.y < B.Pos.y);
+            });
+
+            const float Span    = bDistributeX ? (MaxRight - MinLeft) : (MaxBottom - MinTop);
+            const float Used    = bDistributeX ? SumWidth : SumHeight;
+            const float Gap     = (Span - Used) / (float)(Count - 1);
+            float       Cursor  = bDistributeX ? MinLeft : MinTop;
+
+            for (FEntry& Entry : Entries)
+            {
+                if (bDistributeX)
+                {
+                    Entry.Pos.x = Cursor;
+                    Cursor += Entry.Size.x + Gap;
+                }
+                else
+                {
+                    Entry.Pos.y = Cursor;
+                    Cursor += Entry.Size.y + Gap;
+                }
+                NodeEditor::SetNodePosition(Entry.Id, Entry.Pos);
+            }
+            return;
+        }
+
+        for (FEntry& Entry : Entries)
+        {
+            switch (Alignment)
+            {
+                case ENodeAlignment::Left:    Entry.Pos.x = MinLeft;                              break;
+                case ENodeAlignment::Right:   Entry.Pos.x = MaxRight - Entry.Size.x;              break;
+                case ENodeAlignment::Top:     Entry.Pos.y = MinTop;                               break;
+                case ENodeAlignment::Bottom:  Entry.Pos.y = MaxBottom - Entry.Size.y;             break;
+                case ENodeAlignment::CenterX: Entry.Pos.x = CenterX - Entry.Size.x * 0.5f;        break;
+                case ENodeAlignment::CenterY: Entry.Pos.y = CenterY - Entry.Size.y * 0.5f;        break;
+                default: return;
+            }
+            NodeEditor::SetNodePosition(Entry.Id, Entry.Pos);
+        }
+    }
+
+    void CEdNodeGraph::DrawAlignmentMenuItems()
+    {
+        struct FAlignEntry { ENodeAlignment Mode; const char* Label; const char* Shortcut; };
+
+        static constexpr FAlignEntry Entries[] =
+        {
+            { ENodeAlignment::Left,        "Align Left",      "Shift+A" },
+            { ENodeAlignment::Right,       "Align Right",     "Shift+D" },
+            { ENodeAlignment::Top,         "Align Top",       "Shift+W" },
+            { ENodeAlignment::Bottom,      "Align Bottom",    "Shift+S" },
+            { ENodeAlignment::CenterX,     "Align Center X",  "Shift+X" },
+            { ENodeAlignment::CenterY,     "Align Center Y",  "Shift+Y" },
+            { ENodeAlignment::DistributeX, "Distribute X",    nullptr   },
+            { ENodeAlignment::DistributeY, "Distribute Y",    nullptr   },
+        };
+
+        // Alignment needs two nodes to mean anything; grey the whole set out rather than offering
+        // items that silently do nothing.
+        const bool bEnabled = ax::NodeEditor::GetSelectedObjectCount() >= 2;
+
+        for (const FAlignEntry& Entry : Entries)
+        {
+            if (Entry.Mode == ENodeAlignment::DistributeX)
+            {
+                ImGui::Separator();
+            }
+            if (ImGui::MenuItem(Entry.Label, Entry.Shortcut, false, bEnabled))
+            {
+                PendingAlignment     = Entry.Mode;
+                bHasPendingAlignment = true;
+            }
+        }
+    }
+
     void CEdNodeGraph::QueueNodePlacement(CEdGraphNode* Node, ImVec2 ScreenPos)
     {
         if (Node != nullptr)
@@ -345,6 +588,12 @@ namespace Lumina
             }
         }
         PendingPlacements.clear();
+
+        if (bHasPendingAlignment)
+        {
+            bHasPendingAlignment = false;
+            AlignSelectedNodes(PendingAlignment);
+        }
 
         // Collected before anything is submitted so a graph drawing its own wires (the state machine
         // canvas) can lay them out under the nodes. Order matches the node/pin/connection walk the
@@ -524,6 +773,7 @@ namespace Lumina
             NodeEditor::NodeId NodeId;
             if (NodeEditor::ShowNodeContextMenu(&NodeId))
             {
+                ContextMenuNodeID = NodeId.Get();
                 ImGui::OpenPopup("Node Context Menu");
             }
             
@@ -562,6 +812,20 @@ namespace Lumina
             {
                 PendingSourcePin = nullptr;
             }
+
+            // The popup above was being opened and never begun, so right-clicking a node showed nothing
+            // and every node's own DrawContextMenu (Make Parameter, Make Texture Parameter, ...) was
+            // unreachable.
+            if (ImGui::BeginPopup("Node Context Menu"))
+            {
+                auto NodeItr = eastl::find_if(Nodes.begin(), Nodes.end(), [this](const TObjectPtr<CEdGraphNode>& A)
+                {
+                    return A.IsValid() && std::cmp_equal(A->GetNodeID(), ContextMenuNodeID);
+                });
+
+                DrawNodeContextMenu(NodeItr != Nodes.end() ? NodeItr->Get() : nullptr);
+                ImGui::EndPopup();
+            }
             
             if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)
                 && !NodeEditor::GetHoveredNode()
@@ -593,6 +857,33 @@ namespace Lumina
                 if (Digit >= 0)
                 {
                     HandleQuickPlace(Digit, NodeEditor::ScreenToCanvas(ImGui::GetMousePos()));
+                }
+            }
+
+            // Alignment hotkeys. Shift+letter rather than Shift+arrow: keyboard nav is enabled app-wide,
+            // so ImGui eats the arrows. Applied next frame through PendingAlignment like the menu items.
+            if (!ImGui::IsAnyItemActive() && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)
+                && ImGui::GetIO().KeyShift && !ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyAlt)
+            {
+                struct FAlignHotkey { ImGuiKey Key; ENodeAlignment Mode; };
+                static constexpr FAlignHotkey Hotkeys[] =
+                {
+                    { ImGuiKey_A, ENodeAlignment::Left    },
+                    { ImGuiKey_D, ENodeAlignment::Right   },
+                    { ImGuiKey_W, ENodeAlignment::Top     },
+                    { ImGuiKey_S, ENodeAlignment::Bottom  },
+                    { ImGuiKey_X, ENodeAlignment::CenterX },
+                    { ImGuiKey_Y, ENodeAlignment::CenterY },
+                };
+
+                for (const FAlignHotkey& Hotkey : Hotkeys)
+                {
+                    if (ImGui::IsKeyPressed(Hotkey.Key, false))
+                    {
+                        PendingAlignment     = Hotkey.Mode;
+                        bHasPendingAlignment = true;
+                        break;
+                    }
                 }
             }
         
@@ -640,22 +931,10 @@ namespace Lumina
                 if (NodeEditor::AcceptPaste())
                 {
                     NodeEditor::ClearSelection();
-                
+
                     ImVec2 PasteLocation = NodeEditor::ScreenToCanvas(ImGui::GetMousePos());
 
-                    ImVec2 Delta = PasteLocation - CopiedPivot;
-                
-                    for (CEdGraphNode* Node : CopiedNodes)
-                    {
-                        ImVec2 CopiedCanvasPosition = NodeEditor::GetNodePosition(Node->GetNodeID());
-                    
-                        CEdGraphNode* NewNode = CreateNode(Node->GetClass());
-                        Node->CopyPropertiesTo(NewNode);
-                    
-                        ImVec2 NewPosition = CopiedCanvasPosition + Delta;
-                        NodeEditor::SetNodePosition(NewNode->GetNodeID(), NewPosition);
-                        NodeEditor::SelectNode(NewNode->GetNodeID(), true);
-                    }
+                    CloneNodes(CopiedNodes, PasteLocation - CopiedPivot);
                 }
             
                 if (NodeEditor::AcceptDuplicate())
@@ -697,19 +976,8 @@ namespace Lumina
                 
                     NodeEditor::ClearSelection();
                     ImVec2 PasteLocation = NodeEditor::ScreenToCanvas(ImGui::GetMousePos());
-                    ImVec2 Delta = PasteLocation - CopiedPivot;
-                
-                    for (CEdGraphNode* Node : DupNodes)
-                    {
-                        ImVec2 CopiedCanvasPosition = NodeEditor::GetNodePosition(Node->GetNodeID());
-                    
-                        CEdGraphNode* NewNode = CreateNode(Node->GetClass());
-                        Node->CopyPropertiesTo(NewNode);
 
-                        ImVec2 NewPosition = CopiedCanvasPosition + Delta;
-                        NodeEditor::SetNodePosition(NewNode->GetNodeID(), NewPosition);
-                        NodeEditor::SelectNode(NewNode->GetNodeID(), true);
-                    }
+                    CloneNodes(DupNodes, PasteLocation - CopiedPivot);
                 }
             }
         }
@@ -876,6 +1144,7 @@ namespace Lumina
 
                         StartPin->AddConnection(EndPin);
                         EndPin->AddConnection(StartPin);
+                        NotifyContentChanged();
                         ValidateGraph();
                     }
                 }
@@ -961,9 +1230,14 @@ namespace Lumina
                     
                     Nodes.erase(NodeItr);
 
+                    // The copy buffer holds raw pointers, so a node deleted between Ctrl+C and Ctrl+V
+                    // would be cloned out of freed memory.
+                    CopiedNodes.erase(eastl::remove(CopiedNodes.begin(), CopiedNodes.end(), Node), CopiedNodes.end());
+
                     Node->ConditionalBeginDestroy();
                     Node = nullptr;
-                    
+
+                    NotifyContentChanged();
                     ValidateGraph();
                 }
             }
@@ -980,6 +1254,7 @@ namespace Lumina
                         const TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>& Pair = Links[LinkIndex];
                         Pair.first->RemoveConnection(Pair.second);
                         Pair.second->RemoveConnection(Pair.first);
+                        NotifyContentChanged();
                         ValidateGraph();
                     }
                 }
@@ -1011,38 +1286,19 @@ namespace Lumina
 
     void CEdNodeGraph::DrawNodeContextMenu(CEdGraphNode* Node)
     {
-        constexpr ImVec2 PopupSize(320, 450);
-        constexpr float CategorySpacing = 4.0f;
-
-        ImGui::SetNextWindowSize(PopupSize, ImGuiCond_Always);
-        
-        
-        constexpr float HeaderHeight = 54;
-        constexpr float FooterHeight = 32;
-        ImVec2 ChildSize = ImVec2(PopupSize.x, PopupSize.y - HeaderHeight - FooterHeight);
-        
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, CategorySpacing));
-        
-        if (ImGui::BeginChild("##NodeList", ChildSize, false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse))
+        if (Node != nullptr)
         {
-            ImGui::PushStyleColor(ImGuiCol_ScrollbarBg, ImVec4(0.08f, 0.08f, 0.10f, 0.9f));
-            ImGui::PushStyleColor(ImGuiCol_ScrollbarGrab, ImVec4(0.25f, 0.25f, 0.27f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabHovered, ImVec4(0.35f, 0.35f, 0.37f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabActive, ImVec4(0.45f, 0.45f, 0.47f, 1.0f));
-            
-            if (ImGui::BeginChild("##ScrollRegion", ImVec2(0, 0), false))
-            {
-                ImGuiX::Text("Node: {}", Node->GetNodeDisplayName());
-                
-                ImGui::EndChild();
-            }
-            
-            ImGui::PopStyleColor(4);
-            ImGui::EndChild();
+            ImGui::TextDisabled("%s", FString(Node->GetNodeDisplayName()).c_str());
+            ImGui::Separator();
+
+            Node->DrawContextMenu();
         }
-        
-        ImGui::PopStyleVar(2);
+
+        if (ImGui::BeginMenu("Alignment"))
+        {
+            DrawAlignmentMenuItems();
+            ImGui::EndMenu();
+        }
     }
 
     void CEdNodeGraph::DrawPinContextMenu(CEdNodeGraphPin* Pin)
@@ -1123,6 +1379,7 @@ namespace Lumina
 
         From->AddConnection(To);
         To->AddConnection(From);
+        NotifyContentChanged();
         ValidateGraph();
     }
 
@@ -1151,7 +1408,8 @@ namespace Lumina
             InNode->BuildNode();
             InNode->bWasBuild = true;
         }
-        
+
+        NotifyContentChanged();
         ValidateGraph();
 
         return NodeID;

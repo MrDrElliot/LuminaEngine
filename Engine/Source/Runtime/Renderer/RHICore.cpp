@@ -194,6 +194,14 @@ namespace Lumina::RHI::Core
             WaitSemaphore(GCore.FrameTimeline, GCore.SlotWaitValue[Slot]);
         }
 
+        // Before anything destroys a resource this frame. Resetting a command list drops the
+        // recorded references it holds;
+        for (FCmdListH CommandList : GCore.SlotCommandLists[Slot])
+        {
+            ResetCommandList(CommandList);
+        }
+        GCore.SlotCommandLists[Slot].clear();
+
         Textures::Tick();
         RHI::TickFrame();
 
@@ -214,12 +222,6 @@ namespace Lumina::RHI::Core
                 GCore.PendingFrees.pop_back();
             }
         }
-
-        for (FCmdListH CommandList : GCore.SlotCommandLists[Slot])
-        {
-            ResetCommandList(CommandList);
-        }
-        GCore.SlotCommandLists[Slot].clear();
 
         // Flush queued uploads as the frame's first GPU work, on the frame timeline so
         // slot recycling already waits for them. One submit + one Transfer->All barrier.

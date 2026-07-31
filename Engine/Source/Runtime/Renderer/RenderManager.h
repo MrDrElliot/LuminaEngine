@@ -76,6 +76,10 @@ namespace Lumina
         
         void OnWindowResized(FWindow* Window, const FUIntVector2& Extent);
 
+        // Render thread: rebuild the swapchain + every render target for the newest extent recorded by
+        // OnWindowResized, at most once per frame. See the comment there for why this is coalesced.
+        void ApplyPendingResize_RenderThread();
+
         #if WITH_EDITOR
         IImGuiRenderer*                     ImGuiRenderer = nullptr;
         #endif
@@ -92,6 +96,10 @@ namespace Lumina
         RHI::FSwapchainH                    Swapchain;
 
         FDelegateHandle                     WindowResizedHandle;
+
+        // Newest extent seen by OnWindowResized, packed (x << 32) | y. 0 = nothing pending. Written on
+        // the window thread, consumed by the render thread once per frame.
+        std::atomic<uint64>                 PendingResizeExtent = 0;
 
         uint8                               CurrentFrameIndex = 0;
     };

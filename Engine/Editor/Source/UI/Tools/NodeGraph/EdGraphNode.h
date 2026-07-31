@@ -108,6 +108,12 @@ namespace Lumina
         // context (e.g. material domain on CMaterialOutputNode).
         CEdNodeGraph* GetOwningGraph() const { return OwningGraph; }
 
+        // Call when an inline editor on this node commits a value. Those widgets (a constant's
+        // DragFloat, a pin's ColorEdit, a texture slot) write straight into the node and never pass
+        // through the property table, so without this nothing marks the graph as changed and a tool
+        // watching GetContentVersion never learns it needs to recompile.
+        void NotifyValueEdited();
+
         /** Horizontal position of the node in the graph canvas. */
         PROPERTY(DuplicateTransient)
         float GridX;

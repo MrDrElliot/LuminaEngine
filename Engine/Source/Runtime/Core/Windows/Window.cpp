@@ -248,6 +248,8 @@ namespace Lumina
 			Impl->Window = glfwCreateWindow(Impl->Specs.Extent.x, Impl->Specs.Extent.y, Impl->Specs.Title.c_str(), nullptr, nullptr);
 			glfwSetWindowAttrib(Impl->Window, GLFW_RESIZABLE, GLFW_TRUE);
 			
+			glfwSetWindowSizeLimits(Impl->Window, 640, 360, GLFW_DONT_CARE, GLFW_DONT_CARE);
+			
 
 			const int PosX = (Mode->width  - (int)Impl->Specs.Extent.x) / 2;
 			const int PosY = (Mode->height - (int)Impl->Specs.Extent.y) / 2;

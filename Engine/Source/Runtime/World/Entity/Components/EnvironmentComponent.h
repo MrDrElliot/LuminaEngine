@@ -112,7 +112,7 @@ namespace Lumina
 
         /** Star brightness; HDR-friendly. */
         PROPERTY(Editable, Category = "Sky|Stars", ClampMin = 0.0f, ClampMax = 8.0f)
-        float StarBrightness = 0.16f;
+        float StarBrightness = 0.76f;
 
         /** Twinkle angular speed (rad/s); 0 freezes the field. */
         PROPERTY(Editable, Category = "Sky|Stars", ClampMin = 0.0f, ClampMax = 16.0f)

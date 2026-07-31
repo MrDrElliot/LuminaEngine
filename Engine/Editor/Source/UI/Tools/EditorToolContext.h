@@ -9,6 +9,7 @@ namespace Lumina
     class CObject;
     class CClass;
     class FAssetRegistry;
+    struct FAssetData;
 }
 
 namespace Lumina
@@ -33,6 +34,11 @@ namespace Lumina
         /** Reveals a VFS path in the Content Browser: shows the panel, navigates to the containing
          *  folder, then selects and scrolls to the item. */
         virtual void BrowseToAsset(FStringView VirtualPath) = 0;
+
+        /** The asset highlighted in the Content Browser right now, or null when nothing (or something
+         *  that isn't an asset) is selected. Backs the "use the selected asset" button on object
+         *  reference properties -- the counterpart to BrowseToAsset. */
+        virtual const FAssetData* GetContentBrowserSelectedAsset() const = 0;
 
         /** Called just before an asset is marked for destroy, mostly to close any asset editors that may be using it */
         virtual void OnDestroyAsset(CObject* InAsset) = 0;

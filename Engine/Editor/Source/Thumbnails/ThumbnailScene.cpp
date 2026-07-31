@@ -40,7 +40,12 @@ namespace Lumina
         if (IRenderScene* Scene = World->GetRenderer())
         {
             Scene->Resize(FUIntVector2(RTSize, RTSize));
-            Scene->GetSceneRenderSettings().bDrawBillboards = false;
+
+            FSceneRenderSettings& Settings = Scene->GetSceneRenderSettings();
+            Settings.bDrawBillboards = false;
+            
+            Settings.bOcclusionCull       = false;
+            Settings.bShadowOcclusionCull = false;
         }
 
         CameraEntity = World->ConstructEntity("ThumbnailCamera");
@@ -128,6 +133,12 @@ namespace Lumina
 
         // Flush so the thumbnail world (created in Begin) is realized before we render it.
         FlushRenderingCommands();
+
+        // Drive the mesh resolve to a fixed point BEFORE extracting. The resolve pre-pass defers
+        // anything it cannot finish to the next frame, which the normal loop absorbs invisibly -- but
+        // this capture renders exactly one frame and reads it straight back, so a deferred mesh is not
+        // "late", it is missing from the image. That is the empty-world thumbnail.
+        static_cast<FForwardRenderScene*>(World->GetRenderer())->SettleResolveWork();
 
         // Extract reads the ECS (game thread) and bumps the frame slot's Produced count;
         // SignalFrameConsumed below balances it or the next capture deadlocks.

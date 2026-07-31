@@ -1,4 +1,4 @@
-#include "MaterialNode_Constants.h"
+﻿#include "MaterialNode_Constants.h"
 
 #include "Core/Object/Cast.h"
 #include "Core/Math/Math.h"
@@ -127,7 +127,10 @@ namespace Lumina
     void CMaterialExpression_ConstantFloat::DrawNodeBody()
     {
         ImGui::SetNextItemWidth(126.0f);
-        ImGui::DragFloat("##", Math::ValuePtr(Value), 0.01f);
+        if (ImGui::DragFloat("##", Math::ValuePtr(Value), 0.01f))
+        {
+            NotifyValueEdited();
+        }
     }
 
     void CMaterialExpression_ConstantFloat2::GenerateDefinition(FMaterialCompiler& Compiler)
@@ -144,7 +147,10 @@ namespace Lumina
     void CMaterialExpression_ConstantFloat2::DrawNodeBody()
     {
         ImGui::SetNextItemWidth(126.0f);
-        ImGui::DragFloat2("##", Math::ValuePtr(Value), 0.01f);
+        if (ImGui::DragFloat2("##", Math::ValuePtr(Value), 0.01f))
+        {
+            NotifyValueEdited();
+        }
     }
 
     void CMaterialExpression_ConstantFloat3::GenerateDefinition(FMaterialCompiler& Compiler)
@@ -161,7 +167,10 @@ namespace Lumina
     void CMaterialExpression_ConstantFloat3::DrawNodeBody()
     {
         ImGui::SetNextItemWidth(126.0f);
-        ImGui::ColorPicker3("##", Math::ValuePtr(Value));
+        if (ImGui::ColorPicker3("##", Math::ValuePtr(Value)))
+        {
+            NotifyValueEdited();
+        }
     }
 
     void CMaterialExpression_ConstantFloat4::GenerateDefinition(FMaterialCompiler& Compiler)
@@ -178,7 +187,10 @@ namespace Lumina
     void CMaterialExpression_ConstantFloat4::DrawNodeBody()
     {
         ImGui::SetNextItemWidth(126.0f);
-        ImGui::ColorPicker4("##", Math::ValuePtr(Value));
+        if (ImGui::ColorPicker4("##", Math::ValuePtr(Value)))
+        {
+            NotifyValueEdited();
+        }
     }
 
     void CMaterialExpression_NumericConstant::BuildNode()

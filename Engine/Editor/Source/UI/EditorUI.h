@@ -57,6 +57,7 @@ namespace Lumina
         void OpenAssetEditor(const FGuid& AssetGUID) override;
         void OpenFileEditor(FStringView VirtualPath) override;
         void BrowseToAsset(FStringView VirtualPath) override;
+        const FAssetData* GetContentBrowserSelectedAsset() const override;
         void OnDestroyAsset(CObject* InAsset) override;
 
 
@@ -88,6 +89,13 @@ namespace Lumina
 
         void VerifyDirtyPackages();
 
+        // File > Save: saves the focused tool, which is what Ctrl+S already does.
+        void SaveActiveTool();
+
+        // File > Save All: every dirty package, routed through its open editor tool when there is one
+        // so type-specific save work still runs.
+        void SaveAllDirtyPackages();
+
         // Re-entry guard for the dirty-packages prompt; true while the dialog is open.
         // A member (not a function-local static) so Cancel can re-arm it.
         bool bVerifyingDirtyPackages = false;
@@ -103,6 +111,20 @@ namespace Lumina
         void RegisterBuiltinEditorTools();
 
         FEditorTool* FindToolByTypeID(uint32 TypeID) const;
+
+        // --- Session tab restore (CEditorSessionSettings) ---
+
+        // Adds Tool's tab to the persisted list and writes it out immediately. Key is "asset:<guid>" or
+        // "file:<path>". A key already in the list (i.e. this open IS the restore) is not re-appended,
+        // which is also what keeps replay from rewriting the file it is reading.
+        void RecordSessionTab(FEditorTool* Tool, FString Key);
+
+        // Drops Tool's tab from the persisted list and writes it out. No-op for unrecorded tools.
+        void ForgetSessionTab(FEditorTool* Tool);
+
+        // Reopens the persisted tabs in order, skipping any whose asset or file no longer resolves, then
+        // prunes those dead entries. Runs once, on the first update, so the asset registry is populated.
+        void RestoreSessionTabs();
 
         void EditorToolLayoutCopy(FEditorTool* SourceTool);
 
@@ -209,6 +231,22 @@ namespace Lumina
 
         THashMap<CObject*, FEditorTool*>                ActiveAssetTools;
         THashMap<FString, FEditorTool*>                 ActiveFileTools;
+
+        // Live tool -> its persisted session key, so closing a tab can find the entry to remove.
+        THashMap<FEditorTool*, FString>                 ToolSessionKeys;
+
+        // Armed by OnProjectLoaded, consumed on the next update. NOT armed at construction: the tab list
+        // lives in the project's own config, so restoring before a project is loaded would read an empty
+        // list and burn the one shot.
+        bool                                            bSessionRestorePending = false;
+
+        // Set for the duration of editor teardown. Deinitialize closes every tool through DestroyTool,
+        // which would otherwise "forget" each tab on the way out and leave an empty list on disk -- the
+        // exact state we are trying to preserve. Only a user closing a tab may shorten the list.
+        bool                                            bTearingDownTools = false;
+
+        // Retry hook for tabs whose asset had not been scanned into the registry yet at restore time.
+        FDelegateHandle                                 SessionRestoreRetryHandle;
         TQueue<FEditorTool*>                            ToolsPendingAdd;
         TQueue<FEditorTool*>                            ToolsPendingDestroy;
 

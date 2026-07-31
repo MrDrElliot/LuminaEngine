@@ -154,7 +154,11 @@ namespace Lumina
         void DrawHelpMenu() override;
 
         void HandleContentBrowserDragDrop(FStringView DropPath, FStringView PayloadPath);
-        
+
+        // Registry entry for the single highlighted asset, or null when the selection is empty, is a
+        // multi-selection, or is a folder / loose file. Backs the property widgets' "use selected".
+        NODISCARD const FAssetData* GetSelectedAsset() const;
+
     private:
 
         void OpenDeletionWarningPopup(const FContentBrowserTileViewItem* Item, const TFunction<void(EYesNo)>& Callback = TFunction<void(EYesNo)>());

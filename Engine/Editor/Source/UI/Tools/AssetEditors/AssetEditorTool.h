@@ -5,8 +5,11 @@
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Object/Package/Package.h"
+#include "Assets/AssetTypes/Material/MaterialInterface.h"
+#include "Assets/AssetTypes/Mesh/Mesh.h"
 #include "UI/Properties/PropertyTable.h"
 #include "UI/Tools/EditorTool.h"
+#include "World/Scene/RenderScene/MeshResolveCache.h"
 
 namespace Lumina
 {
@@ -28,6 +31,17 @@ namespace Lumina
                 PropertyTable.SetPostEditCallback([&](const FPropertyChangedEvent&)
                 {
                    Asset->GetPackage()->MarkDirty();
+
+                   // Mesh and material assets are interned into FMeshResolveCache by pointer identity, so
+                   // editing one in place (assigning a mesh's default material slots, retargeting a
+                   // material's textures) changes nothing the cache key can see. Every world instance
+                   // would keep drawing the old resolve. Property edits bypass the setters that bump the
+                   // epoch, so this is the chokepoint that covers all of them -- one place, every asset
+                   // editor, rather than a hook per tool.
+                   if (Asset->IsA<CMesh>() || Asset->IsA<CMaterialInterface>())
+                   {
+                       FMeshResolveCache::BumpEpoch();
+                   }
                 });
 
                 // Property edits on the asset become undoable CObject snapshots -- undo for free, no per-editor code.

@@ -19,6 +19,10 @@ namespace Lumina
         virtual void GenerateDefinition(FMaterialCompiler& Compiler) { UNREACHABLE(); }
         virtual void* GetNodeDefaultValue() { return nullptr; }
         virtual void SetNodeValue(void* Value) { }
+        
+        #if USING(WITH_EDITOR)
+        void PostPropertyChange(FProperty* ChangedProperty) override;
+        #endif
     };
     
 }

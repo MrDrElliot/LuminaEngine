@@ -639,6 +639,15 @@ namespace Lumina
         uint8 GetMSAASampleCount() const { return MSAASampleCount; }
 
         uint32 GetDisplayResourceID() const override;
+
+        // Runs the resolve pre-pass repeatedly until it stops re-marking itself pending, or the budget
+        // runs out. Only for callers that render exactly ONE frame and then read the result back --
+        // the thumbnail capture. The normal frame loop needs none of this: a component that is not
+        // fully resolvable yet re-arms and lands on the next frame, which is invisible at 60fps. A
+        // capture has no next frame, so anything deferred is simply absent from the image, which is
+        // what an "empty world" thumbnail is.
+        // RUNTIME_API: the class is not exported wholesale, and this one is called from the editor.
+        RUNTIME_API void SettleResolveWork(int32 MaxIterations = 8);
         RHI::FTextureH GetDisplayTexture() const override { return SceneViews[0].Output.Texture; }
         const FSceneImage& GetDisplayImage() const { return SceneViews[0].Output; }
         const FSceneImage& GetPrimaryNamedImage(ENamedImage Image) const { return SceneViews[0].Images[(int)Image]; }

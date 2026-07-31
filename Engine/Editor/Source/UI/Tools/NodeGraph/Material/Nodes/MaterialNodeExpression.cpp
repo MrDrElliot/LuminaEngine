@@ -102,6 +102,11 @@ namespace Lumina
         if (NewName != Out)
         {
             Out = NewName;
+
+            // The parameter name is baked into the generated shader, so a rename needs a recompile
+            // just as much as a value edit does.
+            NotifyValueEdited();
+
             if (CPackage* Package = GetPackage())
             {
                 Package->MarkDirty();

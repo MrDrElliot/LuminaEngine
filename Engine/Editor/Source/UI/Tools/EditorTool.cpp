@@ -899,8 +899,14 @@ namespace Lumina
 
         const ImGuiIO& IO = ImGui::GetIO();
         const bool bAllowInput = bViewportFocused && !IO.WantTextInput;
-        
+
         const FInputContext& Raw = FInputViewportRegistry::Get().GetRawInput();
+
+        // The wheel needs a stricter gate than the buttons.
+        const bool bWheelOverViewport = bViewportHovered
+                                     || CameraState.bWasLooking                          // capture already in progress
+                                     || Raw.IsMouseButtonDown(EMouseKey::ButtonRight);   // ...and its first frame
+        const double WheelDelta = (bAllowInput && bWheelOverViewport) ? Raw.GetMouseZ() : 0.0;
 
         // The Alt modifier is read from ImGui like every other keyboard state here; only the mouse
         // comes from the raw context (see the fly-key comment further down).
@@ -960,7 +966,7 @@ namespace Lumina
         // from the focused viewport cancels the lerp so the user can take over mid-flight.
         if (CameraState.bFocusInterp)
         {
-            const bool bWheel = bAllowInput && Raw.GetMouseZ() != 0.0;
+            const bool bWheel = WheelDelta != 0.0;
             // Fly keys only count while a mouse gesture is held, so bWantsCaptured covers every case.
             const bool bMoveInput = bWantsCaptured;
 
@@ -1130,7 +1136,7 @@ namespace Lumina
                 PitchDelta = Math::Clamp(PitchDelta, Elevation - PitchLimit, Elevation + PitchLimit);
                 Transform.AddPitch(PitchDelta);
 
-                const double WheelZ = Raw.GetMouseZ();
+                const double WheelZ = WheelDelta;
                 CameraState.SpeedScale += Math::Pow(1.05f, CameraState.SpeedScale) * static_cast<float>(WheelZ);
                 CameraState.SpeedScale = Math::Clamp(CameraState.SpeedScale, 0.2f, 100.0f);
             }
@@ -1157,7 +1163,7 @@ namespace Lumina
                     CameraState.OrbitTarget += Up    * static_cast<float>(Raw.GetMouseDeltaY()) * PanScale;
                 }
 
-                const double WheelZ = Raw.GetMouseZ();
+                const double WheelZ = WheelDelta;
                 if (WheelZ != 0.0)
                 {
                     const float Zoom = 0.1f * CameraState.OrbitDistance;

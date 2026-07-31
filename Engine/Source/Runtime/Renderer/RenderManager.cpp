@@ -174,7 +174,11 @@ namespace Lumina
                 LUMINA_PROFILE_SECTION_COLORED("RT Frame Fence (GPU)", tracy::Color::Crimson);
                 RHI::Core::BeginFrame(ThisFrameIndex);
             }
-            
+
+            // One rebuild per frame for however many resize events arrived since the last one, and
+            // before anything reads a render target this frame.
+            ApplyPendingResize_RenderThread();
+
             GWorldManager->RenderWorlds(ThisFrameIndex);
 
             RHI::FTextureH SwapImage;
@@ -277,20 +281,26 @@ namespace Lumina
         {
             return;
         }
+        
+        PendingResizeExtent.store(((uint64)Extent.x << 32) | (uint64)Extent.y, std::memory_order_relaxed);
+    }
 
-        // The swapchain lives on the render thread; rebuild it there. Coalesce duplicate
-        // events by skipping when the extent already matches.
-        const FVector2 NewSize = FVector2(Extent);
-        ENQUEUE_RENDER_COMMAND(RecreateSwapchainOnResize)([this, Extent, NewSize]
+    void FRenderManager::ApplyPendingResize_RenderThread()
+    {
+        const uint64 Packed = PendingResizeExtent.exchange(0, std::memory_order_acquire);
+        if (Packed == 0)
         {
-            const FUIntVector2 Current = RHI::GetSwapchainExtent(Swapchain);
-            if (Current.x == Extent.x && Current.y == Extent.y)
-            {
-                return;
-            }
+            return;
+        }
 
-            RHI::RecreateSwapchain(Swapchain, Extent);
-            OnSwapchainResized.Broadcast(NewSize);
-        });
+        const FUIntVector2 Extent((uint32)(Packed >> 32), (uint32)(Packed & 0xFFFFFFFFull));
+        const FUIntVector2 Current = RHI::GetSwapchainExtent(Swapchain);
+        if (Current.x == Extent.x && Current.y == Extent.y)
+        {
+            return;
+        }
+
+        RHI::RecreateSwapchain(Swapchain, Extent);
+        OnSwapchainResized.Broadcast(FVector2(Extent));
     }
 }

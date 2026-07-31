@@ -469,6 +469,9 @@ namespace Lumina
         // Clicking an axis tag resets that component to 0, a discrete edit, so we open the
         // transaction the click frame (Started) and commit it the next (Finished).
         bool bFinishPending = false;
+
+        // Scale-row lock: edits carry to the other two axes by ratio. Session-only, per widget.
+        bool bUniformScale = false;
     };
-    
+
 }

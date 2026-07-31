@@ -729,8 +729,8 @@ namespace Lumina
         RenderFrame = &FrameRing[Slot];
         FFrameData& Frame = FrameRing[Slot];
 
-        // This slot's previous GPU work completed (RHI::Core::BeginFrame waited the frame
-        // timeline), so its deferred frees and pinned asset buffers can retire now.
+        // This slot's previous GPU work completed AND its command lists were recycled (RHI::Core::BeginFrame
+        // waits the frame timeline, then resets them), so nothing executes or still names these resources.
         for (RHI::GPUPtr Ptr : DeferredBufferFrees[Slot])
         {
             RHI::Free(Ptr);
@@ -1518,6 +1518,23 @@ namespace Lumina
                 // Still compiling: come back next frame. The hash is already stored, so the retry is driven
                 // by bAllMaterialsReady rather than by the hash differing again.
                 FMeshResolveCache::MarkPendingWork();
+            }
+        }
+    }
+
+    void FForwardRenderScene::SettleResolveWork(int32 MaxIterations)
+    {
+        // ResolveDirtyMeshComponents re-marks pending work for anything it could not finish (a material
+        // still compiling, GPU buffers not landed), which normally means "retry next frame". Loop until
+        // a pass adds nothing new. Bounded: something genuinely unresolvable must not spin forever, and
+        // rendering it half-ready is still better than not rendering at all.
+        for (int32 Iteration = 0; Iteration < MaxIterations; ++Iteration)
+        {
+            const uint32 Before = FMeshResolveCache::GetPendingGeneration();
+            ResolveDirtyMeshComponents();
+            if (FMeshResolveCache::GetPendingGeneration() == Before)
+            {
+                return;
             }
         }
     }
@@ -9575,7 +9592,11 @@ namespace Lumina
         // Use as many octaves as the resolution supports (smallest mip ~8px on the short axis);
         // the deep mips are what give the wide cinematic veil.
         const uint32 MinDim  = eastl::min(Mip0W, Mip0H);
-        const uint32 NumMips = Math::Clamp((uint32)Math::Log2((float)MinDim) - 2u, 1u, BLOOM_MIP_COUNT);
+        // Guard the -2 before it happens: on a sub-8px axis it underflows unsigned and the clamp then
+        // pins to the MAXIMUM octave count instead of the minimum. Bound by the chain's real mip count
+        // rather than BLOOM_MIP_COUNT, since a small extent gives the image fewer mips than that.
+        const uint32 Octaves = MinDim >= 8u ? (uint32)Math::Log2((float)MinDim) - 2u : 1u;
+        const uint32 NumMips = Math::Clamp(Octaves, 1u, Math::Max(Bloom.GetNumMips(), 1u));
 
         const float Threshold = ActivePostProcess->BloomThreshold;
         const float Knee      = ActivePostProcess->BloomSoftKnee * Threshold + 1e-5f;
@@ -10684,11 +10705,16 @@ namespace Lumina
         {
             // Bloom mip chain (half-res, R11G11B10_FLOAT). SPD writes mips 0..N-1 from
             // HDR in one dispatch, then per-mip upsamples accumulate into mip[i-1].
+            const uint32 BloomW = eastl::max<uint32>(Extent.x / 2u, 1u);
+            const uint32 BloomH = eastl::max<uint32>(Extent.y / 2u, 1u);
+
             RHI::FTextureDesc BloomDesc;
             BloomDesc.Type      = RHI::ETextureType::Tex2D;
-            BloomDesc.Dimension = FUIntVector3(eastl::max<uint32>(Extent.x / 2u, 1u), eastl::max<uint32>(Extent.y / 2u, 1u), 1);
+            BloomDesc.Dimension = FUIntVector3(BloomW, BloomH, 1);
             BloomDesc.Format    = EFormat::R11G11B10_FLOAT;
-            BloomDesc.MipCount  = BLOOM_MIP_COUNT;
+            // Clamped, not a flat 8: a window dragged small enough puts the half-res chain under 128px,
+            // where 8 mips is more than the image can legally have.
+            BloomDesc.MipCount  = Math::Min(BLOOM_MIP_COUNT, RenderUtils::CalculateMipCount(BloomW, BloomH));
             BloomDesc.Usage     = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::Storage;
             View.BloomChainImage = CreateSceneImage(BloomDesc, true, true);
         }
@@ -10835,7 +10861,10 @@ namespace Lumina
         // Output's heap slot survives the resize; only the texture behind it is replaced.
         const uint32 OutputSlot = DetachSampledSlot(Primary.Output);
 
-        // Still DEFERRED: the textures themselves can be named by GPU work already submitted.
+        // Still DEFERRED, even though SwapchainResized already idled the device. The GPU is done, but the
+        // command lists recorded before the resize have not been recycled yet and still name these textures;
+        // destroying now would report them as in use. The slot's Core::BeginFrame resets its lists before
+        // RenderView drains this queue, so by then nothing references them.
         ReleaseViewImages(Primary, /*bDeferRelease*/ true);
         InitViewImages(Primary, OutputSlot);
     }

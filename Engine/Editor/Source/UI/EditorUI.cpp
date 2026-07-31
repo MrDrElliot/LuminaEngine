@@ -93,6 +93,7 @@
 #include "Thumbnails/ThumbnailManager.h"
 #include "Tools/ConsoleLogEditorTool.h"
 #include "Tools/ContentBrowserEditorTool.h"
+#include "Tools/EditorAssetActions.h"
 #include "Tools/EditorTool.h"
 #include "Tools/EditorToolRegistry.h"
 #include "Tools/ToolsMenuRegistry.h"
@@ -441,6 +442,7 @@ namespace Lumina
         FInputViewportRegistry::Get().SetGameInputFocused(false);
 
         RegisterBuiltinEditorTools();
+        RegisterBuiltinAssetActions();
 
         PropertyCustomizationRegistry = Memory::New<FPropertyCustomizationRegistry>();
         PropertyCustomizationRegistry->RegisterPropertyCustomization(TBaseStructure<FVector2>::Get()->GetName(), []
@@ -551,6 +553,9 @@ namespace Lumina
 
     void FEditorUI::Deinitialize(const FUpdateContext& UpdateContext)
     {
+        // Shutting down is not the user closing their tabs; see bTearingDownTools.
+        bTearingDownTools = true;
+
         while (!EditorTools.empty())
         {
             // Pops internally.
@@ -850,6 +855,21 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
+        // Deferred to the first update rather than Initialize: the asset registry has to be populated
+        // before a GUID can resolve, and opening a tool wants a live ImGui frame for the focus call.
+        if (bSessionRestorePending)
+        {
+            bSessionRestorePending = false;
+            RestoreSessionTabs();
+        }
+
+        // Save All is global, unlike Ctrl+S which the focused tool claims. Handled once here rather
+        // than in the per-tool loop, which would fire it for every open tool.
+        if (ImGui::IsKeyDown(ImGuiKey_LeftCtrl) && ImGui::GetIO().KeyShift && ImGui::IsKeyPressed(ImGuiKey_S, false))
+        {
+            SaveAllDirtyPackages();
+        }
+
         // Drain a budget of pending thumbnail renders before the UI draws this frame's tiles. The render
         // itself is game-thread only (World::Extract + GPU readback); keeping the budget small avoids a
         // hitch while cold thumbnails fill in a few per frame.
@@ -894,7 +914,10 @@ namespace Lumina
         ASSERT(Itr != EditorTools.end());
 
         EditorTools.erase(Itr);
-        
+
+        // Closing a tab is as much a session change as opening one, and is written through the same way.
+        ForgetSessionTab(Tool);
+
         for (auto MapItr = ActiveAssetTools.begin(); MapItr != ActiveAssetTools.end(); ++MapItr)
         {
             if (MapItr->second == Tool)
@@ -1091,6 +1114,162 @@ namespace Lumina
         OpenScriptInExternalEditor(ScriptPath);
     }
 
+    namespace
+    {
+        constexpr const char* GSessionAssetPrefix = "asset:";
+        constexpr const char* GSessionFilePrefix  = "file:";
+
+        bool SessionKeyHasPrefix(const FString& Key, const char* Prefix)
+        {
+            return Key.find(Prefix) == 0;
+        }
+    }
+
+    void FEditorUI::RecordSessionTab(FEditorTool* Tool, FString Key)
+    {
+        if (Tool == nullptr || Key.empty())
+        {
+            return;
+        }
+
+        // Tracked even when the entry already exists, so closing a RESTORED tab still finds its key.
+        ToolSessionKeys.insert_or_assign(Tool, Key);
+
+        CEditorSessionSettings* Settings = GetMutableDefault<CEditorSessionSettings>();
+        if (Settings == nullptr)
+        {
+            return;
+        }
+
+        // Already listed means this open is the restore replaying the list -- appending would duplicate
+        // it, and saving would rewrite the file mid-read.
+        if (eastl::find(Settings->OpenTabs.begin(), Settings->OpenTabs.end(), Key) != Settings->OpenTabs.end())
+        {
+            return;
+        }
+
+        Settings->OpenTabs.push_back(Move(Key));
+        GConfig->SaveSettings(CEditorSessionSettings::StaticClass());
+    }
+
+    void FEditorUI::ForgetSessionTab(FEditorTool* Tool)
+    {
+        // Teardown closes every tool; treating that as "the user closed these tabs" is what emptied the
+        // list on every clean shutdown. The list only shrinks on a deliberate close.
+        if (bTearingDownTools)
+        {
+            return;
+        }
+
+        auto KeyItr = ToolSessionKeys.find(Tool);
+        if (KeyItr == ToolSessionKeys.end())
+        {
+            return;
+        }
+
+        const FString Key = KeyItr->second;
+        ToolSessionKeys.erase(KeyItr);
+
+        CEditorSessionSettings* Settings = GetMutableDefault<CEditorSessionSettings>();
+        if (Settings == nullptr)
+        {
+            return;
+        }
+
+        auto TabItr = eastl::find(Settings->OpenTabs.begin(), Settings->OpenTabs.end(), Key);
+        if (TabItr == Settings->OpenTabs.end())
+        {
+            return;
+        }
+
+        // Ordered erase, not swap-and-pop: the order of this list is the whole point.
+        Settings->OpenTabs.erase(TabItr);
+        GConfig->SaveSettings(CEditorSessionSettings::StaticClass());
+    }
+
+    void FEditorUI::RestoreSessionTabs()
+    {
+        const CEditorSessionSettings* Settings = GetDefault<CEditorSessionSettings>();
+        if (Settings == nullptr || !Settings->bRestoreOpenTabs || Settings->OpenTabs.empty())
+        {
+            return;
+        }
+
+        // Copy: opening a tab writes back into the live list.
+        const TVector<FString> Tabs = Settings->OpenTabs;
+
+        // Entries whose asset the registry has not scanned yet. Re-running the whole restore is
+        // idempotent (an already-open tool just gets focused), so the retry below is simply another pass.
+        int32 NumUnscanned = 0;
+
+        TVector<FString> Survivors;
+        Survivors.reserve(Tabs.size());
+
+        for (const FString& Tab : Tabs)
+        {
+            if (SessionKeyHasPrefix(Tab, GSessionAssetPrefix))
+            {
+                const FString GuidText = Tab.substr(strlen(GSessionAssetPrefix));
+                const TOptional<FGuid> Guid = FGuid::TryParse(FStringView(GuidText.c_str(), GuidText.size()));
+                if (!Guid.has_value())
+                {
+                    continue;   // unparseable: drop it
+                }
+
+                // Distinguish "deleted" from "not scanned yet". Dropping an entry the registry simply
+                // has not reached would silently lose tabs on a cold start, so only a miss AFTER the
+                // registry has assets in it counts as gone.
+                if (FAssetRegistry::Get().GetAssetByGUID(*Guid) == nullptr)
+                {
+                    Survivors.push_back(Tab);
+                    ++NumUnscanned;
+                    continue;
+                }
+
+                Survivors.push_back(Tab);
+                OpenAssetEditor(*Guid);
+            }
+            else if (SessionKeyHasPrefix(Tab, GSessionFilePrefix))
+            {
+                const FString Path = Tab.substr(strlen(GSessionFilePrefix));
+                if (!VFS::Exists(FStringView(Path.c_str(), Path.size())))
+                {
+                    continue;   // file is genuinely gone: drop it
+                }
+
+                Survivors.push_back(Tab);
+                OpenFileEditor(FStringView(Path.c_str(), Path.size()));
+            }
+        }
+
+        if (Survivors.size() != Tabs.size())
+        {
+            LOG_INFO("Editor session: dropped {} tab(s) that no longer resolve.", Tabs.size() - Survivors.size());
+
+            CEditorSessionSettings* MutableSettings = GetMutableDefault<CEditorSessionSettings>();
+            MutableSettings->OpenTabs = Move(Survivors);
+            GConfig->SaveSettings(CEditorSessionSettings::StaticClass());
+        }
+
+        // Same pattern as the startup map: the registry scan runs asynchronously, so retry on each
+        // update until every tab has resolved, then unhook.
+        if (NumUnscanned > 0)
+        {
+            if (!SessionRestoreRetryHandle.IsValid())
+            {
+                SessionRestoreRetryHandle = FAssetRegistry::Get().GetOnAssetRegistryUpdated().AddLambda([this]
+                {
+                    RestoreSessionTabs();
+                });
+            }
+        }
+        else if (SessionRestoreRetryHandle.IsValid())
+        {
+            FAssetRegistry::Get().GetOnAssetRegistryUpdated().Remove(SessionRestoreRetryHandle);
+            SessionRestoreRetryHandle = {};
+        }
+    }
+
     FEditorTool* FEditorUI::FinalizeNewTool(FEditorTool* Tool)
     {
         if (Tool != nullptr)
@@ -1176,6 +1355,7 @@ namespace Lumina
         if (NewTool)
         {
             ActiveAssetTools.insert_or_assign(Asset, NewTool);
+            RecordSessionTab(NewTool, FString(GSessionAssetPrefix) + AssetGUID.ToString());
         }
     }
 
@@ -1204,6 +1384,7 @@ namespace Lumina
             return;
         }
 
+        RecordSessionTab(NewTool, FString(GSessionFilePrefix) + Key);
         ActiveFileTools.insert_or_assign(Move(Key), NewTool);
     }
 
@@ -1224,6 +1405,11 @@ namespace Lumina
         }
 
         ContentBrowser->BrowseToAsset(VirtualPath);
+    }
+
+    const FAssetData* FEditorUI::GetContentBrowserSelectedAsset() const
+    {
+        return ContentBrowser != nullptr ? ContentBrowser->GetSelectedAsset() : nullptr;
     }
 
     void FEditorUI::OnDestroyAsset(CObject* InAsset)
@@ -1743,7 +1929,9 @@ namespace Lumina
 
         // Ctrl+S routes to the focused tool only, checking IsKeyPressed inside
         // each tool's Update fires for every open tool simultaneously.
-        if (bIsLastFocusedTool && ImGui::IsKeyDown(ImGuiKey_LeftCtrl) && ImGui::IsKeyPressed(ImGuiKey_S, false))
+        // Shift excluded: Ctrl+Shift+S is Save All, handled once in OnUpdate.
+        if (bIsLastFocusedTool && ImGui::IsKeyDown(ImGuiKey_LeftCtrl) && !ImGui::GetIO().KeyShift
+            && ImGui::IsKeyPressed(ImGuiKey_S, false))
         {
             Tool->OnSave();
         }
@@ -1979,6 +2167,89 @@ namespace Lumina
     void FEditorUI::HandleUserInput(const FUpdateContext& UpdateContext)
     {
         
+    }
+
+    void FEditorUI::SaveActiveTool()
+    {
+        if (LastActiveTool == nullptr)
+        {
+            ImGuiX::Notifications::NotifyWarning("Nothing to save: no editor is focused.");
+            return;
+        }
+
+        // The tool's own OnSave reports success or failure, so no notification here -- a second one
+        // would just duplicate it.
+        LastActiveTool->OnSave();
+    }
+
+    void FEditorUI::SaveAllDirtyPackages()
+    {
+        TVector<CPackage*> DirtyPackages;
+        for (TObjectIterator<CPackage> Itr; Itr; ++Itr)
+        {
+            CPackage* Package = *Itr;
+            // Marked for destroy = a deleted asset awaiting the deferred drain; nothing to write.
+            if (Package->HasAnyFlag(OF_MarkedDestroy) || !Package->IsDirty())
+            {
+                continue;
+            }
+            DirtyPackages.push_back(Package);
+        }
+
+        if (DirtyPackages.empty())
+        {
+            ImGuiX::Notifications::NotifySuccess("Nothing to save; everything is up to date.");
+            return;
+        }
+
+        // Route through the owning tool where one is open: its OnSave carries type-specific work a raw
+        // package write skips -- thumbnail capture, asset-registry notification, material compile-on-save.
+        // Those tools report their own result, so only the packages saved directly are counted here.
+        THashSet<CPackage*> HandledByTool;
+        for (const auto& [Asset, Tool] : ActiveAssetTools)
+        {
+            if (Asset == nullptr || Tool == nullptr)
+            {
+                continue;
+            }
+
+            CPackage* Package = Asset->GetPackage();
+            if (Package != nullptr && Package->IsDirty() && !Package->HasAnyFlag(OF_MarkedDestroy))
+            {
+                Tool->OnSave();
+                HandledByTool.insert(Package);
+            }
+        }
+
+        uint32 Saved  = 0;
+        uint32 Failed = 0;
+        for (CPackage* Package : DirtyPackages)
+        {
+            if (HandledByTool.find(Package) != HandledByTool.end())
+            {
+                continue;
+            }
+
+            if (CPackage::SavePackage(Package, Package->GetPackagePath()))
+            {
+                ++Saved;
+            }
+            else
+            {
+                ++Failed;
+            }
+        }
+
+        if (Failed > 0)
+        {
+            ImGuiX::Notifications::NotifyError("Save All: {0} package(s) saved, {1} failed.", Saved, Failed);
+        }
+        else if (Saved > 0)
+        {
+            ImGuiX::Notifications::NotifySuccess("Save All: {0} package(s) saved.", Saved);
+        }
+        // Saved == 0 with no failures means every dirty package belonged to an open tool, and each of
+        // those already reported itself.
     }
 
     void FEditorUI::VerifyDirtyPackages()
@@ -2309,14 +2580,18 @@ namespace Lumina
         {
             return;
         }
+        // Mirrors the Ctrl+S the focused tool already handles, so the menu and the shortcut do the
+        // same thing rather than one of them silently doing nothing.
+        ImGui::BeginDisabled(LastActiveTool == nullptr);
         if (ImGui::MenuItem(LE_ICON_ZIP_DISK " Save", "Ctrl+S"))
         {
-            // Save action
+            SaveActiveTool();
         }
+        ImGui::EndDisabled();
 
         if (ImGui::MenuItem(LE_ICON_ZIP_DISK " Save All", "Ctrl+Shift+S"))
         {
-            // Save all action
+            SaveAllDirtyPackages();
         }
 
         ImGui::Separator();
@@ -3053,6 +3328,10 @@ namespace Lumina
 
     void FEditorUI::OnProjectLoaded()
     {
+        // Armed here, not at startup: the tab list lives in the project's own /Config, so it isn't
+        // readable until the project is mounted. Consumed on the next update.
+        bSessionRestorePending = true;
+
         ContentBrowser->RefreshContentBrowser();
         
         if (!TryOpenEditorStartupMap())

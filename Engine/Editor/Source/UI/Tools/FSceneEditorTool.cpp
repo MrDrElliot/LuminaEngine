@@ -2664,7 +2664,8 @@ namespace Lumina
     void FSceneEditorTool::DrawAddToEntityOrWorldPopup(entt::entity Entity)
     {
         using namespace entt::literals;
-
+        
+        ImGui::SetNextWindowViewport(ImGui::GetWindowViewport()->ID);
         ImGui::SetNextWindowSize(ImVec2(450.0f, 550.0f), ImGuiCond_Always);
 
         if (ImGui::BeginPopup("AddToEntityMenu", ImGuiWindowFlags_NoMove))

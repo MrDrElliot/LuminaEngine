@@ -1,5 +1,6 @@
 ﻿#include "ContentBrowserEditorTool.h"
 
+#include "EditorAssetActions.h"
 #include "EditorToolContext.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Assets/AssetRegistry/TextAssetTypes.h"
@@ -2074,6 +2075,24 @@ namespace Lumina
     
     }
 
+    const FAssetData* FContentBrowserEditorTool::GetSelectedAsset() const
+    {
+        const TVector<FTileViewItem*>& Selections = ContentBrowserTileView.GetSelections();
+        if (Selections.size() != 1)
+        {
+            return nullptr;   // ambiguous (or nothing) to hand to a single-object property
+        }
+
+        const FContentBrowserTileViewItem* Item = static_cast<const FContentBrowserTileViewItem*>(Selections[0]);
+        if (Item == nullptr || !Item->IsAsset())
+        {
+            return nullptr;
+        }
+
+        const FFixedString Path(Item->GetVirtualPath().data(), Item->GetVirtualPath().size());
+        return FAssetRegistry::Get().GetAssetByPath(Path);
+    }
+
     void FContentBrowserEditorTool::DrawAssetContextMenu(FContentBrowserTileViewItem* ContentItem)
     {
         const bool bIsAsset      = ContentItem->IsAsset();
@@ -2166,6 +2185,36 @@ namespace Lumina
         {
             FString Parent = Paths::Parent(ContentItem->GetPathSource());
             Platform::LaunchURL(StringUtils::ToWideString(Parent).c_str());
+        }
+
+        // Class-registered actions ("Create Material Instance", ...). Plugins contribute here without
+        // touching the content browser; see FAssetActionRegistry.
+        if (bIsAsset)
+        {
+            const FFixedString AssetPath(ContentItem->GetVirtualPath().data(), ContentItem->GetVirtualPath().size());
+            if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(AssetPath))
+            {
+                if (CClass* AssetClass = FindObject<CClass>(Data->AssetClass))
+                {
+                    TVector<const FAssetAction*> AvailableActions;
+                    FAssetActionRegistry::Get().GatherActions(AssetClass, AvailableActions);
+
+                    if (!AvailableActions.empty())
+                    {
+                        DrawMenuSection("ACTIONS");
+
+                        const FAssetActionContext ActionContext{ ToolContext, Data };
+                        for (const FAssetAction* Action : AvailableActions)
+                        {
+                            const bool bEnabled = Action->CanExecute == nullptr || Action->CanExecute(ActionContext);
+                            if (ImGui::MenuItem(Action->Label.c_str(), nullptr, false, bEnabled))
+                            {
+                                Action->Execute(ActionContext);
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         DrawMenuSection("EDIT");

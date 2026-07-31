@@ -6,6 +6,7 @@
 #include "Core/Object/Cast.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/Package/Package.h"
+#include "Settings/EditorSettings.h"
 #include "Tools/UI/ImGui/EditorColors.h"
 #include "Tools/UI/ImGui/ImGuiFonts.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
@@ -118,6 +119,13 @@ namespace Lumina
             if (Asset.IsValid())
             {
                 Asset->GetPackage()->MarkDirty();
+            }
+
+            // A property edit (a constant's value, a texture reference, ...) changes the shader just as
+            // much as rewiring does, so it counts toward "needs compile" the same way.
+            if (NodeGraph != nullptr)
+            {
+                NodeGraph->NotifyContentChanged();
             }
 
             if (Event.PropertyName == FName("MaterialType"))
@@ -367,12 +375,31 @@ namespace Lumina
     {
     }
     
+    bool FMaterialEditorTool::NeedsCompile() const
+    {
+        return NodeGraph != nullptr && (!bHasCompiledOnce || NodeGraph->GetContentVersion() != CompiledContentVersion);
+    }
+
     void FMaterialEditorTool::DrawToolMenu(const FUpdateContext& UpdateContext)
     {
-        if (ImGui::MenuItem(LE_ICON_RECEIPT_TEXT" Compile"))
+        // Pending edits recolor the entry and swap the icon for a warning: forgetting to compile is
+        // silent otherwise -- the graph looks right and the material keeps rendering the old shader.
+        const bool bPending = NeedsCompile();
+        if (bPending)
+        {
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::Warning());
+        }
+
+        if (ImGui::MenuItem(bPending ? LE_ICON_ALERT_CIRCLE " Compile*" : LE_ICON_RECEIPT_TEXT " Compile"))
         {
             Compile();
             OnSave();
+        }
+
+        if (bPending)
+        {
+            ImGui::PopStyleColor();
+            ImGuiX::TextTooltip("{}", "This material has changes that are not in its compiled shader yet.");
         }
     }
 
@@ -717,6 +744,10 @@ namespace Lumina
         bHasCompiledOnce  = true;
         bGLSLPreviewDirty = true;
 
+        // Stamped even on failure: the compile ran against this exact graph, so nagging about it again
+        // until something else changes would just be noise on top of the errors already surfaced.
+        CompiledContentVersion = NodeGraph != nullptr ? NodeGraph->GetContentVersion() : 0;
+
         if (!CompileResult.bSuccess)
         {
             for (const EdNodeGraph::FError& Error : CompileResult.Errors)
@@ -752,6 +783,15 @@ namespace Lumina
 
     void FMaterialEditorTool::OnSave()
     {
+        // Before the base save, not after: Compile writes the shaders, parameters and texture table back
+        // onto the material, so saving first would persist the pre-compile state and leave the asset on
+        // disk disagreeing with the graph it contains.
+        const CMaterialEditorSettings* Settings = GetDefault<CMaterialEditorSettings>();
+        if (Settings != nullptr && Settings->bCompileOnSave && NeedsCompile())
+        {
+            Compile();
+        }
+
         FAssetEditorTool::OnSave();
     }
 

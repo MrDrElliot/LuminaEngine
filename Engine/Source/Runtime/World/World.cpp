@@ -447,8 +447,7 @@ namespace Lumina
             const auto AnyCameraView = EntityRegistry.view<SCameraComponent>();
             if (AnyCameraView.begin() == AnyCameraView.end())
             {
-                LOG_WARN("CWorld::Initialize: world '{}' has no camera entity; spawning a fallback at (0, 2, 5) looking at origin. Add a camera entity for proper gameplay.",
-                    GetName());
+                LOG_WARN("CWorld::Initialize: world '{}' has no camera entity; spawning a fallback at (0, 2, 5) looking at origin. Add a camera entity for proper gameplay.", GetName());
 
                 constexpr FVector3 FallbackPos(0.0f, 2.0f, 5.0f);
 

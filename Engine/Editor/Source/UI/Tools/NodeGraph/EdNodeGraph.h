@@ -18,6 +18,21 @@ namespace Lumina
 
 namespace Lumina
 {
+    // How AlignSelectedNodes arranges the selection. CenterX/CenterY are named for the coordinate they
+    // equalize, not the axis the nodes end up spread along: CenterX gives every node the same center X
+    // (a column), CenterY the same center Y (a row).
+    enum class ENodeAlignment : uint8
+    {
+        Left,
+        Right,
+        Top,
+        Bottom,
+        CenterX,
+        CenterY,
+        DistributeX,   // even gaps between left/right edges, existing order preserved
+        DistributeY,
+    };
+
     REFLECT()
     class CEdNodeGraph : public CObject
     {
@@ -63,6 +78,28 @@ namespace Lumina
         // Quick-place hooks.
         virtual void HandleQuickPlace(int Digit, ImVec2 CanvasPos) {}
         virtual void HandleQuickPlace(char Key, ImVec2 CanvasPos) {}
+
+        // Bumped whenever the graph's CONTENT changes -- nodes or links added or removed. Node moves and
+        // canvas pan/zoom deliberately do not count: they dirty the package but cannot invalidate
+        // compiled output. Tools compare it against the value at their last compile to know whether one
+        // is still needed.
+        NODISCARD uint64 GetContentVersion() const { return ContentVersion; }
+        void NotifyContentChanged() { ++ContentVersion; }
+
+        // Clones SourceNodes into this graph, offset by Delta from their current positions, and selects
+        // the clones. Links whose BOTH endpoints are in the set are rebuilt between the clones; links
+        // reaching outside it are dropped, so a paste never rewires the graph it lands in. Must run
+        // inside DrawGraph (node positions need the editor context).
+        void CloneNodes(const TVector<CEdGraphNode*>& SourceNodes, ImVec2 Delta);
+
+        // Moves the selected nodes into alignment. No-op below two selected nodes (and below three for
+        // the Distribute modes). Must run inside DrawGraph: node geometry and SetNodePosition both need
+        // the editor context current. The editor's own save hook marks the package dirty.
+        void AlignSelectedNodes(ENodeAlignment Alignment);
+
+        // Emits the "Alignment" menu items (assumes an open popup/menu). Shared by the node context
+        // menu and anything else that wants to offer them.
+        void DrawAlignmentMenuItems();
 
         // Positions Node at a screen point on the next draw. Screen->canvas conversion needs the
         // node-editor context, which is only current inside DrawGraph, so callers outside it (drop
@@ -163,6 +200,16 @@ namespace Lumina
             ImVec2                   ScreenPos;
         };
         TVector<FPendingPlacement> PendingPlacements;
+
+        // Alignment picked from a context menu. Menus are drawn inside a Suspend block, so it is applied
+        // on the next draw instead -- same deferral as PendingPlacements, and one code path for moves.
+        uint64         ContentVersion = 0;
+
+        bool           bHasPendingAlignment = false;
+        ENodeAlignment PendingAlignment     = ENodeAlignment::Left;
+
+        // Node the "Node Context Menu" popup was opened on; the popup outlives the frame that spawned it.
+        uint64         ContextMenuNodeID = 0;
         
     public:
 

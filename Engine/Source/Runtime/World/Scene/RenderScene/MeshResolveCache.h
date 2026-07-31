@@ -65,6 +65,12 @@ namespace Lumina
         // move when the vector reallocates.
         uint32                      Generation = 0;
 
+        // Epoch this entry's Surfaces were built at. An entry is interned by (mesh, override list), so a
+        // change to the MESH's own material slots -- or to a material asset itself -- leaves the key
+        // identical while making the contents wrong. Comparing this against the global epoch is what
+        // turns BumpEpoch into an actual invalidation instead of just a per-component re-lookup.
+        uint32                      ResolvedEpoch = ~0u;
+
         // False while a slot's material is still compiling.
         bool                        bAllMaterialsReady = false;
         bool                        bResolved = false;
