@@ -170,6 +170,11 @@ namespace Lumina
 
         /** Called to set up the world for the tool */
         virtual void SetupWorldForTool();
+
+        /** Where this tool's viewport camera starts, and what it points at. The default keeps the
+         *  historical pose (slightly above the origin, looking straight down -Z) so tools that frame
+         *  their own content are unaffected; the world editor overrides it to frame the default scene. */
+        virtual void GetDefaultCameraPose(FVector3& OutLocation, FVector3& OutTarget) const;
         
         /** Creates a plane at world 0 */
         virtual entt::entity CreateFloorPlane(float YOffset = 0.0f, float ScaleX = 10.0f, float ScaleY = 10.0f);

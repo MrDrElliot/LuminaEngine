@@ -70,6 +70,13 @@ int main(int argc, char* argv[])
         // works without per-call slash/case fixups.
         ReflectedProject->Path = Lumina::ClangUtils::NormalizeHeaderPath(eastl::move(ProjectPath));
 
+        // A reference-only project (the engine's modules, pulled into a game or plugin workspace) is
+        // parsed so its types are known, but never generated for.
+        if (Project.contains("ReferenceOnly"))
+        {
+            ReflectedProject->bReferenceOnly = Project["ReferenceOnly"].get<bool>();
+        }
+
         // Optional: a plugin/game module routes its C# bindings into its own Scripts/Generated dir.
         if (Project.contains("CSharpBindingsDir") && !Project["CSharpBindingsDir"].get<std::string>().empty())
         {
@@ -152,6 +159,13 @@ int main(int argc, char* argv[])
     // include block with `<stem>.generated.h` (catches missing/misordered/wrong-file includes).
     for (const auto& Project : Workspace.ReflectedProjects)
     {
+        // Someone else's module. It was validated by the workspace that owns it, and reporting its
+        // problems here would blame a game build for an engine header.
+        if (Project->bReferenceOnly)
+        {
+            continue;
+        }
+
         for (auto& [_, Header] : Project->Headers)
         {
             if (!Header->bHasReflectionMacros)
@@ -250,6 +264,57 @@ int main(int argc, char* argv[])
                 FDiagnostics::Get().Errorf(Loc, EDiagId::GeneratedHeaderNotLast,
                     "'%s' must be the last #include in this header, but '%s' follows it.",
                     ExpectedGenerated.c_str(), LaterInclude->Spelling.c_str());
+            }
+        }
+    }
+
+    // A property whose type is a struct/class emits a Construct_ call for it. If that type was never
+    // reflected there is nothing to call, and the module fails to compile on an undeclared identifier
+    // pointing at generated code. Say what is actually wrong, at the header that caused it.
+    for (const auto& Project : Workspace.ReflectedProjects)
+    {
+        if (Project->bReferenceOnly)
+        {
+            continue;
+        }
+
+        for (auto& [_, Header] : Project->Headers)
+        {
+            auto TypeIt = Parser.ParsingContext.ReflectionDatabase.ReflectedTypes.find(Header.get());
+            if (TypeIt == Parser.ParsingContext.ReflectionDatabase.ReflectedTypes.end())
+            {
+                continue;
+            }
+
+            for (const auto& Type : TypeIt->second)
+            {
+                auto* Struct = dynamic_cast<FReflectedStruct*>(Type.get());
+                if (Struct == nullptr)
+                {
+                    continue;
+                }
+
+                for (const auto& Property : Struct->Props)
+                {
+                    if (!Property->CanDeclareCrossModuleReferences())
+                    {
+                        continue;
+                    }
+
+                    if (Parser.ParsingContext.ReflectionDatabase.GetReflectedType<FReflectedType>(
+                            Lumina::FStringHash(Property->TypeName)) != nullptr)
+                    {
+                        continue;
+                    }
+
+                    FDiagLocation Loc;
+                    Loc.File = Header->HeaderPath;
+                    Loc.Line = Type->LineNumber;
+                    FDiagnostics::Get().Errorf(Loc, EDiagId::UnreflectedPropertyType,
+                        "Property '%s' on '%s' has type '%s', which is not reflected. "
+                        "Give that type a REFLECT() + GENERATED_BODY(), or remove the PROPERTY() macro from this field.",
+                        Property->Name.c_str(), Type->DisplayName.c_str(), Property->TypeName.c_str());
+                }
             }
         }
     }

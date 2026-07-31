@@ -3497,6 +3497,11 @@ namespace Lumina
         }
     }
 
+    void FWorldEditorTool::GetDefaultCameraPose(FVector3& OutLocation, FVector3& OutTarget) const
+    {
+        EditorEntityUtils::GetDefaultScenePreviewPose(OutLocation, OutTarget);
+    }
+
     void FWorldEditorTool::UnbindRegistryObservers()
     {
         if (ObservedRegistry == nullptr)
@@ -3514,22 +3519,18 @@ namespace Lumina
 
     void FWorldEditorTool::RebindRegistryObservers()
     {
-        // Unbind from whatever we were observing -- it may differ from the current World after a
-        // RebindToWorld pointer-swap (e.g. entering PIE), and that old world must not keep a dangling
-        // observer into this tool when it is later torn down.
         UnbindRegistryObservers();
 
-        // Observe the inspected world (defaults to World; may be a foreign live world for inspect-only viewing).
         FEntityRegistry& Registry = ECS::GetWorldRegistry(*GetObservedWorld());
         Registry.on_construct<entt::entity>().connect<&FWorldEditorTool::OnEntityCreated>(this);
         Registry.on_destroy<entt::entity>().connect<&FWorldEditorTool::OnEntityDestroyed>(this);
-        // Hook on SNameComponent (not entt::entity) so we don't add an outliner row before the entity has a name.
         Registry.on_construct<SNameComponent>().connect<&FSceneEditorTool::OnOutlinerEntityConstructed>(this);
         Registry.on_destroy<SNameComponent>().connect<&FSceneEditorTool::OnOutlinerEntityDestroyed>(this);
-        // Add/remove of a script component changes the row's script toggle; rebuild the outliner.
         Registry.on_construct<SScriptComponent>().connect<&FWorldEditorTool::OnEntityScriptChanged>(this);
         Registry.on_destroy<SScriptComponent>().connect<&FWorldEditorTool::OnEntityScriptChanged>(this);
         ObservedRegistry = &Registry;
+
+        OutlinerListView.MarkTreeDirty();
     }
 
     void FWorldEditorTool::SetObservedWorld(CWorld* NewWorld)

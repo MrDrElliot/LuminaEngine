@@ -47,7 +47,7 @@ namespace Lumina
         FMaterialEditorTool(IEditorToolContext* Context, CObject* InAsset);
         
         bool IsSingleWindowTool() const override { return false; }
-        const char* GetTitlebarIcon() const override { return LE_ICON_FORMAT_LIST_BULLETED_TYPE; }
+        const char* GetTitlebarIcon() const override { return LE_ICON_SPHERE; }
         void OnInitialize() override;
         void OnDeinitialize(const FUpdateContext& UpdateContext) override;
         void SetupWorldForTool() override;

@@ -1,0 +1,23 @@
+Name,DisplayName,Description,Rarity,Slot,MaxStack,Weight,Value,bConsumable,Damage,Armor
+Item_HealthPotion,Health Potion,"Restores 50 health, instantly.",Common,None,20,0.5,25,true,0,0
+Item_ManaPotion,Mana Potion,Restores 40 mana over 5 seconds.,Common,None,20,0.5,30,true,0,0
+Item_IronSword,Iron Sword,A plain but dependable blade.,Common,MainHand,1,4.5,80,false,12,0
+Item_SteelSword,Steel Sword,Better balance and a keener edge.,Uncommon,MainHand,1,4,180,false,18,0
+Item_FlameBrand,Flamebrand,"Sears on contact, and never needs sharpening.",Rare,MainHand,1,3.75,950,false,31,0
+Item_WoodenShield,Wooden Shield,Cheap and replaceable.,Common,OffHand,1,6,40,false,0,8
+Item_TowerShield,Tower Shield,"Heavy, but very little gets past it.",Uncommon,OffHand,1,14.5,260,false,0,22
+Item_LeatherCap,Leather Cap,Basic head protection.,Common,Head,1,1.25,20,false,0,3
+Item_IronHelm,Iron Helm,Dented in several places.,Common,Head,1,3.5,65,false,0,7
+Item_LeatherVest,Leather Vest,Supple and quiet.,Common,Chest,1,5,55,false,0,9
+Item_Chainmail,Chainmail Hauberk,Rings on rings.,Uncommon,Chest,1,12,240,false,0,19
+Item_PlateCuirass,Plate Cuirass,"Fitted, and unmistakably expensive.",Rare,Chest,1,22.5,1100,false,0,34
+Item_ClothGloves,Cloth Gloves,Barely counts as armor.,Common,Hands,1,0.4,10,false,0,1
+Item_GauntletsOfMight,Gauntlets of Might,The wearer's grip never falters.,Epic,Hands,1,4.25,2400,false,6,12
+Item_TravelBoots,Traveling Boots,Worn in and comfortable.,Common,Feet,1,2,35,false,0,4
+Item_BootsOfHaste,Boots of Haste,"Light underfoot, in every sense.",Rare,Feet,1,1.5,1350,false,0,6
+Item_LinenTrousers,Linen Trousers,Unremarkable.,Common,Legs,1,1.75,15,false,0,2
+Item_GreavesOfTheDawn,Greaves of the Dawn,Warm to the touch at sunrise.,Epic,Legs,1,9,2750,false,0,26
+Item_CrownOfEmbers,Crown of Embers,"Smolders, and does not consume itself.",Legendary,Head,1,2.25,9800,false,15,20
+Item_Antidote,Antidote,Ends poison. Tastes worse than the poison.,Common,None,10,0.25,45,true,0,0
+Item_Whetstone,Whetstone,Restores an edge that has gone dull.,Common,None,5,1,15,true,0,0
+Item_Torch,Torch,Burns for about an hour.,Common,OffHand,10,1.5,5,false,2,0

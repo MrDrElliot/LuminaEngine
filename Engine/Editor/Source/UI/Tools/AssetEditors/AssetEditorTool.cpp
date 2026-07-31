@@ -42,12 +42,16 @@ namespace Lumina
     {
         if (Asset != nullptr)
         {
-            // "Name###GUID": ImGui shows the label but hashes the stable GUID, so same-named assets don't merge.
+            // "<Icon> Name###GUID": ImGui shows the label but hashes the stable GUID, so same-named
+            // assets don't merge. The icon is part of the label rather than added by the base class,
+            // because this override replaces the name the base composed -- without it here, every
+            // asset tab would be the only unlabeled kind of tab in the editor.
             const FName Name = Asset->GetName();
             if (CachedWindowNameSource != Name)
             {
                 CachedWindowNameSource = Name;
-                CachedWindowName = std::format("{0}###{1}", Name.c_str(), Asset->GetGUID().ToShortString().c_str()).c_str();
+                CachedWindowName = std::format("{0} {1}###{2}",
+                    GetTitlebarIcon(), Name.c_str(), Asset->GetGUID().ToShortString().c_str()).c_str();
             }
             return CachedWindowName;
         }

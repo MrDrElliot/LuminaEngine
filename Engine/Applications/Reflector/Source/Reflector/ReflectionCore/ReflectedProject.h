@@ -26,6 +26,14 @@ namespace Lumina::Reflection
         // this to its <root>/Scripts/Generated so the per-plugin script gather compiles the bindings into the
         // plugin's OWN assembly, not LuminaSharp.dll.
         eastl::string                                                       CSharpBindingsDir;
+
+        // Parsed for type discovery only -- no code is generated for it, and its output directories are
+        // never swept. A game or plugin workspace pulls the engine's modules in this way so that its own
+        // types can name engine types: a base class, or a property typed as an engine struct, needs the
+        // engine type in the database to emit a SuperStruct and a cross-module declaration. Without it
+        // the base is silently dropped and the property reference fails to link.
+        bool                                                                bReferenceOnly = false;
+
         FReflectedWorkspace*                                                Workspace;
         eastl::hash_map<FStringHash, eastl::unique_ptr<FReflectedHeader>>   Headers;
         eastl::vector<eastl::string>                                        IncludeDirs;

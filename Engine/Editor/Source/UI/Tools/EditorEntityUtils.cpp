@@ -5,8 +5,13 @@
 #include "EASTL/string.h"
 #include "Core/Math/AABB.h"
 #include "World/Entity/EntityUtils.h"
+#include "Tools/PrimitiveManager/PrimitiveManager.h"
 #include "World/Entity/Components/DirtyComponent.h"
 #include "World/Entity/Components/EditorComponent.h"
+#include "World/Entity/Components/EnvironmentComponent.h"
+#include "World/Entity/Components/LightComponent.h"
+#include "World/Entity/Components/PhysicsComponent.h"
+#include "World/Entity/Components/SkyLightComponent.h"
 #include "World/Entity/Components/NameComponent.h"
 #include "World/Entity/Components/RelationshipComponent.h"
 #include "World/Entity/Components/StaticMeshComponent.h"
@@ -296,5 +301,63 @@ namespace Lumina::EditorEntityUtils
         {
             World->DrawBoxCorners(Center, HalfExtents, Rotation, Color, CornerFraction, Thickness, bDepthTest);
         }
+    }
+
+    namespace
+    {
+        // Floor slab. The cube primitive is half-extent 1, so this scale gives a 20 x 1 x 20 box whose
+        // top face lands exactly on y = 0 -- which is what the sphere's resting height is measured from.
+        constexpr float kFloorHalfSize  = 10.0f;
+        constexpr float kFloorHalfDepth = 0.5f;
+
+        // Unit-radius primitive, dropped from high enough to visibly fall rather than start resting.
+        constexpr float kSphereRadius = 1.0f;
+        constexpr float kSphereStartY = 4.0f;
+    }
+
+    void PopulateDefaultScene(CWorld* World)
+    {
+        if (World == nullptr)
+        {
+            return;
+        }
+
+        entt::entity Entity = World->ConstructEntity("Environment");
+        World->EmplaceComponent<SEnvironmentComponent>(Entity);
+
+        Entity = World->ConstructEntity("DirectionalLight");
+        World->EmplaceComponent<SDirectionalLightComponent>(Entity);
+
+        Entity = World->ConstructEntity("SkyLight");
+        World->EmplaceComponent<SSkyLightComponent>(Entity);
+
+        // A scaled cube rather than the plane primitive: the plane mesh stands upright in its local XY
+        // and would need a -90 rotation to lie flat, but SPlaneColliderComponent's normal is +Y in the
+        // ENTITY's frame, so that same rotation would tip its collider onto its side. A cube needs no
+        // rotation, and a box collider's half extents are scaled by the transform, so the collision box
+        // matches what is drawn without a second set of numbers to keep in sync.
+        Entity = World->ConstructEntity("Floor", FTransform(
+            FVector3(0.0f, -kFloorHalfDepth, 0.0f),
+            FVector3(0.0f, 0.0f, 0.0f),
+            FVector3(kFloorHalfSize, kFloorHalfDepth, kFloorHalfSize)));
+        World->EmplaceComponent<SStaticMeshComponent>(Entity).SetStaticMesh(CPrimitiveManager::Get().CubeMesh);
+        World->EmplaceComponent<SBoxColliderComponent>(Entity).HalfExtent = FVector3(1.0f);
+        World->EmplaceComponent<SRigidBodyComponent>(Entity).BodyType = EBodyType::Static;
+
+        Entity = World->ConstructEntity("Sphere", FTransform(
+            FVector3(0.0f, kSphereStartY, 0.0f),
+            FVector3(0.0f, 0.0f, 0.0f),
+            FVector3(1.0f, 1.0f, 1.0f)));
+        World->EmplaceComponent<SStaticMeshComponent>(Entity).SetStaticMesh(CPrimitiveManager::Get().SphereMesh);
+        World->EmplaceComponent<SSphereColliderComponent>(Entity).Radius = kSphereRadius;
+        World->EmplaceComponent<SRigidBodyComponent>(Entity).BodyType = EBodyType::Dynamic;
+    }
+
+    void GetDefaultScenePreviewPose(FVector3& OutLocation, FVector3& OutTarget)
+    {
+        // Aimed at the sphere's RESTING height, not its spawn height: the scene is looked at far more
+        // often after it has settled than during the first second of the drop.
+        OutTarget   = FVector3(0.0f, kSphereRadius, 0.0f);
+        OutLocation = FVector3(4.5f, 3.5f, 8.0f);
     }
 }

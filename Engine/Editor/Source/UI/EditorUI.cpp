@@ -125,6 +125,9 @@
 #include "Tools/AssetEditors/Blackboard/BlackboardEditorTool.h"
 #include "Tools/AssetEditors/CurveEditor/CurveAssetEditorTool.h"
 #include "Tools/AssetEditors/DataAsset/DataAssetEditorTool.h"
+#include "Assets/AssetTypes/DataTable/DataTable.h"
+#include "Tools/AssetEditors/DataTable/DataTableEditorTool.h"
+#include "Tools/EditorEntityUtils.h"
 #include "Tools/AssetEditors/AudioStream/AudioStreamEditorTool.h"
 #include "Tools/AssetEditors/PhysicsMaterial/PhysicsMaterialEditorTool.h"
 #include "Tools/AssetEditors/DataAsset/DataAssetSchemaEditorTool.h"
@@ -503,16 +506,12 @@ namespace Lumina
         EditorWindowClass.ParentViewportId              = 0; // Top level window
         EditorWindowClass.DockingAlwaysTabBar           = true;
 
+        // Same starting scene a newly created world asset gets, so the editor's opening view is not a
+        // different world from the one File > New produces.
         CWorld* World = NewObject<CWorld>(nullptr, "Transient World", FGuid::New(), OF_Transient);
-        auto Entity = World->ConstructEntity("Environment");
-        World->EmplaceComponent<SEnvironmentComponent>(Entity);
-        
-        Entity = World->ConstructEntity("DirectionalLight");
-        World->EmplaceComponent<SDirectionalLightComponent>(Entity);
+        EditorEntityUtils::PopulateDefaultScene(World);
 
-        Entity = World->ConstructEntity("SkyLight");
-        World->EmplaceComponent<SSkyLightComponent>(Entity);
-        
+
         WorldEditorTool = CreateTool<FWorldEditorTool>(this, World);
         ConsoleLogTool = CreateTool<FConsoleLogEditorTool>(this);
         ContentBrowser = CreateTool<FContentBrowserEditorTool>(this);
@@ -1308,6 +1307,7 @@ namespace Lumina
         Registry.RegisterAssetEditor<CBlackboard,         FBlackboardEditorTool>();
         Registry.RegisterAssetEditor<CDataAssetSchema,    FDataAssetSchemaEditorTool>();
         Registry.RegisterAssetEditor<CDataAsset,          FDataAssetEditorTool>();
+        Registry.RegisterAssetEditor<CDataTable,          FDataTableEditorTool>();
         Registry.RegisterAssetEditor<CPhysicsMaterial,    FPhysicsMaterialEditorTool>();
         Registry.RegisterAssetEditor<CCurveAsset,         FCurveAssetEditorTool>();
         Registry.RegisterAssetEditor<CAudioStream,        FAudioStreamEditorTool>();

@@ -1148,6 +1148,14 @@ namespace Lumina::ImGuiX
 
             if (bVisible)
             {
+                // The child spans the whole bar height and starts BarPadding.y below the bar's top, so
+                // content drawn at its origin sits high rather than on the centre line. Offset a single
+                // row of items onto it: centre within the BAR, then subtract the padding the child is
+                // already displaced by. Measured from the font, so it follows DPI and font-size changes.
+                const float RowHeight = ImGui::GetTextLineHeight();
+                const float CentredY  = (BarHeight - RowHeight) * 0.5f - BarPadding.y;
+                ImGui::SetCursorPosY(eastl::max(0.0f, CentredY));
+
                 ControlsDrawFunction();
             }
             ImGui::EndChild();

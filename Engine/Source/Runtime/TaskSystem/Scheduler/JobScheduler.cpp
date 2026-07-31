@@ -1156,20 +1156,25 @@ namespace Lumina::Jobs
             return; // fast path
         }
 
-        if (TLS.bIsWorker)
-        {
-            if (GNoParkGuardName != nullptr)
-            {
-#if USING(WITH_EDITOR)
-                LOG_ERROR("Jobs: fiber '{0}' is parking on a counter while its thread runs '{1}', which must never yield. "
-                          "The pump is stalled until this wait resolves, and the fiber may resume on another thread.",
-                          TLS.CurrentFiber->Job.Name ? TLS.CurrentFiber->Job.Name : "<unnamed>", GNoParkGuardName);
-#else
-                LOG_ERROR("Jobs: a fiber is parking on a counter while its thread runs '{0}', which must never yield.",
-                          GNoParkGuardName);
-#endif
-            }
+        // A fiber whose thread runs a no-yield pump.
+        const bool bMustNotYield = GNoParkGuardName != nullptr;
 
+        if (bMustNotYield)
+        {
+            // Once per process: the assist is correct, but a blocking fan-out inside a serial pump is
+            // still worth knowing about. Per-occurrence logging is what made this unreadable.
+            static std::atomic<bool> bReported{ false };
+            bool Expected = false;
+            if (bReported.compare_exchange_strong(Expected, true, std::memory_order_relaxed))
+            {
+                LOG_WARN("Jobs: a counter wait occurred while this thread runs '{0}', which must never yield. "
+                         "Servicing queued jobs inline instead of parking. Further occurrences are not logged.",
+                         GNoParkGuardName);
+            }
+        }
+
+        if (TLS.bIsWorker && !bMustNotYield)
+        {
             // Park and yield to the scheduler, which links us into the counter (see
             // ProcessPending). The releasing decrement touches nothing of a waited (no-completion)
             // counter once we are spliced out, so the caller may reclaim it the instant this returns.
@@ -1195,7 +1200,8 @@ namespace Lumina::Jobs
             return;
         }
 
-        // External thread (not on a fiber): assist-wait, run queued jobs inline until satisfied.
+        // Assist-wait: run queued jobs inline until satisfied, never yielding to the scheduler. Taken by
+        // an external thread (no fiber to park) and by a fiber under a no-yield guard (see above).
         const uint32 Slot = GetWorkerIndex();
         uint32 IdleSpins = 0;
         while (Counter->Value.load(std::memory_order_acquire) > Value)

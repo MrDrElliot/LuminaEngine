@@ -102,7 +102,88 @@ newaction
                 CSharpBindingsDir = ProjectData.CSharpBindingsDir
             })
         end
-    
+
+        -- The reflector only knows about types it parses. A game or plugin workspace contains just its
+        -- own module, so without the engine's headers it cannot tell that an engine base class or an
+        -- engine struct property is reflected: the base is silently dropped (null SuperStruct, so every
+        -- IsChildOf against it fails at runtime) and the property emits a Construct_ call it never
+        -- declared. The engine publishes a manifest of its reflected modules; every other workspace
+        -- pulls it in as reference-only input, parsed for type discovery but never generated for.
+        local function NormalizePath(P)
+            return (path.getabsolute(P):gsub("\\", "/"):lower())
+        end
+
+        local bIsEngineWorkspace = NormalizePath(_MAIN_SCRIPT_DIR) == NormalizePath(LuminaDir)
+
+        -- Lua, not JSON: premake's bundled json module encodes but does not decode, and a manifest
+        -- nobody can read back is no manifest at all. loadfile gives us the table directly.
+        local ManifestPath = path.join(LuminaDir, "Intermediates", "Reflection", "EngineModules.lua")
+
+        if bIsEngineWorkspace then
+            -- %q quotes and escapes for Lua, so paths with backslashes survive the round trip.
+            local Parts = { "return {\n  Projects = {\n" }
+            for _, Project in ipairs(Data.Projects) do
+                table.insert(Parts, "    {\n")
+                table.insert(Parts, string.format("      Name = %q,\n", Project.Name))
+                table.insert(Parts, string.format("      Path = %q,\n", Project.Path))
+
+                table.insert(Parts, "      IncludeDirs = {\n")
+                for _, Dir in ipairs(Project.IncludeDirs) do
+                    table.insert(Parts, string.format("        %q,\n", Dir))
+                end
+                table.insert(Parts, "      },\n")
+
+                table.insert(Parts, "      Files = {\n")
+                for _, F in ipairs(Project.Files) do
+                    table.insert(Parts, string.format("        %q,\n", F))
+                end
+                table.insert(Parts, "      },\n")
+                table.insert(Parts, "    },\n")
+            end
+            table.insert(Parts, "  },\n}\n")
+
+            local Encoded = table.concat(Parts)
+
+            -- Rewrite only on a real change: downstream workspaces key their up-to-date check on this
+            -- file's timestamp, and touching it every generate would re-reflect every game needlessly.
+            local Existing = nil
+            local Read = io.open(ManifestPath, "r")
+            if Read then
+                Existing = Read:read("*a")
+                Read:close()
+            end
+
+            if Existing ~= Encoded then
+                os.mkdir(path.getdirectory(ManifestPath))
+                local Out = io.open(ManifestPath, "w")
+                if Out then
+                    Out:write(Encoded)
+                    Out:close()
+                end
+            end
+        else
+            local Chunk, LoadError = loadfile(ManifestPath)
+            if not Chunk then
+                Logger.Error("Could not read the engine reflection manifest at " .. ManifestPath)
+                Logger.Error(tostring(LoadError))
+                Logger.Error("Generate the engine's projects once before this one - the manifest is what lets your module derive from and reference engine reflected types.")
+                os.exit(1)
+            end
+
+            local bOk, Manifest = pcall(Chunk)
+            if not bOk or type(Manifest) ~= "table" or type(Manifest.Projects) ~= "table" then
+                Logger.Error("Engine reflection manifest at " .. ManifestPath .. " is malformed. Regenerate the engine's projects to rewrite it.")
+                os.exit(1)
+            end
+
+            for _, EngineProject in ipairs(Manifest.Projects) do
+                EngineProject.ReferenceOnly = true
+                -- Its bindings belong to the engine's own build, not this one's.
+                EngineProject.CSharpBindingsDir = ""
+                table.insert(Data.Projects, EngineProject)
+            end
+        end
+
         local File = io.open("Reflection_Files.json", "w")
         if File then
             File:write(json.encode(Data))
@@ -136,6 +217,20 @@ newaction
 
         local StampTime = FileTime(StampFile)
         local LatestInput = FileTime(ReflectionDirectory) -- rebuilding the Reflector invalidates outputs
+
+        -- A downstream workspace's output depends on the engine's types too: an engine base gaining a
+        -- field changes what this module generates, even though none of its own headers moved. The
+        -- engine's own stamp is the precise signal -- it is touched exactly when the engine re-reflects
+        -- -- and costs one stat, where re-scanning every engine header would cost thousands.
+        if not bIsEngineWorkspace then
+            local EngineStamp = path.join(LuminaDir, "Intermediates", "Reflection", ".stamp")
+            for _, Upstream in ipairs({ EngineStamp, ManifestPath }) do
+                local T = FileTime(Upstream)
+                if T > LatestInput then
+                    LatestInput = T
+                end
+            end
+        end
         if LatestInput == 0 then
             Logger.Error("Reflector binary not found at " .. ReflectionDirectory)
             Logger.Error("This means the Reflector project FAILED to build - scroll up to the 'Reflector.vcxproj -- FAILED' errors above; the reflection step itself is fine.")

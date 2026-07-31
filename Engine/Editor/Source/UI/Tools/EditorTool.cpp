@@ -432,9 +432,22 @@ namespace Lumina
         World->EmplaceComponent<SCameraComponent>(EditorEntity);
         World->EmplaceComponent<SInputComponent>(EditorEntity);
         World->EmplaceComponent<FEditorComponent>(EditorEntity);
-        World->GetComponent<STransformComponent>(EditorEntity).SetLocation(FVector3(0.0f, 1.25f, 3.25f));
+        FVector3 CameraLocation;
+        FVector3 CameraTarget;
+        GetDefaultCameraPose(CameraLocation, CameraTarget);
+
+        STransformComponent& CameraTransform = World->GetComponent<STransformComponent>(EditorEntity);
+        CameraTransform.SetLocation(CameraLocation);
+        CameraTransform.SetRotation(Math::FindLookAtRotation(CameraTarget, CameraLocation));
 
         World->SetActiveCamera(EditorEntity);
+    }
+
+    void FEditorTool::GetDefaultCameraPose(FVector3& OutLocation, FVector3& OutTarget) const
+    {
+        OutLocation = FVector3(0.0f, 1.25f, 3.25f);
+        // Straight ahead down -Z, which is the orientation this pose has always had.
+        OutTarget = OutLocation - FVector3(0.0f, 0.0f, 1.0f);
     }
 
     entt::entity FEditorTool::CreateFloorPlane(float YOffset, float ScaleX, float ScaleY)

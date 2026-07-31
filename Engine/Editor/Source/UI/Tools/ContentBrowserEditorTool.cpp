@@ -821,14 +821,17 @@ namespace Lumina
         
         CreateToolWindow("Content", [&] (bool bIsFocused)
         {
-            float Left = 225.0f;
-            float Right = ImGui::GetContentRegionAvail().x - Left;
-            
-            DrawDirectoryBrowser(bIsFocused, ImVec2(Left, 0));
-            
+            // Starting width only. The directory pane is resizable, so its actual width is whatever
+            // the user last dragged it to.
+            constexpr float DefaultDirectoryWidth = 225.0f;
+
+            DrawDirectoryBrowser(bIsFocused, ImVec2(DefaultDirectoryWidth, 0));
+
             ImGui::SameLine();
 
-            DrawContentBrowser(bIsFocused, ImVec2(Right, 0));
+            // Measured, not derived from the default: subtracting a constant would ignore the drag and
+            // leave the content pane overlapping or short by however far the splitter had moved.
+            DrawContentBrowser(bIsFocused, ImVec2(ImGui::GetContentRegionAvail().x, 0));
         });
         
         ContentBrowserTileViewContext.DragDropFunction = [this] (FTileViewItem* DropItem, const TVector<FTileViewItem*>& Selections)
@@ -1907,7 +1910,10 @@ namespace Lumina
 
     void FContentBrowserEditorTool::DrawDirectoryBrowser(bool bIsFocused, ImVec2 Size)
     {
-        ImGui::BeginChild("Directories", Size, ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
+        // ResizeX gives the pane a draggable right border. It also turns the size argument into a
+        // first-use default and persists the user's width in the ini, so the caller must not compute
+        // the content pane's width from that default -- see DrawContentBrowser's call site.
+        ImGui::BeginChild("Directories", Size, ImGuiChildFlags_ResizeX, ImGuiWindowFlags_HorizontalScrollbar);
 
         DirectoryListView.Draw(DirectoryContext);
 

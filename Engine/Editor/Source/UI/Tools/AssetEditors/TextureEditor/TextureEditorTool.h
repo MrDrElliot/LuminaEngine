@@ -15,7 +15,7 @@ namespace Lumina
 
         
         bool IsSingleWindowTool() const override { return false; }
-        const char* GetTitlebarIcon() const override { return LE_ICON_FORMAT_LIST_BULLETED_TYPE; }
+        const char* GetTitlebarIcon() const override { return LE_ICON_IMAGE; }
         void OnInitialize() override;
         void OnDeinitialize(const FUpdateContext& UpdateContext) override;
         void OnAssetLoadFinished() override;

@@ -54,4 +54,17 @@ namespace Lumina::EditorEntityUtils
 
     /** Selection-style corner-bracket box around any entity (via GetEntityDrawBox). No-op if unbounded. */
     void DrawEntitySelectionBox(CWorld* World, entt::entity Entity, const FVector4& Color, float CornerFraction = 0.2f, float Thickness = 5.0f, bool bDepthTest = true);
+
+    /** Fills an empty world with the starting scene: environment, directional light, sky light, a static
+     *  floor slab, and a dynamic sphere resting above it.
+     *
+     *  Shared by CWorldFactory (a newly created world asset) and the transient world the editor opens
+     *  with when no project world is set, so the two cannot drift apart.
+     */
+    void PopulateDefaultScene(CWorld* World);
+
+    /** Where the editor viewport camera should sit to frame PopulateDefaultScene, and the point it
+     *  should look at. Kept next to the scene it frames -- moving the sphere without moving the camera
+     *  is how a "default scene" ends up pointing at empty space. */
+    void GetDefaultScenePreviewPose(FVector3& OutLocation, FVector3& OutTarget);
 }

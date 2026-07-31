@@ -35,6 +35,9 @@ namespace Lumina
         LE_NO_COPYMOVE(FWorldEditorTool);
 
         void OnInitialize() override;
+
+        /** Frames the default scene's floor and sphere. */
+        void GetDefaultCameraPose(FVector3& OutLocation, FVector3& OutTarget) const override;
         void OnDeinitialize(const FUpdateContext& UpdateContext) override;
         bool ShouldGenerateThumbnailOnSave() const override { return true; }
         

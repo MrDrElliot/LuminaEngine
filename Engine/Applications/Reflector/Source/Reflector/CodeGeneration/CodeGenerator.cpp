@@ -236,6 +236,13 @@ namespace Lumina::Reflection
 
         for (const auto& [Header, _] : ReflectionDatabase->ReflectedTypes)
         {
+            // Reference-only modules are in the database so this workspace's types can name theirs.
+            // Generating for them would write into another workspace's intermediates.
+            if (Header->Project->bReferenceOnly)
+            {
+                continue;
+            }
+
             UnityPerProject[Header->Project].push_back(Header->FileName + ".generated.cpp");
 
             auto& Expected = ExpectedArtifacts[Header->Project];
@@ -261,6 +268,11 @@ namespace Lumina::Reflection
             if (Fns.empty() || ReflectionDatabase->ReflectedTypes.find(Header) != ReflectionDatabase->ReflectedTypes.end())
             {
                 continue; // empty, or already handled by the types loop (it emits free functions too)
+            }
+
+            if (Header->Project->bReferenceOnly)
+            {
+                continue;
             }
 
             UnityPerProject[Header->Project].push_back(Header->FileName + ".generated.cpp");
@@ -321,6 +333,11 @@ namespace Lumina::Reflection
 
         for (auto& Project : Workspace->ReflectedProjects)
         {
+            if (Project->bReferenceOnly)
+            {
+                continue;
+            }
+
             const auto* Expected = [&]() -> const eastl::hash_set<eastl::string>*
             {
                 auto It = ExpectedArtifacts.find(Project.get());
@@ -357,6 +374,11 @@ namespace Lumina::Reflection
         // builds fast); the __has_include stub works PCH or not.
         for (auto& Project : Workspace->ReflectedProjects)
         {
+            if (Project->bReferenceOnly)
+            {
+                continue;
+            }
+
             bool bAnyMissing = false;
             for (int Shard = 0; Shard < kUnityShardCount && !bAnyMissing; ++Shard)
             {

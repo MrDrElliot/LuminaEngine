@@ -18,6 +18,7 @@ namespace Lumina::Reflection
         FieldQualifyFailed     = 1004,  // clang couldn't qualify the field's type.
         FunctionFieldFailed    = 1005,  // function argument/return type couldn't be reflected.
         CircularHeaderInclude  = 1006,  // header A includes B (transitively) which includes A.
+        UnreflectedPropertyType = 1007, // PROPERTY names a struct/class type that is not reflected.
 
         MissingGeneratedHeader = 2000,  // header has REFLECT/GENERATED_BODY/PROPERTY/FUNCTION but doesn't #include its <stem>.generated.h
         GeneratedHeaderNotLast = 2001,  // <stem>.generated.h is included but other includes follow it.

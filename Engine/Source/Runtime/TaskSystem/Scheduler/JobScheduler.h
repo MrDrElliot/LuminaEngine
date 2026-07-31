@@ -119,10 +119,14 @@ namespace Lumina::Jobs
     RUNTIME_API FFiberHandle GetCurrentFiberHandle();
 
     // Mark the calling THREAD as running a serial pump that must never yield to the scheduler (the
-    // render drain). While set, any fiber park on this thread logs a loud error naming the guard:
-    // the park strands the pump until the wait resolves, and the fiber can resume on a different
-    // thread, breaking the pump's thread_local state. Diagnostic tripwire only -- the park still
-    // proceeds. Pass nullptr to clear.
+    // render drain). While set, WaitForCounter on this thread does NOT park: it assist-waits instead,
+    // servicing queued jobs inline until the counter clears. Parking would strand the pump until the
+    // wait resolved, and the fiber could resume on a different thread, breaking the thread_local state
+    // the pump depends on (for the render drain, the RHI recording keyed to that thread).
+    //
+    // So a fan-out inside a guarded region is safe and still parallel -- the guarded thread just helps
+    // rather than yielding. It is reported once per process as a warning, since a blocking fan-out in
+    // a serial pump is a design smell worth seeing, not because it is unsafe. Pass nullptr to clear.
     RUNTIME_API void SetThreadNoParkGuard(const char* GuardName);
 
     // Run one queued job inline if one is available; returns true if it ran one. The assist primitive
