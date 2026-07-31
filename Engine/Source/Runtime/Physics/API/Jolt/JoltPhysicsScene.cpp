@@ -838,23 +838,25 @@ namespace Lumina::Physics
         bStepInProgress.store(true, std::memory_order_release);
         struct FStepGuard { TAtomic<bool>& F; ~FStepGuard() { F.store(false, std::memory_order_release); } } StepGuard{ bStepInProgress };
 
-        // Drain pending body creations before the step; release lock per pop so re-enqueue is safe.
-        for (;;)
+        // Drain pending body creations before the step. Snapshot the queue first: an entity that
+        // still is not buildable re-pushes itself, so draining the live queue until empty spins forever.
+        // Re-pushes and on_construct deferrals land in the now-empty live queue and retry next step.
         {
-            entt::entity Entity;
+            TQueue<entt::entity> PendingThisStep;
             {
                 FScopeLock Lock(PendingRigidBodyMutex);
-                if (PendingRigidBodyCreations.empty())
-                {
-                    break;
-                }
-                Entity = PendingRigidBodyCreations.front();
-                PendingRigidBodyCreations.pop();
+                PendingThisStep.swap(PendingRigidBodyCreations);
             }
 
-            if (World->IsValidEntity(Entity))
+            while (!PendingThisStep.empty())
             {
-                CreateRigidBodyImmediate(ECS::GetWorldRegistry(*World), Entity);
+                const entt::entity Entity = PendingThisStep.front();
+                PendingThisStep.pop();
+
+                if (World->IsValidEntity(Entity))
+                {
+                    CreateRigidBodyImmediate(ECS::GetWorldRegistry(*World), Entity);
+                }
             }
         }
 
