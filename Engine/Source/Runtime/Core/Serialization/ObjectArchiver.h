@@ -35,4 +35,36 @@ namespace Lumina
 
         bool bLoadIfFindFails =false;
     };
+
+    // FObjectProxyArchiver that rewrites resolved references through a source -> copy table.
+    //
+    // Object references serialize as GUIDs, so a plain property copy hands the destination the SOURCE
+    // objects: duplicate a package whose exports reference each other (a material and the node graph
+    // beside it, a graph and its nodes) and the copy points straight back into the original. Editing
+    // the duplicate then edits the original. Remapping on read is what makes a package-level duplicate
+    // self-contained; anything not in the table is left alone, which is exactly right for references to
+    // OTHER packages (textures, parent materials) that should stay shared.
+    class FObjectRemapArchiver : public FObjectProxyArchiver
+    {
+    public:
+
+        FObjectRemapArchiver(FArchive& InInnerAr, const THashMap<CObject*, CObject*>& InRemap)
+            : FObjectProxyArchiver(InInnerAr, /*bLoadIfFindFails*/ true)
+            , Remap(InRemap)
+        {
+        }
+
+        RUNTIME_API FArchive& operator<<(CObject*& Obj) override;
+        RUNTIME_API FArchive& operator<<(FObjectHandle& Value) override;
+
+    private:
+
+        CObject* Remapped(CObject* Source) const
+        {
+            const auto Itr = Remap.find(Source);
+            return Itr != Remap.end() ? Itr->second : Source;
+        }
+
+        const THashMap<CObject*, CObject*>& Remap;
+    };
 }

@@ -62,4 +62,16 @@ namespace Lumina
     // Registers the engine's own asset actions. Called once during editor startup, alongside the
     // built-in tool registrations.
     void RegisterBuiltinAssetActions();
+
+    // "<Dir>/<Base><Suffix>.lasset", deduplicated against what is already on disk. Follows the content
+    // browser's own new-asset recipe (combine -> AddPackageExt -> MakeUniqueFilePath); the extension is
+    // not optional, since a package saved to an extension-less path is not a loadable asset.
+    EDITOR_API FFixedString MakeSiblingAssetPath(FStringView SourceVirtualPath, const char* Suffix);
+
+    // Duplicates an asset AND every sub-object in its package to DestPath, rewriting references between
+    // them so the copy is self-contained. References to other packages stay shared, which is what you
+    // want -- a duplicated material still points at the same textures.
+    //
+    // Returns the copy of PrimaryAsset (the object the content browser lists), or null on failure.
+    EDITOR_API CObject* DuplicateAssetPackage(CObject* PrimaryAsset, FStringView DestPath);
 }

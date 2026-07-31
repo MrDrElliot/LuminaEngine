@@ -66,7 +66,10 @@ namespace Lumina
         /** Templates a new object from this one; copies reflected properties only. */
         RUNTIME_API CObject* Duplicate();
 
-        RUNTIME_API void CopyPropertiesTo(CObject* Other);
+        /** Copies reflected properties onto Other. Remap, when supplied, rewrites any object reference
+         *  that lands in it -- pass the source -> copy table when duplicating a whole package, or the
+         *  copy keeps pointing at the source's sub-objects. References outside the table stay as-is. */
+        RUNTIME_API void CopyPropertiesTo(CObject* Other, const THashMap<CObject*, CObject*>* Remap = nullptr);
         
     private:
 

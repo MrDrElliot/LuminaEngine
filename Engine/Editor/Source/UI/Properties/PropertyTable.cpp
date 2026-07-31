@@ -12,8 +12,11 @@
 #include "Core/Reflection/Type/Properties/MapProperty.h"
 #include "Memory/Memory.h"
 #include "Core/Reflection/Type/Properties/InstancedStructProperty.h"
+#include "Core/Reflection/Type/Properties/ObjectProperty.h"
 #include "Core/Reflection/Type/Properties/OptionalProperty.h"
 #include "Core/Reflection/Type/Properties/StructProperty.h"
+#include "Core/Serialization/MemoryArchiver.h"
+#include "Core/Serialization/ObjectArchiver.h"
 #include "Customizations/CoreTypeCustomization.h"
 #include "Customizations/EntityPropertyCustomization.h"
 #include "Tools/UI/DevelopmentToolUI.h"
@@ -139,6 +142,113 @@ namespace Lumina
         return Width;
     }
 
+    namespace
+    {
+        // Shift+RMB copy / Shift+LMB paste clipboard. One buffer for the whole editor, so a value can
+        // move between panels (an entity's detail row into an asset's), not just within one table.
+        TVector<uint8> GPropertyClipboardBytes;
+        FProperty*     GPropertyClipboardSource = nullptr;
+
+        // "Same type" has to mean the same CONCRETE type. Matching type flags and element size is not
+        // enough: two different structs agree on both, and pasting one into the other reinterprets raw
+        // bytes. Containers are excluded outright -- their element type would need the same treatment
+        // one level down, and silently pasting a TVector<float> over a TVector<FVector3> is exactly the
+        // kind of corruption this check exists to prevent.
+        bool ArePropertiesCompatible(FProperty* A, FProperty* B)
+        {
+            if (A == nullptr || B == nullptr)
+            {
+                return false;
+            }
+
+            if (A->GetType() != B->GetType() || A->GetElementSize() != B->GetElementSize())
+            {
+                return false;
+            }
+
+            if (A->IsA(EPropertyTypeFlags::Vector) || A->IsA(EPropertyTypeFlags::Map))
+            {
+                return false;
+            }
+
+            if (A->IsA(EPropertyTypeFlags::Struct))
+            {
+                return static_cast<FStructProperty*>(A)->GetStruct() == static_cast<FStructProperty*>(B)->GetStruct();
+            }
+
+            if (A->IsA(EPropertyTypeFlags::Object))
+            {
+                return static_cast<FObjectProperty*>(A)->GetPropertyClass() == static_cast<FObjectProperty*>(B)->GetPropertyClass();
+            }
+
+            return true;
+        }
+    }
+
+    void FPropertyRow::CopyPropertyValue()
+    {
+        void* Value = PropertyHandle != nullptr ? PropertyHandle->GetValuePtr() : nullptr;
+        if (Value == nullptr || PropertyHandle->Property == nullptr)
+        {
+            return;
+        }
+
+        if (!ArePropertiesCompatible(PropertyHandle->Property, PropertyHandle->Property))
+        {
+            ImGuiX::Notifications::NotifyWarning("'{0}' is not a copyable property type.", PropertyHandle->Property->Name);
+            return;
+        }
+
+        GPropertyClipboardBytes.clear();
+
+        // Same serialization CopyPropertiesTo uses, so object references survive as GUIDs rather than
+        // raw pointers and a paste resolves them properly.
+        FMemoryWriter Writer(GPropertyClipboardBytes);
+        FObjectProxyArchiver Proxy(Writer, true);
+        PropertyHandle->Property->Serialize(Proxy, Value);
+
+        GPropertyClipboardSource = PropertyHandle->Property;
+        ImGuiX::Notifications::NotifySuccess("Copied '{0}'.", PropertyHandle->Property->Name);
+    }
+
+    void FPropertyRow::PastePropertyValue()
+    {
+        void* Value = PropertyHandle != nullptr ? PropertyHandle->GetValuePtr() : nullptr;
+        if (Value == nullptr || PropertyHandle->Property == nullptr || GPropertyClipboardSource == nullptr)
+        {
+            return;
+        }
+
+        if (!ArePropertiesCompatible(GPropertyClipboardSource, PropertyHandle->Property))
+        {
+            ImGuiX::Notifications::NotifyWarning("Clipboard holds a '{0}'; cannot paste into '{1}'.",
+                GPropertyClipboardSource->Name, PropertyHandle->Property->Name);
+            return;
+        }
+
+        // Bracketed like a discrete edit so undo captures the old value and post-edit hooks fire --
+        // the same shape PerformResetToDefault uses.
+        DispatchChange(EPropertyChangeOp::Started);
+
+        {
+            FMemoryReader Reader(GPropertyClipboardBytes);
+            FObjectProxyArchiver Proxy(Reader, true);
+            PropertyHandle->Property->Serialize(Proxy, Value);
+        }
+
+        if (Customization)
+        {
+            Customization->HandleExternalUpdate(PropertyHandle);
+        }
+
+        ChangeOp = EPropertyChangeOp::Updated;
+        DispatchChange(EPropertyChangeOp::Updated);
+        DispatchChange(EPropertyChangeOp::Finished);
+        ChangeOp = EPropertyChangeOp::None;
+
+        ImGuiX::Notifications::NotifySuccess("Pasted into '{0}'.", PropertyHandle->Property->Name);
+    }
+
     void FPropertyRow::PerformResetToDefault()
     {
         if (PropertyHandle == nullptr || !PropertyHandle->HasDefault())
@@ -245,8 +355,26 @@ namespace Lumina
         ImGui::AlignTextToFramePadding();
         DrawHeader(Offset);
 
-        // Right-click context menu; categories don't get one.
-        if (!bIsCategory && PropertyHandle && PropertyHandle->Property)
+        // Shift+RMB copies this property's value, Shift+LMB pastes a compatible one. Hung off the name
+        // cell (the row's only stable click target -- the value cell belongs to whatever widget the
+        // customization drew there).
+        const bool bShiftHeld = ImGui::GetIO().KeyShift;
+        if (!bIsCategory && PropertyHandle && PropertyHandle->Property && bShiftHeld && ImGui::IsItemHovered())
+        {
+            if (ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+            {
+                CopyPropertyValue();
+            }
+            else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)
+                && !bReadOnly && !IsReadOnly() && !bMultipleValues)
+            {
+                PastePropertyValue();
+            }
+        }
+
+        // Right-click context menu; categories don't get one. Skipped while Shift is held so the copy
+        // chord above does not also pop the menu.
+        if (!bIsCategory && !bShiftHeld && PropertyHandle && PropertyHandle->Property)
         {
             if (ImGui::BeginPopupContextItem("##PropCtx"))
             {

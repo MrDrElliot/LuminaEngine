@@ -140,6 +140,10 @@ namespace Lumina
 
         /** Navigates to the folder holding VirtualPath, then selects and scrolls to its tile. */
         void BrowseToAsset(FStringView VirtualPath);
+
+        // Selects the asset and opens its inline rename as soon as its tile appears. Called right after
+        // creating one, so a new asset lands ready to be named instead of keeping the factory default.
+        void QueueRenameAfterCreate(FStringView VirtualPath);
         bool IsSingleWindowTool() const override { return true; }
         const char* GetTitlebarIcon() const override { return LE_ICON_FORMAT_LIST_BULLETED_TYPE; }
         void OnInitialize() override;
@@ -175,6 +179,9 @@ namespace Lumina
         void DrawContentBrowser(bool bIsFocused, ImVec2 Size);
         
         void DrawAssetContextMenu(FContentBrowserTileViewItem* ContentItem);
+
+        // Duplicate entry. Disabled for packages holding sub-objects a property copy would alias.
+        void DrawDuplicateAssetMenuItem(const FContentBrowserTileViewItem* ContentItem, bool bIsProtected);
         
         void DrawContentDirectoryContextMenu();
         
@@ -202,6 +209,10 @@ namespace Lumina
 
         // One-shot browse-to targets, consumed by the next tile rebuild / directory tree draw.
         FFixedString                PendingBrowseToPath;
+
+        // Asset just created and waiting to be dropped into inline rename. Survives rebuilds until the
+        // tile exists, since factory creation can complete asynchronously.
+        FFixedString                PendingRenamePath;
         FFixedString                PendingDirectoryReveal;
 
         THashMap<FName, bool>       FilterState;

@@ -626,6 +626,29 @@ namespace Lumina
             default: return;
         }
 
+        QuickPlaceNode(NodeClass, CanvasPos);
+    }
+
+    void CMaterialNodeGraph::HandleQuickPlace(char Key, ImVec2 CanvasPos)
+    {
+        CClass* NodeClass = nullptr;
+        switch (Key)
+        {
+            case 'T': NodeClass = CMaterialExpression_TextureSample::StaticClass(); break;
+            case 'C': NodeClass = CMaterialExpression_CurveSample::StaticClass();   break;
+            default: return;
+        }
+
+        QuickPlaceNode(NodeClass, CanvasPos);
+    }
+
+    void CMaterialNodeGraph::QuickPlaceNode(CClass* NodeClass, ImVec2 CanvasPos)
+    {
+        if (NodeClass == nullptr)
+        {
+            return;
+        }
+
         if (CEdGraphNode* NewNode = CreateNode(NodeClass))
         {
             ax::NodeEditor::SetNodePosition(NewNode->GetNodeID(), CanvasPos);

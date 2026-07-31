@@ -102,6 +102,11 @@ namespace Lumina
         // cached value so DispatchChange's UpdatePropertyValue won't clobber the reset.
         void PerformResetToDefault();
 
+        // Shift+RMB / Shift+LMB on the row's name cell. The clipboard is shared across the whole
+        // editor, and a paste is rejected unless the two properties are the same concrete type.
+        void CopyPropertyValue();
+        void PastePropertyValue();
+
         
         FPropertyChangedEventCallbacks          Callbacks;
         

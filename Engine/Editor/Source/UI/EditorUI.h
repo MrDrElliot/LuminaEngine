@@ -89,6 +89,9 @@ namespace Lumina
 
         void VerifyDirtyPackages();
 
+        // Ctrl+P quick-open: a filterable list of every registered asset, Enter to open.
+        void OpenAssetSearchModal();
+
         // File > Save: saves the focused tool, which is what Ctrl+S already does.
         void SaveActiveTool();
 
@@ -139,7 +142,19 @@ namespace Lumina
         void DestroyGameViewportTool();
 
         void DrawTitleBarMenu(const FUpdateContext& UpdateContext);
-        void DrawTitleBarInfoStats(const FUpdateContext& UpdateContext);
+
+        // Titlebar stats, composed once per frame so the right-hand region can be sized from their
+        // measured width rather than a constant that silently clips when a stat is added.
+        struct FTitleBarStats
+        {
+            TFixedString<64> Perf;
+            TFixedString<64> Objects;
+            TFixedString<64> Memory;
+            float            Width = 0.0f;
+        };
+
+        FTitleBarStats BuildTitleBarStats(const FUpdateContext& UpdateContext);
+        void DrawTitleBarInfoStats(const FTitleBarStats& Stats);
 
         // Footer drawer: status-bar toggle that slides up as a transient overlay
         // when undocked; "Dock in Layout" pins it back into the dockspace.
@@ -256,6 +271,7 @@ namespace Lumina
 
         float                                           SmoothedFPS = 60.0f;
         float                                           SmoothedFrameTime = 16.67f;
+        float                                           SmoothedMemoryMiB = 0.0f;   // <= 0 seeds from the first sample
         static constexpr float                          FPSSmoothingFactor = 0.01f;
         static constexpr float                          ObjectSmoothingFactor = 0.05f;
     };

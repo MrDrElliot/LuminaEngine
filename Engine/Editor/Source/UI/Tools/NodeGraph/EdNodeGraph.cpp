@@ -16,6 +16,31 @@
 
 namespace Lumina
 {
+    namespace
+    {
+        // ONE clipboard for every graph in the process, not one per graph instance. Copying in one
+        // material editor and pasting into another is the point; a per-graph buffer made Ctrl+C/Ctrl+V
+        // work only within the graph you copied from.
+        //
+        // Raw pointers, deliberately: a TObjectPtr clipboard would keep nodes alive past their graph and
+        // hand the destruction-order problem to static teardown. Lifetime is handled by scrubbing
+        // instead -- on node delete, and on graph shutdown for everything that graph owns.
+        TVector<CEdGraphNode*>& GetNodeClipboard()
+        {
+            static TVector<CEdGraphNode*> Clipboard;
+            return Clipboard;
+        }
+
+        // Canvas-space centre of the copied set, so a paste lands relative to the cursor.
+        ImVec2 GClipboardPivot(0.0f, 0.0f);
+
+        void ForgetClipboardNode(CEdGraphNode* Node)
+        {
+            TVector<CEdGraphNode*>& Clipboard = GetNodeClipboard();
+            Clipboard.erase(eastl::remove(Clipboard.begin(), Clipboard.end(), Node), Clipboard.end());
+        }
+    }
+
     // Display names may carry spaces or punctuation ("Curve Sample", "Two-Bone IK"), but FullName becomes
     // the emitted shader variable, so anything outside [A-Za-z0-9_] has to collapse to an underscore.
     static FString SanitizeNodeIdentifier(const FString& In)
@@ -90,6 +115,16 @@ namespace Lumina
 
     void CEdNodeGraph::Shutdown()
     {
+        // This graph's nodes die with it, so drop anything of ours still on the shared clipboard --
+        // otherwise closing the editor you copied from leaves a paste pointing at freed nodes.
+        for (const TObjectPtr<CEdGraphNode>& Node : Nodes)
+        {
+            if (Node.IsValid())
+            {
+                ForgetClipboardNode(Node.Get());
+            }
+        }
+
         ax::NodeEditor::DestroyEditor(Context);
         Context = nullptr;
     }
@@ -833,11 +868,17 @@ namespace Lumina
                 && !NodeEditor::GetHoveredLink())
             {
                 
-                for (int i = ImGuiKey_A; i < ImGuiKey_Z; ++i)
+                // Letter quick-place, same gesture as the digit row below: hold the key, click empty
+                // canvas. IsKeyDown rather than IsKeyPressed because the CLICK is the trigger and the
+                // letter is acting as a modifier. ImGuiKey_A is an enum value, not the character 'A',
+                // so the index has to be mapped back -- passing the raw enum through was why this
+                // never matched anything when it was first written.
+                for (int i = ImGuiKey_A; i <= ImGuiKey_Z; ++i)
                 {
                     if (ImGui::IsKeyDown((ImGuiKey)i))
                     {
-                        //HandleQuickPlace((char)i, NodeEditor::ScreenToCanvas(ImGui::GetMousePos()));
+                        HandleQuickPlace((char)('A' + (i - ImGuiKey_A)), NodeEditor::ScreenToCanvas(ImGui::GetMousePos()));
+                        break;
                     }
                 }
                 
@@ -889,11 +930,11 @@ namespace Lumina
         
             if (NodeEditor::BeginShortcut())
             {
-                static ImVec2 CopiedPivot;
                 if (NodeEditor::AcceptCopy())
                 {
+                    TVector<CEdGraphNode*>& CopiedNodes = GetNodeClipboard();
                     CopiedNodes.clear();
-                
+
                     NodeEditor::NodeId Selections[12];
                     int Num = NodeEditor::GetSelectedNodes(Selections, std::size(Selections));
                 
@@ -925,7 +966,7 @@ namespace Lumina
                         Max.y = eastl::max(Max.y, Pos.y + Size.y);
                     }
                 
-                    CopiedPivot = (Min + Max) * 0.5f;
+                    GClipboardPivot = (Min + Max) * 0.5f;
                 }
             
                 if (NodeEditor::AcceptPaste())
@@ -934,7 +975,36 @@ namespace Lumina
 
                     ImVec2 PasteLocation = NodeEditor::ScreenToCanvas(ImGui::GetMousePos());
 
-                    CloneNodes(CopiedNodes, PasteLocation - CopiedPivot);
+                    // The clipboard is shared across every graph in the editor, so filter to what THIS
+                    // graph accepts: pasting an animation node into a material graph would build a node
+                    // its compiler cannot walk. Registered node classes are the graph's own definition
+                    // of what it can hold, so that is the test.
+                    TVector<CEdGraphNode*> Pastable;
+                    Pastable.reserve(GetNodeClipboard().size());
+                    uint32 Rejected = 0;
+                    for (CEdGraphNode* Copied : GetNodeClipboard())
+                    {
+                        if (Copied == nullptr)
+                        {
+                            continue;
+                        }
+
+                        if (SupportedNodes.find(Copied->GetClass()) != SupportedNodes.end())
+                        {
+                            Pastable.push_back(Copied);
+                        }
+                        else
+                        {
+                            ++Rejected;
+                        }
+                    }
+
+                    if (Rejected > 0)
+                    {
+                        ImGuiX::Notifications::NotifyWarning("Skipped {0} node(s) this graph does not support.", Rejected);
+                    }
+
+                    CloneNodes(Pastable, PasteLocation - GClipboardPivot);
                 }
             
                 if (NodeEditor::AcceptDuplicate())
@@ -972,12 +1042,14 @@ namespace Lumina
                         Max.y = eastl::max(Max.y, Pos.y + Size.y);
                     }
                 
-                    CopiedPivot = (Min + Max) * 0.5f;
-                
+                    // Local pivot: duplicate never leaves this graph, so it must not disturb the shared
+                    // copy/paste clipboard's pivot.
+                    const ImVec2 DupPivot = (Min + Max) * 0.5f;
+
                     NodeEditor::ClearSelection();
                     ImVec2 PasteLocation = NodeEditor::ScreenToCanvas(ImGui::GetMousePos());
 
-                    CloneNodes(DupNodes, PasteLocation - CopiedPivot);
+                    CloneNodes(DupNodes, PasteLocation - DupPivot);
                 }
             }
         }
@@ -1232,7 +1304,7 @@ namespace Lumina
 
                     // The copy buffer holds raw pointers, so a node deleted between Ctrl+C and Ctrl+V
                     // would be cloned out of freed memory.
-                    CopiedNodes.erase(eastl::remove(CopiedNodes.begin(), CopiedNodes.end(), Node), CopiedNodes.end());
+                    ForgetClipboardNode(Node);
 
                     Node->ConditionalBeginDestroy();
                     Node = nullptr;

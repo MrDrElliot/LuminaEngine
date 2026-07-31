@@ -89,7 +89,7 @@ namespace Lumina
         return Duplicate;
     }
 
-    void CObject::CopyPropertiesTo(CObject* Other)
+    void CObject::CopyPropertiesTo(CObject* Other, const THashMap<CObject*, CObject*>* Remap)
     {
         ASSERT(Other->GetClass() == GetClass());
         
@@ -115,8 +115,19 @@ namespace Lumina
                 {
                     void* ValuePtr = bContainer ? Other : Current->GetValuePtr<void>(Other);
                     FMemoryReader Reader(Bytes);
-                    FObjectProxyArchiver Proxy(Reader, true);
-                    Current->Serialize(Proxy, ValuePtr);
+
+                    // Remapping happens on the READ: the buffer holds the source's GUIDs either way,
+                    // and the swap is applied once each GUID has resolved back to an object.
+                    if (Remap != nullptr)
+                    {
+                        FObjectRemapArchiver Proxy(Reader, *Remap);
+                        Current->Serialize(Proxy, ValuePtr);
+                    }
+                    else
+                    {
+                        FObjectProxyArchiver Proxy(Reader, true);
+                        Current->Serialize(Proxy, ValuePtr);
+                    }
                 }
             }
         }

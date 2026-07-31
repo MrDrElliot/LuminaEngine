@@ -29,6 +29,10 @@ namespace Lumina
         // 8 VertexNormal, 9 Multiply, 0 Add. Extend the dispatch table in HandleQuickPlace for more.
         void HandleQuickPlace(int Digit, ImVec2 CanvasPos) override;
 
+        // Letter variant of the same gesture: T -> TextureSample, C -> CurveSample. Declared alongside
+        // the int overload so overriding one does not hide the other.
+        void HandleQuickPlace(char Key, ImVec2 CanvasPos) override;
+
         // Accepts assets dropped anywhere on the canvas, spawning the node that samples them: textures
         // become a TextureSample, curves a CurveSample.
         void DrawCanvasDropTarget() override;
@@ -47,6 +51,9 @@ namespace Lumina
         CMaterial* GetMaterial() const { return Material; }
 
     protected:
+
+        // Shared tail of both quick-place overloads: spawn at the cursor and select.
+        void QuickPlaceNode(CClass* NodeClass, ImVec2 CanvasPos);
 
         // Registers the shared library of material expression nodes (math, inputs, textures, the
         // function-call node, reroute, ...). Shared by material and material-function graphs.

@@ -94,6 +94,7 @@
 #include "Tools/ConsoleLogEditorTool.h"
 #include "Tools/ContentBrowserEditorTool.h"
 #include "Tools/EditorAssetActions.h"
+#include "Tools/UI/ImGui/EditorColors.h"
 #include "Tools/EditorTool.h"
 #include "Tools/EditorToolRegistry.h"
 #include "Tools/ToolsMenuRegistry.h"
@@ -603,13 +604,17 @@ namespace Lumina
             DrawTitleBarMenu(UpdateContext);
         };
 
-        auto TitleBarRightContents = [this, &UpdateContext] ()
+        // Composed and MEASURED before layout. The right-hand region was a hard-coded 230px, so adding a
+        // stat -- or just a wider frame time -- silently clipped the text off the end of the bar.
+        const FTitleBarStats TitleStats = BuildTitleBarStats(UpdateContext);
+
+        auto TitleBarRightContents = [this, &TitleStats] ()
         {
-            DrawTitleBarInfoStats(UpdateContext);
+            DrawTitleBarInfoStats(TitleStats);
         };
 
         const float TitleBarScale = ImGuiX::GetUIScale();
-        TitleBar.Draw(TitleBarLeftContents, 400 * TitleBarScale, TitleBarRightContents, 230 * TitleBarScale);
+        TitleBar.Draw(TitleBarLeftContents, 400 * TitleBarScale, TitleBarRightContents, TitleStats.Width);
 
         // Reserve the bottom status bar before the dockspace reads the viewport work area.
         DrawStatusBar(UpdateContext);
@@ -868,6 +873,14 @@ namespace Lumina
         if (ImGui::IsKeyDown(ImGuiKey_LeftCtrl) && ImGui::GetIO().KeyShift && ImGui::IsKeyPressed(ImGuiKey_S, false))
         {
             SaveAllDirtyPackages();
+        }
+
+        // Ctrl+P quick-open. Gated on no active text input so it cannot fire out of a rename field or
+        // the search box of another panel.
+        if (ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyShift && !ImGui::GetIO().WantTextInput
+            && ImGui::IsKeyPressed(ImGuiKey_P, false))
+        {
+            OpenAssetSearchModal();
         }
 
         // Drain a budget of pending thumbnail renders before the UI draws this frame's tiles. The render
@@ -2169,6 +2182,130 @@ namespace Lumina
         
     }
 
+    void FEditorUI::OpenAssetSearchModal()
+    {
+        // Snapshotted at open, not re-queried per frame: the list cannot change under the user while a
+        // modal is up, and re-walking the registry on every keystroke would be pure waste.
+        struct FEntry
+        {
+            FGuid        GUID;
+            FFixedString Name;
+            FFixedString Path;
+        };
+
+        TVector<FEntry> Entries;
+        for (const FAssetData* Asset : FAssetRegistry::Get().FindByPredicate([](const FAssetData&) { return true; }))
+        {
+            Entries.push_back(FEntry{ Asset->AssetGUID, FFixedString(Asset->AssetName.c_str()), Asset->Path });
+        }
+
+        if (Entries.empty())
+        {
+            ImGuiX::Notifications::NotifyWarning("No assets to open.");
+            return;
+        }
+
+        eastl::sort(Entries.begin(), Entries.end(), [](const FEntry& A, const FEntry& B)
+        {
+            return strcmp(A.Name.c_str(), B.Name.c_str()) < 0;
+        });
+
+        PushModal("Open Asset", ImVec2(720.0f, 520.0f),
+            [this, Entries = Move(Entries), Filter = ImGuiTextFilter(), Selected = 0, bFocusPending = true]() mutable -> bool
+        {
+            // Focus the box on the first frame so the modal is type-to-search with no click.
+            if (bFocusPending)
+            {
+                ImGui::SetKeyboardFocusHere();
+                bFocusPending = false;
+            }
+
+            ImGui::SetNextItemWidth(-1.0f);
+            Filter.Draw("##AssetSearch");
+            if (!Filter.IsActive())
+            {
+                const ImVec2 TextPos = ImGui::GetItemRectMin() + ImGui::GetStyle().FramePadding + ImVec2(2.0f, 0.0f);
+                ImGui::GetWindowDrawList()->AddText(TextPos, EditorColors::U32(EditorColors::TextMuted()),
+                    LE_ICON_FILE_SEARCH " Search assets...");
+            }
+
+            // Rebuilt each frame: the filter changes with every keystroke, and it is a substring test
+            // over a few thousand short strings.
+            TVector<const FEntry*> Matches;
+            Matches.reserve(Entries.size());
+            for (const FEntry& Entry : Entries)
+            {
+                if (Filter.PassFilter(Entry.Name.c_str()) || Filter.PassFilter(Entry.Path.c_str()))
+                {
+                    Matches.push_back(&Entry);
+                }
+            }
+
+            if (Matches.empty())
+            {
+                Selected = 0;
+            }
+            else
+            {
+                Selected = Math::Clamp(Selected, 0, (int32)Matches.size() - 1);
+            }
+
+            // Arrows move the selection while focus stays in the text box, so the whole flow is
+            // keyboard-only: type, arrow, Enter.
+            if (!Matches.empty())
+            {
+                if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, true)) { Selected = (Selected + 1) % (int32)Matches.size(); }
+                if (ImGui::IsKeyPressed(ImGuiKey_UpArrow,   true)) { Selected = (Selected + (int32)Matches.size() - 1) % (int32)Matches.size(); }
+            }
+
+            bool bChosen = !Matches.empty() && ImGui::IsKeyPressed(ImGuiKey_Enter, false);
+
+            ImGui::Separator();
+
+            const float FooterHeight = ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
+            if (ImGui::BeginChild("##Results", ImVec2(0.0f, -FooterHeight)))
+            {
+                for (int32 i = 0; i < (int32)Matches.size(); ++i)
+                {
+                    const FEntry& Entry = *Matches[i];
+                    ImGui::PushID(i);
+
+                    if (ImGui::Selectable("##Row", i == Selected, ImGuiSelectableFlags_AllowDoubleClick))
+                    {
+                        Selected = i;
+                        bChosen  = ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+                    }
+
+                    // Keep the keyboard selection in view as it moves past the visible range.
+                    if (i == Selected && ImGui::IsWindowAppearing() == false && ImGui::IsItemVisible() == false)
+                    {
+                        ImGui::SetScrollHereY(0.5f);
+                    }
+
+                    ImGui::SameLine();
+                    ImGui::TextUnformatted(Entry.Name.c_str());
+                    ImGui::SameLine();
+                    ImGui::TextColored(EditorColors::TextMuted(), "%s", Entry.Path.c_str());
+
+                    ImGui::PopID();
+                }
+            }
+            ImGui::EndChild();
+
+            ImGuiX::Text("{} asset(s)", (uint32)Matches.size());
+            ImGui::SameLine();
+            ImGui::TextColored(EditorColors::TextMuted(), "  Enter to open, Esc to cancel");
+
+            if (bChosen)
+            {
+                OpenAssetEditor(Matches[Selected]->GUID);
+                return true;
+            }
+
+            return ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+        });
+    }
+
     void FEditorUI::SaveActiveTool()
     {
         if (LastActiveTool == nullptr)
@@ -2554,24 +2691,54 @@ namespace Lumina
 
     }
     
-    void FEditorUI::DrawTitleBarInfoStats(const FUpdateContext& UpdateContext)
+    FEditorUI::FTitleBarStats FEditorUI::BuildTitleBarStats(const FUpdateContext& UpdateContext)
     {
-        ImGui::SameLine();
+        FTitleBarStats Stats;
 
-        float CurrentFrameTime = UpdateContext.GetDeltaTime() * 1000.0f;
+        const float CurrentFrameTime = UpdateContext.GetDeltaTime() * 1000.0f;
 
         // Smooth frame time only and derive FPS from it; averaging 1/dt independently
         // diverges from the frame time under spiky frames (high mean(1/dt), high mean(dt)).
         SmoothedFrameTime = SmoothedFrameTime + (CurrentFrameTime - SmoothedFrameTime) * FPSSmoothingFactor;
         SmoothedFPS = (SmoothedFrameTime > 0.0f) ? 1000.0f / SmoothedFrameTime : 0.0f;
 
-        const TFixedString<100> PerfStats(TFixedString<100>::CtorSprintf(), "FPS: %3.0f / %.2f ms", SmoothedFPS, SmoothedFrameTime);
-        ImGui::TextUnformatted(PerfStats.c_str());
+        // Process working set rather than the tracked-allocation total: tracking can be switched off
+        // (and is, by default), which would leave this reading a flat zero. The working set is always
+        // available and is the number you would compare against Task Manager anyway.
+        //
+        // Smoothed on the same filter as the frame time. Sampling it raw makes the last digits flicker
+        // every frame on allocation churn, which reads as noise rather than information.
+        const float MemoryMiB = (float)Platform::GetProcessMemoryUsageBytes() / (1024.0f * 1024.0f);
+        SmoothedMemoryMiB = (SmoothedMemoryMiB <= 0.0f)
+            ? MemoryMiB
+            : SmoothedMemoryMiB + (MemoryMiB - SmoothedMemoryMiB) * FPSSmoothingFactor;
+
+        Stats.Perf.sprintf("FPS: %3.0f / %.2f ms", SmoothedFPS, SmoothedFrameTime);
+        Stats.Objects.sprintf("CObjects: %i", GObjectArray.GetNumAliveObjects());
+        Stats.Memory.sprintf("Mem: %.0f MiB", SmoothedMemoryMiB);
+
+        // One SameLine gap between each, plus a trailing pad so the last glyph never sits flush against
+        // the window controls.
+        const float Spacing = ImGui::GetStyle().ItemSpacing.x;
+        Stats.Width = ImGui::CalcTextSize(Stats.Perf.c_str()).x
+                    + ImGui::CalcTextSize(Stats.Objects.c_str()).x
+                    + ImGui::CalcTextSize(Stats.Memory.c_str()).x
+                    + Spacing * 4.0f;
+
+        return Stats;
+    }
+
+    void FEditorUI::DrawTitleBarInfoStats(const FTitleBarStats& Stats)
+    {
+        ImGui::SameLine();
+        ImGui::TextUnformatted(Stats.Perf.c_str());
 
         ImGui::SameLine();
+        ImGui::TextUnformatted(Stats.Objects.c_str());
 
-        const TFixedString<100> ObjectStats(TFixedString<100>::CtorSprintf(), "CObjects: %i", GObjectArray.GetNumAliveObjects());
-        ImGui::TextUnformatted(ObjectStats.c_str());
+        ImGui::SameLine();
+        ImGui::TextUnformatted(Stats.Memory.c_str());
+        ImGuiX::TextTooltip("{}", "Process working set (matches Task Manager), smoothed.");
     }
 
     void FEditorUI::DrawFileMenu()

@@ -775,6 +775,27 @@ namespace Lumina
         RefreshContentBrowser();
     }
 
+    void FContentBrowserEditorTool::QueueRenameAfterCreate(FStringView VirtualPath)
+    {
+        if (VirtualPath.empty())
+        {
+            return;
+        }
+
+        PendingRenamePath.assign(VirtualPath.data(), VirtualPath.size());
+
+        // Navigate to the containing folder too: a factory can be invoked from a path other than the
+        // one on screen, and a rename box on a tile the user cannot see would just eat their keystrokes.
+        const FStringView ParentPath = VFS::Parent(VirtualPath, true);
+        if (!ParentPath.empty())
+        {
+            SelectedPath.assign(ParentPath.data(), ParentPath.size());
+            PendingDirectoryReveal = SelectedPath;
+        }
+
+        RefreshContentBrowser();
+    }
+
     void FContentBrowserEditorTool::OnInitialize()
     {
         (void)FAssetRegistry::Get().GetOnAssetRegistryUpdated().AddMember(this, &FContentBrowserEditorTool::RefreshContentBrowser);
@@ -1093,16 +1114,23 @@ namespace Lumina
             // Extension-insensitive so a package path ("/Game/Foo.lasset") still matches however the
             // VFS spelled the entry.
             const FStringView BrowseTarget = VFS::RemoveExtension(FStringView(PendingBrowseToPath.c_str(), PendingBrowseToPath.size()));
-            FTileViewItem* BrowseItem = nullptr;
+            const FStringView RenameTarget = VFS::RemoveExtension(FStringView(PendingRenamePath.c_str(), PendingRenamePath.size()));
+            FTileViewItem*               BrowseItem = nullptr;
+            FContentBrowserTileViewItem* RenameItem = nullptr;
 
             for (const VFS::FFileInfo& Info : SortedPaths)
             {
                 const bool bProtected = IsProtectedRoot(FStringView(Info.VirtualPath.c_str(), Info.VirtualPath.size()));
                 FContentBrowserTileViewItem* NewItem = ContentBrowserTileView.AddItemToTree<FContentBrowserTileViewItem>(nullptr, Info, bProtected);
 
-                if (!BrowseTarget.empty() && VFS::RemoveExtension(NewItem->GetVirtualPath()) == BrowseTarget)
+                const FStringView ItemPath = VFS::RemoveExtension(NewItem->GetVirtualPath());
+                if (!BrowseTarget.empty() && ItemPath == BrowseTarget)
                 {
                     BrowseItem = NewItem;
+                }
+                if (!RenameTarget.empty() && ItemPath == RenameTarget)
+                {
+                    RenameItem = NewItem;
                 }
             }
 
@@ -1111,6 +1139,16 @@ namespace Lumina
             if (BrowseItem != nullptr)
             {
                 Tree->SelectAndScrollTo(BrowseItem);
+            }
+
+            // Rename-on-create. Held across rebuilds until the tile actually shows up, unlike the browse
+            // target above: a factory with a creation dialogue finishes its work on a task thread, so the
+            // first rebuild after the request routinely runs before the file has landed on disk.
+            if (RenameItem != nullptr)
+            {
+                PendingRenamePath.clear();
+                Tree->SelectAndScrollTo(RenameItem);
+                ContentBrowserTileView.BeginInlineRename(RenameItem);
             }
         };
 
@@ -2093,6 +2131,46 @@ namespace Lumina
         return FAssetRegistry::Get().GetAssetByPath(Path);
     }
 
+    void FContentBrowserEditorTool::DrawDuplicateAssetMenuItem(const FContentBrowserTileViewItem* ContentItem, bool bIsProtected)
+    {
+        const FFixedString SourcePath(ContentItem->GetVirtualPath().data(), ContentItem->GetVirtualPath().size());
+        const FAssetData*  Data = FAssetRegistry::Get().GetAssetByPath(SourcePath);
+        if (Data == nullptr)
+        {
+            return;
+        }
+
+        if (ImGui::MenuItem(LE_ICON_CONTENT_DUPLICATE " Duplicate", nullptr, false, !bIsProtected))
+        {
+            CObject* Source = LoadObject<CObject>(Data->AssetGUID);
+            if (Source == nullptr)
+            {
+                ImGuiX::Notifications::NotifyError("Could not load '{0}' to duplicate it.", SourcePath);
+                return;
+            }
+
+            const FFixedString NewPath = MakeSiblingAssetPath(
+                FStringView(SourcePath.c_str(), SourcePath.size()), "_Copy");
+
+            // Package-level, not a flat property copy: a material keeps its node graph as a second
+            // export found by name, and its nodes reference each other. DuplicateAssetPackage copies
+            // every export and rewrites the references between them, so the copy is self-contained.
+            CObject* Copy = DuplicateAssetPackage(Source, FStringView(NewPath.c_str(), NewPath.size()));
+            if (Copy == nullptr)
+            {
+                ImGuiX::Notifications::NotifyError("Failed to duplicate '{0}'.", SourcePath);
+                return;
+            }
+
+            FAssetRegistry::Get().AssetCreated(Copy);
+            ImGuiX::Notifications::NotifySuccess("Duplicated to '{0}'.", NewPath);
+
+            // A duplicate lands as "<Name>_Copy", which is even less likely to be the name you want
+            // than a factory default.
+            QueueRenameAfterCreate(FStringView(NewPath.c_str(), NewPath.size()));
+        }
+    }
+
     void FContentBrowserEditorTool::DrawAssetContextMenu(FContentBrowserTileViewItem* ContentItem)
     {
         const bool bIsAsset      = ContentItem->IsAsset();
@@ -2219,6 +2297,11 @@ namespace Lumina
 
         DrawMenuSection("EDIT");
 
+        if (bIsAsset)
+        {
+            DrawDuplicateAssetMenuItem(ContentItem, bIsProtected);
+        }
+
         if (ImGui::MenuItem(LE_ICON_RENAME " Rename", "F2", false, !bIsProtected))
         {
             ContentBrowserTileView.BeginInlineRename(ContentItem);
@@ -2313,7 +2396,8 @@ namespace Lumina
         {
             FFixedString FinalPath = VFS::MakeUniqueFilePath(SelectedPath + "/NewFolder");
             VFS::CreateDir(FinalPath);
-            RefreshContentBrowser();
+            // Same reasoning as a new asset: "NewFolder" is a placeholder, not a name.
+            QueueRenameAfterCreate(FStringView(FinalPath.c_str(), FinalPath.size()));
         }
 
         // Aggregated asset creation submenu (factory-driven), grouped into per-category submenus.
@@ -2334,6 +2418,10 @@ namespace Lumina
                         if (bShouldClose)
                         {
                             ImGuiX::Notifications::NotifySuccess("Successfully Created: \"{0}\"", Path);
+
+                            // The dialogue hands the actual creation to a task, so the tile may not
+                            // exist for several frames. The request just waits for it.
+                            QueueRenameAfterCreate(FStringView(Path.c_str(), Path.size()));
                         }
                         return bShouldClose;
                     });
@@ -2344,6 +2432,7 @@ namespace Lumina
                     {
                         FAssetRegistry::Get().AssetCreated(Object);
                         ImGuiX::Notifications::NotifySuccess("Successfully Created: \"{0}\"", Path);
+                        QueueRenameAfterCreate(FStringView(Path.c_str(), Path.size()));
                     }
                     else
                     {

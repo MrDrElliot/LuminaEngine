@@ -53,26 +53,109 @@ namespace Lumina
         }
     }
 
-    namespace
+    FFixedString MakeSiblingAssetPath(FStringView SourceVirtualPath, const char* Suffix)
     {
-        // "<Dir>/<Base><Suffix>.lasset", deduplicated. Follows the content browser's own new-asset
-        // recipe exactly -- combine, AddPackageExt, MakeUniqueFilePath. The extension is not optional:
-        // a package saved to an extension-less path is not a loadable asset, and the dedupe check has
-        // to run against the real filename or it never finds the collision it is looking for.
-        FFixedString MakeSiblingAssetPath(FStringView SourceVirtualPath, const char* Suffix)
+        const FStringView NoExt  = VFS::RemoveExtension(SourceVirtualPath);
+        const FStringView Parent = VFS::Parent(NoExt);
+        const FStringView Base   = VFS::FileName(NoExt, true);
+
+        FFixedString Name(Base.data(), Base.size());
+        Name.append_convert(Suffix);
+
+        FFixedString Path = Paths::Combine(Parent, Name);
+        CPackage::AddPackageExt(Path);
+        return VFS::MakeUniqueFilePath(Path);
+    }
+
+    CObject* DuplicateAssetPackage(CObject* PrimaryAsset, FStringView DestPath)
+    {
+        CPackage* SourcePackage = PrimaryAsset != nullptr ? PrimaryAsset->GetPackage() : nullptr;
+        if (SourcePackage == nullptr)
         {
-            const FStringView NoExt  = VFS::RemoveExtension(SourceVirtualPath);
-            const FStringView Parent = VFS::Parent(NoExt);
-            const FStringView Base   = VFS::FileName(NoExt, true);
-
-            FFixedString Name(Base.data(), Base.size());
-            Name.append_convert(Suffix);
-
-            FFixedString Path = Paths::Combine(Parent, Name);
-            CPackage::AddPackageExt(Path);
-            return VFS::MakeUniqueFilePath(Path);
+            return nullptr;
         }
 
+        // Every export has to be RESIDENT before it can be copied. Opening a material only brings in the
+        // material itself -- its node graph is a lazily-loaded sibling export, so a copy made without
+        // this found one object, and the duplicate opened with an empty graph. FullyLoad is what the
+        // package saver itself uses for exactly this reason; pulling exports in by hand missed the ones
+        // whose weak pointer was never populated.
+        if (!SourcePackage->FullyLoad())
+        {
+            return nullptr;
+        }
+
+        TVector<CObject*> SourceObjects;
+        SourceObjects.reserve(SourcePackage->ExportTable.size());
+        for (const FObjectExport& Export : SourcePackage->ExportTable)
+        {
+            if (CObject* Object = Export.Object.Get())
+            {
+                SourceObjects.push_back(Object);
+            }
+        }
+
+        if (SourceObjects.empty())
+        {
+            return nullptr;
+        }
+
+        CPackage* DestPackage = CPackage::CreatePackage(DestPath);
+        if (DestPackage == nullptr)
+        {
+            return nullptr;
+        }
+
+        // The PRIMARY object is identified by having the same name as its package file -- that is how
+        // the factory creates assets and how loading finds them again. Carrying the source's name over
+        // produces a "NewMaterial" inside NewMaterial_Copy.lasset, which nothing can resolve: the asset
+        // shows in the browser but cannot be opened or deleted. Sub-objects are the opposite case --
+        // they are found by name (LoadObjectByName), so renaming THEM would break the copy's wiring.
+        const FStringView DestAssetName = VFS::FileName(DestPath, /*bRemoveExtension*/ true);
+
+        // Pass 1: construct every copy first, so pass 2 can resolve a reference to ANY sibling,
+        // including one later in the table.
+        THashMap<CObject*, CObject*> Remap;
+        Remap.reserve(SourceObjects.size());
+
+        for (CObject* Source : SourceObjects)
+        {
+            const FName CopyName = (Source == PrimaryAsset) ? FName(DestAssetName) : Source->GetName();
+
+            CObject* Copy = NewObject(Source->GetClass(), DestPackage, CopyName, FGuid::New(), OF_Public);
+            if (Copy == nullptr)
+            {
+                return nullptr;
+            }
+
+            // No ExportTable bookkeeping: the saver clears and rebuilds it from what the package
+            // actually owns, so being outered to DestPackage is what makes a copy an export.
+            Remap.emplace(Source, Copy);
+        }
+
+        // Pass 2: copy properties through the remap, so intra-package references land on the copies.
+        for (CObject* Source : SourceObjects)
+        {
+            Source->CopyPropertiesTo(Remap[Source], &Remap);
+        }
+
+        // PostLoad after everything is wired, not per object: a PostLoad that reaches for a sibling
+        // (the material graph rebuilding its node links) needs the whole set present and remapped.
+        for (CObject* Source : SourceObjects)
+        {
+            Remap[Source]->PostLoad();
+        }
+
+        if (!CPackage::SavePackage(DestPackage, DestPath))
+        {
+            return nullptr;
+        }
+
+        return Remap[PrimaryAsset];
+    }
+
+    namespace
+    {
         void CreateMaterialInstanceFrom(const FAssetActionContext& Context)
         {
             CMaterial* Parent = Cast<CMaterial>(LoadObject<CObject>(Context.Asset->AssetGUID));

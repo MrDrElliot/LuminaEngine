@@ -134,6 +134,16 @@ namespace Lumina
         NODISCARD bool HasWorld() const { return World != nullptr; }
         NODISCARD ImGuiID GetCurrentDockspaceID() const { return CurrDockspaceID; }
 
+        // Screen-space rect of the viewport image, refreshed each frame by UpdateViewportInput.
+        ImVec2 ViewportScreenMin  = ImVec2(0.0f, 0.0f);
+        ImVec2 ViewportScreenSize = ImVec2(0.0f, 0.0f);
+
+        // Traces the world along the ray through ScreenPos and returns where an asset dropped there
+        // should land. Falls back through terrain -> mesh bounds -> ground plane -> a fixed distance in
+        // front of the camera, so it always produces something usable. Returns false only when there is
+        // no camera to build a ray from.
+        bool TraceViewportPlacement(ImVec2 ScreenPos, FVector3& OutLocation) const;
+
         virtual void InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& InDockspaceSize) const;
         
         virtual void OnInitialize() = 0;

@@ -329,7 +329,11 @@ namespace Lumina
         else
         {
             ImGui::SetNextItemOpen(State.bExpanded);
-            Flags |= ImGuiTreeNodeFlags_OpenOnArrow;
+            // OpenOnArrow alone made the arrow the ONLY way to expand, which is a small target. Adding
+            // OpenOnDoubleClick lets a double-click anywhere on the row toggle it; a single click still
+            // selects (and, for the content browser, navigates) rather than collapsing what you just
+            // clicked. Single-click also expands -- see the click handler below.
+            Flags |= ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick;
         }
 
         if (State.bSelected)
@@ -486,6 +490,20 @@ namespace Lumina
         ImGui::PopStyleColor(); // text color
 
         bool bTreeNodeClicked = ImGui::IsItemClicked(ImGuiMouseButton_Left) && !ImGui::IsItemToggledOpen();
+
+        // Clicking a row REVEALS its children -- expand only, never collapse. Selecting a folder and
+        // having it fold shut under the cursor is the annoying half of a toggle, and collapsing stays
+        // available on the arrow and on double-click.
+        if (bTreeNodeClicked && bDeclaresChildren && !State.bExpanded)
+        {
+            State.bExpanded = true;
+            bAnyRowExpansionChanged = true;
+
+            if (Node.bHasLazyChildren && !Node.bChildrenBuilt)
+            {
+                EnsureChildrenBuilt(NodeIdx, Context);
+            }
+        }
 
         if (ImGui::IsItemHovered())
         {

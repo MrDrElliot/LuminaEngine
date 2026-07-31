@@ -245,8 +245,6 @@ namespace Lumina
         CEdNodeGraphPin*                                PendingSourcePin = nullptr;
         bool                                            bOpenCreateFromPin = false;
 
-        TVector<CEdGraphNode*>                          CopiedNodes;
-        
         bool                                            bFirstDraw = true;
         bool                                            bDebug = false;
         

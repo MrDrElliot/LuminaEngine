@@ -32,7 +32,9 @@
 #include "World/Entity/Components/EditorComponent.h"
 #include "World/Entity/Components/InputComponent.h"
 #include "World/Entity/Components/StaticMeshComponent.h"
+#include "World/Entity/Components/TerrainComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
+#include "World/Subsystems/TerrainSculptSystem.h"
 #include "Log/Log.h"
 
 namespace Lumina
@@ -560,6 +562,11 @@ namespace Lumina
         const ImVec2 PanelMin(CursorScreenPos.x - WindowOrigin.x, CursorScreenPos.y - WindowOrigin.y);
         const ImVec2 PanelMax(PanelMin.x + ViewportSize.x, PanelMin.y + ViewportSize.y);
         InputViewport->SetWindowRect(int(PanelMin.x), int(PanelMin.y), int(PanelMax.x), int(PanelMax.y));
+
+        // Kept in SCREEN space (not window-relative like the input rect above) so a drop handler can turn
+        // ImGui::GetMousePos() straight into a viewport-local pixel without knowing which window it is in.
+        ViewportScreenMin  = CursorScreenPos;
+        ViewportScreenSize = ViewportSize;
 
         uint32 RTW = uint32(eastl::max(ViewportSize.x, 1.0f));
         uint32 RTH = uint32(eastl::max(ViewportSize.y, 1.0f));
@@ -1467,6 +1474,136 @@ namespace Lumina
         return Result;
     }
 
+    bool FEditorTool::TraceViewportPlacement(ImVec2 ScreenPos, FVector3& OutLocation) const
+    {
+        if (World == nullptr)
+        {
+            return false;
+        }
+
+        const SCameraComponent* Camera = World->GetActiveCamera();
+        if (Camera == nullptr && EditorEntity != entt::null && World->IsValidEntity(EditorEntity))
+        {
+            Camera = World->TryGetComponent<SCameraComponent>(EditorEntity);
+        }
+        if (Camera == nullptr)
+        {
+            return false;
+        }
+
+        // Cursor -> world ray. Same construction the terrain sculpt cursor uses, including the ImGui
+        // Y-flip; anything else and the drop lands mirrored vertically about the viewport centre.
+        const ImVec2 Size = ImVec2(Math::Max(ViewportScreenSize.x, 1.0f), Math::Max(ViewportScreenSize.y, 1.0f));
+        const float  Sx   = ((ScreenPos.x - ViewportScreenMin.x) / Size.x) * 2.0f - 1.0f;
+        const float  Sy   = 1.0f - ((ScreenPos.y - ViewportScreenMin.y) / Size.y) * 2.0f;
+
+        const FViewVolume& View    = Camera->GetViewVolume();
+        const FVector3     Forward = View.GetForwardVector();
+        const FVector3     Up      = View.GetUpVector();
+        const FVector3     Right   = Math::Normalize(Math::Cross(Up, Forward));
+
+        const float AspectRatio = Size.x / Size.y;
+        const float TanHalfFov  = std::tan(Math::Radians(View.GetFOV()) * 0.5f);
+
+        const FVector3 RayOrigin = Camera->GetPosition();
+        const FVector3 RayDir    = Math::Normalize(Forward
+                                                 + Right * (Sx * TanHalfFov * AspectRatio)
+                                                 + Up    * (Sy * TanHalfFov));
+
+        constexpr float FallbackDistance = 5.0f;
+        float BestDistance = FLT_MAX;
+        bool  bHit         = false;
+
+        // 1. Terrain, via the heightmap raycast the sculpt tools already use. This is the case that
+        //    matters most -- a landscape has no collision, so nothing else can hit it accurately.
+        FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
+        for (auto&& [Entity, Terrain] : Registry.view<STerrainComponent>().each())
+        {
+            FVector3 TerrainOrigin(0.0f);
+            if (const STransformComponent* TerrainTransform = Registry.try_get<STransformComponent>(Entity))
+            {
+                TerrainOrigin = TerrainTransform->GetLocation();
+            }
+
+            FVector3 Hit;
+            if (FTerrainSculptSystem::Raycast(Terrain, TerrainOrigin, RayOrigin, RayDir, Hit))
+            {
+                const float Distance = Math::Distance(RayOrigin, Hit);
+                if (Distance < BestDistance)
+                {
+                    BestDistance = Distance;
+                    OutLocation  = Hit;
+                    bHit         = true;
+                }
+            }
+        }
+
+        // 2. Mesh entities, against the bounding sphere the resolve cache already caches on the
+        //    component. Coarse -- the hit sits on the sphere, not the surface -- but it puts the asset
+        //    on the thing you pointed at, which is the whole point. No physics needed.
+        for (auto&& [Entity, Mesh, Transform] : Registry.view<SStaticMeshComponent, STransformComponent>().each())
+        {
+            if (Mesh.CachedLocalRadius <= 0.0f)
+            {
+                continue;
+            }
+
+            // World-space bounding sphere. Composed from the transform's own basis rather than a
+            // transform-point helper, which VTransform does not expose.
+            const FTransform& WorldXform = Transform.GetWorldTransform();
+            const FVector3    Scale      = WorldXform.GetScale();
+            const FVector3    Local      = Mesh.CachedLocalCenter;
+            const FVector3    Center     = WorldXform.GetLocation()
+                                         + WorldXform.GetRight()   * (Local.x * Scale.x)
+                                         + WorldXform.GetUp()      * (Local.y * Scale.y)
+                                         + WorldXform.GetForward() * (Local.z * Scale.z);
+            const float    Radius = Mesh.CachedLocalRadius * Math::Max(Scale.x, Math::Max(Scale.y, Scale.z));
+
+            // Ray-sphere: solve |Origin + t*Dir - Center|^2 = Radius^2 for the nearer positive root.
+            const FVector3 ToCenter = Center - RayOrigin;
+            const float    Along    = Math::Dot(ToCenter, RayDir);
+            const float    DistSq   = Math::Dot(ToCenter, ToCenter) - Along * Along;
+            const float    RadiusSq = Radius * Radius;
+            if (DistSq > RadiusSq)
+            {
+                continue;
+            }
+
+            const float Back = std::sqrt(RadiusSq - DistSq);
+            const float T    = Along - Back;
+            if (T <= 0.0f || T >= BestDistance)
+            {
+                continue;   // behind the camera, or something nearer already won
+            }
+
+            BestDistance = T;
+            OutLocation  = RayOrigin + RayDir * T;
+            bHit         = true;
+        }
+
+        if (bHit)
+        {
+            return true;
+        }
+
+        // 3. Ground plane. Covers an empty world, where "on the floor" beats "floating in the air".
+        //    Only when the ray actually descends, or a camera tilted up would place behind the viewer.
+        if (RayDir.y < -1e-4f)
+        {
+            const float T = -RayOrigin.y / RayDir.y;
+            if (T > 0.0f && T < 1000.0f)
+            {
+                OutLocation = RayOrigin + RayDir * T;
+                return true;
+            }
+        }
+
+        // 4. Nothing to hit: keep the old behaviour, but along the CURSOR ray rather than straight
+        //    ahead, so the asset still lands where the user pointed.
+        OutLocation = RayOrigin + RayDir * FallbackDistance;
+        return true;
+    }
+
     entt::entity FEditorTool::HandleContentBrowserAssetDrop(FStringView VirtualPath, entt::entity DropTarget)
     {
         if (World == nullptr || VirtualPath.empty())
@@ -1495,7 +1632,15 @@ namespace Lumina
             return entt::null;
         }
 
-        const FTransform SpawnTransform = GetCameraSpawnTransform();
+        // Place where the cursor points, not straight ahead. TraceViewportPlacement always yields a
+        // usable point, so the camera-relative transform is only for the no-camera case.
+        FTransform SpawnTransform = GetCameraSpawnTransform();
+        FVector3   TracedLocation;
+        if (TraceViewportPlacement(ImGui::GetMousePos(), TracedLocation))
+        {
+            SpawnTransform.SetLocation(TracedLocation);
+        }
+
         return (*Handler)(World, Loaded, SpawnTransform, DropTarget);
     }
 }
