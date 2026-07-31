@@ -311,6 +311,12 @@ namespace Lumina
         NodeEditor::SetCurrentEditor(Context);
         NodeEditor::Begin(GetName().c_str());
 
+        // Shortcuts are re-armed every frame. A node drawing a text field turns them off for that frame
+        // so Ctrl+C/V/X reach the field instead of copy/pasting nodes (ShortcutAction::Accept gates on
+        // nothing but focus and this flag). Re-arming here means no one has to remember to switch them
+        // back on -- including when the node being edited is deleted mid-edit.
+        NodeEditor::EnableShortcuts(true);
+
         PushGraphStyle();
 
         Graph::GraphNodeBuilder NodeBuilder;
@@ -986,6 +992,10 @@ namespace Lumina
 
         NodeEditor::End();
         NodeEditor::SetCurrentEditor(nullptr);
+
+        // After End(): the host window is current again, and any node the hook spawns lands in
+        // PendingPlacements for the next frame's screen->canvas conversion.
+        DrawCanvasDropTarget();
 
         bFirstDraw = false;
     }

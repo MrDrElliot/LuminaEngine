@@ -1,9 +1,14 @@
 #include "MaterialNodeGraph.h"
 #include "MaterialCompiler.h"
 #include "MaterialReroute.h"
+#include "imgui_internal.h"
+#include "Assets/AssetTypes/Curve/CurveAsset.h"
+#include "Assets/AssetTypes/Textures/Texture.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/Class.h"
+#include "Core/Object/Package/Package.h"
 #include "Nodes/MaterialNodes.h"
+#include "Tools/UI/ImGui/ImGuiDragDrop.h"
 #include "UI/Tools/NodeGraph/EdNodeGraphPin.h"
 #include "UI/Tools/NodeGraph/EdNode_Reroute.h"
 #include "UI/Tools/NodeGraph/GraphAlgorithms.h"
@@ -550,6 +555,57 @@ namespace Lumina
     void CMaterialNodeGraph::SetMaterial(CMaterial* InMaterial)
     {
         Material = InMaterial;
+    }
+
+    void CMaterialNodeGraph::DrawCanvasDropTarget()
+    {
+        // The node editor consumes the canvas region itself and leaves no item behind, so the target is
+        // registered over the whole host window rect (same pattern as the anim graph's clip drops).
+        ImGuiWindow* Window = ImGui::GetCurrentWindow();
+        if (Window == nullptr)
+        {
+            return;
+        }
+
+        if (ImGui::BeginDragDropTargetCustom(Window->Rect(), Window->ID))
+        {
+            // Each accept is class-checked and only fires on release, so a non-matching drag simply
+            // falls through to the next candidate.
+            if (CTexture* DroppedTexture = DragDrop::AcceptAsset<CTexture>())
+            {
+                SpawnAssetNode(CMaterialExpression_TextureSample::StaticClass(), DroppedTexture, ImGui::GetMousePos());
+            }
+            else if (CCurveAsset* DroppedCurve = DragDrop::AcceptAsset<CCurveAsset>())
+            {
+                SpawnAssetNode(CMaterialExpression_CurveSample::StaticClass(), DroppedCurve, ImGui::GetMousePos());
+            }
+            ImGui::EndDragDropTarget();
+        }
+    }
+
+    CEdGraphNode* CMaterialNodeGraph::SpawnAssetNode(CClass* NodeClass, CObject* Asset, ImVec2 ScreenPos)
+    {
+        if (NodeClass == nullptr || Asset == nullptr)
+        {
+            return nullptr;
+        }
+
+        CEdGraphNode* Node = CreateNode(NodeClass);
+        if (CMaterialExpression* Expression = Cast<CMaterialExpression>(Node))
+        {
+            Expression->SetNodeValue(Asset);
+        }
+
+        // Screen->canvas needs the node-editor context, which is only current inside DrawGraph.
+        QueueNodePlacement(Node, ScreenPos);
+        ValidateGraph();
+
+        if (CPackage* Package = GetPackage())
+        {
+            Package->MarkDirty();
+        }
+
+        return Node;
     }
 
     void CMaterialNodeGraph::HandleQuickPlace(int Digit, ImVec2 CanvasPos)

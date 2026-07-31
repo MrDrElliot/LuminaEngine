@@ -2673,6 +2673,7 @@ namespace Lumina::RHI
         const uint32 Slot = AllocateHeapSlot(HeapData.SampledImagesBitset);
         if (Slot == kInvalidHeapSlot)
         {
+            LOG_ERROR("RHI: sampled texture heap exhausted ({} slots); texture not registered.", HeapData.SampledImagesBitset.size());
             return kInvalidHeapSlot;
         }
 
@@ -2730,6 +2731,7 @@ namespace Lumina::RHI
         const uint32 Slot = AllocateHeapSlot(HeapData.RWImagesBitset);
         if (Slot == kInvalidHeapSlot)
         {
+            LOG_ERROR("RHI: RW texture heap exhausted ({} slots); storage view not registered.", HeapData.RWImagesBitset.size());
             return kInvalidHeapSlot;
         }
 
@@ -2787,6 +2789,7 @@ namespace Lumina::RHI
         const uint32 Slot = AllocateHeapSlot(HeapData.SamplersBitset);
         if (Slot == kInvalidHeapSlot)
         {
+            LOG_ERROR("RHI: sampler heap exhausted ({} slots); sampler not registered.", HeapData.SamplersBitset.size());
             return kInvalidHeapSlot;
         }
 
@@ -2820,6 +2823,11 @@ namespace Lumina::RHI
         FTextureHeap& HeapData = GDevice->TextureHeaps[Heap];
 
         FScopeLock Lock(GDevice->HeapMutex);
+        if (Slot >= HeapData.ImageViews.size())
+        {
+            return;
+        }
+
         HeapData.SampledImagesBitset[Slot] = false;
         HeapData.ImageViews[Slot] = VK_NULL_HANDLE;
         HeapData.SampledOwners[Slot] = {};
@@ -2866,6 +2874,11 @@ namespace Lumina::RHI
         FTextureHeap& HeapData = GDevice->TextureHeaps[Heap];
 
         FScopeLock Lock(GDevice->HeapMutex);
+        if (Slot >= HeapData.RWImageViews.size())
+        {
+            return;
+        }
+
         if (HeapData.RWImageViews[Slot] != VK_NULL_HANDLE)
         {
             vkDestroyImageView(*GDevice, HeapData.RWImageViews[Slot], nullptr);
@@ -2879,6 +2892,11 @@ namespace Lumina::RHI
         FTextureHeap& HeapData = GDevice->TextureHeaps[Heap];
 
         FScopeLock Lock(GDevice->HeapMutex);
+        if (Slot >= HeapData.Samplers.size())
+        {
+            return;
+        }
+
         if (HeapData.Samplers[Slot] != VK_NULL_HANDLE)
         {
             vkDestroySampler(*GDevice, HeapData.Samplers[Slot], nullptr);

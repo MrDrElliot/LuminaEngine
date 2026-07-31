@@ -69,6 +69,13 @@ namespace Lumina
         // handlers, external spawners) queue the placement instead of computing it themselves.
         void QueueNodePlacement(CEdGraphNode* Node, ImVec2 ScreenPos);
 
+        // Called at the tail of DrawGraph, after the node-editor pass has ended and the host window is
+        // current again, so an override can register a drag-drop target over the canvas and spawn nodes
+        // from what lands on it. The node editor owns the canvas region and leaves no ImGui item to hang
+        // a target on, which is why this is a hook rather than something a caller can bolt on outside.
+        // Default no-op.
+        virtual void DrawCanvasDropTarget() {}
+
         // When non-null, instantiated on double-clicking a wire: inserted at the click and the wire
         // reroutes through it. Default null; graphs wanting this UX (e.g. material) override.
         virtual CClass* GetRerouteNodeClass() const { return nullptr; }

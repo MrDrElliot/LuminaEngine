@@ -1305,6 +1305,10 @@ namespace Lumina
         // Modes that own the viewport suppress selection, marquee, and gizmo input.
         const bool bModeOwnsInput = GetActiveMode() && GetActiveMode()->ConsumesViewportInput();
 
+        // Same for an editor-camera drag (Alt+LMB orbit, LMB+RMB pan) or Alt merely held over the
+        // viewport. TickEditorCamera runs in Update, before this draw, so the flag is current-frame.
+        const bool bCameraOwnsInput = ShouldSuppressViewportClickInput();
+
         auto SelectionView = ECS::GetWorldRegistry(*World).view<FSelectedInEditorComponent, STransformComponent>();
 
         const entt::entity PivotEntityForGizmo = GetLastSelectedEntity();
@@ -1391,9 +1395,23 @@ namespace Lumina
                         }
                     }
 
+                    // A camera gesture (or Alt merely held) must never grab the gizmo. Enable(false)
+                    // leaves it drawn but inert; never applied mid-drag, since it clears ImGuizmo's
+                    // using state without a release and would strand the open transaction.
+                    const bool bGizmoInert = bCameraOwnsInput && !bImGuizmoUsedOnce;
+                    if (bGizmoInert)
+                    {
+                        ImGuizmo::Enable(false);
+                    }
+
                     FMatrix4 GizmoDeltaMatrix(1.0f);
                     ImGuizmo::Manipulate(Math::ValuePtr(ViewMatrix), Math::ValuePtr(ProjectionMatrix),
                         GuizmoOp, GuizmoMode, Math::ValuePtr(EntityMatrix), Math::ValuePtr(GizmoDeltaMatrix), SnapValues);
+
+                    if (bGizmoInert)
+                    {
+                        ImGuizmo::Enable(true);
+                    }
 
                     if (ImGuizmo::IsUsing())
                     {
@@ -1705,10 +1723,17 @@ namespace Lumina
             }
         }
 
+        // A camera gesture owns the mouse: drop any armed marquee so releasing the buttons can't
+        // commit a box selection the user never asked for.
+        if (bCameraOwnsInput)
+        {
+            SelectionBox.bActive = false;
+        }
+
         // Yield to the world's UI: a click over an interactive Rml element must not
         // also fall through to entity picking / marquee behind it. Same for the camera-preview
         // resize grip (bCameraPreviewMouseOver is set by the preview overlay below, one frame behind).
-        if (!bModeOwnsInput && !bCameraPreviewMouseOver && ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows) && !RmlUi::WorldUIWantsMouse(World))
+        if (!bModeOwnsInput && !bCameraOwnsInput && !bCameraPreviewMouseOver && ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows) && !RmlUi::WorldUIWantsMouse(World))
         {
             uint32 PickerWidth = World->GetRenderer()->GetRenderExtent().x;
             uint32 PickerHeight = World->GetRenderer()->GetRenderExtent().y;

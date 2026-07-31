@@ -738,6 +738,11 @@ namespace Lumina
         const FVector3 EntityWorldLocation = EntityTransform.GetWorldLocation();
         const float FocusDistance = (CameraState.Mode == EEditorCameraMode::Orbit) ? CameraState.OrbitDistance : 10.0f;
 
+        // Remembered so a later Alt+LMB tumble in Free mode picks a pivot at the distance the user
+        // last framed something at, instead of an arbitrary default.
+        CameraState.LastFocusPoint     = EntityWorldLocation;
+        CameraState.bHasLastFocusPoint = true;
+
         if (CameraState.Mode == EEditorCameraMode::Orbit)
         {
             // Re-anchor on the focused entity; TickEditorCamera lerps the orbit target here
@@ -874,6 +879,10 @@ namespace Lumina
 
     void FEditorTool::TickEditorCamera(double DeltaTime)
     {
+        // Cleared first so a tool that early-outs never leaves the gesture flag latched for the
+        // viewport code that reads it later this frame.
+        CameraState.bLeftDragGesture = false;
+
         if (!HasWorld() || EditorEntity == entt::null)
         {
             return;
@@ -893,11 +902,41 @@ namespace Lumina
         
         const FInputContext& Raw = FInputViewportRegistry::Get().GetRawInput();
 
-        const bool bWantLook = bAllowInput && Raw.IsMouseButtonDown(EMouseKey::ButtonRight);
-        const bool bWantPan  = bAllowInput
-                            && CameraState.Mode == EEditorCameraMode::Orbit
-                            && Raw.IsMouseButtonDown(EMouseKey::ButtonMiddle);
-        const bool bWantsCaptured = bWantLook || bWantPan;
+        // The Alt modifier is read from ImGui like every other keyboard state here; only the mouse
+        // comes from the raw context (see the fly-key comment further down).
+        const bool bAltDown   = IO.KeyAlt;
+        const bool bLeftDown  = bAllowInput && Raw.IsMouseButtonDown(EMouseKey::ButtonLeft);
+        const bool bRightDown = bAllowInput && Raw.IsMouseButtonDown(EMouseKey::ButtonRight);
+
+        // A left press made with no camera modifier belongs to selection/gizmo; latch it out of the
+        // camera until release, so adding Alt or RMB mid-gizmo-drag can't also start a gesture.
+        if (bLeftDown && !CameraState.bLeftMouseDownPrev)
+        {
+            CameraState.bLeftGestureBlocked = !bAltDown && !bRightDown;
+        }
+        else if (!bLeftDown)
+        {
+            CameraState.bLeftGestureBlocked = false;
+        }
+        CameraState.bLeftMouseDownPrev = bLeftDown;
+
+        // Mutually exclusive, highest priority first: LMB+RMB pans, Alt+LMB orbits, RMB alone looks.
+        // Both buttons held must pan only, never pan and look at once.
+        const bool bLeftGesture   = bLeftDown && !CameraState.bLeftGestureBlocked;
+        const bool bWantPanDrag   = bLeftGesture && bRightDown;
+        const bool bWantOrbitDrag = bLeftGesture && bAltDown && !bWantPanDrag;
+        const bool bWantLook      = bRightDown && !bWantPanDrag;
+        const bool bWantPan       = bAllowInput
+                                 && CameraState.Mode == EEditorCameraMode::Orbit
+                                 && Raw.IsMouseButtonDown(EMouseKey::ButtonMiddle);
+        const bool bWantsCaptured = bWantLook || bWantPan || bWantPanDrag || bWantOrbitDrag;
+
+        CameraState.bLeftDragGesture = bWantPanDrag || bWantOrbitDrag;
+
+        if (!bWantOrbitDrag)
+        {
+            CameraState.bFreeOrbitActive = false;
+        }
 
         if (bWantsCaptured)
         {
@@ -922,8 +961,8 @@ namespace Lumina
         if (CameraState.bFocusInterp)
         {
             const bool bWheel = bAllowInput && Raw.GetMouseZ() != 0.0;
-            // Fly keys only count while right-mouse looking, so bWantLook alone covers Free mode.
-            const bool bMoveInput = bAllowInput && (bWantLook || bWantPan);
+            // Fly keys only count while a mouse gesture is held, so bWantsCaptured covers every case.
+            const bool bMoveInput = bWantsCaptured;
 
             if (bMoveInput || bWheel)
             {
@@ -972,6 +1011,57 @@ namespace Lumina
             const FVector3 Right   = Transform.GetRight();
             const FVector3 Up      = Transform.GetUp();
 
+            // Alt+LMB tumbles around a pivot captured once on the gesture's rising edge. It owns the
+            // transform for the whole drag, so the fly integration below is skipped entirely.
+            if (bWantOrbitDrag)
+            {
+                if (!CameraState.bFreeOrbitActive)
+                {
+                    // Free mode has no focal point: frame one out along forward. Borrow the distance
+                    // to the last F-focus point when there is one, else the 10.0f FocusViewportToEntity uses.
+                    float PivotDistance = 10.0f;
+                    if (CameraState.bHasLastFocusPoint)
+                    {
+                        const float FocusDistance = Math::Distance(Transform.GetLocation(), CameraState.LastFocusPoint);
+                        if (FocusDistance > 0.1f)
+                        {
+                            PivotDistance = FocusDistance;
+                        }
+                    }
+
+                    CameraState.FreeOrbitPivot       = Transform.GetLocation() + Forward * PivotDistance;
+                    CameraState.FreeOrbitDistance    = PivotDistance;
+                    CameraState.bFreeOrbitPivotValid = true;
+                    CameraState.bFreeOrbitActive     = true;
+                    CameraState.Velocity             = FVector3(0.0f);
+                }
+
+                const FVector3 Offset = Transform.GetLocation() - CameraState.FreeOrbitPivot;
+                const float Distance  = Math::Max(Math::Length(Offset), 0.05f);
+
+                // Spherical form and 0.4 sensitivity match ApplyOrbitTransform so both modes tumble identically.
+                float Yaw   = Math::Degrees(std::atan2(Offset.x, Offset.z));
+                float Pitch = Math::Degrees(std::asin(Math::Clamp(Offset.y / Distance, -1.0f, 1.0f)));
+
+                Yaw   -= static_cast<float>(Raw.GetMouseDeltaX() * 0.4);
+                Pitch += static_cast<float>(Raw.GetMouseDeltaY() * 0.4);
+                // Clamp the accumulated elevation, not the per-frame delta, so the camera can't flip past vertical.
+                Pitch = Math::Clamp(Pitch, -89.0f, 89.0f);
+
+                const float YawRad   = Math::Radians(Yaw);
+                const float PitchRad = Math::Radians(Pitch);
+                const FVector3 NewOffset(
+                    Distance * std::cos(PitchRad) * std::sin(YawRad),
+                    Distance * std::sin(PitchRad),
+                    Distance * std::cos(PitchRad) * std::cos(YawRad));
+
+                const FVector3 NewLocation = CameraState.FreeOrbitPivot + NewOffset;
+                Transform.SetLocation(NewLocation);
+                Transform.SetRotation(Math::FindLookAtRotation(CameraState.FreeOrbitPivot, NewLocation));
+                CameraState.FreeOrbitDistance = Distance;
+                return;
+            }
+
             float Speed = CameraState.Speed;
             if (ImGui::IsKeyDown(ImGuiKey_LeftShift))
             {
@@ -979,9 +1069,10 @@ namespace Lumina
             }
 
             // WASDQE flies only while the right mouse button is held (UE-style), so the
-            // W/E/R gizmo hotkeys and Q/E don't shove the camera around.
+            // W/E/R gizmo hotkeys and Q/E don't shove the camera around. The LMB+RMB pan keeps
+            // the fly keys live, since the right button never left the mouse.
             FVector3 Acceleration(0.0f);
-            if (bWantLook)
+            if (bWantLook || bWantPanDrag)
             {
                 if (ImGui::IsKeyDown(ImGuiKey_W)) Acceleration += Forward;
                 if (ImGui::IsKeyDown(ImGuiKey_S)) Acceleration -= Forward;
@@ -1002,6 +1093,29 @@ namespace Lumina
             CameraState.Velocity *= std::exp(-Drag * static_cast<float>(DeltaTime));
 
             Transform.Translate(CameraState.Velocity * static_cast<float>(DeltaTime) * CameraState.SpeedScale);
+
+            // LMB+RMB grabs the world. Signs match the orbit MMB pan so both modes feel the same;
+            // the scale tracks the tumble pivot when one exists, else the focus distance convention
+            // scaled by the fly-speed multiplier so it stays sane at any working scale.
+            if (bWantPanDrag)
+            {
+                float PanReference = 10.0f * CameraState.SpeedScale;
+                if (CameraState.bFreeOrbitPivotValid)
+                {
+                    PanReference = CameraState.FreeOrbitDistance;
+                }
+
+                const float PanScale = PanReference * 0.002f;
+                const FVector3 PanDelta = (Up * static_cast<float>(Raw.GetMouseDeltaY()) * PanScale)
+                                        - (Right * static_cast<float>(Raw.GetMouseDeltaX()) * PanScale);
+                Transform.Translate(PanDelta);
+
+                if (CameraState.bFreeOrbitPivotValid)
+                {
+                    // Carry the tumble pivot along so a following Alt+LMB doesn't snap the view.
+                    CameraState.FreeOrbitPivot += PanDelta;
+                }
+            }
 
             if (bWantLook)
             {
@@ -1025,14 +1139,16 @@ namespace Lumina
         {
             if (bAllowInput)
             {
-                if (bWantLook)
+                // Alt+LMB drives the same yaw/pitch as RMB, so the tumble is identical in both modes.
+                if (bWantLook || bWantOrbitDrag)
                 {
                     CameraState.OrbitYaw   -= static_cast<float>(Raw.GetMouseDeltaX() * 0.4);
                     CameraState.OrbitPitch += static_cast<float>(Raw.GetMouseDeltaY() * 0.4);
                     CameraState.OrbitPitch = Math::Clamp(CameraState.OrbitPitch, -89.0f, 89.0f);
                 }
 
-                if (Raw.IsMouseButtonDown(EMouseKey::ButtonMiddle))
+                // LMB+RMB pans the orbit target exactly like MMB does.
+                if (bWantPan || bWantPanDrag)
                 {
                     const float PanScale = CameraState.OrbitDistance * 0.002f;
                     const FVector3 Right = Transform.GetRight();
@@ -1052,6 +1168,19 @@ namespace Lumina
 
             ApplyOrbitTransform();
         }
+    }
+
+    bool FEditorTool::ShouldSuppressViewportClickInput() const
+    {
+        if (CameraState.bLeftDragGesture)
+        {
+            return true;
+        }
+
+        // Alt is the orbit modifier, so an Alt-held click over the viewport is always camera intent.
+        // Suppressing on the modifier alone also covers the press frame itself: ImGui has already
+        // latched that click by the time TickEditorCamera resolves the gesture.
+        return (bViewportFocused || bViewportHovered) && ImGui::GetIO().KeyAlt;
     }
 
     void FEditorTool::BeginEditorLookCapture()

@@ -16,12 +16,26 @@ namespace Lumina
 
         void BuildNode() override;
         void DrawNodeTitleBar() override;
-        
+
+        // The FName this expression exposes as a material parameter, or null when the node has no
+        // parameter to name. Mirrors the GetNodeDefaultValue() pointer idiom; non-const because the
+        // title bar's inline rename writes through it.
+        virtual FName* GetParameterName() { return nullptr; }
+
         CMaterialOutput* Output;
 
         /** When true, this expression's result varies per-instance at runtime via dynamic parameters. */
         PROPERTY(Editable, Category = "Dynamic")
         bool bDynamic = false;
+
+    private:
+
+        // Draws the F2 rename field in place of the title, writing Out on commit.
+        void DrawParameterRename(FName& Out);
+
+        // Transient (deliberately not a PROPERTY, so it never serializes): true only while this node's
+        // title bar is an edit field.
+        bool bRenamingParameter = false;
     };
 
     REFLECT()

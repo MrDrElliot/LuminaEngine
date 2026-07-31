@@ -291,9 +291,14 @@ namespace Lumina
         {
             RHI::HeapFreeTexture(RHI::Core::GetGlobalHeap(), Image.SampledSlot);
         }
+        // A mip slot is invalid when the RW heap was full at create time, so it needs the same
+        // guard the sampled slot gets above: freeing kInvalidHeapSlot indexes the heap out of bounds.
         for (uint32 Slot : Image.MipUAVSlots)
         {
-            RHI::HeapFreeRWTexture(RHI::Core::GetGlobalHeap(), Slot);
+            if (Slot != RHI::kInvalidHeapSlot)
+            {
+                RHI::HeapFreeRWTexture(RHI::Core::GetGlobalHeap(), Slot);
+            }
         }
         RHI::FreeH(Image.Texture);
         Image = {};

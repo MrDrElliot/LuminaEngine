@@ -49,6 +49,24 @@ namespace Lumina
         // Trailing-edge: release captured mouse mode once on RMB-up, not every non-looking frame.
         bool        bWasLooking = false;
 
+        // Free-mode Alt+LMB tumble. The pivot is captured on the gesture's rising edge and held for
+        // the whole drag; recomputing it per frame makes the orbit crawl toward the camera.
+        bool        bFreeOrbitActive     = false;
+        bool        bFreeOrbitPivotValid = false;
+        FVector3    FreeOrbitPivot       = FVector3(0.0f);
+        float       FreeOrbitDistance    = 10.0f;
+
+        // Left-button arbitration: a press made with no camera modifier belongs to selection/gizmo
+        // and is latched out of camera gestures until release.
+        bool        bLeftMouseDownPrev  = false;
+        bool        bLeftGestureBlocked = false;
+        // Published for the viewport picking/gizmo code, which draws later in the same frame.
+        bool        bLeftDragGesture    = false;
+
+        // Last point framed by F-focus; the Free-mode tumble borrows its distance.
+        bool        bHasLastFocusPoint = false;
+        FVector3    LastFocusPoint     = FVector3(0.0f);
+
         // Smooth focus interp; user movement input cancels mid-lerp.
         bool        bFocusInterp        = false;
         // Exponential-decay rate (1/s); ~12 yields ~250ms to ~95%.
@@ -164,6 +182,14 @@ namespace Lumina
 
         /** Drives the editor-entity camera; called from FEditorTool::Update. */
         void TickEditorCamera(double DeltaTime);
+
+        /** True while a left-button camera drag (Alt+LMB orbit, LMB+RMB pan) is running this frame. */
+        NODISCARD bool IsEditorCameraGestureActive() const { return CameraState.bLeftDragGesture; }
+
+        /** Viewport click input (picking, marquee, gizmo grab) must yield to the camera: true while a
+         *  gesture runs, and while Alt is merely held over this tool's viewport, since the user
+         *  normally presses Alt before the mouse button. */
+        NODISCARD bool ShouldSuppressViewportClickInput() const;
 
         FEditorCameraState&       GetCameraState()       { return CameraState; }
         const FEditorCameraState& GetCameraState() const { return CameraState; }

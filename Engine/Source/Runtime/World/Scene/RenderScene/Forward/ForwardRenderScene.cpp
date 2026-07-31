@@ -5565,12 +5565,17 @@ namespace Lumina
             Key.MS               = bUseMesh ? Batch.VisBufferMeshShader : nullptr;
             Key.PS               = bMaskedClip ? MaskedPS : (bUseMesh ? VisPixelPrim : VisPixel);
             Key.bVisBufferMasked = bMaskedClip;   // geometry emits interpolants only when actually masked-clipping
-            // SPEC_SKINNED: homogeneous batch -> dead-strip the unused vertex-load path; mixed -> runtime branch (2).
+            Key.bWireframe       = RenderSettings.bWireframe;
             Key.SkinnedMode      = (Batch.bAnySkinned && Batch.bAnyStatic) ? 2u : (Batch.bAnySkinned ? 1u : 0u);
             Key.SampleCount      = MSAASampleCount;
             Key.DepthFormat = EFormat::D32;
             Key.ColorTargets.push_back({ VisRT.Desc.Format, {} });
             RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
+            
+            if (RenderSettings.bWireframe)
+            {
+                RHI::CmdSetLineWidth(CL, 1.5f);
+            }
 
             // Two-sided materials must rasterize both faces into the VisBuffer.
             RHI::CmdSetCullMode(CL, Batch.bTwoSided ? RHI::ECullMode::None : RHI::ECullMode::Back);

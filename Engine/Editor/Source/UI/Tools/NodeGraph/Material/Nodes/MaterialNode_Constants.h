@@ -15,6 +15,7 @@ namespace Lumina
         void BuildNode() override;
 
         void* GetNodeDefaultValue() override { return &Value.r; }
+        FName* GetParameterName() override { return &ParameterName; }
 
         /** Name used to expose this constant as a material parameter for instancing. */
         PROPERTY(Editable, Category = "Parameter")

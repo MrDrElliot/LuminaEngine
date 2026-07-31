@@ -1024,7 +1024,8 @@ namespace Lumina
                 // Skip picking while the mouse is on the camera-preview resize grip (flag set by
                 // DrawCameraPreviewOverlay below, one frame behind).
                 const bool bOverGizmo = (bImGuizmoUsedOnce && ImGuizmo::IsOver()) || ImGuizmo::IsUsing();
-                if (!bOverGizmo && !bCameraPreviewMouseOver && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+                if (!bOverGizmo && !bCameraPreviewMouseOver && !ShouldSuppressViewportClickInput()
+                    && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
                 {
                     entt::entity Hit = Renderer->GetEntityAtPixel(TexX, TexY);
                     entt::registry& Registry = ECS::GetWorldRegistry(*World);
@@ -1091,8 +1092,22 @@ namespace Lumina
             }
         }
 
+        // A camera gesture (or Alt merely held) must never grab the gizmo. Enable(false) leaves it
+        // drawn but inert; never applied mid-drag, since it clears ImGuizmo's using state without a
+        // release and would strand the open transaction.
+        const bool bGizmoInert = ShouldSuppressViewportClickInput() && !bImGuizmoUsedOnce;
+        if (bGizmoInert)
+        {
+            ImGuizmo::Enable(false);
+        }
+
         ImGuizmo::Manipulate(Math::ValuePtr(ViewMatrix), Math::ValuePtr(ProjectionMatrix),
             GuizmoOp, GuizmoMode, Math::ValuePtr(EntityMatrix), nullptr, SnapValues);
+
+        if (bGizmoInert)
+        {
+            ImGuizmo::Enable(true);
+        }
 
         if (ImGuizmo::IsUsing())
         {
