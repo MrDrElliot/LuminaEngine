@@ -127,6 +127,7 @@
 #include "Tools/AssetEditors/DataAsset/DataAssetEditorTool.h"
 #include "Assets/AssetTypes/DataTable/DataTable.h"
 #include "Tools/AssetEditors/DataTable/DataTableEditorTool.h"
+#include "Thumbnails/AssetTilePainters.h"
 #include "Tools/EditorEntityUtils.h"
 #include "Tools/AssetEditors/AudioStream/AudioStreamEditorTool.h"
 #include "Tools/AssetEditors/PhysicsMaterial/PhysicsMaterialEditorTool.h"
@@ -441,6 +442,9 @@ namespace Lumina
 
         // Init ThumbnailManager before world load so engine primitive meshes are in the transient package before deserialization.
         (void)CThumbnailManager::Get();
+
+        // Content-browser tiles that draw their own body (curves, etc) instead of a rendered thumbnail.
+        AssetTilePainters::RegisterBuiltin();
 
         // Editor owns input until the user hits Play (the registry flag defaults true so packaged builds work).
         FInputViewportRegistry::Get().SetGameInputFocused(false);

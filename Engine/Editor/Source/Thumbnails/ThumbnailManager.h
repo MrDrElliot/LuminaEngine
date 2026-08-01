@@ -28,6 +28,12 @@ namespace Lumina
         // Populates a freshly-spun-up FThumbnailScene with what the asset's thumbnail should show; camera is already created and active.
         using FThumbnailRendererFn = TFunction<void(FThumbnailScene&, CObject* /*Asset*/)>;
 
+        // Fills Out's RGBA8 image directly -- no world, no GPU, no readback. For assets whose thumbnail is a
+        // DRAWING rather than a view of something (a curve, a gradient). Runs on the game thread with the
+        // asset resident, exactly like a renderer. Returns false to decline (falls through to the renderer
+        // path, then to the generic icon).
+        using FThumbnailPainterFn = TFunction<bool(CObject* /*Asset*/, uint32 /*Size*/, FPackageThumbnail& /*Out*/)>;
+
         CThumbnailManager();
         ~CThumbnailManager();
 
@@ -51,6 +57,10 @@ namespace Lumina
 
         // Register a setup callback for an asset class; matched by walking up the class hierarchy, so subclasses inherit the renderer.
         void RegisterThumbnailRenderer(CClass* AssetClass, FThumbnailRendererFn Renderer);
+
+        // Same hierarchy matching, for classes drawn rather than rendered. Checked BEFORE the renderer, so a
+        // painter wins for a class that somehow has both.
+        void RegisterThumbnailPainter(CClass* AssetClass, FThumbnailPainterFn Painter);
 
         // Generate a fresh thumbnail for Asset into Package's slot; false if no renderer is registered (caller can fall back to viewport-grab).
         bool GenerateThumbnail(CObject* Asset, CPackage* Package);
@@ -90,6 +100,12 @@ namespace Lumina
         // Walk AssetClass's hierarchy for a registered renderer; nullptr if none.
         FThumbnailRendererFn* FindRenderer(CClass* AssetClass);
 
+        FThumbnailPainterFn* FindPainter(CClass* AssetClass);
+
+        // True when this class can produce a thumbnail at all, by either route. The resolve path gates on
+        // this before queueing, so a paintable class is not written off as Failed.
+        bool CanGenerateFor(CClass* AssetClass);
+
         // Populate the persistent scene with Asset and capture into Out. Game thread only. False if there's
         // no renderer for Asset or the capture failed.
         bool RenderThumbnail(CObject* Asset, FPackageThumbnail& Out);
@@ -106,6 +122,7 @@ namespace Lumina
         TVector<FRenderRequest> RenderQueue;
 
         THashMap<CClass*, FThumbnailRendererFn> ThumbnailRenderers;
+        THashMap<CClass*, FThumbnailPainterFn>  ThumbnailPainters;
 
         std::atomic<bool> bRegistryDirty{false};
     };

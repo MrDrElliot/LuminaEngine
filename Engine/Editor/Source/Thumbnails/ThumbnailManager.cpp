@@ -1,6 +1,7 @@
 #include "ThumbnailManager.h"
 #include "ThumbnailCache.h"
 #include "ThumbnailScene.h"
+#include "ThumbnailUtils.h"
 #include "Assets/AssetRegistry/AssetData.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Assets/AssetTypes/Material/Material.h"
@@ -307,7 +308,7 @@ namespace Lumina
             // 3. Queue for render. Only bother if this class has a renderer; the game-thread drain renders it
             // once it is resident (we never load the object here -- that races the editor's loader).
             CClass* Klass = FindObject<CClass>(ClassName);
-            if (Klass == nullptr || FindRenderer(Klass) == nullptr)
+            if (Klass == nullptr || !CanGenerateFor(Klass))
             {
                 SetRecordState(Package, FPackageThumbnail::EState::Failed);
                 return;
@@ -395,11 +396,37 @@ namespace Lumina
         return nullptr;
     }
 
+    CThumbnailManager::FThumbnailPainterFn* CThumbnailManager::FindPainter(CClass* AssetClass)
+    {
+        for (CClass* Klass = AssetClass; Klass != nullptr; Klass = Cast<CClass>(Klass->GetSuperClass()))
+        {
+            auto It = ThumbnailPainters.find(Klass);
+            if (It != ThumbnailPainters.end())
+            {
+                return &It->second;
+            }
+        }
+        return nullptr;
+    }
+
+    bool CThumbnailManager::CanGenerateFor(CClass* AssetClass)
+    {
+        return FindPainter(AssetClass) != nullptr || FindRenderer(AssetClass) != nullptr;
+    }
+
     bool CThumbnailManager::RenderThumbnail(CObject* Asset, FPackageThumbnail& Out)
     {
         if (Asset == nullptr)
         {
             return false;
+        }
+
+        // Painted first: it needs no world, no GPU and no readback, so a class that can be drawn should
+        // never pay for a scene capture. Everything downstream (cache record, .lasset embed, GPU upload)
+        // consumes the same FPackageThumbnail either way.
+        if (FThumbnailPainterFn* Painter = FindPainter(Asset->GetClass()))
+        {
+            return (*Painter)(Asset, ThumbnailUtils::kThumbnailResolution, Out);
         }
 
         FThumbnailRendererFn* Renderer = FindRenderer(Asset->GetClass());
@@ -560,6 +587,15 @@ namespace Lumina
             return;
         }
         ThumbnailRenderers.insert_or_assign(AssetClass, Move(Renderer));
+    }
+
+    void CThumbnailManager::RegisterThumbnailPainter(CClass* AssetClass, FThumbnailPainterFn Painter)
+    {
+        if (AssetClass == nullptr)
+        {
+            return;
+        }
+        ThumbnailPainters.insert_or_assign(AssetClass, Move(Painter));
     }
 
     bool CThumbnailManager::GenerateThumbnail(CObject* Asset, CPackage* Package)

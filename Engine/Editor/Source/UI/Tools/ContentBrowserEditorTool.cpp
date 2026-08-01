@@ -51,6 +51,7 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 #include "Core/Object/Package/Thumbnail/PackageThumbnail.h"
+#include "Thumbnails/AssetTilePainters.h"
 #include "Thumbnails/ThumbnailManager.h"
 #include <LuminaEditor.h>
 #include "Scripting/DotNet/DotNetHost.h"
@@ -891,6 +892,11 @@ namespace Lumina
             
             ImVec4 TintColor = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
 
+            // Set when this asset's type draws its own tile body (see FAssetTilePainterRegistry). The
+            // button below still draws its frame and owns every interaction; only the image is replaced.
+            FAssetTilePainterFn* TilePainter = nullptr;
+            CObject*             PainterAsset = nullptr;
+
             ImTextureRef ImTexture;
             switch (ContentItem->GetIconKind())
             {
@@ -902,6 +908,25 @@ namespace Lumina
                 }
             case EIconKind::Asset:
                 {
+                    // A type-specific painter takes precedence over the rendered thumbnail: it is sharp at
+                    // any tile size and reflects edits immediately, with no cache to invalidate.
+                    //
+                    // RESIDENT ONLY. FindObject is a hash lookup that never loads -- loading here would race
+                    // the editor's own loader on a non-atomic object (the rule CThumbnailManager's render
+                    // queue documents). An asset nothing has loaded yet just keeps its ordinary thumbnail.
+                    FStringView AssetPath = ContentItem->GetVirtualPath();
+                    if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(AssetPath))
+                    {
+                        if (CObject* Resident = FindObject<CObject>(Data->AssetGUID))
+                        {
+                            TilePainter = FAssetTilePainterRegistry::Get().Find(Resident->GetClass());
+                            if (TilePainter != nullptr)
+                            {
+                                PainterAsset = Resident;
+                            }
+                        }
+                    }
+
                     if (FPackageThumbnail* MaybeThumbnail = CThumbnailManager::Get().GetThumbnailForPackage(ContentItem->GetVirtualPath()))
                     {
                         ImTexture = ImGuiX::ToImTextureRef(MaybeThumbnail->LoadedImage);
@@ -954,7 +979,20 @@ namespace Lumina
                 8.0f
             );
             
-            ImGui::ImageButton("##", ImTexture, Size, ImVec2(0, 0), ImVec2(1, 1), ImVec4(0, 0, 0, 0), TintColor);
+            // A painted tile hides the image (alpha 0) rather than skipping ImageButton: the button still
+            // supplies the frame, hover/active styling, sizing and the click handling below, so the painter
+            // only has to fill the body.
+            ImGui::ImageButton("##", ImTexture, Size, ImVec2(0, 0), ImVec2(1, 1), ImVec4(0, 0, 0, 0),
+                TilePainter != nullptr ? ImVec4(TintColor.x, TintColor.y, TintColor.z, 0.0f) : TintColor);
+
+            if (TilePainter != nullptr)
+            {
+                // Item rect, not Pos/Size: it already accounts for the frame padding pushed above, so the
+                // painter's bounds cannot drift if that padding is ever retuned.
+                const ImVec2 BodyMin = ImGui::GetItemRectMin();
+                const ImVec2 BodyMax = ImGui::GetItemRectMax();
+                (*TilePainter)(PainterAsset, *DrawList, BodyMin, BodyMax);
+            }
 
             if (ImGui::IsItemHovered())
             {
