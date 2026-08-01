@@ -10,7 +10,7 @@ namespace Lumina
 {
     // Per-graph connection rules. Derived graphs can supply a subclass via CEdNodeGraph::GetSchema()
     // to customize what connections are allowed and whether existing input links are broken on reconnect.
-    struct FEdGraphSchema
+    struct EDITOR_API FEdGraphSchema
     {
         virtual ~FEdGraphSchema() = default;
 
@@ -20,5 +20,5 @@ namespace Lumina
     };
 
     // Default schema used by CEdNodeGraph when no derived schema is supplied.
-    const FEdGraphSchema& GetDefaultEdGraphSchema();
+    EDITOR_API const FEdGraphSchema& GetDefaultEdGraphSchema();
 }

@@ -13,7 +13,7 @@
 
 namespace Lumina
 {
-    class FAssetEditorTool : public FEditorTool
+    class EDITOR_API FAssetEditorTool : public FEditorTool
     {
     public:
 
