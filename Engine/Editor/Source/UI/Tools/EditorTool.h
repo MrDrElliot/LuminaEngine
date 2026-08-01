@@ -415,6 +415,12 @@ namespace Lumina
 
         bool                                bViewportFocused = false;
         bool                                bViewportHovered = false;
+
+        // True only for the tool that currently owns keyboard focus. Set by FEditorUI immediately
+        // before Update and cleared after, exactly like bViewportFocused. Registered-action shortcuts
+        // read it: without it every open tool evaluates its own chords every frame, so the world
+        // editor's Ctrl+S fired while a material graph had focus.
+        bool                                bIsActiveTool = false;
 		bool							    bWorldGridEnabled = true;
 
         // F11 fullscreen viewport: draws as borderless overlay; other tool windows are suppressed.

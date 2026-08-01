@@ -9,7 +9,7 @@
 
 namespace Lumina
 {
-    /** Base every data table row type derives from, as UE's FTableRowBase is.
+    /** Base every data table row type derives from.
      *
      *  It carries no fields. It is the compile-time bound for TInstancedStruct, and it is what the
      *  row-struct picker filters on: without it the picker would offer every reflected struct in the

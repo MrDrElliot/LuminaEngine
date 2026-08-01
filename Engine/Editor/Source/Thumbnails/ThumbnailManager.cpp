@@ -91,7 +91,7 @@ namespace Lumina
             SetupStudioLighting(Scene);
 
             entt::entity MeshEntity = Scene.SpawnEntity("SkeletalMesh");
-            World->EmplaceComponent<SSkeletalMeshComponent>(MeshEntity).SkeletalMesh = Mesh;
+            World->EmplaceComponent<SSkeletalMeshComponent>(MeshEntity).SetSkeletalMesh(Mesh);
 
             FrameBounds(Scene, Mesh->GetAABB());
         };
@@ -109,7 +109,7 @@ namespace Lumina
                 SetupStudioLighting(Scene);
 
                 entt::entity MeshEntity = Scene.SpawnEntity("Mesh");
-                World->EmplaceComponent<SStaticMeshComponent>(MeshEntity).StaticMesh = Mesh;
+                World->EmplaceComponent<SStaticMeshComponent>(MeshEntity).SetStaticMesh(Mesh);
 
                 FrameBounds(Scene, Mesh->GetAABB());
             });
@@ -159,7 +159,7 @@ namespace Lumina
 
                 entt::entity MeshEntity = Scene.SpawnEntity("PreviewSphere");
                 SStaticMeshComponent& MeshComp = World->EmplaceComponent<SStaticMeshComponent>(MeshEntity);
-                MeshComp.StaticMesh = CPrimitiveManager::Get().SphereMesh;
+                MeshComp.SetStaticMesh(CPrimitiveManager::Get().SphereMesh);
                 if (!bIsPostProcess)
                 {
                     MeshComp.MaterialOverrides.push_back(Material);

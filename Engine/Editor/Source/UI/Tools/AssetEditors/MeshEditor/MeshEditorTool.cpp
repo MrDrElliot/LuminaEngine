@@ -622,7 +622,7 @@ namespace Lumina
         CameraState.Speed = 5.0f;
 
         MeshEntity = World->ConstructEntity("MeshEntity");
-        World->EmplaceComponent<SStaticMeshComponent>(MeshEntity).StaticMesh = StaticMesh;
+        World->EmplaceComponent<SStaticMeshComponent>(MeshEntity).SetStaticMesh(StaticMesh);
         STransformComponent& MeshTransform = World->GetComponent<STransformComponent>(MeshEntity);
 
         float FloorY = MeshTransform.GetLocation().y + StaticMesh->GetAABB().Min.y;

@@ -111,7 +111,7 @@ namespace Lumina
             }
 
             entt::entity Entity = World->ConstructEntity("Piece");
-            World->EmplaceComponent<SStaticMeshComponent>(Entity).StaticMesh = PieceMesh;
+            World->EmplaceComponent<SStaticMeshComponent>(Entity).SetStaticMesh(PieceMesh);
             PieceEntities.push_back(Entity);
         }
 

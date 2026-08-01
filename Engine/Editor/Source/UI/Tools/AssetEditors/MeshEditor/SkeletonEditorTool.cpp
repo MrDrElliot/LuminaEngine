@@ -200,7 +200,7 @@ namespace Lumina
 
         MeshEntity = World->ConstructEntity("MeshEntity");
         SSkeletalMeshComponent& MeshComponent = World->EmplaceComponent<SSkeletalMeshComponent>(MeshEntity);
-        MeshComponent.SkeletalMesh = Skeleton->PreviewMesh;
+        MeshComponent.SetSkeletalMesh(Skeleton->PreviewMesh);
         Skeleton->ComputeBindPoseSkinningMatrices(MeshComponent.BoneTransforms);
         MeshComponent.bRenderBonesDirty = true;
         

@@ -1100,8 +1100,10 @@ namespace Lumina
         RegisterAction({"Redo", "History", "Re-apply the last undone edit",
             FInputChord{ImGuiKey_Y, true}, [this]{ Redo(); }, EditorWorld});
 
+        // Advisory only. FEditorUI routes Ctrl+S to the FOCUSED tool's OnSave; a live callback here
+        // would both bypass that focus check and save twice when this tool is the focused one.
         RegisterAction({"Save World", "File", "Save the current world",
-            FInputChord{ImGuiKey_S, true}, [this]{ OnSave(); }});
+            FInputChord{ImGuiKey_S, true}, nullptr});
 
         // Advisory entries: inline-handled shortcuts registered so the shortcuts window surfaces them.
         RegisterAction({"Copy Entities", "Selection", "Copy the selection to the entity clipboard",

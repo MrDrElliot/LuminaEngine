@@ -65,6 +65,15 @@ namespace Lumina
         // to gate off-screen pose evaluation. -1 until first rendered. Transient, never serialized.
         double LastRenderedTime = -1.0;
         
+        /** Mirrors SStaticMeshComponent::SetStaticMesh. Assigning the field directly skips
+         *  InvalidateRenderResolve, and the retained render scene only re-reads primitives that report a
+         *  change -- so a direct write is simply never picked up. */
+        FUNCTION(Script)
+        void SetSkeletalMesh(CSkeletalMesh* InMesh) { SkeletalMesh = InMesh; InvalidateRenderResolve(); }
+
+        FUNCTION(Script)
+        CSkeletalMesh* GetSkeletalMesh() const { return SkeletalMesh; }
+
         /** The skeletal mesh asset to render and animate for this component. */
         PROPERTY(Editable, Replicated, Category = "Mesh")
         TObjectPtr<CSkeletalMesh> SkeletalMesh;

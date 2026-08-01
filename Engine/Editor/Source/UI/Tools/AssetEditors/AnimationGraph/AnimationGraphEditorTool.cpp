@@ -442,7 +442,7 @@ namespace Lumina
         if (!bMeshEntityValid)
         {
             MeshEntity = World->ConstructEntity("Preview Mesh");
-            World->EmplaceComponent<SSkeletalMeshComponent>(MeshEntity).SkeletalMesh = PreviewMesh;
+            World->EmplaceComponent<SSkeletalMeshComponent>(MeshEntity).SetSkeletalMesh(PreviewMesh);
             World->EmplaceComponent<SAnimationGraphComponent>(MeshEntity).Graph = Graph;
             // Drive parameter values through a blackboard instance, exactly like
             // a real entity would; the Parameters panel writes into it.
@@ -461,7 +461,7 @@ namespace Lumina
         SSkeletalMeshComponent& MeshComp = World->GetComponent<SSkeletalMeshComponent>(MeshEntity);
         if (MeshComp.SkeletalMesh.Get() != PreviewMesh)
         {
-            MeshComp.SkeletalMesh = PreviewMesh;
+            MeshComp.SetSkeletalMesh(PreviewMesh);
         }
 
         SAnimationGraphComponent& GraphComp = World->GetComponent<SAnimationGraphComponent>(MeshEntity);

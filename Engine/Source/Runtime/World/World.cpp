@@ -850,7 +850,7 @@ namespace Lumina
                 const entt::entity Fragment = ConstructEntity("Fragment", PieceTransform);
                 EntityRegistry.emplace_or_replace<FNeedsTransformUpdate>(Fragment);
 
-                EntityRegistry.emplace<SStaticMeshComponent>(Fragment).StaticMesh = PieceMesh;
+                EntityRegistry.emplace<SStaticMeshComponent>(Fragment).SetStaticMesh(PieceMesh);
 
                 // The collider's on_construct builds the Jolt shape synchronously, so Mesh + bConvex must
                 // be set before insertion -- otherwise the body uses default (non-convex) settings, forced Static.
@@ -896,7 +896,7 @@ namespace Lumina
                 EntityRegistry.emplace_or_replace<FNeedsTransformUpdate>(Fragment);
 
                 SStaticMeshComponent& FragmentMeshComp = EntityRegistry.emplace<SStaticMeshComponent>(Fragment);
-                FragmentMeshComp.StaticMesh = GridMesh;
+                FragmentMeshComp.SetStaticMesh(GridMesh);
                 if (MeshComp != nullptr)
                 {
                     FragmentMeshComp.MaterialOverrides = MeshComp->MaterialOverrides;

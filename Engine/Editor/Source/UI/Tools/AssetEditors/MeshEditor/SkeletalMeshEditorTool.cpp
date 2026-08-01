@@ -396,7 +396,7 @@ namespace Lumina
 
         MeshEntity = World->ConstructEntity("MeshEntity");
         SSkeletalMeshComponent& MeshComponent = World->EmplaceComponent<SSkeletalMeshComponent>(MeshEntity);
-        MeshComponent.SkeletalMesh = SkeletalMesh;
+        MeshComponent.SetSkeletalMesh(SkeletalMesh);
         if (!SkeletalMesh->Skeleton.IsValid())
         {
             return;

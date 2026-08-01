@@ -11,6 +11,7 @@
 #include "World/WorldTypes.h"
 #include "World/Entity/Components/CameraComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
+#include "World/Entity/Systems/SystemSingletons.h"
 #include "World/Scene/RenderScene/RenderScene.h"
 #include "World/Scene/RenderScene/SceneRenderTypes.h"
 #include "World/Scene/RenderScene/Forward/ForwardRenderScene.h"
@@ -122,6 +123,19 @@ namespace Lumina
         const FVector3 Right   = Math::Normalize(Math::Cross(WorldUp, Forward));
         const FVector3 Up      = Math::Normalize(Math::Cross(Forward, Right));
         Camera.SetView(Position, Forward, Up);
+
+        // Publish it as the RESOLVED view too. CWorld::Extract does not read the camera component -- it
+        // reads the FResolvedSceneView context singleton, which only SCameraSystem writes, and that system
+        // only runs on a world tick. An unticked world therefore leaves bHasView false and Extract falls
+        // back to a default-constructed FViewVolume: origin, 90 degrees, 0.01 near. Every thumbnail entity
+        // is spawned at the origin, so the frustum sat inside the subject and culled it, leaving the sky
+        // (a fullscreen pass that needs no scene data) as the only thing in the image. That was the
+        // empty-world thumbnail.
+        FResolvedSceneView& Resolved = ECS::GetWorldRegistry(*World).ctx().get<FResolvedSceneView>();
+        Resolved.ViewVolume      = Camera.GetViewVolume();
+        Resolved.bHasView        = true;
+        Resolved.bHasPostProcess = false;
+        Resolved.PostProcessMaterials.clear();
     }
 
     bool FThumbnailScene::Capture(FPackageThumbnail& Thumbnail)

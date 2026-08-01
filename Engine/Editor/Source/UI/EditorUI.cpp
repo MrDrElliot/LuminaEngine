@@ -1949,7 +1949,11 @@ namespace Lumina
             Tool->OnSave();
         }
 
+        Tool->bIsActiveTool = bIsLastFocusedTool;
+
         Tool->Update(UpdateContext);
+
+        Tool->bIsActiveTool    = false;
         Tool->bViewportFocused = false;
         Tool->bViewportHovered = false;
 

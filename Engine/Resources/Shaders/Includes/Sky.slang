@@ -39,6 +39,11 @@ static const float  kMieH          = 1.2e3;
 static const float  kOzoneCenter   = 25e3;
 static const float  kOzoneWidth    = 15e3;
 
+// Angular width (in sin-elevation) over which the horizon colour fades into the ground swatch below
+// it. Wide enough that the sky cube's finite resolution cannot land the whole transition inside one
+// texel, which is what turned it into a visible edge; narrow enough to still read as a horizon.
+static const float  kHorizonGroundFade = 0.35;
+
 float Sky_RayleighPhase(float CosTheta)
 {
     return (3.0 / (16.0 * PI)) * (1.0 + CosTheta * CosTheta);
@@ -409,19 +414,36 @@ float3 Sky_Dynamic(FEnvironmentParams Env, float3 SunDir, float3 RayDir, float T
     // Atmosphere math is in planet-relative coords. Origin at 50m altitude
     // so the camera never falls inside the planet sphere.
     float3 AtmoCamera = float3(0.0, kPlanetR + 50.0, 0.0);
-    float3 Atmo = Sky_Atmosphere(AtmoCamera, RayDir, SunDir, SunColor, MieG);
+
+    // Sample the atmosphere along a HORIZON-CLAMPED ray.
+    //
+    // From 50m up, a ray a hair below the horizon hits the planet within metres, so Sky_Atmosphere
+    // truncates its integral to nothing and returns black -- while the ray a hair above it still
+    // crosses the whole atmosphere and returns full brightness. That is a step with no angular width.
+    // Blending a ground tint underneath it could not hide it, because the blend started from black on
+    // the far side of the step. Rasterised into the sky cube, that step lands on a texel boundary and
+    // reads as a hard, faintly staircased line -- worst near the cube's face corners, where a texel
+    // covers the most solid angle.
+    //
+    // Clamping the sampled direction to the horizon makes every below-horizon ray start from the
+    // horizon's own colour, so the ground blend below has something continuous to fade from.
+    float3 SkyDir = float3(RayDir.x, max(RayDir.y, 0.0), RayDir.z);
+    float  SkyLen = length(SkyDir);
+    // Straight down: xz is zero and the clamp leaves nothing to normalize. Any finite direction does,
+    // since Below is saturated there and the result is pure ground tint regardless.
+    SkyDir = (SkyLen > 1e-4) ? (SkyDir / SkyLen) : float3(0.0, 1.0, 0.0);
+
+    float3 Atmo = Sky_Atmosphere(AtmoCamera, SkyDir, SunDir, SunColor, MieG);
 
     // Night blend: 1 (deep night) at SunHeight ~ -0.15 to 0 (full day) at ~ 0, via sun elevation.
     float NightFactor = smoothstep(0.05, -0.15, SunHeight);
 
-    // Below-horizon ground tint: the atmosphere term goes black there, so blend in a
-    // darkened ground swatch to avoid a hard cutoff line.
-    if (RayDir.y < 0.0)
-    {
-        float Below = smoothstep(0.0, -0.25, RayDir.y);
-        float3 GroundTint = Env.GroundColor.rgb * 0.5;
-        Atmo = lerp(Atmo, GroundTint, Below);
-    }
+    // Fade the horizon colour into the ground swatch below it. Unbranched and smoothstep-driven, so
+    // the value AND its first derivative are continuous across y = 0 -- a branch at exactly the
+    // horizon would put a crease on the one line of the image the eye is already drawn to.
+    float Below = smoothstep(0.0, -kHorizonGroundFade, RayDir.y);
+    float3 GroundTint = Env.GroundColor.rgb * 0.5;
+    Atmo = lerp(Atmo, GroundTint, Below);
 
     // Galaxy lives in the cube (low-frequency, fine at 256). Stars/sun/moon are pixel-scale and
     // alias at cube resolution, so Environment.slang re-evaluates them per-fragment instead.

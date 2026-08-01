@@ -1222,7 +1222,7 @@ namespace Lumina
         entt::entity CreatedEntity = World->ConstructEntity(DisplayName, GetNewEntitySpawnTransform());
         if (CreatedEntity != entt::null)
         {
-            GetSceneRegistry().emplace<SStaticMeshComponent>(CreatedEntity).StaticMesh = PrimitiveMesh;
+            GetSceneRegistry().emplace<SStaticMeshComponent>(CreatedEntity).SetStaticMesh(PrimitiveMesh);
             OnEntityCreatedInScene(CreatedEntity);
         }
         EndTransaction("New Primitive");
@@ -2809,7 +2809,7 @@ namespace Lumina
                                         {
                                             BeginTransaction();
                                             SStaticMeshComponent& MeshComp = GetSceneRegistry().emplace_or_replace<SStaticMeshComponent>(Entity);
-                                            MeshComp.StaticMesh = PrimitiveMesh;
+                                            MeshComp.SetStaticMesh(PrimitiveMesh);
                                             EndTransaction("Set Primitive Mesh");
 
                                             OutlinerListView.MarkTreeDirty();

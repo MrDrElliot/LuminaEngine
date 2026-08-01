@@ -863,15 +863,13 @@ namespace Lumina
         const bool bCopyPressed      = IO.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_C);
         const bool bDuplicatePressed = IO.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D);
         const bool bPastePressed     = IO.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_V, false);
-        const bool bSavePressed      = IO.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false);
 
         entt::registry& Registry = ECS::GetWorldRegistry(*World);
         const entt::entity Root = FindPrefabRoot();
 
-        if (bSavePressed)
-        {
-            OnSave();
-        }
+        // Ctrl+S is deliberately absent: FEditorUI routes it to the focused tool's OnSave. Handling it
+        // here as well saved twice when focused, and saved the prefab merely because the cursor was
+        // over its viewport while a different tool had focus.
 
         if (bCopyPressed)
         {

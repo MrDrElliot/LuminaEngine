@@ -331,6 +331,15 @@ namespace Lumina
             return;
         }
 
+        // Shortcuts belong to the focused tool. Every open tool ticks its actions every frame, so
+        // without this an unfocused tool's chords fire from whatever the user typed into a different
+        // one -- the world editor saving the world while a material graph had focus, or its Undo
+        // running on a Ctrl+Z meant for a text field elsewhere.
+        if (!bIsActiveTool)
+        {
+            return;
+        }
+
         // Don't fire shortcuts while a text input field is active.
         const ImGuiIO& IO = ImGui::GetIO();
         if (IO.WantTextInput)
@@ -460,7 +469,7 @@ namespace Lumina
         entt::entity FloorEntity = World->ConstructEntity("FloorPlane", Transform);
         World->EmplaceComponent<FHideInSceneOutliner>(FloorEntity);
         SStaticMeshComponent& MeshComponent = World->EmplaceComponent<SStaticMeshComponent>(FloorEntity);
-        MeshComponent.StaticMesh = CPrimitiveManager::Get().PlaneMesh;
+        MeshComponent.SetStaticMesh(CPrimitiveManager::Get().PlaneMesh);
         
         return FloorEntity;
     }
