@@ -101,6 +101,34 @@ namespace Lumina
         // menu and anything else that wants to offer them.
         void DrawAlignmentMenuItems();
 
+        // Tidy / unused-node entries. Emitted at the tail of the node context menu; split out so a graph
+        // that builds its own menu can place them itself.
+        void DrawGraphToolsMenuItems();
+
+        // True for a node the graph's output flows out of. Everything reachable backwards from these is
+        // what the graph actually compiles; anything else is dead weight the compiler never sees. The
+        // base returns false, which disables the contribution features rather than guessing wrong.
+        virtual bool IsGraphRootNode(CEdGraphNode* Node) const { return false; }
+
+        // Nodes that reach a root through their outputs, i.e. the ones that actually affect the result.
+        // Empty when the graph declares no roots. Cheap enough to call per frame on editor-sized graphs.
+        void CollectContributingNodes(THashSet<CEdGraphNode*>& OutContributing) const;
+
+        // Nodes NOT in the contributing set, in graph order. These compile to nothing.
+        void CollectDeadNodes(TVector<CEdGraphNode*>& OutDead) const;
+
+        void SelectDeadNodes();
+        void DeleteDeadNodes();
+
+        // Layered auto-layout: columns by distance from the root, rows ordered to reduce wire crossings.
+        // Queued rather than applied directly, for the same reason as alignment -- it needs node SIZES,
+        // which only exist once the editor has drawn them.
+        void QueueTidyGraph() { bHasPendingTidy = true; }
+
+        // Dead nodes are drawn faded. Off by default in graphs with no declared root (nothing to measure
+        // "dead" against); the material graph turns it on.
+        bool bFadeDeadNodes = true;
+
         // Positions Node at a screen point on the next draw. Screen->canvas conversion needs the
         // node-editor context, which is only current inside DrawGraph, so callers outside it (drop
         // handlers, external spawners) queue the placement instead of computing it themselves.
@@ -207,6 +235,13 @@ namespace Lumina
 
         bool           bHasPendingAlignment = false;
         ENodeAlignment PendingAlignment     = ENodeAlignment::Left;
+
+        // Same deferral as alignment: TidyGraph reads NodeEditor::GetNodeSize, which is only valid for a
+        // node the editor has already laid out at least once.
+        bool           bHasPendingTidy      = false;
+
+        // Applies the layered layout. Must run inside DrawGraph.
+        void TidyGraph();
 
         // Node the "Node Context Menu" popup was opened on; the popup outlives the frame that spawned it.
         uint64         ContextMenuNodeID = 0;

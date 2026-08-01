@@ -142,6 +142,11 @@ namespace Lumina::ImGuiX
     RUNTIME_API bool SliderFloat(const char* Label, float* Value, float Min, float Max, ESliderFlags Flags = ESliderFlags::None, const char* Format = "%.2f", const FSliderStyle* Style = nullptr);
     RUNTIME_API bool SliderInt(const char* Label, int32* Value, int32 Min, int32 Max, ESliderFlags Flags = ESliderFlags::None, const char* Format = "%d", const FSliderStyle* Style = nullptr);
     
+    // Filter input + trailing clear button, sized so the button cannot clip against the panel edge.
+    // Hint is drawn inside the empty box (ImGuiTextFilter::Draw takes no hint of its own). Returns true
+    // when the filter text changed this frame, including via the clear button.
+    RUNTIME_API bool SearchBar(const char* StrId, ImGuiTextFilter& Filter, const char* Hint = nullptr);
+
     // A searchable single-select dropdown.
     RUNTIME_API int32 SearchableCombo(const char* StrId, const char* Preview, int32 ItemCount, int32 CurrentIndex, const TFunction<FFixedString(int32)>& GetItemLabel, const char* ItemIcon = nullptr);
 

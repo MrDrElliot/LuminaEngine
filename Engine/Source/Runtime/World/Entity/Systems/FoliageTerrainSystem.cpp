@@ -12,6 +12,11 @@ namespace Lumina
         .Read<STransformComponent>()
         .Write<STerrainComponent, SFoliageComponent>();
 
+    void SFoliageTerrainSystem::Startup(const FSystemContext& Context) noexcept
+    {
+        (void)Context.CreateView<STerrainComponent, STransformComponent>();
+    }
+
     namespace
     {
         // A terrain's edited region, converted to a world-space XZ rect (with a one-cell margin).

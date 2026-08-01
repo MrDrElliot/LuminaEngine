@@ -304,12 +304,62 @@ namespace Lumina
         return false;
     }
 
+    void FSceneEditorTool::DrawComponentSearchBar()
+    {
+        // Clearing needs no special handling here: DrawComponentList pushes the (now empty) text into
+        // every component table each frame, and each table restores its own collapse state when its
+        // filter goes inactive.
+        ImGuiX::SearchBar("##DetailsSearch", DetailsFilter, LE_ICON_MAGNIFY " Search components and properties...");
+
+        ImGui::Spacing();
+    }
+
     void FSceneEditorTool::DrawComponentList(entt::entity Entity)
     {
+        DrawComponentSearchBar();
+
+        const bool bFiltering = DetailsFilter.IsActive();
+        uint32 VisibleCount = 0;
+
         for (FComponentTableEntry& Entry : PropertyTables)
         {
+            if (bFiltering)
+            {
+                // A component whose NAME matches shows in full -- searching "Static Mesh" means you want
+                // that component, not the subset of its properties that happen to repeat the word.
+                const bool bTitleMatches = DetailsFilter.PassFilter(Entry.Title.c_str());
+
+                if (Entry.Table)
+                {
+                    Entry.Table->SetSearchText(bTitleMatches ? FStringView() : FStringView(DetailsFilter.InputBuf));
+
+                    // Skip the whole component when nothing inside it survives. Drawing the header anyway
+                    // would leave a list of empty sections to scroll past, which is the thing a search is
+                    // meant to remove.
+                    if (!bTitleMatches && !Entry.Table->PrepareAndTestFilter())
+                    {
+                        continue;
+                    }
+                }
+                else if (!bTitleMatches)
+                {
+                    continue;
+                }
+            }
+            else if (Entry.Table)
+            {
+                Entry.Table->SetSearchText(FStringView());
+            }
+
             DrawComponentHeader(Entry, Entity);
             ImGui::Spacing();
+            ++VisibleCount;
+        }
+
+        if (bFiltering && VisibleCount == 0)
+        {
+            ImGui::Spacing();
+            ImGui::TextDisabled("   No components or properties match.");
         }
     }
 
@@ -710,6 +760,9 @@ namespace Lumina
                 Entry.Table = (PrefabDefault != nullptr)
                     ? MakeUnique<FPropertyTable>(Row.Data, Row.Layout, PrefabDefault)
                     : MakeUnique<FPropertyTable>(Row.Data, Row.Layout);
+                // The details panel owns ONE search box across every component (DrawComponentSearchBar);
+                // a per-table box would put one above each component header.
+                Entry.Table->SetShowSearchBar(false);
                 Entry.Table->SetPreEditCallback([&](const FPropertyChangedEvent& Event)    { OnPrePropertyChangeEvent(Event); });
                 Entry.Table->SetPostEditCallback([&](const FPropertyChangedEvent& Event)   { OnPostPropertyChangeEvent(Event); MarkSceneDirty(); });
                 Entry.Table->SetStartEditCallback([&](const FPropertyChangedEvent& Event)  { BeginTransaction(); });

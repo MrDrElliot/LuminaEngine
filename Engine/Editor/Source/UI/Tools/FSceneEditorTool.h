@@ -183,6 +183,13 @@ namespace Lumina
         void RebuildPropertyTables(entt::entity Entity);
         // Draw every component row for Entity.
         void DrawComponentList(entt::entity Entity);
+
+        // One search box over the whole details panel. Matches a component by its title, and otherwise
+        // filters INTO each component's property table, so searching a property name shows only the
+        // components that actually have it.
+        void DrawComponentSearchBar();
+
+        ImGuiTextFilter DetailsFilter;
         void DrawComponentHeader(FComponentTableEntry& Entry, entt::entity Entity);
         // Sockets/bones on Entity's parent's mesh, for SocketPicker FName properties in the details.
         void BuildSocketPickerData(entt::entity Entity, SocketPickerContext::FSocketPickerData& Out);

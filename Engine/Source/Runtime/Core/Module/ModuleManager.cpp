@@ -2,6 +2,7 @@
 #include "ModuleManager.h"
 #include "ModuleInterface.h"
 #include "Core/Delegates/CoreDelegates.h"
+#include "Core/Object/ObjectBase.h"
 #include "Core/Templates/LuminaTemplate.h"
 #include "FileSystem/FileSystem.h"
 #include "Paths/Paths.h"
@@ -69,6 +70,11 @@ namespace Lumina
             return ModuleInterface;
         }
 
+        // Loading the DLL runs its static initializers, which queue its reflected classes/enums/structs as
+        // function pointers into the module. Anything that refuses the module past this point has to discard
+        // those before freeing the handle, or the next ProcessNewlyLoadedCObjects() calls into unmapped code.
+        const FDeferredRegistrationSnapshot RegistrationSnapshot = SnapshotDeferredRegistrations();
+
         void* ModuleHandle = Platform::GetDLLHandle(StringUtils::ToWideString(ModulePath).c_str());
 
         if (!ModuleHandle)
@@ -77,11 +83,13 @@ namespace Lumina
             return nullptr;
         }
 
-        // ABI guard: a module built against an incompatible engine ABI (config, editor/game platform,
-        // compiler, or a breaking change) would corrupt memory once its code runs. Read the tiny signature
-        // export -- a const char* return, ABI-safe regardless of how the module was built -- and refuse the
-        // module before calling InitializeModule if it doesn't match this engine's. Catches the mismatches
-        // a filename can't (editor/game, toolset, ABI version) as well as a stale wrong-config DLL.
+        auto RejectModule = [&]
+        {
+            RollbackDeferredRegistrations(RegistrationSnapshot);
+            Platform::FreeDLLHandle(ModuleHandle);
+        };
+
+
         auto ABIFunctionPtr = Platform::LumGetProcAddress<ModuleABIFunc>(ModuleHandle, "LuminaModuleABISignature");
         const char* ModuleABI = ABIFunctionPtr ? ABIFunctionPtr() : nullptr;
         if (ModuleABI == nullptr || std::strcmp(ModuleABI, LUMINA_MODULE_ABI_SIGNATURE) != 0)
@@ -91,7 +99,7 @@ namespace Lumina
                 + "' vs engine '" + LUMINA_MODULE_ABI_SIGNATURE + "')";
             LOG_ERROR("[Module Manager] - Refusing to load '{}': {}. Rebuild the project against this engine "
                       "(matching Configuration and Editor/Game platform).", ModulePath, LastLoadError);
-            Platform::FreeDLLHandle(ModuleHandle);
+            RejectModule();
             return nullptr;
         }
 
@@ -100,6 +108,7 @@ namespace Lumina
         {
             LastLoadError = FString("missing InitializeModule export");
             LOG_WARN("Failed to get InitializeModule export: {}", ModulePath);
+            RejectModule();
             return nullptr;
         }
 
@@ -107,7 +116,9 @@ namespace Lumina
 
         if (!ModuleInterface)
         {
+            LastLoadError = FString("InitializeModule() returned null");
             LOG_WARN("Module returned null from InitializeModule(): {}", ModulePath);
+            RejectModule();
             return nullptr;
         }
 

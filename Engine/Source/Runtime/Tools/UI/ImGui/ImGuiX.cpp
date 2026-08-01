@@ -420,6 +420,42 @@ namespace Lumina::ImGuiX
         return SliderScalarStyled(Label, ImGuiDataType_S32, Value, &Min, &Max, Flags, Format, Style);
     }
 
+    bool SearchBar(const char* StrId, ImGuiTextFilter& Filter, const char* Hint)
+    {
+        const ImGuiStyle& Style = ImGui::GetStyle();
+        const float ButtonWidth = ImGui::GetFrameHeight();
+
+        // A right MARGIN on top of the item spacing, not just spacing. Sizing the row to fit exactly
+        // leaves the trailing button flush with the panel edge, where it gets clipped -- and
+        // GetContentRegionAvail does not yet account for a scrollbar that appears on this same frame.
+        const float Margin = Style.FramePadding.x;
+        const float Avail  = ImGui::GetContentRegionAvail().x;
+
+        ImGui::SetNextItemWidth(Math::Max(Avail - ButtonWidth - Style.ItemSpacing.x - Margin, 48.0f));
+        bool bChanged = Filter.Draw(StrId);
+
+        if (Hint != nullptr && !Filter.IsActive())
+        {
+            const ImVec2 Min = ImGui::GetItemRectMin();
+            ImGui::GetWindowDrawList()->AddText(ImVec2(Min.x + Style.FramePadding.x, Min.y + Style.FramePadding.y),
+                ImGui::GetColorU32(ImGuiCol_TextDisabled), Hint);
+        }
+
+        ImGui::SameLine();
+
+        ImGui::PushID(StrId);
+        ImGui::BeginDisabled(!Filter.IsActive());
+        if (ImGui::Button(LE_ICON_CLOSE, ImVec2(ButtonWidth, 0.0f)))
+        {
+            Filter.Clear();
+            bChanged = true;
+        }
+        ImGui::EndDisabled();
+        ImGui::PopID();
+
+        return bChanged;
+    }
+
     int32 SearchableCombo(const char* StrId, const char* Preview, int32 ItemCount, int32 CurrentIndex, const TFunction<FFixedString(int32)>& GetItemLabel, const char* ItemIcon)
     {
         int32 Result = INDEX_NONE;

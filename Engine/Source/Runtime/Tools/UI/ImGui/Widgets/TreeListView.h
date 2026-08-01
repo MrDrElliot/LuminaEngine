@@ -227,6 +227,11 @@ namespace Lumina
         TVector<int32>      Roots;
 
         TVector<int32>      VisibleList;     // depth-first list of currently visible row indices
+
+        // VisibleList with the context's filter applied, rebuilt every frame a filter is set. Separate
+        // from VisibleList because that one is cached behind bVisibleListDirty and the widget has no way
+        // to know when the caller's filter text changed.
+        TVector<int32>      FilteredList;
         int32               AliveCount = 0;
 
         // Node to scroll into view on the next Draw (-1 = none); resolved to a row once the

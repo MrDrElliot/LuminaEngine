@@ -47,6 +47,10 @@ namespace Lumina
         // typed CMaterialInput / CMaterialOutput pins so the existing compiler casts keep working.
         CClass* GetRerouteNodeClass() const override;
 
+        // The single CMaterialOutputNode. Everything the compiler emits is reachable backwards from it,
+        // which is what makes the dead-node fade and Tidy meaningful here.
+        bool IsGraphRootNode(CEdGraphNode* Node) const override;
+
         void SetMaterial(CMaterial* InMaterial);
         CMaterial* GetMaterial() const { return Material; }
 

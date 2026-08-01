@@ -19,6 +19,16 @@ namespace Lumina
         void Redo() override;
         void Finalize() override;   // captures the after-image
 
+        // Without this the base returns false and EVERY Begin/End pair pushes an undo step, including the
+        // ones where nothing changed -- merely focusing a property row fires Started/Finished. That matters
+        // more here than for a CObject: this command restores the WHOLE registry, so a spurious step does
+        // not waste one press, it reverts every unrelated change made since that snapshot.
+        //
+        // Byte equality can only be conservative: two captures of identical state could differ if a
+        // component pool was assured in between (storage iteration order), which keeps the transaction. It
+        // cannot report a real change as a no-op.
+        bool IsNoOp() const override { return Before == After; }
+
     private:
 
         void Capture(TVector<uint8>& Out) const;

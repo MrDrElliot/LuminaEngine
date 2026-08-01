@@ -238,6 +238,23 @@ namespace Lumina
         }
     }
     
+    FDeferredRegistrationSnapshot SnapshotDeferredRegistrations()
+    {
+        FDeferredRegistrationSnapshot Snapshot;
+        Snapshot.NumClasses = FClassDeferredRegistry::Get().NumRegistrations();
+        Snapshot.NumEnums   = FEnumDeferredRegistry::Get().NumRegistrations();
+        Snapshot.NumStructs = FStructDeferredRegistry::Get().NumRegistrations();
+
+        return Snapshot;
+    }
+
+    void RollbackDeferredRegistrations(const FDeferredRegistrationSnapshot& Snapshot)
+    {
+        FClassDeferredRegistry::Get().TruncateRegistrations(Snapshot.NumClasses);
+        FEnumDeferredRegistry::Get().TruncateRegistrations(Snapshot.NumEnums);
+        FStructDeferredRegistry::Get().TruncateRegistrations(Snapshot.NumStructs);
+    }
+
     static void LoadAllCompiledInEnumsAndStructs()
     {
         FEnumDeferredRegistry& EnumRegistry = FEnumDeferredRegistry::Get();

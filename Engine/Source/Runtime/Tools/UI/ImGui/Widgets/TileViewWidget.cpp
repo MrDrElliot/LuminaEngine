@@ -87,6 +87,10 @@ namespace Lumina
         Clipper.End();
 
         ImGui::PopStyleVar();
+
+        // After every tile: the start test needs IsAnyItemHovered() to be meaningful, and the band should
+        // paint over the tiles rather than under them.
+        UpdateMarquee(Context);
     }
 
     void FTileViewWidget::DrawTile(FTileViewItem* Item, const FTileViewContext& Context)
@@ -177,6 +181,28 @@ namespace Lumina
         ImGui::Dummy(ImVec2(TileSize, GLabelHeight));
 
         ImGui::EndGroup();
+
+        // Rubber-band hit test against the whole cell, evaluated every frame of the drag rather than only
+        // on entry, so shrinking the band gives items back instead of leaving them stuck selected.
+        ImVec2 MarqueeMin, MarqueeMax;
+        if (GetMarqueeScreenRect(MarqueeMin, MarqueeMax))
+        {
+            const ImVec2 CellMin = ImGui::GetItemRectMin();
+            const ImVec2 CellMax = ImGui::GetItemRectMax();
+
+            const bool bOverlaps = MarqueeMin.x <= CellMax.x && MarqueeMax.x >= CellMin.x
+                                && MarqueeMin.y <= CellMax.y && MarqueeMax.y >= CellMin.y;
+
+            const bool bInBase = bMarqueeAdditive
+                && eastl::find(MarqueeBaseSelection.begin(), MarqueeBaseSelection.end(), Item) != MarqueeBaseSelection.end();
+
+            const bool bShouldSelect = bOverlaps || bInBase;
+            if (bShouldSelect != Item->IsSelected())
+            {
+                ToggleSelection(Item, Context);
+            }
+        }
+
         ImGui::PopID();
     }
     
@@ -236,6 +262,13 @@ namespace Lumina
 
     void FTileViewWidget::BeginInlineRename(FTileViewItem* Item)
     {
+        // One asset at a time. A rename field over a multi-selection either renames the wrong thing or
+        // silently applies one name to many files; refusing is the only safe reading.
+        if (Item != nullptr && Selections.size() > 1)
+        {
+            return;
+        }
+
         RenamingItem = Item;
         bRenameFocusPending = true;
         bRenameWasActive = false;
@@ -431,6 +464,81 @@ namespace Lumina
                 
                 ImGui::EndPopup();
             }
+        }
+    }
+
+    bool FTileViewWidget::GetMarqueeScreenRect(ImVec2& OutMin, ImVec2& OutMax) const
+    {
+        if (!bMarqueeActive)
+        {
+            return false;
+        }
+
+        // Content space -> screen, so the band stays anchored to the tiles while the view scrolls.
+        const ImVec2 ContentOrigin(ImGui::GetWindowPos().x - ImGui::GetScrollX(),
+                                   ImGui::GetWindowPos().y - ImGui::GetScrollY());
+        const ImVec2 Anchor(ContentOrigin.x + MarqueeAnchorContent.x, ContentOrigin.y + MarqueeAnchorContent.y);
+        const ImVec2 Cursor = ImGui::GetIO().MousePos;
+
+        OutMin = ImVec2(std::min(Anchor.x, Cursor.x), std::min(Anchor.y, Cursor.y));
+        OutMax = ImVec2(std::max(Anchor.x, Cursor.x), std::max(Anchor.y, Cursor.y));
+        return true;
+    }
+
+    void FTileViewWidget::UpdateMarquee(const FTileViewContext& Context)
+    {
+        const ImGuiIO& IO = ImGui::GetIO();
+
+        if (!bMarqueeActive)
+        {
+            // Started only from EMPTY space: a drag that began on a tile is a drag-and-drop, and a drag
+            // that began outside this window belongs to whatever it started in. Checked here, at the tail
+            // of Draw, because IsAnyItemHovered() is only meaningful once every tile has been submitted.
+            const bool bCanStart = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)
+                && !ImGui::IsAnyItemHovered()
+                && !ImGui::IsAnyItemActive()
+                && RenamingItem == nullptr
+                && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 4.0f);
+
+            if (!bCanStart)
+            {
+                return;
+            }
+
+            const ImVec2 ContentOrigin(ImGui::GetWindowPos().x - ImGui::GetScrollX(),
+                                       ImGui::GetWindowPos().y - ImGui::GetScrollY());
+            // Anchored at where the button went DOWN, not where the drag threshold was crossed, so the
+            // band starts under the initial click rather than a few pixels into the gesture.
+            const ImVec2 Pressed = IO.MouseClickedPos[ImGuiMouseButton_Left];
+
+            bMarqueeActive       = true;
+            bMarqueeAdditive     = IO.KeyCtrl || IO.KeyShift;
+            MarqueeAnchorContent = ImVec2(Pressed.x - ContentOrigin.x, Pressed.y - ContentOrigin.y);
+
+            MarqueeBaseSelection.clear();
+            if (bMarqueeAdditive)
+            {
+                MarqueeBaseSelection = Selections;
+            }
+            else
+            {
+                ClearSelections();
+            }
+            return;
+        }
+
+        ImVec2 Min, Max;
+        if (GetMarqueeScreenRect(Min, Max))
+        {
+            ImDrawList* DrawList = ImGui::GetWindowDrawList();
+            DrawList->AddRectFilled(Min, Max, IM_COL32(120, 170, 235, 40));
+            DrawList->AddRect(Min, Max, IM_COL32(140, 190, 245, 200));
+        }
+
+        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
+        {
+            bMarqueeActive = false;
+            MarqueeBaseSelection.clear();
         }
     }
 

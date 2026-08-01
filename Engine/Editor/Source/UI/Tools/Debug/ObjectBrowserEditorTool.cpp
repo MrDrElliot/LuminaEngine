@@ -2,15 +2,53 @@
 
 #include <EASTL/sort.h>
 
+#include "Core/Object/Cast.h"
+#include "Core/Object/Class.h"
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectArray.h"
-#include "Core/Object/ObjectIterator.h"
-#include "Core/Object/Package/Package.h"
-#include "Core/Object/Class.h"
 #include "Core/Object/ObjectFlags.h"
+#include "Core/Object/Package/Package.h"
+#include "Core/Profiler/Profile.h"
+#include "Tools/UI/ImGui/EditorColors.h"
+#include "Tools/UI/ImGui/ImGuiDesignIcons.h"
+#include "Tools/UI/ImGui/ImGuiFonts.h"
+#include "Tools/UI/ImGui/ImGuiX.h"
+#include "UI/Properties/PropertyTable.h"
 
 namespace Lumina
 {
+    namespace
+    {
+        // Column identity, shared by the header setup and the sort, so reordering the columns cannot
+        // silently start sorting by the wrong field.
+        enum EObjectColumn : int32
+        {
+            Column_Name = 0,
+            Column_Class,
+            Column_Package,
+            Column_StrongRefs,
+            Column_WeakRefs,
+            Column_Flags,
+            Column_Count,
+        };
+
+        ImVec4 FlagsTint(EObjectFlags Flags)
+        {
+            if (EnumHasAnyFlags(Flags, OF_MarkedDestroy)) { return ImVec4(0.95f, 0.55f, 0.45f, 1.0f); }
+            if (EnumHasAnyFlags(Flags, OF_Rooted))        { return ImVec4(0.55f, 0.85f, 1.00f, 1.0f); }
+            if (EnumHasAnyFlags(Flags, OF_DefaultObject)) { return ImVec4(0.70f, 0.65f, 0.90f, 1.0f); }
+            return EditorColors::TextMuted();
+        }
+
+        void DrawFilterHint(const char* Hint)
+        {
+            const ImVec2 Min = ImGui::GetItemRectMin();
+            const ImVec2 Pad = ImGui::GetStyle().FramePadding;
+            ImGui::GetWindowDrawList()->AddText(ImVec2(Min.x + Pad.x, Min.y + Pad.y),
+                ImGui::GetColorU32(ImGuiCol_TextDisabled), Hint);
+        }
+    }
+
     void FObjectBrowserEditorTool::OnInitialize()
     {
         CreateToolWindow("Object Browser", [this](bool bIsFocused)
@@ -26,327 +64,428 @@ namespace Lumina
     void FObjectBrowserEditorTool::DrawHelpMenu()
     {
         DrawHelpTextRow("What this is",
-            "Lists every live CObject in the engine, every loaded asset, every transient runtime object, "
-            "each grouped by package. Useful when chasing leaks or unexpected references.");
+            "Every live CObject: loaded assets, class defaults, transient runtime objects. The tool to reach "
+            "for when something is still alive that should not be, or when you want to know what a package "
+            "actually holds.");
+        DrawHelpTextRow("Snapshots",
+            "The list is a snapshot, not a live view. Auto-refresh re-takes it on an interval; switch it off "
+            "and use Refresh to hold a moment still while you read it. Nothing walks the object array in "
+            "between, so the tool costs the same whether there are a hundred objects or a million.");
+        DrawHelpTextRow("Refs",
+            "Strong refs keep the object alive. Weak refs observe without keeping alive. An object sitting at "
+            "0 strong that is still listed is either rooted or waiting on the next destroy pass.");
         DrawHelpTextRow("Filters",
-            "Search filters by object name. Class filter narrows to a specific CClass (and its subclasses). "
-            "Show Only Active hides objects pending destroy.");
-        DrawHelpTextRow("Sorting",
-            "Toggle Sort By Name to sort alphabetically; otherwise rows are in registration (creation) order, "
-            "newest at the bottom.");
-        DrawHelpTextRow("Selection",
-            "Click a row to inspect its package + class. The package is what FAssetRegistry / save paths use.");
+            "Class defaults are hidden by default -- one per class, and rarely what you are looking for. "
+            "'Pending Destroy' shows objects already marked for teardown, which is where a leak hunt starts.");
+        DrawHelpTextRow("Details",
+            "Selecting a row inspects that object's live properties, read-only. The selection is held weakly, "
+            "so it reports the object as destroyed rather than showing stale values.");
+    }
+
+    void FObjectBrowserEditorTool::Update(const FUpdateContext& UpdateContext)
+    {
+        FEditorTool::Update(UpdateContext);
+
+        if (!bAutoRefresh)
+        {
+            return;
+        }
+
+        TimeSinceRefresh += (float)UpdateContext.GetDeltaTime();
+        if (TimeSinceRefresh >= RefreshInterval)
+        {
+            TimeSinceRefresh = 0.0f;
+            bSnapshotDirty = true;
+        }
+    }
+
+    void FObjectBrowserEditorTool::TakeSnapshot()
+    {
+        LUMINA_PROFILE_SCOPE();
+
+        Rows.clear();
+        TotalAlive = GObjectArray.GetNumAliveObjects();
+        TotalSlots = GObjectArray.GetMaxObjects();
+        Rows.reserve((size_t)Math::Max(TotalAlive, 0));
+
+        // The ONE walk. Everything the table needs is resolved to a value here, so the draw path never
+        // touches the object array, never builds a string and never dereferences a CObject.
+        GObjectArray.ForEachObject([this](CObjectBase* Base, int32 Index)
+        {
+            CObject* Object = static_cast<CObject*>(Base);
+            if (Object == nullptr)
+            {
+                return;
+            }
+
+            FObjectBrowserRow& Row = Rows.emplace_back();
+            Row.Object     = Object;
+            Row.Name       = Object->GetName();
+            Row.Flags      = Object->GetFlags();
+            Row.FlagsText  = ObjectFlagsToString(Row.Flags).c_str();
+            Row.StrongRefs = Object->GetStrongRefCount();
+            Row.WeakRefs   = Object->GetWeakRefCount();
+            Row.bIsAsset   = Object->IsAsset();
+
+            if (CClass* Class = Object->GetClass())
+            {
+                Row.ClassName = Class->GetName();
+            }
+            if (CPackage* Package = Object->GetPackage())
+            {
+                Row.PackageName = Package->GetName();
+            }
+        });
+
+        bSnapshotDirty = false;
+        bVisibleRowsDirty = true;
+    }
+
+    void FObjectBrowserEditorTool::RebuildVisibleRows()
+    {
+        LUMINA_PROFILE_SCOPE();
+
+        VisibleRows.clear();
+        VisibleRows.reserve(Rows.size());
+
+        for (int32 i = 0; i < (int32)Rows.size(); ++i)
+        {
+            const FObjectBrowserRow& Row = Rows[i];
+
+            if (!Filter.bShowDefaults       && EnumHasAnyFlags(Row.Flags, OF_DefaultObject)) { continue; }
+            if (!Filter.bShowTransient      && EnumHasAnyFlags(Row.Flags, OF_Transient))     { continue; }
+            if (!Filter.bShowPendingDestroy && EnumHasAnyFlags(Row.Flags, OF_MarkedDestroy)) { continue; }
+            if (Filter.bRootedOnly          && !EnumHasAnyFlags(Row.Flags, OF_Rooted))       { continue; }
+            if (Filter.bAssetsOnly          && !Row.bIsAsset)                                { continue; }
+
+            if (NameFilter.IsActive() && !NameFilter.PassFilter(Row.Name.c_str()))
+            {
+                continue;
+            }
+            if (ClassFilter.IsActive() && !ClassFilter.PassFilter(Row.ClassName.c_str()))
+            {
+                continue;
+            }
+
+            VisibleRows.push_back(i);
+        }
+
+        ApplySort();
+        bVisibleRowsDirty = false;
+    }
+
+    void FObjectBrowserEditorTool::ApplySort()
+    {
+        const int32 Column     = SortColumn;
+        const bool  bAscending = bSortAscending;
+        const TVector<FObjectBrowserRow>& Source = Rows;
+
+        eastl::stable_sort(VisibleRows.begin(), VisibleRows.end(), [&Source, Column, bAscending](int32 A, int32 B)
+        {
+            const FObjectBrowserRow& RowA = Source[A];
+            const FObjectBrowserRow& RowB = Source[B];
+
+            int32 Comparison = 0;
+            switch (Column)
+            {
+            // Compares the cached name's characters directly. The old browser's comparator called
+            // GetName().ToString() on BOTH sides of every comparison -- two heap allocations per compare,
+            // O(N log N) of them, every frame.
+            case Column_Name:       Comparison = strcmp(RowA.Name.c_str(), RowB.Name.c_str()); break;
+            case Column_Class:      Comparison = strcmp(RowA.ClassName.c_str(), RowB.ClassName.c_str()); break;
+            case Column_Package:    Comparison = strcmp(RowA.PackageName.c_str(), RowB.PackageName.c_str()); break;
+            case Column_StrongRefs: Comparison = RowA.StrongRefs - RowB.StrongRefs; break;
+            case Column_WeakRefs:   Comparison = RowA.WeakRefs - RowB.WeakRefs; break;
+            case Column_Flags:      Comparison = (int32)RowA.Flags - (int32)RowB.Flags; break;
+            default: break;
+            }
+
+            return bAscending ? Comparison < 0 : Comparison > 0;
+        });
+    }
+
+    CObject* FObjectBrowserEditorTool::ResolveSelection() const
+    {
+        return SelectedObject.Get();
     }
 
     void FObjectBrowserEditorTool::DrawWindow(bool bIsFocused)
     {
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f, 6.0f));
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 8.0f));
-        ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.26f, 0.59f, 0.98f, 0.25f));
-        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.26f, 0.59f, 0.98f, 0.35f));
-        ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.26f, 0.59f, 0.98f, 0.45f));
-
-        const uint32 TotalObjects = GObjectArray.GetNumAliveObjects();
-
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.14f, 0.18f, 1.0f));
-        ImGui::BeginChild("##StatsBar", ImVec2(0, 70.0f), true, ImGuiWindowFlags_NoScrollbar);
+        if (bSnapshotDirty)
         {
-            ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]);
+            TakeSnapshot();
+        }
 
-            ImGui::Columns(3, nullptr, false);
+        DrawToolbar();
+        ImGui::Separator();
 
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.8f, 1.0f, 1.0f));
-            ImGui::TextWrapped("TOTAL OBJECTS");
-            ImGui::PopStyleColor();
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
-            ImGui::Text("%d", TotalObjects);
-            ImGui::PopStyleColor();
+        const float DetailsWidth = Math::Max(ImGui::GetContentRegionAvail().x * 0.32f, 240.0f);
+        const float TableWidth   = Math::Max(ImGui::GetContentRegionAvail().x - DetailsWidth - ImGui::GetStyle().ItemSpacing.x, 200.0f);
 
-            ImGui::NextColumn();
-
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 1.0f, 0.6f, 1.0f));
-            ImGui::TextWrapped("PACKAGES");
-            ImGui::PopStyleColor();
-
-            static int PackageCount = 0;
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
-            ImGui::Text("%d", PackageCount);
-            ImGui::PopStyleColor();
-
-            ImGui::NextColumn();
-
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.4f, 1.0f));
-            ImGui::TextWrapped("FILTERED");
-            ImGui::PopStyleColor();
-
-            static int FilteredCount = 0;
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
-            ImGui::Text("%d", FilteredCount);
-            ImGui::PopStyleColor();
-
-            ImGui::Columns(1);
-            ImGui::PopFont();
+        if (ImGui::BeginChild("##ObjectTable", ImVec2(TableWidth, 0.0f), ImGuiChildFlags_ResizeX))
+        {
+            DrawTable();
         }
         ImGui::EndChild();
-        ImGui::PopStyleColor();
 
-        ImGui::Spacing();
+        ImGui::SameLine();
 
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.12f, 0.15f, 1.0f));
-        ImGui::BeginChild("##FilterPanel", ImVec2(0, 90.0f), true, ImGuiWindowFlags_NoScrollbar);
+        if (ImGui::BeginChild("##ObjectDetails", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders))
         {
-            ImGui::Text("FILTERS");
-            ImGui::Separator();
-
-            ImGui::Columns(2, nullptr, false);
-
-            ImGui::SetNextItemWidth(-1);
-            if (ImGui::InputTextWithHint("##Search", "Search objects...", SearchBuffer, IM_ARRAYSIZE(SearchBuffer)))
-            {
-                SearchFilter = SearchBuffer;
-            }
-
-            ImGui::NextColumn();
-
-            ImGui::SetNextItemWidth(-1);
-            if (ImGui::InputTextWithHint("##ClassFilter", "Filter by class...", ClassFilterBuffer, IM_ARRAYSIZE(ClassFilterBuffer)))
-            {
-                ClassFilter = ClassFilterBuffer;
-            }
-
-            ImGui::Columns(1);
+            DrawDetailsPanel();
         }
         ImGui::EndChild();
-        ImGui::PopStyleColor();
+    }
 
-        ImGui::Spacing();
-
-        ImGui::BeginChild("##MainContent", ImVec2(0, 0), false);
+    void FObjectBrowserEditorTool::DrawToolbar()
+    {
+        if (ImGui::Button(LE_ICON_REFRESH " Refresh"))
         {
-            ImGui::BeginChild("##PackageTree", ImVec2(ImGui::GetContentRegionAvail().x * 0.35f, 0), true);
+            bSnapshotDirty = true;
+        }
+
+        ImGui::SameLine();
+        if (ImGui::Checkbox("Auto", &bAutoRefresh))
+        {
+            TimeSinceRefresh = 0.0f;
+        }
+        ImGuiX::TextTooltip("Re-take the snapshot on an interval. Switch it off to hold the list still.");
+
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(90.0f);
+        ImGui::SliderFloat("##Interval", &RefreshInterval, 0.25f, 5.0f, "%.2fs");
+
+        ImGui::SameLine();
+        ImGui::TextDisabled("|");
+
+        // Counts come from the snapshot, so they describe what is actually on screen. The previous tool
+        // printed two function-local statics that were never assigned, so it always showed 0.
+        ImGui::SameLine();
+        ImGui::AlignTextToFramePadding();
+        ImGui::Text("%d shown", (int32)VisibleRows.size());
+        ImGui::SameLine();
+        ImGui::TextDisabled("of %d live / %d slots", TotalAlive, TotalSlots);
+
+        // A filter change invalidates the visible SET, never the snapshot. Re-walking the object array for
+        // every keystroke is what made the old tool feel slow.
+        bool bFilterChanged = false;
+
+        ImGui::SetNextItemWidth(200.0f);
+        bFilterChanged |= NameFilter.Draw("##NameFilter");
+        if (!NameFilter.IsActive()) { DrawFilterHint(LE_ICON_MAGNIFY " Name..."); }
+
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(200.0f);
+        bFilterChanged |= ClassFilter.Draw("##ClassFilter");
+        if (!ClassFilter.IsActive()) { DrawFilterHint(LE_ICON_MAGNIFY " Class..."); }
+
+        ImGui::SameLine();
+        bFilterChanged |= ImGui::Checkbox("Defaults", &Filter.bShowDefaults);
+        ImGuiX::TextTooltip("Show class default objects. One per class, so they dominate the list.");
+
+        ImGui::SameLine();
+        bFilterChanged |= ImGui::Checkbox("Transient", &Filter.bShowTransient);
+
+        ImGui::SameLine();
+        bFilterChanged |= ImGui::Checkbox("Pending Destroy", &Filter.bShowPendingDestroy);
+        ImGuiX::TextTooltip("Objects already marked for teardown -- where a leak hunt usually starts.");
+
+        ImGui::SameLine();
+        bFilterChanged |= ImGui::Checkbox("Assets", &Filter.bAssetsOnly);
+
+        ImGui::SameLine();
+        bFilterChanged |= ImGui::Checkbox("Rooted", &Filter.bRootedOnly);
+        ImGuiX::TextTooltip("GC roots only -- what is holding the rest of the object graph alive.");
+
+        if (bFilterChanged)
+        {
+            bVisibleRowsDirty = true;
+        }
+    }
+
+    void FObjectBrowserEditorTool::DrawTable()
+    {
+        constexpr ImGuiTableFlags TableFlags =
+            ImGuiTableFlags_RowBg |
+            ImGuiTableFlags_BordersOuter |
+            ImGuiTableFlags_BordersInnerV |
+            ImGuiTableFlags_Resizable |
+            ImGuiTableFlags_Reorderable |
+            ImGuiTableFlags_Hideable |
+            ImGuiTableFlags_Sortable |
+            ImGuiTableFlags_ScrollY |
+            ImGuiTableFlags_SizingStretchProp;
+
+        if (!ImGui::BeginTable("##Objects", Column_Count, TableFlags))
+        {
+            return;
+        }
+
+        ImGui::TableSetupColumn("Name",    ImGuiTableColumnFlags_DefaultSort, 0.28f, Column_Name);
+        ImGui::TableSetupColumn("Class",   ImGuiTableColumnFlags_None,        0.22f, Column_Class);
+        ImGui::TableSetupColumn("Package", ImGuiTableColumnFlags_None,        0.26f, Column_Package);
+        ImGui::TableSetupColumn("Strong",  ImGuiTableColumnFlags_WidthFixed,  56.0f, Column_StrongRefs);
+        ImGui::TableSetupColumn("Weak",    ImGuiTableColumnFlags_WidthFixed,  50.0f, Column_WeakRefs);
+        ImGui::TableSetupColumn("Flags",   ImGuiTableColumnFlags_None,        0.24f, Column_Flags);
+        ImGui::TableSetupScrollFreeze(0, 1);
+        ImGui::TableHeadersRow();
+
+        if (ImGuiTableSortSpecs* Specs = ImGui::TableGetSortSpecs())
+        {
+            if (Specs->SpecsDirty && Specs->SpecsCount > 0)
             {
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.9f, 0.9f, 1.0f));
-                ImGui::Text("PACKAGES");
-                ImGui::PopStyleColor();
-                ImGui::Separator();
-
-                THashMap<FString, TVector<CObject*>> PackageToObjects;
-
-                for (TObjectIterator<CObject> It; It; ++It)
-                {
-                    CObject* Object = *It;
-                    if (Object == nullptr)
-                    {
-                        continue;
-                    }
-
-                    FString ObjectName = Object->GetName().ToString();
-                    FString ClassName = Object->GetClass() ? Object->GetClass()->GetName().ToString() : "None";
-
-                    bool bPassesFilter = true;
-
-                    if (!SearchFilter.empty() && ObjectName.find(SearchFilter) == FString::npos)
-                    {
-                        bPassesFilter = false;
-                    }
-
-                    if (ClassFilter.empty() && bPassesFilter && ClassName.find(ClassFilter) == FString::npos)
-                    {
-                        bPassesFilter = false;
-                    }
-
-                    if (bPassesFilter)
-                    {
-                        FString PackageName = Object->GetPackage() ? Object->GetPackage()->GetName().ToString() : "None";
-                        PackageToObjects[PackageName].push_back(Object);
-                    }
-                }
-
-                for (auto& Pair : PackageToObjects)
-                {
-                    const FString& PackageName = Pair.first;
-                    TVector<CObject*>& Objects = Pair.second;
-
-                    if (bSortByName)
-                    {
-                        eastl::sort(Objects.begin(), Objects.end(), [](CObject* A, CObject* B)
-                        {
-                            return A->GetName().ToString() < B->GetName().ToString();
-                        });
-                    }
-
-                    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.20f, 0.25f, 0.30f, 1.0f));
-                    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.25f, 0.35f, 0.45f, 1.0f));
-
-                    FString NodeLabel = PackageName + " (" + eastl::to_string(Objects.size()) + ")";
-                    bool bIsSelected = (SelectedPackage == PackageName);
-
-                    if (ImGui::Selectable(NodeLabel.c_str(), bIsSelected, ImGuiSelectableFlags_AllowDoubleClick))
-                    {
-                        SelectedPackage = PackageName;
-                    }
-
-                    ImGui::PopStyleColor(2);
-                }
+                SortColumn        = (int32)Specs->Specs[0].ColumnUserID;
+                bSortAscending    = Specs->Specs[0].SortDirection == ImGuiSortDirection_Ascending;
+                bVisibleRowsDirty = true;
+                Specs->SpecsDirty = false;
             }
-            ImGui::EndChild();
+        }
 
-            ImGui::SameLine();
+        // Rebuilt here, after the sort spec is known and before the clipper indexes the list -- doing it
+        // earlier would leave the clipper walking a list ordered for the previous spec for one frame.
+        if (bVisibleRowsDirty)
+        {
+            RebuildVisibleRows();
+        }
 
-            ImGui::BeginChild("##ObjectDetails", ImVec2(0, 0), true);
+        CObject* Selected = ResolveSelection();
+
+        ImGuiListClipper Clipper;
+        Clipper.Begin((int32)VisibleRows.size());
+
+        while (Clipper.Step())
+        {
+            for (int32 i = Clipper.DisplayStart; i < Clipper.DisplayEnd; ++i)
             {
-                if (!SelectedPackage.empty())
+                const FObjectBrowserRow& Row = Rows[VisibleRows[i]];
+
+                ImGui::TableNextRow();
+                ImGui::PushID(i);
+
+                ImGui::TableSetColumnIndex(Column_Name);
+
+                // Compared by resolved pointer, not row index: the index changes on every refilter and sort.
+                const bool bSelected = (Selected != nullptr) && (Selected == Row.Object.Get());
+                if (ImGui::Selectable(Row.Name.c_str(), bSelected, ImGuiSelectableFlags_SpanAllColumns))
                 {
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.9f, 0.9f, 1.0f));
-                    ImGui::Text("OBJECTS IN: %s", SelectedPackage.c_str());
-                    ImGui::PopStyleColor();
-                    ImGui::Separator();
+                    SelectedObject = Row.Object;
+                }
 
-                    THashMap<FString, TVector<CObject*>> PackageToObjects;
-
-                    for (TObjectIterator<CObject> It; It; ++It)
+                if (ImGui::BeginPopupContextItem("##RowMenu"))
+                {
+                    if (ImGui::MenuItem(LE_ICON_CONTENT_COPY " Copy Name"))
                     {
-                        CObject* Object = *It;
-                        if (Object == nullptr)
+                        ImGui::SetClipboardText(Row.Name.c_str());
+                    }
+                    if (ImGui::MenuItem(LE_ICON_CONTENT_COPY " Copy Class"))
+                    {
+                        ImGui::SetClipboardText(Row.ClassName.c_str());
+                    }
+                    // Resolved on demand: the GUID is only wanted when asked for, so it is not worth a
+                    // string per row per snapshot.
+                    if (CObject* Live = Row.Object.Get())
+                    {
+                        if (ImGui::MenuItem(LE_ICON_CONTENT_COPY " Copy GUID"))
                         {
-                            continue;
-                        }
-
-                        FString ObjectName = Object->GetName().ToString();
-                        FString ClassName = Object->GetClass() ? Object->GetClass()->GetName().ToString() : "None";
-
-                        bool bPassesFilter = true;
-
-                        if (!SearchFilter.empty() && ObjectName.find(SearchFilter) == FString::npos)
-                        {
-                            bPassesFilter = false;
-                        }
-
-                        if (ClassFilter.empty() && bPassesFilter && ClassName.find(ClassFilter) == FString::npos)
-                        {
-                            bPassesFilter = false;
-                        }
-
-                        if (bPassesFilter)
-                        {
-                            FString PackageName = Object->GetPackage() ? Object->GetPackage()->GetName().ToString() : "None";
-                            if (PackageName == SelectedPackage)
-                            {
-                                PackageToObjects[PackageName].push_back(Object);
-                            }
+                            ImGui::SetClipboardText(Live->GetGUID().ToString().c_str());
                         }
                     }
+                    ImGui::EndPopup();
+                }
 
-                    if (PackageToObjects.find(SelectedPackage) != PackageToObjects.end())
-                    {
-                        TVector<CObject*>& Objects = PackageToObjects[SelectedPackage];
+                ImGui::TableSetColumnIndex(Column_Class);
+                ImGui::TextUnformatted(Row.ClassName.c_str());
 
-                        if (ImGui::BeginTable("##ObjectTable", 5,
-                            ImGuiTableFlags_RowBg |
-                            ImGuiTableFlags_Borders |
-                            ImGuiTableFlags_Resizable |
-                            ImGuiTableFlags_ScrollY |
-                            ImGuiTableFlags_Sortable |
-                            ImGuiTableFlags_SizingStretchProp))
-                        {
-                            ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_DefaultSort | ImGuiTableColumnFlags_WidthStretch, 0.20f);
-                            ImGui::TableSetupColumn("Class", ImGuiTableColumnFlags_WidthStretch, 0.20f);
-                            ImGui::TableSetupColumn("Flags", ImGuiTableColumnFlags_WidthStretch, 0.20f);
-                            ImGui::TableSetupColumn("Refs", ImGuiTableColumnFlags_WidthStretch, 0.20f);
-                            ImGui::TableSetupColumn("GUID", ImGuiTableColumnFlags_WidthStretch, 0.25f);
-                            ImGui::TableSetupScrollFreeze(0, 1);
-                            ImGui::TableHeadersRow();
-
-                            ImGuiListClipper Clipper;
-                            Clipper.Begin((int)Objects.size());
-
-                            while (Clipper.Step())
-                            {
-                                for (int i = Clipper.DisplayStart; i < Clipper.DisplayEnd; i++)
-                                {
-                                    CObject* Object = Objects[i];
-                                    ImGui::TableNextRow();
-
-                                    bool bIsRowSelected = (SelectedObjectIndex == i);
-
-                                    ImGui::TableSetColumnIndex(0);
-                                    ImGuiSelectableFlags Flags = ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick;
-
-                                    if (ImGui::Selectable(Object->GetName().ToString().c_str(), bIsRowSelected, Flags))
-                                    {
-                                        SelectedObjectIndex = i;
-
-                                        if (ImGui::IsMouseDoubleClicked(0))
-                                        {
-                                            ImGui::SetClipboardText(Object->GetName().ToString().c_str());
-                                        }
-                                    }
-
-                                    if (ImGui::BeginPopupContextItem())
-                                    {
-                                        if (ImGui::MenuItem("Copy Name"))
-                                        {
-                                            ImGui::SetClipboardText(Object->GetName().ToString().c_str());
-                                        }
-                                        if (ImGui::MenuItem("Copy GUID"))
-                                        {
-                                            ImGui::SetClipboardText(Object->GetGUID().ToString().c_str());
-                                        }
-                                        ImGui::EndPopup();
-                                    }
-
-                                    ImGui::TableSetColumnIndex(1);
-                                    if (Object->GetClass())
-                                    {
-                                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.9f, 0.6f, 1.0f));
-                                        ImGui::TextUnformatted(Object->GetClass()->GetName().ToString().c_str());
-                                        ImGui::PopStyleColor();
-                                    }
-                                    else
-                                    {
-                                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
-                                        ImGui::TextUnformatted("None");
-                                        ImGui::PopStyleColor();
-                                    }
-
-                                    ImGui::TableSetColumnIndex(2);
-                                    FFixedString FlagsStr = ObjectFlagsToString(Object->GetFlags());
-                                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.7f, 0.4f, 1.0f));
-                                    ImGui::TextUnformatted(FlagsStr.c_str());
-                                    ImGui::PopStyleColor();
-                                    
-                                    ImGui::TableSetColumnIndex(3);
-                                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
-                                    ImGui::Text("Strong: %i", Object->GetStrongRefCount());
-                                    ImGui::Text("Weak: %i", Object->GetWeakRefCount());
-                                    ImGui::PopStyleColor();
-
-                                    ImGui::TableSetColumnIndex(4);
-                                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
-                                    ImGui::TextUnformatted(Object->GetGUID().ToString().c_str());
-                                    ImGui::PopStyleColor();
-                                }
-                            }
-
-                            ImGui::EndTable();
-                        }
-                    }
+                ImGui::TableSetColumnIndex(Column_Package);
+                if (Row.PackageName.IsNone())
+                {
+                    ImGui::TextDisabled("-");
                 }
                 else
                 {
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
-                    ImVec2 TextSize = ImGui::CalcTextSize("Select a package to view objects");
-                    ImVec2 WindowSize = ImGui::GetWindowSize();
-                    ImGui::SetCursorPos(ImVec2((WindowSize.x - TextSize.x) * 0.5f, (WindowSize.y - TextSize.y) * 0.5f));
-                    ImGui::Text("Select a package to view objects");
-                    ImGui::PopStyleColor();
+                    ImGui::TextUnformatted(Row.PackageName.c_str());
                 }
-            }
-            ImGui::EndChild();
-        }
-        ImGui::EndChild();
 
-        ImGui::PopStyleColor(3);
-        ImGui::PopStyleVar(2);
+                ImGui::TableSetColumnIndex(Column_StrongRefs);
+                ImGui::Text("%d", Row.StrongRefs);
+
+                ImGui::TableSetColumnIndex(Column_WeakRefs);
+                ImGui::TextDisabled("%d", Row.WeakRefs);
+
+                ImGui::TableSetColumnIndex(Column_Flags);
+                ImGui::TextColored(FlagsTint(Row.Flags), "%s", Row.FlagsText.c_str());
+
+                ImGui::PopID();
+            }
+        }
+
+        ImGui::EndTable();
+    }
+
+    void FObjectBrowserEditorTool::DrawDetailsPanel()
+    {
+        CObject* Object = ResolveSelection();
+
+        if (Object == nullptr)
+        {
+            // "Nothing picked" and "what you picked has since died" are different answers, and in a tool
+            // used to watch objects die the difference is the whole point.
+            if (SelectedObject.IsStale())
+            {
+                ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1.0f), "The selected object has been destroyed.");
+            }
+            else
+            {
+                ImGui::TextDisabled("Select an object to inspect it.");
+            }
+
+            DetailsTable.reset();
+            DetailsBoundObject = nullptr;
+            return;
+        }
+
+        ImGuiX::Font::PushFont(ImGuiX::Font::EFont::LargeBold);
+        ImGui::TextUnformatted(Object->GetName().c_str());
+        ImGuiX::Font::PopFont();
+
+        // Class chain: the quickest way to see what a thing actually is and what it inherits.
+        FString Chain;
+        for (CClass* Class = Object->GetClass(); Class != nullptr; Class = Cast<CClass>(Class->GetSuperStruct()))
+        {
+            if (!Chain.empty())
+            {
+                Chain += " < ";
+            }
+            Chain += Class->GetName().c_str();
+        }
+        ImGui::TextColored(EditorColors::TextDim(), "%s", Chain.c_str());
+
+        if (CPackage* Package = Object->GetPackage())
+        {
+            ImGui::TextColored(EditorColors::TextMuted(), "Package: %s", Package->GetName().c_str());
+        }
+
+        ImGui::TextColored(EditorColors::TextMuted(), "GUID: %s", Object->GetGUID().ToString().c_str());
+        ImGui::TextColored(FlagsTint(Object->GetFlags()), "%s", ObjectFlagsToString(Object->GetFlags()).c_str());
+        ImGui::TextColored(EditorColors::TextMuted(), "Strong: %d   Weak: %d",
+            Object->GetStrongRefCount(), Object->GetWeakRefCount());
+
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Rebound only when the selection actually changes: the table carries expansion and scroll state,
+        // and rebuilding it per frame would reset all of it.
+        if (DetailsBoundObject != Object)
+        {
+            DetailsBoundObject = Object;
+            DetailsTable = MakeUnique<FPropertyTable>(Object);
+        }
+
+        if (DetailsTable)
+        {
+            // Read-only on purpose: this is an inspector. Letting a debug list write into arbitrary engine
+            // objects -- class defaults included -- is a far bigger promise than the tool is making.
+            DetailsTable->DrawTree(/*bReadOnly*/ true);
+        }
     }
 }

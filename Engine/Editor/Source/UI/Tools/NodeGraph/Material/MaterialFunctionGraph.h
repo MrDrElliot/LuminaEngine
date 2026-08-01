@@ -30,5 +30,8 @@ namespace Lumina
         void EnsureRootNodes() override {}
 
         void RegisterGraphTypeNodes() override;
+
+        // A function graph has one output node per declared output, so every one of them is a root.
+        bool IsGraphRootNode(CEdGraphNode* Node) const override;
     };
 }

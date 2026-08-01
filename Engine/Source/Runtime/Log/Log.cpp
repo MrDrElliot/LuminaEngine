@@ -242,7 +242,7 @@ namespace Lumina::Logging
 
 		void FlushSinks()
 		{
-			std::lock_guard Lock(GSinkMutex);
+			std::scoped_lock Lock(GSinkMutex);
 			for (TUniquePtr<ILogSink>& Sink : GSinks)
 			{
 				Sink->Flush();
@@ -253,7 +253,7 @@ namespace Lumina::Logging
 		// Returns how many messages it moved.
 		uint32 DrainBatch(FTimestampCache& Timestamps)
 		{
-			std::lock_guard Lock(GSinkMutex);
+			std::scoped_lock Lock(GSinkMutex);
 
 			uint32 Drained = 0;
 
@@ -333,7 +333,7 @@ namespace Lumina::Logging
 			GFlushTarget.store(0, std::memory_order_release);
 
 			{
-				std::lock_guard Lock(GFlushMutex);
+				std::scoped_lock Lock(GFlushMutex);
 				GFlushGeneration.fetch_add(1, std::memory_order_release);
 			}
 			GFlushCv.notify_all();
@@ -414,7 +414,7 @@ namespace Lumina::Logging
 			return;
 		}
 
-		std::lock_guard Lock(GSinkMutex);
+		std::scoped_lock Lock(GSinkMutex);
 		GSinks.push_back(Move(Sink));
 	}
 
@@ -442,7 +442,7 @@ namespace Lumina::Logging
 			const std::filesystem::path ExePath(Platform::BaseDir());
 			const std::filesystem::path LogPath = ExePath.parent_path() / "Lumina.log";
 
-			constexpr uint64 MaxLogSizeBytes = 16 * 1024 * 1024;
+			constexpr uint64 MaxLogSizeBytes = 16llu * 1024 * 1024;
 			constexpr uint32 MaxLogFiles     = 5;
 
 			TUniquePtr<FFileSink> FileSink = MakeUnique<FFileSink>(
@@ -480,7 +480,7 @@ namespace Lumina::Logging
 
 		GStopRequested.store(true, std::memory_order_release);
 		{
-			std::lock_guard Lock(GWakeMutex);
+			std::scoped_lock Lock(GWakeMutex);
 			GWakeCv.notify_all();
 		}
 
@@ -499,7 +499,7 @@ namespace Lumina::Logging
 		FlushSinks();
 
 		{
-			std::lock_guard Lock(GSinkMutex);
+			std::scoped_lock Lock(GSinkMutex);
 			GSinks.clear();
 		}
 	}
@@ -531,8 +531,10 @@ namespace Lumina::Logging
 		WakeBackend();
 
 		std::unique_lock Lock(GFlushMutex);
-		GFlushCv.wait_for(Lock, std::chrono::seconds(2),
-			[Generation] { return GFlushGeneration.load(std::memory_order_acquire) > Generation; });
+		GFlushCv.wait_for(Lock, std::chrono::seconds(2), [Generation] 
+		{
+			return GFlushGeneration.load(std::memory_order_acquire) > Generation; 
+		});
 	}
 
 

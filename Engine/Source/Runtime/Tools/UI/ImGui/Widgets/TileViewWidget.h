@@ -137,6 +137,10 @@ namespace Lumina
 
         FORCEINLINE bool IsRenaming() const { return RenamingItem != nullptr; }
 
+        // True while a rubber-band drag is in progress. Callers use it to suppress anything that would
+        // fight the drag (starting a rename, opening a context menu).
+        FORCEINLINE bool IsMarqueeActive() const { return bMarqueeActive; }
+
     private:
 
         void CommitInlineRename(const FTileViewContext& Context);
@@ -155,6 +159,14 @@ namespace Lumina
         void DrawItem(FTileViewItem* ItemToDraw, const FTileViewContext& Context, ImVec2 DrawSize);
 
         void ToggleSelection(FTileViewItem* Item, const FTileViewContext& Context);
+
+        // Rubber-band selection. Begin/end detection runs at the END of Draw, once every tile has been
+        // submitted and IsAnyItemHovered() can tell "empty space" from "on a tile"; the RECT is rebuilt at
+        // the top of the next Draw so the tiles hit-test against the live mouse position, not a stale one.
+        void UpdateMarquee(const FTileViewContext& Context);
+
+        // Screen-space rect for this frame, or false when no drag is active.
+        bool GetMarqueeScreenRect(ImVec2& OutMin, ImVec2& OutMax) const;
     
 
     private:
@@ -168,6 +180,17 @@ namespace Lumina
 
         /** Item currently being renamed in place. Owned by Allocator, so ClearTree must null it. */
         FTileViewItem*                          RenamingItem = nullptr;
+
+        bool                                    bMarqueeActive = false;
+
+        // Anchor is stored in CONTENT space, not screen space: the view scrolls while you drag (holding
+        // the mouse near an edge auto-scrolls), and a screen-space anchor would slide with it.
+        ImVec2                                  MarqueeAnchorContent = ImVec2(0.0f, 0.0f);
+
+        // Selection at drag start, restored-into on an additive (Ctrl) drag so shrinking the band gives
+        // back what the drag added without dropping what was already selected.
+        TVector<FTileViewItem*>                 MarqueeBaseSelection;
+        bool                                    bMarqueeAdditive = false;
 
         /** Index into ListItems to select and scroll to on the next Draw (-1 = none). */
         int32                                   PendingRevealIndex = -1;

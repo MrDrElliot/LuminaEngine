@@ -58,6 +58,27 @@ namespace Lumina
             return Registrations.size() != ProcessedRegistrations;
         }
 
+        size_t NumRegistrations() const { return Registrations.size(); }
+
+        /** Drops registrations queued since a snapshot.
+         *
+         *  For unwinding a module whose DLL was loaded -- which runs its static registrars -- and then
+         *  REFUSED. Every queued RegisterFunc points into that DLL, so freeing it while they are still
+         *  queued means the next ProcessRegistrations() calls into unmapped memory.
+         */
+        void TruncateRegistrations(size_t NewNum)
+        {
+            if (NewNum >= Registrations.size())
+            {
+                return;
+            }
+
+            // Never below the processed watermark: those already ran, and their types are live in the
+            // reflection system. Anything queued after it is strictly the refused module's tail.
+            ASSERT(NewNum >= ProcessedRegistrations);
+            Registrations.resize(NewNum);
+        }
+
     private:
         
         TFixedVector<FRegistrant, 2024>     Registrations;

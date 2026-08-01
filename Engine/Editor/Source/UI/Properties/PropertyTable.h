@@ -3,6 +3,7 @@
 #include "Core/Reflection/PropertyChangedEvent.h"
 #include "Core/Reflection/PropertyCustomization/PropertyCustomization.h"
 #include "Memory/SmartPtr.h"
+#include "imgui.h"
 
 namespace Lumina
 {
@@ -94,6 +95,21 @@ namespace Lumina
         // nested-category children when fanning out a `Foo|Bar|Baz` path.
         virtual bool IsCategory() const { return false; }
 
+        // Label this row is matched against by the table's search box. A row with no label (array
+        // elements, which are numbered) never matches on its own but can still survive on a
+        // descendant's match.
+        virtual FStringView GetFilterLabel() const { return FStringView(); }
+
+        // Recomputes visibility for this row and its subtree. A row survives when it matches OR any
+        // descendant does -- filtering to a leaf has to keep its ancestors, or the match is unreachable.
+        //
+        // Also owns the expansion save/restore: while filtering, surviving rows are force-opened so
+        // matches are visible without hunting; when the filter clears, every row's manual collapse state
+        // is put back exactly as the user left it.
+        bool ApplyFilter(const ImGuiTextFilter& Filter, bool bFilterActive, bool bJustActivated, bool bJustCleared);
+
+        bool PassesFilter() const { return bPassesFilter; }
+
     protected:
 
         void DispatchChange(EPropertyChangeOp Op);
@@ -121,11 +137,25 @@ namespace Lumina
         bool                                    bEditSessionActive = false;
         bool                                    bArrayElement = false;
         bool                                    bExpanded = true;
+
+        // Read-only state for THIS draw, captured at the top of DrawRow. The container rows consult it
+        // through AllowResize()/AllowReorder() so that structural edits (add / insert / remove / clear /
+        // reorder) are gated by the same flag that disables the value widgets -- passing bReadOnly down
+        // through HasExtraControls/DrawExtraControlsSection would mean changing several virtuals and
+        // every override, and missing one silently leaves a live mutate button on a read-only table.
+        bool                                    bDrawReadOnly = false;
+
+        // Filter state. bExpandedSaved holds the user's real collapse state for the duration of a
+        // filter, since filtering overwrites bExpanded to reveal matches.
+        bool                                    bPassesFilter = true;
+        bool                                    bExpandedSaved = true;
     };
 
     class FPropertyPropertyRow : public FPropertyRow
     {
     public:
+
+        FStringView GetFilterLabel() const override;
 
         FPropertyPropertyRow(const TSharedPtr<FPropertyHandle>& InPropHandle, FPropertyRow* InParentRow, const FPropertyChangedEventCallbacks& Callbacks);
         void Update() override;
@@ -325,6 +355,7 @@ namespace Lumina
         FCategoryPropertyRow* FindOrCreateChildCategory(const FName& InCategory);
 
         FName GetCategoryName() const { return Category; }
+        FStringView GetFilterLabel() const override;
         bool IsCategory() const override { return true; }
 
         void DrawHeader(float Offset) override;
@@ -364,6 +395,25 @@ namespace Lumina
         void MarkDirty();
         void DrawTree(bool bReadOnly = false);
 
+        // Search box filtering the tree by property/category name. On by default so every tool's details
+        // panel gets one; nested tables (a struct or instanced-struct row hosting its own table) turn it
+        // off, since a search box per nested row is noise rather than a feature.
+        void SetShowSearchBar(bool bShow) { bShowSearchBar = bShow; }
+
+        // Clears the search text and restores every row's pre-filter collapse state.
+        void ClearSearch();
+
+        // Drives the filter from outside, for a panel that owns ONE search box spanning several tables
+        // (the scene editor's component list). Pair with SetShowSearchBar(false) so the panel's box is the
+        // only one on screen.
+        void SetSearchText(FStringView Text);
+
+        // Builds the tree if needed, applies the current filter, and reports whether anything survived.
+        // Lets a caller skip drawing a section header for a table that would come back empty -- a list of
+        // headers with nothing under them is worse than hiding them. Always true for a table drawn by a
+        // type customization, which has no row tree to filter.
+        bool PrepareAndTestFilter();
+
         CStruct* GetType() const { return Struct; }
         void* GetObject() const { return Object; }
         void* GetDefaultObject() const { return DefaultObject; }
@@ -379,10 +429,21 @@ namespace Lumina
 
         FPropertyChangedEventCallbacks ChangeEventCallbacks;
         bool                           bObjectEditSessionActive = false;
+
+        ImGuiTextFilter                PropertyFilter;
+        bool                           bShowSearchBar = true;
+        // Edge detection: the save/restore of per-row expansion has to happen exactly once on each
+        // transition, not every frame the filter happens to be active.
+        bool                           bWasFiltering  = false;
         
     protected:
         
         void RebuildTree();
+
+        // Tree build + filter application, split out of DrawTree so PrepareAndTestFilter can run them
+        // before the caller has committed to drawing anything.
+        void EnsureTreeBuilt();
+        void ApplyFilterState();
 
     private:
         

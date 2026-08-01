@@ -210,4 +210,23 @@ namespace Lumina
 
     
     RUNTIME_API void ProcessNewlyLoadedCObjects();
+
+    /** How many compiled-in registrations are queued, per registry. */
+    struct FDeferredRegistrationSnapshot
+    {
+        size_t NumClasses = 0;
+        size_t NumEnums   = 0;
+        size_t NumStructs = 0;
+    };
+
+    RUNTIME_API FDeferredRegistrationSnapshot SnapshotDeferredRegistrations();
+
+    /** Discards every registration queued since the snapshot.
+     *
+     *  Loading a DLL runs its static registrars, so by the time a module can be inspected -- and possibly
+     *  refused -- its reflected types are already queued, as function pointers INTO that DLL. Unloading it
+     *  without this leaves ProcessNewlyLoadedCObjects() calling into unmapped memory. Call before freeing
+     *  the handle, and only for a module whose registrations have not been processed yet.
+     */
+    RUNTIME_API void RollbackDeferredRegistrations(const FDeferredRegistrationSnapshot& Snapshot);
 }

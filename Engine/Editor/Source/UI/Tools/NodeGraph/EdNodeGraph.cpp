@@ -2,6 +2,7 @@
 
 #include "EdGraphNode.h"
 #include "EdNode_Reroute.h"
+#include "GraphAlgorithms.h"
 #include "Core/Object/Class.h"
 #include <Core/Reflection/Type/LuminaTypes.h>
 #include "Drawing.h"
@@ -12,6 +13,7 @@
 #include "Core/Profiler/Profile.h"
 #include "EASTL/sort.h"
 #include "imgui-node-editor/imgui_node_editor_internal.h"
+#include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 
 namespace Lumina
@@ -539,6 +541,207 @@ namespace Lumina
         }
     }
 
+    void CEdNodeGraph::CollectContributingNodes(THashSet<CEdGraphNode*>& OutContributing) const
+    {
+        for (CEdGraphNode* Node : Nodes)
+        {
+            if (Node != nullptr && IsGraphRootNode(Node))
+            {
+                GraphAlgorithms::CollectReachableFromRoot(Node, OutContributing);
+            }
+        }
+    }
+
+    void CEdNodeGraph::CollectDeadNodes(TVector<CEdGraphNode*>& OutDead) const
+    {
+        OutDead.clear();
+
+        THashSet<CEdGraphNode*> Contributing;
+        CollectContributingNodes(Contributing);
+
+        // No roots means no way to tell live from dead. Reporting every node as dead would be worse than
+        // reporting none, so say nothing.
+        if (Contributing.empty())
+        {
+            return;
+        }
+
+        for (CEdGraphNode* Node : Nodes)
+        {
+            if (Node != nullptr && Contributing.find(Node) == Contributing.end())
+            {
+                OutDead.push_back(Node);
+            }
+        }
+    }
+
+    void CEdNodeGraph::SelectDeadNodes()
+    {
+        using namespace ax;
+
+        TVector<CEdGraphNode*> Dead;
+        CollectDeadNodes(Dead);
+
+        NodeEditor::ClearSelection();
+        for (CEdGraphNode* Node : Dead)
+        {
+            NodeEditor::SelectNode(Node->GetNodeID(), /*append*/ true);
+        }
+    }
+
+    void CEdNodeGraph::DeleteDeadNodes()
+    {
+        using namespace ax;
+
+        TVector<CEdGraphNode*> Dead;
+        CollectDeadNodes(Dead);
+
+        // Routed through the editor's own delete request rather than erasing here: that path already
+        // unhooks every pin, forgets the clipboard entry and re-validates. Duplicating it is how the two
+        // drift apart.
+        for (CEdGraphNode* Node : Dead)
+        {
+            NodeEditor::DeleteNode(Node->GetNodeID());
+        }
+    }
+
+    void CEdNodeGraph::TidyGraph()
+    {
+        using namespace ax;
+
+        // Column spacing is generous because material wires read left-to-right and cramped columns make
+        // long wires ambiguous; row spacing is tight since nodes in a column rarely relate to each other.
+        constexpr float kColumnGap = 90.0f;
+        constexpr float kRowGap    = 28.0f;
+
+        THashSet<CEdGraphNode*> Contributing;
+        CollectContributingNodes(Contributing);
+        if (Contributing.empty())
+        {
+            return;
+        }
+
+        // Depth = longest path from this node to a root, so a node sits one column left of its FURTHEST
+        // consumer. Taking the longest (not the shortest) is what stops a wire skipping backwards over a
+        // column, which is the thing that makes an auto-layout look wrong.
+        THashMap<CEdGraphNode*, int32> Depth;
+        TVector<CEdGraphNode*> Sorted;
+        GraphAlgorithms::TopologicalSortReachable(Nodes, Contributing, Sorted);
+
+        // Sorted is dependency order (producers first), so walking it backwards visits every consumer
+        // before its producers -- exactly the order the relaxation below needs.
+        for (CEdGraphNode* Node : Sorted)
+        {
+            Depth[Node] = 0;
+        }
+        for (int32 i = (int32)Sorted.size() - 1; i >= 0; --i)
+        {
+            CEdGraphNode* Node = Sorted[i];
+            for (CEdNodeGraphPin* InputPin : Node->GetInputPins())
+            {
+                for (CEdNodeGraphPin* Connected : InputPin->GetConnections())
+                {
+                    CEdGraphNode* Producer = Connected->GetOwningNode();
+                    if (Contributing.find(Producer) != Contributing.end())
+                    {
+                        Depth[Producer] = Math::Max(Depth[Producer], Depth[Node] + 1);
+                    }
+                }
+            }
+        }
+
+        int32 MaxDepth = 0;
+        for (const auto& Pair : Depth)
+        {
+            MaxDepth = Math::Max(MaxDepth, Pair.second);
+        }
+
+        // Order within a column by the mean Y of each node's consumers, a single barycentric pass. It is
+        // not optimal crossing reduction, but it is stable, O(edges), and removes the obvious tangles.
+        TVector<TVector<CEdGraphNode*>> Columns;
+        Columns.resize(MaxDepth + 1);
+        for (const auto& Pair : Depth)
+        {
+            Columns[Pair.second].push_back(Pair.first);
+        }
+
+        const ImVec2 Origin = NodeEditor::GetNodePosition(Sorted.empty() ? Nodes[0]->GetNodeID() : Sorted.back()->GetNodeID());
+
+        THashMap<CEdGraphNode*, float> PlacedY;
+
+        // Roots (depth 0) are the rightmost column; walk outward so a column is ordered against consumers
+        // that already have their final Y.
+        float ColumnRight = Origin.x;
+        for (int32 D = 0; D <= MaxDepth; ++D)
+        {
+            TVector<CEdGraphNode*>& Column = Columns[D];
+
+            eastl::stable_sort(Column.begin(), Column.end(), [&](CEdGraphNode* A, CEdGraphNode* B)
+            {
+                auto Barycenter = [&](CEdGraphNode* Node)
+                {
+                    float Sum = 0.0f;
+                    int32 Count = 0;
+                    for (CEdNodeGraphPin* OutputPin : Node->GetOutputPins())
+                    {
+                        for (CEdNodeGraphPin* Connected : OutputPin->GetConnections())
+                        {
+                            auto It = PlacedY.find(Connected->GetOwningNode());
+                            if (It != PlacedY.end())
+                            {
+                                Sum += It->second;
+                                ++Count;
+                            }
+                        }
+                    }
+                    return Count > 0 ? (Sum / (float)Count) : FLT_MAX;
+                };
+                return Barycenter(A) < Barycenter(B);
+            });
+
+            float WidestInColumn = 0.0f;
+            for (CEdGraphNode* Node : Column)
+            {
+                WidestInColumn = Math::Max(WidestInColumn, NodeEditor::GetNodeSize(Node->GetNodeID()).x);
+            }
+
+            const float ColumnX = ColumnRight - WidestInColumn;
+
+            float CursorY = Origin.y;
+            for (CEdGraphNode* Node : Column)
+            {
+                NodeEditor::SetNodePosition(Node->GetNodeID(), ImVec2(ColumnX, CursorY));
+                PlacedY[Node] = CursorY;
+                CursorY += NodeEditor::GetNodeSize(Node->GetNodeID()).y + kRowGap;
+            }
+
+            ColumnRight = ColumnX - kColumnGap;
+        }
+
+        // Dead nodes are parked in their own column to the left of everything, so tidying never silently
+        // buries work-in-progress inside the live graph.
+        TVector<CEdGraphNode*> Dead;
+        CollectDeadNodes(Dead);
+        if (!Dead.empty())
+        {
+            float WidestDead = 0.0f;
+            for (CEdGraphNode* Node : Dead)
+            {
+                WidestDead = Math::Max(WidestDead, NodeEditor::GetNodeSize(Node->GetNodeID()).x);
+            }
+
+            const float DeadX = ColumnRight - kColumnGap * 2.0f - WidestDead;
+            float CursorY = Origin.y;
+            for (CEdGraphNode* Node : Dead)
+            {
+                NodeEditor::SetNodePosition(Node->GetNodeID(), ImVec2(DeadX, CursorY));
+                CursorY += NodeEditor::GetNodeSize(Node->GetNodeID()).y + kRowGap;
+            }
+        }
+
+        NotifyContentChanged();
+    }
+
     void CEdNodeGraph::DrawAlignmentMenuItems()
     {
         struct FAlignEntry { ENodeAlignment Mode; const char* Label; const char* Shortcut; };
@@ -586,6 +789,12 @@ namespace Lumina
         LUMINA_PROFILE_SCOPE();
         using namespace ax;
         
+        // Sampled BEFORE NodeEditor::Begin, while the graph's host window is still the current one. The
+        // node editor hit-tests its canvas purely in screen space and has no idea another ImGui window may
+        // be drawn over it, so without this a right-click on a docked window sitting ON TOP of the graph
+        // also reads as a canvas right-click.
+        const bool bHostWindowHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
+
         NodeEditor::SetCurrentEditor(Context);
         NodeEditor::Begin(GetName().c_str());
 
@@ -630,6 +839,20 @@ namespace Lumina
             AlignSelectedNodes(PendingAlignment);
         }
 
+        if (bHasPendingTidy)
+        {
+            bHasPendingTidy = false;
+            TidyGraph();
+        }
+
+        // One analysis pass per draw, reused by the fade below. Skipped entirely when the graph declares
+        // no root, which is also what keeps this off graphs that have no notion of a dead node.
+        THashSet<CEdGraphNode*> ContributingNodes;
+        if (bFadeDeadNodes)
+        {
+            CollectContributingNodes(ContributingNodes);
+        }
+
         // Collected before anything is submitted so a graph drawing its own wires (the state machine
         // canvas) can lay them out under the nodes. Order matches the node/pin/connection walk the
         // rest of the pass assumes when mapping a link id back to its pins.
@@ -653,15 +876,32 @@ namespace Lumina
             Node->GridX = Position.x;
             Node->GridY = Position.y;
 
+            // Faded: this node's result reaches no output, so the compiler never emits it. Cheaper to
+            // read at a glance than any badge, and it costs nothing when the graph is fully connected.
+            const bool bDeadNode = !ContributingNodes.empty()
+                && ContributingNodes.find(Node) == ContributingNodes.end();
+            if (bDeadNode)
+            {
+                ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.4f);
+            }
+
             if (Node->IsRerouteNode())
             {
                 DrawRerouteNode(Node);
+                if (bDeadNode)
+                {
+                    ImGui::PopStyleVar();
+                }
                 ++Index;
                 continue;
             }
 
             if (DrawCustomNode(Node))
             {
+                if (bDeadNode)
+                {
+                    ImGui::PopStyleVar();
+                }
                 ++Index;
                 continue;
             }
@@ -799,36 +1039,49 @@ namespace Lumina
             }
             
             NodeBuilder.End(Node->WantsTitlebar());
+
+            if (bDeadNode)
+            {
+                ImGui::PopStyleVar();
+            }
+
             Index++;
         }
     
         NodeEditor::Suspend();
         {
             
-            NodeEditor::NodeId NodeId;
-            if (NodeEditor::ShowNodeContextMenu(&NodeId))
+            // Only claim a right-click that actually landed on this graph. ImGui allows one popup at a
+            // level, so an unguarded OpenPopup here REPLACES the one the window on top just opened --
+            // which is why right-clicking a content-browser tile docked over a material graph opened
+            // nothing at all.
+            if (bHostWindowHovered)
             {
-                ContextMenuNodeID = NodeId.Get();
-                ImGui::OpenPopup("Node Context Menu");
-            }
-            
-            NodeEditor::PinId PinId;
-            if (NodeEditor::ShowPinContextMenu(&PinId))
-            {
-                ImGui::OpenPopup("Pin Context Menu");
-            }
-            
-            NodeEditor::LinkId LinkId;
-            if (NodeEditor::ShowLinkContextMenu(&LinkId))
-            {
-                ImGui::OpenPopup("Link Context Menu");
-            }
-            
-            if (NodeEditor::ShowBackgroundContextMenu())
-            {
-                PendingSourcePin = nullptr;
-                ActionMenu.Reset();
-                ImGui::OpenPopup("Create New Node");
+                NodeEditor::NodeId NodeId;
+                if (NodeEditor::ShowNodeContextMenu(&NodeId))
+                {
+                    ContextMenuNodeID = NodeId.Get();
+                    ImGui::OpenPopup("Node Context Menu");
+                }
+
+                NodeEditor::PinId PinId;
+                if (NodeEditor::ShowPinContextMenu(&PinId))
+                {
+                    ImGui::OpenPopup("Pin Context Menu");
+                }
+
+                NodeEditor::LinkId LinkId;
+                if (NodeEditor::ShowLinkContextMenu(&LinkId))
+                {
+                    ImGui::OpenPopup("Link Context Menu");
+                }
+
+                if (NodeEditor::ShowBackgroundContextMenu())
+                {
+                    PendingSourcePin = nullptr;
+                    ActionMenu.Reset();
+                    ImGui::OpenPopup("Create New Node");
+                }
             }
 
             if (bOpenCreateFromPin)
@@ -1371,6 +1624,42 @@ namespace Lumina
             DrawAlignmentMenuItems();
             ImGui::EndMenu();
         }
+
+        DrawGraphToolsMenuItems();
+    }
+
+    void CEdNodeGraph::DrawGraphToolsMenuItems()
+    {
+        ImGui::Separator();
+
+        if (ImGui::MenuItem(LE_ICON_AUTO_FIX " Tidy Graph"))
+        {
+            QueueTidyGraph();
+        }
+        ImGuiX::TextTooltip("Lay the graph out in columns by distance from the output, ordered to reduce "
+                            "crossing wires. Unused nodes are parked off to the left.");
+
+        TVector<CEdGraphNode*> Dead;
+        CollectDeadNodes(Dead);
+
+        // Disabled rather than hidden when the graph is clean: a menu whose entries come and go is harder
+        // to learn than one that tells you there is nothing to do.
+        ImGui::BeginDisabled(Dead.empty());
+        if (ImGui::MenuItem(Dead.empty()
+                ? LE_ICON_SELECTION_OFF " No Unused Nodes"
+                : FFixedString(FFixedString::CtorSprintf(), LE_ICON_SELECTION " Select %d Unused Node%s",
+                    (int32)Dead.size(), Dead.size() == 1 ? "" : "s").c_str()))
+        {
+            SelectDeadNodes();
+        }
+
+        if (ImGui::MenuItem(LE_ICON_BROOM " Delete Unused Nodes"))
+        {
+            DeleteDeadNodes();
+        }
+        ImGui::EndDisabled();
+        ImGuiX::TextTooltip("Nodes whose result never reaches the output. The compiler already ignores "
+                            "them; this removes them from the canvas.");
     }
 
     void CEdNodeGraph::DrawPinContextMenu(CEdNodeGraphPin* Pin)

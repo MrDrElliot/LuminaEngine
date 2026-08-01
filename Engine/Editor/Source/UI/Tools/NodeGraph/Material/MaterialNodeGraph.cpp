@@ -197,6 +197,11 @@ namespace Lumina
         return CMaterialReroute::StaticClass();
     }
 
+    bool CMaterialNodeGraph::IsGraphRootNode(CEdGraphNode* Node) const
+    {
+        return Cast<CMaterialOutputNode>(Node) != nullptr;
+    }
+
     void CMaterialNodeGraph::Shutdown()
     {
         CEdNodeGraph::Shutdown();

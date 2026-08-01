@@ -17,6 +17,7 @@ namespace Lumina
 
         static FSystemAccess Access;
 
+        static void Startup(const FSystemContext& Context) noexcept;
         static void Update(const FSystemContext& Context) noexcept;
     };
 }

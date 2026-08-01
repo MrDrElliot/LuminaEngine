@@ -129,9 +129,9 @@ namespace Lumina
         SCameraComponent& Camera = Registry.get<SCameraComponent>(CameraEntity);
 
         // Live pose of the active camera; the blend (if any) eases toward this.
-        const FVector3 TargetPosition = CameraTransform.GetWorldLocation();
-        const FQuat TargetRotation = CameraTransform.GetWorldRotation();
-        const float     TargetFOV      = Camera.FOV;
+        const FVector3 TargetPosition   = CameraTransform.GetWorldLocation();
+        const FQuat TargetRotation      = CameraTransform.GetWorldRotation();
+        const float TargetFOV           = Camera.FOV;
 
         const FVector3 CameraWorldPos = TargetPosition;
         SPostProcessSettings ResolvedPostProcess = Camera.PostProcess;
@@ -268,10 +268,7 @@ namespace Lumina
             FinalPostProcess = B.FromPostProcess;
             BlendPostProcessSettings(FinalPostProcess, ResolvedPostProcess, Alpha);
         }
-
-        // Additive camera shake, composed on top of the blend. Applied only to the baked render view (below)
-        // -- the entity transform and the pre-shake Final pose recorded as the next blend's source are left
-        // untouched, so switching cameras mid-shake doesn't blend from a shaken pose.
+        
         FVector3 ShakeLocation(0.0f);
         FVector3 ShakeRotationDeg(0.0f);
         Detail::EvaluateCameraShakes(CameraState, (float)Context.GetDeltaTime(), ShakeLocation, ShakeRotationDeg);

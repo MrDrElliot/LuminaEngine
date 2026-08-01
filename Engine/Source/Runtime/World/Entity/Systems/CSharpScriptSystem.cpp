@@ -99,7 +99,14 @@ namespace Lumina
         // managed TypeLibrary). Bit index MUST match TypeLibrary.ComputeCallbackFlags. No bit => PrePhysics.
         constexpr int32 PostPhysicsPhaseBit = 1 << 16;
 
-        auto View = Context.CreateView<SScriptComponent>(entt::exclude<SDisabledTag>);
+        // SScriptDisabledTag is the outliner's per-entity script toggle: the entity keeps ticking, only its
+        // scripts stop. Excluding it HERE covers every pass below -- binding, input dispatch, OnReady,
+        // OnFixedUpdate and OnUpdate all iterate this one view, so the toggle cannot be honoured by some
+        // passes and missed by others.
+        //
+        // Already-bound instances are left alive rather than destroyed, so re-enabling resumes the script
+        // instead of re-running OnAttach from a fresh instance.
+        auto View = Context.CreateView<SScriptComponent>(entt::exclude<SDisabledTag, SScriptDisabledTag>);
 
         // Binding, input dispatch and OnReady happen ONCE per frame, in the PrePhysics pass. A post-physics
         // script is still created and readied here; only its OnUpdate is deferred to the PostPhysics pass.

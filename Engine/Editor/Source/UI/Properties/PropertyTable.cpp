@@ -335,6 +335,10 @@ namespace Lumina
 
     void FPropertyRow::DrawRow(float Offset, bool bReadOnly)
     {
+        // First: HasExtraControls() is queried further down and resolves through AllowResize(), which
+        // reads this.
+        bDrawReadOnly = bReadOnly;
+
         ImGui::PushID(this);
 
         ImGui::TableNextRow();
@@ -482,8 +486,56 @@ namespace Lumina
     {
         for (const TUniquePtr<FPropertyRow>& Row : Children)
         {
+            if (!Row->PassesFilter())
+            {
+                continue;
+            }
             Row->DrawRow(ChildOffset, bReadOnly);
         }
+    }
+
+    bool FPropertyRow::ApplyFilter(const ImGuiTextFilter& Filter, bool bFilterActive, bool bJustActivated, bool bJustCleared)
+    {
+        // Stash the user's real collapse state on the way in, put it back on the way out. Without this a
+        // search would silently expand the whole tree and leave it that way.
+        if (bJustActivated)
+        {
+            bExpandedSaved = bExpanded;
+        }
+
+        bool bAnyChildPasses = false;
+        for (const TUniquePtr<FPropertyRow>& Child : Children)
+        {
+            // Not short-circuited: every descendant needs its own flag updated, not just enough of them
+            // to answer this row's question.
+            bAnyChildPasses |= Child->ApplyFilter(Filter, bFilterActive, bJustActivated, bJustCleared);
+        }
+
+        if (!bFilterActive)
+        {
+            bPassesFilter = true;
+            if (bJustCleared)
+            {
+                bExpanded = bExpandedSaved;
+            }
+            return true;
+        }
+
+        const FStringView Label = GetFilterLabel();
+        const bool bSelfMatches = !Label.empty()
+            && Filter.PassFilter(Label.data(), Label.data() + Label.size());
+
+        bPassesFilter = bSelfMatches || bAnyChildPasses;
+
+        // Open anything that survived so a match several levels down is on screen rather than behind a
+        // collapsed parent. A row that matched on its own name stays as the user left it -- expanding it
+        // would dump its whole subtree on them when they searched for the row itself.
+        if (bAnyChildPasses)
+        {
+            bExpanded = true;
+        }
+
+        return bPassesFilter;
     }
 
     bool FPropertyRow::IsReadOnly() const
@@ -551,6 +603,18 @@ namespace Lumina
     {
         DispatchChange(ChangeOp);
         ChangeOp = EPropertyChangeOp::None;
+    }
+
+    FStringView FPropertyPropertyRow::GetFilterLabel() const
+    {
+        // Array elements are labelled by index, which nobody searches for; they still survive on a
+        // descendant match through ApplyFilter.
+        if (IsArrayElementProperty() || PropertyHandle == nullptr || PropertyHandle->Property == nullptr)
+        {
+            return FStringView();
+        }
+        const FString& Display = PropertyHandle->Property->GetPropertyDisplayName();
+        return FStringView(Display.c_str(), Display.size());
     }
 
     void FPropertyPropertyRow::DrawHeader(float Offset)
@@ -826,12 +890,15 @@ namespace Lumina
 
     bool FArrayPropertyRow::AllowResize() const
     {
-        return ArrayProperty == nullptr || !ArrayProperty->HasMetadata("NoResize");
+        // Read-only has to disable STRUCTURAL edits too. Disabling only the value widgets left the +,
+        // trash and per-element insert/remove live, so a read-only table could still change the array's
+        // length -- which is a bigger edit than the ones it was refusing.
+        return !bDrawReadOnly && (ArrayProperty == nullptr || !ArrayProperty->HasMetadata("NoResize"));
     }
 
     bool FArrayPropertyRow::AllowReorder() const
     {
-        return ArrayProperty == nullptr || !ArrayProperty->HasMetadata("NoReorder");
+        return !bDrawReadOnly && (ArrayProperty == nullptr || !ArrayProperty->HasMetadata("NoReorder"));
     }
 
     bool FArrayPropertyRow::HasExtraControls() const
@@ -962,7 +1029,7 @@ namespace Lumina
 
     bool FMapPropertyRow::AllowResize() const
     {
-        return MapProperty == nullptr || !MapProperty->HasMetadata("NoResize");
+        return !bDrawReadOnly && (MapProperty == nullptr || !MapProperty->HasMetadata("NoResize"));
     }
 
     bool FMapPropertyRow::HasExtraControls() const
@@ -1297,6 +1364,8 @@ namespace Lumina
         void* InstancePtr = PropertyHandle->GetValuePtr();
         void* DefaultInstancePtr = PropertyHandle->GetDefaultValuePtr();
         PropertyTable = MakeUnique<FPropertyTable>(InstancePtr, StructProperty->GetStruct(), DefaultInstancePtr);
+        // Nested table inside a row: the owning table's search box already covers these properties.
+        PropertyTable->SetShowSearchBar(false);
         // Forward the owning row's change callbacks so edits to nested-struct members notify
         // (save/undo) exactly like top-level property edits.
         PropertyTable->ChangeEventCallbacks = Callbacks;
@@ -1463,6 +1532,8 @@ namespace Lumina
 
         // Diff/reset of the instance's own fields compares against that struct's default instance.
         PropertyTable = MakeUnique<FPropertyTable>(Instance->GetMutableMemory(), Type, Type->GetDefaultInstance());
+        // Nested table inside a row: the owning table's search box already covers these properties.
+        PropertyTable->SetShowSearchBar(false);
         PropertyTable->ChangeEventCallbacks = Callbacks;
         PropertyTable->RebuildTree();
     }
@@ -1605,6 +1676,11 @@ namespace Lumina
         return RawPtr;
     }
 
+    FStringView FCategoryPropertyRow::GetFilterLabel() const
+    {
+        return FStringView(Category.c_str());
+    }
+
     void FCategoryPropertyRow::DrawHeader(float Offset)
     {
         // Categories paint both row cells with a darker background to read as
@@ -1742,17 +1818,7 @@ namespace Lumina
 
     void FPropertyTable::DrawTree(bool bReadOnly)
     {
-        if (bDirty)
-        {
-            FPropertyCustomizationRegistry* Registry = GEngine->GetDevelopmentToolsUI()->GetPropertyCustomizationRegistry();
-            Customization = Registry->GetPropertyCustomizationForType(Struct->GetName());
-
-            if (Customization == nullptr)
-            {
-                RebuildTree();
-            }
-            bDirty = false;
-        }
+        EnsureTreeBuilt();
 
         if (Customization)
         {
@@ -1822,6 +1888,14 @@ namespace Lumina
             ImGuiTableFlags_SizingStretchSame |
             ImGuiTableFlags_RowBg;
 
+        // Search runs before the width measure below: a filtered-out row must not size the header column.
+        if (bShowSearchBar)
+        {
+            ImGuiX::SearchBar("##PropertySearch", PropertyFilter, LE_ICON_MAGNIFY " Search properties...");
+        }
+
+        ApplyFilterState();
+
         ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(4, 3));
         ImGui::PushStyleColor(ImGuiCol_TableRowBg, EditorColors::U32(EditorColors::PanelBg()));
         ImGui::PushStyleColor(ImGuiCol_TableRowBgAlt, EditorColors::U32(EditorColors::RowBg()));
@@ -1830,6 +1904,10 @@ namespace Lumina
         float HeaderColumnWidth = 0.0f;
         for (auto& [Name, Row] : CategoryMap)
         {
+            if (!Row->PassesFilter())
+            {
+                continue;
+            }
             HeaderColumnWidth = std::max(HeaderColumnWidth, Row->ComputeRequiredHeaderWidth(0.0f));
         }
         HeaderColumnWidth += 18.0f;
@@ -1841,8 +1919,13 @@ namespace Lumina
 
             for (auto& [Name, Row] : CategoryMap)
             {
+                // UpdateRow still runs on filtered-out rows: it drains queued array mutations and edit
+                // state, and skipping it would strand an edit made just before the search was typed.
                 Row->UpdateRow();
-                Row->DrawRow(0.0f, bReadOnly);
+                if (Row->PassesFilter())
+                {
+                    Row->DrawRow(0.0f, bReadOnly);
+                }
             }
 
             ImGui::EndTable();
@@ -1851,6 +1934,98 @@ namespace Lumina
         ImGui::PopID();
         ImGui::PopStyleColor(2);
         ImGui::PopStyleVar();
+    }
+
+    void FPropertyTable::EnsureTreeBuilt()
+    {
+        if (!bDirty)
+        {
+            return;
+        }
+
+        FPropertyCustomizationRegistry* Registry = GEngine->GetDevelopmentToolsUI()->GetPropertyCustomizationRegistry();
+        Customization = Registry->GetPropertyCustomizationForType(Struct->GetName());
+
+        if (Customization == nullptr)
+        {
+            RebuildTree();
+        }
+        bDirty = false;
+    }
+
+    void FPropertyTable::ApplyFilterState()
+    {
+        const bool bFiltering   = PropertyFilter.IsActive();
+        const bool bJustActive  = bFiltering && !bWasFiltering;
+        const bool bJustCleared = !bFiltering && bWasFiltering;
+        bWasFiltering = bFiltering;
+
+        // Re-evaluated every frame rather than only on a text change: the tree is rebuilt underneath us by
+        // array edits, resets and object swaps, and a stale flag would hide a live row. Safe to call twice
+        // in a frame -- the second call sees no transition and just recomputes the same flags.
+        if (bFiltering || bJustCleared)
+        {
+            for (auto& [Name, Row] : CategoryMap)
+            {
+                Row->ApplyFilter(PropertyFilter, bFiltering, bJustActive, bJustCleared);
+            }
+        }
+    }
+
+    void FPropertyTable::SetSearchText(FStringView Text)
+    {
+        const size_t Capacity = sizeof(PropertyFilter.InputBuf) - 1;
+        const size_t Count    = Text.size() < Capacity ? Text.size() : Capacity;
+        if (Count > 0)
+        {
+            Memory::Memcpy(PropertyFilter.InputBuf, Text.data(), Count);
+        }
+        PropertyFilter.InputBuf[Count] = 0;
+        PropertyFilter.Build();
+    }
+
+    bool FPropertyTable::PrepareAndTestFilter()
+    {
+        EnsureTreeBuilt();
+
+        // A customization draws the whole table itself; there is no row tree to filter, so it is always
+        // shown rather than silently vanishing under a search.
+        if (Customization != nullptr)
+        {
+            return true;
+        }
+
+        ApplyFilterState();
+
+        if (!PropertyFilter.IsActive())
+        {
+            return true;
+        }
+
+        for (auto& [Name, Row] : CategoryMap)
+        {
+            if (Row->PassesFilter())
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void FPropertyTable::ClearSearch()
+    {
+        PropertyFilter.Clear();
+
+        // Restore collapse state immediately rather than waiting for the next draw's edge detection --
+        // the button press and the restore should look like one action.
+        if (bWasFiltering)
+        {
+            for (auto& [Name, Row] : CategoryMap)
+            {
+                Row->ApplyFilter(PropertyFilter, /*bFilterActive*/ false, /*bJustActivated*/ false, /*bJustCleared*/ true);
+            }
+            bWasFiltering = false;
+        }
     }
 
     void FPropertyTable::SetObject(void* InObject, CStruct* StructType)

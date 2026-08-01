@@ -9,7 +9,15 @@
 
 
 // Module ABI guard
-#define LUMINA_MODULE_ABI_VERSION 1
+//
+// BUMP THIS whenever the engine's binary interface to modules changes: the layout or size of a type that
+// crosses the boundary, an enum's values, exported signatures, or the VTABLE SHAPE of a class modules
+// derive from. Adding a virtual to FEditorTool shifts every later slot, so a plugin built against the old
+// header dispatches through the wrong one -- which surfaces as a crash somewhere unrelated (a garbage
+// const char* reaching std::format, say) rather than as a load failure.
+//
+// 2 -- FEditorTool gained the GetDefaultCameraPose virtual + bIsActiveTool member.
+#define LUMINA_MODULE_ABI_VERSION 2
 
 #if defined(WITH_EDITOR) && WITH_EDITOR
     #define LUMINA_MODULE_ABI_PLATFORM "Editor"

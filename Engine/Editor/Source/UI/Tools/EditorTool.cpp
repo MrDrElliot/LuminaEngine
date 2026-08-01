@@ -1335,9 +1335,15 @@ namespace Lumina
         const bool bDisabled = EditorActions.empty();
         ImGui::BeginDisabled(bDisabled);
         const bool bOpen = ImGui::BeginMenu(LE_ICON_KEYBOARD" Keybinds");
-        ImGui::EndDisabled();
+
+        // EndDisabled must NOT run here when the menu opened. BeginMenu returning true has already pushed
+        // the submenu WINDOW, which recorded the disabled-stack depth at its Begin; popping the scope now
+        // would pop it inside that window, and EndMenu -> EndPopup -> End would then see a mismatched
+        // stack and trip ImGui's error recovery. Closed after EndMenu instead, back in the window that
+        // opened the scope. (No visual cost: a disabled BeginMenu cannot open, so bOpen implies !bDisabled.)
         if (!bOpen)
         {
+            ImGui::EndDisabled();
             return;
         }
 
@@ -1386,6 +1392,7 @@ namespace Lumina
         }
 
         ImGui::EndMenu();
+        ImGui::EndDisabled();
     }
 
     void FEditorTool::DrawHelpTextRow(const char* Label, const char* Text) const

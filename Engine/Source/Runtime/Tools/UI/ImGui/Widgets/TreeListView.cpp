@@ -127,14 +127,39 @@ namespace Lumina
             RebuildVisibleList();
         }
 
-        // Resolve a pending reveal to a row index now the visible list is final. Consumed either
+        // Resolve the filter into a DENSE row list before the clipper starts.
+        //
+        // ImGuiListClipper requires every index in [DisplayStart, DisplayEnd) to submit a row: it measures
+        // row height from the first one. Filtering with a `continue` inside the loop leaves the first index
+        // submitting nothing, so the cursor never moves and the clipper asserts ("first item hasn't moved
+        // the cursor vertically") -- which is what typing in the outliner search hit.
+        //
+        // Rebuilt per frame rather than folded into RebuildVisibleList, which is cached behind
+        // bVisibleListDirty; the widget cannot know when the caller's filter text changed. It also makes
+        // the scrollbar reflect the FILTERED count instead of leaving a long empty scroll region.
+        const TVector<int32>* Rows = &VisibleList;
+        if (Context.FilterFunction)
+        {
+            FilteredList.clear();
+            FilteredList.reserve(VisibleList.size());
+            for (int32 NodeIdx : VisibleList)
+            {
+                if (Context.FilterFunction(*this, FTreeNodeID{NodeIdx}))
+                {
+                    FilteredList.push_back(NodeIdx);
+                }
+            }
+            Rows = &FilteredList;
+        }
+
+        // Resolve a pending reveal to a row index now the row list is final. Consumed either
         // way: if the node ended up filtered or collapsed out, the request simply lapses.
         int32 ScrollToRow = -1;
         if (PendingScrollNode >= 0)
         {
-            for (int32 i = 0; i < (int32)VisibleList.size(); ++i)
+            for (int32 i = 0; i < (int32)Rows->size(); ++i)
             {
-                if (VisibleList[i] == PendingScrollNode)
+                if ((*Rows)[i] == PendingScrollNode)
                 {
                     ScrollToRow = i;
                     break;
@@ -155,7 +180,7 @@ namespace Lumina
             ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthStretch);
 
             ImGuiListClipper Clipper;
-            Clipper.Begin(static_cast<int>(VisibleList.size()));
+            Clipper.Begin(static_cast<int>(Rows->size()));
 
             // The target row is almost always off-screen (that's the point), so force the clipper
             // to submit it -- SetScrollHereY needs the row's real item rect.
@@ -168,15 +193,9 @@ namespace Lumina
             {
                 for (int i = Clipper.DisplayStart; i < Clipper.DisplayEnd; ++i)
                 {
-                    int32 NodeIdx = VisibleList[i];
-
-                    if (Context.FilterFunction)
-                    {
-                        if (!Context.FilterFunction(*this, FTreeNodeID{NodeIdx}))
-                        {
-                            continue;
-                        }
-                    }
+                    // Already filtered above; every index here submits exactly one row, which is the
+                    // clipper's contract.
+                    const int32 NodeIdx = (*Rows)[i];
 
                     ImGui::TableNextRow();
                     ImGui::TableSetColumnIndex(0);
