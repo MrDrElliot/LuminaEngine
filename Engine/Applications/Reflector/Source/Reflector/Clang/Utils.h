@@ -125,11 +125,6 @@ namespace Lumina::ClangUtils
         return line;
     }
 
-    inline clang::QualType GetQualType(CXType type) 
-    {
-        return clang::QualType::getFromOpaquePtr(type.data[0]); 
-    }
-    
     // True when libclang fell back to its location-derived placeholder (e.g. "(unnamed struct at ...)"),
     // which would leak the build path into generated identifiers and break consumers.
     inline bool IsLibclangPlaceholderName(const eastl::string& Name)
@@ -138,196 +133,34 @@ namespace Lumina::ClangUtils
             || Name.find("(anonymous ") != eastl::string::npos;
     }
 
-    inline bool GetQualifiedNameForType(clang::QualType Type, eastl::string& QualifiedName)
+    /// Strips an elaborated type specifier that libclang sometimes spells, leaving the bare
+    /// qualified name the reflection database keys on.
+    inline void StripElaboratedPrefix(eastl::string& Name)
     {
-        const clang::Type* pType = Type.getTypePtr();
-
-        if (pType->isArrayType())
+        for (const char* Prefix : { "struct ", "class ", "enum ", "union " })
         {
-            auto ElementType = pType->castAsArrayTypeUnsafe()->getElementType();
-            if (!GetQualifiedNameForType(ElementType, QualifiedName))
+            const size_t PrefixLength = strlen(Prefix);
+            if (Name.size() > PrefixLength && Name.compare(0, PrefixLength, Prefix) == 0)
             {
-                return false;
+                Name.erase(0, PrefixLength);
+                return;
             }
         }
-        else if (pType->isBooleanType())
-        {
-            QualifiedName = "bool";
-        }
-        else if (pType->isBuiltinType())
-        {
-            const clang::BuiltinType* pBT = pType->getAs<clang::BuiltinType>();
-            switch (pBT->getKind())
-            {
-                case clang::BuiltinType::Char_S:
-                    QualifiedName = "int8";
-                    break;
+    }
 
-                case clang::BuiltinType::Char_U:
-                    QualifiedName = "uint8";
-                    break;
+    /// Qualified name of a type as libclang spells it.
+    ///
+    /// libclang's spelling is the authoritative answer and needs no AST internals to obtain.
+    inline bool GetSpelledTypeName(CXType Type, eastl::string& QualifiedName)
+    {
+        CXString Spelling = clang_getTypeSpelling(Type);
+        const char* Text = clang_getCString(Spelling);
 
-                case clang::BuiltinType::UChar:
-                    QualifiedName = "uint8";
-                    break;
+        QualifiedName = Text != nullptr ? Text : "";
+        clang_disposeString(Spelling);
 
-                case clang::BuiltinType::SChar:
-                    QualifiedName = "int8";
-                    break;
+        StripElaboratedPrefix(QualifiedName);
 
-                case clang::BuiltinType::Char16:
-                    QualifiedName = "uint16";
-                    break;
-
-                case clang::BuiltinType::Char32:
-                    QualifiedName = "uint32";
-                    break;
-
-                case clang::BuiltinType::UShort:
-                    QualifiedName = "uint16";
-                    break;
-
-                case clang::BuiltinType::Short:
-                    QualifiedName = "int16";
-                    break;
-
-                case clang::BuiltinType::UInt:
-                    QualifiedName = "uint32";
-                    break;
-
-                case clang::BuiltinType::Int:
-                    QualifiedName = "int32";
-                    break;
-
-                case clang::BuiltinType::ULongLong:
-                    QualifiedName = "uint64";
-                    break;
-
-                case clang::BuiltinType::LongLong:
-                    QualifiedName = "int64";
-                    break;
-
-                case clang::BuiltinType::Float:
-                    QualifiedName = "float";
-                    break;
-
-                case clang::BuiltinType::Double:
-                    QualifiedName = "double";
-                    break;
-                default:
-                {
-                    return false;
-                }
-            }
-        }
-        else if (pType->isPointerType())
-        {
-            // Recurse instead of getAsString(): the latter can emit "(unnamed struct at <path>)"
-            // for anonymous records, baking the build path into generated identifiers.
-            clang::QualType Pointee = pType->getAs<clang::PointerType>()->getPointeeType();
-            if (!GetQualifiedNameForType(Pointee, QualifiedName))
-            {
-                return false;
-            }
-        }
-        else if (pType->isReferenceType())
-        {
-            clang::QualType Pointee = pType->getAs<clang::ReferenceType>()->getPointeeType().getUnqualifiedType();
-            if (!GetQualifiedNameForType(Pointee, QualifiedName))
-            {
-                return false;
-            }
-        }
-        else if (pType->isRecordType())
-        {
-            if (pType->isTypedefNameType())
-            {
-                if (const auto* TypedefType = pType->getAs<clang::TypedefType>())
-                {
-                    const clang::TypedefNameDecl* Typedef = TypedefType->getDecl();
-                    QualifiedName = Typedef->getQualifiedNameAsString().c_str();
-                }
-                else
-                {
-                    if (const auto* RecordType = pType->getAs<clang::RecordType>())
-                    {
-                        const clang::RecordDecl* Record = RecordType->getDecl();
-                        QualifiedName = Record->getQualifiedNameAsString().c_str();
-                    }
-                }
-            }
-            else
-            {
-                if (const auto* RecordType = pType->getAs<clang::RecordType>())
-                {
-                    const clang::RecordDecl* Record = RecordType->getDecl();
-                    QualifiedName = Record->getQualifiedNameAsString().c_str();
-                }
-            }
-        }
-        else if (pType->isEnumeralType())
-        {
-            const clang::NamedDecl* pNamedDecl = pType->getAs<clang::EnumType>()->getDecl();
-            QualifiedName = pNamedDecl->getQualifiedNameAsString().c_str();
-        }
-        else if (pType->getTypeClass() == clang::Type::Typedef || pType->getTypeClass() == clang::Type::Using)
-        {
-            const clang::NamedDecl* pNamedDecl = pType->getAs<clang::TypedefType>()->getDecl();
-            QualifiedName = pNamedDecl->getQualifiedNameAsString().c_str();
-        }
-        
-        if (QualifiedName == "eastl::vector")
-        {
-            QualifiedName = "Lumina::TVector";
-        }
-
-        if (QualifiedName == "eastl::hash_map")
-        {
-            QualifiedName = "Lumina::THashMap";
-        }
-
-        if (QualifiedName == "eastl::optional")
-        {
-            QualifiedName = "Lumina::TOptional";
-        }
-
-        if (QualifiedName == "eastl::basic_string")
-        {
-            QualifiedName = "Lumina::FString";
-        }
-        
-        if (QualifiedName == "eastl::fixed_string")
-        {
-            QualifiedName = "Lumina::FString";
-        }
-
-        if (QualifiedName == "FString")
-        {
-            QualifiedName = "Lumina::FString";
-        }
-
-        if (QualifiedName == "FName")
-        {
-            QualifiedName = "Lumina::FName";
-        }
-        
-        if (QualifiedName == "TObjectPtr")
-        {
-            QualifiedName = "Lumina::TObjectPtr";
-        }
-
-        if (QualifiedName == "CObject")
-        {
-            QualifiedName = "Lumina::CObject";
-        }
-
-        if (QualifiedName == "CClass")
-        {
-            QualifiedName = "Lumina::CClass";
-        }
-
-        // Refuse libclang location-based placeholders; they produce broken
-        // generated identifiers like "Construct_CStruct_(unnamed struct at ...)".
         if (IsLibclangPlaceholderName(QualifiedName))
         {
             QualifiedName.clear();
@@ -337,24 +170,241 @@ namespace Lumina::ClangUtils
         return !QualifiedName.empty();
     }
 
-    // Printable C++ type expression for casts in generated code; falls back to the
-    // semantic qualified name when libclang's printer would emit an "(unnamed ...)" placeholder.
-    inline eastl::string GetSafeTypeAsString(clang::QualType Type)
+    /// Rewrites the engine's container and core-type aliases onto their reflected spellings.
+    inline void NormalizeEngineTypeName(eastl::string& Name)
     {
-        eastl::string Result = Type.getAsString().c_str();
+        struct FAlias { const char* From; const char* To; };
+        static const FAlias Aliases[] =
+        {
+            { "eastl::vector",       "Lumina::TVector"    },
+            { "eastl::hash_map",     "Lumina::THashMap"   },
+            { "eastl::optional",     "Lumina::TOptional"  },
+            { "eastl::basic_string", "Lumina::FString"    },
+            { "eastl::fixed_string", "Lumina::FString"    },
+            { "FString",             "Lumina::FString"    },
+            { "FName",               "Lumina::FName"      },
+            { "TObjectPtr",          "Lumina::TObjectPtr" },
+            { "CObject",             "Lumina::CObject"    },
+            { "CClass",              "Lumina::CClass"     },
+        };
+
+        for (const FAlias& Alias : Aliases)
+        {
+            if (Name == Alias.From)
+            {
+                Name = Alias.To;
+                return;
+            }
+        }
+    }
+
+    /// Qualified name of a declaration, assembled from its semantic parents.
+    ///
+    /// Uses only libclang's C API, so it yields the bare qualified name ("eastl::vector") without
+    /// template arguments, which is what the alias normalization and the reflection database key on.
+    inline bool GetQualifiedNameFromDeclCursor(CXCursor Decl, eastl::string& QualifiedName)
+    {
+        if (clang_Cursor_isNull(Decl) || clang_isInvalid(clang_getCursorKind(Decl)))
+        {
+            return false;
+        }
+
+        CXString NameString = clang_getCursorSpelling(Decl);
+        const char* NameText = clang_getCString(NameString);
+        QualifiedName = NameText != nullptr ? NameText : "";
+        clang_disposeString(NameString);
+
+        if (QualifiedName.empty() || IsLibclangPlaceholderName(QualifiedName))
+        {
+            QualifiedName.clear();
+            return false;
+        }
+
+        for (CXCursor Parent = clang_getCursorSemanticParent(Decl);
+             !clang_Cursor_isNull(Parent);
+             Parent = clang_getCursorSemanticParent(Parent))
+        {
+            const CXCursorKind ParentKind = clang_getCursorKind(Parent);
+            if (ParentKind == CXCursor_TranslationUnit || clang_isInvalid(ParentKind))
+            {
+                break;
+            }
+
+            CXString ParentString = clang_getCursorSpelling(Parent);
+            const char* ParentText = clang_getCString(ParentString);
+            const eastl::string ParentName = ParentText != nullptr ? ParentText : "";
+            clang_disposeString(ParentString);
+
+            // An inline or anonymous namespace contributes no qualification.
+            if (!ParentName.empty())
+            {
+                QualifiedName = ParentName + "::" + QualifiedName;
+            }
+        }
+
+        return true;
+    }
+
+    /// The written type when libclang exposes one, else the canonical fallback. Keeps a typedef or
+    /// alias spelling its own name instead of collapsing to whatever it resolves to.
+    inline CXType PreferWritten(CXType Written, CXType Canonical)
+    {
+        return Written.kind != CXType_Invalid ? Written : Canonical;
+    }
+
+    /// Qualified, normalized name of a type, resolved entirely through libclang's C API.
+    ///
+    /// The Reflector links libclang for its C ABI but compiles against the LLVM headers, so
+    /// reinterpreting CXType::data as a clang::QualType only works while the two agree exactly.
+    /// Where they do not, the reinterpreted pointer is neither null nor valid: naming silently
+    /// yields nothing and dereferencing it faults. Everything here goes through the stable API
+    /// instead, so no result depends on clang's internal layout.
+    inline bool GetQualifiedNameForCXType(CXType Type, eastl::string& QualifiedName)
+    {
+        QualifiedName.clear();
+
+        const CXType Canonical = clang_getCanonicalType(Type);
+
+        switch (Canonical.kind)
+        {
+        case CXType_Invalid:
+        case CXType_Unexposed:
+            // Fall back to the spelling; an unexposed type still spells correctly.
+            return GetSpelledTypeName(Type, QualifiedName);
+
+        case CXType_ConstantArray:
+        case CXType_IncompleteArray:
+        case CXType_VariableArray:
+        case CXType_DependentSizedArray:
+            return GetQualifiedNameForCXType(PreferWritten(clang_getArrayElementType(Type),
+                clang_getArrayElementType(Canonical)), QualifiedName);
+
+        case CXType_Pointer:
+        case CXType_LValueReference:
+        case CXType_RValueReference:
+            // Recurse rather than spelling the whole thing: the spelling of a pointer to an
+            // anonymous record bakes a build path into a generated identifier.
+            //
+            // Unwrap the written type, not the canonical one. The engine's math types are alias
+            // templates, so canonicalizing "const FTransform&" first yields TTransform<float> and
+            // the reflection database, which is keyed on FTransform, no longer recognizes it. A
+            // by-value FTransform never hit this because it is named from the written type below.
+            return GetQualifiedNameForCXType(PreferWritten(clang_getPointeeType(Type),
+                clang_getPointeeType(Canonical)), QualifiedName);
+
+        case CXType_Bool:       QualifiedName = "bool";   return true;
+        case CXType_Char_S:     QualifiedName = "int8";   return true;
+        case CXType_Char_U:     QualifiedName = "uint8";  return true;
+        case CXType_UChar:      QualifiedName = "uint8";  return true;
+        case CXType_SChar:      QualifiedName = "int8";   return true;
+        case CXType_Char16:     QualifiedName = "uint16"; return true;
+        case CXType_Char32:     QualifiedName = "uint32"; return true;
+        case CXType_UShort:     QualifiedName = "uint16"; return true;
+        case CXType_Short:      QualifiedName = "int16";  return true;
+        case CXType_UInt:       QualifiedName = "uint32"; return true;
+        case CXType_Int:        QualifiedName = "int32";  return true;
+        case CXType_ULongLong:  QualifiedName = "uint64"; return true;
+        case CXType_LongLong:   QualifiedName = "int64";  return true;
+        case CXType_Float:      QualifiedName = "float";  return true;
+        case CXType_Double:     QualifiedName = "double"; return true;
+
+        default:
+            break;
+        }
+
+        // Records and enums are named from their declaration, which gives the qualified name
+        // without template arguments so the alias table below can match it.
+        if (Canonical.kind == CXType_Record || Canonical.kind == CXType_Enum)
+        {
+            // Name from the written type first so a typedef or alias keeps its own name;
+            // fall back to the canonical declaration when that yields nothing.
+            if (!GetQualifiedNameFromDeclCursor(clang_getTypeDeclaration(Type), QualifiedName)
+                && !GetQualifiedNameFromDeclCursor(clang_getTypeDeclaration(Canonical), QualifiedName))
+            {
+                return false;
+            }
+
+            NormalizeEngineTypeName(QualifiedName);
+            return true;
+        }
+
+        if (!GetSpelledTypeName(Type, QualifiedName))
+        {
+            return false;
+        }
+
+        NormalizeEngineTypeName(QualifiedName);
+        return true;
+    }
+
+    /// Qualified name of the type a declaration cursor declares, as libclang spells it.
+    inline bool GetQualifiedNameForDeclCursor(CXCursor Cursor, eastl::string& QualifiedName)
+    {
+        CXString Spelling = clang_getTypeSpelling(clang_getCursorType(Cursor));
+        const char* Text = clang_getCString(Spelling);
+
+        QualifiedName = Text != nullptr ? Text : "";
+        clang_disposeString(Spelling);
+
+        StripElaboratedPrefix(QualifiedName);
+
+        // Anonymous and locally declared types spell as "(unnamed struct at <path>)", which would
+        // bake a build path into a generated identifier.
+        if (IsLibclangPlaceholderName(QualifiedName))
+        {
+            QualifiedName.clear();
+            return false;
+        }
+
+        return !QualifiedName.empty();
+    }
+
+    /// True when an integer type is unsigned.
+    inline bool IsUnsignedIntegerType(CXType Type)
+    {
+        switch (clang_getCanonicalType(Type).kind)
+        {
+        case CXType_Bool:
+        case CXType_Char_U:
+        case CXType_UChar:
+        case CXType_Char16:
+        case CXType_Char32:
+        case CXType_UShort:
+        case CXType_UInt:
+        case CXType_ULong:
+        case CXType_ULongLong:
+        case CXType_UInt128:
+            return true;
+
+        default:
+            return false;
+        }
+    }
+
+    /// Printable C++ type expression for casts in generated code, falling back to the semantic
+    /// qualified name when libclang's printer would emit an "(unnamed ...)" placeholder.
+    inline eastl::string GetSafeTypeAsString(CXType Type)
+    {
+        eastl::string Result;
+        CXString Spelling = clang_getTypeSpelling(Type);
+        const char* Text = clang_getCString(Spelling);
+        Result = Text != nullptr ? Text : "";
+        clang_disposeString(Spelling);
+
         if (!IsLibclangPlaceholderName(Result))
         {
             return Result;
         }
 
         eastl::string SemanticName;
-        if (GetQualifiedNameForType(Type, SemanticName))
+        if (GetQualifiedNameForCXType(Type, SemanticName))
         {
             return SemanticName;
         }
+
         return Result;
     }
-    
+
 
     inline uint64_t HashString(const eastl::string& str)
     {

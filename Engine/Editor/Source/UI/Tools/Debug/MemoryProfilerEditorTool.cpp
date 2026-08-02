@@ -1,4 +1,4 @@
-#include "MemoryProfilerEditorTool.h"
+﻿#include "MemoryProfilerEditorTool.h"
 
 #include <cstring>
 #include <cstdio>
@@ -17,7 +17,7 @@ namespace Lumina
     namespace
     {
         constexpr uint32 kHistorySamples = 240;     // ~60s at the 0.25s refresh tick.
-        constexpr float  kRefreshSeconds = 0.25f;
+        constexpr float  kMemoryRefreshSeconds = 0.25f;
 
         // Green under load, amber as it fills, red when nearly out.
         ImVec4 UsageColor(float Fraction)
@@ -131,7 +131,7 @@ namespace Lumina
     void FMemoryProfilerEditorTool::DrawWindow(bool bIsFocused)
     {
         RefreshTimer += (float)GEngine->GetDeltaTime();
-        if (RefreshTimer >= kRefreshSeconds || HistVRAM.empty())
+        if (RefreshTimer >= kMemoryRefreshSeconds || HistVRAM.empty())
         {
             RefreshTimer = 0.0f;
             RefreshSnapshot();

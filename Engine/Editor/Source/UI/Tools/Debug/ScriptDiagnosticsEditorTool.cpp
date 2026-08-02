@@ -1,4 +1,4 @@
-#include "ScriptDiagnosticsEditorTool.h"
+﻿#include "ScriptDiagnosticsEditorTool.h"
 
 #include <cfloat>
 
@@ -12,7 +12,7 @@ namespace Lumina
 {
     namespace
     {
-        constexpr float  kRefreshSeconds = 0.25f;   // 4 Hz poll while open
+        constexpr float  kScriptRefreshSeconds = 0.25f;   // 4 Hz poll while open
         constexpr uint32 kHistoryMax     = 240;     // ~60 s of history
         constexpr double kMB             = 1024.0 * 1024.0;
 
@@ -62,7 +62,7 @@ namespace Lumina
             if (bHavePrevAlloc)
             {
                 const double Delta = (double)(New.TotalAllocatedBytes - PrevAllocBytes);
-                AllocRateMBs = (float)((Delta > 0.0 ? Delta : 0.0) / kMB / kRefreshSeconds);
+                AllocRateMBs = (float)((Delta > 0.0 ? Delta : 0.0) / kMB / kScriptRefreshSeconds);
             }
             PushCapped(HistHeapMB,       (float)(New.ManagedHeapBytes / kMB));
             PushCapped(HistAllocRateMB,  AllocRateMBs);
@@ -109,7 +109,7 @@ namespace Lumina
 
         // ---- Throttled poll -----------------------------------------------------------------------
         RefreshTimer += (float)GEngine->GetDeltaTime();
-        if (!bFrozen && (RefreshTimer >= kRefreshSeconds || !bAvailable))
+        if (!bFrozen && (RefreshTimer >= kScriptRefreshSeconds || !bAvailable))
         {
             RefreshTimer = 0.0f;
             Refresh(false);

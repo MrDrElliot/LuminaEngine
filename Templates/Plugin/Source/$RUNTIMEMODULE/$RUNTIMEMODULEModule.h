@@ -1,6 +1,5 @@
-#pragma once
+﻿#pragma once
 
-#include "$RUNTIMEMODULEAPI.h"
 #include "Core/Module/ModuleInterface.h"
 
 namespace Lumina

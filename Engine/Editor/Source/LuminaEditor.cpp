@@ -27,7 +27,7 @@ namespace Lumina
         // authoritative root (Paths resolved it from this exe's location), so it
         // heals a missing or stale env var for everything downstream that still
         // depends on it -- shells, the IDE, and external game-project builds whose
-        // premake hard-fails without it. Process-local set covers tools we spawn
+        // the build tool hard-fails without it. Process-local set covers tools we spawn
         // this session; the persist covers future sessions. Editor-only on purpose:
         // a shipped game must never touch the player's environment.
         const FString& EngineRoot = Paths::GetEngineInstallDirectory();
@@ -188,9 +188,9 @@ namespace Lumina
                 const std::filesystem::path SourcePath = Entry.path();
                 const std::string Ext = SourcePath.extension().string();
 
-                // Token replace only on text files; binaries (premake5.exe, etc.) copy verbatim.
-                // .lua stays (premake5.lua carries $PROJECTNAME); .cs / .rml / .rcss are the C# + UI
-                // authoring files of the current workflow.
+                // Token replace only on text files; anything else copies verbatim. .cs covers both
+                // the C# scripts and the .Build.cs / .Target.cs rules files, which carry
+                // $PROJECTNAME in their contents and in their file names.
                 const bool bIsTextFile =
                     Ext == ".h"          || Ext == ".hpp"        || Ext == ".cpp"     ||
                     Ext == ".c"          || Ext == ".inl"        || Ext == ".lua"     ||
@@ -442,8 +442,8 @@ namespace Lumina
             return false;
         }
 
-        // Detached worker thread runs premake, captures stdout+stderr, and
-        // streams each line into the editor log under a [premake] tag so the
+        // Detached worker thread runs the build tool, captures stdout+stderr, and
+        // streams each line into the editor log under a [BuildTool] tag so the
         // user sees what's happening without a separate console window. The
         // FScopedSlowTask drives a centred progress modal for the duration.
         const std::string BatPathStr(BatPath.c_str(), BatPath.size());
@@ -451,9 +451,9 @@ namespace Lumina
 
         std::thread([BatPathStr, WorkingDirStr]()
         {
-            FScopedSlowTask Task(1.0f, "Generating project files", "Running premake5 vs2026...");
+            FScopedSlowTask Task(1.0f, "Generating project files", "Running LuminaBuildTool GenerateProjectFiles...");
 
-            LOG_INFO("[premake] running {0}", BatPathStr.c_str());
+            LOG_INFO("[BuildTool] running {0}", BatPathStr.c_str());
 
             FWString WideExe = StringUtils::ToWideString(BatPathStr.c_str());
             FWString WideCwd = StringUtils::ToWideString(WorkingDirStr.c_str());
@@ -468,16 +468,16 @@ namespace Lumina
                     {
                         return;
                     }
-                    LOG_INFO("[premake] {0}", FString(Line.data(), Line.size()).c_str());
+                    LOG_INFO("[BuildTool] {0}", FString(Line.data(), Line.size()).c_str());
                 });
 
             if (ExitCode == 0)
             {
-                LOG_INFO("[premake] project files generated successfully.");
+                LOG_INFO("[BuildTool] project files generated successfully.");
             }
             else
             {
-                LOG_ERROR("[premake] generation failed (exit code {0}).", ExitCode);
+                LOG_ERROR("[BuildTool] generation failed (exit code {0}).", ExitCode);
             }
         }).detach();
 

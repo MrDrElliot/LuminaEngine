@@ -4,15 +4,10 @@
 #include "UI/Tools/NodeGraph/Material/MaterialOutput.h"
 #include "UI/Tools/NodeGraph/Material/MaterialCompiler.h"
 
+#include "MaterialNodePinHelpers.h"
+
 namespace Lumina
 {
-    static CMaterialInput* MakeIn(CMaterialExpression* Self, const char* Name, EMaterialInputType Type = EMaterialInputType::Float)
-    {
-        CMaterialInput* P = Cast<CMaterialInput>(Self->CreatePin(CMaterialInput::StaticClass(), Name, ENodePinDirection::Input));
-        P->SetPinName(Name);
-        P->SetInputType(Type);
-        return P;
-    }
 
     void CMaterialExpression_RotateUV::BuildNode()
     {

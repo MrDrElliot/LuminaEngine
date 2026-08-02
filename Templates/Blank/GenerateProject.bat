@@ -1,7 +1,11 @@
 @echo off
 setlocal enableextensions
 
+rem Regenerates this project's IDE files. The engine is built from source alongside the project,
+rem so its own output stays in the engine tree and is shared across projects.
+
 cd /d "%~dp0"
+set "PROJECT_DIR=%CD%"
 
 if not defined LUMINA_DIR (
     echo LUMINA_DIR is not set. Run the engine's Setup.bat first.
@@ -9,16 +13,14 @@ if not defined LUMINA_DIR (
     exit /b 1
 )
 
-set "PREMAKE_EXE=%LUMINA_DIR%\Tools\premake5.exe"
-
-if not exist "%PREMAKE_EXE%" (
-    echo premake5.exe not found at "%PREMAKE_EXE%".
-    echo Run the engine's Setup.bat first.
+if not exist "%LUMINA_DIR%\LuminaBuild.bat" (
+    echo LuminaBuild.bat not found under "%LUMINA_DIR%".
+    echo LUMINA_DIR does not point at a Lumina engine root.
     endlocal
     exit /b 1
 )
 
-"%PREMAKE_EXE%" vs2026
+call "%LUMINA_DIR%\LuminaBuild.bat" GenerateProjectFiles -Project="%PROJECT_DIR%" %*
 if errorlevel 1 (
     echo.
     echo Project generation failed.

@@ -96,6 +96,12 @@ namespace Lumina
         static int InputTextCallbackStub(ImGuiInputTextCallbackData* Data);
         int InputTextCallback(ImGuiInputTextCallbackData* Data);
 
+        // Selection is keyed on the index into the log queue, so it survives the filter changing
+        // under it. Anchor is a queue index too; the shift-range resolves it against the visible list.
+        void HandleRowClick(uint32 MessageIndex, const TVector<uint32>& VisibleIndices);
+        void CopyToClipboard(const TVector<uint32>& VisibleIndices, bool bSelectionOnly) const;
+        void AppendMessageText(FString& Out, const FConsoleMessage& Message) const;
+
         const char* GetLevelIcon(ELogLevel Level) const;
         const char* GetLevelLabel(ELogLevel Level) const;
         static ImVec4 GetColorForLevel(ELogLevel Level);
@@ -123,7 +129,10 @@ namespace Lumina
         } Settings;
 
         FConsoleFilter Filter;
-        
+
+        THashSet<uint32> SelectedMessages;
+        int32 SelectionAnchor = -1;
+
         bool bShowAutoComplete;
         int32 AutoCompleteSelectedIndex;
         TVector<FAutoCompleteCandidate> AutoCompleteCandidates;

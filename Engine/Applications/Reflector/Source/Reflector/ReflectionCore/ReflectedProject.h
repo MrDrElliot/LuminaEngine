@@ -27,6 +27,18 @@ namespace Lumina::Reflection
         // plugin's OWN assembly, not LuminaSharp.dll.
         eastl::string                                                       CSharpBindingsDir;
 
+        /// Where this project's generated C++ goes. Empty uses the workspace default under
+        /// Intermediates/Reflection/<Project>. The build system sets it so two targets that
+        /// share a module do not share one output directory and overwrite each other.
+        eastl::string                                                       GeneratedDir;
+
+        /// Precompiled header this project's generated sources must open with, or empty when the
+        /// module has none. Supplied by the build system rather than assumed: a PCH is named after
+        /// the module that owns it, so generated code cannot know the name, and guessing one that
+        /// belongs to a different module only works while that module happens to be on the
+        /// include path.
+        eastl::string                                                       PrecompiledHeader;
+
         // Parsed for type discovery only -- no code is generated for it, and its output directories are
         // never swept. A game or plugin workspace pulls the engine's modules in this way so that its own
         // types can name engine types: a base class, or a property typed as an engine struct, needs the

@@ -523,17 +523,27 @@ namespace Lumina
                                    "Restart the editor to load the new module set.");
                 ImGui::Spacing();
 
-                const float ButtonWidth = 130.0f;
-                const float TotalWidth  = ButtonWidth * 2.0f + 12.0f;
+                const char* RestartLabel = LE_ICON_POWER " Restart Now";
+                const char* LaterLabel   = "Later";
+
+                const ImGuiStyle& Style = ImGui::GetStyle();
+
+                // Sized from the labels. A fixed width clips the text once the font scales with DPI.
+                const float RestartWidth = ImGui::CalcTextSize(RestartLabel).x;
+                const float LaterWidth   = ImGui::CalcTextSize(LaterLabel).x;
+                const float ButtonWidth  = (RestartWidth > LaterWidth ? RestartWidth : LaterWidth)
+                                         + Style.FramePadding.x * 2.0f;
+
+                const float TotalWidth = ButtonWidth * 2.0f + Style.ItemSpacing.x;
                 ImGui::SetCursorPosX((ImGui::GetWindowWidth() - TotalWidth) * 0.5f);
 
-                if (ImGui::Button(LE_ICON_POWER " Restart Now", ImVec2(ButtonWidth, 0)))
+                if (ImGui::Button(RestartLabel, ImVec2(ButtonWidth, 0)))
                 {
                     FApplication::RequestExit();
                     return true;
                 }
                 ImGui::SameLine();
-                if (ImGui::Button("Later", ImVec2(ButtonWidth, 0)))
+                if (ImGui::Button(LaterLabel, ImVec2(ButtonWidth, 0)))
                 {
                     return true;
                 }

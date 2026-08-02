@@ -73,6 +73,12 @@ namespace Lumina
         }
     }
 
+    CEdNodeGraphPin* CEdGraphNode::GetRerouteSourcePin() const
+    {
+        const TVector<TObjectPtr<CEdNodeGraphPin>>& Inputs = GetInputPins();
+        return Inputs.empty() ? nullptr : Inputs[0].Get();
+    }
+
     CEdNodeGraphPin* CEdGraphNode::GetPin(uint32 ID, ENodePinDirection Direction)
     {
         for (CEdNodeGraphPin* Pin : NodePins[uint32(Direction)])

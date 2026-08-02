@@ -1,6 +1,5 @@
-#pragma once
+﻿#pragma once
 
-#include "GameplayExtrasRuntimeAPI.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Templates/Optional.h"
 #include "HealthComponent.generated.h"

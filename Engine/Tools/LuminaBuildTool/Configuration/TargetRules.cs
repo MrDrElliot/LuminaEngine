@@ -1,0 +1,302 @@
+namespace LuminaBuildTool.Configuration;
+
+/// <summary>
+/// Immutable description of what is being built, handed to every TargetRules and ModuleRules
+/// constructor.
+/// </summary>
+public sealed class TargetInfo
+{
+    public TargetInfo(
+        string Name,
+        TargetType Type,
+        BuildPlatform Platform,
+        BuildConfiguration Configuration,
+        BuildDirectories Directories,
+        BuildOptions? Options = null,
+        bool bMonolithic = false)
+    {
+        this.Name = Name;
+        this.Type = Type;
+        this.Platform = Platform;
+        this.Configuration = Configuration;
+        this.Directories = Directories;
+        this.Options = Options ?? BuildOptions.Empty;
+        this.bMonolithic = bMonolithic;
+    }
+
+    /// <summary>
+    /// Every module links into one executable rather than producing a shared library each.
+    /// Resolved from the target's rules on a first construction pass, then handed back here.
+    /// </summary>
+    public bool bMonolithic { get; }
+
+    /// <summary>Optional-feature switches for this build.</summary>
+    public BuildOptions Options { get; }
+
+    /// <summary>Resolved directory layout, so rules can locate engine paths without guessing.</summary>
+    public BuildDirectories Directories { get; }
+
+    /// <summary>Engine installation root.</summary>
+    public string EngineDirectory => Directories.EngineRoot;
+
+    /// <summary>Engine/Source, the root of the engine's own C++ tree.</summary>
+    public string EngineSourceDirectory => Directories.EngineSourceDirectory;
+
+    /// <summary>Game project root, or null when building the engine itself.</summary>
+    public string? ProjectDirectory => Directories.ProjectRoot;
+
+    /// <summary>True when the build machine has an NVIDIA display adapter.</summary>
+    public bool bHostHasNvidiaGpu => Core.HostCapabilities.bHasNvidiaGpu;
+
+    public string Name { get; }
+
+    public TargetType Type { get; }
+
+    public BuildPlatform Platform { get; }
+
+    public BuildConfiguration Configuration { get; }
+
+    public bool bWithEditor => Type == TargetType.Editor;
+
+    public bool bShipping => Configuration == BuildConfiguration.Shipping;
+
+    public bool bDebug => Configuration == BuildConfiguration.Debug;
+
+    /// <summary>
+    /// Directory name under Binaries, for example "Windows64". Must match the engine's baked
+    /// LUMINA_PLATFORM_NAME or the runtime cannot resolve plugin and game module binaries.
+    /// </summary>
+    public string PlatformName => Platform.GetOutputDirectoryName();
+
+    /// <summary>Operating system without architecture, for example "Windows".</summary>
+    public string SystemName => Platform.GetSystemName();
+
+    public string ArchitectureName => Platform.GetArchitectureName();
+
+    public override string ToString() => $"{Name} {PlatformName} {Configuration}";
+}
+
+/// <summary>A .NET project the build drives through the dotnet SDK.</summary>
+/// <param name="ProjectFile">Absolute path of the .csproj.</param>
+/// <param name="OutputAssembly">
+/// Absolute path of the assembly it produces. Declared rather than parsed out of the project so the
+/// build can check whether it is current without invoking MSBuild.
+/// </param>
+public sealed record ManagedProject(string ProjectFile, string OutputAssembly);
+
+/// <summary>
+/// Base class for a Target.cs file. A target names one launch module and pulls in whatever that
+/// module transitively depends on, plus any extra modules listed here.
+/// </summary>
+public abstract class TargetRules
+{
+    /// <summary>
+    /// Identity published just before construction, so a Target.cs can resolve paths relative to
+    /// itself from inside its constructor.
+    /// </summary>
+    internal sealed class ConstructionContext
+    {
+        public required string RulesFile { get; init; }
+
+        public required string RulesDirectory { get; init; }
+    }
+
+    [ThreadStatic]
+    internal static ConstructionContext? PendingConstruction;
+
+    protected TargetRules(TargetInfo Target)
+    {
+        this.Target = Target;
+        Name = Target.Name;
+        Type = Target.Type;
+        LaunchModuleName = Target.Name;
+        bUseDebugCrt = Target.Configuration == BuildConfiguration.Debug;
+
+        ConstructionContext Context = PendingConstruction
+            ?? throw new InvalidOperationException(
+                "TargetRules was constructed outside the rules assembly. Target.cs types are created by LuminaBuildTool.");
+
+        RulesFile = Context.RulesFile;
+        RulesDirectory = Context.RulesDirectory;
+    }
+
+    /// <summary>Resolves a path relative to the Target.cs file. Absolute inputs pass through.</summary>
+    public string TargetPath(string RelativePath)
+    {
+        return Path.IsPathRooted(RelativePath)
+            ? Path.GetFullPath(RelativePath)
+            : Path.GetFullPath(Path.Combine(RulesDirectory, RelativePath));
+    }
+
+    /// <summary>What is being built. Read only; do not mutate from rules.</summary>
+    public TargetInfo Target { get; }
+
+    /// <summary>Target name. Defaults to the Target.cs file's base name.</summary>
+    public string Name { get; set; }
+
+    public TargetType Type { get; set; }
+
+    /// <summary>
+    /// Module that produces this target's executable. Its binary type decides console versus
+    /// windowed. Defaults to a module sharing the target's name.
+    /// </summary>
+    public string LaunchModuleName { get; set; }
+
+    /// <summary>
+    /// Modules to build even though nothing links them, for plugins and for tools that must exist
+    /// before the launch module runs.
+    /// </summary>
+    public List<string> ExtraModuleNames { get; } = new();
+
+    /// <summary>
+    /// Builds this target in a different configuration than the one requested. Null builds the
+    /// requested one. A tool linking prebuilt release libraries pins itself here so a Debug
+    /// solution configuration does not mix debug and release C runtimes.
+    /// </summary>
+    public BuildConfiguration? ConfigurationOverride { get; set; }
+
+    /// <summary>
+    /// Definitions applied to every module in the target, including third-party modules.
+    /// ABI-affecting definitions belong here and nowhere else.
+    /// </summary>
+    public List<string> GlobalDefinitions { get; } = new();
+
+    /// <summary>Compiler options applied to every module in the target.</summary>
+    public List<string> GlobalCompilerOptions { get; } = new();
+
+    /// <summary>Linker options applied to every linked binary in the target.</summary>
+    public List<string> GlobalLinkerOptions { get; } = new();
+
+    /// <summary>Warning numbers suppressed target wide.</summary>
+    public List<string> GlobalDisabledWarnings { get; } = new();
+
+    /// <summary>
+    /// Targets built to completion before this one starts, for tools this target's build needs
+    /// such as the reflection code generator.
+    /// </summary>
+    public List<string> PreBuildTargetNames { get; } = new();
+
+    /// <summary>
+    /// .NET projects built as part of this target. Not linked into anything; the engine loads them
+    /// at run time.
+    /// </summary>
+    public List<ManagedProject> ManagedProjects { get; } = new();
+
+    /// <summary>Adds a .NET project, resolving both paths relative to the Target.cs file.</summary>
+    public void AddManagedProject(string ProjectFile, string OutputAssembly)
+    {
+        ManagedProjects.Add(new ManagedProject(TargetPath(ProjectFile), TargetPath(OutputAssembly)));
+    }
+
+    /// <summary>
+    /// Include this target in a whole-solution build. Off for targets that stay individually
+    /// buildable in the IDE but should not be part of the default build, such as a test suite.
+    /// </summary>
+    public bool bBuildByDefault { get; set; } = true;
+
+    /// <summary>Make this the solution's startup target.</summary>
+    public bool bIsStartupTarget { get; set; }
+
+    /// <summary>
+    /// Executable the IDE launches. Empty launches whatever the launch module produces, which is
+    /// wrong for a target producing a library some other program loads.
+    /// </summary>
+    public string DebuggerCommand { get; set; } = string.Empty;
+
+    /// <summary>Arguments passed to the launched executable.</summary>
+    public string DebuggerArguments { get; set; } = string.Empty;
+
+    /// <summary>Working directory for the launched executable. Empty uses the engine root.</summary>
+    public string DebuggerWorkingDirectory { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Publish this target's reflected modules as the engine manifest that project builds read.
+    /// </summary>
+    /// <remarks>
+    /// Only engine targets. A project target consumes the manifest; if it also published one it
+    /// would overwrite the engine's with a list containing its own modules.
+    /// </remarks>
+    public bool bPublishesEngineReflectionManifest { get; set; } = true;
+
+    /// <summary>Plugins to enable by name on top of the ones marked enabled by default.</summary>
+    public List<string> EnabledPlugins { get; } = new();
+
+    /// <summary>Plugins to force off even when they are enabled by default.</summary>
+    public List<string> DisabledPlugins { get; } = new();
+
+    /// <summary>
+    /// Link every module statically into a single executable instead of producing one shared
+    /// library per module.
+    /// </summary>
+    public bool bMonolithic { get; set; }
+
+    /// <summary>
+    /// Default for whether this target's modules compile as unity files. A module overrides it with
+    /// its own bUseUnityBuild.
+    /// </summary>
+    /// <remarks>
+    /// Merging translation units makes file-scope names, macros and using-directives visible across
+    /// files, so vendored third-party code is excluded wholesale. Build with -NoUnity to rule unity
+    /// out as the cause of a failure without editing any rules.
+    /// </remarks>
+    public bool bUseUnityBuild { get; set; } = true;
+
+    /// <summary>
+    /// Approximate source bytes packed into one unity file. Bytes rather than a file count because
+    /// source sizes within a module vary by orders of magnitude.
+    /// </summary>
+    public int UnityBuildBytesPerFile { get; set; } = 384 * 1024;
+
+    /// <summary>
+    /// Modules with fewer mergeable sources than this compile file by file, where there is no
+    /// repeated header parsing left to save.
+    /// </summary>
+    public int MinFilesForUnityBuild { get; set; } = 3;
+
+    /// <summary>Emit debug symbols.</summary>
+    public bool bDebugSymbols { get; set; } = true;
+
+    /// <summary>Enable link time code generation.</summary>
+    public bool bLinkTimeCodeGeneration { get; set; }
+
+    public bool bIncrementalLinking { get; set; } = true;
+
+    /// <summary>C++ language standard passed to the toolchain.</summary>
+    public string CppStandard { get; set; } = "c++latest";
+
+    /// <summary>Instruction set baseline. AVX2 crashes on CPUs without it; see the engine target.</summary>
+    public string VectorExtensions { get; set; } = "AVX";
+
+    public bool bEnableExceptions { get; set; } = true;
+
+    public bool bEnableRtti { get; set; }
+
+    /// <summary>Use the dynamically linked C runtime.</summary>
+    public bool bUseDynamicCrt { get; set; } = true;
+
+    /// <summary>
+    /// Link the debug C runtime. On in Debug, but a target linking release third-party libraries
+    /// must turn it off or the two runtimes collide.
+    /// </summary>
+    public bool bUseDebugCrt { get; set; }
+
+    /// <summary>Treat the compiler's own warnings as errors across the target.</summary>
+    public bool bWarningsAsErrors { get; set; }
+
+    /// <summary>Compiler warning level. Maps to /W&lt;n&gt; on MSVC.</summary>
+    public int WarningLevel { get; set; } = 3;
+
+    /// <summary>Suffix appended to output binaries, for example "-Debug".</summary>
+    public string OutputSuffix { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Overrides the directory binaries are written to. Empty uses Binaries/&lt;Platform&gt;.
+    /// </summary>
+    public string OutputDirectoryOverride { get; set; } = string.Empty;
+
+    /// <summary>Absolute path of the Target.cs file.</summary>
+    public string RulesFile { get; }
+
+    /// <summary>Directory containing the Target.cs file.</summary>
+    public string RulesDirectory { get; }
+}

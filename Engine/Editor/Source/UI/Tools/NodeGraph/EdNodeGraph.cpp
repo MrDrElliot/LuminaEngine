@@ -885,7 +885,7 @@ namespace Lumina
                 ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.4f);
             }
 
-            if (Node->IsRerouteNode())
+            if (Node->WantsRerouteDotRendering())
             {
                 DrawRerouteNode(Node);
                 if (bDeadNode)
@@ -1310,22 +1310,35 @@ namespace Lumina
 
         NodeEditor::EndShortcut();
         
-        bool bAnyNodeSelected = false;
+        // Report the selection once per frame, not once per selected node. Firing per node made every
+        // consumer bind its property table to each selected node in turn, so a multi-selection
+        // reassigned the table several times a frame and it never settled on anything editable.
+        CEdGraphNode* SoleSelectedNode = nullptr;
+        int32 SelectedNodeCount = 0;
+
         for (CEdGraphNode* Node : Nodes)
         {
             if (NodeEditor::IsNodeSelected(Node->GetNodeID()))
             {
-                bAnyNodeSelected = true;
-                if (NodeSelectedCallback)
+                ++SelectedNodeCount;
+                if (SelectedNodeCount == 1)
                 {
-                    NodeSelectedCallback(Node);
+                    SoleSelectedNode = Node;
+                }
+                else
+                {
+                    // Nothing below needs an exact count, and graphs can be large.
+                    break;
                 }
             }
         }
-    
-        if (!bAnyNodeSelected && NodeSelectedCallback)
+
+        if (NodeSelectedCallback)
         {
-            NodeSelectedCallback(nullptr);
+            // A multi-selection has no single object to edit, and the property table holds one object.
+            // Reporting none lets consumers fall back to their default view rather than picking an
+            // arbitrary member of the selection.
+            NodeSelectedCallback(SelectedNodeCount == 1 ? SoleSelectedNode : nullptr);
         }
 
         // Surface the single selected link to the graph. Their 1-based IDs match last frame's

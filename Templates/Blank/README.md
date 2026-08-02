@@ -9,13 +9,19 @@ A Lumina Engine project.
 
 ## First-time setup
 
-1. Run `GenerateProject.bat` from this folder. This invokes `%LUMINA_DIR%\Tools\premake5.exe vs2026` and writes `$PROJECTNAME.slnx`.
-2. Open `$PROJECTNAME.slnx` in **Visual Studio** or **JetBrains Rider**.
+1. Run `GenerateProject.bat` from this folder. It calls `%LUMINA_DIR%\LuminaBuild.bat GenerateProjectFiles` for this project and writes `$PROJECTNAME.sln`.
+2. Open `$PROJECTNAME.sln` in **Visual Studio** or **JetBrains Rider**.
 3. Press **F5**.
 
-F5 builds the game DLL (`Binaries\Windows64\$PROJECTNAME-Development.dll`) and launches the Lumina editor with this project pre-loaded. Breakpoints in your game module will hit as soon as `IMPLEMENT_MODULE` runs.
+F5 builds the game DLL (`Binaries\Windows64\$PROJECTNAME-Development.dll`) and launches the Lumina
+editor with this project pre-loaded. Breakpoints in your game module hit as soon as
+`IMPLEMENT_MODULE` runs.
 
-- **Visual Studio** uses the `.vcxproj.user` settings premake writes (`debugcommand` -> `Lumina-Development.exe`).
+The solution also contains the engine's own targets, because the engine is built from source
+alongside your project. Its output stays in the engine tree and is shared by every project, so it
+is built once and not again.
+
+- **Visual Studio** uses the generated `.vcxproj.user`, which points Run at the editor with `--Project=` set to this project.
 - **Rider** uses the shared `.run/` launch configurations that ship with this template. Pick one from the configuration dropdown next to the Run button.
 
 ## Scripting (C#)
@@ -32,18 +38,33 @@ The C++ module in `Source/` is optional: use it for native types, custom compone
 
 - **C# scripts** (`Game/Scripts/*.cs`): save in your editor; the running engine recompiles and reloads them.
 - **Content** (assets in `Game/Content/`): hot-reloads inside the editor; no rebuild needed.
-- **C++** (`Source/*.cpp` / `*.h`): press F5 again, VS rebuilds the DLL and relaunches the editor. New `.h` / `.cpp` files require a re-run of `GenerateProject.bat` (premake globs sources at generate time).
+- **C++** (`Source/*.cpp` / `*.h`): press F5 again to rebuild the DLL and relaunch the editor. New `.h` / `.cpp` files are picked up by the build automatically; re-run `GenerateProject.bat` to make them show up in the IDE's file list.
 
 ## Project layout
 
 ```
 $PROJECTNAME.lproject          Project descriptor (name, GUID, plugins)
-premake5.lua                   Build script, calls LuminaGameProject()
-GenerateProject.bat            One-shot: regenerate the .slnx after source changes
+GenerateProject.bat            Regenerate the .sln after adding or removing source files
 Config/GameSettings.json       Per-project engine settings (startup maps, cook roots, ...)
 Source/                        Your C++ module (optional)
+  $PROJECTNAME.Target.cs       What to build: names the launch module, points Run at the editor
+  $PROJECTNAME.Build.cs        How to build it: dependencies, defines, include paths
+Plugins/                       Project plugins, one folder each (see Plugins/README.md)
 Game/Content/                  Assets, surfaced to the engine under /Game/Content
 Game/Scripts/                  C# scripts, compiled in-editor (surfaced under /Game/Scripts)
-Tools/ReflectionRunner.bat     Prebuild step, regenerates C++ reflection code
-Intermediates/Reflection/      Generated reflection code (do not edit)
 ```
+
+`Binaries/` and `Intermediates/` are build output and are ignored by git.
+
+## Adding to the C++ module
+
+`Source/$PROJECTNAME.Build.cs` is the whole build configuration for the module. To use another
+engine or third-party module, name it there:
+
+```csharp
+PrivateDependencyModuleNames.Add("JoltPhysics");
+```
+
+Export a type from the module with the `$PROJECTNAMEUPPER_API` macro, as
+`Source/$PROJECTNAMEModule.h` does. The build system defines that macro for you; there is no header
+to edit and nothing to declare.

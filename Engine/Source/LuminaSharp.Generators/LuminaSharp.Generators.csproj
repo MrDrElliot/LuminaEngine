@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Roslyn source generator backing [NativeCall] and the managed export registry. Referenced as
+       an analyzer by LuminaSharp and copied beside it so the runtime script compiler can load it. -->
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <IsRoslynComponent>true</IsRoslynComponent>
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <Configurations>Debug;Development;Shipping</Configurations>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <OutputPath>$(MSBuildThisFileDirectory)..\..\..\Intermediates\Managed\LuminaSharp.Generators\</OutputPath>
+    <!-- BaseIntermediateOutputPath is set in Directory.Build.props; it is read too early to set here. -->
+  </PropertyGroup>
+
+  <!-- Development and Shipping are engine configurations the .NET SDK does not know; on the
+       managed side both are simply optimized builds. -->
+  <PropertyGroup Condition="'$(Configuration)' != 'Debug'">
+    <Optimize>true</Optimize>
+    <DebugType>portable</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- PrivateAssets keeps the Roslyn package build-time only. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.13.0" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>

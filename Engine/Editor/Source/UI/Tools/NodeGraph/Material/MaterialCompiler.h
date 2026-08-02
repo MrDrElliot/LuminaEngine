@@ -322,6 +322,14 @@ namespace Lumina
         FInputValue GetTypedInputValue(CMaterialInput* Input, float DefaultValue = 0.0f);
         FInputValue GetTypedInputValue(CMaterialInput* Input, const FString& DefaultValueStr);
 
+        // Walks back through any passthrough nodes (plain reroutes and named reroutes) to the output
+        // pin that actually produces the value. Returns nullptr when the chain dead-ends unconnected
+        // or a named reroute resolves to nothing, which callers must treat as "no connection".
+        //
+        // Anything that reads a connected pin's owning node has to go through this. A reroute emits no
+        // variable of its own, so binding to its node name yields an identifier that was never declared.
+        static CMaterialOutput* ResolveThroughReroutes(CMaterialOutput* OutputPin);
+
         static int32 GetComponentCount(EComponentMask Mask);
         static int32 GetComponentCount(EMaterialInputType Type);
 

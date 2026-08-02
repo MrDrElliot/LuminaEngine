@@ -64,7 +64,7 @@ covered by Microsoft's redistribution terms, not MIT.
 
 - Persists `LUMINA_DIR` to `HKCU\Environment` so standalone game projects can find the engine. Remove with `reg delete "HKCU\Environment" /v LUMINA_DIR /f`.
 - Points `core.hooksPath` at [`BuildScripts/Hooks`](BuildScripts/Hooks). The one hook, `post_merge`, wipes `Binaries/`, `Intermediates/`, and stale IDE files after a merge.
-- Downloads `premake5` from its official GitHub release if `Tools/premake5.exe` is missing.
+- Generates the IDE project files by calling `LuminaBuild.bat GenerateProjectFiles`.
 
 ## Updating the bundle
 
@@ -74,5 +74,5 @@ gh release upload external-deps External.zip --clobber
 ```
 
 Then repin the hash: run `Get-FileHash` (above) and paste the value into
-`EXPECTED_SHA256` in the same commit. First time only, create the release with
+`SetupMode.ExpectedSha256` in the same commit. First time only, create the release with
 `gh release create external-deps External.zip --title "External dependencies"`.

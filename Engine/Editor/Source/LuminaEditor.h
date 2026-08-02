@@ -34,8 +34,8 @@ namespace Lumina
 
         /**
          * Scaffolds a new project-local plugin from the Plugin template into
-         * <ProjectPath>/Plugins/<NewPluginName>/, emitting the .lplugin, the
-         * premake .lua, and a Runtime + Editor module pair. Requires a loaded
+         * <ProjectPath>/Plugins/<NewPluginName>/, emitting the .lplugin and a
+         * Runtime + Editor module pair with their Build.cs. Requires a loaded
          * project. Returns true and fills OutPluginDir with the plugin folder;
          * on failure returns false with a reason in OutError. Regenerate the
          * project (GenerateProjectFiles) afterward so the new modules build.
@@ -44,8 +44,8 @@ namespace Lumina
 
         /**
          * Synchronously runs the project's GenerateProject.bat in a detached
-         * console so the user can watch premake's output. Returns true if the
-         * spawn succeeded; the user closes the console when premake finishes.
+         * console so the user can watch the build tool's output. Returns true if
+         * the spawn succeeded; the user closes the console when it finishes.
          */
         bool GenerateProjectFiles(FStringView ProjectDirectory) const;
 

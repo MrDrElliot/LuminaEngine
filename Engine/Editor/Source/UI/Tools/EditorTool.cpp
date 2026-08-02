@@ -1106,6 +1106,11 @@ namespace Lumina
             // WASDQE flies only while the right mouse button is held (UE-style), so the
             // W/E/R gizmo hotkeys and Q/E don't shove the camera around. The LMB+RMB pan keeps
             // the fly keys live, since the right button never left the mouse.
+            // Q/E rise and fall along world vertical, not the camera's own up. Using the camera's up
+            // means a pitched view slides you forward or back while you are only asking for height,
+            // and looking straight down makes the keys do nothing useful at all.
+            const FVector3 WorldUp(0.0f, 1.0f, 0.0f);
+
             FVector3 Acceleration(0.0f);
             if (bWantLook || bWantPanDrag)
             {
@@ -1113,8 +1118,8 @@ namespace Lumina
                 if (ImGui::IsKeyDown(ImGuiKey_S)) Acceleration -= Forward;
                 if (ImGui::IsKeyDown(ImGuiKey_D)) Acceleration += Right;
                 if (ImGui::IsKeyDown(ImGuiKey_A)) Acceleration -= Right;
-                if (ImGui::IsKeyDown(ImGuiKey_E)) Acceleration += Up;
-                if (ImGui::IsKeyDown(ImGuiKey_Q)) Acceleration -= Up;
+                if (ImGui::IsKeyDown(ImGuiKey_E)) Acceleration += WorldUp;
+                if (ImGui::IsKeyDown(ImGuiKey_Q)) Acceleration -= WorldUp;
             }
 
             if (Math::Length(Acceleration) > 0.0f)

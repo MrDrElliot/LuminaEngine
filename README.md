@@ -1,4 +1,4 @@
-<div align="center">
+﻿<div align="center">
 
 <img src="https://github.com/user-attachments/assets/552b8ca0-ebca-4876-9c6a-df38c468d41e" width="120"/>
 
@@ -189,7 +189,7 @@ https://github.com/user-attachments/assets/3d797479-fc47-4b8f-baf4-87315709d0c2
    (`External.zip`, ~671 MB), verifies it against a SHA-256 hash pinned in this
    repo (once the maintainer records it, see
    [`DEPENDENCIES.md`](DEPENDENCIES.md)), persists the `LUMINA_DIR` environment
-   variable, configures git hooks, and generates `Lumina.slnx`.
+   variable, configures git hooks, and generates `Lumina.sln`.
 
    The bundle contains the .NET 10 runtime (C# scripting), LLVM/Clang 19
    (reflection codegen), the Slang shader compiler, RenderDoc, and Tracy. Each
@@ -205,27 +205,25 @@ https://github.com/user-attachments/assets/3d797479-fc47-4b8f-baf4-87315709d0c2
 
 1. **Open the solution**
 
-   Open `Lumina.slnx` in Visual Studio.
+   Open `Lumina.sln` in Visual Studio.
 
 2. **Build and run**
 
    - Set `Lumina` as the startup project.
-   - Choose the `Development` or `Debug` configuration. Debug is significantly
-     slower but enables full debugger functionality.
-   - Select a platform: `Editor` (default, includes editor tooling) or `Game`
-     (runtime only, no editor).
+   - Pick a configuration: `Development Editor` (default), `Debug Editor` for
+     full debugger functionality at the cost of speed, or `Development Game` for
+     the runtime without the editor.
    - Press F5, or use **Build -> Run**.
 
 3. **Start developing**
 
-   - Open the `Sandbox` project to experiment.
-   - Or copy `Templates/Blank/` to create a new project, then run its
+   - Copy `Templates/Blank/` to create a new project, then run its
      `GenerateProject.bat` to produce a solution.
 
 ### Build Configuration
 
 Optional engine features are controlled from a single file,
-[`BuildScripts/BuildConfig.lua`](BuildScripts/BuildConfig.lua). Each feature is
+[`Engine/Build/BuildConfiguration.json`](Engine/Build/BuildConfiguration.json). Each feature is
 `"auto"`, `"on"` (force into every configuration) or `"off"` (strip from every
 configuration), and the choices are baked in when you regenerate the solution.
 

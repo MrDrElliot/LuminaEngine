@@ -16,11 +16,16 @@ namespace Lumina::Reflection::Visitor
         if (kind == CXCursor_EnumConstantDecl)
         {
             eastl::string DisplayName = ClangUtils::GetCursorDisplayName(Cursor);
-            const clang::EnumConstantDecl* EnumConstantDecl = (const clang::EnumConstantDecl*)Cursor.data[0];
 
-            const llvm::APSInt& initVal = EnumConstantDecl->getInitVal();
-            uint32_t Value = (int32_t)initVal.getExtValue();
-            
+            // Read with the enum's own signedness. Reading an unsigned constant as signed
+            // sign-extends it, so a flag like `All = 0xFFFF` on a uint16 enum would come back as
+            // 0xFFFFFFFF and no longer fit the type the binding emitter gives it.
+            const CXType Underlying = clang_getEnumDeclIntegerType(clang_getCursorSemanticParent(Cursor));
+
+            const uint32_t Value = ClangUtils::IsUnsignedIntegerType(Underlying)
+                ? (uint32_t)clang_getEnumConstantDeclUnsignedValue(Cursor)
+                : (uint32_t)(int32_t)clang_getEnumConstantDeclValue(Cursor);
+
             FReflectedEnum::FConstant Constant;
             Constant.Label = DisplayName;
             Constant.ID = eastl::string(DisplayName);
@@ -46,9 +51,9 @@ namespace Lumina::Reflection::Visitor
         void* Data = clang_getCursorType(Cursor).data[0];
         if(Data == nullptr)
         {
-            return CXChildVisit_Break;
+            return CXChildVisit_Continue;
         }
-        
+
         FReflectionMacro Macro;
         if(!Context->TryFindMacroForCursor(Context->ReflectedHeader->HeaderPath, Cursor, Macro))
         {
@@ -57,9 +62,13 @@ namespace Lumina::Reflection::Visitor
 
         
         eastl::string FullyQualifiedName;
-        if (!ClangUtils::GetQualifiedNameForType(clang::QualType::getFromOpaquePtr(Data), FullyQualifiedName))
+        if (!ClangUtils::GetQualifiedNameForDeclCursor(Cursor, FullyQualifiedName))
         {
-            return CXChildVisit_Break;
+            LRT_ERROR(Cursor, EDiagId::BadTypePrefix,
+                "Reflected enum '%s' has no usable qualified name. Anonymous enums cannot be "
+                "reflected; give it a name at namespace or class scope.",
+                CursorName.c_str());
+            return CXChildVisit_Continue;
         }
         
         if(Macro.Type != EReflectionMacro::Reflect)
@@ -75,12 +84,18 @@ namespace Lumina::Reflection::Visitor
                 CursorName.c_str(), CursorName.c_str());
         }
 
-        const clang::EnumDecl* pEnumDecl = (const clang::EnumDecl*) Cursor.data[0];
-        clang::QualType IntegerType = pEnumDecl->getIntegerType();
+        // Through the C API rather than by casting Cursor.data to a clang::EnumDecl: that cast is
+        // only valid while the LLVM headers match the linked libclang exactly, and when they do
+        // not it yields a pointer that is neither null nor safe to dereference.
+        const CXType IntegerType = clang_getEnumDeclIntegerType(Cursor);
 
-        if (IntegerType.isNull())
+        if (IntegerType.kind == CXType_Invalid)
         {
-            return CXChildVisit_Break;
+            LRT_ERROR(Cursor, EDiagId::BadTypePrefix,
+                "Reflected enum '%s' has no underlying integer type. Give it an explicit "
+                "underlying type, for example `enum class %s : uint8`.",
+                CursorName.c_str(), CursorName.c_str());
+            return CXChildVisit_Continue;
         }
         
         FReflectedEnum* ReflectedEnum = Context->ReflectionDatabase.GetOrCreateReflectedType<FReflectedEnum>(FStringHash(FullyQualifiedName));
@@ -92,9 +107,9 @@ namespace Lumina::Reflection::Visitor
 
         // Record the underlying integer size + signedness so the C# emitter can give the generated enum a
         // matching explicit backing type, letting it mirror by value inside a blittable struct at any width.
-        const long long EnumSizeBytes = clang_Type_getSizeOf(clang_getEnumDeclIntegerType(Cursor));
+        const long long EnumSizeBytes = clang_Type_getSizeOf(IntegerType);
         ReflectedEnum->UnderlyingSize = (EnumSizeBytes > 0) ? (uint32_t)EnumSizeBytes : 4;
-        ReflectedEnum->bUnsignedUnderlying = IntegerType->isUnsignedIntegerType();
+        ReflectedEnum->bUnsignedUnderlying = ClangUtils::IsUnsignedIntegerType(IntegerType);
 
         if (!Context->CurrentNamespace.empty())
         {

@@ -64,8 +64,9 @@ namespace Lumina::Reflection::Visitor
 		eastl::string CursorName = ClangUtils::GetCursorDisplayName(Cursor);
 
 		CXType FieldType = clang_getCursorType(Cursor);
-		clang::QualType FieldQualType = ClangUtils::GetQualType(FieldType);
-		if (FieldQualType.isNull())
+
+		eastl::string TypeSpelling;
+		if (!ClangUtils::GetQualifiedNameForCXType(FieldType, TypeSpelling))
 		{
 			LRT_ERROR(Cursor, Reflection::EDiagId::FieldQualifyFailed,
 				"Failed to qualify the type of property '%s' in '%s'.",
@@ -74,23 +75,22 @@ namespace Lumina::Reflection::Visitor
 			return eastl::nullopt;
 		}
 
-		eastl::string TypeSpelling;
-		ClangUtils::GetQualifiedNameForType(FieldQualType, TypeSpelling);
 		EPropertyTypeFlags PropFlags = GetCoreTypeFromName(TypeSpelling.c_str());
-
 
 		// Is not a core type.
 		if (PropFlags == EPropertyTypeFlags::None)
 		{
-			if (FieldQualType->isEnumeralType())
+			const CXTypeKind CanonicalKind = clang_getCanonicalType(FieldType).kind;
+
+			if (CanonicalKind == CXType_Enum)
 			{
 				PropFlags = EPropertyTypeFlags::Enum;
 			}
-			else if (FieldQualType->isStructureType())
+			else if (CanonicalKind == CXType_Record)
 			{
 				PropFlags = EPropertyTypeFlags::Struct;
 			}
-			else if (FieldQualType->isPointerType())
+			else if (CanonicalKind == CXType_Pointer)
 			{
 				LRT_ERROR(Cursor, Reflection::EDiagId::RawObjectPointer,
 					"Property '%s' is a raw pointer ('%s'). Raw pointers to CObject are not reflectable; use TObjectPtr<T> instead.",
@@ -128,48 +128,49 @@ namespace Lumina::Reflection::Visitor
 		Info.OwningCursor	= Cursor;
 		Info.Name			= CursorName;
 		Info.TypeName		= TypeSpelling;
-		Info.RawFieldType	= ClangUtils::GetSafeTypeAsString(FieldQualType);
+		Info.RawFieldType	= ClangUtils::GetSafeTypeAsString(FieldType);
 
 		return Info;
 	}
 
 	static eastl::optional<FFieldInfo> CreateFuncField(FClangParserContext* Context, const CXType& FieldType)
 	{
-		clang::QualType FieldQualType = ClangUtils::GetQualType(FieldType);
-		if (FieldQualType.isNull())
+		eastl::string TypeSpelling;
+		if (!ClangUtils::GetQualifiedNameForCXType(FieldType, TypeSpelling))
 		{
 			return eastl::nullopt;
 		}
 
-		eastl::string TypeSpelling;
-		ClangUtils::GetQualifiedNameForType(FieldQualType, TypeSpelling);
 		EPropertyTypeFlags PropFlags = GetCoreTypeFromName(TypeSpelling.c_str());
-		
+
 		// Is not a core type.
 		if (PropFlags == EPropertyTypeFlags::None)
 		{
-			if (FieldQualType->isEnumeralType())
+			const CXTypeKind CanonicalKind = clang_getCanonicalType(FieldType).kind;
+
+			if (CanonicalKind == CXType_Enum)
 			{
 				PropFlags = EPropertyTypeFlags::Enum;
 			}
-			else if (FieldQualType->isStructureType())
+			else if (CanonicalKind == CXType_Record)
 			{
 				PropFlags = EPropertyTypeFlags::Struct;
 			}
-			else if (FieldQualType->isPointerType())
+			else if (CanonicalKind == CXType_Pointer)
 			{
 				PropFlags = EPropertyTypeFlags::Object;
 			}
-			else if (FieldQualType->isReferenceType())
+			else if (CanonicalKind == CXType_LValueReference || CanonicalKind == CXType_RValueReference)
 			{
-				clang::QualType ReferenceType = FieldQualType->getAs<clang::ReferenceType>()->getPointeeType();
-				if (ReferenceType->isStructureType())
+				const CXType Referenced = clang_getPointeeType(clang_getCanonicalType(FieldType));
+
+				if (clang_getCanonicalType(Referenced).kind == CXType_Record)
 				{
 					PropFlags = EPropertyTypeFlags::Struct;
 				}
 				else
 				{
-					ClangUtils::GetQualifiedNameForType(ReferenceType, TypeSpelling);
+					ClangUtils::GetQualifiedNameForCXType(Referenced, TypeSpelling);
 					PropFlags = GetCoreTypeFromName(TypeSpelling.c_str());
 				}
 			}
@@ -196,15 +197,15 @@ namespace Lumina::Reflection::Visitor
 		Info.Type			= FieldType;
 		Info.Name			= "None";
 		Info.TypeName		= TypeSpelling;
-		Info.RawFieldType	= ClangUtils::GetSafeTypeAsString(FieldQualType);
+		Info.RawFieldType	= ClangUtils::GetSafeTypeAsString(FieldType);
 
 		return Info;
 	}
 
 	static eastl::optional<FFieldInfo> CreateSubFieldInfo(FClangParserContext* Context, const CXType& FieldType, const FFieldInfo& ParentField)
 	{
-		clang::QualType FieldQualType = ClangUtils::GetQualType(FieldType);
-		if (FieldQualType.isNull())
+		eastl::string FieldName;
+		if (!ClangUtils::GetQualifiedNameForCXType(FieldType, FieldName))
 		{
 			LRT_ERROR(ParentField.OwningCursor, Reflection::EDiagId::FieldQualifyFailed,
 				"Failed to qualify the inner type of property '%s' in '%s'.",
@@ -213,23 +214,22 @@ namespace Lumina::Reflection::Visitor
 			return eastl::nullopt;
 		}
 
-		eastl::string FieldName;
-		ClangUtils::GetQualifiedNameForType(FieldQualType, FieldName);
-
 		EPropertyTypeFlags PropFlags = GetCoreTypeFromName(FieldName.c_str());
 
 		// Is not a core type.
 		if (PropFlags == EPropertyTypeFlags::None)
 		{
-			if (FieldQualType->isEnumeralType())
+			const CXTypeKind CanonicalKind = clang_getCanonicalType(FieldType).kind;
+
+			if (CanonicalKind == CXType_Enum)
 			{
 				PropFlags = EPropertyTypeFlags::Enum;
 			}
-			else if (FieldQualType->isStructureType())
+			else if (CanonicalKind == CXType_Record)
 			{
 				PropFlags = EPropertyTypeFlags::Struct;
 			}
-			else if (FieldQualType->isPointerType())
+			else if (CanonicalKind == CXType_Pointer)
 			{
 				LRT_ERROR(ParentField.OwningCursor, Reflection::EDiagId::RawObjectPointer,
 					"Inner element of property '%s' is a raw pointer ('%s'). Use TObjectPtr<T> instead.",
@@ -498,7 +498,7 @@ namespace Lumina::Reflection::Visitor
 				return false;
 			}
 
-			ArrayProperty->ElementTypeName = ClangUtils::GetSafeTypeAsString(ClangUtils::GetQualType(ArgType));
+			ArrayProperty->ElementTypeName = ClangUtils::GetSafeTypeAsString(ArgType);
 			NewProperty = eastl::move(ArrayProperty);
 
 			FieldProperty->bInner = true; // This property "belongs" to the array.
@@ -546,8 +546,8 @@ namespace Lumina::Reflection::Visitor
 				return false;
 			}
 
-			MapProperty->KeyTypeName   = ClangUtils::GetSafeTypeAsString(ClangUtils::GetQualType(KeyType));
-			MapProperty->ValueTypeName = ClangUtils::GetSafeTypeAsString(ClangUtils::GetQualType(ValueType));
+			MapProperty->KeyTypeName   = ClangUtils::GetSafeTypeAsString(KeyType);
+			MapProperty->ValueTypeName = ClangUtils::GetSafeTypeAsString(ValueType);
 			NewProperty = eastl::move(MapProperty);
 
 			KeyProperty->bInner = true;   // Key "belongs" to the map.
@@ -580,7 +580,7 @@ namespace Lumina::Reflection::Visitor
 				return false;
 			}
 
-			OptionalProperty->ElementTypeName = ClangUtils::GetSafeTypeAsString(ClangUtils::GetQualType(ArgType));
+			OptionalProperty->ElementTypeName = ClangUtils::GetSafeTypeAsString(ArgType);
 			NewProperty = eastl::move(OptionalProperty);
 
 			FieldProperty->bInner = true; // Inner T is owned by the optional.
@@ -766,18 +766,24 @@ namespace Lumina::Reflection::Visitor
 	{
 		eastl::string CursorName = ClangUtils::GetCursorDisplayName(Cursor);
 
-		eastl::string FullyQualifiedCursorName;
-		CXType Type = clang_getCursorType(Cursor);
-		void* Data = Type.data[0];
-
-		if (!ClangUtils::GetQualifiedNameForType(clang::QualType::getFromOpaquePtr(Data), FullyQualifiedCursorName))
-		{
-			return CXChildVisit_Break;
-		}
-
+		// Whether this struct is reflected at all is decided first. Every header carries ordinary
+		// helper structs, anonymous structs and unions that we are not being asked to reflect, and
+		// nothing about them should be able to affect the pass.
 		FReflectionMacro Macro;
 		if (!Context->TryFindMacroForCursor(Context->ReflectedHeader->HeaderPath, Cursor, Macro))
 		{
+			return CXChildVisit_Continue;
+		}
+
+		eastl::string FullyQualifiedCursorName;
+		if (!ClangUtils::GetQualifiedNameForDeclCursor(Cursor, FullyQualifiedCursorName))
+		{
+			// Now that we know it was REFLECT'd, an unnameable type is a real error worth
+			// reporting, rather than something to abandon the whole run over.
+			LRT_ERROR(Cursor, EDiagId::MissingGeneratedBody,
+				"REFLECT'd struct '%s' has no usable qualified name. Anonymous and locally "
+				"declared types cannot be reflected; declare it at namespace or class scope.",
+				CursorName.c_str());
 			return CXChildVisit_Continue;
 		}
 
@@ -791,7 +797,7 @@ namespace Lumina::Reflection::Visitor
 				"REFLECT'd struct '%s' is missing a GENERATED_BODY() macro inside its body. "
 				"Add `GENERATED_BODY()` as the first line of the struct.",
 				CursorName.c_str());
-			return CXChildVisit_Break;
+			return CXChildVisit_Continue;
 		}
 
 		FReflectedStruct* ReflectedStruct = Context->ReflectionDatabase.GetOrCreateReflectedType<FReflectedStruct>(FStringHash(FullyQualifiedCursorName));
@@ -909,18 +915,21 @@ namespace Lumina::Reflection::Visitor
 	{
 		eastl::string CursorName = ClangUtils::GetCursorDisplayName(Cursor);
 
-		eastl::string FullyQualifiedCursorName;
-		CXType Type = clang_getCursorType(Cursor);
-		void* Data = Type.data[0];
-
-		if (!ClangUtils::GetQualifiedNameForType(clang::QualType::getFromOpaquePtr(Data), FullyQualifiedCursorName))
-		{
-			return CXChildVisit_Break;
-		}
-
+		// Reflected or not comes first, for the same reason as structs: an ordinary helper class
+		// must never be able to influence the pass.
 		FReflectionMacro Macro;
 		if (!Context->TryFindMacroForCursor(Context->ReflectedHeader->HeaderPath, Cursor, Macro))
 		{
+			return CXChildVisit_Continue;
+		}
+
+		eastl::string FullyQualifiedCursorName;
+		if (!ClangUtils::GetQualifiedNameForDeclCursor(Cursor, FullyQualifiedCursorName))
+		{
+			LRT_ERROR(Cursor, EDiagId::MissingGeneratedBody,
+				"REFLECT'd class '%s' has no usable qualified name. Anonymous and locally "
+				"declared types cannot be reflected; declare it at namespace or class scope.",
+				CursorName.c_str());
 			return CXChildVisit_Continue;
 		}
 
@@ -931,7 +940,7 @@ namespace Lumina::Reflection::Visitor
 				"REFLECT'd class '%s' is missing a GENERATED_BODY() macro inside its body. "
 				"Add `GENERATED_BODY()` as the first line of the class.",
 				CursorName.c_str());
-			return CXChildVisit_Break;
+			return CXChildVisit_Continue;
 		}
 
 		FReflectedClass* ReflectedClass = Context->ReflectionDatabase.GetOrCreateReflectedType<FReflectedClass>(FStringHash(FullyQualifiedCursorName));

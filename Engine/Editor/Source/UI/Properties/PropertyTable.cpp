@@ -1891,7 +1891,12 @@ namespace Lumina
         // Search runs before the width measure below: a filtered-out row must not size the header column.
         if (bShowSearchBar)
         {
+            // Scoped to the table instance. The PushID(this) below only covers the rows, so two tables
+            // in one window (node details plus the preview editor) submitted the same widget id and
+            // tripped ImGui's conflicting-id check.
+            ImGui::PushID(this);
             ImGuiX::SearchBar("##PropertySearch", PropertyFilter, LE_ICON_MAGNIFY " Search properties...");
+            ImGui::PopID();
         }
 
         ApplyFilterState();

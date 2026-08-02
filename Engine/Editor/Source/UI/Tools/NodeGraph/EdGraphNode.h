@@ -69,9 +69,23 @@ namespace Lumina
         // Null for ordinary leaf nodes. May lazily allocate the graph.
         virtual CEdNodeGraph* GetEnterableSubGraph() { return nullptr; }
 
-        // True for wire-passthrough nodes (e.g. CEdNode_Reroute): drawn as a single dot; graph walks
-        // skip them and resolve through to the real source/target.
+        // True for wire-passthrough nodes (e.g. CEdNode_Reroute): graph walks skip them and resolve
+        // through to the real source/target, and the compiler emits nothing for them.
         virtual bool IsRerouteNode() const { return false; }
+
+        // Whether a passthrough node collapses to a single dot. Split from IsRerouteNode because a
+        // named reroute passes through like one but still needs a titled body to show its name.
+        virtual bool WantsRerouteDotRendering() const { return IsRerouteNode(); }
+
+        // The pin feeding a passthrough node. Defaults to the first input; a named reroute usage
+        // returns its declaration's input instead, which is what lets a wireless link resolve through
+        // every walk that already understands reroutes.
+        virtual CEdNodeGraphPin* GetRerouteSourcePin() const;
+
+        // A node this one depends on with no wire between them. Reachability and topological order
+        // fold it in as a real input edge, so a named reroute's upstream still compiles, and still
+        // compiles first.
+        virtual CEdGraphNode* GetImplicitInputNode() const { return nullptr; }
 
         void SetDebugExecutionOrder(uint32 Order) { DebugExecutionOrder = Order; }
         uint32 GetDebugExecutionOrder() const { return DebugExecutionOrder; }

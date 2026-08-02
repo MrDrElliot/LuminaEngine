@@ -1,4 +1,4 @@
-#include "pch.h"
+﻿#include "EditorPCH.h"
 #include "MaterialFunctionFactory.h"
 #include "Assets/AssetTypes/MaterialFunction/MaterialFunction.h"
 

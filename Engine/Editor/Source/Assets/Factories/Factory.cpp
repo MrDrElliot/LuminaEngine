@@ -1,4 +1,4 @@
-#include "pch.h"
+﻿#include "EditorPCH.h"
 #include "Factory.h"
 
 #include "Assets/AssetRegistry/AssetRegistry.h"

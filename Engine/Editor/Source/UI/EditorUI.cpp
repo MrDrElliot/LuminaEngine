@@ -580,14 +580,9 @@ namespace Lumina
         // centrally off the single registry flag so it's correct regardless of which preview window is active.
         {
             ImGuiIO& IO = ImGui::GetIO();
-            // NoMouseCursorChange: ImGui's per-frame platform-window cursor update would otherwise force a
-            // captured SECONDARY window's cursor back to Normal every frame (it only honors GLFW_CURSOR_DISABLED
-            // on the MAIN window). Leaving the cursor alone while the game owns input lets game capture stick.
+
             const ImGuiConfigFlags Mask = ImGuiConfigFlags_NoMouse | ImGuiConfigFlags_NoKeyboard | ImGuiConfigFlags_NoMouseCursorChange;
-            // Follow the ACTIVE viewport, not the world editor's PIE flags: an external Game Preview window can
-            // be the active, game-focused one while the world editor isn't the relevant simulator. Gating on the
-            // active game world keeps NoMouseCursorChange set so a captured external window's cursor lock isn't
-            // reset by ImGui's per-frame cursor update.
+
             FInputViewportRegistry& Reg = FInputViewportRegistry::Get();
             const FInputViewport* Active = Reg.GetActiveViewport();
             const bool bGameOwnsInput = Reg.IsGameInputFocused()
@@ -1675,11 +1670,7 @@ namespace Lumina
                 : bHandleHovered ? ImGuiCol_SeparatorHovered : ImGuiCol_Border);
             ImGui::GetWindowDrawList()->AddLine(WinMin, ImVec2(WinMin.x + ImGui::GetWindowWidth(), WinMin.y), HandleCol, 2.0f);
         }
-
-        // Toolbar row: a menu-bar child for the tool's own settings (DrawMainToolbar/DrawToolMenu),
-        // then a fixed-width sibling child holding Dock-in-Layout + Close. The buttons live outside
-        // the menu bar on purpose: menu-bar cursor-pinning let a wide tool toolbar (or the menu
-        // bar's own clipping) cover or cull them, leaving the drawer impossible to dock or close.
+        
         const ImGuiStyle& Style = ImGui::GetStyle();
         const float ToolbarHeight = ImGui::GetFrameHeight() + Style.FramePadding.y * 2.0f;
 
@@ -2688,11 +2679,16 @@ namespace Lumina
         ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.25f, 0.35f, 0.45f, 0.8f));
     
         ImGui::SetNextWindowSizeConstraints(ImVec2(220, 1), ImVec2(280, 1000));
-    
         DrawFileMenu();
         DrawProjectMenu();
         DrawToolsMenu();
         DrawHelpMenu();
+        
+        if (GEditorEngine->HasLoadedProject())
+        {
+            ImGuiX::Text("[{}]", GEditorEngine->GetProjectName());
+        }
+    
     
         ImGui::PopStyleColor(5);
         ImGui::PopStyleVar(3);
@@ -2705,17 +2701,10 @@ namespace Lumina
 
         const float CurrentFrameTime = UpdateContext.GetDeltaTime() * 1000.0f;
 
-        // Smooth frame time only and derive FPS from it; averaging 1/dt independently
-        // diverges from the frame time under spiky frames (high mean(1/dt), high mean(dt)).
+
         SmoothedFrameTime = SmoothedFrameTime + (CurrentFrameTime - SmoothedFrameTime) * FPSSmoothingFactor;
         SmoothedFPS = (SmoothedFrameTime > 0.0f) ? 1000.0f / SmoothedFrameTime : 0.0f;
-
-        // Process working set rather than the tracked-allocation total: tracking can be switched off
-        // (and is, by default), which would leave this reading a flat zero. The working set is always
-        // available and is the number you would compare against Task Manager anyway.
-        //
-        // Smoothed on the same filter as the frame time. Sampling it raw makes the last digits flicker
-        // every frame on allocation churn, which reads as noise rather than information.
+        
         const float MemoryMiB = (float)Platform::GetProcessMemoryUsageBytes() / (1024.0f * 1024.0f);
         SmoothedMemoryMiB = (SmoothedMemoryMiB <= 0.0f)
             ? MemoryMiB
@@ -2724,9 +2713,7 @@ namespace Lumina
         Stats.Perf.sprintf("FPS: %3.0f / %.2f ms", SmoothedFPS, SmoothedFrameTime);
         Stats.Objects.sprintf("CObjects: %i", GObjectArray.GetNumAliveObjects());
         Stats.Memory.sprintf("Mem: %.0f MiB", SmoothedMemoryMiB);
-
-        // One SameLine gap between each, plus a trailing pad so the last glyph never sits flush against
-        // the window controls.
+        
         const float Spacing = ImGui::GetStyle().ItemSpacing.x;
         Stats.Width = ImGui::CalcTextSize(Stats.Perf.c_str()).x
                     + ImGui::CalcTextSize(Stats.Objects.c_str()).x
@@ -3127,21 +3114,6 @@ namespace Lumina
                 if (!PendingLoad.empty())
                 {
                     GEditorEngine->LoadProject(PendingLoad);
-                    OnProjectLoaded();
-                    bShouldClose = true;
-                }
-
-                // Examples (de-emphasized).
-                DrawSectionHeader("EXAMPLES");
-                if (DrawProjectRow(
-                        LE_ICON_CUBE_OUTLINE,
-                        "Sandbox",
-                        "Engine sample project",
-                        kProjDialogAccentSoft,
-                        /*bCompact=*/true))
-                {
-                    FString SandboxProjectDirectory = Paths::GetEngineDirectory() + "/Sandbox/Sandbox.lproject";
-                    GEditorEngine->LoadProject(SandboxProjectDirectory);
                     OnProjectLoaded();
                     bShouldClose = true;
                 }

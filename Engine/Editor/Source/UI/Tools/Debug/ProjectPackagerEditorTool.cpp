@@ -1,4 +1,4 @@
-#include "ProjectPackagerEditorTool.h"
+﻿#include "ProjectPackagerEditorTool.h"
 
 #include <filesystem>
 
@@ -59,7 +59,7 @@ namespace Lumina
             "The Extras section adds files/directories to copy alongside the build (e.g. third-party DLLs, "
             "docs, OpenSSL certs). Paths are relative to project root.");
         DrawHelpTextRow("Build Output",
-            "The lower pane streams MSBuild output live. If a build fails, the stderr lines containing 'error' "
+            "The lower pane streams build output live. If a build fails, the stderr lines containing 'error' "
             "are highlighted; full log is also kept on disk under <OutputDir>/build.log.");
     }
 
@@ -288,12 +288,12 @@ namespace Lumina
 
         FPackageBuildOptions Opts;
         Opts.OutputDirectory                = PakDir;
-        Opts.MSBuildPath                    = MSBuildPath;
+        Opts.ProjectDirectory               = FString(GEngine->GetProjectPath().data(), GEngine->GetProjectPath().size());
         Opts.bBuildExecutable               = true;
         Opts.bExtractScriptsAsLooseFiles    = bExtractScriptsLoose;
         Opts.ExtraFiles                     = ExtraFiles;
         Opts.ExtraDirectories               = ExtraDirectories;
-        Opts.MSBuildConfiguration           = (ConfigIndex == 0) ? FString("Shipping")
+        Opts.BuildConfiguration             = (ConfigIndex == 0) ? FString("Shipping")
                                             : (ConfigIndex == 1) ? FString("Development")
                                                                  : FString("Debug");
 
@@ -341,10 +341,6 @@ namespace Lumina
             const FString ProjectName(GEngine->GetProjectName().data(), GEngine->GetProjectName().size());
             OutputDir = FString(GEngine->GetProjectPath().data(), GEngine->GetProjectPath().size())
                 + "/Build/" + ProjectName;
-        }
-        if (MSBuildPath.empty())
-        {
-            MSBuildPath = FProjectPackager::DefaultMSBuildPath();
         }
 
         // Project + cook-roots summary.
@@ -400,14 +396,6 @@ namespace Lumina
         if (ImGui::InputText("##out", OutBuf, sizeof(OutBuf)))
         {
             OutputDir = OutBuf;
-        }
-
-        char MSBuf[512]; std::snprintf(MSBuf, sizeof(MSBuf), "%s", MSBuildPath.c_str());
-        ImGui::Text("MSBuild Path");
-        ImGui::SetNextItemWidth(-1);
-        if (ImGui::InputText("##msb", MSBuf, sizeof(MSBuf)))
-        {
-            MSBuildPath = MSBuf;
         }
 
         ImGui::Text("Build Configuration");
@@ -519,7 +507,7 @@ namespace Lumina
         if (ImGui::BeginChild("##log", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar))
         {
             const ImVec4 ColDefault(0.85f, 0.85f, 0.88f, 1.0f);
-            const ImVec4 ColMSBuild(0.55f, 0.65f, 0.80f, 1.0f);
+            const ImVec4 ColBuildTool(0.55f, 0.65f, 0.80f, 1.0f);
             const ImVec4 ColCookEntry(0.65f, 0.82f, 0.55f, 1.0f);
             const ImVec4 ColError  (1.00f, 0.40f, 0.40f, 1.0f);
             const ImVec4 ColWarn   (1.00f, 0.78f, 0.35f, 1.0f);
@@ -548,7 +536,7 @@ namespace Lumina
                 }
                 else if (Line.size() >= 4 && Line[0] == ' ' && Line[1] == ' ' && Line[2] == '|')
                 {
-                    Color = ColMSBuild;
+                    Color = ColBuildTool;
                 }
 
                 ImGui::PushStyleColor(ImGuiCol_Text, Color);

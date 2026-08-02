@@ -1,4 +1,4 @@
-#include "GameplayInsightsEditorTool.h"
+﻿#include "GameplayInsightsEditorTool.h"
 
 #include <cfloat>
 #include <cstdio>
@@ -22,7 +22,7 @@ namespace Lumina
     // enough to collide with other translation units' Detail helpers.
     namespace
     {
-        namespace Detail
+        namespace InsightsDetail
         {
             const char* StageName(uint8 Stage)
             {
@@ -313,11 +313,11 @@ namespace Lumina
             ImGui::TextColored(EditorColors::Success(), "live %c", Spinner[(DrawTicks / 6) % 4]);
         }
 
-        Detail::StripSeparator();
+        InsightsDetail::StripSeparator();
         ImGui::TextColored(EditorColors::TextDim(), "%d systems", (int32)Schedule.size());
-        Detail::StripSeparator();
+        InsightsDetail::StripSeparator();
         ImGui::TextColored(EditorColors::TextDim(), "%d batches", (int32)ScheduleColumns.size());
-        Detail::StripSeparator();
+        InsightsDetail::StripSeparator();
 
         constexpr double BudgetMs = 16.667;
         const double Share = DisplayFrame.TotalMs / BudgetMs;
@@ -404,16 +404,16 @@ namespace Lumina
         ImGui::Separator();
         ImGui::AlignTextToFramePadding();
         ImGui::TextColored(EditorColors::TextPrimary(), "%d systems", (int32)Schedule.size());
-        Detail::StripSeparator();
+        InsightsDetail::StripSeparator();
         ImGui::TextColored(EditorColors::Success(), "%d run in parallel", ParallelCount);
         if (ExclusiveCount > 0)
         {
-            Detail::StripSeparator();
+            InsightsDetail::StripSeparator();
             ImGui::TextColored(EditorColors::Warning(), "%d exclusive", ExclusiveCount);
         }
-        Detail::StripSeparator();
+        InsightsDetail::StripSeparator();
         ImGui::TextColored(EditorColors::TextDim(), "%d batches", (int32)ScheduleColumns.size());
-        Detail::StripSeparator();
+        InsightsDetail::StripSeparator();
         ImGui::TextColored(EditorColors::TextDim(), "widest x%d", WidestBatch);
 
         ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());
@@ -500,7 +500,7 @@ namespace Lumina
                 ++Last;
             }
 
-            const ImVec4 StageTint = Detail::StageColor(Stage);
+            const ImVec4 StageTint = InsightsDetail::StageColor(Stage);
             const ImVec2 BandMin(Origin.x + (float)L * (NodeW + ColGap) - ColGap * 0.35f, Origin.y - HeaderH);
             const ImVec2 BandMax(Origin.x + (float)Last * (NodeW + ColGap) + NodeW + ColGap * 0.35f, Origin.y + TotalH + Pad * 0.75f);
 
@@ -516,7 +516,7 @@ namespace Lumina
             const int32 StageBatches = Last - L + 1;
             char Header[128];
             snprintf(Header, sizeof(Header), "%s   %d system%s  /  %d batch%s",
-                     Detail::StageName(Stage), StageSystems, StageSystems == 1 ? "" : "s",
+                     InsightsDetail::StageName(Stage), StageSystems, StageSystems == 1 ? "" : "s",
                      StageBatches, StageBatches == 1 ? "" : "es");
             DL->AddText(Font, SmallFont, ImVec2(BandMin.x + 10.0f * Scale, BandMin.y + 4.0f * Scale),
                         EditorColors::U32(StageTint), Header);
@@ -565,7 +565,7 @@ namespace Lumina
                 for (int32 Row = 0; Row < Prev.Count; ++Row)
                 {
                     const int32 Other = Prev.First + Row;
-                    if (!Detail::Conflicts(Schedule[Index], Schedule[Other]))
+                    if (!InsightsDetail::Conflicts(Schedule[Index], Schedule[Other]))
                     {
                         continue;
                     }
@@ -593,14 +593,14 @@ namespace Lumina
             const FSystemScheduleEntry& Entry = Schedule[Index];
 
             const bool bIsSelected = Index == Selection;
-            const bool bConflicts  = Selection != INDEX_NONE && !bIsSelected && Detail::Conflicts(Entry, Schedule[Selection]);
+            const bool bConflicts  = Selection != INDEX_NONE && !bIsSelected && InsightsDetail::Conflicts(Entry, Schedule[Selection]);
             const float Alpha      = (Selection == INDEX_NONE || bIsSelected || bConflicts) ? 1.0f : 0.26f;
 
             const ImVec2 Min(Origin.x + Positions[Index].x, Origin.y + Positions[Index].y);
             const ImVec2 Max(Min.x + NodeW, Min.y + NodeH);
             const float  Rounding = 6.0f * Scale;
 
-            const ImVec4 StageTint = Detail::StageColor(Entry.Stage);
+            const ImVec4 StageTint = InsightsDetail::StageColor(Entry.Stage);
 
             ImVec4 BorderColor = StageTint;
             float  BorderWidth = 1.4f;
@@ -630,7 +630,7 @@ namespace Lumina
             const float BodyMaxW  = NodeW - InnerPad * 2.0f;
             float TextY = Min.y + PadY;
 
-            const FString Label = Detail::SystemLabel(Entry, Index);
+            const FString Label = InsightsDetail::SystemLabel(Entry, Index);
             const FGameplayProfileEntry* Stat = Entry.bManaged ? nullptr : FindStat(Label.c_str());
 
             // Cost (or the exclusivity marker) right-aligned; measured first so the title can reserve
@@ -640,7 +640,7 @@ namespace Lumina
             if (Stat != nullptr)
             {
                 snprintf(Badge, sizeof(Badge), "%.3f ms", Stat->InclusiveMs);
-                BadgeColor = Detail::CostColor(DisplayFrame.TotalMs > 0.0 ? Stat->InclusiveMs / DisplayFrame.TotalMs : 0.0);
+                BadgeColor = InsightsDetail::CostColor(DisplayFrame.TotalMs > 0.0 ? Stat->InclusiveMs / DisplayFrame.TotalMs : 0.0);
             }
             else if (Entry.bExclusive)
             {
@@ -655,7 +655,7 @@ namespace Lumina
                                 EditorColors::U32(EditorColors::WithAlpha(StageTint, Alpha)));
 
             const float TitleMaxW = BodyMaxW - DotOffset - BadgeSize.x - 6.0f * Scale;
-            const FString Title = Detail::FitText(Font, FontSize, Label.c_str(), TitleMaxW);
+            const FString Title = InsightsDetail::FitText(Font, FontSize, Label.c_str(), TitleMaxW);
             DL->AddText(Font, FontSize, ImVec2(TextX + DotOffset, TextY),
                         EditorColors::U32(EditorColors::WithAlpha(EditorColors::TextPrimary(), Alpha)), Title.c_str());
 
@@ -669,26 +669,26 @@ namespace Lumina
 
             if (Entry.bExclusive)
             {
-                const FString ExclusiveLine = Detail::FitText(Font, SmallFont, "exclusive: conflicts with everything", BodyMaxW);
+                const FString ExclusiveLine = InsightsDetail::FitText(Font, SmallFont, "exclusive: conflicts with everything", BodyMaxW);
                 DL->AddText(Font, SmallFont, ImVec2(TextX, TextY),
                             EditorColors::U32(EditorColors::WithAlpha(EditorColors::Warning(), Alpha)), ExclusiveLine.c_str());
             }
             else
             {
-                const FString Writes = Detail::AccessList(Entry.Writes);
+                const FString Writes = InsightsDetail::AccessList(Entry.Writes);
                 FString WriteLine = "W  ";
                 WriteLine += Writes.empty() ? "-" : Writes.c_str();
-                const FString Fitted = Detail::FitText(Font, SmallFont, WriteLine.c_str(), BodyMaxW);
+                const FString Fitted = InsightsDetail::FitText(Font, SmallFont, WriteLine.c_str(), BodyMaxW);
                 DL->AddText(Font, SmallFont, ImVec2(TextX, TextY),
                             EditorColors::U32(EditorColors::WithAlpha(
                                 Writes.empty() ? EditorColors::TextMuted() : EditorColors::Danger(), Alpha)), Fitted.c_str());
 
                 TextY += SmallFont + LineGap;
 
-                const FString Reads = Detail::AccessList(Entry.Reads);
+                const FString Reads = InsightsDetail::AccessList(Entry.Reads);
                 FString ReadLine = "R  ";
                 ReadLine += Reads.empty() ? "-" : Reads.c_str();
-                const FString FittedReads = Detail::FitText(Font, SmallFont, ReadLine.c_str(), BodyMaxW);
+                const FString FittedReads = InsightsDetail::FitText(Font, SmallFont, ReadLine.c_str(), BodyMaxW);
                 DL->AddText(Font, SmallFont, ImVec2(TextX, TextY),
                             EditorColors::U32(EditorColors::WithAlpha(
                                 Reads.empty() ? EditorColors::TextMuted() : EditorColors::Accent(), Alpha)), FittedReads.c_str());
@@ -708,7 +708,7 @@ namespace Lumina
                 ImGui::BeginTooltip();
                 ImGui::TextColored(StageTint, "%s", Label.c_str());
                 ImGui::Separator();
-                ImGui::Text("Stage       %s", Detail::StageName(Entry.Stage));
+                ImGui::Text("Stage       %s", InsightsDetail::StageName(Entry.Stage));
                 ImGui::Text("Batch       %d   (%d system%s)", (int32)Entry.Batch, (int32)Entry.BatchSize,
                             Entry.BatchSize == 1 ? "" : "s");
                 ImGui::Text("Priority    %d", (int32)Entry.Priority);
@@ -720,8 +720,8 @@ namespace Lumina
                 }
                 else
                 {
-                    const FString Writes = Detail::AccessList(Entry.Writes);
-                    const FString Reads  = Detail::AccessList(Entry.Reads);
+                    const FString Writes = InsightsDetail::AccessList(Entry.Writes);
+                    const FString Reads  = InsightsDetail::AccessList(Entry.Reads);
                     ImGui::TextColored(EditorColors::Danger(), "Writes      %s", Writes.empty() ? "(none)" : Writes.c_str());
                     ImGui::TextColored(EditorColors::Accent(), "Reads       %s", Reads.empty() ? "(none)" : Reads.c_str());
                 }
@@ -769,11 +769,11 @@ namespace Lumina
 
         ImGui::AlignTextToFramePadding();
         ImGui::TextColored(EditorColors::TextPrimary(), "%.3f ms", TotalMs);
-        Detail::StripSeparator();
+        InsightsDetail::StripSeparator();
         ImGui::TextColored(HotColor, "%.0f%% of 16.7 ms", Share * 100.0);
-        Detail::StripSeparator();
+        InsightsDetail::StripSeparator();
         ImGui::TextColored(EditorColors::TextDim(), "%d scopes", (int32)DisplayFrame.Entries.size());
-        Detail::StripSeparator();
+        InsightsDetail::StripSeparator();
         ImGui::TextColored(EditorColors::TextDim(), "%d calls", (int32)TotalCalls);
 
         const TVector<float>& History = Prof.GetFrameTotalHistory();
@@ -842,7 +842,7 @@ namespace Lumina
             for (const FGameplayProfileEntry* Entry : Rows)
             {
                 const double RowShare = (TotalMs > 0.0) ? (Entry->InclusiveMs / TotalMs) : 0.0;
-                const ImVec4 RowColor = Detail::CostColor(RowShare);
+                const ImVec4 RowColor = InsightsDetail::CostColor(RowShare);
 
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn(); ImGui::TextUnformatted(Entry->Name.c_str());
@@ -904,20 +904,20 @@ namespace Lumina
         }
 
         const FSystemScheduleEntry& Entry = Schedule[Selection];
-        const FString Label     = Detail::SystemLabel(Entry, Selection);
-        const ImVec4  StageTint = Detail::StageColor(Entry.Stage);
+        const FString Label     = InsightsDetail::SystemLabel(Entry, Selection);
+        const ImVec4  StageTint = InsightsDetail::StageColor(Entry.Stage);
 
         ImGui::PushStyleColor(ImGuiCol_Text, StageTint);
         ImGui::SeparatorText(Label.c_str());
         ImGui::PopStyleColor();
 
         ImGui::AlignTextToFramePadding();
-        ImGui::TextColored(StageTint, "%s", Detail::StageName(Entry.Stage));
-        Detail::StripSeparator();
+        ImGui::TextColored(StageTint, "%s", InsightsDetail::StageName(Entry.Stage));
+        InsightsDetail::StripSeparator();
         ImGui::TextColored(EditorColors::TextDim(), "batch %d", (int32)Entry.Batch);
-        Detail::StripSeparator();
+        InsightsDetail::StripSeparator();
         ImGui::TextColored(EditorColors::TextDim(), "priority %d", (int32)Entry.Priority);
-        Detail::StripSeparator();
+        InsightsDetail::StripSeparator();
         if (Entry.bExclusive)
         {
             ImGui::TextColored(EditorColors::Warning(), LE_ICON_LOCK " runs alone");
@@ -943,8 +943,8 @@ namespace Lumina
         }
         else
         {
-            const FString Writes = Detail::AccessList(Entry.Writes);
-            const FString Reads  = Detail::AccessList(Entry.Reads);
+            const FString Writes = InsightsDetail::AccessList(Entry.Writes);
+            const FString Reads  = InsightsDetail::AccessList(Entry.Reads);
             ImGui::TextColored(EditorColors::Danger(), "Writes");
             ImGui::TextUnformatted(Writes.empty() ? "(none)" : Writes.c_str());
             ImGui::Spacing();
@@ -957,7 +957,7 @@ namespace Lumina
         TVector<int32> ConflictIndices;
         for (int32 Index = 0; Index < (int32)Schedule.size(); ++Index)
         {
-            if (Index != Selection && Schedule[Index].Stage == Entry.Stage && Detail::Conflicts(Entry, Schedule[Index]))
+            if (Index != Selection && Schedule[Index].Stage == Entry.Stage && InsightsDetail::Conflicts(Entry, Schedule[Index]))
             {
                 ConflictIndices.push_back(Index);
             }
@@ -968,7 +968,7 @@ namespace Lumina
 
         if (ConflictIndices.empty())
         {
-            ImGui::TextColored(EditorColors::Success(), "Nothing in %s conflicts with this system.", Detail::StageName(Entry.Stage));
+            ImGui::TextColored(EditorColors::Success(), "Nothing in %s conflicts with this system.", InsightsDetail::StageName(Entry.Stage));
             ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());
             ImGui::TextWrapped("It can run in the stage's first batch alongside everything else.");
             ImGui::PopStyleColor();
@@ -997,7 +997,7 @@ namespace Lumina
                     ImGui::TableNextRow();
                     ImGui::TableNextColumn();
                     ImGui::PushID(Index);
-                    if (ImGui::Selectable(Detail::SystemLabel(Other, Index).c_str(), false, ImGuiSelectableFlags_SpanAllColumns))
+                    if (ImGui::Selectable(InsightsDetail::SystemLabel(Other, Index).c_str(), false, ImGuiSelectableFlags_SpanAllColumns))
                     {
                         SelectedIndex = Index;
                         SelectedName  = Other.Name;
@@ -1016,7 +1016,7 @@ namespace Lumina
                     }
 
                     ImGui::TableNextColumn();
-                    const FString SharedList = Detail::SharedAccessList(Entry, Other);
+                    const FString SharedList = InsightsDetail::SharedAccessList(Entry, Other);
                     ImGui::TextColored(EditorColors::Warning(), "%s", SharedList.empty() ? "(none)" : SharedList.c_str());
                 }
 
@@ -1029,10 +1029,10 @@ namespace Lumina
             ImGui::Spacing();
             ImGui::SeparatorText("Timing (last frame)");
             ImGui::TextColored(EditorColors::TextDim(), "%d call%s", (int32)Stat->Calls, Stat->Calls == 1 ? "" : "s");
-            Detail::StripSeparator();
-            ImGui::TextColored(Detail::CostColor(DisplayFrame.TotalMs > 0.0 ? Stat->InclusiveMs / DisplayFrame.TotalMs : 0.0),
+            InsightsDetail::StripSeparator();
+            ImGui::TextColored(InsightsDetail::CostColor(DisplayFrame.TotalMs > 0.0 ? Stat->InclusiveMs / DisplayFrame.TotalMs : 0.0),
                                "%.3f ms inclusive", Stat->InclusiveMs);
-            Detail::StripSeparator();
+            InsightsDetail::StripSeparator();
             ImGui::TextColored(EditorColors::TextDim(), "%.3f ms self", Stat->ExclusiveMs);
         }
     }

@@ -15,18 +15,24 @@ A Lumina plugin scaffolded from the editor. It ships two modules:
 ```
 $PLUGINNAME/
 ├── $PLUGINNAME.lplugin            Descriptor (modules, loading phases)
-├── $PLUGINNAME.lua                Build script (premake)
 └── Source/
-    ├── $RUNTIMEMODULE/
-    └── $EDITORMODULE/
+    ├── $RUNTIMEMODULE/            Sources plus $RUNTIMEMODULE.Build.cs
+    └── $EDITORMODULE/             Sources plus $EDITORMODULE.Build.cs
 ```
+
+Each module directory holds its own `.Build.cs` alongside its sources; that file
+is the module's whole build configuration.
 
 ## Building
 
-The plugin is discovered by the owning project's premake generation. After
-creating it, regenerate the project's Visual Studio solution (run the project's
-`GenerateProject.bat`, or use the editor's New Plugin flow which does this for
-you), then rebuild. The new module DLLs load on the next editor launch.
+The plugin is discovered by the owning project when it generates its IDE files.
+After creating it, run the project's `GenerateProject.bat` (or use the editor's
+New Plugin flow, which does it for you), then rebuild. The new module DLLs load
+on the next editor launch.
+
+Export a type from a module with the module's `<MODULENAME>_API` macro, as the
+generated module headers do. The build system defines it; there is no header to
+edit and nothing to declare.
 
 ## Enabling / disabling
 

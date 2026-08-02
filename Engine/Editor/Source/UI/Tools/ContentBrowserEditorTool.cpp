@@ -1252,9 +1252,13 @@ namespace Lumina
             ActionRegistry.EnqueueAction<FPendingRename>(FPendingRename{ FFixedString(ContentItem->GetVirtualPath().data(), ContentItem->GetVirtualPath().length()), TestPath });
         };
 
-        DirectoryContext.ItemContextMenuFunction = [this](FTreeListView& Tree, FTreeNodeID Item)
+        // The tree selects the node on right-click before opening this, so SelectedPath is already the
+        // folder under the cursor and the shared directory menu targets the right thing.
+        DirectoryContext.ItemContextMenuFunction = [this](FTreeListView&, FTreeNodeID)
         {
-
+            PushContextMenuItemStyle();
+            DrawContentDirectoryContextMenu();
+            PopContextMenuItemStyle();
         };
 
         DirectoryContext.DragDropFunction = [this](FTreeListView& Tree, FTreeNodeID Item)
@@ -1953,7 +1957,29 @@ namespace Lumina
         // the content pane's width from that default -- see DrawContentBrowser's call site.
         ImGui::BeginChild("Directories", Size, ImGuiChildFlags_ResizeX, ImGuiWindowFlags_HorizontalScrollbar);
 
+        // Wraps the tree because the widget owns the BeginPopup for a right-clicked node; pushing here
+        // is the only way that menu picks up the same styling as the one in the tile pane.
+        PushContextMenuWindowStyle();
+
         DirectoryListView.Draw(DirectoryContext);
+
+        // Empty space below the tree acts on the current folder, matching the tile pane's background menu.
+        if (ImGui::IsWindowHovered() && !ImGui::IsAnyItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Right))
+        {
+            ImGui::OpenPopup("DirectoryPaneContextMenu");
+            ImGui::SetNextWindowSizeConstraints(ImVec2(240.0f, 0.0f), ImVec2(360.0f, FLT_MAX));
+        }
+
+        if (ImGui::BeginPopup("DirectoryPaneContextMenu"))
+        {
+            PushContextMenuItemStyle();
+            DrawContentDirectoryContextMenu();
+            PopContextMenuItemStyle();
+
+            ImGui::EndPopup();
+        }
+
+        PopContextMenuWindowStyle();
 
         // After Draw, so the tree has been rebuilt and the nodes we walk actually exist. The scroll
         // request lands on the next Draw.
@@ -2064,7 +2090,13 @@ namespace Lumina
             ContentBrowserTileView.ClearSelections();
         }
         
-        if (ImGui::IsWindowHovered() && !ImGui::IsAnyItemHovered() && ImGui::IsKeyPressed(ImGuiKey_Delete) && !ContentBrowserTileView.GetSelections().empty())
+        // WantTextInput covers the inline rename and the search box alike: while either owns the
+        // keyboard, Delete is editing text and must not reach the asset shortcut. The mouse is
+        // usually over empty space while typing, so this fired on almost every rename.
+        if (!ImGui::GetIO().WantTextInput
+            && ImGui::IsWindowHovered() && !ImGui::IsAnyItemHovered()
+            && ImGui::IsKeyPressed(ImGuiKey_Delete)
+            && !ContentBrowserTileView.GetSelections().empty())
         {
             if (Dialogs::Confirmation("Confirm Deletion", "Are you sure you want to delete these files/directories?\n This action cannot be undone."))
             {

@@ -1,0 +1,10 @@
+{
+  "//": "Optional engine features. auto lets the engine decide per configuration, on forces every configuration, off strips it everywhere. Command line flags such as -Tracy=off override these.",
+
+  "Features": {
+    "Tracy": "auto",
+    "Validation": "auto",
+    "Aftermath": "auto",
+    "VerboseLogging": "auto"
+  }
+}

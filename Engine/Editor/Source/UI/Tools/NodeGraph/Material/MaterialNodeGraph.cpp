@@ -1,5 +1,6 @@
 #include "MaterialNodeGraph.h"
 #include "MaterialCompiler.h"
+#include "MaterialNamedReroute.h"
 #include "MaterialReroute.h"
 #include "imgui_internal.h"
 #include "Assets/AssetTypes/Curve/CurveAsset.h"
@@ -190,6 +191,8 @@ namespace Lumina
         RegisterGraphNode(CMaterialExpression_CustomSlang::StaticClass());
 
         RegisterGraphNode(CMaterialReroute::StaticClass());
+        RegisterGraphNode(CMaterialNamedRerouteDeclaration::StaticClass());
+        RegisterGraphNode(CMaterialNamedRerouteUsage::StaticClass());
     }
 
     CClass* CMaterialNodeGraph::GetRerouteNodeClass() const
@@ -233,59 +236,65 @@ namespace Lumina
             }
         }
 
+        // Reroutes are not added to OutSet, so they need their own visited set. Without it a named
+        // reroute pointing at a declaration downstream of itself would spin here forever.
+        THashSet<CEdGraphNode*> VisitedPassthrough;
+
+        auto Enqueue = [&](CEdGraphNode* Up)
+        {
+            if (Up == nullptr)
+            {
+                return;
+            }
+
+            if (Up->IsRerouteNode())
+            {
+                if (VisitedPassthrough.insert(Up).second)
+                {
+                    Q.push(Up);
+                }
+            }
+            else if (OutSet.insert(Up).second)
+            {
+                Q.push(Up);
+            }
+        };
+
         while (!Q.empty())
         {
             CEdGraphNode* Node = Q.front();
             Q.pop();
+
+            // A named reroute usage carries no input pins; its source is the declaration's input.
+            if (Node->IsRerouteNode())
+            {
+                if (CEdNodeGraphPin* Source = Node->GetRerouteSourcePin())
+                {
+                    for (CEdNodeGraphPin* Conn : Source->GetConnections())
+                    {
+                        Enqueue(Conn->GetOwningNode());
+                    }
+                }
+                continue;
+            }
+
             for (CEdNodeGraphPin* InputPin : Node->GetInputPins())
             {
                 for (CEdNodeGraphPin* Conn : InputPin->GetConnections())
                 {
-                    CEdGraphNode* Up = Conn->GetOwningNode();
-                    if (Up == nullptr)
-                    {
-                        continue;
-                    }
-                    if (Up->IsRerouteNode())
-                    {
-                        Q.push(Up);
-                    }
-                    else if (OutSet.insert(Up).second)
-                    {
-                        Q.push(Up);
-                    }
+                    Enqueue(Conn->GetOwningNode());
                 }
             }
         }
     }
 
-    // Returns nullptr if the reroute chain dead-ends at a disconnected input.
+    // Kept as a thin alias so all reroute resolution lives in one place; see
+    // FMaterialCompiler::ResolveThroughReroutes.
     static CMaterialOutput* ResolveOutputThroughReroutes(CMaterialOutput* OutputPin)
     {
-        constexpr int MaxHops = 64;
-        int Hops = 0;
-        while (OutputPin != nullptr && Hops++ < MaxHops)
-        {
-            CEdGraphNode* Owner = OutputPin->GetOwningNode();
-            if (Owner == nullptr || !Owner->IsRerouteNode())
-            {
-                return OutputPin;
-            }
-
-            const TVector<TObjectPtr<CEdNodeGraphPin>>& Inputs = Owner->GetInputPins();
-            if (Inputs.empty())
-            {
-                return nullptr;
-            }
-            CEdNodeGraphPin* RerouteInput = Inputs[0].Get();
-            if (RerouteInput == nullptr || !RerouteInput->HasConnection())
-            {
-                return nullptr;
-            }
-            OutputPin = static_cast<CMaterialOutput*>(RerouteInput->GetConnection(0));
-        }
-        return nullptr;
+        return FMaterialCompiler::ResolveThroughReroutes(OutputPin);
     }
+
 
     // Infers the promoted output type after binary-op promotion without running full emit.
     static EMaterialInputType InferOutputType(CEdNodeGraphPin* InputPin)

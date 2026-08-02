@@ -1,4 +1,4 @@
-#include "ProjectPackager.h"
+﻿#include "ProjectPackager.h"
 
 #include <filesystem>
 
@@ -16,7 +16,7 @@ namespace Lumina
 {
     namespace
     {
-        void Log(const TFunction<void(FStringView)>& LogFunc, FStringView Msg)
+        void LogPackager(const TFunction<void(FStringView)>& LogFunc, FStringView Msg)
         {
             if (LogFunc)
             {
@@ -241,18 +241,18 @@ namespace Lumina
                 if (CopyFileTo(Entry.path(), Dst))
                 {
                     ++Copied;
-                    Log(LogFunc, FString().sprintf("  + %s -> %s",
+                    LogPackager(LogFunc, FString().sprintf("  + %s -> %s",
                         FileName.c_str(), DstName.string().c_str()).c_str());
                 }
                 else
                 {
-                    Log(LogFunc, FString().sprintf("  [warn] failed to copy %s", FileName.c_str()).c_str());
+                    LogPackager(LogFunc, FString().sprintf("  [warn] failed to copy %s", FileName.c_str()).c_str());
                 }
             }
 
             if (Skipped > 0)
             {
-                Log(LogFunc, FString().sprintf("  (skipped %zu wrong-config / editor-only / stale files)", Skipped).c_str());
+                LogPackager(LogFunc, FString().sprintf("  (skipped %zu wrong-config / editor-only / stale files)", Skipped).c_str());
             }
             return Copied;
         }
@@ -305,24 +305,24 @@ namespace Lumina
             if (std::filesystem::exists(ManagedSrc, Ec))
             {
                 const size_t N = CopyDirectoryRecursive(ManagedSrc, DestDir / "DotNet" / "Managed");
-                Log(LogFunc, FString().sprintf("DotNet: staged managed bootstrap (%zu file(s)).", N).c_str());
+                LogPackager(LogFunc, FString().sprintf("DotNet: staged managed bootstrap (%zu file(s)).", N).c_str());
             }
             else
             {
-                Log(LogFunc, FString().sprintf("DotNet: [warn] managed bootstrap not found at %s; C# disabled in package.", ManagedSrc.string().c_str()).c_str());
+                LogPackager(LogFunc, FString().sprintf("DotNet: [warn] managed bootstrap not found at %s; C# disabled in package.", ManagedSrc.string().c_str()).c_str());
             }
 
             // 2. Bundled .NET runtime (whole tree so whatever <rid> the host resolves is present).
             const std::filesystem::path RuntimeSrc = EngineInstallDir / "External" / "DotNet" / "runtime";
             if (std::filesystem::exists(RuntimeSrc, Ec))
             {
-                Log(LogFunc, "DotNet: copying bundled .NET runtime (this can take a moment)...");
+                LogPackager(LogFunc, "DotNet: copying bundled .NET runtime (this can take a moment)...");
                 const size_t N = CopyDirectoryRecursive(RuntimeSrc, DestDir / "External" / "DotNet" / "runtime");
-                Log(LogFunc, FString().sprintf("DotNet: staged .NET runtime (%zu file(s)).", N).c_str());
+                LogPackager(LogFunc, FString().sprintf("DotNet: staged .NET runtime (%zu file(s)).", N).c_str());
             }
             else
             {
-                Log(LogFunc, FString().sprintf("DotNet: [warn] bundled runtime not found at %s; C# disabled in package.", RuntimeSrc.string().c_str()).c_str());
+                LogPackager(LogFunc, FString().sprintf("DotNet: [warn] bundled runtime not found at %s; C# disabled in package.", RuntimeSrc.string().c_str()).c_str());
             }
 
             // 3. Prebuilt script assemblies + the manifest the cooked loader reads.
@@ -342,7 +342,7 @@ namespace Lumina
                 const FString DllName = Unit.Name + ".dll";
                 if (!CopyFileTo(DllSrc, ScriptsDst / DllName.c_str()))
                 {
-                    Log(LogFunc, FString().sprintf("DotNet: [warn] failed to stage script DLL %s", DllName.c_str()).c_str());
+                    LogPackager(LogFunc, FString().sprintf("DotNet: [warn] failed to stage script DLL %s", DllName.c_str()).c_str());
                     continue;
                 }
 
@@ -369,11 +369,11 @@ namespace Lumina
                 {
                     Out.write(Manifest.c_str(), (std::streamsize)Manifest.size());
                 }
-                Log(LogFunc, FString().sprintf("DotNet: staged %zu prebuilt script assembly(ies) + manifest.", Staged).c_str());
+                LogPackager(LogFunc, FString().sprintf("DotNet: staged %zu prebuilt script assembly(ies) + manifest.", Staged).c_str());
             }
             else
             {
-                Log(LogFunc, "DotNet: no C# script assemblies to stage (project ships no scripts).");
+                LogPackager(LogFunc, "DotNet: no C# script assemblies to stage (project ships no scripts).");
             }
         }
     }
@@ -388,26 +388,34 @@ namespace Lumina
         Result.OutputDirectory = Options.OutputDirectory;
         Result.PakPath.assign(PakPath.data(), PakPath.size());
 
-        const FString MSBuild = Options.MSBuildPath.empty() ? DefaultMSBuildPath() : Options.MSBuildPath;
-        const FString Config  = Options.MSBuildConfiguration.empty() ? FString("Shipping") : Options.MSBuildConfiguration;
+        const FString Config = Options.BuildConfiguration.empty() ? FString("Shipping") : Options.BuildConfiguration;
+        const FString EngineDir = FString(Paths::GetEngineInstallDirectory().c_str());
 
-        const FString SolutionPath = FString(Paths::GetEngineInstallDirectory().c_str()) + "/Lumina.slnx";
+        // The project's own target, built as a Game. Naming the project rather than the engine is
+        // what makes the game module part of the build: the engine comes along as its dependency,
+        // and is reused rather than rebuilt when it is already current.
+        const FString ProjectDir = Options.ProjectDirectory;
+        const FString BuildTool  = EngineDir + "/LuminaBuild.bat";
 
-        FString Args;
-        Args = FString("\"") + SolutionPath + "\""
-            + " -p:Configuration=" + Config
-            + " -p:Platform=Game"
-            + " -m -v:minimal -nologo";
+        FString Args = FString(ProjectName.data(), ProjectName.size());
+        Args += " -TargetType=Game";
+        Args += " -Configuration=" + Config;
 
-        Log(LogFunc, FString().sprintf("Running MSBuild: %s %s", MSBuild.c_str(), Args.c_str()).c_str());
+        if (!ProjectDir.empty())
+        {
+            Args += " -Project=\"" + ProjectDir + "\"";
+        }
 
-        const std::wstring MSBuildW(MSBuild.begin(), MSBuild.end());
+        LogPackager(LogFunc, FString().sprintf("Building with LuminaBuildTool: Build %s", Args.c_str()).c_str());
+
+        Args = FString("Build ") + Args;
+
+        const std::wstring BuildToolW(BuildTool.begin(), BuildTool.end());
         const std::wstring ArgsW(Args.begin(), Args.end());
-        const std::wstring CwdW(Paths::GetEngineInstallDirectory().c_str(),
-            Paths::GetEngineInstallDirectory().c_str() + Paths::GetEngineInstallDirectory().size());
-        
+        const std::wstring CwdW(EngineDir.begin(), EngineDir.end());
+
         const int ExitCode = Platform::RunProcessAndWaitCapture(
-            MSBuildW.c_str(), ArgsW.c_str(), CwdW.c_str(),
+            BuildToolW.c_str(), ArgsW.c_str(), CwdW.c_str(),
             [&LogFunc](FStringView Line)
             {
                 if (LogFunc && !Line.empty())
@@ -421,7 +429,7 @@ namespace Lumina
         if (ExitCode != 0)
         {
             Result.ErrorMessage = FString().sprintf(
-                "MSBuild failed (exit code %d). See log above for the build error. Cooked PAK is still at %.*s.",
+                "Build failed (exit code %d). See log above for the build error. Cooked PAK is still at %.*s.",
                 ExitCode, (int)PakPath.size(), PakPath.data());
             return Result;
         }
@@ -430,16 +438,34 @@ namespace Lumina
             std::filesystem::path(Paths::GetEngineInstallDirectory().c_str()) / "Binaries" / "Windows64";
         const std::filesystem::path DestDir(Options.OutputDirectory.c_str());
 
-        Log(LogFunc, FString().sprintf("Copying %s binaries from %s",
+        LogPackager(LogFunc, FString().sprintf("Copying %s binaries from %s",
             Config.c_str(), BinariesDir.string().c_str()).c_str());
 
-        const size_t Copied = CopyRuntimePayload(BinariesDir, DestDir, Config, ProjectName, LogFunc);
+        size_t Copied = CopyRuntimePayload(BinariesDir, DestDir, Config, ProjectName, LogFunc);
+
+        // The project's own modules link into the project tree, not the engine's, so a packaged
+        // game needs both. Engine binaries are shared by every project and stay where they are.
+        if (!ProjectDir.empty())
+        {
+            const std::filesystem::path ProjectBinaries =
+                std::filesystem::path(ProjectDir.c_str()) / "Binaries" / "Windows64";
+
+            std::error_code Ec;
+            if (std::filesystem::exists(ProjectBinaries, Ec))
+            {
+                LogPackager(LogFunc, FString().sprintf("Copying project binaries from %s",
+                    ProjectBinaries.string().c_str()).c_str());
+
+                Copied += CopyRuntimePayload(ProjectBinaries, DestDir, Config, ProjectName, LogFunc);
+            }
+        }
+
         if (Copied == 0)
         {
-            Result.ErrorMessage = "MSBuild reported success but no matching binaries were found to copy. Check the build output.";
+            Result.ErrorMessage = "The build succeeded but no matching binaries were found to copy. Check the build output.";
             return Result;
         }
-        Log(LogFunc, FString().sprintf("Copied %zu runtime files.", Copied).c_str());
+        LogPackager(LogFunc, FString().sprintf("Copied %zu runtime files.", Copied).c_str());
 
         // Stage the C# scripting payload (managed bootstrap, bundled .NET runtime, prebuilt script DLLs +
         // manifest) so the cooked game can boot CoreCLR and load its scripts without the editor/dev tree.
@@ -456,61 +482,6 @@ namespace Lumina
     size_t FProjectPackager::ExtractLooseScripts(const FString& OutDir, const TFunction<void(FStringView)>& LogFunc)
     {
         return CopyLooseScripts(OutDir, LogFunc);
-    }
-
-    FString FProjectPackager::DefaultMSBuildPath()
-    {
-        // Cache; vswhere subprocess isn't free and the answer doesn't change in-session.
-        static FString CachedPath;
-        if (!CachedPath.empty())
-        {
-            return CachedPath;
-        }
-
-        // vswhere.exe is at a known path with every VS 2017+ install; canonical Microsoft recipe.
-        // -find matches x86 + amd64 MSBuild.exe; take the first line (x86 builds fine).
-        const char* VsWhereCandidates[] =
-        {
-            R"(C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe)",
-            R"(C:\Program Files\Microsoft Visual Studio\Installer\vswhere.exe)",
-        };
-
-        for (const char* Candidate : VsWhereCandidates)
-        {
-            std::error_code Ec;
-            if (!std::filesystem::exists(Candidate, Ec))
-            {
-                continue;
-            }
-
-            FString FirstLine;
-            const std::string CandidateStr(Candidate);
-            const std::wstring VsWhereW(CandidateStr.begin(), CandidateStr.end());
-            const std::wstring ArgsW = LR"(-latest -products * -requires Microsoft.Component.MSBuild -find "MSBuild\**\Bin\MSBuild.exe" -nologo)";
-
-            const int ExitCode = Platform::RunProcessAndWaitCapture(
-                VsWhereW.c_str(), ArgsW.c_str(), nullptr,
-                [&FirstLine](FStringView Line)
-                {
-                    // vswhere can emit multiple matches; first usable wins.
-                    if (FirstLine.empty() && !Line.empty())
-                    {
-                        FirstLine.assign(Line.data(), Line.size());
-                    }
-                });
-
-            if (ExitCode == 0 && !FirstLine.empty())
-            {
-                // Normalize Windows backslashes to forward slashes.
-                std::replace(FirstLine.begin(), FirstLine.end(), '\\', '/');
-                CachedPath = Move(FirstLine);
-                return CachedPath;
-            }
-        }
-
-        // Fallback: VS 2026 Community default; user can override via "MSBuild Path".
-        CachedPath = "C:/Program Files/Microsoft Visual Studio/2026/Community/MSBuild/Current/Bin/MSBuild.exe";
-        return CachedPath;
     }
 
     FPackageBuildResult FProjectPackager::Package(const FPackageBuildOptions& Options, const TFunction<void(FStringView)>& LogFunc)
@@ -540,10 +511,10 @@ namespace Lumina
         }
         Result.OutputDirectory = OutDir;
 
-        Log(LogFunc, FString().sprintf("Output directory: %s", OutDir.c_str()).c_str());
+        LogPackager(LogFunc, FString().sprintf("Output directory: %s", OutDir.c_str()).c_str());
 
         const FString PakPath = OutDir + "/" + ProjectName + ".pak";
-        Log(LogFunc, FString().sprintf("Cooking PAK: %s", PakPath.c_str()).c_str());
+        LogPackager(LogFunc, FString().sprintf("Cooking PAK: %s", PakPath.c_str()).c_str());
 
         FCookOptions CookOpts;
         CookOpts.bExtractScriptsAsLooseFiles = Options.bExtractScriptsAsLooseFiles;
@@ -558,19 +529,26 @@ namespace Lumina
         }
         
         Result.PakPath = PakPath;
-        Log(LogFunc, FString().sprintf("Cook OK: %zu assets, %zu extras, %zu bytes", Cook.NumAssetsCooked, Cook.NumExtraFiles, Cook.TotalBytes).c_str());
+        LogPackager(LogFunc, FString().sprintf("Cook OK: %zu assets, %zu extras, %zu bytes", Cook.NumAssetsCooked, Cook.NumExtraFiles, Cook.TotalBytes).c_str());
 
         if (Options.bExtractScriptsAsLooseFiles)
         {
-            Log(LogFunc, "Extracting loose /Game files...");
+            LogPackager(LogFunc, "Extracting loose /Game files...");
             const size_t Extracted = CopyLooseScripts(OutDir, LogFunc);
-            Log(LogFunc, FString().sprintf("Extracted %zu loose script files.", Extracted).c_str());
+            LogPackager(LogFunc, FString().sprintf("Extracted %zu loose script files.", Extracted).c_str());
         }
 
         if (Options.bBuildExecutable)
         {
             FPackageBuildOptions LocalOpts = Options;
             LocalOpts.OutputDirectory = OutDir;
+
+            // Resolved here, on the main thread, so the build stage never has to reach for GEngine.
+            if (LocalOpts.ProjectDirectory.empty())
+            {
+                LocalOpts.ProjectDirectory =
+                    FString(GEngine->GetProjectPath().data(), GEngine->GetProjectPath().size());
+            }
             const FPackageBuildResult Sub = BuildAndCopyOnly(LocalOpts, ProjectName, PakPath, LogFunc);
             if (!Sub.bSuccess)
             {
@@ -580,11 +558,11 @@ namespace Lumina
         }
         else
         {
-            Log(LogFunc, "Skipped executable build (cook only).");
+            LogPackager(LogFunc, "Skipped executable build (cook only).");
         }
 
         Result.bSuccess = true;
-        Log(LogFunc, "Package complete.");
+        LogPackager(LogFunc, "Package complete.");
         return Result;
     }
 }

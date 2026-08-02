@@ -1,0 +1,114 @@
+﻿#include "RuntimePCH.h"
+#include "CommandLine.h"
+
+namespace Lumina
+{
+    
+    RUNTIME_API FCommandLine* GCommandLine = nullptr;
+    
+    namespace Detail
+    {
+        static FFixedString Normalize(FStringView Raw)
+        {
+            FFixedString String(Raw.begin(), Raw.end());
+            String.make_lower();
+            return Move(String);
+        }
+    }
+    
+    FCommandLine::FCommandLine(int argc, char* argv[])
+    {
+        Parse(argc, argv);
+    }
+
+    void FCommandLine::Parse(int argc, char* argv[])
+    {
+        for (int i = 1; i < argc; ++i)
+        {
+            FStringView Arg(argv[i], strlen(argv[i]));
+
+            if (Arg.starts_with("--"))
+            {
+                // Lowercase the key but preserve the value's case (paths/identifiers).
+                const FStringView Raw = Arg.substr(2);
+                FFixedString Key;
+                FFixedString Value;
+
+                const size_t Equals = Raw.find('=');
+                if (Equals != FStringView::npos)
+                {
+                    Key   = Detail::Normalize(Raw.substr(0, Equals));
+                    // substr(pos, count), passing 0 used to silently empty
+                    // the value; we want the rest of the string.
+                    const FStringView ValueView = Raw.substr(Equals + 1);
+                    Value.assign(ValueView.data(), ValueView.size());
+                }
+                else
+                {
+                    Key = Detail::Normalize(Raw);
+                    if (i + 1 < argc)
+                    {
+                        FStringView NextArg(argv[i + 1]);
+                        if (!NextArg.starts_with("--"))
+                        {
+                            Value = argv[++i];
+                        }
+                    }
+                }
+
+                Args[Key] = Value;
+            }
+            else if (Arg.starts_with('-') && Arg.size() > 1)
+            {
+                for (size_t j = 1; j < Arg.size(); ++j)
+                {
+                    FFixedString Key(1, Arg[j]);
+                    Args[Detail::Normalize(Key)] = "true";
+                }
+            }
+            else
+            {
+                PositionalArgs.emplace_back(FFixedString(Arg.begin(), Arg.end()));
+            }
+        }
+    }
+
+    bool FCommandLine::Has(const FString& name) const
+    {
+        return Args.find(Detail::Normalize(name)) != Args.end();
+    }
+
+    TOptional<FFixedString> FCommandLine::Get(const FString& Name) const
+    {
+        auto it = Args.find(Detail::Normalize(Name));
+        return it != Args.end() ? TOptional(it->second) : eastl::nullopt;
+    }
+
+    TOptional<int> FCommandLine::GetInt(const FString& name) const
+    {
+        auto it = Args.find(Detail::Normalize(name));
+        return it != Args.end() ? TOptional(std::stoi(it->second.c_str())) : eastl::nullopt;
+    }
+
+    TOptional<bool> FCommandLine::GetBool(const FString& name) const
+    {
+        auto it = Args.find(Detail::Normalize(name));
+        if (it == Args.end())
+        {
+            return eastl::nullopt;
+        }
+    
+        const FFixedString& Val = it->second;
+        return Val.empty() || Val == "1" || Val == "true" || Val == "yes";
+    }
+
+    const TVector<FFixedString>& FCommandLine::GetPositionalArgs() const
+    {
+        return PositionalArgs;
+    }
+
+    const THashMap<FName, FFixedString>& FCommandLine::GetAll() const
+    {
+        return Args;
+    }
+}

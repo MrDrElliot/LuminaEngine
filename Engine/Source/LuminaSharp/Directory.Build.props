@@ -1,0 +1,11 @@
+<Project>
+  <!--
+    Routes NuGet restore and MSBuild intermediates into Intermediates/ instead of an obj/ beside
+    the sources. It lives here rather than in the csproj because Microsoft.Common.props reads
+    BaseIntermediateOutputPath while importing, which is before any PropertyGroup in the project
+    body runs; setting it there earns MSB3539 and leaves restore writing to the default path.
+  -->
+  <PropertyGroup>
+    <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)..\..\..\Intermediates\Obj\Managed\LuminaSharp\</BaseIntermediateOutputPath>
+  </PropertyGroup>
+</Project>

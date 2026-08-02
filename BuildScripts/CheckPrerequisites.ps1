@@ -2,12 +2,12 @@
 <#
     Lumina Engine - Prerequisite Validator
 
-    Verifies a machine can BUILD the engine before premake/MSBuild run, so a
+    Verifies a machine can BUILD the engine before LuminaBuildTool runs, so a
     fresh clone fails fast with actionable guidance instead of a cryptic
     NETSDK / linker error deep into the build.
 
     Checks (hard = blocks setup, soft = warning only):
-      [hard] Windows curl.exe + tar.exe   (premake bootstrap + External download)
+      [hard] Windows curl.exe + tar.exe   (External dependency download)
       [hard] .NET 10 SDK                   (compiles LuminaSharp + game scripts)
       [hard] Visual Studio >= 18.0 (2026)  (only VS 18.0+ MSBuild can target net10.0)
       [soft] Vulkan SDK (VULKAN_SDK)       (validation layers only; headers are bundled)

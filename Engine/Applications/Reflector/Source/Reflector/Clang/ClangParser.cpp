@@ -105,13 +105,18 @@ namespace Lumina::Reflection
             &TranslationUnit);
         
         CXCursor Cursor = clang_getTranslationUnitCursor(TranslationUnit);
+
+        // A non-zero return means a visitor asked to stop, which abandons every cursor after it
+        // and silently drops the reflection data for the rest of the workspace. Visitors report
+        // their own problems and keep going, so reaching this is a defect in the walk itself
+        // rather than something the user can act on in their code.
         if (clang_visitChildren(Cursor, VisitTranslationUnit, &ParsingContext) != 0)
         {
             FDiagLocation Loc;
             Loc.File = AmalgamationPath;
             FDiagnostics::Get().Errorf(Loc, EDiagId::DriverTranslationUnitWalk,
-                "A problem occurred during translation unit parsing. "
-                "Check earlier libclang diagnostics for the root cause.");
+                "The AST walk was aborted before it finished, so reflection data is incomplete. "
+                "This is an internal Reflector fault, not an error in the parsed headers.");
         }
 
         if (Result != CXError_Success)

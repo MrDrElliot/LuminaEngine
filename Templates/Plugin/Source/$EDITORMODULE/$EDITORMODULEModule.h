@@ -1,6 +1,5 @@
-#pragma once
+﻿#pragma once
 
-#include "$EDITORMODULEAPI.h"
 #include "Core/Module/ModuleInterface.h"
 
 namespace Lumina

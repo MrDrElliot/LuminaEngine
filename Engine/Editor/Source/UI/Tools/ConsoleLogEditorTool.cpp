@@ -33,6 +33,10 @@ namespace Lumina
         DrawHelpTextRow("Autocomplete",
             "Live-matched against registered CVars and exec commands. Description text comes from the "
             "FAutoConsoleVariable / FAutoConsoleCommand registration site.");
+        DrawHelpTextRow("Selecting & Copying",
+            "Click a line to select it, shift-click for a range, ctrl-click to toggle one. Ctrl+C copies "
+            "the selection, Ctrl+A selects everything visible, Esc clears. Right-click for the same "
+            "options plus Copy All Visible.");
         DrawHelpTextRow("Export",
             "Copies the currently filtered messages out to a text file.");
         DrawHelpTextRow("Clear",
@@ -176,10 +180,22 @@ namespace Lumina
         // Wrap disables clipper; full iteration is still cheaper than a table.
         const bool bUseClipper = !Settings.bWordWrap;
 
+        // Rows are plain text rather than ImGui items, so the highlight has to be painted manually.
+        // Splitting the draw list lets the text go down first and the selection rect still land behind
+        // it, which is what allows a row's height to be measured after the fact (word wrap).
+        ImDrawList* RowDrawList = ImGui::GetWindowDrawList();
+        RowDrawList->ChannelsSplit(2);
+        RowDrawList->ChannelsSetCurrent(1);
+
+        const bool bLogHovered = ImGui::IsWindowHovered();
+        const float RowRight = ImGui::GetWindowPos().x + ImGui::GetWindowSize().x;
+
         auto DrawLine = [&](uint32 Index)
         {
             const FConsoleMessage& Message = Messages[Index];
             const ImVec4 Color = GetColorForLevel(Message.Level);
+
+            const ImVec2 RowMin = ImGui::GetCursorScreenPos();
 
             if (Settings.bShowTimestamps)
             {
@@ -211,6 +227,29 @@ namespace Lumina
             {
                 ImGui::TextColored(Color, "%s", Message.Message.c_str());
             }
+
+            const ImVec2 RowMax(RowRight, ImGui::GetCursorScreenPos().y);
+
+            if (SelectedMessages.find(Index) != SelectedMessages.end())
+            {
+                RowDrawList->ChannelsSetCurrent(0);
+                RowDrawList->AddRectFilled(RowMin, RowMax, IM_COL32(38, 79, 120, 255));
+                RowDrawList->ChannelsSetCurrent(1);
+            }
+
+            if (bLogHovered && ImGui::IsMouseHoveringRect(RowMin, RowMax))
+            {
+                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+                {
+                    HandleRowClick(Index, VisibleIndices);
+                }
+                else if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)
+                    && SelectedMessages.find(Index) == SelectedMessages.end())
+                {
+                    // Right-clicking outside the selection retargets it, matching every list view.
+                    HandleRowClick(Index, VisibleIndices);
+                }
+            }
         };
 
         if (bUseClipper)
@@ -232,6 +271,70 @@ namespace Lumina
             {
                 DrawLine(Idx);
             }
+        }
+
+        RowDrawList->ChannelsMerge();
+
+        // Not gated on focus: the log child never takes keyboard focus while the command input below
+        // holds it, so hovering is the only workable test. WantTextInput keeps Ctrl+C working normally
+        // for whoever is actually typing.
+        if (bLogHovered && !ImGui::GetIO().WantTextInput)
+        {
+            const ImGuiIO& IO = ImGui::GetIO();
+
+            if (IO.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_C))
+            {
+                CopyToClipboard(VisibleIndices, !SelectedMessages.empty());
+            }
+
+            if (IO.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_A))
+            {
+                SelectedMessages.clear();
+                for (uint32 Visible : VisibleIndices)
+                {
+                    SelectedMessages.insert(Visible);
+                }
+            }
+
+            if (ImGui::IsKeyPressed(ImGuiKey_Escape))
+            {
+                SelectedMessages.clear();
+                SelectionAnchor = -1;
+            }
+        }
+
+        if (ImGui::BeginPopupContextWindow("##LogContext"))
+        {
+            const size_t SelectedCount = SelectedMessages.size();
+
+            if (ImGui::MenuItem("Copy", "Ctrl+C", false, SelectedCount > 0))
+            {
+                CopyToClipboard(VisibleIndices, true);
+            }
+
+            if (ImGui::MenuItem("Copy All Visible"))
+            {
+                CopyToClipboard(VisibleIndices, false);
+            }
+
+            ImGui::Separator();
+
+            if (ImGui::MenuItem("Select All", "Ctrl+A"))
+            {
+                SelectedMessages.clear();
+                for (uint32 Visible : VisibleIndices)
+                {
+                    SelectedMessages.insert(Visible);
+                }
+            }
+
+            if (ImGui::MenuItem("Clear Selection", "Esc", false, SelectedCount > 0))
+            {
+                SelectedMessages.clear();
+                SelectionAnchor = -1;
+            }
+
+            ImGui::EndPopup();
         }
 
         if (bNeedsScrollToBottom)
@@ -796,6 +899,102 @@ namespace Lumina
         return 0.0f;
     }
     
+    void FConsoleLogEditorTool::HandleRowClick(uint32 MessageIndex, const TVector<uint32>& VisibleIndices)
+    {
+        const ImGuiIO& IO = ImGui::GetIO();
+
+        if (IO.KeyShift && SelectionAnchor >= 0)
+        {
+            // Range over the visible order, so a filtered-out message between the two is not swept in.
+            size_t AnchorPos = VisibleIndices.size();
+            size_t ClickPos  = VisibleIndices.size();
+
+            for (size_t i = 0; i < VisibleIndices.size(); ++i)
+            {
+                if (VisibleIndices[i] == (uint32)SelectionAnchor) { AnchorPos = i; }
+                if (VisibleIndices[i] == MessageIndex)            { ClickPos  = i; }
+            }
+
+            if (AnchorPos < VisibleIndices.size() && ClickPos < VisibleIndices.size())
+            {
+                const size_t Begin = AnchorPos < ClickPos ? AnchorPos : ClickPos;
+                const size_t End   = AnchorPos < ClickPos ? ClickPos  : AnchorPos;
+
+                SelectedMessages.clear();
+                for (size_t i = Begin; i <= End; ++i)
+                {
+                    SelectedMessages.insert(VisibleIndices[i]);
+                }
+                return;
+            }
+        }
+
+        if (IO.KeyCtrl)
+        {
+            if (SelectedMessages.find(MessageIndex) != SelectedMessages.end())
+            {
+                SelectedMessages.erase(MessageIndex);
+            }
+            else
+            {
+                SelectedMessages.insert(MessageIndex);
+            }
+        }
+        else
+        {
+            SelectedMessages.clear();
+            SelectedMessages.insert(MessageIndex);
+        }
+
+        SelectionAnchor = (int32)MessageIndex;
+    }
+
+    void FConsoleLogEditorTool::AppendMessageText(FString& Out, const FConsoleMessage& Message) const
+    {
+        // Mirrors what the row shows, so a copy matches what was on screen.
+        if (Settings.bShowTimestamps)
+        {
+            Out += "[";
+            Out += Message.Time.c_str();
+            Out += "] ";
+        }
+
+        if (Settings.bShowLogger)
+        {
+            Out.append(Message.LoggerName.data(), Message.LoggerName.size());
+            Out += ": ";
+        }
+
+        Out += Message.Message.c_str();
+        Out += "\n";
+    }
+
+    void FConsoleLogEditorTool::CopyToClipboard(const TVector<uint32>& VisibleIndices, bool bSelectionOnly) const
+    {
+        const Logging::FLogQueue& Messages = Logging::GetConsoleLogQueue();
+
+        FString Text;
+
+        // Walk the visible order rather than the set, so copied lines come out in the order shown.
+        for (uint32 Index : VisibleIndices)
+        {
+            if (bSelectionOnly && SelectedMessages.find(Index) == SelectedMessages.end())
+            {
+                continue;
+            }
+
+            if (Index < Messages.size())
+            {
+                AppendMessageText(Text, Messages[Index]);
+            }
+        }
+
+        if (!Text.empty())
+        {
+            ImGui::SetClipboardText(Text.c_str());
+        }
+    }
+
     const char* FConsoleLogEditorTool::GetLevelIcon(ELogLevel Level) const
     {
         if (!Settings.bShowIcons)

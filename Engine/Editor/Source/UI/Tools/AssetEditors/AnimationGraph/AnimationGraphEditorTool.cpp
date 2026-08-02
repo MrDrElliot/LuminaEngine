@@ -1,4 +1,4 @@
-#include "AnimationGraphEditorTool.h"
+﻿#include "AnimationGraphEditorTool.h"
 
 #include <cfloat>
 #include <cstdio>
@@ -49,7 +49,7 @@ namespace Lumina
     // enough to collide with other translation units' Detail helpers.
     namespace
     {
-        namespace Detail
+        namespace AnimGraphDetail
         {
             const char* TaskTypeName(EAnimTaskType Type)
             {
@@ -1577,7 +1577,7 @@ namespace Lumina
             const float Alpha    = Entry.bReachable ? 1.0f : 0.34f;
             const float Rounding = 6.0f * Scale;
 
-            const ImVec4 Category = Detail::TaskTypeColor(Entry.Type);
+            const ImVec4 Category = AnimGraphDetail::TaskTypeColor(Entry.Type);
 
             DL->AddRectFilled(Min, Max,
                               EditorColors::U32(EditorColors::WithAlpha(EditorColors::FrameBg(), Alpha)), Rounding);
@@ -1611,7 +1611,7 @@ namespace Lumina
                                 EditorColors::U32(EditorColors::WithAlpha(Category, Alpha)));
 
             const float TitleMaxW = BodyMaxW - DotOffset - OrderSize.x - 6.0f * Scale;
-            const FString Title = Detail::FitText(Font, FontSize, Detail::TaskTypeName(Entry.Type), TitleMaxW);
+            const FString Title = AnimGraphDetail::FitText(Font, FontSize, AnimGraphDetail::TaskTypeName(Entry.Type), TitleMaxW);
             DL->AddText(Font, FontSize, ImVec2(TextX + DotOffset, TextY),
                         EditorColors::U32(EditorColors::WithAlpha(EditorColors::TextPrimary(), Alpha)), Title.c_str());
 
@@ -1621,7 +1621,7 @@ namespace Lumina
 
             TextY += FontSize + LineGap;
 
-            const FString DetailText = Detail::FitText(Font, SmallFont, Detail::BuildTaskDetail(Entry).c_str(), BodyMaxW);
+            const FString DetailText = AnimGraphDetail::FitText(Font, SmallFont, AnimGraphDetail::BuildTaskDetail(Entry).c_str(), BodyMaxW);
             DL->AddText(Font, SmallFont, ImVec2(TextX, TextY),
                         EditorColors::U32(EditorColors::WithAlpha(EditorColors::TextDim(), Alpha)), DetailText.c_str());
 
@@ -1633,7 +1633,7 @@ namespace Lumina
                 char Buffer[64];
                 snprintf(Buffer, sizeof(Buffer), Entry.bStoleBuffer ? "buffer %d  (in place)" : "buffer %d  (new)",
                          (int32)Entry.BufferIndex);
-                const FString Chip = Detail::FitText(Font, SmallFont, Buffer, BodyMaxW);
+                const FString Chip = AnimGraphDetail::FitText(Font, SmallFont, Buffer, BodyMaxW);
                 DL->AddText(Font, SmallFont, ImVec2(TextX, TextY),
                             EditorColors::U32(EditorColors::WithAlpha(
                                 Entry.bStoleBuffer ? EditorColors::AccentAlt() : EditorColors::TextMuted(), Alpha)),
@@ -1645,11 +1645,11 @@ namespace Lumina
             if (bWindowHovered && ImGui::IsMouseHoveringRect(Min, Max))
             {
                 ImGui::BeginTooltip();
-                ImGui::TextColored(Category, "%s", Detail::TaskTypeName(Entry.Type));
+                ImGui::TextColored(Category, "%s", AnimGraphDetail::TaskTypeName(Entry.Type));
                 ImGui::Separator();
                 ImGui::Text("Task index    %d%s", i, bIsOutput ? "   (graph output)" : "");
                 ImGui::Text("Level         %d", (int32)Entry.Level);
-                ImGui::Text("Dependencies  %s", Detail::BuildDepText(Entry).c_str());
+                ImGui::Text("Dependencies  %s", AnimGraphDetail::BuildDepText(Entry).c_str());
                 ImGui::Separator();
                 if (Entry.bReachable)
                 {
@@ -1663,7 +1663,7 @@ namespace Lumina
                     ImGui::TextColored(EditorColors::Warning(), "Skipped: not reachable from the output task.");
                     ImGui::TextColored(EditorColors::TextMuted(), "Inactive branches cost nothing to evaluate.");
                 }
-                const FString DetailLine = Detail::BuildTaskDetail(Entry);
+                const FString DetailLine = AnimGraphDetail::BuildTaskDetail(Entry);
                 if (!DetailLine.empty())
                 {
                     ImGui::Separator();

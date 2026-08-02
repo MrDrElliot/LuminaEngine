@@ -1,0 +1,8 @@
+<Project>
+
+  <!-- Must be set before Microsoft.Common.props is imported or NuGet writes restore output elsewhere. -->
+  <PropertyGroup>
+    <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)..\..\..\Intermediates\BuildTool\obj\</BaseIntermediateOutputPath>
+  </PropertyGroup>
+
+</Project>

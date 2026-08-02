@@ -77,6 +77,20 @@ int main(int argc, char* argv[])
             ReflectedProject->bReferenceOnly = Project["ReferenceOnly"].get<bool>();
         }
 
+        // Optional: the build system pins where this project's generated C++ lands.
+        if (Project.contains("GeneratedDir") && !Project["GeneratedDir"].get<std::string>().empty())
+        {
+            eastl::string GeneratedDir = Project["GeneratedDir"].get<std::string>().c_str();
+            ReflectedProject->GeneratedDir = Lumina::ClangUtils::NormalizeHeaderPath(eastl::move(GeneratedDir));
+        }
+
+        // Optional: the precompiled header generated sources must open with. Absent or empty means
+        // the module has none, and the generated sources then include no PCH at all.
+        if (Project.contains("PrecompiledHeader"))
+        {
+            ReflectedProject->PrecompiledHeader = Project["PrecompiledHeader"].get<std::string>().c_str();
+        }
+
         // Optional: a plugin/game module routes its C# bindings into its own Scripts/Generated dir.
         if (Project.contains("CSharpBindingsDir") && !Project["CSharpBindingsDir"].get<std::string>().empty())
         {

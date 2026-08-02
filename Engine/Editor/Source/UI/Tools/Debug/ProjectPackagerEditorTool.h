@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "UI/Tools/EditorTool.h"
 
 #include <atomic>
@@ -69,7 +69,6 @@ namespace Lumina
         void ClearLog();
 
         FString             OutputDir;          // editable; defaults set on first draw
-        FString             MSBuildPath;        // editable
         int32               ConfigIndex     = 0; // 0=Shipping, 1=Development, 2=Debug
         bool                bExtractScriptsLoose = false;
         TVector<FString>    ExtraFiles;

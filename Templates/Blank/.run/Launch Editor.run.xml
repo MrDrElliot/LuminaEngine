@@ -1,4 +1,4 @@
-<!--
+﻿<!--
   Default Rider run configuration: builds and launches the editor in
   Development. Named "Launch Editor" (no suffix) so it sorts alphabetically
   before "Launch Editor (Debug)" AND has a higher AUTO_SELECT_PRIORITY so
@@ -18,10 +18,10 @@
       <option name="PASS_PARENT_ENVS" value="1" />
       <option name="USE_EXTERNAL_CONSOLE" value="0" />
       <option name="TERMINAL_INTERACTION_BEHAVIOR" value="AUTO_DETECT" />
-      <option name="PROJECT_FILE_PATH" value="$PROJECT_DIR$/$PROJECTNAME.vcxproj" />
+      <option name="PROJECT_FILE_PATH" value="$PROJECT_DIR$/Intermediates/ProjectFiles/$PROJECTNAME.vcxproj" />
     </configuration_1>
-    <option name="DEFAULT_PROJECT_PATH" value="$PROJECT_DIR$/$PROJECTNAME.vcxproj" />
-    <option name="PROJECT_FILE_PATH" value="$PROJECT_DIR$/$PROJECTNAME.vcxproj" />
+    <option name="DEFAULT_PROJECT_PATH" value="$PROJECT_DIR$/Intermediates/ProjectFiles/$PROJECTNAME.vcxproj" />
+    <option name="PROJECT_FILE_PATH" value="$PROJECT_DIR$/Intermediates/ProjectFiles/$PROJECTNAME.vcxproj" />
     <option name="AUTO_SELECT_PRIORITY" value="1000" />
     <method v="2">
       <option name="Build" />

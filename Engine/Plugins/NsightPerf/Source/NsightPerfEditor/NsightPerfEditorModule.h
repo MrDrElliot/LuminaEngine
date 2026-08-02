@@ -1,6 +1,5 @@
-#pragma once
+﻿#pragma once
 
-#include "NsightPerfEditorAPI.h"
 #include "Core/Module/ModuleInterface.h"
 
 namespace Lumina

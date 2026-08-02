@@ -91,14 +91,27 @@ namespace Lumina::Reflection
         }
 
         // Paths produced by generation, relative to the workspace root.
+        // Where a project's generated C++ lives. The build system pins this per target, because
+        // two targets that share a module would otherwise write the same files and each would
+        // see the other's output as its own having changed.
+        eastl::string ProjectGeneratedDir(const eastl::string& WorkspacePath, const FReflectedProject& Project)
+        {
+            if (!Project.GeneratedDir.empty())
+            {
+                return Project.GeneratedDir;
+            }
+
+            return WorkspacePath + R"(\Intermediates\Reflection\)" + Project.Name;
+        }
+
         eastl::string MakeGeneratedHeaderPath(const eastl::string& WorkspacePath, const FReflectedHeader& Header)
         {
-            return WorkspacePath + R"(\Intermediates\Reflection\)" + Header.Project->Name + R"(\)" + Header.FileName + ".generated.h";
+            return ProjectGeneratedDir(WorkspacePath, *Header.Project) + R"(\)" + Header.FileName + ".generated.h";
         }
 
         eastl::string MakeGeneratedSourcePath(const eastl::string& WorkspacePath, const FReflectedHeader& Header)
         {
-            return WorkspacePath + R"(\Intermediates\Reflection\)" + Header.Project->Name + R"(\)" + Header.FileName + ".generated.cpp";
+            return ProjectGeneratedDir(WorkspacePath, *Header.Project) + R"(\)" + Header.FileName + ".generated.cpp";
         }
 
         // bRoutable = the header has no reflected TYPES (it's a SCRIPT_EXPORT free-function facade). Only those
@@ -145,13 +158,13 @@ namespace Lumina::Reflection
 
         eastl::string MakeUnityPath(const eastl::string& WorkspacePath, const FReflectedProject& Project, int Shard)
         {
-            return WorkspacePath + R"(\Intermediates\Reflection\)" + Project.Name
+            return ProjectGeneratedDir(WorkspacePath, Project)
                  + R"(\ReflectionUnity_)" + eastl::to_string(Shard) + ".gen.cpp";
         }
 
         eastl::string MakeProjectIntermediateDir(const eastl::string& WorkspacePath, const FReflectedProject& Project)
         {
-            return WorkspacePath + R"(\Intermediates\Reflection\)" + Project.Name;
+            return ProjectGeneratedDir(WorkspacePath, Project);
         }
 
         eastl::string MakeProjectCSharpDir(const eastl::string& WorkspacePath, const FReflectedProject& Project)
@@ -163,10 +176,21 @@ namespace Lumina::Reflection
             "// Reflection unity stub.\n"
             "// This project has no reflected types yet; this file exists\n"
             "// only so the vcxproj's source list resolves. The Reflector\n"
-            "// will overwrite it the moment a reflected type appears.\n"
-            "#if __has_include(\"pch.h\")\n"
-            "    #include \"pch.h\"\n"
-            "#endif\n";
+            "// will overwrite it the moment a reflected type appears.\n";
+
+        /// The project's precompiled header include, or nothing when it has none. Generated sources
+        /// must open with their own module's PCH: naming another module's only compiles while that
+        /// module happens to sit on the include path, and MSVC rejects a translation unit built with
+        /// /Yu whose first content is anything else.
+        eastl::string PchInclude(const FReflectedProject& Project)
+        {
+            if (Project.PrecompiledHeader.empty())
+            {
+                return {};
+            }
+
+            return eastl::string("#include \"") + Project.PrecompiledHeader + "\"\n";
+        }
 
         // The reflected types for a header, or a shared empty list when the header has none (e.g. a header
         // whose only reflection is SCRIPT_EXPORT free functions). Avoids ReflectedTypes.at() throwing.
@@ -182,15 +206,19 @@ namespace Lumina::Reflection
             std::filesystem::path OutputPath(PathUtf8.c_str());
             std::filesystem::create_directories(OutputPath.parent_path());
 
-            std::ofstream Stream(OutputPath);
+            // Binary, so the bytes on disk are exactly Contents. In text mode every \n becomes \r\n
+            // and the file can never compare equal to what generated it, which defeats the skip in
+            // WriteTextFileIfChanged.
+            std::ofstream Stream(OutputPath, std::ios::binary);
             if (Stream.is_open())
             {
                 Stream.write(Contents.c_str(), static_cast<std::streamsize>(Contents.size()));
             }
         }
 
-        // Skips the write when the contents already match, so an unchanged unity shard keeps its
-        // timestamp and MSBuild doesn't recompile it just because the Reflector ran.
+        // Skips the write when the contents already match. A generated header that keeps its
+        // timestamp costs nothing; rewriting one recompiles every translation unit that includes it,
+        // so a change in any module would otherwise drag the whole build along.
         void WriteTextFileIfChanged(const eastl::string& PathUtf8, const eastl::string& Contents)
         {
             std::filesystem::path OutputPath(PathUtf8.c_str());
@@ -401,14 +429,14 @@ namespace Lumina::Reflection
     {
         FCodeWriter Writer(kStreamInitialCapacity);
         WriteHeaderContent(Writer, Header);
-        WriteTextFile(MakeGeneratedHeaderPath(Workspace->GetPath(), *Header), Writer.String());
+        WriteTextFileIfChanged(MakeGeneratedHeaderPath(Workspace->GetPath(), *Header), Writer.String());
     }
 
     void FCodeGenerator::GenerateSourceFile(FReflectedHeader* Header)
     {
         FCodeWriter Writer(kStreamInitialCapacity);
         WriteSourceContent(Writer, Header);
-        WriteTextFile(MakeGeneratedSourcePath(Workspace->GetPath(), *Header), Writer.String());
+        WriteTextFileIfChanged(MakeGeneratedSourcePath(Workspace->GetPath(), *Header), Writer.String());
     }
 
     void FCodeGenerator::GenerateCSharpFile(FReflectedHeader* Header, bool bRoutable)
@@ -418,7 +446,7 @@ namespace Lumina::Reflection
 
         if (WriteCSharpContent(Writer, Header))
         {
-            WriteTextFile(Path, Writer.String());
+            WriteTextFileIfChanged(Path, Writer.String());
         }
         else
         {
@@ -629,7 +657,11 @@ namespace Lumina::Reflection
 
         EmitFileBanner(Writer);
 
-        Writer.Line("#include \"pch.h\"");
+        if (const eastl::string Pch = PchInclude(*Header->Project); !Pch.empty())
+        {
+            Writer.Line(eastl::string(Pch.begin(), Pch.end() - 1).c_str());
+        }
+
         Writer.Linef("#include \"%s\"", ComputeSourceHeaderInclude(*Header).c_str());
         Writer.Line("#include \"World/Entity/Components/Component.h\"");
         Writer.Line("#include \"World/Entity/Events/ECSEvent.h\"");
@@ -752,7 +784,7 @@ namespace Lumina::Reflection
                 continue;
             }
 
-            WriteTextFileIfChanged(Path, "#include \"pch.h\"\n" + Shards[Shard]);
+            WriteTextFileIfChanged(Path, PchInclude(*Project) + Shards[Shard]);
         }
     }
 }

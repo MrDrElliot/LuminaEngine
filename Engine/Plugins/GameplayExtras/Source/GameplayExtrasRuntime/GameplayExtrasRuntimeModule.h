@@ -1,6 +1,5 @@
-#pragma once
+﻿#pragma once
 
-#include "GameplayExtrasRuntimeAPI.h"
 #include "Core/Module/ModuleInterface.h"
 
 namespace Lumina

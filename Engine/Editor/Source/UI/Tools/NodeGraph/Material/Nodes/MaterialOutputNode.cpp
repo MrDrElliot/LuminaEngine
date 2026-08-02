@@ -106,7 +106,13 @@ namespace Lumina
             return Out + DefaultValue + ";\n";
         }
 
-        CMaterialOutput* ConnectedPin = Pin->GetConnection<CMaterialOutput>(0);
+        // Resolve first: a reroute emits no variable, so binding to its node name would reference an
+        // identifier that was never declared. A chain that dead-ends reads as unconnected.
+        CMaterialOutput* ConnectedPin = FMaterialCompiler::ResolveThroughReroutes(Pin->GetConnection<CMaterialOutput>(0));
+        if (ConnectedPin == nullptr)
+        {
+            return Out + DefaultValue + ";\n";
+        }
         // A material-function call output pin emits its own per-output local and binds it via
         // ResolvedVar; everything else reads the source node's single FullName variable.
         FString NodeName              = ConnectedPin->ResolvedVar.empty()
@@ -165,7 +171,10 @@ namespace Lumina
 
         // Always reconstruct Z from the decoded XY (Z = sqrt(1 - x^2 - y^2) >= 0 for a unit normal):
         // correct for BC7 and BC5 and avoids format detection, which broke BC5 maps through intermediate nodes.
-        if (NormalPin->HasConnection())
+        // Must match what EmitMaterialAssignment actually wrote: a reroute chain that dead-ends emits
+        // the default, and decoding that would corrupt it.
+        if (NormalPin->HasConnection()
+            && FMaterialCompiler::ResolveThroughReroutes(NormalPin->GetConnection<CMaterialOutput>(0)) != nullptr)
         {
             PixelOut += "\tMaterial.Normal.xy = Material.Normal.xy * 2.0 - 1.0;\n";
             PixelOut += "\tMaterial.Normal.z  = sqrt(saturate(1.0 - dot(Material.Normal.xy, Material.Normal.xy)));\n";

@@ -7,26 +7,6 @@
 
 namespace Lumina::Reflection
 {
-    namespace
-    {
-        void EmitMetadataArray(FCodeWriter& Writer, eastl::string_view SymbolBase, const eastl::vector<FMetadataPair>& Metadata)
-        {
-            if (Metadata.empty())
-            {
-                return;
-            }
-
-            Writer.Linef("static constexpr Lumina::FMetaDataPairParam %s_Metadata[] = {",
-                eastl::string(SymbolBase).c_str());
-
-            for (const FMetadataPair& Pair : Metadata)
-            {
-                Writer.Linef("\t{ \"%s\", \"%s\" },", Pair.Key.c_str(), Pair.Value.c_str());
-            }
-
-            Writer.Line("};");
-        }
-    }
 
     FReflectedStruct::~FReflectedStruct() = default;
 

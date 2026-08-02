@@ -17,6 +17,10 @@ namespace Lumina::Reflection
     // Maps a source-level C++ type name onto EPropertyTypeFlags; used by the clang visitors classifying a field.
     EPropertyTypeFlags GetCoreTypeFromName(const char* Name);
 
+    // Writes a static FMetaDataPairParam array named <SymbolBase>_Metadata, or nothing when there
+    // is no metadata. Shared by the enum and struct emitters, which need identical output.
+    void EmitMetadataArray(FCodeWriter& Writer, eastl::string_view SymbolBase, const eastl::vector<FMetadataPair>& Metadata);
+
     // Abstract base for everything the reflector emits (enum/struct/class).
     // Concrete types fill the four emission slots: DefineInitialHeader/DefineSecondaryHeader/DeclareImplementation/DeclareStaticRegistration.
     class FReflectedType

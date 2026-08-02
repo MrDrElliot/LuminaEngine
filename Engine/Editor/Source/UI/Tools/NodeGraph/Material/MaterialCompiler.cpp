@@ -311,8 +311,7 @@ namespace Lumina
 		return GetTypedInputValue(Input, eastl::to_string(DefaultValue));
 	}
 
-	// Returns nullptr if the reroute chain dead-ends at an unconnected input (treated same as no connection).
-	static CMaterialOutput* ResolveSourceOutputThroughReroutes(CMaterialOutput* OutputPin)
+	CMaterialOutput* FMaterialCompiler::ResolveThroughReroutes(CMaterialOutput* OutputPin)
 	{
 		// Cap the walk so a malformed/cyclic graph can't hang the compiler.
 		constexpr int MaxHops = 64;
@@ -325,14 +324,9 @@ namespace Lumina
 				return OutputPin;
 			}
 
-			// Reroute owner: chase back through its single input pin's connection.
-			const TVector<TObjectPtr<CEdNodeGraphPin>>& Inputs = Owner->GetInputPins();
-			if (Inputs.empty())
-			{
-				return nullptr;
-			}
-
-			CEdNodeGraphPin* RerouteInput = Inputs[0].Get();
+			// Chase back through whatever feeds the passthrough. For a plain reroute that is its own
+			// input pin; for a named reroute usage it is the matching declaration's input.
+			CEdNodeGraphPin* RerouteInput = Owner->GetRerouteSourcePin();
 			if (RerouteInput == nullptr || !RerouteInput->HasConnection())
 			{
 				return nullptr;
@@ -350,7 +344,7 @@ namespace Lumina
 		if (Input->HasConnection())
 		{
 			CMaterialOutput* Conn	= Input->GetConnection<CMaterialOutput>(0);
-			Conn					= ResolveSourceOutputThroughReroutes(Conn);
+			Conn					= ResolveThroughReroutes(Conn);
 
 			if (Conn == nullptr)
 			{

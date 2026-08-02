@@ -1,11 +1,10 @@
-#include "pch.h"
+﻿#include "EditorPCH.h"
 #include "ScreenshotCapture.h"
 
 #include <chrono>
 #include <ctime>
 
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#include "stb_image_write.h"
+#include "Tools/Image/ImageWrite.h"
 
 #include "Paths/Paths.h"
 #include "Renderer/Format.h"
@@ -139,11 +138,9 @@ namespace Lumina::Screenshot
                 }
             }
 
-            const int Result = stbi_write_png(OutPath.c_str(), static_cast<int>(Width), static_cast<int>(Height),
-                                              4, Pixels.data(), static_cast<int>(Width * 4));
-            if (Result == 0)
+            if (!ImageWrite::WritePngFile(OutPath.c_str(), Width, Height, 4, Pixels.data(), Width * 4))
             {
-                OutError = "stbi_write_png failed (check the output path is writable).";
+                OutError = "PNG encode failed (check the output path is writable).";
                 return false;
             }
             return true;
@@ -173,11 +170,9 @@ namespace Lumina::Screenshot
                 }
             }
 
-            const int Result = stbi_write_hdr(OutPath.c_str(), static_cast<int>(Width), static_cast<int>(Height),
-                                              3, Pixels.data());
-            if (Result == 0)
+            if (!ImageWrite::WriteHdrFile(OutPath.c_str(), Width, Height, 3, Pixels.data()))
             {
-                OutError = "stbi_write_hdr failed (check the output path is writable).";
+                OutError = "HDR encode failed (check the output path is writable).";
                 return false;
             }
             return true;

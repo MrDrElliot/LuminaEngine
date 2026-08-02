@@ -4,14 +4,10 @@
 #include "UI/Tools/NodeGraph/Material/MaterialOutput.h"
 #include "UI/Tools/NodeGraph/Material/MaterialCompiler.h"
 
+#include "MaterialNodePinHelpers.h"
+
 namespace Lumina
 {
-    static CMaterialInput* MakeIn(CMaterialExpression* Self, const char* Name)
-    {
-        CMaterialInput* P = Cast<CMaterialInput>(Self->CreatePin(CMaterialInput::StaticClass(), Name, ENodePinDirection::Input));
-        P->SetPinName(Name);
-        return P;
-    }
 
     void CMaterialExpression_Hash11::BuildNode() { Super::BuildNode(); X = MakeIn(this, "X"); Output->SetInputType(EMaterialInputType::Float); }
     void CMaterialExpression_Hash11::GenerateDefinition(FMaterialCompiler& C) { C.Hash11(X); }

@@ -1,88 +1,77 @@
-# Prerequisite Files
-*.d
-
-# Build Directories
+# Build output
 Binaries/
 Intermediates/
-/.idea/
 /External/
-/CrashDumps/
+External.7z
 
 # Packaged game output
-Engine/Sandbox/Build/
 Engine/*/Build/
 
-# Stray root test artifacts
+# Crash and log artifacts
+/CrashDumps/
+/*.log
 /newworld_cooked.bin
 /newworld_decomp.bin
-/*.log
 
-*.zip
-/.claude/
+# IDE state
+/.idea/
 /.vs/
-*.vcxproj
 *.user
-*.filters
-*.pyc
+*.DotSettings
+**/Scripts/.idea/
+**/Scripts/.vs/
+
+# Generated IDE projects. LuminaBuildTool writes these into Intermediates/ProjectFiles, which is
+# already covered above; these patterns catch stray copies left by older generators.
 *.sln
 *.slnx
-*.DotSettings
-*.tlog
-*.idb
+*.vcxproj
+*.filters
 
+# Editor scratch. Written wherever the editor's working directory happens to be, so it is matched
+# by name rather than by path.
+imgui.ini
+Engine/Editor/Config/EditorSettings.json
+Engine/Editor/Config/EditorPreferences.json
 
-# Compiled Object Files
+# Compiler and linker intermediates
+*.d
 *.o
 *.obj
 *.slo
 *.lo
-
-# Precompiled Headers
 *.gch
 *.pch
+*.pdb
+*.idb
+*.tlog
 
-# Compiled Dynamic Libraries
+# Compiled libraries
 *.so
 *.dylib
-
-# Compiled Static Libraries
 *.a
 *.lai
 *.la
 
-# Fortran Module Files
+# Fortran module files
 *.mod
 *.smod
 
-# Executable Files
+# Executables
 *.out
 *.app
-*.idb
-*.tlog
-*.pdb
-*.idb
-External.7z
-CLAUDE.md
-Engine/Sandbox/Game/Scripts/Definitions/GlobalDefs.d.luau
-Engine/Sandbox/Game/Scripts/Definitions/GlobalDefs.d.luau
-Engine/Applications/Lumina/imgui.ini
-/Engine/Sandbox/Game/Scripts/Definitions
-Engine/Applications/Lumina/imgui.ini
-Engine/Editor/Config/EditorSettings.json
-Engine/Editor/Config/EditorPreferences.json
 
 # .NET build output
 obj/
 bin/
+*.pyc
 
-# Generated C# projects: engine ones (LuminaSharp + Generators) are emitted by premake like the
-# .vcxproj; the *.Scripts.csproj are emitted by the runtime script host. All are generated, none tracked.
-*.csproj
+# Generated C# projects: the *.Scripts.csproj are emitted by the runtime script host. The engine's
+# own managed projects are hand-authored source now that LuminaBuildTool replaced premake.
+*.Scripts.csproj
 
-# premake (CSharpProject.lua) emits a Directory.Build.props next to each managed csproj to route NuGet
-# restore obj into Intermediates. Generated like the csproj -- not tracked.
-Directory.Build.props
+# Local assistant notes
+/.claude/
+CLAUDE.md
 
-# C# script dev environment
-**/Scripts/.idea/
-**/Scripts/.vs/
+*.zip

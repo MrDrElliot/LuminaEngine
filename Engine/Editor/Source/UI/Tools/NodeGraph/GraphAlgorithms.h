@@ -19,6 +19,26 @@ namespace Lumina::GraphAlgorithms
             }
         }
 
+        // Wireless edges (a named reroute usage depending on its declaration) carry no pin connection,
+        // so they are gathered up front and counted exactly like real ones. Doing it here rather than
+        // special-casing the emit order also means a usage placed above its own declaration is
+        // reported as an ordinary cycle instead of silently emitting in the wrong order.
+        THashMap<CEdGraphNode*, TVector<CEdGraphNode*>> ImplicitDependents;
+        for (CEdGraphNode* Node : Nodes)
+        {
+            if (ReachableNodes.find(Node) == ReachableNodes.end())
+            {
+                continue;
+            }
+
+            CEdGraphNode* Implicit = Node->GetImplicitInputNode();
+            if (Implicit != nullptr && Implicit != Node && ReachableNodes.find(Implicit) != ReachableNodes.end())
+            {
+                ImplicitDependents[Implicit].push_back(Node);
+                InDegree[Node]++;
+            }
+        }
+
         for (CEdGraphNode* Node : Nodes)
         {
             if (ReachableNodes.find(Node) == ReachableNodes.end())
@@ -72,6 +92,17 @@ namespace Lumina::GraphAlgorithms
                     }
                 }
             }
+
+            if (auto It = ImplicitDependents.find(Node); It != ImplicitDependents.end())
+            {
+                for (CEdGraphNode* Dependent : It->second)
+                {
+                    if (--InDegree[Dependent] == 0)
+                    {
+                        ReadyQueue.push(Dependent);
+                    }
+                }
+            }
         }
 
         if (ProcessedNodeCount != ReachableNodes.size())
@@ -112,6 +143,16 @@ namespace Lumina::GraphAlgorithms
                     {
                         ReverseQueue.push(ConnectedNode);
                     }
+                }
+            }
+
+            // A named reroute usage has no input pin, so without this its declaration and everything
+            // feeding it would be judged unreachable and never compiled.
+            if (CEdGraphNode* Implicit = Node->GetImplicitInputNode())
+            {
+                if (ReachableNodes.insert(Implicit).second)
+                {
+                    ReverseQueue.push(Implicit);
                 }
             }
         }
