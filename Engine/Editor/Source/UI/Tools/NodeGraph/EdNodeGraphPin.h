@@ -12,7 +12,7 @@ namespace Lumina
     class CEdGraphNode;
 
     REFLECT()
-    class CEdNodeGraphPin : public CObject
+    class EDITOR_API CEdNodeGraphPin : public CObject
     {
         GENERATED_BODY()
     public:

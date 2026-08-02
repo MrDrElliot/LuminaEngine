@@ -367,7 +367,7 @@ namespace Lumina
         FName Category;
     };
     
-    class FPropertyTable
+    class EDITOR_API FPropertyTable
     {
         friend class FStructPropertyRow;
         friend class FInstancedStructPropertyRow;
