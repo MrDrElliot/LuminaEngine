@@ -34,7 +34,7 @@ namespace Lumina
     }
 
     REFLECT()
-    class CEdGraphNode : public CObject
+    class EDITOR_API CEdGraphNode : public CObject
     {
         GENERATED_BODY()
         
