@@ -259,6 +259,25 @@ void RunEarlyPhase(uint3 GlobalID, uint3 GroupID, uint NumViews)
             VHasCone     = VBounds.ConeCutoff < 1.0;
         }
 
+        // Cascade narrowing. View.FrustumPlanes below is the cascade's ortho box, and that box's lateral
+        // extent is the bounding SPHERE of a camera slice -- for the far cascades that sphere reaches back
+        // past the camera and encloses every nearer cascade, so the box alone accepts essentially the whole
+        // near field into all four. These two tests are what keep a cascade to geometry it is sampled for.
+        // Skinned skips for the same reason it skips the frustum test: its bounds are rest-pose.
+        if (!bSkinned && !bNoCull && View.IsCascade())
+        {
+            // Sub-texel reject. Below one texel of this cascade's pitch the meshlet cannot change the depth
+            // the cascade resolves. Per view, so a meshlet stays in cascade 0 and drops out of cascade 3.
+            if (VWorldRadius < View.MinMeshletRadius)
+                continue;
+
+            // The cascade's real caster volume: its receiver slice (plus the previous cascade's blend tail)
+            // swept toward the sun. Built in ComputeDirectionalLight.
+            if (!FrustumContainsSphere(Scene().CullData.CascadeFrustum[View.CascadeIndex],
+                                       VWorldCenter, VWorldRadius))
+                continue;
+        }
+
         // Cone cull (skipped for skinned/two-sided/NoCull). Sun views test
         // against sun direction; camera/point/spot against apex-to-origin.
         if (!bSkinned && !bNoCull && !bTwoSided && VHasCone && View.HasFlag(CULL_VIEW_FLAG_CONE))

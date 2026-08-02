@@ -4381,7 +4381,10 @@ namespace Lumina
         // BuildDrawPrefix computes on the GPU and SeedIndirectArgs writes into FirstInstance.
         const uint32 NumDraws = Frame.Views.NumDrawsPerView;
 
-        auto PushView = [&](const FMatrix4& ViewProjection, const FVector3& Origin, uint32 Flags)
+        // CascadeIdx defaults to ~0u: a zero-initialized FCullView would otherwise read as cascade 0 and
+        // put every non-cascade view through cascade 0's caster frustum.
+        auto PushView = [&](const FMatrix4& ViewProjection, const FVector3& Origin, uint32 Flags,
+                            uint32 CascadeIdx = ~0u, float MinMeshletRadius = 0.0f)
         {
             // AllocateShadowTiles guarantees the total view count fits in
             // GMaxCullViews before we get here, so no runtime clamp is needed.
@@ -4398,6 +4401,8 @@ namespace Lumina
             float FlagsAsFloat;
             std::memcpy(&FlagsAsFloat, &Flags, sizeof(float));
             View.ViewOriginAndFlags = FVector4(Origin, FlagsAsFloat);
+            View.CascadeIndex       = CascadeIdx;
+            View.MinMeshletRadius   = MinMeshletRadius;
             View.IndirectArgsOffset = ViewIndex * NumDraws;
             View.NumDraws           = NumDraws;
             CullViews.push_back(View);
@@ -4467,7 +4472,19 @@ namespace Lumina
                 CascadeViewBase = (uint32)CullViews.size();
                 for (int32 c = 0; c < NumCascades; ++c)
                 {
-                    PushView(SunShadow.ViewProjection[c], ViewVolume.GetViewPosition(), CascadeFlags);
+                    // Sub-texel reject threshold. ComputeDirectionalLight already published this cascade's
+                    // half-extent and resolution, so the world-space texel pitch is derivable here without
+                    // carrying it across: pitch = 2 * Radius / Resolution. A meshlet whose world radius is
+                    // under GCSMMinMeshletTexels pitches lands inside a texel or two and cannot alter the
+                    // depth this cascade resolves -- which is most of what the far cascades were rastering,
+                    // since they see the whole near field at ~1/20th of cascade 0's texel density.
+                    const float CascadeRes = LightData.CascadeResolutions[c];
+                    const float TexelPitch = CascadeRes > 0.0f
+                                           ? (LightData.CascadeRadii[c] * 2.0f) / CascadeRes
+                                           : 0.0f;
+
+                    PushView(SunShadow.ViewProjection[c], ViewVolume.GetViewPosition(), CascadeFlags,
+                             (uint32)c, TexelPitch * GCSMMinMeshletTexels);
                 }
             }
         }
@@ -4666,7 +4683,13 @@ namespace Lumina
         const float      CamAspect = ViewVolume.GetAspectRatio();
         const FVector3  LightDir  = Light.Direction; // Toward the sun.
         
+        // Cascade i is sampled not only for its own slice but for the tail of slice i-1, where the lit pass
+        // cross-fades into it (the CascadeBlend branch in SurfaceShading.slang). Its caster volume has to
+        // cover that tail as well or the blended half of the fade loses its occluders.
+        const float CascadeBlendFraction = Math::Clamp(DirectionalLight.CascadeBlend, 0.0f, 1.0f);
+
         float LastSplitDistance = ShadowNear;
+        float PrevSliceLength   = 0.0f;   // 0 for cascade 0: nothing fades into it.
         for (int i = 0; i < NumCascades; ++i)
         {
             const float SplitNear = LastSplitDistance;
@@ -4758,10 +4781,44 @@ namespace Lumina
             // world-space length for normal-offset bias.
             LightData.CascadeRadii[i] = Radius;
 
-            // Feed this cascade's frustum to the shadow cull pass so small casters
-            // that only touch cascade 0 don't pay VPC cost on cascades 1/2.
-            SceneGlobalData.CullData.CascadeFrustum[i] = AsGPU(FFrustum::FromViewProjection(CascadeVP));
+            // Caster volume for the shadow cull. Deliberately NOT the ortho box above: that box bounds the
+            // slice's SPHERE, and the sphere of a far slice reaches back past the camera -- with the stock
+            // splits, cascade 3's bounding sphere has radius ~736 about a center only ~323 in front of the
+            // eye, so it contains cascades 0-2 outright. Culling against it submits the whole near field to
+            // every cascade, which is 4x the vertex work for geometry only cascade 0 is ever sampled for.
+            //
+            // What genuinely has to reach cascade i is its RECEIVERS -- its own slice plus the blend tail of
+            // slice i-1 -- swept toward the sun to pick up casters standing off-screen between the sun and
+            // those receivers. The ortho box still bounds the light-direction extent, so this only has to
+            // get the lateral extent right.
+            const float ReceiverNear = Math::Max(ShadowNear, SplitNear - CascadeBlendFraction * PrevSliceLength);
+            const FMatrix4 ReceiverProj = Math::Perspective(Math::Radians(CamFOV), CamAspect, ReceiverNear, SplitFar);
+            const FMatrix4 ReceiverVP   = ReceiverProj * CamView;
 
+            FFrustum ReceiverFrustum = FFrustum::FromViewProjection(ReceiverVP);
+
+            // FromViewProjection extracts the near plane as (row3 + row2), which is the GL [-1,1] clip-Z
+            // formula, but Math::Perspective maps near->0 / far->1. For a [0,1] projection the near plane is
+            // row2 alone; (row3 + row2) instead lands at Near*Far/(2*Far - Near) -- for cascade 3 that is
+            // z=85 rather than z=146, quietly handing the cascade back a chunk of the near field. Only the
+            // near plane is affected (the far plane extracts exactly either way). Fixed here rather than in
+            // FromViewProjection because every other caller inherits the same loose-but-conservative near
+            // plane, and tightening those would change camera and point/spot culling too.
+            FVector4 NearPlane(ReceiverVP[0].z, ReceiverVP[1].z, ReceiverVP[2].z, ReceiverVP[3].z);
+            const float NearLen = Math::Length(FVector3(NearPlane.x, NearPlane.y, NearPlane.z));
+            if (NearLen > 0.0f)
+            {
+                ReceiverFrustum.Planes[FFrustum::BACK] = NearPlane / NearLen;
+                ReceiverFrustum.RebuildSoA();
+            }
+
+            // Same sweep as the whole-frustum ShadowFrustum, just per cascade. Distance MUST match
+            // ShadowSweepDistance in CompileDrawCommands and BuildSceneCullContext.
+            constexpr float ShadowSweepDistance = 2000.0f;
+            SceneGlobalData.CullData.CascadeFrustum[i] =
+                AsGPU(ReceiverFrustum.Extruded(LightDir, ShadowSweepDistance));
+
+            PrevSliceLength   = SplitFar - SplitNear;
             LastSplitDistance = SplitFar;
         }
 

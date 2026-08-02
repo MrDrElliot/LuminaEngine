@@ -156,6 +156,16 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
             {
                 continue;
             }
+            // Cascades narrow further, to their receiver slice swept toward the sun: the ortho box in
+            // FrustumPlanes bounds a camera slice's SPHERE, which for the far cascades encloses every
+            // nearer one. Mirrors the test in CullMeshlets, at instance granularity -- which is the
+            // conservative direction (a meshlet sphere sits inside its instance sphere), so the per-view
+            // reservation below still covers everything the meshlet cull can emit.
+            if (View.IsCascade() &&
+                !FrustumContainsSphere(Scene().CullData.CascadeFrustum[View.CascadeIndex], Center, Radius))
+            {
+                continue;
+            }
         }
         bAnyView = true;
 

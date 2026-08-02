@@ -46,6 +46,13 @@ constexpr int GCSMAtlasHeight                 = 4096;
 constexpr int GCSMCascadeOriginX[NumCascades] = { 0,    2048, 0,    2048 };
 constexpr int GCSMCascadeOriginY[NumCascades] = { 0,    0,    2048, 2048 };
 
+// Meshlet sub-texel reject, in shadow texels of world radius. A meshlet smaller than this cannot move the
+// depth the cascade resolves, so rastering it is pure vertex cost. Applies per cascade, so the same meshlet
+// survives in cascade 0 (fine texels) and drops out of cascade 3 (~20x coarser). Raising this trades a
+// little shadow detail on small geometry for fewer vertex invocations; 1.0 keeps anything that covers a
+// texel edge to edge.
+constexpr float GCSMMinMeshletTexels    = 1.0f;
+
 constexpr int GShadowAtlasResolution    = 4096;
 
 // Hard cap on cull views: camera + NumCascades + 6/point + 1/spot.
@@ -925,11 +932,18 @@ namespace Lumina
     {
         FVector4   FrustumPlanes[6];           // 96 B
         FVector4   ViewOriginAndFlags;         // 16 B: xyz=origin, w=asfloat(flags)
-        // Draw-list geometry used to live here as an equal per-view slice. It is now a packed
-        // per-(view, draw) region computed on the GPU, so these two are reserved padding. Kept rather than
-        // removed to preserve the 128-byte stride CullViews()[v] indexes with in both mirrors.
-        uint32      _ReservedA;
-        uint32      _ReservedB;
+        // These two were the per-view draw-list slice, then reserved padding once that slice became a
+        // packed per-(view, draw) GPU region. Reused here rather than grown, so the 128-byte stride
+        // CullViews()[v] indexes with in both mirrors is unchanged.
+        //
+        // Which cascade this view is, or ~0u for every non-cascade view. Selects this view's entry in
+        // CullData.CascadeFrustum -- the cascade's real caster volume, which is far tighter than the ortho
+        // box in FrustumPlanes. That box is the bounding SPHERE of a camera slice, and a far slice's sphere
+        // reaches back past the camera, so it contains every nearer cascade's geometry as well.
+        uint32      CascadeIndex;
+        // World-space meshlet radius below which this view cannot resolve a meshlet at all -- it lands
+        // within a single shadow texel. 0 disables the test. Set for cascade views only.
+        float       MinMeshletRadius;
         uint32      IndirectArgsOffset;         // v * NumDraws
         uint32      NumDraws;                   // Number of indirect slots owned by this view
     };

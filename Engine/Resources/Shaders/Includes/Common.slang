@@ -533,10 +533,15 @@ struct FCullView
 {
     float4 FrustumPlanes[6];   // 96B
     float4 ViewOriginAndFlags; // 16B: xyz=origin (camera / light pos), w=asuint(flags)
-    // Reserved padding: the draw list is no longer sliced per view, so nothing reads these. Kept to
-    // preserve the struct stride shared with FCullView in SceneRenderTypes.h.
-    uint   _ReservedA;
-    uint   _ReservedB;
+    // Was the per-view draw-list slice, then reserved padding. Reused rather than grown, so the struct
+    // stride shared with FCullView in SceneRenderTypes.h is unchanged.
+    //
+    // Cascade this view is, or ~0u for non-cascade views. Indexes CullData.CascadeFrustum, the cascade's
+    // real caster volume. FrustumPlanes holds the ortho box, which is the bounding SPHERE of a camera
+    // slice -- and a far slice's sphere reaches back past the camera, enclosing every nearer cascade.
+    uint   CascadeIndex;
+    // Meshlet world radius below which this view cannot resolve the meshlet (sub-texel). 0 = no test.
+    float  MinMeshletRadius;
     uint   IndirectArgsOffset; // Into uIndirectArgs (v * NumDraws)
     uint   NumDraws;           // Number of indirect slots owned by this view
 
@@ -544,6 +549,7 @@ struct FCullView
     property uint   Flags      { get { return asuint(ViewOriginAndFlags.w); } }
 
     bool HasFlag(uint Flag) { return (Flags & Flag) == Flag; }
+    bool IsCascade()        { return CascadeIndex < NUM_CASCADES; }
 };
 
 struct FCullData
