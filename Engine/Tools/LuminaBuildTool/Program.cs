@@ -107,6 +107,7 @@ public static class Program
               -KeepGoing                Keep building after a failure
               -DryRun                   List the outdated actions without running them
               -RecompileRules           Force the Target.cs and Build.cs assembly to rebuild
+              -NoProjectFileUpdate      Do not refresh IDE project files when a Build.cs changed
               -Verbose / -Trace         More diagnostic output
 
             Feature switches (default in Engine/Build/BuildConfiguration.json):

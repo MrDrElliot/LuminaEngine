@@ -16,10 +16,27 @@ public static class ProjectFilesMode
 {
     public static int Run(CommandLine Arguments, BuildDirectories Directories)
     {
+        RulesAssembly Assembly = RulesAssembly.Create(Directories, Arguments.HasFlag("RecompileRules"));
+
+        Generate(Arguments, Directories, Assembly);
+
+        return 0;
+    }
+
+    /// <summary>
+    /// Writes the IDE workspace for every resolvable target. Returns the number of files that
+    /// changed on disk, which is zero when the rules produce what is already there.
+    /// </summary>
+    /// <remarks>
+    /// Takes the rules assembly rather than creating one so a build can generate with the assembly
+    /// it already loaded: compiling the rules twice in one process would put two copies of every
+    /// rules type in play.
+    /// </remarks>
+    public static int Generate(CommandLine Arguments, BuildDirectories Directories, RulesAssembly Assembly)
+    {
         BuildPlatform PlatformValue = Arguments.GetEnum("Platform", BuildPlatformRegistry.HostPlatform);
         IBuildPlatform PlatformSupport = BuildPlatformRegistry.Get(PlatformValue);
 
-        RulesAssembly Assembly = RulesAssembly.Create(Directories, Arguments.HasFlag("RecompileRules"));
         BuildOptions Options = BuildOptions.Load(Directories, Arguments);
 
         List<ProjectConfiguration> Configurations = new();
@@ -89,8 +106,12 @@ public static class ProjectFilesMode
         int Changed = Generator.Generate(Directories, Targets, Configurations, RulesProjectPath)
             + (bRulesProjectChanged ? 1 : 0);
 
+        // Written after the files it describes, so an interrupted generation leaves the stamp
+        // pointing at the previous rules and the next build tries again.
+        ProjectFileStamp.Write(Directories, Assembly);
+
         Log.Info("{0} project files changed.", Changed);
 
-        return 0;
+        return Changed;
     }
 }

@@ -61,6 +61,14 @@ public sealed class RulesAssembly
     /// </summary>
     public IReadOnlyList<RulesFile> RulesFiles { get; }
 
+    /// <summary>
+    /// Fingerprint of the rules files this assembly was compiled from. Anything derived from what
+    /// the rules said, generated project files included, is stale when this changes.
+    /// </summary>
+    public string SourceHash => SourceHashValue ??= RulesCompiler.ComputeSourceHash(RulesFiles.Select(F => F.Location));
+
+    private string? SourceHashValue;
+
     public IReadOnlyCollection<string> TargetNames => TargetTypes.Keys;
 
     public IReadOnlyCollection<string> ModuleNames => ModuleTypes.Keys;

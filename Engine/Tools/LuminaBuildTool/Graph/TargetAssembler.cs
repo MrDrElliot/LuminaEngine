@@ -525,6 +525,23 @@ public sealed class TargetAssembler
             Exports.IncludePaths.Add(GetSourceRoot(Rules));
         }
 
+        // A plugin module also exports the directory holding it, which is the plugin's Source, so
+        // a dependent can write "PointGenerator/Components.h" and name the module it is reaching
+        // into. The bare form keeps working; this only adds the qualified one, which is what
+        // stops two plugins that both ship a Types.h from resolving to whichever came first.
+        //
+        // Plugins only. A game module's directory is the project root, and exporting that would
+        // put Binaries, Config and Content on every dependent's include path.
+        if (Module.bIsPlugin && !Rules.bIsThirdParty)
+        {
+            string? ContainingDirectory = Path.GetDirectoryName(Rules.ModuleDirectory);
+
+            if (!string.IsNullOrEmpty(ContainingDirectory))
+            {
+                Exports.IncludePaths.Add(ContainingDirectory);
+            }
+        }
+
         if (Rules.bEnableReflection)
         {
             Exports.IncludePaths.Add(Module.GeneratedCodeDirectory);

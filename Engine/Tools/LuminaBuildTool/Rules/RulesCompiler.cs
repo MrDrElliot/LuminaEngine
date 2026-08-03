@@ -85,12 +85,17 @@ public static class RulesCompiler
     /// Hash covers the file set plus every file's timestamp and size, so adding, removing or
     /// editing any rules file invalidates the cache.
     /// </summary>
-    private static string ComputeSourceHash(IEnumerable<string> SourcePaths)
+    /// <remarks>
+    /// Public because it is not only this cache's key: generated project files bake in what the
+    /// rules said, so they go stale on exactly the same inputs and are checked against the same
+    /// answer. Only stats the files, so it is cheap enough to ask twice in one invocation.
+    /// </remarks>
+    public static string ComputeSourceHash(IEnumerable<string> SourcePaths)
     {
-        return ContentHash.OfFiles(SourcePaths);
+        return ContentHash.OfFiles(SourcePaths.OrderBy(P => P, StringComparer.OrdinalIgnoreCase));
     }
 
-    private static string GetToolVersion()
+    public static string GetToolVersion()
     {
         FileItem ToolAssembly = FileItem.Get(Assembly.GetExecutingAssembly().Location);
         return $"{ToolAssembly.Timestamp.Ticks}-{ToolAssembly.Length}";

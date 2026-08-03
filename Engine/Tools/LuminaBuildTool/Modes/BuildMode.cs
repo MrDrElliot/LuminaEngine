@@ -4,6 +4,7 @@ using LuminaBuildTool.Core;
 using LuminaBuildTool.Execution;
 using LuminaBuildTool.Graph;
 using LuminaBuildTool.Platform;
+using LuminaBuildTool.ProjectFiles;
 using LuminaBuildTool.Rules;
 using LuminaBuildTool.Toolchain;
 
@@ -45,10 +46,60 @@ public static class BuildMode
 
         if (Result == 0)
         {
+            RefreshProjectFilesIfStale(Arguments, Directories, Assembly);
+
             Log.Info("Total build time: {0:F2}s.", Timer.Elapsed.TotalSeconds);
         }
 
         return Result;
+    }
+
+    /// <summary>
+    /// Brings the IDE workspace back in line with the rules after a successful build, when a
+    /// rules file has changed since it was written.
+    /// </summary>
+    /// <remarks>
+    /// Editing a Build.cs used to mean the build saw the change and the IDE did not, until someone
+    /// remembered to regenerate; the symptom was an include that compiles and still shows as
+    /// unresolved. The gap closes itself now.
+    ///
+    /// Cheap because it is gated on the rules fingerprint, so an ordinary rebuild does no extra
+    /// work at all, and because generation rewrites only the files whose content actually changes.
+    /// The IDE therefore sees a modified project exactly when one is, and not on every build.
+    ///
+    /// Runs after the build rather than before it: MSBuild has finished evaluating the project by
+    /// then, so rewriting it cannot affect the build that is invoking us.
+    /// </remarks>
+    private static void RefreshProjectFilesIfStale(
+        CommandLine Arguments,
+        BuildDirectories Directories,
+        RulesAssembly Assembly)
+    {
+        if (Arguments.HasFlag("NoProjectFileUpdate") || Arguments.HasFlag("DryRun"))
+        {
+            return;
+        }
+
+        if (!ProjectFileStamp.IsStale(Directories, Assembly))
+        {
+            return;
+        }
+
+        Log.Info("Build rules changed; updating project files...");
+
+        try
+        {
+            ProjectFilesMode.Generate(Arguments, Directories, Assembly);
+        }
+        catch (Exception Ex)
+        {
+            // Never fail a build that already produced its binaries. The workspace being out of
+            // date costs completion and error checking, not the build, and the manual command
+            // still exists.
+            Log.Warning(
+                "Could not update project files: {0}. Run GenerateProjectFiles to refresh the IDE workspace.",
+                Ex.Message);
+        }
     }
 
     /// <summary>
