@@ -14,6 +14,7 @@
 #include "Core/Serialization/MemoryArchiver.h"
 #include "Core/Serialization/ObjectArchiver.h"
 #include "Transactions/EcsRegistrySnapshotCommand.h"
+#include "Settings/EditorSettings.h"
 #include "Thumbnails/ThumbnailManager.h"
 #include "Thumbnails/ThumbnailUtils.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
@@ -1235,37 +1236,64 @@ namespace Lumina
         FInputViewportRegistry::Get().ReapplyActiveCursorMode();
     }
 
-    void FEditorTool::DrawWorldGrid(int Scale, int Spacing)
+    void FEditorTool::DrawWorldGrid()
     {
-        if (World && !World->IsGameWorld() && bWorldGridEnabled)
+        if (World == nullptr || World->IsGameWorld() || !bWorldGridEnabled)
         {
-            for (int i = -Scale; i <= Scale; ++i)
-            {
-                const float Coord = static_cast<float>(i * Spacing);
-                
-                const FVector4 ZAxisColor  = (i == 0) ? FVector4(0.0f, 0.0f, 1.0f, 1.0f) : FVector4(0.05f);
-                const FVector4 XAxisColor  = (i == 0) ? FVector4(1.0f, 0.0f, 0.0f, 1.0f) : FVector4(0.05f);
-                const float AxisThickness   = (i == 0) ? 5.0f : 3.5f;
+            return;
+        }
 
-                World->DrawLine(
-                    FVector3(Coord, 0, -Scale * Spacing),
-                    FVector3(Coord, 0,  Scale * Spacing),
-                    ZAxisColor,
-                    AxisThickness);
-                
+        const CViewportGridSettings* Settings = GetDefault<CViewportGridSettings>();
 
-                World->DrawLine(
-                    FVector3(-Scale * Spacing, 0, Coord),
-                    FVector3( Scale * Spacing, 0, Coord),
-                    XAxisColor,
-                    AxisThickness);
-            }
-            
+        const float Spacing = Math::Max(Settings->Spacing, 0.01f);
+        const float Extent  = Math::Max(Settings->Extent, Spacing);
+
+        // Past the cap the grid coarsens instead of adding lines. Extent and spacing are independent
+        // settings, so nothing stops a large extent meeting a fine spacing, and the batcher would take
+        // the resulting hundreds of thousands of lines without complaining.
+        int32       HalfCount = (int32)(Extent / Spacing);
+        const int32 HalfLimit = Math::Max(Settings->MaxLinesPerAxis / 2, 1);
+        float       Step      = Spacing;
+
+        if (HalfCount > HalfLimit)
+        {
+            HalfCount = HalfLimit;
+            Step      = Extent / (float)HalfLimit;
+        }
+
+        const float Reach = Step * (float)HalfCount;
+
+        for (int32 i = -HalfCount; i <= HalfCount; ++i)
+        {
+            const float Coord  = (float)i * Step;
+            const bool  bIsAxis = (i == 0);
+
+            const FVector4 AlongZColor = bIsAxis ? FVector4(0.0f, 0.0f, 1.0f, 1.0f) : Settings->LineColor;
+            const FVector4 AlongXColor = bIsAxis ? FVector4(1.0f, 0.0f, 0.0f, 1.0f) : Settings->LineColor;
+            const float    Thickness   = bIsAxis ? Settings->AxisThickness : Settings->LineThickness;
+
             World->DrawLine(
-            FVector3(0, -Scale, 0),
-            FVector3(0,  Scale, 0),
-            FVector4(0.0f, 1.0f, 0.0f, 1.0f),
-            8.0f);
+                FVector3(Coord, 0, -Reach),
+                FVector3(Coord, 0,  Reach),
+                AlongZColor,
+                Thickness);
+
+            World->DrawLine(
+                FVector3(-Reach, 0, Coord),
+                FVector3( Reach, 0, Coord),
+                AlongXColor,
+                Thickness);
+        }
+
+        if (Settings->bShowVerticalAxis)
+        {
+            // Reaches as far as the grid does. It used to use the line count rather than a distance,
+            // so it only matched the grid while spacing happened to be 1.
+            World->DrawLine(
+                FVector3(0, -Reach, 0),
+                FVector3(0,  Reach, 0),
+                FVector4(0.0f, 1.0f, 0.0f, 1.0f),
+                Settings->VerticalAxisThickness);
         }
     }
 

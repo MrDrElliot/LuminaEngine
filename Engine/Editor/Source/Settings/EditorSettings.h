@@ -68,6 +68,47 @@ namespace Lumina
         float CameraPreviewScale = 0.6f;
     };
 
+    // Viewport ground grid, shared by every tool that draws one (world, prefab, mesh, ...).
+    REFLECT(MinimalAPI, ConfigFile = "/Editor/Config/EditorPreferences.json", DisplayName = "Viewport Grid", Category = "Editor")
+    class CViewportGridSettings : public CDeveloperSettings
+    {
+        GENERATED_BODY()
+    public:
+
+        /** How far the grid reaches from the origin, in world units. */
+        PROPERTY(Editable, Category = "Grid", ClampMin = 10.0f, ClampMax = 10000.0f)
+        float Extent = 500.0f;
+
+        /** Distance between grid lines, in world units. */
+        PROPERTY(Editable, Category = "Grid", ClampMin = 0.1f, ClampMax = 1000.0f)
+        float Spacing = 1.0f;
+
+        /** Screen thickness of the ordinary grid lines. */
+        PROPERTY(Editable, Category = "Grid", ClampMin = 0.1f, ClampMax = 10.0f)
+        float LineThickness = 1.25f;
+
+        /** Color and opacity of the ordinary grid lines. */
+        PROPERTY(Editable, Color, Category = "Grid")
+        FVector4 LineColor = FVector4(0.05f, 0.05f, 0.05f, 0.025f);
+
+        /** Screen thickness of the X and Z axis lines through the origin. */
+        PROPERTY(Editable, Category = "Axes", ClampMin = 0.1f, ClampMax = 20.0f)
+        float AxisThickness = 2.5f;
+
+        /** Draw the vertical (Y) axis line through the origin. */
+        PROPERTY(Editable, Category = "Axes")
+        bool bShowVerticalAxis = true;
+
+        /** Screen thickness of the vertical axis line. */
+        PROPERTY(Editable, Category = "Axes", ClampMin = 0.1f, ClampMax = 20.0f)
+        float VerticalAxisThickness = 4.0f;
+
+        /** Upper bound on grid lines per axis. Extent/Spacing combinations past this coarsen rather
+            than flooding the line batcher; a 10000 extent at 0.1 spacing would otherwise be 200k lines. */
+        PROPERTY(Editable, Category = "Grid", ClampMin = 16, ClampMax = 8192)
+        int32 MaxLinesPerAxis = 2048;
+    };
+
     // External application C# script sources open in.
     REFLECT()
     enum class EScriptEditor : uint8

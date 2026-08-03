@@ -253,8 +253,8 @@ namespace Lumina
         /** Moves the viewport to focus on the desired entity */
         virtual void FocusViewportToEntity(entt::entity Entity);
         
-        /** Draws an editor viewport grid if a world exists */
-        virtual void DrawWorldGrid(int Scale = 100, int Spacing = 1);
+        /** Draws an editor viewport grid if a world exists. Extent, spacing and color come from CViewportGridSettings. */
+        virtual void DrawWorldGrid();
 
         /** Draws bone debug lines/joints for every skeletal mesh in the world (CVar-gated). */
         void DrawSkeletonDebug();
