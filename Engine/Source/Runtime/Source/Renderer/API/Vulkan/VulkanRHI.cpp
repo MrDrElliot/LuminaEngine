@@ -2827,12 +2827,7 @@ namespace Lumina::RHI
         HeapData.SampledImagesBitset[Slot] = false;
         HeapData.ImageViews[Slot] = VK_NULL_HANDLE;
         HeapData.SampledOwners[Slot] = {};
-
-        // Clearing the bookkeeping does not clear the DESCRIPTOR: without this write the slot keeps
-        // naming the caller's image view, which the caller destroys immediately after. The heap is
-        // PARTIALLY_BOUND + UPDATE_AFTER_BIND, so nothing validates the read -- a shader indexing the
-        // stale slot just page-faults on freed memory. UPDATE_UNUSED_WHILE_PENDING makes repointing a
-        // bound-but-unused slot legal, so this is safe to do while the set is bound.
+        
         if (HeapData.FallbackView != VK_NULL_HANDLE)
         {
             const VkDescriptorImageInfo ImageInfo
@@ -2900,10 +2895,8 @@ namespace Lumina::RHI
         }
         HeapData.SamplersBitset[Slot] = false;
     }
-
-    // --- Swapchain / presentation -------------------------------------------
-
-    static bool GVSyncEnabled = false;
+    
+    static bool GVSyncEnabled = true;
 
     void SetVSync(bool bEnabled)
     {
@@ -2930,13 +2923,25 @@ namespace Lumina::RHI
 
         auto Supports = [&](VkPresentModeKHR Mode)
         {
-            for (VkPresentModeKHR M : Modes) { if (M == Mode) return true; }
+            for (VkPresentModeKHR M : Modes) 
+            { 
+                if (M == Mode)
+                {
+                    return true;
+                }
+            }
             return false;
         };
 
         // Uncapped: MAILBOX (low-latency, no tearing) preferred, then IMMEDIATE, then FIFO.
-        if (Supports(VK_PRESENT_MODE_MAILBOX_KHR))   return VK_PRESENT_MODE_MAILBOX_KHR;
-        if (Supports(VK_PRESENT_MODE_IMMEDIATE_KHR)) return VK_PRESENT_MODE_IMMEDIATE_KHR;
+        if (Supports(VK_PRESENT_MODE_MAILBOX_KHR))
+        {
+            return VK_PRESENT_MODE_MAILBOX_KHR;
+        }
+        if (Supports(VK_PRESENT_MODE_IMMEDIATE_KHR))
+        {
+            return VK_PRESENT_MODE_IMMEDIATE_KHR;
+        }
         return VK_PRESENT_MODE_FIFO_KHR;
     }
 

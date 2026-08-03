@@ -8,6 +8,7 @@
 #include "Core/Threading/Thread.h"
 #include "Platform/GenericPlatform.h"
 #include "Renderer/MeshData.h"
+#include "Renderer/PrimitiveDrawInterface.h"
 #include "Renderer/RenderResource.h"
 #include "Renderer/ViewVolume.h"
 #include "Renderer/RHI.h"
@@ -569,9 +570,9 @@ namespace Lumina
 
     struct FSolidBatch
     {
-        uint32  StartVertex;
-        uint32  VertexCount;
-        bool    bDepthTest;
+        uint32          StartVertex;
+        uint32          VertexCount;
+        ESolidDrawMode  Mode;
     };
 
     // GTAO tuning; must match FSSAOSettings in Common.slang. No CPU kernel: the shader generates
@@ -1049,6 +1050,17 @@ namespace Lumina
         uint64 PassAddr = 0;
     };
 
+    // Global scaling applied on top of every material's authored Parallax Occlusion Mapping settings,
+    // so quality can be dialed back at runtime without recompiling materials. Driven by the r.POM.*
+    // CVars; must match FParallaxSettings in Common.slang.
+    struct FParallaxSettings
+    {
+        float SampleScale       = 1.0f;   // scales Min/Max sample counts; <= 0 disables POM outright
+        float LODBias           = 0.0f;   // added to the LOD threshold; negative fades POM out nearer
+        float ShadowSampleScale = 1.0f;   // scales self-shadow samples; 0 disables self-shadowing
+        float _Pad0             = 0.0f;
+    };
+
     struct FSceneGlobalData
     {
         FCameraData       CameraData;
@@ -1059,9 +1071,10 @@ namespace Lumina
         float           DeltaTime;
         float           NearPlane;
         float           FarPlane;
-        
+
         FSSAOSettings   SSAOSettings;
         FCullData       CullData;
+        FParallaxSettings ParallaxSettings;
     };
 
     struct FMeshPass

@@ -248,6 +248,13 @@ PSOutput FragmentMain(float4 SvPosition : SV_Position)
     float3 WorldNormal   = normalize(NormalWS);
     float3 ViewPosition  = ViewPos.xyz;
 
+    // Graph local contract (see BasePixelPass). The analytic gradients are the whole reason a
+    // tangent-space marcher works in this lane -- implicit ddx/ddy across a fullscreen tile quad
+    // would pick a mip from unrelated triangles.
+    float4 WorldTangent  = Input.TangentWS;
+    float2 UV0_DDX       = dUVdx;
+    float2 UV0_DDY       = dUVdy;
+
     // Deferred-texturing fix: redirect the codegen's UV0 texture samples to explicit-gradient sampling using
     // the analytic perspective-correct gradients computed above. A fullscreen deferred PS has no valid 2x2
     // quad (it straddles unrelated triangles), so implicit ddx/ddy pick wrong mips along every silhouette,

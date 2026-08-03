@@ -35,6 +35,7 @@ namespace Lumina
         CEdNodeGraphPin* AOPin = nullptr;
         CEdNodeGraphPin* NormalPin = nullptr;
         CEdNodeGraphPin* OpacityPin = nullptr;
+        CEdNodeGraphPin* SelfShadowPin = nullptr;
         CEdNodeGraphPin* WorldPositionOffsetPin = nullptr;
 
     };

@@ -28,7 +28,7 @@ namespace Lumina
     }
     static int GetShaderOptimizationLevel()
     {
-        return SLANG_OPTIMIZATION_LEVEL_HIGH;
+        return SLANG_OPTIMIZATION_LEVEL_MAXIMAL;
     }
 
     class FSlangBlob : public ISlangBlob

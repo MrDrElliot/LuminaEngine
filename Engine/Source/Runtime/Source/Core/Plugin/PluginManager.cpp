@@ -8,6 +8,7 @@
 #include "FileSystem/NativeFileSystem.h"
 #include "Log/Log.h"
 #include "Paths/Paths.h"
+#include "Platform/Process/PlatformProcess.h"
 
 #include <filesystem>
 
@@ -148,6 +149,19 @@ namespace Lumina
 
             LOG_INFO("[PluginManager] Discovered {} plugin '{}' ({} modules)",
                 bIsEngine ? "engine" : "project", Parsed.Name, Parsed.Modules.size());
+
+            // Registered at discovery, before any module loads. A project or plugin module that
+            // links against this plugin has the import resolved by the OS loader the moment its
+            // own DLL loads, and nothing else puts a plugin's Binaries directory on the search
+            // path: without this the dependent DLL fails to load however early it is asked for.
+            FString BinariesDir = PluginDirStr;
+            BinariesDir += "/Binaries/";
+            BinariesDir += LUMINA_PLATFORM_NAME;
+
+            if (Paths::Exists(BinariesDir))
+            {
+                Platform::AddDLLDirectory(BinariesDir);
+            }
 
             TUniquePtr<FPlugin> Owned = MakeUnique<FPlugin>(Move(Parsed), Move(PluginDirStr), Move(DescriptorPath));
             FPlugin* Raw = Owned.get();

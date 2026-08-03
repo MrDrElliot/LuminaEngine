@@ -1,10 +1,11 @@
 #pragma once
 #include "Containers/Array.h"
+#include "Renderer/PrimitiveDrawInterface.h"
 #include "Renderer/Vertex.h"
 
 namespace Lumina
 {
-    // Solid translucent debug triangles. Submitted in bulk (one batch == one whole vertex span) so a
+    // Solid debug triangles. Submitted in bulk (one batch == one whole vertex span) so a
     // large surface (e.g. a navmesh overlay) is a single enqueue, not thousands of per-triangle ones.
     struct RUNTIME_API FTriangleBatcherComponent
     {
@@ -14,7 +15,7 @@ namespace Lumina
         {
             TVector<FSimpleElementVertex>   Vertices;           // 3 verts per triangle, pre-colored
             float                           RemainingLifetime;
-            uint8                           bDepthTest:1;
+            ESolidDrawMode                  Mode;
             uint8                           bSingleFrame:1;
         };
 
@@ -22,7 +23,7 @@ namespace Lumina
         {
             TVector<FSimpleElementVertex>   Vertices;
             float                           Duration;
-            uint8                           bDepthTest:1;
+            ESolidDrawMode                  Mode;
             uint8                           bSingleFrame:1;
         };
 
@@ -31,7 +32,7 @@ namespace Lumina
         TConcurrentQueue<FQueuedBatch>      Queue;
 
         // Thread-safe. Becomes visible the next time DrainQueue runs (once per render-extraction tick).
-        void EnqueueTriangles(TVector<FSimpleElementVertex>&& Vertices, bool bDepthTest = true, float Duration = -1.0f)
+        void EnqueueTriangles(TVector<FSimpleElementVertex>&& Vertices, ESolidDrawMode Mode = ESolidDrawMode::Translucent, float Duration = -1.0f)
         {
             if (Vertices.empty())
             {
@@ -40,7 +41,7 @@ namespace Lumina
             FQueuedBatch Q;
             Q.Vertices      = std::move(Vertices);
             Q.Duration      = Duration;
-            Q.bDepthTest    = bDepthTest ? 1u : 0u;
+            Q.Mode          = Mode;
             Q.bSingleFrame  = (Duration == -1.0f) ? 1u : 0u;
             Queue.enqueue(std::move(Q));
         }
@@ -55,7 +56,7 @@ namespace Lumina
                 {
                     .Vertices           = std::move(Q.Vertices),
                     .RemainingLifetime  = Q.Duration,
-                    .bDepthTest         = Q.bDepthTest,
+                    .Mode               = Q.Mode,
                     .bSingleFrame       = Q.bSingleFrame,
                 });
             }

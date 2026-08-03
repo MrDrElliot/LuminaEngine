@@ -13,6 +13,7 @@
 #include "MaterialNode_Color.h"
 #include "MaterialNode_Noise.h"
 #include "MaterialNode_UV.h"
+#include "MaterialNode_Parallax.h"
 #include "MaterialNode_SceneData.h"
 #include "MaterialNode_Conditional.h"
 #include "MaterialNode_Shading.h"

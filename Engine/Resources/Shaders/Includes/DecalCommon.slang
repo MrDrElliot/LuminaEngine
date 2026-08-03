@@ -1,5 +1,8 @@
 #pragma once
 #include "SceneGlobals.slang"
+// Decals get a real tangent frame (the decal box's own X axis is its UV direction), so the material
+// graph's ParallaxOcclusionMapping node is legal in this domain and needs its helpers declared here.
+#include "ParallaxOcclusion.slang"
 
 // Shared bindings/data for the DecalPass (vertex + pixel). Decals are drawn as unit cubes; the pixel
 // shader reconstructs world position from scene depth, projects into decal-local space, and writes the

@@ -383,7 +383,9 @@ namespace Lumina
 
         FString PixelReplacement;
         
-        PixelReplacement += "\tFMaterialPixelInputs Material;\n";
+        // Start from the shared neutral surface so a field added to FMaterialPixelInputs is never left
+        // uninitialized here; the overrides below are what makes this material what it is.
+        PixelReplacement += "\tFMaterialPixelInputs Material = DefaultMaterialInputs();\n";
         PixelReplacement += "\tMaterial.Diffuse               = float3(1.0);\n";
         PixelReplacement += "\tMaterial.Metallic              = 0.0;\n";
         PixelReplacement += "\tMaterial.Roughness             = 1.0;\n";
@@ -537,7 +539,9 @@ namespace Lumina
         PixelReplacement += "\t                                           float3(0.25, 0.45, 0.15),\n";
         PixelReplacement += "\t                                           float3(0.55, 0.55, 0.55),\n";
         PixelReplacement += "\t                                           float3(0.85, 0.80, 0.60), HeightUV);\n";
-        PixelReplacement += "\tFMaterialPixelInputs Material;\n";
+        // Start from the shared neutral surface so a field added to FMaterialPixelInputs is never left
+        // uninitialized here; the overrides below are what makes this material what it is.
+        PixelReplacement += "\tFMaterialPixelInputs Material = DefaultMaterialInputs();\n";
         PixelReplacement += "\tMaterial.Diffuse               = _TerrainAlbedo;\n";
         PixelReplacement += "\tMaterial.Metallic              = 0.0;\n";
         PixelReplacement += "\tMaterial.Roughness             = 0.9;\n";

@@ -22,6 +22,9 @@ float4 FragmentMain(PSInput Input) : SV_Target0
     float3 ViewPosition  = float3(0.0);
     float4 VertexColor   = float4(1.0);
     uint   EntityID      = 0;
+    float4 WorldTangent  = float4(1.0, 0.0, 0.0, 1.0);
+    float2 UV0_DDX       = ddx(UV0);
+    float2 UV0_DDY       = ddy(UV0);
 
     $MATERIAL_INPUTS
 

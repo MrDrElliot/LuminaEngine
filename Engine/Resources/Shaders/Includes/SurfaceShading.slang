@@ -3,6 +3,7 @@
 #include "Includes/MeshletGeometry.slang"
 #include "Includes/IBLRuntime.slang"
 #include "Includes/ShadowSampling.slang"
+#include "Includes/ParallaxOcclusion.slang"
 
 // Shared opaque/translucent surface shading, factored out of the geometry pixel shaders so the FORWARD
 // base pass (BasePixelPass.slang, rasterizer-interpolated FBaseVertexOutput) and the DEFERRED VisBuffer
@@ -69,22 +70,18 @@ half3 FresnelSchlickHalf(half CosTheta, half3 F0)
 
 // Vertex-tangent TBN: MikkTSpace import tangent, Gram-Schmidt'd against the interpolated normal here;
 // TangentWS.w preserves the bitangent across UV mirrors. (A ddx/ddy TBN faceted normal maps per triangle.)
+// The frame itself lives in ParallaxOcclusion.slang so the POM marcher offsets UVs along the exact basis
+// the normal map is decoded through -- two copies would silently shear parallax against lighting.
 float3 GetWorldNormal(float3 FragNormal, float4 FragTangent, float3 TangentSpaceNormal)
 {
-    // N is assumed unit-length: every caller passes the already-normalized interpolated normal.
-    float3 N = FragNormal;
-
-    float3 T = FragTangent.xyz - N * dot(FragTangent.xyz, N);
-    float TLen2 = dot(T, T);
-    if (TLen2 < 1e-8)
+    bool bDegenerate;
+    float3x3 TBN = BuildTangentFrame(FragNormal, FragTangent, bDegenerate);
+    if (bDegenerate)
     {
-        return N;
+        // No usable tangent: keep the geometric normal rather than rotating the map into an arbitrary
+        // frame, whose axis flips across the |N.z| ~ 1 pole and would seam the surface.
+        return FragNormal;
     }
-    T *= rsqrt(TLen2);
-
-    float3 B = cross(N, T) * FragTangent.w;
-
-    float3x3 TBN = float3x3(T, B, N);
     return normalize(mul(TangentSpaceNormal, TBN));
 }
 
@@ -839,7 +836,10 @@ FShadedSurface ShadeSurface(FBaseVertexOutput Input, FMaterialPixelInputs Materi
         float  SunNdotL = dot(N, SunL);
         if (SunNdotL > 0.0)
         {
+            // Cascade shadow, then the material's own height-field self-occlusion. Applied here and not
+            // to the whole light loop because the parallax trace only ever ran against the sun.
             float Shadow = ComputeShadowFactor(Light, WorldPosition, N, ViewPosition, Input.Position.xy, bReceiveShadow);
+            Shadow *= Material.SelfShadow;
 #ifdef TRANSLUCENT
             float3 SunDiffuse, SunSpec;
             EvaluateLightContributionSplit(Light, Ctx, SunL, 0.0, SunDiffuse, SunSpec);

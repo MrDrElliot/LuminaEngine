@@ -83,6 +83,24 @@ namespace Lumina
             true,
             "Reject instances on the CPU before upload. Disable to leave all culling to the GPU.");
 
+        // Parallax Occlusion Mapping global quality. These scale what materials authored rather than
+        // replacing it, so one setting dials the whole feature without touching or recompiling any
+        // material. Read by Includes/ParallaxOcclusion.slang through FSceneGlobalData.
+        static TConsoleVar<float> CVarPOMSampleScale(
+            "r.POM.SampleScale",
+            1.0f,
+            "Scales every Parallax Occlusion Mapping material's sample counts. 0 disables POM (surfaces fall back to flat normal mapping).");
+
+        static TConsoleVar<float> CVarPOMLODBias(
+            "r.POM.LODBias",
+            0.0f,
+            "Added to every POM material's LOD threshold. Negative values fade POM to normal mapping closer to the camera.");
+
+        static TConsoleVar<float> CVarPOMShadowSampleScale(
+            "r.POM.ShadowSampleScale",
+            1.0f,
+            "Scales POM self-shadow sample counts. 0 disables height-field self-shadowing globally.");
+
         // Cascade micro-poly reject, in shadow texels of the cascade doing the rejecting. Bounds narrower
         // than this cover less than one texel there, so what they leave behind is sub-texel. Raise it to trade
         // shadow detail for geometry, set 0 to disable.
@@ -619,6 +637,10 @@ namespace Lumina
         SceneGlobalData.SSAOSettings.Radius             = Frame.CachedWorldSettings.SSAORadius;
         SceneGlobalData.SSAOSettings.Intensity          = Frame.CachedWorldSettings.SSAOIntensity;
         SceneGlobalData.SSAOSettings.Power              = Frame.CachedWorldSettings.SSAOPower;
+        // POM global quality. Negative CVar values would invert the sample-count lerp, so floor at 0.
+        SceneGlobalData.ParallaxSettings.SampleScale       = Math::Max(CVarPOMSampleScale.GetValue(), 0.0f);
+        SceneGlobalData.ParallaxSettings.LODBias           = CVarPOMLODBias.GetValue();
+        SceneGlobalData.ParallaxSettings.ShadowSampleScale = Math::Max(CVarPOMShadowSampleScale.GetValue(), 0.0f);
         Frame.CameraFrustum                             = ViewVolume.GetFrustum();
         SceneGlobalData.CullData.Frustum                = AsGPU(Frame.CameraFrustum);
         SceneGlobalData.CullData.ShadowFrustum          = SceneGlobalData.CullData.Frustum; // Rebuilt after directional light is processed.
@@ -5122,7 +5144,7 @@ namespace Lumina
             {
                 const uint32 Start = (uint32)SolidVertices.size();
                 SolidVertices.insert(SolidVertices.end(), Batch.Vertices.begin(), Batch.Vertices.end());
-                SolidBatches.emplace_back(Start, (uint32)Batch.Vertices.size(), (bool)Batch.bDepthTest);
+                SolidBatches.emplace_back(Start, (uint32)Batch.Vertices.size(), Batch.Mode);
             }
 
             if (Batch.bSingleFrame)
@@ -9469,6 +9491,23 @@ namespace Lumina
         Pass.DepthAttachment.StoreOp = RHI::EStoreOp::Store;
         Pass.RenderArea              = HDR.GetExtent();
 
+        // Opaque batches write scene depth, which the froxel-fog and pyramid passes sampled earlier this
+        // frame: order those reads ahead of the writes. Only paid when something opaque is queued.
+        bool bWritesDepth = false;
+        for (const FSolidBatch& Batch : SolidBatches)
+        {
+            if (Batch.Mode == ESolidDrawMode::Opaque)
+            {
+                bWritesDepth = true;
+                break;
+            }
+        }
+
+        if (bWritesDepth)
+        {
+            RHI::CmdBarrier(CL, RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute, RHI::EStageFlags::FragmentTests);
+        }
+
         RHI::CmdBeginRenderPass(CL, Pass);
         SetViewportScissor(CL, HDR.GetExtent());
         // Two-sided so the surface reads from any angle.
@@ -9482,33 +9521,69 @@ namespace Lumina
         AlphaBlend.DstAlphaFactor = RHI::EFactor::OneMinusSrcAlpha;
 
         // No input layout: the VS pulls vertices from PassAddr by SV_VertexID.
-        FGraphicsPipelineKey Key;
-        Key.VS          = VertexShader;
-        Key.PS          = PixelShader;
-        Key.DepthFormat = EFormat::D32;
-        Key.ColorTargets.push_back({ HDR.Desc.Format, AlphaBlend });
-        RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
+        FGraphicsPipelineKey BlendedKey;
+        BlendedKey.VS          = VertexShader;
+        BlendedKey.PS          = PixelShader;
+        BlendedKey.DepthFormat = EFormat::D32;
+        BlendedKey.ColorTargets.push_back({ HDR.Desc.Format, AlphaBlend });
 
-        // Depth-tested batches read reversed-Z but never write depth, so the translucent
-        // overlay is occluded by solid geometry without blocking later draws. XRay always draws on top.
-        RHI::FDepthStencilDesc DepthTested;
-        DepthTested.DepthMode = RHI::EDepthFlags::Read;
-        DepthTested.DepthTest = RHI::EOp::Greater;
+        // Opaque batches take the source color as-is; blending an alpha-1 fragment is a no-op anyway,
+        // and skipping it keeps a stray sub-1 alpha from leaking a depth-writing fragment into the blend.
+        FGraphicsPipelineKey OpaqueKey = BlendedKey;
+        OpaqueKey.ColorTargets[0].Blend = RHI::FBlendDesc{};
+
+        // Translucent batches read reversed-Z but never write depth, so the overlay is occluded by solid
+        // geometry without occluding itself. Opaque batches also write, so their own faces sort like real
+        // geometry instead of resolving to whichever triangle was submitted last. XRay does neither, and
+        // draws on top. (Vulkan ignores depth writes when the test is off, hence no write-only mode.)
+        RHI::FDepthStencilDesc TranslucentDepth;
+        TranslucentDepth.DepthMode = RHI::EDepthFlags::Read;
+        TranslucentDepth.DepthTest = RHI::EOp::Greater;
+
+        RHI::FDepthStencilDesc OpaqueDepth;
+        OpaqueDepth.DepthMode = RHI::EDepthFlags::Read | RHI::EDepthFlags::Write;
+        OpaqueDepth.DepthTest = RHI::EOp::Greater;
 
         const FSimpleElementPassData VertsPass{ RHI::Core::CopyTransientArray(SolidVertices.data(), SolidVertices.size()) };
         const RHI::GPUPtr Args = MakeArgs(VertsPass);
 
-        int CurrentDepthMode = -1;
-        for (const FSolidBatch& Batch : SolidBatches)
+        struct FModeGroup
         {
-            const int DepthMode = Batch.bDepthTest ? 1 : 0;
-            if (DepthMode != CurrentDepthMode)
-            {
-                RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(Batch.bDepthTest ? DepthTested : RHI::FDepthStencilDesc{}));
-                CurrentDepthMode = DepthMode;
-            }
+            ESolidDrawMode                  Mode;
+            const FGraphicsPipelineKey*     Pipeline;
+            const RHI::FDepthStencilDesc*   Depth;
+        };
 
-            RHI::CmdDraw(CL, Args, Batch.VertexCount, 1, Batch.StartVertex, 0);
+        // Grouped by mode rather than drawn in submission order: opaque lays down depth first so the
+        // blended modes sort against it. Submission order still holds within a group, and the state is
+        // only bound for groups that actually have batches.
+        const RHI::FDepthStencilDesc XRayDepth{};
+        const FModeGroup Groups[] =
+        {
+            { ESolidDrawMode::Opaque,      &OpaqueKey,  &OpaqueDepth      },
+            { ESolidDrawMode::Translucent, &BlendedKey, &TranslucentDepth },
+            { ESolidDrawMode::XRay,        &BlendedKey, &XRayDepth        },
+        };
+
+        for (const FModeGroup& Group : Groups)
+        {
+            bool bStateBound = false;
+            for (const FSolidBatch& Batch : SolidBatches)
+            {
+                if (Batch.Mode != Group.Mode)
+                {
+                    continue;
+                }
+
+                if (!bStateBound)
+                {
+                    RHI::CmdSetPipeline(CL, GetOrCreatePipeline(*Group.Pipeline));
+                    RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(*Group.Depth));
+                    bStateBound = true;
+                }
+
+                RHI::CmdDraw(CL, Args, Batch.VertexCount, 1, Batch.StartVertex, 0);
+            }
         }
 
         RHI::CmdEndRenderPass(CL);

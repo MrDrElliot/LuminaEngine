@@ -79,7 +79,14 @@ namespace Lumina
 
         if (!ModuleHandle)
         {
-            LOG_WARN("Failed to load module: {}", ModulePath);
+            // Has to be recorded, not just logged: LoadProject reads LastLoadError to decide
+            // between "this project has no C++ module" and "its module refused to load", and an
+            // empty string reads as the former. A module that fails here is almost always missing
+            // a dependency DLL rather than missing itself; the platform layer logs the OS code.
+            LastLoadError = FString("the module or one of its dependencies could not be loaded "
+                                    "(see the LoadLibrary error above; a linked plugin or module "
+                                    "may be missing or built for another configuration)");
+            LOG_ERROR("[Module Manager] - Failed to load module '{}': {}", ModulePath, LastLoadError);
             return nullptr;
         }
 

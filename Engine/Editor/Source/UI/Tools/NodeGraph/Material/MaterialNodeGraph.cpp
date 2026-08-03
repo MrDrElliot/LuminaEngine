@@ -163,6 +163,7 @@ namespace Lumina
         RegisterGraphNode(CMaterialExpression_FlipBook::StaticClass());
         RegisterGraphNode(CMaterialExpression_PolarCoordinates::StaticClass());
         RegisterGraphNode(CMaterialExpression_TwirlUV::StaticClass());
+        RegisterGraphNode(CMaterialExpression_ParallaxOcclusionMapping::StaticClass());
 
         RegisterGraphNode(CMaterialExpression_ScreenPosition::StaticClass());
         RegisterGraphNode(CMaterialExpression_ViewDirection::StaticClass());

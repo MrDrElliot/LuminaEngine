@@ -159,7 +159,31 @@ struct FMaterialPixelInputs
     float  AmbientOcclusion;
     float3 Normal;
     float  Opacity;
+    // Height-field self-occlusion against the SUN specifically (ParallaxOcclusion.slang), so it modulates
+    // only the sun's contribution -- not ambient (that is AmbientOcclusion's job) and not the punctual
+    // lights, which were never traced. 1 = unshadowed.
+    float  SelfShadow;
 };
+
+// Neutral surface. EVERY producer of FMaterialPixelInputs must start from this and then override, because
+// the struct has several independent authors -- the material graph's output node, and the hand-written
+// default/terrain materials built as strings in Material.cpp. Assigning fields one by one at each site
+// means adding a field here silently leaves it uninitialized at the sites that were not updated, which
+// reads as garbage lighting rather than as a compile error. Defaults live here so there is one place.
+FMaterialPixelInputs DefaultMaterialInputs()
+{
+    FMaterialPixelInputs M;
+    M.Diffuse          = float3(1.0, 1.0, 1.0);
+    M.Metallic         = 0.0;
+    M.Roughness        = 1.0;
+    M.Specular         = 0.5;
+    M.Emissive         = float3(0.0, 0.0, 0.0);
+    M.AmbientOcclusion = 1.0;
+    M.Normal           = float3(0.0, 0.0, 1.0);
+    M.Opacity          = 1.0;
+    M.SelfShadow       = 1.0;
+    return M;
+}
 
 struct FMaterialVertexInputs
 {
@@ -614,17 +638,28 @@ struct FCullData
 #define DEBUG_MODE_OIT_REVEALAGE        20u
 #define DEBUG_MODE_OIT_LAYER_COUNT      21u
 
+// Global scaling applied on top of every material's authored POM settings, so a weaker GPU can dial the
+// whole feature back without recompiling materials. Matches FParallaxSettings in SceneRenderTypes.h.
+struct FParallaxSettings
+{
+    float SampleScale;         // scales the material's Min/Max sample counts; <= 0 disables POM outright
+    float LODBias;             // added to the material's LOD threshold; negative fades POM out nearer
+    float ShadowSampleScale;   // scales self-shadow samples; 0 disables self-shadowing globally
+    float _Pad0;
+};
+
 struct FSceneGlobalData
 {
-    FCameraView   CameraView;
-    uint4         ScreenSize;
-    uint4         GridSize;
-    float         Time;
-    float         DeltaTime;
-    float         NearPlane;
-    float         FarPlane;
-    FSSAOSettings SSAOSettings;
-    FCullData     CullData;
+    FCameraView       CameraView;
+    uint4             ScreenSize;
+    uint4             GridSize;
+    float             Time;
+    float             DeltaTime;
+    float             NearPlane;
+    float             FarPlane;
+    FSSAOSettings     SSAOSettings;
+    FCullData         CullData;
+    FParallaxSettings ParallaxSettings;
 };
 
 // Octahedral 16-16 unit-normal decode (Slang lacks unpackSnorm2x16). Branchless wrap follows

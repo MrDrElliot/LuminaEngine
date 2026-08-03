@@ -89,7 +89,7 @@ namespace Lumina
                 });
                 if (!SurfaceVerts.empty())
                 {
-                    Context.DrawDebugSolidTriangles(std::move(SurfaceVerts), true, -1.0f);
+                    Context.DrawDebugSolidTriangles(std::move(SurfaceVerts), ESolidDrawMode::Translucent, -1.0f);
                 }
             }
 

@@ -809,6 +809,35 @@ namespace Lumina
 		return;
 	}
 
+	int32 FMaterialCompiler::BindTexture(CTexture* Texture)
+	{
+		auto It = eastl::find(BoundImages.begin(), BoundImages.end(), Texture);
+		if (It != BoundImages.end())
+		{
+			return (int32)eastl::distance(BoundImages.begin(), It);
+		}
+
+		const int32 Index = (int32)BoundImages.size();
+		BoundImages.push_back(Texture);
+		NumTextureParams++;
+		return Index;
+	}
+
+	int32 FMaterialCompiler::BindTextureParameter(const FName& ParamID, CTexture* Texture)
+	{
+		auto Existing = TextureParameters.find(ParamID);
+		if (Existing != TextureParameters.end())
+		{
+			return (int32)Existing->second.Index;
+		}
+
+		const int32 Index = (int32)BoundImages.size();
+		BoundImages.push_back(Texture);
+		TextureParameters[ParamID] = FTextureParam{ (uint16)Index, Texture };
+		NumTextureParams++;
+		return Index;
+	}
+
 	void FMaterialCompiler::TextureSample(const FString& ID, CTexture* Texture, CMaterialInput* Input)
 	{
 		if (Texture == nullptr || Texture->GetResourceID() < 0)
@@ -828,19 +857,7 @@ namespace Lumina
 			UVStr = "float2(" + UVValue.Value + ")";
 		}
 
-		auto It = eastl::find(BoundImages.begin(), BoundImages.end(), Texture);
-
-		int32 Index;
-		if (It != BoundImages.end())
-		{
-			Index = (int32)eastl::distance(BoundImages.begin(), It);
-		}
-		else
-		{
-			Index = (int32)BoundImages.size();
-			BoundImages.push_back(Texture);
-			NumTextureParams++;
-		}
+		const int32 Index = BindTexture(Texture);
 
 		GetActiveChunk().append("float4 " + ID + " = SampleTexture2D(GetMaterialTexture(MaterialIndex, " + eastl::to_string(Index) + "), SAMPLER_LINEAR_WRAP, " + UVStr + ");\n");
 	}
@@ -859,19 +876,7 @@ namespace Lumina
 			UVStr = "float2(" + UVValue.Value + ")";
 		}
 
-		int32 Index;
-		auto Existing = TextureParameters.find(ParamID);
-		if (Existing != TextureParameters.end())
-		{
-			Index = (int32)Existing->second.Index;
-		}
-		else
-		{
-			Index = (int32)BoundImages.size();
-			BoundImages.push_back(Texture);
-			TextureParameters[ParamID] = FTextureParam{ (uint16)Index, Texture };
-			NumTextureParams++;
-		}
+		const int32 Index = BindTextureParameter(ParamID, Texture);
 
 		GetActiveChunk().append("float4 " + ID + " = SampleTexture2D(GetMaterialTexture(MaterialIndex, " + eastl::to_string(Index) + "), SAMPLER_LINEAR_WRAP, " + UVStr + ");\n");
 	}
@@ -1321,6 +1326,102 @@ namespace Lumina
 		GetActiveChunk().append("float " + OwningNode + "_CY = floor(" + OwningNode + "_FI / max((" + ColsValue.Value + "), 1.0));\n");
 		GetActiveChunk().append("float2 " + OwningNode + " = float2(((" + UVValue.Value + ").x + " + OwningNode + "_CX) / max((" + ColsValue.Value + "), 1.0), 1.0 - (((" + UVValue.Value + ").y + " + OwningNode + "_CY + 1.0) / max((" + RowsValue.Value + "), 1.0)));\n");
 		SetOwningOutputType(UV, EMaterialInputType::Float2);
+	}
+
+	void FMaterialCompiler::ParallaxOcclusionMapping(CMaterialGraphNode* Node, int32 HeightTextureIndex, const FParallaxInputs& Inputs,
+	                                                 CMaterialOutput* UVOut, CMaterialOutput* ShadowOut, CMaterialOutput* HeightOut)
+	{
+		const FString Prefix = GetCurrentInlinePrefix() + Node->GetNodeFullName();
+		const FString UVVar     = Prefix + "_UV";
+		const FString ShadowVar = Prefix + "_Shadow";
+		const FString HeightVar = Prefix + "_Height";
+
+		FInputValue UVValue = GetTypedInputValue(Inputs.UV, "float2(UV0)");
+		FString     UVStr   = UVValue.ComponentCount >= 2 ? UVValue.Value + ".xy" : "float2(" + UVValue.Value + ")";
+
+		// Outputs are declared and initialized FIRST and unconditionally: every downstream node reads them
+		// through ResolvedVar, so a rejected node below must still leave a compilable shader.
+		AddRaw("float2 " + UVVar + " = " + UVStr + ";\n");
+		AddRaw("float " + ShadowVar + " = 1.0;\n");
+		AddRaw("float " + HeightVar + " = 1.0;\n");
+
+		if (UVOut)     UVOut->ResolvedVar     = UVVar;
+		if (ShadowOut) ShadowOut->ResolvedVar = ShadowVar;
+		if (HeightOut) HeightOut->ResolvedVar = HeightVar;
+
+		// Pixel stage only. The vertex graph has no view ray, no UV gradients and no per-pixel tangent
+		// frame; emitting the march there would reference locals that template does not declare.
+		if (CurrentStage != EMaterialCompileStage::Pixel)
+		{
+			EdNodeGraph::FError Error;
+			Error.Node        = Node;
+			Error.Name        = "Parallax Occlusion Mapping";
+			Error.Description = "ParallaxOcclusionMapping is a pixel-stage node; it cannot be reached from World Position Offset.";
+			AddError(Error);
+			return;
+		}
+
+		// Surface domains only. UI and PostProcess are fullscreen passes with no geometry behind them --
+		// no tangent frame and no view ray, so there is nothing to displace along. The UI domain also
+		// deliberately builds without SceneGlobals, so the helper is not even declared there.
+		const EMaterialType Domain = GetMaterialType();
+		if (Domain == EMaterialType::UI || Domain == EMaterialType::PostProcess)
+		{
+			EdNodeGraph::FError Error;
+			Error.Node        = Node;
+			Error.Name        = "Parallax Occlusion Mapping";
+			Error.Description = "ParallaxOcclusionMapping needs a surface to displace; it is not available in UI or PostProcess materials.";
+			AddError(Error);
+			return;
+		}
+
+		if (HeightTextureIndex < 0)
+		{
+			EdNodeGraph::FError Error;
+			Error.Node        = Node;
+			Error.Name        = "Parallax Occlusion Mapping";
+			Error.Description = "ParallaxOcclusionMapping needs a Height Map texture assigned.";
+			AddError(Error);
+			return;
+		}
+
+		// A masked material's pixel graph is compiled into the VisBuffer masked pre-pass too (which runs it
+		// only to reach Opacity), so the march is paid for twice per pixel. Not an error -- it is a valid,
+		// working material -- but it is never what someone intends, so say so once at compile time.
+		if (IsMasked())
+		{
+			LOG_WARN("[Material] ParallaxOcclusionMapping in a MASKED material: the height-field march also runs "
+			         "in the VisBuffer masked pre-pass, roughly doubling its cost. Prefer Opaque unless the "
+			         "cutout is required.");
+		}
+
+		FInputValue ScaleValue     = GetTypedInputValue(Inputs.HeightScale, 0.05f);
+		FInputValue MinValue       = GetTypedInputValue(Inputs.MinSamples, 8.0f);
+		FInputValue MaxValue       = GetTypedInputValue(Inputs.MaxSamples, 32.0f);
+		FInputValue LODValue       = GetTypedInputValue(Inputs.LODThreshold, 6.0f);
+		FInputValue ShadowSamples  = GetTypedInputValue(Inputs.ShadowSamples, 0.0f);
+		FInputValue ShadowSoftness = GetTypedInputValue(Inputs.ShadowSoftness, 1.0f);
+
+		const FString TexStr = "GetMaterialTexture(MaterialIndex, " + eastl::to_string(HeightTextureIndex) + ")";
+
+		AddRaw("FParallaxResult " + Prefix + "_R = ParallaxOcclusion(" + TexStr + ", SAMPLER_LINEAR_WRAP, "
+			+ UVStr + ", normalize(GetCameraPosition() - WorldPosition), WorldNormal, WorldTangent, "
+			+ "(" + ScaleValue.Value + "), (" + MinValue.Value + "), (" + MaxValue.Value + "), (" + LODValue.Value + "), "
+			+ "UV0_DDX, UV0_DDY);\n");
+		AddRaw(UVVar + " = " + Prefix + "_R.UV;\n");
+		AddRaw(HeightVar + " = " + Prefix + "_R.Height;\n");
+
+		// Self-shadowing is opt-in (ShadowSamples > 0): it is a second march per pixel, so a material that
+		// leaves the Shadow output unused pays nothing. bHasDirectional gates it on the sun existing at all.
+		AddRaw("if ((" + ShadowSamples.Value + ") > 0.0 && LightData().bHasSun != 0u && " + Prefix + "_R.Weight > 0.0)\n");
+		AddRaw("{\n");
+		AddRaw("\t" + ShadowVar + " = ParallaxSelfShadow(" + TexStr + ", SAMPLER_LINEAR_WRAP, " + UVVar + ", "
+			+ Prefix + "_R.Height, GetSunDirection(), WorldNormal, WorldTangent, (" + ScaleValue.Value + "), ("
+			+ ShadowSamples.Value + "), (" + ShadowSoftness.Value + "), ParallaxMipLevel(" + TexStr + ", UV0_DDX, UV0_DDY));\n");
+		// Fade the shadow out with the same LOD weight the offset uses, so a surface that has faded to flat
+		// normal mapping is not still casting parallax shadows onto itself.
+		AddRaw("\t" + ShadowVar + " = lerp(1.0, " + ShadowVar + ", " + Prefix + "_R.Weight);\n");
+		AddRaw("}\n");
 	}
 
 	void FMaterialCompiler::PolarCoordinates(CMaterialInput* UV, CMaterialInput* Center)

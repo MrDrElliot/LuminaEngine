@@ -23,6 +23,9 @@ bool MaskedVisKeep(FBaseVertexOutput Input)
     float3 WorldPosition    = mul(GetInverseCameraView(), float4(Input.FragPos.xyz, 1.0)).xyz;
     float2 UV0              = Input.UV;
     float4 VertexColor      = Input.FragColor;
+    float4 WorldTangent     = Input.TangentWS;
+    float2 UV0_DDX          = ddx(UV0);
+    float2 UV0_DDY          = ddy(UV0);
 
     $MATERIAL_INPUTS
 

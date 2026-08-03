@@ -1839,14 +1839,14 @@ namespace Lumina
         LineBatcherComponent->EnqueueLine(Start, End, Color, Thickness, bDepthTest, Duration);
     }
 
-    void CWorld::DrawSolidTriangles(TVector<FSimpleElementVertex>&& Vertices, bool bDepthTest, float Duration)
+    void CWorld::DrawSolidTriangles(TVector<FSimpleElementVertex>&& Vertices, ESolidDrawMode Mode, float Duration)
     {
         if (IsSuspended())
         {
             return;
         }
 
-        TriangleBatcherComponent->EnqueueTriangles(std::move(Vertices), bDepthTest, Duration);
+        TriangleBatcherComponent->EnqueueTriangles(std::move(Vertices), Mode, Duration);
     }
 
     void CWorld::DrawDebugText(const FString& Text, const FVector4& Color)

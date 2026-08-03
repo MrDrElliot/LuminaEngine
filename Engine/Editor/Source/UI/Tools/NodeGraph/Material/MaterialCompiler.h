@@ -165,6 +165,12 @@ namespace Lumina
         void TextureSample(const FString& ID, CTexture* Texture, CMaterialInput* Input);
         void TextureSampleParameter(const FString& ID, const FName& ParamID, CTexture* Texture, CMaterialInput* Input);
 
+        // Claim a material texture slot WITHOUT emitting a sample, for nodes that need the bindless index
+        // itself (a ray-march samples the same texture many times at its own UVs/mip). Deduped exactly
+        // like TextureSample's binding, so a texture used by both paths still binds once.
+        int32 BindTexture(CTexture* Texture);
+        int32 BindTextureParameter(const FName& ParamID, CTexture* Texture);
+
         // Curve operations. The curve is baked into shader constants at compile time, so no bindings
         // are involved and an edited curve only takes effect on the next material recompile.
         void CurveSample(const FString& ID, const SKeyedCurve& Curve, CMaterialInput* TimeInput);
@@ -181,6 +187,21 @@ namespace Lumina
         void FlipBookUV(CMaterialInput* UV, CMaterialInput* NumCols, CMaterialInput* NumRows, CMaterialInput* Time, CMaterialInput* FPS);
         void PolarCoordinates(CMaterialInput* UV, CMaterialInput* Center);
         void TwirlUV(CMaterialInput* UV, CMaterialInput* Center, CMaterialInput* Strength);
+
+        // Parallax Occlusion Mapping (Includes/ParallaxOcclusion.slang). Emits the height-field march and
+        // binds its two outputs by ResolvedVar: the displaced UV, and the sun self-shadow term.
+        struct FParallaxInputs
+        {
+            CMaterialInput* UV           = nullptr;
+            CMaterialInput* HeightScale  = nullptr;
+            CMaterialInput* MinSamples   = nullptr;
+            CMaterialInput* MaxSamples   = nullptr;
+            CMaterialInput* LODThreshold = nullptr;
+            CMaterialInput* ShadowSamples = nullptr;
+            CMaterialInput* ShadowSoftness = nullptr;
+        };
+        void ParallaxOcclusionMapping(CMaterialGraphNode* Node, int32 HeightTextureIndex, const FParallaxInputs& Inputs,
+                                      CMaterialOutput* UVOut, CMaterialOutput* ShadowOut, CMaterialOutput* HeightOut);
         void WorldPos(const FString& ID, CMaterialGraphNode* Node = nullptr);
         void CameraPos(const FString& ID, CMaterialGraphNode* Node = nullptr);
         void ObjectScale(const FString& ID, CMaterialGraphNode* Node = nullptr);
@@ -303,6 +324,11 @@ namespace Lumina
         void SetMaterialType(EMaterialType InType) { CurrentMaterialType = InType; }
         EMaterialType GetMaterialType() const { return CurrentMaterialType; }
 
+        // Masked materials run the whole pixel graph a second time in the VisBuffer masked pre-pass (just
+        // to evaluate Opacity), so expensive nodes are paid for twice. Nodes that care warn on it.
+        void SetMasked(bool bInMasked) { bMasked = bInMasked; }
+        bool IsMasked() const { return bMasked; }
+
         void NewLine();
         void AddRaw(const FString& Raw);
 
@@ -375,6 +401,7 @@ namespace Lumina
         FString VertexOutputChunks;
 
         EMaterialCompileStage CurrentStage = EMaterialCompileStage::Pixel;
+        bool bMasked = false;
 
         TVector<TObjectPtr<CTexture>> BoundImages;
         TVector<EdNodeGraph::FError> Errors;

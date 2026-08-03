@@ -69,6 +69,11 @@ PSOutput FragmentMain(PSInput Input)
     float3 ViewPosition  = mul(GetCameraView(), float4(WorldPosition, 1.0)).xyz;
     float4 VertexColor   = float4(1.0, 1.0, 1.0, 1.0);
     uint   EntityID      = 0;
+    // Graph local contract. The decal's own X axis IS its UV direction (UV0 is Local.xy), so this is a
+    // genuine tangent frame, not a placeholder -- it matches the one the normal decode below builds.
+    float4 WorldTangent  = float4(normalize(mul((float3x3)Decal.DecalToWorld, float3(1.0, 0.0, 0.0))), 1.0);
+    float2 UV0_DDX       = ddx(UV0);
+    float2 UV0_DDY       = ddy(UV0);
 
     $MATERIAL_INPUTS
 

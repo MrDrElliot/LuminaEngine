@@ -43,6 +43,15 @@ PSOutput FragmentMain(FBaseVertexOutput Input)
     float2 UV0              = Input.UV;
     float4 VertexColor      = Input.FragColor;
 
+    // Tangent frame + UV gradients. Part of the graph local contract that every material template
+    // declares, for nodes that ray-march in tangent space or pick their own mip -- see
+    // Includes/ParallaxOcclusion.slang. Raster passes have a real 2x2 quad, so implicit derivatives
+    // are correct here; the deferred lane substitutes analytic ones.
+    // (Do NOT write the material token in a comment: the compiler substitutes the FIRST occurrence.)
+    float4 WorldTangent     = Input.TangentWS;
+    float2 UV0_DDX          = ddx(UV0);
+    float2 UV0_DDY          = ddy(UV0);
+
     $MATERIAL_INPUTS
 
     FShadedSurface Shaded = ShadeSurface(Input, Material);

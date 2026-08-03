@@ -6,6 +6,16 @@ namespace Lumina
     class FRHIImage;
     class FViewVolume;
 
+    // Draw state for a solid triangle batch. Depth writes are only meaningful with the test on
+    // (Vulkan disables them otherwise), so the three valid combinations are named rather than
+    // exposed as independent test/write flags.
+    enum class ESolidDrawMode : uint8
+    {
+        Translucent,   // depth-tested, no depth write, alpha blended -- surface overlays (navmesh)
+        Opaque,        // depth-tested and written, no blending -- solid meshes that self-occlude
+        XRay,          // no depth test or write -- always on top of the scene
+    };
+
     class RUNTIME_API IPrimitiveDrawInterface
     {
     public:

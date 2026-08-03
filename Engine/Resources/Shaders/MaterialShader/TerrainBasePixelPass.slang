@@ -54,6 +54,9 @@ PSOutput FragmentMain(PSInput Input)
     float2 UV0           = Input.UV;
     float2 HeightUV      = Input.HeightUV;
     float4 VertexColor   = Input.FragColor;
+    float4 WorldTangent  = Input.TangentWS;
+    float2 UV0_DDX       = ddx(UV0);
+    float2 UV0_DDY       = ddy(UV0);
 
     $MATERIAL_INPUTS
 

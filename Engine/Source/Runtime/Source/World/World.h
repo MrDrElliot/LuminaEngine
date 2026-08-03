@@ -414,8 +414,10 @@ namespace Lumina
         void DrawBillboard(int32 ResourceID, const FVector3& Location, float Scale) override;
         void DrawLine(const FVector3& Start, const FVector3& End, const FVector4& Color, float Thickness = 1.0f, bool bDepthTest = true, float Duration = -1.0f) override;
 
-        /** Submit a solid translucent triangle batch (3 pre-colored verts per tri). Duration <= 0 draws one frame. */
-        void DrawSolidTriangles(TVector<FSimpleElementVertex>&& Vertices, bool bDepthTest = true, float Duration = -1.0f);
+        /** Submit a solid triangle batch (3 pre-colored verts per tri). Duration <= 0 draws one frame.
+         *  Mode picks the depth/blend state: Opaque for meshes that must occlude themselves, Translucent
+         *  for blended overlays, XRay to ignore scene depth entirely. */
+        void DrawSolidTriangles(TVector<FSimpleElementVertex>&& Vertices, ESolidDrawMode Mode = ESolidDrawMode::Translucent, float Duration = -1.0f);
 
         /** Queue a line of screen-space debug text for this frame, stacked top-left on the world viewport */
         void DrawDebugText(const FString& Text, const FVector4& Color = FVector4(1.0f));

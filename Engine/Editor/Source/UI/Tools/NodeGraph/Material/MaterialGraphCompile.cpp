@@ -23,6 +23,7 @@ namespace Lumina
 
         FMaterialCompiler Compiler;
         Compiler.SetMaterialType(Material->GetMaterialType());
+        Compiler.SetMasked(Material->GetBlendMode() == EBlendMode::Masked);
         Graph->CompileGraph(Compiler);
         Material->SetReadyForRender(false);
 

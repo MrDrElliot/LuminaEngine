@@ -48,6 +48,8 @@ namespace Lumina
         if (AOPin)                   AOPin->SetDisabled(bFullscreen);
         if (NormalPin)               NormalPin->SetDisabled(bFullscreen);
         if (OpacityPin)              OpacityPin->SetDisabled(bPostProcess);
+        // Self-shadowing modulates the sun's direct contribution, which only surface materials receive.
+        if (SelfShadowPin)           SelfShadowPin->SetDisabled(bFullscreen || bDecal);
         if (WorldPositionOffsetPin)  WorldPositionOffsetPin->SetDisabled(bFullscreen || bDecal);
 
         // Emissive is the fullscreen output color (PostProcess/UI); decals have no emissive DBuffer slot in v1.
@@ -89,6 +91,11 @@ namespace Lumina
         // Opacity (For transparent materials)
         OpacityPin = CreatePin(CMaterialInput::StaticClass(), "Opacity", ENodePinDirection::Input);
         OpacityPin->SetPinName("Opacity");
+
+        // Self Shadow: height-field self-occlusion against the sun, from ParallaxOcclusionMapping's
+        // Shadow output. Unconnected = 1 (unshadowed), which is exactly the pre-POM behavior.
+        SelfShadowPin = CreatePin(CMaterialInput::StaticClass(), "Self Shadow", ENodePinDirection::Input);
+        SelfShadowPin->SetPinName("Self Shadow");
 
         // World Position Offset: vertex-stage world-space displacement routed through the vertex chunk.
         // If connected, the vertex shader adds the graph emission to WorldPos before View/Projection.
@@ -154,7 +161,9 @@ namespace Lumina
     {
         FString PixelOut;
         PixelOut += "\n\n";
-        PixelOut += "\tFMaterialPixelInputs Material;\n";
+        // Seeded from the shared neutral surface: every field below is then overwritten explicitly, but a
+        // field added to FMaterialPixelInputs without a matching pin here still starts initialized.
+        PixelOut += "\tFMaterialPixelInputs Material = DefaultMaterialInputs();\n";
 
         // PostProcess: unconnected Emissive = passthrough (SceneColor); surface materials default to black.
         const bool bPostProcess = Compiler.GetMaterialType() == EMaterialType::PostProcess;
@@ -168,6 +177,7 @@ namespace Lumina
         PixelOut += EmitMaterialAssignment("AmbientOcclusion", AOPin,        "1.0",                    1);
         PixelOut += EmitMaterialAssignment("Normal",           NormalPin,    "float3(0.0, 0.0, 1.0)", 3);
         PixelOut += EmitMaterialAssignment("Opacity",          OpacityPin,   "1.0",                    1);
+        PixelOut += EmitMaterialAssignment("SelfShadow",       SelfShadowPin, "1.0",                   1);
 
         // Always reconstruct Z from the decoded XY (Z = sqrt(1 - x^2 - y^2) >= 0 for a unit normal):
         // correct for BC7 and BC5 and avoids format detection, which broke BC5 maps through intermediate nodes.

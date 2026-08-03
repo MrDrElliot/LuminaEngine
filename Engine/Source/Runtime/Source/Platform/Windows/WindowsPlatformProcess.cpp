@@ -32,8 +32,55 @@ namespace Lumina::Platform
     namespace
     {
         TVector<FString> GDLLSearchPaths;
+
+        // Hands the directory to the loader itself, which is the only way it participates in
+        // resolving the *imports* of a DLL we load. GDLLSearchPaths alone only ever helped locate
+        // the file we asked for, and a plugin binary a project module statically links is never
+        // the file we ask for: the loader resolves that import before LoadLibrary returns.
+        void RegisterLoaderDirectory(const FString& Directory)
+        {
+            FWString Wide = StringUtils::ToWideString(Directory);
+
+            if (::AddDllDirectory(Wide.c_str()) == nullptr)
+            {
+                LOG_WARN("AddDllDirectory failed for '{0}' (error {1})", Directory, (uint32)GetLastError());
+            }
+        }
+
+        // Searches the loading module's own directory and everything AddDLLDirectory registered,
+        // so a project DLL under <Project>/Binaries resolves an import of a plugin DLL under
+        // <Plugin>/Binaries. Falls back to the default order on failure, because that flag set
+        // drops PATH and the current directory, which vendored dependencies still rely on.
+        void* LoadModuleImage(const FWString& Wide)
+        {
+            constexpr DWORD SearchFlags =
+                  LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR
+                | LOAD_LIBRARY_SEARCH_APPLICATION_DIR
+                | LOAD_LIBRARY_SEARCH_USER_DIRS
+                | LOAD_LIBRARY_SEARCH_SYSTEM32;
+
+            if (HMODULE Handle = LoadLibraryExW(Wide.c_str(), nullptr, SearchFlags))
+            {
+                return Handle;
+            }
+
+            const DWORD SearchError = GetLastError();
+
+            if (HMODULE Handle = LoadLibraryW(Wide.c_str()))
+            {
+                return Handle;
+            }
+
+            // 126 (ERROR_MOD_NOT_FOUND) here means a dependency is missing, not this file: it
+            // exists, we just resolved a path to it. 193 (ERROR_BAD_EXE_FORMAT) is a bitness or
+            // corruption problem. Logged because the loader gives the caller no way to ask.
+            LOG_ERROR("LoadLibrary failed for '{0}' (error {1}, {2} with default search order)",
+                StringUtils::FromWideString(Wide), (uint32)SearchError, (uint32)GetLastError());
+
+            return nullptr;
+        }
     }
-    
+
     void* GetDLLHandle(const TCHAR* Filename)
     {
         FWString WideString = Filename;
@@ -55,16 +102,31 @@ namespace Lumina::Platform
 
     void AddDLLDirectory(const FString& Directory)
     {
+        for (const FString& Existing : GDLLSearchPaths)
+        {
+            if (Existing == Directory)
+            {
+                return;
+            }
+        }
+
         GDLLSearchPaths.push_back(Directory);
+        RegisterLoaderDirectory(Directory);
     }
 
     void PushDLLDirectory(const TCHAR* Directory)
     {
         SetDllDirectory(Directory);
-        
-        GDLLSearchPaths.push_back(StringUtils::FromWideString(Directory));
 
-        LOG_WARN("Pushing DLL Search Path: {0}", StringUtils::FromWideString(Directory));
+        FString Narrow = StringUtils::FromWideString(Directory);
+
+        // SetDllDirectory is ignored once a load passes LOAD_LIBRARY_SEARCH flags, so register
+        // the same directory the other way too; the pair have to agree about what is searched.
+        RegisterLoaderDirectory(Narrow);
+
+        GDLLSearchPaths.push_back(Narrow);
+
+        LOG_INFO("Pushing DLL Search Path: {0}", Narrow);
     }
 
     void PopDLLDirectory()
@@ -547,7 +609,7 @@ namespace Lumina::Platform
             return Handle;
         }
 
-        if (void* Handle = LoadLibraryW(Wide.c_str()))
+        if (void* Handle = LoadModuleImage(Wide))
         {
             return Handle;
         }
@@ -557,8 +619,7 @@ namespace Lumina::Platform
             FFixedString FullPath = Paths::Combine(Path, Filename);
             if (Paths::Exists(FullPath))
             {
-                FWString WideStr = StringUtils::ToWideString(FullPath);
-                if (void* Handle = LoadLibraryW(WideStr.c_str()))
+                if (void* Handle = LoadModuleImage(StringUtils::ToWideString(FullPath)))
                 {
                     return Handle;
                 }

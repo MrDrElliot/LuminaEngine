@@ -108,12 +108,7 @@ namespace Lumina
                 GetPropertyTable()->SetObject(nullptr, nullptr);
             }
         });
-
-        // The committed shaders belong to whatever domain the material was last compiled for. Editing
-        // MaterialType changes the reported domain while the old shaders stay live and ready-for-render,
-        // so the renderer happily binds e.g. a terrain vertex-pull VS into a mesh pipeline -> GPU page
-        // fault (Device Lost). Mark not-ready immediately (covers the compile-error path) and recompile
-        // for the new domain. Preserves the base callback's package-dirty mark.
+        
         GetPropertyTable()->SetPostEditCallback([this](const FPropertyChangedEvent& Event)
         {
             if (Asset.IsValid())
@@ -151,7 +146,6 @@ namespace Lumina
     void FMaterialEditorTool::SetupWorldForTool()
     {
         FAssetEditorTool::SetupWorldForTool();
-
         World->GetRenderer()->GetSceneRenderSettings().bDrawBillboards = false;
 
         DirectionalLightEntity = World->ConstructEntity("Directional Light");
@@ -382,8 +376,6 @@ namespace Lumina
 
     void FMaterialEditorTool::DrawToolMenu(const FUpdateContext& UpdateContext)
     {
-        // Pending edits recolor the entry and swap the icon for a warning: forgetting to compile is
-        // silent otherwise -- the graph looks right and the material keeps rendering the old shader.
         const bool bPending = NeedsCompile();
         if (bPending)
         {

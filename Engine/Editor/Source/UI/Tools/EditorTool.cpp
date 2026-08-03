@@ -1137,7 +1137,7 @@ namespace Lumina
 
                 const float PanScale = PanReference * 0.002f;
                 const FVector3 PanDelta = (Up * static_cast<float>(Raw.GetMouseDeltaY()) * PanScale)
-                                        - (Right * static_cast<float>(Raw.GetMouseDeltaX()) * PanScale);
+                                        + (Right * static_cast<float>(Raw.GetMouseDeltaX()) * PanScale);
                 Transform.Translate(PanDelta);
 
                 if (CameraState.bFreeOrbitPivotValid)
@@ -1183,7 +1183,7 @@ namespace Lumina
                     const float PanScale = CameraState.OrbitDistance * 0.002f;
                     const FVector3 Right = Transform.GetRight();
                     const FVector3 Up    = Transform.GetUp();
-                    CameraState.OrbitTarget -= Right * static_cast<float>(Raw.GetMouseDeltaX()) * PanScale;
+                    CameraState.OrbitTarget += Right * static_cast<float>(Raw.GetMouseDeltaX()) * PanScale;
                     CameraState.OrbitTarget += Up    * static_cast<float>(Raw.GetMouseDeltaY()) * PanScale;
                 }
 
