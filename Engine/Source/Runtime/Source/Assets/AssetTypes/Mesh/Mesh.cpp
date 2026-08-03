@@ -87,6 +87,12 @@ namespace Lumina
             return false;
         }
 
+        // Zero when GPU buffer creation failed; the header address is fetched through unguarded.
+        if (MeshResources == nullptr || MeshResources->MeshBuffers.MeshletHeaderBuffer == 0)
+        {
+            return false;
+        }
+
         for (CMaterialInterface* Material : Materials)
         {
             if (Material == nullptr)
@@ -164,9 +170,15 @@ namespace Lumina
         const bool bSkinned       = Resource.bSkinnedMesh;
         FMeshResource::FMeshBuffers& MB = Resource.MeshBuffers;
 
-        auto CreateAndUpload = [](const void* Data, uint64 Size) -> RHI::GPUPtr
+        bool bAllocationFailed = false;
+        auto CreateAndUpload = [&bAllocationFailed](const void* Data, uint64 Size) -> RHI::GPUPtr
         {
             const RHI::GPUPtr Memory = RHI::Malloc(Size, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
+            if (Memory == 0)
+            {
+                bAllocationFailed = true;
+                return 0;
+            }
             RHI::UploadBuffer(Memory, Data, Size);
             return Memory;
         };
@@ -201,6 +213,26 @@ namespace Lumina
         const uint64 VertCount  = bSkinned ? MData.MeshletSkinnedVertices.size() : MData.MeshletVertices.size();
         MB.MeshletVertexBuffer   = CreateAndUpload(VertSrc, VertCount * VertStride);
         MB.MeshletTriangleBuffer = CreateAndUpload(MData.MeshletTriangles.data(), sizeof(uint32) * MData.MeshletTriangles.size());
+
+        // Nothing downstream null-checks the addresses the header carries, so a mesh that only
+        // partly allocated has to drop out entirely rather than hand the GPU a null base to fetch
+        // vertices through. IsReadyForRender gates on MeshletHeaderBuffer.
+        if (bAllocationFailed)
+        {
+            LOG_ERROR("Mesh left unrenderable: GPU buffer allocation failed for {} meshlets.", MData.Meshlets.size());
+
+            RHI::Core::DeferredFree(MB.MeshletBuffer);
+            RHI::Core::DeferredFree(MB.MeshletBoundsBuffer);
+            RHI::Core::DeferredFree(MB.MeshletVertexBuffer);
+            RHI::Core::DeferredFree(MB.MeshletTriangleBuffer);
+
+            MB.MeshletBuffer         = 0;
+            MB.MeshletBoundsBuffer   = 0;
+            MB.MeshletVertexBuffer   = 0;
+            MB.MeshletTriangleBuffer = 0;
+            MB.MeshletHeaderBuffer   = 0;
+            return;
+        }
 
         FMeshletHeaderGPU Header;
         Header.MeshletsAddress    = MB.MeshletBuffer;

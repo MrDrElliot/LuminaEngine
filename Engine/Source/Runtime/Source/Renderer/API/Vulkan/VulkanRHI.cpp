@@ -4,6 +4,7 @@
 #define VOLK_IMPLEMENTATION
 #include <volk/volk.h>
 
+#include "Core/Threading/Atomic.h"
 #include "Core/Windows/GLFWInclude.h"
 #include "Memory/SmartPtr.h"
 #include "Memory/Allocators/Allocator.h"
@@ -537,7 +538,21 @@ namespace Lumina::RHI
             uint64          Frame;
         };
         TVector<FPendingTransition>     PendingTransient;
-        uint64                          FrameNumber = 0;
+        // Read under HeapMutex by the bindless free path as well as under SubmitMutex here.
+        TAtomic<uint64>                 FrameNumber{0};
+
+        // Bindless views/samplers retire on the frame ring rather than immediately. The heap's
+        // descriptor set stays bound on every command list, so a slot freed this frame is still
+        // named by work already submitted; destroying the object now leaves that work pointing at
+        // a dead handle. HeapFreeTexture sidesteps this by repointing the slot at the fallback
+        // view, but storage images and samplers have no fallback to repoint to.
+        struct FPendingHeapDestroy
+        {
+            VkImageView View;
+            VkSampler   Sampler;
+            uint64      Frame;
+        };
+        TVector<FPendingHeapDestroy>    PendingHeapDestroys;
 
         // All live allocations, sorted by device address for interior-pointer resolution.
         TVector<FMemoryBlock>           MemoryBlocks;
@@ -567,6 +582,8 @@ namespace Lumina::RHI
     };
 
     static FDeviceImpl* GDevice;
+
+    static void FlushPendingHeapDestroysLocked(uint64 Frame, bool bForce);
 
     // Native-access extension/feature injection requests, populated before CreateDevice runs
     // (see Renderer/RHINative.h). Consumed once during device/instance creation.
@@ -1641,6 +1658,8 @@ namespace Lumina::RHI
             GDevice->PendingTransient.clear();
         }
 
+        FlushPendingHeapDestroysLocked(0, /*bForce*/ true);
+
         GDevice->Swapchains.Clear();
         GDevice->Surfaces.Clear();
         GDevice->Semaphores.Clear();
@@ -1677,31 +1696,68 @@ namespace Lumina::RHI
         GDevice = nullptr;
     }
 
-    void TickFrame()
+    // Caller holds HeapMutex, or has otherwise guaranteed the device is idle.
+    static void FlushPendingHeapDestroysLocked(uint64 Frame, bool bForce)
     {
-        FScopeLock Lock(GDevice->SubmitMutex);
-        const uint64 Frame = ++GDevice->FrameNumber;
-        
-        for (size_t i = 0; i < GDevice->PendingTransient.size(); )
+        for (size_t i = 0; i < GDevice->PendingHeapDestroys.size(); )
         {
-            const FDeviceImpl::FPendingTransition& Pending = GDevice->PendingTransient[i];
-            if (Frame - Pending.Frame > kFramesInFlight)
-            {
-                vkFreeCommandBuffers(*GDevice, GDevice->TransientPool, 1, &Pending.Buffer);
-                GDevice->PendingTransient[i] = GDevice->PendingTransient.back();
-                GDevice->PendingTransient.pop_back();
-            }
-            else
+            const FDeviceImpl::FPendingHeapDestroy& Pending = GDevice->PendingHeapDestroys[i];
+            if (!bForce && Frame - Pending.Frame <= kFramesInFlight)
             {
                 ++i;
+                continue;
+            }
+
+            if (Pending.View != VK_NULL_HANDLE)
+            {
+                vkDestroyImageView(*GDevice, Pending.View, nullptr);
+            }
+            if (Pending.Sampler != VK_NULL_HANDLE)
+            {
+                vkDestroySampler(*GDevice, Pending.Sampler, nullptr);
+            }
+
+            GDevice->PendingHeapDestroys[i] = GDevice->PendingHeapDestroys.back();
+            GDevice->PendingHeapDestroys.pop_back();
+        }
+    }
+
+    void TickFrame()
+    {
+        uint64 Frame;
+        {
+            FScopeLock Lock(GDevice->SubmitMutex);
+            Frame = ++GDevice->FrameNumber;
+
+            for (size_t i = 0; i < GDevice->PendingTransient.size(); )
+            {
+                const FDeviceImpl::FPendingTransition& Pending = GDevice->PendingTransient[i];
+                if (Frame - Pending.Frame > kFramesInFlight)
+                {
+                    vkFreeCommandBuffers(*GDevice, GDevice->TransientPool, 1, &Pending.Buffer);
+                    GDevice->PendingTransient[i] = GDevice->PendingTransient.back();
+                    GDevice->PendingTransient.pop_back();
+                }
+                else
+                {
+                    ++i;
+                }
             }
         }
+
+        FScopeLock HeapLock(GDevice->HeapMutex);
+        FlushPendingHeapDestroysLocked(Frame, /*bForce*/ false);
     }
 
     void WaitDeviceIdle()
     {
         FScopeLock Lock(GDevice->SubmitMutex);
         vkDeviceWaitIdle(*GDevice);
+
+        {
+            FScopeLock HeapLock(GDevice->HeapMutex);
+            FlushPendingHeapDestroysLocked(0, /*bForce*/ true);
+        }
 
         if (!GDevice->PendingTransient.empty())
         {
@@ -1732,6 +1788,14 @@ namespace Lumina::RHI
 
     GPUPtr Malloc(uint64 Size, uint64 Alignment, EMemoryType Type)
     {
+        // A zero-size VkBuffer is invalid, and callers legitimately reach this with an empty array
+        // (a mesh whose meshlet bounds did not generate, for one). Hand back a null GPUPtr instead
+        // of letting the driver see size 0.
+        if (Size == 0)
+        {
+            return 0;
+        }
+
         VmaAllocationCreateInfo Info = {};
         Info.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
 
@@ -1767,10 +1831,19 @@ namespace Lumina::RHI
         SampleInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         
         VmaAllocation Allocation = nullptr;
-        VmaAllocationInfo AllocationInfo;
+        VmaAllocationInfo AllocationInfo = {};
 
-        VkBuffer VulkanBuffer;
-        VK_CHECK(vmaCreateBufferWithAlignment(GDevice->Allocator, &SampleInfo, &Info, Alignment, &VulkanBuffer, &Allocation, &AllocationInfo));
+        VkBuffer VulkanBuffer = VK_NULL_HANDLE;
+
+        // Checked explicitly rather than through VK_CHECK, which compiles to nothing in shipping.
+        // A failure here used to fall through to vkGetBufferDeviceAddress on an uninitialized handle,
+        // turning a recoverable out-of-memory into a crash inside the driver.
+        const VkResult AllocResult = vmaCreateBufferWithAlignment(GDevice->Allocator, &SampleInfo, &Info, Alignment, &VulkanBuffer, &Allocation, &AllocationInfo);
+        if (AllocResult != VK_SUCCESS || VulkanBuffer == VK_NULL_HANDLE || Allocation == nullptr)
+        {
+            LOG_ERROR("RHI: {} KiB buffer allocation failed ({}).", Size / 1024, Vulkan::VkResultToString(AllocResult));
+            return 0;
+        }
 
         // GPU-read memory that fell out of the BAR means every shader/transfer read crosses PCIe.
         if (Type == EMemoryType::CPUWrite)
@@ -2872,7 +2945,12 @@ namespace Lumina::RHI
 
         if (HeapData.RWImageViews[Slot] != VK_NULL_HANDLE)
         {
-            vkDestroyImageView(*GDevice, HeapData.RWImageViews[Slot], nullptr);
+            GDevice->PendingHeapDestroys.push_back(FDeviceImpl::FPendingHeapDestroy
+            {
+                .View    = HeapData.RWImageViews[Slot],
+                .Sampler = VK_NULL_HANDLE,
+                .Frame   = GDevice->FrameNumber.load(std::memory_order_relaxed)
+            });
             HeapData.RWImageViews[Slot] = VK_NULL_HANDLE;
         }
         HeapData.RWImagesBitset[Slot] = false;
@@ -2890,7 +2968,12 @@ namespace Lumina::RHI
 
         if (HeapData.Samplers[Slot] != VK_NULL_HANDLE)
         {
-            vkDestroySampler(*GDevice, HeapData.Samplers[Slot], nullptr);
+            GDevice->PendingHeapDestroys.push_back(FDeviceImpl::FPendingHeapDestroy
+            {
+                .View    = VK_NULL_HANDLE,
+                .Sampler = HeapData.Samplers[Slot],
+                .Frame   = GDevice->FrameNumber.load(std::memory_order_relaxed)
+            });
             HeapData.Samplers[Slot] = VK_NULL_HANDLE;
         }
         HeapData.SamplersBitset[Slot] = false;
@@ -3461,7 +3544,7 @@ namespace Lumina::RHI
             vkCmdPipelineBarrier2(TransitionBuffer, &DependencyInfo);
             vkEndCommandBuffer(TransitionBuffer);
 
-            GDevice->PendingTransient.push_back({ TransitionBuffer, GDevice->FrameNumber });
+            GDevice->PendingTransient.push_back({ TransitionBuffer, GDevice->FrameNumber.load(std::memory_order_relaxed) });
         }
 
         const uint32 TransitionCount = TransitionBuffer != VK_NULL_HANDLE ? 1u : 0u;

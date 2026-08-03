@@ -3,7 +3,9 @@
 #include "RHICore.h"
 
 #include "Core/Math/Math.h"
+#include "Core/Threading/Atomic.h"
 #include "Core/Threading/Thread.h"
+#include "Log/Log.h"
 #include "Memory/Memcpy.h"
 
 namespace Lumina::RHI
@@ -15,19 +17,23 @@ namespace Lumina::RHI
         // freed) allocation, so this never has to fit a worst-case load spike.
         constexpr uint64 kStagingSliceSize = 64ull * 1024 * 1024;
 
+        // Staging that came from a dedicated allocation rather than one of the slices.
+        constexpr uint8 kNoSlice = 0xFF;
+
         enum class EUploadOp : uint8 { Buffer, Texture, Clear };
 
         struct FUploadOp
         {
             EUploadOp   Type;
-            GPUPtr      Staging        = 0;     // source for Buffer/Texture, 0 for Clear
-            bool        bOwnedStaging  = false; // true -> DeferredFree after the copy retires
-            GPUPtr      BufferDest     = 0;     // Buffer
-            FTextureH   TextureDest    = {};    // Texture/Clear
+            GPUPtr      Staging        = 0;         // source for Buffer/Texture, 0 for Clear
+            bool        bOwnedStaging  = false;     // true -> DeferredFree after the copy retires
+            uint8       Slice          = kNoSlice;  // slice the staging was reserved from
+            GPUPtr      BufferDest     = 0;         // Buffer
+            FTextureH   TextureDest    = {};        // Texture/Clear
             uint64      Size           = 0;
-            uint32      RowPitchTexels = 0;     // Texture
-            uint32      Mip            = 0;     // Texture
-            float       ClearValue[4]  = {};    // Clear
+            uint32      RowPitchTexels = 0;         // Texture
+            uint32      Mip            = 0;         // Texture
+            float       ClearValue[4]  = {};        // Clear
         };
 
         struct FStagingSlice
@@ -35,6 +41,18 @@ namespace Lumina::RHI
             GPUPtr      Gpu    = 0;
             std::byte*  Cpu    = nullptr;
             uint64      Cursor = 0;
+
+            // Reservations that have not yet finished their memcpy and queued their op. Callers copy
+            // outside the lock, so the cursor alone says nothing about whether a slice is quiet: a
+            // worker that reserved before a reset can still be writing bytes a later reserve has
+            // already handed out, and an op queued after a Flush would point into recycled staging.
+            TAtomic<uint32> Writers{0};
+
+            // Flush submission that last recorded copies out of this slice. The frame ring waits for
+            // the frame that WROTE a slice, but the flush that READS it is submitted a frame later
+            // and carries a higher timeline value, so recycling has to gate on this separately.
+            FSemaphoreH ReadSemaphore = {};
+            uint64      ReadValue     = 0;
         };
 
         struct FUploadState
@@ -52,22 +70,46 @@ namespace Lumina::RHI
 
         FUploadState GUpload;
 
-        struct FStaging { std::byte* Cpu; GPUPtr Gpu; bool bOwned; };
+        struct FStaging
+        {
+            std::byte*  Cpu    = nullptr;
+            GPUPtr      Gpu    = 0;
+            bool        bOwned = false;
+            uint8       Slice  = kNoSlice;
+        };
 
         // Reserve Size bytes of CPU-write staging from the current slice; falls back to a
-        // dedicated allocation when the slice is full. Caller memcpys outside the lock.
+        // dedicated allocation when the slice is full. Caller memcpys outside the lock and must
+        // pair this with EndWrite once the bytes are in AND the op is queued. A null Cpu means
+        // the fallback allocation failed and there is nothing to stage into.
         FStaging ReserveLocked(uint64 Size, uint64 Alignment)
         {
-            FStagingSlice& Slice = GUpload.Slices[GUpload.CurrentSlot];
+            const uint32 Slot = GUpload.CurrentSlot;
+            FStagingSlice& Slice = GUpload.Slices[Slot];
             const uint64 Aligned = Math::AlignUp(Slice.Cursor, Alignment);
             if (Aligned + Size <= kStagingSliceSize)
             {
                 Slice.Cursor = Aligned + Size;
-                return { Slice.Cpu + Aligned, Slice.Gpu + Aligned, false };
+                Slice.Writers.fetch_add(1, std::memory_order_relaxed);
+                return { Slice.Cpu + Aligned, Slice.Gpu + Aligned, false, (uint8)Slot };
             }
 
             const GPUPtr Owned = Malloc(Size, Alignment, EMemoryType::CPUWrite);
-            return { static_cast<std::byte*>(ToHost(Owned)), Owned, true };
+            if (Owned == 0)
+            {
+                return {};
+            }
+            return { static_cast<std::byte*>(ToHost(Owned)), Owned, true, kNoSlice };
+        }
+
+        // Release the reservation's pin. Must run after the op is in the queue, so that a drained
+        // writer count means every op referencing the slice is visible to the next Flush.
+        void EndWrite(const FStaging& Staging)
+        {
+            if (Staging.Slice != kNoSlice)
+            {
+                GUpload.Slices[Staging.Slice].Writers.fetch_sub(1, std::memory_order_release);
+            }
         }
     }
 
@@ -90,17 +132,29 @@ namespace Lumina::RHI
             FScopeLock Lock(GUpload.Mutex);
             S = ReserveLocked(Size, kDefaultAlign);
         }
+
+        if (S.Cpu == nullptr)
+        {
+            LOG_ERROR("RHI: dropped a {} KiB buffer upload, staging allocation failed.", Size / 1024);
+            return;
+        }
+
         Memory::Memcpy(S.Cpu, Data, Size);
 
         FUploadOp Op;
         Op.Type          = EUploadOp::Buffer;
         Op.Staging       = S.Gpu;
         Op.bOwnedStaging = S.bOwned;
+        Op.Slice         = S.Slice;
         Op.BufferDest    = Dest;
         Op.Size          = Size;
 
-        FScopeLock Lock(GUpload.Mutex);
-        GUpload.Queue.push_back(Op);
+        {
+            FScopeLock Lock(GUpload.Mutex);
+            GUpload.Queue.push_back(Op);
+        }
+
+        EndWrite(S);
     }
 
     void UploadTexture(FTextureH Dest, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels)
@@ -115,19 +169,31 @@ namespace Lumina::RHI
             FScopeLock Lock(GUpload.Mutex);
             S = ReserveLocked(Size, kDefaultAlign);
         }
+
+        if (S.Cpu == nullptr)
+        {
+            LOG_ERROR("RHI: dropped a {} KiB texture upload, staging allocation failed.", Size / 1024);
+            return;
+        }
+
         Memory::Memcpy(S.Cpu, Data, Size);
 
         FUploadOp Op;
         Op.Type           = EUploadOp::Texture;
         Op.Staging        = S.Gpu;
         Op.bOwnedStaging  = S.bOwned;
+        Op.Slice          = S.Slice;
         Op.TextureDest    = Dest;
         Op.Size           = Size;
         Op.RowPitchTexels = RowPitchTexels;
         Op.Mip            = Mip;
 
-        FScopeLock Lock(GUpload.Mutex);
-        GUpload.Queue.push_back(Op);
+        {
+            FScopeLock Lock(GUpload.Mutex);
+            GUpload.Queue.push_back(Op);
+        }
+
+        EndWrite(S);
     }
 
     void UploadClearTexture(FTextureH Dest, const float Value[4])
@@ -157,15 +223,24 @@ namespace Lumina::RHI
         }
 
         const FCmdListH CL = OpenCommandList(EQueueType::Graphics);
-        if (!Upload::Flush(CL))
+        uint32 SliceMask = 0;
+        if (!Upload::Flush(CL, &SliceMask))
         {
             ResetCommandList(CL);
             return;
         }
 
-        const uint64 Value = ++GUpload.FlushCounter;
+        // Counter is shared with any other thread that reaches this path.
+        uint64 Value;
+        {
+            FScopeLock Lock(GUpload.Mutex);
+            Value = ++GUpload.FlushCounter;
+        }
+
         const FSemaphoreInfo Signal { GUpload.FlushSemaphore, Value, EStageFlags::AllCommands };
         Submit(EQueueType::Graphics, TSpan{&CL, 1}, {}, TSpan{&Signal, 1});
+
+        Upload::NoteFlushSubmitted(SliceMask, GUpload.FlushSemaphore, Value);
 
         WaitSemaphore(GUpload.FlushSemaphore, Value);
         ResetCommandList(CL);
@@ -180,6 +255,8 @@ namespace Lumina::RHI
                 Slice.Gpu    = Malloc(kStagingSliceSize, kDefaultAlign, EMemoryType::CPUWrite);
                 Slice.Cpu    = static_cast<std::byte*>(ToHost(Slice.Gpu));
                 Slice.Cursor = 0;
+                Slice.Writers.store(0, std::memory_order_relaxed);
+                Slice.ReadValue = 0;
             }
             GUpload.FlushSemaphore = CreateTimelineSemaphore(0);
             GUpload.CurrentSlot    = 0;
@@ -211,14 +288,19 @@ namespace Lumina::RHI
             for (FStagingSlice& Slice : GUpload.Slices)
             {
                 Free(Slice.Gpu);
-                Slice = FStagingSlice{};
+                Slice.Gpu    = 0;
+                Slice.Cpu    = nullptr;
+                Slice.Cursor = 0;
+                Slice.Writers.store(0, std::memory_order_relaxed);
+                Slice.ReadSemaphore = {};
+                Slice.ReadValue     = 0;
             }
 
             FreeH(GUpload.FlushSemaphore);
             GUpload.bInitialized = false;
         }
 
-        bool Flush(FCmdListH CL)
+        bool Flush(FCmdListH CL, uint32* OutSliceMask)
         {
             TVector<FUploadOp> Ops;
             {
@@ -229,7 +311,9 @@ namespace Lumina::RHI
                 }
                 Ops.swap(GUpload.Queue);
             }
-            
+
+            uint32 SliceMask = 0;
+
             TVector<FTextureH> WrittenTextures;
             auto AlreadyWritten = [&](FTextureH Tex)
             {
@@ -245,6 +329,11 @@ namespace Lumina::RHI
 
             for (const FUploadOp& Op : Ops)
             {
+                if (Op.Slice != kNoSlice)
+                {
+                    SliceMask |= (1u << Op.Slice);
+                }
+
                 const bool bWritesTexture = (Op.Type == EUploadOp::Texture || Op.Type == EUploadOp::Clear);
                 if (bWritesTexture && AlreadyWritten(Op.TextureDest))
                 {
@@ -286,14 +375,60 @@ namespace Lumina::RHI
                     Core::DeferredFree(Op.Staging);
                 }
             }
+
+            if (OutSliceMask != nullptr)
+            {
+                *OutSliceMask = SliceMask;
+            }
             return true;
         }
 
+        void DrainSliceWriters(uint32 Slot)
+        {
+            if (!GUpload.bInitialized)
+            {
+                return;
+            }
+
+            // Writers pin whatever CurrentSlot was at reserve time, and CurrentSlot is never this
+            // slot when BeginFrame runs, so this only ever spins on a reservation made a full frame
+            // cycle ago whose memcpy is still in progress.
+            const FStagingSlice& Slice = GUpload.Slices[Slot];
+            while (Slice.Writers.load(std::memory_order_acquire) != 0)
+            {
+                Threading::ThreadYield();
+            }
+        }
+
+        void NoteFlushSubmitted(uint32 SliceMask, FSemaphoreH Semaphore, uint64 Value)
+        {
+            for (uint32 Slot = 0; Slot < kFramesInFlight; ++Slot)
+            {
+                if ((SliceMask & (1u << Slot)) != 0)
+                {
+                    GUpload.Slices[Slot].ReadSemaphore = Semaphore;
+                    GUpload.Slices[Slot].ReadValue     = Value;
+                }
+            }
+        }
+ 
         void BeginSlot(uint32 Slot)
         {
+            FStagingSlice& Slice = GUpload.Slices[Slot];
+
+            // The copies out of this slice were submitted by the flush at the START of a later frame
+            // than the one the frame ring waited on above, so that wait is one submission short of
+            // covering them. Without this the cursor reset below hands live source bytes to the next
+            // writer, and a mesh's vertex/index data ends up interleaved with the previous mesh's.
+            if (Slice.ReadValue != 0)
+            {
+                WaitSemaphore(Slice.ReadSemaphore, Slice.ReadValue);
+                Slice.ReadValue = 0;
+            }
+
             FScopeLock Lock(GUpload.Mutex);
-            GUpload.CurrentSlot           = Slot;
-            GUpload.Slices[Slot].Cursor   = 0;
+            GUpload.CurrentSlot = Slot;
+            Slice.Cursor        = 0;
         }
     }
 }

@@ -90,6 +90,7 @@ internal static class Serializer
     {
         Writer.Write((byte)Type.Kind);
         Writer.Write((byte)(Type.IsEntity ? 1 : 0));
+        Writer.Write((byte)(Type.IsInputAction ? 1 : 0));
         switch (Type.Kind)
         {
             case EPropertyType.Enum:
@@ -308,6 +309,10 @@ internal static class Serializer
         {
             return Value is IAssetRef Reference ? Reference.GetPath() : "";
         }
+        if (Type.IsInputAction)
+        {
+            return Value is InputBinding Binding ? Binding.Name : "";
+        }
         return Value as string ?? "";
     }
 
@@ -390,9 +395,26 @@ internal static class Serializer
 
             if (ReadValue(ref Reader, Property.Type, out object? Value))
             {
-                Property.Set(Instance, Value);
+                Assign(Property, Instance, Value);
             }
         }
+    }
+
+    /// <summary>
+    /// Applies a decoded value to one member. An input binding is renamed in place rather than replaced:
+    /// the live object owns the script's event subscriptions, so swapping it in would silently drop every
+    /// handler the script attached in OnReady.
+    /// </summary>
+    private static void Assign(ScriptProperty Property, object Instance, object? Value)
+    {
+        if (Property.Type.IsInputAction
+            && Value is InputBinding Incoming
+            && Property.Get(Instance) is InputBinding Existing)
+        {
+            Existing.Name = Incoming.Name;
+            return;
+        }
+        Property.Set(Instance, Value);
     }
 
     private static ScriptProperty? FindProperty(IReadOnlyList<ScriptProperty> Properties, string Name)
@@ -522,7 +544,7 @@ internal static class Serializer
             }
             if (Box != null && ReadValue(ref Reader, Field.Type, out object? FieldValue))
             {
-                Field.Set(Box, FieldValue);
+                Assign(Field, Box, FieldValue);
             }
         }
 
@@ -533,6 +555,18 @@ internal static class Serializer
     private static bool DecodeString(ref FBlobReader Reader, ScriptType Type, out object? Value)
     {
         string Text = Reader.ReadString();
+        if (Type.IsInputAction)
+        {
+            // A fresh binding; Assign hands the name to the existing one instead when there is one, so
+            // event subscriptions made in OnReady survive a value push from the editor.
+            object? Box = Activator.CreateInstance(Type.Clr);
+            if (Box is InputBinding Binding)
+            {
+                Binding.Name = Text;
+            }
+            Value = Box;
+            return Box != null;
+        }
         if (Type.Kind == EPropertyType.SoftObject)
         {
             object? Box = Activator.CreateInstance(Type.Clr);
@@ -637,7 +671,7 @@ internal static class Serializer
             }
             if (Box != null && ReadValue(ref Reader, Field.Type, out object? FieldValue))
             {
-                Field.Set(Box, FieldValue);
+                Assign(Field, Box, FieldValue);
             }
         }
 

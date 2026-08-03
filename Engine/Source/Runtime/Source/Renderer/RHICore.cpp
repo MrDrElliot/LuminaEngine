@@ -190,6 +190,11 @@ namespace Lumina::RHI::Core
             WaitSemaphore(GCore.FrameTimeline, GCore.SlotWaitValue[Slot]);
         }
 
+        // Before the flush below, so an upload that reserved from this slot's slice but had not yet
+        // queued its op is guaranteed to be picked up now rather than after BeginSlot has reset the
+        // cursor and handed its staging bytes to someone else.
+        Upload::DrainSliceWriters(Slot);
+
         // Before anything destroys a resource this frame. Resetting a command list drops the
         // recorded references it holds;
         for (FCmdListH CommandList : GCore.SlotCommandLists[Slot])
@@ -223,7 +228,8 @@ namespace Lumina::RHI::Core
         // slot recycling already waits for them. One submit + one Transfer->All barrier.
         {
             const FCmdListH UploadCL = OpenCommandList(EQueueType::Graphics);
-            if (Upload::Flush(UploadCL))
+            uint32 SliceMask = 0;
+            if (Upload::Flush(UploadCL, &SliceMask))
             {
                 FScopeLock Lock(GCore.SubmitMutex);
                 const uint64 Value = ++GCore.TimelineCounter;
@@ -231,6 +237,9 @@ namespace Lumina::RHI::Core
                 RHI::Submit(EQueueType::Graphics, TSpan{&UploadCL, 1}, {}, TSpan{&Signal, 1});
                 GCore.SlotWaitValue[Slot] = Value;
                 GCore.SlotCommandLists[Slot].push_back(UploadCL);
+
+                // Slices this submission copies out of cannot be recycled until it retires.
+                Upload::NoteFlushSubmitted(SliceMask, GCore.FrameTimeline, Value);
             }
             else
             {

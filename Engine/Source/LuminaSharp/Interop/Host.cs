@@ -307,6 +307,22 @@ public static unsafe partial class Host
         }
     }
 
+    /// Applies this frame's input action states to a script's [Property] input bindings, raising their events.
+    /// States points at the owning context's array; it is only valid for the duration of this call.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static void PollScriptInput(IntPtr Handle, InputActionState* States, int Count, uint Serial, float DeltaTime)
+    {
+        try
+        {
+            Scripts?.EntityScripts?.PollInput(Handle, States, Count, Serial, DeltaTime);
+        }
+        catch (Exception Exception)
+        {
+            Interop.LogException(Exception);
+        }
+    }
+
     /// A native script delegate with live managed bindings was destroyed; free the matching GCHandles.
     [ManagedExport]
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]

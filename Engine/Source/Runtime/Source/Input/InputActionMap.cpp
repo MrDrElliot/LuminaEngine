@@ -253,8 +253,19 @@ namespace Lumina
         Lookup.clear();
         for (int32 i = 0; i < int32(Actions.size()); ++i)
         {
-            Lookup[Actions[i].Name] = i;
+            // Actions authored before EInputActionType existed only said "this is an axis". Fold that into
+            // the type here rather than at every read, so nothing downstream has to know about bAxis.
+            SInputAction& Action = Actions[i];
+            if (Action.bAxis && Action.Type == EInputActionType::Digital)
+            {
+                Action.Type = EInputActionType::Axis1D;
+            }
+            Lookup[Action.Name] = i;
         }
+
+        // Invalidates every cached action index and every context's state array (they re-size on their
+        // next update, which also clears state carried over from a removed action).
+        ++Serial;
         LOG_INFO("[InputActions] Loaded {} actions.", Actions.size());
     }
 
@@ -264,77 +275,199 @@ namespace Lumina
         return It != Lookup.end() ? &Actions[It->second] : nullptr;
     }
 
+    int32 FInputActionMap::FindActionIndex(FName Name) const
+    {
+        const auto It = Lookup.find(Name);
+        return It != Lookup.end() ? It->second : INDEX_NONE;
+    }
+
     bool FInputActionMap::PassesUIGate(const SInputAction& Action, const FInputContext& Context) const
     {
         return Action.bRunsInUI || Context.GetInputMode() != EInputMode::UI;
     }
 
-    bool FInputActionMap::EvaluateDown(const SInputAction& Action, const FInputContext& Context) const
+    void FInputActionMap::EvaluateRaw(const SInputAction& Action, const FInputContext& Context,
+        float& OutX, float& OutY, bool& bOutAnyKeyDown) const
     {
+        float Raw[2] = { 0.0f, 0.0f };
+        bOutAnyKeyDown = false;
+
         for (const SInputActionBinding& Binding : Action.Bindings)
         {
-            if (IsSKeyDown(Binding.Key, Context))
+            // Only Axis2D splits channels; everything else collapses onto X so a 2D action demoted to
+            // Axis1D still reads its X bindings instead of silently going quiet.
+            const int32 Channel = (Action.Type == EInputActionType::Axis2D && Binding.Channel == EInputAxisChannel::Y) ? 1 : 0;
+
+            switch (Binding.Source)
             {
-                return true;
+            case EInputAxisSource::Key:
+                if (IsSKeyDown(Binding.Key, Context))
+                {
+                    Raw[Channel] += Binding.Scale;
+                    bOutAnyKeyDown = true;
+                }
+                break;
+
+            case EInputAxisSource::MouseX:
+                Raw[Channel] += float(Context.GetMouseDeltaXRaw()) * Binding.Scale;
+                break;
+
+            case EInputAxisSource::MouseY:
+                Raw[Channel] += float(Context.GetMouseDeltaYRaw()) * Binding.Scale;
+                break;
+
+            case EInputAxisSource::MouseWheel:
+                Raw[Channel] += float(Context.GetMouseZRaw()) * Binding.Scale;
+                break;
             }
         }
-        return false;
+
+        const float Sign = Action.bInvert ? -1.0f : 1.0f;
+        OutX = Raw[0] * Action.Sensitivity * Sign;
+        OutY = Raw[1] * Action.Sensitivity * Sign;
+
+        // Dead zone: radial for Axis2D so a diagonal isn't cut twice, per-channel otherwise. The remainder
+        // is rescaled, so full deflection still reaches the value it had without a dead zone.
+        const float Dead = Math::Clamp(Action.DeadZone, 0.0f, 0.99f);
+        if (Dead <= 0.0f)
+        {
+            return;
+        }
+
+        if (Action.Type == EInputActionType::Axis2D)
+        {
+            const float Magnitude = Math::Sqrt(OutX * OutX + OutY * OutY);
+            if (Magnitude <= Dead || Magnitude <= 0.0f)
+            {
+                OutX = 0.0f;
+                OutY = 0.0f;
+                return;
+            }
+            const float Scaled = (Magnitude - Dead) / (1.0f - Dead);
+            OutX = (OutX / Magnitude) * Scaled;
+            OutY = (OutY / Magnitude) * Scaled;
+            return;
+        }
+
+        auto ApplyDeadZone = [Dead](float V)
+        {
+            const float Magnitude = Math::Abs(V);
+            if (Magnitude <= Dead)
+            {
+                return 0.0f;
+            }
+            return Math::Sign(V) * ((Magnitude - Dead) / (1.0f - Dead));
+        };
+        OutX = ApplyDeadZone(OutX);
+        OutY = ApplyDeadZone(OutY);
     }
 
-    float FInputActionMap::EvaluateAxis(const SInputAction& Action, const FInputContext& Context) const
+    void FInputActionMap::UpdateContext(FInputContext& Context, float DeltaSeconds) const
     {
-        float Sum = 0.0f;
-        for (const SInputActionBinding& Binding : Action.Bindings)
+        TVector<FInputActionState>& States = Context.GetMutableActionStates();
+
+        // A rebuild reshuffles indices, so the whole array is discarded rather than migrated: carrying a
+        // stale HeldTime onto a different action would fire a phantom release on the next frame.
+        if (Context.GetActionsSerial() != Serial || States.size() != Actions.size())
         {
-            if (IsSKeyDown(Binding.Key, Context))
-            {
-                Sum += Binding.Scale;
-            }
+            States.assign(Actions.size(), FInputActionState());
+            Context.SetActionsSerial(Serial);
         }
-        return Sum;
+
+        for (size_t Index = 0; Index < Actions.size(); ++Index)
+        {
+            const SInputAction& Action = Actions[Index];
+            FInputActionState& State = States[Index];
+            const bool bWasDown = State.IsDown();
+
+            float X = 0.0f;
+            float Y = 0.0f;
+            bool bAnyKeyDown = false;
+            if (PassesUIGate(Action, Context))
+            {
+                EvaluateRaw(Action, Context, X, Y, bAnyKeyDown);
+            }
+
+            // A digital action is down while a key binding is held; a continuous one is down while its
+            // shaped value is non-zero (the dead zone has already decided what counts as movement).
+            const bool bDown = (Action.Type == EInputActionType::Digital)
+                ? bAnyKeyDown
+                : (bAnyKeyDown || X != 0.0f || Y != 0.0f);
+
+            const float HeldTime = bDown ? (bWasDown ? State.HeldTime + DeltaSeconds : 0.0f) : 0.0f;
+
+            uint32 Flags = 0;
+            if (bDown)               { Flags |= FInputActionState::Flag_Down; }
+            if (bDown && !bWasDown)  { Flags |= FInputActionState::Flag_Pressed; }
+            if (!bDown && bWasDown)  { Flags |= FInputActionState::Flag_Released; }
+            if (bDown && HeldTime >= Action.HoldTime) { Flags |= FInputActionState::Flag_Held; }
+            // Tap is decided on the release frame from the press duration we are about to discard.
+            if (!bDown && bWasDown && State.HeldTime <= Action.TapTime) { Flags |= FInputActionState::Flag_Tapped; }
+
+            State.X = X;
+            State.Y = Y;
+            State.HeldTime = HeldTime;
+            State.Flags = Flags;
+        }
+    }
+
+    const FInputActionState& FInputActionMap::GetActionState(FName Name, const FInputContext& Context) const
+    {
+        static const FInputActionState Empty;
+
+        const int32 Index = FindActionIndex(Name);
+        if (Index == INDEX_NONE)
+        {
+            return Empty;
+        }
+
+        // The context has not been updated against this action table yet (a viewport queried before its
+        // first frame, or a context outside the registry). Reading Empty is the safe default.
+        const TVector<FInputActionState>& States = Context.GetActionStates();
+        if (Context.GetActionsSerial() != Serial || Index >= int32(States.size()))
+        {
+            return Empty;
+        }
+        return States[Index];
     }
 
     bool FInputActionMap::IsActionDown(FName Name, const FInputContext& Context) const
     {
-        const SInputAction* Action = FindAction(Name);
-        if (Action == nullptr || !PassesUIGate(*Action, Context))
-        {
-            return false;
-        }
-        return EvaluateDown(*Action, Context);
+        return GetActionState(Name, Context).IsDown();
     }
 
     bool FInputActionMap::IsActionPressed(FName Name, const FInputContext& Context) const
     {
-        const SInputAction* Action = FindAction(Name);
-        if (Action == nullptr || !PassesUIGate(*Action, Context))
-        {
-            return false;
-        }
-        const bool DownNow = EvaluateDown(*Action, Context);
-        const bool DownLast = Context.WasActionDownLastFrame(Name);
-        return DownNow && !DownLast;
+        return GetActionState(Name, Context).IsPressed();
     }
 
     bool FInputActionMap::IsActionReleased(FName Name, const FInputContext& Context) const
     {
-        const SInputAction* Action = FindAction(Name);
-        if (Action == nullptr || !PassesUIGate(*Action, Context))
-        {
-            return false;
-        }
-        const bool DownNow = EvaluateDown(*Action, Context);
-        const bool DownLast = Context.WasActionDownLastFrame(Name);
-        return !DownNow && DownLast;
+        return GetActionState(Name, Context).IsReleased();
+    }
+
+    bool FInputActionMap::IsActionHeld(FName Name, const FInputContext& Context) const
+    {
+        return GetActionState(Name, Context).IsHeld();
+    }
+
+    bool FInputActionMap::WasActionTapped(FName Name, const FInputContext& Context) const
+    {
+        return GetActionState(Name, Context).IsTapped();
     }
 
     float FInputActionMap::GetActionAxis(FName Name, const FInputContext& Context) const
     {
-        const SInputAction* Action = FindAction(Name);
-        if (Action == nullptr || !PassesUIGate(*Action, Context))
-        {
-            return 0.0f;
-        }
-        return EvaluateAxis(*Action, Context);
+        return GetActionState(Name, Context).X;
+    }
+
+    float FInputActionMap::GetActionAxisY(FName Name, const FInputContext& Context) const
+    {
+        return GetActionState(Name, Context).Y;
+    }
+
+    float FInputActionMap::GetActionHeldTime(FName Name, const FInputContext& Context) const
+    {
+        return GetActionState(Name, Context).HeldTime;
     }
 }

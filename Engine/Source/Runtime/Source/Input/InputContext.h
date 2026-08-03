@@ -5,6 +5,7 @@
 #include "Events/KeyCodes.h"
 #include "Events/MouseCodes.h"
 #include "Input/Input.h"
+#include "Input/InputAction.h"
 #include "Input/InputEvent.h"
 #include "Input/InputMode.h"
 
@@ -35,7 +36,7 @@ namespace Lumina
 
         bool WindowToContext(double WindowX, double WindowY, double& OutX, double& OutY) const;
 
-        bool OnEvent(FEvent& Event);
+        RUNTIME_API bool OnEvent(FEvent& Event);
 
         RUNTIME_API double GetMouseX()      const { return IsGameInputGated() ? 0.0 : MouseX; }
         RUNTIME_API double GetMouseY()      const { return IsGameInputGated() ? 0.0 : MouseY; }
@@ -81,6 +82,20 @@ namespace Lumina
         double GetMouseXRaw() const { return MouseX; }
         double GetMouseYRaw() const { return MouseY; }
 
+        // Ungated motion, read by FInputActionMap: an action with bRunsInUI must still see the mouse.
+        double GetMouseDeltaXRaw() const { return MouseDeltaX; }
+        double GetMouseDeltaYRaw() const { return MouseDeltaY; }
+        double GetMouseZRaw()      const { return MouseZ; }
+
+        // This frame's evaluated action states, indexed like FInputActionMap::GetAllActions(). Sized and
+        // filled by FInputActionMap::UpdateContext once per frame; every query reads this snapshot.
+        const TVector<FInputActionState>& GetActionStates() const { return ActionStates; }
+        TVector<FInputActionState>&       GetMutableActionStates() { return ActionStates; }
+
+        // The action-table serial these states were sized against; a mismatch means the settings changed.
+        uint32 GetActionsSerial() const { return ActionsSerial; }
+        void   SetActionsSerial(uint32 InSerial) { ActionsSerial = InSerial; }
+
         // Discrete events that arrived this frame, in order. Populated by OnEvent, drained (read) by the
         // script OnInput dispatch during the world update, cleared in EndFrame.
         const TVector<SInputEvent>& GetFrameEvents() const { return FrameEvents; }
@@ -92,11 +107,6 @@ namespace Lumina
 
         int  GetCachedModifierState() const { return CachedModifierState; }
         void SetCachedModifierState(int Mods) { CachedModifierState = Mods; }
-
-        bool WasActionDownLastFrame(FName ActionName) const;
-        void SetActionDownLastFrame(FName ActionName, bool bDown);
-
-        void UpdateActionEdgeState();
 
     private:
 
@@ -123,7 +133,8 @@ namespace Lumina
         TArray<Input::EKeyState, (uint32)EKey::Num>         KeyStates = {};
         TArray<Input::EMouseState, (uint32)EMouseKey::Num>  MouseStates = {};
 
-        THashMap<FName, bool>          ActionDownLastFrame;
+        TVector<FInputActionState>     ActionStates;
+        uint32                         ActionsSerial = 0;
         TVector<SInputEvent>           FrameEvents;
     };
 }

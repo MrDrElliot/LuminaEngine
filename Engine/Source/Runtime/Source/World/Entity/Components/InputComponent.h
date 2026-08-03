@@ -81,66 +81,75 @@ namespace Lumina
             SnapMouseX = SnapMouseY = SnapMouseZ = SnapMouseDeltaX = SnapMouseDeltaY = 0.0;
         }
         
-        FUNCTION(Script)
-        bool IsActionDown(const FName& Name) const
+        /** This frame's evaluated state for an action, or a zeroed state when input is off, the world has
+         *  no viewport, or the name is not an authored action. Every action query reads through here. */
+        const FInputActionState& GetActionState(const FName& Name) const
         {
+            static const FInputActionState Empty;
             if (!bEnabled)
             {
-                return false;
+                return Empty;
             }
             const FInputViewport* V = FInputViewportRegistry::Get().FindViewportForWorld(World);
             if (V == nullptr)
             {
-                return false;
+                return Empty;
             }
-            return FInputActionMap::Get().IsActionDown(Name, V->GetContext());
+            return FInputActionMap::Get().GetActionState(Name, V->GetContext());
+        }
+
+        FUNCTION(Script)
+        bool IsActionDown(const FName& Name) const
+        {
+            return GetActionState(Name).IsDown();
         }
 
         FUNCTION(Script)
         bool IsActionPressed(const FName& Name) const
         {
-            if (!bEnabled)
-            {
-                return false;
-            }
-            const FInputViewport* V = FInputViewportRegistry::Get().FindViewportForWorld(World);
-            if (V == nullptr)
-            {
-                return false;
-            }
-            return FInputActionMap::Get().IsActionPressed(Name, V->GetContext());
+            return GetActionState(Name).IsPressed();
         }
 
         FUNCTION(Script)
         bool IsActionReleased(const FName& Name) const
         {
-            if (!bEnabled)
-            {
-                return false;
-            }
-            const FInputViewport* V = FInputViewportRegistry::Get().FindViewportForWorld(World);
-            if (V == nullptr)
-            {
-                return false;
-            }
-            return FInputActionMap::Get().IsActionReleased(Name, V->GetContext());
+            return GetActionState(Name).IsReleased();
         }
 
         FUNCTION(Script)
         float GetActionAxis(const FName& Name) const
         {
-            if (!bEnabled)
-            {
-                return 0.0f;
-            }
-            const FInputViewport* V = FInputViewportRegistry::Get().FindViewportForWorld(World);
-            if (V == nullptr)
-            {
-                return 0.0f;
-            }
-            return FInputActionMap::Get().GetActionAxis(Name, V->GetContext());
+            return GetActionState(Name).X;
         }
-        
+
+        /** The Y channel of an Axis2D action (GetActionAxis reads X). 0 for any other action type. */
+        FUNCTION(Script)
+        float GetActionAxisY(const FName& Name) const
+        {
+            return GetActionState(Name).Y;
+        }
+
+        /** True while the action has been down for at least its authored HoldTime. */
+        FUNCTION(Script)
+        bool IsActionHeld(const FName& Name) const
+        {
+            return GetActionState(Name).IsHeld();
+        }
+
+        /** True on the frame a press shorter than the action's TapTime was released. */
+        FUNCTION(Script)
+        bool WasActionTapped(const FName& Name) const
+        {
+            return GetActionState(Name).IsTapped();
+        }
+
+        /** Seconds the current press has lasted, 0 while the action is up. */
+        FUNCTION(Script)
+        float GetActionHeldTime(const FName& Name) const
+        {
+            return GetActionState(Name).HeldTime;
+        }
+
         /** +1 while Positive is down, -1 while Negative is down, 0 when neither is. Holding both
          *  cancels out, which is what a key pair should do rather than latching whichever side is
          *  tested first. For a single action already declared as an axis, use GetActionAxis. */

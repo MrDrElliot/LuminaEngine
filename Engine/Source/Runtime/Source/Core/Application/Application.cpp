@@ -69,6 +69,12 @@ namespace Lumina
 
             bool bApplicationWantsExit = ShouldExit();
 
+            // Evaluate input actions from the events just pumped, before anything reads them this frame.
+            if (!GIsHeadless)
+            {
+                FInputViewportRegistry::Get().BeginFrame(GEngine->GetDeltaTime());
+            }
+
             bEngineWantsExit = !GEngine->Update(bApplicationWantsExit);
 
             if (!GIsHeadless)

@@ -308,5 +308,10 @@ namespace Lumina
         TQueue<FComponentDestroyRequest> ComponentDestroyRequests;
         entt::entity                     DetailsEntity = entt::null;
         bool                             bDetailsDirty = false;
+
+        // Script generation the cached tables were built against. A table holds a raw pointer into a
+        // component's value buffer and a CStruct* layout; a C# reload frees that buffer and destroys the
+        // layout, so every table built before the bump describes memory that no longer exists.
+        int32                            DetailsScriptGeneration = -1;
     };
 }

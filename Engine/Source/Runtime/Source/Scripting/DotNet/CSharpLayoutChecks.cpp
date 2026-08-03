@@ -8,6 +8,7 @@
 #include "Containers/Array.h"
 #include "Containers/ContainerOps.h"
 #include "Core/Assertions/Assert.h"
+#include "Input/InputAction.h"
 #include "Scripting/DotNet/LayoutRegistry.h"
 
 namespace Lumina
@@ -21,6 +22,14 @@ namespace Lumina
     static_assert(sizeof(FVector4) == 16, "LuminaSharp FVector4 mirror size mismatch (update Math.cs).");
     static_assert(sizeof(FQuat)    == 16, "LuminaSharp FQuat mirror size mismatch (update Math.cs).");
     static_assert(sizeof(FMatrix4) == 64, "LuminaSharp FMatrix mirror size mismatch (update Matrix.cs).");
+
+    // The script layer reads a whole array of these through a raw pointer (LuminaSharp.InputActionState),
+    // so a field added on either side without the other silently misreads every action's state.
+    static_assert(sizeof(FInputActionState)              == 16, "LuminaSharp InputActionState mirror size mismatch (update InputAction.cs).");
+    static_assert(offsetof(FInputActionState, X)         == 0,  "InputActionState.X offset mismatch.");
+    static_assert(offsetof(FInputActionState, Y)         == 4,  "InputActionState.Y offset mismatch.");
+    static_assert(offsetof(FInputActionState, HeldTime)  == 8,  "InputActionState.HeldTime offset mismatch.");
+    static_assert(offsetof(FInputActionState, Flags)     == 12, "InputActionState.Flags offset mismatch.");
 
     // SIMD FTransform (VTransform): three 16-byte VFloat4 (Location.xyz+pad, Rotation.xyzw, Scale.xyz+pad).
     // The hand-written C# mirror (Transform.cs) reproduces this padded 48-byte layout for the by-value blit.

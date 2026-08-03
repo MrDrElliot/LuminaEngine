@@ -20,6 +20,7 @@
 #include "Scripting/DotNet/DotNetExport.h"
 #include "Scripting/DotNet/DotNetHost.h"
 #include "UI/RmlUiBridge.h"
+#include "Input/InputActionMap.h"
 #include "Input/InputViewport.h"
 #include "Input/InputContext.h"
 #include "Input/InputMode.h"
@@ -1413,4 +1414,19 @@ LUMINA_DOTNET_EXPORT(void, UI_SetMouseMode)(uint64 World, int32 Mode)
         V->GetContext().SetMouseMode((Lumina::EMouseMode)Mode);
         Registry.ReapplyActiveCursorMode();
     }
+}
+
+//================================================================================================
+// Input actions. A script binding resolves its action name to an index once per settings generation
+// (the serial the poll carries), then reads state straight out of the per-frame array native hands
+// it, so a bound action costs no crossing per frame.
+//================================================================================================
+
+LUMINA_DOTNET_EXPORT(int32, Input_FindActionIndex)(const char* Name, int32 Len)
+{
+    if (Name == nullptr || Len <= 0)
+    {
+        return INDEX_NONE;
+    }
+    return FInputActionMap::Get().FindActionIndex(FName(FStringView(Name, (size_t)Len)));
 }

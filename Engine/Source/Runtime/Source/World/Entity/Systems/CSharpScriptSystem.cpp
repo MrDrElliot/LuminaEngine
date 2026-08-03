@@ -142,6 +142,44 @@ namespace Lumina
             {
                 CWorld* CW = Context.GetRegistry().ctx().get<CWorld*>();
                 const FInputViewport* V = FInputViewportRegistry::Get().FindViewportForWorld(CW);
+
+                // Input action bindings ([Property] InputAction / InputAxis): hand each declaring script this
+                // frame's evaluated states so it can raise Pressed/Released/Changed. Runs every frame, not
+                // only when discrete events arrived -- a held key produces no events but still has to tick
+                // HeldTime and keep an axis reading its value.
+                if (V != nullptr)
+                {
+                    constexpr int32 InputBindingsBit = 1 << 5; // must match TypeLibrary.Build
+                    const FInputContext& Ctx = V->GetContext();
+                    const TVector<FInputActionState>& States = Ctx.GetActionStates();
+                    const uint32 Serial = Ctx.GetActionsSerial();
+
+                    View.each([&](entt::entity Entity, SScriptComponent& Component)
+                    {
+                        const SInputComponent* Input = Context.GetRegistry().try_get<SInputComponent>(Entity);
+                        if (Input == nullptr || !Input->bReceivingInput)
+                        {
+                            return;
+                        }
+
+                        // Snapshotted for the same reason the OnInput dispatch below is: a handler may add or
+                        // remove scripts on this entity, which reallocates Component.Scripts.
+                        TVector<void*> Listeners;
+                        for (SScriptInstance& Slot : Component.Scripts)
+                        {
+                            if (Slot.Instance != nullptr && (Slot.CallbackFlags & InputBindingsBit) != 0)
+                            {
+                                Listeners.push_back(Slot.Instance);
+                            }
+                        }
+
+                        for (void* Instance : Listeners)
+                        {
+                            DotNet::PollScriptInput(Instance, States.data(), (int32)States.size(), Serial, DeltaSeconds);
+                        }
+                    });
+                }
+
                 const TVector<SInputEvent>* Events = (V != nullptr) ? &V->GetContext().GetFrameEvents() : nullptr;
                 if (Events != nullptr && !Events->empty())
                 {

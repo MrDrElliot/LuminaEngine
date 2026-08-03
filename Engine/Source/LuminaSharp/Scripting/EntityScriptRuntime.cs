@@ -148,6 +148,7 @@ internal sealed class EntityScriptRuntime
             try
             {
                 Script.Description.InjectRequiredComponents(Script);
+                Script.Description.EnsureInputComponent(Script);
             }
             catch (Exception Exception)
             {
@@ -294,6 +295,27 @@ internal sealed class EntityScriptRuntime
         catch (Exception Exception)
         {
             Native.Log(ELogLevel.Error, $"EntityScript.OnInput threw: {Exception}");
+        }
+    }
+
+    /// <summary>Applies this frame's action states to a script's input bindings, raising their events. One
+    /// crossing per script per frame, and only for scripts that declare a binding (callback flag) whose
+    /// entity is receiving input.</summary>
+    public unsafe void PollInput(IntPtr Handle, InputActionState* States, int Count, uint Serial, float DeltaTime)
+    {
+        if (Resolve(Handle) is not EntityScript Script)
+        {
+            return;
+        }
+
+        try
+        {
+            using var Scope = Game.Push(Script.World, Script.Entity, Script);
+            Script.Description.PollInputBindings(Script, States, Count, Serial, DeltaTime);
+        }
+        catch (Exception Exception)
+        {
+            Native.Log(ELogLevel.Error, $"EntityScript input binding threw: {Exception}");
         }
     }
 

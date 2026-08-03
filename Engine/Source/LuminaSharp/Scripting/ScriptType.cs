@@ -63,6 +63,10 @@ public sealed class ScriptType
     /// see it).</summary>
     public bool IsEntity { get; init; }
 
+    /// <summary>True when this is an <see cref="InputBinding"/> (kind <see cref="EPropertyType.String"/>): the
+    /// value round-trips as the action name, and the native editor draws a picker of the project's actions.</summary>
+    public bool IsInputAction { get; init; }
+
     /// <summary>Element shape when <see cref="Kind"/> is <see cref="EPropertyType.Vector"/>.</summary>
     public ScriptType? Element { get; init; }
 

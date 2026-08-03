@@ -321,6 +321,7 @@ namespace Lumina
 
         FName CachedValue;
         FName DisplayValue;
+        ImGuiTextFilter SearchFilter;   // input-action picker
         ImGuiTextFilter BoneFilter;
         FTreeListView   BoneTree;
         int32           LastBuiltBoneCount = 0;

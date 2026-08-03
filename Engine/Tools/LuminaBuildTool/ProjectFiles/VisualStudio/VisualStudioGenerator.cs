@@ -793,10 +793,25 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
     {
         string ToolPath = BuildToolAssemblyPath();
         string Script = Path.Combine(Directories.EngineRoot, "LuminaBuild.bat");
+        string ToolProject = Path.Combine(
+            Directories.EngineRoot, "Engine", "Tools", "LuminaBuildTool", "LuminaBuildTool.csproj");
 
         string Test = $"if not exist \"{ToolPath}\" ";
 
-        return Test
+        // Rebuild the tool before using it, the same thing LuminaBuild.bat does and for the same reason:
+        // MSBuild no-ops in well under a second, and a stale tool is not a slow build but a broken one.
+        // A pull that changes both the tool and the .BuildRules.cs files that use it leaves the compiled
+        // tool behind, and the rules then fail against an API that does not exist yet -- reported as a
+        // C# error inside a rules file, which reads like the rules are wrong rather than the tool is old.
+        // That failure also blocks Clean, so the state cannot be cleared without fixing it by hand first.
+        return $"dotnet build \"{ToolProject}\" -v quiet --nologo"
+            + Environment.NewLine
+            + "if errorlevel 1 echo error: LuminaBuildTool failed to build; the engine tree and the build"
+            + " tool are out of step."
+            + Environment.NewLine
+            + "if errorlevel 1 exit /b 1"
+            + Environment.NewLine
+            + Test
             + $"echo error: LuminaBuildTool is missing at \"{ToolPath}\"."
             + $" Run \"{Script}\" once to rebuild it, then regenerate project files."
             + Environment.NewLine

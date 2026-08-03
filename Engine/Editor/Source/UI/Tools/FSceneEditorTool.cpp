@@ -1,4 +1,5 @@
-#include "FSceneEditorTool.h"
+﻿#include "FSceneEditorTool.h"
+#include "Scripting/DotNet/DotNetHost.h"
 
 #include <execution>
 
@@ -2402,6 +2403,22 @@ namespace Lumina
 
         // PropertyTables hold raw component pointers; rebuild before drawing on focus change, invalidation, or dirty mark.
         const bool bEntityValid = (Entity != entt::null) && GetSceneRegistry().valid(Entity);
+
+        // A C# reload rebuilds every script component's value buffer and destroys the CScriptStruct that
+        // describes it, so a table built against the previous generation points at freed memory in both
+        // its data and its layout. Nothing broadcasts that, so the generation is compared here rather
+        // than trusting an invalidation that no one sends.
+        const int32 ScriptGeneration = DotNet::GetScriptGeneration();
+        if (ScriptGeneration != DetailsScriptGeneration)
+        {
+            DetailsScriptGeneration = ScriptGeneration;
+
+            // Dropped rather than rebuilt: the old tables must not be touched again, and the rebuild
+            // below only runs when there is a valid entity to rebuild for.
+            PropertyTables.clear();
+            DetailsEntity = entt::null;
+            bDetailsDirty = true;
+        }
 
         if (!bEntityValid)
         {

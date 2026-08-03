@@ -212,28 +212,10 @@ namespace Lumina
         MouseZ      = 0.0;
         CachedModifierState = 0;
         // Without this a focus regain fires a spurious Released callback.
-        ActionDownLastFrame.clear();
-        FrameEvents.clear();
-    }
-
-    bool FInputContext::WasActionDownLastFrame(FName ActionName) const
-    {
-        const auto It = ActionDownLastFrame.find(ActionName);
-        return It != ActionDownLastFrame.end() ? It->second : false;
-    }
-
-    void FInputContext::SetActionDownLastFrame(FName ActionName, bool bDown)
-    {
-        ActionDownLastFrame[ActionName] = bDown;
-    }
-
-    void FInputContext::UpdateActionEdgeState()
-    {
-        const FInputActionMap& Map = FInputActionMap::Get();
-        for (const SInputAction& Action : Map.GetAllActions())
+        for (FInputActionState& State : ActionStates)
         {
-            const bool bDownNow = Map.IsActionDown(Action.Name, *this);
-            ActionDownLastFrame[Action.Name] = bDownNow;
+            State = FInputActionState();
         }
+        FrameEvents.clear();
     }
 }

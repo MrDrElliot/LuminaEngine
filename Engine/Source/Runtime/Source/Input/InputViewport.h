@@ -82,6 +82,8 @@ namespace Lumina
         // SetMouseMode on the context alone doesn't touch the window cursor.
         RUNTIME_API void ReapplyActiveCursorMode();
 
+        // Evaluates every input action into every context. Runs before the world update; EndFrame runs after.
+        RUNTIME_API void BeginFrame(double DeltaSeconds);
         RUNTIME_API void EndFrame(double DeltaSeconds);
         RUNTIME_API void OnWindowFocusLost();
 

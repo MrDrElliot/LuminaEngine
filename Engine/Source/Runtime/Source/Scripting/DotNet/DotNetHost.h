@@ -8,6 +8,7 @@
 namespace Lumina
 {
     struct FSystemContext;
+    struct FInputActionState;
     class CScriptStruct;
     enum class EUpdateStage : uint8;
     namespace Scripting { struct FScriptExportSchema; struct FScriptPropertyEntry; struct FScriptButton; }
@@ -193,6 +194,11 @@ namespace Lumina::DotNet
     
     RUNTIME_API void DispatchScriptInput(void* Instance, int32 Type, int32 KeyCode, int32 bMouse, int32 Mods,
 int32 bRepeat, double MouseX, double MouseY, double DeltaX, double DeltaY, double Scroll);
+
+    // Hands a script this frame's evaluated input action states so its InputAction / InputAxis bindings can
+    // raise their events. States points into the owning FInputContext and is only valid during the call.
+    RUNTIME_API void PollScriptInput(void* Instance, const FInputActionState* States, int32 Count, uint32 Serial,
+        float DeltaTime);
 
     //~ Exported [Property] schema bridge (editor inspector + serialization). Game thread only.
 

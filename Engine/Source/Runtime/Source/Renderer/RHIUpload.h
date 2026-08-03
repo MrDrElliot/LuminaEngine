@@ -37,13 +37,25 @@ namespace Lumina::RHI
         void Initialize();
         void Shutdown();
 
-        // Render thread, from RHI::Core::BeginFrame. Records every queued copy + one
+        // Main thread, from RHI::Core::BeginFrame. Records every queued copy + one
         // Transfer->All barrier into CL; returns false (and records nothing) when the
-        // queue is empty so the caller can skip the submit.
-        bool Flush(FCmdListH CL);
+        // queue is empty so the caller can skip the submit. OutSliceMask receives one bit
+        // per staging slice the recorded copies read from, to hand to NoteFlushSubmitted.
+        bool Flush(FCmdListH CL, uint32* OutSliceMask = nullptr);
 
-        // Render thread, from RHI::Core::BeginFrame after advancing the frame slot.
-        // Recycles the slot's staging slice for fresh writes.
+        // Main thread, from RHI::Core::BeginFrame BEFORE Flush. Blocks until every
+        // reservation against this slot's slice has finished its memcpy and queued its op,
+        // so the Flush that follows cannot miss one and leave it pointing at bytes that the
+        // BeginSlot below is about to hand out again.
+        void DrainSliceWriters(uint32 Slot);
+
+        // Main thread, immediately after submitting the command list Flush recorded into.
+        // Gates recycling of the slices that submission reads from.
+        void NoteFlushSubmitted(uint32 SliceMask, FSemaphoreH Semaphore, uint64 Value);
+
+        // Main thread, from RHI::Core::BeginFrame after advancing the frame slot.
+        // Recycles the slot's staging slice for fresh writes, once the GPU has finished
+        // copying out of it.
         void BeginSlot(uint32 Slot);
     }
 }

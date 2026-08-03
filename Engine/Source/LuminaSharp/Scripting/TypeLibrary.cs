@@ -216,6 +216,13 @@ internal sealed class TypeLibrary
         {
             return new ScriptType { Kind = EPropertyType.UInt32, Clr = Type, IsEntity = true };
         }
+        // An input binding is stored as the name of the action it listens to (the object itself carries the
+        // subscriptions, which are code, not data), tagged so the editor draws the action picker. Checked
+        // before the generic class branch below, which would otherwise mint its members as a sub-struct.
+        if (typeof(InputBinding).IsAssignableFrom(Type) && !Type.IsAbstract)
+        {
+            return new ScriptType { Kind = EPropertyType.String, Clr = Type, IsInputAction = true };
+        }
         if (Type == typeof(float))
         {
             return new ScriptType { Kind = EPropertyType.Float, Clr = Type };
@@ -572,6 +579,7 @@ internal sealed class TypeDescription
     public Type Type { get; }
     public IReadOnlyList<ScriptProperty> Properties { get; private set; } = Array.Empty<ScriptProperty>();
     public IReadOnlyList<ScriptButton> Buttons { get; private set; } = Array.Empty<ScriptButton>();
+    private IReadOnlyList<ScriptProperty> InputBindings = Array.Empty<ScriptProperty>();
     public int CallbackFlags { get; private set; }
     public string ProfileLabel { get; }
     public string FixedProfileLabel { get; }
@@ -588,8 +596,52 @@ internal sealed class TypeDescription
     {
         Properties = Library.BuildMembers(Type, 0, new HashSet<Type>());
         Buttons = ComputeButtons(Type);
-        CallbackFlags = ComputeCallbackFlags(Type);
+        InputBindings = ComputeInputBindings(Properties);
+        // Bit 5 = "declares input bindings", so native only crosses for scripts that have one. Derived from
+        // the members rather than from an override, hence set here and not in ComputeCallbackFlags. The bit
+        // index must match the native SCSharpScriptSystem.
+        CallbackFlags = ComputeCallbackFlags(Type) | (InputBindings.Count > 0 ? 1 << 5 : 0);
         RequiredComponents = ComputeRequiredComponents(Type);
+    }
+
+    // The [Property] members that are input bindings, gathered once per type so the per-frame poll is a
+    // list walk with no reflection.
+    private static IReadOnlyList<ScriptProperty> ComputeInputBindings(IReadOnlyList<ScriptProperty> Properties)
+    {
+        List<ScriptProperty>? Result = null;
+        foreach (ScriptProperty Property in Properties)
+        {
+            if (Property.Type.IsInputAction)
+            {
+                (Result ??= new List<ScriptProperty>()).Add(Property);
+            }
+        }
+        return (IReadOnlyList<ScriptProperty>?)Result ?? Array.Empty<ScriptProperty>();
+    }
+
+    /// <summary>Gives a script that declares input bindings the component that feeds them, so declaring an
+    /// InputAction field is enough on its own. Same idea as [RequireComponent], and idempotent, so a script
+    /// that also calls EnableInput() is unaffected.</summary>
+    public void EnsureInputComponent(EntityScript Script)
+    {
+        if (InputBindings.Count > 0)
+        {
+            Script.Registry.Emplace<Lumina.SInputComponent>(Script.Entity);
+        }
+    }
+
+    /// <summary>Feeds this frame's action states to each of the instance's input bindings.</summary>
+    public unsafe void PollInputBindings(EntityScript Script, InputActionState* States, int Count, uint Serial, float DeltaTime)
+    {
+        foreach (ScriptProperty Property in InputBindings)
+        {
+            // A binding the script nulled out is skipped rather than recreated: the field is the script's
+            // to own, and silently handing it a new object would lose whatever it meant by clearing it.
+            if (Property.Get(Script) is InputBinding Binding)
+            {
+                Binding.Poll(States, Count, Serial, DeltaTime);
+            }
+        }
     }
 
     // Discovers the [Button] methods: parameterless instance methods surfaced as inspector buttons,

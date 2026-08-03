@@ -3,6 +3,7 @@
 
 #include "Core/Windows/Window.h"
 #include "Events/Event.h"
+#include "Input/InputActionMap.h"
 #include "Input/InputContext.h"
 #include "UI/RmlUiBridge.h"
 #include "World/World.h"
@@ -370,12 +371,23 @@ namespace Lumina
         FocusedViewport = Viewport;
     }
 
-    void FInputViewportRegistry::EndFrame(double DeltaSeconds)
+    void FInputViewportRegistry::BeginFrame(double DeltaSeconds)
     {
-        // Edge state must be recorded before EndFrame rolls Pressedâ†’Held.
+        // Actions are evaluated once here, after the frame's events have been pumped and before anything
+        // updates, so every query during the frame sees the same snapshot and edges fire exactly once.
+        const FInputActionMap& Map = FInputActionMap::Get();
         for (FInputViewport* V : Viewports)
         {
-            V->GetContext().UpdateActionEdgeState();
+            Map.UpdateContext(V->GetContext(), (float)DeltaSeconds);
+        }
+
+        Map.UpdateContext(*RawInput, (float)DeltaSeconds);
+    }
+
+    void FInputViewportRegistry::EndFrame(double DeltaSeconds)
+    {
+        for (FInputViewport* V : Viewports)
+        {
             V->GetContext().EndFrame(DeltaSeconds);
         }
 

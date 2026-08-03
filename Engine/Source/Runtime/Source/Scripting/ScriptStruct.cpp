@@ -732,7 +732,13 @@ namespace Lumina
         }
         if (Type.Kind == EPropertyTypeFlags::String)
         {
-            return MakeSimple<FStringProperty, EPropertyTypeFlags::String>(Owner, Element, 0);
+            FProperty* Property = MakeSimple<FStringProperty, EPropertyTypeFlags::String>(Owner, Element, 0);
+            if (Type.bInputAction && Property != nullptr)
+            {
+                Property->Metadata.AddValue("InputAction", "");
+                Property->OnMetadataFinalized();
+            }
+            return Property;
         }
         if (Type.Kind == EPropertyTypeFlags::SoftObject)
         {
@@ -914,7 +920,9 @@ namespace Lumina
         if (Type.Kind == EPropertyTypeFlags::String)
         {
             FProperty* Property = MakeSimple<FStringProperty, EPropertyTypeFlags::String>(Owner, Field.Name, Offset);
-            ApplyMeta(Property, &Field.Meta, nullptr);
+            // An input binding is a string holding an action name; the tag is what makes the editor draw
+            // the action picker instead of a free-text box.
+            ApplyMeta(Property, &Field.Meta, Type.bInputAction ? "InputAction" : nullptr);
             return Property;
         }
         if (Type.Kind == EPropertyTypeFlags::SoftObject)

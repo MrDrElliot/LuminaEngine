@@ -156,6 +156,7 @@ namespace Lumina::DotNet
         typedef uint32 (CORECLR_DELEGATE_CALLTYPE* RenderSceneGetDisplayResourceIDFn)(void*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* RenderSceneGetExtentFn)(void*, uint32*, uint32*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* DispatchInputFn)(void*, int32, int32, int32, int32, int32, double, double, double, double, double);
+        typedef void  (CORECLR_DELEGATE_CALLTYPE* PollScriptInputFn)(void*, const void*, int32, uint32, float);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* OnNativeDelegateDestroyedFn)(void*);
         typedef int32 (CORECLR_DELEGATE_CALLTYPE* GetCallbackFlagsFn)(void*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* GetScriptSchemaFn)(const char*, int32, void*, void*);
@@ -182,6 +183,7 @@ namespace Lumina::DotNet
             DestroyEntityScriptFn       DestroyEntityScript;
             DestroyEntitySystemFn       DestroyEntitySystem;
             DispatchInputFn             DispatchInput;
+            PollScriptInputFn           PollScriptInput;
             OnNativeDelegateDestroyedFn OnNativeDelegateDestroyed;
             EnumerateEntityScriptsFn    EnumerateEntityScripts;
             EnumerateEntitySystemsFn    EnumerateEntitySystems;
@@ -1005,6 +1007,7 @@ namespace Lumina::DotNet
         LM_RESOLVE(DestroyEntityScript,    DestroyEntityScriptFn);
         LM_RESOLVE(DestroyEntitySystem,    DestroyEntitySystemFn);
         LM_RESOLVE(DispatchInput,          DispatchInputFn);
+        LM_RESOLVE(PollScriptInput,        PollScriptInputFn);
         LM_RESOLVE(EnumerateEntityScripts, EnumerateEntityScriptsFn);
         LM_RESOLVE(EnumerateEntitySystems, EnumerateEntitySystemsFn);
         LM_RESOLVE(CreateScriptable,       CreateScriptableFn);      // optional: only when scripts ship Scriptables
@@ -1569,6 +1572,14 @@ namespace Lumina::DotNet
         }
     }
 
+    void PollScriptInput(void* Instance, const FInputActionState* States, int32 Count, uint32 Serial, float DeltaTime)
+    {
+        if (bInitialized && GManaged.PollScriptInput && Instance)
+        {
+            GManaged.PollScriptInput(Instance, States, Count, Serial, DeltaTime);
+        }
+    }
+
     int32 GetScriptCallbackFlags(void* Instance)
     {
         return (bInitialized && GManaged.GetScriptCallbackFlags && Instance) ? GManaged.GetScriptCallbackFlags(Instance) : 0;
@@ -1672,6 +1683,7 @@ namespace Lumina::DotNet
             auto Type = MakeShared<Scripting::FScriptExportType>();
             Type->Kind = static_cast<EPropertyTypeFlags>(R.U8());
             Type->bEntity = R.U8() != 0;
+            Type->bInputAction = R.U8() != 0;
             switch (Type->Kind)
             {
                 case EPropertyTypeFlags::Enum:

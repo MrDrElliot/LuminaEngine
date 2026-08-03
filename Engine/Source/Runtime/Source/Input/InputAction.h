@@ -8,23 +8,66 @@
 
 namespace Lumina
 {
-    // One physical binding for an action: an SKey (keyboard/mouse, with its own Ctrl/Shift/Alt chord)
-    // plus a scale used only by axis actions.
+    // What an action produces. Digital is on/off; the axis types read a continuous value out of the same
+    // binding list, so one action can be queried either way (a digital action still reports 1/0 as a value).
+    REFLECT()
+    enum class EInputActionType : uint8
+    {
+        Digital,
+        Axis1D,
+        Axis2D,
+    };
+
+    // Where a binding's value comes from. Key is the SKey (its Scale while held); the rest are continuous
+    // device sources whose per-frame motion is multiplied by Scale, and which ignore the SKey entirely.
+    REFLECT()
+    enum class EInputAxisSource : uint8
+    {
+        Key,
+        MouseX,
+        MouseY,
+        MouseWheel,
+    };
+
+    // Which channel of an Axis2D action a binding feeds. Ignored by Digital and Axis1D, which only ever
+    // use X.
+    REFLECT()
+    enum class EInputAxisChannel : uint8
+    {
+        X,
+        Y,
+    };
+
+    // One physical binding for an action: an SKey (keyboard/mouse, with its own Ctrl/Shift/Alt chord) or a
+    // continuous device source, plus the scale it contributes.
     REFLECT()
     struct RUNTIME_API SInputActionBinding
     {
         GENERATED_BODY()
 
+        SInputActionBinding() = default;
+        explicit SInputActionBinding(const SKey& InKey, float InScale = 1.0f)
+            : Key(InKey), Scale(InScale) {}
+
         PROPERTY(Editable)
         SKey Key;
 
-        // Axis actions only: value contributed while Key is held (e.g. +1 / -1). Ignored for digital.
+        // Value contributed while Key is held (e.g. +1 / -1), or the multiplier applied to a continuous
+        // source's per-frame motion. A digital action only cares about the sign being non-zero.
         PROPERTY(Editable)
         float Scale = 1.0f;
+
+        // Key reads the SKey above; the mouse sources read this frame's motion and ignore the SKey.
+        PROPERTY(Editable)
+        EInputAxisSource Source = EInputAxisSource::Key;
+
+        // Axis2D only: which channel this binding drives. W/S on Y and A/D on X make a movement stick.
+        PROPERTY(Editable)
+        EInputAxisChannel Channel = EInputAxisChannel::X;
     };
 
-    // A named gameplay input. Digital actions fire when any bound key is down; axis actions sum the
-    // Scale of every held binding.
+    // A named gameplay input: the bindings that feed it plus the shaping applied to their sum. Authored on
+    // CInputSettings, evaluated once per frame per input context by FInputActionMap.
     REFLECT()
     struct RUNTIME_API SInputAction
     {
@@ -33,15 +76,70 @@ namespace Lumina
         PROPERTY(Editable)
         FName Name;
 
-        // Axis = sum of held bindings' Scale; Digital = any bound key down.
+        // Digital = on/off; Axis1D = the summed value; Axis2D = the summed value per channel.
         PROPERTY(Editable)
-        bool bAxis = false;
+        EInputActionType Type = EInputActionType::Digital;
 
         // Keep firing while the active context is in EInputMode::UI (pause / save hotkeys).
         PROPERTY(Editable)
         bool bRunsInUI = false;
 
+        // Input below this magnitude reads as zero, and the remainder is rescaled so full deflection still
+        // reaches the original range. Applied radially for Axis2D. 0 disables it.
+        PROPERTY(Editable, ClampMin = 0.0f, ClampMax = 0.99f)
+        float DeadZone = 0.0f;
+
+        // Multiplies the shaped value. The usual home for mouse-look sensitivity.
+        PROPERTY(Editable, ClampMin = 0.0f)
+        float Sensitivity = 1.0f;
+
+        PROPERTY(Editable)
+        bool bInvert = false;
+
+        // Seconds the action must stay down before it counts as held. 0 means "held from the first frame
+        // it is down", which is the every-frame-while-pressed behaviour.
+        PROPERTY(Editable, ClampMin = 0.0f)
+        float HoldTime = 0.0f;
+
+        // A press released within this many seconds also reports a tap on the release frame.
+        PROPERTY(Editable, ClampMin = 0.0f)
+        float TapTime = 0.2f;
+
         PROPERTY(Editable)
         TVector<SInputActionBinding> Bindings;
+
+        //~ Migration: actions authored before EInputActionType existed carry bAxis instead. Not Editable, so
+        //  it never shows in the Input settings, but still round-trips through the config file until
+        //  FInputActionMap::RebuildFromSettings folds it into Type.
+        PROPERTY()
+        bool bAxis = false;
+
+        bool IsAxis() const { return Type != EInputActionType::Digital; }
+    };
+
+    // Per-frame evaluated state of one action within one input context. Plain data, mirrored byte for byte by
+    // LuminaSharp.InputActionState: the script layer reads the whole array through a pointer instead of
+    // crossing into native per action.
+    struct FInputActionState
+    {
+        enum EFlags : uint32
+        {
+            Flag_Down     = 1u << 0,  ///< Down this frame.
+            Flag_Pressed  = 1u << 1,  ///< Went down this frame.
+            Flag_Released = 1u << 2,  ///< Came up this frame.
+            Flag_Held     = 1u << 3,  ///< Down and past the action's HoldTime.
+            Flag_Tapped   = 1u << 4,  ///< Released this frame after less than TapTime down.
+        };
+
+        float  X = 0.0f;
+        float  Y = 0.0f;
+        float  HeldTime = 0.0f;   ///< Seconds the current press has lasted; 0 while up.
+        uint32 Flags = 0;
+
+        bool IsDown()     const { return (Flags & Flag_Down) != 0; }
+        bool IsPressed()  const { return (Flags & Flag_Pressed) != 0; }
+        bool IsReleased() const { return (Flags & Flag_Released) != 0; }
+        bool IsHeld()     const { return (Flags & Flag_Held) != 0; }
+        bool IsTapped()   const { return (Flags & Flag_Tapped) != 0; }
     };
 }
