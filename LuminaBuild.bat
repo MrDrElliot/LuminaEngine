@@ -13,6 +13,15 @@ if errorlevel 1 (
     exit /b 1
 )
 
+rem Reached when this script is not sitting in an engine root, which is what happens when it is
+rem copied somewhere on its own or LUMINA_DIR points at the wrong tree. Checked here so the failure
+rem names the tree it looked in, rather than surfacing as an MSBuild error about a missing project.
+if not exist "%BUILD_TOOL_PROJECT%" (
+    echo error: LuminaBuildTool source is missing at "%BUILD_TOOL_PROJECT%".
+    echo "%LUMINA_ROOT%" does not look like a Lumina engine root.
+    exit /b 1
+)
+
 rem The C# compiler reads LIB and warns about every entry that is not a real directory (CS1668).
 rem A Developer Command Prompt puts ATL/MFC paths there whether or not that optional component was
 rem installed, so building from one reported it on every managed project. Cleared inside setlocal,
@@ -27,8 +36,15 @@ if not defined LUMINA_SKIP_TOOL_BUILD (
     if errorlevel 1 exit /b 1
 )
 
+rem Two different failures, and saying "did not produce" for the second one sends the reader off
+rem looking at a build that never ran.
 if not exist "%BUILD_TOOL_DLL%" (
-    echo error: LuminaBuildTool did not produce "%BUILD_TOOL_DLL%".
+    if defined LUMINA_SKIP_TOOL_BUILD (
+        echo error: LuminaBuildTool is missing at "%BUILD_TOOL_DLL%" and LUMINA_SKIP_TOOL_BUILD is set.
+        echo Clear LUMINA_SKIP_TOOL_BUILD and run this script again to build it.
+    ) else (
+        echo error: LuminaBuildTool did not produce "%BUILD_TOOL_DLL%".
+    )
     exit /b 1
 )
 

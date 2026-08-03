@@ -410,13 +410,18 @@ public sealed class TargetAssembler
                 break;
 
             case ModuleBinaryType.StaticLibrary:
-                // Static libraries stay in the intermediate tree; only loadable output ships.
+                // Static libraries stay in the intermediate tree; only loadable output ships. Keyed
+                // the same way this module's objects are, which for an engine module means the
+                // environment rather than the target: archiving to a per-target directory left every
+                // target linking the engine's DLLs against its own copy of the same third-party libs,
+                // so the link command differed between them and alternating an engine build with a
+                // project build relinked all of them every time, in both directions.
                 Module.OutputDirectory = Path.Combine(
                     OutputRoot,
                     "Intermediates",
                     "Obj",
                     Info.PlatformName,
-                    Info.Name,
+                    TargetKey,
                     $"{Info.Type}-{Info.Configuration}",
                     "Lib");
                 Module.OutputFile = Path.Combine(

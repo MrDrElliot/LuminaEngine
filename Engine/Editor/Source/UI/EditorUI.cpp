@@ -961,6 +961,13 @@ namespace Lumina
             }
         }
 
+        // Nothing else drops this reference, so a closed tool would leave File > Save and Ctrl+S
+        // calling OnSave on freed memory.
+        if (Tool == LastActiveTool)
+        {
+            LastActiveTool = nullptr;
+        }
+
         Tool->Deinitialize(UpdateContext);
         Memory::Delete(Tool);
     }

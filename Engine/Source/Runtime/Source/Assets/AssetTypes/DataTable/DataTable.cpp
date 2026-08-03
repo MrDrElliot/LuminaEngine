@@ -8,24 +8,15 @@ namespace Lumina
 {
     CStruct* CDataTable::GetRowStruct() const
     {
-        // Re-resolve whenever the name moves; the cache is keyed on the name it was resolved from so
-        // an edit (or a load) cannot leave a pointer to the previous type behind.
-        if (CachedRowStructName != RowStructName)
-        {
-            CachedRowStructName = RowStructName;
-            CachedRowStruct = RowStructName.IsNone() ? nullptr : FindObject<CStruct>(RowStructName);
-        }
-
-        return CachedRowStruct;
+        return RowStructCache.Resolve(RowStructName);
     }
 
     void CDataTable::SetRowStruct(CStruct* InStruct)
     {
         ClearRows();
 
-        RowStructName = InStruct != nullptr ? InStruct->GetName() : FName();
-        CachedRowStructName = RowStructName;
-        CachedRowStruct = InStruct;
+        RowStructName = InStruct != nullptr ? DataStructIdentity(InStruct) : FName();
+        RowStructCache.Set(InStruct, RowStructName);
     }
 
     int32 CDataTable::FindRowIndex(const FName& RowName) const

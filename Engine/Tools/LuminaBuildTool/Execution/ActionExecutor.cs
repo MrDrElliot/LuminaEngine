@@ -401,10 +401,19 @@ public sealed class ActionExecutor
 
     private void RecordSuccess(BuildAction Action)
     {
-        // Drop the cached stats so the recheck of any dependent sees the new timestamps.
-        foreach (FileItem Produced in Action.AllProducedItems)
+        // Drop the cached stats so the recheck of any dependent sees the new timestamps. An action
+        // that writes files it never declared invalidates everything instead, because the files it
+        // touched cannot be enumerated from the graph.
+        if (Action.bWritesUndeclaredOutputs)
         {
-            Produced.Invalidate();
+            FileItem.InvalidateAll();
+        }
+        else
+        {
+            foreach (FileItem Produced in Action.AllProducedItems)
+            {
+                Produced.Invalidate();
+            }
         }
 
         if (Action.ProducedItems.Count > 0)

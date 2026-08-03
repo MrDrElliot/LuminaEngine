@@ -30,6 +30,7 @@ namespace Lumina
     private:
 
         void DrawKeysWindow();
+        void DrawBackingStructPicker();
         void DrawDefaultEditor(struct FBlackboardKey& Key);
         void DrawEnumTypeCombo(struct FBlackboardKey& Key);
 

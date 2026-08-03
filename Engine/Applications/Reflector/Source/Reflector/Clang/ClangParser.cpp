@@ -34,8 +34,8 @@ namespace Lumina::Reflection
         AmalgamationFile << "#pragma once\n\n";
         
         // Needed to keep dynamic args alive.
-        eastl::fixed_vector<eastl::string, 256, false>  ClangArgStorage;
-        eastl::fixed_vector<const char*, 256, false>    ClangArgs;
+        eastl::fixed_vector<eastl::string, 256>  ClangArgStorage;
+        eastl::fixed_vector<const char*, 256>    ClangArgs;
         
         auto AppendArg = [&](eastl::string Arg)
         {

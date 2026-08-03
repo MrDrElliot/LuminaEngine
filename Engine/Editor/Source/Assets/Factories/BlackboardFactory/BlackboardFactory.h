@@ -18,6 +18,6 @@ namespace Lumina
         FStringView GetDefaultAssetCreationName() override { return "NewBlackboard"; }
         FString GetAssetDescription() const override { return "A blackboard: a named set of typed keys read/written at runtime by the animation graph and AI."; }
         CClass* GetAssetClass() const override { return CBlackboard::StaticClass(); }
-        FString GetCategory() const override { return "AI"; }
+        FString GetCategory() const override { return "Gameplay"; }
     };
 }

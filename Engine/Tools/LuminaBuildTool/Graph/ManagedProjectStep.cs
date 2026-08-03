@@ -70,7 +70,7 @@ public static class ManagedProjectStep
             {
                 Action.OrderDependencies.Add(GenerateReflection);
 
-                foreach (FileItem Binding in EnumerateGeneratedBindings(Target))
+                foreach (FileItem Binding in EnumerateGeneratedBindings(Target, Project))
                 {
                     Action.PrerequisiteItems.Add(Binding);
                 }
@@ -105,9 +105,17 @@ public static class ManagedProjectStep
         }
     }
 
-    private static IEnumerable<FileItem> EnumerateGeneratedBindings(BuildTarget Target)
+    /// <summary>
+    /// The generated bindings this assembly compiles. Rooted where the project file lives, because
+    /// a .csproj globs a path relative to itself: the engine's assembly reads the engine's bindings
+    /// whether or not a project is what was asked for.
+    /// </summary>
+    private static IEnumerable<FileItem> EnumerateGeneratedBindings(BuildTarget Target, ManagedProject Project)
     {
-        string BindingsDirectory = Target.Directories.CSharpBindingsDirectory;
+        string BindingsDirectory = Path.Combine(
+            Target.Directories.GetOutputRootFor(Path.GetDirectoryName(Project.ProjectFile)!),
+            "Intermediates",
+            "CSharpBindings");
 
         if (!Directory.Exists(BindingsDirectory))
         {

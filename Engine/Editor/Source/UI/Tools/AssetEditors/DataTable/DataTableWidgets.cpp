@@ -1,4 +1,6 @@
-#include "DataTableWidgets.h"
+﻿#include "DataTableWidgets.h"
+#include "Scripting/ScriptDataStruct.h"
+#include "Scripting/ScriptStruct.h"
 
 #include "Assets/AssetTypes/DataTable/DataTable.h"
 #include "Containers/Array.h"
@@ -29,6 +31,9 @@ namespace Lumina::DataTableUI
                 continue;
             }
 
+            // Reaches script-declared rows too: a minted CScriptStruct is force-registered like any other
+            // reflected type, and the iterator walks the object array rather than a package, so deriving
+            // from the base is the whole test. Nothing extra to merge in.
             Candidates.push_back(Candidate);
         }
 

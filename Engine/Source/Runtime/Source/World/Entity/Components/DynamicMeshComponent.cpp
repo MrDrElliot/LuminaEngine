@@ -172,8 +172,7 @@ namespace Lumina
             return FAABB();
         }
 
-        const FVector3 Extent(RenderData->LocalRadius);
-        return FAABB(RenderData->LocalCenter - Extent, RenderData->LocalCenter + Extent);
+        return FAABB(RenderData->LocalMin, RenderData->LocalMax);
     }
 
     void SDynamicMeshComponent::RefreshResolvedMaterials()
@@ -382,6 +381,8 @@ namespace Lumina
         }
 
         TSharedPtr<FDynamicMeshRenderData> NewData = MakeShared<FDynamicMeshRenderData>();
+        NewData->LocalMin    = Min;
+        NewData->LocalMax    = Max;
         NewData->LocalCenter = (Min + Max) * 0.5f;
         NewData->LocalRadius = Math::Length(Max - NewData->LocalCenter);
 

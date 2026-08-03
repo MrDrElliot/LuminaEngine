@@ -1,4 +1,4 @@
-#include "LayoutRegistry.h"
+﻿#include "LayoutRegistry.h"
 #include "DotNetHost.h"
 #include "ManagedCall.h"
 #include "ManagedRenderScene.h"
@@ -17,6 +17,7 @@
 #include "Core/Engine/Engine.h"
 #include "Scripting/ScriptStruct.h"
 #include "Scripting/ScriptableObject.h"
+#include "Scripting/ScriptDataStruct.h"
 #include "Core/Plugin/Plugin.h"
 #include "Core/Plugin/PluginManager.h"
 #include "FileSystem/FileSystem.h"
@@ -140,6 +141,8 @@ namespace Lumina::DotNet
         typedef void* (CORECLR_DELEGATE_CALLTYPE* CreateScriptableFn)(const char*, int32, uint64, int32*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* DestroyScriptableFn)(void*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* EnumerateScriptablesFn)(void*, void*);
+        typedef void  (CORECLR_DELEGATE_CALLTYPE* EnumerateScriptStructsFn)(void*, void*);
+        typedef void  (CORECLR_DELEGATE_CALLTYPE* GetScriptStructSchemaFn)(const char*, int32, void*, void*);
         typedef void* (CORECLR_DELEGATE_CALLTYPE* CreateEntitySystemFn)(const char*, int32, uint64);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* TickEntitySystemFn)(void*, void*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* DestroyEntitySystemFn)(void*);
@@ -185,6 +188,8 @@ namespace Lumina::DotNet
             CreateScriptableFn          CreateScriptable;
             DestroyScriptableFn         DestroyScriptable;
             EnumerateScriptablesFn      EnumerateScriptables;
+            EnumerateScriptStructsFn    EnumerateScriptStructs;
+            GetScriptStructSchemaFn     GetScriptStructSchema;
             ManagedFieldGetFn           FieldGet;
             ManagedFieldSetFn           FieldSet;
             ManagedFreeHandleFn         FreeHandle;
@@ -255,6 +260,23 @@ namespace Lumina::DotNet
             }
             FScriptableTypeDesc Desc;
             Desc.TypeName = FString(Name, static_cast<size_t>(NameLen));
+            if (Base != nullptr && BaseLen > 0)
+            {
+                Desc.NativeBaseName = FString(Base, static_cast<size_t>(BaseLen));
+            }
+            Out->emplace_back(eastl::move(Desc));
+        }
+
+        // Sink the managed EnumerateScriptStructs calls once per marked C# data type; Ctx is the out desc vector.
+        void LmScriptStructSink(void* Ctx, const char* Name, int NameLen, const char* Base, int BaseLen)
+        {
+            auto* Out = static_cast<TVector<FScriptStructTypeDesc>*>(Ctx);
+            if (Out == nullptr || Name == nullptr || NameLen <= 0)
+            {
+                return;
+            }
+            FScriptStructTypeDesc Desc;
+            Desc.ScriptTypeName = FString(Name, static_cast<size_t>(NameLen));
             if (Base != nullptr && BaseLen > 0)
             {
                 Desc.NativeBaseName = FString(Base, static_cast<size_t>(BaseLen));
@@ -988,6 +1010,8 @@ namespace Lumina::DotNet
         LM_RESOLVE(CreateScriptable,       CreateScriptableFn);      // optional: only when scripts ship Scriptables
         LM_RESOLVE(DestroyScriptable,      DestroyScriptableFn);
         LM_RESOLVE(EnumerateScriptables,   EnumerateScriptablesFn);
+        LM_RESOLVE(EnumerateScriptStructs, EnumerateScriptStructsFn);   // optional: only when scripts ship data types
+        LM_RESOLVE(GetScriptStructSchema,  GetScriptStructSchemaFn);
         LM_RESOLVE(FieldGet,               ManagedFieldGetFn);
         LM_RESOLVE(FieldSet,               ManagedFieldSetFn);
         LM_RESOLVE(FreeHandle,             ManagedFreeHandleFn);
@@ -1226,6 +1250,11 @@ namespace Lumina::DotNet
         // / NewObject / editor pickers see them like any native class (minted classes are reused by name across
         // reloads; the managed instance behind each rebinds via the per-instance FScriptableBridge generation gate).
         FScriptableRegistry::RefreshMintedClasses();
+
+        // Mint a CScriptStruct for every C# type carrying a data marker, deriving from the native base the
+        // marker names, so blackboards and data tables see script-declared shapes exactly as native ones.
+        // Ordered after the CClass minting for the same reason: both read the generation that just loaded.
+        FScriptDataStructRegistry::Get().Refresh();
 
         // Re-sync the renderer override against the new generation's RenderScene types and give the worlds
         // PreScriptUnload tore down a renderer again. Runs even on a failed load so those worlds fall back
@@ -2038,6 +2067,80 @@ namespace Lumina::DotNet
         return GManaged.FieldSet(Handle, Name.data(), (int32)Name.size(), ValBlob.data(), (int32)ValBlob.size()) == 0;
     }
 
+    namespace
+    {
+        // Decodes one managed schema blob. Shared by every caller that asks for a member layout, so the
+        // wire format is read in exactly one place regardless of which managed export produced it.
+        bool ParseSchemaBlob(const TVector<uint8>& Blob, Scripting::FScriptExportSchema& OutSchema,
+            TVector<Scripting::FScriptPropertyEntry>& OutDefaults)
+        {
+            if (Blob.empty())
+            {
+                return false;
+            }
+
+            FBlobReader R{ Blob.data(), Blob.data() + Blob.size() };
+            const int32 Count = R.I32();
+            for (int32 i = 0; i < Count; ++i)
+            {
+                Scripting::FScriptExportField Field;
+                Field.Name = FName(R.Str().c_str());
+                ReadAliasesInto(R, Field.Meta);
+                ReadMetaInto(R, Field.Meta);
+
+                // Top level only: nested fields have no hot-reload identity of their own, so WriteFields
+                // does not emit this byte and nothing here may consume one.
+                if (R.U8())
+                {
+                    Field.Meta.Set("SkipHotReload", FString());
+                }
+
+                Field.Type = ReadType(R);
+                Scripting::FScriptPropertyValue Val;
+                ReadValue(R, Val);
+
+                OutSchema.Fields.push_back(Field);
+                Scripting::FScriptPropertyEntry Entry;
+                Entry.Name = Field.Name;
+                Entry.Value = Val;
+                OutDefaults.push_back(Entry);
+            }
+            return true;
+        }
+    }
+
+    void GatherScriptStructTypes(TVector<FScriptStructTypeDesc>& Out)
+    {
+        Out.clear();
+        if (bInitialized && GManaged.EnumerateScriptStructs)
+        {
+            GManaged.EnumerateScriptStructs(reinterpret_cast<void*>(&LmScriptStructSink), &Out);
+        }
+    }
+
+    bool GatherScriptStructSchema(FStringView ScriptTypeName, Scripting::FScriptExportSchema& OutSchema,
+        TVector<Scripting::FScriptPropertyEntry>& OutDefaults)
+    {
+        OutSchema.Fields.clear();
+        OutDefaults.clear();
+        if (!bInitialized || GManaged.GetScriptStructSchema == nullptr || ScriptTypeName.empty())
+        {
+            return false;
+        }
+
+        const FString Name(ScriptTypeName.data(), ScriptTypeName.size());
+        TVector<uint8> Blob;
+        GManaged.GetScriptStructSchema(Name.c_str(), (int32)Name.size(), reinterpret_cast<void*>(&LmSchemaBlobSink), &Blob);
+
+        if (!ParseSchemaBlob(Blob, OutSchema, OutDefaults))
+        {
+            return false;
+        }
+
+        OutSchema.ScriptTypeName = FName(Name.c_str());
+        return true;
+    }
+
     bool GatherScriptSchema(FStringView ScriptClass, Scripting::FScriptExportSchema& OutSchema, TVector<Scripting::FScriptPropertyEntry>& OutDefaults)
     {
         OutSchema.Fields.clear();
@@ -2050,38 +2153,8 @@ namespace Lumina::DotNet
         const FString Name(ScriptClass.data(), ScriptClass.size());
         TVector<uint8> Blob;
         GManaged.GetScriptSchema(Name.c_str(), (int32)Name.size(), reinterpret_cast<void*>(&LmSchemaBlobSink), &Blob);
-        if (Blob.empty())
-        {
-            return false;
-        }
 
-        FBlobReader R{ Blob.data(), Blob.data() + Blob.size() };
-        const int32 Count = R.I32();
-        for (int32 i = 0; i < Count; ++i)
-        {
-            Scripting::FScriptExportField Field;
-            Field.Name = FName(R.Str().c_str());
-            ReadAliasesInto(R, Field.Meta);
-            ReadMetaInto(R, Field.Meta);
-
-            // Top level only: nested fields have no hot-reload identity of their own, so WriteFields
-            // does not emit this byte and nothing here may consume one.
-            if (R.U8())
-            {
-                Field.Meta.Set("SkipHotReload", FString());
-            }
-
-            Field.Type = ReadType(R);
-            Scripting::FScriptPropertyValue Val;
-            ReadValue(R, Val);
-
-            OutSchema.Fields.push_back(Field);
-            Scripting::FScriptPropertyEntry Entry;
-            Entry.Name = Field.Name;
-            Entry.Value = Val;
-            OutDefaults.push_back(Entry);
-        }
-        return true;
+        return ParseSchemaBlob(Blob, OutSchema, OutDefaults);
     }
 
     const CScriptStruct* GetScriptStruct(FStringView ScriptClass)

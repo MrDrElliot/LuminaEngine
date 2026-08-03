@@ -16,6 +16,9 @@ internal sealed class TypeLibrary
     private readonly Dictionary<string, Type> RenderScenes = new();
     // C# subclasses of REFLECT(Scriptable) native CObjects, keyed by full name; the host mints a CClass per one.
     private readonly Dictionary<string, Type> Scriptables = new();
+    // Types carrying a ScriptStructBase marker, keyed by StableId (the simple type name). The host mints a
+    // CScriptStruct per one, deriving from the named native struct.
+    private readonly Dictionary<string, DataStructEntry> DataStructs = new();
     private readonly Dictionary<Type, TypeDescription> ByType = new();
     // Prior full type names to current full name, so renamed script references resolve.
     private readonly Dictionary<string, string> ScriptAliases = new();
@@ -50,6 +53,36 @@ internal sealed class TypeLibrary
             }
         }
 
+        // A second, unconditional pass rather than another arm of the chain above. A marked data type is
+        // not one of those roles and is not required to be reachable from one: it is published because it
+        // carries the marker, so discovery cannot depend on the classification or on anything referencing
+        // it. Keyed by StableId (simple name) because that is the identity an asset stores, and native
+        // struct names share that same flat namespace.
+        foreach (Type Type in AllTypes)
+        {
+            if (Type.IsAbstract)
+            {
+                continue;
+            }
+
+            ScriptStructBaseAttribute? Marker = Type.GetCustomAttribute<ScriptStructBaseAttribute>(inherit: false);
+            if (Marker == null)
+            {
+                continue;
+            }
+
+            string StableId = Type.Name;
+            if (DataStructs.TryGetValue(StableId, out DataStructEntry Existing))
+            {
+                Native.Log(ELogLevel.Warn,
+                    $"Data type name '{StableId}' is claimed by both '{Existing.Description.Type.FullName}' and "
+                    + $"'{Type.FullName}'; ignoring the latter. Rename one, they share one identity namespace.");
+                continue;
+            }
+
+            DataStructs[StableId] = new DataStructEntry(Describe(Type), Marker.NativeBase);
+        }
+
         // Build the alias map after all current names are known, so an alias never shadows a live type.
         foreach (TypeDescription Description in EntityScripts.Values)
         {
@@ -78,6 +111,15 @@ internal sealed class TypeLibrary
 
     /// <summary>Every discovered Scriptable C# subclass type.</summary>
     public IEnumerable<Type> ScriptableTypes => Scriptables.Values;
+
+    /// <summary>Every marked data type as (StableId, description, native base name).</summary>
+    public IEnumerable<KeyValuePair<string, DataStructEntry>> DataStructTypes => DataStructs;
+
+    /// <summary>The description for a marked data type by StableId, or null if unknown.</summary>
+    public TypeDescription? GetDataStruct(string StableId)
+    {
+        return DataStructs.TryGetValue(StableId, out DataStructEntry Entry) ? Entry.Description : null;
+    }
 
     /// <summary>A Scriptable C# subclass by full name, or null if unknown.</summary>
     public Type? GetScriptable(string FullName) => Scriptables.TryGetValue(FullName, out Type? Type) ? Type : null;
@@ -746,4 +788,19 @@ internal sealed class RequiredComponent
     public required IntPtr Token;
     public required Func<IntPtr, object?> Factory;
     public required Action<object, object?> Setter;
+}
+
+/// <summary>A discovered data type: its member description plus the native struct it derives from.</summary>
+internal readonly struct DataStructEntry
+{
+    public DataStructEntry(TypeDescription Description, string NativeBase)
+    {
+        this.Description = Description;
+        this.NativeBase = NativeBase;
+    }
+
+    public TypeDescription Description { get; }
+
+    /// <summary>Registered name of the native CStruct the minted type is given as its super.</summary>
+    public string NativeBase { get; }
 }

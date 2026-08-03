@@ -1182,6 +1182,33 @@ namespace Lumina
         OutlinerListView.MarkTreeDirty();
     }
 
+    FName FWorldEditorTool::GetToolName() const
+    {
+        if (World == nullptr)
+        {
+            return Super::GetToolName();
+        }
+
+        // The base class names the tab after its Asset, and the world editor keeps its CWorld live
+        // rather than as one, so it always fell through to the static "World Editor". A world that
+        // was never saved has no package and is still carrying the placeholder name it was created
+        // with, which is not something to show.
+        const FName Name = World->GetPackage() != nullptr ? World->GetName() : FName("Untitled");
+
+        if (CachedWindowNameSource != Name)
+        {
+            CachedWindowNameSource = Name;
+
+            // Fixed "###WorldEditor" rather than anything derived from the world: ImGui identifies
+            // the window by what follows it, so opening another level renames this tab where it sits
+            // instead of leaving the layout behind and docking a new window somewhere else.
+            CachedWindowName = std::format("{0} {1}###WorldEditor",
+                GetTitlebarIcon(), Name.c_str()).c_str();
+        }
+
+        return CachedWindowName;
+    }
+
     const char* FWorldEditorTool::GetTitlebarIcon() const
     {
         return LE_ICON_EARTH;

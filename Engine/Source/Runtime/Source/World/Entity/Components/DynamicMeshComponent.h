@@ -18,6 +18,11 @@ namespace Lumina
         FMeshResource               Resource;
         TVector<FResolvedSurface>   Surfaces;
 
+        // Tight local box, kept alongside the sphere rather than derived from it: the sphere circumscribes
+        // the box, so rebuilding a box from the radius inflates every axis by up to sqrt(3).
+        FVector3                    LocalMin             = FVector3(0.0f);
+        FVector3                    LocalMax             = FVector3(0.0f);
+
         FVector3                    LocalCenter          = FVector3(0.0f);
         float                       LocalRadius          = 0.0f;
         uint64                      MeshletHeaderAddress = 0;

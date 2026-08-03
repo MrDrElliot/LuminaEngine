@@ -187,6 +187,45 @@ public static class BuildMode
                     }
                 }
 
+                // Built at this target's own type, not as tools. Their output is not consumed by
+                // this target's graph, so ordering against them is not what matters; what matters is
+                // that asking for one of these builds the other too.
+                //
+                // Built as the engine's own build rather than as part of this project's, because it
+                // is one: an engine target assembled with a project attached puts the engine's
+                // intermediates, its reflection input and its generated C# bindings under that
+                // project, and LuminaSharp compiles those bindings from a fixed path in the engine
+                // tree. It also means one engine build serves every project instead of each getting
+                // a private copy of the same thing.
+                if (Target.Rules.RequiredTargetNames.Count > 0)
+                {
+                    BuildDirectories EngineOnly = Directories.ProjectRoot is null
+                        ? Directories
+                        : BuildDirectories.Discover(Directories.EngineRoot, null);
+
+                    BuildSession EngineBuild = ReferenceEquals(EngineOnly, Directories)
+                        ? this
+                        : new BuildSession(Arguments, EngineOnly, Assembly, PlatformSupport, Toolchain, Options);
+
+                    foreach (string Required in Target.Rules.RequiredTargetNames)
+                    {
+                        Log.Verbose("Target '{0}' also requires '{1}'", TargetName, Required);
+
+                        int RequiredResult = await EngineBuild.BuildAsync(
+                            Required,
+                            TypeValue,
+                            PlatformValue,
+                            ConfigurationValue,
+                            Cancellation).ConfigureAwait(false);
+
+                        if (RequiredResult != 0)
+                        {
+                            Log.Error("Required target '{0}' failed; not building '{1}'.", Required, TargetName);
+                            return RequiredResult;
+                        }
+                    }
+                }
+
                 return await BuildResolvedAsync(Target, Cancellation).ConfigureAwait(false);
             }
             finally

@@ -1,6 +1,7 @@
-#pragma once
+﻿#pragma once
 
 #include "Containers/Array.h"
+#include "Scripting/ScriptDataStruct.h"
 #include "Containers/Name.h"
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectMacros.h"
@@ -94,8 +95,7 @@ namespace Lumina
 
         /** Resolution result for RowStructName. Not serialized: reflection objects live at different
          *  addresses each run, and a stale pointer here would outlive its module. */
-        mutable CStruct* CachedRowStruct = nullptr;
-        mutable FName CachedRowStructName;
+        FDataStructResolveCache RowStructCache;
     };
 
     /** Typed lookup. Returns null unless the table's row type actually is T -- a mismatched cast here

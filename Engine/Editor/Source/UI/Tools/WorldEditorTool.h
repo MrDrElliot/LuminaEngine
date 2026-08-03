@@ -47,6 +47,7 @@ namespace Lumina
         
         void OnEntityCreated(entt::registry& Registry, entt::entity Entity);
 
+        FName GetToolName() const override;
         const char* GetTitlebarIcon() const override;
         void DrawToolMenu(const FUpdateContext& UpdateContext) override;
         void InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& InDockspaceSize) const override;

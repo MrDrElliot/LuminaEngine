@@ -17,6 +17,7 @@
 #include "TaskSystem/ThreadedCallback.h"
 #include "Tools/Dialogs/Dialogs.h"
 #include "Tools/UI/ImGui/ImGuiFonts.h"
+#include "Tools/UI/ImGui/EditorColors.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "World/WorldManager.h"
 #include <string.h>
@@ -259,6 +260,25 @@ namespace Lumina
                 || IEquals(VirtualPath, "/Engine/Resources")
                 || IEquals(VirtualPath, "/Engine/Resources/Content")
                 || IEquals(VirtualPath, "/Engine/Resources/Scripts");
+        }
+
+        // Assets belong under a mount's Content directory. "/Game" and "/Engine/Resources" are mount
+        // roots that hold Content and Scripts; creating into them puts an asset somewhere the asset
+        // registry does not scan.
+        bool IsAssetCreationAllowed(FStringView VirtualPath)
+        {
+            auto IsAtOrUnder = [VirtualPath](const char* RootLiteral)
+            {
+                const FStringView Root(RootLiteral);
+                if (VirtualPath.size() < Root.size() || !IEquals(VirtualPath.substr(0, Root.size()), RootLiteral))
+                {
+                    return false;
+                }
+                // A prefix match is only real on a path boundary, or "/Game/ContentPacks" would pass.
+                return VirtualPath.size() == Root.size() || VirtualPath[Root.size()] == '/';
+            };
+
+            return IsAtOrUnder("/Game/Content") || IsAtOrUnder("/Engine/Resources/Content");
         }
 
         // True if VirtualPath is a mount's "Scripts" subdir or anything beneath it.
@@ -1870,84 +1890,242 @@ namespace Lumina
         RefreshContentBrowser();
     }
 
+    bool FContentBrowserEditorTool::DrawImportWindow(
+        CFactory* Factory,
+        const FFixedString& RawPath,
+        const FFixedString& DestinationPath,
+        Import::FImportSettings& Settings,
+        int32 RemainingCount,
+        bool& bShouldClose,
+        bool& bOutApplyToAll)
+    {
+        ImGuiX::Font::PushFont(ImGuiX::Font::EFont::LargeBold);
+        ImGuiX::TextColoredUnformatted(EditorColors::Accent(), LE_ICON_IMPORT);
+        ImGui::SameLine();
+        ImGui::TextUnformatted(VFS::FileName(RawPath).data());
+        ImGui::PopFont();
+
+        ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextDim());
+        ImGui::TextUnformatted(DestinationPath.c_str());
+        ImGui::PopStyleColor();
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Settings scroll; the footer stays pinned so the buttons never walk off a long options list.
+        const float FooterHeight = ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y * 2.0f;
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f, 12.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 6.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f, 5.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+
+        if (ImGui::BeginChild("##ImportSettings", ImVec2(0.0f, -FooterHeight), ImGuiChildFlags_AlwaysUseWindowPadding))
+        {
+            Factory->DrawImportSettings(RawPath, Settings);
+        }
+        ImGui::EndChild();
+
+        ImGui::PopStyleVar(4);
+
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        constexpr float ButtonWidth = 110.0f;
+        const bool bHasMore = RemainingCount > 0;
+
+        if (bHasMore)
+        {
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextDim());
+            ImGui::Text("%d more queued", RemainingCount);
+            ImGui::PopStyleColor();
+            ImGui::SameLine();
+        }
+
+        const float ButtonCount = bHasMore ? 3.0f : 2.0f;
+        const float ButtonsWidth = ButtonWidth * ButtonCount + ImGui::GetStyle().ItemSpacing.x * (ButtonCount - 1.0f);
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - ButtonsWidth);
+
+        bool bConfirmed = false;
+        if (ImGui::Button("Import", ImVec2(ButtonWidth, 0.0f)))
+        {
+            Factory->CommitImportSettings(Settings);
+            bConfirmed = true;
+            bShouldClose = true;
+        }
+
+        if (bHasMore)
+        {
+            ImGui::SameLine();
+
+            // These settings become the answer for everything still queued, so the rest import
+            // without asking again.
+            if (ImGui::Button("Import All", ImVec2(ButtonWidth, 0.0f)))
+            {
+                Factory->CommitImportSettings(Settings);
+                bConfirmed = true;
+                bShouldClose = true;
+                bOutApplyToAll = true;
+            }
+        }
+
+        ImGui::SameLine();
+
+        ImGui::PushStyleColor(ImGuiCol_Button, EditorColors::Danger());
+        if (ImGui::Button("Cancel", ImVec2(ButtonWidth, 0.0f)))
+        {
+            bShouldClose = true;
+        }
+        ImGui::PopStyleColor();
+
+        return bConfirmed;
+    }
+
+    CFactory* FContentBrowserEditorTool::FindImportFactory(const FFixedString& Path) const
+    {
+        const FStringView Ext = VFS::Extension(Path);
+
+        for (CFactory* Factory : CFactoryRegistry::Get().GetFactories())
+        {
+            if (Factory->CanImport() && Factory->IsExtensionSupported(Ext))
+            {
+                return Factory;
+            }
+        }
+
+        return nullptr;
+    }
+
+    void FContentBrowserEditorTool::StartImport(CFactory* Factory, const FFixedString& Path, const FFixedString& DestinationPath, TUniquePtr<Import::FImportSettings> Settings)
+    {
+        Task::AsyncTask(1, 1, [this, Factory, Path, DestinationPath, Settings = Move(Settings)](uint32, uint32, uint32)
+        {
+            Factory->Import(Path, DestinationPath, Settings.get());
+
+            MainThread::Enqueue([this, Path]()
+            {
+                RefreshContentBrowser();
+                ImGuiX::Notifications::NotifySuccess("Successfully Imported: \"{0}\"", Path);
+            });
+        });
+    }
+
     void FContentBrowserEditorTool::TryImport(const FFixedString& Path)
     {
-        const TVector<CFactory*>& Factories = CFactoryRegistry::Get().GetFactories();
-        for (CFactory* Factory : Factories)
+        TVector<FFixedString> Single;
+        Single.push_back(Path);
+        TryImport(Single);
+    }
+
+    void FContentBrowserEditorTool::TryImport(const TVector<FFixedString>& Paths)
+    {
+        // Anything whose factory has no options dialogue imports straight away -- textures, fonts,
+        // audio. Only the importers that ask something go in the queue, so dropping forty PNGs and one
+        // FBX is one prompt, not forty-one.
+        for (const FFixedString& Path : Paths)
         {
-            if (!Factory->CanImport())
+            CFactory* Factory = FindImportFactory(Path);
+            if (Factory == nullptr)
             {
+                ImGuiX::Notifications::NotifyWarning("No importer for \"{0}\"", VFS::FileName(Path).data());
                 continue;
             }
-        
-            FStringView Ext = VFS::Extension(Path);
-            if (!Factory->IsExtensionSupported(Ext))
+
+            const FFixedString Destination = VFS::MakeUniqueFilePath(Paths::Combine(SelectedPath, VFS::FileName(Path)));
+
+            if (!Factory->HasImportDialogue())
             {
+                StartImport(Factory, Path, Destination, nullptr);
                 continue;
             }
-            
-            
-            FStringView FileName = VFS::FileName(Path);
-            FFixedString DestinationPath = Paths::Combine(SelectedPath, FileName);
-            DestinationPath = VFS::MakeUniqueFilePath(DestinationPath);
-            
-            if (Factory->HasImportDialogue())
+
+            PendingImports.push_back(Path);
+        }
+
+        // A queue already running will pick these up when it advances.
+        if (!bImportWindowOpen)
+        {
+            ProcessNextImport();
+        }
+    }
+
+    void FContentBrowserEditorTool::ProcessNextImport()
+    {
+        if (PendingImports.empty())
+        {
+            // The batch is over, so the next one starts by asking again.
+            bApplyImportSettingsToAll = false;
+            return;
+        }
+
+        const FFixedString Path = PendingImports.front();
+        PendingImports.erase(PendingImports.begin());
+
+        CFactory* Factory = FindImportFactory(Path);
+        if (Factory == nullptr)
+        {
+            ProcessNextImport();
+            return;
+        }
+
+        const FFixedString DestinationPath = VFS::MakeUniqueFilePath(Paths::Combine(SelectedPath, VFS::FileName(Path)));
+
+        bImportWindowOpen = true;
+
+        // Each file is parsed on its own: Import All reuses the chosen OPTIONS, not the previous
+        // file's parsed contents, which is why the prepare still runs for every one of them.
+        Factory->PrepareImportAsync(Path, DestinationPath,
+            [this, Factory, Path, DestinationPath](TUniquePtr<Import::FImportSettings> Settings)
             {
+                if (!Settings)
+                {
+                    ImGuiX::Notifications::NotifyError("Failed to import: \"{0}\"", Path);
+                    bImportWindowOpen = false;
+                    ProcessNextImport();
+                    return;
+                }
+
+                if (bApplyImportSettingsToAll)
+                {
+                    Factory->CommitImportSettings(*Settings);
+                    StartImport(Factory, Path, DestinationPath, Move(Settings));
+                    bImportWindowOpen = false;
+                    ProcessNextImport();
+                    return;
+                }
+
                 struct FModalState
                 {
                     TUniquePtr<Import::FImportSettings> ImportSettings;
                     bool bShouldClose = false;
                 };
 
-                // Prepare the import off-thread first (parsing shows the slow-task popup);
-                // the options dialog is pushed only once the settings have landed.
-                Factory->PrepareImportAsync(Path, DestinationPath,
-                    [this, Factory, Path, DestinationPath](TUniquePtr<Import::FImportSettings> Settings)
+                auto SharedState = MakeShared<FModalState>();
+                SharedState->ImportSettings = Move(Settings);
+
+                ToolContext->PushModal("Import", {940, 900},
+                    [this, Factory, Path, DestinationPath, SharedState]() mutable
                     {
-                        if (!Settings)
+                        bool bApplyToAll = false;
+
+                        if (DrawImportWindow(Factory, Path, DestinationPath, *SharedState->ImportSettings,
+                                             (int32)PendingImports.size(), SharedState->bShouldClose, bApplyToAll))
                         {
-                            ImGuiX::Notifications::NotifyError("Failed to import: \"{0}\"", Path);
-                            return;
+                            bApplyImportSettingsToAll = bApplyToAll;
+                            StartImport(Factory, Path, DestinationPath, Move(SharedState->ImportSettings));
                         }
 
-                        auto SharedState = MakeShared<FModalState>();
-                        SharedState->ImportSettings = Move(Settings);
+                        if (SharedState->bShouldClose)
+                        {
+                            // Advancing from here rather than from the confirm branch, so cancelling one
+                            // file skips it and moves on instead of abandoning the rest of the batch.
+                            bImportWindowOpen = false;
+                            MainThread::Enqueue([this]() { ProcessNextImport(); });
+                        }
 
-                        ToolContext->PushModal("Import", {700, 800},
-                            [this, Factory, Path, DestinationPath, SharedState]() mutable
-                            {
-                                if (Factory->DrawImportDialogue(Path, DestinationPath, SharedState->ImportSettings, SharedState->bShouldClose))
-                                {
-                                    Task::AsyncTask(1, 1, [this, Factory, Path, DestinationPath, ImportSettings = Move(SharedState->ImportSettings)](uint32, uint32, uint32)
-                                    {
-                                        Factory->Import(Path, DestinationPath, ImportSettings.get());
-
-                                        MainThread::Enqueue([this, Path]()
-                                        {
-                                            RefreshContentBrowser();
-                                            ImGuiX::Notifications::NotifySuccess("Successfully Imported: \"{0}\"", Path);
-                                        });
-                                    });
-                                }
-
-                                return SharedState->bShouldClose;
-                            });
+                        return SharedState->bShouldClose;
                     });
-            }
-            else
-            {
-                Task::AsyncTask(1, 1, [this, Factory, Path = Move(Path), PathString = Move(DestinationPath)] (uint32, uint32, uint32)
-                {
-                    Factory->Import(Path, PathString, nullptr);
-
-                    MainThread::Enqueue([this, Path = Move(Path)] ()
-                    {
-                        RefreshContentBrowser();
-                        ImGuiX::Notifications::NotifySuccess("Successfully Imported: \"{0}\"", Path);
-                    });
-                });
-            }
-        }
+            });
     }
 
     void FContentBrowserEditorTool::DrawDirectoryBrowser(bool bIsFocused, ImVec2 Size)
@@ -2482,6 +2660,14 @@ namespace Lumina
         {
             auto CreateFromFactory = [this](CFactory* Factory)
             {
+                if (!IsAssetCreationAllowed(FStringView(SelectedPath.c_str(), SelectedPath.size())))
+                {
+                    ImGuiX::Notifications::NotifyWarning(
+                        "Cannot create assets in \"{0}\". Assets have to live under a Content folder.",
+                        SelectedPath);
+                    return;
+                }
+
                 FFixedString Path = Paths::Combine(SelectedPath, Factory->GetDefaultAssetCreationName());
                 CPackage::AddPackageExt(Path);
                 Path = VFS::MakeUniqueFilePath(Path);
@@ -2650,11 +2836,11 @@ namespace Lumina
 
             if (ImGui::MenuItem(LE_ICON_IMPORT " Import Asset..."))
             {
-                FFixedString SelectedFile;
+                TVector<FFixedString> SelectedFiles;
                 const char* Filter = "Supported Assets (*.wav;*.png;*.jpg;*.hdr;*.fbx;*.gltf;*.glb;*.obj;*.ttf;*.otf)\0*.wav;*.png;*.jpg;*.hdr;*.fbx;*.gltf;*.glb;*.obj;*.ttf;*.otf\0All Files (*.*)\0*.*\0";
-                if (Platform::OpenFileDialogue(SelectedFile, "Import Asset", Filter))
+                if (Platform::OpenFileDialogueMulti(SelectedFiles, "Import Assets", Filter))
                 {
-                    TryImport(SelectedFile);
+                    TryImport(SelectedFiles);
                 }
             }
         }

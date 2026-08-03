@@ -79,6 +79,9 @@ namespace Lumina::Platform
 
     RUNTIME_API bool OpenFileDialogue(FFixedString& OutFile, const char* Title = "Open File", const char* Filter = nullptr, const char* InitialDir = nullptr);
 
+    // Multi-select. Empty selection reports false, so callers need not check the vector as well.
+    RUNTIME_API bool OpenFileDialogueMulti(TVector<FFixedString>& OutFiles, const char* Title = "Open Files", const char* Filter = nullptr, const char* InitialDir = nullptr);
+
     // OS shell integration: real impl on the host platform, quiet no-op fallback elsewhere.
 
     // Open the file manager with this file selected (explorer /select, open -R, etc.).

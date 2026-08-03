@@ -1,9 +1,12 @@
-#include "BlackboardEditorTool.h"
+﻿#include "BlackboardEditorTool.h"
+#include "Scripting/ScriptDataStruct.h"
+#include "Scripting/ScriptStruct.h"
 
 #include "Assets/AssetTypes/Blackboard/Blackboard.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectArray.h"
+#include "Core/Object/ObjectIterator.h"
 #include "Core/Object/Package/Package.h"
 #include "Tools/UI/ImGui/ImGuiDragDrop.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
@@ -205,6 +208,98 @@ namespace Lumina
         }
     }
 
+    void FBlackboardEditorTool::DrawBackingStructPicker()
+    {
+        CBlackboard* Blackboard = GetAsset<CBlackboard>();
+
+        CStruct* Base = SBlackboardDataBase::StaticStruct();
+        CStruct* Current = Blackboard->GetBackingStruct();
+
+        TVector<CStruct*> Candidates;
+        for (TObjectIterator<CStruct> It; It; ++It)
+        {
+            CStruct* Candidate = *It;
+
+            // The base declares nothing, so backing a blackboard with it would produce no keys.
+            // IsChildOf also filters out CClass instances, which derive from CStruct.
+            // Reaches script-declared schemas too: a minted CScriptStruct is force-registered like any
+            // other reflected type, and the iterator walks the object array rather than a package, so
+            // deriving from the base is the whole test. Nothing extra to merge in.
+            if (Candidate != Base && Candidate->IsChildOf(Base))
+            {
+                Candidates.push_back(Candidate);
+            }
+        }
+
+        eastl::sort(Candidates.begin(), Candidates.end(), [](CStruct* A, CStruct* B)
+        {
+            return strcmp(A->GetName().c_str(), B->GetName().c_str()) < 0;
+        });
+
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextDisabled("Backing Struct:");
+        ImGui::SameLine();
+
+        ImGui::SetNextItemWidth(260.0f);
+        if (ImGui::BeginCombo("##backingstruct", Current != nullptr ? Current->GetName().c_str() : "<none>"))
+        {
+            if (ImGui::Selectable("<none>", Current == nullptr))
+            {
+                Blackboard->SetBackingStruct(nullptr);
+                Blackboard->GetPackage()->MarkDirty();
+            }
+
+            for (int32 i = 0; i < (int32)Candidates.size(); ++i)
+            {
+                CStruct* Candidate = Candidates[i];
+
+                // Row identity comes from the index, not the label: two entries that happen to share a
+                // name would otherwise be one widget to ImGui, and only the first would be clickable.
+                ImGui::PushID(i);
+                const bool bPicked = ImGui::Selectable(Candidate->GetName().c_str(), Candidate == Current);
+                ImGui::PopID();
+
+                if (bPicked)
+                {
+                    Blackboard->SetBackingStruct(Candidate);
+                    Blackboard->GetPackage()->MarkDirty();
+                }
+            }
+
+            ImGui::EndCombo();
+        }
+        ImGuiX::TextTooltip("Every mappable property on this struct becomes a key automatically.\n"
+            "Keys added by hand are kept alongside them.");
+
+        // The struct's fields can change under a saved asset (a rebuild, or a C# reload), and nothing
+        // reopens every blackboard to notice. Offered explicitly rather than synced on open so a
+        // resync is never something the editor did to the asset behind the author's back.
+        if (Current != nullptr)
+        {
+            ImGui::SameLine();
+            if (ImGui::Button(LE_ICON_REFRESH " Resync"))
+            {
+                if (Blackboard->SyncKeysFromBackingStruct())
+                {
+                    Blackboard->GetPackage()->MarkDirty();
+                    ImGuiX::Notifications::NotifySuccess("Blackboard keys resynced from \"{0}\".", Current->GetName().c_str());
+                }
+                else
+                {
+                    ImGuiX::Notifications::NotifyInfo("Blackboard keys already match \"{0}\".", Current->GetName().c_str());
+                }
+            }
+            ImGuiX::TextTooltip("Rebuild derived keys after the struct's fields changed.");
+        }
+        else if (Candidates.empty())
+        {
+            ImGui::TextDisabled("No backing structs are defined. Declare one in your game or plugin module:");
+            ImGui::TextDisabled("    REFLECT()");
+            ImGui::TextDisabled("    struct SMyBlackboardData : public SBlackboardDataBase");
+            ImGui::TextDisabled("    { GENERATED_BODY() PROPERTY(Editable) float Health = 100.0f; };");
+        }
+    }
+
     void FBlackboardEditorTool::DrawKeysWindow()
     {
         CBlackboard* Blackboard = GetAsset<CBlackboard>();
@@ -216,6 +311,9 @@ namespace Lumina
         ImGui::TextWrapped("Keys declared here are the schema for this blackboard. Entities get their own "
             "values via a Blackboard Component seeded from these defaults; the animation graph and AI read "
             "and write by key name.");
+        ImGui::Separator();
+
+        DrawBackingStructPicker();
         ImGui::Separator();
 
         if (ImGui::Button(LE_ICON_PLUS " Add Key"))
@@ -275,9 +373,13 @@ namespace Lumina
                 strncpy(NameBuffer, NameStr.c_str(), sizeof(NameBuffer));
                 NameBuffer[sizeof(NameBuffer) - 1] = '\0';
 
-                const float DeleteW = 28.0f;
+                // Measured from the glyph rather than a fixed pixel count: the icon font and the frame
+                // padding both scale with DPI, so a hardcoded width clips the icon as soon as either grows.
+                const ImGuiStyle& Style = ImGui::GetStyle();
+                const float DeleteW = ImGui::CalcTextSize(LE_ICON_TRASH_CAN).x + Style.FramePadding.x * 2.0f;
+
                 if (bDuplicate) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
-                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - DeleteW);
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - DeleteW - Style.ItemSpacing.x);
                 if (ImGui::InputTextWithHint("##name", "Key name", NameBuffer, sizeof(NameBuffer)))
                 {
                     Key.Name = FName(NameBuffer);
@@ -292,7 +394,7 @@ namespace Lumina
                 ImGui::SameLine();
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.20f, 0.20f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.70f, 0.25f, 0.25f, 1.0f));
-                if (ImGui::Button(LE_ICON_TRASH_CAN, ImVec2(DeleteW - 4.0f, 0.0f)))
+                if (ImGui::Button(LE_ICON_TRASH_CAN, ImVec2(DeleteW, 0.0f)))
                 {
                     PendingRemoval = i;
                 }

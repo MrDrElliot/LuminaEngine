@@ -94,6 +94,21 @@ public sealed class BuildAction
     /// <summary>Actions that must not run concurrently with anything else, such as link steps under LTO.</summary>
     public bool bCanExecuteInParallel { get; set; } = true;
 
+    /// <summary>
+    /// Set when the action writes files it does not declare, which makes every cached stat in the
+    /// process suspect once it has run.
+    /// </summary>
+    /// <remarks>
+    /// The code generator is the case this exists for: it emits a .generated.h and .generated.cpp
+    /// per reflected type plus the C# bindings, and which files those are is only known after it
+    /// has run. Everything downstream reads those through the interned stat cache, which was filled
+    /// while the build was being planned, so without dropping it the recheck that decides whether a
+    /// compile is still necessary compares against the file as it looked before the generator
+    /// rewrote it. Must stay paired with bCanExecuteInParallel = false: the invalidation is only
+    /// safe while no other action is mid-flight.
+    /// </remarks>
+    public bool bWritesUndeclaredOutputs { get; set; }
+
     /// <summary>Treat a failure as a warning rather than a build failure.</summary>
     public bool bIgnoreExitCode { get; set; }
 

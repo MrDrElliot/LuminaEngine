@@ -141,6 +141,38 @@ namespace Lumina
             return FInputActionMap::Get().GetActionAxis(Name, V->GetContext());
         }
         
+        /** +1 while Positive is down, -1 while Negative is down, 0 when neither is. Holding both
+         *  cancels out, which is what a key pair should do rather than latching whichever side is
+         *  tested first. For a single action already declared as an axis, use GetActionAxis. */
+        FUNCTION(Script)
+        float GetAxis(const FName& Positive, const FName& Negative) const
+        {
+            if (!bEnabled)
+            {
+                return 0.0f;
+            }
+            const FInputViewport* V = FInputViewportRegistry::Get().FindViewportForWorld(World);
+            if (V == nullptr)
+            {
+                return 0.0f;
+            }
+
+            // Resolved once and reused: the pair is two lookups against the same context, and
+            // going back through IsActionDown would find the viewport again for each.
+            const FInputActionMap& Map = FInputActionMap::Get();
+            const FInputContext& Ctx = V->GetContext();
+
+            return (Map.IsActionDown(Positive, Ctx) ? 1.0f : 0.0f)
+                 - (Map.IsActionDown(Negative, Ctx) ? 1.0f : 0.0f);
+        }
+
+        /** GetAxis over raw key names ("W"/"S"), for input that is not worth an action mapping. */
+        FUNCTION(Script)
+        float GetKeyAxis(const FName& PositiveKey, const FName& NegativeKey) const
+        {
+            return (IsKeyDown(PositiveKey) ? 1.0f : 0.0f) - (IsKeyDown(NegativeKey) ? 1.0f : 0.0f);
+        }
+
         FUNCTION(Script)
         bool IsInputActive() const { return bEnabled && bReceivingInput; }
         

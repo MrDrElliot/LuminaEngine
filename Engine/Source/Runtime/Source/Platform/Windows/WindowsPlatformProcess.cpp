@@ -731,6 +731,99 @@ namespace Lumina::Platform
 
     // â”€â”€â”€ OS shell integration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+    bool OpenFileDialogueMulti(TVector<FFixedString>& OutFiles, const char* Title, const char* Filter, const char* InitialDir)
+    {
+        OutFiles.clear();
+
+        IFileOpenDialog* Dialog = nullptr;
+        if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_ALL, IID_IFileOpenDialog, reinterpret_cast<void**>(&Dialog))))
+        {
+            return false;
+        }
+
+        DWORD Options = 0;
+        Dialog->GetOptions(&Options);
+        Dialog->SetOptions(Options | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST | FOS_ALLOWMULTISELECT);
+
+        if (Title)
+        {
+            Dialog->SetTitle(UTF8_TO_TCHAR(Title));
+        }
+
+        if (InitialDir)
+        {
+            IShellItem* Folder = nullptr;
+            if (SUCCEEDED(SHCreateItemFromParsingName(UTF8_TO_TCHAR(InitialDir), nullptr, IID_PPV_ARGS(&Folder))))
+            {
+                Dialog->SetFolder(Folder);
+                Folder->Release();
+            }
+        }
+
+        // Same double-null-terminated "Name\0Spec\0..." form the single-file dialogue takes.
+        TVector<COMDLG_FILTERSPEC> FileTypes;
+        TVector<FWString>          Storage;
+
+        if (Filter && strlen(Filter) > 0)
+        {
+            const char* Cursor = Filter;
+            while (*Cursor)
+            {
+                const size_t NameLen = strlen(Cursor);
+                Storage.push_back(UTF8_TO_TCHAR(std::string(Cursor, NameLen).c_str()));
+                Cursor += NameLen + 1;
+
+                const size_t SpecLen = strlen(Cursor);
+                Storage.push_back(UTF8_TO_TCHAR(std::string(Cursor, SpecLen).c_str()));
+                Cursor += SpecLen + 1;
+
+                FileTypes.push_back({ Storage[Storage.size() - 2].c_str(), Storage[Storage.size() - 1].c_str() });
+            }
+        }
+
+        if (!FileTypes.empty())
+        {
+            Dialog->SetFileTypes(static_cast<UINT>(FileTypes.size()), FileTypes.data());
+        }
+
+        if (SUCCEEDED(Dialog->Show(nullptr)))
+        {
+            IShellItemArray* Items = nullptr;
+            if (SUCCEEDED(Dialog->GetResults(&Items)))
+            {
+                DWORD Count = 0;
+                Items->GetCount(&Count);
+
+                for (DWORD Index = 0; Index < Count; ++Index)
+                {
+                    IShellItem* Item = nullptr;
+                    if (!SUCCEEDED(Items->GetItemAt(Index, &Item)))
+                    {
+                        continue;
+                    }
+
+                    PWSTR Raw = nullptr;
+                    if (SUCCEEDED(Item->GetDisplayName(SIGDN_FILESYSPATH, &Raw)))
+                    {
+                        FFixedString Path = TCHAR_TO_UTF8(FWString(Raw).c_str());
+                        eastl::replace(Path.begin(), Path.end(), '\\', '/');
+                        OutFiles.push_back(Path);
+                        CoTaskMemFree(Raw);
+                    }
+
+                    Item->Release();
+                }
+
+                Items->Release();
+            }
+        }
+
+        Dialog->Release();
+        CoUninitialize();
+
+        return !OutFiles.empty();
+    }
+
     void ShowFileInExplorer(const TCHAR* Path)
     {
         if (!Path || !Path[0])

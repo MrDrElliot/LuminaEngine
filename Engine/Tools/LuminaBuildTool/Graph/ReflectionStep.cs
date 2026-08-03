@@ -137,9 +137,15 @@ public static class ReflectionStep
         }
 
         List<BuildAction> InputActions = new();
-        bool bIsEngineWorkspace = Target.Directories.ProjectRoot is null;
 
-        if (bIsEngineWorkspace)
+        // Whether this is the engine's own build, decided by where the Target.cs lives rather than
+        // by whether a -Project was passed. A game solution builds the engine target with -Project
+        // set so that Run launches the editor on that project, which used to make the engine's own
+        // build look like a project's: it published no manifest, and claimed none of the generated
+        // code it was producing.
+        bool bIsEngineTarget = Target.Directories.IsEngineOwned(Target.Rules.RulesDirectory);
+
+        if (bIsEngineTarget)
         {
             if (Target.Rules.bPublishesEngineReflectionManifest)
             {
@@ -174,6 +180,11 @@ public static class ReflectionStep
             // The generator holds every header in memory at once; running one is already
             // internally parallel and a second instance would fight it for cores.
             bCanExecuteInParallel = false,
+
+            // Only the unity shards below are declared. The per-type generated headers and sources
+            // they include, and the C# bindings, are written too and are compile inputs to actions
+            // that have already been planned against the previous contents.
+            bWritesUndeclaredOutputs = true,
         };
 
         Action.PrerequisiteItems.Add(FileItem.Get(InputFile));
@@ -191,8 +202,7 @@ public static class ReflectionStep
             // claimed those files, each would record its own command against them and every build
             // would find the other's record and regenerate. Only the owner declares them, which
             // leaves the shared copy stable for everyone reading it.
-            bool bOwnsOutput = Target.Directories.IsEngineOwned(Module.Rules.ModuleDirectory)
-                == (Target.Directories.ProjectRoot is null);
+            bool bOwnsOutput = Target.Directories.IsEngineOwned(Module.Rules.ModuleDirectory) == bIsEngineTarget;
 
             foreach (string Shard in EnumerateUnityShardPaths(Module.GeneratedCodeDirectory))
             {
@@ -262,7 +272,7 @@ public static class ReflectionStep
             }).ToList(),
         };
 
-        string ManifestPath = Path.Combine(Target.Directories.ReflectionDirectory, "EngineModules.json");
+        string ManifestPath = EngineManifestPath(Target);
 
         BuildAction Action = new(ActionType.Generate, "Reflection")
         {
@@ -275,23 +285,64 @@ public static class ReflectionStep
         return Action;
     }
 
+    /// <summary>
+    /// Where the engine publishes its reflected module set, always under the engine tree.
+    /// </summary>
+    /// <remarks>
+    /// Keyed the same way the intermediates it describes are. A single shared file meant whichever
+    /// engine target built last decided what every project saw: a Game build publishes no editor
+    /// modules, so after one the manifest claimed the engine had none, and a project's Editor build
+    /// read that and silently treated every editor base class as unreflected.
+    /// </remarks>
+    private static string EngineManifestPath(BuildTarget Target)
+    {
+        return Path.Combine(
+            Target.Directories.EngineRoot,
+            "Intermediates",
+            "Reflection",
+            Target.Info.PlatformName,
+            $"{Target.Info.Type}-{Target.Info.Configuration}",
+            "EngineModules.json");
+    }
+
+    /// <summary>
+    /// Adds the engine's reflected modules that this target does not build for itself, so a project
+    /// type can derive from an engine one.
+    /// </summary>
+    /// <remarks>
+    /// A project builds the engine from source alongside itself, so every engine module it depends
+    /// on is already in the document above as something to generate for. The manifest only has
+    /// anything to contribute for a module the target does not compile, and on a source build there
+    /// are none, which is why a missing one is not an error: requiring it made the first build of a
+    /// new project fail outright on a tree where no engine target had been built yet, even though
+    /// that build compiles the engine and needs nothing the manifest holds.
+    /// </remarks>
     private static void AppendEngineReferenceProjects(BuildTarget Target, ReflectionInputDocument Document)
     {
-        string ManifestPath = Path.Combine(
-            Target.Directories.EngineRoot, "Intermediates", "Reflection", "EngineModules.json");
-
+        string ManifestPath = EngineManifestPath(Target);
         EngineReflectionManifest? Manifest = JsonStore.Load<EngineReflectionManifest>(ManifestPath);
 
         if (Manifest is null)
         {
-            throw new BuildException(
-                $"The engine reflection manifest at '{ManifestPath}' is missing or unreadable. "
-                + "Build the engine once before building a project against it; the manifest is what lets "
-                + "a project module derive from and reference engine reflected types.");
+            Log.Verbose(
+                "No engine reflection manifest at '{0}'; this target's own modules cover the engine types it references.",
+                ManifestPath);
+
+            return;
         }
+
+        HashSet<string> Present = new(Document.Projects.Select(P => P.Name), StringComparer.OrdinalIgnoreCase);
 
         foreach (ReflectionProjectEntry Project in Manifest.Projects)
         {
+            // Already in the document as a module this target generates for. Passing the generator
+            // the same module twice, once with its real output directory and once reference-only
+            // with none, leaves which one wins up to parse order.
+            if (!Present.Add(Project.Name))
+            {
+                continue;
+            }
+
             Project.ReferenceOnly = true;
             Project.CSharpBindingsDir = string.Empty;
             Document.Projects.Add(Project);

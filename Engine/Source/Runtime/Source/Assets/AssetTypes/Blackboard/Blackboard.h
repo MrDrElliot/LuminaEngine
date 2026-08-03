@@ -1,10 +1,11 @@
-#pragma once
+﻿#pragma once
 
 #include "Core/LuminaMacros.h"
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Containers/Array.h"
 #include "Core/Math/Math.h"
+#include "Scripting/ScriptDataStruct.h"
 #include "Blackboard.generated.h"
 
 namespace Lumina
@@ -36,6 +37,18 @@ namespace Lumina
         Hidden   = 1 << 1,
     };
     ENUM_CLASS_FLAGS(EBlackboardKeyFlags)
+
+    /** Marker a struct derives from to offer itself as a blackboard's backing type.
+     *
+     *  Carries nothing. It exists so the editor can list the types meant to be used this way rather
+     *  than every reflected struct in the build, and so declaring one is a deliberate act. Works the
+     *  same from C#, where a script struct deriving from it registers as an ordinary CStruct.
+     */
+    REFLECT()
+    struct RUNTIME_API SBlackboardDataBase
+    {
+        GENERATED_BODY()
+    };
 
     // Schema-only declaration of one blackboard entry (name, type, default); live per-instance
     // values live in SBlackboardComponent, seeded from these defaults.
@@ -82,6 +95,11 @@ namespace Lumina
 
         // Entity keys have no authorable default: an entity id is only meaningful inside a live world,
         // so they always start unset and are written at runtime.
+
+        /** Set when this key was generated from the backing struct rather than authored here. Such a
+         *  key is rewritten on every sync, so editing it by hand would not survive. */
+        PROPERTY()
+        bool bDerived = false;
     };
 
     // True for the key types the animation VM reads as a float register. Vector/Object/Entity keys carry
@@ -140,8 +158,36 @@ namespace Lumina
         FUNCTION(Script)
         FName GetKeyName(int32 Index) const;
 
-        /** Key declarations that make up this blackboard's schema. */
+        /** Optional backing type. Every reflected property on it whose type maps to a key type becomes
+         *  a derived key, so a schema can be declared as an ordinary struct in C++ or C# and the asset
+         *  picks it up instead of the keys being retyped by hand in two places.
+         *
+         *  Stored as a name for the same reason CDataTable::RowStructName is: a CStruct is a reflection
+         *  object built at module init, not a serializable asset, so a pointer to one cannot go in a
+         *  package. Read it through GetBackingStruct(), which resolves and caches. */
+        PROPERTY()
+        FName BackingStructName;
+
+        /** The resolved backing type, or null if unset or its module is not loaded. */
+        NODISCARD CStruct* GetBackingStruct() const;
+
+        /** Points the schema at a new backing type and syncs immediately. Keys authored by hand are
+         *  kept; the previous type's derived keys are dropped. */
+        void SetBackingStruct(CStruct* InStruct);
+
+        /** Rebuilds the derived keys from the backing struct, preserving hand-authored ones. Returns
+         *  true when Keys actually changed, so a caller can avoid dirtying the package for nothing. */
+        bool SyncKeysFromBackingStruct();
+
+        /** Key declarations that make up this blackboard's schema. Derived keys come first, in the
+         *  backing struct's property order; hand-authored ones follow. */
         PROPERTY(Editable, Category = "Blackboard")
         TVector<FBlackboardKey> Keys;
+
+    private:
+
+        /** Resolution result for BackingStructName. Not serialized: reflection objects live at different
+         *  addresses each run, and a script-declared type is re-minted on every reload. */
+        FDataStructResolveCache BackingStructCache;
     };
 }

@@ -56,7 +56,7 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
                 SolutionFolder = ResolveTargetSolutionFolder(Directories, Target),
                 bBuildable = true,
                 bBuildByDefault = Target.PrimaryVariant.Rules.bBuildByDefault,
-                bIsStartup = Target.PrimaryVariant.Rules.bIsStartupTarget,
+                bIsStartup = IsStartupTarget(Directories, Target),
             });
         }
 
@@ -200,6 +200,26 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
     }
 
     /// <summary>
+    /// Whether this is the target the IDE should start with.
+    /// </summary>
+    /// <remarks>
+    /// A solution has no startup-project field, so the answer is really "which project is listed
+    /// first". In a game solution that has to be the game's own target: the engine's application is
+    /// there as a dependency, and it is the game target that carries the debugger settings passing
+    /// --Project. Left to the engine's own answer, opening a project and hitting Run launched a
+    /// bare editor with no project loaded.
+    /// </remarks>
+    private static bool IsStartupTarget(BuildDirectories Directories, ProjectTargetInfo Target)
+    {
+        if (Directories.ProjectRoot is null)
+        {
+            return Target.PrimaryVariant.Rules.bIsStartupTarget;
+        }
+
+        return PathUtils.IsUnder(Target.PrimaryVariant.Rules.RulesDirectory, Directories.ProjectRoot);
+    }
+
+    /// <summary>
     /// Solution folder for a target's own project. A game target sits with the rest of that
     /// project's code rather than in the engine's flat list of targets.
     /// </summary>
@@ -272,6 +292,7 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
         Xml.AppendLine("""  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />""");
 
         string ToolInvocation = BuildToolInvocation(Directories);
+        string ToolGuard = BuildToolGuard(Directories) + Environment.NewLine;
 
         foreach (ProjectConfiguration Configuration in Configurations)
         {
@@ -300,9 +321,9 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
 
             if (Project.bBuildable)
             {
-                Xml.AppendLine($"    <NMakeBuildCommandLine>{Escape($"{ToolInvocation} Build {CommonArguments}")}</NMakeBuildCommandLine>");
-                Xml.AppendLine($"    <NMakeReBuildCommandLine>{Escape($"{ToolInvocation} Build {CommonArguments} -Clean")}</NMakeReBuildCommandLine>");
-                Xml.AppendLine($"    <NMakeCleanCommandLine>{Escape($"{ToolInvocation} Clean {CommonArguments}")}</NMakeCleanCommandLine>");
+                Xml.AppendLine($"    <NMakeBuildCommandLine>{Escape($"{ToolGuard}{ToolInvocation} Build {CommonArguments}")}</NMakeBuildCommandLine>");
+                Xml.AppendLine($"    <NMakeReBuildCommandLine>{Escape($"{ToolGuard}{ToolInvocation} Build {CommonArguments} -Clean")}</NMakeReBuildCommandLine>");
+                Xml.AppendLine($"    <NMakeCleanCommandLine>{Escape($"{ToolGuard}{ToolInvocation} Clean {CommonArguments}")}</NMakeCleanCommandLine>");
             }
             else
             {
@@ -321,13 +342,24 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
 
             if (VariantModule is not null)
             {
-                Xml.AppendLine($"    <NMakeOutput>{Escape(VariantModule.OutputFile)}</NMakeOutput>");
+                // Rider turns every project with an NMakeOutput into a run configuration, which is
+                // how a browse-only module project ends up in the run dropdown offering to launch a
+                // .lib. Only a target has something to run, so only a target names an output; the
+                // IntelliSense properties below are the point of a module project and stay.
+                if (Project.bBuildable)
+                {
+                    Xml.AppendLine($"    <NMakeOutput>{Escape(VariantModule.OutputFile)}</NMakeOutput>");
+                }
+
                 Xml.AppendLine($"    <NMakePreprocessorDefinitions>{Escape(string.Join(';', VariantModule.CompileDefinitions))}</NMakePreprocessorDefinitions>");
                 Xml.AppendLine($"    <NMakeIncludeSearchPath>{Escape(string.Join(';', VariantModule.CompileIncludePaths))}</NMakeIncludeSearchPath>");
                 Xml.AppendLine($"    <NMakeForcedIncludes>{Escape(string.Join(';', VariantModule.ForceIncludeFiles))}</NMakeForcedIncludes>");
             }
 
-            Xml.AppendLine($"    <AdditionalOptions>/std:{Variant.Rules.CppStandard} /Zc:__cplusplus</AdditionalOptions>");
+            // Carries /Zc:preprocessor because the compile does. The engine's USING(flag) macro pastes the
+            // flag onto a token and expands differently under the legacy preprocessor, so leaving it out
+            // let the IDE evaluate a guard the opposite way from the build and grey out live code.
+            Xml.AppendLine($"    <AdditionalOptions>/std:{Variant.Rules.CppStandard} /Zc:__cplusplus /Zc:preprocessor</AdditionalOptions>");
 
             if (Project.bBuildable)
             {
@@ -722,11 +754,54 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
 
         if (ToolPath.EndsWith("dotnet.exe", StringComparison.OrdinalIgnoreCase))
         {
-            string AssemblyPath = System.Reflection.Assembly.GetExecutingAssembly().Location;
-            return $"{PathUtils.Quote(ToolPath)} {PathUtils.Quote(AssemblyPath)} {Roots}";
+            return $"{PathUtils.Quote(ToolPath)} {PathUtils.Quote(BuildToolAssemblyPath())} {Roots}";
         }
 
         return $"{PathUtils.Quote(ToolPath)} {Roots}";
+    }
+
+    /// <summary>
+    /// The file whose absence stops a generated project from building anything.
+    /// </summary>
+    private static string BuildToolAssemblyPath()
+    {
+        string ToolPath = Environment.ProcessPath ?? string.Empty;
+
+        return ToolPath.EndsWith("dotnet.exe", StringComparison.OrdinalIgnoreCase)
+            ? System.Reflection.Assembly.GetExecutingAssembly().Location
+            : ToolPath;
+    }
+
+    /// <summary>
+    /// Batch prefix that fails a build from the IDE with something actionable when the tool the
+    /// generated projects invoke is not there.
+    /// </summary>
+    /// <remarks>
+    /// Those projects run the tool by absolute path, so anything that removes it -- a cleaned
+    /// Binaries directory, a moved or renamed engine, a solution opened on a machine that has never
+    /// run Setup -- turns every build in the IDE into MSB3073 with an exit code and no subject.
+    /// Rebuilding the tool here instead would be worse: that needs the .NET SDK, and a failure to
+    /// find it would bury the actual problem under a second one.
+    /// </remarks>
+    /// <remarks>
+    /// Written as two unconditional lines rather than one parenthesized block, and quoting the path
+    /// itself rather than leaving that to PathUtils.Quote, because this is read by cmd and not by a
+    /// process launcher: an engine under "Program Files (x86)" closes a block early, and Quote
+    /// leaves a path without spaces bare, which "if not exist" needs quoted anyway.
+    /// </remarks>
+    private static string BuildToolGuard(BuildDirectories Directories)
+    {
+        string ToolPath = BuildToolAssemblyPath();
+        string Script = Path.Combine(Directories.EngineRoot, "LuminaBuild.bat");
+
+        string Test = $"if not exist \"{ToolPath}\" ";
+
+        return Test
+            + $"echo error: LuminaBuildTool is missing at \"{ToolPath}\"."
+            + $" Run \"{Script}\" once to rebuild it, then regenerate project files."
+            + Environment.NewLine
+            + Test
+            + "exit /b 1";
     }
 
     /// <summary>

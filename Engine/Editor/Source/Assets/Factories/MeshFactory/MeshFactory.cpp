@@ -369,24 +369,6 @@ namespace Lumina
             ImGui::Spacing();
         }
 
-        bool DrawDialogButtons()
-        {
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            constexpr float ButtonWidth = 110.0f;
-            const float Spacing = ImGui::GetStyle().ItemSpacing.x;
-            const float Total = ButtonWidth * 2 + Spacing;
-            const float Avail = ImGui::GetContentRegionAvail().x;
-            if (Avail > Total)
-            {
-                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + Avail - Total);
-            }
-
-            const bool bImport = ImGui::Button("Import", ImVec2(ButtonWidth, 0));
-            ImGui::SameLine();
-            return bImport;
-        }
     }
 
     void CMeshFactory::PrepareImportAsync(const FFixedString& RawPath, const FFixedString& DestinationPath, FImportPrepareCallback OnReady)
@@ -420,40 +402,43 @@ namespace Lumina
         });
     }
 
-    bool CMeshFactory::DrawImportDialogue(const FFixedString& RawPath, const FFixedString& DestinationPath, TUniquePtr<Import::FImportSettings>& ImportSettings, bool& bShouldClose)
+    namespace
+    {
+        // UI state for the options widgets, distinct from the parsed source data. Still a static, so
+        // it carries between files -- which is what a batch will want, but it means two importers
+        // cannot be open at once. The import window enforces that today.
+        Import::Mesh::FMeshImportOptions GMeshImportOptions;
+    }
+
+    void CMeshFactory::DrawImportSettings(const FFixedString& RawPath, Import::FImportSettings& Settings)
     {
         using namespace Import::Mesh;
 
-        // ImportSettings arrives fully parsed: PrepareImportAsync ran the source-file parse
-        // off-thread and the dialog is only pushed once the result (and thumbnails) landed.
-        static FMeshImportOptions Options;
+        // Settings arrive fully parsed: PrepareImportAsync ran the source-file parse off-thread and
+        // the window is only shown once the result (and thumbnails) landed.
+        FMeshImportData& ImportedData = static_cast<FMeshImportData&>(Settings);
 
-        FMeshImportData* ImportedData = static_cast<FMeshImportData*>(ImportSettings.get());
-
-        ImGui::TextDisabled("Source");
-        ImGui::SameLine();
-        ImGui::TextUnformatted(VFS::FileName(RawPath).data());
-        ImGui::Spacing();
-
-        DrawOptionsSection(Options);
-        DrawMeshStats(*ImportedData);
-        DrawTexturesPreview(*ImportedData);
-        DrawSkeletonsPreview(*ImportedData);
-        DrawAnimationsPreview(*ImportedData);
-
-        if (const bool bImport = DrawDialogButtons())
+        // Each section is a collapsing header; without a gap between them they read as one wall of
+        // controls rather than five things you can consider separately.
+        auto Section = [](auto&& Draw)
         {
-            ImportedData->CommitOptions = Options;
-            bShouldClose = true;
-            return true;
-        }
-        if (ImGui::Button("Cancel", ImVec2(110.0f, 0)))
-        {
-            bShouldClose = true;
-        }
-        return false;
+            Draw();
+            ImGui::Spacing();
+            ImGui::Spacing();
+        };
+
+        Section([&] { DrawOptionsSection(GMeshImportOptions); });
+        Section([&] { DrawMeshStats(ImportedData); });
+        Section([&] { DrawTexturesPreview(ImportedData); });
+        Section([&] { DrawSkeletonsPreview(ImportedData); });
+        Section([&] { DrawAnimationsPreview(ImportedData); });
     }
-    
+
+    void CMeshFactory::CommitImportSettings(Import::FImportSettings& Settings)
+    {
+        static_cast<Import::Mesh::FMeshImportData&>(Settings).CommitOptions = GMeshImportOptions;
+    }
+
     void CMeshFactory::TryImport(const FFixedString& RawPath, const FFixedString& DestinationPath, const Import::FImportSettings* Settings)
     {
         using namespace Import::Mesh;

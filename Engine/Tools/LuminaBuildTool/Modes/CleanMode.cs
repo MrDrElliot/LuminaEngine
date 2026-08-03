@@ -17,9 +17,13 @@ public static class CleanMode
 
         if (string.IsNullOrEmpty(TargetName))
         {
-            // No target named: wipe everything the tool owns.
+            // No target named: wipe everything the tool owns. Generated code goes with the objects,
+            // because a .generated.h for a type that no longer exists stays includable and turns a
+            // clean build into a confusing one.
             DeleteDirectory(Directories.BuildToolIntermediatesDirectory);
             DeleteDirectory(Path.Combine(Directories.IntermediatesDirectory, "Obj"));
+            DeleteDirectory(Directories.ReflectionDirectory);
+            DeleteDirectory(Directories.CSharpBindingsDirectory);
             Log.Info("Cleaned all build tool intermediates.");
             return 0;
         }

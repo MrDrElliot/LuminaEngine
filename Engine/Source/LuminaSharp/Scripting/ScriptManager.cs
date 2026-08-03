@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -46,6 +46,9 @@ internal sealed class ScriptManager
 
     /// <summary>Hosts C# subclasses of REFLECT(Scriptable) native CObjects for the current generation.</summary>
     public ScriptableRuntime? Scriptables { get; private set; }
+
+    /// <summary>Types marked as engine data shapes ([BlackboardData], [DataTableRow], ...).</summary>
+    public ScriptDataStructRuntime? DataStructs { get; private set; }
 
     /// <summary>Bumps on every successful (re)load; the native side rebinds entity scripts when it changes.</summary>
     public int Generation { get; private set; }
@@ -148,6 +151,7 @@ internal sealed class ScriptManager
         EntitySystems = new EntitySystemRuntime(Library);
         RenderScenes = new RenderSceneRuntime(Library);
         Scriptables = new ScriptableRuntime(Library);
+        DataStructs = new ScriptDataStructRuntime(Library);
 
         Native.Log(ELogLevel.Info,
             $"Loaded C# scripts [generation {Generation}]: {Pending.Count} assembl(ies), {AllTypes.Count} type(s), " +
@@ -277,6 +281,10 @@ internal sealed class ScriptManager
         RenderScenes = null;
         Scriptables?.FreeAll();   // C# Scriptable subclass instances (GCHandles) -> teardown contract
         Scriptables = null;
+
+        // Holds no handles of its own, but it holds the TypeLibrary, which holds user Types. Cleared here
+        // so the teardown table stays complete rather than depending on this runtime being harmless.
+        DataStructs = null;
 
         // Drop this generation's script-tier managed exports: their function pointers reference code in the
         // ALC about to unload and would dangle. The next generation's module initializers repopulate them.

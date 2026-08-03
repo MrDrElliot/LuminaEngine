@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Containers/Array.h"
 #include "Containers/String.h"
@@ -118,6 +118,25 @@ namespace Lumina::DotNet
 
     // Reports every loaded C# Scriptable subclass + its native base. Drives runtime CClass minting + editor picker.
     RUNTIME_API void GatherScriptableTypes(TVector<FScriptableTypeDesc>& Out);
+
+    //~ Script data structs: a C# type marked [BlackboardData] / [DataTableRow] / any ScriptStructBase marker.
+    //  Discovered on its own pass whether or not anything references it, and minted as a CScriptStruct whose
+    //  super is the named native struct, so it is accepted anywhere that base is.
+
+    // One discovered C# data type: its StableId (the simple type name, the identity an asset stores) plus the
+    // native struct it derives from.
+    struct FScriptStructTypeDesc
+    {
+        FString ScriptTypeName;
+        FString NativeBaseName;
+    };
+
+    // Reports every loaded C# data type + its native base. Drives CScriptStruct minting + the editor pickers.
+    RUNTIME_API void GatherScriptStructTypes(TVector<FScriptStructTypeDesc>& Out);
+
+    // Reads one data type's member schema, addressed by StableId. False when the type is unknown.
+    RUNTIME_API bool GatherScriptStructSchema(FStringView ScriptTypeName, Scripting::FScriptExportSchema& OutSchema,
+        TVector<Scripting::FScriptPropertyEntry>& OutDefaults);
 
     // Instantiates the named C# Scriptable subclass and pairs it to an already-created native object (NativePtr).
     // Writes the override-flag bitmask (which ScriptEvents the subclass overrides). Returns a GCHandle (the native

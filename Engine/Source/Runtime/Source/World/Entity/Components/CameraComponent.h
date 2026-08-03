@@ -9,6 +9,8 @@
 
 namespace Lumina
 {
+    struct FPropertyChangedEvent;
+
     class CMaterialInterface;
 
     // Interpolation curve for blending the active camera (SCameraSystem::SetActiveCamera);
@@ -84,6 +86,26 @@ namespace Lumina
         /** Vertical field of view in degrees. */
         PROPERTY(Editable, Category = "Camera", Units = "deg")
         float FOV = 90.0f;
+
+        /** Nearest distance drawn. Raising it buys depth precision everywhere further out. */
+        PROPERTY(Editable, Category = "Camera", ClampMin = 0.001f)
+        float NearPlane = FViewVolume::DefaultNearPlane;
+
+        /** Furthest distance drawn. */
+        PROPERTY(Editable, Category = "Camera", ClampMin = 1.0f)
+        float FarPlane = FViewVolume::DefaultFarPlane;
+
+        // The properties above are the authored values; the view volume is what the renderer reads.
+        // Anything that writes one directly has to call this, which is what PostEditChange does for
+        // an edit made in the details panel.
+        void ApplyCameraProperties()
+        {
+            ViewVolume.SetFOV(FOV).SetNear(NearPlane).SetFar(FarPlane);
+        }
+
+        #if USING(WITH_EDITOR)
+        void PostEditChange(const FPropertyChangedEvent& Event) { ApplyCameraProperties(); }
+        #endif
 
         /** When true, this camera activates automatically when the entity is spawned. */
         PROPERTY(Editable, Category = "Camera")

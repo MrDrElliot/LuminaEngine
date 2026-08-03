@@ -17,6 +17,9 @@
 
 namespace Lumina
 {
+    class CFactory;
+    namespace Import { struct FImportSettings; }
+
     class CObjectRedirector;
     struct FAssetData;
 }
@@ -168,7 +171,24 @@ namespace Lumina
         void OpenDeletionWarningPopup(const FContentBrowserTileViewItem* Item, const TFunction<void(EYesNo)>& Callback = TFunction<void(EYesNo)>());
         void OnProjectLoaded();
 
+        // Shared frame around a factory's import settings: source header, scrolling body, footer
+        // buttons. Returns true when the user confirmed.
+        bool DrawImportWindow(CFactory* Factory, const FFixedString& RawPath, const FFixedString& DestinationPath,
+                              Import::FImportSettings& Settings, int32 RemainingCount,
+                              bool& bShouldClose, bool& bOutApplyToAll);
+
+        CFactory* FindImportFactory(const FFixedString& Path) const;
+        void StartImport(CFactory* Factory, const FFixedString& Path, const FFixedString& DestinationPath,
+                         TUniquePtr<Import::FImportSettings> Settings);
+        void ProcessNextImport();
+
         void TryImport(const FFixedString& Path);
+        void TryImport(const TVector<FFixedString>& Paths);
+
+        // Files still waiting on an options window. Drained one at a time by ProcessNextImport.
+        TVector<FFixedString> PendingImports;
+        bool bImportWindowOpen = false;
+        bool bApplyImportSettingsToAll = false;
         
         void DrawDirectoryBrowser(bool bIsFocused, ImVec2 Size);
 

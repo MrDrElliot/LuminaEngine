@@ -10,7 +10,10 @@ public sealed class FileItem
 {
     private static readonly ConcurrentDictionary<string, FileItem> Interned = new(StringComparer.OrdinalIgnoreCase);
 
-    private bool bStatted;
+    // Written last and read first, so the stat fields below are published before any thread can
+    // observe them as valid. Workers recheck freshness without holding a build slot, so a generator
+    // dropping the cache runs concurrently with readers.
+    private volatile bool bStatted;
 
     private bool bExists;
 

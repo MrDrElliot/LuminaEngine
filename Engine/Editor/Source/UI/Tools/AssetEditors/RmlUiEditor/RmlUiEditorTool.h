@@ -1,12 +1,14 @@
-#pragma once
+﻿#pragma once
 
 #include "Containers/Array.h"
 #include "Containers/String.h"
 #include "Core/Threading/Atomic.h"
 #include "Platform/Filesystem/DirectoryWatcher.h"
 #include "Renderer/RHITexture.h"
+#include "UI/RmlUiBridge.h"
 #include "UI/ColorTextEdit/TextEditor.h"
 #include "UI/Tools/AssetEditors/AssetEditorTool.h"
+#include "Tools/UI/ImGui/Widgets/TreeListView.h"
 
 namespace Rml
 {
@@ -44,7 +46,9 @@ namespace Lumina
         enum class EPalette : uint8 { Dark, Light };
 
         void LoadFromDisk();
-        void ReloadDocument();
+        // bAlwaysReport: report the parse outcome even when it matches the previous reload. Pass it for a
+        // deliberate action; leave it off for the debounced auto reload.
+        void ReloadDocument(bool bAlwaysReport = false);
         void EnsurePreviewTarget(uint32 Width, uint32 Height);
         void TearDownPreview();
         void StartWatching();
@@ -94,6 +98,10 @@ namespace Lumina
         // reflow everything below it, because the inspector was drawn inline between the hierarchy and the
         // palette. Hierarchy and Inspector are visible together; the Palette tabs alongside the Hierarchy.
         void DrawHierarchyPanel();
+
+        // Rebuilds HierarchyTree from the current source text. Wired to RebuildTreeFunction, so the widget
+        // calls it whenever the tree is marked dirty rather than the panel rebuilding every frame.
+        void RebuildHierarchyTree(FTreeListView& Tree);
         void DrawInspectorPanel();
         void DrawPalettePanel();
         void DrawSlotOverlays(const ImVec2& CanvasMin, float ScalePx);
@@ -112,6 +120,13 @@ namespace Lumina
         // RemoveElement deletes a slot's element (open..close) from the buffer entirely.
         void AddElement(const FString& TargetSlotId, int PrimitiveIndex);
         void RemoveElement(const FString& SlotId);
+
+        // Surfaces what RmlUi complained about during the last reload as an editor notification. Silent
+        // when the outcome is unchanged, so the debounced auto reload does not toast on a loop.
+        // bAlwaysReport opts a deliberate action (save, Reload, Re-render) out of that: acting on a file
+        // and hearing nothing back reads as success, whatever the reason for the silence.
+        void ReportReloadDiagnostics(bool bLoaded, const TVector<RmlUi::FRmlDiagnostic>& Diagnostics,
+                                     bool bAlwaysReport);
 
         // True when this document can host elements at all. False for .rcss, which has no DOM -- the
         // designer panels explain that instead of offering authoring controls that can only fail.
@@ -144,16 +159,21 @@ namespace Lumina
         TVector<FCompSlot>   CompSlots;
         TVector<FCompWidget> CompWidgets;
         FString              SelectedSlotId;
-        FString              HoveredSlotId;          // recomputed each frame (tree or canvas hover)
+        FString              HoveredSlotId;          // what the overlay draws; promoted from Pending each frame
+        FString              PendingHoveredSlotId;   // written by the tree/canvas producers, expires every frame
         bool                 bShowSlotOverlays = true;
         EOverlayDetail       OverlayDetail = EOverlayDetail::Assigned;
         bool                 bWidgetLibraryDirty = true;
         char                 WidgetSearch[64] = {};
         char                 HierarchySearch[64] = {};
 
-        // Collapsed subtrees, keyed by element id. An id-less element gets one assigned the moment its
-        // arrow is clicked, matching how every other action in the tree treats id-less elements.
-        TSet<FString>        CollapsedNodes;
+        // The document tree. Expansion, filtering, indentation and row hit-testing all live in the widget;
+        // this tool only supplies nodes on rebuild and reacts to the callbacks.
+        FTreeListView        HierarchyTree;
+        FTreeListViewContext HierarchyContext;
+
+        // Rebuilt from the source text, so any edit that changes the markup has to invalidate it.
+        bool                 bHierarchyDirty = true;
 
         bool                 bDraggingSlot = false;
         FString              DraggingSlotId;
@@ -177,6 +197,11 @@ namespace Lumina
         bool                 bCompAssignDirty = true;
 
         FString                     VirtualPath;
+
+        // Outcome of the last reload, so a repeat of the same result stays quiet. Starts clean so the
+        // first parse of an already-broken document still reports.
+        FString                     LastReloadDiagnosticSignature;
+        bool                        bLastReloadWasClean = true;
         FString                     ParentDir;
 
         // Retargets VirtualPath when this file is renamed/moved, so a save writes the new file.

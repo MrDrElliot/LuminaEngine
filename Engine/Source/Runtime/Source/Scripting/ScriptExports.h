@@ -126,6 +126,18 @@ namespace Lumina::Scripting
     {
         TVector<FScriptExportField> Fields;
 
+        /** Registered name of the native CStruct a type built from this schema derives from, or None for
+         *  a schema that stands alone.
+         *
+         *  Carried on the schema rather than resolved from the fields or from the type's name, so the
+         *  inheritance a C# type declares is a value that travels with its layout. Structs cannot inherit
+         *  in C#, so this is the only place the relationship can be stated. */
+        FName NativeBaseName;
+
+        /** Stable identity of the C# type this schema came from, independent of the minted object's name.
+         *  Empty for the schemas that are not published data types. */
+        FName ScriptTypeName;
+
         bool IsValid() const { return !Fields.empty(); }
     };
 

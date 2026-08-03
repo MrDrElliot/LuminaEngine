@@ -743,6 +743,16 @@ namespace Lumina
             // baseline (not the class CDO). Resolve the focus entity's instance info once.
             SPrefabInstanceComponent* FocusPrefabInstance = Registry.try_get<SPrefabInstanceComponent>(Entity);
 
+            // Resolved once rather than per row, and screened the way CPrefab::CullOrphanedInstances
+            // screens the same field: a source prefab can be a marked-destroy zombie, which a null
+            // test does not catch, because TObjectPtr's Get/IsValid are plain pointer reads that
+            // never consult GObjectArray.
+            CPrefab* FocusSourcePrefab = FocusPrefabInstance != nullptr ? FocusPrefabInstance->SourcePrefab.Get() : nullptr;
+            if (FocusSourcePrefab != nullptr && FocusSourcePrefab->HasAnyFlag(OF_MarkedDestroy))
+            {
+                FocusSourcePrefab = nullptr;
+            }
+
             for (const FPendingRow& Row : Pending)
             {
                 FComponentTableEntry Entry;
@@ -752,9 +762,9 @@ namespace Lumina
                 // Prefab instances diff/reset against the matched prefab component; everything else
                 // falls back to the struct CDO (the 2-arg form).
                 void* PrefabDefault = nullptr;
-                if (FocusPrefabInstance != nullptr && FocusPrefabInstance->SourcePrefab != nullptr && Row.Layout != nullptr)
+                if (FocusSourcePrefab != nullptr && Row.Layout != nullptr)
                 {
-                    PrefabDefault = FocusPrefabInstance->SourcePrefab->ResolvePrefabComponentPtr(FocusPrefabInstance->StableID, Row.Layout);
+                    PrefabDefault = FocusSourcePrefab->ResolvePrefabComponentPtr(FocusPrefabInstance->StableID, Row.Layout);
                 }
 
                 Entry.Table = (PrefabDefault != nullptr)

@@ -12,8 +12,11 @@ namespace Lumina
     class RUNTIME_API FViewVolume
     {
     public:
+        
+        static constexpr float DefaultFarPlane = 4000.0f;
+        static constexpr float DefaultNearPlane = 0.01f;
 
-        FViewVolume(float fov = 90.0f, float aspect = 16.0f / 9.0f, float InNear = 0.01f, float InFar = 100000.0f);
+        FViewVolume(float fov = 90.0f, float aspect = 16.0f / 9.0f, float InNear = DefaultNearPlane, float InFar = DefaultFarPlane);
 
         FViewVolume& SetNear(float InNear);
         FViewVolume& SetFar(float InFar);

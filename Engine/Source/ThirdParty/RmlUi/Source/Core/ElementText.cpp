@@ -60,11 +60,15 @@ void LogMissingFontFace(Element* element)
 	{
 		const ComputedValues& computed = element->GetComputedValues();
 		const String font_face_description = GetFontFaceDescription(font_family_property, computed.font_style(), computed.font_weight());
+		// LUMINA: the computed size is the difference between "this family was never loaded" and "this
+		// family is loaded but cannot be instanced at this size", which are unrelated problems with the
+		// same message. A handle is cached per size, and a failed one is cached as null and never retried,
+		// so one bad size stays broken for the process while every other size keeps working.
 		Log::Message(Log::LT_WARNING,
 			"No font face defined. Ensure (1) that Context::Update is run after new elements are constructed, before Context::Render, "
 			"and (2) that the specified font face %s has been successfully loaded. "
-			"Please see previous log messages for all successfully loaded fonts. On element %s",
-			font_face_description.c_str(), element->GetAddress().c_str());
+			"Please see previous log messages for all successfully loaded fonts. On element %s (computed font-size %d)",
+			font_face_description.c_str(), element->GetAddress().c_str(), (int)computed.font_size());
 	}
 }
 

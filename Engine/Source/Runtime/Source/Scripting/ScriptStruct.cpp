@@ -495,8 +495,25 @@ namespace Lumina
     CEnum* CScriptStruct::MintEnum(const FScriptExportType& Type)
     {
         static TAtomic<uint64> Serial{ 0 };
-        FString Name = "ScriptEnum_";
-        Name += eastl::to_string(Serial.fetch_add(1)).c_str();
+
+        // The C# enum's own name, so anything that stores an enum type by name (a blackboard key's
+        // EnumType, for one) keeps a value that means something and survives a reload. The serial is
+        // only a fallback for an unnamed enum, or one whose name a native enum already claims -- a
+        // minted type must never shadow a native one.
+        // The simple name, not the namespace-qualified one C# ships: reflected type names live in one
+        // flat space (a blackboard key stores a bare name), and a qualified name would also read as a
+        // namespace to anything that splits on '.'.
+        FString Name = Type.EnumName.IsNone() ? FString() : FString(Type.EnumName.c_str());
+        if (const size_t Dot = Name.find_last_of('.'); Dot != FString::npos)
+        {
+            Name.erase(0, Dot + 1);
+        }
+
+        if (Name.empty() || FindObject<CEnum>(FName(Name.c_str())) != nullptr)
+        {
+            Name = "ScriptEnum_";
+            Name += eastl::to_string(Serial.fetch_add(1)).c_str();
+        }
 
         FConstructCObjectParams Params(CEnum::StaticClass());
         Params.Name    = FName(Name);

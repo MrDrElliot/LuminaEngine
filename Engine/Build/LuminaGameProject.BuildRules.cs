@@ -48,6 +48,12 @@ public abstract class LuminaGameTargetRules : LuminaTargetRules
         Type = Target.Type;
         PreBuildTargetNames.Add("Reflector");
 
+        // This target builds a library, and the thing that loads it is the engine's application,
+        // which lives in a target of its own. Building a project has to build that too or there is
+        // nothing to run afterwards; it also carries the managed engine assembly the editor loads
+        // at startup, so without it C# scripting comes up silently dead.
+        RequiredTargetNames.Add("Lumina");
+
         // A project reads the engine's reflection manifest; publishing one would replace the
         // engine's list with one that includes this project's own modules.
         bPublishesEngineReflectionManifest = false;

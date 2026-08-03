@@ -1,4 +1,4 @@
-#include "RmlUiEditorTool.h"
+﻿#include "RmlUiEditorTool.h"
 
 #include "Config/Config.h"
 #include "Core/Delegates/CoreDelegates.h"
@@ -857,6 +857,17 @@ namespace Lumina
 
         // A node in the document's authored hierarchy (parsed from the SOURCE, not the live DOM, so it shows
         // exactly what the user can edit -- every element, id or not -- and excludes injected widget internals).
+        // One hierarchy row's source facts. Held as tree user data so every callback can act on the element
+        // without re-parsing or indexing back into a parallel array that the tree could outlive.
+        struct FRmlHierarchyItem
+        {
+            std::string Tag;
+            std::string Id;      // "" until the element is acted on and EnsureElementId assigns one
+            size_t      OpenLt = 0;
+            bool        bIsBody = false;
+        };
+
+
         struct FSourceNode
         {
             std::string Tag;
@@ -1216,6 +1227,85 @@ namespace Lumina
             DrawPreviewCanvas();
         });
 
+        HierarchyContext.IndentPerDepth = 14.0f;
+
+        HierarchyContext.RebuildTreeFunction = [this](FTreeListView& Tree)
+        {
+            RebuildHierarchyTree(Tree);
+        };
+
+        // Tag and id only, matching what the old row loop matched on. The assigned-widget name is a chip
+        // rather than part of the label, so it deliberately does not widen the search.
+        HierarchyContext.FilterFunction = [this](FTreeListView& Tree, FTreeNodeID Item)
+        {
+            if (HierarchySearch[0] == '\0')
+            {
+                return true;
+            }
+
+            const FRmlHierarchyItem& Data = Tree.Get<FRmlHierarchyItem>(Item);
+            return ContainsCI(FString(Data.Tag.c_str(), Data.Tag.size()), HierarchySearch)
+                || (!Data.Id.empty() && ContainsCI(FString(Data.Id.c_str(), Data.Id.size()), HierarchySearch));
+        };
+
+        HierarchyContext.ItemSelectedFunction = [this](FTreeListView& Tree, FTreeNodeID Item, bool)
+        {
+            if (!Item.IsValid())
+            {
+                return;
+            }
+
+            FRmlHierarchyItem& Data = Tree.Get<FRmlHierarchyItem>(Item);
+
+            // Selecting the body means "no slot selected", which is what makes new elements land there.
+            SelectedSlotId = Data.bIsBody
+                ? FString()
+                : (!Data.Id.empty() ? FString(Data.Id.c_str(), Data.Id.size())
+                                    : EnsureElementId(Data.Tag, Data.OpenLt, Data.Id));
+
+            // EnsureElementId rewrites the buffer, which moves every later element's offsets.
+            if (!Data.bIsBody && Data.Id.empty())
+            {
+                bHierarchyDirty = true;
+            }
+        };
+
+        HierarchyContext.HoveredFunction = [this](FTreeListView& Tree, FTreeNodeID Item)
+        {
+            const FRmlHierarchyItem& Data = Tree.Get<FRmlHierarchyItem>(Item);
+            if (!Data.bIsBody && !Data.Id.empty())
+            {
+                PendingHoveredSlotId = FString(Data.Id.c_str(), Data.Id.size());
+            }
+        };
+
+        HierarchyContext.ItemContextMenuFunction = [this](FTreeListView& Tree, FTreeNodeID Item)
+        {
+            FRmlHierarchyItem& Data = Tree.Get<FRmlHierarchyItem>(Item);
+            if (Data.bIsBody)
+            {
+                return;
+            }
+
+            const bool bAssigned = !Data.Id.empty() && !ParseSlotAssignment(CompAssignText, Data.Id).empty();
+            DrawElementContextMenu(Data.Tag, Data.Id, Data.OpenLt, bAssigned);
+        };
+
+        HierarchyContext.DragDropFunction = [this](FTreeListView& Tree, FTreeNodeID Item)
+        {
+            FRmlHierarchyItem& Data = Tree.Get<FRmlHierarchyItem>(Item);
+            if (Data.bIsBody)
+            {
+                return;
+            }
+
+            if (const ImGuiPayload* Payload = ImGui::AcceptDragDropPayload("RML_WIDGET"))
+            {
+                AssignWidgetToSlot(EnsureElementId(Data.Tag, Data.OpenLt, Data.Id), *(const int*)Payload->Data);
+                bHierarchyDirty = true;
+            }
+        };
+
         CreateToolWindow(RmlHierarchyWindowName, [this](bool bFocused)
         {
             DrawHierarchyPanel();
@@ -1246,12 +1336,21 @@ namespace Lumina
     {
         FAssetEditorTool::Update(UpdateContext);
 
+        // Hover is derived state and expires with the frame that produced it. Nothing used to clear it,
+        // so the last hovered slot stayed lit once the cursor left both the canvas and the tree, and a
+        // lit slot draws in full whatever the overlay detail mode is, leaving no setting that could hide
+        // it again. Promoted here rather than cleared at the top of the frame because the hierarchy panel
+        // is registered after the preview and so publishes its hover a frame before the overlay reads it.
+        HoveredSlotId = PendingHoveredSlotId;
+        PendingHoveredSlotId.clear();
+
         if (bExternalChangePending.exchange(false, Atomic::MemoryOrderAcquire))
         {
             if (!bBufferDirty)
             {
+                // Someone saved the file in another editor, which is as deliberate an act as saving here.
                 LoadFromDisk();
-                ReloadDocument();
+                ReloadDocument(/*bAlwaysReport*/ true);
             }
             else
             {
@@ -1298,7 +1397,7 @@ namespace Lumina
         bBufferDirty = false;
         ImGuiX::Notifications::NotifySuccess("Saved '{0}'.", VirtualPath.c_str());
 
-        ReloadDocument();
+        ReloadDocument(/*bAlwaysReport*/ true);
     }
 
     void FRmlUiEditorTool::InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& InDockspaceSize) const
@@ -1405,7 +1504,7 @@ namespace Lumina
         if (ImGui::Button(LE_ICON_REFRESH " Reload"))
         {
             LoadFromDisk();
-            ReloadDocument();
+            ReloadDocument(/*bAlwaysReport*/ true);
         }
         ImGuiX::TextTooltip("Discard buffer changes and reload from disk.");
 
@@ -1430,7 +1529,7 @@ namespace Lumina
 
         if (ImGui::Button(LE_ICON_PLAY " Re-render"))
         {
-            ReloadDocument();
+            ReloadDocument(/*bAlwaysReport*/ true);
         }
         ImGuiX::TextTooltip("Re-parse the current buffer into the preview.");
 
@@ -2224,7 +2323,7 @@ namespace Lumina
         bBufferDirty = false;
     }
 
-    void FRmlUiEditorTool::ReloadDocument()
+    void FRmlUiEditorTool::ReloadDocument(bool bAlwaysReport)
     {
         if (PreviewContext == nullptr)
         {
@@ -2259,9 +2358,108 @@ namespace Lumina
         const FStringView View(Doc.data(), Doc.size());
         const FStringView SourceUrl(VirtualPath.c_str(), VirtualPath.size());
 
-        if (!RmlUi::ReplaceEditorContextDocument(PreviewContext, View, SourceUrl))
+        TVector<RmlUi::FRmlDiagnostic> Diagnostics;
+        const bool bLoaded = RmlUi::ReplaceEditorContextDocument(PreviewContext, View, SourceUrl, &Diagnostics);
+
+        if (!bLoaded)
         {
             LOG_WARN("[RmlUiEditor] Failed to parse buffer for '{}'.", VirtualPath.c_str());
+        }
+
+        ReportReloadDiagnostics(bLoaded, Diagnostics, bAlwaysReport);
+    }
+
+    void FRmlUiEditorTool::ReportReloadDiagnostics(bool bLoaded, const TVector<RmlUi::FRmlDiagnostic>& Diagnostics,
+        bool bAlwaysReport)
+    {
+        int32 ErrorCount = 0;
+        const FString* FirstError = nullptr;
+
+        for (const RmlUi::FRmlDiagnostic& Diagnostic : Diagnostics)
+        {
+            if (!Diagnostic.bError)
+            {
+                continue;
+            }
+            ++ErrorCount;
+            if (FirstError == nullptr)
+            {
+                FirstError = &Diagnostic.Message;
+            }
+        }
+
+        const int32 WarningCount = (int32)Diagnostics.size() - ErrorCount;
+
+        FString Headline;
+        if (FirstError != nullptr)
+        {
+            Headline = *FirstError;
+        }
+        else if (!Diagnostics.empty())
+        {
+            Headline = Diagnostics[0].Message;
+        }
+
+        // The toast has no room for a full virtual path, and the tool's tab already says which file.
+        const size_t Slash = VirtualPath.find_last_of('/');
+        const FString Name = Slash == FString::npos ? VirtualPath : VirtualPath.substr(Slash + 1);
+
+        // Auto reload re-parses shortly after every edit, so the same broken document would toast on a
+        // loop. Keyed on the outcome rather than throttled by time: the user hears about a problem the
+        // moment it appears, once, and again only when it changes or clears.
+        //
+        // An explicit reload opts out. Saving a file and being told nothing reads as "the error went
+        // away", when all that happened was that it had been reported once already and had not changed
+        // since. What the user asked for is the state of the thing they just acted on.
+        FString Signature;
+        Signature.sprintf("%d|%d|%d|%s", bLoaded ? 1 : 0, ErrorCount, WarningCount, Headline.c_str());
+
+        const bool bUnchanged = (Signature == LastReloadDiagnosticSignature);
+        if (bUnchanged && !bAlwaysReport)
+        {
+            return;
+        }
+
+        const bool bWasClean = LastReloadDiagnosticSignature.empty() || bLastReloadWasClean;
+        LastReloadDiagnosticSignature = Signature;
+        bLastReloadWasClean = bLoaded && Diagnostics.empty();
+
+        if (!bLoaded)
+        {
+            if (Headline.empty())
+            {
+                ImGuiX::Notifications::NotifyError("{} failed to parse.", Name.c_str());
+            }
+            else
+            {
+                ImGuiX::Notifications::NotifyError("{} failed to parse: {}", Name.c_str(), Headline.c_str());
+            }
+            return;
+        }
+
+        if (Diagnostics.empty())
+        {
+            // Only worth saying when it is news: a clean reload is the normal case and says nothing.
+            if (!bWasClean)
+            {
+                ImGuiX::Notifications::NotifySuccess("{} reloaded cleanly.", Name.c_str());
+            }
+            return;
+        }
+
+        FString Suffix;
+        if (Diagnostics.size() > 1)
+        {
+            Suffix.sprintf(" (+%d more)", (int32)Diagnostics.size() - 1);
+        }
+
+        if (ErrorCount > 0)
+        {
+            ImGuiX::Notifications::NotifyError("{}: {}{}", Name.c_str(), Headline.c_str(), Suffix.c_str());
+        }
+        else
+        {
+            ImGuiX::Notifications::NotifyWarning("{}: {}{}", Name.c_str(), Headline.c_str(), Suffix.c_str());
         }
     }
 
@@ -2409,6 +2607,11 @@ namespace Lumina
             CompAssignText = CodeEditor.GetText();
             CompAssignUndoIndex = Undo;
             bCompAssignDirty = false;
+
+            // The tree is parsed from this text, so it is stale for exactly the same reason and on
+            // exactly the same edits. Rebuilding here rather than per frame is what lets the widget
+            // keep its expansion state across everything that is not a markup change.
+            bHierarchyDirty = true;
         }
 
         CompSlots.reserve(Slots.size());
@@ -2563,6 +2766,97 @@ namespace Lumina
         ImGui::EndPopup();
     }
 
+    void FRmlUiEditorTool::RebuildHierarchyTree(FTreeListView& Tree)
+    {
+        Tree.ClearTree();
+
+        // The body is a real node rather than a separate row above the tree, so the whole document folds
+        // as one and "nothing selected" is expressible as selecting it.
+        // Icons go in the label rather than FTreeNodeDisplay::IconText: the widget draws IconText over the
+        // row's text instead of reserving space ahead of it, so a glyph and the name overlap.
+        const FTreeNodeID Body = Tree.CreateNode(InvalidTreeNode, LE_ICON_FOLDER "  body (root)");
+        {
+            FTreeNodeDisplay& Display = Tree.Get<FTreeNodeDisplay>(Body);
+            Display.TooltipText = "The document body. New elements land here when nothing else is selected.";
+
+            FRmlHierarchyItem& Item = Tree.EmplaceUserData<FRmlHierarchyItem>(Body);
+            Item.bIsBody = true;
+
+            Tree.Get<FTreeNodeState>(Body).bExpanded = true;
+        }
+
+        std::vector<FSourceNode> Nodes;
+        ParseSourceElements(CompAssignText, Nodes);
+
+        // Depth is a running counter from the parser, so the parent of a node at depth D is the most
+        // recent node at depth D-1. One stack indexed by depth turns the flat list back into a tree.
+        TVector<FTreeNodeID> ParentAtDepth;
+        ParentAtDepth.push_back(Body);
+
+        for (const FSourceNode& Node : Nodes)
+        {
+            if (Node.Tag == "template")
+            {
+                continue;   // an assignment directive: shown as its parent's badge, not its own row
+            }
+
+            const int32 Depth = Math::Max(0, Node.Depth);
+            if ((int32)ParentAtDepth.size() <= Depth)
+            {
+                ParentAtDepth.resize(Depth + 1, Body);
+            }
+
+            const FTreeNodeID Parent = ParentAtDepth[Depth];
+            const bool bHasId = !Node.Id.empty();
+
+            const std::string Assigned = bHasId ? ParseSlotAssignment(CompAssignText, Node.Id) : std::string();
+            const bool bAssigned = !Assigned.empty();
+
+            const char* Icon = bAssigned ? LE_ICON_PUZZLE
+                             : (bHasId   ? LE_ICON_CHECKBOX_BLANK_OUTLINE
+                                         : LE_ICON_SHAPE_OUTLINE);
+
+            char Label[200];
+            if (bHasId) std::snprintf(Label, sizeof(Label), "%s  #%s", Icon, Node.Id.c_str());
+            else        std::snprintf(Label, sizeof(Label), "%s  <%s>", Icon, Node.Tag.c_str());
+
+            const FTreeNodeID Handle = Tree.CreateNode(Parent, Label);
+
+            FTreeNodeDisplay& Display = Tree.Get<FTreeNodeDisplay>(Handle);
+
+            // Tints the whole row, which is the readable way to show assignment now that the icon is
+            // part of the text and no longer has a colour of its own.
+            if (bAssigned)
+            {
+                Display.DisplayColor = ImVec4(0.45f, 0.75f, 1.0f, 1.0f);
+            }
+
+            if (bAssigned)
+            {
+                // The inline badge the old row drew after the label. A chip keeps it out of the label so
+                // filtering still matches on tag and id alone.
+                Display.TooltipChipHeader = "Widget";
+                Display.TooltipChips.push_back(FString(Assigned.c_str(), Assigned.size()));
+            }
+
+            FRmlHierarchyItem& Item = Tree.EmplaceUserData<FRmlHierarchyItem>(Handle);
+            Item.Tag    = Node.Tag;
+            Item.Id     = Node.Id;
+            Item.OpenLt = Node.OpenLt;
+
+            Tree.Get<FTreeNodeState>(Handle).bExpanded = true;
+
+            // Anything deeper than this node parents to it, until a sibling at this depth replaces it.
+            if ((int32)ParentAtDepth.size() <= Depth + 1)
+            {
+                ParentAtDepth.resize(Depth + 2, Body);
+            }
+            ParentAtDepth[Depth + 1] = Handle;
+        }
+
+        bHierarchyDirty = false;
+    }
+
     void FRmlUiEditorTool::DrawHierarchyPanel()
     {
         if (!SupportsElementAuthoring())
@@ -2598,131 +2892,13 @@ namespace Lumina
         ImGui::InputTextWithHint("##hierarchy_search", LE_ICON_MAGNIFY " Filter elements", HierarchySearch, sizeof(HierarchySearch));
         ImGui::Separator();
 
-        // Parsed from the SOURCE so every element shows, id'd or not. Acting on an id-less element assigns
-        // it an id (EnsureElementId), which is also what makes it collapsible and selectable.
-        std::vector<FSourceNode> Nodes;
-        ParseSourceElements(CompAssignText, Nodes);
-
-        // Scroll region so a deep document can't push the rest of the panel off-screen.
-        if (!ImGui::BeginChild("##hierarchy_tree", ImVec2(0.0f, 0.0f), true))
+        // Selection and expansion live in the widget; this only re-supplies nodes when the source moved.
+        if (bHierarchyDirty)
         {
-            ImGui::EndChild();
-            return;
+            HierarchyTree.MarkTreeDirty();
         }
 
-        if (ImGui::Selectable(LE_ICON_FOLDER " body (root)", SelectedSlotId.empty()))
-        {
-            SelectedSlotId = FString();
-        }
-        ImGuiX::TextTooltip("The document body. New elements land here when nothing else is selected.");
-
-        const std::string SelId(SelectedSlotId.c_str(), SelectedSlotId.size());
-        const bool bFiltering = HierarchySearch[0] != '\0';
-
-        // Collapse is depth-driven: once a subtree is folded, skip rows until depth returns to its level.
-        // Filtering bypasses folding entirely so a match is never hidden behind a collapsed parent.
-        int SkipBelowDepth = -1;
-
-        for (int n = 0; n < (int)Nodes.size(); ++n)
-        {
-            const FSourceNode& Node = Nodes[n];
-            if (Node.Tag == "template")
-            {
-                continue; // an assignment directive -> shown via its parent's badge, not as its own row
-            }
-
-            if (SkipBelowDepth >= 0)
-            {
-                if (Node.Depth > SkipBelowDepth)
-                {
-                    continue;
-                }
-                SkipBelowDepth = -1;
-            }
-
-            const bool bHasId = !Node.Id.empty();
-            const FString NodeId = bHasId ? FString(Node.Id.c_str(), Node.Id.size()) : FString();
-
-            if (bFiltering)
-            {
-                const bool bMatch = ContainsCI(FString(Node.Tag.c_str(), Node.Tag.size()), HierarchySearch)
-                                 || (bHasId && ContainsCI(NodeId, HierarchySearch));
-                if (!bMatch)
-                {
-                    continue;
-                }
-            }
-
-            const bool bHasChildren = (n + 1 < (int)Nodes.size()) && (Nodes[n + 1].Depth > Node.Depth);
-            const bool bCollapsed   = bHasId && CollapsedNodes.find(NodeId) != CollapsedNodes.end();
-
-            ImGui::PushID(n);
-            const float Indent = float(Node.Depth + 1) * 12.0f;
-            ImGui::Indent(Indent);
-
-            // Fold arrow. Drawn only for real parents, and only outside filtering (where folding is off).
-            if (bHasChildren && !bFiltering)
-            {
-                if (ImGui::ArrowButton("##fold", bCollapsed ? ImGuiDir_Right : ImGuiDir_Down))
-                {
-                    const FString Id = bHasId ? NodeId : EnsureElementId(Node.Tag, Node.OpenLt, Node.Id);
-                    if (CollapsedNodes.find(Id) != CollapsedNodes.end()) CollapsedNodes.erase(Id);
-                    else                                                 CollapsedNodes.insert(Id);
-                }
-                ImGui::SameLine(0.0f, 4.0f);
-            }
-            else
-            {
-                // Keep leaf rows aligned with their siblings' arrows.
-                ImGui::Dummy(ImVec2(ImGui::GetFrameHeight(), 0.0f));
-                ImGui::SameLine(0.0f, 4.0f);
-            }
-
-            const std::string Assigned = bHasId ? ParseSlotAssignment(CompAssignText, Node.Id) : std::string();
-            const bool bAssigned = !Assigned.empty();
-            const bool bSel = bHasId && (Node.Id == SelId);
-
-            char Row[200];
-            const char* Icon = bAssigned ? LE_ICON_PUZZLE : (bHasId ? LE_ICON_CHECKBOX_BLANK_OUTLINE : LE_ICON_SHAPE_OUTLINE);
-            if (bHasId) std::snprintf(Row, sizeof(Row), "%s  #%s", Icon, Node.Id.c_str());
-            else        std::snprintf(Row, sizeof(Row), "%s  <%s>", Icon, Node.Tag.c_str());
-
-            if (ImGui::Selectable(Row, bSel, ImGuiSelectableFlags_SpanAvailWidth))
-            {
-                SelectedSlotId = bHasId ? NodeId : EnsureElementId(Node.Tag, Node.OpenLt, Node.Id);
-            }
-            if (ImGui::IsItemHovered() && bHasId)
-            {
-                HoveredSlotId = NodeId;
-            }
-
-            if (ImGui::BeginDragDropTarget())
-            {
-                if (const ImGuiPayload* Payload = ImGui::AcceptDragDropPayload("RML_WIDGET"))
-                {
-                    AssignWidgetToSlot(EnsureElementId(Node.Tag, Node.OpenLt, Node.Id), *(const int*)Payload->Data);
-                }
-                ImGui::EndDragDropTarget();
-            }
-
-            DrawElementContextMenu(Node.Tag, Node.Id, Node.OpenLt, bAssigned);
-
-            if (bAssigned)
-            {
-                ImGui::SameLine();
-                ImGui::TextColored(ImVec4(0.45f, 0.75f, 1.0f, 1.0f), LE_ICON_PUZZLE " %s", Assigned.c_str());
-            }
-
-            ImGui::Unindent(Indent);
-            ImGui::PopID();
-
-            if (bCollapsed && bHasChildren && !bFiltering)
-            {
-                SkipBelowDepth = Node.Depth;
-            }
-        }
-
-        ImGui::EndChild();
+        HierarchyTree.Draw(HierarchyContext);
 
         // Delete clears the selected slot's widget (ignored while typing in a field).
         if (!SelectedSlotId.empty() && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)
@@ -2870,7 +3046,9 @@ namespace Lumina
                     if (Area < Best) { Best = Area; NewHover = Slot.Id; }
                 }
             }
+            // Both, so the canvas keeps its same-frame response while still expiring at end of frame.
             HoveredSlotId = NewHover;
+            PendingHoveredSlotId = NewHover;
         }
 
         // Visuals, clipped to the canvas so nothing spills onto the rest of the pane.
@@ -2961,6 +3139,16 @@ namespace Lumina
         }
         DL->PopClipRect();
 
+        // Backdrop, submitted before the slots so their hit rects win any overlap: clicking canvas that
+        // is not a slot clears the selection. Without it the only way to deselect was the tree's
+        // "body (root)" row, which a stylesheet never draws, so a selection made on the specimen canvas
+        // could not be undone at all.
+        const ImVec2 CursorRestore = ImGui::GetCursorScreenPos();
+        ImGui::SetCursorScreenPos(CanvasMin);
+        ImGui::InvisibleButton("##canvas_backdrop", ImVec2(CanvasMax.x - CanvasMin.x, CanvasMax.y - CanvasMin.y));
+        const bool bBackdropClicked = ImGui::IsItemClicked();
+        ImGui::SetCursorScreenPos(CursorRestore);
+
         // Interaction: submit innermost-first so an overlapping parent doesn't steal the hit.
         for (int i = (int)CompSlots.size() - 1; i >= 0; --i)
         {
@@ -3017,6 +3205,15 @@ namespace Lumina
                 ImGui::EndDragDropTarget();
             }
             ImGui::PopID();
+        }
+
+        // Applied after the slot pass, so a click the backdrop reported cannot race a slot that also
+        // took it. Escape is the keyboard equivalent, gated the same way the Delete binding below is so
+        // it cannot swallow the key from a field or a dialog.
+        if (bBackdropClicked
+            || (bWindowHovered && !ImGui::IsAnyItemActive() && ImGui::IsKeyPressed(ImGuiKey_Escape, false)))
+        {
+            SelectedSlotId.clear();
         }
 
         // Delete clears the selected slot's widget while the canvas is in use (ignored while editing a field).

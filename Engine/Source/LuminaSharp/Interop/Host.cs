@@ -547,6 +547,47 @@ public static unsafe partial class Host
         }
     }
 
+    /// Reports each marked data type as (StableId, native base struct name) to a native sink, so the host can
+    /// mint a CScriptStruct deriving from that native base.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static void EnumerateScriptStructs(IntPtr Sink, IntPtr Context)
+    {
+        try
+        {
+            Scripts?.DataStructs?.Enumerate(Sink, Context);
+        }
+        catch (Exception Exception)
+        {
+            Interop.LogException(Exception);
+        }
+    }
+
+    /// Writes the member schema blob for a marked data type, addressed by its StableId.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static unsafe void GetScriptStructSchema(byte* StableId, int IdLength, IntPtr Sink, IntPtr Context)
+    {
+        try
+        {
+            byte[]? Blob = Scripts?.DataStructs?.Schema(Interop.GetString(StableId, IdLength));
+            if (Blob == null || Sink == IntPtr.Zero)
+            {
+                return;
+            }
+
+            var Add = (delegate* unmanaged[Stdcall]<IntPtr, byte*, int, void>)Sink;
+            fixed (byte* Bytes = Blob)
+            {
+                Add(Context, Bytes, Blob.Length);
+            }
+        }
+        catch (Exception Exception)
+        {
+            Interop.LogException(Exception);
+        }
+    }
+
     // EntitySystem bridge: one instance per world; the GCHandle is the FStageSlot Self.
 
     /// Reports every discovered EntitySystem to a native sink as (full name, stage, priority, write-ops, read-ops). Once per type.

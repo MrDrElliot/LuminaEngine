@@ -84,7 +84,13 @@ namespace Lumina
         using FImportPrepareCallback = TMoveOnlyFunction<void(TUniquePtr<Import::FImportSettings>)>;
         virtual void PrepareImportAsync(const FFixedString& RawPath, const FFixedString& DestinationPath, FImportPrepareCallback OnReady);
 
-        virtual bool DrawImportDialogue(const FFixedString& RawPath, const FFixedString& DestinationPath, TUniquePtr<Import::FImportSettings>& ImportSettings, bool& bShouldClose) { return true; }
+        // Draws THIS FACTORY'S SETTINGS ONLY. The window around them -- source header, scroll region,
+        // confirm and cancel -- belongs to the import window, so every importer gets the same one and a
+        // batch can drive the buttons without reaching into a factory.
+        virtual void DrawImportSettings(const FFixedString& RawPath, Import::FImportSettings& Settings) {}
+
+        // The user confirmed: fold whatever the settings UI was holding into the settings object.
+        virtual void CommitImportSettings(Import::FImportSettings& Settings) {}
         
     protected:
         

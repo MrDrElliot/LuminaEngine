@@ -14,6 +14,8 @@
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/Input.h>
+#include <RmlUi/Core/FontEngineInterface.h>
+#include <RmlUi/Core/StringUtilities.h>
 #include <RmlUi/Core/SystemInterface.h>
 #include <RmlUi/Core/DataModelHandle.h>
 #include <RmlUi/Core/DataVariable.h>
@@ -35,6 +37,10 @@
 #include "World/World.h"
 #include "World/Scene/RenderScene/RenderScene.h"
 #include "World/Entity/Components/WidgetComponent.h"
+
+#if USING(WITH_EDITOR)
+#include "Tools/UI/ImGui/ImGuiX.h"
+#endif
 
 extern "C" void* LuminaRmlFreeTypeAlloc(size_t Size)
 {
@@ -68,6 +74,73 @@ namespace Lumina::RmlUi
 
     namespace
     {
+        // Set only for the duration of a parse the caller asked to collect diagnostics for. Thread-local
+        // because RmlUi logs from whichever thread is driving it: a world context ticking elsewhere must
+        // not append into an editor tool's buffer, or race it.
+        thread_local TVector<FRmlDiagnostic>* GDiagnosticSink = nullptr;
+
+        struct FScopedDiagnosticSink
+        {
+            explicit FScopedDiagnosticSink(TVector<FRmlDiagnostic>* Sink) : Previous(GDiagnosticSink) { GDiagnosticSink = Sink; }
+            ~FScopedDiagnosticSink() { GDiagnosticSink = Previous; }
+
+            TVector<FRmlDiagnostic>* Previous;
+        };
+
+#if USING(WITH_EDITOR)
+        /**
+         * Surfaces an RmlUi warning or error as an editor toast.
+         *
+         * RmlUi reports a problem once per thing it affects, every frame it persists: a document missing
+         * its font logs once per text element per frame. Toasts hold ten entries for three seconds, so an
+         * unfiltered hook would evict every other notification in the editor and still show nothing but
+         * copies of one message. Each distinct message is therefore shown once and then muted, which also
+         * turns a per-frame repeat into a single readable line.
+         *
+         * Called from whichever thread drives RmlUi, so the bookkeeping is locked. Notify itself is
+         * already safe from any thread.
+         */
+        void NotifyDiagnostic(Rml::Log::Type Type, const Rml::String& Message)
+        {
+            constexpr double MuteSeconds = 10.0;
+            constexpr size_t MaxTracked  = 64;
+
+            static FMutex Mutex;
+            static THashMap<FString, double> LastShown;
+
+            const double Now = std::chrono::duration<double>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+
+            const FString Key(Message.c_str(), Message.size());
+            {
+                FScopeLock Lock(Mutex);
+
+                // Bounded rather than evicted one by one: a message whose text carries a line number is
+                // effectively unique, so the map would otherwise grow for the life of the process. Dropping
+                // the whole table just means a stale message may announce itself once more.
+                if (LastShown.size() >= MaxTracked)
+                {
+                    LastShown.clear();
+                }
+
+                auto It = LastShown.find(Key);
+                if (It != LastShown.end() && (Now - It->second) < MuteSeconds)
+                {
+                    return;
+                }
+                LastShown[Key] = Now;
+            }
+
+            // NotifyInternal, not the format-string wrappers: RCSS and selector text is full of braces and
+            // would be parsed as format specifiers.
+            const ImGuiX::Notifications::EType Severity = (Type == Rml::Log::LT_WARNING)
+                ? ImGuiX::Notifications::EType::Warning
+                : ImGuiX::Notifications::EType::Error;
+
+            ImGuiX::Notifications::NotifyInternal(Severity, FStringView(Key.c_str(), Key.size()));
+        }
+#endif
+
         class FLuminaSystemInterface final : public Rml::SystemInterface
         {
         public:
@@ -81,6 +154,26 @@ namespace Lumina::RmlUi
 
             bool LogMessage(Rml::Log::Type Type, const Rml::String& Message) override
             {
+                // Only the two levels that mean the author has something to fix; info and debug would
+                // bury those in a notification.
+                const bool bDiagnostic =
+                    (Type == Rml::Log::LT_ERROR || Type == Rml::Log::LT_ASSERT || Type == Rml::Log::LT_WARNING);
+
+                if (bDiagnostic && GDiagnosticSink != nullptr)
+                {
+                    FRmlDiagnostic& Diagnostic = GDiagnosticSink->emplace_back();
+                    Diagnostic.bError  = (Type != Rml::Log::LT_WARNING);
+                    Diagnostic.Message = FString(Message.c_str(), Message.size());
+                }
+#if USING(WITH_EDITOR)
+                // Only when nobody is collecting: a caller that captures reports its own summary, naming the
+                // file and folding the count, and toasting each line here as well would duplicate it.
+                else if (bDiagnostic)
+                {
+                    NotifyDiagnostic(Type, Message);
+                }
+#endif
+
                 switch (Type)
                 {
                 case Rml::Log::LT_ERROR:
@@ -440,10 +533,21 @@ namespace Lumina::RmlUi
             {
                 return;
             }
-            if (Rml::Element* Root = Ctx->GetRootElement())
+            Rml::Element* Root = Ctx->GetRootElement();
+            if (Root == nullptr)
             {
-                Root->SetProperty("font-family", GDefaultUIFontFamily);
+                return;
             }
+            Root->SetProperty("font-family", GDefaultUIFontFamily);
+
+            // Setting the property is not the same as the root having computed it. An element inherits from its
+            // parent's *computed* values, and the context root's are only computed inside Context::Update. But
+            // ElementDocument::Show() lays the document out on the spot, so a document loaded and shown before
+            // the context's first update inherits an empty font-family and every text element in it reports
+            // "No font face defined" for a font that is loaded and resolving perfectly well. Update once here,
+            // while the context still has no documents and the call costs nothing, so the root already carries
+            // the family by the time anything can be parented to it.
+            Ctx->Update();
         }
 
         void DestroyWidgetRuntime(FWidgetRuntime& E)
@@ -638,22 +742,71 @@ namespace Lumina::RmlUi
         // Register the default UI font under GDefaultUIFontFamily (from memory, so we control the family name).
         // ApplyDefaultFontFamily then sets it on each context root, giving every document a working font
         // without authoring 'font-family'. The byte buffer is kept in State for the font face's lifetime.
-        constexpr const char* DefaultFontPath = "/Engine/Resources/UI/Fonts/LatoLatin-Regular.ttf";
-        if (VFS::ReadFile(State.DefaultFontData, DefaultFontPath) && !State.DefaultFontData.empty())
+        // Every candidate is loaded from MEMORY so the family name is ours to choose. A path load names the
+        // family from the file's own metadata ("Lato"), which no document ever asks for: ApplyDefaultFontFamily
+        // still stamps GDefaultUIFontFamily on each context root, so the lookup misses and RmlUi logs
+        // "No font face defined ... 'Lumina' [regular]" for every text element, every frame, forever. A font
+        // that cannot be reached is not a fallback, so the alternates are tried under the same family instead.
+        constexpr const char* DefaultFontCandidates[] =
         {
+            "/Engine/Resources/UI/Fonts/LatoLatin-Regular.ttf",
+            "/Engine/Resources/Fonts/Lexend/Lexend-Regular.ttf",
+            "/Engine/Resources/Fonts/JetbrainsMono/JetBrainsMono-Regular.ttf",
+        };
+
+        bool bDefaultFontRegistered = false;
+        for (const char* Candidate : DefaultFontCandidates)
+        {
+            if (!VFS::ReadFile(State.DefaultFontData, Candidate) || State.DefaultFontData.empty())
+            {
+                LOG_WARN("[RmlUi] Could not read UI font '{}'; trying the next candidate.", Candidate);
+                continue;
+            }
+
             const Rml::Span<const Rml::byte> FontSpan(State.DefaultFontData.data(), State.DefaultFontData.size());
-            if (!Rml::LoadFontFace(FontSpan, GDefaultUIFontFamily, Rml::Style::FontStyle::Normal,
+            if (Rml::LoadFontFace(FontSpan, GDefaultUIFontFamily, Rml::Style::FontStyle::Normal,
                     Rml::Style::FontWeight::Auto, true /*fallback_face*/))
             {
-                LOG_WARN("[RmlUi] Default UI font failed to register as '{}'; text may not render.", GDefaultUIFontFamily);
+                bDefaultFontRegistered = true;
+                break;
+            }
+
+            LOG_WARN("[RmlUi] UI font '{}' failed to register as '{}'; trying the next candidate.",
+                Candidate, GDefaultUIFontFamily);
+        }
+
+        if (bDefaultFontRegistered)
+        {
+            // Registering a face only means one was added under some name. What every document depends on
+            // is that the name ApplyDefaultFontFamily stamps on each context root actually resolves, and
+            // the two are separate steps that can disagree. Probing once here turns that into a single
+            // line at startup, instead of RmlUi reporting it per text element per frame at render time
+            // with no way to tell which half went wrong.
+            //
+            // Lowercased because the provider keys on lowercase and only asserts it in Debug, so a mixed
+            // case name silently misses in Development, which is exactly the shape of failure this catches.
+            const Rml::String Probe = Rml::StringUtilities::ToLower(Rml::String(GDefaultUIFontFamily));
+
+            if (Rml::GetFontEngineInterface()->GetFontFaceHandle(Probe, Rml::Style::FontStyle::Normal,
+                    Rml::Style::FontWeight::Normal, 16) == 0)
+            {
+                LOG_ERROR("[RmlUi] A face registered under '{}' but the family does not resolve for lookup. "
+                          "Every document inheriting the engine default will render no text.",
+                    GDefaultUIFontFamily);
+            }
+            else
+            {
+                LOG_INFO("[RmlUi] Default UI font family '{}' registered and resolving.", GDefaultUIFontFamily);
             }
         }
         else
         {
-            // Couldn't read the bytes: fall back to a path load so glyphs still exist (its family is derived
-            // from the file metadata, so the GDefaultUIFontFamily default won't resolve -- author font-family).
-            LOG_WARN("[RmlUi] Could not read default UI font '{}'; falling back to path load.", DefaultFontPath);
-            Rml::LoadFontFace(DefaultFontPath, true /*fallback_face*/);
+            // Nothing else in the UI stack fails visibly when this happens, so say it once and plainly here
+            // rather than leaving the per-element warning to imply the documents are at fault.
+            State.DefaultFontData.clear();
+            LOG_ERROR("[RmlUi] No UI font could be registered as '{}'. Every document that does not author its "
+                      "own 'font-family' will render no text. Check that the engine content is mounted.",
+                GDefaultUIFontFamily);
         }
 
         // Monospace face for digit-heavy HUDs (speedometer, RPM, etc.). Optional;
@@ -1399,7 +1552,8 @@ namespace Lumina::RmlUi
         }
     }
 
-    bool ReplaceEditorContextDocument(Rml::Context* Context, FStringView Body, FStringView SourceUrl)
+    bool ReplaceEditorContextDocument(Rml::Context* Context, FStringView Body, FStringView SourceUrl,
+        TVector<FRmlDiagnostic>* OutDiagnostics)
     {
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
@@ -1423,12 +1577,27 @@ namespace Lumina::RmlUi
         const Rml::String BodyStr(Body.data(), Body.size());
         const Rml::String UrlStr(SourceUrl.data(), SourceUrl.size());
 
-        Entry->Document = Entry->Context->LoadDocumentFromMemory(BodyStr, UrlStr);
-        if (Entry->Document == nullptr)
+        // Scoped over Show() as well: property and decorator errors surface when the document is first
+        // styled, not while its markup is being read.
         {
-            return false;
+            FScopedDiagnosticSink Capture(OutDiagnostics);
+
+            Entry->Document = Entry->Context->LoadDocumentFromMemory(BodyStr, UrlStr);
+            if (Entry->Document == nullptr)
+            {
+                return false;
+            }
+            Entry->Document->Show();
+
+            // A document's text elements do not acquire their font handles until the context updates, so
+            // one that is rendered before its first update reports "No font face defined" for every line of
+            // text in it, naming a font that is loaded and resolving perfectly well. Replacing the document
+            // leaves the context renderable rather than leaving that to the caller's frame ordering, which
+            // holds for the steady-state loop but not for a load that happens outside it, such as a tool
+            // restoring its tab during startup.
+            Entry->Context->Update();
         }
-        Entry->Document->Show();
+
         return true;
     }
 

@@ -15,6 +15,56 @@ public sealed class AliasAttribute : Attribute
     public string Name { get; }
 }
 
+/// <summary>
+/// Base for the markers that publish a C# data type to the engine as a subtype of a native reflected
+/// struct. A marked type is discovered and minted on every script load whether or not anything
+/// references it, and the engine sees it as deriving from <see cref="NativeBase"/>, so it appears
+/// wherever that base is accepted.
+/// </summary>
+/// <remarks>
+/// C# structs cannot inherit, so the base relationship has to be carried by an attribute rather than
+/// expressed in the type. The native base is named here rather than inferred from the C# type's shape
+/// or name: the engine resolves it through the reflection registry, so a wrong name is a load-time
+/// warning naming both types instead of a type that silently fails to appear in a picker.
+/// </remarks>
+[AttributeUsage(AttributeTargets.Struct | AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
+public abstract class ScriptStructBaseAttribute : Attribute
+{
+    protected ScriptStructBaseAttribute(string NativeBase)
+    {
+        this.NativeBase = NativeBase;
+    }
+
+    /// <summary>Registered name of the native CStruct the minted type derives from.</summary>
+    public string NativeBase { get; }
+}
+
+/// <summary>
+/// Publishes this type as a blackboard schema. Its [Property] members become the keys of any
+/// blackboard asset that selects it as its backing struct.
+/// </summary>
+[AttributeUsage(AttributeTargets.Struct | AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
+public sealed class BlackboardDataAttribute : ScriptStructBaseAttribute
+{
+    public BlackboardDataAttribute()
+        : base("SBlackboardDataBase")
+    {
+    }
+}
+
+/// <summary>
+/// Publishes this type as a data table row shape. Its [Property] members become the columns of any
+/// data table asset that selects it as its row struct.
+/// </summary>
+[AttributeUsage(AttributeTargets.Struct | AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
+public sealed class DataTableRowAttribute : ScriptStructBaseAttribute
+{
+    public DataTableRowAttribute()
+        : base("SDataTableRowBase")
+    {
+    }
+}
+
 /// <summary>Resets this [Property] (or every [Property] on the class) to its default on a C# hot reload instead of carrying the previous value into the reloaded instance.</summary>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Field | AttributeTargets.Property, AllowMultiple = false)]
 public sealed class SkipHotReloadAttribute : Attribute

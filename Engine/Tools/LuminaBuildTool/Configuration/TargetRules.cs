@@ -207,9 +207,23 @@ public abstract class TargetRules
 
     /// <summary>
     /// Targets built to completion before this one starts, for tools this target's build needs
-    /// such as the reflection code generator.
+    /// such as the reflection code generator. Always built as Program targets.
     /// </summary>
     public List<string> PreBuildTargetNames { get; } = new();
+
+    /// <summary>
+    /// Targets this one's output is not usable without, built at this target's own type and
+    /// configuration rather than as a tool.
+    /// </summary>
+    /// <remarks>
+    /// A game module is a library the editor loads, so a game target produces no executable and
+    /// nothing in its module graph reaches the one that does. Building a project therefore left the
+    /// application meant to run it missing, and Run failed on an exe path that had never been built.
+    /// Separate from PreBuildTargetNames because these are products rather than tools: a tool is a
+    /// Program whatever is being built, while these have to match, or an Editor build of a project
+    /// would go looking for an editor that was compiled as a game.
+    /// </remarks>
+    public List<string> RequiredTargetNames { get; } = new();
 
     /// <summary>
     /// .NET projects built as part of this target. Not linked into anything; the engine loads them

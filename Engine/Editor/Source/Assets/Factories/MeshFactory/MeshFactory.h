@@ -23,7 +23,8 @@ namespace Lumina
 
         bool HasImportDialogue() const override { return true; }
         void PrepareImportAsync(const FFixedString& RawPath, const FFixedString& DestinationPath, FImportPrepareCallback OnReady) override;
-        bool DrawImportDialogue(const FFixedString& RawPath, const FFixedString& DestinationPath, TUniquePtr<Import::FImportSettings>& ImportSettings, bool& bShouldClose) override;
+        void DrawImportSettings(const FFixedString& RawPath, Import::FImportSettings& Settings) override;
+        void CommitImportSettings(Import::FImportSettings& Settings) override;
         void TryImport(const FFixedString& RawPath, const FFixedString& DestinationPath, const Import::FImportSettings* Settings) override;
         
     };

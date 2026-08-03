@@ -24,6 +24,18 @@ namespace Lumina
 
 namespace Lumina::RmlUi
 {
+    /**
+     * One warning or error RmlUi raised while a document was being parsed. RmlUi reports these
+     * through the log interface rather than through a return value, so a document that is broken but
+     * still loadable comes back as a success with the reason only in the log. Capturing them lets a
+     * caller tell the user what is wrong instead of silently showing an empty preview.
+     */
+    struct FRmlDiagnostic
+    {
+        bool    bError = false;   // false = warning
+        FString Message;
+    };
+
     RUNTIME_API bool            Initialize();
     RUNTIME_API void            Shutdown();
 
@@ -96,8 +108,13 @@ namespace Lumina::RmlUi
     /** RGBA8; 0-alpha clear allows the editor to composite its own background. */
     RUNTIME_API void            SetEditorContextClearColor(Rml::Context* Context, const FVector4& Color);
 
-    /** SourceUrl resolves relative includes. Previous document unloads either way; returns false on parse failure. */
-    RUNTIME_API bool            ReplaceEditorContextDocument(Rml::Context* Context, FStringView Body, FStringView SourceUrl);
+    /**
+     * SourceUrl resolves relative includes. Previous document unloads either way; returns false on parse
+     * failure. Pass OutDiagnostics to also receive the warnings and errors RmlUi raised while parsing:
+     * a return of true only means a document was produced, not that it was well formed.
+     */
+    RUNTIME_API bool            ReplaceEditorContextDocument(Rml::Context* Context, FStringView Body, FStringView SourceUrl,
+                                                             TVector<FRmlDiagnostic>* OutDiagnostics = nullptr);
     RUNTIME_API void            ClearEditorContextDocument(Rml::Context* Context);
 
     //--------------------------------------------------------------------------------------------
