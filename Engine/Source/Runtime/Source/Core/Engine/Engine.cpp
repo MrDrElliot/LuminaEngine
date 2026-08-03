@@ -38,7 +38,6 @@
 #include "Physics/PhysicsThread.h"
 #include "Platform/Filesystem/FileHelper.h"
 #include "Renderer/RenderManager.h"
-#include "Renderer/RenderThread.h"
 #include "Scripting/DotNet/DotNetHost.h"
 #include "TaskSystem/ThreadedCallback.h"
 #include "Tools/PrimitiveManager/PrimitiveManager.h"
@@ -326,7 +325,6 @@ namespace Lumina
         
         if (!GIsHeadless)
         {
-            FlushRenderingCommands();
             RHI::WaitDeviceIdle();
             RmlUi::Shutdown();
         }
@@ -388,7 +386,7 @@ namespace Lumina
         HangWatchdog::Heartbeat();
 
         // Frame boundary: reclaim every thread's frame arena before any system gathers into it this frame.
-        // Quiescent here (single game thread, previous frame's parallel gathers already joined+consumed).
+        // Quiescent here (single main thread, previous frame's parallel gathers already joined+consumed).
         ResetThreadFrameAllocators();
 
         FCPUProfiler::Get().BeginFrame();
@@ -501,7 +499,7 @@ namespace Lumina
                 DeveloperToolUI->Update(UpdateContext);
                 #endif
 
-                // Final world update stage runs on game thread.
+                // Final world update stage runs on the main thread.
                 GWorldManager->UpdateWorlds(UpdateContext);
 
                 #if USING(WITH_EDITOR)
@@ -520,7 +518,7 @@ namespace Lumina
 
                 OnUpdateStage(UpdateContext);
 
-                // Kick physics after all game-thread ECS access; results land next frame.
+                // Kick physics after all main-thread ECS access; results land next frame.
                 GWorldManager->KickPhysics();
             }
         }

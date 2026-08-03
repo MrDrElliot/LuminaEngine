@@ -13,7 +13,7 @@ namespace Rml
 
 namespace Lumina
 {
-    // One world-space widget to rasterize this frame; built game-thread in Tick, consumed render-thread in Render.
+    // One world-space widget to rasterize this frame; built in Tick, consumed in Render.
     // Non-owning: the Rml context + RT live on the SWidgetComponent that outlives the frame.
     struct FWidgetRenderJob
     {

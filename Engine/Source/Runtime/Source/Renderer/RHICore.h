@@ -42,11 +42,11 @@ namespace Lumina::RHI
         void Initialize();
         void Shutdown();
 
-        // Render thread. Waits for the GPU to finish this slot's previous frame,
+        // Waits for the GPU to finish this slot's previous frame,
         // recycles its command lists, and resets its transient ring slice.
         void BeginFrame(uint32 SlotIndex);
 
-        // Render thread. Submits graphics work for the current slot and signals
+        // Thread-safe. Submits graphics work for the current slot and signals
         // the frame timeline so BeginFrame can pace slot reuse.
         void Submit(FCmdListH CommandList);
 
@@ -54,7 +54,7 @@ namespace Lumina::RHI
         // device. Backs the public RHI::SubmitAndWait; see it for the deadlock rationale.
         void SubmitAndWait(FCmdListH CommandList);
 
-        // Render thread. Presents FinalCommandList to the swapchain: signals the
+        // Presents FinalCommandList to the swapchain: signals the
         // frame timeline (paces BeginFrame) + recycles the list with the slot.
         bool Present(FSwapchainH Swapchain, FCmdListH FinalCommandList);
 
@@ -83,7 +83,7 @@ namespace Lumina::RHI
         // Frees the memory once every in-flight frame has retired. Thread-safe.
         //
         // ExtraFrames holds it longer, for memory whose address can still be referenced by work submitted
-        // AFTER the free was queued. kFramesInFlight only covers frames already in flight; a game-thread
+        // AFTER the free was queued. kFramesInFlight only covers frames already in flight; a CPU-side
         // cache that hands out the old address for another tick needs that tick counted too.
         RUNTIME_API void DeferredFree(GPUPtr Memory, uint32 ExtraFrames = 0);
 

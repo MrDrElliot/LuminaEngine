@@ -6,7 +6,6 @@
 #include "Core/Engine/GameInstance.h"
 #include "Core/Profiler/Profile.h"
 #include "Physics/PhysicsThread.h"
-#include "Renderer/RenderThread.h"
 #include "TaskSystem/TaskSystem.h"
 
 
@@ -22,9 +21,6 @@ namespace Lumina
 
     FWorldManager::~FWorldManager()
     {
-        // Render thread iterates Contexts in RenderWorlds; drain before we touch them.
-        FlushRenderingCommands();
-
         // Worker holds raw CWorld*; drain before teardown.
         WaitForPhysics();
 
@@ -158,7 +154,6 @@ namespace Lumina
             {
                 Renderer->RenderView(FrameIndex);
             }
-            Renderer->SignalFrameConsumed(FrameIndex);
         };
 
         // Parallel only earns its keep with multiple live worlds (editor multi-view); a single world
@@ -201,7 +196,6 @@ namespace Lumina
 
         FWorldContext* Raw = Context.get();
         
-        FlushRenderingCommands();
         Contexts.push_back(Move(Context));
 
         World->OwningContext = Raw;
@@ -228,9 +222,6 @@ namespace Lumina
         {
             return;
         }
-
-        // Flush before mutating Contexts: render thread iterates it.
-        FlushRenderingCommands();
 
         for (size_t i = 0; i < Contexts.size(); ++i)
         {

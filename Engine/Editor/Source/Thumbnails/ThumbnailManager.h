@@ -29,7 +29,7 @@ namespace Lumina
         using FThumbnailRendererFn = TFunction<void(FThumbnailScene&, CObject* /*Asset*/)>;
 
         // Fills Out's RGBA8 image directly -- no world, no GPU, no readback. For assets whose thumbnail is a
-        // DRAWING rather than a view of something (a curve, a gradient). Runs on the game thread with the
+        // DRAWING rather than a view of something (a curve, a gradient). Runs on Extract with the
         // asset resident, exactly like a renderer. Returns false to decline (falls through to the renderer
         // path, then to the generic icon).
         using FThumbnailPainterFn = TFunction<bool(CObject* /*Asset*/, uint32 /*Size*/, FPackageThumbnail& /*Out*/)>;
@@ -45,7 +45,7 @@ namespace Lumina
         // A miss kicks off async resolve/generation in the background; callers show a generic icon meanwhile.
         FPackageThumbnail* GetThumbnailForPackage(const FName& Package);
 
-        // Game-thread pump: render up to Budget queued thumbnails this frame, and apply any pending
+        // Extract-phase pump: render up to Budget queued thumbnails this frame, and apply any pending
         // invalidations. Call once per frame from the editor update.
         void ProcessRenderQueue(uint32 Budget = 1);
 
@@ -77,7 +77,7 @@ namespace Lumina
 
         // A resolved asset that has a renderer but no cached/embedded thumbnail, so it must be rendered. The
         // thumbnail path NEVER loads the object itself -- loading a CObject off-thread races the editor's
-        // loader on the same non-atomic object (torn FMeshResource -> crash). Instead the game-thread drain
+        // loader on the same non-atomic object (torn FMeshResource -> crash). Instead the extract-phase drain
         // renders it only once it is ALREADY resident + fully loaded (e.g. it's in the open level, or the user
         // opened it); non-resident requests are deferred and re-checked cheaply. DeferChecks bounds that wait.
         struct FRenderRequest
@@ -116,7 +116,7 @@ namespace Lumina
         FSharedMutex ThumbnailLock;
         THashMap<FName, TUniquePtr<FThumbnailRecord>> Thumbnails;
 
-        // Render requests produced by worker resolve tasks, drained by the game-thread ProcessRenderQueue
+        // Render requests produced by worker resolve tasks, drained by the extract-phase ProcessRenderQueue
         // (which renders only resident assets and re-queues the rest). Guarded because workers push to it.
         FMutex                  RenderQueueMutex;
         TVector<FRenderRequest> RenderQueue;

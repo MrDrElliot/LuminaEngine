@@ -5,7 +5,6 @@
 #include "Core/Object/ObjectCore.h"
 #include "Core/Object/Package/Thumbnail/PackageThumbnail.h"
 #include "Renderer/RenderManager.h"
-#include "Renderer/RenderThread.h"
 #include "Renderer/RHI.h"
 #include "Renderer/RHIUpload.h"
 #include "World/WorldTypes.h"
@@ -145,17 +144,12 @@ namespace Lumina
             return false;
         }
 
-        // Flush so the thumbnail world (created in Begin) is realized before we render it.
-        FlushRenderingCommands();
-
         // Drive the mesh resolve to a fixed point BEFORE extracting. The resolve pre-pass defers
         // anything it cannot finish to the next frame, which the normal loop absorbs invisibly -- but
         // this capture renders exactly one frame and reads it straight back, so a deferred mesh is not
         // "late", it is missing from the image. That is the empty-world thumbnail.
         static_cast<FForwardRenderScene*>(World->GetRenderer())->SettleResolveWork();
 
-        // Extract reads the ECS (game thread) and bumps the frame slot's Produced count;
-        // SignalFrameConsumed below balances it or the next capture deadlocks.
         const uint8 FrameIndex = (uint8)GRenderManager->GetCurrentFrameIndex();
         World->Extract();
 
@@ -164,8 +158,6 @@ namespace Lumina
         uint32 SourceHeight = 0;
         RHI::GPUPtr Readback = 0;
 
-        // Submit on the render thread (the sole graphics submitter) so we never race the
-        // swapchain frame. Capture is game-thread only, so EnqueueAndWait can't self-deadlock.
         auto RecordCapture = [&]()
         {
             // This render bypasses the frame pipeline, and queued RHI uploads only become resident at
@@ -173,7 +165,7 @@ namespace Lumina
             // asset being thumbnailed, or scene meshes streaming in) still has its meshlet header/bounds
             // copies pending -- rendering now would make CullMeshlets read uninitialized header memory
             // and chase a null Bounds address (GPU MMU page fault at a near-zero VA). Flush them first;
-            // we run on the render drain (the sole graphics submitter), so the extra submit is ordered.
+            // the extra submit is ordered ahead of this frame's rendering.
             RHI::FlushUploadsAndWait();
 
             IRenderScene* Scene = World->GetRenderer();
@@ -195,29 +187,15 @@ namespace Lumina
             RHI::CmdBarrier(CL, RHI::EStageFlags::AllCommands, RHI::EStageFlags::Transfer);
             RHI::CmdCopyTextureToMemory(CL, Output.Texture, RHI::FTextureSlice{}, Readback, SourceWidth);
             RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
-            // Wait only on THIS copy's completion, not the whole device. A WaitDeviceIdle here (we run inside a
-            // render-thread command) stalls on unrelated in-flight frame work while holding the cooperative
-            // drain, which hangs the next FlushRenderingCommands -- e.g. opening a material editor.
+            // Wait only on THIS copy's completion, not the whole device: a WaitDeviceIdle here would
+            // stall on unrelated in-flight frame work.
             RHI::SubmitAndWait(CL);
             RHI::ResetCommandList(CL);
 
             bCaptured = true;
         };
 
-        if (GRenderThread != nullptr && GRenderThread->IsRunning())
-        {
-            GRenderThread->EnqueueAndWait("ThumbnailCapture", [&RecordCapture]() { RecordCapture(); });
-        }
-        else
-        {
-            RecordCapture();
-        }
-
-        // Balance the Produced++ that Extract did, since we bypassed the render lambda.
-        if (IRenderScene* Scene = World->GetRenderer())
-        {
-            Scene->SignalFrameConsumed(FrameIndex);
-        }
+        RecordCapture();
 
         if (!bCaptured || Readback == 0)
         {

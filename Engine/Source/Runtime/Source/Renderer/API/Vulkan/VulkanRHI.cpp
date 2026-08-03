@@ -484,8 +484,8 @@ namespace Lumina::RHI
 #endif
     };
 
-    // A window-system surface awaiting a swapchain. Lives only between CreateSurface (window thread)
-    // and CreateSwapchain (render thread), which moves the VkSurfaceKHR into the swapchain.
+    // A window-system surface awaiting a swapchain. Lives only between CreateSurface and
+    // CreateSwapchain, which moves the VkSurfaceKHR into the swapchain.
     struct FSurface
     {
         VkSurfaceKHR Surface = VK_NULL_HANDLE;
@@ -3814,6 +3814,91 @@ namespace Lumina::RHI
 
         auto VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
         vkCmdClearColorImage(VkCmdBuf, TextureData.Image, VK_IMAGE_LAYOUT_GENERAL, &Clear, 1, &Range);
+    }
+
+    // Narrowest access set that covers the given stages. CmdBarrier uses MEMORY_READ|MEMORY_WRITE because it
+    // is a global barrier with no resource to reason about; an image barrier can and should be precise, and
+    // the precision is the entire point (see CmdImageBarrier).
+    static VkAccessFlags2 AccessForStages(EStageFlags Stages)
+    {
+        VkAccessFlags2 Access = 0;
+
+        if (EnumHasAnyFlags(Stages, EStageFlags::AllCommands))
+        {
+            return VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+        }
+        if (EnumHasAnyFlags(Stages, EStageFlags::FragmentTests))
+        {
+            Access |= VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        }
+        if (EnumHasAnyFlags(Stages, EStageFlags::RasterColorOut))
+        {
+            Access |= VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+        }
+        if (EnumHasAnyFlags(Stages, EStageFlags::Compute | EStageFlags::PixelShader | EStageFlags::VertexShader |
+                                    EStageFlags::MeshShader | EStageFlags::TaskShader))
+        {
+            Access |= VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT;
+        }
+        if (EnumHasAnyFlags(Stages, EStageFlags::Transfer))
+        {
+            Access |= VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        }
+        if (EnumHasAnyFlags(Stages, EStageFlags::Host))
+        {
+            Access |= VK_ACCESS_2_HOST_READ_BIT | VK_ACCESS_2_HOST_WRITE_BIT;
+        }
+        if (EnumHasAnyFlags(Stages, EStageFlags::IndirectArguments))
+        {
+            Access |= VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT;
+        }
+
+        return Access != 0 ? Access : (VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
+    }
+
+    void CmdImageBarrier(FCmdListH CL, FTextureH Texture, EStageFlags Before, EStageFlags After)
+    {
+        if (!IsValid(Texture))
+        {
+            return;
+        }
+
+        const FTexture& TextureData = GDevice->Textures[Texture];
+
+        // GENERAL on both sides: the layout is not what we are after, the named-image dependency is.
+        VkImageMemoryBarrier2 BarrierInfo
+        {
+            .sType                  = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+            .pNext                  = nullptr,
+            .srcStageMask           = ToVkPipelineState(Before),
+            .srcAccessMask          = AccessForStages(Before),
+            .dstStageMask           = ToVkPipelineState(After),
+            .dstAccessMask          = AccessForStages(After),
+            .oldLayout              = VK_IMAGE_LAYOUT_GENERAL,
+            .newLayout              = VK_IMAGE_LAYOUT_GENERAL,
+            .srcQueueFamilyIndex    = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex    = VK_QUEUE_FAMILY_IGNORED,
+            .image                  = TextureData.Image,
+            .subresourceRange =
+                {
+                    .aspectMask     = AspectsForFormat(TextureData.Format),
+                    .baseMipLevel   = 0,
+                    .levelCount     = VK_REMAINING_MIP_LEVELS,
+                    .baseArrayLayer = 0,
+                    .layerCount     = VK_REMAINING_ARRAY_LAYERS
+                }
+        };
+
+        VkDependencyInfo DepInfo
+        {
+            .sType                      = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+            .pNext                      = nullptr,
+            .dependencyFlags            = 0,
+            .imageMemoryBarrierCount    = 1,
+            .pImageMemoryBarriers       = &BarrierInfo
+        };
+
+        vkCmdPipelineBarrier2(GDevice->CommandLists[CL].CommandBuffer, &DepInfo);
     }
 
     void CmdBarrier(FCmdListH CL, EStageFlags Before, EStageFlags After)

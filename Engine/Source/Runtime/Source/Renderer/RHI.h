@@ -16,7 +16,7 @@ namespace Lumina::RHI
     constexpr auto kImageBindingSlot            = 1;
     constexpr auto kRWImageBindingSlot          = 2;
 
-    constexpr auto kFramesInFlight              = 3;
+    constexpr auto kFramesInFlight              = 2;
     constexpr auto kMaxTextureHeapSize          = INT16_MAX;
     constexpr auto kMaxNumSamplers              = 4000;
     constexpr auto kMaxNumTextureHeaps          = 1024;
@@ -496,7 +496,7 @@ namespace Lumina::RHI
     RUNTIME_API void        FreeH(FSurfaceH Surface);
 
     // Window-system surface. MUST be created on the thread that owns the window (GLFW's window calls
-    // are main-thread only), then handed to the render thread to build a swapchain on. CreateSwapchain
+    // are main-thread only), then consumed by CreateSwapchain to build a swapchain on. CreateSwapchain
     // consumes the handle and takes ownership of the surface; FreeH is for a surface whose window died
     // before a swapchain was ever built.
     RUNTIME_API FSurfaceH    CreateSurface(void* WindowHandle);
@@ -565,6 +565,14 @@ namespace Lumina::RHI
     RUNTIME_API void        CmdClearTextureUInt(FCmdListH CL, FTextureH Texture, const uint32 Value[4]);
 
     RUNTIME_API void        CmdBarrier(FCmdListH CL, EStageFlags Before, EStageFlags After);
+
+    // Image-scoped barrier. Access masks are derived from the stages, so unlike CmdBarrier this NAMES the
+    // image and tells the driver what it is about to be used for. Under VK_KHR_unified_image_layouts the
+    // layout stays GENERAL either way -- that extension drops layout transitions, not image barriers, and
+    // its proposal is explicit that they are "still required for best performance on some hardware, even
+    // if both src and dst layouts are VK_IMAGE_LAYOUT_GENERAL". On NVIDIA that signal is what lets a depth
+    // target sit in its compressed, ZCULL-capable state instead of the conservative one.
+    RUNTIME_API void        CmdImageBarrier(FCmdListH CL, FTextureH Texture, EStageFlags Before, EStageFlags After);
 
     // Canonical pipeline-stage barriers.
     namespace Barriers

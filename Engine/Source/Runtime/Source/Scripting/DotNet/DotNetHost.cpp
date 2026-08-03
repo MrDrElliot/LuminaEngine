@@ -1171,7 +1171,7 @@ namespace Lumina::DotNet
             bEditorFollowups ? "compiling" : "loading", Units.size(), TotalFiles);
 
         // Managed render scenes hold GCHandles into the generation about to unload; tear their worlds'
-        // renderers down first (flushes the render thread) so nothing dispatches into a dead ALC.
+        // renderers down first (waits for the GPU) so nothing dispatches into a dead ALC.
         ManagedRenderScenes::PreScriptUnload();
 
         const int32 Result = GManaged.LoadScripts(Units.empty() ? nullptr : Units.data(), (int32)Units.size());

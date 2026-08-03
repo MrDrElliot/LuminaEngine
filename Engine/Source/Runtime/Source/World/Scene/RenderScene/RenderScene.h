@@ -18,8 +18,8 @@ namespace Lumina
      * so a project or plugin can replace the default (FForwardRenderScene) with its own
      * implementation -- see RenderSceneFactory.h.
      *
-     * Threading contract: Extract runs on the game thread; PrepareRender / RenderView /
-     * SignalFrameConsumed run on the render thread. Everything else is game thread unless noted.
+     * Threading contract: Extract, then PrepareRender, then RenderView, all on the same thread in
+     * the same frame. Parallelism comes from the job system inside each, not from pipelining.
      *
      * Only the pure-virtual core is required. Every optional feature (picking, capture views,
      * post-process, debug draw, shadow atlas) defaults to "not supported" so a minimal renderer
@@ -41,11 +41,10 @@ namespace Lumina
         // each class's destructor releases what it owns, so there is no Shutdown() to pair with it.
         virtual void Init() = 0;
 
-        // Game thread, populate the frame slot's snapshot. N-buffered so Extract and RenderView run
-        // concurrently; Extract back-pressures on the slot's consumed fence.
+        // Gather this frame's scene from the ECS.
         virtual void Extract(const FViewVolume& ViewVolume, const SPostProcessSettings* PostProcess) = 0;
 
-        // Render thread, record + submit this frame's rendering. Safe to run concurrently across scenes
+        // Record + submit this frame's rendering. Safe to run concurrently across scenes
         // (each opens its own command list; shared RHI creation is internally locked).
         virtual void RenderView(uint8 FrameIndex) = 0;
 
@@ -58,13 +57,10 @@ namespace Lumina
 
         //~ Frame hooks ---------------------------------------------------------------------
 
-        // Render thread, serial: device-wide reconciliation that can't run while other scenes record
-        // (e.g. WaitDeviceIdle-guarded resource recreation). Runs for every scene before the parallel
+        // Serial: device-wide reconciliation that can't run while other scenes record (e.g.
+        // WaitDeviceIdle-guarded resource recreation). Runs for every scene before the parallel
         // RenderView pass, so RenderView can record off-thread.
         virtual void PrepareRender(uint8 FrameIndex) {}
-
-        // Render thread: release the slot after the last CPU read for this frame.
-        virtual void SignalFrameConsumed(uint8 FrameIndex) {}
 
         // Post-process material chain for this frame, resolved by the world from the active camera +
         // volumes. Not retained across frames -- the world rebuilds the list each tick.

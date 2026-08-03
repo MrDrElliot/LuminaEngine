@@ -32,6 +32,13 @@ public class Reflector : ModuleRules
         PublicLibraryPaths.Add(ModulePath("../../../External/LLVM/lib"));
         PublicLibraryPaths.Add(ModulePath("../../../External/LLVM/bin"));
 
+        // Stage the vendored libclang next to Reflector.exe. The application directory beats PATH in the
+        // Windows DLL search, so this pins the parse to LLVM 19 instead of whatever the host happens to
+        // have installed -- an older system libclang loads fine and then dies mid-parse on modern C++.
+        // Deliberately NOT optional: a missing copy means Setup never fetched External/LLVM, and failing
+        // here names the file instead of surfacing as an access violation inside the Reflector.
+        AddRuntimeDependency("../../../External/LLVM/bin/libclang.dll");
+
         PublicSystemLibraries.AddRange(new[]
         {
             "clangBasic",

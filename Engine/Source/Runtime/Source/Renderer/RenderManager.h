@@ -48,16 +48,16 @@ namespace Lumina
 
         void Initialize();
 
-        // Game thread: ImGui::NewFrame (and any other backend per-frame init).
+        // ImGui::NewFrame (and any other backend per-frame init).
         void FrameStart(const FUpdateContext& UpdateContext);
 
-        // Game thread: snapshot ImGui DrawData and enqueue the render-thread pipeline (world + RmlUi
-        // + ImGui composite). Per-world UI must already have ticked (CWorld::Extract).
+        // Record + submit the frame: worlds, RmlUi, ImGui composite, present. Per-world UI must
+        // already have ticked (CWorld::Extract).
         void FrameEnd();
 
         void SwapchainResized(FVector2 NewSize);
 
-        // Render thread: rebuild the primary swapchain (vsync / present-mode change).
+        // Rebuild the primary swapchain (vsync / present-mode change).
         RUNTIME_API void RecreatePrimarySwapchain();
 
 
@@ -76,9 +76,9 @@ namespace Lumina
         
         void OnWindowResized(FWindow* Window, const FUIntVector2& Extent);
 
-        // Render thread: rebuild the swapchain + every render target for the newest extent recorded by
+        // Rebuild the swapchain + every render target for the newest extent recorded by
         // OnWindowResized, at most once per frame. See the comment there for why this is coalesced.
-        void ApplyPendingResize_RenderThread();
+        void ApplyPendingResize();
 
         #if WITH_EDITOR
         IImGuiRenderer*                     ImGuiRenderer = nullptr;
@@ -97,8 +97,8 @@ namespace Lumina
 
         FDelegateHandle                     WindowResizedHandle;
 
-        // Newest extent seen by OnWindowResized, packed (x << 32) | y. 0 = nothing pending. Written on
-        // the window thread, consumed by the render thread once per frame.
+        // Newest extent seen by OnWindowResized, packed (x << 32) | y. 0 = nothing pending. Coalesced
+        // so a burst of resize events costs one rebuild, applied once per frame in FrameEnd.
         std::atomic<uint64>                 PendingResizeExtent = 0;
 
         uint8                               CurrentFrameIndex = 0;

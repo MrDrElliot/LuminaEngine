@@ -14,7 +14,6 @@
 #include "Memory/Memcpy.h"
 #include "Renderer/RHICore.h"
 #include "Renderer/RHITexture.h"
-#include "Renderer/RenderThread.h"
 #include "Tools/Import/ImportHelpers.h"
 
 namespace Lumina
@@ -46,8 +45,8 @@ namespace Lumina
         IO.BackendFlags |= ImGuiBackendFlags_RendererHasViewports;  // we drive secondary-window swapchains
 
         // Multi-viewport: ImGui strips ViewportsEnable on the first NewFrame unless both Platform and
-        // Renderer advertise viewport support. We render secondary viewports ourselves (capture on the
-        // game thread, present on the render thread), so only the window-lifecycle hooks are registered;
+        // Renderer advertise viewport support. We render secondary viewports ourselves in
+        // RenderSecondaryViewports, so only the window-lifecycle hooks are registered;
         // RenderPlatformWindowsDefault is intentionally not used.
         ImGuiPlatformIO& PlatformIO = ImGui::GetPlatformIO();
         PlatformIO.Renderer_CreateWindow  = &FVulkanImGuiRender::OnRendererCreateWindow;
@@ -79,16 +78,10 @@ namespace Lumina
         }
         PathTextures.clear();
 
-        for (TVector<FCapturedViewport>& Slot : SecondaryCaptures)
-        {
-            Slot.clear();
-        }
-
         // ImGui_ImplGlfw_Shutdown / DestroyContext tear down any remaining secondary windows, which
         // calls OnRendererDestroyWindow back into us; keep GImGuiBackend valid until after.
         ImGui_ImplGlfw_Shutdown();
         ImPlot::DestroyContext();
-        ClearSnapshots();
         ImGui::DestroyContext();
         GImGuiBackend = nullptr;
     }
@@ -107,7 +100,7 @@ namespace Lumina
         }
     }
 
-    void FVulkanImGuiRender::ProcessTextureUpdates_GameThread()
+    void FVulkanImGuiRender::ProcessTextureUpdates()
     {
         LUMINA_PROFILE_SCOPE();
         FRecursiveScopeLock Lock(Mutex);
@@ -153,9 +146,9 @@ namespace Lumina
         }
     }
 
-    void FVulkanImGuiRender::OnEndFrame_NewRHI(RHI::FCmdListH CL, RHI::FTextureH Target, const FUIntVector2& Extent, FImDrawDataSnapshot& Snapshot)
+    void FVulkanImGuiRender::OnEndFrame_NewRHI(RHI::FCmdListH CL, RHI::FTextureH Target, const FUIntVector2& Extent, ImDrawData* DrawData)
     {
-        RecordDrawData_NewRHI(CL, Snapshot.GetDrawData(), Target, Extent);
+        RecordDrawData_NewRHI(CL, DrawData, Target, Extent);
     }
 
     void FVulkanImGuiRender::RecordDrawData_NewRHI(RHI::FCmdListH CL, ImDrawData* DrawData, RHI::FTextureH Target, const FUIntVector2& Extent)
@@ -197,9 +190,13 @@ namespace Lumina
 
         RHI::CmdBeginRenderPass(CL, Pass);
 
-        const float FBW = (float)Extent.x;
-        const float FBH = (float)Extent.y;
+        RecordDrawLists(CL, DrawData, (float)Extent.x, (float)Extent.y);
 
+        RHI::CmdEndRenderPass(CL);
+    }
+
+    void FVulkanImGuiRender::RecordDrawLists(RHI::FCmdListH CL, ImDrawData* DrawData, float FBW, float FBH)
+    {
         if (DrawData != nullptr && DrawData->TotalVtxCount > 0 && DrawData->TotalIdxCount > 0 && FBW > 0.0f && FBH > 0.0f && NewPipeline)
         {
             const int32 TotalVtx = DrawData->TotalVtxCount;
@@ -270,8 +267,6 @@ namespace Lumina
                 GlobalIdx += List->IdxBuffer.Size;
             }
         }
-
-        RHI::CmdEndRenderPass(CL);
     }
 
     void FVulkanImGuiRender::OnRendererCreateWindow(ImGuiViewport* Viewport)
@@ -281,9 +276,8 @@ namespace Lumina
             return;
         }
 
-        // The swapchain is created lazily on the render thread (first RenderCapturedViewport), but the
-        // window-system surface is created here: GLFW's window calls are main-thread only, and the
-        // render thread must not touch a GLFWwindow the platform backend may be creating or destroying.
+        // The swapchain is built lazily on first render (RenderSecondaryViewport); the window-system
+        // surface is created here because GLFW's window calls are main-thread only.
         FImGuiViewportData* Data = IM_NEW(FImGuiViewportData)();
         Data->Window  = Viewport->PlatformHandle;
         Data->Surface = RHI::CreateSurface(Data->Window);
@@ -298,26 +292,8 @@ namespace Lumina
             return;
         }
 
-        // ImGui destroys the GLFW window (and its surface) right after this hook, so nothing on the
-        // render thread may still reference this viewport. Captures hold a raw FImGuiViewportData* and
-        // a torn-out window can be closed in the very frame it was first captured -- before its
-        // swapchain was ever built -- so the drain is unconditional, not gated on a valid swapchain.
-        // (Gating it left the render thread to read freed FImGuiViewportData and hand a dangling
-        // GLFWwindow* to glfwCreateWindowSurface inside RHI::CreateSwapchain.)
-        FlushRenderingCommands();
-
-        // Captured but not yet consumed: the capture happens before the frame's render command is
-        // enqueued, so a flush alone does not guarantee the slot was drained. Scrub explicitly.
-        if (GImGuiBackend != nullptr)
-        {
-            FRecursiveScopeLock Lock(GImGuiBackend->Mutex);
-            for (TVector<FCapturedViewport>& Slot : GImGuiBackend->SecondaryCaptures)
-            {
-                Slot.erase(std::remove_if(Slot.begin(), Slot.end(),
-                    [Data](const FCapturedViewport& Cap) { return Cap.Data == Data; }), Slot.end());
-            }
-        }
-
+        // ImGui destroys the GLFW window (and its surface) right after this hook. Recording is
+        // synchronous, so only submitted GPU work can still reference the swapchain.
         if (RHI::IsValid(Data->Swapchain))
         {
             RHI::WaitDeviceIdle();
@@ -325,7 +301,7 @@ namespace Lumina
         }
         else
         {
-            // Never reached the render thread: the surface is still ours to destroy. (CreateSwapchain
+            // Never rendered, so nothing consumed it: the surface is still ours to destroy. (CreateSwapchain
             // consumes the handle, so this must not run once a swapchain exists.)
             RHI::FreeH(Data->Surface);
         }
@@ -334,123 +310,50 @@ namespace Lumina
         Viewport->RendererUserData = nullptr;
     }
 
-    void FVulkanImGuiRender::CaptureSecondaryViewports_GameThread(uint8 FrameIndex)
+    void FVulkanImGuiRender::RenderSecondaryViewports()
     {
         LUMINA_PROFILE_SCOPE();
-
-        const uint8 Slot = FrameIndex % RHI::kFramesInFlight;
-        TVector<FCapturedViewport>& Captures = SecondaryCaptures[Slot];
-        Captures.clear();
 
         ImGuiPlatformIO& PlatformIO = ImGui::GetPlatformIO();
         for (int32 i = 1; i < PlatformIO.Viewports.Size; ++i)   // index 0 is the main viewport
         {
-            ImGuiViewport*      Viewport = PlatformIO.Viewports[i];
-            FImGuiViewportData* Data     = static_cast<FImGuiViewportData*>(Viewport->RendererUserData);
-            ImDrawData*         DrawData = Viewport->DrawData;
-            if (Data == nullptr || DrawData == nullptr || DrawData->TotalVtxCount == 0)
-            {
-                continue;
-            }
-
-            const float FbW = DrawData->DisplaySize.x * DrawData->FramebufferScale.x;
-            const float FbH = DrawData->DisplaySize.y * DrawData->FramebufferScale.y;
-            if (FbW <= 0.0f || FbH <= 0.0f)
-            {
-                continue;
-            }
-
-            Captures.emplace_back();
-            FCapturedViewport& Cap = Captures.back();
-            Cap.Data         = Data;
-            Cap.Scale[0]     = 2.0f / DrawData->DisplaySize.x;
-            Cap.Scale[1]     = 2.0f / DrawData->DisplaySize.y;
-            Cap.Translate[0] = -1.0f - DrawData->DisplayPos.x * Cap.Scale[0];
-            Cap.Translate[1] = -1.0f - DrawData->DisplayPos.y * Cap.Scale[1];
-            Cap.Extent       = FUIntVector2((uint32)FbW, (uint32)FbH);
-            Cap.Vertices.reserve(DrawData->TotalVtxCount);
-            Cap.Indices.reserve(DrawData->TotalIdxCount);
-
-            const ImVec2 ClipOff   = DrawData->DisplayPos;
-            const ImVec2 ClipScale = DrawData->FramebufferScale;
-            const uint32 DefaultTex = RHI::Textures::DefaultResourceID();
-            uint32 GlobalVtx = 0, GlobalIdx = 0;
-            for (int32 n = 0; n < DrawData->CmdListsCount; ++n)
-            {
-                const ImDrawList* List = DrawData->CmdLists[n];
-                Cap.Vertices.insert(Cap.Vertices.end(), List->VtxBuffer.Data, List->VtxBuffer.Data + List->VtxBuffer.Size);
-                Cap.Indices.insert(Cap.Indices.end(),   List->IdxBuffer.Data, List->IdxBuffer.Data + List->IdxBuffer.Size);
-
-                for (int32 c = 0; c < List->CmdBuffer.Size; ++c)
-                {
-                    const ImDrawCmd& Cmd = List->CmdBuffer[c];
-                    if (Cmd.UserCallback != nullptr)
-                    {
-                        continue;   // user callbacks aren't replayed for secondary viewports
-                    }
-
-                    const float MinX = std::max((Cmd.ClipRect.x - ClipOff.x) * ClipScale.x, 0.0f);
-                    const float MinY = std::max((Cmd.ClipRect.y - ClipOff.y) * ClipScale.y, 0.0f);
-                    const float MaxX = std::min((Cmd.ClipRect.z - ClipOff.x) * ClipScale.x, FbW);
-                    const float MaxY = std::min((Cmd.ClipRect.w - ClipOff.y) * ClipScale.y, FbH);
-                    if (MaxX <= MinX || MaxY <= MinY)
-                    {
-                        continue;
-                    }
-
-                    FCapturedCmd CC;
-                    CC.ClipMinX  = MinX; CC.ClipMinY = MinY; CC.ClipMaxX = MaxX; CC.ClipMaxY = MaxY;
-                    const int32 TexID = (int32)Cmd.GetTexID();
-                    CC.TextureID = (TexID >= 0) ? (uint32)TexID : DefaultTex;
-                    CC.ElemCount = Cmd.ElemCount;
-                    CC.IdxOffset = Cmd.IdxOffset + GlobalIdx;
-                    CC.VtxOffset = (int32)(Cmd.VtxOffset + GlobalVtx);
-                    Cap.Cmds.push_back(CC);
-                }
-                GlobalVtx += List->VtxBuffer.Size;
-                GlobalIdx += List->IdxBuffer.Size;
-            }
+            ImGuiViewport* Viewport = PlatformIO.Viewports[i];
+            RenderSecondaryViewport(static_cast<FImGuiViewportData*>(Viewport->RendererUserData), Viewport->DrawData);
         }
     }
 
-    void FVulkanImGuiRender::RenderSecondaryViewports_RenderThread(uint8 FrameIndex)
+    void FVulkanImGuiRender::RenderSecondaryViewport(FImGuiViewportData* Data, ImDrawData* DrawData)
     {
-        LUMINA_PROFILE_SCOPE();
-
-        const uint8 Slot = FrameIndex % RHI::kFramesInFlight;
-        for (FCapturedViewport& Cap : SecondaryCaptures[Slot])
-        {
-            RenderCapturedViewport(Cap);
-        }
-        SecondaryCaptures[Slot].clear();
-    }
-
-    void FVulkanImGuiRender::RenderCapturedViewport(FCapturedViewport& Cap)
-    {
-        FImGuiViewportData* Data = Cap.Data;
-        if (Data == nullptr || Data->Window == nullptr || Cap.Indices.empty() || Cap.Extent.x == 0 || Cap.Extent.y == 0)
+        if (Data == nullptr || Data->Window == nullptr || DrawData == nullptr || DrawData->TotalVtxCount == 0)
         {
             return;
         }
 
-        // Create / resize the secondary swapchain on the render thread (the only thread that touches
-        // the swapchain pool during a frame), tracking the built extent so a clamped surface doesn't
-        // thrash recreation every frame. The surface itself came from the game thread; consuming it
-        // here means no window-system call happens off the window's own thread.
+        const float ReqW = DrawData->DisplaySize.x * DrawData->FramebufferScale.x;
+        const float ReqH = DrawData->DisplaySize.y * DrawData->FramebufferScale.y;
+        if (ReqW <= 0.0f || ReqH <= 0.0f)
+        {
+            return;
+        }
+
+        const FUIntVector2 RequestedExtent((uint32)ReqW, (uint32)ReqH);
+
+        // Create / resize the secondary swapchain, tracking the built extent so a clamped surface
+        // doesn't thrash recreation every frame.
         if (!RHI::IsValid(Data->Swapchain))
         {
             if (!RHI::IsValid(Data->Surface))
             {
                 return;
             }
-            Data->Swapchain   = RHI::CreateSwapchain(Data->Surface, Cap.Extent);
+            Data->Swapchain   = RHI::CreateSwapchain(Data->Surface, RequestedExtent);
             Data->Surface     = RHI::FSurfaceH{};
-            Data->BuiltExtent = Cap.Extent;
+            Data->BuiltExtent = RequestedExtent;
         }
-        else if (Data->BuiltExtent != Cap.Extent)
+        else if (Data->BuiltExtent != RequestedExtent)
         {
-            RHI::RecreateSwapchain(Data->Swapchain, Cap.Extent);
-            Data->BuiltExtent = Cap.Extent;
+            RHI::RecreateSwapchain(Data->Swapchain, RequestedExtent);
+            Data->BuiltExtent = RequestedExtent;
         }
 
         // Surface collapsed to zero area (minimized / mid-drag) so the swapchain did not build; retry next frame.
@@ -464,8 +367,8 @@ namespace Lumina
         RHI::FTextureH Img = RHI::AcquireNextImage(Data->Swapchain);
         if (!RHI::IsValid(Img))
         {
-            RHI::RecreateSwapchain(Data->Swapchain, Cap.Extent);
-            Data->BuiltExtent = Cap.Extent;
+            RHI::RecreateSwapchain(Data->Swapchain, RequestedExtent);
+            Data->BuiltExtent = RequestedExtent;
             return;   // retry next frame
         }
 
@@ -487,52 +390,9 @@ namespace Lumina
         Pass.RenderArea       = ImgExtent;
         RHI::CmdBeginRenderPass(CL, Pass);
 
-        const float FBW = (float)ImgExtent.x;
-        const float FBH = (float)ImgExtent.y;
-
-        if (NewPipeline && FBW > 0.0f && FBH > 0.0f)
-        {
-            const size_t VBytes = Cap.Vertices.size() * sizeof(ImDrawVert);
-            const size_t IBytes = Cap.Indices.size()  * sizeof(uint16);
-            RHI::FTransientAlloc VB = RHI::Core::AllocTransient(VBytes, 16);
-            RHI::FTransientAlloc IB = RHI::Core::AllocTransient(IBytes, 4);
-            Memory::Memcpy(VB.Cpu, Cap.Vertices.data(), VBytes);
-            Memory::Memcpy(IB.Cpu, Cap.Indices.data(),  IBytes);
-
-            FNewImGuiArgs Args;
-            Args.Scale[0]     = Cap.Scale[0];
-            Args.Scale[1]     = Cap.Scale[1];
-            Args.Translate[0] = Cap.Translate[0];
-            Args.Translate[1] = Cap.Translate[1];
-            Args.SamplerIndex = (uint32)RHI::EStockSampler::LinearWrap;
-            Args.VertexAddr   = VB.Gpu;
-
-            RHI::CmdSetDepthStencilState(CL, NewDepthState.Get());
-            RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
-            RHI::CmdSetFrontFace(CL, RHI::EFrontFace::CCW);
-            RHI::CmdSetPipeline(CL, NewPipeline.Get());
-
-            for (const FCapturedCmd& CC : Cap.Cmds)
-            {
-                // Clip rects were captured against the requested size, which can exceed the clamped
-                // swapchain extent; re-clamp to the actual image.
-                const float MinX = std::min(CC.ClipMinX, FBW);
-                const float MinY = std::min(CC.ClipMinY, FBH);
-                const float MaxX = std::min(CC.ClipMaxX, FBW);
-                const float MaxY = std::min(CC.ClipMaxY, FBH);
-                if (MaxX <= MinX || MaxY <= MinY)
-                {
-                    continue;
-                }
-
-                RHI::CmdSetScissor(CL, RHI::FRect{ (int)MinX, (int)MaxX, (int)MinY, (int)MaxY });
-                Args.TextureID = CC.TextureID;
-                const RHI::GPUPtr ArgsPtr = RHI::Core::CopyTransient(Args);
-
-                RHI::CmdDrawIndexed(CL, IB.Gpu, 0, ArgsPtr, CC.ElemCount, 1,
-                                    CC.IdxOffset, CC.VtxOffset, 0, RHI::EIndexType::Uint16);
-            }
-        }
+        // Clip rects project against the actual image, which can be smaller than the requested size
+        // when the surface clamped.
+        RecordDrawLists(CL, DrawData, (float)ImgExtent.x, (float)ImgExtent.y);
 
         RHI::CmdEndRenderPass(CL);
         RHI::Core::Present(Data->Swapchain, CL);

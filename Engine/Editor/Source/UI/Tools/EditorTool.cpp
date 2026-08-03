@@ -24,7 +24,6 @@
 #include "Input/InputProcessor.h"
 #include "Input/InputViewport.h"
 #include "Renderer/RHI.h"
-#include "Renderer/RenderThread.h"
 #include "UI/RmlUiBridge.h"
 #include "World/WorldManager.h"
 #include "World/Entity/EntityUtils.h"
@@ -87,28 +86,19 @@ namespace Lumina
         const uint32 SourceHeight = Desc.Dimension.y;
         const RHI::GPUPtr Readback = RHI::Malloc((uint64)SourceWidth * SourceHeight * 4u, RHI::kDefaultAlign, RHI::EMemoryType::CPURead);
 
-        // Submit on the render thread (the sole graphics submitter) so this never
-        // races the in-flight frame's command lists.
         auto RecordCapture = [&]()
         {
             RHI::FCmdListH CL = RHI::OpenCommandList();
             RHI::CmdBarrier(CL, RHI::EStageFlags::AllCommands, RHI::EStageFlags::Transfer);
             RHI::CmdCopyTextureToMemory(CL, RenderTarget, RHI::FTextureSlice{}, Readback, SourceWidth);
             RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Host);
-            // Wait only on this copy, not the whole device (see RHI::SubmitAndWait): WaitDeviceIdle from inside
-            // a render-thread command wedges the cooperative drain and hangs later flushes.
+            // Wait only on this copy, not the whole device (see RHI::SubmitAndWait): a WaitDeviceIdle
+            // here would stall on unrelated in-flight frame work.
             RHI::SubmitAndWait(CL);
             RHI::ResetCommandList(CL);
         };
 
-        if (GRenderThread != nullptr && GRenderThread->IsRunning())
-        {
-            GRenderThread->EnqueueAndWait("ToolThumbnailCapture", [&RecordCapture]() { RecordCapture(); });
-        }
-        else
-        {
-            RecordCapture();
-        }
+        RecordCapture();
 
         if (const void* MappedMemory = RHI::ToHost(Readback))
         {

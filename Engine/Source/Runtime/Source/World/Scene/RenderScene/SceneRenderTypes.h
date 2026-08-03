@@ -868,7 +868,22 @@ namespace Lumina
         FGPUFrustum Frustum;
         FGPUFrustum ShadowFrustum;
 
+        // Per-cascade CASTER volume: the camera sub-frustum slice that cascade i actually shades, swept
+        // toward the sun. This is NOT the cascade's own ortho box -- that box is fitted to a sphere around
+        // the slice, and because the sphere's radius is dominated by the slice's lateral extent, the outer
+        // boxes fully CONTAIN the inner ones. Culling on the box alone therefore put nearly every caster in
+        // every cascade. The slice volume does not nest, so a caster lands only in the cascades that shade it.
         FGPUFrustum CascadeFrustum[NumCascades];
+
+        // Cascade Hi-Z reprojection. These describe the cascade transforms that produced the CURRENT
+        // contents of the cascade pyramid, i.e. LAST frame's -- the pyramid is built after the shadow
+        // raster, so this frame's cull can only test against the previous one.
+        FMatrix4 CascadeHZBViewProjection[NumCascades];
+        // xy = pyramid-UV offset of the cascade's tile, zw = its UV scale.
+        FVector4 CascadeHZBTile[NumCascades];
+        // xyz = NDC units per world unit for that cascade's ortho volume (x/y = 1/Radius, z = 1/OrthoRange).
+        // Avoids reconstructing the scale from the matrix rows in the shader.
+        FVector4 CascadeHZBNdcScale[NumCascades];
 
         uint32 bFrustumCull;
         uint32 bOcclusionCull;
@@ -892,7 +907,21 @@ namespace Lumina
         uint32 MeshletDrawListCapacity;
         // Bindless ResourceID of the depth pyramid; HZB tap goes through uBindlessTex2D.
         uint32 DepthPyramidIndex;
+
+        // Cascade Hi-Z pyramid: MAX-reduced (the cascade atlas is standard-Z, unlike the camera's
+        // reverse-Z pyramid). 0 in bCascadeHZBValid means nothing has been rendered into it yet and every
+        // cascade occlusion test must pass.
+        uint32 CascadePyramidIndex;
+        uint32 bCascadeHZBValid;
+        float  CascadePyramidWidth;
+        float  CascadePyramidHeight;
+        uint32 CascadePyramidMipCount;
+        uint32 _CullPad0;
+        uint32 _CullPad1;
+        uint32 _CullPad2;
     };
+
+    VERIFY_SSBO_ALIGNMENT(FCullData)
 
     // Bits inside FCullView::Flags. Must match CULL_VIEW_FLAG_* in Common.slang.
     namespace ECullViewFlags
@@ -907,6 +936,9 @@ namespace Lumina
             CastShadowOnly  = BIT(4),
             SunAligned      = BIT(5),
             PhaseLate       = BIT(6),
+            // CSM cascade: also test CullData.CascadeFrustum[CascadeIndex] (the tight, non-nested caster
+            // volume) and the cascade Hi-Z, and reject bounds smaller than MinBoundsDiameter.
+            Cascade         = BIT(7),
         };
     }
 
@@ -925,11 +957,11 @@ namespace Lumina
     {
         FVector4   FrustumPlanes[6];           // 96 B
         FVector4   ViewOriginAndFlags;         // 16 B: xyz=origin, w=asfloat(flags)
-        // Draw-list geometry used to live here as an equal per-view slice. It is now a packed
-        // per-(view, draw) region computed on the GPU, so these two are reserved padding. Kept rather than
-        // removed to preserve the 128-byte stride CullViews()[v] indexes with in both mirrors.
-        uint32      _ReservedA;
-        uint32      _ReservedB;
+        // These two were the draw list's per-view slice before it became a GPU-packed per-(view, draw)
+        // region; they were left as reserved padding to hold the 128-byte stride. The cascade cull reuses
+        // them rather than growing the struct.
+        uint32      CascadeIndex;               // Cascade this view rasterizes; only read when Flags has Cascade
+        float       MinBoundsDiameter;          // Reject bounds thinner than this (world units); 0 = off
         uint32      IndirectArgsOffset;         // v * NumDraws
         uint32      NumDraws;                   // Number of indirect slots owned by this view
     };
@@ -1071,6 +1103,10 @@ namespace Lumina
 
         // Camera LOD + bias picks shadow LOD; capped at MAX_SHADOW_LOD. 0 = no saving, 1-2 typical.
         int8  ShadowLODBias             = 1;
+
+        // Past this distance a caster may take MAX_COARSE_SHADOW_LOD instead of MAX_SHADOW_LOD. Only the
+        // far cascades reach out here, and their texel pitch hides the sloppy LODs' holes. 0 disables.
+        float ShadowCoarseLODDistance   = 150.0f;
     };
     
 }

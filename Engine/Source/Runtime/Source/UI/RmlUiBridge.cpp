@@ -990,7 +990,7 @@ namespace Lumina::RmlUi
             // an animation/transition (incl. delayed) is pending. Huge => idle => dormancy-eligible.
             R.bRmlIdle = (R.Context->GetNextUpdateDelay() > 1.0e6);
 
-            // Queue for the render thread (R.ResourceID is read by the scene gather directly).
+            // Queue for the render phase (R.ResourceID is read by the scene gather directly).
             if (R.Document != nullptr && R.Target.IsValid())
             {
                 UI->WidgetJobs.push_back(FWidgetRenderJob{ R.Context, R.Target.Texture, R.BuiltSize });

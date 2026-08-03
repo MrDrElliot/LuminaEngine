@@ -36,6 +36,7 @@ static const float INV_PI = 0.31830988618;
 #define CULL_VIEW_FLAG_CAST_SHADOW_ONLY BIT(4)
 #define CULL_VIEW_FLAG_SUN_ALIGNED      BIT(5)
 #define CULL_VIEW_FLAG_PHASE_LATE       BIT(6)
+#define CULL_VIEW_FLAG_CASCADE          BIT(7)
 
 // CullMeshlets phase: 0 walks all instance/meshlet pairs (emit or defer occluded);
 // 1 walks only the defer list and re-tests against the freshly-built HZB.
@@ -222,6 +223,9 @@ struct FCustomPrimitiveData
 #define MESHLET_MAX_LODS      6
 // Matches Lumina::MAX_SHADOW_LOD: shadow views never take a LOD past this, however far the bias pushes.
 #define MESHLET_MAX_SHADOW_LOD 3
+// Matches Lumina::MAX_COARSE_SHADOW_LOD: the cap past ShadowCoarseLODDistance, where one cascade texel is
+// wide enough that a sloppy LOD's holes stay sub-texel.
+#define MESHLET_MAX_COARSE_SHADOW_LOD 5
 
 // Mirror of Lumina::FSurfaceDescGPU (80 B). Per-surface LOD table, interned per distinct resolved
 // surface, so CullInstances can pick the LOD the CPU gather used to pick.
@@ -533,10 +537,10 @@ struct FCullView
 {
     float4 FrustumPlanes[6];   // 96B
     float4 ViewOriginAndFlags; // 16B: xyz=origin (camera / light pos), w=asuint(flags)
-    // Reserved padding: the draw list is no longer sliced per view, so nothing reads these. Kept to
-    // preserve the struct stride shared with FCullView in SceneRenderTypes.h.
-    uint   _ReservedA;
-    uint   _ReservedB;
+    // Formerly reserved padding (the draw list stopped being sliced per view). Reused by the cascade cull
+    // so the struct keeps the 128-byte stride it shares with FCullView in SceneRenderTypes.h.
+    uint   CascadeIndex;       // Only meaningful when Flags has CULL_VIEW_FLAG_CASCADE
+    float  MinBoundsDiameter;  // Reject bounds thinner than this (world units); 0 = off
     uint   IndirectArgsOffset; // Into uIndirectArgs (v * NumDraws)
     uint   NumDraws;           // Number of indirect slots owned by this view
 
@@ -550,7 +554,13 @@ struct FCullData
 {
     FFrustum Frustum;
     FFrustum ShadowFrustum;
+    // Tight per-cascade CASTER volume (camera sub-frustum slice swept toward the sun). Not the cascade's
+    // ortho box -- those nest, so culling on them alone put every caster in every cascade.
     FFrustum CascadeFrustum[NUM_CASCADES];
+    // Cascade transforms that produced the pyramid's CURRENT contents (last frame's).
+    float4x4 CascadeHZBViewProjection[NUM_CASCADES];
+    float4   CascadeHZBTile[NUM_CASCADES];      // xy = pyramid-UV offset of the tile, zw = UV scale
+    float4   CascadeHZBNdcScale[NUM_CASCADES];  // xyz = NDC units per world unit
     uint     bFrustumCull;
     uint     bOcclusionCull;
     uint     InstanceNum;
@@ -564,6 +574,16 @@ struct FCullData
     uint     DebugMode;
     uint     MeshletDrawListCapacity;   // entries in MeshletDrawList(); an index bound, not a frame total
     uint     DepthPyramidIndex;
+    // Cascade Hi-Z: MAX-reduced, because the cascade atlas is standard-Z (the camera pyramid is reverse-Z
+    // and MIN-reduced). Invalid until the first cascade raster has been pyramided.
+    uint     CascadePyramidIndex;
+    uint     bCascadeHZBValid;
+    float    CascadePyramidWidth;
+    float    CascadePyramidHeight;
+    uint     CascadePyramidMipCount;
+    uint     _CullPad0;
+    uint     _CullPad1;
+    uint     _CullPad2;
 };
 
 // Debug visualization modes. Must match Lumina::ERenderSceneDebugFlags.

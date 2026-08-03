@@ -398,7 +398,6 @@ namespace Lumina
 
     void IImGuiRenderer::Deinitialize()
     {
-    	ClearSnapshots();
     	ImGui::DestroyContext();
     }
 
@@ -409,22 +408,9 @@ namespace Lumina
     	OnStartFrame(UpdateContext);
     }
 
-    void IImGuiRenderer::ClearSnapshots()
-    {
-        for (FImDrawDataSnapshot& Snapshot : Snapshots)
-        {
-            Snapshot.Clear();
-        }
-    }
-
-    FImDrawDataSnapshot* IImGuiRenderer::BuildFrame_GameThread(uint8 FrameIndex)
+    ImDrawData* IImGuiRenderer::BuildFrame()
     {
         LUMINA_PROFILE_SCOPE();
-
-        const uint8 Slot = FrameIndex % RHI::kFramesInFlight;
-
-        // Must wait: game thread wrapping the ring while render thread reads it â†’ null draw lists.
-        WaitForSnapshotSlot(Slot, SnapshotProduced[Slot].load(std::memory_order_acquire));
 
         ImGuiIO& Io = ImGui::GetIO();
         const FUIntVector2 ViewportSize = FEngine::GetEngineViewportSize();
@@ -433,55 +419,15 @@ namespace Lumina
 
         ImGuiX::Notifications::Render();
         ImGui::Render();
-    	
-        ProcessTextureUpdates_GameThread();
+
+        ProcessTextureUpdates();
 
         if (Io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
         {
             ImGui::UpdatePlatformWindows();
             ForwardSecondaryPlatformWindowInput();
-            CaptureSecondaryViewports_GameThread(FrameIndex);
         }
 
-        FImDrawDataSnapshot& Snapshot = Snapshots[Slot];
-        Snapshot.SnapUsingSwap(ImGui::GetDrawData(), ImGui::GetTime());
-        if (!Snapshot.IsValid())
-        {
-            // Still bump produced: a Signal must follow every Wait to keep counters paired across slots.
-            SnapshotProduced[Slot].fetch_add(1, std::memory_order_release);
-            SignalSnapshotSlotConsumed(FrameIndex);
-            return nullptr;
-        }
-
-        // Null Textures: render thread must not re-iterate the live PlatformIO.Textures we just processed (device lost).
-        if (ImDrawData* SnapshotDrawData = Snapshot.GetDrawData())
-        {
-            SnapshotDrawData->Textures = nullptr;
-        }
-
-        SnapshotProduced[Slot].fetch_add(1, std::memory_order_release);
-        return &Snapshot;
-    }
-
-    void IImGuiRenderer::SignalSnapshotSlotConsumed(uint8 FrameIndex)
-    {
-        const uint8 Slot = FrameIndex % RHI::kFramesInFlight;
-        SnapshotConsumed[Slot].fetch_add(1, std::memory_order_release);
-        { std::lock_guard<std::mutex> Lock(SnapshotSlotMutex); }
-        SnapshotSlotCV.notify_all();
-    }
-
-    void IImGuiRenderer::WaitForSnapshotSlot(uint8 Slot, uint64 Target)
-    {
-        if (SnapshotConsumed[Slot].load(std::memory_order_acquire) >= Target)
-        {
-            return;
-        }
-        LUMINA_PROFILE_SECTION_COLORED("WaitForImGuiSnapshotSlot", tracy::Color::Crimson);
-        std::unique_lock<std::mutex> Lock(SnapshotSlotMutex);
-        SnapshotSlotCV.wait(Lock, [&]()
-        {
-            return SnapshotConsumed[Slot].load(std::memory_order_acquire) >= Target;
-        });
+        return ImGui::GetDrawData();
     }
 }

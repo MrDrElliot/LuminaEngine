@@ -29,7 +29,7 @@ struct FCullInstancesArgs
 
     uint  bUseLODs;
     uint  MaxVisibleInstances;  // capacity of OutInstances; overflow is dropped, not written past
-    uint  _Pad0;
+    float ShadowCoarseLODDistSq; // past this, shadow LOD caps at MESHLET_MAX_COARSE_SHADOW_LOD; 0 = never
     uint  _Pad1;
 
     FGPUInstance*      RetainedInstances;   // in:  retained, CPU dirty-range written
@@ -113,7 +113,12 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
         LODIndex = Desc.SelectLOD(DistSq, Radius * Radius);
     }
 
-    const int  MaxShadowLOD  = (int)min(Desc.NumLODs > 0u ? Desc.NumLODs - 1u : 0u, (uint)MESHLET_MAX_SHADOW_LOD);
+    // Distance drives the cap because cascade membership is essentially distance: only the far cascades
+    // reach past ShadowCoarseLODDistSq, and their texel pitch is what makes the sloppy LODs safe there.
+    // Must match the CPU's ResolveShadowLOD exactly -- the two seed the same cull dispatch domain.
+    const uint ShadowCap = (Pass().ShadowCoarseLODDistSq > 0.0 && DistSq >= Pass().ShadowCoarseLODDistSq)
+                         ? (uint)MESHLET_MAX_COARSE_SHADOW_LOD : (uint)MESHLET_MAX_SHADOW_LOD;
+    const int  MaxShadowLOD  = (int)min(Desc.NumLODs > 0u ? Desc.NumLODs - 1u : 0u, ShadowCap);
     const uint ShadowLODIndex = (uint)clamp((int)LODIndex + Pass().ShadowLODBias, 0, MaxShadowLOD);
 
     // A null header with a non-zero count would page-fault the meshlet cull, so gate the count on it
@@ -153,6 +158,20 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
             }
             if (View.HasFlag(CULL_VIEW_FLAG_FRUSTUM) &&
                 !FrustumContainsSphere(View.FrustumPlanes, Center, Radius))
+            {
+                continue;
+            }
+            // The cascade's own ortho box (tested just above) is fitted to a sphere around the camera
+            // sub-frustum slice, and those spheres NEST -- cascade 3's box swallows cascades 0-2 whole. The
+            // box therefore rejects almost nothing between cascades, which is what made every caster reserve
+            // and raster in all four. CascadeFrustum is the slice itself swept toward the sun: the actual set
+            // of casters that can shade something this cascade is responsible for.
+            //
+            // Only the frustum half of the cascade cull runs here. The micro-poly reject stays meshlet-side:
+            // this reservation is an upper bound the meshlet cull emits against, and a bound derived from a
+            // radius the meshlet pass does not use verbatim could come up short and silently drop meshlets.
+            if (View.HasFlag(CULL_VIEW_FLAG_CASCADE) &&
+                !FrustumContainsSphere(Scene().CullData.CascadeFrustum[View.CascadeIndex], Center, Radius))
             {
                 continue;
             }

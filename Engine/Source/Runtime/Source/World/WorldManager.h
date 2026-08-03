@@ -32,7 +32,7 @@ namespace Lumina
         // Game thread
         void ExtractWorlds();
 
-        // Render thread
+        // Called from FRenderManager::FrameEnd, after ExtractWorlds.
         void RenderWorlds(uint8 FrameIndex);
 
         // Creates a context for an already-constructed CWorld and calls InitializeWorld on it.

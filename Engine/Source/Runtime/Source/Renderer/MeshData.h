@@ -25,6 +25,10 @@ namespace Lumina
     // shadow casters to topology-preserving LODs.
     constexpr uint32 MAX_SHADOW_LOD             = 3;
 
+    // Cap for casters past FSceneRenderSettings::ShadowCoarseLODDistance. Out there one cascade texel is
+    // wide enough that a sloppy LOD's holes stay sub-texel, so the leak they would cause never resolves.
+    constexpr uint32 MAX_COARSE_SHADOW_LOD      = 5;
+
     // Positions are full float3 (FMeshletVertex.Position) -- no quantization, gap-free. LODIndex kept for
     // LOD selection. TriangleOffset is in dwords (3 micro-indices per dword).
     // NO alignas: the GPU mirror (Common.slang FMeshlet) is 5 tightly packed uints = 20B; alignas(16) here
@@ -149,8 +153,8 @@ namespace Lumina
             RHI::GPUPtr MeshletTriangleBuffer = 0;
             RHI::GPUPtr MeshletHeaderBuffer = 0;
 
-            // Extra frames beyond the render pipeline depth, because these addresses outlive the free
-            // request on the GAME thread too. SetMeshResource frees this set immediately, but the meshlet
+            // Extra frames beyond the GPU pipeline depth, because these addresses outlive the free
+            // request within the tick too. SetMeshResource frees this set immediately, but the meshlet
             // header address is cached per component (SMeshComponent::CachedMeshletHeaderAddress) and is
             // only refreshed by the next ResolveDirtyMeshComponents pass -- so the extract running later in
             // this same tick still hands the old address to the GPU. That frame is then submitted and

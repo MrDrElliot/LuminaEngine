@@ -286,6 +286,35 @@ void RunEarlyPhase(uint3 GlobalID, uint3 GroupID, uint NumViews)
                 continue;
         }
 
+        // Cascade-specific rejects. The frustum test above is against the cascade's ortho box, which is
+        // fitted to a sphere around the camera sub-frustum slice -- and those spheres nest, so the box alone
+        // barely separates one cascade from the next. Everything that actually makes a cascade cheap is here.
+        if (!bNoCull && View.HasFlag(CULL_VIEW_FLAG_CASCADE))
+        {
+            const uint CascadeIndex = View.CascadeIndex;
+
+            // The slice this cascade shades, swept toward the sun: the exact caster set, and unlike the
+            // ortho box it does not nest. This is what stops cascade 3 from re-rastering cascade 0's scene.
+            if (!FrustumContainsSphere(Scene().CullData.CascadeFrustum[CascadeIndex], VWorldCenter, VWorldRadius))
+                continue;
+
+            // Micro-poly reject. MinBoundsDiameter is a world length derived from the cascade's own texel
+            // pitch, so the same meshlet survives in cascade 0 and dies in cascade 3 -- which is the point:
+            // the coarse cascades are where sub-texel geometry costs the most and shows the least. What it
+            // leaves behind is by construction narrower than one shadow texel.
+            if (View.MinBoundsDiameter > 0.0 && (VWorldRadius * 2.0) < View.MinBoundsDiameter)
+                continue;
+
+            // Hi-Z against LAST frame's cascade depth. Skinned meshes are excluded for the same reason they
+            // are on the camera path: their bounds are re-fed each frame and the pyramid describes the pose
+            // that is already gone.
+            if (!bSkinned && Scene().CullData.bShadowOcclusionCull != 0u &&
+                IsCascadeHZBOccluded(CascadeIndex, VWorldCenter, VWorldRadius))
+            {
+                continue;
+            }
+        }
+
         // Hi-Z occlusion runs only on the camera view (the pyramid tracks the camera); an occluded
         // meshlet is deferred to phase 1 rather than dropped.
         if (!bSkinned && !bNoCull && View.HasFlag(CULL_VIEW_FLAG_OCCLUSION))

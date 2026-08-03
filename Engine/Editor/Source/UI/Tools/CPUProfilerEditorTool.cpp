@@ -68,7 +68,7 @@ namespace Lumina
             "CPU profiling is gated on cpu.Profiler.Enabled, toggle from the gear menu. Costs frames; "
             "leave off when not investigating.");
         DrawHelpTextRow("Targets",
-            "Multiple sample targets (engine main thread, render thread, asset cooker) can be picked "
+            "Multiple sample targets (engine main thread, asset cooker) can be picked "
             "from the Target menu. Each has its own scope tree.");
         DrawHelpTextRow("Reading the tree",
             "Each node is a CPU scope pushed via FCPUProfileScope (or LUMINA_PROFILE macro). Time is "

@@ -2,7 +2,6 @@
 #include "MaterialManager.h"
 #include "MaterialTypes.h"
 #include "RHICore.h"
-#include "RenderThread.h"
 #include "Assets/AssetTypes/Material/MaterialInterface.h"
 
 namespace Lumina::RHI
@@ -65,11 +64,8 @@ namespace Lumina::RHI
             Copy = *InUniforms;
         }
 
-        // Render thread: queued onto the per-frame upload ring, copied at the next
-        // BeginFrame after any in-flight frame still reading the old slot has retired.
-        ENQUEUE_RENDER_COMMAND(UpdateMaterialUniforms)([this, Index, Copy]
-        {
-            UploadBuffer(MaterialBuffer + Index * sizeof(FMaterialUniforms), &Copy, sizeof(FMaterialUniforms));
-        });
+        // Queued onto the per-frame upload ring, copied at the next BeginFrame after any
+        // in-flight frame still reading the old slot has retired.
+        UploadBuffer(MaterialBuffer + Index * sizeof(FMaterialUniforms), &Copy, sizeof(FMaterialUniforms));
     }
 }

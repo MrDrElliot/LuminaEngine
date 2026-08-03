@@ -82,6 +82,21 @@ namespace Lumina
             "r.Scene.CPUInstanceCull",
             true,
             "Reject instances on the CPU before upload. Disable to leave all culling to the GPU.");
+
+        // Cascade micro-poly reject, in shadow texels of the cascade doing the rejecting. Bounds narrower
+        // than this cover less than one texel there, so what they leave behind is sub-texel. Raise it to trade
+        // shadow detail for geometry, set 0 to disable.
+        static TConsoleVar<float> CVarCascadeMinTexels(
+            "r.Shadow.Cascade.MinTexels",
+            1.0f,
+            "Drop shadow casters whose bounds cover fewer than this many texels in a given cascade (0 = off).");
+
+        // The cascade Hi-Z reads the PREVIOUS frame's cascade depth, so a caster that was hidden last frame
+        // and is exposed this frame is one frame late. Off makes cascades ignore occlusion entirely.
+        static TConsoleVar<bool> CVarCascadeOcclusionCull(
+            "r.Shadow.Cascade.OcclusionCull",
+            true,
+            "Reject shadow casters hidden behind other casters, tested against last frame's cascade Hi-Z.");
         
         // One grain for the whole gather: all primitive types share a single dense array.
         static TConsoleVar<int32> CVarPrimitiveGrain(
@@ -185,6 +200,27 @@ namespace Lumina
             NamedImages[(int)ENamedImage::Cascade] = CreateSceneImage(Desc);
         }
 
+        // Cascade Hi-Z, shared with the atlas above. Exactly HALF the atlas per axis, which is not a memory
+        // compromise but a correctness one: SPD's base case covers one 2x2 source block per output texel with
+        // a single reduction tap, so any other ratio would sample a subset of the block and report an extent
+        // smaller than the truth -- and an under-reported extent over-culls.
+        //
+        // The 2x2 cascade packing survives the mip chain because both the tile size and the tile origins are
+        // powers of two: every reduction stays inside one tile until the tile is a single texel. R32 rather
+        // than the camera pyramid's R16: rounding a max DOWN loses occluders, and near 1.0 R16 has a ~5e-4 step.
+        {
+            const uint32 PyramidW = GCSMAtlasWidth  / 2u;
+            const uint32 PyramidH = GCSMAtlasHeight / 2u;
+
+            RHI::FTextureDesc Desc;
+            Desc.Type      = RHI::ETextureType::Tex2D;
+            Desc.Dimension = FUIntVector3(PyramidW, PyramidH, 1);
+            Desc.Format    = EFormat::R32_FLOAT;
+            Desc.MipCount  = RenderUtils::CalculateMipCount(PyramidW, PyramidH);
+            Desc.Usage     = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::Storage;
+            NamedImages[(int)ENamedImage::CascadePyramid] = CreateSceneImage(Desc, true, /*bMipUAVs*/ true);
+        }
+
         // Reserve so capture-view registration never reallocates SceneViews -- the render
         // thread holds raw FSceneView* (CurrentView) and indexes SceneViews by snapshot.
         SceneViews.reserve(MaxSceneViews);
@@ -248,7 +284,7 @@ namespace Lumina
 
         // No WaitIdle: resource creation is mutex-serialized, the new view isn't referenced by any
         // in-flight frame, and SceneViews is reserved so the push-back can't reallocate under the
-        // render thread.
+        // render phase.
         const int32 Handle = (int32)SceneViews.size();
         AddSceneView(ClampedSize, /*bPrimary*/ false);
         return Handle;
@@ -444,7 +480,7 @@ namespace Lumina
             }
         }
 
-        // Render-thread-owned terrain / particle GPU state.
+        // Render-phase-owned terrain / particle GPU state.
         for (auto& [Entity, State] : TerrainGPUStates)
         {
             ReleaseSceneImage(State.HeightmapTexture);
@@ -503,40 +539,9 @@ namespace Lumina
         DepthStateCache.clear();
     }
 
-    void FForwardRenderScene::WaitForSlotConsumed(uint8 Slot, uint64 Target)
-    {
-        if (SlotConsumedCount[Slot].load(std::memory_order_acquire) >= Target)
-        {
-            return;
-        }
-        
-        LUMINA_PROFILE_SECTION_COLORED("WaitForSlotConsumed", tracy::Color::Crimson);
-        std::unique_lock<FMutex> Lock(SlotMutex);
-        
-        SlotCV.wait(Lock, [&]() 
-        {
-            return SlotConsumedCount[Slot].load(std::memory_order_acquire) >= Target;
-        });
-    }
-
-    void FForwardRenderScene::SignalSlotConsumed(uint8 Slot)
-    {
-        bool Expected = true;
-        if (!SlotHasPendingConsume[Slot].compare_exchange_strong(Expected, false, std::memory_order_acq_rel))
-        {
-            return;
-        }
-        SlotConsumedCount[Slot].fetch_add(1, std::memory_order_release);
-        
-        {
-            std::scoped_lock<FMutex> Lock(SlotMutex);
-        }
-        SlotCV.notify_all();
-    }
-
     namespace
     {
-        // Defined in the terrain helper block below; game-thread Extract prep.
+        // Defined in the terrain helper block below; Extract prep.
         void PrepareTerrainExtract(STerrainComponent& Terrain, const FMatrix4& WorldMatrix, FForwardRenderScene::FFrameData::FTerrainExtract& Out);
     }
 
@@ -545,14 +550,7 @@ namespace Lumina
         LUMINA_PROFILE_SCOPE();
         LUMINA_MEMORY_SCOPE("Render Scene");
 
-        const uint8  Slot        = (uint8)(GRenderManager->GetCurrentFrameIndex() % RHI::kFramesInFlight);
-        const uint64 NextProduce = SlotProducedCount[Slot] + 1u;
-        WaitForSlotConsumed(Slot, SlotProducedCount[Slot]);
-
-        // Marks one outstanding produce so SignalSlotConsumed pairs it and ignores stray signals.
-        SlotHasPendingConsume[Slot].store(true, std::memory_order_release);
-
-        ExtractFrame = &FrameRing[Slot];
+        ExtractFrame = &FrameData;
         FFrameData& Frame = *ExtractFrame;
 
         Frame.bExtractedThisFrame  = false;
@@ -571,8 +569,8 @@ namespace Lumina
             Frame.PostProcess.bHasActivePostProcess    = false;
         }
 
-        // Resolve post-process materials here (game thread, alive) and ref-hold their shaders, so a
-        // deleted PP material can't dangle the render thread. Invalid/wrong-domain entries are dropped.
+        // Resolve post-process materials here (extract phase, alive) and ref-hold their shaders, so a
+        // deleted PP material can't dangle the render phase. Invalid/wrong-domain entries are dropped.
         Frame.PostProcess.ActivePostProcessMaterials.clear();
         for (CMaterialInterface* PPInterface : PendingPostProcessMaterials)
         {
@@ -616,7 +614,7 @@ namespace Lumina
         SceneGlobalData.FarPlane                        = ViewVolume.GetFar();
         SceneGlobalData.NearPlane                       = ViewVolume.GetNear();
         // SSAO (GTAO): per-world tuning only, no CPU kernel. AOTextureIndex stays the ~0u sentinel here;
-        // the render thread patches it (or leaves the sentinel when SSAO is off) before upload.
+        // the render phase patches it (or leaves the sentinel when SSAO is off) before upload.
         SceneGlobalData.SSAOSettings                    = FSSAOSettings{};
         SceneGlobalData.SSAOSettings.Radius             = Frame.CachedWorldSettings.SSAORadius;
         SceneGlobalData.SSAOSettings.Intensity          = Frame.CachedWorldSettings.SSAOIntensity;
@@ -625,21 +623,25 @@ namespace Lumina
         SceneGlobalData.CullData.Frustum                = AsGPU(Frame.CameraFrustum);
         SceneGlobalData.CullData.ShadowFrustum          = SceneGlobalData.CullData.Frustum; // Rebuilt after directional light is processed.
         SceneGlobalData.CullData.bHasDirectional        = 0u;
-        // InstanceNum / MeshletDrawListCapacity are published by CompileDrawCommands_RenderThread, which
+        // InstanceNum / MeshletDrawListCapacity are published by CompileDrawCommands_Render, which
         // is where the buffers they bound are actually sized. Nothing on this thread knows either value.
         SceneGlobalData.CullData.bFrustumCull           = RenderSettings.bFrustumCull;
         SceneGlobalData.CullData.bOcclusionCull         = RenderSettings.bOcclusionCull;
         // Fallback; ProcessDirectionalLight overrides this from the active sun's
         // ShadowMaxDistance. Only matters when no directional light is present.
         SceneGlobalData.CullData.ShadowMaxDistance      = 5000.0f;
-        SceneGlobalData.CullData.bShadowOcclusionCull   = RenderSettings.bShadowOcclusionCull;
+        // Per-scene AND global: the thumbnail scene turns it off because it renders a single frame and there
+        // is no previous cascade depth to test against.
+        SceneGlobalData.CullData.bShadowOcclusionCull   = RenderSettings.bShadowOcclusionCull && CVarCascadeOcclusionCull.GetValue();
         SceneGlobalData.CullData.DebugMode              = (uint32)RenderSettings.Flags;
+        // Cleared here, raised by ProcessDirectionalLight (transforms) and the render phase (pyramid).
+        // A scene with no sun leaves it at 0, which is what makes every cascade occlusion test pass.
+        SceneGlobalData.CullData.bCascadeHZBValid       = 0u;
 
 
         CMaterial* FallbackMaterial = CMaterial::GetDefaultMaterial();
         if (!IsValid(FallbackMaterial) || !FallbackMaterial->IsReadyForRender())
         {
-            SlotHasPendingConsume[Slot].store(false, std::memory_order_release);
             ExtractFrame = nullptr;
 
             // Nothing rendered, so next frame's HZB is not this frame's depth.
@@ -647,12 +649,12 @@ namespace Lumina
             return;
         }
 
-        // Clear CPU scene state before the gather; game-thread so the render thread
+        // Clear CPU scene state before the gather, so the render phase
         // never sees half-populated containers.
-        ResetPass_GameThread();
+        ResetPass_Extract();
 
         // Snapshot the enabled capture views (camera + RT) before the gather, so BuildCullViews
-        // (inside CompileDrawCommands_GameThread) can append a frustum-only cull view for each.
+        // (inside CompileDrawCommands_Extract) can append a frustum-only cull view for each.
         for (int32 i = 1; i < (int32)SceneViews.size(); ++i)
         {
             if (!SceneViews[i].bEnabled)
@@ -666,7 +668,7 @@ namespace Lumina
         }
 
         // CPU half: parallel ECS gather + cull setup.
-        CompileDrawCommands_GameThread();
+        CompileDrawCommands_Extract();
 
         // Finalize each capture view's per-view constants: inherit the primary's shared state
         // (debug mode, time, instance count) then override the camera-specific fields.
@@ -695,16 +697,14 @@ namespace Lumina
 
         Frame.bExtractedThisFrame = true;
 
-        SlotProducedCount[Slot] = NextProduce;
         ExtractFrame = nullptr;
     }
 
-    void FForwardRenderScene::PrepareRender(uint8 FrameIndex)
+    void FForwardRenderScene::PrepareRender(uint8 /*FrameIndex*/)
     {
         LUMINA_PROFILE_SCOPE();
 
-        const uint8 Slot = (uint8)(FrameIndex % RHI::kFramesInFlight);
-        FFrameData& Frame = FrameRing[Slot];
+        FFrameData& Frame = FrameData;
         if (!Frame.bExtractedThisFrame)
         {
             return;
@@ -721,8 +721,8 @@ namespace Lumina
         LUMINA_MEMORY_SCOPE("Render Scene");
 
         const uint8 Slot = (uint8)(FrameIndex % RHI::kFramesInFlight);
-        RenderFrame = &FrameRing[Slot];
-        FFrameData& Frame = FrameRing[Slot];
+        RenderFrame = &FrameData;
+        FFrameData& Frame = FrameData;
 
         // This slot's previous GPU work completed AND its command lists were recycled (RHI::Core::BeginFrame
         // waits the frame timeline, then resets them), so nothing executes or still names these resources.
@@ -742,7 +742,6 @@ namespace Lumina
 
         if (!Frame.bExtractedThisFrame)
         {
-            // SignalFrameConsumed at lambda tail releases the slot.
             RenderFrame = nullptr;
             return;
         }
@@ -758,6 +757,34 @@ namespace Lumina
         Frame.SceneGlobalData.CullData.PyramidWidth      = (float)GetNamedImage(ENamedImage::DepthPyramid).GetSizeX();
         Frame.SceneGlobalData.CullData.PyramidHeight     = (float)GetNamedImage(ENamedImage::DepthPyramid).GetSizeY();
         Frame.SceneGlobalData.CullData.DepthPyramidIndex = (uint32)GetNamedImage(ENamedImage::DepthPyramid).GetResourceID();
+
+        // Cascade Hi-Z. Extract already decided whether the reprojection transforms are usable; this ANDs in
+        // whether the pyramid behind them has actually been built, which only the render phase knows.
+        {
+            const FSceneImage& CascadePyramid = GetNamedImage(ENamedImage::CascadePyramid);
+            FCullData& CullData = Frame.SceneGlobalData.CullData;
+
+            CullData.CascadePyramidIndex    = (uint32)CascadePyramid.GetResourceID();
+            CullData.CascadePyramidWidth    = (float)CascadePyramid.GetSizeX();
+            CullData.CascadePyramidHeight   = (float)CascadePyramid.GetSizeY();
+            CullData.CascadePyramidMipCount = CascadePyramid.GetNumMips();
+            if (!bCascadePyramidValid.load(std::memory_order_acquire))
+            {
+                CullData.bCascadeHZBValid = 0u;
+            }
+
+            // Constant tile rects: the pyramid is the atlas at half resolution, so a cascade's tile maps
+            // straight through. Kept as data rather than recomputed in the shader because the packing table
+            // is a CPU constant and nothing in the shader should have to know it.
+            for (int32 i = 0; i < NumCascades; ++i)
+            {
+                CullData.CascadeHZBTile[i] = FVector4(
+                    (float)(GCSMCascadeOriginX[i] / 2) / CullData.CascadePyramidWidth,
+                    (float)(GCSMCascadeOriginY[i] / 2) / CullData.CascadePyramidHeight,
+                    (float)(GCSMCascadeSizes[i]   / 2) / CullData.CascadePyramidWidth,
+                    (float)(GCSMCascadeSizes[i]   / 2) / CullData.CascadePyramidHeight);
+            }
+        }
 
         // Publish this frame's stats for the editor-side GetRenderStats() reader.
         RenderStats = Frame.FrameStats;
@@ -785,7 +812,7 @@ namespace Lumina
 
             {
                 SCENE_GPU_SCOPE(CL, "Reset Pass");
-                ResetPass_RenderThread(CL);
+                ResetPass_Render(CL);
             }
 
             {
@@ -794,7 +821,7 @@ namespace Lumina
                 // dispatches. It had no GPU marker, so on the GPU timeline it was an unlabelled gap between
                 // "RmlUi Widgets" and "Cull Early" -- which is where the frame was actually going.
                 SCENE_GPU_SCOPE(CL, "Compile Draw Commands");
-                CompileDrawCommands_RenderThread(CL);
+                CompileDrawCommands_Render(CL);
             }
 
             {
@@ -889,6 +916,13 @@ namespace Lumina
                 {
                     SCENE_GPU_SCOPE(CL, "Cascaded Shadows");
                     CascadedShowPass(CL);
+                }
+
+                // Cascade HZB for NEXT frame's shadow cull. It has to be here rather than beside the camera
+                // pyramid: the cascades were only just rastered, and nothing later in the frame writes them.
+                {
+                    SCENE_GPU_SCOPE(CL, "Cascade Pyramid");
+                    CascadePyramidPass(CL);
                 }
 
                 {
@@ -1153,11 +1187,6 @@ namespace Lumina
         }
     }
 
-    void FForwardRenderScene::SignalFrameConsumed(uint8 FrameIndex)
-    {
-        SignalSlotConsumed((uint8)(FrameIndex % RHI::kFramesInFlight));
-    }
-
     void FForwardRenderScene::SwapchainResized(FVector2 NewSize)
     {
         // Rare, editor-driven: drain the GPU so the per-view images can be released and
@@ -1208,7 +1237,7 @@ namespace Lumina
         FThreadLocalDrawData& Local = ThreadLocalStorage[Slot];
 
         // First touch this frame on this worker: bind the slot to this thread's frame arena and reserve.
-        // CompileDrawCommands_GameThread cleared every slot's arena to null up front, so a null arena here
+        // CompileDrawCommands_Extract cleared every slot's arena to null up front, so a null arena here
         // is the once-per-frame guard; later chunks on the same worker see the bound arena and accumulate.
         if (Local.Arena.GetArena() == nullptr)
         {
@@ -1246,7 +1275,7 @@ namespace Lumina
         PublishRetainedUpload();
     }
 
-    // Hands the retained scene to the render thread while the game thread still owns it.
+    // Collects what changed in the retained scene, before the render phase uploads it.
     void FForwardRenderScene::PublishRetainedUpload()
     {
         FFrameData::FGeometry::FRetainedUpload& Out = ExtractFrame->Geometry.RetainedUpload;
@@ -1254,87 +1283,46 @@ namespace Lumina
         const uint32 SlotCount = ScenePrimitives.GetRetainedSlotCount();
         Out.SlotCount = SlotCount;
 
-        Out.FullInstances.clear();
-        Out.FullCullData.clear();
         Out.DirtySlots.clear();
-        Out.DirtyInstances.clear();
-        Out.DirtyCullData.clear();
-        Out.SurfaceDescs.clear();
 
         // A full re-send is needed exactly when the device allocation is about to be replaced, because a
         // replacement loses the accumulated contents. That happens when the slot count outgrows the capacity
-        // the render thread last published -- reading that value stale is safe, it only ever grows.
+        // the render phase last published; that value only ever grows.
         const uint32 DeviceCapacity = RetainedDeviceCapacity.load(std::memory_order_acquire);
         Out.bFull = ScenePrimitives.NeedsFullInstanceUpload() || SlotCount > DeviceCapacity;
 
-        const FGPUInstance*      SrcInstances = ScenePrimitives.GetRetainedInstances();
-        const FInstanceCullData* SrcCullData  = ScenePrimitives.GetRetainedCullData();
-
-        if (Out.bFull)
+        if (!Out.bFull)
         {
-            if (SlotCount > 0)
-            {
-                Out.FullInstances.assign(SrcInstances, SrcInstances + SlotCount);
-                Out.FullCullData.assign(SrcCullData, SrcCullData + SlotCount);
-            }
-        }
-        else
-        {
-            // Sort and dedupe so the render thread can coalesce runs of adjacent slots into ONE copy each.
+            // Sort and dedupe so the upload can coalesce runs of adjacent slots into ONE copy each.
             // The channel legitimately repeats a slot (a re-bind frees then re-stamps it) and hands them out
             // in whatever order the sweep hit them.
-            DirtySlotSortScratch.clear();
             for (uint32 DirtySlot : ScenePrimitives.GetDirtyInstanceSlots())
             {
                 if (DirtySlot < SlotCount)   // a slot freed after being marked is simply dropped
                 {
-                    DirtySlotSortScratch.push_back(DirtySlot);
+                    Out.DirtySlots.push_back(DirtySlot);
                 }
             }
-            std::sort(DirtySlotSortScratch.begin(), DirtySlotSortScratch.end());
-            DirtySlotSortScratch.erase(std::unique(DirtySlotSortScratch.begin(), DirtySlotSortScratch.end()),
-                                       DirtySlotSortScratch.end());
+            std::sort(Out.DirtySlots.begin(), Out.DirtySlots.end());
+            Out.DirtySlots.erase(std::unique(Out.DirtySlots.begin(), Out.DirtySlots.end()), Out.DirtySlots.end());
 
             // Past a quarter of the scene, one contiguous upload beats scattered per-run copies outright.
             // This matters because "incremental" is badly named for a material edit: the resolve entry is
             // shared, so invalidating one mesh dirties EVERY primitive drawing it. Uploading that as
             // thousands of separate ranges was O(dirty) transient allocations, each one an insert into the
-            // RHI's block list -- which is quadratic and hung the render thread outright.
-            if (DirtySlotSortScratch.size() * 4 >= (SIZE_T)SlotCount)
+            // RHI's block list -- which is quadratic and hung the frame outright.
+            if (Out.DirtySlots.size() * 4 >= (SIZE_T)SlotCount)
             {
                 Out.bFull = true;
-                DirtySlotSortScratch.clear();
-                if (SlotCount > 0)
-                {
-                    Out.FullInstances.assign(SrcInstances, SrcInstances + SlotCount);
-                    Out.FullCullData.assign(SrcCullData, SrcCullData + SlotCount);
-                }
-            }
-            else
-            {
-                Out.DirtySlots.reserve(DirtySlotSortScratch.size());
-                Out.DirtyInstances.reserve(DirtySlotSortScratch.size());
-                Out.DirtyCullData.reserve(DirtySlotSortScratch.size());
-                for (uint32 DirtySlot : DirtySlotSortScratch)
-                {
-                    Out.DirtySlots.push_back(DirtySlot);
-                    Out.DirtyInstances.push_back(SrcInstances[DirtySlot]);
-                    Out.DirtyCullData.push_back(SrcCullData[DirtySlot]);
-                }
+                Out.DirtySlots.clear();
             }
         }
 
-        // Interned and small; copied whole on the rare frames a new distinct LOD table appears. A full
-        // instance re-send also re-sends these, since a replaced device buffer loses them too.
+        // Interned; a full instance re-send also re-sends these, since a replaced device buffer loses them.
         Out.SurfaceDescCount     = ScenePrimitives.GetSurfaceDescCount();
         Out.bSurfaceDescsChanged = ScenePrimitives.AreSurfaceDescsDirty() || Out.bFull;
-        if (Out.bSurfaceDescsChanged && Out.SurfaceDescCount > 0)
-        {
-            const FSurfaceDescGPU* SrcDescs = ScenePrimitives.GetSurfaceDescs();
-            Out.SurfaceDescs.assign(SrcDescs, SrcDescs + Out.SurfaceDescCount);
-        }
 
-        // Channel consumed: everything above is now owned by this frame's snapshot.
+        // Channel consumed: the decisions above are now owned by this frame.
         ScenePrimitives.ClearDirtyInstanceSlots();
         ScenePrimitives.ClearFullInstanceUpload();
         ScenePrimitives.ClearSurfaceDescsDirty();
@@ -1448,7 +1436,7 @@ namespace Lumina
         }
     }
 
-    // Serial, game-thread: runs before the parallel gather so workers only read the resolve table.
+    // Serial: runs before the parallel gather so workers only read the resolve table.
     // Dynamic meshes own their resolve outright, so they never go through FMeshResolveCache and its
     // pending-work generation. That is why this is NOT part of ResolveDirtyMeshComponents: that pass
     // early-returns unless the generation moved, so anything routed through it only runs when the cache
@@ -1622,7 +1610,7 @@ namespace Lumina
         }
     }
 
-    void FForwardRenderScene::CompileDrawCommands_GameThread()
+    void FForwardRenderScene::CompileDrawCommands_Extract()
     {
         LUMINA_PROFILE_SCOPE();
         LUMINA_MEMORY_SCOPE("Render Scene");
@@ -1691,7 +1679,7 @@ namespace Lumina
             // GPU) and the serial force-disabled reuse whenever any skinned primitive existed, so it could
             // only ever skip work that was already empty, while hashing two 4x4 matrices a byte at a time
             // every frame to decide that.
-            ResetGeometry_GameThread();
+            ResetGeometry_Extract();
 
             const uint32 NumPrimitives     = ScenePrimitives.Num();
             const size_t EstimatedProxies  = (size_t)NumPrimitives * 2;
@@ -1749,7 +1737,7 @@ namespace Lumina
                 Graph.AddDependency(MergeNode, CullNode);
             }
 
-            // Kick the mesh critical path NOW: the workers chew on the gather while the game thread
+            // Kick the mesh critical path NOW: the workers chew on the gather while Extract
             // builds the emitter graph below (lights/primitives/extract snapshots), whose tasks share
             // no state with the mesh nodes. This pulls that build time off the serial window.
             Graph.Dispatch();
@@ -2232,7 +2220,7 @@ namespace Lumina
 
                 Frame.Primitives.DecalExtracts.reserve(DecalSortScratch.size());
                 // Resolve RHI shaders here (material is alive); the batch stores refs, never the
-                // CMaterial*, so deleting the decal asset can't dangle the render thread.
+                // CMaterial*, so deleting the decal asset can't dangle the render phase.
                 CMaterial* PrevOwner = nullptr;
                 for (uint32 i = 0; i < (uint32)DecalSortScratch.size(); ++i)
                 {
@@ -2427,7 +2415,7 @@ namespace Lumina
             {
                 LUMINA_PROFILE_SECTION("Environment Processing");
 
-                // Local, assigned once below: the render thread reads RenderSettings.bHasEnvironment live,
+                // Local, assigned once below: the render phase reads RenderSettings.bHasEnvironment live,
                 // and a transient false (reset-then-set) makes SkyCubeCapturePass clear the IBL cubes.
                 bool bHasEnvironment           = false;
                 RenderSettings.bSSAO           = false;
@@ -2493,7 +2481,7 @@ namespace Lumina
 
                 RenderSettings.bHasEnvironment = bHasEnvironment;
 
-                // Resolve the IBL bake resolution; the render thread rebuilds the cubes when it changes
+                // Resolve the IBL bake resolution; the render phase rebuilds the cubes when it changes
                 // (handled alongside the dirty-flag bookkeeping below). Keep the last tier if no env.
                 Frame.Volumetrics.IBLResolution = ActiveEnv
                     ? ResolveIBLQuality(ActiveEnv->IBLQuality)
@@ -2599,11 +2587,11 @@ namespace Lumina
         }
 
         // Populates CullViews[]/IndirectArgs[]; runs after AllocateShadowTiles so shadow VPs are settled.
-        // Use the snapshot's view volume -- SceneViewport is render-thread state and may be the capture's.
+        // Use the snapshot's view volume -- SceneViewport is render-phase state and may be the capture's.
         BuildCullViews(ExtractFrame->ViewVolume);
     }
 
-    void FForwardRenderScene::CompileDrawCommands_RenderThread(RHI::FCmdListH CL)
+    void FForwardRenderScene::CompileDrawCommands_Render(RHI::FCmdListH CL)
     {
         LUMINA_PROFILE_SCOPE();
         LUMINA_MEMORY_SCOPE("Render Scene");
@@ -2819,7 +2807,7 @@ namespace Lumina
             const bool bMapChanged = LastIBLEnvironmentMapID != EnvironmentMapID;
 
             // Quality-tier change forces a full re-bake into the freshly-sized cubes (recreated on
-            // the render thread by SyncIBLResolution before SkyCubeCapturePass runs).
+            // the render phase by SyncIBLResolution before SkyCubeCapturePass runs).
             const bool bResChanged = Frame.Volumetrics.IBLResolution != LastExtractedIBLResolution;
             LastExtractedIBLResolution = Frame.Volumetrics.IBLResolution;
 
@@ -3071,14 +3059,18 @@ namespace Lumina
         return 0u;
     }
 
-    static uint32 ResolveShadowLOD(const FResolvedSurface& Surface, uint32 CameraLOD, int32 ShadowLODBias)
+    // Mirrors CullInstances.slang exactly: both seed the cull's dispatch domain, so a disagreement drops
+    // meshlets off its tail. CoarseDistSq <= 0 keeps the tight cap everywhere.
+    static uint32 ResolveShadowLOD(const FResolvedSurface& Surface, uint32 CameraLOD, int32 ShadowLODBias,
+                                   float DistSq, float CoarseDistSq)
     {
         if (Surface.NumLODs == 0)
         {
             return 0u;
         }
+        const uint32 Cap   = (CoarseDistSq > 0.0f && DistSq >= CoarseDistSq) ? MAX_COARSE_SHADOW_LOD : MAX_SHADOW_LOD;
         const int32 Biased = (int32)CameraLOD + ShadowLODBias;
-        const int32 MaxLOD = (int32)Math::Min<uint32>(Surface.NumLODs - 1u, MAX_SHADOW_LOD);
+        const int32 MaxLOD = (int32)Math::Min<uint32>(Surface.NumLODs - 1u, Cap);
         return (uint32)Math::Clamp(Biased, 0, MaxLOD);
     }
 
@@ -3178,7 +3170,8 @@ namespace Lumina
 
             // CPU LOD pick replaces LOD 0; smaller ranges directly cut cull-pass cost.
             const uint32 LODIndex       = ResolveSurfaceLOD(Surface, Prim.ForcedLODIndex, Settings.bUseLODs, DistSq, RadiusSq);
-            const uint32 ShadowLODIndex = ResolveShadowLOD(Surface, LODIndex, Settings.ShadowLODBias);
+            const uint32 ShadowLODIndex = ResolveShadowLOD(Surface, LODIndex, Settings.ShadowLODBias,
+                                                           DistSq, Settings.ShadowCoarseLODDistance * Settings.ShadowCoarseLODDistance);
 
             // Zero meshlet count gates the cull shader's MeshletHeader deref.
             const uint32 SurfaceMeshletCount  = MeshletHeaderAddress ? Surface.LODMeshletCount[LODIndex]       : 0u;
@@ -4381,7 +4374,8 @@ namespace Lumina
         // BuildDrawPrefix computes on the GPU and SeedIndirectArgs writes into FirstInstance.
         const uint32 NumDraws = Frame.Views.NumDrawsPerView;
 
-        auto PushView = [&](const FMatrix4& ViewProjection, const FVector3& Origin, uint32 Flags)
+        auto PushView = [&](const FMatrix4& ViewProjection, const FVector3& Origin, uint32 Flags,
+                            uint32 CascadeIndex = ~0u, float MinBoundsDiameter = 0.0f)
         {
             // AllocateShadowTiles guarantees the total view count fits in
             // GMaxCullViews before we get here, so no runtime clamp is needed.
@@ -4398,6 +4392,8 @@ namespace Lumina
             float FlagsAsFloat;
             std::memcpy(&FlagsAsFloat, &Flags, sizeof(float));
             View.ViewOriginAndFlags = FVector4(Origin, FlagsAsFloat);
+            View.CascadeIndex       = CascadeIndex;
+            View.MinBoundsDiameter  = MinBoundsDiameter;
             View.IndirectArgsOffset = ViewIndex * NumDraws;
             View.NumDraws           = NumDraws;
             CullViews.push_back(View);
@@ -4462,12 +4458,24 @@ namespace Lumina
                     ECullViewFlags::Cone |
                     ECullViewFlags::SunAligned |
                     ECullViewFlags::CastShadowOnly |
-                    ECullViewFlags::Distance;
+                    ECullViewFlags::Distance |
+                    ECullViewFlags::Cascade;
+
+                const float MinTexels = Math::Max(CVarCascadeMinTexels.GetValue(), 0.0f);
 
                 CascadeViewBase = (uint32)CullViews.size();
                 for (int32 c = 0; c < NumCascades; ++c)
                 {
-                    PushView(SunShadow.ViewProjection[c], ViewVolume.GetViewPosition(), CascadeFlags);
+                    // Micro-poly threshold in world units, from this cascade's own texel pitch. Each cascade
+                    // covers 2 * Radius across CascadeResolutions[c] texels, so the far cascades -- coarse
+                    // texels over a huge footprint -- reject far more than the near ones, which is where the
+                    // geometry actually is and where a sub-texel meshlet is worth the least.
+                    const float Radius     = LightData.CascadeRadii[c];
+                    const float Resolution = Math::Max(LightData.CascadeResolutions[c], 1.0f);
+                    const float TexelWorld = (Radius * 2.0f) / Resolution;
+
+                    PushView(SunShadow.ViewProjection[c], ViewVolume.GetViewPosition(), CascadeFlags,
+                             (uint32)c, MinTexels * TexelWorld);
                 }
             }
         }
@@ -4585,7 +4593,7 @@ namespace Lumina
         auto& SceneGlobalData      = Frame.SceneGlobalData;
 
         LightData.bHasSun = true;
-        // Primary camera (frame snapshot), not the render-thread SceneViewport: CSM cascades
+        // Primary camera (frame snapshot), not the render-phase SceneViewport: CSM cascades
         // fit to the primary view; capture views reuse these cascades rather than fitting their own.
         const FViewVolume& ViewVolume = Frame.ViewVolume;
 
@@ -4665,7 +4673,28 @@ namespace Lumina
         const float      CamFOV    = ViewVolume.GetFOV();
         const float      CamAspect = ViewVolume.GetAspectRatio();
         const FVector3  LightDir  = Light.Direction; // Toward the sun.
-        
+
+        // Republish the transforms that produced the cascade pyramid's CURRENT contents before this frame's
+        // loop overwrites them. The pyramid is built after the shadow raster, so a cull can only ever test
+        // against the previous frame's -- projecting with this frame's matrices would misregister the tap by
+        // however far the cascade re-snapped.
+        if (bCascadeHZBTransformsValid)
+        {
+            for (int i = 0; i < NumCascades; ++i)
+            {
+                SceneGlobalData.CullData.CascadeHZBViewProjection[i] = CascadeHZBViewProjection[i];
+                SceneGlobalData.CullData.CascadeHZBNdcScale[i]       = CascadeHZBNdcScale[i];
+            }
+            SceneGlobalData.CullData.bCascadeHZBValid = 1u;
+        }
+
+        // Blend-band widening for the caster volumes below. A pixel in band i-1 samples cascade i over the
+        // last ShadowParams.w of its band (see ComputeDirectionalShadow), so cascade i is responsible for a
+        // slice that starts BEFORE its own near split. Culling to the split alone would strip the occluders
+        // out of exactly the region the two cascades cross-fade over, and the seam would show as shadows
+        // fading out and back in.
+        const float CascadeBlendFraction = Math::Clamp(DirectionalLight.CascadeBlend, 0.0f, 1.0f);
+
         float LastSplitDistance = ShadowNear;
         for (int i = 0; i < NumCascades; ++i)
         {
@@ -4758,12 +4787,45 @@ namespace Lumina
             // world-space length for normal-offset bias.
             LightData.CascadeRadii[i] = Radius;
 
-            // Feed this cascade's frustum to the shadow cull pass so small casters
-            // that only touch cascade 0 don't pay VPC cost on cascades 1/2.
-            SceneGlobalData.CullData.CascadeFrustum[i] = AsGPU(FFrustum::FromViewProjection(CascadeVP));
+            // The cull volume, which is deliberately NOT this cascade's ortho box. The box is fitted to a
+            // sphere around the slice, and that sphere's radius is set by the slice's lateral extent at its
+            // far plane -- for any reasonable FOV that makes it wider than the slice is deep, so cascade i's
+            // box swallows every box before it. Culling on the box alone therefore let essentially the whole
+            // shadow-casting scene into all four cascades, which is the 4x geometry this replaces.
+            //
+            // What a cascade actually needs is: everything that can occlude a pixel it shades. That is the
+            // camera sub-frustum slice it owns, swept toward the sun. Slices do not nest.
+            {
+                // Length of the PRECEDING band, measured the way the shader measures it: cascade 0's band
+                // starts at 0, not at the shadow near plane (ComputeDirectionalShadow hardcodes that).
+                const float PrevBandNear = (i >= 2) ? CascadeFarDistances[i - 2] : 0.0f;
+                const float BlendBack    = (i == 0) ? 0.0f : CascadeBlendFraction * (SplitNear - PrevBandNear);
+
+                // Cascade 0 culls from the camera's own near plane, not from ShadowNear. The cascade FIT
+                // starts at ShadowNear because that is where the texel budget is worth spending, but pixels
+                // in front of it still select cascade 0 and still want their occluders.
+                const float MinCullNear = Math::Max(NearClip, 0.01f);
+                const float CullNear    = (i == 0) ? MinCullNear : Math::Max(SplitNear - BlendBack, MinCullNear);
+                const FMatrix4 CullProj = Math::Perspective(Math::Radians(CamFOV), CamAspect, CullNear, SplitFar);
+
+                // Swept by the full ortho depth: a caster farther from the receivers than that is behind the
+                // light eye and outside the box test above anyway, so there is nothing to gain by sweeping
+                // further and correctness to lose by sweeping less.
+                const FFrustum SliceFrustum = FFrustum::FromViewProjection(CullProj * CamView);
+                SceneGlobalData.CullData.CascadeFrustum[i] = AsGPU(SliceFrustum.Extruded(LightDir, OrthoRange));
+            }
+
+            // Record the transform + NDC scale that this frame's raster will write into the pyramid, for
+            // NEXT frame's occlusion test. Scale is carried rather than derived from the matrix so the
+            // shader never has to care whether it is indexing rows or columns.
+            CascadeHZBViewProjection[i] = CascadeVP;
+            CascadeHZBNdcScale[i]       = FVector4(1.0f / Radius, 1.0f / Radius, 1.0f / OrthoRange, 0.0f);
 
             LastSplitDistance = SplitFar;
         }
+
+        // Only true once the loop above has run at least once; the republish at the top reads it.
+        bCascadeHZBTransformsValid = true;
 
         LightCount.fetch_add(1, std::memory_order_acquire);
         LightData.Lights[0] = Light;
@@ -5100,7 +5162,7 @@ namespace Lumina
         Billboard.EntityID              = entt::null;
     }
 
-    void FForwardRenderScene::ResetPass_GameThread()
+    void FForwardRenderScene::ResetPass_Extract()
     {
         FFrameData& Frame = *ExtractFrame;
 
@@ -5128,8 +5190,8 @@ namespace Lumina
         }
     }
 
-    // Split out of ResetPass: a frame that reuses this slot's compiled geometry must not clear it.
-    void FForwardRenderScene::ResetGeometry_GameThread()
+    // Split out of ResetPass so it can be ordered against SyncScenePrimitives.
+    void FForwardRenderScene::ResetGeometry_Extract()
     {
         FFrameData& Frame = *ExtractFrame;
 
@@ -5145,7 +5207,7 @@ namespace Lumina
         // value-initializes (memsets) only growth beyond the previous frame, not the whole array.
     }
 
-    void FForwardRenderScene::ResetPass_RenderThread(RHI::FCmdListH CL)
+    void FForwardRenderScene::ResetPass_Render(RHI::FCmdListH CL)
     {
         // VisBuffer phase 1 clears depth when it runs (LoadOp); with no geometry it early-outs, so clear
         // here for the downstream depth consumers (terrain, water, transparent, fog).
@@ -5614,31 +5676,19 @@ namespace Lumina
         Barriers::RasterToRead(CL);
     }
 
-    void FForwardRenderScene::DepthPyramidPass(RHI::FCmdListH CL)
+    void FForwardRenderScene::BuildDepthPyramid(RHI::FCmdListH CL, const FSceneImage& Source, const FSceneImage& Pyramid, bool bReduceMax)
     {
-        const FFrameData& Frame = *RenderFrame;
-        const auto& DrawCommands = Frame.Geometry.DrawCommands;
-
-        if (DrawCommands.empty())
-        {
-            return;
-        }
-
-        LUMINA_PROFILE_SECTION_COLORED("Depth Pyramid Pass (SPD)", tracy::Color::Orange);
-
         static const FShaderEntry* const ComputeShader = FShaderLibrary::Get("DepthPyramidSPD.slang");
         if (!ComputeShader)
         {
             return;
         }
 
-        const FSceneImage& DepthPyramid = GetNamedImage(ENamedImage::DepthPyramid);
-        const FSceneImage& DepthSource  = GetNamedImage(ENamedImage::DepthAttachment);
-        const FSceneBuffer SpdCounter   = GetSpdCounter();
+        const FSceneBuffer SpdCounter = GetSpdCounter();
 
-        const uint32 PyramidW = DepthPyramid.GetSizeX();
-        const uint32 PyramidH = DepthPyramid.GetSizeY();
-        const uint32 MipCount = DepthPyramid.GetNumMips();
+        const uint32 PyramidW = Pyramid.GetSizeX();
+        const uint32 PyramidH = Pyramid.GetSizeY();
+        const uint32 MipCount = Pyramid.GetNumMips();
 
         constexpr uint32 SpdMaxMips = 12;
         const uint32 NumMips = std::min(MipCount, SpdMaxMips);
@@ -5657,7 +5707,7 @@ namespace Lumina
             uint32 NumWorkGroups;
             float  InvPyramidSize[2];
             uint32 SrcDepthIndex;
-            uint32 Pad0;
+            uint32 ReduceMax;
             uint64 AtomicCounter;
             uint32 MipUAV[SpdMaxMips];
         } PC = {};
@@ -5673,17 +5723,67 @@ namespace Lumina
         PC.NumWorkGroups      = TotalGroups;
         PC.InvPyramidSize[0]  = 1.0f / (float)PyramidW;
         PC.InvPyramidSize[1]  = 1.0f / (float)PyramidH;
-        PC.SrcDepthIndex      = (uint32)DepthSource.GetResourceID();
+        PC.SrcDepthIndex      = (uint32)Source.GetResourceID();
+        PC.ReduceMax          = bReduceMax ? 1u : 0u;
         PC.AtomicCounter      = SpdCounter.GetAddress();
         for (uint32 i = 0; i < SpdMaxMips; ++i)
         {
             const uint32 SrcMip = (i < MipCount) ? i : 0u;
-            PC.MipUAV[i] = (uint32)DepthPyramid.GetMipUAVIndex(SrcMip);
+            PC.MipUAV[i] = (uint32)Pyramid.GetMipUAVIndex(SrcMip);
         }
 
         RHI::CmdDispatch(CL, MakeArgs(PC), DispatchX, DispatchY, 1);
 
         Barriers::ComputeToAll(CL);
+    }
+
+    void FForwardRenderScene::DepthPyramidPass(RHI::FCmdListH CL)
+    {
+        const FFrameData& Frame = *RenderFrame;
+        const auto& DrawCommands = Frame.Geometry.DrawCommands;
+
+        if (DrawCommands.empty())
+        {
+            return;
+        }
+
+        LUMINA_PROFILE_SECTION_COLORED("Depth Pyramid Pass (SPD)", tracy::Color::Orange);
+
+        // Reverse-Z scene depth: MIN reduction keeps the farthest occluder in each footprint.
+        BuildDepthPyramid(CL,
+            GetNamedImage(ENamedImage::DepthAttachment),
+            GetNamedImage(ENamedImage::DepthPyramid),
+            /*bReduceMax*/ false);
+    }
+
+    void FForwardRenderScene::CascadePyramidPass(RHI::FCmdListH CL)
+    {
+        const FFrameData& Frame = *RenderFrame;
+        const auto& LightData   = Frame.Lighting.LightData;
+
+        // Mirrors CascadedShowPass's guards exactly. If it rendered nothing, the atlas still holds the 1.0
+        // clear and pyramiding it would publish a "nothing occludes anything" HZB -- harmless but pointless.
+        // If it DID render and we skipped the pyramid, next frame would test against a stale one, so these
+        // two must agree.
+        if (!LightData.bHasSun ||
+            Frame.Geometry.DrawCommands.empty() ||
+            LightData.Lights[0].ShadowDataIndex == INDEX_NONE ||
+            Frame.Views.CascadeViewBase == ~0u)
+        {
+            bCascadePyramidValid.store(false, std::memory_order_release);
+            return;
+        }
+
+        LUMINA_PROFILE_SECTION_COLORED("Cascade Pyramid Pass (SPD)", tracy::Color::Orange3);
+
+        // Standard-Z cascade atlas (Less test, cleared to 1.0): MAX reduction keeps the farthest-from-light
+        // occluder, which is the one a caster has to be behind to contribute nothing.
+        BuildDepthPyramid(CL,
+            GetNamedImage(ENamedImage::Cascade),
+            GetNamedImage(ENamedImage::CascadePyramid),
+            /*bReduceMax*/ true);
+
+        bCascadePyramidValid.store(true, std::memory_order_release);
     }
 
     void FForwardRenderScene::ClusterBuildPass(RHI::FCmdListH CL)
@@ -6598,7 +6698,7 @@ namespace Lumina
                 State.bBurstPending     = true;
             }
 
-            // Apply the game-thread Activate()/Deactivate() intents to the render-owned sim state.
+            // Apply the extract-phase Activate()/Deactivate() intents to the render-owned sim state.
             if (Item.bForceReset)
             {
                 RHI::CmdMemset(CL, State.ParticleBuffer, State.ParticleBufferSize, 0u);
@@ -6982,8 +7082,8 @@ namespace Lumina
             }
         }
 
-        // Game-thread terrain prep (during Extract, exclusive ECS access): rebuild dirty metadata and copy
-        // the bytes the render thread needs into the extract, so a concurrent sculpt can't realloc under it.
+        // Terrain prep (during Extract, exclusive ECS access): rebuild dirty metadata and copy
+        // the bytes the render phase needs into the extract, so a concurrent sculpt can't realloc under it.
         static void PrepareTerrainExtract(STerrainComponent& Terrain, const FMatrix4& WorldMatrix,
                                           FForwardRenderScene::FFrameData::FTerrainExtract& Out)
         {
@@ -7004,7 +7104,7 @@ namespace Lumina
             Out.bCastShadow     = Terrain.bCastShadow;
             Out.bReceiveShadow  = Terrain.bReceiveShadow;
 
-            // Resolve shaders here (game thread, material alive) and ref-hold them; the render
+            // Resolve shaders here (extract phase, material alive) and ref-hold them; the render
             // thread never touches the CMaterial. A wrong-domain material leaves the shaders null
             // (terrain skipped); null/not-ready falls back to the default terrain material.
             CMaterialInterface* TerrainMaterial = Terrain.Material.Get();
@@ -7218,15 +7318,15 @@ namespace Lumina
                 continue;
             }
 
-            // GPUState is render-thread-owned (this map); the CPU payload comes entirely
-            // from the game-thread snapshot in TerrainItem, never from the live component.
+            // GPUState is render-phase-owned (this map); the CPU payload comes entirely
+            // from the extract-phase snapshot in TerrainItem, never from the live component.
             FTerrainGPUState& State = TerrainGPUStates[TerrainItem.Entity];
             const uint32 Res        = (uint32)TerrainItem.Resolution;
             const uint32 LayerCount = (uint32)std::max(TerrainItem.LayerCount, 1);
             const size_t SlicePixels = size_t(Res) * size_t(Res);
 
             // (Re)allocate GPU textures when the GPU dimensions no longer match what the
-            // game thread prepared. A structural change always ships Full payloads below.
+            // Extract prepared. A structural change always ships Full payloads below.
             const bool bRealloc = State.AllocatedResolution != Res || State.AllocatedLayerCount != LayerCount;
             if (bRealloc)
             {
@@ -7346,7 +7446,7 @@ namespace Lumina
                 Barriers::ComputeToAll(CL);
             }
 
-            // Upload chunk + meshlet metadata the game thread rebuilt this frame; the
+            // Upload chunk + meshlet metadata Extract rebuilt this frame; the
             // cull pass tests these AABBs, so it must land before the next cull.
             if (TerrainItem.bGeometryRebuilt)
             {
@@ -7639,7 +7739,7 @@ namespace Lumina
 
 
             // The extract enforced the terrain domain + default fallback and ref-held the shaders on the
-            // game thread, so the render thread never touches the CMaterial. Null VS/PS => skip.
+            // extract phase, so the render phase never touches the CMaterial. Null VS/PS => skip.
             const FShaderEntry* VertexShader = TerrainItem.Shaders.VertexShader;
             const FShaderEntry*  PixelShader  = TerrainItem.Shaders.PixelShader;
             if (!VertexShader || !PixelShader)
@@ -9820,7 +9920,7 @@ namespace Lumina
 
         for (const FFrameData::FPostProcessMaterial& PPMaterial : ActivePostProcessMaterials)
         {
-            // Resolved + ref-held at extract; the render thread never touches the CMaterial.
+            // Resolved + ref-held at extract; the render phase never touches the CMaterial.
             const FShaderEntry* VS = PPMaterial.Shaders.VertexShader;
             const FShaderEntry*  PS = PPMaterial.Shaders.PixelShader;
             if (VS == nullptr || PS == nullptr)
@@ -10109,7 +10209,7 @@ namespace Lumina
             // dispatch, where there is a command list to do it with.
             TotalsZeroed[Slot] = false;
 
-            // GPU-driven scene per-frame outputs. Sized for real in CompileDrawCommands_RenderThread.
+            // GPU-driven scene per-frame outputs. Sized for real in CompileDrawCommands_Render.
             VisibleInstanceRing[Slot]       = CreateSceneBuffer(sizeof(FGPUInstance));
             CullCounterRing[Slot]           = CreateSceneBuffer(sizeof(uint32) * 2);
             BatchMeshletCountRing[Slot]     = CreateSceneBuffer(sizeof(uint32));
@@ -10184,9 +10284,11 @@ namespace Lumina
         LUMINA_PROFILE_SECTION_COLORED("GPU Scene Cull", tracy::Color::Magenta);
         SCENE_GPU_SCOPE(CL, "GPU Scene Cull");
 
-        // Everything about the retained scene comes from the frame's own snapshot. ScenePrimitives is
-        // game-thread state and is deliberately NOT touched here -- see FGeometry::FRetainedUpload.
+        // Extract decided WHAT to send; the payload is read straight from ScenePrimitives' live arrays,
+        // which nothing mutates between Extract and here. See FGeometry::FRetainedUpload.
         const FFrameData::FGeometry::FRetainedUpload& Upload = Frame.Geometry.RetainedUpload;
+        const FGPUInstance*      SrcInstances = ScenePrimitives.GetRetainedInstances();
+        const FInstanceCullData* SrcCullData  = ScenePrimitives.GetRetainedCullData();
 
         const uint8  Slot          = CurrentFrameSlot;
         const uint32 RetainedSlots = Upload.SlotCount;
@@ -10218,7 +10320,7 @@ namespace Lumina
 
             // Shrink is gated on a full-snapshot frame: reclaiming the allocation drops the accumulated
             // contents, and only a frame carrying the whole array can put them back. Growth is always
-            // accompanied by a full snapshot, because the game thread sets bFull precisely when the slot
+            // accompanied by a full snapshot, because Extract sets bFull precisely when the slot
             // count outgrew the capacity published below.
             ResizeBufferIfNeeded(RetainedInstanceBuffer, InstanceBytes, 1.5f, RetainedInstanceLowUsage, Upload.bFull);
             ResizeBufferIfNeeded(RetainedCullDataBuffer, CullBytes,     1.5f, RetainedCullDataLowUsage, Upload.bFull);
@@ -10233,15 +10335,15 @@ namespace Lumina
                     LUMINA_PROFILE_SECTION_COLORED("FULL resend", tracy::Color::Red3);
 
                     WriteBuffer(CL, RetainedInstanceBuffer.GetAddress(),
-                                Upload.FullInstances.data(), (SIZE_T)RetainedSlots * sizeof(FGPUInstance));
+                                SrcInstances, (SIZE_T)RetainedSlots * sizeof(FGPUInstance));
                     WriteBuffer(CL, RetainedCullDataBuffer.GetAddress(),
-                                Upload.FullCullData.data(), (SIZE_T)RetainedSlots * sizeof(FInstanceCullData));
+                                SrcCullData, (SIZE_T)RetainedSlots * sizeof(FInstanceCullData));
                 }
                 else
                 {
                     // One copy per CONTIGUOUS RUN of slots, not per slot. Every WriteBuffer is a transient
                     // allocation, and each allocation inserts into the RHI's memory-block vector -- so a
-                    // copy per slot is quadratic in the dirty count and will hang the render thread on a
+                    // copy per slot is quadratic in the dirty count and will hang the render phase on a
                     // large invalidation. The snapshot arrives sorted and deduped precisely so this can
                     // walk runs; in the steady state the list is empty and this loop does not execute.
                     const SIZE_T NumDirty = Upload.DirtySlots.size();
@@ -10256,15 +10358,16 @@ namespace Lumina
                         const uint32 First = Upload.DirtySlots[i];
                         const SIZE_T Run   = j - i;
 
+                        // A run is contiguous slots, so it is contiguous in the source arrays too.
                         WriteBuffer(CL, RetainedInstanceBuffer.GetAddress() + (uint64)First * sizeof(FGPUInstance),
-                                    &Upload.DirtyInstances[i], Run * sizeof(FGPUInstance));
+                                    &SrcInstances[First], Run * sizeof(FGPUInstance));
                         WriteBuffer(CL, RetainedCullDataBuffer.GetAddress() + (uint64)First * sizeof(FInstanceCullData),
-                                    &Upload.DirtyCullData[i], Run * sizeof(FInstanceCullData));
+                                    &SrcCullData[First], Run * sizeof(FInstanceCullData));
                         i = j;
                     }
                 }
             }
-            // Publish the capacity the game thread uses to decide whether the NEXT frame needs a full
+            // Publish the capacity Extract uses to decide whether the NEXT frame needs a full
             // re-send. Derived from the allocation we actually got, and from the smaller of the two so a
             // partial failure cannot advertise room that isn't there.
             const uint32 InstanceCap = (uint32)Math::Min<uint64>(RetainedInstanceBuffer.GetSize() / sizeof(FGPUInstance), 0xFFFFFFFFull);
@@ -10288,10 +10391,10 @@ namespace Lumina
                                           || UploadedSurfaceDescs != NumDescs);
             if (bNeedsDescWrite)
             {
-                if (Upload.SurfaceDescs.size() == (SIZE_T)NumDescs)
+                if (ScenePrimitives.GetSurfaceDescCount() == NumDescs)
                 {
                     WriteBuffer(CL, SurfaceDescBuffer.GetAddress(),
-                                Upload.SurfaceDescs.data(), (SIZE_T)NumDescs * sizeof(FSurfaceDescGPU));
+                                ScenePrimitives.GetSurfaceDescs(), (SIZE_T)NumDescs * sizeof(FSurfaceDescGPU));
                     UploadedSurfaceDescs = NumDescs;
                 }
                 else
@@ -10303,7 +10406,7 @@ namespace Lumina
 
         //~ Per-frame outputs. VisibleInstanceRing is deliberately NOT sized here: the SceneRoot published
         //  before this call already baked in its device address, so a resize at this point would retire the
-        //  allocation every shader is pointing at. CompileDrawCommands_RenderThread sizes it up front and
+        //  allocation every shader is pointing at. CompileDrawCommands_Render sizes it up front and
         //  hands the capacity over in FrameVisibleInstanceCapacity -- one value, sampled once, so the
         //  buffer, the prefix allocation and the clamps below cannot disagree.
         const uint32 VisibleCapacity = FrameVisibleInstanceCapacity;
@@ -10365,7 +10468,7 @@ namespace Lumina
                 int32  ShadowLODBias;
                 uint32 bUseLODs;
                 uint32 MaxVisibleInstances;
-                uint32 Pad0;
+                float  ShadowCoarseLODDistSq;
                 uint32 Pad1;
                 uint64 RetainedInstancesAddr;
                 uint64 RetainedCullDataAddr;
@@ -10385,6 +10488,7 @@ namespace Lumina
             PC.ShadowLODBias            = RenderSettings.ShadowLODBias;
             PC.bUseLODs                 = RenderSettings.bUseLODs ? 1u : 0u;
             PC.MaxVisibleInstances      = VisibleCapacity;
+            PC.ShadowCoarseLODDistSq    = RenderSettings.ShadowCoarseLODDistance * RenderSettings.ShadowCoarseLODDistance;
             PC.RetainedInstancesAddr    = RetainedInstanceBuffer.GetAddress();
             PC.RetainedCullDataAddr     = RetainedCullDataBuffer.GetAddress();
             PC.SurfaceDescsAddr         = SurfaceDescBuffer.GetAddress();
@@ -10841,9 +10945,9 @@ namespace Lumina
             View.Images[(int)ENamedImage::SkyPrefilter]  = BorrowSceneImage(NamedImages[(int)ENamedImage::SkyPrefilter]);
         }
 
-        // The freshly-sized cubes have undefined contents, but the game thread set bIBLDirty +
+        // The freshly-sized cubes have undefined contents, but Extract set bIBLDirty +
         // bIBLConvolutionDirty on this same resolution change (bResChanged), so the bake refills them
-        // this frame. Don't touch bIBL*Valid here -- those are game-thread-owned (avoids a data race).
+        // this frame. Don't touch bIBL*Valid here -- the bake later this frame owns them.
         AppliedIBLResolution = Resolution;
     }
 

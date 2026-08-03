@@ -41,7 +41,7 @@ namespace Lumina::DotNet
     FManagedRenderScene::~FManagedRenderScene()
     {
         // Destroying the proxy releases the managed instance; the caller (CWorld::DestroyRenderer)
-        // has already flushed the render thread, so nothing is still referencing the handle.
+        // has already waited for the GPU, so nothing is still referencing the handle.
         DestroyManagedRenderScene(Handle);
         Handle = nullptr;
 

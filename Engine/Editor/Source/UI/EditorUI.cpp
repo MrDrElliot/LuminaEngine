@@ -87,7 +87,6 @@
 #include "Renderer/CustomPrimitiveData.h"
 #include "Renderer/RenderDocImpl.h"
 #include "Renderer/RenderManager.h"
-#include "Renderer/RenderThread.h"
 #include "Renderer/ShaderCompiler.h"
 #include "Renderer/ShaderLibrary.h"
 #include "Thumbnails/ThumbnailManager.h"
@@ -882,7 +881,7 @@ namespace Lumina
         }
 
         // Drain a budget of pending thumbnail renders before the UI draws this frame's tiles. The render
-        // itself is game-thread only (World::Extract + GPU readback); keeping the budget small avoids a
+        // itself is extract-phase only (World::Extract + GPU readback); keeping the budget small avoids a
         // hitch while cold thumbnails fill in a few per frame.
         CThumbnailManager::Get().ProcessRenderQueue();
 
@@ -2951,11 +2950,8 @@ namespace Lumina
         if (ImGui::MenuItem(LE_ICON_DISC_PLAYER " V-Sync", nullptr, bVSyncEnabled))
         {
             const bool bNewVSync = !bVSyncEnabled;
-            ENQUEUE_RENDER_COMMAND(ToggleVSync)([bNewVSync]
-            {
-                RHI::SetVSync(bNewVSync);
-                GRenderManager->RecreatePrimarySwapchain();
-            });
+            RHI::SetVSync(bNewVSync);
+            GRenderManager->RecreatePrimarySwapchain();
         }
         
         if (ImGui::BeginMenu(LE_ICON_PALETTE " Theme"))

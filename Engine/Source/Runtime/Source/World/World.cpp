@@ -59,7 +59,6 @@
 #include "entity/components/tagcomponent.h"
 #include "Entity/Events/WorldEvents.h"
 #include "Physics/Physics.h"
-#include "Renderer/RenderThread.h"
 #include "Scene/RenderScene/RenderSceneFactory.h"
 #include "Scripting/DotNet/DotNetHost.h"
 #include "World/Entity/Components/CSharpScriptComponent.h"
@@ -480,10 +479,9 @@ namespace Lumina
     
     void CWorld::TeardownWorld()
     {
-        // No render thread / RHI / audio device in a headless process.
+        // No render phase / RHI / audio device in a headless process.
         if (!GIsHeadless)
         {
-            FlushRenderingCommands();
             RHI::WaitDeviceIdle();
         }
 
@@ -1326,9 +1324,12 @@ namespace Lumina
     {
         if (RenderScene)
         {
-            // Flush first so nothing in flight still references the scene's resources; the
-            // destructor then releases everything it owns.
-            FlushRenderingCommands();
+            // Submitted GPU work can still name the scene's resources; the destructor then
+            // releases everything it owns.
+            if (!GIsHeadless)
+            {
+                RHI::WaitDeviceIdle();
+            }
             RenderScene.reset();
         }
     }

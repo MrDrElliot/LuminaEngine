@@ -3,7 +3,6 @@
 
 #include "Tools/UI/ImGui/Vulkan/VulkanImGuiRender.h"
 
-#include "RenderThread.h"
 #include "ShaderCompiler.h"
 #include "ShaderLibrary.h"
 #include "RHI.h"
@@ -26,19 +25,11 @@ namespace Lumina
 
     static TConsoleVar CVarVSync("Core.VSync", true, "Toggles v-sync", [](const CVarValueType& Value)
     {
-        // Render thread recreates the swapchain with the new present mode.
         const bool bEnabled = eastl::get<bool>(Value);
+        RHI::SetVSync(bEnabled);
         if (GRenderManager != nullptr)
         {
-            ENQUEUE_RENDER_COMMAND(SetVSync)([bEnabled]
-            {
-                RHI::SetVSync(bEnabled);
-                GRenderManager->RecreatePrimarySwapchain();
-            });
-        }
-        else
-        {
-            RHI::SetVSync(bEnabled);
+            GRenderManager->RecreatePrimarySwapchain();
         }
     });
 
@@ -50,14 +41,6 @@ namespace Lumina
     {
         // Detach from resize events before teardown so a late resize can't enqueue work.
         FWindow::OnWindowResized.Remove(WindowResizedHandle);
-
-        // Stop the worker first: queued commands hold refs to GPU resources destroyed below.
-        if (GRenderThread)
-        {
-            GRenderThread->Stop();
-            Memory::Delete(GRenderThread);
-            GRenderThread = nullptr;
-        }
 
         #if WITH_EDITOR
         ImGuiRenderer->Deinitialize();
@@ -134,9 +117,6 @@ namespace Lumina
 
         WindowResizedHandle = FWindow::OnWindowResized.AddMember(this, &FRenderManager::OnWindowResized);
 
-        GRenderThread = Memory::New<FRenderThread>();
-        GRenderThread->Start();
-
         MaterialManager = MakeUnique<RHI::FMaterialManager>();
 
 #if WITH_EDITOR
@@ -163,38 +143,31 @@ namespace Lumina
         const uint8 ThisFrameIndex = CurrentFrameIndex;
         CurrentFrameIndex = (CurrentFrameIndex + 1) % RHI::kFramesInFlight;
 
-        [[maybe_unused]] FImDrawDataSnapshot* ImGuiSnapshot = nullptr;
+        [[maybe_unused]] ImDrawData* ImGuiDrawData = nullptr;
         #if WITH_EDITOR
-        ImGuiSnapshot = ImGuiRenderer->BuildFrame_GameThread(ThisFrameIndex);
+        ImGuiDrawData = ImGuiRenderer->BuildFrame();
         #endif
 
-        ENQUEUE_RENDER_COMMAND(RenderFrame)([this, ThisFrameIndex, Snapshot = ImGuiSnapshot]() mutable
         {
             {
-                LUMINA_PROFILE_SECTION_COLORED("RT Frame Fence (GPU)", tracy::Color::Crimson);
+                LUMINA_PROFILE_SECTION_COLORED("Frame Fence (GPU)", tracy::Color::Crimson);
                 RHI::Core::BeginFrame(ThisFrameIndex);
             }
 
             // One rebuild per frame for however many resize events arrived since the last one, and
             // before anything reads a render target this frame.
-            ApplyPendingResize_RenderThread();
+            ApplyPendingResize();
 
             GWorldManager->RenderWorlds(ThisFrameIndex);
 
             RHI::FTextureH SwapImage;
             {
-                LUMINA_PROFILE_SECTION_COLORED("RT Acquire Swapchain", tracy::Color::Orange3);
+                LUMINA_PROFILE_SECTION_COLORED("Acquire Swapchain", tracy::Color::Orange3);
                 SwapImage = RHI::AcquireNextImage(Swapchain);
             }
             if (!RHI::IsValid(SwapImage))
             {
                 RHI::RecreateSwapchain(Swapchain, Windowing::GetPrimaryWindowHandle()->GetExtent());
-                #if WITH_EDITOR
-                if (Snapshot)
-                {
-                    ImGuiRenderer->SignalSnapshotSlotConsumed(ThisFrameIndex);
-                }
-                #endif
                 return;
             }
 
@@ -206,22 +179,21 @@ namespace Lumina
 
             #if WITH_EDITOR
             {
-                LUMINA_PROFILE_SECTION_COLORED("RT Editor UI", tracy::Color::SlateBlue1);
+                LUMINA_PROFILE_SECTION_COLORED("Editor UI", tracy::Color::SlateBlue1);
                 RmlUi::RenderEditorContexts(CL);
             }
             #endif
 
             #if WITH_EDITOR
-            if (Snapshot)
             {
-                LUMINA_PROFILE_SECTION_COLORED("RT ImGui Record", tracy::Color::SlateBlue3);
-                ImGuiRenderer->OnEndFrame_NewRHI(CL, SwapImage, Extent, *Snapshot);
+                LUMINA_PROFILE_SECTION_COLORED("ImGui Record", tracy::Color::SlateBlue3);
+                ImGuiRenderer->OnEndFrame_NewRHI(CL, SwapImage, Extent, ImGuiDrawData);
             }
             #endif
 
             #if !WITH_EDITOR
             {
-                LUMINA_PROFILE_SECTION_COLORED("RT Game Composite", tracy::Color::ForestGreen);
+                LUMINA_PROFILE_SECTION_COLORED("Game Composite", tracy::Color::ForestGreen);
 
                 IRenderScene* Scene = nullptr;
                 if (FWorldContext* GameContext = GWorldManager->GetPrimaryGameContext())
@@ -241,21 +213,18 @@ namespace Lumina
             #endif
 
             {
-                LUMINA_PROFILE_SECTION_COLORED("RT Present", tracy::Color::Orange4);
+                LUMINA_PROFILE_SECTION_COLORED("Present", tracy::Color::Orange4);
                 RHI::Core::Present(Swapchain, CL);
             }
 
             #if WITH_EDITOR
-            if (Snapshot)
             {
                 // Multi-viewport: render + present each dragged-out tool window into its own swapchain.
-                // Must finish (it reads this frame slot's captures) before releasing the slot.
-                LUMINA_PROFILE_SECTION_COLORED("RT ImGui Secondary Viewports", tracy::Color::SlateBlue4);
-                ImGuiRenderer->RenderSecondaryViewports_RenderThread(ThisFrameIndex);
-                ImGuiRenderer->SignalSnapshotSlotConsumed(ThisFrameIndex);
+                LUMINA_PROFILE_SECTION_COLORED("ImGui Secondary Viewports", tracy::Color::SlateBlue4);
+                ImGuiRenderer->RenderSecondaryViewports();
             }
             #endif
-        });
+        }
     }
 
     void FRenderManager::SwapchainResized(FVector2 NewSize)
@@ -285,7 +254,7 @@ namespace Lumina
         PendingResizeExtent.store(((uint64)Extent.x << 32) | (uint64)Extent.y, std::memory_order_relaxed);
     }
 
-    void FRenderManager::ApplyPendingResize_RenderThread()
+    void FRenderManager::ApplyPendingResize()
     {
         const uint64 Packed = PendingResizeExtent.exchange(0, std::memory_order_acquire);
         if (Packed == 0)

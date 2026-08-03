@@ -299,10 +299,9 @@ namespace Lumina::RHI::Core
             RHI::Submit(EQueueType::Graphics, TSpan{&CommandList, 1}, {}, TSpan{&Signal, 1});
         }
 
-        // Wait for ONLY this submission's timeline value (not vkDeviceWaitIdle): a full device wait issued from
-        // inside a render-thread command blocks on unrelated frame work while holding the cooperative drain,
-        // wedging the next FlushRenderingCommands (e.g. opening an asset editor). The caller owns CommandList
-        // and resets it after this returns, so it is intentionally not tracked in the frame's slot lists.
+        // Wait for ONLY this submission's timeline value (not vkDeviceWaitIdle), which would block on
+        // unrelated in-flight frame work. The caller owns CommandList and resets it after this returns,
+        // so it is intentionally not tracked in the frame's slot lists.
         WaitSemaphore(GCore.FrameTimeline, Value);
     }
 

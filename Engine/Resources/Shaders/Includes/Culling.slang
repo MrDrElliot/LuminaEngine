@@ -121,3 +121,65 @@ bool IsHiZOccluded(float3 CenterWS, float RadiusWS)
     // farthest occluder in its footprint.
     return DepthSphere < PyramidDepth;
 }
+
+// Rejects a caster whose shadow is already fully written by something nearer the light, tested against the
+// PREVIOUS frame's cascade depth. Differs from the camera HZB in two ways that matter:
+//
+//   * the cascade atlas is STANDARD Z (Less test, cleared to 1.0), so "the farthest occluder in the
+//     footprint" is a MAX, not a min -- hence SAMPLER_MAX_REDUCTION and a max-reduced pyramid.
+//   * the projection is orthographic, so the sphere's NDC footprint is a plain scale of its world radius
+//     (CascadeHZBNdcScale) rather than the perspective sphere-clip the camera path needs.
+//
+// Conservative by construction: a sphere that leaves the cascade's clip box skips the test entirely, and
+// the tap is allowed to bleed into a neighbouring cascade's tile because sampling a SUPERSET of the
+// footprint can only ever raise the max, i.e. cull less.
+bool IsCascadeHZBOccluded(uint CascadeIndex, float3 CenterWS, float RadiusWS)
+{
+    if (Scene().CullData.bCascadeHZBValid == 0u || CascadeIndex >= (uint)NUM_CASCADES)
+    {
+        return false;
+    }
+
+    const float4x4 CascadeVP = Scene().CullData.CascadeHZBViewProjection[CascadeIndex];
+    const float3   NdcScale  = Scene().CullData.CascadeHZBNdcScale[CascadeIndex].xyz;
+
+    // Ortho: w == 1, so clip space is already NDC.
+    const float3 Ndc       = mul(CascadeVP, float4(CenterWS, 1.0)).xyz;
+    const float3 NdcRadius = RadiusWS * NdcScale;
+
+    const float2 MinNdc = Ndc.xy - NdcRadius.xy;
+    const float2 MaxNdc = Ndc.xy + NdcRadius.xy;
+    const float  NearZ  = Ndc.z - NdcRadius.z;
+
+    // Partly outside the cascade volume: the raster clips it, so the pyramid never described all of it.
+    // Treat as visible rather than guess.
+    if (any(MinNdc < -1.0) || any(MaxNdc > 1.0) || NearZ < 0.0)
+    {
+        return false;
+    }
+
+    // NDC -> tile-local UV -> pyramid UV. The ortho projection already bakes Vulkan +Y-down, so this is a
+    // direct mapping, same as the camera path.
+    const float4 Tile     = Scene().CullData.CascadeHZBTile[CascadeIndex];
+    const float2 LocalMin = MinNdc * 0.5 + 0.5;
+    const float2 LocalMax = MaxNdc * 0.5 + 0.5;
+
+    const float2 UvMin = Tile.xy + LocalMin * Tile.zw;
+    const float2 UvMax = Tile.xy + LocalMax * Tile.zw;
+
+    const float Width  = (UvMax.x - UvMin.x) * Scene().CullData.CascadePyramidWidth;
+    const float Height = (UvMax.y - UvMin.y) * Scene().CullData.CascadePyramidHeight;
+
+    // Mip where one bilinear tap (2x2) covers the footprint, clamped to the chain we actually allocated.
+    const float MaxLevel = max((float)Scene().CullData.CascadePyramidMipCount - 1.0, 0.0);
+    const float Level    = clamp(ceil(log2(max(max(Width, Height) * 0.5, 1.0))), 0.0, MaxLevel);
+
+    const float2 SampleUV = (UvMin + UvMax) * 0.5;
+
+    // MIN-reduction is what the camera's reverse-Z pyramid wants; standard Z wants the opposite.
+    const float PyramidDepth = SampleTexture2DLevel(Scene().CullData.CascadePyramidIndex, SAMPLER_MAX_REDUCTION, SampleUV, Level).x;
+
+    // Standard Z: occluded iff the whole sphere sits behind the farthest thing already in its footprint,
+    // i.e. every fragment it would emit fails the Less test.
+    return NearZ > PyramidDepth;
+}

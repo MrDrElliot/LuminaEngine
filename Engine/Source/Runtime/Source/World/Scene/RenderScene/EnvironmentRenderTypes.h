@@ -19,7 +19,7 @@ namespace Lumina
     constexpr uint32 GSkyMode_HDRI       = 3u;
 
     // Resolved IBL bake resolution, mapped from SEnvironmentComponent::IBLQuality during extraction.
-    // The render thread recreates the sky/irradiance/prefilter cubes whenever this changes; comparison
+    // The render phase recreates the sky/irradiance/prefilter cubes whenever this changes; comparison
     // gates that (rare, WaitIdle-guarded) rebuild. The default is the cheap (Low) baseline so scenes
     // without an environment (e.g. thumbnail scenes) stay small; the active env's tier bumps it on the
     // first rendered frame.

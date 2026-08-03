@@ -49,7 +49,7 @@ namespace Lumina
         (void)CPackage::OnPackageDestroyed.AddMember(this, &ThisClass::OnPackageDestroyed);
 
         // Any registry change (import/save/delete) may have altered content hashes; flag a sweep so
-        // stale in-memory records regenerate. The actual erase happens on the game thread (ProcessRenderQueue).
+        // stale in-memory records regenerate. The actual erase happens on Extract (ProcessRenderQueue).
         (void)FAssetRegistry::Get().GetOnAssetRegistryUpdated().AddLambda([this]()
         {
             bRegistryDirty.store(true, std::memory_order_relaxed);
@@ -305,7 +305,7 @@ namespace Lumina
                 }
             }
 
-            // 3. Queue for render. Only bother if this class has a renderer; the game-thread drain renders it
+            // 3. Queue for render. Only bother if this class has a renderer; the extract-phase drain renders it
             // once it is resident (we never load the object here -- that races the editor's loader).
             CClass* Klass = FindObject<CClass>(ClassName);
             if (Klass == nullptr || !CanGenerateFor(Klass))
@@ -435,10 +435,8 @@ namespace Lumina
             return false;
         }
 
-        // Build a fresh preview world per capture and tear it down immediately. A PERSISTENT thumbnail world
-        // lingers in the render-scene registry and wedges the FlushRenderingCommands() that opening an asset
-        // editor (FWorldManager::CreateWorldContext) performs -> hang. Per-capture matches the original
-        // save-path pattern, which never had this problem.
+        // Build a fresh preview world per capture and tear it down immediately, so no thumbnail world
+        // lingers in the render-scene registry.
         FThumbnailScene Scene(512);
         Scene.Begin();
         if (Scene.GetWorld() == nullptr)

@@ -148,7 +148,7 @@ namespace Lumina::DotNet
     //~ Managed RenderScene bridge: a C# subclass of LuminaSharp's RenderScene drives a world's rendering
     //  through the FManagedRenderScene proxy (see ManagedRenderScene.h). Create runs the managed ctor +
     //  OnInit; Destroy runs OnShutdown and frees the GCHandle. Extract/GetExtent run on the game thread,
-    //  Render/GetDisplayTexture on the render thread (the CLR attaches threads on demand).
+    //  Render/GetDisplayTexture during the render phase (the CLR attaches threads on demand).
 
     RUNTIME_API void GatherManagedRenderSceneTypes(TVector<FString>& Out);
 

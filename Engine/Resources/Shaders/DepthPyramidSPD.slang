@@ -2,8 +2,13 @@
 #include "Includes/Common.slang"
 #include "Includes/SceneGlobals.slang"
 
-// Single-pass downsampler for the reverse-Z HZB (up to 12 mips per dispatch). Bindless source SRV +
+// Single-pass downsampler for a conservative HZB (up to 12 mips per dispatch). Bindless source SRV +
 // per-mip UAVs, BDA atomic counter for the cross-WG hand-off; no pass-local binding set.
+//
+// Two reduction modes, because the engine has two depth conventions: the camera pyramid is reverse-Z and
+// wants MIN (the farthest surface), the cascade atlas is standard Z and wants MAX. Both are "the surface an
+// occludee must be behind to be hidden"; the sign is the only difference. ReduceMax is a push constant, so
+// the branch is wave-uniform.
 
 #define TILE_THREAD_WIDTH 16
 #define TILE_THREAD_COUNT (TILE_THREAD_WIDTH * TILE_THREAD_WIDTH)
@@ -17,12 +22,18 @@ struct FPushConstants
     uint   NumWorkGroups;
     float2 InvPyramidSize;
     uint   SrcDepthIndex;
-    uint   _Pad0;
+    uint   ReduceMax;       // 0 = min (reverse-Z camera depth), 1 = max (standard-Z shadow depth)
     uint*  AtomicCounter;
     uint   MipUAV[SPD_MAX_MIPS];
 };
 
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
+
+// Value that leaves a reduction unchanged, for the lanes whose destination texel is outside the pyramid.
+float ReduceIdentity()
+{
+    return Pass().ReduceMax != 0u ? 0.0f : 1.0f;
+}
 
 // Ping-pong LDS: alternating reduction passes write to disjoint halves so no
 // slot is read+written across a barrier.
@@ -31,6 +42,10 @@ groupshared bool  SpdIsLastWorkgroup;
 
 float Reduce4(float a, float b, float c, float d)
 {
+    if (Pass().ReduceMax != 0u)
+    {
+        return max(max(a, b), max(c, d));
+    }
     return min(min(a, b), min(c, d));
 }
 
@@ -53,15 +68,18 @@ float LoadMip5Coherent(int2 Pos, int2 MaxIdx)
     return gRWTextures2DCoherent[Pass().MipUAV[5]][clamp(Pos, int2(0, 0), MaxIdx)].x;
 }
 
+// Mip 0 is a 2x1-per-axis reduction of the source, so the reduction sampler has to match the mode: one tap
+// covers the 2x2 source block exactly. Sampling a subset here would under-report the extent and over-cull.
 float SampleSrcDepth(float2 UV)
 {
-    return gTextures2D[Pass().SrcDepthIndex].SampleLevel(
-        gSamplers[SAMPLER_MIN_REDUCTION], UV, 0.0f).x;
+    const uint Sampler = Pass().ReduceMax != 0u ? SAMPLER_MAX_REDUCTION : SAMPLER_MIN_REDUCTION;
+    return gTextures2D[Pass().SrcDepthIndex].SampleLevel(gSamplers[Sampler], UV, 0.0f).x;
 }
 
 float4 DownsampleMipN0_BaseCase(uint2 Tile, uint2 TileThread)
 {
-    float4 Quad = float4(1, 1, 1, 1);
+    const float Identity = ReduceIdentity();
+    float4 Quad = float4(Identity, Identity, Identity, Identity);
 
     [unroll]
     for (uint qi = 0; qi < 4; ++qi)
@@ -83,7 +101,8 @@ float4 DownsampleMipN0_BaseCase(uint2 Tile, uint2 TileThread)
 
 float4 DownsampleMipN0_FromMip5(uint2 Tile, uint2 TileThread)
 {
-    float4 Quad = float4(1, 1, 1, 1);
+    const float Identity = ReduceIdentity();
+    float4 Quad = float4(Identity, Identity, Identity, Identity);
 
     const uint2 SrcMipSize = max(Pass().PyramidSize >> 5u, uint2(1, 1));
     const uint2 DstMipSize = max(Pass().PyramidSize >> 6u, uint2(1, 1));

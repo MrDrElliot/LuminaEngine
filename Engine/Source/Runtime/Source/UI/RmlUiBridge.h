@@ -32,13 +32,13 @@ namespace Lumina::RmlUi
     RUNTIME_API TUniquePtr<FWorldUIContext> CreateWorldUI(CWorld* World);
     RUNTIME_API void            DestroyWorldUI(CWorld* World);
 
-    // Game thread: update one world's DOM (called from CWorld::Extract).
+    // Update one world's DOM (called from CWorld::Extract).
     RUNTIME_API void            TickWorldUI(CWorld* World);
-    // Render thread: composite one world's UI onto its render target (from the scene's RenderView).
+    // Composite one world's UI onto its render target (from the scene's RenderView).
     RUNTIME_API void            RenderWorldUI(const CWorld* World, RHI::FCmdListH CmdList);
 
-    // World-space widgets (SWidgetComponent): Tick lays each document into its RT (game thread, in Extract),
-    // Render rasterizes the queued RTs (render thread), Release tears one down from on_destroy.
+    // World-space widgets (SWidgetComponent): Tick lays each document into its RT (in Extract),
+    // Render rasterizes the queued RTs, Release tears one down from on_destroy.
     RUNTIME_API void            TickWorldWidgets(CWorld* World);
     RUNTIME_API void            RenderWorldWidgets(const CWorld* World, RHI::FCmdListH CmdList);
     RUNTIME_API void            ReleaseWidget(CWorld* World, SWidgetComponent& Component);
@@ -128,8 +128,8 @@ namespace Lumina::RmlUi
     //
     // These drive a world's own full-screen Rml::Context (the HUD/menu context input is already
     // forwarded to, see FInputViewport) -- distinct from world-space SWidgetComponents and editor
-    // previews. Every call takes the bridge StateMutex, so it is safe on the game thread against the
-    // render thread's RenderWorldUI. Documents/elements cross as opaque handles (Rml::ElementDocument*
+    // previews. Every call takes the bridge StateMutex, which also guards re-entrant event
+    // callbacks. Documents/elements cross as opaque handles (Rml::ElementDocument*
     // / Rml::Element* as void*); they are valid while the owning document is loaded. Backs LuminaSharp's
     // World.UI facade (LuminaSharp_UI_* exports in DotNetGameplay.cpp).
     //--------------------------------------------------------------------------------------------

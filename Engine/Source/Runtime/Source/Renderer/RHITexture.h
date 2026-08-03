@@ -36,7 +36,7 @@ namespace Lumina::RHI
         void Initialize();   // creates the 1x1 placeholder
         void Shutdown();
 
-        // Render thread, per frame: retires heap slots/textures whose deferred
+        // Per frame: retires heap slots/textures whose deferred
         // window has elapsed (called from RHI::Core::BeginFrame).
         void Tick();
 

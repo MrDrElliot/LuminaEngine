@@ -144,14 +144,14 @@ namespace Lumina
         /** Runs systems attached to this world; called on every update stage. */
         void Update(const FUpdateContext& Context);
 
-        // Steps physics. Runs on the physics worker; pair with DispatchPhysicsEvents on the game thread post-join.
+        // Steps physics. Runs on the physics worker; pair with DispatchPhysicsEvents on the main thread post-join.
         void TickPhysics();
 
-        // Game-thread drain of physics events (entt::dispatcher).
+        // Main-thread drain of physics events (entt::dispatcher).
         void DispatchPhysicsEvents();
 
-        // Game thread: read ECS to compute camera/post-process and populate the scene's
-        // per-frame state. Must run before any render-thread RenderView consumes it.
+        // Read ECS to compute camera/post-process and populate the scene's per-frame state.
+        // Must run before RenderView consumes it, same frame.
         void Extract();
 
         /**
@@ -407,7 +407,7 @@ namespace Lumina
         void RegisterSystems();
 
         // Read-only snapshot of the per-stage parallel system batches + each system's declared access, for the
-        // Gameplay Insights editor tool. Replays the TickSystems batching; game thread.
+        // Gameplay Insights editor tool. Replays the TickSystems batching; main thread.
         void GetSystemSchedule(TVector<FSystemScheduleEntry>& Out) const;
 
         //~ Begin Debug Drawing
@@ -429,7 +429,7 @@ namespace Lumina
         // longer side; Strength = center opacity; Hardness > 1 sharpens. Queued, run next frame (TexturePaintPass).
         void PaintRenderTarget(CTextureRenderTarget* Target, const FVector2& UV, float RadiusUV, const FVector4& Color, float Strength = 1.0f, float Hardness = 1.0f, CTexture* BrushMask = nullptr);
 
-        /** Clear an entire render target to Color (queued; executed on the render thread). */
+        /** Clear an entire render target to Color (queued; executed during the render phase). */
         void ClearRenderTarget(CTextureRenderTarget* Target, const FVector4& Color);
 
         /** Render-scene Extract drains the queued paint/clear ops into the frame snapshot. */

@@ -56,7 +56,7 @@ namespace Lumina
         const auto GetDeviceProcAddr   = reinterpret_cast<PFN_vkGetDeviceProcAddr>(H.GetDeviceProcAddr);
 
         // NvPerf init (Initialize/BeginSession) submits to the shared graphics queue. The engine
-        // submits frames from the render thread; hold the RHI submit lock for the whole setup so the
+        // submits frames from engine threads; hold the RHI submit lock for the whole setup so the
         // two never race. One-time hitch on tool open is fine. RAII releases on every return path.
         const RHI::Native::FScopedSubmitLock SubmitLock;
 
@@ -126,7 +126,7 @@ namespace Lumina
             return;
         }
         {
-            // EndSession/Reset also touch the shared queue; serialize with the render thread.
+            // EndSession/Reset also touch the shared queue; serialize with engine submission.
             const RHI::Native::FScopedSubmitLock SubmitLock;
             if (State->bSessionActive)
             {
