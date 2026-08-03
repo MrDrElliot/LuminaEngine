@@ -33,16 +33,17 @@ namespace Lumina::Reflection
         }
         AmalgamationFile << "#pragma once\n\n";
         
-        // Needed to keep dynamic args alive.
-        eastl::fixed_vector<eastl::string, 256>  ClangArgStorage;
-        eastl::fixed_vector<const char*, 256>    ClangArgs;
-        
+        // Needed to keep dynamic args alive. The pointer array is built only once every argument
+        // is in place: taking c_str() as we go dangles the moment the storage reallocates, and a
+        // fixed cap here silently mis-parsed the whole workspace once the include dirs outgrew it.
+        eastl::vector<eastl::string> ClangArgStorage;
+        eastl::vector<const char*>   ClangArgs;
+
         auto AppendArg = [&](eastl::string Arg)
         {
             ClangArgStorage.emplace_back(eastl::move(Arg));
-            ClangArgs.emplace_back(ClangArgStorage.back().c_str());
         };
-        
+
         for (const auto& Project : Workspace->ReflectedProjects)
         {
             eastl::string APIDecl = "-D" + Project->Name + "_API=";
@@ -84,7 +85,13 @@ namespace Lumina::Reflection
         AppendArg("-Wno-vla-extension-static-assert");
         AppendArg("-fno-spell-checking");
         AppendArg("-fno-delayed-template-parsing");
-    
+
+        ClangArgs.reserve(ClangArgStorage.size());
+        for (const eastl::string& Arg : ClangArgStorage)
+        {
+            ClangArgs.emplace_back(Arg.c_str());
+        }
+
         ClangIndex = clang_createIndex(0, 0);
         
         constexpr uint32_t ClangOptions = 
