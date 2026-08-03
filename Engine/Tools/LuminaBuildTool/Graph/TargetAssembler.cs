@@ -83,6 +83,10 @@ public sealed class TargetAssembler
 
         Target.Modules.AddRange(TopologicallySort(ModulesByName.Values));
 
+        // Before any environment is built, because a layering violation makes the environments
+        // meaningless and the error should be about the graph rather than about what came of it.
+        ModuleLayerCheck.Verify(Target);
+
         foreach (BuildModule Module in Target.Modules)
         {
             Target.RulesFiles.Add(Module.Rules.RulesFile);

@@ -249,6 +249,11 @@ public static class BuildMode
 
             if (Outdated.Count == 0)
             {
+                // Nothing to build still leaves something to write: loading the cache prunes
+                // closures for outputs that no longer exist, and without this the pruning would be
+                // redone on every up-to-date build and never kept.
+                HeaderDependencies.Save();
+
                 Log.Info("{0} is up to date ({1:F2}s).", Target.Name, Timer.Elapsed.TotalSeconds);
                 return 0;
             }
@@ -256,7 +261,9 @@ public static class BuildMode
             int MaxParallelism = Arguments.GetInt("MaxParallel", Math.Max(1, Environment.ProcessorCount - 1));
             bool bStopOnFirstError = !Arguments.GetBool("KeepGoing", false);
 
-            ActionExecutor Executor = new(Graph, History, HeaderDependencies, MaxParallelism, bStopOnFirstError);
+            BuildTimeline? Timeline = Arguments.HasFlag("Timeline") ? new BuildTimeline() : null;
+
+            ActionExecutor Executor = new(Graph, History, HeaderDependencies, MaxParallelism, bStopOnFirstError, Timeline);
             ExecutionResult Result;
 
             try
@@ -267,6 +274,14 @@ public static class BuildMode
             {
                 History.Save();
                 HeaderDependencies.Save();
+
+                // Written even for a failed build: a build that died partway is exactly when you
+                // want to see what had run and what was still waiting.
+                Timeline?.Write(Path.Combine(
+                    Target.Directories.BuildToolIntermediatesDirectory,
+                    $"Timeline-{Target.Name}-{Target.Info.Type}-{Target.Info.Configuration}.json"));
+
+                Timeline?.LogSlowest(10);
             }
 
             if (!Result.bSucceeded)

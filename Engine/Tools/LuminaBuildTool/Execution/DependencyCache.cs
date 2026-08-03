@@ -44,8 +44,22 @@ public sealed class DependencyCache
             return Cache;
         }
 
+        int Dropped = 0;
+
         foreach ((string Output, List<int> Indices) in Data.Dependencies)
         {
+            // An output that is no longer on disk has nothing left to keep a closure for. It is
+            // rebuilt regardless, so this never affected a freshness decision, but the entries
+            // accumulate: changing what a module produces, by merging its sources into unity blobs
+            // for instance, orphans every object the old arrangement made. Left in place they
+            // outnumbered the live ones and made anything reading this cache as a measurement of
+            // the codebase count objects that do not exist.
+            if (!File.Exists(Output))
+            {
+                Dropped++;
+                continue;
+            }
+
             string[] Paths = new string[Indices.Count];
             bool bValid = true;
 
@@ -66,6 +80,14 @@ public sealed class DependencyCache
             {
                 Cache.DependenciesByOutput[Output] = Paths;
             }
+        }
+
+        if (Dropped > 0)
+        {
+            // Marked dirty so the pruned form is what gets written back, rather than the orphans
+            // being reloaded and re-dropped on every build from here on.
+            Cache.bDirty = true;
+            Log.Verbose("Dropped header dependencies for {0} outputs that no longer exist", Dropped);
         }
 
         Log.Verbose("Loaded header dependencies for {0} outputs", Cache.DependenciesByOutput.Count);
@@ -109,6 +131,15 @@ public sealed class DependencyCache
     public string[]? GetDependencies(string OutputFile)
     {
         return DependenciesByOutput.TryGetValue(OutputFile, out string[]? Paths) ? Paths : null;
+    }
+
+    /// <summary>
+    /// Every recorded output and the header closure the compiler reported for it. Exposed so the
+    /// graph the build keeps for freshness can also be read as a measurement of the codebase.
+    /// </summary>
+    public IEnumerable<KeyValuePair<string, string[]>> EnumerateRecorded()
+    {
+        return DependenciesByOutput;
     }
 
     public void Forget(string OutputFile)

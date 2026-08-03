@@ -75,20 +75,61 @@ public static class PathUtils
     /// Writes only when content differs so generated project files keep stable timestamps and
     /// do not retrigger downstream work on every generation pass.
     /// </summary>
-    public static bool WriteFileIfChanged(string FilePath, string Content)
+    /// <param name="bByteOrderMark">
+    /// MSBuild's own tooling writes project files with a byte order mark, so they keep one. JSON
+    /// must not have one: the grammar has no place for it and a strict parser stops at the first
+    /// character. Anything consumed by something other than Visual Studio wants it off.
+    /// </param>
+    public static bool WriteFileIfChanged(string FilePath, string Content, bool bByteOrderMark = true)
     {
         string Normalized = Normalize(FilePath);
 
-        if (File.Exists(Normalized) && File.ReadAllText(Normalized) == Content)
+        if (IsAlreadyWritten(Normalized, Content, bByteOrderMark))
         {
             return false;
         }
 
         EnsureDirectoryForFile(Normalized);
-        File.WriteAllText(Normalized, Content, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+        File.WriteAllText(Normalized, Content, new UTF8Encoding(encoderShouldEmitUTF8Identifier: bByteOrderMark));
         FileItem.Get(Normalized).Invalidate();
 
         return true;
+    }
+
+    /// <summary>
+    /// Whether the file already holds exactly this text in the requested encoding.
+    /// </summary>
+    /// <remarks>
+    /// ReadAllText strips a byte order mark if there is one, so content alone cannot tell us the
+    /// encoding matches. Both have to, or a file whose text never changes would keep whichever
+    /// encoding it was first written with forever. An unreadable file counts as not written, which
+    /// lets the write attempt surface the real error rather than this check swallowing it.
+    /// </remarks>
+    private static bool IsAlreadyWritten(string FilePath, string Content, bool bByteOrderMark)
+    {
+        try
+        {
+            if (!File.Exists(FilePath))
+            {
+                return false;
+            }
+
+            byte[] Head = new byte[3];
+            int Read;
+
+            using (FileStream Stream = File.OpenRead(FilePath))
+            {
+                Read = Stream.Read(Head, 0, Head.Length);
+            }
+
+            bool bFound = Read == 3 && Head[0] == 0xEF && Head[1] == 0xBB && Head[2] == 0xBF;
+
+            return bFound == bByteOrderMark && File.ReadAllText(FilePath) == Content;
+        }
+        catch (Exception Ex) when (Ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
     }
 
     /// <summary>

@@ -16,10 +16,10 @@ namespace Lumina
         }
     };
 
-    template<typename S> using TSharedPtr =         eastl::shared_ptr<S>;
-    template<typename S> using TUniquePtr =         eastl::unique_ptr<S>;
-    template<typename S> using TWeakPtr =           eastl::weak_ptr<S>;
-    template<typename S> using TSharedFromThis =    eastl::enable_shared_from_this<S>;
+    template<typename S> using TSharedPtr                                           = eastl::shared_ptr<S>;
+    template<typename S, typename D = eastl::default_delete<S>> using TUniquePtr    = eastl::unique_ptr<S, D>;
+    template<typename S> using TWeakPtr                                             = eastl::weak_ptr<S>;
+    template<typename S> using TSharedFromThis                                      = eastl::enable_shared_from_this<S>;
 
     template<typename T, typename... Args>
     requires (std::is_constructible_v<T, Args...>)

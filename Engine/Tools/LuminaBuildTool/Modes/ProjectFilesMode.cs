@@ -5,6 +5,7 @@ using LuminaBuildTool.Platform;
 using LuminaBuildTool.ProjectFiles;
 using LuminaBuildTool.ProjectFiles.VisualStudio;
 using LuminaBuildTool.Rules;
+using LuminaBuildTool.Toolchain;
 
 namespace LuminaBuildTool.Modes;
 
@@ -100,11 +101,12 @@ public static class ProjectFilesMode
         bool bRulesProjectChanged = RulesProjectGenerator.Generate(Directories, Assembly);
         string RulesProjectPath = RulesProjectGenerator.GetProjectPath(Directories);
 
-        IProjectFileGenerator Generator = new VisualStudioGenerator(
-            PlatformSupport.CreateToolchain(Targets[0].PrimaryVariant.Info));
+        IToolchain Toolchain = PlatformSupport.CreateToolchain(Targets[0].PrimaryVariant.Info);
+        IProjectFileGenerator Generator = new VisualStudioGenerator(Toolchain);
 
         int Changed = Generator.Generate(Directories, Targets, Configurations, RulesProjectPath)
-            + (bRulesProjectChanged ? 1 : 0);
+            + (bRulesProjectChanged ? 1 : 0)
+            + (CompileDatabaseStep.Write(Directories, Targets, Configurations, Toolchain) ? 1 : 0);
 
         // Written after the files it describes, so an interrupted generation leaves the stamp
         // pointing at the previous rules and the next build tries again.

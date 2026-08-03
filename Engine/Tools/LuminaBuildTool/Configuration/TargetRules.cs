@@ -1,6 +1,17 @@
 namespace LuminaBuildTool.Configuration;
 
 /// <summary>
+/// A dependency edge the rules declare must not exist.
+/// </summary>
+/// <param name="ModuleName">The module that must stay clear of the dependency.</param>
+/// <param name="DependencyName">What it must not reach, directly or through anything else.</param>
+/// <param name="Reason">
+/// Why, quoted back in the error. A layering rule without one becomes folklore the moment the
+/// person who added it stops answering questions about it.
+/// </param>
+public sealed record ForbiddenDependency(string ModuleName, string DependencyName, string Reason);
+
+/// <summary>
 /// Immutable description of what is being built, handed to every TargetRules and ModuleRules
 /// constructor.
 /// </summary>
@@ -154,6 +165,30 @@ public abstract class TargetRules
     /// solution configuration does not mix debug and release C runtimes.
     /// </summary>
     public BuildConfiguration? ConfigurationOverride { get; set; }
+
+    /// <summary>
+    /// Check the module graph against the layering the rules declare, and refuse to build it when
+    /// they disagree.
+    /// </summary>
+    /// <remarks>
+    /// Opting out belongs here rather than on a command line. A guard that any build can wave away
+    /// stops being one the first time waving it away is quicker than fixing the dependency, and a
+    /// target that genuinely has to is a decision worth reading in the rules.
+    /// </remarks>
+    public bool bEnforceModuleLayering { get; set; } = true;
+
+    /// <summary>
+    /// Dependency edges that must not exist, for layering the module graph cannot state on its own.
+    /// Checked through the whole closure, so routing one through an intermediate module does not
+    /// evade it.
+    /// </summary>
+    public List<ForbiddenDependency> ForbiddenDependencies { get; } = new();
+
+    /// <summary>Declares that one module must never end up depending on another.</summary>
+    public void ForbidDependency(string ModuleName, string DependencyName, string Reason)
+    {
+        ForbiddenDependencies.Add(new ForbiddenDependency(ModuleName, DependencyName, Reason));
+    }
 
     /// <summary>
     /// Definitions applied to every module in the target, including third-party modules.

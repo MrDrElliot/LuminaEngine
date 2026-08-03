@@ -34,9 +34,10 @@ public class ImGui : LuminaThirdPartyModuleRules
             "backends/imgui_impl_glfw.cpp",
             "backends/imgui_impl_vulkan.cpp",
         });
-        // Not merged: imgui_impl_vulkan.cpp expects to be the translation unit that pulls in the
-        // Vulkan headers. Sharing one with a neighbour that has already included them under
-        // VK_NO_PROTOTYPES leaves VK_SUCCESS and friends undeclared (C2065).
-        bUseUnityBuild = false;
+        // imgui_impl_vulkan.cpp expects to be the translation unit that pulls in the Vulkan
+        // headers. Sharing one with a neighbour that has already included them under
+        // VK_NO_PROTOTYPES leaves VK_SUCCESS and friends undeclared (C2065). Only that file, so
+        // only that file is held back; the rest merge.
+        ExcludeFromUnity.Add("imgui_impl_vulkan.cpp");
     }
 }

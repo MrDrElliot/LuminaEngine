@@ -99,6 +99,22 @@ public abstract class LuminaTargetRules : TargetRules
         });
 
         GlobalCompilerOptions.Add("/bigobj");
+
+        // Layering the module graph cannot state for itself. Checked across the whole closure, so
+        // routing one of these through an intermediate module does not get past it.
+        ForbidDependency(
+            "Runtime",
+            "Editor",
+            "The runtime is what ships. An editor dependency here is not only a layering inversion, "
+            + "it cannot link at all in a Game target, where the editor module does not exist.");
+
+        // Vendored SDKs whose reach is meant to stop at the plugin wrapping them. Left contained,
+        // the plugin can be disabled and the SDK goes with it.
+        ForbidDependency(
+            "Runtime",
+            "NsightPerf",
+            "The Nsight SDK belongs to the NsightPerf plugin. Nothing in the runtime should be built "
+            + "against a vendor profiler that a project is free to disable.");
     }
 }
 

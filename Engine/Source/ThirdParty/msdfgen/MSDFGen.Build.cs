@@ -20,9 +20,10 @@ public class MSDFGen : LuminaThirdPartyModuleRules
         // FreeType importer are built.
         SourceDirectories.Add("core");
         ExtraSourceFiles.Add("ext/import-font.cpp");
-        // Not merged: these sources define _USE_MATH_DEFINES before including <cmath> to get M_PI.
-        // The macro only has an effect on the first include, so whichever source is second in a
-        // merged translation unit finds M_PI undeclared (C2065).
-        bUseUnityBuild = false;
+        // equation-solver.cpp defines _USE_MATH_DEFINES before including <cmath> to get M_PI. The
+        // macro only has an effect on the first include, so it has to be the one that gets there
+        // first, which it cannot be from inside a merged translation unit (C2065). Only that file,
+        // so only that file is held back; the rest merge.
+        ExcludeFromUnity.Add("equation-solver.cpp");
     }
 }

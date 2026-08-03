@@ -94,8 +94,6 @@ void FNsightPerfEditorModule::StartupModule()
 
 void FNsightPerfEditorModule::ShutdownModule()
 {
-    // Remove our Tools-menu entry while this DLL is still mapped: its callbacks are code here, and
-    // the registry (Editor module, static lifetime) would otherwise destroy them after we unload.
     FToolsMenuRegistry::Get().Unregister(ToolsMenuHandle);
     ToolsMenuHandle = 0;
 

@@ -50,6 +50,8 @@ public static class Program
                 "build" => await BuildMode.RunAsync(Arguments, Directories, Cancellation.Token).ConfigureAwait(false),
                 "clean" => CleanMode.Run(Arguments, Directories),
                 "query" => QueryMode.Run(Arguments, Directories),
+                "includes" => AnalyzeMode.RunIncludes(Arguments, Directories),
+                "deps" => AnalyzeMode.RunDependencies(Arguments, Directories),
                 "setup" => await SetupMode.RunAsync(Arguments, Directories, Cancellation.Token).ConfigureAwait(false),
                 "generateprojectfiles" or "genprojects" => ProjectFilesMode.Run(Arguments, Directories),
                 _ => UnknownMode(Mode),
@@ -93,7 +95,14 @@ public static class Program
               Build <Target>            Compile and link a target
               Clean [Target]            Delete a target's outputs, or all intermediates
               Query [Target]            List targets, modules and plugins, or describe one target
+              Includes <Target>         Rank headers by how many translation units include them
+              Deps <Target>             Compare declared module dependencies against reached ones
               GenerateProjectFiles      Write IDE project and solution files
+
+            Includes options (reads the graph the last build recorded):
+              -Top=<n>                  How many headers to list (default: 40)
+              -Module=<name>            Rank within one module only
+              -All                      Include toolchain and SDK headers
 
             Options:
               -Platform=<name>          Windows64 (default: host platform)
@@ -108,6 +117,7 @@ public static class Program
               -DryRun                   List the outdated actions without running them
               -RecompileRules           Force the Target.cs and Build.cs assembly to rebuild
               -NoProjectFileUpdate      Do not refresh IDE project files when a Build.cs changed
+              -Timeline                 Write a Perfetto / chrome://tracing trace of the build
               -Verbose / -Trace         More diagnostic output
 
             Feature switches (default in Engine/Build/BuildConfiguration.json):

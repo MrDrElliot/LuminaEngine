@@ -28,6 +28,12 @@ Engine/*/Build/
 *.vcxproj
 *.filters
 
+# Compile database for clangd and clang-tidy, written at the workspace root because that is where
+# those tools look. Machine specific: it holds absolute toolchain paths. .cache/ is the index
+# clangd builds from it.
+compile_commands.json
+.cache/
+
 # Editor scratch. Written wherever the editor's working directory happens to be, so it is matched
 # by name rather than by path.
 imgui.ini

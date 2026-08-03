@@ -1294,32 +1294,33 @@ namespace Lumina
     void FEditorUI::RegisterBuiltinEditorTools()
     {
         FEditorToolRegistry& Registry = FEditorToolRegistry::Get();
+        const FName Owner = FEditorToolRegistry::BuiltInOwner();
 
         // Asset editors, keyed by asset class. Lookup walks the class hierarchy
         // most-derived first, so sibling/override registrations resolve cleanly.
-        Registry.RegisterAssetEditor<CParticleSystem,     FParticleSystemEditorTool>();
-        Registry.RegisterAssetEditor<CMaterial,           FMaterialEditorTool>();
-        Registry.RegisterAssetEditor<CMaterialInstance,   FMaterialInstanceEditorTool>();
-        Registry.RegisterAssetEditor<CMaterialFunction,   FMaterialFunctionEditorTool>();
-        Registry.RegisterAssetEditor<CAnimationGraph,     FAnimationGraphEditorTool>();
-        Registry.RegisterAssetEditor<CBlackboard,         FBlackboardEditorTool>();
-        Registry.RegisterAssetEditor<CDataAssetSchema,    FDataAssetSchemaEditorTool>();
-        Registry.RegisterAssetEditor<CDataAsset,          FDataAssetEditorTool>();
-        Registry.RegisterAssetEditor<CDataTable,          FDataTableEditorTool>();
-        Registry.RegisterAssetEditor<CPhysicsMaterial,    FPhysicsMaterialEditorTool>();
-        Registry.RegisterAssetEditor<CCurveAsset,         FCurveAssetEditorTool>();
-        Registry.RegisterAssetEditor<CAudioStream,        FAudioStreamEditorTool>();
-        Registry.RegisterAssetEditor<CGeometryCollection, FGeometryCollectionEditorTool>();
-        Registry.RegisterAssetEditor<CTexture,            FTextureEditorTool>();
-        Registry.RegisterAssetEditor<CFont,               FFontEditorTool>();
-        Registry.RegisterAssetEditor<CStaticMesh,         FStaticMeshEditorTool>();
-        Registry.RegisterAssetEditor<CSkeleton,           FSkeletonEditorTool>();
-        Registry.RegisterAssetEditor<CAnimation,          FAnimationEditorTool>();
-        Registry.RegisterAssetEditor<CSkeletalMesh,       FSkeletalMeshEditorTool>();
-        Registry.RegisterAssetEditor<CPrefab,             FPrefabEditorTool>();
+        Registry.RegisterAssetEditor<CParticleSystem,     FParticleSystemEditorTool>(Owner);
+        Registry.RegisterAssetEditor<CMaterial,           FMaterialEditorTool>(Owner);
+        Registry.RegisterAssetEditor<CMaterialInstance,   FMaterialInstanceEditorTool>(Owner);
+        Registry.RegisterAssetEditor<CMaterialFunction,   FMaterialFunctionEditorTool>(Owner);
+        Registry.RegisterAssetEditor<CAnimationGraph,     FAnimationGraphEditorTool>(Owner);
+        Registry.RegisterAssetEditor<CBlackboard,         FBlackboardEditorTool>(Owner);
+        Registry.RegisterAssetEditor<CDataAssetSchema,    FDataAssetSchemaEditorTool>(Owner);
+        Registry.RegisterAssetEditor<CDataAsset,          FDataAssetEditorTool>(Owner);
+        Registry.RegisterAssetEditor<CDataTable,          FDataTableEditorTool>(Owner);
+        Registry.RegisterAssetEditor<CPhysicsMaterial,    FPhysicsMaterialEditorTool>(Owner);
+        Registry.RegisterAssetEditor<CCurveAsset,         FCurveAssetEditorTool>(Owner);
+        Registry.RegisterAssetEditor<CAudioStream,        FAudioStreamEditorTool>(Owner);
+        Registry.RegisterAssetEditor<CGeometryCollection, FGeometryCollectionEditorTool>(Owner);
+        Registry.RegisterAssetEditor<CTexture,            FTextureEditorTool>(Owner);
+        Registry.RegisterAssetEditor<CFont,               FFontEditorTool>(Owner);
+        Registry.RegisterAssetEditor<CStaticMesh,         FStaticMeshEditorTool>(Owner);
+        Registry.RegisterAssetEditor<CSkeleton,           FSkeletonEditorTool>(Owner);
+        Registry.RegisterAssetEditor<CAnimation,          FAnimationEditorTool>(Owner);
+        Registry.RegisterAssetEditor<CSkeletalMesh,       FSkeletalMeshEditorTool>(Owner);
+        Registry.RegisterAssetEditor<CPrefab,             FPrefabEditorTool>(Owner);
 
         // File editors, keyed by extension (CObject-less, raw content).
-        Registry.RegisterFileEditor<FRmlUiEditorTool>({ ".rml", ".rcss" });
+        Registry.RegisterFileEditor<FRmlUiEditorTool>({ ".rml", ".rcss" }, Owner);
     }
 
     void FEditorUI::OpenAssetEditor(const FGuid& AssetGUID)
@@ -1362,8 +1363,11 @@ namespace Lumina
             return;
         }
 
-        FEditorTool* NewTool = FinalizeNewTool(FEditorToolRegistry::Get().CreateAssetEditor(this, Asset));
-        if (NewTool)
+        // The registry hands ownership over; FinalizeNewTool puts it into EditorTools, which is
+        // what DestroyTool later frees, so the pointer is released into that model here.
+        FEditorToolPtr CreatedTool = FEditorToolRegistry::Get().CreateAssetEditor(this, Asset);
+
+        if (FEditorTool* NewTool = FinalizeNewTool(CreatedTool.release()))
         {
             ActiveAssetTools.insert_or_assign(Asset, NewTool);
             RecordSessionTab(NewTool, FString(GSessionAssetPrefix) + AssetGUID.ToString());
@@ -1387,7 +1391,9 @@ namespace Lumina
             return;
         }
 
-        FEditorTool* NewTool = FinalizeNewTool(FEditorToolRegistry::Get().CreateFileEditor(this, VirtualPath));
+        FEditorToolPtr CreatedTool = FEditorToolRegistry::Get().CreateFileEditor(this, VirtualPath);
+        FEditorTool* NewTool = FinalizeNewTool(CreatedTool.release());
+
         if (NewTool == nullptr)
         {
             // No registered editor for this extension; fall back to OS default.

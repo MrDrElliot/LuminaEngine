@@ -9,6 +9,9 @@ Intermediates/
 *.vcxproj.filters
 *.vcxproj.user
 
+# Compile database for clangd and clang-tidy. Machine specific: absolute toolchain paths.
+compile_commands.json
+
 # Visual Studio / Rider
 .vs/
 .idea/

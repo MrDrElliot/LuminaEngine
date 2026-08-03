@@ -31,14 +31,98 @@ Modes:
 | `Build <Target>` | Compile and link a target |
 | `Clean [Target]` | Delete a target's outputs, or every intermediate |
 | `Query [Target]` | List targets, modules and plugins, or describe one resolved target |
-| `GenerateProjectFiles` | Write `.vcxproj`, `.filters` and a solution |
+| `Includes <Target>` | Rank headers by how many translation units include them |
+| `Deps <Target>` | Compare a module's declared dependencies against the ones it reaches |
+| `GenerateProjectFiles` | Write `.vcxproj`, `.filters`, a solution and `compile_commands.json` |
 
 Targets: `Lumina` (the editor and game launcher), `Reflector` (the reflection generator),
 and `Tests`. Game projects live outside the engine tree and are passed with `-Project=<path>`.
 
 Common options: `-Configuration=Debug|Development|Shipping`, `-TargetType=Editor|Game|Program`,
 `-Platform=Win64`, `-EngineRoot=<path>`, `-Project=<path>`, `-MaxParallel=<n>`, `-DryRun`,
-`-Clean`, `-KeepGoing`, `-RecompileRules`, `-Verbose`, `-Trace`.
+`-Clean`, `-KeepGoing`, `-RecompileRules`, `-Verbose`, `-Trace`, `-Timeline`,
+`-NoProjectFileUpdate`.
+
+## Measuring the build
+
+`-Timeline` writes a Chrome Trace Event file to
+`Intermediates/BuildTool/Timeline-<Target>-<Type>-<Configuration>.json`, which opens in Perfetto or
+`chrome://tracing`, and logs the ten longest actions. Spans cover execution only, not the wait for a
+parallelism slot, so a gap in the picture is real idleness rather than queueing. The lane count the
+viewer shows is the parallelism the build achieved, which is the number worth comparing against the
+one it was allowed.
+
+`Includes` and `Deps` read the header closure the compiler reported during the last build, which
+LuminaBuildTool already keeps so that editing a header rebuilds exactly the objects that read it.
+Both need that target to have been built once; neither compiles anything itself.
+
+```bash
+LuminaBuild.bat Includes Lumina -Top=30
+LuminaBuild.bat Includes Lumina -Module=Runtime
+LuminaBuild.bat Deps Lumina
+```
+
+`Includes` rolls the ranking up to the module owning each header before listing individual files,
+because a library is the unit you make a decision about. A header high in that list and outside the
+precompiled header is the cheapest clean-build win available; one low in it and inside a PCH is
+weight every translation unit pays and almost none use. `-All` adds toolchain and SDK headers, which
+are excluded by default because they dominate the ranking and cannot be changed.
+
+`Deps` reports two things. Declared dependencies whose headers a module never opens are candidates
+for deletion, though not confirmed ones: a dependency can exist purely to link. Headers reached from
+an undeclared module compile today only because something else re-exports them, and the report names
+the module they arrive through, since that is the edge whose removal would break the build. Note that
+a per-image source such as `EASTLImpl.cpp` is compiled into every module and its closure is charged
+to whichever module compiled it, which accounts for entries with no re-exporting module named.
+
+## Module layering
+
+Every resolved graph is checked against the layering the rules declare, before any compile or link
+environment is built. All violations are reported at once, because architectural drift is usually
+several edges that arrived together.
+
+Two checks need no declaration. A third-party module must not depend on a first-party one: vendored
+code has to stand alone so it can be replaced by the next version of itself, and an edge back into
+the engine turns that update into a merge. And a target's own `ForbidDependency` rules are checked
+across the whole closure, so routing a forbidden edge through an intermediate module does not evade
+it; the error names the shortest path it found.
+
+```csharp
+ForbidDependency(
+    "Runtime",
+    "Editor",
+    "The runtime is what ships. An editor dependency here cannot link in a Game target.");
+```
+
+The reason is required, and it is quoted back in the error. A layering rule without one becomes
+folklore as soon as whoever added it stops answering questions about it.
+
+Host type is deliberately **not** checked. "A dependency must exist everywhere its dependent does"
+reads like the obvious rule and is unsound: a `Build.cs` is evaluated per target type, so a module
+can name an editor dependency inside a `Target.bWithEditor` check and the edge simply does not exist
+in a Game resolution. `Lumina` does exactly that. What is left after excluding conditional edges is
+a dependency missing from the target being resolved right now, which module resolution already
+rejects with a better message.
+
+A target that genuinely has to build against its own declared layering sets
+`bEnforceModuleLayering = false` in its rules. There is no command-line equivalent on purpose: a
+guard any build can wave away stops being one the first time waving it away is quicker than fixing
+the dependency.
+
+## Compile database
+
+Project generation also writes `compile_commands.json` at the workspace root, where clangd,
+clang-tidy and editors other than Visual Studio look for it. The commands come from the same
+toolchain call the build uses, so a tool sees what the compiler sees.
+
+Two differences from the real command line, both about precompiled headers. Clang cannot read an
+MSVC `.pch`, so `/Yc` and `/Yu` become a forced include of the same header and `/Fp` is dropped: the
+same declarations arrive by the route that does not need a binary the tool cannot parse.
+`/sourceDependencies` is dropped because it asks for a build artifact and reading code is not a
+build. Entries are per file rather than per unity blob, because a blob's command line does not name
+the sources it absorbed.
+
+The file is generated, machine specific and gitignored.
 
 ## Writing rules
 

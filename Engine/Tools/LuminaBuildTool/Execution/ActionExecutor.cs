@@ -38,6 +38,9 @@ public sealed class ActionExecutor
 
     private readonly bool bStopOnFirstError;
 
+    /// <summary>Collects per-action spans when the build was asked for a timeline; null otherwise.</summary>
+    private readonly BuildTimeline? Timeline;
+
     /// <summary>One slot per concurrently runnable action; an exclusive action takes them all.</summary>
     private readonly SemaphoreSlim ParallelSlots;
 
@@ -49,13 +52,15 @@ public sealed class ActionExecutor
         ActionHistory History,
         DependencyCache Dependencies,
         int MaxParallelism,
-        bool bStopOnFirstError)
+        bool bStopOnFirstError,
+        BuildTimeline? Timeline = null)
     {
         this.Graph = Graph;
         this.History = History;
         this.Dependencies = Dependencies;
         this.MaxParallelism = Math.Max(1, MaxParallelism);
         this.bStopOnFirstError = bStopOnFirstError;
+        this.Timeline = Timeline;
 
         ParallelSlots = new SemaphoreSlim(this.MaxParallelism, this.MaxParallelism);
     }
@@ -249,7 +254,7 @@ public sealed class ActionExecutor
 
             try
             {
-                return await ExecuteActionAsync(Action, Cancellation).ConfigureAwait(false);
+                return await ExecuteAndRecordAsync(Action, Cancellation).ConfigureAwait(false);
             }
             finally
             {
@@ -268,7 +273,7 @@ public sealed class ActionExecutor
 
             try
             {
-                return await ExecuteActionAsync(Action, Cancellation).ConfigureAwait(false);
+                return await ExecuteAndRecordAsync(Action, Cancellation).ConfigureAwait(false);
             }
             finally
             {
@@ -279,6 +284,25 @@ public sealed class ActionExecutor
         {
             ExclusiveGate.Release();
         }
+    }
+
+    /// <summary>
+    /// Times the action for the timeline. Wraps only the run itself, so waiting for a parallelism
+    /// slot is never charged to the action that was waiting.
+    /// </summary>
+    private async Task<bool> ExecuteAndRecordAsync(BuildAction Action, CancellationToken Cancellation)
+    {
+        if (Timeline is null)
+        {
+            return await ExecuteActionAsync(Action, Cancellation).ConfigureAwait(false);
+        }
+
+        TimeSpan Start = Timeline.Now;
+        bool bSucceeded = await ExecuteActionAsync(Action, Cancellation).ConfigureAwait(false);
+
+        Timeline.Record(DescribeAction(Action), Action.Type.ToString(), Start, Timeline.Now - Start, bSucceeded);
+
+        return bSucceeded;
     }
 
     private async Task<bool> ExecuteActionAsync(BuildAction Action, CancellationToken Cancellation)
