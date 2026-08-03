@@ -302,11 +302,21 @@ namespace Lumina
             ImGui::Spacing();
 
             {
+                // Only the LODs this mesh actually has. Listing all MAX_MESH_LODS made a mesh whose
+                // simplifier stopped early look broken: selecting LOD 3 on a two-LOD mesh clamps to the
+                // coarsest one in ResolveSurfaceLOD, so the viewport correctly did nothing.
+                uint32 AvailableLODs = 1;
+                for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
+                {
+                    AvailableLODs = Math::Max(AvailableLODs, Surface.NumLODs);
+                }
+                AvailableLODs = Math::Clamp(AvailableLODs, 1u, (uint32)MAX_MESH_LODS);
+
                 // Names built at runtime; no parallel string list needed for MAX_MESH_LODS tracking.
                 char        LODNames[MAX_MESH_LODS][24];
                 const char* PreviewItems[MAX_MESH_LODS + 1];
                 PreviewItems[0] = "Automatic (distance)";
-                for (uint32 i = 0; i < MAX_MESH_LODS; ++i)
+                for (uint32 i = 0; i < AvailableLODs; ++i)
                 {
                     if (i == 0)
                     {
@@ -319,13 +329,21 @@ namespace Lumina
                     PreviewItems[i + 1] = LODNames[i];
                 }
 
+                // A stale selection from a mesh with more LODs would otherwise index past the list.
+                PreviewLODIndex = Math::Min(PreviewLODIndex, (int32)AvailableLODs - 1);
+
                 int PreviewItem = (PreviewLODIndex < 0) ? 0 : PreviewLODIndex + 1;
                 ImGui::SetNextItemWidth(220.0f);
-                if (ImGui::Combo("Preview LOD", &PreviewItem, PreviewItems, IM_ARRAYSIZE(PreviewItems)))
+                if (ImGui::Combo("Preview LOD", &PreviewItem, PreviewItems, (int)AvailableLODs + 1))
                 {
                     PreviewLODIndex = (PreviewItem == 0) ? -1 : PreviewItem - 1;
                 }
                 ImGuiX::TextTooltip("Force the viewport mesh to a specific LOD regardless of camera distance.");
+
+                if (AvailableLODs == 1)
+                {
+                    ImGui::TextDisabled("This mesh has one LOD, so there is nothing to switch between.");
+                }
             }
 
             ImGui::Spacing();
@@ -653,8 +671,14 @@ namespace Lumina
         SStaticMeshComponent& StaticMeshComponent = World->GetComponent<SStaticMeshComponent>(MeshEntity);
         STransformComponent&  Transform           = World->GetComponent<STransformComponent>(MeshEntity);
 
-        // Renderer reads ForcedLODIndex during instance build; push every frame to stay in sync with the LOD combo.
-        StaticMeshComponent.ForcedLODIndex = PreviewLODIndex;
+        // A direct write is not enough: the renderer retains a per-primitive GPU record and only rewrites
+        // it for primitives that report a change, so this has to mark (see MeshComponent.h). Marking only
+        // on a change, because marking every frame would re-resolve and rewrite the record every frame.
+        if (StaticMeshComponent.ForcedLODIndex != PreviewLODIndex)
+        {
+            StaticMeshComponent.ForcedLODIndex = PreviewLODIndex;
+            StaticMeshComponent.MarkRenderStateDirty();
+        }
 
         if (bShowAABB)
         {

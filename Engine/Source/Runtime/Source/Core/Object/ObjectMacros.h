@@ -62,7 +62,7 @@ public: \
     using Super = TBaseClass; \
     inline static Lumina::CClass* StaticClass() \
     { \
-        LUMINA_STATIC_HELPER(CClass*) \
+        LUMINA_STATIC_HELPER(Lumina::CClass*) \
         { \
             StaticValue = GetPrivateStaticClass(); \
         } \
@@ -70,7 +70,7 @@ public: \
     } \
     inline static Lumina::FName StaticName() \
     { \
-        static FName StaticName(#TClass); \
+        static Lumina::FName StaticName(#TClass); \
         return StaticName; \
     } \
     inline static const TCHAR* StaticPackage() \
@@ -87,8 +87,10 @@ public: \
     private:
 
 
+// Every engine type named inside these macros is fully qualified: a reflected class may live in any
+// namespace, or none, and unqualified names only resolve while the type happens to sit in Lumina.
 #define DEFINE_CLASS_FACTORY(TClass) \
-    static CObject* __PlacementNew(void* Memory) \
+    static Lumina::CObject* __PlacementNew(void* Memory) \
     { \
         return new (Memory) TClass(); \
     }

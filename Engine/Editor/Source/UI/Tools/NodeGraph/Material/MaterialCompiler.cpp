@@ -762,6 +762,15 @@ namespace Lumina
 	void FMaterialCompiler::ComponentMask(CMaterialInput* A)
 	{
 		CMaterialExpression_ComponentMask* OwningNode = A->GetOwningNode<CMaterialExpression_ComponentMask>();
+		const FString ResultName = OwningNode->GetNodeFullName();
+
+		// Emitting a masked scalar on the failure paths, because falling through used to append
+		// "float4 X = .rgba;" and the real complaint arrived later as a Slang syntax error.
+		auto EmitFallback = [&]
+		{
+			GetActiveChunk().append("float " + ResultName + " = 0.0;\n");
+			SetOwningOutputType(A, EMaterialInputType::Float);
+		};
 
 		if (!A->HasConnection())
 		{
@@ -771,36 +780,70 @@ namespace Lumina
 			Error.Description.append("ComponentMask is required to have an input value");
 
 			AddError(Error);
-			GetActiveChunk().append("// ERROR: Component Mask Issue\n");
+			EmitFallback();
+			return;
 		}
 
-		FString Swizzle = ".";
-		int32 ComponentCount = 0;
-		if (OwningNode->R)
-		{
-			Swizzle += "r";
-			ComponentCount++;
-		}
-		if (OwningNode->G)
-		{
-			Swizzle += "g";
-			ComponentCount++;
-		}
-		if (OwningNode->B)
-		{
-			Swizzle += "b";
-			ComponentCount++;
-		}
-		if (OwningNode->A)
-		{
-			Swizzle += "a";
-			ComponentCount++;
-		}
-
-		FString VectorType = GetVectorType(ComponentCount);
 		FInputValue Value = GetTypedInputValue(A, "");
 
-		GetActiveChunk().append(VectorType + " " + OwningNode->GetNodeFullName() + " = " + Value.Value + Swizzle + ";\n");
+		// Width the source actually has once its own mask is applied. The node offers R/G/B/A
+		// whatever it is fed, so selecting past the end is how ".ga" ended up on a float3.
+		const int32 MaskComponents = GetComponentCount(Value.Mask);
+		const int32 Available = MaskComponents > 0 ? MaskComponents : GetComponentCount(Value.Type);
+
+		const bool bRequested[4] = { OwningNode->R, OwningNode->G, OwningNode->B, OwningNode->A };
+		constexpr char Channels[4] = { 'r', 'g', 'b', 'a' };
+
+		FString Swizzle;
+		int32 ComponentCount = 0;
+		FString Missing;
+
+		for (int32 Index = 0; Index < 4; ++Index)
+		{
+			if (!bRequested[Index])
+			{
+				continue;
+			}
+
+			if (Index >= Available)
+			{
+				Missing.push_back(Channels[Index]);
+				continue;
+			}
+
+			Swizzle.push_back(Channels[Index]);
+			ComponentCount++;
+		}
+
+		if (!Missing.empty())
+		{
+			EdNodeGraph::FError Error;
+			Error.Node = A->GetOwningNode<CMaterialGraphNode>();
+			Error.Name = "Type Mismatch";
+			Error.Description.sprintf(
+				"ComponentMask selects channel(s) '%s' that its input does not have; the input is a %s.",
+				Missing.c_str(), GetVectorType(Available).c_str());
+
+			AddError(Error);
+		}
+
+		if (ComponentCount == 0)
+		{
+			EdNodeGraph::FError Error;
+			Error.Node = A->GetOwningNode<CMaterialGraphNode>();
+			Error.Name = "Invalid Action";
+			Error.Description.append("ComponentMask has no channel selected that its input provides");
+
+			AddError(Error);
+			EmitFallback();
+			return;
+		}
+
+		// The source's own mask comes first: a channel output pin hands back the whole vector's
+		// variable and relies on the consumer to swizzle it down.
+		GetActiveChunk().append(GetVectorType(ComponentCount) + " " + ResultName + " = "
+			+ Value.Value + GetSwizzleForMask(Value.Mask) + "." + Swizzle + ";\n");
+
 		SetOwningOutputType(A, GetTypeFromComponentCount(ComponentCount));
 	}
 
@@ -1264,7 +1307,30 @@ namespace Lumina
 	{
 		// Connected Tiling pin overrides the inline UTiling/VTiling defaults.
 		FInputValue TilingValue = GetTypedInputValue(Tiling, "float2(" + eastl::to_string(UTiling) + ", " + eastl::to_string(VTiling) + ")");
-		GetActiveChunk().append("float2 " + ID + " = UV0 * " + TilingValue.Value + ";\n");
+
+		FString Scale = TilingValue.Value;
+
+		// The unconnected default is already a float2 literal; only a connection needs widening.
+		if (Tiling != nullptr && Tiling->HasConnection())
+		{
+			Scale += GetSwizzleForMask(TilingValue.Mask);
+
+			// A mask narrows the connection, so it decides the width where there is one.
+			const int32 MaskComponents = GetComponentCount(TilingValue.Mask);
+			const int32 Components = MaskComponents > 0 ? MaskComponents : TilingValue.ComponentCount;
+
+			if (Components <= 1)
+			{
+				// A scalar tiles both axes by the same amount, which is what tiling usually wants.
+				Scale = "float2(" + Scale + ")";
+			}
+			else if (Components > 2)
+			{
+				Scale = "float2((" + Scale + ").xy)";
+			}
+		}
+
+		GetActiveChunk().append("float2 " + ID + " = UV0 * " + Scale + ";\n");
 	}
 
 	void FMaterialCompiler::Panner(CMaterialInput* UV, CMaterialInput* Time, CMaterialInput* Speed)

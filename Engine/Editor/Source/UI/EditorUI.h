@@ -269,11 +269,15 @@ namespace Lumina
         bool                                            bShowImGuiStyleEditor = false;
         bool                                            bShowImPlotDemoWindow = false;
 
-        float                                           SmoothedFPS = 60.0f;
-        float                                           SmoothedFrameTime = 16.67f;
+        float                                           SmoothedFPS = 0.0f;
+        float                                           SmoothedFrameTime = 0.0f;   // <= 0 seeds from the first sample
         float                                           SmoothedMemoryMiB = 0.0f;   // <= 0 seeds from the first sample
-        static constexpr float                          FPSSmoothingFactor = 0.01f;
-        static constexpr float                          ObjectSmoothingFactor = 0.05f;
+
+        // Time constants, not per-frame blend factors: a fixed factor makes the settling time depend on
+        // the frame rate, so the readout was sluggish at 30 fps and twitchy at 300 -- worst at exactly the
+        // moment you are reading it. Seconds to reach ~63% of a step change, frame rate independent.
+        static constexpr float                          FrameTimeSmoothingSeconds = 0.2f;
+        static constexpr float                          MemorySmoothingSeconds = 1.0f;
     };
 
     template <typename T, typename ... Args>

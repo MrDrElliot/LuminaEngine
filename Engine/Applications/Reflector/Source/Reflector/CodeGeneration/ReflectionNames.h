@@ -21,15 +21,19 @@ namespace Lumina::Reflection
             return ClangUtils::MakeCodeFriendlyNamespace(eastl::string(QualifiedName));
         }
 
-        // "Lumina" + "FName" -> "Lumina_FName"; empty namespace -> "FName".
+        // "Lumina" + "FName" -> "Lumina_FName"; no namespace -> "_FName".
+        //
+        // The separator is emitted even with nothing before it, because the engine's IMPLEMENT_CLASS
+        // builds the same symbol through CONCAT4(Registration_Info_CClass_, TNamespace, _, TClass).
+        // An empty namespace argument still contributes its separator there, so dropping ours made
+        // the two disagree by one underscore and a class outside any namespace failed to link.
         inline eastl::string FriendlyFromParts(eastl::string_view Namespace, eastl::string_view DisplayName)
         {
-            eastl::string Out;
-            if (!Namespace.empty())
-            {
-                Out.append(Namespace.data(), Namespace.data() + Namespace.size());
-                Out.push_back('_');
-            }
+            // Sanitized, because a nested namespace arrives as "MyStudio::Deep" and this result is
+            // spliced into identifiers. Left raw, the "::" made the compiler read the symbol as a
+            // scope resolution and the surrounding macro name as ill-formed.
+            eastl::string Out = ClangUtils::MakeCodeFriendlyNamespace(eastl::string(Namespace));
+            Out.push_back('_');
             Out.append(DisplayName.data(), DisplayName.data() + DisplayName.size());
             return Out;
         }

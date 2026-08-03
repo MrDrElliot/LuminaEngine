@@ -35,6 +35,12 @@ namespace Lumina::Reflection
         void PushNamespace(const eastl::string& Namespace);
         void PopNamespace();
 
+    private:
+
+        void RebuildCurrentNamespace();
+
+    public:
+
         template<typename T>
         T* GetParentReflectedType();
 

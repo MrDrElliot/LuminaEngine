@@ -128,25 +128,35 @@ namespace Lumina::Reflection
         return true;
     }
     
+    // Joined with "::" so a nested namespace forms a real C++ path. Concatenating bare turned
+    // MyGame::Editor into "MyGameEditor", which only went unnoticed because every engine type sits
+    // one level deep in Lumina.
+    void FClangParserContext::RebuildCurrentNamespace()
+    {
+        CurrentNamespace.clear();
+
+        for (const eastl::string& Segment : NamespaceStack)
+        {
+            if (!CurrentNamespace.empty())
+            {
+                CurrentNamespace.append("::");
+            }
+
+            CurrentNamespace.append(Segment);
+        }
+    }
+
     void FClangParserContext::PushNamespace(const eastl::string& Namespace)
     {
         NamespaceStack.push_back(Namespace);
 
-        CurrentNamespace.clear();
-        for (const eastl::string& String : NamespaceStack)
-        {
-            CurrentNamespace.append(String);
-        }
+        RebuildCurrentNamespace();
     }
 
     void FClangParserContext::PopNamespace()
     {
         NamespaceStack.pop_back();
 
-        CurrentNamespace.clear();
-        for (const eastl::string& String : NamespaceStack)
-        {
-            CurrentNamespace.append(String);
-        }
+        RebuildCurrentNamespace();
     }
 }

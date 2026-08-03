@@ -2704,16 +2704,33 @@ namespace Lumina
     {
         FTitleBarStats Stats;
 
-        const float CurrentFrameTime = UpdateContext.GetDeltaTime() * 1000.0f;
+        const float DeltaSeconds     = UpdateContext.GetDeltaTime();
+        const float CurrentFrameTime = DeltaSeconds * 1000.0f;
 
+        // Blend weight for this frame's share of the average, from how long the frame took rather than
+        // from the frame merely happening.
+        auto WeightFor = [DeltaSeconds](float TimeConstantSeconds) -> float
+        {
+            if (TimeConstantSeconds <= 0.0f || DeltaSeconds <= 0.0f)
+            {
+                return 1.0f;
+            }
 
-        SmoothedFrameTime = SmoothedFrameTime + (CurrentFrameTime - SmoothedFrameTime) * FPSSmoothingFactor;
+            return 1.0f - Math::Exp(-DeltaSeconds / TimeConstantSeconds);
+        };
+
+        // Averaging frame time and inverting, never averaging FPS: the mean of a reciprocal is not the
+        // reciprocal of the mean, and doing it the other way reads high whenever frame times vary.
+        SmoothedFrameTime = (SmoothedFrameTime <= 0.0f)
+            ? CurrentFrameTime
+            : SmoothedFrameTime + (CurrentFrameTime - SmoothedFrameTime) * WeightFor(FrameTimeSmoothingSeconds);
+
         SmoothedFPS = (SmoothedFrameTime > 0.0f) ? 1000.0f / SmoothedFrameTime : 0.0f;
-        
+
         const float MemoryMiB = (float)Platform::GetProcessMemoryUsageBytes() / (1024.0f * 1024.0f);
         SmoothedMemoryMiB = (SmoothedMemoryMiB <= 0.0f)
             ? MemoryMiB
-            : SmoothedMemoryMiB + (MemoryMiB - SmoothedMemoryMiB) * FPSSmoothingFactor;
+            : SmoothedMemoryMiB + (MemoryMiB - SmoothedMemoryMiB) * WeightFor(MemorySmoothingSeconds);
 
         Stats.Perf.sprintf("FPS: %3.0f / %.2f ms", SmoothedFPS, SmoothedFrameTime);
         Stats.Objects.sprintf("CObjects: %i", GObjectArray.GetNumAliveObjects());

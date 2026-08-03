@@ -13,10 +13,10 @@ namespace Lumina
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "Inputs"; }
         FStringView GetNodeDisplayName() const override { return "TexCoords"; }
-        FStringView GetNodeTooltip() const override { return "Returns the mesh's UV coordinates from the given texcoord set, scaled by the tiling factors. Connect Tiling to drive the scale from another node; otherwise the UTiling/VTiling defaults are used."; }
+        FStringView GetNodeTooltip() const override { return "Returns the mesh's UV coordinates from the given texcoord set, scaled by the tiling factors. Connect Tiling to drive the scale from another node; a scalar tiles both axes equally. Otherwise the UTiling/VTiling defaults are used."; }
         void GenerateDefinition(FMaterialCompiler& Compiler) override;
 
-        /** Optional float2 tiling multiplier. Overrides UTiling/VTiling when connected. */
+        // Tiling multiplier. A scalar applies to both axes; wider than float2 is truncated to xy.
         CMaterialInput* Tiling = nullptr;
 
         /** Index of the UV set to sample from the mesh. */
