@@ -216,7 +216,7 @@ namespace Lumina
         void ApplyAddComponentToTargets(const TVector<entt::entity>& Targets, entt::meta_type PickedMetaType);
         // Filterable, categorized list of addable reflected components.
         // Fills OutMetaType/OutStruct and returns true on click.
-        bool DrawAddableComponentList(const ImGuiTextFilter& Filter, entt::meta_type& OutMetaType, CStruct*& OutStruct);
+        bool DrawAddableComponentList(const ImGuiTextFilter& Filter, const TVector<entt::entity>& Targets, entt::meta_type& OutMetaType, CStruct*& OutStruct);
         
         virtual void OnEntityCreatedInScene(entt::entity Entity) {}
         virtual FTransform GetNewEntitySpawnTransform() const;
@@ -290,6 +290,9 @@ namespace Lumina
         // Hook: whether Entity may be deleted from the panel (prefab forbids the root).
         virtual bool CanDeleteEntity(entt::entity Entity) const { return true; }
         // Hook: extra header buttons next to Add-Component/Delete (world: Add Tag).
+        // Modal name prompt for one entity. Also reached from the outliner context menu.
+        void PushRenameEntityModal(entt::entity Entity);
+
         virtual void DrawDetailsHeaderExtraButtons(entt::entity Entity) {}
         // Hook: extra sections above the component list (world: the Tags chip section).
         virtual void DrawDetailsExtraSections(entt::entity Entity) {}

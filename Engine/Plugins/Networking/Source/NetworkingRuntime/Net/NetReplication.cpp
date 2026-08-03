@@ -12,7 +12,7 @@
 #include "Assets/AssetRef.h"
 #include "World/Entity/EntityUtils.h"
 #include "World/Entity/Components/RelationshipComponent.h"
-#include "World/Entity/Components/NetworkComponent.h"
+#include "Components/NetworkComponent.h"
 #include "Networking/INetworkTransport.h"
 #include "Log/Log.h"
 #include "entt/entt.hpp"

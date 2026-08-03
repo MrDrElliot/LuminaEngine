@@ -4,7 +4,8 @@
 
 namespace Lumina
 {
-    REFLECT(Component, HideInComponentList)
+    // Tags render as chips in their own details section rather than as a component row.
+    REFLECT(Component, HideInComponentList, HideInDetails)
     struct RUNTIME_API STagComponent
     {
         GENERATED_BODY()

@@ -3,12 +3,12 @@
 
 #include "Core/Profiler/Profile.h"
 #include "TaskSystem/TaskSystem.h"
-#include "World/Entity/Components/NetworkComponent.h"
+#include "Components/NetworkComponent.h"
 #include "World/Entity/Components/RelationshipComponent.h"
-#include "World/Entity/Components/RepTransformComponent.h"
+#include "Components/RepTransformComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/Net/NetGUID.h"
-#include "World/Net/NetReplication.h"
+#include "Net/NetReplication.h"
 #include "World/Subsystems/WorldSettings.h"
 #include <algorithm>
 #include <cmath>

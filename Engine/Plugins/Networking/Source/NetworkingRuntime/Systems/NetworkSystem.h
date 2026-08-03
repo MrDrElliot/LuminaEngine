@@ -1,5 +1,5 @@
 #pragma once
-#include "EntitySystem.h"
+#include "World/Entity/Systems/EntitySystem.h"
 #include "NetworkSystem.generated.h"
 
 namespace Lumina

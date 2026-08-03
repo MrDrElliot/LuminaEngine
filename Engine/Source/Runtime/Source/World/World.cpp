@@ -64,10 +64,8 @@
 #include "World/Entity/Components/CSharpScriptComponent.h"
 #include "World/Entity/Components/LifetimeComponent.h"
 #include "World/Entity/Components/ProjectileComponent.h"
-#include "World/Net/NetWorldState.h"
 #include "World/Net/NetRole.h"
-#include "World/Net/NetReplication.h"
-#include "World/Entity/Components/NetworkComponent.h"
+#include "Networking/INetworkRuntime.h"
 #include "Subsystems/WorldSettings.h"
 #include "UI/RmlUiBridge.h"
 #include "World/Entity/Components/RelationshipComponent.h"
@@ -304,20 +302,11 @@ namespace Lumina
         
         EntityRegistry.compact();
         
-        if (GetNetMode() == ENetMode::Client)
+        // Which entities a client has no business holding is a netcode question, so it is reported
+        // rather than decided here.
+        if (INetworkRuntime* NetRuntime = GetNetworkRuntime())
         {
-            TVector<entt::entity> ServerOnly;
-            for (entt::entity Entity : EntityRegistry.view<SNetworkComponent>())
-            {
-                if (!EntityRegistry.get<SNetworkComponent>(Entity).bNetLoadOnClient)
-                {
-                    ServerOnly.push_back(Entity);
-                }
-            }
-            for (entt::entity Entity : ServerOnly)
-            {
-                EntityRegistry.destroy(Entity);
-            }
+            NetRuntime->OnWorldEntitiesLoaded(this);
         }
 
         EntityRegistry.ctx().emplace<entt::dispatcher&>(SingletonDispatcher);
@@ -1388,8 +1377,8 @@ namespace Lumina
 
     int32 CWorld::GetConnectedClientCount() const
     {
-        const FNetWorldState* State = EntityRegistry.ctx().find<FNetWorldState>();
-        return State != nullptr ? State->ConnectedClients : 0;
+        INetworkRuntime* NetRuntime = GetNetworkRuntime();
+        return NetRuntime != nullptr ? NetRuntime->GetConnectedClientCount(this) : 0;
     }
 
     bool CWorld::ShouldRender() const

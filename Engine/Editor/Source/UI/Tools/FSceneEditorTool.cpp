@@ -4,6 +4,7 @@
 
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Assets/AssetTypes/Prefabs/Prefab.h"
+#include "EditorToolContext.h"
 #include "Assets/AssetTypes/Prefabs/PrefabComponents.h"
 #include "Components/EditorEntityTags.h"
 #include "Config/Config.h"
@@ -297,11 +298,10 @@ namespace Lumina
 
     bool FSceneEditorTool::IsComponentHiddenInDetails(const CStruct* Type) const
     {
-        // Tags render as chips in their own section, not as a component row.
-        if (Type == STagComponent::StaticStruct())          { return true; }
-        // The prefab override ledger is internal bookkeeping, never user-edited directly.
-        if (Type == SPrefabOverrideComponent::StaticStruct()) { return true; }
-        return false;
+        // Deliberately not HideInComponentList, which means "cannot be hand-added" and is a different
+        // question: SFoliageComponent carries it so the picker will not offer it, while its settings
+        // are exactly what the details panel is for.
+        return Type != nullptr && Type->HasMeta("HideInDetails");
     }
 
     void FSceneEditorTool::DrawComponentSearchBar()
@@ -1338,22 +1338,62 @@ namespace Lumina
             }
         }
 
-        BeginTransaction();
+        // The reflected "emplace" uses emplace_or_replace for data components (would reset existing
+        // data) and plain emplace for tags (would assert if present), so targets that already hold the
+        // component are separated out rather than emplaced over.
+        //
+        // Partitioned before the transaction opens: an add that turns out to be a no-op should not
+        // leave an empty step on the undo stack for the user to step back through.
+        TVector<entt::entity> Missing;
+        Missing.reserve(Targets.size());
+
+        uint32 AlreadyPresent = 0;
+
         for (entt::entity Target : Targets)
         {
-            // The reflected "emplace" uses emplace_or_replace for data components (would reset existing
-            // data) and plain emplace for tags (would assert if present), so skip targets that already
-            // hold the component.
-            if (!ECS::Utils::HasComponent(Registry, Target, PickedMetaType))
+            if (ECS::Utils::HasComponent(Registry, Target, PickedMetaType))
             {
-                ECS::Utils::InvokeMetaFunc(PickedMetaType, "emplace"_hs, entt::forward_as_meta(Registry), Target, entt::forward_as_meta(entt::meta_any{}));
-                if (AddedStruct != nullptr)
-                {
-                    CPrefab::NoteComponentAdded(Registry, Target, AddedStruct);
-                }
+                ++AlreadyPresent;
+            }
+            else
+            {
+                Missing.push_back(Target);
+            }
+        }
+
+        if (Missing.empty())
+        {
+            // Nothing happened, which without saying so is indistinguishable from the click not
+            // registering.
+            if (Targets.size() == 1)
+            {
+                ImGuiX::Notifications::NotifyWarning("This entity already has {0}.", AddedStruct ? AddedStruct->GetName().c_str() : "that component");
+            }
+            else
+            {
+                ImGuiX::Notifications::NotifyWarning("All {0} selected entities already have {1}.",
+                    (uint32)Targets.size(), AddedStruct ? AddedStruct->GetName().c_str() : "that component");
+            }
+
+            return;
+        }
+
+        BeginTransaction();
+        for (entt::entity Target : Missing)
+        {
+            ECS::Utils::InvokeMetaFunc(PickedMetaType, "emplace"_hs, entt::forward_as_meta(Registry), Target, entt::forward_as_meta(entt::meta_any{}));
+            if (AddedStruct != nullptr)
+            {
+                CPrefab::NoteComponentAdded(Registry, Target, AddedStruct);
             }
         }
         EndTransaction("Add Component");
+
+        if (AlreadyPresent > 0)
+        {
+            ImGuiX::Notifications::NotifyInfo("Added {0} to {1} entities; {2} already had it.",
+                AddedStruct ? AddedStruct->GetName().c_str() : "component", (uint32)Missing.size(), AlreadyPresent);
+        }
 
         MarkSceneDirty();
         OutlinerListView.MarkTreeDirty();
@@ -1442,7 +1482,7 @@ namespace Lumina
         }
     }
 
-    bool FSceneEditorTool::DrawAddableComponentList(const ImGuiTextFilter& Filter, entt::meta_type& OutMetaType, CStruct*& OutStruct)
+    bool FSceneEditorTool::DrawAddableComponentList(const ImGuiTextFilter& Filter, const TVector<entt::entity>& Targets, entt::meta_type& OutMetaType, CStruct*& OutStruct)
     {
         struct FComponentEntry
         {
@@ -1522,6 +1562,8 @@ namespace Lumina
         bool bPicked = false;
         const bool bFiltering = Filter.IsActive();
 
+        FEntityRegistry& Registry = GetSceneRegistry();
+
         ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(6.0f, 3.0f));
         for (FComponentCategory& Category : Categories)
         {
@@ -1546,6 +1588,21 @@ namespace Lumina
 
                     for (const FComponentEntry& Entry : Category.Entries)
                     {
+                        // Offering a component every target already holds is offering a no-op: the add
+                        // skips them rather than replacing, so the click would do nothing at all. Stops
+                        // at the first target that lacks it, which is the usual answer on the first one.
+                        bool bEveryTargetHasIt = !Targets.empty();
+                        for (entt::entity Target : Targets)
+                        {
+                            if (!ECS::Utils::HasComponent(Registry, Target, Entry.MetaType))
+                            {
+                                bEveryTargetHasIt = false;
+                                break;
+                            }
+                        }
+
+                        ImGui::BeginDisabled(bEveryTargetHasIt);
+
                         // Stable per-item ID across frames (the entry list is rebuilt every frame, so its
                         // address is not stable -- an unstable ID breaks click press/release matching).
                         FFixedString DisplayName = Entry.Struct->MakeDisplayName();
@@ -1554,6 +1611,16 @@ namespace Lumina
                             OutMetaType = Entry.MetaType;
                             OutStruct   = Entry.Struct;
                             bPicked = true;
+                        }
+
+                        ImGui::EndDisabled();
+
+                        // Tooltip outside the disabled scope: a disabled item does not report hover.
+                        if (bEveryTargetHasIt && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                        {
+                            ImGui::SetTooltip(Targets.size() == 1
+                                ? "This entity already has this component."
+                                : "Every selected entity already has this component.");
                         }
                     }
 
@@ -2357,6 +2424,65 @@ namespace Lumina
         ImGui::PopStyleVar();
     }
 
+    // Lives on the base rather than the world tool: the details header offers Rename for every
+    // scene-flavored tool, and the prefab editor edits a preview world that GetSceneRegistry
+    // resolves and ECS::GetWorldRegistry(*World) would not.
+    void FSceneEditorTool::PushRenameEntityModal(entt::entity Entity)
+    {
+        ToolContext->PushModal("Rename Entity", ImVec2(450.0f, 250.0f), [this, Entity]() -> bool
+        {
+            auto& NameComponent = GetSceneRegistry().get<SNameComponent>(Entity);
+            static FFixedString InputBuffer;
+    
+            if (ImGui::IsWindowAppearing())
+            {
+                InputBuffer = NameComponent.Name.c_str();
+            }
+    
+            ImGui::Text("Enter new name:");
+            ImGui::Spacing();
+    
+            ImGui::SetNextItemWidth(-1.0f);
+            bool bShouldClose = ImGui::InputText("##Name", InputBuffer.data(), 
+                                                  InputBuffer.max_size(), 
+                                                  ImGuiInputTextFlags_EnterReturnsTrue);
+    
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            constexpr float ButtonWidth = 100.0f;
+            const float AvailWidth = ImGui::GetContentRegionAvail().x;
+            ImGui::SetCursorPosX((AvailWidth - ButtonWidth * 2 - ImGui::GetStyle().ItemSpacing.x) * 0.5f);
+    
+            if (ImGui::Button("OK", ImVec2(ButtonWidth, 0.0f)) || bShouldClose)
+            {
+                NameComponent.Name = FName(InputBuffer.c_str());
+
+                // Update just this entity's row label rather than rebuilding the whole tree.
+                auto It = EntityToTreeNode.find(Entity);
+                if (It != EntityToTreeNode.end())
+                {
+                    FFixedString Label;
+                    Label.append(LE_ICON_CUBE).append(" ")
+                        .append(NameComponent.Name.c_str())
+                        .append_convert(FString(" - (" + eastl::to_string(entt::to_integral(Entity)) + ")"));
+                    OutlinerListView.Get<FTreeNodeDisplay>(It->second).DisplayName.assign(Label.data(), Label.length());
+                }
+                return true;
+            }
+    
+            ImGui::SameLine();
+    
+            if (ImGui::Button("Cancel", ImVec2(ButtonWidth, 0.0f)))
+            {
+                return true;
+            }
+
+            return false;
+        });
+    }
+
     void FSceneEditorTool::DrawEntityProperties(entt::entity Entity)
     {
         const bool bMultiSelect = SelectedEntities.size() > 1 && IsEntitySelected(Entity);
@@ -2431,6 +2557,22 @@ namespace Lumina
             DrawDetailsHeaderExtraButtons(Entity);
 
             ImGui::PopStyleColor(3);
+
+            // One name, so renaming a multi-selection has no sensible meaning, and an entity without
+            // a name component has nothing to write to.
+            const bool bCanRename = !bMultiSelect && NameComponent != nullptr;
+            ImGui::BeginDisabled(!bCanRename);
+
+            if (ImGui::Button(LE_ICON_RENAME, ActionSize))
+            {
+                PushRenameEntityModal(Entity);
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort | ImGuiHoveredFlags_AllowWhenDisabled))
+            {
+                ImGui::SetTooltip(bMultiSelect ? "Rename is single selection only" : "Rename Entity");
+            }
+
+            ImGui::EndDisabled();
 
             const bool bCanDelete = bMultiSelect || CanDeleteEntity(Entity);
             ImGui::BeginDisabled(!bCanDelete);
@@ -2890,10 +3032,12 @@ namespace Lumina
 
                 entt::meta_type       PickedMetaType;
                 CStruct*              PickedStruct = nullptr;
-                if (DrawAddableComponentList(AddEntityComponentFilter, PickedMetaType, PickedStruct))
-                {
-                    TVector<entt::entity> Targets = GetComponentEditTargets(Entity);
 
+                // Resolved before the list is drawn so it can grey out what these targets already have.
+                TVector<entt::entity> Targets = GetComponentEditTargets(Entity);
+
+                if (DrawAddableComponentList(AddEntityComponentFilter, Targets, PickedMetaType, PickedStruct))
+                {
                     if (!Targets.empty())
                     {
                         ApplyAddComponentToTargets(Targets, PickedMetaType);

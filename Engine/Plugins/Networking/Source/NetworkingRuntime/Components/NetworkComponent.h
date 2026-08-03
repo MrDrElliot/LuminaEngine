@@ -10,7 +10,7 @@ namespace Lumina
     // Marks an entity for networking. Authored fields serialize with the world; runtime net state is
     // derived per-peer by SNetworkSystem and shown ReadOnly for debugging but never saved.
     REFLECT(Component, Category = "Networking")
-    struct RUNTIME_API SNetworkComponent
+    struct NETWORKINGRUNTIME_API SNetworkComponent
     {
         GENERATED_BODY()
 

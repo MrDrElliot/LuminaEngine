@@ -67,7 +67,6 @@ namespace Lumina
 
         // GetComponentEditTargets / ApplyAddComponentToTargets / DrawAddableComponentList and the
         // CreateEntity* helpers now live in FSceneEditorTool.
-        void PushRenameEntityModal(entt::entity Entity);
         void PushSaveAsAssetModal();
         void PushCreatePrefabFromSelectionModal();
         void PushCreatePrefabModalForEntity(entt::entity Entity);
@@ -121,7 +120,6 @@ namespace Lumina
         void DrawOffscreenSelectionIndicators(ImVec2 ViewportOrigin, ImVec2 ViewportSize, const SCameraComponent& Camera);
         // Net interest-management overlay: the spatial grid (occupied cells), per-client AOI circles, and
         // relevant entities coloured by LOD tier. Draws into the world if it has a live FNetWorldState.
-        void DrawNetworkDebugOverlay();
         
         bool HasSimulatingWorld() const { return bSimulatingWorld || bGamePreviewRunning; }
         

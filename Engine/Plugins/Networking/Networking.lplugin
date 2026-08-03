@@ -1,0 +1,26 @@
+{
+    "FormatVersion": 1,
+    "Name": "Networking",
+    "Version": 1,
+    "VersionName": "0.1.0",
+    "Author": "Lumina Team",
+    "Description": "Lumina's built-in netcode: ENet transport, replication and interest management. Disable it to run without networking, or to replace it with your own INetworkRuntime.",
+    "Category": "Networking",
+    "EnabledByDefault": true,
+    "EditorOnly": false,
+    "ContainsContent": false,
+    "SupportedPlatforms": [],
+    "Dependencies": [],
+    "Modules": [
+        {
+            "Name": "NetworkingRuntime",
+            "Type": "Runtime",
+            "LoadingPhase": "Earliest"
+        },
+        {
+            "Name": "NetworkingEditor",
+            "Type": "Editor",
+            "LoadingPhase": "EditorInit"
+        }
+    ]
+}

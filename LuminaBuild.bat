@@ -13,6 +13,13 @@ if errorlevel 1 (
     exit /b 1
 )
 
+rem The C# compiler reads LIB and warns about every entry that is not a real directory (CS1668).
+rem A Developer Command Prompt puts ATL/MFC paths there whether or not that optional component was
+rem installed, so building from one reported it on every managed project. Cleared inside setlocal,
+rem so this only affects the tool build below and nothing the caller's shell keeps.
+set LIB=
+set INCLUDE=
+
 rem Always rebuild: MSBuild no-ops in well under a second, and a stale tool silently produces
 rem stale rules behavior that is very hard to diagnose. Set LUMINA_SKIP_TOOL_BUILD=1 to opt out.
 if not defined LUMINA_SKIP_TOOL_BUILD (

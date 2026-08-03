@@ -4,7 +4,7 @@
 #include "Core/Diagnostics/HangWatchdog.h"
 #include "Audio/AudioContext.h"
 #include "Audio/AudioSettings.h"
-#include "Networking/NetworkGlobals.h"
+#include "Networking/INetworkRuntime.h"
 #include "Config/Config.h"
 #include "Config/EngineSettings.h"
 #include "Core/Application/Application.h"
@@ -46,7 +46,6 @@
 #include "World/WorldManager.h"
 #include "World/World.h"
 #include "World/WorldContext.h"
-#include "World/Net/NetWorldState.h"
 #include "UI/RmlUiBridge.h"
 #include "GameInstance.h"
 #include "Core/CommandLine/CommandLine.h"
@@ -249,7 +248,10 @@ namespace Lumina
         {
             Audio::Initialize();
         }
-        Network::Initialize();
+        if (INetworkRuntime* NetRuntime = GetNetworkRuntime())
+        {
+            NetRuntime->Initialize();
+        }
         Task::Initialize();
         Physics::Initialize();
 
@@ -361,7 +363,10 @@ namespace Lumina
         {
             Audio::Shutdown();
         }
-        Network::Shutdown();
+        if (INetworkRuntime* NetRuntime = GetNetworkRuntime())
+        {
+            NetRuntime->Shutdown();
+        }
         Task::Shutdown();
 
         FPluginManager::Get().ShutdownAllPlugins();
@@ -400,7 +405,10 @@ namespace Lumina
             Audio::Update();
         }
 
-        Network::Update();
+        if (INetworkRuntime* NetRuntime = GetNetworkRuntime())
+        {
+            NetRuntime->Update();
+        }
 
         if (GIsHeadless || !Windowing::GetPrimaryWindowHandle()->IsWindowMinimized())
         {
@@ -1021,15 +1029,10 @@ namespace Lumina
         
         if (NetMode == ENetMode::Client && OldWorld != nullptr)
         {
-            if (FNetWorldState* OldNet = OldWorld->TryGetSingleton<FNetWorldState>())
+            if (INetworkRuntime* NetRuntime = GetNetworkRuntime())
             {
-                if (OldNet->Transport != nullptr && OldNet->bClientConnected)
-                {
-                    CarriedTransport        = Move(OldNet->Transport);
-                    CarriedServerConnection = OldNet->ServerConnection;
-                    CarriedLocalPeerId      = OldNet->LocalPeerId;
-                    bHasCarriedConnection   = true;
-                }
+                bHasCarriedConnection = NetRuntime->TakeClientConnection(
+                    OldWorld, CarriedTransport, CarriedServerConnection, CarriedLocalPeerId);
             }
         }
 

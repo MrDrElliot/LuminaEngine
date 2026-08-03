@@ -44,6 +44,18 @@ public static class ManagedProjectStep
                 // MSBuild already parallelizes internally and holds a NuGet lock; two concurrent
                 // restores of the same project deadlock more often than they help.
                 bCanExecuteInParallel = false,
+
+                // The C# compiler has no use for the native toolchain's search paths, but it does read
+                // LIB and warn about every entry that is not a real directory (CS1668). Whoever started
+                // the build decides what those hold: a Developer Command Prompt puts ATL/MFC paths in
+                // LIB whether or not that optional component was ever installed, and the managed build
+                // then reports it once per project. Dropped here so this build does not inherit an
+                // opinion about C++ from the shell that launched it.
+                EnvironmentOverrides = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["LIB"] = string.Empty,
+                    ["INCLUDE"] = string.Empty,
+                },
             };
 
             Action.PrerequisiteItems.Add(FileItem.Get(Project.ProjectFile));

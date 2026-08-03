@@ -40,9 +40,6 @@ public abstract class LuminaTargetRules : TargetRules
             "IMGUI_DEFINE_MATH_OPERATORS",
             "IMGUI_IMPL_VULKAN_USE_VOLK",
             "RMLUI_STATIC_LIB",
-            "LUA_VECTOR_SIZE=4",
-            "LUA_UTAG_LIMIT=2000",
-            "LUA_LUTAG_LIMIT=2000",
             "__AVX__",
 
             // The runtime resolves plugin and project binaries from these, so they must stay
@@ -61,7 +58,6 @@ public abstract class LuminaTargetRules : TargetRules
                 "JPH_FLOATING_POINT_EXCEPTIONS_ENABLED",
                 "JPH_EXTERNAL_PROFILE",
                 "JPH_ENABLE_ASSERTS",
-                "LUAI_GCMETRICS",
             });
         }
         else
@@ -158,12 +154,6 @@ public abstract class LuminaThirdPartyModuleRules : ModuleRules
         bIsThirdParty = true;
         bEnableReflection = false;
         bRootSourceFiles = true;
-
-        // Vendored code is merged where it tolerates it. A library that does not is opted out in
-        // its own Build.cs with the reason, rather than the whole category being written off:
-        // most of these are ordinary C++ that merges fine, and they are a large share of a clean
-        // build. When one does not survive, the fix would be upstream's, so we simply leave it
-        // compiling file by file.
         bUseUnityBuild = true;
     }
 }

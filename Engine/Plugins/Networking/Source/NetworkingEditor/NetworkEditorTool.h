@@ -1,5 +1,5 @@
 #pragma once
-#include "EditorTool.h"
+#include "UI/Tools/EditorTool.h"
 #include "Containers/Array.h"
 
 namespace Lumina

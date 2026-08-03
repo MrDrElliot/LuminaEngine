@@ -8,7 +8,7 @@
 #include "Assets/AssetRef.h"
 #include "Networking/INetworkTransport.h"
 #include "World/Net/NetGUID.h"
-#include "World/Net/NetReplicationGraph.h"
+#include "Net/NetReplicationGraph.h"
 
 namespace Lumina
 {

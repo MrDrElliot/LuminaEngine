@@ -70,7 +70,7 @@ namespace Lumina
      *  from the source prefab, keyed by node StableID. Bare PROPERTY() => serialized with the world but
      *  never rendered in the details panel (FProperty::IsVisible() is false without Editable/ReadOnly);
      *  HideInComponentList keeps it out of the Add-Component picker. Created lazily on first divergence. */
-    REFLECT(Component, HideInComponentList)
+    REFLECT(Component, HideInComponentList, HideInDetails)
     struct RUNTIME_API SPrefabOverrideComponent
     {
         GENERATED_BODY()

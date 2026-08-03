@@ -100,7 +100,6 @@
 #include "Tools/CPUProfilerEditorTool.h"
 #include "Tools/TaskSystemProfilerEditorTool.h"
 #include "Tools/GameplayInsightsEditorTool.h"
-#include "Tools/NetworkEditorTool.h"
 #include "Tools/PluginBrowserEditorTool.h"
 #include "Tools/ShadowAtlasEditorTool.h"
 #include "Tools/EditorToolModal.h"
@@ -2885,7 +2884,6 @@ namespace Lumina
         DrawToolMenuItem<FCPUProfilerEditorTool>(LE_ICON_CHART_BAR " CPU Profiler", this);
         DrawToolMenuItem<FTaskSystemProfilerEditorTool>(LE_ICON_CHART_TIMELINE " Task System", this);
         DrawToolMenuItem<FGameplayInsightsEditorTool>(LE_ICON_CHART_TIMELINE_VARIANT " Gameplay Insights", this);
-        DrawToolMenuItem<FNetworkEditorTool>(LE_ICON_LAN " Network", this);
         DrawToolMenuItem<FShadowAtlasEditorTool>(LE_ICON_GRID " Shadow Atlas", this);
         DrawToolMenuItem<FTextureHeapEditorTool>(LE_ICON_IMAGE_ALBUM " Texture Heap", this);
         DrawToolMenuItem<FMemoryProfilerEditorTool>(LE_ICON_MEMORY " Memory", this);

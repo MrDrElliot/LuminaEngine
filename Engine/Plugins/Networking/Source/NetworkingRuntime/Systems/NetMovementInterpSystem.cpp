@@ -1,15 +1,15 @@
 ﻿#include "RuntimePCH.h"
-#include "NetMovementInterpSystem.h"
+#include "Systems/NetMovementInterpSystem.h"
 
-#include "SystemContext.h"
+#include "World/Entity/Systems/SystemContext.h"
 #include "TaskSystem/TaskSystem.h"
 #include "Config/NetworkSettings.h"
 #include "Core/Object/ObjectCore.h"
-#include "World/Net/NetWorldState.h"
+#include "Net/NetWorldState.h"
 #include "World/Entity/EntityUtils.h"
 #include "World/Entity/Components/RelationshipComponent.h"
-#include "World/Entity/Components/RepTransformComponent.h"
-#include "World/Entity/Components/NetworkComponent.h"
+#include "Components/RepTransformComponent.h"
+#include "Components/NetworkComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
 
 namespace Lumina

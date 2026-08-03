@@ -41,6 +41,15 @@ public static class ProcessRunner
         {
             foreach ((string Key, string Value) in EnvironmentOverrides)
             {
+                // An empty value removes the variable rather than setting it to nothing. A tool that
+                // parses a list variable reads "" as one empty entry and complains about it, so
+                // clearing has to mean absent, not present and empty.
+                if (Value.Length == 0)
+                {
+                    StartInfo.Environment.Remove(Key);
+                    continue;
+                }
+
                 StartInfo.Environment[Key] = Value;
             }
         }

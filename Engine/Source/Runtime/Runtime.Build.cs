@@ -48,7 +48,6 @@ public class Runtime : LuminaModuleRules
             "MiniAudio",
             "JoltPhysics",
             "Recast",
-            "ENet",
             "DotNetHost",
 
             "MeshOptimizer",

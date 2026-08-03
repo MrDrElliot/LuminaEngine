@@ -1,6 +1,6 @@
 #pragma once
 
-#include "EntitySystem.h"
+#include "World/Entity/Systems/EntitySystem.h"
 #include "Core/Object/ObjectMacros.h"
 #include "NetMovementInterpSystem.generated.h"
 
@@ -12,7 +12,7 @@ namespace Lumina
     // from SNetworkSystem because that system is exclusive (transport pump, Lua, structural spawn/destroy);
     // this one declares a disjoint write set so the scheduler can overlap it.
     REFLECT(System)
-    struct RUNTIME_API SNetMovementInterpSystem
+    struct NETWORKINGRUNTIME_API SNetMovementInterpSystem
     {
         GENERATED_BODY()
         ENTITY_SYSTEM(RequiresUpdate(EUpdateStage::PostPhysics, EUpdatePriority::High))

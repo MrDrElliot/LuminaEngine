@@ -7,7 +7,7 @@
 #include "Components/PhysicsComponent.h"
 #include "Components/NameComponent.h"
 #include "Components/RelationshipComponent.h"
-#include "Components/NetworkComponent.h"
+#include "Networking/INetworkRuntime.h"
 #include "Components/CSharpScriptComponent.h"
 #include "components/tagcomponent.h"
 #include "Components/TransformComponent.h"
@@ -28,7 +28,6 @@
 #include "Memory/SmartPtr.h"
 #include "World/World.h"
 #include "World/WorldContext.h"
-#include "World/Net/NetReplication.h"
 #include <atomic>
 #include <EASTL/hash_map.h>
 #include "Log/Log.h"
@@ -510,16 +509,13 @@ namespace Lumina::ECS::Utils
             Registry.emplace_or_replace<FNeedsTransformUpdate>(Child);
         }
 
-        // A networked entity's attachment change must reach clients.
-        if (CWorld** WorldPtr = Registry.ctx().find<CWorld*>())
+        // An attachment change may have to reach clients. Whether it does, and what that costs, is
+        // the netcode's business.
+        if (INetworkRuntime* NetRuntime = GetNetworkRuntime())
         {
-            if (CWorld* World = *WorldPtr)
+            if (CWorld** WorldPtr = Registry.ctx().find<CWorld*>())
             {
-                const ENetMode Mode = World->GetNetMode();
-                if ((Mode == ENetMode::ListenServer || Mode == ENetMode::DedicatedServer) && Registry.all_of<SNetworkComponent>(Child))
-                {
-                    Registry.emplace_or_replace<FNetDirty>(Child);
-                }
+                NetRuntime->OnEntityAttachmentChanged(*WorldPtr, Child);
             }
         }
     }

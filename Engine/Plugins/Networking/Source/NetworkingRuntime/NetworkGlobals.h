@@ -1,15 +1,16 @@
 #pragma once
 
-#include "ModuleAPI.h"
-#include "NetworkTypes.h"
+#include "Networking/NetworkTypes.h"
 #include "Containers/Array.h"
 
+// Nothing outside this plugin names any of these: the engine reaches netcode only through
+// INetworkRuntime, so none of it is exported.
 namespace Lumina
 {
     class INetworkTransport;
 
     // Active networking transport, or null before Network::Initialize / after Network::Shutdown.
-    RUNTIME_API extern INetworkTransport* GNetwork;
+    extern INetworkTransport* GNetwork;
 
     namespace Network
     {
@@ -22,10 +23,10 @@ namespace Lumina
         void Update();
 
         // Events serviced during the most recent Update(); valid until the next Update(). Poll this.
-        RUNTIME_API const TVector<FNetworkEvent>& GetFrameEvents();
+        const TVector<FNetworkEvent>& GetFrameEvents();
 
         // Constructs a fresh backend transport (ENet today). Caller owns it. Used for per-world
         // networking (a listen-server world and a client world each own one), distinct from GNetwork.
-        RUNTIME_API INetworkTransport* CreateTransport();
+        INetworkTransport* CreateTransport();
     }
 }

@@ -122,26 +122,30 @@ namespace Lumina
         {
             const FMeshletData& MD = MeshResources->MeshletData;
 
-            if (!MD.MeshletBounds.empty())
+            // Vertex positions first. A cooked mesh has no Positions array, so this is the path that
+            // actually runs for anything imported, and it is exact.
+            for (const FMeshletVertex& V : MD.MeshletVertices)
             {
+                BoundingBox.Min = Math::Min(BoundingBox.Min, V.Position);
+                BoundingBox.Max = Math::Max(BoundingBox.Max, V.Position);
+            }
+
+            for (const FMeshletSkinnedVertex& V : MD.MeshletSkinnedVertices)
+            {
+                BoundingBox.Min = Math::Min(BoundingBox.Min, V.Position);
+                BoundingBox.Max = Math::Max(BoundingBox.Max, V.Position);
+            }
+
+            if (MD.MeshletVertices.empty() && MD.MeshletSkinnedVertices.empty() && !MD.MeshletBounds.empty())
+            {
+                // Last resort only. Each meshlet contributes a cube of side 2*Radius around its
+                // centre, which is its bounding SPHERE squared off: conservative, never wrong for
+                // culling, and wildly loose for anything that is not itself roughly spherical. A tall
+                // thin mesh came out looking like a cube several times its real size.
                 for (const FMeshletBounds& B : MD.MeshletBounds)
                 {
                     BoundingBox.Min = Math::Min(BoundingBox.Min, B.Center - FVector3(B.Radius));
                     BoundingBox.Max = Math::Max(BoundingBox.Max, B.Center + FVector3(B.Radius));
-                }
-            }
-            else
-            {
-                // Fallback (no bounds stored): union the meshlet vertex positions (now full float3).
-                for (const FMeshletVertex& V : MD.MeshletVertices)
-                {
-                    BoundingBox.Min = Math::Min(BoundingBox.Min, V.Position);
-                    BoundingBox.Max = Math::Max(BoundingBox.Max, V.Position);
-                }
-                for (const FMeshletSkinnedVertex& V : MD.MeshletSkinnedVertices)
-                {
-                    BoundingBox.Min = Math::Min(BoundingBox.Min, V.Position);
-                    BoundingBox.Max = Math::Max(BoundingBox.Max, V.Position);
                 }
             }
         }

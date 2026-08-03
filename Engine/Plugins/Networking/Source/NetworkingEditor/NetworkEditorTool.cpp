@@ -1,12 +1,15 @@
+// Engine headers reach for entt; the Runtime PCH supplies it there, not here.
+#include <entt/entt.hpp>
 #include "NetworkEditorTool.h"
+
 
 #include "World/WorldManager.h"
 #include "World/WorldContext.h"
 #include "World/World.h"
-#include "World/Net/NetWorldState.h"
-#include "World/Net/NetReplication.h"
-#include "World/Entity/Components/NetworkComponent.h"
-#include "World/Entity/Components/RepTransformComponent.h"
+#include "Net/NetWorldState.h"
+#include "Net/NetReplication.h"
+#include "Components/NetworkComponent.h"
+#include "Components/RepTransformComponent.h"
 #include "World/Entity/Components/NameComponent.h"
 #include "Networking/INetworkTransport.h"
 #include "Config/NetworkSettings.h"
