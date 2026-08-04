@@ -14,6 +14,8 @@ public static class LuminaFeatures
 
     public const string Aftermath = "Aftermath";
 
+    public const string RadeonGpuDetective = "RadeonGpuDetective";
+
     public const string VerboseLogging = "VerboseLogging";
 
     public static bool IsActive(TargetInfo Target, string Feature)
@@ -45,6 +47,12 @@ public static class LuminaFeatures
 
             // Vendor specific: pointless on a machine that cannot produce the crash dumps.
             Aftermath => bNonShipping && Target.bHostHasNvidiaGpu,
+
+            // AMD's counterpart. Unlike Aftermath there is no SDK to link: the Adrenalin driver
+            // writes the .rgd dump and the offline rgd CLI parses it. What the build controls is
+            // the in-process side that decides whether that dump is readable -- debug-utils object
+            // names and markers, and the device-fault reporting on a lost device.
+            RadeonGpuDetective => bNonShipping && Target.bHostHasAmdGpu,
 
             // TRACE, DEBUG and INFO compile to nothing when off; WARN and above always stay.
             VerboseLogging => bNonShipping,
@@ -84,6 +92,11 @@ public static class LuminaFeatures
         if (IsActive(Target, Aftermath))
         {
             Definitions.Add("WITH_AFTERMATH");
+        }
+
+        if (IsActive(Target, RadeonGpuDetective))
+        {
+            Definitions.Add("WITH_RGD");
         }
 
         if (IsActive(Target, VerboseLogging))

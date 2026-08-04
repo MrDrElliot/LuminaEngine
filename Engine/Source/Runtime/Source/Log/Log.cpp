@@ -76,6 +76,11 @@ namespace Lumina::Logging
 		std::mutex                      GSinkMutex;
 		TVector<TUniquePtr<ILogSink>>   GSinks;
 
+		// Owned by GSinks; kept for SetLogFileDirectory. Only touched under GSinkMutex.
+		FFileSink*                      GFileSink = nullptr;
+
+		constexpr const char* GLogFileName = "Lumina.log";
+
 		// Guards the direct-to-stdout path used before Init() and after Shutdown().
 		std::mutex GFallbackMutex;
 
@@ -437,10 +442,11 @@ namespace Lumina::Logging
 		AddSink(MakeUnique<FStdoutSink>());
 		AddSink(MakeUnique<FMemorySink>(GetConsoleLogQueue()));
 
-		// Keeps prior run evidence; WindowedApp builds have no console.
+		// Keeps prior run evidence; WindowedApp builds have no console. Starts next to the exe
+		// because no project is known this early; SetLogFileDirectory moves it once one loads.
 		{
 			const std::filesystem::path ExePath(Platform::BaseDir());
-			const std::filesystem::path LogPath = ExePath.parent_path() / "Lumina.log";
+			const std::filesystem::path LogPath = ExePath.parent_path() / "Logs" / GLogFileName;
 
 			constexpr uint64 MaxLogSizeBytes = 16llu * 1024 * 1024;
 			constexpr uint32 MaxLogFiles     = 5;
@@ -450,7 +456,9 @@ namespace Lumina::Logging
 
 			if (FileSink->IsOpen())
 			{
-				AddSink(Move(FileSink));
+				std::scoped_lock Lock(GSinkMutex);
+				GFileSink = FileSink.get();
+				GSinks.push_back(Move(FileSink));
 			}
 		}
 
@@ -500,8 +508,30 @@ namespace Lumina::Logging
 
 		{
 			std::scoped_lock Lock(GSinkMutex);
+			GFileSink = nullptr;
 			GSinks.clear();
 		}
+	}
+
+
+	void SetLogFileDirectory(FStringView Directory)
+	{
+		if (Directory.empty())
+		{
+			return;
+		}
+
+		std::scoped_lock Lock(GSinkMutex);
+		if (GFileSink == nullptr)
+		{
+			return;
+		}
+
+		const std::filesystem::path LogPath =
+			std::filesystem::path(FString(Directory.data(), Directory.size()).c_str()) / GLogFileName;
+
+		// Retarget flushes what the sink is holding, so nothing written so far is lost.
+		GFileSink->Retarget(FString(LogPath.string().c_str()));
 	}
 
 

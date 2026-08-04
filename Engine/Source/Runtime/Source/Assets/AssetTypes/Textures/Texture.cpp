@@ -35,6 +35,10 @@ namespace Lumina
 
         const FTextureResource::FDescription& Desc = TextureResource->ImageDescription;
 
+        // Named after the asset so a GPU crash report identifies which texture a faulting address
+        // belongs to. Read during Create only, so the local outliving the call is enough.
+        const FString DebugName = "Texture." + GetName().ToString();
+
         // New RHI: create the sampled texture in the global heap + upload every mip.
         TextureResource->NewTexture = RHI::Textures::Create(RHI::FTexture2DDesc
         {
@@ -42,6 +46,7 @@ namespace Lumina
             .Height = Desc.Extent.y,
             .Mips   = (uint32)TextureResource->Mips.size(),
             .Format = Desc.Format,
+            .DebugName = DebugName.c_str(),
         });
 
         for (uint8 i = 0; i < TextureResource->Mips.size(); ++i)

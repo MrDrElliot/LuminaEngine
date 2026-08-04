@@ -171,7 +171,10 @@ namespace Lumina
         FMeshResource::FMeshBuffers& MB = Resource.MeshBuffers;
 
         bool bAllocationFailed = false;
-        auto CreateAndUpload = [&bAllocationFailed](const void* Data, uint64 Size) -> RHI::GPUPtr
+
+        // The name is what a GPU crash report resolves a faulting address to. These five are reached
+        // from the shader through a raw device address, so they are the ones worth naming.
+        auto CreateAndUpload = [&bAllocationFailed](const void* Data, uint64 Size, const char* DebugName) -> RHI::GPUPtr
         {
             const RHI::GPUPtr Memory = RHI::Malloc(Size, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
             if (Memory == 0)
@@ -179,12 +182,13 @@ namespace Lumina
                 bAllocationFailed = true;
                 return 0;
             }
+            RHI::SetDebugName(Memory, DebugName);
             RHI::UploadBuffer(Memory, Data, Size);
             return Memory;
         };
 
-        MB.MeshletBuffer       = CreateAndUpload(MData.Meshlets.data(), sizeof(FMeshlet) * MData.Meshlets.size());
-        MB.MeshletBoundsBuffer = CreateAndUpload(MData.MeshletBounds.data(), sizeof(FMeshletBounds) * MData.MeshletBounds.size());
+        MB.MeshletBuffer       = CreateAndUpload(MData.Meshlets.data(), sizeof(FMeshlet) * MData.Meshlets.size(), "Mesh.Meshlets");
+        MB.MeshletBoundsBuffer = CreateAndUpload(MData.MeshletBounds.data(), sizeof(FMeshletBounds) * MData.MeshletBounds.size(), "Mesh.MeshletBounds");
 
         // Highest joint index the packed vertices actually reference. Checked at resolve against the
         // skeleton's bone count -- the GPU bone fetch is unbounded, so a mesh that outruns its skeleton
@@ -211,8 +215,8 @@ namespace Lumina
         const void*  VertSrc    = bSkinned ? (const void*)MData.MeshletSkinnedVertices.data() : (const void*)MData.MeshletVertices.data();
         const uint64 VertStride = bSkinned ? sizeof(FMeshletSkinnedVertex) : sizeof(FMeshletVertex);
         const uint64 VertCount  = bSkinned ? MData.MeshletSkinnedVertices.size() : MData.MeshletVertices.size();
-        MB.MeshletVertexBuffer   = CreateAndUpload(VertSrc, VertCount * VertStride);
-        MB.MeshletTriangleBuffer = CreateAndUpload(MData.MeshletTriangles.data(), sizeof(uint32) * MData.MeshletTriangles.size());
+        MB.MeshletVertexBuffer   = CreateAndUpload(VertSrc, VertCount * VertStride, bSkinned ? "Mesh.SkinnedVertices" : "Mesh.Vertices");
+        MB.MeshletTriangleBuffer = CreateAndUpload(MData.MeshletTriangles.data(), sizeof(uint32) * MData.MeshletTriangles.size(), "Mesh.MeshletTriangles");
 
         // Nothing downstream null-checks the addresses the header carries, so a mesh that only
         // partly allocated has to drop out entirely rather than hand the GPU a null base to fetch
@@ -240,7 +244,7 @@ namespace Lumina
         Header.VerticesAddress    = MB.MeshletVertexBuffer;
         Header.TrianglesAddress   = MB.MeshletTriangleBuffer;
 
-        MB.MeshletHeaderBuffer = CreateAndUpload(&Header, sizeof(FMeshletHeaderGPU));
+        MB.MeshletHeaderBuffer = CreateAndUpload(&Header, sizeof(FMeshletHeaderGPU), "Mesh.MeshletHeader");
     }
 
     void CMesh::GenerateGPUBuffers()

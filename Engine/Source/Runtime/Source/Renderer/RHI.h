@@ -486,6 +486,16 @@ namespace Lumina::RHI
     RUNTIME_API GPUPtr      Malloc(uint64 Size, uint64 Alignment = kDefaultAlign, EMemoryType Type = EMemoryType::Default);
     RUNTIME_API GPUPtr      Malloc(uint64 Size, EMemoryType Type);
     RUNTIME_API void*       ToHost(GPUPtr GPU);
+
+    // Attach a human-readable name to a GPU allocation or texture, via VK_EXT_debug_utils.
+    // No-ops when debug utils is unavailable (shipping), so call sites need no guard.
+    //
+    // This is what turns a post-mortem crash report into something readable. Radeon GPU Detective
+    // resolves a page fault back to the resource(s) at the offending virtual address, and an
+    // unnamed allocation resolves to nothing more useful than its size. Aftermath and RenderDoc
+    // read the same names. Worth doing for anything a shader reaches through a raw address.
+    RUNTIME_API void        SetDebugName(GPUPtr GPU, const char* Name);
+    RUNTIME_API void        SetDebugName(FTextureH Texture, const char* Name);
     RUNTIME_API void        Free(GPUPtr GPU);
     RUNTIME_API void        FreeH(FSemaphoreH Semaphore);
     RUNTIME_API void        FreeH(FPipelineH Pipeline);

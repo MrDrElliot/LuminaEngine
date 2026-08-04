@@ -12,6 +12,7 @@
 #endif
 #include "Log/Log.h"
 #include "Paths/Paths.h"
+#include "Platform/CrashHandler.h"
 #include "Platform/Filesystem/FileHelper.h"
 #include "Platform/Process/PlatformProcess.h"
 
@@ -128,11 +129,18 @@ namespace Lumina::RHI
     }
 #endif // WITH_AFTERMATH
 
+    FString FVulkanCrashTracker::GetCrashDumpDirectory() const
+    {
+        FString Directory = CrashHandler::GetCrashDumpDirectory();
+
+        std::error_code Ec;
+        std::filesystem::create_directories(Directory.c_str(), Ec);
+
+        return Directory;
+    }
+
     FVulkanCrashTracker::FVulkanCrashTracker()
     {
-        CrashDumpDirectory = Paths::Combine(Paths::GetEngineInstallDirectory(), "CrashDumps");
-        std::filesystem::create_directories(CrashDumpDirectory.c_str());
-
         #if WITH_AFTERMATH
         GFSDK_Aftermath_Result Result = GFSDK_Aftermath_EnableGpuCrashDumps(
             GFSDK_Aftermath_Version_API,
@@ -160,6 +168,14 @@ namespace Lumina::RHI
     {
         Device = static_cast<VkDevice>(InDevice);
         PhysicalDevice = static_cast<VkPhysicalDevice>(InPhysicalDevice);
+
+        #if WITH_RGD
+        if (IsAmdDevice())
+        {
+            LOG_INFO("Radeon GPU Detective support active: debug-utils object names and markers are enabled. "
+                     "Arm Crash Analysis in Radeon Developer Panel to capture a .rgd dump on a GPU crash.");
+        }
+        #endif
     }
 
     void FVulkanCrashTracker::Shutdown()
@@ -283,10 +299,50 @@ namespace Lumina::RHI
         }
     }
 
+#if WITH_RGD
+    bool FVulkanCrashTracker::IsAmdDevice() const
+    {
+        if (PhysicalDevice == VK_NULL_HANDLE)
+        {
+            return false;
+        }
+
+        VkPhysicalDeviceDriverProperties DriverProps{};
+        DriverProps.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES;
+
+        VkPhysicalDeviceProperties2 Props2{};
+        Props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+        Props2.pNext = &DriverProps;
+
+        vkGetPhysicalDeviceProperties2(PhysicalDevice, &Props2);
+
+        return DriverProps.driverID == VK_DRIVER_ID_AMD_PROPRIETARY
+            || DriverProps.driverID == VK_DRIVER_ID_AMD_OPEN_SOURCE
+            || DriverProps.driverID == VK_DRIVER_ID_MESA_RADV;
+    }
+    
+    void FVulkanCrashTracker::LogRgdGuidance() const
+    {
+        LOG_ERROR("[DeviceLost] AMD device. To capture a full post-mortem, reproduce with Radeon Developer Panel:");
+        LOG_ERROR("[DeviceLost]   1. Radeon Developer Panel -> Crash Analysis, then launch the editor from the panel.");
+        LOG_ERROR("[DeviceLost]   2. Enable 'Hardware Crash Analysis' for shader-level attribution.");
+        LOG_ERROR("[DeviceLost]   3. After the crash: rgd --parse <dump>.rgd -o crash.txt");
+        LOG_ERROR("[DeviceLost] The report's marker tree and page-fault resource list use this build's debug-utils");
+        LOG_ERROR("[DeviceLost] names, so anything passed to RHI::SetDebugName resolves by name rather than by address.");
+    }
+#endif
+
     void FVulkanCrashTracker::OnDeviceLost()
     {
         LogDeviceInfo();
         LogDeviceFaultInfo();
+
+        #if WITH_RGD
+        if (IsAmdDevice())
+        {
+            LogRgdGuidance();
+        }
+        #endif
 
         #if WITH_AFTERMATH
         GFSDK_Aftermath_CrashDump_Status Status = GFSDK_Aftermath_CrashDump_Status_Unknown;

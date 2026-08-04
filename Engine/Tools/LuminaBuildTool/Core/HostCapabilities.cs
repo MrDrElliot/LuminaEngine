@@ -9,26 +9,40 @@ namespace LuminaBuildTool.Core;
 /// </summary>
 public static class HostCapabilities
 {
-    private static bool? CachedNvidiaGpu;
+    private static string? CachedAdapterNames;
 
     /// <summary>
     /// True when an NVIDIA display adapter is present. Used to decide whether vendor-specific
     /// tooling is worth building in.
     /// </summary>
-    public static bool bHasNvidiaGpu
+    public static bool bHasNvidiaGpu => AdapterNames.Contains("nvidia", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// True when an AMD display adapter is present. Adapter strings read "AMD Radeon ..." for
+    /// discrete parts and "AMD Radeon(TM) Graphics" for integrated ones, so either token matches.
+    /// </summary>
+    public static bool bHasAmdGpu =>
+        AdapterNames.Contains("amd", StringComparison.OrdinalIgnoreCase)
+        || AdapterNames.Contains("radeon", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Comma-joined display adapter names, or empty when the probe could not run. A machine with
+    /// both vendors present reports both, and both vendor features turn on.
+    /// </summary>
+    private static string AdapterNames
     {
         get
         {
-            CachedNvidiaGpu ??= DetectNvidiaGpu();
-            return CachedNvidiaGpu.Value;
+            CachedAdapterNames ??= ProbeAdapterNames();
+            return CachedAdapterNames;
         }
     }
 
-    private static bool DetectNvidiaGpu()
+    private static string ProbeAdapterNames()
     {
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
-            return false;
+            return string.Empty;
         }
 
         try
@@ -49,22 +63,22 @@ public static class HostCapabilities
 
             if (Runner is null)
             {
-                return false;
+                return string.Empty;
             }
 
             string Output = Runner.StandardOutput.ReadToEnd();
 
             if (!Runner.WaitForExit(20_000))
             {
-                return false;
+                return string.Empty;
             }
 
-            return Output.Contains("nvidia", StringComparison.OrdinalIgnoreCase);
+            return Output;
         }
         catch (Exception Ex) when (Ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
         {
             Log.Verbose("GPU probe failed: {0}", Ex.Message);
-            return false;
+            return string.Empty;
         }
     }
 }

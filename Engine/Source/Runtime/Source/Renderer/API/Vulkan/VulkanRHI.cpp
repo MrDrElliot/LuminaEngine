@@ -1408,6 +1408,22 @@ namespace Lumina::RHI
                 VK_API_VERSION_MAJOR(APIVer), VK_API_VERSION_MINOR(APIVer), VK_API_VERSION_PATCH(APIVer), DeviceDesc.bValidation);
         }
 
+        // Every SetDebugName call is a silent no-op without this entry point, and an unnamed resource
+        // is the difference between a crash report naming the buffer and reporting a bare address.
+        // Worth saying out loud rather than discovering it while reading an unhelpful dump.
+        if (DeviceDesc.bValidation || DeviceDesc.bDebugUtils)
+        {
+            if (vkSetDebugUtilsObjectNameEXT != nullptr)
+            {
+                LOG_TRACE("Vulkan RHI - debug-utils object naming active (crash reports resolve resources by name).");
+            }
+            else
+            {
+                LOG_WARN("Vulkan RHI - VK_EXT_debug_utils requested but vkSetDebugUtilsObjectNameEXT is unavailable; "
+                         "GPU crash reports will show unnamed resources.");
+            }
+        }
+
         constexpr auto Flags =    VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT
                                 | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT
                                 | VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT;
@@ -1903,6 +1919,58 @@ namespace Lumina::RHI
         }
 
         return nullptr;
+    }
+
+    // Shared by both SetDebugName overloads. vkSetDebugUtilsObjectNameEXT is only non-null when the
+    // instance enabled VK_EXT_debug_utils, which FRenderManager does for every non-shipping build.
+    static void NameObject(VkObjectType Type, uint64 Handle, const char* Name)
+    {
+        if (vkSetDebugUtilsObjectNameEXT == nullptr || Name == nullptr || Handle == 0)
+        {
+            return;
+        }
+
+        const VkDebugUtilsObjectNameInfoEXT Info
+        {
+            .sType        = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
+            .pNext        = nullptr,
+            .objectType   = Type,
+            .objectHandle = Handle,
+            .pObjectName  = Name
+        };
+
+        vkSetDebugUtilsObjectNameEXT(*GDevice, &Info);
+    }
+
+    void SetDebugName(GPUPtr GPU, const char* Name)
+    {
+        if (GDevice == nullptr)
+        {
+            return;
+        }
+
+        VkBuffer Buffer = VK_NULL_HANDLE;
+        {
+            FScopeLock Lock(GDevice->MemoryMutex);
+            // Interior pointers resolve to the owning allocation, so naming any address inside a
+            // block names the block. The crash report reads back the same way.
+            if (const FMemoryBlock* Block = FindMemory(GPU))
+            {
+                Buffer = Block->Buffer;
+            }
+        }
+
+        NameObject(VK_OBJECT_TYPE_BUFFER, (uint64)Buffer, Name);
+    }
+
+    void SetDebugName(FTextureH Texture, const char* Name)
+    {
+        if (GDevice == nullptr || !IsValid(Texture))
+        {
+            return;
+        }
+
+        NameObject(VK_OBJECT_TYPE_IMAGE, (uint64)GDevice->Textures[Texture].Image, Name);
     }
 
     void Free(GPUPtr GPU)

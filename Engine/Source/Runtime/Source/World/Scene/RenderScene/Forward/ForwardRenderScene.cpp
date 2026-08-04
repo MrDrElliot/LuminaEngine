@@ -399,6 +399,10 @@ namespace Lumina
             NamedImages[(int)IconSlots[i]] = Alias(SharedNow.EditorIcons[i], EFormat::RGBA8_UNORM, FUIntVector2(1, 1));
         }
         #endif
+
+        // Only the scene's own images (cascade atlas, pyramid). The aliases above belong to the
+        // render manager's shared resources and are named where they are created.
+        NameOwnedImages(NamedImages);
     }
 
     FForwardRenderScene::~FForwardRenderScene()
@@ -10667,6 +10671,9 @@ namespace Lumina
         Desc.Usage  = RHI::EImageUsageFlags::ColorAttachment;
         View.Images[(int)ENamedImage::Picker_MS] = CreateSceneImage(Desc, /*bSampled*/ false);
         #endif
+
+        // These arrive after InitViewImages has already named the rest of the array.
+        NameOwnedImages(View.Images);
     }
 
     void FForwardRenderScene::SyncMSAAState()
@@ -10729,6 +10736,78 @@ namespace Lumina
 
         // Shared aliases: just drop the copies, the owners release them.
         View.Images.fill(FSceneImage{});
+    }
+
+    // Debug-utils name for each render target slot. A GPU crash report resolves a page fault back to
+    // whatever resource owns the offending address, and an unnamed image resolves to nothing more
+    // useful than its dimensions. Kept exhaustive rather than defaulted so a new ENamedImage entry
+    // fails the switch warning instead of silently reporting as "Unknown".
+    static const char* ENamedImageToString(FForwardRenderScene::ENamedImage Image)
+    {
+        using ENamedImage = FForwardRenderScene::ENamedImage;
+        switch (Image)
+        {
+        case ENamedImage::HDR:                return "Scene.HDR";
+        case ENamedImage::LDR:                return "Scene.LDR";
+        case ENamedImage::PostProcessScratch: return "Scene.PostProcessScratch";
+        case ENamedImage::SMAAEdges:          return "Scene.SMAAEdges";
+        case ENamedImage::SMAABlend:          return "Scene.SMAABlend";
+        case ENamedImage::SMAAArea:           return "Scene.SMAAArea";
+        case ENamedImage::SMAASearch:         return "Scene.SMAASearch";
+        case ENamedImage::SSAO:               return "Scene.SSAO";
+        case ENamedImage::SSAODenoise:        return "Scene.SSAODenoise";
+        case ENamedImage::SSAOBlur:           return "Scene.SSAOBlur";
+        case ENamedImage::Cascade:            return "Scene.Cascade";
+        case ENamedImage::CascadePyramid:     return "Scene.CascadePyramid";
+        case ENamedImage::DepthAttachment:    return "Scene.DepthAttachment";
+        case ENamedImage::DepthPyramid:       return "Scene.DepthPyramid";
+        case ENamedImage::Picker:             return "Scene.Picker";
+        case ENamedImage::VisBuffer:          return "Scene.VisBuffer";
+        case ENamedImage::MaterialDepth:      return "Scene.MaterialDepth";
+        case ENamedImage::Accum:              return "Scene.Accum";
+        case ENamedImage::Revealage:          return "Scene.Revealage";
+        case ENamedImage::WaterRefraction:    return "Scene.WaterRefraction";
+        case ENamedImage::DBufferA:           return "Scene.DBufferA";
+        case ENamedImage::DBufferB:           return "Scene.DBufferB";
+        case ENamedImage::DBufferC:           return "Scene.DBufferC";
+        case ENamedImage::AdaptedLuminance:   return "Scene.AdaptedLuminance";
+        case ENamedImage::FroxelScatter:      return "Scene.FroxelScatter";
+        case ENamedImage::FroxelIntegrated:   return "Scene.FroxelIntegrated";
+        case ENamedImage::HDR_MS:             return "Scene.HDR_MS";
+        case ENamedImage::Depth_MS:           return "Scene.Depth_MS";
+        case ENamedImage::Picker_MS:          return "Scene.Picker_MS";
+        case ENamedImage::BRDFLut:            return "Scene.BRDFLut";
+        case ENamedImage::SkyCube:            return "Scene.SkyCube";
+        case ENamedImage::SkyIrradiance:      return "Scene.SkyIrradiance";
+        case ENamedImage::SkyPrefilter:       return "Scene.SkyPrefilter";
+
+        #if USING(WITH_EDITOR)
+        case ENamedImage::PointLightIcon:       return "Scene.PointLightIcon";
+        case ENamedImage::DirectionalLightIcon: return "Scene.DirectionalLightIcon";
+        case ENamedImage::SkyLightIcon:         return "Scene.SkyLightIcon";
+        case ENamedImage::SpotLightIcon:        return "Scene.SpotLightIcon";
+        case ENamedImage::CameraIcon:           return "Scene.CameraIcon";
+        case ENamedImage::CharacterIcon:        return "Scene.CharacterIcon";
+        case ENamedImage::ParticleSystemIcon:   return "Scene.ParticleSystemIcon";
+        #endif
+
+        case ENamedImage::Num:                break;
+        }
+        return "Scene.Unknown";
+    }
+
+    // Named after the fact rather than at each CreateSceneImage call, so a newly added image is
+    // covered without touching its call site. Borrowed entries are skipped: they alias an image
+    // someone else owns and named, and renaming through the copy would just fight the owner.
+    void FForwardRenderScene::NameOwnedImages(TArray<FSceneImage, (int)ENamedImage::Num>& Images)
+    {
+        for (int i = 0; i < (int)ENamedImage::Num; ++i)
+        {
+            if (Images[i].bOwned && Images[i].IsValid())
+            {
+                RHI::SetDebugName(Images[i].Texture, ENamedImageToString((ENamedImage)i));
+            }
+        }
     }
 
     void FForwardRenderScene::InitViewImages(FSceneView& View, uint32 ReuseOutputSlot)
@@ -10902,6 +10981,10 @@ namespace Lumina
             AdaptedDesc.Usage     = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::Storage;
             View.Images[(int)ENamedImage::AdaptedLuminance] = CreateSceneImage(AdaptedDesc, true, true);
         }
+
+        NameOwnedImages(View.Images);
+        RHI::SetDebugName(View.Output.Texture, "View.Output");
+        RHI::SetDebugName(View.BloomChainImage.Texture, "View.BloomChain");
     }
 
     void FForwardRenderScene::BakeBRDFLUT()
@@ -10988,6 +11071,8 @@ namespace Lumina
 
             NamedImages[(int)ENamedImage::SkyPrefilter] = CreateSceneImage(Desc, true, true);
         }
+
+        NameOwnedImages(NamedImages);
     }
 
     void FForwardRenderScene::SyncIBLResolution(const FIBLBakeResolution& Resolution)

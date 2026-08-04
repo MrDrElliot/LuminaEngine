@@ -52,9 +52,11 @@ Source/                        Your C++ module (optional)
 Plugins/                       Project plugins, one folder each (see Plugins/README.md)
 Game/Content/                  Assets, surfaced to the engine under /Game/Content
 Game/Scripts/                  C# scripts, compiled in-editor (surfaced under /Game/Scripts)
+Logs/                          Engine log for runs with this project loaded (Lumina.log, 5 kept)
+CrashDumps/                    Minidumps and GPU crash dumps from runs with this project loaded
 ```
 
-`Binaries/` and `Intermediates/` are build output and are ignored by git.
+`Binaries/`, `Intermediates/`, `Logs/` and `CrashDumps/` are generated output and are ignored by git.
 
 ## Adding to the C++ module
 

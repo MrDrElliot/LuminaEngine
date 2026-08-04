@@ -71,7 +71,8 @@ namespace Lumina
         {
             .Width  = AtlasWidth,
             .Height = AtlasHeight,
-            .Format = EFormat::RGBA8_UNORM
+            .Format = EFormat::RGBA8_UNORM,
+            .DebugName = "Font.MTSDFAtlas"
         });
         RHI::Textures::Upload(AtlasTexture, 0, AtlasPixels.data(), AtlasPixels.size(), AtlasWidth);
 

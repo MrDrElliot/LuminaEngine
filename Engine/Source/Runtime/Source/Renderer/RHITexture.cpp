@@ -140,6 +140,7 @@ namespace Lumina::RHI::Textures
 
         FManagedTexture Out;
         Out.Texture     = CreateTexture(TextureDesc);
+        SetDebugName(Out.Texture, Desc.DebugName);
         Out.SampledSlot = HeapWriteTexture(Core::GetGlobalHeap(), Out.Texture);
         return Out;
     }

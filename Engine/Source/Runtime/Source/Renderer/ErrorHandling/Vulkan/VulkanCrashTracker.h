@@ -42,7 +42,8 @@ namespace Lumina::RHI
         void EndMarker(RHICommandBuffer cmdBuffer) override;
         void PollCrashDumps() override;
 
-        const FString& GetCrashDumpDirectory() const { return CrashDumpDirectory; }
+        // Resolved per call, not cached: the tracker is built during RHI init, before any project loads.
+        FString GetCrashDumpDirectory() const;
 
         #if WITH_AFTERMATH
         // Decoder lookup handlers (called from static callback shims)
@@ -80,10 +81,15 @@ namespace Lumina::RHI
         void LogDeviceInfo() const;
         void LogDeviceFaultInfo() const;
 
+        #if WITH_RGD
+        // The build enables WITH_RGD from the BUILD machine's adapter, which says nothing about the
+        // machine running this binary, so the AMD-specific reporting is gated on the live driver.
+        bool IsAmdDevice() const;
+        void LogRgdGuidance() const;
+        #endif
+
         VkDevice Device = VK_NULL_HANDLE;
         VkPhysicalDevice PhysicalDevice = VK_NULL_HANDLE;
-
-        FString CrashDumpDirectory;
 
         bool bInitialized = false;
         bool bDeviceFaultEnabled = false;

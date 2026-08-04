@@ -4,34 +4,7 @@ using System.Runtime.InteropServices;
 namespace LuminaSharp;
 
 /// <summary>
-/// One action's evaluated state for the current frame. Byte-for-byte mirror of the native
-/// <c>FInputActionState</c>; the script layer reads the whole array through a pointer rather than crossing
-/// into native per action.
-/// </summary>
-[StructLayout(LayoutKind.Sequential)]
-public struct InputActionState
-{
-    /// <summary>The action's value (its X channel for an Axis2D action). 1/0 for a digital action.</summary>
-    public float X;
-
-    /// <summary>The Y channel of an Axis2D action; 0 otherwise.</summary>
-    public float Y;
-
-    /// <summary>Seconds the current press has lasted; 0 while the action is up.</summary>
-    public float HeldTime;
-
-    /// <summary>Bit flags; use the properties rather than reading this directly.</summary>
-    public uint Flags;
-
-    public bool IsDown     => (Flags & 1u) != 0;
-    public bool IsPressed  => (Flags & 2u) != 0;
-    public bool IsReleased => (Flags & 4u) != 0;
-    public bool IsHeld     => (Flags & 8u) != 0;
-    public bool IsTapped   => (Flags & 16u) != 0;
-}
-
-/// <summary>
-/// Base for the two script-facing input bindings, <see cref="InputAction"/> and <see cref="InputAxis"/>.
+/// Base for the two script-facing input bindings, <see cref="SInputAction"/> and <see cref="SInputAxis"/>.
 /// A binding is just a name plus the state the engine evaluated for it this frame; declare one as a
 /// <c>[Property]</c> field and the inspector shows a dropdown of the project's authored input actions
 /// (Settings &gt; Engine &gt; Input), so the key a script reacts to is data, not a hardcoded string.
@@ -41,7 +14,7 @@ public struct InputActionState
 /// be receiving input, exactly like the polling queries and <c>OnInput</c>. Bindings are polled once per
 /// frame before OnUpdate, so an event handler sees the same state a poll in OnUpdate would.
 /// </remarks>
-public abstract partial class InputBinding
+public abstract partial class SInputBinding
 {
     private int Index = -1;
 
@@ -52,11 +25,11 @@ public abstract partial class InputBinding
     // False until the first Poll, so the first frame has no prior state to raise edges against.
     private bool bPrimed;
 
-    protected InputBinding()
+    protected SInputBinding()
     {
     }
 
-    protected InputBinding(string Name)
+    protected SInputBinding(string Name)
     {
         this.Name = Name ?? string.Empty;
     }
@@ -84,7 +57,7 @@ public abstract partial class InputBinding
     private string ActionName = string.Empty;
 
     /// <summary>This frame's raw state, for anything the typed members don't expose.</summary>
-    public InputActionState State { get; private set; }
+    public Lumina.FInputActionState State { get; private set; }
 
     /// <summary>True once the name has resolved to an action that exists in the project's input settings.</summary>
     public bool IsBound => Index >= 0;
@@ -99,7 +72,7 @@ public abstract partial class InputBinding
 
     // Applies this frame's state and raises whatever the concrete binding raises. Called by the runtime
     // for every binding on a script whose entity is receiving input; never call it from game code.
-    internal unsafe void Poll(InputActionState* States, int Count, uint Serial, float DeltaTime)
+    internal unsafe void Poll(Lumina.FInputActionState* States, int Count, uint Serial, float DeltaTime)
     {
         if (ResolvedSerial != Serial)
         {
@@ -109,11 +82,11 @@ public abstract partial class InputBinding
 
         // An unresolved or out-of-range index reads as a zeroed state rather than skipping the update, so
         // an action deleted from the settings mid-session still delivers its release edge.
-        InputActionState Next = (Index >= 0 && Index < Count) ? States[Index] : default;
+        Lumina.FInputActionState Next = (Index >= 0 && Index < Count) ? States[Index] : default;
 
         // The first poll has no previous frame to compare against: hand Raise the incoming state as the
         // previous one so a key already held at bind time doesn't read as a press that just happened.
-        InputActionState Previous = bPrimed ? State : Next;
+        Lumina.FInputActionState Previous = bPrimed ? State : Next;
         bPrimed = true;
         State = Next;
 
@@ -121,7 +94,7 @@ public abstract partial class InputBinding
     }
 
     // Fires this binding's events for the transition from Previous to the state just applied.
-    private protected abstract void Raise(in InputActionState Previous, float DeltaTime);
+    private protected abstract void Raise(in Lumina.FInputActionState Previous, float DeltaTime);
 
     [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Input_FindActionIndex")]
     private static partial int FindActionIndex(string Name);
@@ -131,7 +104,7 @@ public abstract partial class InputBinding
 /// A digital input binding: subscribe to <see cref="Pressed"/> / <see cref="Released"/> instead of testing
 /// a string every frame.
 /// <code>
-/// [Property] public InputAction Interact = new("Interact");
+/// [Property] public SInputAction Interact = new("Interact");
 ///
 /// public override void OnReady()
 /// {
@@ -141,13 +114,13 @@ public abstract partial class InputBinding
 /// </code>
 /// Works against an axis action too: it is down whenever the action's value leaves the dead zone.
 /// </summary>
-public sealed class InputAction : InputBinding
+public sealed class SInputAction : SInputBinding
 {
-    public InputAction()
+    public SInputAction()
     {
     }
 
-    public InputAction(string Name)
+    public SInputAction(string Name)
         : base(Name)
     {
     }
@@ -180,9 +153,9 @@ public sealed class InputAction : InputBinding
     /// <summary>Seconds the current press has lasted; 0 while up.</summary>
     public float HeldTime => State.HeldTime;
 
-    private protected override void Raise(in InputActionState Previous, float DeltaTime)
+    private protected override void Raise(in Lumina.FInputActionState Previous, float DeltaTime)
     {
-        InputActionState Current = State;
+        Lumina.FInputActionState Current = State;
 
         // Edges come from the transition as well as from the engine's own flag. They agree frame to frame;
         // the transition is what covers a frame the script was NOT polled on (the entity stopped receiving
@@ -210,22 +183,22 @@ public sealed class InputAction : InputBinding
 }
 
 /// <summary>
-/// An analog input binding: read <see cref="InputBinding.Value"/> in OnUpdate, or subscribe to
+/// An analog input binding: read <see cref="SInputBinding.Value"/> in OnUpdate, or subscribe to
 /// <see cref="Changed"/> to react only when it moves.
 /// <code>
-/// [Property] public InputAxis Move = new("MoveForward");
+/// [Property] public SInputAxis Move = new("MoveForward");
 ///
 /// public override void OnUpdate(float Delta) =&gt; Walk(Move.Value * Delta);
 /// </code>
-/// An Axis2D action fills <see cref="InputBinding.Value2D"/> as well.
+/// An Axis2D action fills <see cref="SInputBinding.Value2D"/> as well.
 /// </summary>
-public sealed class InputAxis : InputBinding
+public sealed class SInputAxis : SInputBinding
 {
-    public InputAxis()
+    public SInputAxis()
     {
     }
 
-    public InputAxis(string Name)
+    public SInputAxis(string Name)
         : base(Name)
     {
     }
@@ -239,9 +212,9 @@ public sealed class InputAxis : InputBinding
     /// <summary>True while the axis is off zero.</summary>
     public bool IsMoving => State.X != 0.0f || State.Y != 0.0f;
 
-    private protected override void Raise(in InputActionState Previous, float DeltaTime)
+    private protected override void Raise(in Lumina.FInputActionState Previous, float DeltaTime)
     {
-        InputActionState Current = State;
+        Lumina.FInputActionState Current = State;
         if (Current.X != Previous.X)
         {
             Changed?.Invoke(Current.X);

@@ -59,6 +59,9 @@ public sealed class TargetInfo
     /// <summary>True when the build machine has an NVIDIA display adapter.</summary>
     public bool bHostHasNvidiaGpu => Core.HostCapabilities.bHasNvidiaGpu;
 
+    /// <summary>True when the build machine has an AMD display adapter.</summary>
+    public bool bHostHasAmdGpu => Core.HostCapabilities.bHasAmdGpu;
+
     public string Name { get; }
 
     public TargetType Type { get; }

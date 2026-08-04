@@ -23,9 +23,9 @@ namespace Lumina
     static_assert(sizeof(FQuat)    == 16, "LuminaSharp FQuat mirror size mismatch (update Math.cs).");
     static_assert(sizeof(FMatrix4) == 64, "LuminaSharp FMatrix mirror size mismatch (update Matrix.cs).");
 
-    // The script layer reads a whole array of these through a raw pointer (LuminaSharp.InputActionState),
-    // so a field added on either side without the other silently misreads every action's state.
-    static_assert(sizeof(FInputActionState)              == 16, "LuminaSharp InputActionState mirror size mismatch (update InputAction.cs).");
+    // The script layer reads a whole array of these through a raw pointer (the Lumina.FInputActionState
+    // mirror), so a field added on either side without the other silently misreads every action's state.
+    static_assert(sizeof(FInputActionState)              == 16, "LuminaSharp FInputActionState mirror size mismatch (update InputActionState.cs).");
     static_assert(offsetof(FInputActionState, X)         == 0,  "InputActionState.X offset mismatch.");
     static_assert(offsetof(FInputActionState, Y)         == 4,  "InputActionState.Y offset mismatch.");
     static_assert(offsetof(FInputActionState, HeldTime)  == 8,  "InputActionState.HeldTime offset mismatch.");
@@ -46,6 +46,7 @@ namespace Lumina
     LE_REGISTER_LAYOUT("FQuat",        FQuat);
     LE_REGISTER_LAYOUT("FMatrix",      FMatrix4);
     LE_REGISTER_LAYOUT("FTransform",   FTransform);
+    LE_REGISTER_LAYOUT("FInputActionState", FInputActionState);
     LE_REGISTER_LAYOUT("FUIntVector2", FUIntVector2);
     LE_REGISTER_LAYOUT("FUIntVector3", FUIntVector3);
     LE_REGISTER_LAYOUT("FIntVector2",  FIntVector2);

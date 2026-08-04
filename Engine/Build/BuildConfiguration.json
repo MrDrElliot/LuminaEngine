@@ -5,6 +5,7 @@
     "Tracy": "auto",
     "Validation": "auto",
     "Aftermath": "auto",
+    "RadeonGpuDetective": "auto",
     "VerboseLogging": "auto"
   }
 }

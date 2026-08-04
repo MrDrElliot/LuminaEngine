@@ -311,7 +311,7 @@ public static unsafe partial class Host
     /// States points at the owning context's array; it is only valid for the duration of this call.
     [ManagedExport]
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
-    public static void PollScriptInput(IntPtr Handle, InputActionState* States, int Count, uint Serial, float DeltaTime)
+    public static void PollScriptInput(IntPtr Handle, Lumina.FInputActionState* States, int Count, uint Serial, float DeltaTime)
     {
         try
         {

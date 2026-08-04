@@ -301,7 +301,7 @@ internal sealed class EntityScriptRuntime
     /// <summary>Applies this frame's action states to a script's input bindings, raising their events. One
     /// crossing per script per frame, and only for scripts that declare a binding (callback flag) whose
     /// entity is receiving input.</summary>
-    public unsafe void PollInput(IntPtr Handle, InputActionState* States, int Count, uint Serial, float DeltaTime)
+    public unsafe void PollInput(IntPtr Handle, Lumina.FInputActionState* States, int Count, uint Serial, float DeltaTime)
     {
         if (Resolve(Handle) is not EntityScript Script)
         {

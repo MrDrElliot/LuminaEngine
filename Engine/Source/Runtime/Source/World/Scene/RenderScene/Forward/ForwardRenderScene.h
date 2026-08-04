@@ -650,6 +650,10 @@ namespace Lumina
         // ReuseOutputSlot adopts the heap slot detached from the previous Output image, keeping the
         // view's published ResourceID stable across a resize. See InitFrameResources.
         void InitViewImages(FSceneView& View, uint32 ReuseOutputSlot = RHI::kInvalidHeapSlot);
+
+        // Attach debug-utils names to every image the array owns, so a GPU crash report can resolve
+        // a faulting address to a render target by name. Idempotent; safe to re-run after a rebuild.
+        void NameOwnedImages(TArray<FSceneImage, (int)ENamedImage::Num>& Images);
         // bDeferRelease routes the images through this slot's deferred-free list instead of freeing them
         // outright, so in-flight GPU work finishes first. Pass false only at shutdown, where nothing will
         // ever process the deferred list.

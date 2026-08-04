@@ -19,6 +19,10 @@ namespace Lumina::Logging
 	// Blocks until everything logged so far has reached the sinks and the OS.
 	RUNTIME_API void Flush();
 
+	// Moves the log file into Directory (created if needed), carrying this run's lines with it.
+	// Init() has no project yet, so the file starts beside the exe and lands here once one loads.
+	RUNTIME_API void SetLogFileDirectory(FStringView Directory);
+
 	RUNTIME_API void ClearLogQueue();
 	RUNTIME_API FLogQueue& GetConsoleLogQueue();
 

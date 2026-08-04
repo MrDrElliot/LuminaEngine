@@ -2,6 +2,7 @@
 #include "FileSink.h"
 
 #include <cstdio>
+#include <filesystem>
 
 namespace Lumina
 {
@@ -34,7 +35,8 @@ namespace Lumina
         , Batch(64 * 1024)
     {
         // Up front, so each run gets its own file.
-        Rotate();
+        RotateExisting();
+        OpenCurrent("wb");
     }
 
     FFileSink::~FFileSink()
@@ -46,14 +48,8 @@ namespace Lumina
         }
     }
 
-    void FFileSink::Rotate()
+    void FFileSink::RotateExisting()
     {
-        if (Handle != nullptr)
-        {
-            std::fclose(Handle);
-            Handle = nullptr;
-        }
-
         // Walk down so each rename lands on a free slot.
         for (uint32 Index = MaxFiles; Index > 0; --Index)
         {
@@ -66,14 +62,79 @@ namespace Lumina
             }
             std::rename(Source.c_str(), Target.c_str());
         }
+    }
 
-        Handle = std::fopen(BasePath.c_str(), "wb");
+    void FFileSink::OpenCurrent(const char* Mode)
+    {
+        // The Logs folder is ours to make; fopen won't create the directory.
+        const std::filesystem::path Parent = std::filesystem::path(BasePath.c_str()).parent_path();
+        if (!Parent.empty())
+        {
+            std::error_code Ec;
+            std::filesystem::create_directories(Parent, Ec);
+        }
+
+        Handle = std::fopen(BasePath.c_str(), Mode);
         if (Handle != nullptr)
         {
             std::setvbuf(Handle, nullptr, _IOFBF, 64 * 1024);
         }
+    }
+
+    void FFileSink::Rotate()
+    {
+        if (Handle != nullptr)
+        {
+            std::fclose(Handle);
+            Handle = nullptr;
+        }
+
+        RotateExisting();
+        OpenCurrent("wb");
 
         WrittenBytes = 0;
+    }
+
+    void FFileSink::Retarget(const FString& NewBasePath)
+    {
+        if (NewBasePath.empty() || NewBasePath == BasePath)
+        {
+            return;
+        }
+
+        Flush();
+
+        if (Handle != nullptr)
+        {
+            std::fclose(Handle);
+            Handle = nullptr;
+        }
+
+        const FString OldPath = BasePath;
+        BasePath = NewBasePath;
+
+        // Whatever sits at the destination is a previous run: age it out before this one lands on it.
+        {
+            const std::filesystem::path Parent = std::filesystem::path(BasePath.c_str()).parent_path();
+            if (!Parent.empty())
+            {
+                std::error_code Ec;
+                std::filesystem::create_directories(Parent, Ec);
+            }
+        }
+        RotateExisting();
+
+        // Carry the boot lines across. rename fails across volumes, so fall back to a copy.
+        if (std::rename(OldPath.c_str(), BasePath.c_str()) != 0)
+        {
+            std::error_code Ec;
+            std::filesystem::copy_file(OldPath.c_str(), BasePath.c_str(),
+                std::filesystem::copy_options::overwrite_existing, Ec);
+            std::remove(OldPath.c_str());
+        }
+
+        // Append: the moved file already holds everything written so far.
+        OpenCurrent("ab");
     }
 
     void FFileSink::Write(const Logging::FLogRecord& Record)

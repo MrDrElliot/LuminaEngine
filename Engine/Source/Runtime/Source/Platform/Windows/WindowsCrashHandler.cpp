@@ -40,22 +40,34 @@ namespace Lumina::CrashHandler
         
         void BuildCrashPaths(FCrashPaths& Out)
         {
-            wchar_t ExePath[MAX_PATH] = {};
-            GetModuleFileNameW(nullptr, ExePath, MAX_PATH);
+            wchar_t CrashDir[MAX_PATH] = {};
 
-            wchar_t* LastSlash = wcsrchr(ExePath, L'\\');
-            if (LastSlash)
+            // Points at the loaded project once there is one. Stack buffers only; we may be running
+            // on a corrupt heap.
+            char Configured[MAX_PATH] = {};
+            const uint32 ConfiguredLength = GetCrashDumpDirectory(Configured, MAX_PATH);
+
+            if (ConfiguredLength == 0
+                || MultiByteToWideChar(CP_UTF8, 0, Configured, -1, CrashDir, MAX_PATH) == 0)
             {
-                *LastSlash = 0;
+                wchar_t ExePath[MAX_PATH] = {};
+                GetModuleFileNameW(nullptr, ExePath, MAX_PATH);
+
+                wchar_t* LastSlash = wcsrchr(ExePath, L'\\');
+                if (LastSlash)
+                {
+                    *LastSlash = 0;
+                }
+
+                swprintf_s(CrashDir, L"%s\\CrashDumps", ExePath);
             }
 
-            wchar_t CrashDir[MAX_PATH];
-            swprintf_s(CrashDir, L"%s\\Crashes", ExePath);
             CreateDirectoryW(CrashDir, nullptr);
 
             SYSTEMTIME T;
             GetLocalTime(&T);
-            swprintf_s(Out.DumpPath, L"%s\\Lumina-%04d%02d%02d-%02d%02d%02d-%lu.dmp",
+            // CPUCrash_ to sit alongside the tracker's GPUCrash_ dumps in the same folder.
+            swprintf_s(Out.DumpPath, L"%s\\CPUCrash_%04d%02d%02d-%02d%02d%02d-%lu.dmp",
                 CrashDir, T.wYear, T.wMonth, T.wDay, T.wHour, T.wMinute, T.wSecond,
                 GetCurrentProcessId());
 
@@ -363,6 +375,9 @@ namespace Lumina::CrashHandler
             return;
         }
         GInstalled = true;
+
+        // Resolve the default directory now; the crash path must not be the first caller, that one allocates.
+        (void)GetCrashDumpDirectory();
 
         GPreviousFilter    = SetUnhandledExceptionFilter(&TopLevelFilter);
         GPreviousTerminate = std::set_terminate(&TerminateHandler);

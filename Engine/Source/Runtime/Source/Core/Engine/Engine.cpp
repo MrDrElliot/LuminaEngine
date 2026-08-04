@@ -29,6 +29,7 @@
 #include "Input/InputActionMap.h"
 #include "Input/InputViewport.h"
 #include "Pak/PakArchive.h"
+#include "Platform/CrashHandler.h"
 #include "Platform/Process/PlatformProcess.h"
 #include "TaskSystem/TaskSystem.h"
 #include "Input/InputProcessor.h"
@@ -661,6 +662,16 @@ namespace Lumina
         std::error_code GameDirEc;
         std::filesystem::create_directories(GameContentDir.c_str(), GameDirEc);
         std::filesystem::create_directories(GameScriptsDir.c_str(), GameDirEc);
+
+        // From here the run belongs to the project, so its log and crash dumps do too. Boot lines
+        // written before the project was known move across with the log file.
+        const FFixedString LogsDir = Paths::Combine(ProjectPath, "Logs");
+        std::filesystem::create_directories(LogsDir.c_str(), GameDirEc);
+        Logging::SetLogFileDirectory(LogsDir);
+
+        const FFixedString CrashDumpsDir = Paths::Combine(ProjectPath, "CrashDumps");
+        std::filesystem::create_directories(CrashDumpsDir.c_str(), GameDirEc);
+        CrashHandler::SetCrashDumpDirectory(CrashDumpsDir);
 
         // Reloading a project (or switching to another) re-enters here. The VFS mount list is
         // append-only and DirectoryIterator visits every mount, so re-mounting /Game onto a stale

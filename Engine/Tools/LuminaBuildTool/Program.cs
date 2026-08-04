@@ -123,7 +123,8 @@ public static class Program
             Feature switches (default in Engine/Build/BuildConfiguration.json):
               -Tracy=<mode>             auto | on | off
               -Validation=<mode>        auto | on | off
-              -Aftermath=<mode>         auto | on | off
+              -Aftermath=<mode>         auto | on | off   (NVIDIA crash dumps)
+              -RadeonGpuDetective=<mode> auto | on | off  (AMD crash analysis)
               -VerboseLogging=<mode>    auto | on | off
 
             Setup options:

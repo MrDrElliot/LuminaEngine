@@ -29,6 +29,11 @@ namespace Lumina::RHI
         EFormat Format   = EFormat::RGBA8_UNORM;
         bool    bStorage = false;        // also allow per-mip UAV slots (compute writes)
         bool    bRenderTarget = false;   // usable as a color attachment (UI widget/brush RTs)
+
+        // Optional debug-utils name, applied at Create. Read only during the Create call, so a
+        // pointer to a temporary is fine. Worth setting for anything a crash report might have to
+        // identify -- an unnamed image resolves to nothing more useful than its dimensions.
+        const char* DebugName = nullptr;
     };
 
     namespace Textures

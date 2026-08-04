@@ -68,7 +68,11 @@ namespace Lumina
 
     // A named gameplay input: the bindings that feed it plus the shaping applied to their sum. Authored on
     // CInputSettings, evaluated once per frame per input context by FInputActionMap.
-    REFLECT()
+    //
+    // NoCSharp: this is the authored DEFINITION, which the script layer never reads. The name belongs to the
+    // script-facing binding (LuminaSharp.SInputAction) instead; emitting a wrapper here would put two
+    // different SInputAction types in scope of every script and make the name ambiguous.
+    REFLECT(NoCSharp)
     struct RUNTIME_API SInputAction
     {
         GENERATED_BODY()

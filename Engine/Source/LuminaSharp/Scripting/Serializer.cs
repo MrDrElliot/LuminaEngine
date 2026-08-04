@@ -311,7 +311,7 @@ internal static class Serializer
         }
         if (Type.IsInputAction)
         {
-            return Value is InputBinding Binding ? Binding.Name : "";
+            return Value is SInputBinding Binding ? Binding.Name : "";
         }
         return Value as string ?? "";
     }
@@ -408,8 +408,8 @@ internal static class Serializer
     private static void Assign(ScriptProperty Property, object Instance, object? Value)
     {
         if (Property.Type.IsInputAction
-            && Value is InputBinding Incoming
-            && Property.Get(Instance) is InputBinding Existing)
+            && Value is SInputBinding Incoming
+            && Property.Get(Instance) is SInputBinding Existing)
         {
             Existing.Name = Incoming.Name;
             return;
@@ -560,7 +560,7 @@ internal static class Serializer
             // A fresh binding; Assign hands the name to the existing one instead when there is one, so
             // event subscriptions made in OnReady survive a value push from the editor.
             object? Box = Activator.CreateInstance(Type.Clr);
-            if (Box is InputBinding Binding)
+            if (Box is SInputBinding Binding)
             {
                 Binding.Name = Text;
             }

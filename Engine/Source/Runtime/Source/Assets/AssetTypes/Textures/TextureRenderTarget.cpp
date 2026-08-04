@@ -57,6 +57,7 @@ namespace Lumina
             .Height   = H,
             .Format   = GetRHIFormat(),
             .bStorage = true,
+            .DebugName = "TextureRenderTarget",
         });
 
         // Clear so a sampler never reads uninitialized memory before the first paint/render.

@@ -65,6 +65,7 @@ public sealed class RulesScanner
         "node_modules",
         "External",
         "CrashDumps",
+        "Logs",
     };
 
     private readonly BuildDirectories Directories;
