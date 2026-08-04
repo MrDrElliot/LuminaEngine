@@ -407,7 +407,11 @@ struct FGPUInstance
     uint                    ShadowMeshletCount;
     FMeshletHeader*         MeshletHeader;
 
-    private uint            DrawIDAndFlags;
+    // Explicitly zeroed: Slang's synthesized default initializer skips private members, so
+    // (FGPUInstance)0 left the packed draw id and flags holding whatever was on the stack -- and the
+    // accessors below read both out of this one word. That is the kind of value a guard path hands
+    // back after refusing to resolve something, which is exactly when it must not be garbage.
+    private uint            DrawIDAndFlags = 0u;
     uint                    SurfaceMeshletOffset;
     uint                    SurfaceMeshletCount;
     FCustomPrimitiveData    CustomData;
@@ -605,7 +609,7 @@ struct FCullData
     float    CascadePyramidWidth;
     float    CascadePyramidHeight;
     uint     CascadePyramidMipCount;
-    uint     _CullPad0;
+    uint     BoneNum;                   // entries in Bones(); an index bound, not a frame total
     uint     _CullPad1;
     uint     _CullPad2;
 };

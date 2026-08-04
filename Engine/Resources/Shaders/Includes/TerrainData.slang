@@ -18,7 +18,7 @@
 // One push range, identical layout in the terrain VS and PS (see FTerrainPushConstants in TerrainCommon).
 FTerrainPushConstants* TerrainArgs() { return GetPassArgs<FTerrainPushConstants>(); }
 
-FTerrainRenderParams GetTerrainParams() { return TerrainArgs().Params.get(); }
+FTerrainRenderParams GetTerrainParams() { return LoadBlock<FTerrainRenderParams>(TerrainArgs().Params); }
 
 // ---------------------------------------------------------------------------------------------------
 // Layer sampling

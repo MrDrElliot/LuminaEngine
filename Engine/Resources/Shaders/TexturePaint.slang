@@ -1,5 +1,6 @@
 #pragma once
 #include "Includes/SceneGlobals.slang"
+#include "Includes/GlobalRHIStorage.slang"
 
 // Stamps a soft radial brush into a bindless UAV; the CPU dispatches only over the brush's pixel
 // rect [RectMin, RectMax). An optional grayscale brush mask (white = full coverage) modulates falloff.

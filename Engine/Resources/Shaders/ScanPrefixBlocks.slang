@@ -21,7 +21,7 @@ groupshared uint gScanB[SCAN_BLOCK];
 [numthreads(SCAN_BLOCK, 1, 1)]
 void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupIndex)
 {
-    const uint N     = Pass().CountPtr[0];
+    const uint N     = ScanCount();
     const uint Block = GroupID.x + GroupID.y * 65535u;   // same Y fold the cull dispatches use
     const uint Idx   = Block * SCAN_BLOCK + Lane;
 
@@ -60,7 +60,13 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupIndex)
 
     // Only blocks that actually cover live elements have a meaningful sum; the rest still publish 0 so
     // pass 2 can scan a dense array without knowing which blocks were partial.
-    if (Lane == SCAN_BLOCK - 1u)
+    //
+    // Bounded by the block count rather than written for every group that ran. The Y fold dispatches
+    // ceil(Blocks / 65535) * 65535 groups, which is more than Blocks whenever Blocks is not a multiple
+    // of 65535, and BlockSums only has room for the real ones plus pass 2's grand-total slot. Writing
+    // past that corrupts whatever allocation follows, which is a fault somewhere else entirely.
+    const uint NumBlocks = (N + SCAN_BLOCK - 1u) / SCAN_BLOCK;
+    if (Lane == SCAN_BLOCK - 1u && Block < NumBlocks)
     {
         Pass().BlockSums[Block] = gScanA[SCAN_BLOCK - 1u];
     }

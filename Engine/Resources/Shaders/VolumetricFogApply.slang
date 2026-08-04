@@ -11,7 +11,7 @@
 
 struct FPushConstants
 {
-    ConstBufferPointer<FExponentialHeightFogParams> Fog;
+    uint64_t Fog;         // FExponentialHeightFogParams, see LoadBlock
     uint  DepthIndex;        // bindless 2D SRV: scene depth
     uint  IntegratedIndex;   // bindless 3D SRV: integrated froxel volume
     uint  GridZ;
@@ -37,7 +37,7 @@ float IGN(float2 PixelPos)
 [shader("fragment")]
 float4 FragmentMain(PSInput Input) : SV_Target0
 {
-    FExponentialHeightFogParams uFog = Pass().Fog.get();
+    FExponentialHeightFogParams uFog = LoadBlock<FExponentialHeightFogParams>(Pass().Fog);
 
     float2 UV    = Input.UV;
     float  Depth = gTextures2D[Pass().DepthIndex].SampleLevel(gSamplers[SAMPLER_POINT_CLAMP], UV, 0.0).r;

@@ -4,6 +4,7 @@
 #define VOLK_IMPLEMENTATION
 #include <volk/volk.h>
 
+#include "Core/CommandLine/CommandLine.h"
 #include "Core/Threading/Atomic.h"
 #include "Core/Windows/GLFWInclude.h"
 #include "Memory/SmartPtr.h"
@@ -522,6 +523,8 @@ namespace Lumina::RHI
         VkDebugUtilsMessengerEXT        DebugMessenger = VK_NULL_HANDLE;
         VkPhysicalDeviceProperties      Properties = {};
         TVector<const char*>            EnabledDeviceExtensions;
+        VkDeviceSize                    RobustUniformBufferAccessSizeAlignment = 0;
+        VkDeviceSize                    RobustStorageBufferAccessSizeAlignment = 0;
         bool                            bUnifiedImageLayouts = false;
         bool                            bMemoryPriority = false;
         bool                            bMeshShaderSupported = false;
@@ -884,6 +887,14 @@ namespace Lumina::RHI
                 if (LayerCount == 0)
                 {
                     LOG_WARN("Vulkan validation requested but VK_LAYER_KHRONOS_validation is not installed.");
+
+                    // The layer is what implements GPU-AV, so without it the request is not merely
+                    // degraded, it does nothing at all. Never let that pass as a quiet success.
+                    if (DeviceDesc.bGpuValidation)
+                    {
+                        LOG_ERROR("GPU-assisted validation was requested but the validation layer is missing, "
+                                  "so no shader will be instrumented. Install the Vulkan SDK or unset the flag.");
+                    }
                 }
             }
 
@@ -968,23 +979,258 @@ namespace Lumina::RHI
                 .pfnUserCallback = VkDebugCallback,
             };
 
-            VkValidationFeatureEnableEXT ValidationEnables[] =
+            // VK_EXT_layer_settings, not VkValidationFeaturesEXT. The latter has been deprecated since
+            // Vulkan header 272 and could only flip whole features on or off; this reaches every
+            // individual knob the layer exposes, which is what makes GPU-AV usable at all here.
+            //
+            // Keys and types are taken from VkLayer_khronos_validation.json in the SDK -- an unknown
+            // key is silently ignored, so they are not guesses.
+            static constexpr const char* kValidationLayer = "VK_LAYER_KHRONOS_validation";
+
+            // Static storage on purpose: pValues keeps a pointer to these until vkCreateInstance reads
+            // them, which is long after this scope would have gone.
+            static constexpr VkBool32 kEnable  = VK_TRUE;
+            static constexpr VkBool32 kDisable = VK_FALSE;
+
+            VkLayerSettingEXT LayerSettings[24] = {};
+            uint32 LayerSettingCount = 0;
+
+            auto AddSetting = [&](const char* Name, const VkBool32& Value)
             {
-                VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT,
+                LUMINA_ASSERT(LayerSettingCount < std::size(LayerSettings));
+
+                LayerSettings[LayerSettingCount++] = VkLayerSettingEXT
+                {
+                    .pLayerName   = kValidationLayer,
+                    .pSettingName = Name,
+                    .type         = VK_LAYER_SETTING_TYPE_BOOL32_EXT,
+                    .valueCount   = 1,
+                    .pValues      = &Value,
+                };
             };
 
-            VkValidationFeaturesEXT ValidationFeatures
+            auto AddUIntSetting = [&](const char* Name, const uint32& Value)
             {
-                .sType                         = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT,
-                .pNext                         = &MessengerInfo,
-                .enabledValidationFeatureCount = (uint32)std::size(ValidationEnables),
-                .pEnabledValidationFeatures    = ValidationEnables,
+                LUMINA_ASSERT(LayerSettingCount < std::size(LayerSettings));
+
+                LayerSettings[LayerSettingCount++] = VkLayerSettingEXT
+                {
+                    .pLayerName   = kValidationLayer,
+                    .pSettingName = Name,
+                    .type         = VK_LAYER_SETTING_TYPE_UINT32_EXT,
+                    .valueCount   = 1,
+                    .pValues      = &Value,
+                };
+            };
+
+            // The manifest types some settings INT rather than UINT32, and the layer reads pValues
+            // according to the type it is told -- so the wrong one here is a silently misread value,
+            // not a rejected setting.
+            auto AddIntSetting = [&](const char* Name, const int32& Value)
+            {
+                LUMINA_ASSERT(LayerSettingCount < std::size(LayerSettings));
+
+                LayerSettings[LayerSettingCount++] = VkLayerSettingEXT
+                {
+                    .pLayerName   = kValidationLayer,
+                    .pSettingName = Name,
+                    .type         = VK_LAYER_SETTING_TYPE_INT32_EXT,
+                    .valueCount   = 1,
+                    .pValues      = &Value,
+                };
+            };
+
+            // Individual checks can be forced either way with --validate=a,b,c and --novalidate=a,b,c.
+            // GPU-AV rewrites shader SPIR-V, so when a driver falls over under it the module it
+            // compiled is not the one we produced, and the only way to say which check did it is to
+            // switch them one at a time. A rebuild per attempt would make that bisection cost an
+            // afternoon.
+            auto IsListed = [](const char* Argument, const char* Check)
+            {
+                if (GCommandLine == nullptr)
+                {
+                    return false;
+                }
+
+                const TOptional<FFixedString> List = GCommandLine->Get(Argument);
+                if (!List.has_value())
+                {
+                    return false;
+                }
+
+                // Substring match against a comma-joined list, with the separators kept on both sides
+                // so "bda" cannot match a longer name that merely contains it.
+                const FString Haystack = FString(",") + List.value().c_str() + ",";
+                const FString Needle   = FString(",") + Check + ",";
+                return Haystack.find(Needle) != FString::npos;
+            };
+
+            auto ResolveCheck = [&](const char* Check, bool bDefault)
+            {
+                if (IsListed("novalidate", Check))
+                {
+                    return false;
+                }
+                if (IsListed("validate", Check))
+                {
+                    return true;
+                }
+                return bDefault;
+            };
+
+            // Sync validation belongs to the plain layer, not to GPU-AV: it is a CPU-side hazard
+            // tracker that instruments nothing, and it is the half most likely to name a missing
+            // barrier. Gating it behind GPU validation would mean paying for shader instrumentation
+            // to get it.
+            AddSetting("validate_sync", ResolveCheck("sync", true) ? kEnable : kDisable);
+
+            // A bare hazard report names the two accesses and nothing else, which for a buffer the
+            // engine sub-allocates out of a shared VkBuffer is not enough to find the prior write.
+            // These add the prior command's index and debug region, which is what turns "some earlier
+            // transfer wrote this" into a call site.
+            AddSetting("syncval_message_extra_properties", ResolveCheck("syncdetail", true) ? kEnable : kDisable);
+            AddSetting("syncval_message_extra_properties_pretty_print", ResolveCheck("syncdetail", true) ? kEnable : kDisable);
+
+            // Off unless asked for: see --gpuvalidation. Pass --nogpuvalidation to rule the
+            // instrumentation out of a fault entirely, without rebuilding.
+            if (DeviceDesc.bGpuValidation)
+            {
+                AddSetting("gpuav_enable", kEnable);
+
+                // Every individually switchable GPU-AV check, the token --validate/--novalidate take
+                // for it, and whether it is on by default. Setting names are the keys from
+                // VkLayer_khronos_validation.json; an unknown key is silently ignored by the layer,
+                // so a typo here would read as a check that simply never fires.
+                struct FCheck { const char* Setting; const char* Token; bool bDefault; };
+                static constexpr FCheck kChecks[] =
+                {
+                    // The SPIR-V rewrite itself. Off keeps GPU-AV's CPU-side half and stops changing
+                    // what the driver compiles -- the first thing to try when the driver is the one
+                    // crashing, and the switch that turns off most of the others by implication.
+                    { "gpuav_shader_instrumentation",          "instrument",       true  },
+
+                    // OFF, and the other half of the same story as post_process below: on this heap it
+                    // reports descriptors that provably are written.
+                    //
+                    // Measured 2026-08-04. The heap seeds every sampled slot with the fallback view at
+                    // init and writes the real view on registration, so binding 1 stands at 8192 of 8192
+                    // descriptors written -- the layer processed every one of those updates itself and
+                    // raised nothing. It then reported indices 11 (Scene.SkyCube), 29 (Scene.VisBuffer)
+                    // and 198 (the ImGui atlas) on that binding as uninitialized, each naming a live
+                    // view, and slot 198's descriptor had been written at submit 2 and was still being
+                    // reported at submit 21. There is no unwritten descriptor on the binding for the
+                    // report to be describing.
+                    //
+                    // Left switchable rather than deleted: it is the right check for this engine on a
+                    // layer version that gets it right, and --validate=descriptor brings it back.
+                    { "gpuav_descriptor_checks",               "descriptor",       false },
+
+                    // Range-checks every buffer-device-address dereference -- the other half of the
+                    // same story, and the one that matters most here because every pass reaches its
+                    // arguments through a BDA pointer and nothing enables robustBufferAccess.
+                    { "gpuav_buffer_address_oob",              "bda",              true  },
+
+                    // OFF, and it is the descriptor_checks pair that decides it. Bisected against
+                    // NVIDIA 610.88 on 2026-08-03: either of these two alone is fine, both together
+                    // take the ICD down before the first frame executes. Since only one can be on,
+                    // this is the one to drop -- descriptor_checks is what actually catches a read of
+                    // an unwritten slot, whereas post-process only attributes accesses after the
+                    // fact, and its attribution here was demonstrably wrong: it reported a draw
+                    // reading gRWTextures2DArray, a variable that appears in no graphics shader in
+                    // the build (verified against the compiled SPIR-V).
+                    { "gpuav_post_process_descriptor_indexing","postprocess",      false },
+
+                    // Buffer-content checks. These inject extra dispatches ahead of the real work to
+                    // read indirect args and index data, which is why a GPU-driven renderer feels
+                    // them more than a CPU-driven one.
+                    { "gpuav_buffers_validation",              "buffers",          true  },
+                    { "gpuav_indirect_draws_buffers",          "indirectdraw",     true  },
+                    { "gpuav_indirect_dispatches_buffers",     "indirectdispatch", true  },
+                    { "gpuav_index_buffers",                   "indexbuffer",      true  },
+                    { "gpuav_buffer_copies",                   "buffercopy",       true  },
+
+                    { "gpuav_image_layout",                    "imagelayout",      true  },
+
+                    // Takes a descriptor set slot for the instrumentation's own bindings and hides it
+                    // by reporting one fewer in maxBoundDescriptorSets. Without it GPU-AV would
+                    // either collide with the bindless sets or turn itself off.
+                    { "gpuav_reserve_binding_slot",            "slot",             true  },
+                };
+
+                for (const FCheck& Check : kChecks)
+                {
+                    AddSetting(Check.Setting, ResolveCheck(Check.Token, Check.bDefault) ? kEnable : kDisable);
+                }
+
+                // GPU-AV tracks live buffer device addresses in a fixed-size table so the instrumented
+                // shader can resolve an address to an allocation. The default is 10000; past that it
+                // cannot resolve, and an unresolvable address is not reported -- the check goes quiet
+                // rather than loud, which is the worst failure mode a checker has. The engine creates
+                // one VkBuffer per Malloc and a busy editor session churns a lot of them, so the
+                // default is not obviously enough. Raised to the manifest's maximum: the cost is the
+                // layer's table, not ours, and a checker that silently stops checking is worth less
+                // than the memory.
+                static constexpr int32 kMaxTrackedAddresses = 10000000;
+                AddIntSetting("gpuav_max_buffer_device_addresses", kMaxTrackedAddresses);
+
+                // Runs spirv-val over what GPU-AV produced, before the driver ever sees it. This is
+                // the question a driver crash under instrumentation actually turns on -- whether the
+                // module handed down was valid -- and it is not answerable from our side any other
+                // way, because the module is the layer's, not ours.
+                AddSetting("gpuav_debug_validate_instrumented_shaders",
+                    ResolveCheck("validateinstrumented", false) ? kEnable : kDisable);
+
+                AddSetting("gpuav_debug_print_instrumentation_info",
+                    ResolveCheck("printinstrumentation", false) ? kEnable : kDisable);
+
+                // Instrument only the first N shaders. Bisects a driver that dies on one particular
+                // module: raise it until the crash returns and the last one named is the culprit.
+                // Zero means the layer's own default, which is "all of them".
+                static uint32 MaxInstrumentations = 0;
+                if (GCommandLine != nullptr)
+                {
+                    if (const TOptional<int> Limit = GCommandLine->GetInt("maxinstrumented"))
+                    {
+                        MaxInstrumentations = (uint32)Limit.value();
+                    }
+                }
+                if (MaxInstrumentations != 0)
+                {
+                    AddUIntSetting("gpuav_debug_max_instrumentations_count", MaxInstrumentations);
+                    LOG_WARN("Vulkan RHI - instrumenting at most {} shader(s) (--maxinstrumented).", MaxInstrumentations);
+                }
+            }
+            else
+            {
+                // Stated rather than left to the layer's own default, so the off state is a decision
+                // the log can be held to and not whatever the installed SDK happens to ship with.
+                AddSetting("gpuav_enable", kDisable);
+            }
+
+            if (GCommandLine != nullptr)
+            {
+                if (const TOptional<FFixedString> Disabled = GCommandLine->Get("novalidate"))
+                {
+                    LOG_WARN("Vulkan RHI - validation checks disabled by --novalidate: {}", Disabled.value().c_str());
+                }
+                if (const TOptional<FFixedString> Enabled = GCommandLine->Get("validate"))
+                {
+                    LOG_WARN("Vulkan RHI - validation checks force-enabled by --validate: {}", Enabled.value().c_str());
+                }
+            }
+
+            VkLayerSettingsCreateInfoEXT LayerSettingsInfo
+            {
+                .sType        = VK_STRUCTURE_TYPE_LAYER_SETTINGS_CREATE_INFO_EXT,
+                .pNext        = &MessengerInfo,
+                .settingCount = LayerSettingCount,
+                .pSettings    = LayerSettings,
             };
 
             VkInstanceCreateInfo InstanceInfo
             {
                 .sType                   = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
-                .pNext                   = DeviceDesc.bValidation ? (const void*)&ValidationFeatures : nullptr,
+                .pNext                   = DeviceDesc.bValidation ? (const void*)&LayerSettingsInfo : nullptr,
                 .pApplicationInfo        = &AppInfo,
                 .enabledLayerCount       = LayerCount,
                 .ppEnabledLayerNames     = EnabledLayers,
@@ -1064,6 +1310,7 @@ namespace Lumina::RHI
         bool bBufferMarker   = false;
         bool bMemoryPriority = false;
         bool bMeshShader     = false;
+        bool bRobustness2    = false;
         {
             uint32 ExtCount = 0;
             vkEnumerateDeviceExtensionProperties(GDevice->PhysicsDevice, nullptr, &ExtCount, nullptr);
@@ -1113,6 +1360,11 @@ namespace Lumina::RHI
                 EnableIfPresent(VK_EXT_PAGEABLE_DEVICE_LOCAL_MEMORY_EXTENSION_NAME);
             }
 
+            #if defined(LE_DEBUG)
+            bRobustness2 = EnableIfPresent(VK_EXT_ROBUSTNESS_2_EXTENSION_NAME)
+                        || EnableIfPresent(VK_KHR_ROBUSTNESS_2_EXTENSION_NAME);
+            #endif
+
             // Mesh/task shader pipeline. Feature support is confirmed (and the feature enabled) below.
             bMeshShader = EnableIfPresent(VK_EXT_MESH_SHADER_EXTENSION_NAME);
 
@@ -1156,6 +1408,20 @@ namespace Lumina::RHI
         GDevice->bMeshShaderSupported = bMeshShader && SupportedMesh.meshShader;
         LOG_DISPLAY("Mesh/task shaders: {}", GDevice->bMeshShaderSupported ? "supported" : "unavailable");
 
+        VkPhysicalDeviceRobustness2FeaturesKHR SupportedRobustness2{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_KHR };
+        if (bRobustness2)
+        {
+            VkPhysicalDeviceFeatures2 Robustness2Query{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &SupportedRobustness2 };
+            vkGetPhysicalDeviceFeatures2(GDevice->PhysicsDevice, &Robustness2Query);
+
+            VkPhysicalDeviceRobustness2PropertiesKHR Robustness2Props{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_PROPERTIES_KHR };
+            VkPhysicalDeviceProperties2 Props2{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &Robustness2Props };
+            vkGetPhysicalDeviceProperties2(GDevice->PhysicsDevice, &Props2);
+
+            GDevice->RobustUniformBufferAccessSizeAlignment = Robustness2Props.robustUniformBufferAccessSizeAlignment;
+            GDevice->RobustStorageBufferAccessSizeAlignment = Robustness2Props.robustStorageBufferAccessSizeAlignment;
+        }
+
         VkPhysicalDeviceFeatures Features10             = {};
         Features10.fragmentStoresAndAtomics             = VK_TRUE;
         Features10.samplerAnisotropy                    = VK_TRUE;
@@ -1174,10 +1440,16 @@ namespace Lumina::RHI
         Features10.independentBlend                     = VK_TRUE;
         Features10.pipelineStatisticsQuery              = VK_TRUE;
         Features10.wideLines                            = Supported2.features.wideLines;
-        // The VisBuffer mesh-shader fragment reads SV_PrimitiveID; Slang emits the SPIR-V Geometry
-        // capability for that builtin (it has no MeshShadingEXT lowering for it), which needs this feature
-        // even though no geometry-shader stage exists. Every mesh-shader-capable GPU supports it.
         Features10.geometryShader                       = Supported2.features.geometryShader;
+        
+        #ifndef LUMINA_SHIPPING
+        Features10.robustBufferAccess                   = Supported2.features.robustBufferAccess;
+        #endif
+        
+        VkPhysicalDeviceRobustness2FeaturesKHR Robustness2Features{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_KHR };
+        const bool bUseRobustness2 = bRobustness2
+                                  && Features10.robustBufferAccess == VK_TRUE
+                                  && SupportedRobustness2.robustBufferAccess2 == VK_TRUE;
 
         VkPhysicalDeviceVulkan11Features Features11{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
         Features11.shaderDrawParameters = VK_TRUE;
@@ -1223,6 +1495,13 @@ namespace Lumina::RHI
         {
             UnifiedLayoutFeatures.unifiedImageLayouts = VK_TRUE;
             Chain(UnifiedLayoutFeatures);
+        }
+
+        if (bUseRobustness2)
+        {
+            Robustness2Features.robustBufferAccess2 = VK_FALSE;
+            Robustness2Features.robustImageAccess2 = SupportedRobustness2.robustImageAccess2;
+            Chain(Robustness2Features);
         }
 
         VkPhysicalDeviceFaultFeaturesEXT DeviceFaultFeatures{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT };
@@ -1455,6 +1734,48 @@ namespace Lumina::RHI
             const uint32 APIVer = GDevice->Properties.apiVersion;
             LOG_TRACE("Vulkan RHI - {} - API: {}.{}.{} - Validation: {}", GDevice->Properties.deviceName,
                 VK_API_VERSION_MAJOR(APIVer), VK_API_VERSION_MINOR(APIVer), VK_API_VERSION_PATCH(APIVer), DeviceDesc.bValidation);
+
+            #if defined(LE_DEBUG)
+            if (bUseRobustness2)
+            {
+                LOG_DISPLAY("Vulkan RHI - robustness2 ON: out-of-bounds buffer reads return zero and writes are "
+                            "dropped, so a Debug run reproduces rather than reading a neighbour. Bounds-check "
+                            "granularity: uniform {} B, storage {} B -- an overrun smaller than that past a "
+                            "bound range is still invisible.",
+                            GDevice->RobustUniformBufferAccessSizeAlignment,
+                            GDevice->RobustStorageBufferAccessSizeAlignment);
+
+                // Worth stating next to the number, because it is the trap: none of this reaches the path
+                // this engine actually reads geometry through. Robustness bounds-checks accesses made
+                // through a buffer DESCRIPTOR (and vertex/index fetch); a PhysicalStorageBuffer pointer
+                // carries no range, so every BDA load stays unchecked no matter what is enabled here.
+                // GPU-AV's buffer-address range check is the only thing that covers those.
+                LOG_DISPLAY("Vulkan RHI - robustness does NOT cover buffer-device-address loads. The engine "
+                            "reaches meshlet and instance data that way, so those reads are bounded only by "
+                            "the shaders themselves and by GPU-AV's --validate=bda check.");
+            }
+            else if (bRobustness2)
+            {
+                LOG_WARN("Vulkan RHI - VK_KHR_robustness2 present but robustBufferAccess2 was not enabled; "
+                         "out-of-bounds reads fall back to robustBufferAccess, which may return any value "
+                         "from the same buffer rather than zero.");
+            }
+            #endif
+
+            // Said out loud because it changes what a crash means. Under GPU-AV the driver is
+            // compiling instrumented shaders rather than ours, so a fault is as likely to belong to
+            // the instrumentation as to the engine, and every log has to state which run it was.
+            if (DeviceDesc.bGpuValidation)
+            {
+                LOG_WARN("Vulkan RHI - GPU-assisted validation is ON. Shaders are instrumented, frame rate "
+                         "will drop sharply, and a driver fault may belong to the instrumentation rather "
+                         "than to the engine. Re-run with --nogpuvalidation to rule it out.");
+
+                LOG_WARN("Vulkan RHI - buffer-address range checks are ON. Both descriptor-indexing "
+                         "checks are OFF: each was measured reporting written descriptors as "
+                         "uninitialized on this bindless heap. --validate=descriptor / "
+                         "--validate=postprocess brings either back.");
+            }
         }
 
         // Every SetDebugName call is a silent no-op without this entry point, and an unnamed resource
@@ -1952,6 +2273,19 @@ namespace Lumina::RHI
         auto It = std::ranges::lower_bound(GDevice->MemoryBlocks, Gpu, {}, &FMemoryBlock::Device);
         GDevice->MemoryBlocks.insert(It, Block);
 
+        // Live buffer-device-address count, reported at each new high-water thousand. GPU-AV tracks
+        // these in a table of its own and stops validating once it overflows, so this is the number
+        // that says whether its silence means "no faults" or "no longer looking". Cheap: a comparison
+        // per allocation, and it prints a handful of times over a session.
+        static uint64 HighWaterThousands = 0;
+        const uint64 Thousands = GDevice->MemoryBlocks.size() / 1000;
+        if (Thousands > HighWaterThousands)
+        {
+            HighWaterThousands = Thousands;
+            LOG_WARN("RHI: {} live buffer allocations (device addresses). GPU-AV tracks these in a fixed "
+                     "table and validates nothing beyond its limit.", GDevice->MemoryBlocks.size());
+        }
+
         return Block.Device;
     }
 
@@ -2023,7 +2357,9 @@ namespace Lumina::RHI
             return;
         }
 
-        NameObject(VK_OBJECT_TYPE_IMAGE, (uint64)GDevice->Textures[Texture].Image, Name);
+        FTexture& TextureData = GDevice->Textures[Texture];
+
+        NameObject(VK_OBJECT_TYPE_IMAGE, (uint64)TextureData.Image, Name);
     }
 
     void Free(GPUPtr GPU)
@@ -2790,7 +3126,7 @@ namespace Lumina::RHI
         
         VkDescriptorSet DescriptorSet;
         vkAllocateDescriptorSets(*GDevice, &Info, &DescriptorSet);
-        
+
         return GDevice->TextureHeaps.Emplace(FTextureHeap
         {
             .DescriptorSet          = DescriptorSet,
@@ -2818,13 +3154,14 @@ namespace Lumina::RHI
         return kInvalidHeapSlot;
     }
 
-    static void WriteHeapDescriptor(VkDescriptorSet Set, uint32 Binding, uint32 Slot, VkDescriptorType Type, const VkDescriptorImageInfo& ImageInfo)
+    // Caller holds HeapMutex.
+    static void WriteHeapDescriptor(FTextureHeap& HeapData, uint32 Binding, uint32 Slot, VkDescriptorType Type, const VkDescriptorImageInfo& ImageInfo)
     {
         VkWriteDescriptorSet Write
         {
             .sType              = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
             .pNext              = nullptr,
-            .dstSet             = Set,
+            .dstSet             = HeapData.DescriptorSet,
             .dstBinding         = Binding,
             .dstArrayElement    = Slot,
             .descriptorCount    = 1,
@@ -2852,7 +3189,7 @@ namespace Lumina::RHI
             .imageLayout    = VK_IMAGE_LAYOUT_GENERAL
         };
 
-        WriteHeapDescriptor(HeapData.DescriptorSet, kImageBindingSlot, Slot, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, ImageInfo);
+        WriteHeapDescriptor(HeapData, kImageBindingSlot, Slot, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, ImageInfo);
     }
 
     uint32 HeapWriteTexture(FTextureHeapH Heap, FTextureH Texture)
@@ -2961,7 +3298,7 @@ namespace Lumina::RHI
             .imageLayout    = VK_IMAGE_LAYOUT_GENERAL
         };
 
-        WriteHeapDescriptor(HeapData.DescriptorSet, kRWImageBindingSlot, Slot, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, ImageInfo);
+        WriteHeapDescriptor(HeapData, kRWImageBindingSlot, Slot, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, ImageInfo);
 
         return Slot;
     }
@@ -3019,7 +3356,43 @@ namespace Lumina::RHI
             .imageLayout    = VK_IMAGE_LAYOUT_UNDEFINED
         };
 
-        WriteHeapDescriptor(HeapData.DescriptorSet, kSamplerBindingSlot, Slot, VK_DESCRIPTOR_TYPE_SAMPLER, ImageInfo);
+        WriteHeapDescriptor(HeapData, kSamplerBindingSlot, Slot, VK_DESCRIPTOR_TYPE_SAMPLER, ImageInfo);
+
+        // The sampler binding gets the same treatment the sampled binding gets from the fallback view,
+        // and for the same reason: an unwritten descriptor under PARTIALLY_BOUND is undefined to read,
+        // not merely unused. There is no separate fallback object to build here -- the first sampler
+        // registered is a perfectly good stand-in, and every later registration overwrites its own slot
+        // on top of it. Ten stock samplers out of 4000 slots otherwise leaves the binding almost
+        // entirely unwritten.
+        if (Slot == 0)
+        {
+            TVector<VkDescriptorImageInfo> SeedInfos;
+            SeedInfos.resize(HeapData.SamplersBitset.size() - 1, VkDescriptorImageInfo
+            {
+                .sampler        = Sampler,
+                .imageView      = VK_NULL_HANDLE,
+                .imageLayout    = VK_IMAGE_LAYOUT_UNDEFINED
+            });
+
+            if (!SeedInfos.empty())
+            {
+                const VkWriteDescriptorSet Write
+                {
+                    .sType              = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                    .pNext              = nullptr,
+                    .dstSet             = HeapData.DescriptorSet,
+                    .dstBinding         = kSamplerBindingSlot,
+                    .dstArrayElement    = 1,
+                    .descriptorCount    = (uint32)SeedInfos.size(),
+                    .descriptorType     = VK_DESCRIPTOR_TYPE_SAMPLER,
+                    .pImageInfo         = SeedInfos.data(),
+                    .pBufferInfo        = nullptr,
+                    .pTexelBufferView   = nullptr
+                };
+
+                vkUpdateDescriptorSets(*GDevice, 1, &Write, 0, nullptr);
+            }
+        }
 
         return Slot;
     }
@@ -3030,6 +3403,75 @@ namespace Lumina::RHI
 
         FScopeLock Lock(GDevice->HeapMutex);
         HeapData.FallbackView = IsValid(Texture) ? GDevice->Textures[Texture].DefaultImageView : VK_NULL_HANDLE;
+
+        if (HeapData.FallbackView == VK_NULL_HANDLE)
+        {
+            // Shutdown clearing the fallback ahead of the texture's death. Leaving the seeded slots
+            // naming a view about to be destroyed is fine: the device is idle by then, and rewriting
+            // 8192 descriptors to VK_NULL_HANDLE is not a thing the spec allows anyway.
+            return;
+        }
+
+        // Seed EVERY unoccupied sampled slot with the fallback, not just the ones a free comes back to.
+        //
+        // The heap's contract everywhere else is that a slot always names a valid view -- that is what
+        // HeapFreeTexture's repoint is for. Slots that have never been allocated were the one hole in
+        // it: PARTIALLY_BOUND makes reading one undefined rather than diagnosable, so a bad index
+        // sampled whatever the driver felt like and nothing said so. Filling them closes the hole for
+        // the same reason freeing does, and turns any out-of-thin-air index into visible magenta.
+        //
+        // One vkUpdateDescriptorSets over the whole array, at init, once per heap.
+        TVector<VkDescriptorImageInfo> ImageInfos;
+        ImageInfos.reserve(HeapData.SampledImagesBitset.size());
+
+        uint32 First = 0;
+        auto FlushRun = [&]()
+        {
+            if (ImageInfos.empty())
+            {
+                return;
+            }
+
+            const VkWriteDescriptorSet Write
+            {
+                .sType              = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .pNext              = nullptr,
+                .dstSet             = HeapData.DescriptorSet,
+                .dstBinding         = kImageBindingSlot,
+                .dstArrayElement    = First,
+                .descriptorCount    = (uint32)ImageInfos.size(),
+                .descriptorType     = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                .pImageInfo         = ImageInfos.data(),
+                .pBufferInfo        = nullptr,
+                .pTexelBufferView   = nullptr
+            };
+
+            vkUpdateDescriptorSets(*GDevice, 1, &Write, 0, nullptr);
+            ImageInfos.clear();
+        };
+
+        for (uint32 Slot = 0; Slot < (uint32)HeapData.SampledImagesBitset.size(); ++Slot)
+        {
+            if (HeapData.SampledImagesBitset[Slot])
+            {
+                // A live slot must keep its own view, so the run breaks here rather than overwriting it.
+                FlushRun();
+                continue;
+            }
+
+            if (ImageInfos.empty())
+            {
+                First = Slot;
+            }
+
+            ImageInfos.push_back(VkDescriptorImageInfo
+            {
+                .sampler        = VK_NULL_HANDLE,
+                .imageView      = HeapData.FallbackView,
+                .imageLayout    = VK_IMAGE_LAYOUT_GENERAL
+            });
+        }
+        FlushRun();
     }
 
     void HeapFreeTexture(FTextureHeapH Heap, uint32 Slot)
@@ -3055,7 +3497,7 @@ namespace Lumina::RHI
                 .imageLayout    = VK_IMAGE_LAYOUT_GENERAL
             };
 
-            WriteHeapDescriptor(HeapData.DescriptorSet, kImageBindingSlot, Slot, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, ImageInfo);
+            WriteHeapDescriptor(HeapData, kImageBindingSlot, Slot, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, ImageInfo);
         }
     }
 
@@ -3585,7 +4027,7 @@ namespace Lumina::RHI
     void Submit(EQueueType Queue, TSpan<const FCmdListH> CommandLists, TSpan<const FSemaphoreInfo> Waits, TSpan<const FSemaphoreInfo> Signals)
     {
         LUMINA_PROFILE_SCOPE();
-        
+
         FMemMark Scratch;
 
         auto* SignalInfos = Scratch.AllocArray<VkSemaphoreSubmitInfo>(Signals.size());
@@ -3775,6 +4217,16 @@ namespace Lumina::RHI
         };
 
         auto* VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
+
+        // --logcopies: sync validation names the VkBuffer a hazard lands on, but the engine allocates
+        // one buffer per Malloc, so the handle alone does not say which of them it was. Printing the
+        // handle with the offset and size is what pairs a hazard report with a call site.
+        static const bool bLogCopies = GCommandLine != nullptr && GCommandLine->Has("logcopies");
+        if (bLogCopies)
+        {
+            LOG_TRACE("CmdMemcpy: dst=0x{:016X} off={} size={} (src=0x{:016X} off={})",
+                (uint64)DestBuffer, (uint64)DestOffset, (uint64)Size, (uint64)SourceBuffer, (uint64)SourceOffset);
+        }
 
         vkCmdCopyBuffer(VkCmdBuf, SourceBuffer, DestBuffer, 1, &Region);
     }
@@ -4270,7 +4722,7 @@ namespace Lumina::RHI
     {
         auto* VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
         auto* DescriptorSet = GDevice->TextureHeaps[Heap].DescriptorSet;
-        
+
         vkCmdBindDescriptorSets(VkCmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, GDevice->PipelineLayout, 0, 1, &DescriptorSet, 0, nullptr);
         vkCmdBindDescriptorSets(VkCmdBuf, VK_PIPELINE_BIND_POINT_COMPUTE, GDevice->PipelineLayout, 0, 1, &DescriptorSet, 0, nullptr);
     }
@@ -4329,8 +4781,8 @@ namespace Lumina::RHI
     void CmdSetPipeline(FCmdListH CL, FPipelineH Pipeline)
     {
         FPipeline PL = GDevice->Pipelines[Pipeline];
-        auto VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
-        vkCmdBindPipeline(VkCmdBuf, PL.BindPoint, PL.Pipeline);
+        FCommandList& List = GDevice->CommandLists[CL];
+        vkCmdBindPipeline(List.CommandBuffer, PL.BindPoint, PL.Pipeline);
     }
 
     void CmdSetScissor(FCmdListH CL, const FRect& Rect)

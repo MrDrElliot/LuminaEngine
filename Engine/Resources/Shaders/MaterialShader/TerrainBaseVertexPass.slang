@@ -23,7 +23,7 @@ struct VSOutput
 [shader("vertex")]
 VSOutput VertexMain(uint VertexID : SV_VulkanVertexID, uint InstanceID : SV_VulkanInstanceID)
 {
-    FTerrainRenderParams TerrainParams = TerrainArgs().Params.get();
+    FTerrainRenderParams TerrainParams = LoadBlock<FTerrainRenderParams>(TerrainArgs().Params);
 
     FTerrainVisibleMeshlet Vis     = TerrainArgs().Visible[InstanceID];
     FTerrainMeshletInfo    Meshlet = TerrainArgs().Meshlets[Vis.MeshletIndex];

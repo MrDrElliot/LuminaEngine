@@ -328,6 +328,25 @@ namespace Lumina::RHI
                 return false;
             };
 
+            // Buffer ranges written since the last transfer barrier, for the same reason the texture
+            // list above exists: two copies into one range with nothing between them are unordered,
+            // and which one survives is the driver's choice. The queue reaches here holding repeats
+            // routinely -- a material slot re-uploaded after a second parameter edit, or freed and
+            // immediately reused -- so this is the ordinary case rather than a corner.
+            struct FWrittenRange { GPUPtr Begin; GPUPtr End; };
+            TVector<FWrittenRange> WrittenBuffers;
+            auto OverlapsWritten = [&](GPUPtr Dest, uint64 Size)
+            {
+                for (const FWrittenRange& Range : WrittenBuffers)
+                {
+                    if (Dest < Range.End && Range.Begin < Dest + Size)
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            };
+
             for (const FUploadOp& Op : Ops)
             {
                 if (Op.Slice != kNoSlice)
@@ -336,10 +355,17 @@ namespace Lumina::RHI
                 }
 
                 const bool bWritesTexture = (Op.Type == EUploadOp::Texture || Op.Type == EUploadOp::Clear);
-                if (bWritesTexture && AlreadyWritten(Op.TextureDest))
+                const bool bWritesBuffer  = (Op.Type == EUploadOp::Buffer);
+
+                // One barrier orders every transfer issued before it, so both records reset together
+                // whichever kind tripped it -- otherwise the next repeat of the other kind would
+                // insert a second barrier that the first one already covered.
+                if ((bWritesTexture && AlreadyWritten(Op.TextureDest))
+                 || (bWritesBuffer && OverlapsWritten(Op.BufferDest, Op.Size)))
                 {
                     Barriers::TransferToTransfer(CL);
                     WrittenTextures.clear();
+                    WrittenBuffers.clear();
                 }
 
                 switch (Op.Type)
@@ -362,6 +388,10 @@ namespace Lumina::RHI
                 if (bWritesTexture)
                 {
                     WrittenTextures.push_back(Op.TextureDest);
+                }
+                if (bWritesBuffer)
+                {
+                    WrittenBuffers.push_back(FWrittenRange{ Op.BufferDest, Op.BufferDest + Op.Size });
                 }
             }
 

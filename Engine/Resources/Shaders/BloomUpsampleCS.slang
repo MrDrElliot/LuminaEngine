@@ -1,6 +1,7 @@
 #pragma once
 #include "Includes/Common.slang"
 #include "Includes/SceneGlobals.slang"
+#include "Includes/GlobalRHIStorage.slang"
 
 // Bloom upsample: 3x3 tent filter (Jimenez 2014) from the smaller mip, additively accumulated into
 // the larger one. One dispatch per step. Bindless source (SrcIndex@SrcMip) + read-modify-write DstUAV.

@@ -11,7 +11,7 @@
 [numthreads(SCAN_BLOCK, 1, 1)]
 void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupIndex)
 {
-    const uint N     = Pass().CountPtr[0];
+    const uint N     = ScanCount();
     const uint Block = GroupID.x + GroupID.y * 65535u;
     const uint Idx   = Block * SCAN_BLOCK + Lane;
 

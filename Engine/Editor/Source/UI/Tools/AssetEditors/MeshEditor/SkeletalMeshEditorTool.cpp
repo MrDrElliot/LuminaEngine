@@ -421,6 +421,11 @@ namespace Lumina
         {
             return;
         }
+        
+        if (World->GetRenderer())
+        {
+            World->GetRenderer()->GetSceneRenderSettings().bDrawBillboards = false;
+        }
 
         if (bShowAABB)
         {

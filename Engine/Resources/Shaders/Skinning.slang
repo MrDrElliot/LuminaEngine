@@ -23,8 +23,21 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
         return;
     }
 
+    // The root carries SkinDescriptors and PreSkinnedVertices only when their buffers exist, and the
+    // header pointer is whatever the descriptor happened to hold. ResolveMeshlet already refuses a null
+    // header for the same reason; this pass reached straight through both. The store below was already
+    // bounded -- the reads that feed it were not, and it is a read that faults.
+    if (SkinDescriptors() == nullptr || PreSkinnedVertices() == nullptr)
+    {
+        return;
+    }
+
     FSkinDescriptor Desc   = SkinDescriptors()[Descriptor];
     FMeshletHeader* Header = Desc.MeshletHeader;
+    if (Header == nullptr || Header.Meshlets == nullptr || Header.Vertices == nullptr)
+    {
+        return;
+    }
 
     // SkinnedVertexBase folds in the span start so the write lands in the compacted slice
     // (same index the draw VS reads). 64 lanes per meshlet.

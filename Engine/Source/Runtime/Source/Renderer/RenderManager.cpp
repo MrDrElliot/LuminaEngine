@@ -8,6 +8,7 @@
 #include "RHI.h"
 #include "RHICore.h"
 #include "Core/Application/Application.h"
+#include "Core/CommandLine/CommandLine.h"
 #include "Core/Console/ConsoleVariable.h"
 #include "Core/Engine/Engine.h"
 #include "Core/Windows/Window.h"
@@ -91,24 +92,47 @@ namespace Lumina
 
     void FRenderManager::Initialize()
     {
-#if defined(LUMINA_WITH_VALIDATION)
-        constexpr bool bValidation = true;
-#else
-        constexpr bool bValidation = false;
-#endif
+        #if defined(LUMINA_WITH_VALIDATION)
+        bool bValidation = true;
+        #else
+        bool bValidation = false;
+        #endif
 
-#if LUMINA_SHIPPING
+
+        #if defined(LE_SHIPPING)
         constexpr bool bDebugUtils = false;
-#else
+        #else
         constexpr bool bDebugUtils = true;
-#endif
+        #endif
 
-        RHI::CreateDevice(RHI::FDeviceDesc{ bValidation, bDebugUtils });
+        #if defined(LUMINA_WITH_GPU_VALIDATION)
+        bool bGpuValidation = true;
+        #else
+        bool bGpuValidation = false;
+        #endif
+
+        if (GCommandLine != nullptr)
+        {
+            if (GCommandLine->Has("gpuvalidation"))
+            {
+                bGpuValidation = true;
+            }
+            if (GCommandLine->Has("nogpuvalidation"))
+            {
+                bGpuValidation = false;
+            }
+        }
+
+        // A feature of the layer, so it does nothing without it. Turn the layer on rather than
+        // dropping the request on the floor.
+        bValidation = bValidation || bGpuValidation;
+
+        RHI::CreateDevice(RHI::FDeviceDesc{ bValidation, bDebugUtils, bGpuValidation });
         RHI::Core::Initialize();
 
-        ShaderLibrary = Memory::New<FShaderLibrary>();
-        GShaderLibrary = ShaderLibrary;
-        ShaderCompiler = Memory::New<FSpirVShaderCompiler>();
+        ShaderLibrary   = Memory::New<FShaderLibrary>();
+        GShaderLibrary  = ShaderLibrary;
+        ShaderCompiler  = Memory::New<FSpirVShaderCompiler>();
         GShaderCompiler = ShaderCompiler;
         ShaderCompiler->Initialize();
 

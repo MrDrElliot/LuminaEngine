@@ -917,7 +917,14 @@ namespace Lumina
         float  CascadePyramidWidth;
         float  CascadePyramidHeight;
         uint32 CascadePyramidMipCount;
-        uint32 _CullPad0;
+        // Entries in Bones(). Same meaning as MeshletDrawListCapacity above: a fault-safe upper bound on
+        // a bone index, not a count anything iterates. SkinVertex indexes with BoneOffset + a joint index
+        // read out of vertex data, so a mesh skinned against the wrong skeleton indexes off the end --
+        // a device-lost page fault rather than a wrong pose, and the importer already warns about
+        // exactly that case ("channels target bones missing from the skeleton").
+        //
+        // Takes a pad slot so the struct size, and the layout Common.slang mirrors, are unchanged.
+        uint32 BoneNum;
         uint32 _CullPad1;
         uint32 _CullPad2;
     };
@@ -1032,7 +1039,7 @@ namespace Lumina
         uint64 PreSkinnedVertices    = 0;  // GPU-written
         uint64 SkinDescriptors       = 0;
         uint64 Widgets               = 0;
-        
+
         uint32 BRDFLutIndex          = 0;
         uint32 SkyIrradianceIndex    = 0;
         uint32 SkyPrefilterIndex     = 0;
@@ -1105,20 +1112,14 @@ namespace Lumina
         uint8 bDrawAABB:1               = false;
         uint8 bSSAO:1                   = false;
         uint8 bFrustumCull:1            = true;
+        uint8 bConeCull:1               = true;
         uint8 bOcclusionCull:1          = true;
         uint8 bShadowOcclusionCull:1    = true;
         uint8 bWireframe:1              = false;
         uint8 bDrawBillboards:1         = true;
-        // Pre-upload reject of instances outside every contributing view.
         uint8 bCPUInstanceCull:1        = true;
-        // Disabled = always LOD 0 (full detail).
         uint8 bUseLODs:1                = true;
-
-        // Camera LOD + bias picks shadow LOD; capped at MAX_SHADOW_LOD. 0 = no saving, 1-2 typical.
         int8  ShadowLODBias             = 1;
-
-        // Past this distance a caster may take MAX_COARSE_SHADOW_LOD instead of MAX_SHADOW_LOD. Only the
-        // far cascades reach out here, and their texel pitch hides the sloppy LODs' holes. 0 disables.
         float ShadowCoarseLODDistance   = 150.0f;
     };
     

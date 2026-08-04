@@ -1,6 +1,7 @@
 #pragma once
 #include "Includes/Common.slang"
 #include "Includes/SceneGlobals.slang"
+#include "Includes/GlobalRHIStorage.slang"
 
 // 13-tap partial-overlap downsample (Jimenez, "Next Generation Post Processing in Call of Duty:
 // Advanced Warfare"), dispatched once per bloom mip. The first pass (HDR -> mip 0) adds Karis-average

@@ -1,4 +1,5 @@
 #include "Includes/SceneGlobals.slang"
+#include "Includes/GlobalRHIStorage.slang"
 #include "Includes/Froxel.slang"
 
 // Froxel volumetric fog integrate pass: one thread per (x,y) column marches Z front-to-back,

@@ -62,7 +62,7 @@ struct FTerrainVisibleMeshlet
 // LayerWeightsIndex -- it never dereferences the cull pointers.
 struct FTerrainPushConstants
 {
-    ConstBufferPointer<FTerrainRenderParams> Params;
+    uint64_t Params;      // FTerrainRenderParams, see LoadBlock
     FTerrainChunkInfo*      Chunks;
     FTerrainMeshletInfo*    Meshlets;
     FTerrainVisibleMeshlet* Visible;

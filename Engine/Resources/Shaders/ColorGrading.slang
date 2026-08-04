@@ -51,7 +51,7 @@ struct FColorGradingConstants
 // Per-pass block: grading constants by device address + bindless indices for the three inputs.
 struct FComposePushConstants
 {
-    ConstBufferPointer<FColorGradingConstants> Constants;
+    uint64_t Constants;   // FColorGradingConstants, see LoadBlock
     uint HDRIndex;          // bindless SRV: pre-tone-map HDR
     uint BloomIndex;        // bindless SRV: bloom chain mip 0
     uint AdaptedLumIndex;   // bindless SRV: 1x1 adapted luminance
@@ -255,7 +255,7 @@ float3 ApplyFilmGrain(float3 X, float2 PixelPos, float Time, float Intensity, fl
 [shader("fragment")]
 float4 FragmentMain(VSOutput Input) : SV_Target0
 {
-    FColorGradingConstants Grading = Pass().Constants.get();
+    FColorGradingConstants Grading = LoadBlock<FColorGradingConstants>(Pass().Constants);
     SamplerState Smp    = gSamplers[SAMPLER_LINEAR_CLAMP];
     Texture2D    HDRTex = gTextures2D[Pass().HDRIndex];
 

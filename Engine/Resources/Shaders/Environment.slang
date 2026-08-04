@@ -8,7 +8,7 @@
 // No pass-local set: env params via a device-address pointer, sky cube + equirect via bindless indices.
 struct FEnvPushConstants
 {
-    ConstBufferPointer<FEnvironmentParams> Env;
+    uint64_t Env;         // FEnvironmentParams, see LoadBlock
     uint SkyCubeIndex;    // bindless cube SRV (procedural sky, or HDRI-derived cube for IBL)
     uint EquirectIndex;   // bindless 2D SRV (imported HDRI equirect, sampled with a screen-derivative LOD)
     uint EquirectWidth;   // equirect base width in texels; drives the anti-aliasing LOD
@@ -34,7 +34,7 @@ float3 GetViewRay(float2 UV)
 [shader("fragment")]
 FragmentOutput FragmentMain(FragmentInput Input)
 {
-    FEnvironmentParams uEnvironment = Pass().Env.get();
+    FEnvironmentParams uEnvironment = LoadBlock<FEnvironmentParams>(Pass().Env);
 
     float3 Color;
     uint SkyMode = asuint(uEnvironment.Misc.x);

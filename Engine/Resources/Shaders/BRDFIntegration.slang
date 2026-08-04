@@ -1,4 +1,5 @@
 #include "Includes/SceneGlobals.slang"
+#include "Includes/GlobalRHIStorage.slang"
 #include "Includes/IBL.slang"
 
 // Bakes the split-sum BRDF integration LUT once at init, indexed by (NdotV, Roughness) -> (scale, bias);

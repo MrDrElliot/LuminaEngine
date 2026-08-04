@@ -110,6 +110,11 @@ namespace Lumina
     void FAnimationEditorTool::Update(const FUpdateContext& UpdateContext)
     {
         FAssetEditorTool::Update(UpdateContext);
+        
+        if (World && World->GetRenderer())
+        {
+            World->GetRenderer()->GetSceneRenderSettings().bDrawBillboards = false;
+        }
     }
 
     void FAnimationEditorTool::OnDeinitialize(const FUpdateContext& UpdateContext)

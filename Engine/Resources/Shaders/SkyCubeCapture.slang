@@ -1,4 +1,5 @@
 #include "Includes/SceneGlobals.slang"
+#include "Includes/GlobalRHIStorage.slang"
 #include "Includes/Sky.slang"
 
 // Bakes the procedural sky into a 6-face cubemap for the IBL passes; one thread per texel computes
@@ -7,7 +8,7 @@
 
 struct FPushConstants
 {
-    ConstBufferPointer<FEnvironmentParams> Env;
+    uint64_t Env;         // FEnvironmentParams, see LoadBlock
     uint   SkyCubeUAV;     // bindless 2D-array UAV of the sky cube (GetMipUAVIndex(0))
     float  Time;
     float3 SunDirection;
@@ -21,7 +22,7 @@ FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 [numthreads(SKYCAP_TILE, SKYCAP_TILE, 1)]
 void ComputeMain(uint3 DTid : SV_DispatchThreadID)
 {
-    FEnvironmentParams uEnvironment = Pass().Env.get();
+    FEnvironmentParams uEnvironment = LoadBlock<FEnvironmentParams>(Pass().Env);
     RWTexture2DArray<float4> uSkyCube = gRWTextures2DArray[Pass().SkyCubeUAV];
 
     uint Width, Height, Layers;

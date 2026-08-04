@@ -1,4 +1,5 @@
 #include "Includes/SceneGlobals.slang"
+#include "Includes/GlobalRHIStorage.slang"
 #include "Includes/ShadowSampling.slang"
 #include "Includes/Fog.slang"
 #include "Includes/Froxel.slang"
@@ -18,7 +19,7 @@ struct FPushConstants
     float  Time;
     uint   LocalLightIndices[FROXEL_MAX_LOCAL_LIGHTS];
     // Pointer placed after the array so its 8-byte alignment lands on a multiple of 8 (offset 96).
-    ConstBufferPointer<FExponentialHeightFogParams> Fog;  // fog params (transient device address)
+    uint64_t Fog;         // FExponentialHeightFogParams (transient device address), see LoadBlock
     uint   ScatterUAV;   // bindless 3D UAV index of the froxel scatter volume
     uint   bSupersampleLocal;   // 1 = 4x supersample local light in-scatter per froxel
 };
@@ -185,7 +186,7 @@ void ComputeMain(uint3 DispatchID : SV_DispatchThreadID)
 
     // Sample the slice center. Sun-shadow shafts are debanded by Z-stratified taps in
     // SampleSunShadowAA (averaging, not dither) so the smooth fog stays grain-free.
-    FExponentialHeightFogParams uFog = Pass().Fog.get();
+    FExponentialHeightFogParams uFog = LoadBlock<FExponentialHeightFogParams>(Pass().Fog);
 
     float3 WorldPos = FroxelToWorld(DispatchID, float3(0.5, 0.5, 0.5));
     float3 ToCamVec = GetCameraPosition() - WorldPos;

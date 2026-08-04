@@ -102,6 +102,6 @@ void MeshMain(
     // One triangle per thread; UnpackMeshletTriangle returns the 3 local vertex indices.
     if (ThreadID < TriCount)
     {
-        Tris[ThreadID] = UnpackMeshletTriangle(Ref, ThreadID);
+        Tris[ThreadID] = UnpackMeshletTriangleSafe(Ref, ThreadID);
     }
 }

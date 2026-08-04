@@ -426,6 +426,10 @@ namespace Lumina::RHI
     {
         bool bValidation = false;
         bool bDebugUtils = true;
+
+        // GPU-assisted validation. Implies bValidation: it is a feature of the validation layer, so
+        // asking for it without the layer loaded silently does nothing.
+        bool bGpuValidation = false;
     };
 
     // API-neutral GPU device summary, surfaced to tools.

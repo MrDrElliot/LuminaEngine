@@ -2136,6 +2136,87 @@ namespace Lumina
                     ImGui::EndMenu();
                 }
 
+                // Every stage that can remove geometry, individually switchable. This is a diagnostic
+                // menu, not a quality one: when part of a mesh is missing, the question is always which
+                // stage dropped it, and turning them off one at a time answers it in seconds where
+                // reading the cull shaders takes an afternoon. Each entry says what it costs to disable
+                // so nobody leaves one off and later reports the frame rate as a bug.
+                if (ImGui::BeginMenu("Culling"))
+                {
+                    // Spelled out per entry rather than driven by a pointer-to-member table: these are
+                    // bitfields, and there is no such thing as a pointer to one.
+                    static const char* const kNames[] =
+                    {
+                        "Frustum Cull",
+                        "Cone Cull",
+                        "Occlusion Cull (Camera)",
+                        "Occlusion Cull (Shadows)",
+                        "CPU Instance Cull",
+                        "Level of Detail",
+                    };
+                    static const char* const kTooltips[] =
+                    {
+                        "Rejects instances and meshlets outside a view's frustum.\nOff: everything is submitted from every angle.",
+                        "Rejects meshlets whose normal cone faces away from the view.\nOff: backfacing clusters are submitted. The only cull besides occlusion that removes PARTS of a mesh.",
+                        "Two-phase Hi-Z: meshlets hidden by last frame's depth pyramid are deferred, then re-tested against this frame's.\nOff: no deferral, no late pass.",
+                        "The same test for shadow cascades, against the cascade pyramid.",
+                        "Pre-upload reject of instances outside every contributing view, on the CPU.\nOff: the whole retained set is uploaded each frame.",
+                        "Distance-based LOD selection.\nOff: always LOD 0, full detail.",
+                    };
+
+                    bool bValues[] =
+                    {
+                        (bool)Settings.bFrustumCull,
+                        (bool)Settings.bConeCull,
+                        (bool)Settings.bOcclusionCull,
+                        (bool)Settings.bShadowOcclusionCull,
+                        (bool)Settings.bCPUInstanceCull,
+                        (bool)Settings.bUseLODs,
+                    };
+                    static_assert(std::size(kNames) == std::size(kTooltips), "Cull toggle names and tooltips must pair up.");
+
+                    bool bChanged[std::size(kNames)] = {};
+                    for (size_t i = 0; i < std::size(kNames); ++i)
+                    {
+                        bChanged[i] = ImGui::MenuItem(kNames[i], nullptr, &bValues[i]);
+                        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                        {
+                            ImGui::SetTooltip("%s", kTooltips[i]);
+                        }
+                    }
+
+                    if (bChanged[0]) { Settings.bFrustumCull         = bValues[0]; }
+                    if (bChanged[1]) { Settings.bConeCull            = bValues[1]; }
+                    if (bChanged[2]) { Settings.bOcclusionCull       = bValues[2]; }
+                    if (bChanged[3]) { Settings.bShadowOcclusionCull = bValues[3]; }
+                    if (bChanged[4]) { Settings.bCPUInstanceCull     = bValues[4]; }
+                    if (bChanged[5]) { Settings.bUseLODs             = bValues[5]; }
+
+                    ImGui::Separator();
+
+                    // The state to compare a suspicious frame against: whatever is still missing with all
+                    // of these off was not culled, which is worth more than any single toggle.
+                    const bool bAllOff = !Settings.bFrustumCull && !Settings.bConeCull && !Settings.bOcclusionCull
+                                      && !Settings.bShadowOcclusionCull && !Settings.bCPUInstanceCull && !Settings.bUseLODs;
+                    if (ImGui::MenuItem("Disable All Culling", nullptr, bAllOff))
+                    {
+                        const uint8 bEnable = bAllOff ? 1u : 0u;
+                        Settings.bFrustumCull         = bEnable;
+                        Settings.bConeCull            = bEnable;
+                        Settings.bOcclusionCull       = bEnable;
+                        Settings.bShadowOcclusionCull = bEnable;
+                        Settings.bCPUInstanceCull     = bEnable;
+                        Settings.bUseLODs             = bEnable;
+                    }
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                    {
+                        ImGui::SetTooltip("Turns every stage above off (and back on). Expensive -- for isolating "
+                                          "missing geometry, not for working in.");
+                    }
+
+                    ImGui::EndMenu();
+                }
+
                 ImGui::Separator();
 
                 bool bWireframe = Settings.bWireframe;

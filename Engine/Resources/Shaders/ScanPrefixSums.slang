@@ -18,7 +18,7 @@ groupshared uint gScanB[SCAN_BLOCK];
 [numthreads(SCAN_BLOCK, 1, 1)]
 void ComputeMain(uint Lane : SV_GroupIndex)
 {
-    const uint N         = Pass().CountPtr[0];
+    const uint N         = ScanCount();
     const uint NumBlocks = (N + SCAN_BLOCK - 1u) / SCAN_BLOCK;
 
     uint Running = 0u;   // uniform: every lane accumulates the same chunk totals

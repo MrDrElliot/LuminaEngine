@@ -28,6 +28,27 @@ namespace Lumina::Import::Mesh::GLTF
 {
     namespace
     {
+        // RH(glTF) -> LH(engine): reflect X.
+        constexpr FVector3 kHandednessReflect = FVector3(-1.0f, 1.0f, 1.0f);
+
+        // Conjugate by the X reflection (M' = R * M * R, R = diag(-1,1,1)). Matches the FBX importer's
+        // ConjugateHandedness exactly; the two formats must land in the same space.
+        void ConjugateHandedness(FMatrix4& M)
+        {
+            M[0][1] = -M[0][1];
+            M[0][2] = -M[0][2];
+            M[0][3] = -M[0][3];
+            M[1][0] = -M[1][0];
+            M[2][0] = -M[2][0];
+            M[3][0] = -M[3][0];
+        }
+
+        // The same conjugation expressed on a rotation quaternion.
+        FQuat ConjugateHandedness(const FQuat& Q)
+        {
+            return FQuat(Q.w, Q.x, -Q.y, -Q.z);
+        }
+
         TExpected<fastgltf::Asset, FString> ExtractAsset(FStringView InPath, FScopedSlowTask* Progress)
         {
             std::filesystem::path FSPath(InPath.begin(), InPath.end());
@@ -171,10 +192,13 @@ namespace Lumina::Import::Mesh::GLTF
                         if (Channel.path == fastgltf::AnimationPath::Translation)
                         {
                             Value *= ImportScale;
+                            Value.x *= kHandednessReflect.x;
                             AnimChannel.Translations.push_back(Value);
                         }
                         else
                         {
+                            // Scale is invariant under the reflection: R * diag(s) * R is diag(s) again,
+                            // so a mirrored key would be wrong, not merely redundant.
                             AnimChannel.Scales.push_back(Value);
                         }
                     });
@@ -183,7 +207,7 @@ namespace Lumina::Import::Mesh::GLTF
                 {
                     fastgltf::iterateAccessor<FVector4>(Asset, ValueAccessor, [&](FVector4 value)
                     {
-                        AnimChannel.Rotations.push_back(FQuat(value.w, value.x, value.y, value.z));
+                        AnimChannel.Rotations.push_back(ConjugateHandedness(FQuat(value.w, value.x, value.y, value.z)));
                     });
                 }
                 
@@ -270,11 +294,16 @@ namespace Lumina::Import::Mesh::GLTF
                     LocalTransform = Math::MakeMat4(mat->data());
                 }
                 
+                // Both are conjugated rather than pre- or post-multiplied: a bone local transform maps
+                // parent space to bone space and an inverse bind maps model space to bone space, and in
+                // each case BOTH spaces are reflected, which is what conjugation expresses.
+                ConjugateHandedness(LocalTransform);
                 Bone.LocalTransform = LocalTransform;
-                
+
                 if (JointIdx < InverseBindMatrices.size())
                 {
                     Bone.InvBindMatrix = InverseBindMatrices[JointIdx];
+                    ConjugateHandedness(Bone.InvBindMatrix);
                 }
                 else
                 {
@@ -577,8 +606,18 @@ namespace Lumina::Import::Mesh::GLTF
             THashMap<int16, int16>* MergedMaterialRemapPtr,
             const FMatrix4&      WorldMatrix)
         {
-            const FMatrix4 PosMatrix    = Math::Scale(FMatrix4(1.0f), FVector3(ImportScale)) * WorldMatrix;
-            const FMatrix3 NormalMatrix = Math::Transpose(Math::Inverse(FMatrix3(WorldMatrix)));
+            // Applied in world space so it converts the whole baked scene at once, exactly as the FBX
+            // importer does. It inverts both the winding (compensated below) and the normal basis --
+            // which NormalMatrix picks up for free by deriving from the same matrix.
+            const FMatrix4 MeshToEngine = Math::Scale(FMatrix4(1.0f), kHandednessReflect) * WorldMatrix;
+            const FMatrix4 PosMatrix    = Math::Scale(FMatrix4(1.0f), FVector3(ImportScale)) * MeshToEngine;
+            const FMatrix3 NormalMatrix = Math::Transpose(Math::Inverse(FMatrix3(MeshToEngine)));
+
+            // The engine is CCW-front with back-face culling, so a reflected mesh would show its back
+            // faces and cull the front ones. Tested on the composed matrix rather than assumed from the
+            // reflection: a node already carrying a negative scale reflects a second time and lands back
+            // on the original winding.
+            const bool bMirroredXform = Math::Determinant(FMatrix3(MeshToEngine)) < 0.0f;
 
             for (auto& Primitive : Mesh.primitives)
             {

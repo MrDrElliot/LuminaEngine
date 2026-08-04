@@ -157,14 +157,26 @@ FPreSkinnedVertex SkinVertex(FMeshletHeader* Header, FMeshlet M, uint VertexLoca
     float4 R1;
     float4 R2;
 
-    if (WeightSum > 1e-5f)
+    // A joint index is vertex data, so nothing between the importer and here bounds it. Skin a mesh
+    // against a skeleton it was not authored for -- which the importer warns about rather than
+    // refuses, "channels target bones missing from the skeleton" -- and BoneOffset + JointIndex walks
+    // straight off the end of the bone array. That read is unmapped, and an unmapped read here costs
+    // the device, not the pose. Clamping instead of dropping keeps a wrong-skeleton mesh visible and
+    // obviously wrong, which is the failure the artist can act on.
+    const uint BoneCount   = Scene().CullData.BoneNum;
+    const bool bBonesValid = (Bones() != nullptr) && (BoneCount != 0u);
+
+    if (bBonesValid && WeightSum > 1e-5f)
     {
         Weights /= WeightSum;
 
-        FBoneTransform B0 = Bones()[BoneOffset + JointIndices.x];
-        FBoneTransform B1 = Bones()[BoneOffset + JointIndices.y];
-        FBoneTransform B2 = Bones()[BoneOffset + JointIndices.z];
-        FBoneTransform B3 = Bones()[BoneOffset + JointIndices.w];
+        const uint LastBone = BoneCount - 1u;
+        const uint4 Joint   = min(BoneOffset + JointIndices, uint4(LastBone, LastBone, LastBone, LastBone));
+
+        FBoneTransform B0 = Bones()[Joint.x];
+        FBoneTransform B1 = Bones()[Joint.y];
+        FBoneTransform B2 = Bones()[Joint.z];
+        FBoneTransform B3 = Bones()[Joint.w];
 
         // Linear blend of the row-stored skinning matrices, then transform by explicit row dots.
         // Rigid per bone, so the same 3x3 rows rotate Tangent and its handedness sign is preserved.

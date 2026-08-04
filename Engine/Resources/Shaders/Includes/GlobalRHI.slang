@@ -17,6 +17,20 @@ Ptr<T> GetArgs<T>()
     return (T*)gRHI.Args;
 }
 
+// Reads a block whose address is stored INSIDE another args block, given that address as a
+// plain integer.
+//
+// Store nested addresses as uint64_t and go through this, never as a typed field. A typed
+// pointer field has to be loaded by value before it can be followed, and GPU-AV instruments
+// that load with a bounds check whose failure path needs a null of the loaded type -- for a
+// PhysicalStorageBuffer pointer that is OpConstantNull of a pointer type, which the SPIR-V
+// spec forbids. The layer emits it anyway, fails its own spirv-val, and disables itself
+// mid-run. Loading an integer and casting afterwards leaves nothing for it to null.
+T LoadBlock<T>(uint64_t Address)
+{
+    return ((T*)Address)[0];
+}
+
 // ---------------------------------------------------------------------------
 //  Global texture heap.
 // ---------------------------------------------------------------------------
@@ -33,13 +47,10 @@ Ptr<T> GetArgs<T>()
 // Integer alias of the same heap, for R32_UINT targets (e.g. the VisBuffer triangle-ID buffer).
 [[vk::binding(1, 0)]] Texture2D<uint>                           gTextures2DUInt[];
 
-[[vk::binding(2, 0)]] RWTexture2D<float4>                       gRWTextures2D[];
-[[vk::binding(2, 0)]] RWTexture3D<float4>                       gRWTextures3D[];
-// Cube storage views are illegal in Vulkan; cube RW slots are registered as
-// 2D-array views (HeapWriteRWTexture) and written via [int3(x, y, face)].
-[[vk::binding(2, 0)]] RWTexture2DArray<float4>                  gRWTextures2DArray[];
-// Coherent alias for cross-workgroup hand-offs (SPD-style single-pass chains).
-[[vk::binding(2, 0)]] globallycoherent RWTexture2D<float4>      gRWTextures2DCoherent[];
+// The storage-image half of the heap (binding 2) lives in GlobalRHIStorage.slang, which
+// a shader includes only if it writes to the heap. See that file for why: the aliases
+// there disagree about view type, so declaring them costs a validation error in any
+// module that does not use them.
 
 // Stock sampler heap slots. Keep in lockstep with the registration order in
 // RHICore.cpp (RHI::Core::Initialize).

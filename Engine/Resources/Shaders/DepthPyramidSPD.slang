@@ -1,6 +1,7 @@
 #pragma once
 #include "Includes/Common.slang"
 #include "Includes/SceneGlobals.slang"
+#include "Includes/GlobalRHIStorage.slang"
 
 // Single-pass downsampler for a conservative HZB (up to 12 mips per dispatch). Bindless source SRV +
 // per-mip UAVs, BDA atomic counter for the cross-WG hand-off; no pass-local binding set.

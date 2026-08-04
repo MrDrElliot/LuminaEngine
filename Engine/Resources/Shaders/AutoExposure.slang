@@ -1,6 +1,7 @@
 #pragma once
 #include "Includes/Common.slang"
 #include "Includes/SceneGlobals.slang"
+#include "Includes/GlobalRHIStorage.slang"
 
 // Auto exposure: one workgroup log-averages a 16x16 grid over the HDR frame (geometric mean =
 // key luminance), then eases the persistent 1x1 R32F adapted value toward it like an eye adapting.

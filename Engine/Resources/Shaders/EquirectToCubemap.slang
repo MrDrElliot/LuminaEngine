@@ -1,5 +1,6 @@
 #include "Includes/Common.slang"
 #include "Includes/SceneGlobals.slang"
+#include "Includes/GlobalRHIStorage.slang"
 #include "Includes/Sky.slang"
 
 // Bakes an HDR equirect panorama into the scene's 6-face cube map (HDRI path; downstream IBL is identical).

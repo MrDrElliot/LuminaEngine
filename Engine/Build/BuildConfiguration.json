@@ -3,9 +3,12 @@
 
   "//BugSplat": "Crash upload to the engine's BugSplat database. auto means on for Editor targets and off for Game targets, and it is gated at runtime on the user's consent either way.",
 
+  "//GpuValidation": "Default state of GPU-assisted validation, which instruments every shader to catch out-of-bounds and null reads from inside them. auto means off. Only the default lives here: the switch is --gpuvalidation / --nogpuvalidation on the engine command line, so a session spent chasing a GPU fault never costs a rebuild to enter or leave. Expect a large frame-rate cost while it is on.",
+
   "Features": {
     "Tracy": "auto",
     "Validation": "auto",
+    "GpuValidation": "auto",
     "Aftermath": "auto",
     "RadeonGpuDetective": "auto",
     "VerboseLogging": "auto",

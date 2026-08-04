@@ -264,8 +264,44 @@ namespace Lumina::CrashHandler
                 }
                 else
                 {
-                    _snprintf_s(Line, sizeof(Line), _TRUNCATE,
-                        "  [0x%016llX] <no symbol>", (unsigned long long)Frame.AddrPC.Offset);
+                    // No symbol, so fall back to the owning module and an offset into it. A bare
+                    // address is unactionable; "SomeLayer.dll+0x1234" names the culprit outright and
+                    // is stable across runs, because module-relative offsets do not move with ASLR.
+                    //
+                    // This is the normal case, not an edge case: users build the engine themselves,
+                    // so uploaded reports never resolve against symbols we hold. Module + offset is
+                    // what makes those reports mean anything, and it is what tells a crash inside a
+                    // driver or a validation layer apart from one in engine code.
+                    char ModuleLine[MAX_PATH] = {};
+                    const DWORD64 ModuleBase = SymGetModuleBase64(Process, Frame.AddrPC.Offset);
+
+                    if (ModuleBase != 0)
+                    {
+                        wchar_t ModulePath[MAX_PATH] = {};
+                        if (GetModuleFileNameW(reinterpret_cast<HMODULE>(ModuleBase), ModulePath, MAX_PATH) != 0)
+                        {
+                            const wchar_t* Name = wcsrchr(ModulePath, L'\\');
+                            Name = Name != nullptr ? Name + 1 : ModulePath;
+
+                            WideCharToMultiByte(CP_UTF8, 0, Name, -1, ModuleLine, MAX_PATH, nullptr, nullptr);
+                        }
+                    }
+
+                    if (ModuleLine[0] != 0)
+                    {
+                        _snprintf_s(Line, sizeof(Line), _TRUNCATE,
+                            "  [0x%016llX] %s+0x%llX",
+                            (unsigned long long)Frame.AddrPC.Offset, ModuleLine,
+                            (unsigned long long)(Frame.AddrPC.Offset - ModuleBase));
+                    }
+                    else
+                    {
+                        // Not inside any loaded module at all -- a heap or generated-code address,
+                        // which usually means the walk has left a real call stack behind.
+                        _snprintf_s(Line, sizeof(Line), _TRUNCATE,
+                            "  [0x%016llX] <not in any loaded module>",
+                            (unsigned long long)Frame.AddrPC.Offset);
+                    }
                 }
 
                 AppendLine(Line);

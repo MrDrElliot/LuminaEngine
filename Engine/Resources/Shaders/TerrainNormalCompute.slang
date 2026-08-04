@@ -1,4 +1,5 @@
 #include "Includes/SceneGlobals.slang"
+#include "Includes/GlobalRHIStorage.slang"
 
 // Matches FTerrainNormalParams in TerrainRenderTypes.h.
 struct FTerrainNormalParams

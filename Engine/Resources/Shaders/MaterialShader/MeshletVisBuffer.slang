@@ -95,7 +95,7 @@ void MeshMain(
     // Triangle phase grid-strides the 64 lanes (2 iterations at the 124-tri cap). VisID packs the LOOP var.
     for (uint t = ThreadID; t < TriCount; t += 64u)
     {
-        Tris[t]        = UnpackMeshletTriangle(Ref, t);
+        Tris[t]        = UnpackMeshletTriangleSafe(Ref, t);
         Prims[t].VisID = ((MeshletSlot << 7u) | (t & 0x7Fu)) + 1u;
     }
 }

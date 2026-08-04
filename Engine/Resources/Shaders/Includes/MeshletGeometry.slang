@@ -33,6 +33,21 @@ struct FMeshletRef
 // bShadow selects the instance's shadow meshlet range instead of the surface (base/depth) range.
 FMeshletRef ResolveMeshlet(uint MeshletSlot, bool bShadow)
 {
+    // Same reasoning as the MeshletHeader check below, one level up: the root only carries these two
+    // addresses when their buffers exist, and a pass that draws without them page-faults the device
+    // rather than producing a wrong pixel. The CPU side refuses the draw too (VisBufferPass); this is
+    // the backstop for every other pass that resolves a meshlet.
+    if (MeshletDrawList() == nullptr || Instances() == nullptr)
+    {
+        FMeshletRef Empty;
+        Empty.SkinnedVertexBase = kNoPreSkinBase;
+        Empty.GlobalMeshletIdx  = 0u;
+        Empty.InstanceID        = 0u;
+        Empty.Inst              = (FGPUInstance)0;
+        Empty.M                 = (FMeshlet)0;
+        return Empty;
+    }
+
     FMeshletDraw Draw = MeshletDrawList()[MeshletSlot];
 
     FMeshletRef Ref;
@@ -52,9 +67,46 @@ FMeshletRef ResolveMeshlet(uint MeshletSlot, bool bShadow)
     }
 
     uint BaseOffset          = bShadow ? Ref.Inst.ShadowMeshletOffset : Ref.Inst.SurfaceMeshletOffset;
+    uint RangeCount          = bShadow ? Ref.Inst.ShadowMeshletCount  : Ref.Inst.SurfaceMeshletCount;
     Ref.SkinnedVertexBase    = bShadow ? Ref.Inst.ShadowSkinnedVertexBase : Ref.Inst.SkinnedVertexBase;
+
+    // The tag says the slot was written THIS FRAME. It says nothing about the index inside it being in
+    // range for the LOD this pass resolves against, and those are different questions: the cull emits a
+    // local index bounded by the count it read for the view it emitted into, while this resolves against
+    // whichever range the PASS asks for. Surface and shadow LODs have different meshlet counts (the
+    // shadow LOD is the finer of the two once the camera LOD passes MAX_SHADOW_LOD), so an index legal
+    // for one is not automatically legal for the other.
+    //
+    // Unbounded, this indexes off the end of the LOD's meshlets. Because LODs are packed back to back it
+    // does not fault -- it returns a NEIGHBOURING LOD's meshlet, or past the last LOD, whatever bytes
+    // follow the allocation. The counts in that garbage then drive SetMeshOutputCounts and the mesh
+    // output array writes, which is how a bad index here becomes an out-of-bounds WRITE two steps later.
+    if (Draw.MeshletLocalIndex >= RangeCount)
+    {
+        Ref.SkinnedVertexBase = kNoPreSkinBase;
+        Ref.GlobalMeshletIdx  = 0u;
+        Ref.M                 = (FMeshlet)0;
+        return Ref;
+    }
+
     Ref.GlobalMeshletIdx     = BaseOffset + Draw.MeshletLocalIndex;
     Ref.M                    = Ref.Inst.MeshletHeader.Meshlets[Ref.GlobalMeshletIdx];
+
+    // A meshlet the builder produced can never exceed these -- MeshImport caps every buildMeshlets call at
+    // exactly MESHLET_MAX_VERTICES/TRIANGLES. So this is not a clamp on legitimate data, it is the point at
+    // which garbage stops propagating: past here the counts reach SetMeshOutputCounts, which the spec
+    // requires to be within the shader's DECLARED array sizes, and index writes into fixed-size output
+    // arrays. Over-declaring leaves the vertices past the workgroup's 64 lanes never written at all --
+    // undefined interpolants, which rasterize as a triangle anchored at whatever the unwritten position
+    // decodes to. Dropping the whole meshlet instead makes that a visible hole, not a spike and a fault.
+    if (Ref.M.VertexCount > MESHLET_MAX_VERTICES || Ref.M.TriangleCount > MESHLET_MAX_TRIANGLES)
+    {
+        Ref.SkinnedVertexBase = kNoPreSkinBase;
+        Ref.GlobalMeshletIdx  = 0u;
+        Ref.M                 = (FMeshlet)0;
+        return Ref;
+    }
+
     return Ref;
 }
 
@@ -94,6 +146,27 @@ uint3 UnpackMeshletTriangle(FMeshletRef Ref, uint TriIdx)
 {
     uint Packed = Ref.Inst.MeshletHeader.Triangles[Ref.M.TriangleOffset + TriIdx];
     return uint3(Packed & 0xFFu, (Packed >> 8u) & 0xFFu, (Packed >> 16u) & 0xFFu);
+}
+
+// Mesh-shader index output. Every index a mesh shader emits must address a vertex the workgroup both
+// DECLARED (SetMeshOutputCounts) and WROTE, and a local index is eight bits of imported vertex data --
+// nothing between the importer and here bounds it against this meshlet's own vertex count. One that
+// overruns points the rasterizer at an output slot no lane ever assigned, whose contents are undefined;
+// that is the second way an unwritten mesh output reaches the screen, and it looks identical to the
+// first (a triangle anchored at whatever the undefined position decodes to).
+//
+// Collapsing to (0,0,0) makes the primitive degenerate -- zero area, nothing rasterized -- using vertex
+// 0, which is written whenever the meshlet has any vertices at all. An index array has no way to say
+// "skip this primitive", so a degenerate triangle is the in-bounds way to spell it.
+uint3 UnpackMeshletTriangleSafe(FMeshletRef Ref, uint TriIdx)
+{
+    const uint3 Tri = UnpackMeshletTriangle(Ref, TriIdx);
+    const uint  VC  = Ref.M.VertexCount;
+    if (Tri.x >= VC || Tri.y >= VC || Tri.z >= VC)
+    {
+        return uint3(0u, 0u, 0u);
+    }
+    return Tri;
 }
 
 // VS-emulation single-corner decode: corner in [0,3) of triangle TriIdx -> local vertex index.

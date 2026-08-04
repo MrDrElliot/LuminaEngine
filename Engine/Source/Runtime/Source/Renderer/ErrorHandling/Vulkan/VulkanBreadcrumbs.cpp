@@ -243,6 +243,15 @@ namespace Lumina::RHI
                 LOG_ERROR("[GPU] Breadcrumbs: no markers were ever recorded this session. The trail "
                           "is not being written, so this says nothing about what the GPU was doing.");
             }
+            else if (LastCompleted == nullptr)
+            {
+                // Recorded but none begun and none ended: the CPU wrote the markers into command
+                // buffers the GPU never got to. That is a crash during recording or before submit,
+                // NOT an idle GPU -- reporting it as "drained" points at the wrong half of the frame.
+                LOG_ERROR("[GPU] Breadcrumbs: {} marker(s) recorded but the GPU executed none of them. "
+                          "The crash happened while building the frame, before any of this work ran.",
+                    TotalRecorded);
+            }
             else
             {
                 LOG_ERROR("[GPU] Breadcrumbs: {} marker(s) recorded, none outstanding -- the GPU had "

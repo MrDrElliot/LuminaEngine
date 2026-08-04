@@ -220,6 +220,11 @@ namespace Lumina
             return;
         }
         
+        if (World && World->GetRenderer())
+        {
+            World->GetRenderer()->GetSceneRenderSettings().bDrawBillboards = false;
+        }
+        
         CSkeleton* Skeleton = GetAsset<CSkeleton>();
         FSkeletonResource* SkeletonResource = Skeleton->GetSkeletonResource();
 

@@ -2836,6 +2836,9 @@ namespace Lumina
         // geometry rastered into depth and the VisBuffer, then nothing shaded it.
         SceneGlobalData.CullData.MeshletDrawListCapacity = DrawListCapacity;
         SceneGlobalData.CullData.InstanceNum             = FrameVisibleInstanceCapacity;
+        // Published for the same reason as the two above: the bone index SkinVertex builds comes partly
+        // from vertex data, so nothing upstream of the shader bounds it.
+        SceneGlobalData.CullData.BoneNum                 = (uint32)BonesData.size();
 
         {
             LUMINA_PROFILE_SECTION_COLORED("Write Scene Buffers", tracy::Color::OrangeRed3);
@@ -3937,7 +3940,11 @@ namespace Lumina
         auto& SceneGlobalData  = Frame.SceneGlobalData;
 
         SceneCullContext.Reset();
-        SceneCullContext.bEnabled = CVarCPUInstanceCull.GetValue();
+        // FSceneRenderSettings::bCPUInstanceCull existed but nothing read it -- only the CVar did, so the
+        // per-scene setting was dead and a viewport that turned it off still culled. Both now gate it, the
+        // same way bShadowOcclusionCull pairs with its CVar: the CVar is the global kill switch, the
+        // setting is this scene's.
+        SceneCullContext.bEnabled = RenderSettings.bCPUInstanceCull && CVarCPUInstanceCull.GetValue();
         SceneCullContext.Frustum  = Frame.CameraFrustum;
 
         if (!SceneCullContext.bEnabled)
@@ -4469,30 +4476,23 @@ namespace Lumina
         PointShadowCullViewBases.reserve(PackedShadows[(uint32)ELightType::Point].size());
         SpotShadowCullViewBases.clear();
         SpotShadowCullViewBases.reserve(PackedShadows[(uint32)ELightType::Spot].size());
-
-        // View 0: main camera. Frustum + occlusion gated by render settings so the
-        // toggles disable culling at runtime; cone is always cheap so it stays.
+        
+        const uint32 ConeFlag = RenderSettings.bConeCull ? (uint32)ECullViewFlags::Cone : 0u;
+        
         {
             const FMatrix4 CameraVP = ViewVolume.GetProjectionMatrix() * ViewVolume.GetViewMatrix();
-            uint32 CameraFlags = ECullViewFlags::Cone;
+            uint32 CameraFlags = ConeFlag;
             if (RenderSettings.bFrustumCull)
             {
                 CameraFlags |= ECullViewFlags::Frustum;
             }
-            // Occlusion culling reads LAST frame's depth pyramid. If the previous frame did not render
-            // (engine shaders still coming up, a resize) the pyramid is arbitrary, and phase 0 would defer
-            // essentially the whole scene against it -- which is what overflowed the defer list. Skipping
-            // the test for one frame emits everything, defers nothing, and rebuilds the pyramid from this
-            // frame's depth so the next frame is back to normal.
             if (RenderSettings.bOcclusionCull && bDepthPyramidValid.load(std::memory_order_acquire))
             {
                 CameraFlags |= ECullViewFlags::Occlusion;
             }
             PushView(CameraVP, ViewVolume.GetViewPosition(), CameraFlags);
         }
-
-        // CSM cascades: sun-aligned cone + cast-shadow-only + distance; frustum still
-        // cheap and catches casters outside the cascade volume.
+        
         if (LightData.bHasSun)
         {
             const int32 SunShadowIndex = LightData.Lights[0].ShadowDataIndex;
@@ -4512,10 +4512,7 @@ namespace Lumina
                 CascadeViewBase = (uint32)CullViews.size();
                 for (int32 c = 0; c < NumCascades; ++c)
                 {
-                    // Micro-poly threshold in world units, from this cascade's own texel pitch. Each cascade
-                    // covers 2 * Radius across CascadeResolutions[c] texels, so the far cascades -- coarse
-                    // texels over a huge footprint -- reject far more than the near ones, which is where the
-                    // geometry actually is and where a sub-texel meshlet is worth the least.
+                    // Micro-poly threshold in world units, from this cascade's own texel pitch.
                     const float Radius     = LightData.CascadeRadii[c];
                     const float Resolution = Math::Max(LightData.CascadeResolutions[c], 1.0f);
                     const float TexelWorld = (Radius * 2.0f) / Resolution;
@@ -4587,7 +4584,7 @@ namespace Lumina
         for (FFrameData::FCaptureViewData& Capture : Frame.Views.CaptureViews)
         {
             const FMatrix4 CaptureVP = Capture.ViewVolume.GetProjectionMatrix() * Capture.ViewVolume.GetViewMatrix();
-            const uint32 CaptureFlags = ECullViewFlags::Frustum | ECullViewFlags::Cone;
+            const uint32 CaptureFlags = ECullViewFlags::Frustum | ConeFlag;
             Capture.CameraViewIndex = PushView(CaptureVP, Capture.ViewVolume.GetViewPosition(), CaptureFlags);
         }
     }
@@ -5295,10 +5292,10 @@ namespace Lumina
 
     void FForwardRenderScene::CullPassEarly(RHI::FCmdListH CL)
     {
-        const FFrameData& Frame = *RenderFrame;
-        const auto& DrawCommands     = Frame.Geometry.DrawCommands;
-        const auto& CullViews        = Frame.Views.CullViews;
-        const uint32 CameraLateViewIndex = Frame.Views.CameraLateViewIndex;
+        const FFrameData& Frame             = *RenderFrame;
+        const auto& DrawCommands            = Frame.Geometry.DrawCommands;
+        const auto& CullViews               = Frame.Views.CullViews;
+        const uint32 CameraLateViewIndex    = Frame.Views.CameraLateViewIndex;
 
         if (DrawCommands.empty() || CullViews.empty())
         {
@@ -5311,42 +5308,6 @@ namespace Lumina
         if (!CullShader)
         {
             return;
-        }
-
-        // Every address handed to this shader is dereferenced with no null check of its own, so a
-        // failed allocation anywhere below turns into a read off address 0. NVIDIA has tolerated
-        // that; AMD faults the device outright ("Invalid read at 0x0", VK_ERROR_DEVICE_LOST on the
-        // next submit) with the breadcrumb trail pointing here. CreateSceneBuffer already reports a
-        // null Ptr and Size 0 when an allocation fails -- refusing to dispatch is the missing half.
-        //
-        // Cost is one predictable branch per pass per frame against values already in registers.
-        {
-            const struct { const char* Name; RHI::GPUPtr Addr; } Required[] =
-            {
-                { "IndirectArgs",          GetIndirectArgs().GetAddress()          },
-                { "MeshletDeferList",      GetMeshletDeferList().GetAddress()      },
-                { "DeferCount",            GetDeferCount().GetAddress()            },
-                { "MeshDrawArgs",          GetMeshDrawArgs().GetAddress()          },
-                { "Totals",                GetTotals().GetAddress()                },
-                { "ViewDrawCounts",        GetViewDrawCounts().GetAddress()        },
-                { "ViewDrawOffsets",       GetViewDrawOffsets().GetAddress()       },
-                { "EarlyCullDispatchArgs", GetEarlyCullDispatchArgs().GetAddress() },
-            };
-
-            for (const auto& Buffer : Required)
-            {
-                if (Buffer.Addr == 0)
-                {
-                    // Throttled: if one allocation is failing they all will, every frame.
-                    static uint32 NullBufferLogCounter = 0;
-                    if ((NullBufferLogCounter++ % 120u) == 0u)
-                    {
-                        LOG_ERROR("RenderScene: skipping early cull -- scene buffer '{}' has no allocation. "
-                                  "Dispatching would read device address 0 and fault the GPU.", Buffer.Name);
-                    }
-                    return;
-                }
-            }
         }
 
         RHI::CmdMemset(CL, GetDeferCount().Ptr, GetDeferCount().Size, 0u);
@@ -5367,18 +5328,10 @@ namespace Lumina
         PC.ViewDrawOffsetsAddr = GetViewDrawOffsets().GetAddress();
         PC.DrawListCapacity    = DrawListCapacity;
         PC.DeferListCapacity   = DeferListCapacity;
-
-        // Indirect: the domain is TotalMeshletBound, which only exists on the GPU now. BuildDrawPrefix
-        // wrote {ceil(Total/64) folded into X/Y, 1} for exactly this dispatch, and the in-shader
-        // flat_idx >= Total guard backstops the fold's rounding.
+        
         RHI::CmdDispatchIndirect(CL, MakeArgs(PC), GetEarlyCullDispatchArgs().Ptr, 0);
-
-        // Draw list + indirect args feed the phase-1 VisBuffer raster.
         Barriers::ComputeToAll(CL);
-
-        // Size the LATE cull's indirect dispatch from the now-final DeferCount (GPU-side, no readback): the late
-        // cull then launches O(deferred) workgroups instead of the worst-case full-scene grid. Skipped for
-        // single-phase capture views (no late phase).
+        
         static const FShaderEntry* const DispatchArgsShader = FShaderLibrary::Get("BuildCullDispatchArgs.slang");
         if (DispatchArgsShader && CameraLateViewIndex != ~0u)
         {
@@ -5663,6 +5616,39 @@ namespace Lumina
             return;
         }
 
+        // Every device address this pass's shaders dereference, checked while it still has a name.
+        // MeshMain's first instruction indexes ViewDrawOffsets, and ResolveMeshlet walks
+        // MeshletDrawList and Instances immediately after; none of the three is guarded GPU-side.
+        //
+        // Instances is not a theoretical null: BuildSceneRoot only fills it when the visible-instance
+        // ring is allocated, and leaves it zero otherwise. Reaching a shader that way costs the device
+        // -- Aftermath reports "mesh_02, MMU Fault Error, GPU virtual address 0", which names neither
+        // the buffer nor the pass, so the fault has to be caught here or not at all.
+        {
+            const RHI::GPUPtr DrawListAddr  = GetMeshletDrawList().GetAddress();
+            const RHI::GPUPtr InstancesAddr = SceneRootShared.Instances;
+            const RHI::GPUPtr OffsetsAddr   = GetViewDrawOffsets().GetAddress();
+
+            const char* MissingBuffer = DrawListAddr == 0  ? "MeshletDrawList"
+                                      : InstancesAddr == 0 ? "Instances (visible-instance ring)"
+                                      : OffsetsAddr == 0   ? "ViewDrawOffsets"
+                                                           : nullptr;
+            if (MissingBuffer != nullptr)
+            {
+                // Once per occurrence rather than once per frame would spam a stuck frame forever;
+                // once ever would hide a second, different buffer going null later.
+                static FName LastMissing;
+                const FName Missing(MissingBuffer);
+                if (Missing != LastMissing)
+                {
+                    LastMissing = Missing;
+                    LOG_ERROR("VisBuffer: '{}' has no device address this frame; skipping the pass. "
+                              "Drawing would page-fault the GPU inside the mesh shader.", MissingBuffer);
+                }
+                return;
+            }
+        }
+
         LUMINA_PROFILE_SECTION_COLORED("VisBuffer Geometry Pass", tracy::Color::Red);
 
         static const FShaderEntry* const VisPixel = FShaderLibrary::Get("VisBufferPixel.slang");
@@ -5805,13 +5791,35 @@ namespace Lumina
         PC.NumWorkGroups      = TotalGroups;
         PC.InvPyramidSize[0]  = 1.0f / (float)PyramidW;
         PC.InvPyramidSize[1]  = 1.0f / (float)PyramidH;
-        PC.SrcDepthIndex      = (uint32)Source.GetResourceID();
+        // GetResourceID and GetMipUAVIndex both report "no slot" as -1, and both are cast to uint32 on
+        // the way into a bindless index. That cast turns the sentinel into 0xFFFFFFFF, which the shader
+        // indexes the texture heap with -- a descriptor read four billion entries past the end, whose
+        // contents are whatever memory follows. The resulting unmapped access is a device loss inside
+        // the SPD dispatch, attributed to a shader that did nothing wrong.
+        //
+        // Neither GPU-assisted validation check catches it: the read is through a descriptor, not a
+        // buffer device address, so the buffer-address range check never sees it.
+        const int32 SrcDepthSlot = Source.GetResourceID();
+        if (SrcDepthSlot < 0)
+        {
+            LOG_ERROR("Depth pyramid: source image has no sampled heap slot; skipping. Sampling it would "
+                      "index the texture heap with 0xFFFFFFFF and fault the device.");
+            return;
+        }
+
+        PC.SrcDepthIndex      = (uint32)SrcDepthSlot;
         PC.ReduceMax          = bReduceMax ? 1u : 0u;
         PC.AtomicCounter      = SpdCounter.GetAddress();
         for (uint32 i = 0; i < SpdMaxMips; ++i)
         {
             const uint32 SrcMip = (i < MipCount) ? i : 0u;
-            PC.MipUAV[i] = (uint32)Pyramid.GetMipUAVIndex(SrcMip);
+            const int32  Slot   = Pyramid.GetMipUAVIndex(SrcMip);
+            if (Slot < 0)
+            {
+                LOG_ERROR("Depth pyramid: mip {} has no storage heap slot; skipping the pass.", SrcMip);
+                return;
+            }
+            PC.MipUAV[i] = (uint32)Slot;
         }
 
         RHI::CmdDispatch(CL, MakeArgs(PC), DispatchX, DispatchY, 1);
@@ -10442,6 +10450,7 @@ namespace Lumina
             Barriers::TransferToAll(CL);
             TotalsZeroed[Slot] = true;
         }
+
 
         //~ Retained uploads. Ordered on the GPU timeline against every earlier frame's reads because
         //  they are CmdMemcpy from the transient ring, not CPU writes into memory the GPU is reading --

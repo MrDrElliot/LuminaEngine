@@ -12,6 +12,8 @@ public static class LuminaFeatures
 
     public const string Validation = "Validation";
 
+    public const string GpuValidation = "GpuValidation";
+
     public const string Aftermath = "Aftermath";
 
     public const string RadeonGpuDetective = "RadeonGpuDetective";
@@ -44,8 +46,29 @@ public static class LuminaFeatures
             // Profiler instrumentation is not worth its overhead in a shipping build.
             Tracy => bNonShipping,
 
-            // Validation layers cost far too much to leave on outside Debug.
+            // Debug only. The layer costs far too much to leave on anywhere else, and this one flag is
+            // what gates all of it -- core checks and sync validation both. Debug also turns on
+            // robustBufferAccess (see CreateDevice), so a Debug run is the configuration where an
+            // out-of-bounds access is bounded rather than undefined; the two belong to the same
+            // decision even though only one of them is a layer.
             Validation => Target.Configuration == BuildConfiguration.Debug,
+
+            // Never on by default, in any configuration -- including Debug. GPU-assisted validation
+            // instruments every shader, so it is a deliberate hunting mode rather than something to
+            // leave running.
+            //
+            // Note what this feature does and does not control. GPU-AV is instance-creation data, not
+            // code, so it is always compiled in and the define here only picks the startup default:
+            // --gpuvalidation and --nogpuvalidation are what turn it on and off. Leaving it a rebuild
+            // away would be the wrong shape for it, because separating an engine fault from an
+            // instrumentation fault means running the same build both ways.
+            //
+            // Worth knowing before reaching for it: on NVIDIA 610.88 the instrumented shaders fault
+            // inside the driver rather than reporting anything (2026-08-04). The faulting module is the
+            // layer's rewrite of ours -- 113 KB against a few KB -- and Aftermath cannot name it,
+            // because the hash the driver reports is not one the engine ever registered. Treat a
+            // device loss under it as the instrumentation's until proven otherwise.
+            GpuValidation => false,
 
             // Vendor specific: pointless on a machine that cannot produce the crash dumps.
             Aftermath => bNonShipping && Target.bHostHasNvidiaGpu,
@@ -99,6 +122,15 @@ public static class LuminaFeatures
         if (IsActive(Target, Validation))
         {
             Definitions.Add("LUMINA_WITH_VALIDATION");
+        }
+
+        // Only the startup default; the runtime flags decide. The layer is turned on with it at
+        // runtime too, because GPU-AV is a feature OF the validation layer and does nothing without
+        // it -- so this deliberately does not add LUMINA_WITH_VALIDATION, which would drag the layer
+        // into every build whose default is on.
+        if (IsActive(Target, GpuValidation))
+        {
+            Definitions.Add("LUMINA_WITH_GPU_VALIDATION");
         }
 
         if (IsActive(Target, Aftermath))

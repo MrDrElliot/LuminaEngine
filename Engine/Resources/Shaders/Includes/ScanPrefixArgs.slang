@@ -24,3 +24,29 @@ struct FScanPrefixArgs
     uint* BlockSums;   // in/out: ceil(Count / SCAN_BLOCK) + 1 entries; [NumBlocks] = grand total
 };
 FScanPrefixArgs* Pass() { return GetPassArgs<FScanPrefixArgs>(); }
+
+// The element count all three passes scan.
+//
+// Clamped to the visible-instance CAPACITY the CPU published, not taken raw from the totals block.
+// CountPtr[0] is GPU-produced, so nothing on the CPU has seen it; if it ever exceeds the allocation
+// -- a totals block read before its producer landed, a resize that did not take, a capacity two
+// consumers disagree about -- then Instances()[Idx] resolves to an unmapped address and the fault
+// takes the device with it, rather than producing a wrong pixel. MaterialDepth and DeferredMaterial
+// already bound their instance index against this same value for the same reason; the scan is what
+// was missing it.
+//
+// It lives here, next to the shared push block, for the reason written above it: all three passes
+// have to derive N identically, and a per-shader clamp is exactly the kind of divergence that made
+// pass 2 fold in block sums pass 1 never wrote.
+uint ScanCount()
+{
+    // No instance buffer means no elements, not "scan whatever the totals block says". The root only
+    // carries this address when the visible-instance ring is allocated, so null is a state the CPU
+    // can legitimately publish -- and every element the scan then touched would be an offset off zero.
+    if (Instances() == nullptr)
+    {
+        return 0u;
+    }
+
+    return min(Pass().CountPtr[0], Scene().CullData.InstanceNum);
+}
