@@ -512,7 +512,13 @@ namespace Lumina
         // Same starting scene a newly created world asset gets, so the editor's opening view is not a
         // different world from the one File > New produces. Created here but POPULATED below, after
         // the project has had its chance to load -- see the comment at the PopulateDefaultScene call.
-        CWorld* World = NewObject<CWorld>(nullptr, "Transient World", FGuid::New(), OF_Transient);
+        //
+        // Held through a TObjectPtr, not a raw pointer: the world editor is this world's only other owner,
+        // and the project load below can hand that tool a different world, which frees this one on the
+        // spot (FEditorTool::SetWorld). A strong ref here keeps it alive to the end of Initialize so the
+        // check at the populate call is an identity test and not a compare against a freed address that
+        // the replacement world may have been allocated into.
+        TObjectPtr<CWorld> World = NewObject<CWorld>(nullptr, "Transient World", FGuid::New(), OF_Transient);
 
         WorldEditorTool = CreateTool<FWorldEditorTool>(this, World);
         ConsoleLogTool = CreateTool<FConsoleLogEditorTool>(this);
@@ -556,7 +562,14 @@ namespace Lumina
         // asset registry is not discovered until a project loads. With no --Project on the command
         // line that load happens in the block above, so building the scene any earlier means every
         // asset lookup runs against an empty registry and silently falls back.
-        EditorEntityUtils::PopulateDefaultScene(World);
+        //
+        // But that same load can open the project's EditorStartupMap, which retargets the world editor and
+        // frees this world. Skip in that case: the user is looking at their own map, and populating a world
+        // nothing owns any more writes through freed memory.
+        if (WorldEditorTool->GetWorld() == World)
+        {
+            EditorEntityUtils::PopulateDefaultScene(World);
+        }
     }
 
     void FEditorUI::Deinitialize(const FUpdateContext& UpdateContext)
@@ -631,8 +644,17 @@ namespace Lumina
         ImGui::SetNextWindowSize(viewport->WorkSize);
         ImGui::SetNextWindowViewport(viewport->ID);
 
+        // NoDocking is not cosmetic. Without it this window registers as a second, full-viewport dockable
+        // drop target sitting on top of the dockspace's own one, and -- worse -- it can become the drag
+        // PAYLOAD: BeginDockableDragDropSource resolves the moving window to its RootWindowDockTree, which
+        // for the DockSpace child host is this window. On the frame the drag is released, g.MovingWindow is
+        // already null while the payload is still live, so Begin's "don't target the window being moved"
+        // guard passes and imgui queues a dock of this window into itself -> IM_ASSERT(target != payload).
+        // Real docking is unaffected: drops into the dockspace go through DockNodeUpdate against the
+        // "EditorDockSpaceWindow/DockSpace_XXXXXXXX" child that DockSpace() creates, not through this window.
         constexpr ImGuiWindowFlags WindowFlags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse
-        | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
+        | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus
+        | ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_NoDocking;
 
         ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
@@ -1875,11 +1897,158 @@ namespace Lumina
         EditorTool->PrevDockspaceID = EditorTool->CurrDockspaceID;
         EditorTool->CurrDockspaceID = EditorTool->CalculateDockspaceID();
         ASSERT(EditorTool->CurrDockspaceID != 0);
-        
+
+        DrawToolTabContextMenu(EditorTool);
 
         ImGui::End();
 
         return bIsToolStillOpen;
+    }
+
+    FEditorTool* FEditorUI::FindToolByWindowName(const char* WindowName) const
+    {
+        if (WindowName == nullptr)
+        {
+            return nullptr;
+        }
+
+        for (FEditorTool* Tool : EditorTools)
+        {
+            if (Tool->GetToolName() == WindowName)
+            {
+                return Tool;
+            }
+        }
+
+        return nullptr;
+    }
+
+    bool FEditorUI::CanCloseTool(const FEditorTool* Tool) const
+    {
+        // Matches SubmitToolMainWindow's rule for whether the tab even gets an X button.
+        return Tool != nullptr && Tool != WorldEditorTool;
+    }
+
+    void FEditorUI::RequestCloseTool(FEditorTool* Tool)
+    {
+        if (!CanCloseTool(Tool))
+        {
+            return;
+        }
+
+        // A docked drawer tool goes back to its footer drawer rather than being destroyed, same as when
+        // its own X is pressed.
+        if (FFooterDrawer* Drawer = FindDrawerForTool(Tool); Drawer != nullptr)
+        {
+            Drawer->bDocked = false;
+            return;
+        }
+
+        ToolsPendingDestroy.push(Tool);
+    }
+
+    void FEditorUI::DrawToolTabContextMenu(FEditorTool* EditorTool)
+    {
+        ImGuiWindow*   Window = ImGui::GetCurrentWindow();
+        ImGuiDockNode* Node   = Window->DockNode;
+
+        // Hit-tested by hand instead of with BeginPopupContextItem. A docked window whose tab is not the
+        // selected one has SkipItems set, and BeginPopupContextItem early-outs on that -- so only the
+        // frontmost tab would ever open a menu, which is not how tab strips behave anywhere else. The tab
+        // rect itself is filled in for every tab by the dockspace earlier this frame.
+        if (Window->DockIsActive && Node != nullptr && Node->HostWindow != nullptr)
+        {
+            const ImGuiContext& G = *ImGui::GetCurrentContext();
+
+            // Gated on HoveredWindow as well as the rect: the rect alone would fire through a floating
+            // window parked over the tab bar.
+            const bool bOverTab = G.HoveredWindow == Node->HostWindow
+                && Window->DC.DockTabItemRect.Contains(G.IO.MousePos);
+
+            if (bOverTab && ImGui::IsMouseReleased(ImGuiMouseButton_Right))
+            {
+                ImGui::OpenPopup("##ToolTabContext");
+            }
+        }
+
+        if (!ImGui::BeginPopup("##ToolTabContext"))
+        {
+            return;
+        }
+
+        // Left-to-right as the user sees them. Node->Windows is explicitly an unordered list; TabBar->Tabs
+        // is the display order and is what ImGui rewrites when a tab is dragged.
+        TVector<FEditorTool*> Order;
+        int32 SelfIndex = -1;
+
+        if (Node != nullptr && Node->TabBar != nullptr)
+        {
+            for (const ImGuiTabItem& Tab : Node->TabBar->Tabs)
+            {
+                if (Tab.Window == nullptr)
+                {
+                    continue;
+                }
+
+                if (FEditorTool* Tool = FindToolByWindowName(Tab.Window->Name))
+                {
+                    if (Tool == EditorTool)
+                    {
+                        SelfIndex = (int32)Order.size();
+                    }
+                    Order.push_back(Tool);
+                }
+            }
+        }
+
+        const int32 Count = (int32)Order.size();
+
+        auto AnyClosableIn = [this, &Order, Count](int32 First, int32 Last, int32 Skip) -> bool
+        {
+            for (int32 i = eastl::max(0, First); i <= Last && i < Count; ++i)
+            {
+                if (i != Skip && CanCloseTool(Order[i]))
+                {
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        auto CloseRange = [this, &Order, Count](int32 First, int32 Last, int32 Skip)
+        {
+            for (int32 i = eastl::max(0, First); i <= Last && i < Count; ++i)
+            {
+                if (i != Skip)
+                {
+                    RequestCloseTool(Order[i]);
+                }
+            }
+        };
+
+        if (ImGui::MenuItem(LE_ICON_CLOSE " Close", nullptr, false, CanCloseTool(EditorTool)))
+        {
+            RequestCloseTool(EditorTool);
+        }
+
+        if (ImGui::MenuItem("Close Others", nullptr, false, SelfIndex >= 0 && AnyClosableIn(0, Count - 1, SelfIndex)))
+        {
+            CloseRange(0, Count - 1, SelfIndex);
+        }
+
+        if (ImGui::MenuItem("Close to the Right", nullptr, false, SelfIndex >= 0 && AnyClosableIn(SelfIndex + 1, Count - 1, -1)))
+        {
+            CloseRange(SelfIndex + 1, Count - 1, -1);
+        }
+
+        ImGui::Separator();
+
+        if (ImGui::MenuItem("Close All", nullptr, false, AnyClosableIn(0, Count - 1, -1)))
+        {
+            CloseRange(0, Count - 1, -1);
+        }
+
+        ImGui::EndPopup();
     }
 
     void FEditorUI::DrawToolContents(const FUpdateContext& UpdateContext, FEditorTool* Tool)
@@ -3516,9 +3685,26 @@ namespace Lumina
         // the caller retries when the registry updates.
         if (FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(EditorStartupMap))
         {
-            LOG_DISPLAY("Opening editor startup map '{}' (resolved '{}').",
-                        RawEditorStartupMap.c_str(), EditorStartupMap.c_str());
             OpenAssetEditor(Data->AssetGUID);
+
+            // Reported AFTER the fact, and checked rather than assumed. OpenAssetEditor returns silently
+            // when the package fails to load, and routes a non-world asset to its own tool instead; both
+            // leave the editor on the world it already had. Logging "Opening..." before the call turned
+            // either into a success message, which is indistinguishable from the map having opened and
+            // simply containing the default scene.
+            const CWorld* Opened = WorldEditorTool->GetWorld();
+            if (Opened != nullptr && Opened->GetGUID() == Data->AssetGUID)
+            {
+                LOG_DISPLAY("Opened editor startup map '{}' (resolved '{}').",
+                            RawEditorStartupMap.c_str(), EditorStartupMap.c_str());
+            }
+            else
+            {
+                LOG_ERROR("Editor startup map '{}' (resolved '{}') did not open; staying on the current world. "
+                          "The package failed to load, or that path is not a world asset.",
+                          RawEditorStartupMap.c_str(), EditorStartupMap.c_str());
+            }
+
             return true;
         }
 

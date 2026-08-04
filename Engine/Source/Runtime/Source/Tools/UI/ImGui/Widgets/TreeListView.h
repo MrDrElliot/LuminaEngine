@@ -238,6 +238,12 @@ namespace Lumina
         // visible list is rebuilt, then cleared.
         int32               PendingScrollNode = -1;
 
+        // Bumped by every node create/destroy. Row callbacks (drag-drop reparent, context-menu delete)
+        // restructure the tree from inside the draw loop, which invalidates both the row-index list being
+        // iterated and any FNode& held across the callback. Draw compares this before and after each row
+        // and stops the frame when it moves. See Draw().
+        uint32              StructureVersion = 0;
+
         bool                bVisibleListDirty = true;
         bool                bDirty = false;
         TAtomic<bool>       bRebuilding = false;

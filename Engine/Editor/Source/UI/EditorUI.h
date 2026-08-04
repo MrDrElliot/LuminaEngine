@@ -135,6 +135,18 @@ namespace Lumina
         bool SubmitToolMainWindow(const FUpdateContext& UpdateContext, FEditorTool* EditorTool, ImGuiID TopLevelDockspaceID);
         void DrawToolContents(const FUpdateContext& UpdateContext, FEditorTool* Tool);
 
+        // Right-click menu on a tool's dock tab: Close / Close Others / Close to the Right / Close All.
+        // Called between the tool's Begin() and End(), where ImGui's "last item" is that tool's tab.
+        void DrawToolTabContextMenu(FEditorTool* EditorTool);
+
+        // Closes a tool exactly as its tab's X button does, so a batch close and a manual one cannot drift:
+        // a docked drawer tool returns to its drawer, the world editor is never closable, and anything else
+        // is queued for destruction at the end of the frame.
+        void RequestCloseTool(FEditorTool* Tool);
+        bool CanCloseTool(const FEditorTool* Tool) const;
+
+        FEditorTool* FindToolByWindowName(const char* WindowName) const;
+
 
         // Multiplayer PIE: spawn/destroy the extra-player Game Preview tools (players 2..N).
         // Driven by FWorldEditorTool's OnGamePreviewStart/StopRequested delegates.

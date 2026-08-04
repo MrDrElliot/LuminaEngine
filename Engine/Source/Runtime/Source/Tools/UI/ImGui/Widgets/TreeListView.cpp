@@ -189,7 +189,16 @@ namespace Lumina
                 Clipper.IncludeItemByIndex(ScrollToRow);
             }
 
-            while (Clipper.Step())
+            // A row's own callbacks can restructure the tree mid-iteration: dropping an entity onto
+            // another reparents it right there in DragDropFunction, which frees nodes, recycles their
+            // indices and can reallocate Nodes. Everything this loop depends on -- the row-index list,
+            // node liveness, parent/child links -- is invalidated by that. Stop the frame at the row that
+            // did it and let the next one draw the rebuilt tree; a single half-drawn frame is the frame
+            // the user released the mouse on, so it is not visible.
+            const uint32 VersionAtStart = StructureVersion;
+            bool bStructureChanged = false;
+
+            while (!bStructureChanged && Clipper.Step())
             {
                 for (int i = Clipper.DisplayStart; i < Clipper.DisplayEnd; ++i)
                 {
@@ -205,7 +214,19 @@ namespace Lumina
                     {
                         ImGui::SetScrollHereY(0.5f);
                     }
+
+                    if (StructureVersion != VersionAtStart)
+                    {
+                        bStructureChanged = true;
+                        bVisibleListDirty = true;
+                        break;
+                    }
                 }
+            }
+
+            if (bStructureChanged)
+            {
+                Clipper.End();
             }
 
             ImGui::EndTable();
@@ -240,6 +261,7 @@ namespace Lumina
         VisibleList.clear();
         AliveCount = 0;
         bVisibleListDirty = true;
+        ++StructureVersion;
     }
 
     void FTreeListView::RebuildTreeNow(const FTreeListViewContext& Context)
@@ -329,11 +351,17 @@ namespace Lumina
         const bool bDeclaresChildren = !Node.Children.empty() || Node.bHasLazyChildren;
         const float kIndentPerDepth = Context.IndentPerDepth;
 
+        // Node/Display/State are references INTO Nodes, and this row's callbacks (drop, context menu) can
+        // create or destroy nodes, which reallocates that vector. Depth is cached so the unindent at the
+        // bottom never has to read back through a reference the callbacks may have invalidated.
+        const int32  RowDepth       = Node.Depth;
+        const uint32 VersionAtEntry = StructureVersion;
+
         ImGui::PushID(NodeIdx);
 
-        if (Node.Depth > 0)
+        if (RowDepth > 0)
         {
-            ImGui::Indent(Node.Depth * kIndentPerDepth);
+            ImGui::Indent(RowDepth * kIndentPerDepth);
         }
 
         // DrawLinesNone: this is a flattened list (NoTreePushOnOpen + manual indent), so ImGui's built-in
@@ -369,6 +397,18 @@ namespace Lumina
         ImGui::PushStyleColor(ImGuiCol_Text, TextColor);
         ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.22f, 0.52f, 0.22f, 0.40f));
 
+        // Closes exactly what this row still has open, for the early return taken when a callback
+        // restructures the tree. Mirrors the tail of this function.
+        auto UnwindRow = [&]()
+        {
+            ImGui::PopStyleColor(); // header color
+            if (RowDepth > 0)
+            {
+                ImGui::Unindent(RowDepth * kIndentPerDepth);
+            }
+            ImGui::PopID();
+        };
+
         const ImVec2 RowCursorScreenPos = ImGui::GetCursorScreenPos();
         const bool bNowExpanded = ImGui::TreeNodeEx("##TreeNode", Flags, "%s", Display.DisplayName.c_str());
 
@@ -380,9 +420,7 @@ namespace Lumina
             ImGui::GetWindowDrawList()->AddText(ImVec2(IconX, IconY), ImGui::GetColorU32(Display.IconColor), Display.IconText.c_str());
         }
 
-        // Hierarchy connector lines. ImGui's built-in tree lines need real TreePush nesting, which this
-        // flattened list doesn't use, so draw the elbows by hand: a vertical passes through each ancestor
-        // level that still has siblings below, and an elbow joins this row to its parent's drop line.
+
         {
             ImDrawList* DL = ImGui::GetWindowDrawList();
             const ImGuiStyle& LineStyle = ImGui::GetStyle();
@@ -400,14 +438,18 @@ namespace Lumina
 
             if (Node.Depth > 0)
             {
-                // Record, per level on the path to this node, whether that ancestor is its parent's last child.
                 bool LastChild[64];
                 const int32 MaxDepth = Node.Depth < 63 ? Node.Depth : 63;
+                for (int32 d = 0; d < 64; ++d)
+                {
+                    LastChild[d] = true;
+                }
+
                 int32 Cur = NodeIdx;
-                for (int32 d = MaxDepth; d >= 1; --d)
+                for (int32 d = MaxDepth; d >= 1 && Cur >= 0; --d)
                 {
                     const int32 PIdx = Nodes[Cur].ParentIdx;
-                    LastChild[d] = (PIdx < 0) || (Nodes[PIdx].Children.back() == Cur);
+                    LastChild[d] = (PIdx < 0) || Nodes[PIdx].Children.empty() || (Nodes[PIdx].Children.back() == Cur);
                     Cur = PIdx;
                 }
 
@@ -574,6 +616,14 @@ namespace Lumina
             ImGui::EndDragDropTarget();
         }
 
+        // Dropping onto a row reparents right here, which frees nodes, recycles their indices and can
+        // reallocate Nodes. Node/Display/State all point into it, so nothing below may run.
+        if (StructureVersion != VersionAtEntry)
+        {
+            UnwindRow();
+            return;
+        }
+
         DrawTreeNodeTooltip(Display);
 
         if (Context.ItemContextMenuFunction)
@@ -585,7 +635,14 @@ namespace Lumina
                 ImGui::EndPopup();
             }
         }
-        
+
+        // Same again: a context menu entry is just as free to delete the entity this row belongs to.
+        if (StructureVersion != VersionAtEntry)
+        {
+            UnwindRow();
+            return;
+        }
+
         bool bMouseOverTrailingButton = false;
         {
             const int32 TrailingCount = (Display.bShowSecondaryIcon ? 1 : 0) + (Display.bShowDisabledIcon ? 1 : 0);
@@ -686,14 +743,7 @@ namespace Lumina
             Context.ItemDoubleClickedFunction(*this, FTreeNodeID{NodeIdx});
         }
 
-        ImGui::PopStyleColor(); // header color
-
-        if (Node.Depth > 0)
-        {
-            ImGui::Unindent(Node.Depth * kIndentPerDepth);
-        }
-
-        ImGui::PopID();
+        UnwindRow();
     }
 
     void FTreeListView::ExpandNode(FTreeNodeID Handle, const FTreeListViewContext& Context)
@@ -766,6 +816,7 @@ namespace Lumina
         }
         Nodes[Idx].bAlive = true;
         ++AliveCount;
+        ++StructureVersion;
         return Idx;
     }
 
@@ -862,6 +913,7 @@ namespace Lumina
         Node.bHasLazyChildren = false;
         FreeList.push_back(Idx);
         --AliveCount;
+        ++StructureVersion;
     }
 
     void FTreeListView::MarkHasLazyChildren(FTreeNodeID Handle, bool bHasLazy)
