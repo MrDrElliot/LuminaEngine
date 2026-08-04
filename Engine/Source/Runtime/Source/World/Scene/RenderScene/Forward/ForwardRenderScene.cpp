@@ -5310,6 +5310,42 @@ namespace Lumina
             return;
         }
 
+        // Every address handed to this shader is dereferenced with no null check of its own, so a
+        // failed allocation anywhere below turns into a read off address 0. NVIDIA has tolerated
+        // that; AMD faults the device outright ("Invalid read at 0x0", VK_ERROR_DEVICE_LOST on the
+        // next submit) with the breadcrumb trail pointing here. CreateSceneBuffer already reports a
+        // null Ptr and Size 0 when an allocation fails -- refusing to dispatch is the missing half.
+        //
+        // Cost is one predictable branch per pass per frame against values already in registers.
+        {
+            const struct { const char* Name; RHI::GPUPtr Addr; } Required[] =
+            {
+                { "IndirectArgs",          GetIndirectArgs().GetAddress()          },
+                { "MeshletDeferList",      GetMeshletDeferList().GetAddress()      },
+                { "DeferCount",            GetDeferCount().GetAddress()            },
+                { "MeshDrawArgs",          GetMeshDrawArgs().GetAddress()          },
+                { "Totals",                GetTotals().GetAddress()                },
+                { "ViewDrawCounts",        GetViewDrawCounts().GetAddress()        },
+                { "ViewDrawOffsets",       GetViewDrawOffsets().GetAddress()       },
+                { "EarlyCullDispatchArgs", GetEarlyCullDispatchArgs().GetAddress() },
+            };
+
+            for (const auto& Buffer : Required)
+            {
+                if (Buffer.Addr == 0)
+                {
+                    // Throttled: if one allocation is failing they all will, every frame.
+                    static uint32 NullBufferLogCounter = 0;
+                    if ((NullBufferLogCounter++ % 120u) == 0u)
+                    {
+                        LOG_ERROR("RenderScene: skipping early cull -- scene buffer '{}' has no allocation. "
+                                  "Dispatching would read device address 0 and fault the GPU.", Buffer.Name);
+                    }
+                    return;
+                }
+            }
+        }
+
         RHI::CmdMemset(CL, GetDeferCount().Ptr, GetDeferCount().Size, 0u);
         Barriers::TransferToAll(CL);
 
@@ -10657,12 +10693,52 @@ namespace Lumina
             LUMINA_PROFILE_SECTION_COLORED("Build Draw Prefix", tracy::Color::Magenta3);
             SCENE_GPU_SCOPE(CL, "Build Draw Prefix");
 
+            // Ceiling on the meshlet work domain. Surface descs are interned and append-only, so the
+            // largest per-LOD meshlet count any of them carries only ever grows -- fold in the entries
+            // added since last frame and the running max stays valid without rescanning the table.
+            // Using the GLOBAL max rather than each slot's own desc is deliberate: it stays an upper
+            // bound across a rebind, which changes which desc a slot points at without touching either
+            // count, so nothing has to invalidate it.
+            {
+                const FSurfaceDescGPU* Descs     = ScenePrimitives.GetSurfaceDescs();
+                const uint32           NumDescs2 = ScenePrimitives.GetSurfaceDescCount();
+                if (NumDescs2 < ScannedSurfaceDescCount)
+                {
+                    // The table only shrinks by being cleared wholesale (FScenePrimitiveSet::Reset), which
+                    // invalidates the running max; rescan rather than carry a bound for descs that are gone.
+                    ScannedSurfaceDescCount = 0;
+                    MaxSurfaceDescMeshlets  = 0;
+                }
+                for (uint32 i = ScannedSurfaceDescCount; i < NumDescs2; ++i)
+                {
+                    const FSurfaceDescGPU& Desc = Descs[i];
+                    const uint32 NumLODs = Math::Min<uint32>(Desc.NumLODs, MAX_MESH_LODS);
+                    for (uint32 l = 0; l < NumLODs; ++l)
+                    {
+                        MaxSurfaceDescMeshlets = Math::Max(MaxSurfaceDescMeshlets, Desc.LODMeshletCount[l]);
+                    }
+                }
+                ScannedSurfaceDescCount = NumDescs2;
+            }
+
+            // The skinned contribution never passes through the instance cull, so it is not covered by
+            // the retained-slot product and has to be added on top.
+            uint64 SkinnedSeedTotal = 0;
+            for (uint32 Seed : Frame.Geometry.BatchMeshletSeed)
+            {
+                SkinnedSeedTotal += Seed;
+            }
+
+            const uint64 MaxMeshletWork64 = (uint64)RetainedSlots * (uint64)MaxSurfaceDescMeshlets + SkinnedSeedTotal;
+
             struct FBuildDrawPrefixPC
             {
                 uint32 NumViews;
                 uint32 NumDraws;
                 uint32 MaxVisibleInstances;
                 uint32 DrawListCapacityArg;
+                uint32 MaxMeshletWork;
+                uint32 Pad0;
                 uint64 BatchMeshletCountsAddr;
                 uint64 ViewDrawCountsAddr;
                 uint64 InstanceCountAddr;
@@ -10671,13 +10747,14 @@ namespace Lumina
                 uint64 OutCullDispatchArgsAddr;
                 uint64 OutScanDispatchArgsAddr;
             };
-            static_assert(sizeof(FBuildDrawPrefixPC) == 72, "FBuildDrawPrefixPC must match BuildDrawPrefix.slang.");
+            static_assert(sizeof(FBuildDrawPrefixPC) == 80, "FBuildDrawPrefixPC must match BuildDrawPrefix.slang.");
 
             FBuildDrawPrefixPC PC = {};
             PC.NumViews                  = SeedViews;
             PC.NumDraws                  = NumBatches;
             PC.MaxVisibleInstances       = VisibleCapacity;
             PC.DrawListCapacityArg       = DrawListCapacity;
+            PC.MaxMeshletWork            = (uint32)Math::Min<uint64>(MaxMeshletWork64, 0xFFFFFFFFull);
             PC.BatchMeshletCountsAddr    = GetBatchMeshletCounts().GetAddress();
             PC.ViewDrawCountsAddr        = GetViewDrawCounts().GetAddress();
             PC.InstanceCountAddr         = GetCullCounters().GetAddress();

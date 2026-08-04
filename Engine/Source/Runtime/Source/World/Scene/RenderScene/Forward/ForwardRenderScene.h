@@ -1109,6 +1109,11 @@ namespace Lumina
         // CullData::InstanceNum -- must agree on one value, or the GPU indexes one buffer with another
         // buffer's bound. Sampled in CompileDrawCommands_Render before the SceneRoot is published.
         uint32                                              FrameVisibleInstanceCapacity = 0;
+        // Ceiling BuildDrawPrefix clamps the meshlet work domain to, so a corrupt GPU-side counter cannot
+        // become an unbounded indirect dispatch. Surface descs are interned and append-only, so the max
+        // only grows and only the entries added since ScannedSurfaceDescCount need looking at.
+        uint32                                              MaxSurfaceDescMeshlets = 0;
+        uint32                                              ScannedSurfaceDescCount = 0;
         void   UpdateMeshletBoundFeedback(uint8 Slot);
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          MaterialBinTileBitsRing = {};
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          MaterialTileListRing = {};

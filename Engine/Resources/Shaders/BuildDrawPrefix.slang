@@ -25,6 +25,13 @@ struct FBuildDrawPrefixArgs
     // Entries the meshlet draw list can hold. Regions past this are clamped to zero length rather than
     // being handed offsets outside the allocation.
     uint  DrawListCapacity;
+    // Hard ceiling on the meshlet work domain, computed CPU-side as RetainedSlots * the largest per-LOD
+    // meshlet count any interned surface has, plus the skinned seed. BatchMeshletCounts is accumulated by
+    // CullInstances and nothing else bounds it, so without this a corrupt counter becomes the dispatch
+    // size below: X saturates at 65535 and Y grows without limit, launching a grid that hangs the GPU
+    // until the TDR fires (VK_ERROR_DEVICE_LOST, "No fault detected", breadcrumbs stopped in Cull Early).
+    uint  MaxMeshletWork;
+    uint  _Pad0;
 
     uint* BatchMeshletCounts;      // in:  NumDraws entries, view-independent meshlet work
     uint* ViewDrawCounts;          // in:  NumViews * NumDraws entries, per-(view, draw) emit bound
@@ -65,6 +72,11 @@ void ComputeMain()
         MeshletWork += Pass().BatchMeshletCounts[d];
     }
 
+    // Clamped before it is used for anything -- the dispatch size, the domain guard in CullMeshlets and
+    // the CPU's defer-list feedback all read OutTotals[0], so they stay consistent with each other. A
+    // frame that trips this drops meshlets off the tail of the domain; one that doesn't loses the GPU.
+    MeshletWork = min(MeshletWork, Pass().MaxMeshletWork);
+
     // Draw-list layout. Regions are laid out view-major so a view's draws stay contiguous, which keeps the
     // raster's per-batch indirect stride walk sequential.
     const uint Capacity = Pass().DrawListCapacity;
@@ -93,7 +105,9 @@ void ComputeMain()
     // as the CPU dispatch did.
     const uint Groups = (MeshletWork + CULL_LOCAL_SIZE_X - 1u) / CULL_LOCAL_SIZE_X;
     Pass().OutCullDispatchArgs[0] = min(Groups, MAX_GROUPS_X);
-    Pass().OutCullDispatchArgs[1] = (Groups + MAX_GROUPS_X - 1u) / MAX_GROUPS_X;
+    // Y is clamped as well, even though the MeshletWork clamp above already bounds it: this is the value
+    // that actually reaches vkCmdDispatchIndirect, so it is the last place a bad number can be stopped.
+    Pass().OutCullDispatchArgs[1] = min((Groups + MAX_GROUPS_X - 1u) / MAX_GROUPS_X, MAX_GROUPS_X);
     Pass().OutCullDispatchArgs[2] = 1u;
 
     // Instance-prefix scan domain: one workgroup per block of surviving instances. Uses the LOCAL count,
