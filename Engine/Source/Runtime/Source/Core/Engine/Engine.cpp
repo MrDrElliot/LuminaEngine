@@ -30,6 +30,7 @@
 #include "Input/InputViewport.h"
 #include "Pak/PakArchive.h"
 #include "Platform/CrashHandler.h"
+#include "Platform/CrashReporter.h"
 #include "Platform/Process/PlatformProcess.h"
 #include "TaskSystem/TaskSystem.h"
 #include "Input/InputProcessor.h"
@@ -298,6 +299,14 @@ namespace Lumina
 
         #if USING(WITH_EDITOR)
         GConfig->DiscoverAndLoadSettings();
+
+        // Pre-fills the sender dialog's email box. Applied as soon as the setting is readable so a
+        // crash during the rest of startup still carries it.
+        if (const CEditorSettings* EditorSettings = GetDefault<CEditorSettings>();
+            !EditorSettings->CrashReportContactEmail.empty())
+        {
+            CrashReporting::SetUser("", EditorSettings->CrashReportContactEmail);
+        }
 
         DeveloperToolUI = CreateDevelopmentTools();
         DeveloperToolUI->Initialize(UpdateContext);
@@ -672,6 +681,12 @@ namespace Lumina
         const FFixedString CrashDumpsDir = Paths::Combine(ProjectPath, "CrashDumps");
         std::filesystem::create_directories(CrashDumpsDir.c_str(), GameDirEc);
         CrashHandler::SetCrashDumpDirectory(CrashDumpsDir);
+
+        // Tag uploaded reports with the project and attach its log. Re-entered when switching
+        // projects, so the previous project's log is dropped rather than sent with the new one's.
+        CrashReporting::SetAttribute("Project", ProjectName);
+        CrashReporting::ClearAttachments();
+        CrashReporting::AddAttachment(Paths::Combine(LogsDir, "Lumina.log"));
 
         // Reloading a project (or switching to another) re-enters here. The VFS mount list is
         // append-only and DirectoryIterator visits every mount, so re-mounting /Game onto a stale

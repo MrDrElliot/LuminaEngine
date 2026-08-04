@@ -1,4 +1,4 @@
-#include "EditorUI.h"
+﻿#include "EditorUI.h"
 #include <cfloat>
 #include <cstdlib>
 #include <filesystem>
@@ -74,6 +74,7 @@
 #include "Input/InputProcessor.h"
 #include "Input/InputViewport.h"
 #include "Memory/Memory.h"
+#include "Platform/CrashReporter.h"
 #include "Platform/Process/PlatformProcess.h"
 #include "Properties/Customizations/CoreTypeCustomization.h"
 #include "Properties/Customizations/CustomPrimitiveDataCustomization.h"

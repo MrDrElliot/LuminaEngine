@@ -18,6 +18,8 @@ public static class LuminaFeatures
 
     public const string VerboseLogging = "VerboseLogging";
 
+    public const string BugSplat = "BugSplat";
+
     public static bool IsActive(TargetInfo Target, string Feature)
     {
         switch (Target.Options.GetMode(Feature))
@@ -56,6 +58,16 @@ public static class LuminaFeatures
 
             // TRACE, DEBUG and INFO compile to nothing when off; WARN and above always stay.
             VerboseLogging => bNonShipping,
+
+            // Editor targets only, and on by default there: the point is crash reports from people
+            // running the editor, and they build it from source, so anything defaulting to off
+            // reaches nobody. It stays gated on consent at runtime, and the database compiled in
+            // here is the engine's.
+            //
+            // Deliberately off for Game targets. A game built on Lumina belongs to whoever built it;
+            // shipping it with the engine's reporter would send their players' logs to this database
+            // without either party agreeing to it.
+            BugSplat => Target.Type == TargetType.Editor,
 
             _ => false,
         };
@@ -102,6 +114,11 @@ public static class LuminaFeatures
         if (IsActive(Target, VerboseLogging))
         {
             Definitions.Add("LUMINA_VERBOSE_LOGGING");
+        }
+
+        if (IsActive(Target, BugSplat))
+        {
+            Definitions.Add("WITH_BUGSPLAT");
         }
     }
 }

@@ -1,11 +1,14 @@
 {
   "//": "Optional engine features. auto lets the engine decide per configuration, on forces every configuration, off strips it everywhere. Command line flags such as -Tracy=off override these.",
 
+  "//BugSplat": "Crash upload to the engine's BugSplat database. auto means on for Editor targets and off for Game targets, and it is gated at runtime on the user's consent either way.",
+
   "Features": {
     "Tracy": "auto",
     "Validation": "auto",
     "Aftermath": "auto",
     "RadeonGpuDetective": "auto",
-    "VerboseLogging": "auto"
+    "VerboseLogging": "auto",
+    "BugSplat": "auto"
   }
 }

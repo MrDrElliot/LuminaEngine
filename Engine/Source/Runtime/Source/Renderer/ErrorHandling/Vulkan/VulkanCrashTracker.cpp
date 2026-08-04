@@ -13,6 +13,7 @@
 #include "Log/Log.h"
 #include "Paths/Paths.h"
 #include "Platform/CrashHandler.h"
+#include "Platform/CrashReporter.h"
 #include "Platform/Filesystem/FileHelper.h"
 #include "Platform/Process/PlatformProcess.h"
 
@@ -223,11 +224,11 @@ namespace Lumina::RHI
         }
     }
 
-    void FVulkanCrashTracker::LogDeviceInfo() const
+    FString FVulkanCrashTracker::LogDeviceInfo() const
     {
         if (PhysicalDevice == VK_NULL_HANDLE)
         {
-            return;
+            return {};
         }
 
         VkPhysicalDeviceDriverProperties DriverProps{};
@@ -248,13 +249,43 @@ namespace Lumina::RHI
             VK_API_VERSION_MAJOR(ApiVer),
             VK_API_VERSION_MINOR(ApiVer),
             VK_API_VERSION_PATCH(ApiVer));
+
+        // Attributes rather than log-only: a GPU crash is almost always a driver-version or
+        // specific-model story, and those want to be sortable columns in the dashboard rather than
+        // something to be dug out of an attached log per report.
+        CrashReporting::SetAttribute("GPU", Props2.properties.deviceName);
+        CrashReporting::SetAttribute("GPUDriver", DriverProps.driverInfo);
+
+        FString Summary = Props2.properties.deviceName;
+        Summary += " (";
+        Summary += DriverProps.driverInfo;
+        Summary += ")";
+        return Summary;
     }
 
-    void FVulkanCrashTracker::LogDeviceFaultInfo() const
+    static const char* FaultAddressTypeToString(VkDeviceFaultAddressTypeEXT Type)
+    {
+        switch (Type)
+        {
+        case VK_DEVICE_FAULT_ADDRESS_TYPE_NONE_EXT:                         return "None";
+        case VK_DEVICE_FAULT_ADDRESS_TYPE_READ_INVALID_EXT:                 return "Invalid read";
+        case VK_DEVICE_FAULT_ADDRESS_TYPE_WRITE_INVALID_EXT:                return "Invalid write";
+        case VK_DEVICE_FAULT_ADDRESS_TYPE_EXECUTE_INVALID_EXT:              return "Invalid execute";
+        case VK_DEVICE_FAULT_ADDRESS_TYPE_INSTRUCTION_POINTER_UNKNOWN_EXT:  return "Instruction pointer unknown";
+        case VK_DEVICE_FAULT_ADDRESS_TYPE_INSTRUCTION_POINTER_INVALID_EXT:  return "Instruction pointer invalid";
+        case VK_DEVICE_FAULT_ADDRESS_TYPE_INSTRUCTION_POINTER_FAULT_EXT:    return "Instruction pointer faulted";
+        default:                                                            return "Unknown";
+        }
+    }
+
+    FString FVulkanCrashTracker::LogDeviceFaultInfo() const
     {
         if (!bDeviceFaultEnabled || Device == VK_NULL_HANDLE || vkGetDeviceFaultInfoEXT == nullptr)
         {
-            return;
+            // Worth saying out loud: without this extension an AMD or Intel crash reports nothing at
+            // all, and a silent absence reads like "the GPU had no complaint".
+            LOG_ERROR("[DeviceLost] VK_EXT_device_fault unavailable; no vendor fault detail for this crash.");
+            return {};
         }
 
         VkDeviceFaultCountsEXT Counts{};
@@ -264,39 +295,91 @@ namespace Lumina::RHI
         if (Result != VK_SUCCESS && Result != VK_INCOMPLETE)
         {
             LOG_ERROR("[DeviceLost] vkGetDeviceFaultInfoEXT(counts) failed: 0x{:x}", (uint32)Result);
-            return;
+            return {};
         }
 
         TVector<VkDeviceFaultAddressInfoEXT> AddressInfos(Counts.addressInfoCount);
         TVector<VkDeviceFaultVendorInfoEXT>  VendorInfos(Counts.vendorInfoCount);
 
+        // The vendor binary is the driver's own post-mortem blob, and on AMD it is by far the richest
+        // thing available -- RGD parses it into a marker tree and page-fault resource list. It was
+        // previously discarded here, which left an AMD crash with nothing but a description string.
+        TVector<uint8> VendorBinary(static_cast<size_t>(Counts.vendorBinarySize));
+
         VkDeviceFaultInfoEXT Info{};
         Info.sType             = VK_STRUCTURE_TYPE_DEVICE_FAULT_INFO_EXT;
         Info.pAddressInfos     = AddressInfos.empty() ? nullptr : AddressInfos.data();
         Info.pVendorInfos      = VendorInfos.empty()  ? nullptr : VendorInfos.data();
-        Info.pVendorBinaryData = nullptr;
-        Counts.vendorBinarySize = 0;
+        Info.pVendorBinaryData = VendorBinary.empty() ? nullptr : VendorBinary.data();
 
         Result = vkGetDeviceFaultInfoEXT(Device, &Counts, &Info);
         if (Result != VK_SUCCESS && Result != VK_INCOMPLETE)
         {
             LOG_ERROR("[DeviceLost] vkGetDeviceFaultInfoEXT(info) failed: 0x{:x}", (uint32)Result);
-            return;
+            return {};
         }
 
         LOG_ERROR("[DeviceLost] Fault: {}", Info.description);
+
         for (uint32 i = 0; i < Counts.addressInfoCount; ++i)
         {
             const VkDeviceFaultAddressInfoEXT& A = AddressInfos[i];
-            LOG_ERROR("[DeviceLost]   Address[{}] type={} reported=0x{:x} precision=0x{:x}",
-                i, (uint32)A.addressType, (uint64)A.reportedAddress, (uint64)A.addressPrecision);
+
+            // Precision is a power-of-two mask: the faulting address is somewhere in
+            // [reported & ~(precision-1), reported | (precision-1)]. Logged as that range because the
+            // raw pair is routinely misread as an exact address.
+            const uint64 Mask  = A.addressPrecision ? A.addressPrecision - 1 : 0;
+            const uint64 Lower = static_cast<uint64>(A.reportedAddress) & ~Mask;
+            const uint64 Upper = static_cast<uint64>(A.reportedAddress) | Mask;
+
+            LOG_ERROR("[DeviceLost]   Address[{}] {} at 0x{:x} (range 0x{:x}-0x{:x}, precision 0x{:x})",
+                i, FaultAddressTypeToString(A.addressType),
+                (uint64)A.reportedAddress, Lower, Upper, (uint64)A.addressPrecision);
         }
+
         for (uint32 i = 0; i < Counts.vendorInfoCount; ++i)
         {
             const VkDeviceFaultVendorInfoEXT& V = VendorInfos[i];
             LOG_ERROR("[DeviceLost]   Vendor[{}] {} (code=0x{:x} data=0x{:x})",
                 i, V.description, (uint64)V.vendorFaultCode, (uint64)V.vendorFaultData);
         }
+
+        if (Counts.vendorBinarySize > 0)
+        {
+            const auto Time = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+            const FString BinaryPath = GetCrashDumpDirectory() + "/GPUFault_"
+                + eastl::to_string(static_cast<uint64>(Time)) + ".bin";
+
+            std::ofstream File(BinaryPath.c_str(), std::ios::binary);
+            if (File.is_open())
+            {
+                File.write(reinterpret_cast<const char*>(VendorBinary.data()),
+                    static_cast<std::streamsize>(Counts.vendorBinarySize));
+                File.close();
+
+                LOG_ERROR("[DeviceLost] Vendor crash binary ({} bytes): {}",
+                    (uint64)Counts.vendorBinarySize, BinaryPath.c_str());
+
+                // Goes up with the crash report; it is the only artifact that explains an AMD fault.
+                CrashReporting::AddAttachment(BinaryPath);
+            }
+            else
+            {
+                LOG_ERROR("[DeviceLost] Could not write vendor crash binary to {}", BinaryPath.c_str());
+            }
+        }
+
+        // First address info is the useful one for a one-line summary; description alone is often
+        // just "GPU HANG" and says nothing about where.
+        FString Reason = Info.description;
+        if (Counts.addressInfoCount > 0)
+        {
+            Reason += " (";
+            Reason += FaultAddressTypeToString(AddressInfos[0].addressType);
+            Reason += ")";
+        }
+
+        return Reason;
     }
 
 #if WITH_RGD
@@ -335,7 +418,12 @@ namespace Lumina::RHI
     void FVulkanCrashTracker::OnDeviceLost()
     {
         LogDeviceInfo();
-        LogDeviceFaultInfo();
+
+        const FString Reason = LogDeviceFaultInfo();
+
+        // Tagged even when empty, so a report with no vendor detail is visibly "we could not tell"
+        // rather than indistinguishable from a CPU crash in the dashboard.
+        CrashReporting::SetAttribute("DeviceLostReason", Reason.empty() ? FStringView("Unknown") : FStringView(Reason));
 
         #if WITH_RGD
         if (IsAmdDevice())
@@ -345,32 +433,78 @@ namespace Lumina::RHI
         #endif
 
         #if WITH_AFTERMATH
+        // Deliberately NOT AFTERMATH_CHECK_ERROR here. That macro calls exit(1) on any failure, and
+        // a status query failing is entirely likely when the device has just been lost -- which
+        // would kill the process before the local dump, the log flush or the report. exit() raises
+        // no signal, so nothing downstream would have caught it either. A failed query here just
+        // means no NVIDIA data; the rest of the report still has to go out.
         GFSDK_Aftermath_CrashDump_Status Status = GFSDK_Aftermath_CrashDump_Status_Unknown;
-        AFTERMATH_CHECK_ERROR(GFSDK_Aftermath_GetCrashDumpStatus(&Status));
+
+        auto PollStatus = [&Status]() -> bool
+        {
+            const GFSDK_Aftermath_Result Result = GFSDK_Aftermath_GetCrashDumpStatus(&Status);
+            if (!GFSDK_Aftermath_SUCCEED(Result))
+            {
+                LOG_ERROR("[DeviceLost] Aftermath status query failed ({}); continuing without NVIDIA data.",
+                    AftermathErrorMessage(Result).c_str());
+                return false;
+            }
+            return true;
+        };
+
+        bool bStatusValid = PollStatus();
 
         auto TerminationTimeout = std::chrono::seconds(3);
         auto tStart = std::chrono::steady_clock::now();
         auto tElapsed = std::chrono::milliseconds::zero();
 
-        while (Status != GFSDK_Aftermath_CrashDump_Status_CollectingDataFailed && Status != GFSDK_Aftermath_CrashDump_Status_Finished && tElapsed < TerminationTimeout)
+        while (bStatusValid
+            && Status != GFSDK_Aftermath_CrashDump_Status_CollectingDataFailed
+            && Status != GFSDK_Aftermath_CrashDump_Status_Finished
+            && tElapsed < TerminationTimeout)
         {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            AFTERMATH_CHECK_ERROR(GFSDK_Aftermath_GetCrashDumpStatus(&Status));
+            bStatusValid = PollStatus();
 
             tElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - tStart);
         }
 
-        if (Status == GFSDK_Aftermath_CrashDump_Status_Finished)
+        // LOG_ERROR, not LOG_INFO: this is the line that says whether NVIDIA data exists at all, and
+        // LOG_INFO compiles to nothing in Shipping, where a user's crash is the only copy there is.
+        switch (bStatusValid ? Status : GFSDK_Aftermath_CrashDump_Status_Unknown)
         {
-            LOG_INFO("Aftermath finished processing crash dump");
-        }
-        else
-        {
-            LOG_ERROR("Unexpected crash dump status: {}", static_cast<int>(Status));
+        case GFSDK_Aftermath_CrashDump_Status_Finished:
+            LOG_ERROR("[DeviceLost] Aftermath finished; GPU dump and decoded JSON are in {}",
+                GetCrashDumpDirectory().c_str());
+            break;
+
+        case GFSDK_Aftermath_CrashDump_Status_CollectingDataFailed:
+            LOG_ERROR("[DeviceLost] Aftermath failed to collect crash data. Usually means the fault "
+                      "took the whole device down before the dump could be assembled.");
+            break;
+
+        case GFSDK_Aftermath_CrashDump_Status_NotStarted:
+            // Distinct from a timeout mid-collection: the driver never began a dump at all, so it
+            // never saw a GPU fault. Either this was not a real device loss (a forced
+            // HandleDeviceLost, or a CPU-side failure misreported as one), or the fault was outside
+            // what Aftermath watches. Chasing a missing dump here is chasing the wrong thing.
+            LOG_ERROR("[DeviceLost] Aftermath never started a dump: the driver did not report a GPU "
+                      "fault. Not a real device loss, or the fault was outside Aftermath's scope.");
+            break;
+
+        default:
+            // Collection was genuinely in progress and ran past the 3s budget. The dump may still
+            // land on disk after this, but the process is about to go away.
+            LOG_ERROR("[DeviceLost] Aftermath did not finish within the timeout (status {}); "
+                      "the GPU dump may be missing or truncated.", static_cast<int>(Status));
+            break;
         }
         #endif
 
-        PANIC("Vulkan detected a crash");
+        // Returns rather than panicking. This function's job is to gather evidence; HandleDeviceLost
+        // owns how the process dies, and it has to run the reporter first. The PANIC that used to be
+        // here aborted mid-function, which made everything after the call site unreachable.
+        Logging::Flush();
     }
 
     void* FVulkanCrashTracker::GetDeviceCreatePNext()
@@ -405,8 +539,13 @@ namespace Lumina::RHI
             if (DumpFile.is_open())
             {
                 DumpFile.write(static_cast<const char*>(GPUCrashDump), CrashDumpSize);
-                LOG_INFO("Aftermath: Raw dump written to '{}'", DumpPath);
-                Platform::LaunchURL(UTF8_TO_TCHAR(JsonPath.c_str()));
+                LOG_ERROR("[DeviceLost] Aftermath raw dump written to '{}'", DumpPath.c_str());
+                
+                CrashReporting::AddAttachment(DumpPath);
+            }
+            else
+            {
+                LOG_ERROR("[DeviceLost] Could not write Aftermath dump to '{}'", DumpPath.c_str());
             }
         }
 
@@ -448,7 +587,14 @@ namespace Lumina::RHI
             if (JsonFile.is_open())
             {
                 JsonFile.write(Json.data(), JsonSize);
-                LOG_INFO("Aftermath: Full JSON dump written to '{}' - open this for complete crash details", JsonPath);
+                JsonFile.close();
+
+                LOG_ERROR("[DeviceLost] Aftermath JSON written to '{}' - decoded fault, active warps "
+                          "and shader attribution are in there", JsonPath.c_str());
+
+                // The readable half of the pair, and the one that resolves to shader source when
+                // debug info was uploaded. Attached so it arrives without asking the user for it.
+                CrashReporting::AddAttachment(JsonPath);
             }
         }
         else

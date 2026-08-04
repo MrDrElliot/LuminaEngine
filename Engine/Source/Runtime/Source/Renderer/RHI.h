@@ -490,6 +490,11 @@ namespace Lumina::RHI
     // Attach a human-readable name to a GPU allocation or texture, via VK_EXT_debug_utils.
     // No-ops when debug utils is unavailable (shipping), so call sites need no guard.
     //
+    // Thread-safe against concurrent allocation, and safe to call from asset-import workers. Name a
+    // resource you own, before publishing it: Vulkan requires the named object itself to be
+    // externally synchronized, so racing a name against another thread's free of the SAME resource
+    // is the caller's problem either way.
+    //
     // This is what turns a post-mortem crash report into something readable. Radeon GPU Detective
     // resolves a page fault back to the resource(s) at the offending virtual address, and an
     // unnamed allocation resolves to nothing more useful than its size. Aftermath and RenderDoc

@@ -40,7 +40,11 @@ namespace Lumina::RHI::Core
         uint64              SlotWaitValue[kFramesInFlight] = {};
         TVector<FCmdListH>  SlotCommandLists[kFramesInFlight];
         FTransientSlice     Slices[kFramesInFlight];
-        uint32              CurrentSlot = 0;
+
+        // Read by AllocTransient from frame jobs while BeginFrame advances it. Publishing it with a
+        // release store after the slice has been resized is what lets a reader that acquires it see
+        // a consistent Gpu/Cpu/Capacity triple rather than a half-updated one.
+        TAtomic<uint32>     CurrentSlot{0};
         FMutex              SubmitMutex;
 
         TVector<FPendingFree> PendingFrees;
@@ -247,8 +251,9 @@ namespace Lumina::RHI::Core
             }
         }
 
-        // Resize this slot's transient slice to last cycle's demand before resetting it. The slot's GPU work
-        // has already retired (we waited its timeline above), so freeing/recreating the buffer is hazard-free.
+        // Resize this slot's transient slice to last cycle's demand before resetting it. The slot's GPU
+        // work has already retired (we waited its timeline above); the CPU side is covered by the
+        // deferred free below rather than by that wait.
         {
             FTransientSlice& Slice = GCore.Slices[Slot];
             const uint64 Demand = Slice.Cursor.load(std::memory_order_relaxed);
@@ -271,7 +276,11 @@ namespace Lumina::RHI::Core
 
             if (NewCapacity != Slice.Capacity)
             {
-                Free(Slice.Gpu);
+                // Deferred, not immediate. The slot's GPU work has retired, but AllocTransient hands
+                // out raw Cpu pointers into this buffer and a job that outlives its frame can still
+                // be writing through one. Freeing here made that a use-after-free; holding the old
+                // block for the frame ring makes the straggler's write land on memory nobody reads.
+                DeferredFree(Slice.Gpu);
                 Slice.Gpu = Malloc(NewCapacity, kDefaultAlign, EMemoryType::CPUWrite);
                 Slice.Cpu = static_cast<std::byte*>(ToHost(Slice.Gpu));
                 Slice.Capacity = NewCapacity;
@@ -280,7 +289,9 @@ namespace Lumina::RHI::Core
             Slice.Cursor.store(0, std::memory_order_relaxed);
         }
 
-        GCore.CurrentSlot = Slot;
+        // Release: everything above (including a resized slice) is published before a reader can
+        // observe the new slot index.
+        GCore.CurrentSlot.store(Slot, std::memory_order_release);
         Upload::BeginSlot(Slot);
     }
 
@@ -293,8 +304,10 @@ namespace Lumina::RHI::Core
         const FSemaphoreInfo Signal { GCore.FrameTimeline, Value, EStageFlags::AllCommands };
         RHI::Submit(EQueueType::Graphics, TSpan{&CommandList, 1}, {}, TSpan{&Signal, 1});
 
-        GCore.SlotWaitValue[GCore.CurrentSlot] = Value;
-        GCore.SlotCommandLists[GCore.CurrentSlot].push_back(CommandList);
+        // Relaxed: only BeginFrame writes this, and both run on the frame thread.
+        const uint32 Slot = GCore.CurrentSlot.load(std::memory_order_relaxed);
+        GCore.SlotWaitValue[Slot] = Value;
+        GCore.SlotCommandLists[Slot].push_back(CommandList);
     }
 
     void SubmitAndWait(FCmdListH CommandList)
@@ -323,8 +336,9 @@ namespace Lumina::RHI::Core
         // PresentSwapchain submits CommandList (wait acquire, signal present + this frame value), presents.
         const bool bOk = PresentSwapchain(Swapchain, CommandList, GCore.FrameTimeline, Value);
 
-        GCore.SlotWaitValue[GCore.CurrentSlot] = Value;
-        GCore.SlotCommandLists[GCore.CurrentSlot].push_back(CommandList);
+        const uint32 Slot = GCore.CurrentSlot.load(std::memory_order_relaxed);
+        GCore.SlotWaitValue[Slot] = Value;
+        GCore.SlotCommandLists[Slot].push_back(CommandList);
         return bOk;
     }
 
@@ -333,9 +347,13 @@ namespace Lumina::RHI::Core
         return GCore.GlobalHeap;
     }
 
+    // Callable from frame jobs. The returned memory is valid for the frame that allocated it and no
+    // longer: a job that outlives its frame and allocates again gets the NEXT frame's slice, which is
+    // inherent to a per-frame linear allocator. Acquire pairs with BeginFrame's release store so the
+    // slice's Gpu/Cpu/Capacity are all observed as one consistent set.
     FTransientAlloc AllocTransient(uint64 Size, uint64 Alignment)
     {
-        FTransientSlice& Slice = GCore.Slices[GCore.CurrentSlot];
+        FTransientSlice& Slice = GCore.Slices[GCore.CurrentSlot.load(std::memory_order_acquire)];
 
         const uint64 Padded = Size + Alignment;
         const uint64 RawOffset = Slice.Cursor.fetch_add(Padded, std::memory_order_relaxed);

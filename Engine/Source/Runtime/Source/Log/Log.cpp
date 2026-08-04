@@ -514,6 +514,13 @@ namespace Lumina::Logging
 	}
 
 
+	FString GetLogFilePath()
+	{
+		std::scoped_lock Lock(GSinkMutex);
+		return GFileSink != nullptr ? GFileSink->GetBasePath() : FString();
+	}
+
+
 	void SetLogFileDirectory(FStringView Directory)
 	{
 		if (Directory.empty())

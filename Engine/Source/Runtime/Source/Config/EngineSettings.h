@@ -61,6 +61,12 @@ namespace Lumina
         /** Project to open at startup. **/
         PROPERTY(Editable, Category = "Loading")
         FString StartupProject;
+
+        /** Pre-fills the email box in the crash reporter's send dialog, so it does not have to be
+            retyped per crash. The dialog still asks before anything is sent, and the user can edit
+            or clear the value there. Blank is fine; reports are still useful anonymous. */
+        PROPERTY(Editable, Category = "Crash Reporting")
+        FString CrashReportContactEmail;
     };
 
     // The editor's central color palette.

@@ -13,6 +13,9 @@
 #include "Renderer/API/Vulkan/VulkanMacros.h"
 #include "Renderer/RHINative.h"
 #include "Renderer/ErrorHandling/Vulkan/VulkanCrashTracker.h"
+#include "Renderer/ErrorHandling/Vulkan/VulkanBreadcrumbs.h"
+#include "Platform/CrashHandler.h"
+#include "Platform/CrashReporter.h"
 #include "Tools/Dialogs/Dialogs.h"
 
 #define VMA_IMPLEMENTATION
@@ -483,6 +486,11 @@ namespace Lumina::RHI
         alignas(tracy::VkCtxScope) uint8 GPUZoneStack[kMaxGPUZoneDepth * sizeof(tracy::VkCtxScope)];
         uint32 GPUZoneDepth = 0;
 #endif
+
+        // Breadcrumb slot per open marker, so CmdEndMarker knows which one to close. Same
+        // single-threaded-per-list assumption as the Tracy stack above.
+        uint32 BreadcrumbStack[FGpuBreadcrumbs::MaxDepth] = {};
+        uint32 BreadcrumbDepth = 0;
     };
 
     // A window-system surface awaiting a swapchain. Lives only between CreateSurface and
@@ -518,6 +526,7 @@ namespace Lumina::RHI
         bool                            bMemoryPriority = false;
         bool                            bMeshShaderSupported = false;
         TUniquePtr<FVulkanCrashTracker> CrashTracker;
+        FGpuBreadcrumbs                 Breadcrumbs;
 
         VkDevice                        Device;
         VkPhysicalDevice                PhysicsDevice;
@@ -799,13 +808,33 @@ namespace Lumina::RHI
     {
         LOG_ERROR("[DeviceLost] Vulkan device lost.");
 
+        // Breadcrumbs first, before anything that calls back into the driver. This is a plain read
+        // of mapped host memory and cannot fail, whereas the vendor paths below query a device that
+        // has just died and may hang or bail. Losing the pass trail to that would be the worst
+        // possible trade, since it is the only part that says *what* was running.
+        if (GDevice != nullptr)
+        {
+            const FString Innermost = GDevice->Breadcrumbs.ReportOutstanding();
+            if (!Innermost.empty())
+            {
+                CrashReporting::SetAttribute("GPUPass", Innermost);
+            }
+        }
+
+        // Then the vendor detail: fault addresses, the GPU dump files, and the attributes and
+        // attachments the report needs. All of it has to be registered before the report is built.
         if (GDevice != nullptr && GDevice->CrashTracker)
         {
             GDevice->CrashTracker->OnDeviceLost();
         }
 
-        Dialogs::ShowInternal(Dialogs::ESeverity::FatalError, Dialogs::EType::Ok, "GPU Device Lost",
-            "The Vulkan device was lost. See the log for crash diagnostics.");
+        // Then reports. This shows the send dialog and uploads before the process goes away -- a GPU
+        // crash is not a CPU exception, so nothing else in the process would have reported it.
+        // ReportFatal owns the user-facing dialog too (BugSplat's, or the fatal-error modal when
+        // there is no reporter), so there is no separate Dialogs::ShowInternal here to stack a
+        // second modal on top of it.
+        CrashHandler::ReportFatal("Vulkan device lost", CrashHandler::EFatalKind::Gpu);
+
         std::abort();
     }
 
@@ -1032,6 +1061,7 @@ namespace Lumina::RHI
         // ---- Optional device extensions ----
         bool bDeviceFault    = false;
         bool bNvDiagnostics  = false;
+        bool bBufferMarker   = false;
         bool bMemoryPriority = false;
         bool bMeshShader     = false;
         {
@@ -1070,12 +1100,10 @@ namespace Lumina::RHI
             };
 
             EnableIfPresent(VK_EXT_SAMPLER_FILTER_MINMAX_EXTENSION_NAME);
-            // AMD rejects NonSemantic SPIR-V without explicit extension enable even though it's core in 1.3.
             EnableIfPresent(VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME);
-            // NV-only Aftermath diagnostics; AMD/Intel skip the diagnostics-config pNext below.
-            bNvDiagnostics = EnableIfPresent(VK_NV_DEVICE_DIAGNOSTICS_CONFIG_EXTENSION_NAME);
-            // Vendor-agnostic device fault info on VK_ERROR_DEVICE_LOST.
-            bDeviceFault = EnableIfPresent(VK_EXT_DEVICE_FAULT_EXTENSION_NAME);
+            bNvDiagnostics  = EnableIfPresent(VK_NV_DEVICE_DIAGNOSTICS_CONFIG_EXTENSION_NAME);
+            bDeviceFault    = EnableIfPresent(VK_EXT_DEVICE_FAULT_EXTENSION_NAME);
+            bBufferMarker   = EnableIfPresent(VK_AMD_BUFFER_MARKER_EXTENSION_NAME);
             const bool bLayerKnowsUnifiedLayouts = ValidationLayerVersion == 0 || ValidationLayerVersion >= VK_MAKE_API_VERSION(0, 1, 4, 311);
             GDevice->bUnifiedImageLayouts = bLayerKnowsUnifiedLayouts && EnableIfPresent(VK_KHR_UNIFIED_IMAGE_LAYOUTS_EXTENSION_NAME);
             // VMA memory priority + pageable device-local memory.
@@ -1344,6 +1372,27 @@ namespace Lumina::RHI
         }
 
         GDevice->CrashTracker->Initialize(GDevice->Device, GDevice->PhysicsDevice);
+
+        // After volkLoadDevice, since it needs vkCmdWriteBufferMarkerAMD resolved.
+        if (bBufferMarker)
+        {
+            GDevice->Breadcrumbs.Initialize(GDevice->Device, GDevice->PhysicsDevice);
+
+            // Registered for every crash, not just device loss. A CPU crash on the render thread is
+            // exactly when knowing which pass the GPU was in matters, and the crash handler cannot
+            // reach into the RHI on its own.
+            CrashHandler::AddDiagnosticProvider([]
+            {
+                if (GDevice != nullptr)
+                {
+                    (void)GDevice->Breadcrumbs.ReportOutstanding();
+                }
+            });
+        }
+        else
+        {
+            LOG_WARN("VK_AMD_buffer_marker not present; a device loss will not report which pass was running.");
+        }
 
         {
             VkQueue GraphicsQueue = VK_NULL_HANDLE;
@@ -1691,6 +1740,10 @@ namespace Lumina::RHI
         }
         GDevice->MemoryBlocks.clear();
 
+        // Only on a clean shutdown. The device-lost path deliberately never frees this: the mapping
+        // is what the crash report is read out of.
+        GDevice->Breadcrumbs.Shutdown(GDevice->Device);
+
         vkDestroyCommandPool(*GDevice, GDevice->TransientPool, nullptr);
         vkDestroyPipelineLayout(*GDevice, GDevice->PipelineLayout, nullptr);
         vkDestroyDescriptorPool(*GDevice, GDevice->DescriptorPool, nullptr);
@@ -1949,18 +2002,18 @@ namespace Lumina::RHI
             return;
         }
 
-        VkBuffer Buffer = VK_NULL_HANDLE;
-        {
-            FScopeLock Lock(GDevice->MemoryMutex);
-            // Interior pointers resolve to the owning allocation, so naming any address inside a
-            // block names the block. The crash report reads back the same way.
-            if (const FMemoryBlock* Block = FindMemory(GPU))
-            {
-                Buffer = Block->Buffer;
-            }
-        }
+        // Named under the lock, not after it. Free() destroys the VkBuffer while holding this same
+        // mutex, so releasing it first and naming afterwards would leave a window where a concurrent
+        // free hands vkSetDebugUtilsObjectNameEXT a dead handle. Import runs on worker threads, and
+        // this costs nothing at resource-creation frequency.
+        FScopeLock Lock(GDevice->MemoryMutex);
 
-        NameObject(VK_OBJECT_TYPE_BUFFER, (uint64)Buffer, Name);
+        // Interior pointers resolve to the owning allocation, so naming any address inside a
+        // block names the block. The crash report reads back the same way.
+        if (const FMemoryBlock* Block = FindMemory(GPU))
+        {
+            NameObject(VK_OBJECT_TYPE_BUFFER, (uint64)Block->Buffer, Name);
+        }
     }
 
     void SetDebugName(FTextureH Texture, const char* Name)
@@ -3451,6 +3504,9 @@ namespace Lumina::RHI
 #if defined(TRACY_ENABLE)
                 CommandList.GPUZoneDepth = 0;
 #endif
+                // A list that was recycled with markers still open would otherwise start its next
+                // recording at a stale depth, and every breadcrumb on it would nest wrongly.
+                CommandList.BreadcrumbDepth = 0;
 
                 // Already in the initial state: ResetCommandList reset the pool when it recycled the list.
                 vkBeginCommandBuffer(CommandList.CommandBuffer, &BeginInfo);
@@ -4547,6 +4603,15 @@ namespace Lumina::RHI
     {
         FCommandList& List = GDevice->CommandLists[CL];
 
+        // Hooked here rather than at each pass: every pass already brackets itself with these, so
+        // the breadcrumb trail comes for free and cannot drift out of sync with the debug labels.
+        if (List.BreadcrumbDepth < FGpuBreadcrumbs::MaxDepth)
+        {
+            List.BreadcrumbStack[List.BreadcrumbDepth] =
+                GDevice->Breadcrumbs.Begin(List.CommandBuffer, Name, List.BreadcrumbDepth);
+        }
+        ++List.BreadcrumbDepth;
+
         if (vkCmdBeginDebugUtilsLabelEXT != nullptr)
         {
             VkDebugUtilsLabelEXT Label
@@ -4574,6 +4639,17 @@ namespace Lumina::RHI
     void CmdEndMarker(FCmdListH CL)
     {
         FCommandList& List = GDevice->CommandLists[CL];
+
+        // Guarded against an unbalanced end, which would otherwise underflow the depth and close a
+        // slot this list never opened.
+        if (List.BreadcrumbDepth > 0)
+        {
+            --List.BreadcrumbDepth;
+            if (List.BreadcrumbDepth < FGpuBreadcrumbs::MaxDepth)
+            {
+                GDevice->Breadcrumbs.End(List.CommandBuffer, List.BreadcrumbStack[List.BreadcrumbDepth]);
+            }
+        }
 
         #if defined(TRACY_ENABLE)
         if (List.GPUZoneDepth > 0)

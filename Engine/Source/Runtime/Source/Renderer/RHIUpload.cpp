@@ -223,8 +223,7 @@ namespace Lumina::RHI
         }
 
         const FCmdListH CL = OpenCommandList(EQueueType::Graphics);
-        uint32 SliceMask = 0;
-        if (!Upload::Flush(CL, &SliceMask))
+        if (!Upload::Flush(CL))
         {
             ResetCommandList(CL);
             return;
@@ -240,8 +239,10 @@ namespace Lumina::RHI
         const FSemaphoreInfo Signal { GUpload.FlushSemaphore, Value, EStageFlags::AllCommands };
         Submit(EQueueType::Graphics, TSpan{&CL, 1}, {}, TSpan{&Signal, 1});
 
-        Upload::NoteFlushSubmitted(SliceMask, GUpload.FlushSemaphore, Value);
-
+        // Deliberately no NoteFlushSubmitted. This path blocks until its own copies retire, so the
+        // slices it read need no gate once it returns. Recording one could only do harm: it would
+        // overwrite a still-pending gate from the BeginFrame flush with a different semaphore, and
+        // (being callable off the main thread) would race BeginSlot's read of those fields.
         WaitSemaphore(GUpload.FlushSemaphore, Value);
         ResetCommandList(CL);
     }
@@ -393,9 +394,21 @@ namespace Lumina::RHI
             // Writers pin whatever CurrentSlot was at reserve time, and CurrentSlot is never this
             // slot when BeginFrame runs, so this only ever spins on a reservation made a full frame
             // cycle ago whose memcpy is still in progress.
+            //
+            // Read under the lock the reserve took. The pin is incremented there, and without that
+            // edge nothing orders the increment against this load: a first read could see a stale
+            // zero and let the slice recycle out from under a live writer. Rare enough to never show
+            // up in testing, which is exactly why it is not left to timing.
             const FStagingSlice& Slice = GUpload.Slices[Slot];
-            while (Slice.Writers.load(std::memory_order_acquire) != 0)
+            for (;;)
             {
+                {
+                    FScopeLock Lock(GUpload.Mutex);
+                    if (Slice.Writers.load(std::memory_order_acquire) == 0)
+                    {
+                        return;
+                    }
+                }
                 Threading::ThreadYield();
             }
         }

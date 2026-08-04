@@ -23,6 +23,10 @@ namespace Lumina::Logging
 	// Init() has no project yet, so the file starts beside the exe and lands here once one loads.
 	RUNTIME_API void SetLogFileDirectory(FStringView Directory);
 
+	// Absolute path of the live log file, or empty when there is no file sink. Follows
+	// SetLogFileDirectory, so callers holding the path must re-read it after a project loads.
+	RUNTIME_API FString GetLogFilePath();
+
 	RUNTIME_API void ClearLogQueue();
 	RUNTIME_API FLogQueue& GetConsoleLogQueue();
 

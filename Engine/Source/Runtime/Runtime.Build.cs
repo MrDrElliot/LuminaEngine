@@ -66,6 +66,11 @@ public class Runtime : LuminaModuleRules
             PrivateDependencyModuleNames.Add("NvidiaAftermath");
         }
 
+        if (LuminaFeatures.IsActive(Target, LuminaFeatures.BugSplat))
+        {
+            PrivateDependencyModuleNames.Add("BugSplat");
+        }
+
         // Shadowed locals and unreferenced formal parameters have caused real bugs in this module.
         FatalWarnings.AddRange(new[] { "4456", "4457", "4458", "4238" });
 

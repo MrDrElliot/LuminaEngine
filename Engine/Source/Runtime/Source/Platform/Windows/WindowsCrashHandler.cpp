@@ -4,6 +4,7 @@
 #include "Platform/CrashHandler.h"
 
 #include "Log/Log.h"
+#include "Platform/CrashReporter.h"
 #include "Platform/Process/PlatformProcess.h"
 
 #include <atomic>
@@ -28,7 +29,20 @@ namespace Lumina::CrashHandler
     namespace
     {
         std::atomic<bool> GInsideHandler{false};
+
+        // Fixed storage and a plain function-pointer array: the crash path walks these with the heap
+        // already suspect, so there is nothing here to allocate or lock.
+        constexpr uint32 GMaxDiagnosticProviders = 8;
+        FDiagnosticProvider GDiagnosticProviders[GMaxDiagnosticProviders] = {};
+        std::atomic<uint32> GDiagnosticProviderCount{0};
+
         LPTOP_LEVEL_EXCEPTION_FILTER GPreviousFilter = nullptr;
+        PVOID GVectoredHandle = nullptr;
+
+        // Dump filename stem. A pointer to a string literal, so the crash path reads it without
+        // touching the heap. Defaults to CPU because that is what an unannounced hardware fault is;
+        // ReportFatal overrides it for the paths that know better.
+        std::atomic<const wchar_t*> GDumpPrefix{ L"CPUCrash" };
         std::terminate_handler GPreviousTerminate = nullptr;
         bool GInstalled = false;
 
@@ -66,9 +80,11 @@ namespace Lumina::CrashHandler
 
             SYSTEMTIME T;
             GetLocalTime(&T);
-            // CPUCrash_ to sit alongside the tracker's GPUCrash_ dumps in the same folder.
-            swprintf_s(Out.DumpPath, L"%s\\CPUCrash_%04d%02d%02d-%02d%02d%02d-%lu.dmp",
-                CrashDir, T.wYear, T.wMonth, T.wDay, T.wHour, T.wMinute, T.wSecond,
+            // Prefixed by failure kind so the folder sorts into CPU and GPU crashes at a glance, and
+            // sits alongside the tracker's own GPUCrash_* vendor dumps.
+            swprintf_s(Out.DumpPath, L"%s\\%s_%04d%02d%02d-%02d%02d%02d-%lu.dmp",
+                CrashDir, GDumpPrefix.load(std::memory_order_acquire),
+                T.wYear, T.wMonth, T.wDay, T.wHour, T.wMinute, T.wSecond,
                 GetCurrentProcessId());
 
             // ANSI variant for the modal/log path display (no wide log formatter).
@@ -250,9 +266,44 @@ namespace Lumina::CrashHandler
             }
         }
 
-        // The filter can re-enter if our own logging/dumping faults. The guard
-        // ensures we fall through to the previous filter / WER on second entry.
-        LONG WINAPI TopLevelFilter(EXCEPTION_POINTERS* ExceptionInfo)
+        // Codes worth treating as a crash from a vectored handler.
+        //
+        // A VEH sees every FIRST-chance exception in the process, most of which are entirely normal:
+        // a C++ throw is 0xE06D7363, a debugger breakpoint is EXCEPTION_BREAKPOINT, and thread
+        // naming is 0x406D1388. Reporting on those would fire constantly. Only genuinely fatal
+        // hardware faults, plus our own synthesized code, get through.
+        bool IsFatalExceptionCode(DWORD Code)
+        {
+            switch (Code)
+            {
+            case EXCEPTION_ACCESS_VIOLATION:
+            case EXCEPTION_ARRAY_BOUNDS_EXCEEDED:
+            case EXCEPTION_DATATYPE_MISALIGNMENT:
+            case EXCEPTION_FLT_DIVIDE_BY_ZERO:
+            case EXCEPTION_FLT_INVALID_OPERATION:
+            case EXCEPTION_FLT_STACK_CHECK:
+            case EXCEPTION_ILLEGAL_INSTRUCTION:
+            case EXCEPTION_IN_PAGE_ERROR:
+            case EXCEPTION_INT_DIVIDE_BY_ZERO:
+            case EXCEPTION_INVALID_DISPOSITION:
+            case EXCEPTION_NONCONTINUABLE_EXCEPTION:
+            case EXCEPTION_PRIV_INSTRUCTION:
+            case EXCEPTION_STACK_OVERFLOW:
+            case 0xE0000001:    // ReportFatal / terminate / SIGABRT
+                return true;
+
+            default:
+                return false;
+            }
+        }
+
+        // bMayHandOff is false when called from the vectored handler, where the reporter is going to
+        // consume the exception itself: handing off there would run its filter twice, and our modal
+        // would stack on top of its send dialog.
+        //
+        // The guard makes this run-once. If our own logging or dumping faults, the second entry
+        // falls straight through to the previous filter / WER.
+        LONG HandleCrash(EXCEPTION_POINTERS* ExceptionInfo, bool bMayHandOff)
         {
             bool Expected = false;
             if (!GInsideHandler.compare_exchange_strong(Expected, true))
@@ -289,6 +340,20 @@ namespace Lumina::CrashHandler
                         LOG_CRITICAL("Stack trace:\n{}", StackBuffer);
                     }
                     LOG_CRITICAL("Minidump: {}", Paths.LogPath);
+
+                    // Subsystem state the handler cannot reach itself. Inside the same guard and
+                    // before the flush, so whatever they log rides out with everything above --
+                    // a GPU breadcrumb trail is just as relevant to a CPU crash on the render
+                    // thread as it is to a lost device.
+                    const uint32 Count = GDiagnosticProviderCount.load(std::memory_order_acquire);
+                    for (uint32 Index = 0; Index < Count; ++Index)
+                    {
+                        if (GDiagnosticProviders[Index] != nullptr)
+                        {
+                            GDiagnosticProviders[Index]();
+                        }
+                    }
+
                     Logging::Flush();
                 }
             }
@@ -330,10 +395,56 @@ namespace Lumina::CrashHandler
                     StackBuffer[0] ? StackBuffer : "  <unavailable>");
             }
 
+            // With a reporter installed, the local artifacts are now on disk and it owns the rest:
+            // its dialog shows the user what is about to be sent and asks, then its monitor process
+            // uploads. Two modals for one crash is worse than none, so ours only appears when
+            // nothing else is going to report this.
+            if (!bMayHandOff)
+            {
+                // Recorded everything; the reporter owns the dialog and the exit from here.
+                return EXCEPTION_CONTINUE_SEARCH;
+            }
+
+            if (CrashReporting::IsEnabled() && GPreviousFilter != nullptr)
+            {
+                return GPreviousFilter(ExceptionInfo);
+            }
+
             MessageBoxA(nullptr, ModalBody, "Lumina - Fatal Error",
                 MB_OK | MB_ICONERROR | MB_TOPMOST | MB_SYSTEMMODAL);
 
             // Let WER / attached debugger see it too.
+            return EXCEPTION_CONTINUE_SEARCH;
+        }
+
+        LONG WINAPI TopLevelFilter(EXCEPTION_POINTERS* ExceptionInfo)
+        {
+            return HandleCrash(ExceptionInfo, /*bMayHandOff*/ true);
+        }
+
+        // Runs BEFORE any SEH unhandled-exception filter, which is the only way to get in ahead of
+        // the crash reporter. BugSplat's monitor takes the exception and exits the process, so a
+        // top-level filter registered after it never executes at all -- no local dump, no crash
+        // block in the log, no GPU breadcrumbs. Everything we want recorded has to happen here.
+        //
+        // Always returns EXCEPTION_CONTINUE_SEARCH: this handler observes and records, it never
+        // consumes. The reporter still sees the crash and still uploads exactly as before.
+        LONG CALLBACK VectoredCrashHandler(EXCEPTION_POINTERS* ExceptionInfo)
+        {
+            if (ExceptionInfo == nullptr || ExceptionInfo->ExceptionRecord == nullptr)
+            {
+                return EXCEPTION_CONTINUE_SEARCH;
+            }
+
+            if (!IsFatalExceptionCode(ExceptionInfo->ExceptionRecord->ExceptionCode))
+            {
+                return EXCEPTION_CONTINUE_SEARCH;
+            }
+
+            // Shares GInsideHandler with TopLevelFilter, so whichever runs first does the work once
+            // and the other becomes a no-op.
+            (void)HandleCrash(ExceptionInfo, /*bMayHandOff*/ false);
+
             return EXCEPTION_CONTINUE_SEARCH;
         }
 
@@ -350,6 +461,46 @@ namespace Lumina::CrashHandler
                 (void)Reason;
             }
         }
+    }
+
+
+    void AddDiagnosticProvider(FDiagnosticProvider Provider)
+    {
+        if (Provider == nullptr)
+        {
+            return;
+        }
+
+        // Startup-only, so the plain increment is safe; the crash path only ever reads.
+        const uint32 Index = GDiagnosticProviderCount.load(std::memory_order_relaxed);
+        if (Index >= GMaxDiagnosticProviders)
+        {
+            return;
+        }
+
+        GDiagnosticProviders[Index] = Provider;
+        GDiagnosticProviderCount.store(Index + 1, std::memory_order_release);
+    }
+
+
+    void ReportFatal(const char* Reason, EFatalKind Kind)
+    {
+        // Set before raising, since BuildCrashPaths reads it from inside the handler.
+        GDumpPrefix.store(Kind == EFatalKind::Gpu ? L"GPUCrash" : L"CPUCrash", std::memory_order_release);
+
+        if (Reason != nullptr && Logging::IsInitialized())
+        {
+            LOG_CRITICAL("Fatal: {}", Reason);
+        }
+
+        // Same synthesized-exception path as terminate and SIGABRT, so a non-exception fatal gets
+        // the identical treatment: stack walk, local dump, log flush, then the reporter's dialog.
+        HandleNonSehCrash(Reason);
+    }
+
+
+    namespace
+    {
 
         [[noreturn]] void TerminateHandler()
         {
@@ -380,6 +531,15 @@ namespace Lumina::CrashHandler
         (void)GetCrashDumpDirectory();
 
         GPreviousFilter    = SetUnhandledExceptionFilter(&TopLevelFilter);
+
+        // Only when a reporter is present, and registered FIRST (the 1) so it precedes any vectored
+        // handler the reporter installed. Without a reporter the top-level filter is reached
+        // normally and still owns the modal, so adding a VEH there would only cost first-chance
+        // overhead on every exception in the process for nothing.
+        if (CrashReporting::IsEnabled())
+        {
+            GVectoredHandle = AddVectoredExceptionHandler(1, &VectoredCrashHandler);
+        }
         GPreviousTerminate = std::set_terminate(&TerminateHandler);
         std::signal(SIGABRT, &SignalAbortHandler);
         
@@ -389,6 +549,13 @@ namespace Lumina::CrashHandler
     void Shutdown()
     {
         if (!GInstalled) return;
+
+        if (GVectoredHandle != nullptr)
+        {
+            RemoveVectoredExceptionHandler(GVectoredHandle);
+            GVectoredHandle = nullptr;
+        }
+
         SetUnhandledExceptionFilter(GPreviousFilter);
         std::set_terminate(GPreviousTerminate);
         std::signal(SIGABRT, SIG_DFL);

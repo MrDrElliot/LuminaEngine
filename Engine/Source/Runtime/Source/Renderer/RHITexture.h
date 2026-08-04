@@ -48,10 +48,14 @@ namespace Lumina::RHI
         RUNTIME_API FManagedTexture Create(const FTexture2DDesc& Desc);
 
         // Upload tight pixel data for one mip. RowPitchTexels = 0 -> mip width.
-        // Synchronous (asset-load time): stages, copies, waits, frees the staging.
+        //
+        // NOT synchronous: this stages the bytes and queues the copy, which the next
+        // RHI::Core::BeginFrame records and submits. The texture is not resident when this returns.
+        // Callers that must sample it immediately have to follow up with FlushUploadsAndWait.
+        // Thread-safe; asset import calls it from worker threads.
         RUNTIME_API void Upload(const FManagedTexture& Tex, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels = 0);
 
-        // Synchronous clear of the whole texture to an RGBA float value (asset-load time).
+        // Queue a full-texture clear to an RGBA float value. Same deferred semantics as Upload.
         RUNTIME_API void Clear(const FManagedTexture& Tex, const float Value[4]);
 
         // Lazily create + register a per-mip storage (UAV) heap slot; index for gRWTextures*[].

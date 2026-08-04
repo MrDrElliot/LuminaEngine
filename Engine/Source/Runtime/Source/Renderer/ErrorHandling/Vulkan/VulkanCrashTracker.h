@@ -78,8 +78,10 @@ namespace Lumina::RHI
 
         const void* StoreMarker(const char* MarkerName);
 
-        void LogDeviceInfo() const;
-        void LogDeviceFaultInfo() const;
+        // Both return a one-line summary for the crash report's attributes, or empty when the data
+        // was not available. The detail goes to the log either way.
+        FString LogDeviceInfo() const;
+        FString LogDeviceFaultInfo() const;
 
         #if WITH_RGD
         // The build enables WITH_RGD from the BUILD machine's adapter, which says nothing about the
