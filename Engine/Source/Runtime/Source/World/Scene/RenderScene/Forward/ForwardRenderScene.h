@@ -970,6 +970,10 @@ namespace Lumina
         // them, so on a slot's first trip the copy reads bytes nothing has written. Zeroing once makes
         // that read a real 0 instead of whatever the allocation came with.
         TArray<bool, RHI::kFramesInFlight>                                  TotalsZeroed = {};
+
+        // Same one-time-zero contract as TotalsZeroed, for the early cull's indirect dispatch args.
+        // Undefined bytes in a group count are a GPU hang, not a wrong number.
+        TArray<bool, RHI::kFramesInFlight>                                  EarlyCullArgsZeroed = {};
         FSceneBuffer GetTotals() const { return TotalsRing[CurrentFrameSlot]; }
 
         //~ GPU-driven scene ---------------------------------------------------------------------

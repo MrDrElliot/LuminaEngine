@@ -2709,6 +2709,26 @@ namespace Lumina
             // shrink the clamp, not be trusted.
             DrawListCapacity = (uint32)Math::Min<uint64>(MeshletDrawListRing[Slot].GetSize() / (sizeof(uint32) * 2), 0xFFFFFFFFull);
 
+            // One-time zero of the indirect DISPATCH args, for the same reason Totals is zeroed below --
+            // CreateSceneBuffer is a bare device allocation and these hold undefined bytes until
+            // something writes them.
+            //
+            // The consequence is far worse here than a bad statistic. BuildDrawPrefix is the only writer
+            // and it lives inside DispatchGPUSceneCull, which early-returns if its shaders are missing;
+            // CullPassEarly guards on entirely different conditions and dispatches indirectly from this
+            // buffer regardless. When those disagree the GPU reads a garbage group count and launches an
+            // essentially unbounded grid -- a multi-second hang, then a TDR, surfacing as
+            // VK_ERROR_DEVICE_LOST with "No fault detected" because nothing ever touched a bad address.
+            //
+            // Zeroed HERE rather than next to the dispatch: this runs before every writer, so it can
+            // never clobber args that were legitimately produced this frame.
+            if (!EarlyCullArgsZeroed[Slot] && EarlyCullDispatchArgsRing[Slot])
+            {
+                RHI::CmdMemset(CL, EarlyCullDispatchArgsRing[Slot].Ptr, EarlyCullDispatchArgsRing[Slot].GetSize(), 0u);
+                Barriers::TransferToAll(CL);
+                EarlyCullArgsZeroed[Slot] = true;
+            }
+
             // Draw-list overflow, reported by the GPU itself rather than inferred: BuildDrawPrefix sets
             // Totals[3] when the packed requirement exceeded the allocation it was given, which is the only
             // condition that can still drop a meshlet now that each region is exactly sized.
