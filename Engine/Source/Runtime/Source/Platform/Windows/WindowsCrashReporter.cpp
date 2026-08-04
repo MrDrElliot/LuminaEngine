@@ -31,6 +31,9 @@ namespace Lumina::CrashReporting
     {
         std::atomic<bool> GInitialized{ false };
 
+        // Filled by Initialize, drained by LogStatus once logging exists.
+        FString GStatusLine;
+
         #if WITH_BUGSPLAT
         constexpr uint32 GMaxWideChars = 512;
 
@@ -237,7 +240,11 @@ namespace Lumina::CrashReporting
         // handler wholesale, silently displacing the ones CrashHandler::Install registered. Those
         // route terminate and SIGABRT through the same filter, so the path is covered already.
 
-        LOG_DISPLAY("Crash reporting initialized (BugSplat, version {})", VersionString.c_str());
+        // Stored rather than logged. Initialize() has to run before CrashHandler::Install(), which is
+        // before FApplicationGlobalState brings logging up, so a LOG_ here reaches nothing -- which is
+        // why no log in the wild has ever shown whether the reporter started. LogStatus() reports it
+        // once there is a log to report into.
+        GStatusLine = FString("BugSplat, version ") + VersionString;
         #endif
     }
 
@@ -254,6 +261,42 @@ namespace Lumina::CrashReporting
         return GInitialized.load(std::memory_order_acquire) && GSenderReady.load(std::memory_order_acquire);
         #else
         return false;
+        #endif
+    }
+
+
+    void LogStatus()
+    {
+        if (IsEnabled())
+        {
+            LOG_DISPLAY("Crash reporting active ({}).", GStatusLine.c_str());
+        }
+        else
+        {
+            // Says WHY, because "no reports are arriving" is otherwise indistinguishable from the
+            // uploader being broken.
+            #if WITH_BUGSPLAT
+            LOG_WARN("Crash reporting is compiled in but inactive; crashes will not be uploaded.");
+            #else
+            LOG_DISPLAY("Crash reporting is not compiled into this build (WITH_BUGSPLAT off).");
+            #endif
+        }
+    }
+
+
+    void GenerateReport(void* ExceptionPointers)
+    {
+        #if WITH_BUGSPLAT
+        if (!GSenderReady.load(std::memory_order_acquire) || ExceptionPointers == nullptr)
+        {
+            return;
+        }
+
+        // Negative dumpType means "SDK default", which keeps this consistent with the reports the
+        // monitor produces on its own rather than inventing a second minidump shape.
+        BugSplat_GenerateDump(ExceptionPointers, -1);
+        #else
+        (void)ExceptionPointers;
         #endif
     }
 

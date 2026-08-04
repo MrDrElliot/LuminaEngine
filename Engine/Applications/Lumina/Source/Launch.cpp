@@ -40,6 +40,10 @@ int LuminaMain(int ArgC, char** ArgV)  // NOLINT(misc-use-internal-linkage)
     // init, or sitting on the Open Project dialog -- would upload with no log at all.
     CrashReporting::AddAttachment(Logging::GetLogFilePath());
 
+    // First point at which the reporter can say anything. Every log now states plainly whether
+    // crashes will be uploaded, instead of leaving it to be inferred from reports that never arrive.
+    CrashReporting::LogStatus();
+
     FCommandLine Parsed{ArgC, ArgV};
     GCommandLine = &Parsed;
 

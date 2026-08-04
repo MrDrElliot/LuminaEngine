@@ -136,7 +136,18 @@ public sealed class ActionGraph
                     throw new BuildException($"Runtime dependency '{Dependency.SourcePath}' does not exist.");
                 }
 
-                Log.Verbose("Skipping missing optional runtime dependency '{0}'", Dependency.SourcePath);
+                // Warning, not Verbose. bOptional exists so a DLL a running editor holds open does not
+                // fail the build -- that is a "cannot overwrite the destination" problem. A source file
+                // that is not there at all is a different thing: the binary ships incomplete, and the
+                // symptom shows up far away and much later.
+                //
+                // slang-glslang.dll is the case in point. Missing, it fails no build and breaks no load;
+                // it surfaces only as "failed to load downstream compiler 'spirv-opt'" during shader
+                // compilation, so a warm shader cache hides it entirely and every shader built on a cold
+                // cache silently skips SPIR-V optimisation.
+                Log.Warning("Runtime dependency '{0}' does not exist; it will be missing from {1}. " +
+                            "Anything that loads it at run time will fail.",
+                            Dependency.SourcePath, Target.BinariesDirectory);
                 continue;
             }
 

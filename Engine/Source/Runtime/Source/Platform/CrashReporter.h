@@ -21,6 +21,21 @@ namespace Lumina::CrashReporting
 
     RUNTIME_API bool IsEnabled();
 
+    // Reports whether the reporter came up, and why not if it did not. Call once logging is running:
+    // Initialize() runs before the log system exists, so it cannot say anything itself.
+    RUNTIME_API void LogStatus();
+
+    // Builds and queues a report for a crash the reporter will NOT see by itself.
+    //
+    // Its monitor detects abnormal process death, which covers a genuine unhandled exception but not
+    // a fatal the engine synthesizes and then swallows -- a lost GPU device, a failed assert, abort.
+    // Those end in a controlled exit that looks like a clean shutdown from outside the process, so
+    // without this call they upload nothing at all.
+    //
+    // ExceptionPointers must be the EXCEPTION_POINTERS the OS supplied to a filter; it is not a
+    // value to construct. Does not terminate the process.
+    RUNTIME_API void GenerateReport(void* ExceptionPointers);
+
     // Consent is the SDK's own job: its sender shows the user what is about to be uploaded and asks
     // before sending, so the engine does not gate this a second time.
 

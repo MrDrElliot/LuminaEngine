@@ -28,6 +28,12 @@ namespace Lumina::CrashHandler
 {
     namespace
     {
+        // Raised by HandleNonSehCrash so ReportFatal / terminate / SIGABRT share the SEH dump path.
+        // Distinguishable from a real hardware fault, which matters below: a genuine unhandled
+        // exception kills the process and the reporter's monitor sees that by itself, whereas this
+        // one is caught and swallowed, so it has to be reported explicitly.
+        constexpr DWORD kSynthesizedFatalCode = 0xE0000001;
+
         std::atomic<bool> GInsideHandler{false};
 
         // Fixed storage and a plain function-pointer array: the crash path walks these with the heap
@@ -289,7 +295,7 @@ namespace Lumina::CrashHandler
             case EXCEPTION_NONCONTINUABLE_EXCEPTION:
             case EXCEPTION_PRIV_INSTRUCTION:
             case EXCEPTION_STACK_OVERFLOW:
-            case 0xE0000001:    // ReportFatal / terminate / SIGABRT
+            case kSynthesizedFatalCode:
                 return true;
 
             default:
@@ -399,6 +405,18 @@ namespace Lumina::CrashHandler
             // its dialog shows the user what is about to be sent and asks, then its monitor process
             // uploads. Two modals for one crash is worse than none, so ours only appears when
             // nothing else is going to report this.
+            // A synthesized fatal never reaches the reporter on its own. HandleNonSehCrash catches the
+            // exception it raised, so the process does not die of it -- it goes on to abort() and then
+            // a controlled _Exit, which the out-of-process monitor sees as a clean shutdown. Every GPU
+            // device loss, failed assert and abort therefore wrote a local dump and uploaded nothing.
+            //
+            // Only for the synthesized code: a real unhandled exception does kill the process, the
+            // monitor picks that up itself, and asking for a second report would duplicate it.
+            if (CrashReporting::IsEnabled() && Code == kSynthesizedFatalCode)
+            {
+                CrashReporting::GenerateReport(ExceptionInfo);
+            }
+
             if (!bMayHandOff)
             {
                 // Recorded everything; the reporter owns the dialog and the exit from here.
