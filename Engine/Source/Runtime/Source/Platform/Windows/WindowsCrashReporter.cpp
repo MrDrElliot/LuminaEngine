@@ -109,8 +109,57 @@ namespace Lumina::CrashReporting
                 if (!FileHelper::LoadFileIntoString(Resolved,
                         FStringView((Root / ".git" / RefName.c_str()).string().c_str())))
                 {
-                    // Ref is packed (after a gc), which needs a packed-refs scan this does not do.
-                    return {};
+                    // No loose ref. git packs refs during gc and a fresh clone may never write one,
+                    // so this is the normal state on a user's machine rather than an edge case --
+                    // without the fallback every report from them loses its commit.
+                    FString Packed;
+                    if (!FileHelper::LoadFileIntoString(Packed,
+                            FStringView((Root / ".git" / "packed-refs").string().c_str())))
+                    {
+                        return {};
+                    }
+
+                    // Lines are "<sha> <refname>". '#' is the header, '^' a peeled tag target.
+                    size_t LineStart = 0;
+                    while (LineStart < Packed.size())
+                    {
+                        size_t LineEnd = Packed.find('\n', LineStart);
+                        if (LineEnd == FString::npos)
+                        {
+                            LineEnd = Packed.size();
+                        }
+
+                        const FStringView Line(Packed.data() + LineStart, LineEnd - LineStart);
+                        LineStart = LineEnd + 1;
+
+                        if (Line.empty() || Line.front() == '#' || Line.front() == '^')
+                        {
+                            continue;
+                        }
+
+                        const size_t Space = Line.find(' ');
+                        if (Space == FStringView::npos)
+                        {
+                            continue;
+                        }
+
+                        FStringView Name = Line.substr(Space + 1);
+                        while (!Name.empty() && (Name.back() == '\r' || Name.back() == ' '))
+                        {
+                            Name = Name.substr(0, Name.size() - 1);
+                        }
+
+                        if (Name == FStringView(RefName))
+                        {
+                            Resolved.assign(Line.data(), Space);
+                            break;
+                        }
+                    }
+
+                    if (Resolved.empty())
+                    {
+                        return {};
+                    }
                 }
 
                 Head = Resolved;

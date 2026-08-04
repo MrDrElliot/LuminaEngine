@@ -72,12 +72,31 @@ function Get-GitCommitSuffix
     {
         $RefName = $Head.Substring(5).Trim()
         $RefPath = Join-Path $RepoRoot ".git\$($RefName -replace '/', '\')"
-        if (-not (Test-Path $RefPath))
+        if (Test-Path $RefPath)
         {
-            # Packed ref, same case the runtime gives up on. Both sides then agree on no suffix.
-            return ""
+            $Head = (Get-Content $RefPath -Raw).Trim()
         }
-        $Head = (Get-Content $RefPath -Raw).Trim()
+        else
+        {
+            # Packed refs, matching the runtime's fallback. Both sides must resolve identically or
+            # the uploaded symbols are filed under a version no crash reports.
+            $PackedPath = Join-Path $RepoRoot ".git\packed-refs"
+            if (-not (Test-Path $PackedPath))
+            {
+                return ""
+            }
+
+            $Line = Get-Content $PackedPath |
+                Where-Object { $_ -notmatch '^[#^]' -and $_ -match "\s$([regex]::Escape($RefName))$" } |
+                Select-Object -First 1
+
+            if ($null -eq $Line)
+            {
+                return ""
+            }
+
+            $Head = ($Line -split '\s+')[0]
+        }
     }
 
     if ($Head.Length -lt 8)
