@@ -2857,6 +2857,15 @@ namespace Lumina::RHI
 
     uint32 HeapWriteTexture(FTextureHeapH Heap, FTextureH Texture)
     {
+        // A null handle decomposes to index 0, which TSegmentMap resolves to the first slot of the
+        // first segment -- a real, live texture. Registration paths reach here with an empty handle
+        // routinely (an unloaded asset, a material slot left blank), and without this the heap would
+        // quietly publish some unrelated texture under the caller's slot.
+        if (!IsValid(Texture))
+        {
+            return kInvalidHeapSlot;
+        }
+
         FTextureHeap& HeapData = GDevice->TextureHeaps[Heap];
 
         FScopeLock Lock(GDevice->HeapMutex);
@@ -2874,6 +2883,14 @@ namespace Lumina::RHI
 
     void HeapRepointTexture(FTextureHeapH Heap, uint32 Slot, FTextureH Texture)
     {
+        // Repointing to a null handle would leave the slot published and pointing at slot 0's
+        // texture. Leaving the existing view in place is the safer failure: the slot is a stable
+        // identity that shaders are already indexing, so it must never resolve to the wrong image.
+        if (!IsValid(Texture))
+        {
+            return;
+        }
+
         FTextureHeap& HeapData = GDevice->TextureHeaps[Heap];
 
         FScopeLock Lock(GDevice->HeapMutex);
@@ -2888,6 +2905,13 @@ namespace Lumina::RHI
 
     uint32 HeapWriteRWTexture(FTextureHeapH Heap, FTextureH Texture, uint32 Mip)
     {
+        // Before the Textures[] lookup below, which would otherwise resolve a null handle to slot 0
+        // and build a storage view over a completely unrelated image.
+        if (!IsValid(Texture))
+        {
+            return kInvalidHeapSlot;
+        }
+
         FTextureHeap& HeapData = GDevice->TextureHeaps[Heap];
         const FTexture& TextureData = GDevice->Textures[Texture];
 

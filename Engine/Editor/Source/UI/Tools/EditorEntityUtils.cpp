@@ -1,7 +1,12 @@
 #include "EditorEntityUtils.h"
 
+#include "Assets/AssetRegistry/AssetRegistry.h"
+#include "Assets/AssetTypes/Material/MaterialInterface.h"
 #include "Components/EditorEntityTags.h"
+#include "GUID/GUID.h"
 #include "Containers/String.h"
+#include "Core/Object/ObjectCore.h"
+#include "Log/Log.h"
 #include "EASTL/string.h"
 #include "Core/Math/AABB.h"
 #include "World/Entity/EntityUtils.h"
@@ -10,7 +15,9 @@
 #include "World/Entity/Components/EditorComponent.h"
 #include "World/Entity/Components/EnvironmentComponent.h"
 #include "World/Entity/Components/LightComponent.h"
+#include "World/Entity/Components/ExponentialHeightFogComponent.h"
 #include "World/Entity/Components/PhysicsComponent.h"
+#include "World/Entity/Components/PostProcessComponent.h"
 #include "World/Entity/Components/SkyLightComponent.h"
 #include "World/Entity/Components/NameComponent.h"
 #include "World/Entity/Components/RelationshipComponent.h"
@@ -313,6 +320,28 @@ namespace Lumina::EditorEntityUtils
         // Unit-radius primitive, dropped from high enough to visibly fall rather than start resting.
         constexpr float kSphereRadius = 1.0f;
         constexpr float kSphereStartY = 4.0f;
+
+        // Text sits behind the sphere so the drop happens in front of it rather than through it.
+        // Level with the top of the resting sphere (radius 1 centred at y = 1), so the separation is
+        // depth rather than height -- the Z offset is what keeps them from overlapping.
+        constexpr float kTextY = 2.0f;
+        constexpr float kTextZ = -3.0f;
+
+        // Engine-content material for the preview sphere. Extension is optional -- GetAssetByPath
+        // strips it from both sides before comparing.
+        constexpr const char* kPreviewMaterialPath = "/Engine/Resources/Content/M_EditorPreview";
+
+        // Coloured accent lights ringing the sphere, 120 degrees apart on a 2m circle so no two sit
+        // on the same side and each gets its own arc of the surface. Placed at the sphere's resting
+        // centre height rather than on the floor, so they wrap the sphere instead of uplighting it.
+        constexpr float kAccentLightRadius = 2.0f;
+        constexpr float kAccentLightY      = kSphereRadius;
+
+        // The text plane spans the entity's local X (right) and Y (up), so its facing normal runs
+        // along local Z. The convention is that -Z points at the viewer, and the preview camera sits
+        // at +Z, so a half turn about Y is what aims the text out of the screen. Without it the
+        // glyphs face away and read mirrored from the default pose.
+        constexpr float kTextYawDegrees = 180.0f;
     }
 
     void PopulateDefaultScene(CWorld* World)
@@ -325,11 +354,27 @@ namespace Lumina::EditorEntityUtils
         entt::entity Entity = World->ConstructEntity("Environment");
         World->EmplaceComponent<SEnvironmentComponent>(Entity);
 
+        // Warm key light raked across the scene rather than the default near-frontal direction:
+        // a light pointing where the camera looks flattens everything it touches. Coming from the
+        // side gives the sphere a terminator and the floor a long shadow, which is most of what
+        // makes a single-object scene read as three-dimensional.
         Entity = World->ConstructEntity("DirectionalLight");
-        World->EmplaceComponent<SDirectionalLightComponent>(Entity);
+        {
+            SDirectionalLightComponent& Light = World->EmplaceComponent<SDirectionalLightComponent>(Entity);
+            Light.Direction     = FVector3(-0.45f, 0.72f, 0.53f);
+            Light.Color         = FVector3(1.0f, 0.94f, 0.84f);
+            Light.Intensity     = 3.2f;
+            Light.bCastShadows  = true;
+        }
 
+        // Cool sky fill opposing the warm key. The warm/cool split is what stops the shadow side
+        // from going flat grey, and it costs nothing.
         Entity = World->ConstructEntity("SkyLight");
-        World->EmplaceComponent<SSkyLightComponent>(Entity);
+        {
+            SSkyLightComponent& SkyLight = World->EmplaceComponent<SSkyLightComponent>(Entity);
+            SkyLight.AmbientColor = FVector3(0.42f, 0.55f, 0.78f);
+            SkyLight.Intensity    = 0.22f;
+        }
 
         // A scaled cube rather than the plane primitive: the plane mesh stands upright in its local XY
         // and would need a -90 rotation to lie flat, but SPlaneColliderComponent's normal is +Y in the
@@ -348,16 +393,158 @@ namespace Lumina::EditorEntityUtils
             FVector3(0.0f, kSphereStartY, 0.0f),
             FVector3(0.0f, 0.0f, 0.0f),
             FVector3(1.0f, 1.0f, 1.0f)));
-        World->EmplaceComponent<SStaticMeshComponent>(Entity).SetStaticMesh(CPrimitiveManager::Get().SphereMesh);
+        {
+            SStaticMeshComponent& Mesh = World->EmplaceComponent<SStaticMeshComponent>(Entity);
+            Mesh.SetStaticMesh(CPrimitiveManager::Get().SphereMesh);
+
+            // Resolved through the asset registry instead of hard-referenced. A path that is missing,
+            // renamed, or simply not discovered yet comes back null rather than faulting, and the
+            // sphere keeps the default material. A default scene that refuses to open because an
+            // engine asset moved would be a much worse failure than one that opens looking plain.
+            //
+            // Warned rather than swallowed, and the two failure modes are reported separately: a
+            // path the registry has never heard of (renamed, or discovery has not run yet) needs a
+            // completely different fix from a path that resolves but whose package will not load.
+            // One combined "could not be resolved" message cannot tell those apart.
+            if (const FAssetData* PreviewData = FAssetRegistry::Get().GetAssetByPath(kPreviewMaterialPath))
+            {
+                if (CMaterialInterface* PreviewMaterial = LoadObject<CMaterialInterface>(kPreviewMaterialPath))
+                {
+                    Mesh.SetMaterialAtSlot(PreviewMaterial, 0);
+                }
+                else
+                {
+                    LOG_WARN("Default scene: preview material '{}' is registered (GUID {}, class {}) but "
+                             "failed to load; the sphere falls back to the default material.",
+                        kPreviewMaterialPath,
+                        PreviewData->AssetGUID.ToString().c_str(),
+                        PreviewData->AssetClass.c_str());
+                }
+            }
+            else
+            {
+                LOG_WARN("Default scene: preview material '{}' is not in the asset registry; the sphere "
+                         "falls back to the default material.", kPreviewMaterialPath);
+            }
+        }
+
         World->EmplaceComponent<SSphereColliderComponent>(Entity).Radius = kSphereRadius;
         World->EmplaceComponent<SRigidBodyComponent>(Entity).BodyType = EBodyType::Dynamic;
+
+        // Volumetric on so the fog above picks the colours up as visible shafts; everything else is
+        // left at component defaults.
+        {
+            struct FAccentLight
+            {
+                const char* Name;
+                FVector3    Color;
+                float       AngleDegrees;
+            };
+
+            // Blue is placed at 180 so it sits on the far side, between the sphere and the banner --
+            // the one position whose spill reaches the text.
+            constexpr FAccentLight AccentLights[] =
+            {
+                { "PointLight_Red",   FVector3(1.0f, 0.0f, 0.0f),  60.0f },
+                { "PointLight_Green", FVector3(0.0f, 1.0f, 0.0f), 300.0f },
+                { "PointLight_Blue",  FVector3(0.0f, 0.0f, 1.0f), 180.0f },
+            };
+
+            for (const FAccentLight& Accent : AccentLights)
+            {
+                const float Radians = Math::Radians(Accent.AngleDegrees);
+
+                Entity = World->ConstructEntity(Accent.Name, FTransform(
+                    FVector3(Math::Sin(Radians) * kAccentLightRadius,
+                             kAccentLightY,
+                             Math::Cos(Radians) * kAccentLightRadius),
+                    FVector3(0.0f, 0.0f, 0.0f),
+                    FVector3(1.0f, 1.0f, 1.0f)));
+
+                SPointLightComponent& Light = World->EmplaceComponent<SPointLightComponent>(Entity);
+                Light.LightColor  = Accent.Color;
+                Light.bVolumetric = true;
+            }
+        }
+
+        // Font is left null on purpose: the text extractor falls back to the engine's default
+        // world-text font, so this works in a project that has not imported one.
+        Entity = World->ConstructEntity("Welcome Text", FTransform(
+            FVector3(0.0f, kTextY, kTextZ),
+            FVector3(0.0f, kTextYawDegrees, 0.0f),
+            FVector3(1.0f, 1.0f, 1.0f)));
+        {
+            STextComponent& Text = World->EmplaceComponent<STextComponent>(Entity);
+            Text.Text            = "Welcome to Lumina!";
+            Text.WorldSize       = 0.85f;
+
+            // Above 1 on purpose. The colour feeds the same HDR buffer the bloom threshold reads, so
+            // pushing it over white is what makes the text bloom rather than just look bright.
+            Text.Color           = FVector4(1.35f, 1.5f, 1.9f, 1.0f);
+            Text.HorizontalAlign = ETextHorizontalAlign::Center;
+            Text.VerticalAlign   = ETextVerticalAlign::Middle;
+
+            // Not a billboard: a fixed banner that swings to track the camera as you orbit reads as a
+            // bug. Depth-tested so the sphere passes in front of it properly on the way down.
+            Text.bBillboard      = false;
+            Text.bDepthTest      = true;
+        }
+
+        // Infinite extent: this is the level's global look, not a region to walk into, so there is no
+        // box to sit inside and no boundary to blend across.
+        Entity = World->ConstructEntity("Post Process");
+        {
+            SPostProcessComponent& PostProcess = World->EmplaceComponent<SPostProcessComponent>(Entity);
+            PostProcess.bInfiniteExtent = true;
+            PostProcess.BlendWeight     = 1.0f;
+
+            SPostProcessSettings& Settings = PostProcess.Settings;
+
+            // AGX over the ACES default: ACES hue-shifts saturated reds and crushes highlights, and
+            // the bloomed text is exactly the kind of bright saturated element it handles worst.
+            Settings.ToneMapper          = EToneMapper::AGX;
+            Settings.ExposureCompensation = 0.15f;
+
+            // Slight warm push and a touch of contrast/saturation. Small numbers on purpose -- this
+            // is the first thing anyone sees, and a heavily graded default is one somebody has to
+            // undo before they can judge their own content.
+            Settings.Temperature = 0.12f;
+            Settings.Contrast    = 1.06f;
+            Settings.Saturation  = 1.08f;
+
+            Settings.BloomIntensity = 0.35f;
+            Settings.BloomThreshold = 1.0f;
+            Settings.BloomScatter   = 0.82f;
+            Settings.BloomTint      = FVector3(0.85f, 0.92f, 1.0f);
+
+            // Draws the eye to the centre of frame where the sphere and text sit.
+            Settings.VignetteIntensity  = 0.28f;
+            Settings.VignetteSmoothness = 0.55f;
+        }
+
+        // Thin ground haze. The floor slab ends abruptly at its edge; fog softens that seam into
+        // distance instead of leaving a hard rectangle floating in the void.
+        Entity = World->ConstructEntity("Height Fog");
+        {
+            SExponentialHeightFogComponent& Fog = World->EmplaceComponent<SExponentialHeightFogComponent>(Entity);
+            Fog.FogDensity                  = 0.018f;
+            Fog.FogHeightFalloff            = 0.35f;
+            Fog.FogBaseHeight               = -0.5f;
+            Fog.FogMaxOpacity               = 0.65f;
+            Fog.FogInscatteringColor        = FVector3(0.38f, 0.47f, 0.62f);
+            Fog.DirectionalInscatteringColor = FVector3(1.0f, 0.88f, 0.68f);
+        }
     }
 
     void GetDefaultScenePreviewPose(FVector3& OutLocation, FVector3& OutTarget)
     {
-        // Aimed at the sphere's RESTING height, not its spawn height: the scene is looked at far more
-        // often after it has settled than during the first second of the drop.
-        OutTarget   = FVector3(0.0f, kSphereRadius, 0.0f);
-        OutLocation = FVector3(4.5f, 3.5f, 8.0f);
+        // Aimed between the sphere's RESTING height and the text behind it, so the opening shot frames
+        // both rather than centring the sphere and clipping the banner. The scene is looked at far
+        // more often after it has settled than during the first second of the drop.
+        OutTarget   = FVector3(0.0f, (kSphereRadius + kTextY) * 0.5f, kTextZ * 0.35f);
+
+        // Pulled back and swung further off-axis than a straight-on view: the key light rakes from
+        // -X, so sitting on +X puts the lit side toward the camera and keeps the terminator visible.
+        OutLocation = FVector3(6.0f, 4.0f, 9.5f);
     }
 }

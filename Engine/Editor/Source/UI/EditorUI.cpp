@@ -510,10 +510,9 @@ namespace Lumina
         EditorWindowClass.DockingAlwaysTabBar           = true;
 
         // Same starting scene a newly created world asset gets, so the editor's opening view is not a
-        // different world from the one File > New produces.
+        // different world from the one File > New produces. Created here but POPULATED below, after
+        // the project has had its chance to load -- see the comment at the PopulateDefaultScene call.
         CWorld* World = NewObject<CWorld>(nullptr, "Transient World", FGuid::New(), OF_Transient);
-        EditorEntityUtils::PopulateDefaultScene(World);
-
 
         WorldEditorTool = CreateTool<FWorldEditorTool>(this, World);
         ConsoleLogTool = CreateTool<FConsoleLogEditorTool>(this);
@@ -552,6 +551,12 @@ namespace Lumina
         {
             OnProjectLoaded();
         }
+
+        // Populated only now, because the default scene references engine content by path and the
+        // asset registry is not discovered until a project loads. With no --Project on the command
+        // line that load happens in the block above, so building the scene any earlier means every
+        // asset lookup runs against an empty registry and silently falls back.
+        EditorEntityUtils::PopulateDefaultScene(World);
     }
 
     void FEditorUI::Deinitialize(const FUpdateContext& UpdateContext)

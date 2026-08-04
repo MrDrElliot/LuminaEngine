@@ -84,14 +84,18 @@ namespace Lumina
         FUNCTION(Script)
         void SetMaterialAtSlot(CMaterialInterface* Material, uint32 Slot)
         {
-            if (MaterialOverrides.size() < Slot)
+            // Grow to cover Slot, then assign. The previous form tested `size() < Slot` and otherwise
+            // indexed directly, so the common case of slot 0 on a component with no overrides yet
+            // (0 < 0 is false) wrote through MaterialOverrides[0] on an EMPTY vector. Nothing sizes
+            // this array -- not SetStaticMesh, not construction -- so that was an out-of-bounds write
+            // on the first call for any component. push_back was also wrong for Slot > size, landing
+            // the material at whatever index happened to be next rather than the one asked for.
+            if (MaterialOverrides.size() <= Slot)
             {
-                MaterialOverrides.push_back(Material);
+                MaterialOverrides.resize(Slot + 1);
             }
-            else
-            {
-                MaterialOverrides[Slot] = Material;
-            }
+
+            MaterialOverrides[Slot] = Material;
             InvalidateRenderResolve();
         }
 

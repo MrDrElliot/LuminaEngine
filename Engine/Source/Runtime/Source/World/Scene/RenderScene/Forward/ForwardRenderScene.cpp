@@ -5293,6 +5293,42 @@ namespace Lumina
             return;
         }
 
+        // Every address handed to this shader is dereferenced with no null check of its own, so a
+        // failed allocation anywhere below turns into a read off address 0. NVIDIA has tolerated
+        // that; AMD faults the device outright ("Invalid read at 0x0", VK_ERROR_DEVICE_LOST on the
+        // next submit) with the breadcrumb trail pointing here. CreateSceneBuffer already reports a
+        // null Ptr and Size 0 when an allocation fails -- refusing to dispatch is the missing half.
+        //
+        // Cost is one predictable branch per pass per frame against values already in registers.
+        {
+            const struct { const char* Name; RHI::GPUPtr Addr; } Required[] =
+            {
+                { "IndirectArgs",          GetIndirectArgs().GetAddress()          },
+                { "MeshletDeferList",      GetMeshletDeferList().GetAddress()      },
+                { "DeferCount",            GetDeferCount().GetAddress()            },
+                { "MeshDrawArgs",          GetMeshDrawArgs().GetAddress()          },
+                { "Totals",                GetTotals().GetAddress()                },
+                { "ViewDrawCounts",        GetViewDrawCounts().GetAddress()        },
+                { "ViewDrawOffsets",       GetViewDrawOffsets().GetAddress()       },
+                { "EarlyCullDispatchArgs", GetEarlyCullDispatchArgs().GetAddress() },
+            };
+
+            for (const auto& Buffer : Required)
+            {
+                if (Buffer.Addr == 0)
+                {
+                    // Throttled: if one allocation is failing they all will, every frame.
+                    static uint32 NullBufferLogCounter = 0;
+                    if ((NullBufferLogCounter++ % 120u) == 0u)
+                    {
+                        LOG_ERROR("RenderScene: skipping early cull -- scene buffer '{}' has no allocation. "
+                                  "Dispatching would read device address 0 and fault the GPU.", Buffer.Name);
+                    }
+                    return;
+                }
+            }
+        }
+
         RHI::CmdMemset(CL, GetDeferCount().Ptr, GetDeferCount().Size, 0u);
         Barriers::TransferToAll(CL);
 
