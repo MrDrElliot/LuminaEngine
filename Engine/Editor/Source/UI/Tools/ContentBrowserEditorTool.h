@@ -178,6 +178,17 @@ namespace Lumina
                               bool& bShouldClose, bool& bOutApplyToAll);
 
         CFactory* FindImportFactory(const FFixedString& Path) const;
+
+        // Free package path for importing SourcePath into the current folder, or empty if none could be
+        // found. Uniquifying on the source filename is not enough: imports become packages, whose names
+        // carry no extension, so the check has to run in the package namespace.
+        FFixedString MakeUniqueImportDestination(FStringView SourcePath);
+
+        // Destinations handed out for imports that have not finished yet. Every import runs on its own
+        // task, so none of them have created their package by the time the batch is queued; without this
+        // two sources in one batch happily claim the same name and the second create fails.
+        THashSet<FFixedString> ReservedImportPaths;
+
         void StartImport(CFactory* Factory, const FFixedString& Path, const FFixedString& DestinationPath,
                          TUniquePtr<Import::FImportSettings> Settings);
         void ProcessNextImport();
@@ -199,6 +210,13 @@ namespace Lumina
         void DrawContentBrowser(bool bIsFocused, ImVec2 Size);
         
         void DrawAssetContextMenu(FContentBrowserTileViewItem* ContentItem);
+
+        // Menu shown when a marquee (or Ctrl-click / Ctrl+A) has gathered more than one tile. Deliberately
+        // sparse: only the operations that mean the same thing applied to a mixed bag of folders and files.
+        void DrawMultiSelectionContextMenu(const TVector<FTileViewItem*>& Items);
+
+        // One confirmation for the whole set, protected entries filtered out rather than aborting the batch.
+        void DeleteSelectedItems(const TVector<FTileViewItem*>& Items);
 
         // Duplicate entry. Disabled for packages holding sub-objects a property copy would alias.
         void DrawDuplicateAssetMenuItem(const FContentBrowserTileViewItem* ContentItem, bool bIsProtected);

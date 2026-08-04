@@ -95,6 +95,13 @@ namespace Lumina
         }
 
         CAudioStream* NewStream = TryCreateNew<CAudioStream>(DestinationPath);
+        if (NewStream == nullptr)
+        {
+            LOG_ERROR("AudioStreamFactory: could not create '{0}' for '{1}'; a package already exists at that path",
+                DestinationPath.c_str(), RawPath.c_str());
+            return;
+        }
+
         NewStream->SourcePath  = FString(RawPath.c_str());
         NewStream->SampleRate  = Info.SampleRate;
         NewStream->NumChannels = Info.NumChannels;

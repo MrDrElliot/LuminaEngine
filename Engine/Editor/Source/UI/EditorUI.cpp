@@ -1220,8 +1220,8 @@ namespace Lumina
         // Copy: opening a tab writes back into the live list.
         const TVector<FString> Tabs = Settings->OpenTabs;
 
-        // Entries whose asset the registry has not scanned yet. Re-running the whole restore is
-        // idempotent (an already-open tool just gets focused), so the retry below is simply another pass.
+        // Entries whose asset the registry has not scanned yet. The retry below is another pass over the
+        // same list, skipping whatever an earlier pass already restored.
         int32 NumUnscanned = 0;
 
         TVector<FString> Survivors;
@@ -1229,6 +1229,15 @@ namespace Lumina
 
         for (const FString& Tab : Tabs)
         {
+            // Restoring twice is not free: OpenAssetEditor reloads the asset graph and focuses the tool.
+            // Since the retry fires on every registry change, an asset import was enough to steal focus
+            // and dismiss the footer drawer mid-click.
+            if (RestoredSessionTabs.find(Tab) != RestoredSessionTabs.end())
+            {
+                Survivors.push_back(Tab);
+                continue;
+            }
+
             if (SessionKeyHasPrefix(Tab, GSessionAssetPrefix))
             {
                 const FString GuidText = Tab.substr(strlen(GSessionAssetPrefix));
@@ -1249,6 +1258,7 @@ namespace Lumina
                 }
 
                 Survivors.push_back(Tab);
+                RestoredSessionTabs.insert(Tab);
                 OpenAssetEditor(*Guid);
             }
             else if (SessionKeyHasPrefix(Tab, GSessionFilePrefix))
@@ -1260,6 +1270,7 @@ namespace Lumina
                 }
 
                 Survivors.push_back(Tab);
+                RestoredSessionTabs.insert(Tab);
                 OpenFileEditor(FStringView(Path.c_str(), Path.size()));
             }
         }
@@ -1748,13 +1759,24 @@ namespace Lumina
             OpenDrawer->DrawDrawerContent(bFocused);
         }
 
+        // Captured before End(), while the drawer is still the current window.
+        const ImVec2 DrawerMin = ImGui::GetWindowPos();
+        const ImVec2 DrawerMax = ImVec2(DrawerMin.x + ImGui::GetWindowWidth(), DrawerMin.y + ImGui::GetWindowHeight());
+
         ImGui::End();
         ImGui::PopStyleVar();
 
         // Auto-dismiss on click-outside, unless a footer button/shortcut toggled it this
         // frame or one of the drawer's own popups is open (those read as a separate window).
-        const bool bPopupOpen = ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup);
-        if (!bFocused && !bPopupOpen && !bDrawerActivatedThisFrame && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+        //
+        // The geometric test is not redundant with bFocused. Anything that calls SetWindowFocus elsewhere
+        // in the frame leaves the drawer unfocused while the cursor is still over it, and then the user's
+        // very next click -- on the drawer -- read as a click-outside and closed it.
+        const bool bPopupOpen   = ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup);
+        const bool bMouseInside = ImGui::IsMouseHoveringRect(DrawerMin, DrawerMax, false);
+
+        if (!bFocused && !bMouseInside && !bPopupOpen && !bDrawerActivatedThisFrame
+            && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
         {
             OpenDrawer = nullptr;
             DrawerOpenAmount = 0.0f;
@@ -3508,6 +3530,7 @@ namespace Lumina
         // Armed here, not at startup: the tab list lives in the project's own /Config, so it isn't
         // readable until the project is mounted. Consumed on the next update.
         bSessionRestorePending = true;
+        RestoredSessionTabs.clear();
 
         ContentBrowser->RefreshContentBrowser();
         

@@ -262,6 +262,11 @@ namespace Lumina
 
         // Retry hook for tabs whose asset had not been scanned into the registry yet at restore time.
         FDelegateHandle                                 SessionRestoreRetryHandle;
+
+        // Session keys already handed to OpenAssetEditor/OpenFileEditor. The retry pass runs on every
+        // registry change, and re-opening an open tool focuses it -- which yanks focus away from whatever
+        // the user is actually using.
+        THashSet<FString>                               RestoredSessionTabs;
         TQueue<FEditorTool*>                            ToolsPendingAdd;
         TQueue<FEditorTool*>                            ToolsPendingDestroy;
 

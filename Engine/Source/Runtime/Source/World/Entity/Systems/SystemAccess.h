@@ -5,6 +5,7 @@
 #include "ModuleAPI.h"
 #include "Containers/Array.h"
 #include "Containers/String.h"
+#include "SystemResources.h"
 
 namespace Lumina
 {
@@ -21,12 +22,22 @@ namespace Lumina
     {
         TVector<uint32> Writes;
         TVector<uint32> Reads;
+
+        // One per declared component type. Creating a component pool MUTATES the registry's pool map, and
+        // entt does it lazily inside view()/get()/storage() -- for reads as much as writes. So two systems
+        // in the same parallel batch can be inside that dense_map at once, one of them rehashing it, and
+        // the reader walks a reallocated bucket array. It does not matter whether the two want the same
+        // component: the map is shared. The scheduler runs these on the tick thread before the batch, so
+        // every assure() inside the batch is a pure lookup. See CWorld::TickSystems.
+        TVector<void(*)(entt::registry&)> PoolAssurers;
+
         bool            bExclusive = false;
 
         template<typename... Ts>
         FSystemAccess& Write()
         {
             (Writes.push_back(static_cast<uint32>(entt::type_hash<Ts>::value())), ...);
+            (AddPoolAssurer<Ts>(), ...);
             return *this;
         }
 
@@ -34,7 +45,17 @@ namespace Lumina
         FSystemAccess& Read()
         {
             (Reads.push_back(static_cast<uint32>(entt::type_hash<Ts>::value())), ...);
+            (AddPoolAssurer<Ts>(), ...);
             return *this;
+        }
+
+        template<typename T>
+        void AddPoolAssurer()
+        {
+            if constexpr (!TIsSystemResource<T>)
+            {
+                PoolAssurers.push_back(+[](entt::registry& Registry) { (void)Registry.storage<T>(); });
+            }
         }
 
         static FSystemAccess Exclusive()

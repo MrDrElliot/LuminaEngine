@@ -50,6 +50,13 @@ namespace Lumina
         }
 
         CFont* NewFont = TryCreateNew<CFont>(DestinationPath);
+        if (NewFont == nullptr)
+        {
+            LOG_ERROR("FontFactory: could not create '{0}' for '{1}'; a package already exists at that path",
+                DestinationPath.c_str(), RawPath.c_str());
+            return;
+        }
+
         NewFont->FontData = Move(Bytes);
         NewFont->SourcePath = FString(RawPath.c_str());
 

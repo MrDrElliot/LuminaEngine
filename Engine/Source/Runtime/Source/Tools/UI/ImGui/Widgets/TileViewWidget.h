@@ -151,6 +151,9 @@ namespace Lumina
 
         bool HandleKeyPressed(const FTileViewContext& Context, FTileViewItem& Item, ImGuiKey Key);
 
+        /** Ctrl+A. Covers every item in the folder, including rows the clipper never submitted. */
+        void SelectAll(const FTileViewContext& Context);
+
         // Runs once per frame against the selection. Keying off the hovered tile instead loses presses:
         // a rename re-sorts the tree, the tile slides out from under the cursor, and the next press
         // lands on empty space.

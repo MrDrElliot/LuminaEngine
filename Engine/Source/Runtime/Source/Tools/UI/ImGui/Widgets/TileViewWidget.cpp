@@ -355,7 +355,7 @@ namespace Lumina
     {
         // Typing must not fire item actions, and a rubber-band drag owns input. WantTextInput covers
         // any focused text field, including the search box, not just this widget's rename.
-        if (RenamingItem != nullptr || bMarqueeActive || Selections.empty() || ImGui::GetIO().WantTextInput)
+        if (RenamingItem != nullptr || bMarqueeActive || ImGui::GetIO().WantTextInput)
         {
             return;
         }
@@ -363,6 +363,19 @@ namespace Lumina
         // Only the focused panel acts on keys. Checked against the root so a click on any tile,
         // which focuses the child, still counts as the browser having focus.
         if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
+        {
+            return;
+        }
+
+        // Returns rather than falling through: the dispatch loop below would otherwise deliver a bare
+        // 'A' to the item handler on the same press.
+        if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_A, false))
+        {
+            SelectAll(Context);
+            return;
+        }
+
+        if (Selections.empty())
         {
             return;
         }
@@ -456,12 +469,28 @@ namespace Lumina
 
         if (bItemHovered && ImGui::IsMouseReleased(ImGuiMouseButton_Right) && ItemToDraw->HasContextMenu())
         {
+            // Right-clicking outside the selection retargets it; right-clicking inside one keeps it, so
+            // the menu can act on everything a marquee just gathered. Matches every file manager.
+            if (!ItemToDraw->IsSelected())
+            {
+                ClearSelections();
+                ToggleSelection(ItemToDraw, Context);
+            }
+
             ImGui::OpenPopup("ItemContextMenu");
         }
 
 
         if (ImGui::BeginDragDropSource())
         {
+            // Same rule as the context menu. Without it, dragging an unselected tile also drags whatever
+            // was selected elsewhere, since the drop handler moves the whole selection.
+            if (!ItemToDraw->IsSelected())
+            {
+                ClearSelections();
+                ToggleSelection(ItemToDraw, Context);
+            }
+
             ItemToDraw->SetDragDropPayloadData();
             if (Context.DrawItemOverrideFunction)
             {
@@ -486,10 +515,20 @@ namespace Lumina
             // captured at the right moment. Letting it re-test here would reintroduce the same bug.
             if (ImGui::BeginPopup("ItemContextMenu"))
             {
+                // Copied rather than passed by reference: the menu can clear or rebuild the selection
+                // (deleting is the whole point), which would resize Selections mid-iteration.
                 TVector<FTileViewItem*> SelectionsToDraw;
-                SelectionsToDraw.push_back(ItemToDraw);
+                if (ItemToDraw->IsSelected())
+                {
+                    SelectionsToDraw = Selections;
+                }
+                else
+                {
+                    SelectionsToDraw.push_back(ItemToDraw);
+                }
+
                 Context.DrawItemContextMenuFunction(SelectionsToDraw);
-                
+
                 ImGui::EndPopup();
             }
         }
@@ -589,6 +628,17 @@ namespace Lumina
         }
 
         Item->OnSelectionStateChanged();
+    }
+
+    void FTileViewWidget::SelectAll(const FTileViewContext& Context)
+    {
+        for (FTileViewItem* Item : ListItems)
+        {
+            if (!Item->IsSelected())
+            {
+                ToggleSelection(Item, Context);
+            }
+        }
     }
 
     void FTileViewWidget::ClearSelections()

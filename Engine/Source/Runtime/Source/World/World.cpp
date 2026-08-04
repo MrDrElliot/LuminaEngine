@@ -1990,6 +1990,17 @@ namespace Lumina
             }
             else
             {
+                // Create every pool the batch declares BEFORE going wide. entt creates pools lazily inside
+                // view(), which writes to the registry's shared pool map -- concurrently with sibling systems
+                // reading it. Doing it here on one thread leaves the map immutable for the parallel region.
+                for (uint16 Index : Batch)
+                {
+                    for (void (*Assure)(entt::registry&) : Systems[Index].Access.PoolAssurers)
+                    {
+                        Assure(EntityRegistry);
+                    }
+                }
+
                 Task::ParallelFor(static_cast<uint32>(Batch.size()), [&](uint32 Index)
                 {
                     DEBUG_ASSERT(!Systems[Batch[Index]].Access.bExclusive); // scheduler invariant: batched => not exclusive

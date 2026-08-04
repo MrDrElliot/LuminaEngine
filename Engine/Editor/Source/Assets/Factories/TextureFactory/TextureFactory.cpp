@@ -717,6 +717,15 @@ namespace Lumina
     void CTextureFactory::TryImport(const FFixedString& RawPath, const FFixedString& DestinationPath, const Import::FImportSettings* Settings)
     {
         CTexture* NewTexture = TryCreateNew<CTexture>(DestinationPath);
+        if (NewTexture == nullptr)
+        {
+            // Almost always a destination whose package is already loaded. The caller is responsible for
+            // handing us a free path; failing here is a refusal to clobber, not something to recover from.
+            LOG_ERROR("TextureFactory: could not create '{0}' for '{1}'; a package already exists at that path",
+                DestinationPath.c_str(), RawPath.c_str());
+            return;
+        }
+
         NewTexture->SetFlag(OF_NeedsPostLoad);
 
         NewTexture->TextureResource = MakeUnique<FTextureResource>();

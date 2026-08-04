@@ -1100,20 +1100,18 @@ namespace Lumina
         
         ContentBrowserTileViewContext.DrawItemContextMenuFunction = [this] (const TVector<FTileViewItem*>& Items)
         {
-            bool bMultipleItems = Items.size() > 1;
-            
-            for (FTileViewItem* Item : Items)
+            if (Items.empty())
             {
-                FContentBrowserTileViewItem* ContentItem = static_cast<FContentBrowserTileViewItem*>(Item);
-
-                if (bMultipleItems)
-                {
-                    continue;
-                }
-
-                DrawAssetContextMenu(ContentItem);
-
+                return;
             }
+
+            if (Items.size() == 1)
+            {
+                DrawAssetContextMenu(static_cast<FContentBrowserTileViewItem*>(Items[0]));
+                return;
+            }
+
+            DrawMultiSelectionContextMenu(Items);
         };
 
         ContentBrowserTileViewContext.RebuildTreeFunction = [this] (FTileViewWidget* Tree)
@@ -1230,13 +1228,22 @@ namespace Lumina
 
             if (Key == ImGuiKey_Delete)
             {
+                // Item is only the key's anchor (the first selection). Delete has to take the whole set,
+                // or a marquee over fifty assets removes exactly one.
+                const TVector<FTileViewItem*>& Selections = ContentBrowserTileView.GetSelections();
+                if (Selections.size() > 1)
+                {
+                    DeleteSelectedItems(Selections);
+                    return true;
+                }
+
                 FContentBrowserTileViewItem* ContentItem = static_cast<FContentBrowserTileViewItem*>(&Item);
                 if (ContentItem->IsProtected())
                 {
                     ImGuiX::Notifications::NotifyError("Cannot delete a core directory");
                     return true;
                 }
-                
+
                 OpenDeletionWarningPopup(ContentItem);
                 return true;
             }
@@ -1996,14 +2003,66 @@ namespace Lumina
         return nullptr;
     }
 
+    FFixedString FContentBrowserEditorTool::MakeUniqueImportDestination(FStringView SourcePath)
+    {
+        // Stem only. An import becomes a package, and a package name is the path with any extension
+        // stripped (see SanitizeObjectName), so "Foo.png" and "Foo.jpg" both want to be "Foo".
+        const FFixedString Base = Paths::Combine(SelectedPath, VFS::FileName(SourcePath, true));
+
+        // Three namespaces have to agree. Testing only the source path on disk -- which is what this used
+        // to do -- tests a name that can never exist, since the asset lands as "<stem>.lasset".
+        auto IsFree = [this](const FFixedString& Candidate) -> bool
+        {
+            // What CreatePackage actually refuses on.
+            if (FindObject<CPackage>(Candidate) != nullptr)
+            {
+                return false;
+            }
+
+            // An asset already on disk that nothing has loaded this session.
+            FFixedString OnDisk = Candidate;
+            CPackage::AddPackageExt(OnDisk);
+            if (VFS::Exists(OnDisk))
+            {
+                return false;
+            }
+
+            return ReservedImportPaths.find(Candidate) == ReservedImportPaths.end();
+        };
+
+        if (IsFree(Base))
+        {
+            ReservedImportPaths.insert(Base);
+            return Base;
+        }
+
+        for (uint32 N = 1; N < 10000; ++N)
+        {
+            FFixedString Candidate = Base;
+            Candidate.append("_").append_convert(eastl::to_string(N).c_str());
+
+            if (IsFree(Candidate))
+            {
+                ReservedImportPaths.insert(Candidate);
+                return Candidate;
+            }
+        }
+
+        return {};
+    }
+
     void FContentBrowserEditorTool::StartImport(CFactory* Factory, const FFixedString& Path, const FFixedString& DestinationPath, TUniquePtr<Import::FImportSettings> Settings)
     {
         Task::AsyncTask(1, 1, [this, Factory, Path, DestinationPath, Settings = Move(Settings)](uint32, uint32, uint32)
         {
             Factory->Import(Path, DestinationPath, Settings.get());
 
-            MainThread::Enqueue([this, Path]()
+            MainThread::Enqueue([this, Path, DestinationPath]()
             {
+                // Released only now the import has run. On success the package is registered and saved, so
+                // the checks above see it; on failure the name goes back to being free.
+                ReservedImportPaths.erase(DestinationPath);
+
                 RefreshContentBrowser();
                 ImGuiX::Notifications::NotifySuccess("Successfully Imported: \"{0}\"", Path);
             });
@@ -2031,14 +2090,21 @@ namespace Lumina
                 continue;
             }
 
-            const FFixedString Destination = VFS::MakeUniqueFilePath(Paths::Combine(SelectedPath, VFS::FileName(Path)));
-
             if (!Factory->HasImportDialogue())
             {
+                const FFixedString Destination = MakeUniqueImportDestination(Path);
+                if (Destination.empty())
+                {
+                    ImGuiX::Notifications::NotifyError("No free asset name for \"{0}\"", VFS::FileName(Path).data());
+                    continue;
+                }
+
                 StartImport(Factory, Path, Destination, nullptr);
                 continue;
             }
 
+            // Queued files get their destination when they reach the front, not here: the dialogue can sit
+            // open for minutes, and reserving forty names up front would make every later one a "_1".
             PendingImports.push_back(Path);
         }
 
@@ -2068,7 +2134,13 @@ namespace Lumina
             return;
         }
 
-        const FFixedString DestinationPath = VFS::MakeUniqueFilePath(Paths::Combine(SelectedPath, VFS::FileName(Path)));
+        const FFixedString DestinationPath = MakeUniqueImportDestination(Path);
+        if (DestinationPath.empty())
+        {
+            ImGuiX::Notifications::NotifyError("No free asset name for \"{0}\"", VFS::FileName(Path).data());
+            ProcessNextImport();
+            return;
+        }
 
         bImportWindowOpen = true;
 
@@ -2080,6 +2152,8 @@ namespace Lumina
                 if (!Settings)
                 {
                     ImGuiX::Notifications::NotifyError("Failed to import: \"{0}\"", Path);
+                    // Nothing will be created at the reserved name, so hand it back.
+                    ReservedImportPaths.erase(DestinationPath);
                     bImportWindowOpen = false;
                     ProcessNextImport();
                     return;
@@ -2098,6 +2172,7 @@ namespace Lumina
                 {
                     TUniquePtr<Import::FImportSettings> ImportSettings;
                     bool bShouldClose = false;
+                    bool bStarted     = false;
                 };
 
                 auto SharedState = MakeShared<FModalState>();
@@ -2112,11 +2187,18 @@ namespace Lumina
                                              (int32)PendingImports.size(), SharedState->bShouldClose, bApplyToAll))
                         {
                             bApplyImportSettingsToAll = bApplyToAll;
+                            SharedState->bStarted = true;
                             StartImport(Factory, Path, DestinationPath, Move(SharedState->ImportSettings));
                         }
 
                         if (SharedState->bShouldClose)
                         {
+                            // Cancelled: StartImport never ran, so nothing else will release the name.
+                            if (!SharedState->bStarted)
+                            {
+                                ReservedImportPaths.erase(DestinationPath);
+                            }
+
                             // Advancing from here rather than from the confirm branch, so cancelling one
                             // file skips it and moves on instead of abandoning the rest of the batch.
                             bImportWindowOpen = false;
@@ -2276,20 +2358,7 @@ namespace Lumina
             && ImGui::IsKeyPressed(ImGuiKey_Delete)
             && !ContentBrowserTileView.GetSelections().empty())
         {
-            if (Dialogs::Confirmation("Confirm Deletion", "Are you sure you want to delete these files/directories?\n This action cannot be undone."))
-            {
-                for (FTileViewItem* Selection : ContentBrowserTileView.GetSelections())
-                {
-                    FContentBrowserTileViewItem* ContentBrowserItem = static_cast<FContentBrowserTileViewItem*>(Selection);
-                    DEBUG_ASSERT(Selection->IsSelected());
-                    
-                    ActionRegistry.EnqueueAction<FPendingDestroy>(
-                    FPendingDestroy
-                    { 
-                        FFixedString(ContentBrowserItem->GetVirtualPath().data(), ContentBrowserItem->GetVirtualPath().size())
-                    });
-                }
-            }
+            DeleteSelectedItems(ContentBrowserTileView.GetSelections());
         }
         
         ImGui::BeginHorizontal("Breadcrumbs");
@@ -2627,7 +2696,174 @@ namespace Lumina
 
         PopContextMenuItemStyle();
     }
-    
+
+    void FContentBrowserEditorTool::DrawMultiSelectionContextMenu(const TVector<FTileViewItem*>& Items)
+    {
+        int32 FolderCount    = 0;
+        int32 AssetCount     = 0;
+        int32 FileCount      = 0;
+        int32 ProtectedCount = 0;
+
+        for (FTileViewItem* Item : Items)
+        {
+            const auto* ContentItem = static_cast<const FContentBrowserTileViewItem*>(Item);
+
+            if (ContentItem->IsProtected()) { ++ProtectedCount; }
+
+            if (ContentItem->IsDirectory()) { ++FolderCount; }
+            else if (ContentItem->IsAsset()) { ++AssetCount; }
+            else { ++FileCount; }
+        }
+
+        FFixedString Title;
+        Title.append_convert(eastl::to_string(Items.size()).c_str()).append(" items selected");
+
+        FFixedString Subtitle;
+        auto AppendPart = [&Subtitle](int32 Count, const char* Label)
+        {
+            if (Count == 0)
+            {
+                return;
+            }
+            if (!Subtitle.empty())
+            {
+                Subtitle.append(", ");
+            }
+            Subtitle.append_convert(eastl::to_string(Count).c_str()).append(" ").append(Label);
+        };
+        AppendPart(FolderCount, "folder(s)");
+        AppendPart(AssetCount,  "asset(s)");
+        AppendPart(FileCount,   "file(s)");
+
+        PushContextMenuItemStyle();
+
+        DrawMenuHeader(LE_ICON_SELECT_MULTIPLE, Title.c_str(), Subtitle.c_str(), kMenuAccent);
+
+        DrawMenuSection("CLIPBOARD");
+
+        if (ImGui::MenuItem(LE_ICON_CONTENT_COPY " Copy Paths"))
+        {
+            FFixedString Clipboard;
+            for (FTileViewItem* Item : Items)
+            {
+                const auto* ContentItem = static_cast<const FContentBrowserTileViewItem*>(Item);
+                if (!Clipboard.empty())
+                {
+                    Clipboard.append("\n");
+                }
+                Clipboard.append_convert(ContentItem->GetVirtualPath().data(), ContentItem->GetVirtualPath().size());
+            }
+
+            ImGui::SetClipboardText(Clipboard.c_str());
+            ImGuiX::Notifications::NotifyInfo("{0} paths copied to clipboard", Items.size());
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+
+        const bool bWorldActive  = IsAnyWorldPlayingOrSimulating();
+        const bool bAllProtected = ProtectedCount == (int32)Items.size();
+
+        ImGui::PushStyleColor(ImGuiCol_Text,          kMenuDanger);
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, kMenuDangerHover);
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4(0.85f, 0.22f, 0.24f, 0.85f));
+        const bool bDeleteClicked = ImGui::MenuItem(LE_ICON_TRASH_CAN " Delete Selected", "Del", false, !bAllProtected && !bWorldActive);
+        ImGui::PopStyleColor(3);
+
+        // Protected entries do not block the batch, they are simply skipped, so say so up front rather
+        // than only in the notification after the fact.
+        if (bAllProtected || bWorldActive || ProtectedCount > 0)
+        {
+            ImGuiX::Font::PushFont(ImGuiX::Font::EFont::Tiny);
+            ImGui::PushStyleColor(ImGuiCol_Text, kMenuTextDim);
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 4.0f);
+
+            if (bWorldActive)
+            {
+                ImGui::TextUnformatted(LE_ICON_LOCK " Stop play to delete");
+            }
+            else if (bAllProtected)
+            {
+                ImGui::TextUnformatted(LE_ICON_LOCK " Every selected entry is protected");
+            }
+            else
+            {
+                ImGui::Text(LE_ICON_LOCK " %d protected entr%s will be skipped", ProtectedCount, ProtectedCount == 1 ? "y" : "ies");
+            }
+
+            ImGui::PopStyleColor();
+            ImGuiX::Font::PopFont();
+        }
+
+        PopContextMenuItemStyle();
+
+        // Last, after every read of Items: DeleteSelectedItems clears the selection and queues the tiles
+        // for destruction.
+        if (bDeleteClicked)
+        {
+            DeleteSelectedItems(Items);
+        }
+    }
+
+    void FContentBrowserEditorTool::DeleteSelectedItems(const TVector<FTileViewItem*>& Items)
+    {
+        if (Items.empty())
+        {
+            return;
+        }
+
+        if (IsAnyWorldPlayingOrSimulating())
+        {
+            ImGuiX::Notifications::NotifyError("Stop play before deleting content");
+            return;
+        }
+
+        // Paths are snapshotted before anything can rebuild the tile tree; the items themselves live in
+        // the widget's block allocator and die on the next refresh.
+        TVector<FFixedString> Deletable;
+        Deletable.reserve(Items.size());
+
+        int32 ProtectedCount = 0;
+        for (FTileViewItem* Item : Items)
+        {
+            const auto* ContentItem = static_cast<const FContentBrowserTileViewItem*>(Item);
+            if (ContentItem->IsProtected())
+            {
+                ++ProtectedCount;
+                continue;
+            }
+
+            Deletable.emplace_back(ContentItem->GetVirtualPath().data(), ContentItem->GetVirtualPath().size());
+        }
+
+        if (Deletable.empty())
+        {
+            ImGuiX::Notifications::NotifyError("Nothing to delete, every selected entry is protected");
+            return;
+        }
+
+        if (!Dialogs::Confirmation("Confirm Deletion",
+            "Are you sure you want to delete {0} selected item(s)?\n""\nThis action cannot be undone.", Deletable.size()))
+        {
+            return;
+        }
+
+        for (const FFixedString& Path : Deletable)
+        {
+            ActionRegistry.EnqueueAction<FPendingDestroy>(FPendingDestroy{ Path });
+        }
+
+        if (ProtectedCount > 0)
+        {
+            ImGuiX::Notifications::NotifyWarning("Skipped {0} protected entries", ProtectedCount);
+        }
+
+        // The tiles are about to be destroyed by the queued actions; holding pointers to them past this
+        // point is what turns a delete into a crash on the next draw.
+        ContentBrowserTileView.ClearSelections();
+    }
+
+
     void FContentBrowserEditorTool::DrawContentDirectoryContextMenu()
     {
         FStringView FolderName = VFS::FileName(FStringView(SelectedPath.c_str(), SelectedPath.size()), true);

@@ -206,10 +206,7 @@ namespace Lumina
             bReverseMapDirty = true;
         }
 
-        MainThread::Enqueue([this]
-        {
-            BroadcastRegistryUpdate();
-        });
+        DispatchRegistryChanged();
     }
 
     bool FAssetRegistry::NeedsReextract(FStringView Path, int64 MTimeNs, uint64 ContentHash) const
@@ -240,9 +237,27 @@ namespace Lumina
         {
             if (bBroadcastPending.exchange(false, std::memory_order_relaxed))
             {
-                OnAssetRegistryUpdated.Broadcast();
+                DispatchRegistryChanged();
             }
         }
+    }
+
+    void FAssetRegistry::DispatchRegistryChanged()
+    {
+        // Every subscriber to this is main-thread-only: the content browser rebuilds its tile tree, the
+        // editor reopens asset tabs and loads worlds, the thumbnail manager queues renders. Asset creation
+        // runs on a task fiber during import, so broadcasting inline ran all of that concurrently with the
+        // main thread drawing the very structures it rebuilds.
+        if (Threading::IsMainThread())
+        {
+            OnAssetRegistryUpdated.Broadcast();
+            return;
+        }
+
+        MainThread::Enqueue([]
+        {
+            FAssetRegistry::Get().OnAssetRegistryUpdated.Broadcast();
+        });
     }
 
     void FAssetRegistry::NotifyRegistryChanged()
@@ -252,7 +267,8 @@ namespace Lumina
             bBroadcastPending.store(true, std::memory_order_relaxed);
             return;
         }
-        OnAssetRegistryUpdated.Broadcast();
+
+        DispatchRegistryChanged();
     }
 
     FScopedAssetRegistryBatch::FScopedAssetRegistryBatch()
@@ -537,7 +553,7 @@ namespace Lumina
     void FAssetRegistry::TextAssetCreated(FStringView Path)
     {
         EnsureTextAsset(Path);
-        GetOnAssetRegistryUpdated().Broadcast();
+        NotifyRegistryChanged();
     }
 
     void FAssetRegistry::TextAssetRenamed(FStringView OldPath, FStringView NewPath)
@@ -586,7 +602,7 @@ namespace Lumina
         {
             // Outside the lock: subscribers (open file editors) may read the registry back.
             FCoreDelegates::OnContentFileRenamed.Broadcast(OldPath, NewPath);
-            GetOnAssetRegistryUpdated().Broadcast();
+            NotifyRegistryChanged();
         }
     }
 
@@ -606,7 +622,7 @@ namespace Lumina
             }
         }
 
-        GetOnAssetRegistryUpdated().Broadcast();
+        NotifyRegistryChanged();
     }
 
     void FAssetRegistry::TextAssetFolderRenamed(FStringView OldDir, FStringView NewDir)
@@ -883,27 +899,25 @@ namespace Lumina
 
     void FAssetRegistry::ClearAssets()
     {
-        FWriteScopeLock Lock(AssetsMutex);
-
-        Assets.clear();
-
+        // Scoped so every lock is released before the broadcast. Listeners read the registry straight back
+        // (the content browser rebuilds from it), and AssetsMutex is not recursive.
         {
-            FWriteScopeLock TextLock(TextAssetsMutex);
-            TextAssets.clear();
+            FWriteScopeLock Lock(AssetsMutex);
+            Assets.clear();
+
+            {
+                FWriteScopeLock TextLock(TextAssetsMutex);
+                TextAssets.clear();
+            }
+
+            {
+                FWriteScopeLock RLock(ReverseMapMutex);
+                ReverseDepMap.clear();
+                bReverseMapDirty = false;
+            }
         }
 
-        {
-            FWriteScopeLock RLock(ReverseMapMutex);
-            ReverseDepMap.clear();
-            bReverseMapDirty = false;
-        }
-
-        BroadcastRegistryUpdate();
-    }
-
-    void FAssetRegistry::BroadcastRegistryUpdate()
-    {
-        OnAssetRegistryUpdated.Broadcast();
+        DispatchRegistryChanged();
     }
 
     void FAssetRegistry::WriteToArchive(FArchive& Ar) const

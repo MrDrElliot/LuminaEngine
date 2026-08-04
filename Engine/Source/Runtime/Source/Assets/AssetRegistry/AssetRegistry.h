@@ -149,6 +149,10 @@ namespace Lumina
 		// OUTSIDE AssetsMutex so a listener can re-enter the (non-recursive) registry without self-deadlock.
 		void NotifyRegistryChanged();
 
+		// Actually fires the delegate, hopping to the main thread first when called from anywhere else.
+		// Every subscriber touches editor UI state, and asset creation runs on import task fibers.
+		void DispatchRegistryChanged();
+
 		// True iff the on-disk asset is new or changed since the cached entry was extracted.
 		bool NeedsReextract(FStringView Path, int64 MTimeNs, uint64 ContentHash) const;
 
@@ -156,8 +160,6 @@ namespace Lumina
 		void ProcessPackagePath(FStringView Path);
 
 		void ClearAssets();
-
-		void BroadcastRegistryUpdate();
 
 		void RecordFailedAsset(FStringView Path);
 

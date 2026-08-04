@@ -9,3 +9,15 @@ namespace Lumina::SystemResource
     struct EntityStructure {};  // does structural ECS changes (create/destroy/add/remove component)
     struct PhysicsQuery {};     // issues physics queries against the live scene
 }
+
+namespace Lumina
+{
+    // Resources are not components: they never get a registry pool, so the scheduler must not try to
+    // pre-create one for them (it would leave a permanent empty pool that no entity can ever join).
+    template<typename T>
+    inline constexpr bool TIsSystemResource = false;
+
+    template<> inline constexpr bool TIsSystemResource<SystemResource::EventDispatcher> = true;
+    template<> inline constexpr bool TIsSystemResource<SystemResource::EntityStructure> = true;
+    template<> inline constexpr bool TIsSystemResource<SystemResource::PhysicsQuery>    = true;
+}
