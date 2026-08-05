@@ -89,6 +89,18 @@ namespace Lumina
     constexpr uint32 MESHLET_DRAW_INDEX_BITS   = 20;
     constexpr uint32 MAX_MESHLETS_PER_SURFACE_LOD = (1u << MESHLET_DRAW_INDEX_BITS);
 
+    /**
+     * Hard ceiling on the meshlet cull's (instance, meshlet) work domain -- the size of an INDIRECT
+     * dispatch, so the last place a bad number can be stopped before it reaches the GPU.
+     *
+     * 2^28 threads is far past any real scene (it is ~4.2M workgroups of 64) and still finishes in well
+     * under a frame, whereas the value one bad input produces is 2^32 -- 65535 x 65535 groups, which the
+     * GPU chews on until the TDR fires. That failure reports as VK_ERROR_DEVICE_LOST with NO page fault
+     * and a running wave parked in CullMeshlets, because nothing ever touched a bad address: the grid was
+     * simply unbounded. Sized as a sanity limit, never as a resource bound -- see the use site.
+     */
+    constexpr uint32 GMaxMeshletCullDomain = (1u << 28);
+
     // Mutually-exclusive debug viz; values must match DEBUG_MODE_* in Common.slang.
     enum class ERenderSceneDebugFlags : uint8
     {

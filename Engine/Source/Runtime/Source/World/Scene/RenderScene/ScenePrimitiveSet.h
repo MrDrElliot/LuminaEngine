@@ -326,6 +326,13 @@ namespace Lumina
         bool                        AreSurfaceDescsDirty() const { return bSurfaceDescsDirty; }
         void                        ClearSurfaceDescsDirty()     { bSurfaceDescsDirty = false; }
 
+        // Largest per-LOD meshlet count any interned surface carries. Accumulated in InternSurfaceDesc --
+        // on the game thread, from the already-clamped value that goes into the table -- because the
+        // render phase turns it into the meshlet cull's DISPATCH SIZE ceiling. Deriving it by walking
+        // SurfaceDescs from the render phase means reading a TVector the game thread can reallocate
+        // underneath it, and a torn read there is not a wrong number, it is an unbounded grid.
+        uint32                      GetMaxSurfaceDescMeshlets() const { return MaxSurfaceDescMeshlets; }
+
         // Slots written since the last upload. Empty on a frame where nothing changed, which is what
         // makes the upload proportional to the change rather than to the scene.
         //
@@ -707,6 +714,8 @@ namespace Lumina
         TVector<FSurfaceDescGPU>            SurfaceDescs;
         THashMap<uint64, TVector<uint32>>   SurfaceDescByHash;
         bool                                bSurfaceDescsDirty = true;
+        // See GetMaxSurfaceDescMeshlets. Only ever grows while the table does, and is reset with it.
+        uint32                              MaxSurfaceDescMeshlets = 0;
 
         uint64                              StructureGeneration = 1;
         uint32                              SkinnedCount = 0;

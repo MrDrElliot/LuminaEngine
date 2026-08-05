@@ -30,7 +30,10 @@ struct FCullInstancesArgs
     uint  bUseLODs;
     uint  MaxVisibleInstances;  // capacity of OutInstances; overflow is dropped, not written past
     float ShadowCoarseLODDistSq; // past this, shadow LOD caps at MESHLET_MAX_COARSE_SHADOW_LOD; 0 = never
-    uint  _Pad1;
+    // Entries of SurfaceDescs the CPU has actually uploaded. A slot's SurfaceDescIndex is stamped when it
+    // binds and the table is uploaded separately, so the two can disagree for a frame -- and this read is
+    // where that turns into a meshlet count summed straight into an indirect dispatch size.
+    uint  NumSurfaceDescs;
 
     // The retained scene, split by ACCESS RATE. CullEntries is streamed in full by every lane below;
     // the other two are read ONLY once an instance has survived, which is what the split is for.
@@ -106,16 +109,30 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     //
     // Resolved BEFORE the per-view visibility loop, because that loop now also accumulates how many
     // meshlets each view could emit for this instance -- which needs the LOD's meshlet counts.
+
+    // The index is bounded, because the consequence of trusting it is not a wrong LOD. Past the table this
+    // reads whatever follows the allocation, and the meshlet counts below are accumulated into
+    // BatchMeshletCounts, which BuildDrawPrefix sums into the meshlet cull's INDIRECT DISPATCH SIZE --
+    // so one out-of-range index here is a multi-billion-thread grid and a TDR, not a visual artifact.
+    if (Cull.SurfaceDescIndex >= Pass().NumSurfaceDescs)
+    {
+        return;
+    }
+
     FSurfaceDesc Desc = Pass().SurfaceDescs[Cull.SurfaceDescIndex];
+
+    // The LOD arrays are MESHLET_MAX_LODS long; NumLODs comes through the desc and indexes them. Clamping
+    // it here means a bad table cannot index the arrays out of bounds, whatever else it gets wrong.
+    const uint NumLODs = min(Desc.NumLODs, (uint)MESHLET_MAX_LODS);
 
     uint LODIndex = 0u;
     if (Cull.ForcedLODIndex >= 0)
     {
-        LODIndex = min((uint)Cull.ForcedLODIndex, Desc.NumLODs > 0u ? Desc.NumLODs - 1u : 0u);
+        LODIndex = min((uint)Cull.ForcedLODIndex, NumLODs > 0u ? NumLODs - 1u : 0u);
     }
     else if (Pass().bUseLODs != 0u)
     {
-        LODIndex = Desc.SelectLOD(DistSq, Radius * Radius);
+        LODIndex = min(Desc.SelectLOD(DistSq, Radius * Radius), NumLODs > 0u ? NumLODs - 1u : 0u);
     }
 
     // Distance drives the cap because cascade membership is essentially distance: only the far cascades
@@ -123,7 +140,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     // Must match the CPU's ResolveShadowLOD exactly -- the two seed the same cull dispatch domain.
     const uint ShadowCap = (Pass().ShadowCoarseLODDistSq > 0.0 && DistSq >= Pass().ShadowCoarseLODDistSq)
                          ? (uint)MESHLET_MAX_COARSE_SHADOW_LOD : (uint)MESHLET_MAX_SHADOW_LOD;
-    const int  MaxShadowLOD  = (int)min(Desc.NumLODs > 0u ? Desc.NumLODs - 1u : 0u, ShadowCap);
+    const int  MaxShadowLOD  = (int)min(NumLODs > 0u ? NumLODs - 1u : 0u, ShadowCap);
     const uint ShadowLODIndex = (uint)clamp((int)LODIndex + Pass().ShadowLODBias, 0, MaxShadowLOD);
 
     // A null header with a non-zero count would page-fault the meshlet cull, so gate the count on it

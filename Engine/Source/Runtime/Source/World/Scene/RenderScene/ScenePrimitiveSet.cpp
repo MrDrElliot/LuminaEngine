@@ -619,6 +619,16 @@ namespace Lumina
         SurfaceDescs.push_back(Desc);
         Bucket.push_back(NewIndex);
         bSurfaceDescsDirty = true;
+
+        // Folded in HERE, from the clamped copy that just entered the table, rather than by rescanning
+        // SurfaceDescs later. The render phase multiplies this by the retained slot count to get the
+        // meshlet cull's dispatch ceiling, so it has to come from a value this thread owns.
+        const uint32 DescLODs = Math::Min<uint32>(Desc.NumLODs, MAX_MESH_LODS);
+        for (uint32 i = 0; i < DescLODs; ++i)
+        {
+            MaxSurfaceDescMeshlets = Math::Max(MaxSurfaceDescMeshlets, Desc.LODMeshletCount[i]);
+        }
+
         return NewIndex;
     }
 
@@ -1379,6 +1389,9 @@ namespace Lumina
         SurfaceDescs.clear();
         SurfaceDescByHash.clear();
         bSurfaceDescsDirty = true;
+        // Dropped with the table it summarizes; carrying a bound for descs that are gone would leave the
+        // cull's dispatch ceiling permanently wider than the scene.
+        MaxSurfaceDescMeshlets = 0;
         FoliageInstanceCount.clear();
 
         const FSyncPools Pools(Registry);
@@ -1993,6 +2006,9 @@ namespace Lumina
         SurfaceDescs.clear();
         SurfaceDescByHash.clear();
         bSurfaceDescsDirty = true;
+        // Dropped with the table it summarizes; carrying a bound for descs that are gone would leave the
+        // cull's dispatch ceiling permanently wider than the scene.
+        MaxSurfaceDescMeshlets = 0;
         FoliageInstanceCount.clear();
         Batches.Reset();
         // Paired with Batches.Reset(), always: a reset renumbers every batch index the memo cached.

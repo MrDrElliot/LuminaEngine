@@ -1395,8 +1395,9 @@ namespace Lumina
         }
 
         // Interned; a full instance re-send also re-sends these, since a replaced device buffer loses them.
-        Out.SurfaceDescCount     = ScenePrimitives.GetSurfaceDescCount();
-        Out.bSurfaceDescsChanged = ScenePrimitives.AreSurfaceDescsDirty() || Out.bFull;
+        Out.SurfaceDescCount        = ScenePrimitives.GetSurfaceDescCount();
+        Out.bSurfaceDescsChanged    = ScenePrimitives.AreSurfaceDescsDirty() || Out.bFull;
+        Out.MaxSurfaceDescMeshlets  = ScenePrimitives.GetMaxSurfaceDescMeshlets();
 
         // Channel consumed: the decisions above are now owned by this frame.
         ScenePrimitives.ClearDirtyInstanceSlots();
@@ -10848,12 +10849,21 @@ namespace Lumina
             // Same reasoning as above: a reclaim would drop descriptors this frame may not be re-sending.
             ResizeBufferIfNeeded(SurfaceDescBuffer, DescBytes, 1.5f, SurfaceDescLowUsage, Upload.bSurfaceDescsChanged);
 
+            // A replaced allocation holds undefined bytes until something writes it, so nothing in it may
+            // be indexed yet. UploadedSurfaceDescs is what the cull is bounded by below, which makes this
+            // assignment load-bearing rather than bookkeeping: without it a frame that resized the buffer
+            // and then skipped the write (the count-drift path below) leaves the cull reading a table of
+            // pure garbage, and a garbage LOD meshlet count is what the dispatch size is summed from.
+            if (SurfaceDescBuffer.Ptr != PrevDescs)
+            {
+                UploadedSurfaceDescs = 0;
+            }
+
             // Only writable when this frame actually carries the payload. A reallocation or a count change
             // on a frame that did NOT bring one cannot be serviced here, so ask for a re-send instead of
             // writing a short buffer -- forcing bFull next frame also re-copies the descriptors.
             const bool bNeedsDescWrite = SurfaceDescBuffer && NumDescs > 0
-                                      && (SurfaceDescBuffer.Ptr != PrevDescs || Upload.bSurfaceDescsChanged
-                                          || UploadedSurfaceDescs != NumDescs);
+                                      && (Upload.bSurfaceDescsChanged || UploadedSurfaceDescs != NumDescs);
             if (bNeedsDescWrite)
             {
                 if (ScenePrimitives.GetSurfaceDescCount() == NumDescs)
@@ -10934,7 +10944,7 @@ namespace Lumina
                 uint32 bUseLODs;
                 uint32 MaxVisibleInstances;
                 float  ShadowCoarseLODDistSq;
-                uint32 Pad1;
+                uint32 NumSurfaceDescs;
                 uint64 RetainedCullEntriesAddr;
                 uint64 RetainedTransformsAddr;
                 uint64 RetainedStaticAddr;
@@ -10955,6 +10965,9 @@ namespace Lumina
             PC.bUseLODs                 = RenderSettings.bUseLODs ? 1u : 0u;
             PC.MaxVisibleInstances      = VisibleCapacity;
             PC.ShadowCoarseLODDistSq    = RenderSettings.ShadowCoarseLODDistance * RenderSettings.ShadowCoarseLODDistance;
+            // What the device buffer actually holds, not what the game thread has interned. A slot whose
+            // binding is newer than the last upload reads past the table otherwise.
+            PC.NumSurfaceDescs          = UploadedSurfaceDescs;
             PC.RetainedCullEntriesAddr  = RetainedCullEntryBuffer.GetAddress();
             PC.RetainedTransformsAddr   = RetainedTransformBuffer.GetAddress();
             PC.RetainedStaticAddr       = RetainedStaticBuffer.GetAddress();
@@ -10980,33 +10993,18 @@ namespace Lumina
             LUMINA_PROFILE_SECTION_COLORED("Build Draw Prefix", tracy::Color::Magenta3);
             SCENE_GPU_SCOPE(CL, "Build Draw Prefix");
 
-            // Ceiling on the meshlet work domain. Surface descs are interned and append-only, so the
-            // largest per-LOD meshlet count any of them carries only ever grows -- fold in the entries
-            // added since last frame and the running max stays valid without rescanning the table.
-            // Using the GLOBAL max rather than each slot's own desc is deliberate: it stays an upper
-            // bound across a rebind, which changes which desc a slot points at without touching either
-            // count, so nothing has to invalidate it.
-            {
-                const FSurfaceDescGPU* Descs     = ScenePrimitives.GetSurfaceDescs();
-                const uint32           NumDescs2 = ScenePrimitives.GetSurfaceDescCount();
-                if (NumDescs2 < ScannedSurfaceDescCount)
-                {
-                    // The table only shrinks by being cleared wholesale (FScenePrimitiveSet::Reset), which
-                    // invalidates the running max; rescan rather than carry a bound for descs that are gone.
-                    ScannedSurfaceDescCount = 0;
-                    MaxSurfaceDescMeshlets  = 0;
-                }
-                for (uint32 i = ScannedSurfaceDescCount; i < NumDescs2; ++i)
-                {
-                    const FSurfaceDescGPU& Desc = Descs[i];
-                    const uint32 NumLODs = Math::Min<uint32>(Desc.NumLODs, MAX_MESH_LODS);
-                    for (uint32 l = 0; l < NumLODs; ++l)
-                    {
-                        MaxSurfaceDescMeshlets = Math::Max(MaxSurfaceDescMeshlets, Desc.LODMeshletCount[l]);
-                    }
-                }
-                ScannedSurfaceDescCount = NumDescs2;
-            }
+            // Ceiling on the meshlet work domain. Using the GLOBAL max per-LOD meshlet count rather than
+            // each slot's own desc is deliberate: it stays an upper bound across a rebind, which changes
+            // which desc a slot points at without touching either count, so nothing has to invalidate it.
+            //
+            // Published by the game thread (FRetainedUpload::MaxSurfaceDescMeshlets), NOT re-derived here.
+            // This used to walk ScenePrimitives' live SurfaceDescs vector from the render phase, which the
+            // game thread reallocates whenever a new distinct LOD table is interned -- and since the value
+            // is a running max that never decreases, ONE torn read poisoned the ceiling for the life of the
+            // scene. A poisoned ceiling is not a wrong number: it is what stops being a clamp, and the
+            // garbage meshlet count that follows becomes a multi-billion-thread indirect dispatch.
+            const uint64 MaxDescMeshlets = Math::Min<uint64>(Upload.MaxSurfaceDescMeshlets,
+                                                             MAX_MESHLETS_PER_SURFACE_LOD);
 
             // The skinned contribution never passes through the instance cull, so it is not covered by
             // the retained-slot product and has to be added on top.
@@ -11016,7 +11014,28 @@ namespace Lumina
                 SkinnedSeedTotal += Seed;
             }
 
-            const uint64 MaxMeshletWork64 = (uint64)RetainedSlots * (uint64)MaxSurfaceDescMeshlets + SkinnedSeedTotal;
+            // Absolute backstop, independent of every input above. The product is a worst case -- every
+            // retained slot surviving at the densest LOD any surface has -- so it is legitimately large on
+            // a big scene, but past some size it stops bounding anything the GPU can finish inside a TDR
+            // window, and a bad input makes it 2^32. Deliberately NOT a resource bound (the draw list, say):
+            // the walk is what MEASURES demand, so clamping it to what currently fits would under-report,
+            // the allocation would never grow, and the clamp would latch. This only fires in a regime that
+            // is already broken, so truncating the tail there is the lesser outcome.
+            const uint64 RawMeshletWork   = (uint64)RetainedSlots * MaxDescMeshlets + SkinnedSeedTotal;
+            const uint64 MaxMeshletWork64 = Math::Min<uint64>(RawMeshletWork, GMaxMeshletCullDomain);
+
+            if (RawMeshletWork > GMaxMeshletCullDomain)
+            {
+                static uint32 DomainCeilingLogCounter = 0;
+                if ((DomainCeilingLogCounter++ % 120u) == 0u)
+                {
+                    LOG_ERROR("RenderScene: meshlet cull domain ceiling hit -- {} retained slots x {} meshlets "
+                              "+ {} skinned = {}, capped at {}. Meshlets are being dropped off the tail; a "
+                              "figure this size means a surface LOD table is wrong, not that the scene is big.",
+                              RetainedSlots, MaxDescMeshlets, SkinnedSeedTotal, RawMeshletWork,
+                              (uint64)GMaxMeshletCullDomain);
+                }
+            }
 
             struct FBuildDrawPrefixPC
             {

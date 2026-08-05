@@ -442,6 +442,13 @@ namespace Lumina
                     // frame the descriptors happened not to move.
                     bool                        bSurfaceDescsChanged = false;
                     uint32                      SurfaceDescCount = 0;
+
+                    // Largest per-LOD meshlet count in the interned table, published by the thread that
+                    // owns the table. The render phase turns it into the meshlet cull's dispatch-size
+                    // ceiling, so it must NOT be re-derived there by walking SurfaceDescs: that vector
+                    // is game-thread state, and a torn read of it becomes an unbounded indirect grid --
+                    // a multi-second GPU hang, then a TDR, with no page fault to point at it.
+                    uint32                      MaxSurfaceDescMeshlets = 0;
                 } RetainedUpload;
             } Geometry;
 
@@ -1143,11 +1150,6 @@ namespace Lumina
         // CullData::InstanceNum -- must agree on one value, or the GPU indexes one buffer with another
         // buffer's bound. Sampled in CompileDrawCommands_Render before the SceneRoot is published.
         uint32                                              FrameVisibleInstanceCapacity = 0;
-        // Ceiling BuildDrawPrefix clamps the meshlet work domain to, so a corrupt GPU-side counter cannot
-        // become an unbounded indirect dispatch. Surface descs are interned and append-only, so the max
-        // only grows and only the entries added since ScannedSurfaceDescCount need looking at.
-        uint32                                              MaxSurfaceDescMeshlets = 0;
-        uint32                                              ScannedSurfaceDescCount = 0;
         void   UpdateMeshletBoundFeedback(uint8 Slot);
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          MaterialBinTileBitsRing = {};
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          MaterialTileListRing = {};
