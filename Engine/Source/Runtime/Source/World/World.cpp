@@ -1469,16 +1469,12 @@ namespace Lumina
 
     void CWorld::OnCSharpScriptComponentDestroyed(entt::registry& Registry, entt::entity Entity)
     {
+        // Runs at on_destroy, while the entity is still queryable, so user OnDetach can still read it. The
+        // slot destructor would free these anyway; doing it here just gives OnDetach a live entity.
         SScriptComponent& Component = Registry.get<SScriptComponent>(Entity);
-        const int32 Generation = DotNet::GetScriptGeneration();
         for (SScriptInstance& Slot : Component.Scripts)
         {
-            if (Slot.Instance != nullptr && Slot.Generation == Generation)
-            {
-                DotNet::DestroyEntityScript(Slot.Instance);
-            }
-            Slot.Instance = nullptr;
-            Slot.BindState = ECSharpBindState::Unbound;
+            Slot.ReleaseInstance();
         }
     }
 

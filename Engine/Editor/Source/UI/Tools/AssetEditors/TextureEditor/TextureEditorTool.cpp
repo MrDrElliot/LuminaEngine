@@ -33,6 +33,14 @@ namespace Lumina
             ImVec2 WindowSize = ImGui::GetContentRegionAvail();
             ImVec2 WindowPos = ImGui::GetCursorScreenPos();
 
+            // Float formats are the cooked-HDR path (Environment color space, scene captures): their
+            // texels are linear radiance rather than display-encoded bytes. Drives both the display
+            // transform on the image below and whether the exposure control is shown at all.
+            const bool bIsHDRPreview =
+                ImageDesc.Format == EFormat::RGBA16_FLOAT ||
+                ImageDesc.Format == EFormat::RGBA32_FLOAT ||
+                ImageDesc.Format == EFormat::R11G11B10_FLOAT;
+
             if (ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows))
             {
                 float Wheel = ImGui::GetIO().MouseWheel;
@@ -87,18 +95,27 @@ namespace Lumina
                 2.0f
             );
 
-            // ImGui draw shader doesn't tone-map; exposure stops as a tint multiplier lets
-            // the user recover detail in HDR regions that clip to white on LDR swapchains.
-            const float ExposureMul = std::pow(2.0f, ExposureStops);
-            const int TintByte = std::clamp((int)std::round(ExposureMul * 255.0f), 0, 255);
+            // Float formats hold LINEAR radiance, so they need the scene's display transform to read
+            // the way the same texture does in-world; blitting them straight to the _UNORM swapchain
+            // is what made cooked HDRIs look far darker here than in the viewport. Cooked color
+            // textures are already display-encoded and must go through untouched.
+            if (bIsHDRPreview)
+            {
+                ImGuiX::BeginHDRPreview(DrawList, ExposureStops);
+            }
+
             DrawList->AddImage(
                 TextureID,
                 CenterPos,
                 ImVec2(CenterPos.x + ScaledSize.x, CenterPos.y + ScaledSize.y),
                 ImVec2(0, 0),
-                ImVec2(1, 1),
-                IM_COL32(TintByte, TintByte, TintByte, 255)
+                ImVec2(1, 1)
             );
+
+            if (bIsHDRPreview)
+            {
+                ImGuiX::EndHDRPreview(DrawList);
+            }
 
             ImVec2 MousePos = ImGui::GetMousePos();
             bool isOverTexture = MousePos.x >= CenterPos.x && MousePos.x <= CenterPos.x + ScaledSize.x &&
@@ -141,10 +158,6 @@ namespace Lumina
 
                 // HDR preview exposure: only for float-format textures (cooked HDRIs);
                 // hidden for LDR so the toolbar has no unused controls.
-                const EFormat Fmt = ImageDesc.Format;
-                const bool bIsHDRPreview =
-                    Fmt == EFormat::RGBA16_FLOAT || Fmt == EFormat::RGBA32_FLOAT ||
-                    Fmt == EFormat::R11G11B10_FLOAT;
                 if (bIsHDRPreview)
                 {
                     if (ImageDesc.NumMips > 1)
@@ -155,7 +168,7 @@ namespace Lumina
                     ImGui::SameLine();
                     ImGui::SetNextItemWidth(140);
                     ImGui::SliderFloat("##Exposure", &ExposureStops, -8.0f, 4.0f, "%+.1f stops");
-                    ImGuiX::TextTooltip("ImGui can't tone-map; HDR values >1 clip to white. Dial down to see detail in bright sky regions.");
+                    ImGuiX::TextTooltip("Exposure bias on the preview, in stops. The image is tone-mapped with the same transform the viewport uses, so 0 stops shows the texture as the scene sees it; dial down to read detail in bright regions.");
                 }
             }
             ImGui::EndChild();
@@ -616,8 +629,10 @@ namespace Lumina
             "If the texture has mips, the Mip slider lets you preview each level. The on-disk pixel "
             "data is unchanged, this only changes which level is sampled for display.");
         DrawHelpTextRow("HDR / Exposure",
-            "HDR textures (RGBA16F, RGB9E5, etc.) clip above 1.0 in the editor's LDR pipeline. "
-            "Use the Exposure stops slider to dim the preview and recover bright detail.");
+            "HDR textures (RGBA16F, RGB9E5, etc.) store linear radiance, so they are tone-mapped for "
+            "display using the same transform the scene viewport applies. At 0 stops the preview shows "
+            "the texture as the renderer sees it; the Exposure slider biases that to read into very "
+            "bright or very dark regions.");
         DrawHelpTextRow("Channels",
             "Toggle R/G/B/A channels from the View menu to inspect them in isolation. "
             "Useful for verifying packed maps (e.g. ORM, normal maps with alpha height).");

@@ -31,6 +31,51 @@ namespace Lumina::ImGuiX
         GUIScale = Scale > 0.0f ? Scale : 1.0f;
     }
 
+    namespace Detail
+    {
+        // Mirrors IMGUI_DISPLAY_* in Includes/ImGuiCommon.slang.
+        constexpr uint32 GDisplayModeDirect = 0u;
+        constexpr uint32 GDisplayModeHDR    = 1u;
+
+        static void DisplayStateCallback(const ImDrawList*, const ImDrawCmd*)
+        {
+            // Intentionally empty: the backend intercepts this by identity before it would ever run.
+        }
+
+        ImDrawCallback GetDisplayStateCallback()
+        {
+            return &DisplayStateCallback;
+        }
+    }
+
+    void BeginHDRPreview(ImDrawList* DrawList, float ExposureStops)
+    {
+        if (DrawList == nullptr)
+        {
+            return;
+        }
+
+        Detail::FImGuiDisplayState State;
+        State.DisplayMode = Detail::GDisplayModeHDR;
+        State.Exposure    = std::exp2(ExposureStops);
+
+        // Non-zero size: ImGui copies the payload into the draw list's own buffer, so it stays alive
+        // until the backend records this frame.
+        DrawList->AddCallback(Detail::GetDisplayStateCallback(), &State, sizeof(State));
+    }
+
+    void EndHDRPreview(ImDrawList* DrawList)
+    {
+        if (DrawList == nullptr)
+        {
+            return;
+        }
+
+        Detail::FImGuiDisplayState State;
+        State.DisplayMode = Detail::GDisplayModeDirect;
+        DrawList->AddCallback(Detail::GetDisplayStateCallback(), &State, sizeof(State));
+    }
+
     void TextTooltip_Internal(FStringView String)
     {
         ImGui::PushStyleVar( ImGuiStyleVar_WindowPadding, ImVec2(4, 4));

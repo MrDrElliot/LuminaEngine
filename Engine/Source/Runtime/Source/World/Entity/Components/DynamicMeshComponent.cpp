@@ -165,37 +165,65 @@ namespace Lumina
         return nullptr;
     }
 
+    TSharedPtr<FDynamicMeshRenderData> SDynamicMeshComponent::LoadRenderData() const
+    {
+        return eastl::atomic_load(&RenderData);
+    }
+
+    uint32 SDynamicMeshComponent::LoadRenderDataVersion() const
+    {
+        // atomic_ref needs a non-const lvalue; this access is a pure read.
+        return std::atomic_ref<uint32>(const_cast<uint32&>(RenderDataVersion)).load(std::memory_order_acquire);
+    }
+
+    void SDynamicMeshComponent::PublishRenderData(TSharedPtr<FDynamicMeshRenderData> NewData)
+    {
+        // Pointer first, then the version with a release: the render scene's poll acquire-loads the
+        // version and only then takes a ref, so it can never see a bump advertising data that isn't
+        // visible yet. The old data (and its GPU buffers) drop when the last holder releases it, which
+        // may be a gather still reading the previous snapshot.
+        eastl::atomic_store(&RenderData, eastl::move(NewData));
+        std::atomic_ref<uint32>(RenderDataVersion).fetch_add(1u, std::memory_order_release);
+    }
+
     FAABB SDynamicMeshComponent::GetAABB() const
     {
-        if (!RenderData)
+        const TSharedPtr<FDynamicMeshRenderData> Data = LoadRenderData();
+        if (!Data)
         {
             return FAABB();
         }
 
-        return FAABB(RenderData->LocalMin, RenderData->LocalMax);
+        return FAABB(Data->LocalMin, Data->LocalMax);
     }
 
-    void SDynamicMeshComponent::RefreshResolvedMaterials()
+    void SDynamicMeshComponent::ResolveMaterialsInto(FDynamicMeshRenderData& Data) const
     {
-        if (!RenderData)
-        {
-            return;
-        }
-
         bool bAllReady = true;
-        const TVector<FGeometrySurface>& Geometry = RenderData->Resource.GeometrySurfaces;
+        const TVector<FGeometrySurface>& Geometry = Data.Resource.GeometrySurfaces;
 
-        for (size_t i = 0; i < RenderData->Surfaces.size() && i < Geometry.size(); ++i)
+        for (size_t i = 0; i < Data.Surfaces.size() && i < Geometry.size(); ++i)
         {
             // -1 means unassigned; widening keeps it out of range so it falls through to the default.
             const size_t Slot = (size_t)Geometry[i].MaterialIndex;
-            if (!MeshResolve::ResolveSurfaceMaterial(RenderData->Surfaces[i], GetMaterialForSlot(Slot)))
+            if (!MeshResolve::ResolveSurfaceMaterial(Data.Surfaces[i], GetMaterialForSlot(Slot)))
             {
                 bAllReady = false;
             }
         }
 
-        RenderData->bAllMaterialsReady = bAllReady;
+        Data.bAllMaterialsReady = bAllReady;
+    }
+
+    void SDynamicMeshComponent::RefreshResolvedMaterials()
+    {
+        // Re-resolves the PUBLISHED data in place, for the render scene's retry-while-compiling pass.
+        // Game thread only, like the pass that calls it; Commit resolves its snapshot before publishing
+        // and never comes through here.
+        if (const TSharedPtr<FDynamicMeshRenderData> Data = LoadRenderData())
+        {
+            ResolveMaterialsInto(*Data);
+        }
     }
 
     void SDynamicMeshComponent::AddSection(int32 MaterialSlot, int32 StartIndex, int32 IndexCount)
@@ -209,15 +237,16 @@ namespace Lumina
     void SDynamicMeshComponent::ClearMesh()
     {
         BuildData.reset();
-        RenderData.reset();     // GPU buffers retire through ~FMeshBuffers' deferred free
-        ++RenderDataVersion;    // the primitive sync polls this; see the field
+        // GPU buffers retire through ~FMeshBuffers' deferred free, once the last reader drops its ref.
+        PublishRenderData(nullptr);
         CommittedVertexCount   = 0;
         CommittedTriangleCount = 0;
     }
 
     bool SDynamicMeshComponent::IsBuilt() const
     {
-        return RenderData && RenderData->MeshletHeaderAddress != 0;
+        const TSharedPtr<FDynamicMeshRenderData> Data = LoadRenderData();
+        return Data && Data->MeshletHeaderAddress != 0;
     }
 
     int32 SDynamicMeshComponent::GetVertexCount() const
@@ -301,7 +330,9 @@ namespace Lumina
         TUniquePtr<FMeshResource> Resource = MakeUnique<FMeshResource>();
         Resource->bSkinnedMesh = false;
         Resource->MaxLODs      = (uint32)Math::Clamp(MaxLODs, 1, (int32)MAX_MESH_LODS);
-        Resource->bGenerateTangents = bGenerateTangents;
+        Resource->bGenerateTangents   = bGenerateTangents;
+        Resource->bMeshletConeCulling = bMeshletConeCulling;
+        Resource->bOptimizeMeshlets   = bOptimizeMeshlets;
 
         // Normals are derived first because deriving them is the only stage that reads Positions and
         // Indices; once it is done both streams can be moved into the resource rather than copied.
@@ -407,16 +438,19 @@ namespace Lumina
             }
         }
 
-        // Published before the materials resolve: the old data (and its GPU buffers) drop here, and the
-        // extract later this tick already reads the new addresses -- no resolve-cache tick of lag.
-        RenderData = eastl::move(NewData);
-        ++RenderDataVersion;    // the primitive sync polls this; see the field
-        RefreshResolvedMaterials();
+        // Everything below happens on the snapshot BEFORE it is published. This used to publish first and
+        // then resolve materials and drop the scratch streams through the member, which is fine on one
+        // thread but hands a worker-committed mesh to the renderer while it is still being written.
+        ResolveMaterialsInto(*NewData);
 
         // Scratch streams are dead once the meshlets and GPU buffers exist.
-        RenderData->Resource.ClearVertices();
-        RenderData->Resource.Indices.clear();
-        RenderData->Resource.Indices.shrink_to_fit();
+        NewData->Resource.ClearVertices();
+        NewData->Resource.Indices.clear();
+        NewData->Resource.Indices.shrink_to_fit();
+
+        // Single publish point. The extract later this tick already reads the new addresses -- no
+        // resolve-cache tick of lag, same as before.
+        PublishRenderData(eastl::move(NewData));
 
         // Staging is consumed; the next edit re-stages from scratch.
         BuildData.reset();

@@ -17,6 +17,19 @@ namespace Lumina
 {
     class CWorld;
 
+    void SScriptInstance::ReleaseInstance()
+    {
+        // A stale-generation handle was already freed by the managed unload; touching it would double-free.
+        if (Instance != nullptr && Generation == DotNet::GetScriptGeneration())
+        {
+            DotNet::DestroyEntityScript(Instance);
+        }
+        Instance      = nullptr;
+        Generation    = -1;
+        BindState     = ECSharpBindState::Unbound;
+        CallbackFlags = 0;
+    }
+
     void* BindScriptInstance(uint64 World, uint32 Entity, SScriptComponent& Component, int32 SlotIndex, int32 Generation, bool bHotReload)
     {
         // Read the class by value first: CreateEntityScript runs the script's OnAttach, which may add

@@ -142,15 +142,13 @@ LUMINA_DOTNET_EXPORT(void, RemoveEntityScript)(uint64 World, uint32 Entity, void
     {
         return;
     }
-    const int32 Generation = DotNet::GetScriptGeneration();
     for (auto It = Component->Scripts.begin(); It != Component->Scripts.end(); ++It)
     {
         if (It->Instance == Instance)
         {
-            if (It->Generation == Generation)
-            {
-                DotNet::DestroyEntityScript(It->Instance);
-            }
+            // Must clear the slot, not just free the handle: erase move-assigns the next slot over this
+            // one, and the move-assign releases whatever the destination still points at.
+            It->ReleaseInstance();
             Component->Scripts.erase(It);
             return;
         }

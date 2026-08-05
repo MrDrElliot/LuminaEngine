@@ -1,8 +1,18 @@
 #pragma once
 #include "GlobalRHI.slang"
+#include "Tonemap.slang"
 
 // Bindless ImGui pass: vertices pulled by device address, textures sampled from the
 // global heap by ResourceID. Args re-point per draw (TextureID changes).
+
+// How the sampled texel is turned into a display value.
+//   DIRECT: pass through. Correct for UI atlases and cooked color textures, which already hold
+//           display-encoded bytes.
+//   HDR:    the texel is LINEAR radiance (RGBA16F environment maps, scene captures). Exposure ->
+//           tone map -> display encode, matching what ColorGrading.slang does to the scene. Without
+//           it the linear values reach an _UNORM swapchain unencoded and read far too dark.
+#define IMGUI_DISPLAY_DIRECT 0u
+#define IMGUI_DISPLAY_HDR    1u
 
 struct FImGuiArgs
 {
@@ -10,6 +20,8 @@ struct FImGuiArgs
     float2   Translate;    // -1 - DisplayPos * Scale
     uint     TextureID;    // heap ResourceID (gTextures2D[])
     uint     SamplerIndex; // SAMPLER_* heap slot
+    uint     DisplayMode;  // IMGUI_DISPLAY_*
+    float    Exposure;     // linear multiplier, HDR mode only
     uint64_t VertexAddr;   // device address of the transient ImDrawVert array
 };
 

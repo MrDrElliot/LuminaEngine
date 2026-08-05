@@ -1487,16 +1487,20 @@ namespace Lumina
             }
 
             SDynamicMeshComponent& Component = PackedPayloadAt(Storage, i);
-            if (!Component.RenderData)
+
+            // One atomic ref for the whole hash: Commit can swap this from a worker, so re-reading the
+            // member per surface could walk two different snapshots (or one being freed).
+            const TSharedPtr<FDynamicMeshRenderData> Data = Component.LoadRenderData();
+            if (!Data)
             {
                 continue;
             }
 
             // FNV-1a over the material each surface would resolve to right now. GetMaterialForSlot folds in
             // the override AND the fallback, so this changes exactly when the outcome would change.
-            const TVector<FGeometrySurface>& Geometry = Component.RenderData->Resource.GeometrySurfaces;
+            const TVector<FGeometrySurface>& Geometry = Data->Resource.GeometrySurfaces;
             uint32 Hash = 2166136261u;
-            for (SIZE_T s = 0; s < Component.RenderData->Surfaces.size() && s < Geometry.size(); ++s)
+            for (SIZE_T s = 0; s < Data->Surfaces.size() && s < Geometry.size(); ++s)
             {
                 const void* Material = Component.GetMaterialForSlot((size_t)Geometry[s].MaterialIndex);
                 const uint64 Bits    = (uint64)(uintptr_t)Material;
@@ -1509,7 +1513,7 @@ namespace Lumina
             // 0 is the never-resolved sentinel, so a real hash must not collide with it.
             Hash |= 1u;
 
-            if (Hash == Component.CachedMaterialHash && Component.RenderData->bAllMaterialsReady)
+            if (Hash == Component.CachedMaterialHash && Data->bAllMaterialsReady)
             {
                 continue;
             }
@@ -1522,7 +1526,7 @@ namespace Lumina
             // primitive is never re-bound and the retained instance keeps its original MaterialIndex/batch.
             Tracker.Mark(Entity, EPrimitiveSource::DynamicMesh, EPrimitiveDirty::Data);
 
-            if (!Component.RenderData->bAllMaterialsReady)
+            if (!Data->bAllMaterialsReady)
             {
                 // Still compiling: come back next frame. The hash is already stored, so the retry is driven
                 // by bAllMaterialsReady rather than by the hash differing again.
@@ -2503,6 +2507,14 @@ namespace Lumina
                                                                 Env.bMoonOpposeSun ? 1.0f : 0.0f);
                     EnvironmentParams.MoonDirection = FVector4(Env.MoonDirection, 0.0f);
                     EnvironmentParams.GalaxyParams  = FVector4(Env.GalaxyIntensity, Env.GalaxyTilt, 0.0f, 0.0f);
+
+                    // Yaw resolved to cos/sin once here so the sky pass and the equirect->cube bake read
+                    // identical values; they must agree or reflections slide against the background.
+                    const float HDRIYaw = Math::Radians(Env.HDRIRotation);
+                    EnvironmentParams.HDRIParams    = FVector4(Math::Max(Env.HDRIIntensity, 0.0f),
+                                                                std::cos(HDRIYaw),
+                                                                std::sin(HDRIYaw),
+                                                                0.0f);
                 });
 
                 RenderSettings.bHasEnvironment = bHasEnvironment;
@@ -9209,10 +9221,27 @@ namespace Lumina
 
             RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(ComputeShader));
 
-            struct FEquirectPC { uint32 EquirectSRV; uint32 SkyCubeUAV; uint32 _Pad0; uint32 _Pad1; };
+            struct FEquirectPC
+            {
+                uint32 EquirectSRV;
+                uint32 SkyCubeUAV;
+                float  Intensity;
+                float  CosYaw;
+                float  SinYaw;
+                uint32 _Pad0;
+            };
+            static_assert(sizeof(FEquirectPC) == 24, "FEquirectPC must match EquirectToCubemap.slang::FPushConstants.");
+
+            // Intensity/yaw come from the same HDRIParams the sky pass reads, so the baked cube (and
+            // therefore irradiance + prefilter) matches the visible background exactly.
+            const FVector4& HDRIParams = Frame.Volumetrics.EnvironmentParams.HDRIParams;
+
             FEquirectPC PC = {};
             PC.EquirectSRV = (uint32)EnvironmentMapID;
             PC.SkyCubeUAV  = (uint32)SkyCube.GetMipUAVIndex(0);
+            PC.Intensity   = HDRIParams.x;
+            PC.CosYaw      = HDRIParams.y;
+            PC.SinYaw      = HDRIParams.z;
 
             constexpr uint32 EquirectTile = 8u;
             const uint32 FaceSize = SkyCube.GetSizeX();

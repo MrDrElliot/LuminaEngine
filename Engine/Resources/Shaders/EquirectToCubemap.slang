@@ -4,16 +4,21 @@
 #include "Includes/Sky.slang"
 
 // Bakes an HDR equirect panorama into the scene's 6-face cube map (HDRI path; downstream IBL is identical).
-// Addressing (Y up, left-handed +Z fwd): u = 0.5 + atan2(-z, x)/2PI; v = 0.5 - asin(y)/PI. The -z keeps u
-// increasing with camera right-rotation (else the sky mirrors); asin keeps the poles non-singular under bilinear.
+// Addressing is Sky_EquirectUV, shared with the visible sky pass.
+//
+// Intensity and yaw are applied HERE, not just on the visible sky: this cube is what the irradiance and
+// GGX prefilter convolve from, so baking them in is what keeps ambient and reflections agreeing with the
+// background. The bake is gated on the environment params changing, so both are free per-frame.
 
 // No pass-local set: equirect read via bindless 2D SRV, cube written via bindless 2D-array UAV.
 struct FPushConstants
 {
-    uint EquirectSRV;
-    uint SkyCubeUAV;
-    uint _Pad0;
-    uint _Pad1;
+    uint  EquirectSRV;
+    uint  SkyCubeUAV;
+    float Intensity;
+    float CosYaw;
+    float SinYaw;
+    uint  _Pad0;
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
@@ -34,16 +39,15 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     }
 
     // Texel-centered face UV; same convention as SkyCubeCapture so IBL addressing matches either source.
-    float2 UV     = (float2(DTid.xy) + 0.5) / float2(Width, Height);
-    float3 RayDir = CubeFaceDirection(DTid.z, UV);
+    float2 FaceUV = (float2(DTid.xy) + 0.5) / float2(Width, Height);
+    float3 RayDir = CubeFaceDirection(DTid.z, FaceUV);
 
-    // World ray -> equirect UV; asin clamps v off the exact pole row to avoid garbage bilinear taps.
-    float u = 0.5 + atan2(-RayDir.z, RayDir.x) * (1.0 / TWO_PI);
-    float v = 0.5 - asin(clamp(RayDir.y, -1.0, 1.0)) * INV_PI;
+    float2 EquirectUV = Sky_EquirectUV(RayDir, Pass().CosYaw, Pass().SinYaw);
 
     // Sanitize here: this is the gate between the raw HDR panorama (which may hold Inf/NaN) and the IBL
     // cube the convolutions read, so a finite cube keeps the whole downstream chain stable.
-    float3 Color = SanitizeRadiance(SampleTexture2DLevel(Pass().EquirectSRV, SAMPLER_LINEAR_CLAMP, float2(u, v), 0.0).rgb);
+    float3 Color = SanitizeRadiance(SampleTexture2DLevel(Pass().EquirectSRV, SAMPLER_LINEAR_CLAMP, EquirectUV, 0.0).rgb);
+    Color *= max(Pass().Intensity, 0.0);
 
     uSkyCube[DTid] = float4(Color, 1.0);
 }

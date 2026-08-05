@@ -50,15 +50,15 @@ FragmentOutput FragmentMain(FragmentInput Input)
         float3 RayDir = GetViewRay(Input.UV);
         if (SkyMode == SKY_MODE_HDRI)
         {
-            // World ray -> equirect UV. Matches EquirectToCubemap.slang so the
-            // visible sky lines up with the cube-derived IBL / reflections.
-            float u = 0.5 + atan2(-RayDir.z, RayDir.x) * (1.0 / TWO_PI);
-            float v = 0.5 - asin(clamp(RayDir.y, -1.0, 1.0)) * INV_PI;
+            // Shared with EquirectToCubemap.slang, so the visible sky lines up with the cube-derived
+            // IBL / reflections under any yaw.
+            float2 UV = Sky_EquirectUV(RayDir, uEnvironment.HDRIParams.y, uEnvironment.HDRIParams.z);
 
             // Screen-derivative LOD from the ray footprint. RayDir is continuous (no equirect seam,
             // unlike u), so its derivatives give a clean per-pixel angular footprint. Selecting a mip
             // from that stops the sky shimmering when many equirect texels collapse under one pixel
             // (toward the horizon / at distance). SkyMode is uniform, so these derivatives are safe.
+            // Yaw is a rigid rotation, so the unrotated RayDir's footprint is the rotated one's.
             float3 dRdx = ddx(RayDir);
             float3 dRdy = ddy(RayDir);
             float pixelAngle      = max(length(dRdx), length(dRdy));   // radians/pixel (chord ~= angle)
@@ -66,7 +66,8 @@ FragmentOutput FragmentMain(FragmentInput Input)
             float lod             = log2(max(pixelAngle * texelsPerRadian, 1.0));
             // Sanitize: a half-float-overflow Inf texel (bright sun/lights) sampled straight into the HDR
             // target blows out bloom and flashes the screen white.
-            Color = SanitizeRadiance(SampleTexture2DLevel(Pass().EquirectIndex, SAMPLER_LINEAR_WRAP, float2(u, v), lod).rgb);
+            Color = SanitizeRadiance(SampleTexture2DLevel(Pass().EquirectIndex, SAMPLER_LINEAR_WRAP, UV, lod).rgb);
+            Color *= max(uEnvironment.HDRIParams.x, 0.0);
         }
         else
         {

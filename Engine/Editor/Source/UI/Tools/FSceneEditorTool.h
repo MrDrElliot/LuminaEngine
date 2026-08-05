@@ -313,5 +313,9 @@ namespace Lumina
         // component's value buffer and a CStruct* layout; a C# reload frees that buffer and destroys the
         // layout, so every table built before the bump describes memory that no longer exists.
         int32                            DetailsScriptGeneration = -1;
+
+        // Same contract for prefab data: a refresh rewrites an instance's component set and a re-capture
+        // replaces the prefab registry the reset-to-prefab baselines point into.
+        uint32                           DetailsPrefabGeneration = 0;
     };
 }

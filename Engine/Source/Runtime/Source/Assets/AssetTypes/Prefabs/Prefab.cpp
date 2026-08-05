@@ -51,6 +51,9 @@ namespace Lumina
             return FName(FGuid::New().ToShortString());
         }
 
+        // Game thread only: every writer below runs from world init, the prefab editor, or asset capture.
+        uint32 GDataGeneration = 0;
+
         // CopyRegistry extra-skip when capturing from a live world: nested instance tracking and the
         // override ledger must not leak into the new prefab (entities get fresh SPrefabComponent tags instead).
         bool ShouldSkipInstanceComponent(entt::id_type ID)
@@ -97,6 +100,16 @@ namespace Lumina
                 Registry.emplace_or_replace<FNeedsTransformUpdate>(Desc);
             });
         }
+    }
+
+    uint32 CPrefab::GetDataGeneration()
+    {
+        return GDataGeneration;
+    }
+
+    void CPrefab::BumpDataGeneration()
+    {
+        ++GDataGeneration;
     }
 
     void CPrefab::Serialize(FArchive& Ar)
@@ -318,6 +331,9 @@ namespace Lumina
         {
             return;
         }
+
+        // Everything past here rewrites this instance's components, invalidating any cached pointer into them.
+        BumpDataGeneration();
 
         // Index instance entities by StableID.
         THashMap<FName, entt::entity> InstanceByStableID;
@@ -620,12 +636,16 @@ namespace Lumina
             ECS::Utils::RemapEntityReferences(WorldRegistry, WorldE, PrefabToInstance, /*bClearUnmapped*/ !bEntityHasOverrides);
         });
 
-        // Re-stamp instance tracking components and rebuild hierarchy.
+        // Re-stamp instance tracking components and rebuild hierarchy. get_or_emplace, NOT
+        // emplace_or_replace: replacing assigns a default-constructed temp over the existing component,
+        // which releases its SourcePrefab strong ref before the line below re-adds it. Instance components
+        // are the only strong refs a placed prefab has (packages hold exports weakly), so for a prefab
+        // whose sole live holder is this entity that transient zero destroys the prefab mid-refresh.
         for (auto& [StableID, WorldE] : InstanceByStableID)
         {
             if (!WorldRegistry.valid(WorldE)) continue;
             const bool bIsRoot = (WorldE == InstanceRoot);
-            SPrefabInstanceComponent& Inst = WorldRegistry.emplace_or_replace<SPrefabInstanceComponent>(WorldE);
+            SPrefabInstanceComponent& Inst = WorldRegistry.get_or_emplace<SPrefabInstanceComponent>(WorldE);
             Inst.SourcePrefab = this;
             Inst.StableID = StableID;
             Inst.bIsRoot = bIsRoot;
@@ -870,6 +890,7 @@ namespace Lumina
 
         // Copy the captured subtree into a fresh registry; CopyRegistry remaps hierarchy +
         // entity-handle fields (escaping refs fall to null) and skips nested instance tracking.
+        BumpDataGeneration();
         Registry = entt::registry{};
         THashMap<entt::entity, entt::entity> Map;
         CopyRegistry(WorldRegistry, Registry, Map, &EntitiesToCapture, &ShouldSkipInstanceComponent);

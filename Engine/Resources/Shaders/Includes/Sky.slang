@@ -23,6 +23,7 @@ struct FEnvironmentParams
     float4 MoonParams;        // x=size, y=glowSize, z=brightness, w=autoOpposeFlag
     float4 MoonDirection;     // xyz=manual dir, w unused
     float4 GalaxyParams;      // x=intensity, y=tilt(rad)
+    float4 HDRIParams;        // x=intensity, y=cos(yaw), z=sin(yaw)
 };
 
 static const float kSunBaseAngle  = radians(0.53);
@@ -477,6 +478,27 @@ float3 EvaluateSky(FEnvironmentParams Env, float3 SunDir, float3 RayDir, float T
     if (Mode == SKY_MODE_SOLID)    return Sky_Solid(Env);
     if (Mode == SKY_MODE_GRADIENT) return Sky_Gradient(Env, SunDir, RayDir);
     return Sky_Dynamic(Env, SunDir, RayDir, Time);
+}
+
+// World ray -> equirect UV for an HDRI panorama, with the environment's yaw applied.
+//
+// Addressing (Y up, left-handed +Z fwd): u = 0.5 + atan2(-z, x)/2PI; v = 0.5 - asin(y)/PI. The -z keeps
+// u increasing with camera right-rotation (else the sky mirrors); asin keeps the poles non-singular
+// under bilinear. CosYaw/SinYaw are cos/sin of the PANORAMA's yaw, so the sample ray is rotated by the
+// inverse -- positive yaw turns the HDRI, not the camera.
+//
+// This lives here rather than in either caller because the visible sky (Environment.slang) and the IBL
+// bake (EquirectToCubemap.slang) must address the panorama identically. Two copies that drift apart by
+// even a degree read as reflections sliding against the background.
+float2 Sky_EquirectUV(float3 RayDir, float CosYaw, float SinYaw)
+{
+    float3 R = float3(RayDir.x * CosYaw - RayDir.z * SinYaw,
+                      RayDir.y,
+                      RayDir.x * SinYaw + RayDir.z * CosYaw);
+
+    float u = 0.5 + atan2(-R.z, R.x) * (1.0 / TWO_PI);
+    float v = 0.5 - asin(clamp(R.y, -1.0, 1.0)) * INV_PI;
+    return float2(u, v);
 }
 
 // Cubemap face -> world-space ray direction.

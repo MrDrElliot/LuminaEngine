@@ -161,6 +161,39 @@ namespace Lumina::ImGuiX
 
     RUNTIME_API FString FormatSize(size_t Bytes);
 
+    /**
+     * Switches subsequent images in this draw list into HDR-preview mode: the sampled texel is treated
+     * as LINEAR radiance and run through exposure -> ACES -> display encode, the same transform the
+     * scene viewport applies (both share Includes/Tonemap.slang).
+     *
+     * Use it for float-format sources -- environment maps, scene captures, anything cooked as RGBA16F.
+     * Do NOT use it for ordinary color textures: those are already display-encoded, and running the
+     * transform again would wash them out. Without it the reverse happens, which is why a linear HDR
+     * panorama blitted directly reads far darker in a preview than the same data does in-world.
+     *
+     * ExposureStops is a photographic EV bias; 0 = the texture's authored values.
+     *
+     * Always pair with EndHDRPreview -- the mode persists for the rest of the draw list otherwise.
+     */
+    RUNTIME_API void BeginHDRPreview(ImDrawList* DrawList, float ExposureStops);
+    RUNTIME_API void EndHDRPreview(ImDrawList* DrawList);
+
+    namespace Detail
+    {
+        // Mirrors FImGuiArgs' display fields in Includes/ImGuiCommon.slang.
+        struct FImGuiDisplayState
+        {
+            uint32 DisplayMode = 0;     // IMGUI_DISPLAY_*
+            float  Exposure    = 1.0f;  // linear multiplier
+        };
+
+        // Marker only; never invoked. The renderer backend compares ImDrawCmd::UserCallback against
+        // this and reads ImDrawCmd::UserCallbackData as an FImGuiDisplayState. Going through the
+        // draw list rather than a global keeps the state ordered with the draws it applies to, which
+        // is what makes it correct across docked windows and secondary viewports.
+        RUNTIME_API ImDrawCallback GetDisplayStateCallback();
+    }
+
     RUNTIME_API void RenderWindowOuterBorders(ImGuiWindow* Window);
     RUNTIME_API bool UpdateWindowManualResize(ImGuiWindow* Window, ImVec2& NewSize, ImVec2& NewPosition);
     

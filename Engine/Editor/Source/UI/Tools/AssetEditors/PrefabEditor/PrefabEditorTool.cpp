@@ -422,6 +422,9 @@ namespace Lumina
 
         // Rebuild from scratch (avoids accumulating dead entities). CopyRegistry copies just the
         // tagged subset, skips the editor-only set, and remaps hierarchy + entity-handle fields.
+        // Replacing the registry frees the components any open details panel points at for its
+        // reset-to-prefab baseline, so the generation has to move with it.
+        CPrefab::BumpDataGeneration();
         Prefab->Registry = entt::registry{};
         THashMap<entt::entity, entt::entity> SrcToDst;
         CPrefab::CopyRegistry(WorldRegistry, Prefab->Registry, SrcToDst, &PrefabEntities,

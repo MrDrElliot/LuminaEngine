@@ -154,6 +154,16 @@ namespace Lumina
         PROPERTY(Editable, Category = "Sky|HDRI")
         TObjectPtr<CTexture> EnvironmentMap;
 
+        /** Linear multiplier on the panorama's radiance. Applied to the visible sky AND the IBL bake, so
+            ambient and reflections track it. 1.0 = the HDRI's authored values. */
+        PROPERTY(Editable, Category = "Sky|HDRI", ClampMin = 0.0f, ClampMax = 64.0f)
+        float HDRIIntensity = 1.0f;
+
+        /** Yaw of the panorama about world Y, in degrees; turns the HDRI, not the camera. Lines the
+            source's sun/skyline up with the scene. Applied to the IBL bake as well. */
+        PROPERTY(Editable, Category = "Sky|HDRI", ClampMin = 0.0f, ClampMax = 360.0f)
+        float HDRIRotation = 0.0f;
+
         /** Reflection/IBL bake resolution. Higher tiers sharpen reflections at more VRAM; only re-baked
             on sky change, so no per-frame cost. */
         PROPERTY(Editable, Category = "Environment|Quality")

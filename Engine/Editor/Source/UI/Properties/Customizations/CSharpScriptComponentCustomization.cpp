@@ -24,14 +24,8 @@ namespace Lumina
         // Clears a slot's binding and class. Frees any live instance from the current generation first.
         void RebindSlot(SScriptInstance& Slot, const FString& NewClass)
         {
-            if (Slot.Instance != nullptr && Slot.Generation == DotNet::GetScriptGeneration())
-            {
-                DotNet::DestroyEntityScript(Slot.Instance);
-            }
-            Slot.Instance = nullptr;
-            Slot.BindState = ECSharpBindState::Unbound;
+            Slot.ReleaseInstance();
             Slot.ScriptClass = NewClass;
-            Slot.Generation = -1;
 
             if (NewClass.empty())
             {

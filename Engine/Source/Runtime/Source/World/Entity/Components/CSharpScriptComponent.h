@@ -25,6 +25,13 @@ namespace Lumina
 
         SScriptInstance() = default;
 
+        // The slot OWNS its managed instance: whatever drops the last pointer to it must free the GCHandle,
+        // or the script stays alive in EntityScriptRuntime's per-entity index as a zombie that GetScript can
+        // still hand out, and OnDetach never runs. entt's emplace_or_replace assigns a temporary over a live
+        // component, so this fires on prefab refresh, undo restore and world duplication -- not only on the
+        // entity-destroy path that CWorld::OnCSharpScriptComponentDestroyed covers.
+        ~SScriptInstance() { ReleaseInstance(); }
+
         // Copy carries the serialized data but never the live managed binding.
         SScriptInstance(const SScriptInstance& Other)
             : ScriptClass(Other.ScriptClass)
@@ -36,19 +43,47 @@ namespace Lumina
         {
             if (this != &Other)
             {
-                ScriptClass   = Other.ScriptClass;
-                Values        = Other.Values;
-                Instance      = nullptr;
-                Generation    = -1;
-                BindState     = ECSharpBindState::Unbound;
-                CallbackFlags = 0;
+                ReleaseInstance();
+                ScriptClass = Other.ScriptClass;
+                Values      = Other.Values;
             }
             return *this;
         }
 
-        // Move transfers the binding (ownership), so it is the default memberwise move.
-        SScriptInstance(SScriptInstance&&) noexcept            = default;
-        SScriptInstance& operator=(SScriptInstance&&) noexcept = default;
+        // Move transfers the binding, so the source must give it up -- a memberwise move leaves the raw
+        // void* in both halves and the destructor above would then free it twice.
+        SScriptInstance(SScriptInstance&& Other) noexcept
+            : ScriptClass(Move(Other.ScriptClass))
+            , Values(Move(Other.Values))
+            , Instance(Other.Instance)
+            , Generation(Other.Generation)
+            , BindState(Other.BindState)
+            , CallbackFlags(Other.CallbackFlags)
+        {
+            Other.Instance  = nullptr;
+            Other.BindState = ECSharpBindState::Unbound;
+        }
+
+        SScriptInstance& operator=(SScriptInstance&& Other) noexcept
+        {
+            if (this != &Other)
+            {
+                ReleaseInstance();
+                ScriptClass     = Move(Other.ScriptClass);
+                Values          = Move(Other.Values);
+                Instance        = Other.Instance;
+                Generation      = Other.Generation;
+                BindState       = Other.BindState;
+                CallbackFlags   = Other.CallbackFlags;
+                Other.Instance  = nullptr;
+                Other.BindState = ECSharpBindState::Unbound;
+            }
+            return *this;
+        }
+
+        /** Destroys the managed instance this slot owns and returns it to the unbound state. No-op when
+         *  unbound, or when the handle belongs to a dead generation (managed already freed it on unload). */
+        void ReleaseInstance();
 
         // Full C# type name to run, e.g. "Game.HelloScript".
         PROPERTY(Editable, Category = "Script")

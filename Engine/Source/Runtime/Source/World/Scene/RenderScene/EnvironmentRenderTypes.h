@@ -60,6 +60,12 @@ namespace Lumina
         FVector4   MoonDirection    = FVector4(0.0f, -1.0f, 0.0f, 0.0f);
         // x = milky-way band intensity, y = band tilt (radians), z/w reserved
         FVector4   GalaxyParams     = FVector4(0.06f, 0.45f, 0.0f, 0.0f);
+
+        // HDRI mode only. x = radiance multiplier, y = cos(yaw), z = sin(yaw), w reserved. The yaw is
+        // pre-resolved to cos/sin here so the sky pass and the equirect->cube bake consume the same two
+        // numbers; a bake that disagreed with the visible sky by even a degree shows up as reflections
+        // sliding against the background.
+        FVector4   HDRIParams       = FVector4(1.0f, 1.0f, 0.0f, 0.0f);
     };
     VERIFY_SSBO_ALIGNMENT(FEnvironmentParams);
 

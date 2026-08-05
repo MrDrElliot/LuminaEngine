@@ -21,15 +21,18 @@ namespace Lumina
     // The single live backend instance, so the static ImGuiPlatformIO::Renderer_* hooks can reach it.
     static FVulkanImGuiRender* GImGuiBackend = nullptr;
 
-    // Mirrors FImGuiArgs in ImGuiVert/Pixel.slang (32 B scalar).
+    // Mirrors FImGuiArgs in ImGuiVert/Pixel.slang (40 B scalar).
     struct FNewImGuiArgs
     {
         float  Scale[2];
         float  Translate[2];
         uint32 TextureID;
         uint32 SamplerIndex;
+        uint32 DisplayMode;
+        float  Exposure;
         uint64 VertexAddr;
     };
+    static_assert(sizeof(FNewImGuiArgs) == 40, "FNewImGuiArgs must match ImGuiCommon.slang::FImGuiArgs.");
 
     void FVulkanImGuiRender::Initialize()
     {
@@ -222,7 +225,13 @@ namespace Lumina
             Args.Translate[0] = -1.0f - DrawData->DisplayPos.x * Args.Scale[0];
             Args.Translate[1] = -1.0f - DrawData->DisplayPos.y * Args.Scale[1];
             Args.SamplerIndex = (uint32)RHI::EStockSampler::LinearWrap;
+            Args.DisplayMode  = 0;      // IMGUI_DISPLAY_DIRECT: UI atlases and cooked textures are already encoded.
+            Args.Exposure     = 1.0f;
             Args.VertexAddr   = VB.Gpu;
+
+            // Resolved once: ImGuiX::BeginHDRPreview stamps this marker into the draw list, and we
+            // match on identity below.
+            const ImDrawCallback DisplayStateCallback = ImGuiX::Detail::GetDisplayStateCallback();
 
             RHI::CmdSetDepthStencilState(CL, NewDepthState.Get());
             RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
@@ -242,6 +251,16 @@ namespace Lumina
                     const ImDrawCmd& Cmd = List->CmdBuffer[c];
                     if (Cmd.UserCallback != nullptr)
                     {
+                        // Display-transform switch (HDR texture previews). It carries no geometry, so
+                        // it updates Args for the draws that follow and contributes nothing itself.
+                        if (Cmd.UserCallback == DisplayStateCallback &&
+                            Cmd.UserCallbackData != nullptr &&
+                            Cmd.UserCallbackDataSize == (int)sizeof(ImGuiX::Detail::FImGuiDisplayState))
+                        {
+                            const auto* State = static_cast<const ImGuiX::Detail::FImGuiDisplayState*>(Cmd.UserCallbackData);
+                            Args.DisplayMode = State->DisplayMode;
+                            Args.Exposure    = State->Exposure;
+                        }
                         continue;
                     }
 

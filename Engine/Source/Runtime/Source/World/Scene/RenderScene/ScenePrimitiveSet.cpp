@@ -783,19 +783,22 @@ namespace Lumina
                 // has looked at this version", which is what PollUnhookedSources asks. Stamping only on a
                 // successful resolve would leave a cleared or empty mesh permanently mismatched, and the
                 // poll would re-mark it every frame forever.
-                C->SyncedRenderDataVersion = C->RenderDataVersion;
+                C->SyncedRenderDataVersion = C->LoadRenderDataVersion();
 
                 // Dynamic meshes own their resolve outright: Commit publishes RenderData synchronously, so
                 // there is no cache handle, no epoch and no staleness check.
-                const FDynamicMeshRenderData* Data = C->RenderData.get();
+                //
+                // Ref-taken ONCE, atomically: Commit() can swap the component's pointer from a worker, so
+                // reading it twice could see two different snapshots, and a plain copy would race the swap
+                // outright. Holding the ref also keeps the surfaces alive for the gather that reads them.
+                Prim.DynamicRenderData = C->LoadRenderData();
+
+                const FDynamicMeshRenderData* Data = Prim.DynamicRenderData.get();
                 if (Data == nullptr || Data->MeshletHeaderAddress == 0 || Data->Surfaces.empty())
                 {
+                    Prim.DynamicRenderData.reset();
                     break;
                 }
-
-                // Ref-held: Commit() can swap the component's pointer from a worker, and the gather is
-                // still reading the surfaces this primitive points at.
-                Prim.DynamicRenderData    = C->RenderData;
 
                 Prim.LocalCenter          = Data->LocalCenter;
                 Prim.LocalRadius          = Data->LocalRadius;
@@ -1116,7 +1119,9 @@ namespace Lumina
         // makes the removed Index == ~0u probe unnecessary.
         for (auto&& [Entity, Mesh] : Registry.view<SDynamicMeshComponent>().each())
         {
-            if (Mesh.SyncedRenderDataVersion != Mesh.RenderDataVersion)
+            // Acquire-load: Commit may bump this from a worker. On x86 it still compiles to the same
+            // plain load, so the dense sequential scan this comment block is about is unchanged.
+            if (Mesh.SyncedRenderDataVersion != Mesh.LoadRenderDataVersion())
             {
                 Tracker.Mark(Entity, EPrimitiveSource::DynamicMesh, EPrimitiveDirty::Data);
             }

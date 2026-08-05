@@ -215,6 +215,21 @@ namespace Lumina
         // since the substitute basis is valid but arbitrarily oriented.
         bool                        bGenerateTangents = true;
 
+        // Per-meshlet normal cones, which cost twice: cone-weighted clustering inside meshopt_buildMeshlets
+        // (the expensive clustering mode) plus a meshopt_computeMeshletBounds call per meshlet. Off derives
+        // the culling sphere from the per-meshlet AABB pass that already runs and writes ConeCutoff = 1.0,
+        // which is the shader's own "this meshlet has no cone" gate (CullMeshlets.slang) -- so backface
+        // cluster culling is skipped rather than fed garbage, and frustum/occlusion culling still work off a
+        // slightly more conservative (AABB-circumscribed) sphere. Build input, not serialized.
+        //
+        // Assets build once and keep it; geometry rebuilt every frame generally should not, because the
+        // build cost lands on the frame that rebuilds it while the cull saving is spread over the frames
+        // that draw it. See SDynamicMeshComponent.
+        bool                        bMeshletConeCulling = true;
+
+        // Per-meshlet triangle reorder for the hardware vertex cache. Build input, not serialized.
+        bool                        bOptimizeMeshlets = true;
+
         FORCEINLINE size_t GetNumSurfaces() const { return GeometrySurfaces.size(); }
 
         FORCEINLINE bool IsSurfaceIndexValid(size_t Slot) const

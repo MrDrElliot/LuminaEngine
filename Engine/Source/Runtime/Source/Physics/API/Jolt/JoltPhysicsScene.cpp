@@ -2621,7 +2621,11 @@ namespace Lumina::Physics
             ResolvedMaterial   = DMC->PhysicsMaterial.Get();
 
             const SDynamicMeshComponent* DM = Registry.try_get<SDynamicMeshComponent>(Entity);
-            if (DM == nullptr || !DM->RenderData || DM->RenderData->Resource.MeshletData.IsEmpty())
+
+            // Ref-held across the shape build: Commit can swap the component's data from a worker, and
+            // BuildMeshColliderShape reads the resource for the whole call.
+            const TSharedPtr<FDynamicMeshRenderData> MeshData = DM ? DM->LoadRenderData() : nullptr;
+            if (!MeshData || MeshData->Resource.MeshletData.IsEmpty())
             {
                 // Nothing committed yet. Defer rather than error: a streamed chunk builds its geometry a
                 // frame or more after the entity exists, and the pending list retries.
@@ -2630,7 +2634,7 @@ namespace Lumina::Physics
 
             // Deliberately uncached: a dynamic mesh is unique per component and rebuilt on every commit, so
             // the CMesh-keyed shape cache has nothing to reuse.
-            Shape = BuildMeshColliderShape(DM->RenderData->Resource, "DynamicMesh",
+            Shape = BuildMeshColliderShape(MeshData->Resource, "DynamicMesh",
                                            TransformComponent->GetScale(), DMC->bConvex);
             if (Shape == nullptr)
             {

@@ -55,7 +55,16 @@ namespace Lumina
         void ClearMesh();
 
         /** Finalize the staged data: generate meshlets/LODs and upload the GPU buffers. Returns false if
-         *  there is nothing renderable (no positions or no indices). Call after setting the streams. */
+         *  there is nothing renderable (no positions or no indices). Call after setting the streams.
+         *
+         *  Callable from any worker thread, and concurrently across DIFFERENT components -- which is the
+         *  point, since this is the expensive call and chunked geometry commits many of them at once. The
+         *  build stages are component-local, the nested ParallelFor re-enters the scheduler safely, and the
+         *  RHI alloc/upload path is already built for multi-threaded submission.
+         *
+         *  A single component is still owned by ONE thread at a time: the stream setters, AddSection and
+         *  ClearMesh are unsynchronized, so staging and committing the same component from two threads is
+         *  a data race. What IS synchronized is the handoff to the renderer -- see PublishRenderData. */
         FUNCTION(Script)
         bool Commit();
 
@@ -82,11 +91,32 @@ namespace Lumina
         void SetIndicesData(const uint32* Data, int32 Count);
 
         /** How many LOD levels Commit() builds, 1 meaning LOD 0 only. Each extra level is another full
-         *  simplify pass over the whole index range, so a mesh that is rebuilt often (voxel chunks,
-         *  procedural terrain) usually wants 1-2; geometry that is built once and viewed at range wants
-         *  more. Clamped to MAX_MESH_LODS. */
+         *  meshopt_simplify pass over the WHOLE LOD-0 index range (levels are not cascaded), plus a
+         *  full-size scratch allocation, so cost is roughly linear in this. Clamped to MAX_MESH_LODS.
+         *
+         *  Defaults to 1 because this component exists for geometry that is rebuilt often, where the build
+         *  lands on the frame that rebuilds it and the LOD ramp only pays off for meshes also viewed at
+         *  range. Raise it for procedural geometry that is built once and seen from far away. */
         PROPERTY(Editable, Category = "Rendering")
-        int32 MaxLODs = (int32)MAX_MESH_LODS;
+        int32 MaxLODs = 1;
+
+        /** Build per-meshlet normal cones so the GPU can cull backfacing clusters. Costs twice at build
+         *  time: it selects meshopt's cone-weighted clustering (the expensive mode) and adds a bounds
+         *  solve per meshlet. Off, the culling sphere comes from the per-meshlet AABB pass that runs
+         *  anyway, and the meshlet is tagged as having no cone -- frustum and occlusion culling are
+         *  unaffected, only backface-cluster rejection is given up.
+         *
+         *  Defaults off here (imported assets keep it on): they build once, this rebuilds constantly, and
+         *  the saving is largest on the near-planar geometry -- terrain, voxel surfaces -- that cone
+         *  culling helps least anyway. Turn it on for closed, high-curvature procedural meshes. */
+        PROPERTY(Editable, Category = "Rendering")
+        bool bMeshletConeCulling = false;
+
+        /** Reorder each meshlet's triangles for the hardware vertex cache. Cheap next to the cone solve
+         *  and it helps every draw, so it stays on by default; exposed for rebuild-bound meshes that want
+         *  the last of the build cost back. */
+        PROPERTY(Editable, Category = "Rendering")
+        bool bOptimizeMeshlets = true;
 
         /** Generate proper MikkTSpace tangents at Commit. This is the slowest single stage of a commit and
          *  it does not parallelize across a mesh with one section, so turning it off is the biggest saving
@@ -96,8 +126,21 @@ namespace Lumina
         PROPERTY(Editable, Category = "Rendering")
         bool bGenerateTangents = true;
 
-        /// Committed geometry + resolved surfaces. Null until the first successful Commit.
-        TSharedPtr<FDynamicMeshRenderData> RenderData;
+        /// Takes a ref on the currently published data (null until the first successful Commit). Every
+        /// reader outside this component goes through this rather than touching the pointer: Commit can
+        /// swap it from a worker, and copying a shared_ptr while another thread reassigns that same
+        /// shared_ptr object is a data race, not a ref-count that happens to work out.
+        ///
+        /// The returned data is immutable from the renderer's side and outlives the swap, so a gather can
+        /// hold it across a commit. Commit finishes and drops scratch BEFORE publishing for that reason.
+        TSharedPtr<FDynamicMeshRenderData> LoadRenderData() const;
+
+        /// Acquire-load of RenderDataVersion, paired with the release in PublishRenderData: a reader that
+        /// observes a new version is guaranteed to observe the pointer that goes with it.
+        uint32 LoadRenderDataVersion() const;
+
+        /// Atomically swaps in fully-built data and releases the version bump. Null clears.
+        void PublishRenderData(TSharedPtr<FDynamicMeshRenderData> NewData);
 
         /// Bumped every time RenderData is replaced or cleared.
         ///
@@ -124,6 +167,14 @@ namespace Lumina
     private:
 
         FDynamicMeshBuildData& EnsureBuildData();
+
+        /// Resolve the material half of Data's surfaces against the current overrides. Takes the data
+        /// rather than reading the member so Commit can run it on the not-yet-published snapshot.
+        void ResolveMaterialsInto(FDynamicMeshRenderData& Data) const;
+
+        /// Private: reachable only through LoadRenderData / PublishRenderData, which is what keeps the
+        /// cross-thread accesses atomic. Nothing may mutate it once published.
+        TSharedPtr<FDynamicMeshRenderData> RenderData;
 
         TSharedPtr<FDynamicMeshBuildData> BuildData;
 

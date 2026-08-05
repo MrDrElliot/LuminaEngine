@@ -2489,10 +2489,16 @@ namespace Lumina
         // describes it, so a table built against the previous generation points at freed memory in both
         // its data and its layout. Nothing broadcasts that, so the generation is compared here rather
         // than trusting an invalidation that no one sends.
-        const int32 ScriptGeneration = DotNet::GetScriptGeneration();
-        if (ScriptGeneration != DetailsScriptGeneration)
+        // A prefab refresh is the same hazard: it removes and re-emplaces components (entt's swap-and-pop
+        // relocates a pool's last element into the freed slot, so even an untouched neighbour's row can end
+        // up aliasing someone else's component) and a re-capture replaces the whole prefab registry the
+        // reset-to-prefab baselines point into.
+        const int32  ScriptGeneration = DotNet::GetScriptGeneration();
+        const uint32 PrefabGeneration = CPrefab::GetDataGeneration();
+        if (ScriptGeneration != DetailsScriptGeneration || PrefabGeneration != DetailsPrefabGeneration)
         {
             DetailsScriptGeneration = ScriptGeneration;
+            DetailsPrefabGeneration = PrefabGeneration;
 
             // Dropped rather than rebuilt: the old tables must not be touched again, and the rebuild
             // below only runs when there is a valid entity to rebuild for.

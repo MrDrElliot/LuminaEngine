@@ -174,16 +174,11 @@ namespace Lumina::Import::Mesh
             }
         });
     }
-
-    // Stand-in for MikkTSpace: an arbitrary unit vector perpendicular to each normal. One parallel pass over
-    // the vertices instead of MikkTSpace's serial per-surface adjacency build.
-    //
-    // Note this is NOT the same as leaving the tangents zeroed. Zero decodes (see UnpackTangent) to a constant
-    // object-space +Z, and the pixel shader re-orthogonalizes the basis per pixel -- so every vertex whose
-    // normal is parallel to +Z would produce normalize(0), i.e. a NaN basis. A flat floor is exactly that
-    // case. Materials that never sample a normal map are unaffected by the arbitrary orientation.
+    
     void GenerateFallbackTangents(FMeshResource& MeshResource)
     {
+        LUMINA_PROFILE_SCOPE();
+
         const size_t NumVertices = MeshResource.GetNumVertices();
         if (NumVertices == 0 || MeshResource.Normals.size() != NumVertices)
         {
@@ -215,6 +210,8 @@ namespace Lumina::Import::Mesh
     // triangle) can request multi-GB allocations and OOM-crash. Dedup is a correctness prerequisite, not an optimization.
     void DeduplicateMeshVertices(FMeshResource& MeshResource, FScopedSlowTask* Progress)
     {
+        LUMINA_PROFILE_SCOPE();
+
         const size_t NumVertices = MeshResource.GetNumVertices();
         const size_t NumIndices  = MeshResource.Indices.size();
         if (NumVertices == 0 || NumIndices == 0)
@@ -252,6 +249,8 @@ namespace Lumina::Import::Mesh
     // Assumes vertices were already deduplicated (DeduplicateMeshVertices ran first).
     void OptimizeNewlyImportedMesh(FMeshResource& MeshResource, FScopedSlowTask* Progress)
     {
+        LUMINA_PROFILE_SCOPE();
+
         const size_t NumVertices = MeshResource.GetNumVertices();
         const size_t NumIndices  = MeshResource.Indices.size();
 
@@ -354,31 +353,49 @@ namespace Lumina::Import::Mesh
         void BuildLODMeshletsForRange(
             const uint32* SrcIndices, size_t SrcIndexCount,
             const float*  VertexPositions, size_t NumVertices, size_t VertexSize,
+            bool bConeCulling, bool bOptimizeMeshlets,
             TReadPos&&    ReadPosition,
             FSurfaceMeshletResult& Result)
         {
+            LUMINA_PROFILE_SECTION("Build LOD Meshlets For Range");
+            
             constexpr size_t MaxVertices  = MESHLET_MAX_VERTICES;
             constexpr size_t MaxTriangles = MESHLET_MAX_TRIANGLES;
-            constexpr float  ConeWeight   = 0.25f;
+            
+            const float ConeWeight = bConeCulling ? 0.25f : 0.0f;
 
             if (SrcIndexCount < 3)
             {
                 return;
             }
 
+            // WORST-CASE bound: meshopt sizes it for an unindexed stream, where the 64-vertex limit binds
+            // before the 124-triangle one, so this is ~SrcIndexCount/62. Real indexed geometry is
+            // triangle-limited (~SrcIndexCount/372), so these buffers are routinely ~6x larger than what
+            // gets written -- and eastl::vector::resize VALUE-initializes, so all of it is memset first.
+            // That is ~10 bytes zeroed per source index per cell, all of it dead. Measure before trading
+            // it away; the section below is what tells you whether it matters on your mesh.
             const size_t MaxMeshlets = meshopt_buildMeshletsBound(SrcIndexCount, MaxVertices, MaxTriangles);
 
-            TVector<meshopt_Meshlet> LocalMeshlets(MaxMeshlets);
-            Result.Vertices.resize(MaxMeshlets * MaxVertices);
-            Result.Triangles.resize(MaxMeshlets * MaxTriangles * 3);
+            TVector<meshopt_Meshlet> LocalMeshlets;
+            {
+                LUMINA_PROFILE_SECTION("Meshlet Scratch Alloc");
+                LocalMeshlets.resize(MaxMeshlets);
+                Result.Vertices.resize(MaxMeshlets * MaxVertices);
+                Result.Triangles.resize(MaxMeshlets * MaxTriangles * 3);
+            }
 
-            const size_t MeshletCount = meshopt_buildMeshlets(
-                LocalMeshlets.data(),
-                Result.Vertices.data(),
-                Result.Triangles.data(),
-                SrcIndices, SrcIndexCount,
-                VertexPositions, NumVertices, VertexSize,
-                MaxVertices, MaxTriangles, ConeWeight);
+            size_t MeshletCount = 0;
+            {
+                LUMINA_PROFILE_SECTION("meshopt_buildMeshlets");
+                MeshletCount = meshopt_buildMeshlets(
+                    LocalMeshlets.data(),
+                    Result.Vertices.data(),
+                    Result.Triangles.data(),
+                    SrcIndices, SrcIndexCount,
+                    VertexPositions, NumVertices, VertexSize,
+                    MaxVertices, MaxTriangles, ConeWeight);
+            }
 
             if (MeshletCount == 0)
             {
@@ -394,18 +411,24 @@ namespace Lumina::Import::Mesh
             Result.Vertices.resize(Last.vertex_offset + Last.vertex_count);
             Result.Triangles.resize(Last.triangle_offset + ((Last.triangle_count * 3 + 3) & ~3u));
 
-            for (const meshopt_Meshlet& M : LocalMeshlets)
+            if (bOptimizeMeshlets)
             {
-                meshopt_optimizeMeshlet(
-                    &Result.Vertices[M.vertex_offset],
-                    &Result.Triangles[M.triangle_offset],
-                    M.triangle_count, M.vertex_count);
+                LUMINA_PROFILE_SECTION("meshopt_optimizeMeshlet");
+                for (const meshopt_Meshlet& M : LocalMeshlets)
+                {
+                    meshopt_optimizeMeshlet(
+                        &Result.Vertices[M.vertex_offset],
+                        &Result.Triangles[M.triangle_offset],
+                        M.triangle_count, M.vertex_count);
+                }
             }
 
             Result.OutMeshlets.reserve(MeshletCount);
             Result.Bounds.reserve(MeshletCount);
             Result.MeshletLo.reserve(MeshletCount);
-
+            
+            {
+            LUMINA_PROFILE_SECTION("Meshlet Bounds");
             for (const meshopt_Meshlet& M : LocalMeshlets)
             {
                 FMeshlet Out{};
@@ -415,20 +438,7 @@ namespace Lumina::Import::Mesh
                 Out.TriangleCount  = M.triangle_count;
                 Result.OutMeshlets.push_back(Out);
 
-                const meshopt_Bounds B = meshopt_computeMeshletBounds(
-                    &Result.Vertices[M.vertex_offset],
-                    &Result.Triangles[M.triangle_offset],
-                    M.triangle_count,
-                    VertexPositions, NumVertices, VertexSize);
-
-                FMeshletBounds Bounds{};
-                Bounds.Center     = FVector3(B.center[0],    B.center[1],    B.center[2]);
-                Bounds.Radius     = B.radius;
-                Bounds.ConeApex   = FVector3(B.cone_apex[0], B.cone_apex[1], B.cone_apex[2]);
-                Bounds.ConeAxis   = FVector3(B.cone_axis[0], B.cone_axis[1], B.cone_axis[2]);
-                Bounds.ConeCutoff = B.cone_cutoff;
-                Result.Bounds.push_back(Bounds);
-
+                // Hoisted above the bounds: without cones this pass IS the bounds, so it must run first.
                 FVector3 Lo( FLT_MAX);
                 FVector3 Hi(-FLT_MAX);
                 for (uint32 i = 0; i < M.vertex_count; ++i)
@@ -437,8 +447,34 @@ namespace Lumina::Import::Mesh
                     Lo = Math::Min(Lo, P);
                     Hi = Math::Max(Hi, P);
                 }
+
+                FMeshletBounds Bounds{};
+                if (bConeCulling)
+                {
+                    const meshopt_Bounds B = meshopt_computeMeshletBounds(
+                        &Result.Vertices[M.vertex_offset],
+                        &Result.Triangles[M.triangle_offset],
+                        M.triangle_count,
+                        VertexPositions, NumVertices, VertexSize);
+
+                    Bounds.Center     = FVector3(B.center[0],    B.center[1],    B.center[2]);
+                    Bounds.Radius     = B.radius;
+                    Bounds.ConeApex   = FVector3(B.cone_apex[0], B.cone_apex[1], B.cone_apex[2]);
+                    Bounds.ConeAxis   = FVector3(B.cone_axis[0], B.cone_axis[1], B.cone_axis[2]);
+                    Bounds.ConeCutoff = B.cone_cutoff;
+                }
+                else
+                {
+                    Bounds.Center     = (Lo + Hi) * 0.5f;
+                    Bounds.Radius     = Math::Length(Hi - Bounds.Center);
+                    Bounds.ConeAxis   = FVector3(0.0f, 0.0f, 1.0f);
+                    Bounds.ConeCutoff = 1.0f;
+                }
+                Result.Bounds.push_back(Bounds);
+
                 Result.MeshletLo.push_back(Lo);
                 Result.MaxExtent = Math::Max(Result.MaxExtent, Hi - Lo);
+            }
             }
 
             Result.bHasData = !Result.OutMeshlets.empty();
@@ -451,11 +487,9 @@ namespace Lumina::Import::Mesh
         
         MeshResource.MeshletData.Clear();
 
-        // Split each surface's progress budget between tangent generation and meshlet building.
         const float TangentStep = StepPerSurface * 0.35f;
         const float MeshletStep = StepPerSurface * 0.65f;
 
-        // Tangents generated post-dedup so MikkTSpace runs once on the deduped vertex array.
         if (Progress)
         {
             Progress->UpdateMessage("Generating tangents...");
@@ -475,7 +509,6 @@ namespace Lumina::Import::Mesh
 
         const size_t NumVertices = MeshResource.GetNumVertices();
         const size_t NumIndices  = MeshResource.Indices.size();
-        // meshopt position-stream stride; the SoA Positions array is tightly packed FVector3.
         constexpr size_t PositionStride = sizeof(FVector3);
 
         if (NumVertices == 0 || NumIndices == 0)
@@ -507,29 +540,22 @@ namespace Lumina::Import::Mesh
         const uint32 NumSurfaces = (uint32)MeshResource.GeometrySurfaces.size();
 
         // Callers that rebuild often (dynamic meshes) trade distant-draw quality for build time here.
-        const uint32 LODCount = Math::Clamp(MeshResource.MaxLODs, 1u, MAX_MESH_LODS);
+        const uint32 LODCount          = Math::Clamp(MeshResource.MaxLODs, 1u, MAX_MESH_LODS);
+        const bool   bConeCulling      = MeshResource.bMeshletConeCulling;
+        const bool   bOptimizeMeshlets = MeshResource.bOptimizeMeshlets;
 
         if (Progress)
         {
             Progress->UpdateMessage("Building meshlets & LODs...");
         }
-
-        // Phase 1: every (LOD, Surface) cell is independent, so the whole grid runs at once rather than one
-        // task per surface with a serial LOD chain inside it. Each LOD simplifies from the surface's ORIGINAL
-        // index range with its own ratio -- not from the previous LOD -- so nothing here actually depends on
-        // the level before it; only the accept/break bookkeeping did, and that is replayed serially below.
-        // For the common single-surface case (every dynamic mesh with no declared sections) this is the
-        // difference between one busy thread and MAX_MESH_LODS of them.
-        //
-        // The tradeoff: cells past the point where the serial chain would have broken are computed and then
-        // thrown away. meshopt_simplify costs scale with the SOURCE index count rather than the target, so a
-        // discarded cell is not cheap -- but the cheap break (target below kLODMinIndices) is still taken
-        // before any simplification, and wall-clock wins whenever the chain would have run more than one LOD.
+        
         TVector<FSurfaceMeshletResult> Results(LODCount * NumSurfaces);
         TVector<size_t> CellIndexCount(LODCount * NumSurfaces, 0u);
 
         Task::ParallelFor(LODCount * NumSurfaces, [&](uint32 Cell)
         {
+            LUMINA_PROFILE_SECTION("Process Surfaces and LODs");
+            
             const uint32 lod        = Cell / NumSurfaces;
             const uint32 SurfaceIdx = Cell % NumSurfaces;
 
@@ -547,6 +573,7 @@ namespace Lumina::Import::Mesh
                 BuildLODMeshletsForRange(
                     SurfaceIndices, Section.IndexCount,
                     VertexPositions, NumVertices, PositionStride,
+                    bConeCulling, bOptimizeMeshlets,
                     ReadPosition, Out);
                 CellIndexCount[Cell] = Section.IndexCount;
                 return;
@@ -562,25 +589,37 @@ namespace Lumina::Import::Mesh
                 return;
             }
 
-            // Scratch is per cell now that cells run concurrently.
-            TVector<uint32> Simplified(Section.IndexCount);
+            // Scratch is per cell now that cells run concurrently. Sized to the FULL source range and
+            // value-initialized by resize, i.e. 4 bytes memset per source index per LOD cell, on top of
+            // the meshlet scratch inside BuildLODMeshletsForRange.
+            TVector<uint32> Simplified;
+            {
+                LUMINA_PROFILE_SECTION("Simplify Scratch Alloc");
+                Simplified.resize(Section.IndexCount);
+            }
 
-            float        ResultError = 0.0f;
-            const size_t NewCount    = Cfg.bSloppy
-                ? meshopt_simplifySloppy(
-                    Simplified.data(),
-                    SurfaceIndices, Section.IndexCount,
-                    VertexPositions, NumVertices, PositionStride,
-                    nullptr,
-                    TargetIndices, Cfg.TargetError,
-                    &ResultError)
-                : meshopt_simplify(
-                    Simplified.data(),
-                    SurfaceIndices, Section.IndexCount,
-                    VertexPositions, NumVertices, PositionStride,
-                    TargetIndices, Cfg.TargetError,
-                    meshopt_SimplifyLockBorder,
-                    &ResultError);
+            float  ResultError = 0.0f;
+            size_t NewCount    = 0;
+            {
+                // Note this simplifies from the FULL LOD-0 range every level, not from LOD N-1, so each
+                // cell's input is the whole surface regardless of how coarse the target is.
+                LUMINA_PROFILE_SECTION("meshopt_simplify");
+                NewCount = Cfg.bSloppy
+                    ? meshopt_simplifySloppy(
+                        Simplified.data(),
+                        SurfaceIndices, Section.IndexCount,
+                        VertexPositions, NumVertices, PositionStride,
+                        nullptr,
+                        TargetIndices, Cfg.TargetError,
+                        &ResultError)
+                    : meshopt_simplify(
+                        Simplified.data(),
+                        SurfaceIndices, Section.IndexCount,
+                        VertexPositions, NumVertices, PositionStride,
+                        TargetIndices, Cfg.TargetError,
+                        meshopt_SimplifyLockBorder,
+                        &ResultError);
+            }
 
             CellIndexCount[Cell] = NewCount;
             if (NewCount < kLODMinIndices)
@@ -589,14 +628,18 @@ namespace Lumina::Import::Mesh
             }
 
             // Restore vertex-cache locality after simplifiers reorder by collapse/cluster priority.
-            meshopt_optimizeVertexCache(
-                Simplified.data(),
-                Simplified.data(),
-                NewCount, NumVertices);
+            {
+                LUMINA_PROFILE_SECTION("meshopt_optimizeVertexCache");
+                meshopt_optimizeVertexCache(
+                    Simplified.data(),
+                    Simplified.data(),
+                    NewCount, NumVertices);
+            }
 
             BuildLODMeshletsForRange(
                 Simplified.data(), NewCount,
                 VertexPositions, NumVertices, PositionStride,
+                bConeCulling, bOptimizeMeshlets,
                 ReadPosition, Out);
         });
 
@@ -697,9 +740,10 @@ namespace Lumina::Import::Mesh
             }
         }
 
-        // Phase 3: serial pack, LOD-major so LOD 0 is contiguous at the front of the buffer.
         for (uint32 lod = 0; lod < LODCount; ++lod)
         {
+            LUMINA_PROFILE_SECTION("Serial Pack LODs");
+            
             for (uint32 SurfaceIdx = 0; SurfaceIdx < NumSurfaces; ++SurfaceIdx)
             {
                 FGeometrySurface&      Section = MeshResource.GeometrySurfaces[SurfaceIdx];

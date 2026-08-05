@@ -254,6 +254,16 @@ internal sealed class EntityScriptRuntime
         }
 
         GCHandle Handle = GCHandle.FromIntPtr(Pointer);
+
+        // Claim the handle before running any user code. Removing first makes a re-entrant Destroy (OnDetach
+        // destroying this same script) a no-op instead of a double free, and keeps FreeAll's contract that a
+        // handle absent from the set has already been freed. GCHandle.IsAllocated cannot serve here: it only
+        // tests this struct copy's raw value, so it still reads true for a pointer someone else freed.
+        if (!LiveHandles.Remove(Handle))
+        {
+            return;
+        }
+
         if (Handle.Target is EntityScript Script)
         {
             try
@@ -272,11 +282,7 @@ internal sealed class EntityScriptRuntime
             IndexRemove(Script);
         }
 
-        LiveHandles.Remove(Handle);
-        if (Handle.IsAllocated)
-        {
-            Handle.Free();
-        }
+        Handle.Free();
     }
 
     /// <summary>Delivers one discrete input event to a script's OnInput (event-driven input listening).</summary>
@@ -405,12 +411,18 @@ internal sealed class EntityScriptRuntime
         }
     }
 
-    private static EntityScript? Resolve(IntPtr Pointer)
+    /// <summary>Resolves a handle native gathered earlier in this frame. Native dispatches in batches, so a
+    /// script that destroys another entity (or removes another script) from its callback frees a handle the
+    /// rest of the batch still names. LiveHandles membership is the liveness test -- GCHandle equality and
+    /// hashing compare the raw value without touching the target, so an already-freed pointer is rejected
+    /// here instead of being dereferenced.</summary>
+    private EntityScript? Resolve(IntPtr Pointer)
     {
         if (Pointer == IntPtr.Zero)
         {
             return null;
         }
-        return GCHandle.FromIntPtr(Pointer).Target as EntityScript;
+        GCHandle Handle = GCHandle.FromIntPtr(Pointer);
+        return LiveHandles.Contains(Handle) ? Handle.Target as EntityScript : null;
     }
 }

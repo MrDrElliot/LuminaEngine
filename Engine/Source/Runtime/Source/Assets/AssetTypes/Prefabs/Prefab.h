@@ -17,6 +17,14 @@ namespace Lumina
 
         void Serialize(FArchive& Ar) override;
 
+        /** Bumped whenever prefab data or a live instance's component set is rewritten. Editor details
+         *  panels cache raw pointers into entt component storage (and into this registry, for the
+         *  reset-to-prefab baseline); a refresh removes/re-emplaces components, which relocates neighbours
+         *  under entt's swap-and-pop, and a re-capture replaces the registry outright. Nothing broadcasts
+         *  either, so consumers compare this the way they compare DotNet::GetScriptGeneration(). */
+        static uint32 GetDataGeneration();
+        static void   BumpDataGeneration();
+
         /** Returns root entity of new instance (entt::null on failure). OffsetTransform applied to root. */
         entt::entity Instantiate(CWorld* TargetWorld, const FTransform& OffsetTransform = FTransform(), entt::entity Parent = entt::null);
 
