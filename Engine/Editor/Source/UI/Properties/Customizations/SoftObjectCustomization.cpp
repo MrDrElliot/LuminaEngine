@@ -15,6 +15,7 @@
 #include <Core/Object/Package/Package.h>
 #include <imgui_internal.h>
 #include "Thumbnails/ThumbnailManager.h"
+#include "UI/Properties/Customizations/AssetPickerFilter.h"
 
 namespace Lumina
 {
@@ -114,7 +115,7 @@ namespace Lumina
                 }
 
                 ImGui::SameLine();
-                ImGui::Button(LE_ICON_FILTER, ImVec2(30.0f, 0.0f));
+                AssetPickerFilter::DrawFilterButton(30.0f);
                 ImGui::SetNextWindowSizeConstraints(ImVec2(200, 200), ComboDropDownSize);
 
                 if (ImGui::BeginChild("##OptList", ComboDropDownSize, false, ImGuiChildFlags_NavFlattened))
@@ -134,6 +135,11 @@ namespace Lumina
                         for (const FAssetData* Asset : Assets)
                         {
                             if (!SearchFilter.PassFilter(Asset->AssetName.c_str()))
+                            {
+                                continue;
+                            }
+
+                            if (!AssetPickerFilter::PassesSourceFilter(Asset->Path))
                             {
                                 continue;
                             }

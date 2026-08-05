@@ -229,6 +229,10 @@ namespace Lumina
 
         void HandleUserInput(const FUpdateContext& UpdateContext);
 
+        // Launches the bundled Tracy profiler (F8, and Tools > Tracy Profiler). Reports the path it looked
+        // at when the tool is missing, rather than failing silently.
+        void LaunchTracyProfiler();
+
     private:
 
         FEditorModalManager                             ModalManager;

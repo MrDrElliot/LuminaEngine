@@ -744,6 +744,14 @@ namespace Lumina
             Screenshot::CaptureActiveWorld(Source);
         }
 
+        // Tracy sits on F8 next to the other external-tool keys (F9 screenshot, F11 RenderDoc). It used to
+        // be advertised as Ctrl+P, which quick-open has taken -- and which never had a handler regardless,
+        // so the menu was the only way to launch it.
+        if (ImGui::IsKeyPressed(ImGuiKey_F8, false))
+        {
+            LaunchTracyProfiler();
+        }
+
         // Recompile + hot-swap all C# script assemblies (every Scripts/ across game, plugins, engine). The
         // chord is rebindable in Editor Settings > General > Hotkeys (default Ctrl+Shift+R).
         {
@@ -2434,12 +2442,16 @@ namespace Lumina
             FGuid        GUID;
             FFixedString Name;
             FFixedString Path;
+            // Thumbnail lookup key. Precomputed because the alternative is interning the path string on
+            // every visible row on every frame the modal is up.
+            FName        PathName;
         };
 
         TVector<FEntry> Entries;
         for (const FAssetData* Asset : FAssetRegistry::Get().FindByPredicate([](const FAssetData&) { return true; }))
         {
-            Entries.push_back(FEntry{ Asset->AssetGUID, FFixedString(Asset->AssetName.c_str()), Asset->Path });
+            Entries.push_back(FEntry{ Asset->AssetGUID, FFixedString(Asset->AssetName.c_str()), Asset->Path,
+                                      FName(Asset->Path.c_str()) });
         }
 
         if (Entries.empty())
@@ -2495,42 +2507,94 @@ namespace Lumina
 
             // Arrows move the selection while focus stays in the text box, so the whole flow is
             // keyboard-only: type, arrow, Enter.
+            bool bScrollToSelected = false;
             if (!Matches.empty())
             {
-                if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, true)) { Selected = (Selected + 1) % (int32)Matches.size(); }
-                if (ImGui::IsKeyPressed(ImGuiKey_UpArrow,   true)) { Selected = (Selected + (int32)Matches.size() - 1) % (int32)Matches.size(); }
+                if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, true))
+                {
+                    Selected = (Selected + 1) % (int32)Matches.size();
+                    bScrollToSelected = true;
+                }
+                if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, true))
+                {
+                    Selected = (Selected + (int32)Matches.size() - 1) % (int32)Matches.size();
+                    bScrollToSelected = true;
+                }
             }
 
             bool bChosen = !Matches.empty() && ImGui::IsKeyPressed(ImGuiKey_Enter, false);
 
             ImGui::Separator();
 
+            const float Scale     = ImGuiX::GetUIScale();
+            const float ThumbSize = 32.0f * Scale;
+            const float RowPad    = 6.0f * Scale;
+            const float RowHeight = ThumbSize + RowPad * 2.0f;
+
+            static const FString GenericAssetIcon = Paths::GetEngineResourceDirectory() + "/Textures/Asset.png";
+
             const float FooterHeight = ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
             if (ImGui::BeginChild("##Results", ImVec2(0.0f, -FooterHeight)))
             {
-                for (int32 i = 0; i < (int32)Matches.size(); ++i)
+                // Clipped, because asking for a thumbnail is what QUEUES it: walking every match would
+                // hand the thumbnail renderer the entire project the moment the modal opens.
+                ImGuiListClipper Clipper;
+                Clipper.Begin((int32)Matches.size(), RowHeight);
+                if (!Matches.empty())
                 {
-                    const FEntry& Entry = *Matches[i];
-                    ImGui::PushID(i);
+                    // The selection can sit outside the visible range after an arrow keypress, and it has
+                    // to be submitted for SetScrollHereY to have an item to scroll to.
+                    Clipper.IncludeItemByIndex(Selected);
+                }
 
-                    if (ImGui::Selectable("##Row", i == Selected, ImGuiSelectableFlags_AllowDoubleClick))
+                while (Clipper.Step())
+                {
+                    for (int32 i = Clipper.DisplayStart; i < Clipper.DisplayEnd; ++i)
                     {
-                        Selected = i;
-                        bChosen  = ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+                        const FEntry& Entry = *Matches[i];
+                        ImGui::PushID(i);
+
+                        const ImVec2 RowMin = ImGui::GetCursorScreenPos();
+
+                        if (ImGui::Selectable("##Row", i == Selected, ImGuiSelectableFlags_AllowDoubleClick,
+                                              ImVec2(0.0f, RowHeight)))
+                        {
+                            Selected = i;
+                            bChosen  = ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+                        }
+
+                        if (i == Selected && bScrollToSelected)
+                        {
+                            ImGui::SetScrollHereY(0.5f);
+                        }
+
+                        // Painted onto the row rather than laid out with SameLine: the row is a single
+                        // full-height Selectable, and real widgets on top of it would advance the cursor
+                        // and take the hover off it.
+                        ImDrawList* DrawList = ImGui::GetWindowDrawList();
+
+                        // A miss starts the async resolve and draws the generic icon until it lands, the
+                        // same fallback the content browser tiles use.
+                        ImTextureRef Thumbnail = ImGuiX::ToImTextureRef(GenericAssetIcon);
+                        if (FPackageThumbnail* Ready = CThumbnailManager::Get().GetThumbnailForPackage(Entry.PathName))
+                        {
+                            Thumbnail = ImGuiX::ToImTextureRef(Ready->LoadedImage);
+                        }
+
+                        const ImVec2 ThumbMin(RowMin.x + RowPad, RowMin.y + RowPad);
+                        DrawList->AddImage(Thumbnail, ThumbMin, ImVec2(ThumbMin.x + ThumbSize, ThumbMin.y + ThumbSize));
+
+                        const float LineHeight = ImGui::GetTextLineHeight();
+                        const float TextX      = ThumbMin.x + ThumbSize + RowPad * 2.0f;
+                        const float TextTop    = RowMin.y + (RowHeight - LineHeight * 2.0f) * 0.5f;
+
+                        DrawList->AddText(ImVec2(TextX, TextTop),
+                                          EditorColors::U32(EditorColors::TextPrimary()), Entry.Name.c_str());
+                        DrawList->AddText(ImVec2(TextX, TextTop + LineHeight),
+                                          EditorColors::U32(EditorColors::TextMuted()), Entry.Path.c_str());
+
+                        ImGui::PopID();
                     }
-
-                    // Keep the keyboard selection in view as it moves past the visible range.
-                    if (i == Selected && ImGui::IsWindowAppearing() == false && ImGui::IsItemVisible() == false)
-                    {
-                        ImGui::SetScrollHereY(0.5f);
-                    }
-
-                    ImGui::SameLine();
-                    ImGui::TextUnformatted(Entry.Name.c_str());
-                    ImGui::SameLine();
-                    ImGui::TextColored(EditorColors::TextMuted(), "%s", Entry.Path.c_str());
-
-                    ImGui::PopID();
                 }
             }
             ImGui::EndChild();
@@ -2547,6 +2611,40 @@ namespace Lumina
 
             return ImGui::IsKeyPressed(ImGuiKey_Escape, false);
         });
+    }
+
+    void FEditorUI::LaunchTracyProfiler()
+    {
+        const FString& EngineRoot = Paths::GetEngineInstallDirectory();
+        if (EngineRoot.empty())
+        {
+            ImGuiX::Notifications::NotifyError("Cannot locate Tracy: the engine install directory is unresolved.");
+            return;
+        }
+
+        const FString FullPath = EngineRoot + "/External/Tracy/tracy-profiler.exe";
+
+        // Checked before launching so a missing tool names the path it looked at. ShellExecute on a
+        // non-existent exe reports nothing useful, which is how this managed to look like it worked.
+        std::error_code Ec;
+        if (!std::filesystem::exists(FullPath.c_str(), Ec))
+        {
+            LOG_ERROR("Tracy profiler not found at '{}'.", FullPath.c_str());
+            ImGuiX::Notifications::NotifyError("Tracy not found at {0}", FullPath);
+            return;
+        }
+
+        // LaunchProcess, not LaunchURL: this is an executable, and it returns the system error so a failed
+        // launch can say why instead of silently doing nothing.
+        const int Result = Platform::LaunchProcess(StringUtils::ToWideString(FullPath).c_str());
+        if (Result != 0)
+        {
+            LOG_ERROR("Failed to launch Tracy at '{}' (system error {}).", FullPath.c_str(), Result);
+            ImGuiX::Notifications::NotifyError("Failed to launch Tracy (system error {0}).", Result);
+            return;
+        }
+
+        ImGuiX::Notifications::NotifySuccess("Tracy profiler launched.");
     }
 
     void FEditorUI::SaveActiveTool()
@@ -3260,18 +3358,9 @@ namespace Lumina
         ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.62f, 1.0f), "External Tools");
         ImGui::Separator();
         
-        if (ImGui::MenuItem(LE_ICON_WATCH" Tracy Profiler", "Ctrl+P"))
+        if (ImGui::MenuItem(LE_ICON_WATCH " Tracy Profiler", "F8"))
         {
-            const FString& EngineRoot = Paths::GetEngineInstallDirectory();
-            if (EngineRoot.empty())
-            {
-                LOG_ERROR("Cannot locate Tracy: engine install directory is unresolved.");
-            }
-            else
-            {
-                FString FullPath = EngineRoot + "/External/Tracy/tracy-profiler.exe";
-                Platform::LaunchURL(StringUtils::ToWideString(FullPath).c_str());
-            }
+            LaunchTracyProfiler();
         }
         
         if (ImGui::MenuItem(LE_ICON_CAMERA " RenderDoc Capture", "F11"))

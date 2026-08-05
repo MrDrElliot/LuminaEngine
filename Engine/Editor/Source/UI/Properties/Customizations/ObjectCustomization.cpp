@@ -8,6 +8,7 @@
 #include "Tools/UI/ImGui/ImGuiDragDrop.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "UI/EditorUI.h"
+#include "UI/Properties/Customizations/AssetPickerFilter.h"
 #include <Assets/AssetRegistry/AssetData.h>
 #include <Assets/AssetRegistry/AssetRegistry.h>
 #include <Containers/Array.h>
@@ -168,7 +169,7 @@ namespace Lumina
                 }
                 
                 ImGui::SameLine();
-                ImGui::Button(LE_ICON_FILTER, ImVec2(30.0f, 0.0f));
+                AssetPickerFilter::DrawFilterButton(30.0f);
                 ImGui::SetNextWindowSizeConstraints(ImVec2(200, 200), ComboDropDownSize);
 
                 if (ImGui::BeginChild("##OptList", ComboDropDownSize, false, ImGuiChildFlags_NavFlattened))
@@ -192,7 +193,12 @@ namespace Lumina
                             {
                                 continue;
                             }
-                        
+
+                            if (!AssetPickerFilter::PassesSourceFilter(Asset->Path))
+                            {
+                                continue;
+                            }
+
                             ImGui::PushID(Asset);
                             ImGui::TableNextRow(ImGuiTableRowFlags_None, 42.0f);
                             ImGui::TableSetColumnIndex(0);
