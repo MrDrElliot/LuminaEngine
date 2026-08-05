@@ -389,6 +389,11 @@ namespace Lumina
 
         NodeEditor::BeginNode(Node->GetNodeID());
         {
+            // BeginNode does not scope ImGui IDs, so without this every state reuses the literal layout
+            // names below and the second one drawn in a frame trips the stack-layout "already live"
+            // assert. The blueprint node builder pushes the same way.
+            ImGui::PushID((int32)Node->GetNodeID());
+
             ImGui::BeginVertical("state");
 
             if (State != nullptr)
@@ -462,6 +467,8 @@ namespace Lumina
                 NodeEditor::PinPivotRect(NodeCenter, NodeCenter);
                 NodeEditor::EndPin();
             }
+
+            ImGui::PopID();
         }
         NodeEditor::EndNode();
 

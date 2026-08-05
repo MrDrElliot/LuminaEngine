@@ -6,6 +6,7 @@
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Object/ObjectMacros.h"
+#include "Core/Object/SoftObjectPtr.h"
 #include "Renderer/MaterialTypes.h"
 #include "Renderer/RenderResource.h"
 #include "Material.generated.h"
@@ -147,8 +148,52 @@ namespace Lumina
         PROPERTY(Editable)
         float OpacityMaskClipValue = 0.333f;
 
+        /** Default texture binding per texture-parameter index.
+         *
+         *  SOFT deliberately. These are only DEFAULTS: an instance that overrides a texture parameter
+         *  never reads the master's entry for it, so a hard reference would load the texture, upload it,
+         *  and hold a bindless slot for something nothing samples -- for every instance-only material in
+         *  the project. Resolution is per-slot and on demand through ResolveTextureSlot; an unresolved
+         *  slot reads the 1x1 placeholder and the block is re-pushed once the real texture lands.
+         *
+         *  Soft also reclassifies the cook edge (Hard -> Soft), so a default still ships when something
+         *  reaches it but no longer forces itself into the referring material's chunk. */
         PROPERTY()
-        TVector<TObjectPtr<CTexture>>           Textures;
+        TVector<TSoftObjectPtr<CTexture>>       Textures;
+
+        /** Strong refs for the slots that have actually been demanded, parallel-indexed with Textures.
+         *  Not a PROPERTY: this is the runtime cache the soft refs resolve into, and holding the strong
+         *  ref here is precisely what keeps a demanded default resident. Entries stay null until asked
+         *  for, which is the whole point of the change. */
+        TVector<TObjectPtr<CTexture>>           ResolvedTextures;
+
+        /** Set once RequestTexturesResolved has issued its async loads, so the per-frame render-path
+         *  demand does not re-queue the same textures every frame until the first load lands. */
+        bool                                    bTextureLoadRequested = false;
+
+        /** Resolves slot Index if it has not been already and returns its bindless resource ID, or the
+         *  placeholder ID while it cannot be resolved. Idempotent, and cheap after the first call.
+         *
+         *  Loads synchronously, so call it from a load or editor context -- NOT from the render extract,
+         *  which runs on worker fibers where blocking on disk I/O would stall a frame. The render-side
+         *  demand path goes through EnsureTexturesResolved at material bind time instead. */
+        uint32 ResolveTextureSlot(uint32 Index);
+
+        /** Demands every slot, then rebuilds and re-pushes the uniform block if anything changed.
+         *  Called when the MASTER itself is bound for rendering, since a directly-rendered master needs
+         *  all of its own defaults -- unlike an instance, which only needs the ones it does not override.
+         *  Blocking; same context restriction as ResolveTextureSlot. */
+        void EnsureTexturesResolved();
+
+        /** Non-blocking form for the render path. Returns true when every slot is already resolved;
+         *  otherwise kicks a one-shot async load for the missing ones and returns false, leaving the
+         *  caller to treat this material as not-ready.
+         *
+         *  Deliberately shaped to reuse the fallback that already exists for a still-compiling material:
+         *  the surface draws with the default material for a few frames, and the load completion calls
+         *  FMeshResolveCache::InvalidateDependency to wake it. Blocking here instead would stall a
+         *  worker fiber on disk I/O in the middle of Extract. */
+        bool RequestTexturesResolved();
 
         PROPERTY()
         TVector<uint32>                         PixelShaderBinaries;

@@ -4,6 +4,7 @@
 #include "Containers/String.h"
 #include "Assets/AssetTypes/Curve/CurveAsset.h"
 #include "Assets/AssetTypes/Curve/Gradient.h"
+#include "Assets/AssetTypes/ParticleSystem/ParticleSystem.h"
 #include "UI/Tools/NodeGraph/EdGraphNode.h"
 #include "ParticlePin.h"
 
@@ -57,6 +58,14 @@ namespace Lumina
         // One float4 per parameter, read back through a swizzle. That wastes up to 12 bytes on a scalar,
         // which at a realistic stack size is well under a kilobyte; packing sub-float4 would make slot
         // assignment order-dependent for no meaningful saving.
+
+        /** Registers a module input and returns the HLSL expression that reads it.
+         *
+         *  The overload every stock module uses. A bound input still writes its authored constant into the
+         *  slot and additionally records a binding, which the runtime uses to overwrite that slot from the
+         *  component's parameters each frame. Binding therefore leaves the emitted code byte-identical, so
+         *  it takes the value-only refresh path rather than a Slang rebuild. */
+        FString Param(const char* DebugName, const SParticleParam& Value);
 
         /** Registers a value and returns the HLSL expression that reads it. DebugName is for diagnostics
          *  only -- slots are positional, so the same stack always produces the same layout. */
@@ -115,6 +124,11 @@ namespace Lumina
 
         /** Packed slot values in layout order; uploaded verbatim as the shader's ModuleParams array. */
         const TVector<FVector4>& GetParamValues() const { return ParamValues; }
+
+        /** Slots a named user parameter drives, in the order they were registered. Stored on the emitter
+         *  next to the values and read by the runtime; must be copied wherever GetParamValues() is, or a
+         *  binding added in the editor would sit in the asset doing nothing. */
+        const TVector<SParticleParamBinding>& GetParamBindings() const { return ParamBindings; }
 
         /** Hash of the emitted HLSL. Values no longer appear in the generated code, so editing one leaves
          *  this identical and the value-only path is safe; anything that changes the code -- reordering,
@@ -178,8 +192,9 @@ namespace Lumina
             FString DefaultExpr;
         };
 
-        TVector<FVector4>        ParamValues;
-        TVector<FAttributeDecl>  Attributes;   // index == float offset in the attribute buffer
+        TVector<FVector4>              ParamValues;
+        TVector<SParticleParamBinding> ParamBindings;
+        TVector<FAttributeDecl>        Attributes;   // index == float offset in the attribute buffer
 
         TVector<EdNodeGraph::FError> Errors;
 

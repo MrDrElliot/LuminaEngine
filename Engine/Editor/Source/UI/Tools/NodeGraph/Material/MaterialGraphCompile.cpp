@@ -1,6 +1,8 @@
 #include "MaterialGraphCompile.h"
 #include "MaterialNodeGraph.h"
 #include "Assets/AssetTypes/Material/Material.h"
+#include "Assets/AssetRegistry/AssetRegistry.h"
+#include "Assets/AssetTypes/Textures/Texture.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/Package/Package.h"
 #include "Memory/Memory.h"
@@ -165,7 +167,64 @@ namespace Lumina
             return Result;   // leave the material not-ready; the caller skips it rather than saving a ghost.
         }
 
-        Compiler.GetBoundTextures(Material->Textures);
+        // The compiler works in live CTexture*; the material stores SOFT refs, so the graph's texture
+        // pins are demoted to (path, GUID) here. The GUID is filled in from the live object rather than
+        // left for TryResolve, so a later resolve never has to hit the registry by path -- and so a
+        // texture that gets renamed still resolves.
+        {
+            TVector<TObjectPtr<CTexture>> BoundTextures;
+            Compiler.GetBoundTextures(BoundTextures);
+
+            Material->Textures.clear();
+            Material->Textures.reserve(BoundTextures.size());
+            Material->ResolvedTextures.clear();
+            Material->ResolvedTextures.reserve(BoundTextures.size());
+
+            for (const TObjectPtr<CTexture>& Texture : BoundTextures)
+            {
+                if (Texture == nullptr)
+                {
+                    Material->Textures.emplace_back();
+                    Material->ResolvedTextures.emplace_back();
+                    continue;
+                }
+
+                const FGuid Guid = Texture->GetGUID();
+
+                // Registry first, package path as the fallback. The registry can legitimately miss a
+                // texture that was imported moments ago and has not been indexed yet, and an empty path
+                // is not a recoverable state: the soft ref would look valid (its GUID is set) while
+                // every resolve of it calls LoadPackage("") and silently yields the magenta placeholder,
+                // for the life of the asset.
+                FStringView Path;
+                if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByGUID(Guid))
+                {
+                    Path = FStringView(Data->Path.c_str(), Data->Path.size());
+                }
+
+                FFixedString PackagePath;
+                if (Path.empty() && Texture->GetPackage() != nullptr)
+                {
+                    PackagePath = Texture->GetPackage()->GetPackagePath();
+                    Path = FStringView(PackagePath.c_str(), PackagePath.size());
+                }
+
+                if (Path.empty())
+                {
+                    LOG_WARN("Material '{}': texture '{}' has no resolvable asset path; its slot will "
+                             "fall back to the placeholder on any future load.",
+                             Material->GetName(), Texture->GetName());
+                }
+
+                Material->Textures.emplace_back(FSoftObjectPath(Path, Guid));
+
+                // Seed the resolved cache with the pointer the graph already holds. Compiling is not a
+                // reason to go back through the asset manager for something that is loaded and resident
+                // right now -- and doing so is what made a freshly imported material render magenta,
+                // because the round trip could fail while the live pointer was sitting right here.
+                Material->ResolvedTextures.emplace_back(Texture);
+            }
+        }
 
         Memory::Memzero(&Material->MaterialUniforms, sizeof(FMaterialUniforms));
         Material->Parameters.clear();

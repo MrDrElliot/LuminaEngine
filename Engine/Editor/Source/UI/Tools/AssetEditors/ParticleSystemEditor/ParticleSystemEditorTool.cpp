@@ -1,4 +1,5 @@
 #include "ParticleSystemEditorTool.h"
+#include "ParticleParamCustomization.h"
 #include "Assets/AssetTypes/ParticleSystem/ParticleSystem.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/Class.h"
@@ -64,6 +65,10 @@ namespace Lumina
 
         CreateToolWindow(SelectionWindowName, [&](bool bFocused)
         {
+            // Module inputs are SParticleParam, whose customization offers a menu of the system's user
+            // parameters -- and a property handle carries no owner, so the system has to be announced
+            // around the draw rather than found from the property.
+            ParticleParamContext::FScope ParamScope(Cast<CParticleSystem>(Asset.Get()));
             GetPropertyTable()->DrawTree();
         });
 
@@ -724,6 +729,7 @@ namespace Lumina
         // Slots the shader was built against; RefreshModuleParams checks against this before doing a
         // value-only update.
         Emitter->ModuleParamValues   = Compiler.GetParamValues();
+        Emitter->ParamBindings       = Compiler.GetParamBindings();
         Emitter->CompiledCodeHash    = Compiler.GetGeneratedCodeHash();
         // Structural, so it only moves with a rebuild -- which is exactly when the renderer needs to
         // resize the parallel attribute buffer.
@@ -790,7 +796,12 @@ namespace Lumina
             return false;
         }
 
+        // Bindings ride along with the values: binding an input leaves the generated code identical, so
+        // the hash check above passes and this is the ONLY path that will ever write them. Refreshing the
+        // values alone would leave a binding sitting in the asset doing nothing until some unrelated
+        // structural edit happened to force a full compile.
         Emitter->ModuleParamValues = Compiler.GetParamValues();
+        Emitter->ParamBindings     = Compiler.GetParamBindings();
         PS->GetPackage()->MarkDirty();
         return true;
     }

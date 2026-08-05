@@ -314,6 +314,22 @@ namespace Lumina
             Material = CMaterial::GetDefaultMaterial();
         }
 
+        // Third gate, same shape as the second. A MASTER bound directly needs its own default textures,
+        // which are soft and resolved on demand -- an instance does not come through here for them,
+        // because it demands only the parent slots it does not override when it builds its own block.
+        //
+        // Non-blocking on purpose: this runs on a worker fiber inside Extract, so the load is kicked
+        // async and the surface draws with the default material until it lands, at which point
+        // InvalidateDependency wakes it. Instances are skipped entirely -- their block is already whole.
+        if (Material != nullptr && Material->GetMaterial() == Material)
+        {
+            if (!static_cast<CMaterial*>(Material)->RequestTexturesResolved())
+            {
+                bReady   = false;
+                Material = CMaterial::GetDefaultMaterial();
+            }
+        }
+
         CMaterial* ConcreteMaterial = Material->GetMaterial();
 
         const EBlendMode BlendMode    = Material->GetBlendMode();

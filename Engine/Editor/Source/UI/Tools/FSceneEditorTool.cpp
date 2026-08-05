@@ -2791,7 +2791,7 @@ namespace Lumina
                                 {
                                     if (DrawPickerRow(Data, LE_ICON_PACKAGE_VARIANT_CLOSED, Data->AssetName.c_str()))
                                     {
-                                        HandlePrefabContentDrop(FStringView(Data->Path.c_str()), entt::null);
+                                        HandlePrefabContentDrop(FStringView(Data->Path.c_str()), entt::null, /*bAttachToTarget*/ false);
                                         ImGui::CloseCurrentPopup();
                                         AddEntityComponentFilter.Clear();
                                     }

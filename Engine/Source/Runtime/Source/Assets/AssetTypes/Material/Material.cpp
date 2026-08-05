@@ -5,10 +5,12 @@
 #include "Core/Object/ObjectIterator.h"
 #include "FileSystem/FileSystem.h"
 #include "Core/Math/Hash/Hash.h"
+#include "Core/Object/Cast.h"
 #include "Memory/MemoryTracking.h"
 #include "Paths/Paths.h"
 #include "EASTL/sort.h"
 #include "Renderer/RenderManager.h"
+#include "Renderer/RHITexture.h"
 #include "Renderer/ShaderCache.h"
 #include "Renderer/ShaderCompiler.h"
 #include "Renderer/ShaderLibrary.h"
@@ -47,7 +49,7 @@ namespace Lumina
             { &CMaterial::MaskedVisBufferPixelShaderPrimBinaries, &CMaterial::MaskedVisBufferPixelShaderPrim, "_MVBPP", ERHIShaderType::Fragment },
             { &CMaterial::DeferredShaderBinaries,                 &CMaterial::DeferredShader,                 "_DM",    ERHIShaderType::Fragment },
         };
-        static_assert(sizeof(GMaterialStages) / sizeof(GMaterialStages[0]) == (size_t)EMaterialShaderStage::Count,
+        static_assert(std::size(GMaterialStages) == (size_t)EMaterialShaderStage::Count,
             "GMaterialStages must cover every EMaterialShaderStage");
 
 #if USING(WITH_EDITOR)
@@ -176,9 +178,149 @@ namespace Lumina
         return Refreshed;
     }
 
+    uint32 CMaterial::ResolveTextureSlot(uint32 Index)
+    {
+        if (Index >= (uint32)Textures.size())
+        {
+            return RHI::Textures::DefaultResourceID();
+        }
+
+        if ((uint32)ResolvedTextures.size() != (uint32)Textures.size())
+        {
+            ResolvedTextures.resize(Textures.size());
+        }
+
+        if (ResolvedTextures[Index] == nullptr && Textures[Index].IsValid())
+        {
+            ResolvedTextures[Index] = Textures[Index].LoadSynchronous();
+
+            if (ResolvedTextures[Index] == nullptr)
+            {
+                const FStringView Path = Textures[Index].GetPath();
+                LOG_WARN("Material '{}': texture slot {} failed to load (path '{}'); slot falls back to "
+                         "the placeholder.", GetName(), Index,
+                         Path.empty() ? FStringView("<empty>") : Path);
+            }
+        }
+
+        CTexture* Texture = ResolvedTextures[Index].Get();
+        const int32 ResourceID = (Texture != nullptr) ? Texture->GetResourceID() : -1;
+
+        // Loaded but with no heap slot means its PostLoad has not run -- RHI::Textures::Create is what
+        // assigns the slot. Making these refs SOFT took them out of the load graph's Hard/Owned BFS, so
+        // they are no longer ordered leaf-first ahead of the material that reads them, which is exactly
+        // the guarantee the old hard refs bought. Loud, because it bakes a placeholder into the block
+        // and nothing on a normal load comes back to fix it.
+        if (Texture != nullptr && ResourceID < 0)
+        {
+            LOG_WARN("Material '{}': texture slot {} ('{}') loaded but is not GPU-resident (no heap slot); "
+                     "slot falls back to the placeholder.", GetName(), Index, Texture->GetName());
+        }
+
+        return (ResourceID >= 0) ? (uint32)ResourceID : RHI::Textures::DefaultResourceID();
+    }
+
+    void CMaterial::EnsureTexturesResolved()
+    {
+        const uint32 NumTextures = (uint32)Math::Min<size_t>(Textures.size(), MAX_TEXTURES);
+
+        bool bChanged = false;
+        for (uint32 i = 0; i < NumTextures; ++i)
+        {
+            const uint32 ResourceID = ResolveTextureSlot(i);
+            if (MaterialUniforms.Textures[i] != ResourceID)
+            {
+                MaterialUniforms.Textures[i] = ResourceID;
+                bChanged = true;
+            }
+        }
+
+        // Only re-push when something actually moved. This runs on every bind of a directly-rendered
+        // master, so after the first call it has to settle into a pure comparison.
+        if (bChanged)
+        {
+            UpdateMaterialUniforms();
+        }
+    }
+
+    bool CMaterial::RequestTexturesResolved()
+    {
+        const uint32 NumTextures = (uint32)Math::Min<size_t>(Textures.size(), MAX_TEXTURES);
+        if (NumTextures == 0)
+        {
+            return true;
+        }
+
+        if ((uint32)ResolvedTextures.size() != (uint32)Textures.size())
+        {
+            ResolvedTextures.resize(Textures.size());
+        }
+
+        bool bAllResolved = true;
+        for (uint32 i = 0; i < NumTextures; ++i)
+        {
+            if (ResolvedTextures[i] != nullptr || !Textures[i].IsValid())
+            {
+                continue;   // resolved, or empty and never going to resolve
+            }
+            bAllResolved = false;
+        }
+
+        if (bAllResolved)
+        {
+            // Steady state after the first frame or two. Slots are already in the block; nothing to do.
+            return true;
+        }
+
+        // One request per material, not per frame: Extract asks again every frame until the load lands,
+        // and re-issuing would queue the same texture dozens of times before the first one completed.
+        if (bTextureLoadRequested)
+        {
+            return false;
+        }
+        bTextureLoadRequested = true;
+
+        // Weak, because a material can be destroyed while its textures are still in flight -- the
+        // callback fires on the loader's completion, which is not ordered against OnDestroy.
+        TWeakObjectPtr<CMaterial> WeakSelf(this);
+
+        for (uint32 i = 0; i < NumTextures; ++i)
+        {
+            if (ResolvedTextures[i] != nullptr || !Textures[i].IsValid())
+            {
+                continue;
+            }
+
+            Textures[i].GetSoftPath().LoadAsync([WeakSelf, i](CObject* Loaded)
+            {
+                CMaterial* Self = WeakSelf.Get();
+                if (Self == nullptr)
+                {
+                    return;
+                }
+
+                if (i < (uint32)Self->ResolvedTextures.size())
+                {
+                    Self->ResolvedTextures[i] = Cast<CTexture>(Loaded);
+                }
+
+                // Re-push the block with whatever has landed so far, then wake the surfaces that fell
+                // back to the default material while this was loading.
+                Self->RefreshTextureBindings(nullptr);
+                FMeshResolveCache::InvalidateDependency(Self);
+            });
+        }
+
+        return false;
+    }
+
     bool CMaterial::ReferencesTexture(const CTexture* ChangedTexture) const
     {
-        for (const TObjectPtr<CTexture>& Texture : Textures)
+        // Compares against RESOLVED slots only, and must never resolve to answer. This runs for every
+        // material in the project on a texture reimport; resolving here would load every default in the
+        // project the first time anyone re-cooks a texture -- strictly worse than the hard refs this
+        // replaced. A slot nobody has demanded cannot be displaying the changed texture anyway.
+        for (const TObjectPtr<CTexture>& Texture : ResolvedTextures)
         {
             if (Texture.Get() == ChangedTexture)
             {
@@ -195,13 +337,20 @@ namespace Lumina
             return false;
         }
 
-        // Every slot, not just the changed one: the block is cheap to rewrite, and any OTHER slot that was
-        // baked while its texture was still unresolved is wrong in exactly the same way.
-        const uint32 NumTextures = (uint32)Math::Min<size_t>(Textures.size(), MAX_TEXTURES);
+        // Every RESOLVED slot, not just the changed one: the block is cheap to rewrite, and any OTHER
+        // slot that was baked while its texture was still unresolved is wrong in exactly the same way.
+        // Unresolved slots are left alone -- re-cooking a texture is not a reason to start loading
+        // defaults that nothing has asked for.
+        const uint32 NumTextures = (uint32)Math::Min<size_t>(ResolvedTextures.size(), MAX_TEXTURES);
         for (uint32 i = 0; i < NumTextures; ++i)
         {
-            const int32 ResourceID = Textures[i] ? Textures[i]->GetResourceID() : -1;
-            MaterialUniforms.Textures[i] = (ResourceID >= 0) ? (uint32)ResourceID : 0u;
+            CTexture* Texture = ResolvedTextures[i].Get();
+            if (Texture == nullptr)
+            {
+                continue;
+            }
+            const int32 ResourceID = Texture->GetResourceID();
+            MaterialUniforms.Textures[i] = (ResourceID >= 0) ? (uint32)ResourceID : RHI::Textures::DefaultResourceID();
         }
 
         UpdateMaterialUniforms();
@@ -268,13 +417,26 @@ namespace Lumina
                 }
             }
             
+            // Textures are deliberately NOT resolved here. Loading them at PostLoad is exactly the
+            // behavior this replaced: it made every default resident the moment any material loaded,
+            // including the defaults of every parameter that every instance overrides. Slots start on
+            // the placeholder and are demanded per-slot -- by an instance for the parameters it does
+            // NOT override, or by EnsureTexturesResolved when this master is itself bound for rendering.
+            // RESIZE, never assign. The editor compile path fills ResolvedTextures with the live
+            // textures the graph already holds and then calls PostLoad -- clearing here would throw
+            // those away one line later and leave a freshly compiled material rendering placeholders.
+            ResolvedTextures.resize(Textures.size());
+
             const uint32 NumTextures = (uint32)Math::Min<size_t>(Textures.size(), MAX_TEXTURES);
             for (uint32 i = 0; i < NumTextures; ++i)
             {
-                const int32 ResourceID = Textures[i] ? Textures[i]->GetResourceID() : -1;
-                MaterialUniforms.Textures[i] = (ResourceID >= 0) ? (uint32)ResourceID : 0u;
+                // Already-resolved slots keep their real ID; only the untouched ones start on the
+                // placeholder, waiting for a consumer to demand them.
+                CTexture* Resolved = ResolvedTextures[i].Get();
+                const int32 ResourceID = (Resolved != nullptr) ? Resolved->GetResourceID() : -1;
+                MaterialUniforms.Textures[i] = (ResourceID >= 0) ? (uint32)ResourceID : RHI::Textures::DefaultResourceID();
             }
-            
+
             EMaterialGPUFlags GPUFlags = EMaterialGPUFlags::None;
             if (BlendMode == EBlendMode::Masked)
             {

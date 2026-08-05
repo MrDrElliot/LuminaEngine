@@ -127,6 +127,92 @@ namespace Lumina
         FName ParameterName;
     };
 
+    /** Floats a parameter type occupies in the module parameter block. */
+    inline uint32 ParticleParamComponents(EParticleParameterType Type)
+    {
+        switch (Type)
+        {
+        case EParticleParameterType::Vec2:  return 2;
+        case EParticleParameterType::Vec3:  return 3;
+        case EParticleParameterType::Vec4:
+        case EParticleParameterType::Color: return 4;
+        default:                            return 1;   // Float / Int / Bool all read as one scalar
+        }
+    }
+
+    /** A module input: either the value authored in the details panel, or the name of a user parameter
+     *  that supplies it at runtime.
+     *
+     *  This is what makes a stack drivable from code. Every module value input is one of these instead of
+     *  a bare float/vector, so binding is a property of the INPUT rather than a separate mirror table
+     *  listing which properties are redirected -- the arrangement this replaced, which had to be kept in
+     *  sync by hand and silently rotted whenever a module changed.
+     *
+     *  Binding does not change the generated HLSL: the shader reads its float4 slot either way, and only
+     *  the CPU-side writer of that slot differs. So binding, unbinding and renaming a binding all take the
+     *  value-only refresh path -- no Slang, no shader swap, no preview restart. */
+    REFLECT()
+    struct RUNTIME_API SParticleParam
+    {
+        GENERATED_BODY()
+
+        SParticleParam() = default;
+        SParticleParam(float V)             : Type(EParticleParameterType::Float), Constant(V, 0.0f, 0.0f, 0.0f) {}
+        SParticleParam(const FVector2& V)   : Type(EParticleParameterType::Vec2),  Constant(V, 0.0f, 0.0f) {}
+        SParticleParam(const FVector3& V)   : Type(EParticleParameterType::Vec3),  Constant(V, 0.0f) {}
+        SParticleParam(const FVector4& V)   : Type(EParticleParameterType::Vec4),  Constant(V) {}
+
+        /** Declared by the module that owns the input, never chosen by the user: it picks the editor
+         *  widget and filters which user parameters the bind menu offers. Set by the constructor from
+         *  whatever value the module initialized the input with, so a module author gets it for free. */
+        PROPERTY()
+        EParticleParameterType Type = EParticleParameterType::Float;
+
+        /** The authored value, used whenever ParameterName is None. Kept when a binding is added so that
+         *  unbinding restores what was there -- and it stays in the compiled slot as the fallback, which
+         *  is what the editor preview and any unresolved binding fall back to. */
+        PROPERTY()
+        FVector4 Constant = FVector4(0.0f);
+
+        /** None means "use Constant". Otherwise the value comes from the system's user parameter of this
+         *  name, with a component override taking priority over the asset's declared default. */
+        PROPERTY()
+        FName ParameterName;
+
+        bool IsBound() const { return !ParameterName.IsNone(); }
+
+        float    AsFloat()   const { return Constant.x; }
+        FVector2 AsVector2() const { return FVector2(Constant.x, Constant.y); }
+        FVector3 AsVector3() const { return FVector3(Constant.x, Constant.y, Constant.z); }
+        FVector4 AsVector4() const { return Constant; }
+
+        bool operator==(const SParticleParam& Other) const
+        {
+            return Type == Other.Type && Constant == Other.Constant && ParameterName == Other.ParameterName;
+        }
+    };
+
+    /** One module parameter slot fed by a named user parameter, resolved fresh every frame.
+     *
+     *  Produced by the compiler alongside the slot values and stored on the emitter, so the runtime never
+     *  needs the editor-only module stack to know which slots are drivable. */
+    REFLECT()
+    struct RUNTIME_API SParticleParamBinding
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        FName ParameterName;
+
+        /** Index into CParticleEmitter::ModuleParamValues. */
+        PROPERTY()
+        int32 SlotIndex = 0;
+
+        /** Width the module declared the input at; a narrower parameter broadcasts to fill it. */
+        PROPERTY()
+        EParticleParameterType Type = EParticleParameterType::Float;
+    };
+
     /** Declared attributes the RENDERER can consume.
      *
      *  The vertex shader is shared rather than generated, so it cannot know the attribute layout at
@@ -204,6 +290,15 @@ namespace Lumina
          *  shader. Empty for legacy data-driven assets, which read the SimParams uniforms instead. */
         PROPERTY()
         TVector<FVector4> ModuleParamValues;
+
+        /** Slots of ModuleParamValues that a named user parameter drives, produced by the compiler from
+         *  the module inputs that were bound. Empty for a stack whose inputs are all constants, which is
+         *  the common case -- and the check the per-frame resolve early-outs on.
+         *
+         *  Not part of CompiledCodeHash on purpose: a binding changes who writes a slot, never the shader
+         *  that reads it, so adding or clearing one takes the no-recompile path. */
+        PROPERTY()
+        TVector<SParticleParamBinding> ParamBindings;
 
         /** Layout the compiled shader was built against. A value-only refresh compares the freshly
          *  generated layout to this and forces a full rebuild on mismatch, so a slot can never be read
@@ -483,4 +578,15 @@ namespace Lumina
      *  Takes both: the values come from the emitter, but the property bindings that redirect them to a
      *  named user parameter are declared once per system. */
     RUNTIME_API FResolvedParticleParams ResolveParticleParams(const CParticleSystem& Asset, const CParticleEmitter& Emitter, const SParticleSystemComponent& Component);
+
+    /** Overwrites the bound slots of a module parameter block with the component's live parameter values.
+     *
+     *  This is the whole runtime half of driving a stack from code: ParticleComponent.SetFloat("Size", x)
+     *  writes a component override, and this stamps it into the slot the module input compiled to, on the
+     *  way to the GPU. A binding whose parameter resolves to nothing leaves the authored constant, so a
+     *  misspelled or not-yet-set name degrades to the value in the asset rather than to zero.
+     *
+     *  A parameter narrower than the input it drives broadcasts its scalar across the components, so one
+     *  float can drive all three axes of a vector input. Wider narrows by truncation. */
+    RUNTIME_API void ApplyParticleParamBindings(const CParticleEmitter& Emitter, const SParticleSystemComponent& Component, TVector<FVector4>& InOutValues);
 }

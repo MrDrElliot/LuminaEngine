@@ -153,13 +153,14 @@ namespace Lumina
         void SetColor(const FName& Name, FVector4 Value);
 
         /** Drop the override for this parameter, reverting to the asset default. */
-        FUNCTION(Script) 
+        FUNCTION(Script)
         void ResetParameter(const FName& Name);
 
-    private:
-
-        /** Resolve a parameter by name, preferring component overrides over the asset's default. */
+        /** Resolve a parameter by name, preferring component overrides over the asset's default. Public
+         *  because the per-frame module-slot resolve reads through it from outside the component. */
         const FParticleParameter* FindParameter(const FName& Name) const;
+
+    private:
 
         // Get-or-create the override entry for (Name, type). Returns nullptr if the asset declares the
         // parameter with a different type (programmer error).

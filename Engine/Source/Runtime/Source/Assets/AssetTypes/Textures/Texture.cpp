@@ -45,8 +45,17 @@ namespace Lumina
         // New RHI: create the sampled texture in the global heap + upload every mip of every layer.
         // Both paths land in the same heap, so the ResourceID is interchangeable -- what decides
         // whether a shader may read it as gTextures2DArray[] is the VIEW type chosen here.
+        // PostLoad is NOT once-per-object: the texture editor re-runs it after an in-place edit (flip
+        // H/V), and the array factory re-runs it after re-cooking layers. Creating over the top left the
+        // previous image and its heap slot orphaned -- one leaked texture per edit -- and moved the
+        // ResourceID, which every material that samples this texture has already baked into its uniform
+        // block. Both branches therefore have to deal with an existing image.
         if (TextureResource->IsArray())
         {
+            // No array overload of Recreate: an array's layer count is baked into the image, so there is
+            // no same-shape image to repoint the slot at. Release + create, and accept the new slot --
+            // the same trade the array factory already makes explicitly.
+            RHI::Textures::Release(TextureResource->NewTexture);
             TextureResource->NewTexture = RHI::Textures::Create(RHI::FTexture2DArrayDesc
             {
                 .Width  = Desc.Extent.x,
@@ -59,7 +68,10 @@ namespace Lumina
         }
         else
         {
-            TextureResource->NewTexture = RHI::Textures::Create(RHI::FTexture2DDesc
+            // Repoints the existing heap slot and frame-defers the old image, so a re-run keeps the
+            // published ResourceID valid. Falls back to a plain Create when the handle is not yet valid,
+            // which is the normal first-load path.
+            RHI::Textures::Recreate(TextureResource->NewTexture, RHI::FTexture2DDesc
             {
                 .Width  = Desc.Extent.x,
                 .Height = Desc.Extent.y,

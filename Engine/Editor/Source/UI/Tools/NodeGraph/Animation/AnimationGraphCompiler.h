@@ -11,6 +11,7 @@ namespace Lumina
     class CAnimation;
     class CAnimationGraph;
     class CBlackboard;
+    class CBlendSpace;
     class CEdGraphNode;
     struct FSkeletonResource;
 
@@ -33,6 +34,9 @@ namespace Lumina
 
         // Registers a clip and returns its index; dedups identical clips.
         uint16 AddClip(CAnimation* Clip);
+
+        // Registers a blend space and returns its index; dedups identical assets.
+        uint16 AddBlendSpace(CBlendSpace* BlendSpace);
 
         // Registers an exposed parameter and returns its index; dedups by name.
         // A name collision with a different type reports an error and returns the existing index.
@@ -58,6 +62,10 @@ namespace Lumina
         uint16 AddSyncGroup(const FName& Name);
 
         uint16 EmitSampleAnim(uint16 ClipIndex, uint16 TimeReg);
+
+        // Samples a blend space at (X, Y). The op owns its playback phase in PhaseSlot and advances it
+        // against the weighted-blend duration, so the contributing clips stay stride-aligned.
+        uint16 EmitSampleBlendSpace(uint16 BlendSpaceIndex, uint16 XReg, uint16 YReg, uint16 SpeedReg, uint16 PhaseSlot);
         uint16 EmitRefPose();
         uint16 EmitBlend(uint16 PoseRegA, uint16 PoseRegB, uint16 AlphaReg);
         uint16 EmitBlendMasked(uint16 PoseRegA, uint16 PoseRegB, uint16 AlphaReg, uint16 MaskIndex);
@@ -151,6 +159,7 @@ namespace Lumina
 
         TVector<uint8>                          Bytecode;
         TVector<TObjectPtr<CAnimation>>         Clips;
+        TVector<TObjectPtr<CBlendSpace>>        BlendSpaces;
         TVector<FName>                          SyncGroupNames;
         TVector<FAnimGraphParameter>            Parameters;
         TVector<FAnimGraphBoneMask>             BoneMasks;

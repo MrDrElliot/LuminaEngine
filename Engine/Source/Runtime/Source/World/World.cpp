@@ -495,7 +495,10 @@ namespace Lumina
         // Release this world's C# system instances (OnTeardown + GCHandle free).
         DestroyManagedSystems();
 
-        if (WorldType == EWorldType::Game || WorldType == EWorldType::Simulation)
+        // Keyed on the scene, not the world type: an editor world can acquire one on demand through
+        // EnsurePhysicsScene, and StopSimulate is what disconnects its registry listeners. Skipping it
+        // leaves hooks pointing at a freed scene.
+        if (PhysicsScene != nullptr)
         {
             PhysicsScene->StopSimulate();
         }
@@ -577,6 +580,24 @@ namespace Lumina
             CPU_PROFILE_SCOPE("Systems");
             TickSystems(SystemContext);
         }
+    }
+
+    Physics::IPhysicsScene* CWorld::EnsurePhysicsScene()
+    {
+        if (PhysicsScene == nullptr)
+        {
+            // TickPhysics runs on the physics worker and early-outs while this is null, but the
+            // assignment itself must not land while a step is in flight.
+            GWorldManager->WaitForPhysics();
+            PhysicsScene = Physics::GetPhysicsContext()->CreatePhysicsScene(this);
+
+            // Simulate() is what connects the on_construct hook that turns SRigidBodyComponent into an
+            // actual body. Without it the scene steps but nothing is ever added to it, so a caller that
+            // only creates the scene gets gravity and no collision.
+            PhysicsScene->Simulate();
+        }
+
+        return PhysicsScene.get();
     }
 
     void CWorld::TickPhysics()

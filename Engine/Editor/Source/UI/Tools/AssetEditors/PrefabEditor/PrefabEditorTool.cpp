@@ -772,11 +772,11 @@ namespace Lumina
         // Asset drop (static mesh, material, etc.) onto an outliner row.
         if (Peek->Kind == DragDrop::EPayloadKind::Asset && DragDrop::IsDelivered())
         {
-            HandlePrefabContentDrop(FStringView(Peek->AssetPath.c_str(), Peek->AssetPath.size()), DropItem);
+            HandlePrefabContentDrop(FStringView(Peek->AssetPath.c_str(), Peek->AssetPath.size()), DropItem, /*bAttachToTarget*/ true);
         }
     }
 
-    void FPrefabEditorTool::HandlePrefabContentDrop(FStringView VirtualPath, entt::entity DropTarget)
+    void FPrefabEditorTool::HandlePrefabContentDrop(FStringView VirtualPath, entt::entity DropTarget, bool bAttachToTarget)
     {
         // Default drop target is the prefab root so dropped meshes become prefab-owned children.
         if (DropTarget == entt::null)
@@ -785,7 +785,7 @@ namespace Lumina
         }
 
         BeginTransaction();
-        entt::entity Spawned = HandleContentBrowserAssetDrop(VirtualPath, DropTarget);
+        entt::entity Spawned = HandleContentBrowserAssetDrop(VirtualPath, DropTarget, bAttachToTarget);
         if (Spawned != entt::null && Spawned != DropTarget)
         {
             // Mark the freshly created entity as part of the prefab so it round-trips on save.
@@ -954,7 +954,7 @@ namespace Lumina
         const DragDrop::FPayload* Peek = DragDrop::PeekPayload();
         if (Peek && Peek->Kind == DragDrop::EPayloadKind::Asset && DragDrop::IsDelivered())
         {
-            HandlePrefabContentDrop(FStringView(Peek->AssetPath.c_str(), Peek->AssetPath.size()), entt::null);
+            HandlePrefabContentDrop(FStringView(Peek->AssetPath.c_str(), Peek->AssetPath.size()), entt::null, /*bAttachToTarget*/ false);
         }
     }
 
@@ -996,7 +996,7 @@ namespace Lumina
                 const DragDrop::FPayload* Peek = DragDrop::PeekPayload();
                 if (Peek && Peek->Kind == DragDrop::EPayloadKind::Asset && DragDrop::IsDelivered())
                 {
-                    HandlePrefabContentDrop(FStringView(Peek->AssetPath.c_str(), Peek->AssetPath.size()), entt::null);
+                    HandlePrefabContentDrop(FStringView(Peek->AssetPath.c_str(), Peek->AssetPath.size()), entt::null, /*bAttachToTarget*/ false);
                 }
                 ImGui::EndDragDropTarget();
             }

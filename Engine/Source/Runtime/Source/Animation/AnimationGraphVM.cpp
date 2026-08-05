@@ -2,6 +2,7 @@
 #include "AnimationGraphVM.h"
 
 #include "Assets/AssetTypes/Animation/AnimationGraph/AnimationGraph.h"
+#include "Assets/AssetTypes/Animation/BlendSpace/BlendSpace.h"
 #include "Assets/AssetTypes/Mesh/Animation/Animation.h"
 #include "Core/Console/ConsoleVariable.h"
 #include "Memory/Memcpy.h"
@@ -530,6 +531,132 @@ namespace Lumina
                             TimeReg < NumScalar ? ClockDeltas[TimeReg] : FRootMotionDelta(),
                             TimeReg < NumScalar ? ClockEvents[TimeReg] : FEventRange());
                 SetPoseSync(Dst, TimeReg < NumScalar ? ClockSync[TimeReg] : FSyncTag());
+                break;
+            }
+
+            case EAnimOp::SampleBlendSpace:
+            {
+                const uint16 BlendSpaceIdx = Reader.Read<uint16>();
+                const uint16 XReg          = Reader.Read<uint16>();
+                const uint16 YReg          = Reader.Read<uint16>();
+                const uint16 SpeedReg      = Reader.Read<uint16>();
+                const uint16 PhaseSlot     = Reader.Read<uint16>();
+                const uint16 Dst           = Reader.Read<uint16>();
+
+                const CBlendSpace* BlendSpace = (BlendSpaceIdx < (uint16)Graph->BlendSpaces.size())
+                    ? Graph->BlendSpaces[BlendSpaceIdx].Get() : nullptr;
+
+                FBlendSpaceWeights Weights;
+                if (BlendSpace != nullptr)
+                {
+                    BlendSpace->Evaluate(FVector2(ReadScalar(XReg, 0.0f), ReadScalar(YReg, 0.0f)), Weights);
+                }
+
+                if (Weights.Count == 0)
+                {
+                    FAnimTask Task;
+                    Task.Type = EAnimTaskType::ReferencePose;
+                    SetPoseTask(Dst, OutTasks.Add(Task));
+                    break;
+                }
+
+                // One shared normalized phase across every contributing clip. Sampling each at the same
+                // fraction of its own duration is what keeps a walk/run blend on a single stride; the
+                // phase speed comes from the weighted duration so it retimes as the blend moves.
+                const float PrevPhase = (PhaseSlot < (uint16)State.StateSlots.size()) ? State.StateSlots[PhaseSlot] : 0.0f;
+                float Phase = PrevPhase;
+
+                const float BlendedDuration = BlendSpace->GetBlendedDuration(Weights);
+                if (BlendedDuration > 1e-4f)
+                {
+                    Phase += (DeltaTime * ReadScalar(SpeedReg, 1.0f)) / BlendedDuration;
+                    Phase -= Math::Floor(Phase);
+                }
+
+                if (PhaseSlot < (uint16)State.StateSlots.size())
+                {
+                    State.StateSlots[PhaseSlot] = Phase;
+                }
+
+                int16 Accumulated = FAnimTask::NoTask;
+                float AccumulatedWeight = 0.0f;
+
+                // Root motion and notifies are folded with the same running alpha as the pose, so a
+                // sample contributing 20% of the pose contributes 20% of the motion.
+                FRootMotionDelta BlendedDelta;
+                const uint16 EventStart = (uint16)EventScratch.size();
+
+                for (int32 i = 0; i < Weights.Count; ++i)
+                {
+                    const SBlendSpaceSample& Sample = BlendSpace->Samples[Weights.SampleIndices[i]];
+                    CAnimation* SampleClip = Sample.Animation.Get();
+
+                    FAnimTask Task;
+                    if (SampleClip != nullptr)
+                    {
+                        Task.Type = EAnimTaskType::SampleClip;
+                        Task.Clip = SampleClip;
+                        Task.Time = Phase * SampleClip->GetDuration();
+                    }
+                    else
+                    {
+                        Task.Type = EAnimTaskType::ReferencePose;
+                    }
+
+                    const int16 SampleTask = OutTasks.Add(Task);
+
+                    // Each sample walks the same normalized phase across its own duration, which is the
+                    // interval its root delta and notifies have to be measured over.
+                    const float SampleDuration = SampleClip != nullptr ? SampleClip->GetDuration() : 0.0f;
+                    const float PrevSampleTime = PrevPhase * SampleDuration;
+                    const float SampleTime     = Phase * SampleDuration;
+
+                    FRootMotionDelta SampleDelta;
+                    if (bExtractRootMotion && SampleClip != nullptr
+                        && SampleClip->bEnableRootMotion && !SampleClip->bLockRootMotion)
+                    {
+                        if (SampleTime != PrevSampleTime)
+                        {
+                            SampleDelta = RootMotion::ExtractRootDelta(SampleClip, Skeleton, RootMotionInOut.RootBoneIndex,
+                                                                       PrevSampleTime, SampleTime, true, SampleDuration);
+                        }
+
+                        // Held even on a paused frame so the branch keeps reading as root-motion driven.
+                        SampleDelta.bHasMotion = true;
+                    }
+
+                    if (OutEvents != nullptr && SampleClip != nullptr
+                        && SampleTime != PrevSampleTime && SampleClip->HasNotifies())
+                    {
+                        AnimEvents::CollectTriggeredNotifies(SampleClip, PrevSampleTime, SampleTime, true,
+                                                             Weights.Weights[i], EventScratch);
+                    }
+
+                    if (Accumulated == FAnimTask::NoTask)
+                    {
+                        Accumulated = SampleTask;
+                        AccumulatedWeight = Weights.Weights[i];
+                        BlendedDelta = SampleDelta;
+                        continue;
+                    }
+
+                    // Fold in sequentially: each new sample's share of the running total, so three
+                    // barycentric weights collapse to two blends without renormalizing by hand.
+                    AccumulatedWeight += Weights.Weights[i];
+                    const float FoldAlpha = AccumulatedWeight > 1e-5f ? (Weights.Weights[i] / AccumulatedWeight) : 0.0f;
+
+                    FAnimTask BlendTask;
+                    BlendTask.Type = EAnimTaskType::Blend;
+                    BlendTask.DepA = Accumulated;
+                    BlendTask.DepB = SampleTask;
+                    BlendTask.Alpha = FoldAlpha;
+
+                    Accumulated = OutTasks.Add(BlendTask);
+                    BlendedDelta = RootMotion::BlendRootMotion(BlendedDelta, SampleDelta, FoldAlpha);
+                }
+
+                SetPoseTask(Dst, Accumulated);
+                SetPoseTags(Dst, BlendedDelta, FEventRange{ EventStart, (uint16)EventScratch.size() });
                 break;
             }
 

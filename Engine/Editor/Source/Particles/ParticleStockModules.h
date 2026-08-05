@@ -41,11 +41,11 @@ namespace Lumina
 
         /** Sphere: x=radius. Box: xyz=half extents. Cone: x=base radius, y=height. Ring/Disk: x=outer, y=inner. */
         PROPERTY(Editable, Category = "Shape")
-        FVector3 ShapeSize = FVector3(1.0f);
+        SParticleParam ShapeSize { FVector3(1.0f) };
 
         /** Cone half-angle in degrees. */
         PROPERTY(Editable, Category = "Shape", ClampMin = 0.0f, ClampMax = 180.0f)
-        float ConeAngle = 30.0f;
+        SParticleParam ConeAngle { 30.0f };
     };
 
     /** Sets the initial P.Velocity. */
@@ -65,18 +65,18 @@ namespace Lumina
         EParticleInitVelocityMode Mode = EParticleInitVelocityMode::Explicit;
 
         PROPERTY(Editable, Category = "Velocity")
-        FVector3 VelocityMin = FVector3(-0.5f, 1.0f, -0.5f);
+        SParticleParam VelocityMin { FVector3(-0.5f, 1.0f, -0.5f) };
 
         PROPERTY(Editable, Category = "Velocity")
-        FVector3 VelocityMax = FVector3(0.5f, 3.0f, 0.5f);
+        SParticleParam VelocityMax { FVector3(0.5f, 3.0f, 0.5f) };
 
         /** Speed range for Radial / Cone modes. */
         PROPERTY(Editable, Category = "Velocity")
-        FVector2 SpeedRange = FVector2(1.0f, 3.0f);
+        SParticleParam SpeedRange { FVector2(1.0f, 3.0f) };
 
         /** Cone half-angle in degrees for Cone mode. */
         PROPERTY(Editable, Category = "Velocity", ClampMin = 0.0f, ClampMax = 180.0f)
-        float ConeAngle = 30.0f;
+        SParticleParam ConeAngle { 30.0f };
     };
 
     /** Sets the initial particle color. */
@@ -93,7 +93,7 @@ namespace Lumina
         void Generate(FParticleCompiler& Compiler, int32 ModuleIndex) override;
 
         PROPERTY(Editable, Category = "Color", Color)
-        FVector4 Color = FVector4(1.0f, 0.6f, 0.2f, 1.0f);
+        SParticleParam Color { FVector4(1.0f, 0.6f, 0.2f, 1.0f) };
     };
 
     /** Sets the initial particle size (random within a range). */
@@ -110,7 +110,7 @@ namespace Lumina
         void Generate(FParticleCompiler& Compiler, int32 ModuleIndex) override;
 
         PROPERTY(Editable, Category = "Size", ClampMin = 0.0f)
-        FVector2 SizeRange = FVector2(0.2f, 0.3f);
+        SParticleParam SizeRange { FVector2(0.2f, 0.3f) };
     };
 
     /** Sets how long newborn particles live (random within a range). */
@@ -127,7 +127,7 @@ namespace Lumina
         void Generate(FParticleCompiler& Compiler, int32 ModuleIndex) override;
 
         PROPERTY(Editable, Category = "Lifetime", ClampMin = 0.01f)
-        FVector2 LifetimeRange = FVector2(1.0f, 2.0f);
+        SParticleParam LifetimeRange { FVector2(1.0f, 2.0f) };
     };
 
     /** Sets the initial rotation and rotation speed (random within ranges). */
@@ -144,10 +144,10 @@ namespace Lumina
         void Generate(FParticleCompiler& Compiler, int32 ModuleIndex) override;
 
         PROPERTY(Editable, Category = "Rotation")
-        FVector2 RotationRange = FVector2(0.0f, 0.0f);
+        SParticleParam RotationRange { FVector2(0.0f, 0.0f) };
 
         PROPERTY(Editable, Category = "Rotation")
-        FVector2 RotationSpeedRange = FVector2(0.0f, 0.0f);
+        SParticleParam RotationSpeedRange { FVector2(0.0f, 0.0f) };
     };
 
     /** Writes a per-particle Mass attribute that force modules can divide by. */
@@ -164,7 +164,7 @@ namespace Lumina
         void Generate(FParticleCompiler& Compiler, int32 ModuleIndex) override;
 
         PROPERTY(Editable, Category = "Physics", ClampMin = 0.001f)
-        FVector2 MassRange = FVector2(1.0f, 1.0f);
+        SParticleParam MassRange { FVector2(1.0f, 1.0f) };
     };
 
     /** Writes the SizeScaleX/SizeScaleY attributes the renderer multiplies into the billboard extent. */
@@ -182,7 +182,7 @@ namespace Lumina
 
         /** Multipliers on the simulated size. 1,1 matches a square sprite. */
         PROPERTY(Editable, Category = "Size", ClampMin = 0.0f)
-        FVector2 Scale = FVector2(1.0f, 1.0f);
+        SParticleParam Scale { FVector2(1.0f, 1.0f) };
     };
 
     // Update modules
@@ -201,7 +201,7 @@ namespace Lumina
         void Generate(FParticleCompiler& Compiler, int32 ModuleIndex) override;
 
         PROPERTY(Editable, Category = "Forces")
-        FVector3 Gravity = FVector3(0.0f, -9.8f, 0.0f);
+        SParticleParam Gravity { FVector3(0.0f, -9.8f, 0.0f) };
     };
 
     /** Exponentially damps velocity (framerate-independent). */
@@ -218,7 +218,7 @@ namespace Lumina
         void Generate(FParticleCompiler& Compiler, int32 ModuleIndex) override;
 
         PROPERTY(Editable, Category = "Forces", ClampMin = 0.0f)
-        float Drag = 0.5f;
+        SParticleParam Drag { 0.5f };
 
         /** Divide drag by each particle's Mass attribute so heavy particles slow less. Declares the
          *  attribute itself, so this works whether or not a Set Mass module is present -- without one
@@ -241,13 +241,13 @@ namespace Lumina
         void Generate(FParticleCompiler& Compiler, int32 ModuleIndex) override;
 
         PROPERTY(Editable, Category = "Noise")
-        FVector3 Strength = FVector3(1.0f);
+        SParticleParam Strength { FVector3(1.0f) };
 
         PROPERTY(Editable, Category = "Noise", ClampMin = 0.0001f)
-        float Scale = 1.0f;
+        SParticleParam Scale { 1.0f };
 
         PROPERTY(Editable, Category = "Noise")
-        float Speed = 1.0f;
+        SParticleParam Speed { 1.0f };
     };
 
     /** Blends color from Start to End over the particle's life. */
@@ -310,7 +310,7 @@ namespace Lumina
          *  the tail stays pinned near the spawn point and the streak spans the whole flight. Capped well
          *  short of any value that could only be a misreading of the unit. */
         PROPERTY(Editable, Category = "Trail", ClampMin = 0.0f, ClampMax = 5.0f)
-        float TrailLength = 0.1f;
+        SParticleParam TrailLength { 0.1f };
     };
 
     /**

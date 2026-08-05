@@ -66,7 +66,7 @@ namespace Lumina
         bool IsOutlinerEntityVisible(entt::entity Entity) const override;
 
         void HandleOutlinerDragDrop(FTreeListView& Tree, entt::entity DropItem);
-        void HandlePrefabContentDrop(FStringView VirtualPath, entt::entity DropTarget) override;
+        void HandlePrefabContentDrop(FStringView VirtualPath, entt::entity DropTarget, bool bAttachToTarget) override;
 
         // Base CreateEntity*/component-add path; the prefab supplies these hooks: tag new entities
         // with SPrefabComponent + parent them under the root, and spawn at identity (not the camera).

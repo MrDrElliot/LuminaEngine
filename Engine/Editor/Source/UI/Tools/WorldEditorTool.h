@@ -170,7 +170,7 @@ namespace Lumina
         void OnGameQuitRequested() { bGameQuitRequested = true; }
 
         /** Accept a content-browser drag payload in the current scope and, if it's a prefab, instantiate it under DropTarget. */
-        void AcceptContentBrowserPrefabPayload(entt::entity DropTarget);
+        void AcceptContentBrowserPrefabPayload(entt::entity DropTarget, bool bAttachToTarget);
 
         // The Scene Graph panel + shared Add menu + filter UI + the incremental outliner engine now
         // live in FSceneEditorTool. The world editor supplies the empty-area drop + prefab instantiation
@@ -178,7 +178,7 @@ namespace Lumina
         void HandleOutlinerEmptyAreaDrop() override;
 
         void HandleEntityEditorDragDrop(FTreeListView& Tree, entt::entity DropItem);
-        void HandlePrefabContentDrop(FStringView VirtualPath, entt::entity DropTarget) override;
+        void HandlePrefabContentDrop(FStringView VirtualPath, entt::entity DropTarget, bool bAttachToTarget) override;
 
         void DrawWorldSettings(bool bFocused);
         void DrawSystemsPanel(bool bFocused);

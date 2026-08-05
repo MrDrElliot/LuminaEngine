@@ -3,6 +3,7 @@
 #include "AnimationGraphCompiler.h"
 #include "AnimGraphNode.h"
 #include "Nodes/AnimGraphNode_Output.h"
+#include "Nodes/AnimGraphNode_BlendSpace.h"
 #include "Nodes/AnimGraphNode_ClipPlayer.h"
 #include "Nodes/AnimGraphNode_Blend.h"
 #include "Nodes/AnimGraphNode_GetParameter.h"
@@ -50,6 +51,7 @@ namespace Lumina
         }
 
         RegisterGraphNode(CAnimGraphNode_ClipPlayer::StaticClass());
+        RegisterGraphNode(CAnimGraphNode_BlendSpace::StaticClass());
         RegisterGraphNode(CAnimGraphNode_Blend::StaticClass());
         RegisterGraphNode(CAnimGraphNode_GetParameter::StaticClass());
         RegisterGraphNode(CAnimGraphNode_FloatConstant::StaticClass());

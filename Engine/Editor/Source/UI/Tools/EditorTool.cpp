@@ -33,6 +33,7 @@
 #include "World/Entity/Components/CameraComponent.h"
 #include "World/Entity/Components/EditorComponent.h"
 #include "World/Entity/Components/InputComponent.h"
+#include "World/Entity/Components/SkeletalMeshComponent.h"
 #include "World/Entity/Components/StaticMeshComponent.h"
 #include "World/Entity/Components/TerrainComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
@@ -1887,8 +1888,13 @@ namespace Lumina
         return Result;
     }
 
-    bool FEditorTool::TraceViewportPlacement(ImVec2 ScreenPos, FVector3& OutLocation) const
+    bool FEditorTool::TraceViewportPlacement(ImVec2 ScreenPos, FVector3& OutLocation, entt::entity* OutHitEntity) const
     {
+        if (OutHitEntity != nullptr)
+        {
+            *OutHitEntity = entt::null;
+        }
+
         if (World == nullptr)
         {
             return false;
@@ -1954,45 +1960,59 @@ namespace Lumina
         // 2. Mesh entities, against the bounding sphere the resolve cache already caches on the
         //    component. Coarse -- the hit sits on the sphere, not the surface -- but it puts the asset
         //    on the thing you pointed at, which is the whole point. No physics needed.
-        for (auto&& [Entity, Mesh, Transform] : Registry.view<SStaticMeshComponent, STransformComponent>().each())
+        //
+        //    Static and skeletal both: the cached bounds live on the shared SMeshComponent base, and a
+        //    drop that ignored skeletal meshes could never land on a character -- which is exactly what
+        //    an animation drop has to hit to mean anything.
+        auto TraceMeshView = [&](auto View)
         {
-            if (Mesh.CachedLocalRadius <= 0.0f)
+            for (auto&& [Entity, Mesh, Transform] : View.each())
             {
-                continue;
+                if (Mesh.CachedLocalRadius <= 0.0f)
+                {
+                    continue;
+                }
+
+                // World-space bounding sphere. Composed from the transform's own basis rather than a
+                // transform-point helper, which VTransform does not expose.
+                const FTransform& WorldXform = Transform.GetWorldTransform();
+                const FVector3    Scale      = WorldXform.GetScale();
+                const FVector3    Local      = Mesh.CachedLocalCenter;
+                const FVector3    Center     = WorldXform.GetLocation()
+                                             + WorldXform.GetRight()   * (Local.x * Scale.x)
+                                             + WorldXform.GetUp()      * (Local.y * Scale.y)
+                                             + WorldXform.GetForward() * (Local.z * Scale.z);
+                const float    Radius = Mesh.CachedLocalRadius * Math::Max(Scale.x, Math::Max(Scale.y, Scale.z));
+
+                // Ray-sphere: solve |Origin + t*Dir - Center|^2 = Radius^2 for the nearer positive root.
+                const FVector3 ToCenter = Center - RayOrigin;
+                const float    Along    = Math::Dot(ToCenter, RayDir);
+                const float    DistSq   = Math::Dot(ToCenter, ToCenter) - Along * Along;
+                const float    RadiusSq = Radius * Radius;
+                if (DistSq > RadiusSq)
+                {
+                    continue;
+                }
+
+                const float Back = std::sqrt(RadiusSq - DistSq);
+                const float T    = Along - Back;
+                if (T <= 0.0f || T >= BestDistance)
+                {
+                    continue;   // behind the camera, or something nearer already won
+                }
+
+                BestDistance = T;
+                OutLocation  = RayOrigin + RayDir * T;
+                bHit         = true;
+                if (OutHitEntity != nullptr)
+                {
+                    *OutHitEntity = Entity;
+                }
             }
+        };
 
-            // World-space bounding sphere. Composed from the transform's own basis rather than a
-            // transform-point helper, which VTransform does not expose.
-            const FTransform& WorldXform = Transform.GetWorldTransform();
-            const FVector3    Scale      = WorldXform.GetScale();
-            const FVector3    Local      = Mesh.CachedLocalCenter;
-            const FVector3    Center     = WorldXform.GetLocation()
-                                         + WorldXform.GetRight()   * (Local.x * Scale.x)
-                                         + WorldXform.GetUp()      * (Local.y * Scale.y)
-                                         + WorldXform.GetForward() * (Local.z * Scale.z);
-            const float    Radius = Mesh.CachedLocalRadius * Math::Max(Scale.x, Math::Max(Scale.y, Scale.z));
-
-            // Ray-sphere: solve |Origin + t*Dir - Center|^2 = Radius^2 for the nearer positive root.
-            const FVector3 ToCenter = Center - RayOrigin;
-            const float    Along    = Math::Dot(ToCenter, RayDir);
-            const float    DistSq   = Math::Dot(ToCenter, ToCenter) - Along * Along;
-            const float    RadiusSq = Radius * Radius;
-            if (DistSq > RadiusSq)
-            {
-                continue;
-            }
-
-            const float Back = std::sqrt(RadiusSq - DistSq);
-            const float T    = Along - Back;
-            if (T <= 0.0f || T >= BestDistance)
-            {
-                continue;   // behind the camera, or something nearer already won
-            }
-
-            BestDistance = T;
-            OutLocation  = RayOrigin + RayDir * T;
-            bHit         = true;
-        }
+        TraceMeshView(Registry.view<SStaticMeshComponent, STransformComponent>());
+        TraceMeshView(Registry.view<SSkeletalMeshComponent, STransformComponent>());
 
         if (bHit)
         {
@@ -2017,7 +2037,7 @@ namespace Lumina
         return true;
     }
 
-    entt::entity FEditorTool::HandleContentBrowserAssetDrop(FStringView VirtualPath, entt::entity DropTarget)
+    entt::entity FEditorTool::HandleContentBrowserAssetDrop(FStringView VirtualPath, entt::entity DropTarget, bool bAttachToTarget)
     {
         if (World == nullptr || VirtualPath.empty())
         {
@@ -2054,6 +2074,6 @@ namespace Lumina
             SpawnTransform.SetLocation(TracedLocation);
         }
 
-        return (*Handler)(World, Loaded, SpawnTransform, DropTarget);
+        return (*Handler)(World, Loaded, SpawnTransform, DropTarget, bAttachToTarget);
     }
 }

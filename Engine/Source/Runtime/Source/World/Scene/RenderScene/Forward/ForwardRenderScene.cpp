@@ -2966,6 +2966,11 @@ namespace Lumina
                             {
                                 Item.CustomComputeShader = Emitter->GetCustomComputeShader();
                                 Item.ModuleParamValues   = Emitter->ModuleParamValues;
+                                // Stamp the component's live parameter values over the slots the module
+                                // stack bound. This is where ParticleComponent.SetFloat("Size", x) from
+                                // C++/C# actually reaches the simulation: the asset supplies the authored
+                                // constants, the component overrides the bound ones on the way to the GPU.
+                                ApplyParticleParamBindings(*Emitter, Component, Item.ModuleParamValues);
                                 Item.AttributeFloatCount = Math::Max(Emitter->AttributeFloatCount, 1u);
                                 for (int32 A = 0; A < (int32)ParticleRenderAttribute::Count; ++A)
                                 {

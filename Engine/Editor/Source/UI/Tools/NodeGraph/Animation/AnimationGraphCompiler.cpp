@@ -20,6 +20,20 @@ namespace Lumina
         return (uint16)(Clips.size() - 1);
     }
 
+    uint16 FAnimationGraphCompiler::AddBlendSpace(CBlendSpace* BlendSpace)
+    {
+        for (SIZE_T i = 0; i < BlendSpaces.size(); ++i)
+        {
+            if (BlendSpaces[i].Get() == BlendSpace)
+            {
+                return (uint16)i;
+            }
+        }
+
+        BlendSpaces.push_back(BlendSpace);
+        return (uint16)(BlendSpaces.size() - 1);
+    }
+
     int32 FAnimationGraphCompiler::AddParameter(const FName& Name, EAnimGraphParamType Type, float DefaultValue)
     {
         for (SIZE_T i = 0; i < Parameters.size(); ++i)
@@ -110,6 +124,19 @@ namespace Lumina
         WriteOp(EAnimOp::SampleAnim);
         Write(ClipIndex);
         Write(TimeReg);
+        Write(Dst);
+        return Dst;
+    }
+
+    uint16 FAnimationGraphCompiler::EmitSampleBlendSpace(uint16 BlendSpaceIndex, uint16 XReg, uint16 YReg, uint16 SpeedReg, uint16 PhaseSlot)
+    {
+        const uint16 Dst = AllocPoseReg();
+        WriteOp(EAnimOp::SampleBlendSpace);
+        Write(BlendSpaceIndex);
+        Write(XReg);
+        Write(YReg);
+        Write(SpeedReg);
+        Write(PhaseSlot);
         Write(Dst);
         return Dst;
     }
@@ -384,6 +411,7 @@ namespace Lumina
 
         OutGraph->Bytecode           = Bytecode;
         OutGraph->Clips              = Clips;
+        OutGraph->BlendSpaces        = BlendSpaces;
         OutGraph->Parameters         = Parameters;
         OutGraph->BoneMasks          = BoneMasks;
         OutGraph->StateMachines      = StateMachines;

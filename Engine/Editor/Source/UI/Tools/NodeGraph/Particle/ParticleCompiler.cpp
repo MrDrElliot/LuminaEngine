@@ -129,6 +129,25 @@ namespace Lumina
         return Hash;
     }
 
+    FString FParticleCompiler::Param(const char* DebugName, const SParticleParam& Value)
+    {
+        // The slot always carries the authored constant, bound or not. It is what the editor preview
+        // simulates with (nothing overrides parameters there) and what the runtime falls back to when a
+        // binding names a parameter nobody ever declared or set.
+        const int32  Slot = (int32)ParamValues.size();
+        const FString Expr = AddParamSlot(DebugName, Value.Constant, ParticleParamComponents(Value.Type));
+
+        if (Value.IsBound())
+        {
+            SParticleParamBinding& Binding = ParamBindings.emplace_back();
+            Binding.ParameterName = Value.ParameterName;
+            Binding.SlotIndex     = Slot;
+            Binding.Type          = Value.Type;
+        }
+
+        return Expr;
+    }
+
     FString FParticleCompiler::Param(const char* DebugName, float Value)
     {
         return AddParamSlot(DebugName, FVector4(Value, 0.0f, 0.0f, 0.0f), 1);

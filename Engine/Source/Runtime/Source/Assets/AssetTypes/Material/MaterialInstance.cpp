@@ -72,6 +72,29 @@ namespace Lumina
                 return !Material->GetParameterValue(O.Type, O.ParameterName, Probe);
             }), Overrides.end());
 
+        // Texture slots are demanded from the parent one at a time rather than inherited with the block
+        // above, which is where the memory saving actually happens: a parameter this instance overrides
+        // never asks the parent to resolve its default, so a master reached only through instances that
+        // override everything loads none of its textures at all.
+        //
+        // Runs BEFORE the override loop so ApplyOverride still has the last word on every slot.
+        for (const FMaterialParameter& Param : Parameters)
+        {
+            if (Param.Type != EMaterialParameterType::Texture || Param.Index >= MAX_TEXTURES)
+            {
+                continue;
+            }
+
+            const FMaterialParameterOverride* Override = FindOverride(Param.ParameterName);
+            const bool bOverridden = Override != nullptr && Override->bEnabled && Override->Texture != nullptr;
+            if (bOverridden)
+            {
+                continue;   // ApplyOverride supplies this slot; the parent default is dead weight
+            }
+
+            MaterialUniforms.Textures[Param.Index] = Material->ResolveTextureSlot(Param.Index);
+        }
+
         for (const FMaterialParameterOverride& Override : Overrides)
         {
             // Disabled overrides keep their stored value but are not applied; the parent value shows through.
@@ -262,7 +285,18 @@ namespace Lumina
             Override.Vector = (Param.Index < MAX_VECTORS) ? Material->MaterialUniforms.Vectors[Param.Index] : FVector4(0.0f);
             break;
         case EMaterialParameterType::Texture:
-            Override.Texture = (Param.Index < Material->Textures.size()) ? Material->Textures[Param.Index] : nullptr;
+            // Seeding an override from the parent's default is a deliberate demand for that slot -- the
+            // user is about to edit the value, so it has to be a real texture rather than a soft path.
+            // Editor action, so the synchronous resolve is fine here.
+            if (Param.Index < (uint32)Material->Textures.size())
+            {
+                Material->ResolveTextureSlot(Param.Index);
+                Override.Texture = Material->ResolvedTextures[Param.Index];
+            }
+            else
+            {
+                Override.Texture = nullptr;
+            }
             break;
         }
 

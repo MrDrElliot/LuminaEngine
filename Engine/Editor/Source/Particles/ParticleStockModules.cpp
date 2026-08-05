@@ -35,18 +35,22 @@ namespace Lumina
         {
             const FString D = LocalVar(ModuleIndex, "dir");
             const FString L = LocalVar(ModuleIndex, "len");
+            const FString S = LocalVar(ModuleIndex, "speed");
             Compiler.EmitSpawn("float3 " + D + " = P.Position - SimParams().EmitterPosition.xyz;");
             Compiler.EmitSpawn("float " + L + " = length(" + D + ");");
             Compiler.EmitSpawn(D + " = (" + L + " > 1e-5) ? (" + D + " / " + L + ") : RandOnUnitSphere(Seed);");
-            Compiler.EmitSpawn("P.Velocity = " + D + " * lerp(" + Compiler.Param("SpeedMin", SpeedRange.x) + ", " + Compiler.Param("SpeedMax", SpeedRange.y) + ", RandUnit(Seed));");
+            Compiler.EmitSpawn("const float2 " + S + " = " + Compiler.Param("SpeedRange", SpeedRange) + ";");
+            Compiler.EmitSpawn("P.Velocity = " + D + " * lerp(" + S + ".x, " + S + ".y, RandUnit(Seed));");
             break;
         }
         case EParticleInitVelocityMode::Cone:
         {
             const FString D = LocalVar(ModuleIndex, "dir");
+            const FString S = LocalVar(ModuleIndex, "speed");
             Compiler.EmitSpawn("float3 " + D + " = RandDirectionInCone(Seed, SimParams().EmitterForward.xyz, "
                 + "SimParams().EmitterRight.xyz, SimParams().EmitterUp.xyz, radians(" + Compiler.Param("ConeAngle", ConeAngle) + "));");
-            Compiler.EmitSpawn("P.Velocity = " + D + " * lerp(" + Compiler.Param("SpeedMin", SpeedRange.x) + ", " + Compiler.Param("SpeedMax", SpeedRange.y) + ", RandUnit(Seed));");
+            Compiler.EmitSpawn("const float2 " + S + " = " + Compiler.Param("SpeedRange", SpeedRange) + ";");
+            Compiler.EmitSpawn("P.Velocity = " + D + " * lerp(" + S + ".x, " + S + ".y, RandUnit(Seed));");
             break;
         }
         }
@@ -59,18 +63,29 @@ namespace Lumina
 
     void CParticleModule_InitialSize::Generate(FParticleCompiler& Compiler, int32 ModuleIndex)
     {
-        Compiler.EmitSpawn("P.Size = lerp(" + Compiler.Param("SizeMin", SizeRange.x) + ", " + Compiler.Param("SizeMax", SizeRange.y) + ", RandUnit(Seed));");
+        // A range is ONE bindable input, so it registers as a single float2 slot rather than a min and a
+        // max scalar. Read into a local because the slot expression is already swizzled ("MP(3).xy") and
+        // chaining another component off it reads far worse than naming the range once.
+        const FString S = LocalVar(ModuleIndex, "size");
+        Compiler.EmitSpawn("const float2 " + S + " = " + Compiler.Param("SizeRange", SizeRange) + ";");
+        Compiler.EmitSpawn("P.Size = lerp(" + S + ".x, " + S + ".y, RandUnit(Seed));");
     }
 
     void CParticleModule_Lifetime::Generate(FParticleCompiler& Compiler, int32 ModuleIndex)
     {
-        Compiler.EmitSpawn("P.Lifetime = lerp(" + Compiler.Param("LifeMin", LifetimeRange.x) + ", " + Compiler.Param("LifeMax", LifetimeRange.y) + ", RandUnit(Seed));");
+        const FString L = LocalVar(ModuleIndex, "life");
+        Compiler.EmitSpawn("const float2 " + L + " = " + Compiler.Param("LifetimeRange", LifetimeRange) + ";");
+        Compiler.EmitSpawn("P.Lifetime = lerp(" + L + ".x, " + L + ".y, RandUnit(Seed));");
     }
 
     void CParticleModule_InitialRotation::Generate(FParticleCompiler& Compiler, int32 ModuleIndex)
     {
-        Compiler.EmitSpawn("P.Rotation = radians(lerp(" + Compiler.Param("RotMin", RotationRange.x) + ", " + Compiler.Param("RotMax", RotationRange.y) + ", RandUnit(Seed)));");
-        Compiler.EmitSpawn("P.RotationSpeed = radians(lerp(" + Compiler.Param("RotSpeedMin", RotationSpeedRange.x) + ", " + Compiler.Param("RotSpeedMax", RotationSpeedRange.y) + ", RandUnit(Seed)));");
+        const FString R = LocalVar(ModuleIndex, "rot");
+        const FString S = LocalVar(ModuleIndex, "spin");
+        Compiler.EmitSpawn("const float2 " + R + " = " + Compiler.Param("RotationRange", RotationRange) + ";");
+        Compiler.EmitSpawn("const float2 " + S + " = " + Compiler.Param("RotationSpeedRange", RotationSpeedRange) + ";");
+        Compiler.EmitSpawn("P.Rotation = radians(lerp(" + R + ".x, " + R + ".y, RandUnit(Seed)));");
+        Compiler.EmitSpawn("P.RotationSpeed = radians(lerp(" + S + ".x, " + S + ".y, RandUnit(Seed)));");
     }
 
     // Update modules
@@ -85,16 +100,19 @@ namespace Lumina
         // Names matter: these are the strings in ParticleRenderAttribute::Names that the compiler resolves
         // to slots for the vertex shader. Declaring them under any other name would simulate fine and
         // render as an ordinary square sprite.
-        Compiler.EmitSpawn(Compiler.Attribute("SizeScaleX", "1.0") + " = " + Compiler.Param("ScaleX", Scale.x) + ";");
-        Compiler.EmitSpawn(Compiler.Attribute("SizeScaleY", "1.0") + " = " + Compiler.Param("ScaleY", Scale.y) + ";");
+        const FString S = LocalVar(ModuleIndex, "scale");
+        Compiler.EmitSpawn("const float2 " + S + " = " + Compiler.Param("Scale", Scale) + ";");
+        Compiler.EmitSpawn(Compiler.Attribute("SizeScaleX", "1.0") + " = " + S + ".x;");
+        Compiler.EmitSpawn(Compiler.Attribute("SizeScaleY", "1.0") + " = " + S + ".y;");
     }
 
     void CParticleModule_SetMass::Generate(FParticleCompiler& Compiler, int32 ModuleIndex)
     {
         // Declaring returns the addressed lvalue, so writing an attribute reads like writing a field.
         const FString Mass = Compiler.Attribute("Mass", "1.0");
-        Compiler.EmitSpawn(Mass + " = lerp(" + Compiler.Param("MassMin", MassRange.x) + ", "
-            + Compiler.Param("MassMax", MassRange.y) + ", RandUnit(Seed));");
+        const FString M    = LocalVar(ModuleIndex, "mass");
+        Compiler.EmitSpawn("const float2 " + M + " = " + Compiler.Param("MassRange", MassRange) + ";");
+        Compiler.EmitSpawn(Mass + " = lerp(" + M + ".x, " + M + ".y, RandUnit(Seed));");
     }
 
     void CParticleModule_Drag::Generate(FParticleCompiler& Compiler, int32 ModuleIndex)
@@ -166,7 +184,9 @@ namespace Lumina
         // rises. It also tracks the position history, so on a curved path (gravity, curl noise) the streak
         // follows the arc -- which is the whole reason this exists next to velocity stretch, which can only
         // ever draw a straight line along the instantaneous heading.
-        const FString Length = Compiler.Param("TrailTime", Math::Max(TrailLength, 0.0f));
+        // No CPU-side clamp to non-negative any more: the value can now come from a runtime parameter, so
+        // the guard has to be in the shader to be worth anything. The max() below already is it.
+        const FString Length = Compiler.Param("TrailTime", TrailLength);
         Compiler.EmitUpdate("{");
         Compiler.EmitUpdate("	const float TrailAlpha = saturate(DeltaTime / max(" + Length + ", 1e-4));");
         Compiler.EmitUpdate("	" + PX + " = lerp(" + PX + ", P.Position.x, TrailAlpha);");

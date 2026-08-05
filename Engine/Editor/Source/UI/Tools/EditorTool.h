@@ -142,7 +142,11 @@ namespace Lumina
         // should land. Falls back through terrain -> mesh bounds -> ground plane -> a fixed distance in
         // front of the camera, so it always produces something usable. Returns false only when there is
         // no camera to build a ray from.
-        bool TraceViewportPlacement(ImVec2 ScreenPos, FVector3& OutLocation) const;
+        /** Cursor ray against terrain, then mesh bounds, then the ground plane; always yields a location.
+         *  OutHitEntity (optional) receives the mesh entity that was hit, or entt::null when the location
+         *  came from terrain, the ground plane, or the fallback distance -- which is what lets a drop know
+         *  whether it landed ON something. */
+        bool TraceViewportPlacement(ImVec2 ScreenPos, FVector3& OutLocation, entt::entity* OutHitEntity = nullptr) const;
 
         virtual void InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& InDockspaceSize) const;
         
@@ -340,7 +344,10 @@ namespace Lumina
         FTransform GetCameraSpawnTransform(float DistanceForward = 5.0f) const;
 
         /** Dispatches a content-browser asset drop by asset class. Returns the spawned entity (or entt::null). */
-        entt::entity HandleContentBrowserAssetDrop(FStringView VirtualPath, entt::entity DropTarget);
+        /** DropTarget is the entity the drop landed on (outliner row, or the viewport ray hit).
+         *  bAttachToTarget is the separate question of whether the gesture meant to PARENT under it --
+         *  true only for an outliner row drop; viewport placement acts on the target without adopting it. */
+        entt::entity HandleContentBrowserAssetDrop(FStringView VirtualPath, entt::entity DropTarget, bool bAttachToTarget = false);
 
     protected:
 

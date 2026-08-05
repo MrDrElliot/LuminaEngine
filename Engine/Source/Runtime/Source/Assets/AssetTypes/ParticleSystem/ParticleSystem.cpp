@@ -311,4 +311,55 @@ namespace Lumina
 
         return R;
     }
+
+    // Widens a parameter to the float4 a module slot holds. Int and Bool land in the same scalar lane as
+    // Float: the module input decides how many components are read, not the parameter, so an int knob can
+    // drive a float input without the user having to match the declared types exactly.
+    static FVector4 ParameterAsVector4(const FParticleParameter& Param)
+    {
+        switch (Param.Type)
+        {
+        case EParticleParameterType::Float: return FVector4(Param.Scalar, 0.0f, 0.0f, 0.0f);
+        case EParticleParameterType::Int:   return FVector4((float)Param.Integer, 0.0f, 0.0f, 0.0f);
+        case EParticleParameterType::Bool:  return FVector4(Param.Boolean ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f);
+        default:                            return Param.Vector;
+        }
+    }
+
+    void ApplyParticleParamBindings(const CParticleEmitter& Emitter, const SParticleSystemComponent& Component, TVector<FVector4>& InOutValues)
+    {
+        // The overwhelmingly common case: a stack of plain constants pays one empty-check per emitter.
+        if (Emitter.ParamBindings.empty())
+        {
+            return;
+        }
+
+        for (const SParticleParamBinding& Binding : Emitter.ParamBindings)
+        {
+            // A slot out of range means the bindings were saved against a different compile than the
+            // values -- skip rather than write past the block; the constant already in the slot is right.
+            if (Binding.SlotIndex < 0 || Binding.SlotIndex >= (int32)InOutValues.size())
+            {
+                continue;
+            }
+
+            const FParticleParameter* Param = Component.FindParameter(Binding.ParameterName);
+            if (Param == nullptr)
+            {
+                continue;   // never declared and never set from code; the authored constant stands
+            }
+
+            FVector4 Value = ParameterAsVector4(*Param);
+
+            // Broadcast a scalar parameter across a wider input, so a single float can drive all three
+            // axes of a vector. Without this the y and z of that input would silently read zero, which
+            // for something like a gravity or noise-strength input reads as "the module stopped working".
+            if (ParticleParamComponents(Param->Type) == 1 && ParticleParamComponents(Binding.Type) > 1)
+            {
+                Value = FVector4(Value.x, Value.x, Value.x, Value.x);
+            }
+
+            InOutValues[Binding.SlotIndex] = Value;
+        }
+    }
 }

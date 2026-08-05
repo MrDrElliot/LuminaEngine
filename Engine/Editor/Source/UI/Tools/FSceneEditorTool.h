@@ -148,7 +148,7 @@ namespace Lumina
         ImGuiTextFilter AddEntityComponentFilter;
 
         virtual void HandleOutlinerEmptyAreaDrop() {}
-        virtual void HandlePrefabContentDrop(FStringView VirtualPath, entt::entity DropTarget) {}
+        virtual void HandlePrefabContentDrop(FStringView VirtualPath, entt::entity DropTarget, bool bAttachToTarget) {}
 
         struct FEntityListFilterState
         {

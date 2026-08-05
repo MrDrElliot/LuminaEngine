@@ -688,16 +688,21 @@ namespace Lumina::Physics
         
         FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
 
-        Registry.on_construct<SSphereColliderComponent>().connect<&entt::registry::emplace_or_replace<SRigidBodyComponent>>();
-        Registry.on_construct<SBoxColliderComponent>().connect<&entt::registry::emplace_or_replace<SRigidBodyComponent>>();
-        Registry.on_construct<SCapsuleColliderComponent>().connect<&entt::registry::emplace_or_replace<SRigidBodyComponent>>();
-        Registry.on_construct<SCylinderColliderComponent>().connect<&entt::registry::emplace_or_replace<SRigidBodyComponent>>();
-        Registry.on_construct<STaperedCapsuleColliderComponent>().connect<&entt::registry::emplace_or_replace<SRigidBodyComponent>>();
-        Registry.on_construct<STaperedCylinderColliderComponent>().connect<&entt::registry::emplace_or_replace<SRigidBodyComponent>>();
-        Registry.on_construct<SPlaneColliderComponent>().connect<&entt::registry::emplace_or_replace<SRigidBodyComponent>>();
-        Registry.on_construct<SCompoundColliderComponent>().connect<&entt::registry::emplace_or_replace<SRigidBodyComponent>>();
-        Registry.on_construct<SMeshColliderComponent>().connect<&entt::registry::emplace_or_replace<SRigidBodyComponent>>();
-        Registry.on_construct<STerrainColliderComponent>().connect<&entt::registry::emplace_or_replace<SRigidBodyComponent>>();
+        // get_or_emplace, NOT emplace_or_replace: a collider added to an entity that already has a
+        // configured rigid body must leave it alone. Replacing it reset the body to defaults (dynamic,
+        // default profile) and fired on_update, which rebuilds nothing -- so "set the body type, then add
+        // a collider" silently produced a dynamic body. Body-first is fine either way: building with no
+        // collider yet returns NoCollider and the entity is retried on a later step.
+        Registry.on_construct<SSphereColliderComponent>().connect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
+        Registry.on_construct<SBoxColliderComponent>().connect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
+        Registry.on_construct<SCapsuleColliderComponent>().connect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
+        Registry.on_construct<SCylinderColliderComponent>().connect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
+        Registry.on_construct<STaperedCapsuleColliderComponent>().connect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
+        Registry.on_construct<STaperedCylinderColliderComponent>().connect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
+        Registry.on_construct<SPlaneColliderComponent>().connect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
+        Registry.on_construct<SCompoundColliderComponent>().connect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
+        Registry.on_construct<SMeshColliderComponent>().connect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
+        Registry.on_construct<STerrainColliderComponent>().connect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
     }
 
     FJoltPhysicsScene::~FJoltPhysicsScene()
@@ -707,16 +712,16 @@ namespace Lumina::Physics
 
         FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
 
-        Registry.on_construct<SSphereColliderComponent>().disconnect<&entt::registry::emplace_or_replace<SRigidBodyComponent>>();
-        Registry.on_construct<SBoxColliderComponent>().disconnect<&entt::registry::emplace_or_replace<SRigidBodyComponent>>();
-        Registry.on_construct<SCapsuleColliderComponent>().disconnect<&entt::registry::emplace_or_replace<SRigidBodyComponent>>();
-        Registry.on_construct<SCylinderColliderComponent>().disconnect<&entt::registry::emplace_or_replace<SRigidBodyComponent>>();
-        Registry.on_construct<STaperedCapsuleColliderComponent>().disconnect<&entt::registry::emplace_or_replace<SRigidBodyComponent>>();
-        Registry.on_construct<STaperedCylinderColliderComponent>().disconnect<&entt::registry::emplace_or_replace<SRigidBodyComponent>>();
-        Registry.on_construct<SPlaneColliderComponent>().disconnect<&entt::registry::emplace_or_replace<SRigidBodyComponent>>();
-        Registry.on_construct<SCompoundColliderComponent>().disconnect<&entt::registry::emplace_or_replace<SRigidBodyComponent>>();
-        Registry.on_construct<SMeshColliderComponent>().disconnect<&entt::registry::emplace_or_replace<SRigidBodyComponent>>();
-        Registry.on_construct<STerrainColliderComponent>().disconnect<&entt::registry::emplace_or_replace<SRigidBodyComponent>>();
+        Registry.on_construct<SSphereColliderComponent>().disconnect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
+        Registry.on_construct<SBoxColliderComponent>().disconnect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
+        Registry.on_construct<SCapsuleColliderComponent>().disconnect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
+        Registry.on_construct<SCylinderColliderComponent>().disconnect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
+        Registry.on_construct<STaperedCapsuleColliderComponent>().disconnect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
+        Registry.on_construct<STaperedCylinderColliderComponent>().disconnect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
+        Registry.on_construct<SPlaneColliderComponent>().disconnect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
+        Registry.on_construct<SCompoundColliderComponent>().disconnect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
+        Registry.on_construct<SMeshColliderComponent>().disconnect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
+        Registry.on_construct<STerrainColliderComponent>().disconnect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
     }
 
     void FJoltPhysicsScene::PreUpdate()

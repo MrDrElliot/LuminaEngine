@@ -478,7 +478,8 @@ namespace Lumina::Import::Mesh
     void GenerateMeshlets(FMeshResource& MeshResource, FScopedSlowTask* Progress, float StepPerSurface)
     {
         LUMINA_PROFILE_SCOPE();
-        
+        LUMINA_MEMORY_SCOPE("Meshes");
+
         MeshResource.MeshletData.Clear();
 
         const float TangentStep = StepPerSurface * 0.35f;
@@ -549,7 +550,12 @@ namespace Lumina::Import::Mesh
         Task::ParallelFor(LODCount * NumSurfaces, [&](uint32 Cell)
         {
             LUMINA_PROFILE_SECTION("Process Surfaces and LODs");
-            
+            // Scoped again INSIDE the worker: the scope stack is thread-local, so the one on
+            // GenerateMeshlets covers only the calling thread. Nearly all of a mesh's memory is built
+            // right here -- meshlet streams, per-LOD simplified index buffers -- so without this the
+            // bulk of "Meshes" lands in no category at all.
+            LUMINA_MEMORY_SCOPE("Meshes");
+
             const uint32 lod        = Cell / NumSurfaces;
             const uint32 SurfaceIdx = Cell % NumSurfaces;
 

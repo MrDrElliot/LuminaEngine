@@ -2,6 +2,7 @@
 
 #include "ImportHelpers.h"
 #include "Paths/Paths.h"
+#include "Memory/MemoryTracking.h"
 #include "Renderer/RHITexture.h"
 
 // Declarations only; StbImageImpl.cpp compiles the implementations for the whole engine.
@@ -15,6 +16,8 @@ namespace Lumina::Import::Textures
     
     static void ResizeResult(FTextureImportResult& Source, FUIntVector2 TargetSize)
     {
+        LUMINA_MEMORY_SCOPE("Textures");
+
         const uint32 SrcW = Source.Dimensions.x;
         const uint32 SrcH = Source.Dimensions.y;
         const uint32 DstW = TargetSize.x;
@@ -58,6 +61,8 @@ namespace Lumina::Import::Textures
     
     TOptional<FTextureImportResult> ImportTexture(FStringView RawFilePath, bool bFlipVertical, FUIntVector2 Size)
     {
+        LUMINA_MEMORY_SCOPE("Textures");
+
         FTextureImportResult Result = {};
         
         stbi_set_flip_vertically_on_load_thread(bFlipVertical);
@@ -195,6 +200,8 @@ namespace Lumina::Import::Textures
 
     TOptional<FTextureImportResult> ImportTexture(TSpan<const uint8> ImageData, bool bFlipVertical, FUIntVector2 Size)
     {
+        LUMINA_MEMORY_SCOPE("Textures");
+
         FTextureImportResult Result = {};
         
         stbi_set_flip_vertically_on_load_thread(bFlipVertical);
@@ -333,6 +340,8 @@ namespace Lumina::Import::Textures
 
     RHI::FManagedTexture CreateTextureFromImport(FStringView RawFilePath, bool bFlipVerticalOnLoad, FUIntVector2 Size)
     {
+        LUMINA_MEMORY_SCOPE("Textures");
+
         LUMINA_PROFILE_SCOPE();
 
         TOptional<FTextureImportResult> MaybeResult = ImportTexture(RawFilePath, bFlipVerticalOnLoad, Size);

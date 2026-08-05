@@ -12,6 +12,8 @@
 
 #include <atomic>
 
+#include "Memory/MemoryTracking.h"
+
 namespace Lumina
 {
     // One material-tagged slice of the index buffer.
@@ -217,9 +219,6 @@ namespace Lumina
 
     void SDynamicMeshComponent::RefreshResolvedMaterials()
     {
-        // Re-resolves the PUBLISHED data in place, for the render scene's retry-while-compiling pass.
-        // Game thread only, like the pass that calls it; Commit resolves its snapshot before publishing
-        // and never comes through here.
         if (const TSharedPtr<FDynamicMeshRenderData> Data = LoadRenderData())
         {
             ResolveMaterialsInto(*Data);
@@ -323,6 +322,7 @@ namespace Lumina
         }
 
         LUMINA_PROFILE_SCOPE();
+        LUMINA_MEMORY_SCOPE("Meshes");
 
         FDynamicMeshBuildData& BD = *BuildData;
         const size_t VertexCount = BD.Positions.size();

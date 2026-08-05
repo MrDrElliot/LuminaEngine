@@ -13,10 +13,9 @@ namespace Lumina
 {
     void CMesh::Serialize(FArchive& Ar)
     {
-        LUMINA_MEMORY_SCOPE("Meshes");
-
         Super::Serialize(Ar);
-
+        
+        LUMINA_MEMORY_SCOPE("Meshes");
         if (!MeshResources)
         {
             MeshResources = MakeUnique<FMeshResource>();
@@ -166,6 +165,8 @@ namespace Lumina
         // a dynamic mesh committing) refreshes the volume with everything else.
         void CreateDistanceFieldTexture(FMeshResource& Resource)
         {
+            LUMINA_MEMORY_SCOPE("Meshes");
+
             RHI::FManagedTexture& Texture = Resource.MeshBuffers.DistanceFieldTexture;
 
             // Released unconditionally: a rebuild that turned the field OFF has to drop the old volume,
@@ -229,6 +230,8 @@ namespace Lumina
 
     void MeshBuffers::RefreshDistanceField(FMeshResource& Resource)
     {
+        LUMINA_MEMORY_SCOPE("Meshes");
+
         // Nothing to publish through: the mesh never got its buffers, so the next CreateForResource
         // picks the volume up anyway.
         if (Resource.MeshBuffers.MeshletHeaderBuffer == 0)
@@ -251,6 +254,8 @@ namespace Lumina
 
     void MeshBuffers::CreateForResource(FMeshResource& Resource)
     {
+        LUMINA_MEMORY_SCOPE("Meshes");
+
         if (Resource.MeshletData.IsEmpty())
         {
             return;
@@ -261,6 +266,13 @@ namespace Lumina
         const FMeshletData& MData = Resource.MeshletData;
         const bool bSkinned       = Resource.bSkinnedMesh;
         FMeshResource::FMeshBuffers& MB = Resource.MeshBuffers;
+
+        // Drop any previous set before building a new one. Every caller today happens to arrive with an
+        // empty set -- SetMeshResource destroys the old resource first, a dynamic mesh commits into a
+        // fresh one -- but that was an ordering accident, and overwriting live addresses orphans them
+        // permanently (nothing else knows them). RefreshDistanceField exists purely to route around
+        // this; with the free here, a rebuild through this path is simply correct.
+        MB.ReleaseBuffers();
 
         bool bAllocationFailed = false;
 
@@ -365,9 +377,14 @@ namespace Lumina
 
         MeshResources->DistanceField = Move(NewVolume);
 
-        // Republishes the volume through the existing meshlet header. Deliberately NOT
-        // GenerateGPUBuffers: that allocates a fresh set of meshlet buffers and leaks the current one,
-        // since nothing frees the old addresses before overwriting them.
+        // Republishes the volume through the EXISTING meshlet header, so the header address is unchanged.
+        // Deliberately NOT GenerateGPUBuffers: that rebuilds the whole meshlet set, which moves the header
+        // address that every component has cached in SMeshComponent::CachedMeshletHeaderAddress -- costing
+        // a resolve-cache invalidation and a full re-upload of the retained instance buffer to publish a
+        // volume the existing header can carry on its own.
+        //
+        // (It no longer LEAKS to go the other way -- CreateForResource frees the previous set first -- but
+        // it is still all that work for nothing.)
         MeshBuffers::RefreshDistanceField(*MeshResources);
     }
 

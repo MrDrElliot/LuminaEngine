@@ -481,35 +481,56 @@ namespace Lumina
         PackageToDestroy->SetFlag(OF_MarkedDestroy);
 
         // Synchronous teardown.
-        TVector<CObject*> ExportObjects;
-        ExportObjects.reserve(20);
-        GetObjectsWithPackage(PackageToDestroy, ExportObjects);
-
-        // Null every live reference to the exported assets across the whole object graph.
-        for (CObject* ExportObject : ExportObjects)
         {
-            if (ExportObject == nullptr || ExportObject == PackageToDestroy)
+            // Pinned for the duration of the sweep. Nulling the last reference to an export frees it on
+            // the spot, and a primary asset's destructor releases the sub-object exports it owns (particle
+            // emitters, graph nodes) -- which are entries in this same list. Without the pin those
+            // siblings die mid-loop and the next iteration reads a freed vtable.
+            TVector<TObjectPtr<CObject>> PinnedExports;
             {
-                continue;
-            }
-            if (!ExportObject->IsAsset())
-            {
-                continue;
+                TVector<CObject*> ExportObjects;
+                ExportObjects.reserve(20);
+                GetObjectsWithPackage(PackageToDestroy, ExportObjects);
+
+                PinnedExports.reserve(ExportObjects.size());
+                for (CObject* ExportObject : ExportObjects)
+                {
+                    PinnedExports.emplace_back(ExportObject);
+                }
             }
 
-            FObjectReferenceReplacerArchive Ar(ExportObject, nullptr);
-            for (TObjectIterator<CObject> Itr; Itr; ++Itr)
+            // Null every live reference to the exported assets across the whole object graph.
+            for (const TObjectPtr<CObject>& ExportObject : PinnedExports)
             {
-                if (CObject* Object = *Itr)
+                if (!ExportObject.IsValid() || ExportObject.Get() == PackageToDestroy)
                 {
-                    Object->Serialize(Ar);
+                    continue;
+                }
+                if (!ExportObject->IsAsset())
+                {
+                    continue;
+                }
+
+                FObjectReferenceReplacerArchive Ar(ExportObject.Get(), nullptr);
+                for (TObjectIterator<CObject> Itr; Itr; ++Itr)
+                {
+                    if (CObject* Object = *Itr)
+                    {
+                        Object->Serialize(Ar);
+                    }
                 }
             }
         }
 
+        // Pins are gone: whatever the sweep orphaned has been freed, so the list is rebuilt from what is
+        // still alive rather than reusing pointers that may now dangle.
+        TVector<CObject*> SurvivingExports;
+        SurvivingExports.reserve(20);
+        GetObjectsWithPackage(PackageToDestroy, SurvivingExports);
+
         // Free the now-unreferenced assets. ConditionalBeginDestroy is a no-op for any still held by a
         // non-reflected strong ref (e.g. an open editor, which closes on its own deferred queue and releases).
-        for (CObject* ExportObject : ExportObjects)
+        for (CObject* ExportObject : SurvivingExports)
         {
             if (ExportObject == nullptr || ExportObject == PackageToDestroy)
             {

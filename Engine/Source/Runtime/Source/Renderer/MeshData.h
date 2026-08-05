@@ -184,14 +184,7 @@ namespace Lumina
             RHI::GPUPtr MeshletTriangleBuffer = 0;
             RHI::GPUPtr MeshletHeaderBuffer = 0;
 
-            // Extra frames beyond the GPU pipeline depth, because these addresses outlive the free
-            // request within the tick too. SetMeshResource frees this set immediately, but the meshlet
-            // header address is cached per component (SMeshComponent::CachedMeshletHeaderAddress) and is
-            // only refreshed by the next ResolveDirtyMeshComponents pass -- so the extract running later in
-            // this same tick still hands the old address to the GPU. That frame is then submitted and
-            // executes up to kFramesInFlight later, i.e. after a plain kFramesInFlight countdown would
-            // already have unmapped the memory. Committing a dynamic mesh while it is on screen is exactly
-            // that sequence, and it faults in the mesh shader's vertex/triangle fetch.
+            // Extra frames beyond the GPU pipeline depth.
             static constexpr uint32 kResolveLagFrames = 2;
 
             // The mesh's distance field volume (Tex3D). Its heap slot is published in the meshlet
@@ -200,14 +193,65 @@ namespace Lumina
             // the old index can do is sample a constant -- not fault.
             RHI::FManagedTexture DistanceFieldTexture;
 
+            FMeshBuffers()                              = default;
+            FMeshBuffers(const FMeshBuffers&)            = delete;
+            FMeshBuffers& operator=(const FMeshBuffers&) = delete;
+
+            FMeshBuffers(FMeshBuffers&& Other) noexcept { Steal(Other); }
+
+            FMeshBuffers& operator=(FMeshBuffers&& Other) noexcept
+            {
+                if (this != &Other)
+                {
+                    ReleaseBuffers();
+                    RHI::Textures::Release(DistanceFieldTexture);
+                    Steal(Other);
+                }
+                return *this;
+            }
+
             ~FMeshBuffers()
+            {
+                ReleaseBuffers();
+                RHI::Textures::Release(DistanceFieldTexture);
+            }
+
+            /** Frees the five meshlet streams and clears them, so the set is safe to rebuild into.
+             *  Deliberately does NOT touch DistanceFieldTexture: CreateDistanceFieldTexture owns that
+             *  one and releases it itself, and releasing it twice would retire the same image twice. */
+            void ReleaseBuffers()
             {
                 RHI::Core::DeferredFree(MeshletBuffer,         kResolveLagFrames);
                 RHI::Core::DeferredFree(MeshletBoundsBuffer,   kResolveLagFrames);
                 RHI::Core::DeferredFree(MeshletVertexBuffer,   kResolveLagFrames);
                 RHI::Core::DeferredFree(MeshletTriangleBuffer, kResolveLagFrames);
                 RHI::Core::DeferredFree(MeshletHeaderBuffer,   kResolveLagFrames);
-                RHI::Textures::Release(DistanceFieldTexture);
+
+                MeshletBuffer         = 0;
+                MeshletBoundsBuffer   = 0;
+                MeshletVertexBuffer   = 0;
+                MeshletTriangleBuffer = 0;
+                MeshletHeaderBuffer   = 0;
+            }
+
+        private:
+
+            /** Takes ownership of Other's addresses and leaves it empty, so exactly one object frees. */
+            void Steal(FMeshBuffers& Other)
+            {
+                MeshletBuffer         = Other.MeshletBuffer;
+                MeshletBoundsBuffer   = Other.MeshletBoundsBuffer;
+                MeshletVertexBuffer   = Other.MeshletVertexBuffer;
+                MeshletTriangleBuffer = Other.MeshletTriangleBuffer;
+                MeshletHeaderBuffer   = Other.MeshletHeaderBuffer;
+                DistanceFieldTexture  = Other.DistanceFieldTexture;
+
+                Other.MeshletBuffer         = 0;
+                Other.MeshletBoundsBuffer   = 0;
+                Other.MeshletVertexBuffer   = 0;
+                Other.MeshletTriangleBuffer = 0;
+                Other.MeshletHeaderBuffer   = 0;
+                Other.DistanceFieldTexture  = RHI::FManagedTexture{};
             }
         };
 

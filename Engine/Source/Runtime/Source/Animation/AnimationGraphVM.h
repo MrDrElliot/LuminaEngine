@@ -53,6 +53,7 @@ namespace Lumina
         ScalarOp,        // op:uint8, a:sReg, b:sReg, dst:sReg
         AdvanceClock,    // stateIdx:uint16, speed:sReg, clipIdx:uint16, loopMode:sReg, dstClock:sReg, dstFinished:sReg, syncGroup:uint16
         SampleAnim,      // clipIdx:uint16, time:sReg, dst:pReg
+        SampleBlendSpace,// bsIdx:uint16, x:sReg, y:sReg, phase:sReg, dst:pReg
         RefPose,         // dst:pReg
         Blend,           // a:pReg, b:pReg, alpha:sReg, dst:pReg
         BlendMasked,     // a:pReg, b:pReg, alpha:sReg, maskIdx:uint16, dst:pReg
@@ -102,7 +103,8 @@ namespace Lumina
     // opcode's operand layout changes: a stale program would misparse operands into garbage poses,
     // so the VM refuses it (bind pose + warning) until the graph is recompiled in the editor.
     // 0 = compiled before versioning existed (pre-sync-group layout). 2 = AdvanceClock syncGroup operand.
-    inline constexpr uint16 kAnimBytecodeVersion = 2;
+    // 3 = SampleBlendSpace opcode inserted after SampleAnim, which renumbers every opcode past it.
+    inline constexpr uint16 kAnimBytecodeVersion = 3;
 
     // Clips in a sync group advance one shared normalized phase instead of independent clocks, so a
     // walk->run blend samples both clips at the same stride phase (no foot slide). The phase speed

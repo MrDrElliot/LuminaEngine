@@ -80,6 +80,7 @@
 #include "Properties/Customizations/CoreTypeCustomization.h"
 #include "Properties/Customizations/CurveGradientCustomization.h"
 #include "Properties/Customizations/CustomPrimitiveDataCustomization.h"
+#include "Tools/AssetEditors/ParticleSystemEditor/ParticleParamCustomization.h"
 #include "Tools/AssetEditors/ParticleSystemEditor/ParticleParameterCustomization.h"
 #include "Properties/Customizations/CSharpScriptComponentCustomization.h"
 #include "Properties/Customizations/AssetRefPropertyCustomization.h"
@@ -132,6 +133,8 @@
 #include "Thumbnails/AssetTilePainters.h"
 #include "Tools/EditorEntityUtils.h"
 #include "Tools/AssetEditors/AudioStream/AudioStreamEditorTool.h"
+#include "Tools/AssetEditors/BlendSpace/BlendSpaceEditorTool.h"
+#include "Tools/AssetEditors/PhysicsAsset/PhysicsAssetEditorTool.h"
 #include "Tools/AssetEditors/PhysicsMaterial/PhysicsMaterialEditorTool.h"
 #include "Tools/AssetEditors/DataAsset/DataAssetSchemaEditorTool.h"
 #include "Tools/AssetEditors/GeometryCollection/GeometryCollectionEditorTool.h"
@@ -509,6 +512,11 @@ namespace Lumina
         PropertyCustomizationRegistry->RegisterPropertyCustomization(FParticleParameter::StaticStruct()->GetName(), []
         {
            return FParticleParameterCustomization::MakeInstance();
+        });
+
+        PropertyCustomizationRegistry->RegisterPropertyCustomization(SParticleParam::StaticStruct()->GetName(), []
+        {
+           return FParticleParamCustomization::MakeInstance();
         });
 
         PropertyCustomizationRegistry->RegisterPropertyCustomization(SCurve::StaticStruct()->GetName(), []
@@ -1405,6 +1413,8 @@ namespace Lumina
         Registry.RegisterAssetEditor<CDataAsset,          FDataAssetEditorTool>(Owner);
         Registry.RegisterAssetEditor<CDataTable,          FDataTableEditorTool>(Owner);
         Registry.RegisterAssetEditor<CPhysicsMaterial,    FPhysicsMaterialEditorTool>(Owner);
+        Registry.RegisterAssetEditor<CPhysicsAsset,       FPhysicsAssetEditorTool>(Owner);
+        Registry.RegisterAssetEditor<CBlendSpace,         FBlendSpaceEditorTool>(Owner);
         Registry.RegisterAssetEditor<CCurveAsset,         FCurveAssetEditorTool>(Owner);
         Registry.RegisterAssetEditor<CAudioStream,        FAudioStreamEditorTool>(Owner);
         Registry.RegisterAssetEditor<CGeometryCollection, FGeometryCollectionEditorTool>(Owner);

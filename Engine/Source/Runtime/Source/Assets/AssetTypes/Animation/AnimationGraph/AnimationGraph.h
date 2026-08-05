@@ -9,6 +9,7 @@ namespace Lumina
     class CSkeleton;
     class CAnimation;
     class CBlackboard;
+    class CBlendSpace;
 
     REFLECT()
     enum class EAnimGraphParamType : uint8
@@ -189,6 +190,10 @@ namespace Lumina
         /** Animation clips referenced by SampleAnim opcodes, indexed by clip index. */
         PROPERTY()
         TVector<TObjectPtr<CAnimation>> Clips;
+
+        /** Blend spaces referenced by SampleBlendSpace opcodes, indexed by blend-space index. */
+        PROPERTY()
+        TVector<TObjectPtr<CBlendSpace>> BlendSpaces;
 
         /** Lua- and editor-tweakable parameters that drive the graph. */
         TVector<FAnimGraphParameter> Parameters;

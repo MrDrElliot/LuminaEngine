@@ -1315,7 +1315,15 @@ namespace Lumina
             const ImRect ViewportRect(ViewportOrigin, ImVec2(ViewportOrigin.x + ViewportSize.x, ViewportOrigin.y + ViewportSize.y));
             if (ImGui::BeginDragDropTargetCustom(ViewportRect, ImGui::GetCurrentWindow()->ID))
             {
-                AcceptContentBrowserPrefabPayload(entt::null);
+                // Whatever the cursor is over becomes the drop target. Passing entt::null unconditionally
+                // made every target-only handler dead in the viewport -- a material or an animation has
+                // nothing to act on without an entity, so dropping one could only ever fail there, and the
+                // outliner was the sole way to land it.
+                FVector3     TracedLocation(0.0f);
+                entt::entity HitEntity = entt::null;
+                TraceViewportPlacement(ImGui::GetMousePos(), TracedLocation, &HitEntity);
+
+                AcceptContentBrowserPrefabPayload(HitEntity, /*bAttachToTarget*/ false);
                 ImGui::EndDragDropTarget();
             }
         }
@@ -3941,10 +3949,10 @@ namespace Lumina
             return;
         }
 
-        AcceptContentBrowserPrefabPayload(DropItem);
+        AcceptContentBrowserPrefabPayload(DropItem, /*bAttachToTarget*/ true);
     }
 
-    void FWorldEditorTool::AcceptContentBrowserPrefabPayload(entt::entity DropTarget)
+    void FWorldEditorTool::AcceptContentBrowserPrefabPayload(entt::entity DropTarget, bool bAttachToTarget)
     {
         const DragDrop::FPayload* Peek = DragDrop::PeekPayload();
         if (Peek == nullptr || Peek->Kind != DragDrop::EPayloadKind::Asset)
@@ -3955,14 +3963,14 @@ namespace Lumina
         {
             return;
         }
-        HandlePrefabContentDrop(FStringView(Peek->AssetPath.c_str(), Peek->AssetPath.size()), DropTarget);
+        HandlePrefabContentDrop(FStringView(Peek->AssetPath.c_str(), Peek->AssetPath.size()), DropTarget, bAttachToTarget);
     }
 
-    void FWorldEditorTool::HandlePrefabContentDrop(FStringView VirtualPath, entt::entity DropTarget)
+    void FWorldEditorTool::HandlePrefabContentDrop(FStringView VirtualPath, entt::entity DropTarget, bool bAttachToTarget)
     {
         // Dispatches every asset class via the editor drop registry. Spawn transform comes from the camera.
         BeginTransaction();
-        entt::entity Spawned = HandleContentBrowserAssetDrop(VirtualPath, DropTarget);
+        entt::entity Spawned = HandleContentBrowserAssetDrop(VirtualPath, DropTarget, bAttachToTarget);
         if (Spawned != entt::null)
         {
             EndTransaction("Drop Asset");
@@ -4202,7 +4210,7 @@ namespace Lumina
 
     void FWorldEditorTool::HandleOutlinerEmptyAreaDrop()
     {
-        AcceptContentBrowserPrefabPayload(entt::null);
+        AcceptContentBrowserPrefabPayload(entt::null, /*bAttachToTarget*/ false);
     }
 
     void FWorldEditorTool::DrawDetailsHeaderExtraButtons(entt::entity Entity)
