@@ -138,14 +138,14 @@ PSOutput FragmentMain(float4 SvPosition : SV_Position)
     uint SafeInst = (Draw.InstanceID < InstCount) ? Draw.InstanceID : 0u;
 
     // Build the meshlet ref with clamped indices (mirrors ResolveSurfaceMeshlet, but fault-proof against a
-    // stale draw-list gap whose InstanceID/MeshletLocalIndex are garbage).
+    // stale draw-list gap whose InstanceID/MeshletIndex are garbage). The index is mesh-global -- the view
+    // that emitted it owns the LOD choice -- so it is clamped against the mesh's whole meshlet array.
     FMeshletRef Ref;
     Ref.Inst              = GetInstance(SafeInst);
     Ref.InstanceID        = SafeInst;
     Ref.SkinnedVertexBase = Ref.Inst.SkinnedVertexBase;   // deferred pass is camera-side only
-    uint LocalCount       = max(Ref.Inst.SurfaceMeshletCount, 1u);
-    uint SafeLocal        = min(Draw.MeshletLocalIndex, LocalCount - 1u);
-    Ref.GlobalMeshletIdx  = Ref.Inst.SurfaceMeshletOffset + SafeLocal;
+    uint MeshletCount     = max(Ref.Inst.MeshletTotalCount, 1u);
+    Ref.GlobalMeshletIdx  = min(Draw.MeshletIndex, MeshletCount - 1u);
     Ref.M                 = Ref.Inst.MeshletHeader.Meshlets[Ref.GlobalMeshletIdx];
 
     if (!bValid)

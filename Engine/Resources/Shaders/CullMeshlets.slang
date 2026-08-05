@@ -25,7 +25,9 @@ struct FPushConstants
     uint NumViews;
     uint Phase;              // CULL_PHASE_EARLY or CULL_PHASE_LATE
     uint CameraLateViewIndex; // Only consumed in LATE; index into CullViews().
-    uint _Pad;
+    // Entries SurfaceDescs actually holds (what the DEVICE buffer holds, not what the game thread has
+    // interned). Bounds the per-view LOD lookup below.
+    uint NumSurfaceDescs;
     // Cull-private scratch, addressed by device pointer (not a descriptor) so draw/post passes
     // never bind or transition them. State tracked CPU-side via State.Writes; 8-byte aligned here.
     FDrawIndirectArguments*          IndirectArgs;
@@ -44,6 +46,10 @@ struct FPushConstants
     // lane in this same dispatch, so loading the base out of it puts a read-only value on a contended
     // cacheline. This array is written once by BuildDrawPrefix and read-only for the rest of the frame.
     uint*                            ViewDrawOffsets;
+    // The interned per-surface LOD tables, so each view can pick its own LOD from its own origin. Same
+    // buffer CullInstances reserved draw-list space from, read through the same helper, so the two picks
+    // cannot drift. Grouped with the other pointers so the trailing uint pair needs no padding.
+    FSurfaceDesc*                    SurfaceDescs;
     // Entries the shared meshlet draw list can hold; outer backstop for a short allocation.
     uint                             DrawListCapacity;
     // Entries the defer list can hold. DeferCount is an unbounded atomic, so this is what stops the
@@ -54,7 +60,9 @@ struct FPushConstants
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
 // Appends a surviving meshlet into the view's slice; centralized so both phases share the atomic protocol.
-void EmitMeshlet(FCullView View, uint DrawID, uint InstanceID, uint MeshletLocalIdx)
+// MeshletIdx is MESH-GLOBAL (see FMeshletDraw): the view picked the LOD, so the entry has to name the
+// meshlet outright rather than an offset into a range the reader would have to guess.
+void EmitMeshlet(FCullView View, uint DrawID, uint InstanceID, uint MeshletIdx)
 {
     // A DrawID past the view's slice would make every atomic below land outside the args allocation.
     // The instance's DrawID is stamped by the game thread and the arg arrays are sized from the batch
@@ -86,16 +94,16 @@ void EmitMeshlet(FCullView View, uint DrawID, uint InstanceID, uint MeshletLocal
 
     FMeshletDraw Draw;
     Draw.InstanceID        = InstanceID;
-    Draw.PackedIndexAndTag = FMeshletDraw::Pack(MeshletLocalIdx, Scene().CullData.MeshletDrawTag);
+    Draw.PackedIndexAndTag = FMeshletDraw::Pack(MeshletIdx, Scene().CullData.MeshletDrawTag);
     MeshletDrawList()[Slot] = Draw;
 }
 
-// Recover (InstanceID, MeshletLocalIdx) from a flat thread index via binary search on the inclusive
+// Recover (InstanceID, MeshletWalkIdx) from a flat thread index via binary search on the inclusive
 // per-instance prefix sum: prefix[InstanceID] <= flat_idx < prefix[InstanceID + 1]. O(log NumInstances).
-bool ResolveInstanceFromFlatIndex(uint flat_idx, out uint InstanceID, out uint MeshletLocalIdx)
+bool ResolveInstanceFromFlatIndex(uint flat_idx, out uint InstanceID, out uint MeshletWalkIdx)
 {
-    InstanceID      = 0u;
-    MeshletLocalIdx = 0u;
+    InstanceID     = 0u;
+    MeshletWalkIdx = 0u;
 
     uint TotalWork = Pass().Totals[0];
     if (flat_idx >= TotalWork)
@@ -120,8 +128,8 @@ bool ResolveInstanceFromFlatIndex(uint flat_idx, out uint InstanceID, out uint M
         }
     }
 
-    InstanceID      = Lo;
-    MeshletLocalIdx = flat_idx - InstanceMeshletPrefix()[Lo];
+    InstanceID     = Lo;
+    MeshletWalkIdx = flat_idx - InstanceMeshletPrefix()[Lo];
     return true;
 }
 
@@ -133,31 +141,26 @@ void RunEarlyPhase(uint3 GlobalID, uint3 GroupID, uint NumViews)
     const uint flat_idx = GlobalID.x + GroupID.y * 65535u * 64u;
 
     uint InstanceID;
-    uint MeshletLocalIdx;
-    if (!ResolveInstanceFromFlatIndex(flat_idx, InstanceID, MeshletLocalIdx))
+    uint MeshletWalkIdx;
+    if (!ResolveInstanceFromFlatIndex(flat_idx, InstanceID, MeshletWalkIdx))
     {
         return;
     }
 
     FGPUInstance Inst = GetInstance(InstanceID);
 
-    // The domain covers BOTH LODs: a shadow-only view walks the SHADOW LOD, which is capped at
-    // MESHLET_MAX_SHADOW_LOD and so is the FINER (more meshlets) of the two once the camera LOD passes the
-    // cap. Sizing it on the surface count alone left [SurfaceCount, ShadowCount) with no thread at all.
+    // The walk domain covers the WIDEST range any view will ask for: each non-shadow view picks its own
+    // LOD, and a shadow view walks the shadow LOD (capped at MESHLET_MAX_SHADOW_LOD, so it can be the
+    // finer -- and larger -- of the two on distant casters). CullInstances computed that max while it
+    // reserved space; a thread past it has no meshlet in any view.
     //
-    // This value is computed in FOUR places -- here, ScanPrefixBlocks (the prefix), CullInstances
-    // (OutBatchMeshletCount, the dispatch size) and the CPU's skinned seed. Any two disagreeing drops
-    // meshlets off the tail of the domain.
-    const uint SurfaceCount = Inst.SurfaceMeshletCount;
-    const uint ShadowCount  = Inst.ShadowMeshletCount;
-    if (MeshletLocalIdx >= max(SurfaceCount, ShadowCount))
+    // This value is computed in ONE place now (CullInstances, into MeshletWalkCount) and READ here, by
+    // ScanPrefixBlocks for the prefix that indexes this domain, and by the CPU's skinned seed. It used to
+    // be re-derived at each of those sites, which is three chances to disagree and drop the tail.
+    if (MeshletWalkIdx >= Inst.MeshletWalkCount)
     {
         return;
     }
-
-    // Past the surface count this thread exists only for the shadow LOD: the same local index addresses a
-    // different LOD's meshlet, so nothing may read the surface bounds for it.
-    const bool bHasSurface = MeshletLocalIdx < SurfaceCount;
 
     // A null header with a non-zero meshlet count should be impossible -- the gather forces the count to
     // zero whenever the address is null -- but it is only an invariant, and violating it dereferences
@@ -165,6 +168,18 @@ void RunEarlyPhase(uint3 GlobalID, uint3 GroupID, uint NumViews)
     if (Inst.MeshletHeader == nullptr)
     {
         return;
+    }
+
+    // Per-view LOD table. Loaded once per thread (the descs are interned, so this is a handful of distinct
+    // lines for the whole scene); the pick itself is a dot product and a short compare chain per view.
+    // kNoSurfaceDesc means the instance's LOD is fixed -- skinned, forced, or LODs off -- and every view
+    // takes the range as it stands.
+    const bool bPerViewLOD = Inst.SurfaceDescIndex != kNoSurfaceDesc
+                          && Inst.SurfaceDescIndex < Pass().NumSurfaceDescs;
+    FSurfaceDesc Desc = (FSurfaceDesc)0;
+    if (bPerViewLOD)
+    {
+        Desc = Pass().SurfaceDescs[Inst.SurfaceDescIndex];
     }
 
     // Per-instance / per-meshlet data reused across every view.
@@ -180,27 +195,17 @@ void RunEarlyPhase(uint3 GlobalID, uint3 GroupID, uint NumViews)
     float SqScaleZ = dot(Model[2].xyz, Model[2].xyz);
     float MaxScale = sqrt(max(SqScaleX, max(SqScaleY, SqScaleZ)));
 
-    // Camera-LOD bounds for the camera and non-shadow views. Shadow-only views fetch their own
-    // bounds from the shadow LOD in the per-view loop (different primitive at the same local index).
-    // Guarded: a shadow-only thread's index is past the surface LOD's meshlet range, and because LODs are
-    // packed back to back this would read the NEXT LOD's bounds rather than fault -- a wrong cull decision
-    // that looks like nothing at all went wrong.
-    FMeshletBounds Bounds      = (FMeshletBounds)0;
-    float3         WorldCenter = float3(0.0, 0.0, 0.0);
-    float          WorldRadius = 0.0;
-    float3         WorldApex   = float3(0.0, 0.0, 0.0);
-    float3         WorldAxis   = float3(0.0, 0.0, 1.0);
-    bool           bHasCone    = false;
-
-    if (bHasSurface)
-    {
-        Bounds      = Inst.MeshletHeader.Bounds[Inst.SurfaceMeshletOffset + MeshletLocalIdx];
-        WorldCenter = mul(Model, float4(Bounds.Center, 1.0)).xyz;
-        WorldRadius = Bounds.Radius * MaxScale;
-        WorldApex   = mul(Model, float4(Bounds.ConeApex, 1.0)).xyz;
-        WorldAxis   = normalize(mul((float3x3)Model, Bounds.ConeAxis));
-        bHasCone    = Bounds.ConeCutoff < 1.0;
-    }
+    // Bounds for the meshlet the CURRENT view resolved to. Nothing can be hoisted out of the loop any
+    // more: two views at different LODs address different primitives at the same walk index. Cached on the
+    // resolved index instead, so the common cases -- four cascades sharing the shadow LOD, a capture that
+    // happens to agree with the primary -- still load once.
+    uint           CachedMeshletIdx = ~0u;
+    FMeshletBounds Bounds           = (FMeshletBounds)0;
+    float3         WorldCenter      = float3(0.0, 0.0, 0.0);
+    float          WorldRadius      = 0.0;
+    float3         WorldApex        = float3(0.0, 0.0, 0.0);
+    float3         WorldAxis        = float3(0.0, 0.0, 1.0);
+    bool           bHasCone         = false;
 
     uint DrawID = Inst.DrawID;
 
@@ -229,35 +234,63 @@ void RunEarlyPhase(uint3 GlobalID, uint3 GroupID, uint NumViews)
                 continue;
         }
 
-        // Shadow-only views test the shadow LOD's meshlet (its own Center/Radius/Cone); threads
-        // past the shadow LOD's per-instance count have no meshlet here and skip the view.
-        bool bShadowView = View.HasFlag(CULL_VIEW_FLAG_CAST_SHADOW_ONLY);
+        // Which meshlet range this view rasters. A shadow view takes the pre-made shadow pick (the cascades
+        // are fit to the primary camera, so their LOD is the primary's distance, biased); every other view
+        // picks its own from its own origin -- which is the whole point of this pass being per view.
+        const bool bShadowView = View.HasFlag(CULL_VIEW_FLAG_CAST_SHADOW_ONLY);
 
-        // Every non-shadow view rasters the surface LOD, so a thread that exists only to cover the shadow
-        // LOD's extra meshlets has nothing to contribute here.
-        if (!bShadowView && !bHasSurface)
-            continue;
-
-        FMeshletBounds VBounds      = Bounds;
-        float3         VWorldCenter = WorldCenter;
-        float          VWorldRadius = WorldRadius;
-        float3         VWorldApex   = WorldApex;
-        float3         VWorldAxis   = WorldAxis;
-        bool           VHasCone     = bHasCone;
-
+        uint RangeOffset;
+        uint RangeCount;
         if (bShadowView)
         {
-            if (MeshletLocalIdx >= Inst.ShadowMeshletCount)
-                continue;
-
-            uint ShadowGlobalIdx = Inst.ShadowMeshletOffset + MeshletLocalIdx;
-            VBounds      = Inst.MeshletHeader.Bounds[ShadowGlobalIdx];
-            VWorldCenter = mul(Model, float4(VBounds.Center, 1.0)).xyz;
-            VWorldRadius = VBounds.Radius * MaxScale;
-            VWorldApex   = mul(Model, float4(VBounds.ConeApex, 1.0)).xyz;
-            VWorldAxis   = normalize(mul((float3x3)Model, VBounds.ConeAxis));
-            VHasCone     = VBounds.ConeCutoff < 1.0;
+            RangeOffset = Inst.ShadowMeshletOffset;
+            RangeCount  = Inst.ShadowMeshletCount;
         }
+        else if (bPerViewLOD)
+        {
+            // Byte-for-byte the pick CullInstances reserved this view's draw-list region from.
+            const uint2 Range = SelectViewMeshletRange(Desc, View.ViewOrigin, Inst.SphereBounds);
+            RangeOffset = Range.x;
+            RangeCount  = Range.y;
+        }
+        else
+        {
+            RangeOffset = Inst.SurfaceMeshletOffset;
+            RangeCount  = Inst.SurfaceMeshletCount;
+        }
+
+        // The walk domain is the max over views, so a thread past THIS view's count exists only to cover
+        // some other view's finer LOD and has no meshlet here.
+        if (MeshletWalkIdx >= RangeCount)
+            continue;
+
+        const uint MeshletIdx = RangeOffset + MeshletWalkIdx;
+
+        // Mesh-global bound, the same one the late phase and MeshletGeometry already apply. RangeCount
+        // only says how far into the RANGE this thread sits; nothing above proves RangeOffset + it lands
+        // inside the header's arrays, and a bad range walks Bounds[] past the allocation. Those are
+        // scattered 48-byte BDA reads, which return garbage rather than faulting -- so the symptom is a
+        // multi-second hang and a TDR with a live wave parked on the load below and NO page fault.
+        if (MeshletIdx >= Inst.MeshletTotalCount)
+            continue;
+
+        if (MeshletIdx != CachedMeshletIdx)
+        {
+            CachedMeshletIdx = MeshletIdx;
+            Bounds      = Inst.MeshletHeader.Bounds[MeshletIdx];
+            WorldCenter = mul(Model, float4(Bounds.Center, 1.0)).xyz;
+            WorldRadius = Bounds.Radius * MaxScale;
+            WorldApex   = mul(Model, float4(Bounds.ConeApex, 1.0)).xyz;
+            WorldAxis   = normalize(mul((float3x3)Model, Bounds.ConeAxis));
+            bHasCone    = Bounds.ConeCutoff < 1.0;
+        }
+
+        const FMeshletBounds VBounds      = Bounds;
+        const float3         VWorldCenter = WorldCenter;
+        const float          VWorldRadius = WorldRadius;
+        const float3         VWorldApex   = WorldApex;
+        const float3         VWorldAxis   = WorldAxis;
+        const bool           VHasCone     = bHasCone;
 
         // Cone cull (skipped for skinned/two-sided/NoCull). Sun views test
         // against sun direction; camera/point/spot against apex-to-origin.
@@ -354,17 +387,17 @@ void RunEarlyPhase(uint3 GlobalID, uint3 GroupID, uint NumViews)
                 if (DeferSlot < Pass().DeferListCapacity)
                 {
                     FMeshletDeferred Entry;
-                    Entry.InstanceID        = InstanceID;
-                    Entry.MeshletLocalIndex = MeshletLocalIdx;
-                    Entry.DrawID            = DrawID;
-                    Entry._Pad              = 0u;
+                    Entry.InstanceID   = InstanceID;
+                    Entry.MeshletIndex = MeshletIdx;
+                    Entry.DrawID       = DrawID;
+                    Entry._Pad         = 0u;
                     Pass().DeferList[DeferSlot] = Entry;
                 }
                 continue;
             }
         }
 
-        EmitMeshlet(View, DrawID, InstanceID, MeshletLocalIdx);
+        EmitMeshlet(View, DrawID, InstanceID, MeshletIdx);
     }
 }
 
@@ -384,13 +417,17 @@ void RunLatePhase(uint3 GlobalID, uint3 GroupID, uint CameraLateViewIndex)
     // Reconstruct world-space bounds as phase 0 did; transforms are baked into the Instance buffer
     // before phase 0, so re-deriving is stable.
     FGPUInstance Inst = GetInstance(Entry.InstanceID);
-    if (Entry.MeshletLocalIndex >= Inst.SurfaceMeshletCount)
+
+    // The entry names the meshlet outright, so the late phase no longer has to know which LOD the early
+    // phase picked -- it bounds against the mesh's whole meshlet array instead of re-deriving a range.
+    // (The late view is the same camera as the early one, so it would agree either way; not needing to
+    // agree is what makes this correct for a view whose LOD is its own.)
+    if (Entry.MeshletIndex >= Inst.MeshletTotalCount || Inst.MeshletHeader == nullptr)
     {
-   		return;
+        return;
     }
 
-    uint GlobalMeshletIdx = Inst.SurfaceMeshletOffset + Entry.MeshletLocalIndex;
-    FMeshletBounds Bounds = Inst.MeshletHeader.Bounds[GlobalMeshletIdx];
+    FMeshletBounds Bounds = Inst.MeshletHeader.Bounds[Entry.MeshletIndex];
 
     float4x4 Model = Inst.ModelMatrix;
     float3 WorldCenter = mul(Model, float4(Bounds.Center, 1.0)).xyz;
@@ -407,7 +444,7 @@ void RunLatePhase(uint3 GlobalID, uint3 GroupID, uint CameraLateViewIndex)
         return;
 
     FCullView CameraLate = CullViews()[CameraLateViewIndex];
-    EmitMeshlet(CameraLate, Entry.DrawID, Entry.InstanceID, Entry.MeshletLocalIndex);
+    EmitMeshlet(CameraLate, Entry.DrawID, Entry.InstanceID, Entry.MeshletIndex);
 }
 
 [shader("compute")]

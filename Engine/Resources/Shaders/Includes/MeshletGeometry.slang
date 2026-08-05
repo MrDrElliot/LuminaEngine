@@ -67,30 +67,30 @@ FMeshletRef ResolveMeshlet(uint MeshletSlot, bool bShadow)
         return Ref;
     }
 
-    uint BaseOffset          = bShadow ? Ref.Inst.ShadowMeshletOffset : Ref.Inst.SurfaceMeshletOffset;
-    uint RangeCount          = bShadow ? Ref.Inst.ShadowMeshletCount  : Ref.Inst.SurfaceMeshletCount;
+    // bShadow no longer selects a meshlet RANGE -- the draw entry names the meshlet outright, because the
+    // cull picks the LOD per view and the raster has no way to know which one that was. All it still
+    // selects is the pre-skin block, which the skinning pass built per LOD range.
     Ref.SkinnedVertexBase    = bShadow ? Ref.Inst.ShadowSkinnedVertexBase : Ref.Inst.SkinnedVertexBase;
 
-    // The tag says the slot was written THIS FRAME. It says nothing about the index inside it being in
-    // range for the LOD this pass resolves against, and those are different questions: the cull emits a
-    // local index bounded by the count it read for the view it emitted into, while this resolves against
-    // whichever range the PASS asks for. Surface and shadow LODs have different meshlet counts (the
-    // shadow LOD is the finer of the two once the camera LOD passes MAX_SHADOW_LOD), so an index legal
-    // for one is not automatically legal for the other.
+    // The tag says the slot was written THIS FRAME. It says nothing about the index inside it addressing a
+    // meshlet this mesh actually has.
     //
-    // Unbounded, this indexes off the end of the LOD's meshlets. Because LODs are packed back to back it
-    // does not fault -- it returns a NEIGHBOURING LOD's meshlet, or past the last LOD, whatever bytes
-    // follow the allocation. The counts in that garbage then drive SetMeshOutputCounts and the mesh
-    // output array writes, which is how a bad index here becomes an out-of-bounds WRITE two steps later.
-    if (Draw.MeshletLocalIndex >= RangeCount)
-    {
+    // One bound instead of the old per-LOD pair, and a stricter one: the end of the whole meshlet array,
+    // so it no longer matters which LOD the emitting view picked. The "legal for the surface LOD, out of
+    // range for the shadow LOD" ambiguity the pair had went away with the LOD-relative index.
+    //
+    // Unbounded, this indexes past the end of the meshlet array -- whatever bytes follow the allocation.
+    // The counts in that garbage then drive SetMeshOutputCounts and the mesh output array writes, which is
+    // how a bad index here becomes an out-of-bounds WRITE two steps later.
+    if (Draw.MeshletIndex >= Ref.Inst.MeshletTotalCount)
+    {
         Ref.SkinnedVertexBase = kNoPreSkinBase;
         Ref.GlobalMeshletIdx  = 0u;
         Ref.M                 = (FMeshlet)0;
         return Ref;
     }
 
-    Ref.GlobalMeshletIdx     = BaseOffset + Draw.MeshletLocalIndex;
+    Ref.GlobalMeshletIdx     = Draw.MeshletIndex;
     Ref.M                    = Ref.Inst.MeshletHeader.Meshlets[Ref.GlobalMeshletIdx];
 
     // A meshlet the builder produced can never exceed these -- MeshImport caps every buildMeshlets call at
@@ -101,7 +101,7 @@ FMeshletRef ResolveMeshlet(uint MeshletSlot, bool bShadow)
     // undefined interpolants, which rasterize as a triangle anchored at whatever the unwritten position
     // decodes to. Dropping the whole meshlet instead makes that a visible hole, not a spike and a fault.
     if (Ref.M.VertexCount > MESHLET_MAX_VERTICES || Ref.M.TriangleCount > MESHLET_MAX_TRIANGLES)
-    {
+    {
         Ref.SkinnedVertexBase = kNoPreSkinBase;
         Ref.GlobalMeshletIdx  = 0u;
         Ref.M                 = (FMeshlet)0;
@@ -164,7 +164,7 @@ uint3 UnpackMeshletTriangleSafe(FMeshletRef Ref, uint TriIdx)
     const uint3 Tri = UnpackMeshletTriangle(Ref, TriIdx);
     const uint  VC  = Ref.M.VertexCount;
     if (Tri.x >= VC || Tri.y >= VC || Tri.z >= VC)
-    {
+    {
         return uint3(0u, 0u, 0u);
     }
     return Tri;

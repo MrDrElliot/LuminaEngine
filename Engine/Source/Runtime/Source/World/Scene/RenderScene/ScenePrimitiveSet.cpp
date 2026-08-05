@@ -586,12 +586,21 @@ namespace Lumina
             Desc.LODMeshletCount[i]      = Surface.LODMeshletCount[i];
             Desc.LODScreenThresholdSq[i] = Surface.LODScreenThresholdSq[i];
             
-            if (Desc.LODMeshletCount[i] > MAX_MESHLETS_PER_SURFACE_LOD)
+            // The draw list carries a MESH-GLOBAL meshlet index, so what has to fit the field is the END of
+            // the LOD's range, not its length -- a small LOD sitting past a million earlier meshlets is
+            // just as unaddressable as an oversized one. Clamping the count is how a range is trimmed to
+            // what the index can reach; a LOD that starts past the limit ends up empty, which draws nothing
+            // rather than resolving a wrapped index to some other mesh's meshlet.
+            const uint32 RangeEnd = Desc.LODMeshletOffset[i] + Desc.LODMeshletCount[i];
+            if (RangeEnd > MAX_MESHLETS_PER_SURFACE_LOD)
             {
-                LOG_ERROR("ScenePrimitiveSet: surface LOD {} has {} meshlets, past the {} the draw list can "
-                          "index. Clamping; the mesh needs splitting or a coarser meshlet build.",
-                          i, Desc.LODMeshletCount[i], MAX_MESHLETS_PER_SURFACE_LOD);
-                Desc.LODMeshletCount[i] = MAX_MESHLETS_PER_SURFACE_LOD;
+                const uint32 Addressable = Desc.LODMeshletOffset[i] < MAX_MESHLETS_PER_SURFACE_LOD
+                                         ? MAX_MESHLETS_PER_SURFACE_LOD - Desc.LODMeshletOffset[i]
+                                         : 0u;
+                LOG_ERROR("ScenePrimitiveSet: surface LOD {} spans meshlets [{}, {}), past the {} the draw "
+                          "list can index. Clamping to {}; the mesh needs splitting or a coarser meshlet build.",
+                          i, Desc.LODMeshletOffset[i], RangeEnd, MAX_MESHLETS_PER_SURFACE_LOD, Addressable);
+                Desc.LODMeshletCount[i] = Addressable;
             }
         }
 

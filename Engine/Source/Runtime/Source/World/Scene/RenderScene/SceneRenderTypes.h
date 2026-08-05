@@ -82,12 +82,18 @@ namespace Lumina
     constexpr uint32 MESH_RESOLVE_STATE_NO_MESH = 0u;   // settled: there is nothing to resolve
 
 
-    // Mirror of MESHLET_DRAW_INDEX_BITS in Common.slang. FMeshletDraw packs the meshlet-local index into
-    // this many bits and spends the rest on the frame tag, so no single surface LOD may hold more meshlets
-    // than the field can address -- past it the index wraps and silently resolves the wrong meshlet, which
-    // is the precise failure mode the tag exists to prevent.
+    // Mirror of MESHLET_DRAW_INDEX_BITS in Common.slang. FMeshletDraw packs a MESH-GLOBAL meshlet index
+    // into this many bits and spends the rest on the frame tag, so no mesh may hold more meshlets across
+    // all its LODs than the field can address -- past it the index wraps and silently resolves the wrong
+    // meshlet, which is the precise failure mode the tag exists to prevent. The index became mesh-global
+    // when LOD selection became per view: the emitting view owns the LOD, so the entry has to name the
+    // meshlet outright rather than offset into a range the reader would have to guess.
     constexpr uint32 MESHLET_DRAW_INDEX_BITS   = 20;
     constexpr uint32 MAX_MESHLETS_PER_SURFACE_LOD = (1u << MESHLET_DRAW_INDEX_BITS);
+
+    // Mirror of kNoSurfaceDesc in Common.slang: FGPUInstance::SurfaceDescIndex when the instance's LOD is
+    // fixed and no view may re-select it.
+    constexpr uint32 kNoSurfaceDescIndex = 0xFFFFFFFFu;
 
     /**
      * Hard ceiling on the meshlet cull's (instance, meshlet) work domain -- the size of an INDIRECT
@@ -883,15 +889,15 @@ namespace Lumina
     static_assert(sizeof(FInstanceStatic) == 32, "FInstanceStatic layout must match shader");
     VERIFY_SSBO_ALIGNMENT(FInstanceStatic)
 
-    // 144B per-instance descriptor. This is the COMPACTED OUTPUT layout only -- CullInstances assembles
+    // 128B per-instance descriptor. This is the COMPACTED OUTPUT layout only -- CullInstances assembles
     // one of these per survivor from the three retained arrays above, and every downstream pass reads it
     // per meshlet / vertex / pixel with high per-instance locality, which is what AoS is good at.
     // Empty ctor skips zero-init on resize() (parallel writer overwrites everything).
     //
     // NO alignas(16). The layout is SCALAR (Slang emits this as `_natural`), so alignment comes from the
-    // widest member -- 8, for MeshletHeaderAddress -- and the stride is the plain sum of the members.
-    // Forcing 16 here would round sizeof up to 128 while Slang keeps computing 120, and the two strides
-    // would silently disagree one element in.
+    // widest member -- 8, for MeshletHeaderAddress -- and the stride is the plain sum of the members. It
+    // happens to land on 128 now, but that must stay a consequence of the members rather than something
+    // forced here: the moment the two sides compute a different stride they disagree one element in.
     struct FGPUInstance
     {
         FGPUInstance() noexcept {}
@@ -923,16 +929,26 @@ namespace Lumina
         // Same, for the shadow-LOD block. Equal to SkinnedVertexBase when the shadow LOD resolved to
         // the same block, which is the common case; the two differ only when the LODs diverge.
         uint32          ShadowSkinnedVertexBase;//        112
-        // Declared, not implied: under scalar layout the shader's array stride comes from the
-        // declared members, so trailing padding has to exist on both sides or the strides diverge.
-        // ONE word, not three: 116 rounds to 120 against the 8-byte alignment the pointer imposes.
-        uint32          _Pad;                   //        116
+        // Into the interned surface-desc table, so a cull view can re-select this instance's LOD from its
+        // OWN origin instead of inheriting the primary camera's pick. kNoSurfaceDescIndex = fixed pick
+        // (skinned instances, an authored ForcedLODIndex, or LODs off), in which case the Surface* range
+        // above stands for every view.
+        uint32          SurfaceDescIndex;       //        116
+        // The meshlet cull's per-instance thread domain: max over (each non-shadow view's picked LOD count,
+        // the shadow LOD count). Stored rather than re-derived because the prefix scan indexes the same
+        // domain and the two must agree exactly.
+        uint32          MeshletWalkCount;       //        120
+        // Entries in this mesh's meshlet array (end of the last LOD) -- the bound on the mesh-global
+        // meshlet index the draw list carries.
+        uint32          MeshletTotalCount;      //        124
     };
 
-    // Both verified against what Slang actually emits for this struct, not merely asserted here:
-    // `slangc -target spirv-asm` reports ArrayStride 120 and member offsets 0/48/64/72/76/80/84/88/92/
-    // 96/100/104/108/112/116, matching the declaration order above exactly.
-    static_assert(sizeof(FGPUInstance) == 120, "FGPUInstance layout must match shader");
+    // The three trailing words replaced the explicit _Pad the 116-byte layout needed: 128 is already a
+    // multiple of the 8-byte alignment MeshletHeaderAddress imposes, so scalar layout adds nothing.
+    // Verified against what Slang emits for this struct, not merely asserted here: `slangc -target
+    // spirv-asm` reports ArrayStride 128 and member offsets 0/48/64/72/76/80/84/88/92/96/100/104/108/112/
+    // 116/120/124, matching the declaration order above exactly.
+    static_assert(sizeof(FGPUInstance) == 128, "FGPUInstance layout must match shader");
     static_assert(alignof(FGPUInstance) == 8, "Scalar layout: alignment comes from MeshletHeaderAddress");
 
     // One per skinned vertex, produced by the skinning pass and read by every draw VS. Holds the COMPLETE

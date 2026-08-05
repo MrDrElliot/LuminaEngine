@@ -78,6 +78,41 @@ float SphereFrontDepth(float FrontZ, float ZNear, float ZFar)
     return (ZNear * ZFar / FrontZ - ZNear) / (ZFar - ZNear);
 }
 
+// ---------------------------------------------------------------------------------------------------
+// Per-view LOD selection
+// ---------------------------------------------------------------------------------------------------
+//
+// A view's LOD is a function of that view's own origin, so a preview camera standing next to a mesh sees
+// it at the detail IT needs rather than at whatever the primary camera picked. Which means the pick is
+// made twice per (instance, view): CullInstances makes it to reserve draw-list space, CullMeshlets makes
+// it again to decide which meshlets that view walks. The two MUST return the same LOD -- reserve for LOD 2
+// and walk LOD 1 and the surplus is wasted; the other way round and meshlets are silently dropped at the
+// region boundary. That is why the arithmetic lives here and is CALLED by both, never re-derived: same
+// expression, same operand order, so the float math is bit-identical on both sides.
+//
+// Shadow views deliberately do NOT go through this. Cascades are fit to the primary camera, so the LOD
+// that matches their texel pitch is a function of the primary camera's distance; the instance carries
+// that pick pre-made in ShadowMeshletOffset/Count.
+uint SelectSurfaceLODForView(FSurfaceDesc Desc, float3 ViewOrigin, float4 SphereBounds)
+{
+    const float3 ToView  = SphereBounds.xyz - ViewOrigin;
+    const float  DistSq  = dot(ToView, ToView);
+    const uint   NumLODs = min(Desc.NumLODs, (uint)MESHLET_MAX_LODS);
+    const uint   Picked  = Desc.SelectLOD(DistSq, SphereBounds.w * SphereBounds.w);
+
+    // NumLODs comes through the desc and indexes MESHLET_MAX_LODS-long arrays, so clamp it here: past the
+    // table the offsets and counts below are whatever follows the allocation, and a garbage meshlet count
+    // is what both the dispatch domain and the draw-list reservation are summed from.
+    return min(Picked, NumLODs > 0u ? NumLODs - 1u : 0u);
+}
+
+// The meshlet range that pick resolves to: xy = (mesh-global offset, count).
+uint2 SelectViewMeshletRange(FSurfaceDesc Desc, float3 ViewOrigin, float4 SphereBounds)
+{
+    const uint LOD = SelectSurfaceLODForView(Desc, ViewOrigin, SphereBounds);
+    return uint2(Desc.LODMeshletOffset[LOD], Desc.LODMeshletCount[LOD]);
+}
+
 // Tests a world-space sphere against the camera depth pyramid.
 // Returns true if the sphere is fully occluded and can be skipped.
 bool IsHiZOccluded(float3 CenterWS, float RadiusWS)

@@ -1538,7 +1538,8 @@ namespace Lumina
                     CurrentCameraEarlyView = Capture.CameraViewIndex;
                     CurrentCameraLateView  = ~0u;
 
-                    CurrentSceneRootAddr = BuildViewSceneRoot(View, RHI::Core::CopyTransient(Capture.SceneGlobalData));
+                    CurrentSceneRootAddr = BuildViewSceneRoot(View,
+                        RHI::Core::CopyTransient(MakeSecondaryViewGlobals(Capture.SceneGlobalData)));
 
                     RenderCaptureView(CL);
                 }
@@ -1651,7 +1652,8 @@ namespace Lumina
             CurrentCameraEarlyView = Bake.FaceCullViews[Face];
             CurrentCameraLateView  = ~0u;   // frustum-only, no late re-test
 
-            CurrentSceneRootAddr = BuildViewSceneRoot(View, RHI::Core::CopyTransient(Bake.FaceGlobals[Face]));
+            CurrentSceneRootAddr = BuildViewSceneRoot(View,
+                RHI::Core::CopyTransient(MakeSecondaryViewGlobals(Bake.FaceGlobals[Face])));
 
             if (Frame.Geometry.DrawCommands.empty())
             {
@@ -1772,6 +1774,26 @@ namespace Lumina
         // the primary view for THIS frame already shaded above, so making the slice samplable now
         // would be a lie for everything already recorded.
         CompletedProbeBakes.fetch_or(1u << (uint32)Bake.BakingProbe, std::memory_order_acq_rel);
+    }
+
+    // Extract snapshots each secondary view's globals from the primary's, then overrides the camera. Four
+    // CullData fields are not known yet at that point -- CompileDrawCommands_Render stamps this frame's
+    // meshlet draw-list tag and publishes the three resolve bounds (draw-list capacity, visible-instance
+    // capacity, bone count) onto the primary only. A secondary view that keeps the snapshot's values carries
+    // a stale tag and zeroed bounds, so every meshlet fails IsFromFrame in MeshletGeometry.slang (nothing
+    // rasterizes) and every covered texel fails the same check in MaterialDepth / DeferredMaterial (nothing
+    // shades). Symptom: a capture that renders sky and terrain but no meshes.
+    FSceneGlobalData FForwardRenderScene::MakeSecondaryViewGlobals(const FSceneGlobalData& ViewGlobals) const
+    {
+        FSceneGlobalData Globals = ViewGlobals;
+
+        const FCullData& Primary = RenderFrame->SceneGlobalData.CullData;
+        Globals.CullData.MeshletDrawTag            = Primary.MeshletDrawTag;
+        Globals.CullData.MeshletDrawListCapacity   = Primary.MeshletDrawListCapacity;
+        Globals.CullData.InstanceNum               = Primary.InstanceNum;
+        Globals.CullData.BoneNum                   = Primary.BoneNum;
+
+        return Globals;
     }
 
     void FForwardRenderScene::RenderCaptureView(RHI::FCmdListH CL)
@@ -4048,6 +4070,14 @@ namespace Lumina
             const uint32 ShadowMeshletCount   = MeshletHeaderAddress ? Surface.LODMeshletCount[ShadowLODIndex] : 0u;
             const uint32 ShadowMeshletOffset  = Surface.LODMeshletOffset[ShadowLODIndex];
 
+            // End of the last LOD: what bounds the mesh-global meshlet index the raster resolves. A skinned
+            // instance's LOD is fixed (its pre-skin blocks are built for one specific range, so no view may
+            // re-select), but it emits the same kind of draw entry and so carries the same bound.
+            const uint32 LastLOD = Surface.NumLODs > 0u ? Math::Min(Surface.NumLODs, (uint32)MAX_MESH_LODS) - 1u : 0u;
+            const uint32 MeshletTotalCount = MeshletHeaderAddress
+                                           ? Surface.LODMeshletOffset[LastLOD] + Surface.LODMeshletCount[LastLOD]
+                                           : 0u;
+
             const uint32 BatchIndex = Binding.BatchIndex;
 
             if (Local.DrawInstanceCounts[BatchIndex]++ == 0u)
@@ -4069,6 +4099,7 @@ namespace Lumina
             Item.SurfaceMeshletCount  = SurfaceMeshletCount;
             Item.ShadowMeshletOffset  = ShadowMeshletOffset;
             Item.ShadowMeshletCount   = ShadowMeshletCount;
+            Item.MeshletTotalCount    = MeshletTotalCount;
             Item.Flags                = Flags;
             Item.MaterialIndex        = Binding.MaterialIndex;
             Item._Pad                 = 0;
@@ -4719,6 +4750,14 @@ namespace Lumina
                         // Per-block bases, resolved in AssignPreSkinSlices and stashed on the item.
                         Out.SkinnedVertexBase          = Item.SurfaceVertexOffset;
                         Out.ShadowSkinnedVertexBase    = Item.ShadowVertexOffset;
+                        // Skinned instances are the one producer that does NOT let a view re-select the LOD:
+                        // the pre-skin blocks the draw path reads were built for these exact ranges, so a
+                        // view picking a different LOD would skin one range and raster another.
+                        Out.SurfaceDescIndex           = kNoSurfaceDescIndex;
+                        // The walk domain the meshlet cull and the prefix scan share. No per-view maximum to
+                        // fold in here for the same reason: both ranges are fixed.
+                        Out.MeshletWalkCount           = Math::Max(Item.SurfaceMeshletCount, Item.ShadowMeshletCount);
+                        Out.MeshletTotalCount          = Item.MeshletTotalCount;
                     }
                 }
             };
@@ -6131,7 +6170,7 @@ namespace Lumina
         uint32 NumViews;
         uint32 Phase;
         uint32 CameraLateViewIndex;
-        uint32 Pad;
+        uint32 NumSurfaceDescs;     // bounds the per-view LOD lookup; what the DEVICE buffer holds
         // Device addresses of the cull-private scratch buffers (matches the pointer
         // fields in CullMeshlets.slang's pass block, 8-byte aligned).
         uint64 IndirectArgsAddr;
@@ -6141,10 +6180,14 @@ namespace Lumina
         uint64 TotalsAddr;          // {MeshletWork, InstanceCount, DrawListRequired, Overflowed}
         uint64 ViewDrawCountsAddr;  // per-(view, draw) region length; EmitMeshlet exact bound
         uint64 ViewDrawOffsetsAddr; // per-(view, draw) region base; read-only, off the contended args line
+        // Interned per-surface LOD tables. The same buffer CullInstances reserved draw-list space from, so
+        // both passes make each view's LOD pick from identical inputs. Grouped with the other pointers so
+        // the trailing uint32 pair needs no alignment padding on either side.
+        uint64 SurfaceDescsAddr;
         uint32 DrawListCapacity;    // entries in the whole allocation; outer backstop
         uint32 DeferListCapacity;   // entries the defer list holds; bounds the unbounded defer append
     };
-    static_assert(sizeof(FCullMeshletPushConstants) == 80, "FCullMeshletPushConstants must match CullMeshlets.slang FPushConstants.");
+    static_assert(sizeof(FCullMeshletPushConstants) == 88, "FCullMeshletPushConstants must match CullMeshlets.slang FPushConstants.");
 
     void FForwardRenderScene::CullPassEarly(RHI::FCmdListH CL)
     {
@@ -6211,9 +6254,14 @@ namespace Lumina
         PC.TotalsAddr          = GetTotals().GetAddress();
         PC.ViewDrawCountsAddr  = GetViewDrawCounts().GetAddress();
         PC.ViewDrawOffsetsAddr = GetViewDrawOffsets().GetAddress();
+        // What the device buffer actually holds, not what the game thread has interned -- same bound
+        // CullInstances uses, so an instance whose binding is newer than the last upload falls back to its
+        // fixed range in both passes instead of reading past the table in one of them.
+        PC.NumSurfaceDescs     = UploadedSurfaceDescs;
+        PC.SurfaceDescsAddr    = SurfaceDescBuffer.GetAddress();
         PC.DrawListCapacity    = DrawListCapacity;
         PC.DeferListCapacity   = DeferListCapacity;
-        
+
         RHI::CmdDispatchIndirect(CL, MakeArgs(PC), GetEarlyCullDispatchArgs().Ptr, 0);
         Barriers::ComputeToAll(CL);
         
@@ -6328,6 +6376,10 @@ namespace Lumina
         PC.TotalsAddr          = GetTotals().GetAddress();
         PC.ViewDrawCountsAddr  = GetViewDrawCounts().GetAddress();
         PC.ViewDrawOffsetsAddr = GetViewDrawOffsets().GetAddress();
+        // The late phase re-tests deferred entries that already name their meshlet, so it makes no LOD pick
+        // of its own; passed anyway so the two dispatches differ only in Phase.
+        PC.NumSurfaceDescs     = UploadedSurfaceDescs;
+        PC.SurfaceDescsAddr    = SurfaceDescBuffer.GetAddress();
         PC.DrawListCapacity    = DrawListCapacity;
         PC.DeferListCapacity   = DeferListCapacity;
 

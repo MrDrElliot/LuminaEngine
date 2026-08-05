@@ -256,7 +256,13 @@ struct FCustomPrimitiveData
 #define MESHLET_MAX_COARSE_SHADOW_LOD 5
 
 // Mirror of Lumina::FSurfaceDescGPU (80 B). Per-surface LOD table, interned per distinct resolved
-// surface, so CullInstances can pick the LOD the CPU gather used to pick.
+// surface, so a cull view can pick the LOD the CPU gather used to pick -- per view, from its own origin.
+//
+// FGPUInstance::SurfaceDescIndex carries this sentinel when the instance's LOD is fixed and must not be
+// re-selected: skinned instances (CPU-fed, and their pre-skin blocks are built for one specific LOD),
+// an authored ForcedLODIndex, or LODs disabled scene-wide.
+static const uint kNoSurfaceDesc = 0xFFFFFFFFu;
+
 struct FSurfaceDesc
 {
     uint  LODMeshletOffset[MESHLET_MAX_LODS];
@@ -422,8 +428,14 @@ typealias FBoneTransform = FTransform3x4;
 // bug surfaced as wrong geometry rather than as nothing. The tag makes "not written this frame" detectable,
 // so a stale entry is a clean reject instead of silent garbage.
 //
-// 20 bits of local index (a surface LOD never has a million meshlets) leaves 12 for the tag. The CPU never
-// issues tag 0, and a freshly allocated draw list is zeroed, so untouched memory always fails the check.
+// The index is MESH-GLOBAL: it addresses MeshletHeader.Meshlets/Bounds directly, across every LOD, rather
+// than being relative to one LOD's range. That is what lets each view pick its OWN LOD -- the entry no
+// longer means anything different depending on which range the reader resolves it against, so a capture
+// camera's draw and the primary's can sit side by side in the same list.
+//
+// 20 bits of index (a mesh's meshlet array, all LODs together, never has a million entries -- interning
+// clamps it) leaves 12 for the tag. The CPU never issues tag 0, and a freshly allocated draw list is
+// zeroed, so untouched memory always fails the check.
 #define MESHLET_DRAW_INDEX_BITS  20u
 #define MESHLET_DRAW_INDEX_MASK  ((1u << MESHLET_DRAW_INDEX_BITS) - 1u)
 #define MESHLET_DRAW_TAG_INVALID 0u
@@ -431,17 +443,17 @@ typealias FBoneTransform = FTransform3x4;
 struct FMeshletDraw
 {
     uint InstanceID;          // Into Instances()
-    uint PackedIndexAndTag;   // [19:0] local offset inside the instance's surface range, [31:20] frame tag
+    uint PackedIndexAndTag;   // [19:0] index into the mesh's meshlet array, [31:20] frame tag
 
-    property uint MeshletLocalIndex { get { return PackedIndexAndTag & MESHLET_DRAW_INDEX_MASK; } }
-    property uint Tag               { get { return PackedIndexAndTag >> MESHLET_DRAW_INDEX_BITS; } }
+    property uint MeshletIndex { get { return PackedIndexAndTag & MESHLET_DRAW_INDEX_MASK; } }
+    property uint Tag          { get { return PackedIndexAndTag >> MESHLET_DRAW_INDEX_BITS; } }
 
     // Written this frame? Compare against Scene().CullData.MeshletDrawTag.
     bool IsFromFrame(uint ExpectedTag) { return Tag == ExpectedTag && ExpectedTag != MESHLET_DRAW_TAG_INVALID; }
 
-    static uint Pack(uint LocalIndex, uint FrameTag)
+    static uint Pack(uint MeshletIndex, uint FrameTag)
     {
-        return (FrameTag << MESHLET_DRAW_INDEX_BITS) | (LocalIndex & MESHLET_DRAW_INDEX_MASK);
+        return (FrameTag << MESHLET_DRAW_INDEX_BITS) | (MeshletIndex & MESHLET_DRAW_INDEX_MASK);
     }
 };
 
@@ -451,7 +463,7 @@ struct FMeshletDraw
 struct FMeshletDeferred
 {
     uint InstanceID;
-    uint MeshletLocalIndex;
+    uint MeshletIndex;      // mesh-global, same meaning as FMeshletDraw's
     uint DrawID;
     uint _Pad;
 };
@@ -470,11 +482,15 @@ struct FGPUInstance
     // accessors below read both out of this one word. That is the kind of value a guard path hands
     // back after refusing to resolve something, which is exactly when it must not be garbage.
     private uint            DrawIDAndFlags = 0u;
+    // Meshlet range of the DEFAULT surface LOD -- the one picked from the primary camera. Used verbatim by
+    // any view that cannot re-select (SurfaceDescIndex == kNoSurfaceDesc: skinned, forced-LOD, LODs off),
+    // and as the reference the per-view pick starts from. Not what the raster resolves against any more:
+    // the draw entry carries a mesh-global meshlet index precisely because the LOD is per view.
     uint                    SurfaceMeshletOffset;
     uint                    SurfaceMeshletCount;
-    // Shadow LOD's meshlet range. CullMeshlets uses these for shadow-only
-    // views; ShadowMappingVert reads ShadowMeshletOffset to locate the
-    // emitted meshlet. Camera-side passes keep using SurfaceMeshlet*.
+    // Shadow LOD's meshlet range. Shadow views keep using this pick rather than re-selecting per view:
+    // the cascades are fit to the PRIMARY camera, so the LOD that matches their texel pitch is a function
+    // of the primary camera's distance, not of the light's position.
     uint                    ShadowMeshletOffset;
     uint                    ShadowMeshletCount;
     FCustomPrimitiveData    CustomData;
@@ -490,10 +506,16 @@ struct FGPUInstance
     // must blend bones itself.
     uint                    SkinnedVertexBase;
     uint                    ShadowSkinnedVertexBase;
-    // Declared, not implied: under scalar layout the array stride comes from the declared members, so
-    // trailing padding has to exist on both sides or the strides diverge. 116 -> 120 against the 8-byte
-    // alignment MeshletHeader imposes.
-    uint                    _Pad;
+    // Into SurfaceDescs, so a cull view can re-select this instance's LOD from its OWN origin.
+    // kNoSurfaceDesc means "not selectable": use SurfaceMeshletOffset/Count as they stand.
+    uint                    SurfaceDescIndex;
+    // The meshlet cull's per-instance thread domain: max over (every non-shadow view's picked surface LOD
+    // count, the shadow LOD count). Has to be a stored value rather than re-derived, because the prefix
+    // scan indexes into the same domain and the two must agree exactly.
+    uint                    MeshletWalkCount;
+    // Entries in this mesh's meshlet array (end of the last LOD). The bound on a mesh-global meshlet index,
+    // and the only bound the raster resolve needs now that the index is not LOD-relative.
+    uint                    MeshletTotalCount;
 
     // Expands the packed 3x4. Named for what it returns so every consumer predates the packing and did
     // not have to change; the struct is loaded once and this is a few moves off registers.

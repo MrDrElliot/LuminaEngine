@@ -9,8 +9,10 @@
 //   * visibility   -- a slot survives if it intersects ANY cull view's frustum. That is strictly more
 //                     accurate than the CPU pre-cull it replaces, which had to union the camera frustum,
 //                     a sun sweep and a sphere per shadow light because it could not afford per-view work.
-//   * LOD          -- picked here from the interned FSurfaceDesc, per instance (not per view), matching
-//                     the CPU's main-camera distance rule. Shadow LOD is the same pick, biased.
+//   * LOD          -- picked here from the interned FSurfaceDesc, PER VIEW, from each view's own origin
+//                     (SelectSurfaceLODForView). The pick decides how much draw-list space that view
+//                     reserves for the instance; CullMeshlets makes the identical pick when it walks.
+//                     Shadow views take the camera-distance pick, biased -- see FGPUInstance.
 //   * compaction   -- survivors are atomically appended, so the output is dense and FGPUInstance keeps
 //                     its exact existing layout. CullMeshlets, the VisBuffer passes, shadows and skinning
 //                     are untouched.
@@ -44,7 +46,7 @@ struct FCullInstancesArgs
 
     FGPUInstance*      OutInstances;        // out: compacted survivors (what SceneRoot.Instances points at)
     uint*              OutInstanceCount;    // out: [0] = survivor count, pre-zeroed
-    // out: NumBatches entries. VIEW-INDEPENDENT meshlet work: sum of SurfaceMeshletCount over survivors.
+    // out: NumBatches entries. VIEW-INDEPENDENT meshlet work: sum of MeshletWalkCount over survivors.
     // This is the meshlet cull's dispatch domain, which must cover every surviving instance regardless of
     // which view sees it, so it cannot be derived from the per-view counts below.
     uint*              OutBatchMeshletCount;
@@ -104,11 +106,12 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
         }
     }
 
-    // LOD. Per instance and camera-derived, matching the CPU rule this replaces; every view reuses the
-    // pick, with shadow views taking the biased one.
+    // Default LOD: camera-derived, matching the CPU rule this replaces. Every view that cannot re-select
+    // (forced LOD, LODs off) uses it as-is, the shadow pick is biased off it, and the per-view picks in the
+    // loop below start from the same desc.
     //
-    // Resolved BEFORE the per-view visibility loop, because that loop now also accumulates how many
-    // meshlets each view could emit for this instance -- which needs the LOD's meshlet counts.
+    // Resolved BEFORE the per-view visibility loop, because that loop also accumulates how many meshlets
+    // each view could emit for this instance -- which needs the LOD's meshlet counts.
 
     // The index is bounded, because the consequence of trusting it is not a wrong LOD. Past the table this
     // reads whatever follows the allocation, and the meshlet counts below are accumulated into
@@ -125,14 +128,20 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     // it here means a bad table cannot index the arrays out of bounds, whatever else it gets wrong.
     const uint NumLODs = min(Desc.NumLODs, (uint)MESHLET_MAX_LODS);
 
+    // An authored forced LOD means "this LOD, in every view", and with LODs off there is only LOD 0 to
+    // pick. Both are fixed picks, so the instance publishes kNoSurfaceDesc and no view re-selects.
+    const bool bSelectPerView = Cull.ForcedLODIndex < 0 && Pass().bUseLODs != 0u;
+
     uint LODIndex = 0u;
     if (Cull.ForcedLODIndex >= 0)
     {
         LODIndex = min((uint)Cull.ForcedLODIndex, NumLODs > 0u ? NumLODs - 1u : 0u);
     }
-    else if (Pass().bUseLODs != 0u)
+    else if (bSelectPerView)
     {
-        LODIndex = min(Desc.SelectLOD(DistSq, Radius * Radius), NumLODs > 0u ? NumLODs - 1u : 0u);
+        // The primary camera's pick. GetCameraPosition() is this dispatch's scene buffer -- the primary --
+        // so this is view 0's LOD by construction, and the loop below re-derives it identically.
+        LODIndex = SelectSurfaceLODForView(Desc, CamPos, Cull.SphereBounds);
     }
 
     // Distance drives the cap because cascade membership is essentially distance: only the far cascades
@@ -169,6 +178,11 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     const uint DrawID   = Cull.DrawID;
     const bool bInRange = DrawID < Pass().NumBatches;
     bool bAnyView = false;
+
+    // The meshlet cull's per-instance thread domain, accumulated over the views that can actually emit:
+    // one walk has to cover the widest LOD any of them picked, plus the shadow LOD. Seeded from the shadow
+    // count because a shadow view needs no visibility of its own to be reached.
+    uint WalkCount = ShadowMeshletCount;
 
     for (uint v = 0; v < Pass().NumViews; ++v)
     {
@@ -211,7 +225,18 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
         // min(surface, shadow), which matched a cull that could only ever walk the surface count; now that
         // the walk covers both, reserving the min would drop exactly the meshlets the widened walk found.
         const bool bShadowView = View.HasFlag(CULL_VIEW_FLAG_CAST_SHADOW_ONLY);
-        const uint Emitted     = bShadowView ? ShadowMeshletCount : SurfaceMeshletCount;
+
+        // Non-shadow views pick their own LOD, so what this one reserves is what IT will walk -- a distant
+        // capture reserves for its coarse LOD while the primary reserves for its fine one, out of the same
+        // instance. Reserving the primary's count for everyone is what made every view inherit its LOD.
+        uint Emitted = ShadowMeshletCount;
+        if (!bShadowView)
+        {
+            Emitted = bSelectPerView
+                ? (bHasGeometry ? SelectViewMeshletRange(Desc, View.ViewOrigin, Cull.SphereBounds).y : 0u)
+                : SurfaceMeshletCount;
+            WalkCount = max(WalkCount, Emitted);
+        }
 
         if (Emitted > 0u && bInRange)
         {
@@ -247,10 +272,10 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     // allocation follows, which then shows up as some unrelated shader faulting.
     if (bInRange)
     {
-        // Same max as the prefix scan: this is the cull's dispatch domain and the prefix is what indexes
-        // into it, so the two have to be the same number or the tail of the domain resolves nothing.
-        InterlockedAdd(Pass().OutBatchMeshletCount[DrawID],
-                       max(SurfaceMeshletCount, ShadowMeshletCount));
+        // The same per-instance number the prefix scan reads off the instance below: this is the cull's
+        // dispatch domain and the prefix is what indexes into it, so the two have to agree or the tail of
+        // the domain resolves nothing.
+        InterlockedAdd(Pass().OutBatchMeshletCount[DrawID], WalkCount);
     }
 
     // ONLY survivors get here, which is the whole point of the split: the transform and the static
@@ -274,7 +299,13 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     Inst.SurfaceMeshletCount     = SurfaceMeshletCount;
     Inst.ShadowMeshletOffset     = ShadowMeshletOffset;
     Inst.ShadowMeshletCount      = ShadowMeshletCount;
-    Inst._Pad = 0u;
+    Inst.SurfaceDescIndex        = bSelectPerView ? Cull.SurfaceDescIndex : kNoSurfaceDesc;
+    Inst.MeshletWalkCount        = WalkCount;
+    // End of the last LOD: the bound on the mesh-global meshlet index the cull emits. NumLODs is already
+    // clamped to the table size above, so this cannot read past the desc.
+    Inst.MeshletTotalCount       = bHasGeometry && NumLODs > 0u
+                                 ? Desc.LODMeshletOffset[NumLODs - 1u] + Desc.LODMeshletCount[NumLODs - 1u]
+                                 : 0u;
 
     Pass().OutInstances[OutSlot] = Inst;
 }

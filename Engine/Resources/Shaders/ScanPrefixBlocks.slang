@@ -25,13 +25,11 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupIndex)
     const uint Block = GroupID.x + GroupID.y * 65535u;   // same Y fold the cull dispatches use
     const uint Idx   = Block * SCAN_BLOCK + Lane;
 
-    // max, not the surface count: a shadow-only view walks the SHADOW LOD, which is capped at
-    // MESHLET_MAX_SHADOW_LOD and so can be FINER (more meshlets) than the camera LOD on distant casters.
-    // This is the per-instance work domain and must match CullMeshlets' walk, CullInstances'
-    // OutBatchMeshletCount and the CPU's skinned seed exactly.
-    const uint Value = (Idx < N)
-        ? max(Instances()[Idx].SurfaceMeshletCount, Instances()[Idx].ShadowMeshletCount)
-        : 0u;
+    // The per-instance work domain, READ rather than re-derived: it is the max over every view's picked
+    // LOD (each non-shadow view picks its own) plus the shadow LOD, which only CullInstances is in a
+    // position to compute. It must match CullMeshlets' walk bound, CullInstances' OutBatchMeshletCount and
+    // the CPU's skinned seed exactly, and all four now come from this one field.
+    const uint Value = (Idx < N) ? Instances()[Idx].MeshletWalkCount : 0u;
 
     gScanA[Lane] = Value;
     GroupMemoryBarrierWithGroupSync();

@@ -93,6 +93,10 @@ namespace Lumina
             uint32              SurfaceMeshletCount;
             uint32              ShadowMeshletOffset;
             uint32              ShadowMeshletCount;
+            // End of the surface's last LOD: the bound the raster resolve applies to the mesh-global
+            // meshlet index. Skinned instances never re-select their LOD per view, but they emit the same
+            // kind of draw entry, so they carry the same bound.
+            uint32              MeshletTotalCount;
             // Vertex extent of the two meshlet blocks this item draws (skinned only; 0 otherwise).
             // Merge overwrites the *Offset fields in place with the resolved pre-skin bases, which is
             // what FGPUInstance carries -- the offsets are only needed to derive them.
@@ -731,6 +735,10 @@ namespace Lumina
         FSceneView& AddSceneView(const FUIntVector2& Size, bool bPrimary);
         
         void RenderCaptureView(RHI::FCmdListH CL);
+
+        // Capture / probe-face globals are snapshotted during Extract, so they predate the CullData fields
+        // the render phase owns. Returns the snapshot with those fields filled in from this frame's primary.
+        FSceneGlobalData MakeSecondaryViewGlobals(const FSceneGlobalData& ViewGlobals) const;
 
         void PointAtView(FSceneView& View)
         {
