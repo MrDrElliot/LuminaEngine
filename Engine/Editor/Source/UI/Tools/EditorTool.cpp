@@ -35,6 +35,8 @@
 #include "World/Entity/Components/TerrainComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/Subsystems/TerrainSculptSystem.h"
+#include "Tools/ComponentVisualizers/ComponentVisualizer.h"
+#include "Tools/UI/ImGui/EditorColors.h"
 #include "Log/Log.h"
 
 namespace Lumina
@@ -474,10 +476,19 @@ namespace Lumina
 
         if (IsAssetEditorTool())
         {
-            if (ImGui::MenuItem(LE_ICON_CONTENT_SAVE"##Save"))
+            // Tinted by dirty state. The icon used to look identical saved or not, so the only signal that
+            // an edit still needed saving was the tab's UnsavedDocument dot -- which asset editors did not
+            // report either. Left clickable when clean so a deliberate re-save is still possible.
+            const bool bUnsaved = IsUnsavedDocument();
+            ImGui::PushStyleColor(ImGuiCol_Text, bUnsaved ? EditorColors::Warning() : EditorColors::TextDim());
+            if (ImGui::MenuItem(bUnsaved ? LE_ICON_CONTENT_SAVE_EDIT "##Save" : LE_ICON_CONTENT_SAVE "##Save"))
             {
                 OnSave();
             }
+            ImGui::PopStyleColor();
+            // "{}" + arg: TextTooltip takes a consteval format string, so a ternary of two literals
+            // cannot be passed as the format itself.
+            ImGuiX::TextTooltip("{}", bUnsaved ? "Save -- this asset has unsaved changes" : "Save (no changes)");
         }
 
         const FFixedString AssetVirtualPath = GetAssetVirtualPath();
@@ -524,7 +535,24 @@ namespace Lumina
             ImGui::EndMenu();
         }
 
+        DrawViewModeMenu();
         DrawToolMenu(UpdateContext);
+    }
+
+    void FEditorTool::DrawViewModeMenu()
+    {
+        // One entry point per tool: scene tools already carry this in their viewport toolbar, so adding it
+        // here too would give them two menus editing the same render settings.
+        if (!HasWorld() || DrawsViewModeInViewportToolbar())
+        {
+            return;
+        }
+
+        if (ImGui::BeginMenu(LE_ICON_EYE " Visualize"))
+        {
+            DrawViewModePopupContents();
+            ImGui::EndMenu();
+        }
     }
 
     void FEditorTool::DrawViewportOverlayElements(const FUpdateContext& UpdateContext, ImTextureRef ViewportTexture, ImVec2 ViewportSize)
@@ -695,8 +723,312 @@ namespace Lumina
         return false;
     }
 
+    bool FEditorTool::BeginViewportToolbarWindow(float& OutButtonSize)
+    {
+        const float Scale = ImGuiX::GetUIScale();
+        const float Padding = 8.0f * Scale;
+        const float ItemSpacing = 6.0f * Scale;
+        constexpr float CornerRounding = 8.0f;
+
+        OutButtonSize = 24.0f * Scale;
+
+        const ImVec2 Pos = ImGui::GetWindowPos();
+        ImGui::SetNextWindowPos(Pos + ImVec2(Padding, Padding));
+        ImGui::SetNextWindowBgAlpha(0.85f);
+
+        constexpr ImGuiWindowFlags WindowFlags =
+            ImGuiWindowFlags_NoDecoration |
+            ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoFocusOnAppearing |
+            ImGuiWindowFlags_NoNav |
+            ImGuiWindowFlags_AlwaysAutoResize;
+
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(Padding, Padding));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, CornerRounding);
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ItemSpacing, ItemSpacing));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
+
+        // Per-tool window ID. ImGui keys windows globally by name, so a shared literal made every open
+        // tool's bar the SAME window -- harmless while only the world and prefab editors drew one (rarely
+        // both at once), but now that every preview-world tool does, two open tools would append into one
+        // another's bar and fight over its position.
+        const FFixedString WindowName = GetToolWindowName("##ViewportToolbar", CurrDockspaceID);
+        return ImGui::Begin(WindowName.c_str(), nullptr, WindowFlags);
+    }
+
+    void FEditorTool::EndViewportToolbarWindow()
+    {
+        ImGui::End();
+        ImGui::PopStyleVar(4);
+    }
+
+    void FEditorTool::DrawViewModeButton(float ButtonSize)
+    {
+        if (ImGuiX::IconButton(LE_ICON_EYE, "##ViewMode", 0xFFFFFFFF, ImVec2(ButtonSize, ButtonSize)))
+        {
+            ImGui::OpenPopup("ViewModePopup");
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+        {
+            ImGui::SetTooltip("View Mode Options");
+        }
+
+        if (ImGui::BeginPopup("ViewModePopup", ImGuiWindowFlags_NoMove))
+        {
+            DrawViewModePopupContents();
+            ImGui::EndPopup();
+        }
+    }
+
+    void FEditorTool::DrawViewModePopupContents()
+    {
+        IRenderScene* RenderScene = HasWorld() ? World->GetRenderer() : nullptr;
+
+        ImGui::Text("Visualizations");
+        ImGui::Separator();
+
+        if (ImGui::BeginMenu("Components"))
+        {
+            ImGui::Checkbox("Show All", &bShowComponentVisualizers);
+            ImGui::BeginDisabled(!bShowComponentVisualizers);
+            for (auto&& [Struct, Visualizer] : CComponentVisualizerRegistry::Get().GetVisualizers())
+            {
+                bool bFoobar = false;
+                ImGui::Checkbox(Struct->MakeDisplayName().c_str(), &bFoobar);
+            }
+            ImGui::EndDisabled();
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("Physics"))
+        {
+            if (const bool* bValue = FConsoleRegistry::Get().TryGetAs<bool>("Jolt.Debug.Draw"))
+            {
+                bool bProxy = *bValue;
+                if (ImGui::MenuItem("Toggle Collision", nullptr, &bProxy))
+                {
+                    FConsoleRegistry::Get().SetAs("Jolt.Debug.Draw", bProxy);
+                }
+            }
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("Navigation"))
+        {
+            if (const bool* bValue = FConsoleRegistry::Get().TryGetAs<bool>("Nav.DrawDebug"))
+            {
+                bool bProxy = *bValue;
+                if (ImGui::MenuItem("Draw NavMesh", nullptr, &bProxy))
+                {
+                    FConsoleRegistry::Get().SetAs("Nav.DrawDebug", bProxy);
+                }
+            }
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu(LE_ICON_BONE " Skeleton"))
+        {
+            DrawSkeletonDebugMenuItems();
+            ImGui::EndMenu();
+        }
+
+        // Everything below edits the world's render scene. A tool whose world has no renderer yet (still
+        // initializing, or headless) keeps the debug-draw menus above, which are CVar-backed and global.
+        if (RenderScene == nullptr)
+        {
+            DrawViewModeExtraItems();
+            return;
+        }
+
+        if (ImGui::BeginMenu("Rendering"))
+        {
+            FSceneRenderSettings& Settings = RenderScene->GetSceneRenderSettings();
+
+            if (ImGui::BeginMenu("View Mode"))
+            {
+                struct FViewModeEntry { ERenderSceneDebugFlags Mode; const char* Label; };
+
+                static const FViewModeEntry Shading[] =
+                {
+                    { ERenderSceneDebugFlags::None,  "Lit"   },
+                    { ERenderSceneDebugFlags::Unlit, "Unlit" },
+                };
+                static const FViewModeEntry Buffers[] =
+                {
+                    { ERenderSceneDebugFlags::BaseColor,         "Base Color"        },
+                    { ERenderSceneDebugFlags::WorldNormal,       "World Normal"      },
+                    { ERenderSceneDebugFlags::ShadingNormal,     "Shading Normal"    },
+                    { ERenderSceneDebugFlags::Roughness,         "Roughness"         },
+                    { ERenderSceneDebugFlags::Metallic,          "Metallic"          },
+                    { ERenderSceneDebugFlags::AmbientOcclusion,  "Ambient Occlusion" },
+                    { ERenderSceneDebugFlags::Emissive,          "Emissive"          },
+                    { ERenderSceneDebugFlags::UV,                "UV"                },
+                };
+                static const FViewModeEntry Geometry[] =
+                {
+                    { ERenderSceneDebugFlags::Meshlets,   "Meshlets"    },
+                    { ERenderSceneDebugFlags::MaterialID, "Material ID" },
+                    { ERenderSceneDebugFlags::TriangleID, "Triangle ID" },
+                };
+                static const FViewModeEntry Lighting[] =
+                {
+                    { ERenderSceneDebugFlags::LightComplexity, "Light Complexity" },
+                    { ERenderSceneDebugFlags::ClusterGrid,     "Light Clusters"   },
+                    { ERenderSceneDebugFlags::ShadowCascades,  "Shadow Cascades"  },
+                    { ERenderSceneDebugFlags::ShadowPenumbra,  "Shadow Penumbra"  },
+                    { ERenderSceneDebugFlags::SSAO,            "SSAO"             },
+                };
+                // Raw WBOIT target inspectors (OITResolve.slang): accum color flags INF red /
+                // NaN magenta, weight turns red near the fp16 ceiling, revealage is the
+                // background-transmittance product. For chasing translucency artifacts.
+                static const FViewModeEntry Translucency[] =
+                {
+                    { ERenderSceneDebugFlags::OITAccumColor,  "OIT Accum Color"  },
+                    { ERenderSceneDebugFlags::OITAccumWeight, "OIT Accum Weight" },
+                    { ERenderSceneDebugFlags::OITRevealage,   "OIT Revealage"    },
+                    { ERenderSceneDebugFlags::OITLayerCount,  "OIT Layer Count"  },
+                };
+
+                auto DrawGroup = [&](const char* Header, const FViewModeEntry* Entries, size_t Count)
+                {
+                    ImGui::TextDisabled("%s", Header);
+                    ImGui::Separator();
+                    for (size_t i = 0; i < Count; ++i)
+                    {
+                        bool bSelected = Settings.Flags == Entries[i].Mode;
+                        if (ImGui::MenuItem(Entries[i].Label, nullptr, bSelected))
+                        {
+                            Settings.Flags = Entries[i].Mode;
+                        }
+                    }
+                };
+
+                DrawGroup("Shading", Shading, std::size(Shading));
+                ImGui::Spacing();
+                DrawGroup("Buffers", Buffers, std::size(Buffers));
+                ImGui::Spacing();
+                DrawGroup("Geometry", Geometry, std::size(Geometry));
+                ImGui::Spacing();
+                DrawGroup("Lighting", Lighting, std::size(Lighting));
+                ImGui::Spacing();
+                DrawGroup("Translucency", Translucency, std::size(Translucency));
+
+                ImGui::EndMenu();
+            }
+
+            // Every stage that can remove geometry, individually switchable. This is a diagnostic
+            // menu, not a quality one: when part of a mesh is missing, the question is always which
+            // stage dropped it, and turning them off one at a time answers it in seconds where
+            // reading the cull shaders takes an afternoon. Each entry says what it costs to disable
+            // so nobody leaves one off and later reports the frame rate as a bug.
+            if (ImGui::BeginMenu("Culling"))
+            {
+                // Spelled out per entry rather than driven by a pointer-to-member table: these are
+                // bitfields, and there is no such thing as a pointer to one.
+                static const char* const kNames[] =
+                {
+                    "Frustum Cull",
+                    "Cone Cull",
+                    "Occlusion Cull (Camera)",
+                    "Occlusion Cull (Shadows)",
+                    "CPU Instance Cull",
+                    "Level of Detail",
+                };
+                static const char* const kTooltips[] =
+                {
+                    "Rejects instances and meshlets outside a view's frustum.\nOff: everything is submitted from every angle.",
+                    "Rejects meshlets whose normal cone faces away from the view.\nOff: backfacing clusters are submitted. The only cull besides occlusion that removes PARTS of a mesh.",
+                    "Two-phase Hi-Z: meshlets hidden by last frame's depth pyramid are deferred, then re-tested against this frame's.\nOff: no deferral, no late pass.",
+                    "The same test for shadow cascades, against the cascade pyramid.",
+                    "Pre-upload reject of instances outside every contributing view, on the CPU.\nOff: the whole retained set is uploaded each frame.",
+                    "Distance-based LOD selection.\nOff: always LOD 0, full detail.",
+                };
+
+                bool bValues[] =
+                {
+                    (bool)Settings.bFrustumCull,
+                    (bool)Settings.bConeCull,
+                    (bool)Settings.bOcclusionCull,
+                    (bool)Settings.bShadowOcclusionCull,
+                    (bool)Settings.bCPUInstanceCull,
+                    (bool)Settings.bUseLODs,
+                };
+                static_assert(std::size(kNames) == std::size(kTooltips), "Cull toggle names and tooltips must pair up.");
+
+                bool bChanged[std::size(kNames)] = {};
+                for (size_t i = 0; i < std::size(kNames); ++i)
+                {
+                    bChanged[i] = ImGui::MenuItem(kNames[i], nullptr, &bValues[i]);
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                    {
+                        ImGui::SetTooltip("%s", kTooltips[i]);
+                    }
+                }
+
+                if (bChanged[0]) { Settings.bFrustumCull         = bValues[0]; }
+                if (bChanged[1]) { Settings.bConeCull            = bValues[1]; }
+                if (bChanged[2]) { Settings.bOcclusionCull       = bValues[2]; }
+                if (bChanged[3]) { Settings.bShadowOcclusionCull = bValues[3]; }
+                if (bChanged[4]) { Settings.bCPUInstanceCull     = bValues[4]; }
+                if (bChanged[5]) { Settings.bUseLODs             = bValues[5]; }
+
+                ImGui::Separator();
+
+                // The state to compare a suspicious frame against: whatever is still missing with all
+                // of these off was not culled, which is worth more than any single toggle.
+                const bool bAllOff = !Settings.bFrustumCull && !Settings.bConeCull && !Settings.bOcclusionCull
+                                  && !Settings.bShadowOcclusionCull && !Settings.bCPUInstanceCull && !Settings.bUseLODs;
+                if (ImGui::MenuItem("Disable All Culling", nullptr, bAllOff))
+                {
+                    const uint8 bEnable = bAllOff ? 1u : 0u;
+                    Settings.bFrustumCull         = bEnable;
+                    Settings.bConeCull            = bEnable;
+                    Settings.bOcclusionCull       = bEnable;
+                    Settings.bShadowOcclusionCull = bEnable;
+                    Settings.bCPUInstanceCull     = bEnable;
+                    Settings.bUseLODs             = bEnable;
+                }
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                {
+                    ImGui::SetTooltip("Turns every stage above off (and back on). Expensive -- for isolating "
+                                      "missing geometry, not for working in.");
+                }
+
+                ImGui::EndMenu();
+            }
+
+            ImGui::Separator();
+
+            bool bWireframe = Settings.bWireframe;
+            if (ImGui::MenuItem("Wireframe", nullptr, &bWireframe))
+            {
+                Settings.bWireframe = bWireframe;
+            }
+
+            bool bDrawBillboards = Settings.bDrawBillboards;
+            if (ImGui::MenuItem("Draw Billboards", nullptr, &bDrawBillboards))
+            {
+                Settings.bDrawBillboards = bDrawBillboards;
+            }
+
+            bool bDrawAABB = Settings.bDrawAABB;
+            if (ImGui::MenuItem("Draw Bounds", nullptr, &bDrawAABB))
+            {
+                Settings.bDrawAABB = bDrawAABB;
+            }
+
+            // Tool-specific view-mode items (world: Entity Debug Info, Game View).
+            DrawViewModeExtraItems();
+
+            ImGui::EndMenu();
+        }
+    }
+
     void FEditorTool::DrawViewportToolbar(const FUpdateContext& UpdateContext)
     {
+        // Asset tools get the visualization menu on the menu bar next to Help, not as a floating overlay
+        // -- see DrawViewModeMenu. Scene tools override this and keep theirs in the viewport.
         ImGui::Dummy(ImVec2(0, 0));
     }
 

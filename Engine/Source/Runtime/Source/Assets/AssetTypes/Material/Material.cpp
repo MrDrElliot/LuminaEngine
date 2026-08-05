@@ -166,40 +166,20 @@ namespace Lumina
     {
         if (!PixelShaderBinaries.empty() && !VertexShaderBinaries.empty())
         {
-            // The stage binaries bake both the templates they were compiled from and the compiler
-            // settings they were compiled under; GetShaderTemplateHash covers both. Decided BEFORE
-            // anything is published, because publishing is the thing being withheld.
-            //
-            // The package check skips the procedural default materials -- they compile fresh from
-            // source every run and have no graph to recompile.
             const bool bStale = GetPackage() != nullptr && CompiledTemplateHash != GetShaderTemplateHash();
 
             if (bStale)
             {
-                // Deliberately does NOT commit. A stale stage is SPIR-V produced by a compiler the
-                // engine no longer agrees with, and handing it to the shader library would render with
-                // it -- silently, and indistinguishably from a good one -- until something got round to
-                // recompiling. The stages stay serialized so the recompile has its input; they just do
-                // not reach the library. Every lookup returns null, which is the same state as a stage
-                // that was never compiled and which the render path already handles.
-#if USING(WITH_EDITOR)
+                #if USING(WITH_EDITOR)
                 QueueStaleTemplateMaterial(this);
-#else
-                // Nothing recompiles in a cooked build, so this is a content problem, not a runtime one:
-                // the material was cooked against different shader templates or a different shader cache
-                // version than this executable was built with. It will render as the default material.
+                #else
                 LOG_ERROR("Material '{}' was compiled against different shader templates or an older shader "
                           "cache version and cannot be used by this build. Recook the content.",
-                          GetPathName().c_str());
-#endif
+                          GetPackage()->GetPackagePath().c_str());
+                #endif
             }
             else
             {
-                // Commit every serialized stage to the library (entries keyed by asset GUID + stage
-                // suffix: stable across reloads, refreshed in place on recompile). The merged VS
-                // (MeshletVertex.slang) serves base/depth/shadow via the EPass spec constant;
-                // mesh/VisBuffer/masked/deferred stages are optional and simply absent (empty) when not
-                // compiled for this material.
                 for (size_t i = 0; i < (size_t)EMaterialShaderStage::Count; ++i)
                 {
                     const TVector<uint32>& Binaries = this->*GMaterialStages[i].Binaries;

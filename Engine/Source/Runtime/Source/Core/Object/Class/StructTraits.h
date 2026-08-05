@@ -97,6 +97,19 @@ namespace Lumina
                 static_cast<T*>(Dst)->CopyFrom(*static_cast<const T*>(Src));
             };
         }
+        else if constexpr (eastl::is_copy_assignable_v<T>)
+        {
+            // Without this, a type with no CopyFrom leaves Ops->Copy null, and FStructProperty::
+            // CopyCompleteValue silently falls through to walking the reflected property chain. That is a
+            // no-op for any REFLECT(ManualStub) type -- every math type -- because a stub registers the
+            // type and its ops but NO properties. The result was a copy that did nothing and reported
+            // nothing: reset-to-default on a transform, prefab override inheritance of a vector leaf, and
+            // multi-entity property replication all failed silently.
+            Ops->Copy = +[](void* Dst, const void* Src)
+            {
+                *static_cast<T*>(Dst) = *static_cast<const T*>(Src);
+            };
+        }
         
         if constexpr (Concepts::THasEquality<T>)
         {

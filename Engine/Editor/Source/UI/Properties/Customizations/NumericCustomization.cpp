@@ -54,7 +54,10 @@ namespace Lumina
             ImGui::SameLine(IconColumnW);
 
             const float TagW = LineHeight;
-            const float LockW = UniformLock != nullptr ? LineHeight + Style.ItemInnerSpacing.x : 0.0f;
+            // Reserved on EVERY row, not only the one that owns a lock. The width comes out of the three
+            // fields, so charging it to the scale row alone made that row's fields narrower than the two
+            // above it and broke the column alignment down the whole widget.
+            const float LockW = LineHeight + Style.ItemInnerSpacing.x;
             const float Avail = ImGui::GetContentRegionAvail().x;
             const float FieldW = Math::Max((Avail - LockW - 3.0f * (TagW + Style.ItemInnerSpacing.x)) / 3.0f, 1.0f);
 

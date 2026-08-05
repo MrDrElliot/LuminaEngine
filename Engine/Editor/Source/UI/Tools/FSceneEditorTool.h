@@ -231,8 +231,6 @@ namespace Lumina
         // Draws component visualizers for the current selection (+ their children). Shared EndFrame body.
         void EndFrame() override;
 
-        bool bShowComponentVisualizers = true;
-        
         void CycleGuizmoOp();
         void ToggleGuizmoMode();
 
@@ -241,6 +239,9 @@ namespace Lumina
         virtual void PersistGizmoSettings() {}
         
         void DrawViewportToolbar(const FUpdateContext& UpdateContext) override;
+
+        // The scene viewport toolbar carries the eye button, so the menu-bar "Visualize" dropdown stays off.
+        NODISCARD bool DrawsViewModeInViewportToolbar() const override { return true; }
         void DrawCameraControls(float ButtonSize);
         void DrawViewportOptions(float ButtonSize);
         void DrawSnapSettingsPopup();
@@ -251,8 +252,6 @@ namespace Lumina
         virtual void DrawViewportToolbarPlayControls(float ButtonSize) {}
         // Hook: trailing editor-mode selector + active-mode toolbar (+ its own leading separator). World only.
         virtual void DrawViewportToolbarModeSelector(float ButtonSize) {}
-        // Hook: extra items at the bottom of the View Mode popup (world: Game View, Entity Debug Info).
-        virtual void DrawViewModeExtraItems() {}
 
         ImGuizmo::OPERATION GuizmoOp = ImGuizmo::TRANSLATE;
         ImGuizmo::MODE      GuizmoMode = ImGuizmo::WORLD;

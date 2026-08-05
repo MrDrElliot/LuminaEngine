@@ -344,7 +344,9 @@ namespace Lumina
                             Surface.LODScreenThreshold[i] = SharedThresholds[i];
                         }
                     }
-                    Asset->GetPackage()->MarkDirty();
+                    // Not just MarkDirty: the resolve cache holds the squared copy the picker actually
+                    // reads, so without the epoch bump this edit only survives a save, never shows up.
+                    NotifyAssetDataChanged();
                 }
             }
 
@@ -459,7 +461,7 @@ namespace Lumina
                                     if (ImGui::DragFloat("##SurfaceThreshold", &Value, 0.5f, MinValue, 1024.0f, "%.2f"))
                                     {
                                         SurfaceRW.LODScreenThreshold[lod] = Math::Max(Value, MinValue);
-                                        Asset->GetPackage()->MarkDirty();
+                                        NotifyAssetDataChanged();
                                     }
                                     ImGui::PopID();
                                 }
@@ -642,6 +644,17 @@ namespace Lumina
             "overrides where slot names match.");
     }
 
+    void FStaticMeshEditorTool::DrawViewModeExtraItems()
+    {
+        ImGui::Separator();
+        ImGui::MenuItem(LE_ICON_CUBE_OUTLINE " Show AABB", nullptr, &bShowAABB);
+
+        if (ImGui::MenuItem(LE_ICON_RELOAD " Reload Mesh Buffers"))
+        {
+            Cast<CStaticMesh>(Asset.Get())->PostLoad();
+        }
+    }
+
     void FStaticMeshEditorTool::DrawToolMenu(const FUpdateContext& UpdateContext)
     {
         FAssetEditorTool::DrawToolMenu(UpdateContext);
@@ -660,18 +673,6 @@ namespace Lumina
                 case 1: GuizmoOp = ImGuizmo::ROTATE;    break;
                 case 2: GuizmoOp = ImGuizmo::SCALE;     break;
                 }
-            }
-
-            ImGui::EndMenu();
-        }
-
-        if (ImGui::BeginMenu(LE_ICON_DEBUG_STEP_INTO " Mesh Debug"))
-        {
-            ImGui::Checkbox(LE_ICON_CUBE_OUTLINE " Show AABB", &bShowAABB);
-
-            if (ImGui::Button(LE_ICON_RELOAD " Reload Mesh Buffers"))
-            {
-                Cast<CStaticMesh>(Asset.Get())->PostLoad();
             }
 
             ImGui::EndMenu();

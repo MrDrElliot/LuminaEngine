@@ -522,22 +522,18 @@ namespace Lumina
 
             ImGui::EndMenu();
         }
+    }
 
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 8.0f));
-        if (ImGui::BeginMenu(LE_ICON_DEBUG_STEP_INTO " Mesh Debug"))
+    void FSkeletalMeshEditorTool::DrawViewModeExtraItems()
+    {
+        ImGui::Separator();
+        ImGui::MenuItem(LE_ICON_CUBE_OUTLINE " Show AABB", nullptr, &bShowAABB);
+        ImGui::MenuItem(LE_ICON_BONE " Show Bones", nullptr, &bShowBones);
+
+        if (ImGui::MenuItem(LE_ICON_RELOAD " Reload Mesh Buffers"))
         {
-            ImGui::Checkbox(LE_ICON_CUBE_OUTLINE " Show AABB", &bShowAABB);
-            
-            ImGui::Checkbox(LE_ICON_BONE " Show Bones", &bShowBones);
-            
-            if (ImGui::Button(LE_ICON_RELOAD " Reload Mesh Buffers"))
-            {
-                Asset->PostLoad();
-            }
-
-            ImGui::EndMenu();
+            Asset->PostLoad();
         }
-        ImGui::PopStyleVar();
     }
 
     void FSkeletalMeshEditorTool::InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& InDockspaceSize) const

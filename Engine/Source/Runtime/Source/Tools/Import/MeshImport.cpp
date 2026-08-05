@@ -368,13 +368,7 @@ namespace Lumina::Import::Mesh
             {
                 return;
             }
-
-            // WORST-CASE bound: meshopt sizes it for an unindexed stream, where the 64-vertex limit binds
-            // before the 124-triangle one, so this is ~SrcIndexCount/62. Real indexed geometry is
-            // triangle-limited (~SrcIndexCount/372), so these buffers are routinely ~6x larger than what
-            // gets written -- and eastl::vector::resize VALUE-initializes, so all of it is memset first.
-            // That is ~10 bytes zeroed per source index per cell, all of it dead. Measure before trading
-            // it away; the section below is what tells you whether it matters on your mesh.
+            
             const size_t MaxMeshlets = meshopt_buildMeshletsBound(SrcIndexCount, MaxVertices, MaxTriangles);
 
             TVector<meshopt_Meshlet> LocalMeshlets;
@@ -642,52 +636,61 @@ namespace Lumina::Import::Mesh
                 bConeCulling, bOptimizeMeshlets,
                 ReadPosition, Out);
         });
+        
+        TVector<TFixedVector<uint32, MAX_MESH_LODS>> AcceptedPerSurface(NumSurfaces);
 
-        // Phase 2: replay the accept/break chain that used to be interleaved with the work. Identical rules,
-        // just evaluated after the fact -- and cells beyond the accepted run are dropped, because the pack
-        // below keys purely off bHasData and would otherwise fold in a level the serial version never built.
         for (uint32 SurfaceIdx = 0; SurfaceIdx < NumSurfaces; ++SurfaceIdx)
         {
             const FGeometrySurface& Section = MeshResource.GeometrySurfaces[SurfaceIdx];
 
-            uint32 LODsBuilt      = Results[0 * NumSurfaces + SurfaceIdx].bHasData ? 1u : 0u;
+            TFixedVector<uint32, MAX_MESH_LODS>& Accepted = AcceptedPerSurface[SurfaceIdx];
+            if (Results[0 * NumSurfaces + SurfaceIdx].bHasData)
+            {
+                Accepted.push_back(0u);
+            }
             size_t LastIndexCount = Section.IndexCount;
 
             for (uint32 lod = 1; lod < LODCount; ++lod)
             {
                 const uint32        Cell = lod * NumSurfaces + SurfaceIdx;
                 const FLODSettings& Cfg  = kLODs[lod];
-
+                
                 size_t TargetIndices = (size_t)((float)Section.IndexCount * Cfg.Ratio);
                 TargetIndices = (TargetIndices / 3u) * 3u;
                 if (TargetIndices < kLODMinIndices)
                 {
-                    break;
+                    continue;
                 }
 
                 const size_t NewCount = CellIndexCount[Cell];
                 if (NewCount < kLODMinIndices)
                 {
-                    break;
+                    continue;
                 }
 
-                // 5% progress floor for topology-preserving simplify; sloppy always hits target.
+                // 5% progress floor for topology-preserving simplify; sloppy always hits target. Measured
+                // against the last ACCEPTED level, so skipping one keeps the bar where it was.
                 if (!Cfg.bSloppy && (float)NewCount > (float)LastIndexCount * 0.95f)
                 {
-                    break;
+                    continue;
                 }
-                LastIndexCount = NewCount;
 
                 if (!Results[Cell].bHasData)
                 {
-                    break;
+                    continue;
                 }
-                LODsBuilt = lod + 1u;
+
+                LastIndexCount = NewCount;
+                Accepted.push_back(lod);
             }
 
-            for (uint32 lod = LODsBuilt; lod < LODCount; ++lod)
+            // Drop every level that did not make the cut so the pack pass cannot fold one back in.
+            for (uint32 lod = 0; lod < LODCount; ++lod)
             {
-                Results[lod * NumSurfaces + SurfaceIdx] = FSurfaceMeshletResult{};
+                if (eastl::find(Accepted.begin(), Accepted.end(), lod) == Accepted.end())
+                {
+                    Results[lod * NumSurfaces + SurfaceIdx] = FSurfaceMeshletResult{};
+                }
             }
 
             if (Progress)
@@ -740,30 +743,41 @@ namespace Lumina::Import::Mesh
             }
         }
 
-        for (uint32 lod = 0; lod < LODCount; ++lod)
+        // Slot, NOT source level: accepted levels compact down so LODMeshletOffset[0..NumLODs) is dense,
+        // which is what both selectors require (they walk slots 0..NumLODs-1 and index the arrays with the
+        // result). Each slot keeps its SOURCE level's screen threshold, so a compacted level still
+        // activates at the distance it was authored for, and the sequence stays ascending.
+        for (uint32 Slot = 0; Slot < LODCount; ++Slot)
         {
             LUMINA_PROFILE_SECTION("Serial Pack LODs");
-            
+
             for (uint32 SurfaceIdx = 0; SurfaceIdx < NumSurfaces; ++SurfaceIdx)
             {
+                const TFixedVector<uint32, MAX_MESH_LODS>& Accepted = AcceptedPerSurface[SurfaceIdx];
+                if (Slot >= Accepted.size())
+                {
+                    continue;
+                }
+                const uint32 SourceLOD = Accepted[Slot];
+
                 FGeometrySurface&      Section = MeshResource.GeometrySurfaces[SurfaceIdx];
-                FSurfaceMeshletResult& Result  = Results[lod * NumSurfaces + SurfaceIdx];
+                FSurfaceMeshletResult& Result  = Results[SourceLOD * NumSurfaces + SurfaceIdx];
 
                 if (!Result.bHasData)
                 {
                     continue;
                 }
 
-                Section.LODMeshletOffset[lod]   = (uint32)MeshResource.MeshletData.Meshlets.size();
-                Section.LODMeshletCount[lod]    = (uint32)Result.OutMeshlets.size();
-                Section.LODScreenThreshold[lod] = kLODs[lod].Threshold;
-                Section.NumLODs                 = lod + 1u;
+                Section.LODMeshletOffset[Slot]   = (uint32)MeshResource.MeshletData.Meshlets.size();
+                Section.LODMeshletCount[Slot]    = (uint32)Result.OutMeshlets.size();
+                Section.LODScreenThreshold[Slot] = kLODs[SourceLOD].Threshold;
+                Section.NumLODs                  = Slot + 1u;
 
                 for (size_t MeshletIdx = 0; MeshletIdx < Result.OutMeshlets.size(); ++MeshletIdx)
                 {
                     FMeshlet Out = Result.OutMeshlets[MeshletIdx];
 
-                    Out.LODIndex = lod;
+                    Out.LODIndex = Slot;
 
                     const uint32 PackedVertexStart = MeshResource.bSkinnedMesh
                         ? (uint32)MeshResource.MeshletData.MeshletSkinnedVertices.size()
@@ -824,6 +838,25 @@ namespace Lumina::Import::Mesh
         if (MeshResource.MeshletData.MeshletTriangles.empty())
         {
             MeshResource.MeshletData.MeshletTriangles.push_back(0u);
+        }
+
+        // Per-surface LOD outcome. LOD selection clamps to each surface's OWN NumLODs, so a surface that
+        // built one level silently ignores every LOD pick -- indistinguishable in the viewport from a
+        // broken selector, which is exactly how the foliage-vs-trunk case presented. Logged per surface so
+        // "this material slot has no LODs" is readable instead of inferred.
+        for (uint32 SurfaceIdx = 0; SurfaceIdx < NumSurfaces; ++SurfaceIdx)
+        {
+            const FGeometrySurface& Section = MeshResource.GeometrySurfaces[SurfaceIdx];
+            if (Section.NumLODs > 1u || Section.IndexCount == 0)
+            {
+                continue;
+            }
+
+            LOG_WARN("Mesh '{}' surface {} (material slot {}, {} tris) built only LOD 0 -- every LOD "
+                     "selection on it resolves to 0. Simplification could not reduce it: geometry made of "
+                     "disconnected shells (foliage cards) is all border, which meshopt_SimplifyLockBorder "
+                     "pins in place.",
+                     MeshResource.Name.c_str(), SurfaceIdx, Section.MaterialIndex, Section.IndexCount / 3u);
         }
     }
 

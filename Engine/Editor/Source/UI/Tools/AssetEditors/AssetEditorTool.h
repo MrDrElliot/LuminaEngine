@@ -38,10 +38,7 @@ namespace Lumina
                    // would keep drawing the old resolve. Property edits bypass the setters that bump the
                    // epoch, so this is the chokepoint that covers all of them -- one place, every asset
                    // editor, rather than a hook per tool.
-                   if (Asset->IsA<CMesh>() || Asset->IsA<CMaterialInterface>())
-                   {
-                       FMeshResolveCache::BumpEpoch();
-                   }
+                   NotifyAssetDataChanged();
                 });
 
                 // Property edits on the asset become undoable CObject snapshots -- undo for free, no per-editor code.
@@ -70,6 +67,36 @@ namespace Lumina
         FPropertyTable* GetPropertyTable() { return &PropertyTable; }
 
         bool HasAsset() const { return Asset.IsValid(); }
+
+        /** Every asset editor reports its package's dirty state. Without this the base returned false for
+         *  all of them, so MarkDirty was doing its job and nothing ever showed it -- no tab dot, no prompt
+         *  on close. Only the world and RmlUi editors had overridden it. */
+        NODISCARD bool IsUnsavedDocument() override
+        {
+            return Asset.IsValid() && Asset->GetPackage() != nullptr && Asset->GetPackage()->IsDirty();
+        }
+
+        /** Call after mutating this asset's data. The property table's post-edit callback routes here, but
+         *  a tool that draws its own widgets (the mesh editor's LOD threshold rows, say) never goes through
+         *  that table and has to call this itself -- marking the package dirty alone only makes the change
+         *  SAVE, it does not make it VISIBLE. */
+        void NotifyAssetDataChanged()
+        {
+            if (!Asset.IsValid())
+            {
+                return;
+            }
+
+            Asset->GetPackage()->MarkDirty();
+
+            // Mesh and material assets are interned into FMeshResolveCache by pointer identity, so editing
+            // one in place changes nothing the cache key can see and every world instance keeps drawing the
+            // old resolve (stale LOD thresholds, meshlet ranges, materials). The epoch is the invalidation.
+            if (Asset->IsA<CMesh>() || Asset->IsA<CMaterialInterface>())
+            {
+                FMeshResolveCache::BumpEpoch();
+            }
+        }
 
     private:
 

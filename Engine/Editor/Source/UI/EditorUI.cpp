@@ -2789,12 +2789,29 @@ namespace Lumina
 
             // Footer: Save & Exit (blue), Discard & Exit (gold), Cancel (soft),
             // right-aligned so the primary action lands at the F-pattern target.
-            constexpr float ButtonH    = 32.0f;
-            constexpr float SaveW      = 150.0f;
-            constexpr float DiscardW   = 150.0f;
-            constexpr float CancelW    = 90.0f;
-            constexpr float Gap        = 8.0f;
-            constexpr float Total      = SaveW + DiscardW + CancelW + Gap * 2.0f;
+            constexpr float ButtonH = 32.0f;
+            constexpr float Gap     = 8.0f;
+            constexpr float MinW    = 90.0f;
+
+            // Single '&': ImGui has no mnemonic escaping (only '#' is special), so "&&" reached the screen
+            // as a literal "&&".
+            const char* SaveLabel    = LE_ICON_CONTENT_SAVE " Save & Exit";
+            const char* DiscardLabel = LE_ICON_DELETE " Discard & Exit";
+            const char* CancelLabel  = "Cancel";
+
+            // Measured per label rather than one shared constant. The three differ in length, two carry an
+            // icon glyph, and all of them scale with font size and DPI -- a fixed 150px fit "Save & Exit"
+            // and clipped the longer "Discard & Exit" to "Discard & Exi".
+            auto MeasureButton = [](const char* Label)
+            {
+                const float Text = ImGui::CalcTextSize(Label).x + ImGui::GetStyle().FramePadding.x * 2.0f + 12.0f;
+                return Text < MinW ? MinW : Text;
+            };
+
+            const float SaveW    = MeasureButton(SaveLabel);
+            const float DiscardW = MeasureButton(DiscardLabel);
+            const float CancelW  = MeasureButton(CancelLabel);
+            const float Total    = SaveW + DiscardW + CancelW + Gap * 2.0f;
             ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 8.0f);
             ImGui::SetCursorPosX(ImGui::GetWindowWidth() - Total - 16.0f);
 
@@ -2810,7 +2827,7 @@ namespace Lumina
             {
                 ImGui::BeginDisabled();
             }
-            if (ImGui::Button(LE_ICON_CONTENT_SAVE " Save && Exit", ImVec2(SaveW, ButtonH)))
+            if (ImGui::Button(SaveLabel, ImVec2(SaveW, ButtonH)))
             {
                 // Synchronous save loop; the dialog stays open this frame so failed
                 // entries show a "Failed" badge instead of disappearing silently.
@@ -2845,7 +2862,7 @@ namespace Lumina
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kProjDialogRowBgHover);
             ImGui::PushStyleColor(ImGuiCol_ButtonActive,  kProjDialogRowBgActive);
             ImGui::PushStyleColor(ImGuiCol_Text,          kProjDialogAccentGold);
-            if (ImGui::Button(LE_ICON_DELETE " Discard && Exit", ImVec2(DiscardW, ButtonH)))
+            if (ImGui::Button(DiscardLabel, ImVec2(DiscardW, ButtonH)))
             {
                 bShouldClose = true;
             }
@@ -2857,7 +2874,7 @@ namespace Lumina
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kProjDialogRowBgHover);
             ImGui::PushStyleColor(ImGuiCol_ButtonActive,  kProjDialogRowBgActive);
             ImGui::PushStyleColor(ImGuiCol_Text,          kProjDialogAccentSoft);
-            if (ImGui::Button("Cancel", ImVec2(CancelW, ButtonH)))
+            if (ImGui::Button(CancelLabel, ImVec2(CancelW, ButtonH)))
             {
                 FApplication::CancelExit();
                 bVerifyingDirtyPackages = false; // re-arm for the next exit attempt

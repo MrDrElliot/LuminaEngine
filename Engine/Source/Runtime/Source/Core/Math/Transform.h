@@ -8,6 +8,8 @@
 
 namespace Lumina
 {
+    class FArchive;
+
     #ifndef REFLECTION_PARSER
 
     struct alignas(16) VTransform
@@ -103,6 +105,8 @@ namespace Lumina
         }
 
         bool operator!=(const VTransform& Other) const { return !(*this == Other); }
+        
+        RUNTIME_API bool Serialize(FArchive& Ar);
 
         VTransform operator*(const VTransform& Other) const
         {
@@ -161,13 +165,20 @@ namespace Lumina
 #endif
 namespace Lumina
 {
-    REFLECT(ManualStub, NoLua, NoCSharp)
+    REFLECT(ManualStub, NoCSharp)
     struct alignas(16) FTransform
     {
-        PROPERTY(Script, Editable) FVector3 Location;  // @0
-        float Pad0;                                    // @12
-        PROPERTY(Script, Editable) FQuat    Rotation;  // @16
-        PROPERTY(Script, Editable) FVector3 Scale;     // @32
+        PROPERTY(Script, Editable) 
+        FVector3 Location;  // @0
+        
+        float Pad0;          // @12
+        
+        PROPERTY(Script, Editable) 
+        FQuat    Rotation;  // @16
+        
+        PROPERTY(Script, Editable)
+        FVector3 Scale;     // @32
+        
         float Pad1;                                    // @44
     };
 }

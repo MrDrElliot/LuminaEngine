@@ -269,6 +269,34 @@ namespace Lumina
         bool BeginViewportToolbarGroup(char const* GroupID, ImVec2 GroupSize, const ImVec2& Padding);
         void EndViewportToolbarGroup();
 
+        /** Floating toolbar shell pinned to the viewport's top-left. Returns false when the bar should not
+         *  draw (game input focused); End must be called either way. Lives here rather than on the scene
+         *  tool so a preview-world tool gets the same chrome without duplicating it. */
+        bool BeginViewportToolbarWindow(float& OutButtonSize);
+        void EndViewportToolbarWindow();
+
+        /** Eye button + "Visualizations" popup: render view modes, culling toggles, wireframe, and the
+         *  physics/navigation/skeleton debug draws. Anything with a world can show it -- the settings it
+         *  edits live on the world's render scene, not on the scene editor. */
+        void DrawViewModeButton(float ButtonSize);
+
+        /** The popup body without the button, so a tool can host it somewhere else (a menu, say). */
+        void DrawViewModePopupContents();
+
+        /** "Visualize" dropdown on the tool menu bar, beside Help. Drawn for any tool with a world that
+         *  does not already surface this in its viewport toolbar. */
+        void DrawViewModeMenu();
+
+        /** True when the tool puts the view-mode control in its viewport toolbar instead (scene tools),
+         *  which suppresses the menu-bar dropdown so there is only ever one entry point. */
+        NODISCARD virtual bool DrawsViewModeInViewportToolbar() const { return false; }
+
+        /** Hook: extra rows at the bottom of the View Mode menu (world: Game View, Entity Debug Info). */
+        virtual void DrawViewModeExtraItems() {}
+
+        /** Master toggle for component visualizers; read by the scene tool's EndFrame draw pass. */
+        bool bShowComponentVisualizers = true;
+
         /** Is this editor tool for editing assets? */
         NODISCARD virtual bool IsAssetEditorTool() const { return false; }
 
