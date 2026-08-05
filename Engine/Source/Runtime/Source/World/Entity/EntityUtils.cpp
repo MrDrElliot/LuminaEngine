@@ -151,72 +151,66 @@ namespace Lumina::ECS::Utils
 {
     // --- Serialization ---
 
-    bool SerializeEntity(FArchive& RESTRICT Ar, FEntityRegistry& RESTRICT Registry, entt::entity& RESTRICT Entity)
+    /**
+     * The reflected component types present in a registry, resolved ONCE.
+     *
+     * The write path has to ask, for each entity, which components it carries -- and entt offers no
+     * "components of entity X", so the storages must be probed. That probe is inherent. What was NOT
+     * inherent is that every probe HIT then paid `entt::resolve(Set.info())` plus an `InvokeMetaFunc`
+     * to recover the CStruct*, and both are hash lookups into entt's meta registry. Those depend only on
+     * the component TYPE, so paying them per component INSTANCE meant a whole-registry save spent
+     * (entities x components) on meta traffic alone. On the editor's undo snapshot -- which serializes
+     * the entire registry twice per transaction -- that was the bulk of a multi-hundred-millisecond stall.
+     *
+     * Empty storages are dropped here too: an assured-but-unused pool still cost a contains() probe per
+     * entity, and a mature registry has a lot of them.
+     *
+     * Built in `Registry.storage()` order, so the emitted component order is unchanged -- which matters,
+     * because the undo system byte-compares two captures to decide whether a transaction was a no-op.
+     */
+    struct FComponentTypeCache
     {
-        using namespace entt::literals;
-        
-        if (Ar.IsWriting())
+        struct FEntry
         {
-            Ar << Entity;
+            entt::sparse_set*   Set;
+            CStruct*            Struct;
+        };
+        TVector<FEntry> Entries;
 
-            FRelationshipComponent* RelationshipComponent = Registry.try_get<FRelationshipComponent>(Entity);
-            bool bHasRelationship = (RelationshipComponent != nullptr);
-            Ar << bHasRelationship;
-
-            if (bHasRelationship)
+        void Build(FEntityRegistry& Registry)
+        {
+            Entries.clear();
+            for (auto&& Curr : Registry.storage())
             {
-                Ar << *RelationshipComponent;
-            }
-
-            int64 NumComponentsPos = Ar.Tell();
-            size_t NumComponents = 0;
-            Ar << NumComponents;
-
-            for (auto [ID, Set] : Registry.storage())
-            {
-                if (!Set.contains(Entity))
+                entt::sparse_set& Set = Curr.second;
+                if (Set.empty())
                 {
                     continue;
                 }
 
+                entt::meta_type MetaType = entt::resolve(Set.info());
+                if (entt::meta_any ReturnValue = InvokeMetaFunc(MetaType, "static_struct"_hs))
                 {
-                    void* ComponentPointer = Set.value(Entity);
-                    entt::meta_type MetaType = entt::resolve(Set.info());
-                    if (entt::meta_any ReturnValue = InvokeMetaFunc(MetaType, "static_struct"_hs))
-                    {
-                        CStruct* StructType = ReturnValue.cast<CStruct*>();
-                        ASSERT(StructType);
-
-                        FName Name = StructType->GetName();
-                        Ar << Name;
-                        
-                        int64 ComponentStart = Ar.Tell();
-
-                        int64 ComponentSize = 0;
-                        Ar << ComponentSize;
-
-                        int64 StartOfComponentData = Ar.Tell();
-
-                        StructType->SerializeTaggedProperties(Ar, ComponentPointer);
-
-                        int64 EndOfComponentData = Ar.Tell();
-
-                        ComponentSize = EndOfComponentData - StartOfComponentData;
-
-                        Ar.Seek(ComponentStart);
-                        Ar << ComponentSize;
-                        Ar.Seek(EndOfComponentData);
-                        
-                        NumComponents++;
-                    }
+                    CStruct* StructType = ReturnValue.cast<CStruct*>();
+                    ASSERT(StructType);
+                    Entries.push_back({ &Set, StructType });
                 }
             }
+        }
+    };
 
-            int64 SizeBefore = Ar.Tell();
-            Ar.Seek(NumComponentsPos);    
-            Ar << NumComponents;
-            Ar.Seek(SizeBefore);
-            
+    // Internal write path. Cache may be null, in which case one is built for this entity alone -- correct
+    // but pointless for a bulk save, which is why SerializeRegistry builds it once and passes it down.
+    static bool SerializeEntityWrite(FArchive& RESTRICT Ar, FEntityRegistry& RESTRICT Registry,
+                                     entt::entity& RESTRICT Entity, const FComponentTypeCache* Cache);
+
+    bool SerializeEntity(FArchive& RESTRICT Ar, FEntityRegistry& RESTRICT Registry, entt::entity& RESTRICT Entity)
+    {
+        using namespace entt::literals;
+
+        if (Ar.IsWriting())
+        {
+            return SerializeEntityWrite(Ar, Registry, Entity, nullptr);
         }
         else if (Ar.IsReading())
         {
@@ -301,6 +295,70 @@ namespace Lumina::ECS::Utils
         return !Ar.HasError();
     }
 
+    static bool SerializeEntityWrite(FArchive& RESTRICT Ar, FEntityRegistry& RESTRICT Registry,
+                                     entt::entity& RESTRICT Entity, const FComponentTypeCache* Cache)
+    {
+        Ar << Entity;
+
+        FRelationshipComponent* RelationshipComponent = Registry.try_get<FRelationshipComponent>(Entity);
+        bool bHasRelationship = (RelationshipComponent != nullptr);
+        Ar << bHasRelationship;
+
+        if (bHasRelationship)
+        {
+            Ar << *RelationshipComponent;
+        }
+
+        int64 NumComponentsPos = Ar.Tell();
+        size_t NumComponents = 0;
+        Ar << NumComponents;
+
+        // A one-entity write builds its own; the bulk path shares one across the whole registry.
+        FComponentTypeCache LocalCache;
+        if (Cache == nullptr)
+        {
+            LocalCache.Build(Registry);
+            Cache = &LocalCache;
+        }
+
+        for (const FComponentTypeCache::FEntry& Entry : Cache->Entries)
+        {
+            if (!Entry.Set->contains(Entity))
+            {
+                continue;
+            }
+
+            FName Name = Entry.Struct->GetName();
+            Ar << Name;
+
+            int64 ComponentStart = Ar.Tell();
+
+            int64 ComponentSize = 0;
+            Ar << ComponentSize;
+
+            int64 StartOfComponentData = Ar.Tell();
+
+            Entry.Struct->SerializeTaggedProperties(Ar, Entry.Set->value(Entity));
+
+            int64 EndOfComponentData = Ar.Tell();
+
+            ComponentSize = EndOfComponentData - StartOfComponentData;
+
+            Ar.Seek(ComponentStart);
+            Ar << ComponentSize;
+            Ar.Seek(EndOfComponentData);
+
+            NumComponents++;
+        }
+
+        int64 SizeBefore = Ar.Tell();
+        Ar.Seek(NumComponentsPos);
+        Ar << NumComponents;
+        Ar.Seek(SizeBefore);
+
+        return !Ar.HasError();
+    }
+
     bool SerializeRegistry(FArchive& Ar, FEntityRegistry& Registry)
     {
         using namespace entt::literals;
@@ -310,19 +368,25 @@ namespace Lumina::ECS::Utils
             Registry.compact<>();
             auto View = Registry.view<entt::entity>(entt::exclude<FEditorComponent>);
 
+            // ONCE for the whole walk, not once per entity. See FComponentTypeCache -- this is what turns
+            // the write from (entities x component types) meta-registry lookups into (entities x populated
+            // types) plain sparse probes.
+            FComponentTypeCache TypeCache;
+            TypeCache.Build(Registry);
+
             int64 PreSerializePos = Ar.Tell();
-    
+
             int32 NumEntitiesSerialized = 0;
             Ar << NumEntitiesSerialized;
 
             View.each([&](entt::entity Entity)
             {
                 int64 PreEntityPos = Ar.Tell();
-        
+
                 int64 EntitySaveSize = 0;
                 Ar << EntitySaveSize;
 
-                bool bSuccess = SerializeEntity(Ar, Registry, Entity);
+                bool bSuccess = SerializeEntityWrite(Ar, Registry, Entity, &TypeCache);
                 if (!bSuccess)
                 {
                     // Rewind to before this entity's data and continue with next entity

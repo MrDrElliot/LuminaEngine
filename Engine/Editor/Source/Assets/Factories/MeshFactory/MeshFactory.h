@@ -20,6 +20,14 @@ namespace Lumina
         CClass* GetAssetClass() const override { return CStaticMesh::StaticClass(); }
         bool CanImport() override { return true; }
         bool IsExtensionSupported(FStringView Ext) override { return Ext == ".gltf" || Ext == ".glb" || Ext == ".obj" || Ext == ".fbx"; }
+        void GetSupportedExtensions(TVector<FStringView>& OutExtensions) const override
+        {
+            OutExtensions.insert(OutExtensions.end(), { ".gltf", ".glb", ".obj", ".fbx" });
+        }
+
+        bool CanReimport(const CStruct* AssetClass) const override;
+        bool TryReimport(CObject* Asset, const FFixedString& SourceFile, const Import::FImportSettings* Settings) override;
+        FString GetReimportSourcePath(const CObject* Asset) const override;
 
         bool HasImportDialogue() const override { return true; }
         void PrepareImportAsync(const FFixedString& RawPath, const FFixedString& DestinationPath, FImportPrepareCallback OnReady) override;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Containers/String.h"
 #include "Core/Math/AABB.h"
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectHandleTyped.h"
@@ -69,6 +70,12 @@ namespace Lumina
 
         PROPERTY(Script, Category = "AABB")
         FAABB BoundingBox;
+
+        /** File this mesh was last imported from, so "Reimport From File..." can open on it. Empty for
+         *  procedurally generated meshes and for assets imported before this was recorded. Matches the
+         *  SourcePath that CTexture / CFont / CAudioStream already keep. */
+        PROPERTY()
+        FString SourcePath;
         
     private:
         

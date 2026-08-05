@@ -2,6 +2,7 @@
 #include "Material.h"
 #include "Assets/AssetTypes/Material/MaterialInstance.h"
 #include "Assets/AssetTypes/Textures/Texture.h"
+#include "Core/Object/ObjectIterator.h"
 #include "FileSystem/FileSystem.h"
 #include "Core/Math/Hash/Hash.h"
 #include "Memory/MemoryTracking.h"
@@ -152,6 +153,61 @@ namespace Lumina
         }
     }
 
+    uint32 RefreshMaterialsReferencingTexture(const CTexture* ChangedTexture)
+    {
+        uint32 Refreshed = 0;
+
+        for (TObjectIterator<CMaterial> Itr; Itr; ++Itr)
+        {
+            if (CMaterial* Master = *Itr; Master != nullptr && Master->RefreshTextureBindings(ChangedTexture))
+            {
+                ++Refreshed;
+            }
+        }
+
+        for (TObjectIterator<CMaterialInstance> Itr; Itr; ++Itr)
+        {
+            if (CMaterialInstance* Instance = *Itr; Instance != nullptr && Instance->RefreshTextureBindings(ChangedTexture))
+            {
+                ++Refreshed;
+            }
+        }
+
+        return Refreshed;
+    }
+
+    bool CMaterial::ReferencesTexture(const CTexture* ChangedTexture) const
+    {
+        for (const TObjectPtr<CTexture>& Texture : Textures)
+        {
+            if (Texture.Get() == ChangedTexture)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool CMaterial::RefreshTextureBindings(const CTexture* ChangedTexture)
+    {
+        if (ChangedTexture != nullptr && !ReferencesTexture(ChangedTexture))
+        {
+            return false;
+        }
+
+        // Every slot, not just the changed one: the block is cheap to rewrite, and any OTHER slot that was
+        // baked while its texture was still unresolved is wrong in exactly the same way.
+        const uint32 NumTextures = (uint32)Math::Min<size_t>(Textures.size(), MAX_TEXTURES);
+        for (uint32 i = 0; i < NumTextures; ++i)
+        {
+            const int32 ResourceID = Textures[i] ? Textures[i]->GetResourceID() : -1;
+            MaterialUniforms.Textures[i] = (ResourceID >= 0) ? (uint32)ResourceID : 0u;
+        }
+
+        UpdateMaterialUniforms();
+        return true;
+    }
+
     void CMaterial::RebuildParameterLookup()
     {
         ParameterLookup.clear();
@@ -268,8 +324,10 @@ namespace Lumina
 #endif
         }
 
-        // Recompile chokepoint; the material editor calls PostLoad() after committing new stages.
-        FMeshResolveCache::BumpEpoch();
+        // Recompile chokepoint; the material editor calls PostLoad() after committing new stages. Only
+        // entries that resolved a surface against this master (directly, or through one of its instances)
+        // need rebuilding -- surfaces record both, so this reaches them.
+        FMeshResolveCache::InvalidateDependency(this);
     }
 
     void CMaterial::OnDestroy()
@@ -277,7 +335,7 @@ namespace Lumina
         CMaterialInterface::OnDestroy();
 
         // Resolves are keyed partly on this pointer; drop them before it can be recycled.
-        FMeshResolveCache::BumpEpoch();
+        FMeshResolveCache::InvalidateDependency(this);
 
         if (GetMaterialIndex() != -1)
         {

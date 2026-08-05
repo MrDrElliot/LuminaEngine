@@ -14,6 +14,8 @@
 #include "Core/Serialization/MemoryArchiver.h"
 #include "Core/Serialization/ObjectArchiver.h"
 #include "Transactions/EcsRegistrySnapshotCommand.h"
+#include "Transactions/EntityCreationCommand.h"
+#include "Transactions/EntityTransformCommand.h"
 #include "Settings/EditorSettings.h"
 #include "Thumbnails/ThumbnailManager.h"
 #include "Thumbnails/ThumbnailUtils.h"
@@ -1775,6 +1777,28 @@ namespace Lumina
         // World/prefab editors record a whole-registry snapshot as one command (migrated to fine-grained in Phase 3).
         TransactionManager.BeginTransaction(FName());
         TransactionManager.Record(MakeUnique<FEcsRegistrySnapshotCommand>(World));
+    }
+
+    void FEditorTool::BeginTransformTransaction(const TVector<entt::entity>& Entities)
+    {
+        if (!CanTransact())
+        {
+            return;
+        }
+
+        TransactionManager.BeginTransaction(FName());
+        TransactionManager.Record(MakeUnique<FEntityTransformCommand>(World, Entities));
+    }
+
+    void FEditorTool::BeginCreationTransaction()
+    {
+        if (!CanTransact())
+        {
+            return;
+        }
+
+        TransactionManager.BeginTransaction(FName());
+        TransactionManager.Record(MakeUnique<FEntityCreationCommand>(World));
     }
 
     void FEditorTool::EndTransaction(FName Name)

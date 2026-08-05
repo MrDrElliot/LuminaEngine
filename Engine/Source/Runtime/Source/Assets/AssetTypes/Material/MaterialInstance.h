@@ -92,6 +92,8 @@ namespace Lumina
         void SetOverrideEnabled(const FName& Name, bool bEnabled);
         /** The stored override for a parameter (retained even while disabled), or null. */
         const FMaterialParameterOverride* FindOverride(const FName& Name) const;
+
+        bool RefreshTextureBindings(const CTexture* ChangedTexture) override;
         /** Drop a parameter's override entirely (discards its stored value). */
         void RemoveOverride(const FName& Name);
 

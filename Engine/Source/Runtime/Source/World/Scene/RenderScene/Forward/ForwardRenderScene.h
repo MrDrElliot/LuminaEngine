@@ -321,9 +321,18 @@ namespace Lumina
 
             // Per-frame snapshot of one emitter; render passes read ONLY this. GPU + sim state lives in
             // ParticleGPUStates keyed by Entity, so it outlives the component and no pass dereferences it.
+            // One of these per (entity, emitter): a system with four emitters extracts four items, each
+            // dispatching and drawing independently.
             struct FParticleExtract
             {
                 entt::entity            Entity;
+                // Index into the system's Emitters, and the component's slot in that entity's GPU state
+                // vector. Stays valid for the frame because extract snapshots everything the passes read.
+                int32                   EmitterIndex        = 0;
+                // Emitters on the system this frame, including disabled ones. Lets the sim pass size the
+                // entity's state vector exactly, so deleting an emitter frees its buffers instead of
+                // leaving them stranded until the entity dies.
+                int32                   EmitterCount        = 1;
                 FMatrix4                WorldMatrix;
 
                 FVector3                EmitterOffset       = FVector3(0.0f);
@@ -343,6 +352,18 @@ namespace Lumina
                 bool                    bUsesCustomShader   = false;
                 const FShaderEntry*     CustomComputeShader = nullptr;  // set iff bUsesCustomShader
                 uint32                  TextureIndex        = 0u;     // heap ResourceID, resolved game-side
+
+                // Module-stack parameter slots, copied on Extract rather than read from the asset on the
+                // render thread. Small (one float4 per module input) and uploaded through the transient
+                // ring, so no persistent buffer or dirty tracking is needed.
+                TVector<FVector4>       ModuleParamValues;
+
+                // Floats per particle in the declared-attribute buffer; sizes the parallel allocation.
+                uint32                  AttributeFloatCount = 1u;
+
+                // Slot per ParticleRenderAttribute::Type, -1 when undeclared. Copied on extract so the
+                // render thread never reads the asset.
+                int32                   RenderAttrSlots[ParticleRenderAttribute::Count];
             };
 
             // Per-frame snapshot of enabled capture views, in registration order. The shared cull fills
@@ -407,7 +428,13 @@ namespace Lumina
 
                     // Changed slots, sorted + deduped so the upload can coalesce adjacent runs. Empty
                     // when bFull.
+                    //
+                    // Split the same way the retained arrays are: DirtySlots covers the cull entry and
+                    // the transform (what a MOVE writes), DirtyStaticSlots the static payload (what a
+                    // RE-BIND writes). A crowd moving leaves the second list empty, so its buffer is not
+                    // re-sent -- and each run is a transient RHI allocation, so the count matters too.
                     TVector<uint32>             DirtySlots;
+                    TVector<uint32>             DirtyStaticSlots;
 
                     // SurfaceDescCount is the LIVE count every frame; bSurfaceDescsChanged says whether
                     // the payload moved. They are separate because the count also gates the cull
@@ -982,11 +1009,18 @@ namespace Lumina
         // ordered on the GPU timeline against every earlier frame's reads on the same queue. The
         // per-frame outputs ARE ringed, because the next frame's cull would otherwise overwrite results
         // the current frame is still rasterizing.
-        FSceneBuffer                                        RetainedInstanceBuffer;
-        FSceneBuffer                                        RetainedCullDataBuffer;
+        //
+        // Three retained buffers, split by access rate rather than held as one interleaved struct. See
+        // FInstanceCullEntry: the cull entries are streamed in full every frame and the other two are
+        // read only for survivors, so keeping them apart is what stops the cull dragging ~5x the
+        // bandwidth it consumes through the memory system.
+        FSceneBuffer                                        RetainedCullEntryBuffer;
+        FSceneBuffer                                        RetainedTransformBuffer;
+        FSceneBuffer                                        RetainedStaticBuffer;
         FSceneBuffer                                        SurfaceDescBuffer;
-        uint32                                              RetainedInstanceLowUsage = 0;
-        uint32                                              RetainedCullDataLowUsage = 0;
+        uint32                                              RetainedCullEntryLowUsage = 0;
+        uint32                                              RetainedTransformLowUsage = 0;
+        uint32                                              RetainedStaticLowUsage = 0;
         uint32                                              SurfaceDescLowUsage = 0;
         // Whether the device buffers need a full re-send is decided during Extract from
         // RetainedDeviceCapacity, so no second slot mirror is needed.
@@ -1125,7 +1159,10 @@ namespace Lumina
         
         THashMap<entt::entity, FTerrainGPUState> TerrainGPUStates;
         
-        THashMap<entt::entity, FParticleGPUState> ParticleGPUStates;
+        // Per entity, one state per emitter, indexed by FParticleExtract::EmitterIndex. Grouped by entity
+        // rather than keyed by a packed (entity, emitter) pair so the dead-entity sweep still drops an
+        // entity's entire footprint in a single erase.
+        THashMap<entt::entity, TVector<FParticleGPUState>> ParticleGPUStates;
 
         // Persistent scene state. Membership and every camera-independent property are maintained from
         // the dirty channel, so a frame in which nothing changed does no scene work at all.

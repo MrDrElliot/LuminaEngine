@@ -1114,7 +1114,20 @@ namespace Lumina
         {
             if (!bImGuizmoUsedOnce)
             {
-                BeginTransaction();
+                // Transform-only; see WorldEditorTool for why this is not the whole-registry snapshot.
+                // The pivot is driven directly and the rest co-move, so the record is both.
+                TVector<entt::entity> Dragged;
+                Dragged.reserve(SelectedEntities.size() + 1);
+                Dragged.push_back(PivotEntity);
+                for (entt::entity Selected : SelectedEntities)
+                {
+                    if (Selected != PivotEntity)
+                    {
+                        Dragged.push_back(Selected);
+                    }
+                }
+                BeginTransformTransaction(Dragged);
+
                 bImGuizmoUsedOnce = true;
             }
 

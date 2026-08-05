@@ -16,6 +16,63 @@ namespace Lumina
         return dt == ImGuiDataType_Float || dt == ImGuiDataType_Double;
     }
 
+    /**
+     * Multiplier for a drag widget's step, taken from how fast the cursor is currently moving.
+     *
+     * ImGui moves a drag value by (pixels moved * speed), so a single fixed speed has to serve both
+     * "nudge this by 0.01" and "sweep this to 5000" -- and it cannot. Folding the cursor's SPEED into
+     * the step lets one widget do both: inch the mouse and the step falls below the base for fine
+     * tuning, throw it and the step grows superlinearly enough to cross a large range in one drag.
+     *
+     * Deliberately NOT applied when the property authored an explicit Delta. That value is a statement
+     * about the field's units (a "Density" that means something at 0.0001), and scaling it would make
+     * the annotation meaningless.
+     *
+     * Composes with ImGui's own modifiers, which is the point: Alt still gives a slow precise drag and
+     * Shift a fast one, on top of whatever the cursor speed is doing.
+     */
+    inline float MouseAdaptiveDragScale()
+    {
+        // Horizontal only -- that is the axis ImGui's drag behavior reads.
+        const float Pixels = Math::Abs(ImGui::GetIO().MouseDelta.x);
+
+        // Under the reference speed the multiplier drops below 1 and the drag gets finer than the base;
+        // over it, the exponent makes it climb faster than the raw pixel count already does.
+        constexpr float ReferencePixels = 5.0f;
+        constexpr float Exponent        = 1.5f;
+        constexpr float MinScale        = 0.05f;   // ~20x finer than the base at a crawl
+        constexpr float MaxScale        = 25.0f;   // capped so a flick cannot fling the value to infinity
+
+        return Math::Clamp(Math::Pow(Pixels / ReferencePixels, Exponent), MinScale, MaxScale);
+    }
+
+    /**
+     * The property's authored Delta, or the supplied fallback. NOT cursor-scaled.
+     *
+     * This is the step for the +/- buttons on a NoDrag field, where the user is clicking rather than
+     * dragging -- there is no cursor speed to read, and letting one leak in would make a button press
+     * step by an arbitrary amount depending on how the mouse happened to be moving.
+     */
+    inline float ResolveBaseStep(const FProperty* Prop, float FallbackSpeed)
+    {
+        if (Prop != nullptr && Prop->HasMetadata("Delta"))
+        {
+            return std::stof(Prop->GetMetadata("Delta").c_str());
+        }
+        return FallbackSpeed;
+    }
+
+    // Step for a click-drag: the base, scaled by cursor speed unless the property authored a Delta.
+    // Single place so every numeric widget agrees on the rule.
+    inline float ResolveDragSpeed(const FProperty* Prop, float FallbackSpeed)
+    {
+        if (Prop != nullptr && Prop->HasMetadata("Delta"))
+        {
+            return std::stof(Prop->GetMetadata("Delta").c_str());
+        }
+        return FallbackSpeed * MouseAdaptiveDragScale();
+    }
+
     // Default printf format ImGui uses for each scalar type, so we can append a
     // unit suffix without losing the type's natural precision.
     inline const char* DefaultScalarFormat(ImGuiDataType dt)
@@ -75,7 +132,7 @@ namespace Lumina
         EPropertyChangeOp DrawProperty(const TSharedPtr<FPropertyHandle>& Property) override
         {
             FProperty* Prop = Property->Property;
-            float Speed = Prop->HasMetadata("Delta") ? std::stof(Prop->GetMetadata("Delta").c_str()) : (IsFloatType(DT) ? 0.01f : 1.0f);
+            float Speed = ResolveDragSpeed(Prop, IsFloatType(DT) ? 0.01f : 1.0f);
             
             TOptional<ValueType> MinOpt;
             TOptional<ValueType> MaxOpt;
@@ -98,8 +155,9 @@ namespace Lumina
             ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x);
             if (Prop->HasMetadata("NoDrag"))
             {
-                // Type-only entry; +/- buttons step by Delta, no click-drag scrubbing.
-                ValueType Step = static_cast<ValueType>(Speed);
+                // Type-only entry; +/- buttons step by Delta, no click-drag scrubbing. The UNSCALED base:
+                // a button press must step by the same amount every time.
+                ValueType Step = static_cast<ValueType>(ResolveBaseStep(Prop, IsFloatType(DT) ? 0.01f : 1.0f));
                 ImGui::InputScalar("##Value", DT, &DisplayValue, &Step, nullptr, Format);
                 if (Min && DisplayValue < *Min)
                 {

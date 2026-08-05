@@ -2,6 +2,7 @@
 #include "TextureFactory.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Assets/AssetTypes/Textures/Texture.h"
+#include "Assets/AssetTypes/Textures/TextureRenderTarget.h"
 #include "Core/Object/Package/Package.h"
 #include "Core/Object/Package/Thumbnail/PackageThumbnail.h"
 #include "encoder/basisu_comp.h"
@@ -187,7 +188,8 @@ namespace Lumina
         ApplyTextureGroupMipPolicy(Texture);
         const uint32 UploadMips = (uint32)Texture->TextureResource->Mips.size();
 
-        Texture->TextureResource->NewTexture = RHI::Textures::Create(RHI::FTexture2DDesc
+        // Recreate: see CookTexturePixels. A re-cook must keep the published ResourceID.
+        RHI::Textures::Recreate(Texture->TextureResource->NewTexture, RHI::FTexture2DDesc
         {
             .Width  = Width,
             .Height = Height,
@@ -416,7 +418,10 @@ namespace Lumina
         ApplyTextureGroupMipPolicy(Texture);
         const uint32 UploadMips = (uint32)Texture->TextureResource->Mips.size();
 
-        Texture->TextureResource->NewTexture = RHI::Textures::Create(RHI::FTexture2DDesc
+        // Recreate, not Create: on a RE-cook (reimport, or a ColorSpace change) this texture already has a
+        // GPU image and a published ResourceID. Overwriting the handle would leak the old image and hand
+        // out a new index that every material sampling this texture has already baked into its uniforms.
+        RHI::Textures::Recreate(Texture->TextureResource->NewTexture, RHI::FTexture2DDesc
         {
             .Width  = Extent.x,
             .Height = Extent.y,
@@ -571,7 +576,8 @@ namespace Lumina
         ApplyTextureGroupMipPolicy(Texture);
         const uint32 UploadMips = (uint32)Texture->TextureResource->Mips.size();
 
-        Texture->TextureResource->NewTexture = RHI::Textures::Create(RHI::FTexture2DDesc
+        // Recreate: see CookTexturePixels. A re-cook must keep the published ResourceID.
+        RHI::Textures::Recreate(Texture->TextureResource->NewTexture, RHI::FTexture2DDesc
         {
             .Width  = Width,
             .Height = Height,
@@ -919,6 +925,48 @@ namespace Lumina
         }
 
         return Texture;
+    }
+
+    bool CTextureFactory::CanReimport(const CStruct* AssetClass) const
+    {
+        // Mesh-embedded textures qualify too: reimport supplies the file, so a texture that arrived with no
+        // SourcePath of its own is exactly the case this exists to rescue.
+        if (AssetClass == nullptr || !AssetClass->IsChildOf(CTexture::StaticClass()))
+        {
+            return false;
+        }
+
+        // Render targets are CTextures, but their contents are written by the renderer rather than cooked
+        // from a file -- anything reimported into one is gone on the next draw.
+        return !AssetClass->IsChildOf(CTextureRenderTarget::StaticClass());
+    }
+
+    FString CTextureFactory::GetReimportSourcePath(const CObject* Asset) const
+    {
+        const CTexture* Texture = Cast<CTexture>(Asset);
+        return Texture != nullptr ? Texture->SourcePath : FString();
+    }
+
+    bool CTextureFactory::TryReimport(CObject* Asset, const FFixedString& SourceFile, const Import::FImportSettings* Settings)
+    {
+        CTexture* Texture = Cast<CTexture>(Asset);
+        if (Texture == nullptr)
+        {
+            return false;
+        }
+
+        // Recook reads SourcePath, so point it at the new file first. Restored on failure: a half-applied
+        // reimport that leaves the asset claiming a source it was never cooked from is worse than no change.
+        const FString PreviousSource = Texture->SourcePath;
+        Texture->SourcePath = FString(SourceFile.c_str());
+
+        if (!Recook(Texture))
+        {
+            Texture->SourcePath = PreviousSource;
+            return false;
+        }
+
+        return true;
     }
 
     bool CTextureFactory::Recook(CTexture* Texture)

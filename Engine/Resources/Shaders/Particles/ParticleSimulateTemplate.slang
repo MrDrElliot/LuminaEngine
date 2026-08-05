@@ -4,13 +4,17 @@
 
 #include "Includes/ParticleSimCommon.slang"
 
+// Floats per particle in the attribute buffer, emitted by FParticleCompiler from the declared set.
+// Always at least 1 so the buffer and its indexing stay well-formed when no module declares anything.
+static const uint PARTICLE_ATTR_FLOATS = $PARTICLE_ATTR_COUNT;
+
 // Module-stack function bodies (filled in by FParticleCompiler).
-void SpawnParticleGraph(inout FGPUParticle P, inout uint Seed, float TotalTime, uint SpawnIndex)
+void SpawnParticleGraph(inout FGPUParticle P, inout uint Seed, float TotalTime, uint Index)
 {
 $PARTICLE_SPAWN_FUNC
 }
 
-void UpdateParticleGraph(inout FGPUParticle P, float DeltaTime, float TotalTime)
+void UpdateParticleGraph(inout FGPUParticle P, float DeltaTime, float TotalTime, uint Index)
 {
     float LifeRatio = saturate(P.Age / max(P.Lifetime, 0.0001));
 $PARTICLE_UPDATE_FUNC
@@ -46,6 +50,9 @@ void ComputeMain(uint3 DispatchThreadID : SV_DispatchThreadID)
             P.RotationSpeed = 0.0;
             P.Seed          = RandUnit(Seed);
 
+            // Declared attribute defaults, before the spawn stack: a module that only reads an attribute
+            // no one wrote still gets the value its declaration asked for rather than zero.
+$PARTICLE_ATTR_DEFAULTS
             SpawnParticleGraph(P, Seed, SimParams().Timing.y, Index);
 
             P.Lifetime = max(P.Lifetime, 0.01);
@@ -76,7 +83,7 @@ void ComputeMain(uint3 DispatchThreadID : SV_DispatchThreadID)
         }
         else
         {
-            UpdateParticleGraph(P, SimParams().Timing.x, SimParams().Timing.y);
+            UpdateParticleGraph(P, SimParams().Timing.x, SimParams().Timing.y, Index);
         }
     }
 

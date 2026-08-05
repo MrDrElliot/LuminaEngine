@@ -135,12 +135,14 @@ namespace Lumina
         float Min = MinOpt ? MinOpt.value() : 0.0f;
         float Max = MaxOpt ? MaxOpt.value() : 0.0f;
 
-        float Speed = Prop->HasMetadata("Delta") ? std::stof(Prop->GetMetadata("Delta").c_str()) : 0.01f;
+        float Speed = ResolveDragSpeed(Prop, 0.01f);
         const FString UnitFormat = BuildUnitFormat(Prop, "%.3f");
         const char* Format = UnitFormat.empty() ? "%.3f" : UnitFormat.c_str();
         if (Prop->HasMetadata("NoDrag"))
         {
-            ImGui::InputScalarN("##", ImGuiDataType_Float, Math::ValuePtr(DisplayValue), 2, &Speed, nullptr, Format);
+            // UNSCALED base: the +/- buttons must step the same amount every press.
+            float Step = ResolveBaseStep(Prop, 0.01f);
+            ImGui::InputScalarN("##", ImGuiDataType_Float, Math::ValuePtr(DisplayValue), 2, &Step, nullptr, Format);
         }
         else
         {
@@ -210,12 +212,14 @@ namespace Lumina
             float Min = MinOpt ? MinOpt.value() : 0.0f;
             float Max = MaxOpt ? MaxOpt.value() : 0.0f;
 
-            float Speed = Prop->HasMetadata("Delta") ? std::stof(Prop->GetMetadata("Delta").c_str()) : 0.01f;
+            float Speed = ResolveDragSpeed(Prop, 0.01f);
             const FString UnitFormat = BuildUnitFormat(Prop, "%.3f");
             const char* Format = UnitFormat.empty() ? "%.3f" : UnitFormat.c_str();
             if (Prop->HasMetadata("NoDrag"))
             {
-                ImGui::InputScalarN("##", ImGuiDataType_Float, Math::ValuePtr(DisplayValue), 3, &Speed, nullptr, Format);
+                // UNSCALED base: the +/- buttons must step the same amount every press.
+                float Step = ResolveBaseStep(Prop, 0.01f);
+                ImGui::InputScalarN("##", ImGuiDataType_Float, Math::ValuePtr(DisplayValue), 3, &Step, nullptr, Format);
             }
             else
             {
@@ -286,12 +290,14 @@ namespace Lumina
             float Min = MinOpt ? MinOpt.value() : 0.0f;
             float Max = MaxOpt ? MaxOpt.value() : 0.0f;
 
-            float Speed = Prop->HasMetadata("Delta") ? std::stof(Prop->GetMetadata("Delta").c_str()) : 0.01f;
+            float Speed = ResolveDragSpeed(Prop, 0.01f);
             const FString UnitFormat = BuildUnitFormat(Prop, "%.3f");
             const char* Format = UnitFormat.empty() ? "%.3f" : UnitFormat.c_str();
             if (Prop->HasMetadata("NoDrag"))
             {
-                ImGui::InputScalarN("##", ImGuiDataType_Float, Math::ValuePtr(DisplayValue), 4, &Speed, nullptr, Format);
+                // UNSCALED base: the +/- buttons must step the same amount every press.
+                float Step = ResolveBaseStep(Prop, 0.01f);
+                ImGui::InputScalarN("##", ImGuiDataType_Float, Math::ValuePtr(DisplayValue), 4, &Step, nullptr, Format);
             }
             else
             {
@@ -339,7 +345,7 @@ namespace Lumina
     {
         ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x);
 
-        ImGui::DragFloat4("##", Math::ValuePtr(DisplayValue), 0.01f);
+        ImGui::DragFloat4("##", Math::ValuePtr(DisplayValue), 0.01f * MouseAdaptiveDragScale());
 
         ImGui::PopItemWidth();
         
@@ -392,12 +398,12 @@ namespace Lumina
         // Translation is always in meters; rotation (degrees) and scale stay unitless.
         // The SIMD transform has no scalar member to point at, so edit scalar buffers and write back.
         FVector3 Translation = DisplayValue.GetLocation();
-        Merge(DrawAxisRow("T", LE_ICON_AXIS_ARROW, ImVec4(0.40f, 0.70f, 1.0f, 1.0f), "Translation (Location)", Math::ValuePtr(Translation), 0.01f, bReset, 0.0f, "%.3f m"));
+        Merge(DrawAxisRow("T", LE_ICON_AXIS_ARROW, ImVec4(0.40f, 0.70f, 1.0f, 1.0f), "Translation (Location)", Math::ValuePtr(Translation), 0.01f * MouseAdaptiveDragScale(), bReset, 0.0f, "%.3f m"));
         DisplayValue.SetLocation(Translation);
 
         FVector3 EulerRotation = Math::Degrees(Math::EulerAngles(DisplayValue.GetRotation()));
         bool bRotationReset = false;
-        const EPropertyChangeOp RotationOp = DrawAxisRow("R", LE_ICON_ROTATE_360, ImVec4(0.40f, 1.0f, 0.70f, 1.0f), "Rotation (Euler Angles)", Math::ValuePtr(EulerRotation), 0.1f, bRotationReset, 0.0f, "%.3f\xc2\xb0");
+        const EPropertyChangeOp RotationOp = DrawAxisRow("R", LE_ICON_ROTATE_360, ImVec4(0.40f, 1.0f, 0.70f, 1.0f), "Rotation (Euler Angles)", Math::ValuePtr(EulerRotation), 0.1f * MouseAdaptiveDragScale(), bRotationReset, 0.0f, "%.3f\xc2\xb0");
         if (RotationOp == EPropertyChangeOp::Updated || bRotationReset)
         {
             DisplayValue.SetRotationFromEuler(EulerRotation);
@@ -409,7 +415,7 @@ namespace Lumina
         const FVector3 PrevScale = ScaleVec;
         bool bScaleReset = false;
         const EPropertyChangeOp ScaleOp = DrawAxisRow("S", LE_ICON_ARROW_TOP_RIGHT_BOTTOM_LEFT, ImVec4(1.0f, 0.70f, 0.40f, 1.0f),
-            "Scale (multiplier)", Math::ValuePtr(ScaleVec), 0.01f, bScaleReset, 1.0f, "%.3f\xc3\x97", &bUniformScale);
+            "Scale (multiplier)", Math::ValuePtr(ScaleVec), 0.01f * MouseAdaptiveDragScale(), bScaleReset, 1.0f, "%.3f\xc3\x97", &bUniformScale);
 
         if (bUniformScale && ScaleOp == EPropertyChangeOp::Updated)
         {

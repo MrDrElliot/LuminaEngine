@@ -77,12 +77,55 @@ struct FParticleSimArgs
     FParticleSimParams* Params;
     FGPUParticle*       Particles;
     uint*               SpawnCounter;   // scratch counter, sized 4 bytes
+    // Module-stack value inputs, one float4 slot per parameter, in the order FParticleCompiler assigned
+    // them. Null for the legacy data-driven sim, which has no module stack and never reads MP().
+    float4*             ModuleParams;
+    // Declared per-particle attributes: PARTICLE_ATTR_FLOATS floats per particle, parallel to the core
+    // particle buffer and indexed by the same particle index. A plain float* rather than a generated
+    // struct because this header is parsed before any generated code and cannot name a generated type.
+    float*              Attributes;
 };
 
 FParticleSimArgs*   SimArgs()      { return GetPassArgs<FParticleSimArgs>(); }
 FParticleSimParams* SimParams()    { return SimArgs().Params; }
 FGPUParticle*       Particles()    { return SimArgs().Particles; }
 uint*               SpawnCounter() { return SimArgs().SpawnCounter; }
+float*              PAttr()        { return SimArgs().Attributes; }
+
+// Module parameter slot accessor. Generated module code indexes this instead of embedding literals, so
+// the compiled shader is invariant to the values and only a structural stack edit needs a rebuild.
+float4 MP(uint Slot) { return SimArgs().ModuleParams[Slot]; }
+
+// Baked curve/gradient tables. MUST match kParticleLUTSamples in ParticleCompiler.h -- the compiler lays
+// the tables out with this stride, so a mismatch reads into the next parameter.
+static const uint PARTICLE_LUT_SAMPLES = 16u;
+
+// Normalized index pair + blend factor shared by both samplers.
+void LUTIndices(float T, out uint I0, out uint I1, out float Frac)
+{
+    const float U = saturate(T) * (float)(PARTICLE_LUT_SAMPLES - 1u);
+    I0   = (uint)floor(U);
+    I1   = min(I0 + 1u, PARTICLE_LUT_SAMPLES - 1u);
+    Frac = U - (float)I0;
+}
+
+// Scalar curve: samples packed 4-per-slot from BaseSlot.
+float SampleCurveLUT(uint BaseSlot, float T)
+{
+    uint I0, I1; float Frac;
+    LUTIndices(T, I0, I1, Frac);
+    const float A = MP(BaseSlot + (I0 >> 2u))[I0 & 3u];
+    const float B = MP(BaseSlot + (I1 >> 2u))[I1 & 3u];
+    return lerp(A, B, Frac);
+}
+
+// Colour gradient: one RGBA sample per slot from BaseSlot.
+float4 SampleGradientLUT(uint BaseSlot, float T)
+{
+    uint I0, I1; float Frac;
+    LUTIndices(T, I0, I1, Frac);
+    return lerp(MP(BaseSlot + I0), MP(BaseSlot + I1), Frac);
+}
 
 uint WangHash(uint x)
 {

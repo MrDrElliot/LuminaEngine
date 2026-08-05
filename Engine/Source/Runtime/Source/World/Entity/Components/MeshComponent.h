@@ -71,14 +71,26 @@ namespace Lumina
         // Compared against the live mesh field so a direct assignment self-heals after one frame.
         const void*     CachedMeshKey = nullptr;
 
-        // 0 never matches a live epoch, so a fresh component always resolves.
-        uint32  CachedEpoch = 0;
+        /**
+         * Staleness token of the resolve entry this component last copied from
+         * (FMeshResolveCache::GetEntryState).
+         *
+         * This used to be a stamp of the cache's GLOBAL epoch, which made every invalidation scene-wide:
+         * one mesh finishing its GPU upload bumped the epoch, so every mesh component in the world failed
+         * its gate, re-resolved, and got marked dirty -- and the render scene then re-bound and re-uploaded
+         * every primitive. Comparing the entry's own token instead means the components that re-resolve are
+         * exactly the ones drawing the mesh that changed.
+         *
+         * MESH_RESOLVE_STATE_STALE never matches a live entry, so a fresh component always resolves.
+         */
+        uint32  CachedEntryState = MESH_RESOLVE_STATE_STALE;
 
-        // Hash of the materials this component last RESOLVED with. Compared against the live materials every
-        // frame, so a material change is detected from its effect rather than from a notification. Belt and
-        // braces on purpose: the editor's PostEditChange, SetMaterialAtSlot and MarkRenderStateDirty all
-        // signal correctly, but a direct write from C++ or C# signals nothing, and a retained renderer bakes
-        // the material into a GPU record that is only rewritten when something reports a change.
+        // Hash of the override list this component last RESOLVED with. Compared against the live array
+        // every frame, so a material change is detected from its effect rather than from a notification.
+        // Belt and braces on purpose: the editor's PostEditChange, SetMaterialAtSlot and MarkRenderStateDirty
+        // all signal correctly, but a direct write from C++ or C# signals nothing, and a retained renderer
+        // bakes the material into a GPU record that is only rewritten when something reports a change.
+        // 0 is the never-resolved sentinel.
         uint32  CachedMaterialHash = 0;
 
         FUNCTION(Script)

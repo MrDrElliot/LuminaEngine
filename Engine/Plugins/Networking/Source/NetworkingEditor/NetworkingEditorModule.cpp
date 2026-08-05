@@ -10,10 +10,15 @@
 #include "Log/Log.h"
 #include "UI/EditorUI.h"
 #include "UI/Tools/ToolsMenuRegistry.h"
+#include "Tools/UI/ImGui/ImGuiModule.h"   // LUMINA_MODULE_IMGUI
 
 using namespace Lumina;
 
 IMPLEMENT_MODULE(FNetworkingEditorModule, "NetworkingEditor");
+
+// This module DRAWS (FNetworkEditorTool), and ImGui is a StaticLib -- so without this the DLL gets
+// its own null GImGui and the first ImGui call in the tool faults. Same opt-in NsightPerfEditor makes.
+LUMINA_MODULE_IMGUI();
 
 namespace
 {

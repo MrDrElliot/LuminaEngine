@@ -7,8 +7,11 @@ namespace Lumina
 {
     void SMeshComponent::InvalidateRenderResolve()
     {
-        // 0 never matches a live epoch (the cache starts at 1), so the next gather re-resolves this one.
-        CachedEpoch = 0;
+        // Bit 0 is set, which no live entry token ever has, so the next resolve pass re-reads this one.
+        // Note the scope: this invalidates THIS COMPONENT's copy, not the shared resolve entry. Anything
+        // that changes the entry itself (the mesh's GPU buffers landing, a material recompiling) goes
+        // through FMeshResolveCache::InvalidateDependency instead.
+        CachedEntryState = MESH_RESOLVE_STATE_STALE;
         FMeshResolveCache::MarkPendingWork();
     }
 }

@@ -40,6 +40,19 @@ namespace Lumina
         Multiply,
     };
 
+    /** How a particle's billboard is oriented. */
+    REFLECT()
+    enum class RUNTIME_API EParticleFacingMode : uint8
+    {
+        /** Always square-on to the camera. */
+        CameraFacing,
+        /** Fixed to the world XZ plane; for ground decals and flat sheets. */
+        WorldXZ,
+        /** Long axis follows the particle's velocity, still turned to face the camera. Sparks, rain,
+         *  debris trails -- anything whose direction of travel should read. */
+        VelocityAligned,
+    };
+
     REFLECT()
     enum class RUNTIME_API EParticleShaderMode : uint8
     {
@@ -114,20 +127,54 @@ namespace Lumina
         FName ParameterName;
     };
 
+    /** Declared attributes the RENDERER can consume.
+     *
+     *  The vertex shader is shared rather than generated, so it cannot know the attribute layout at
+     *  compile time the way the simulation shader does. The compiler resolves these names to slot indices
+     *  once, the asset stores them, and the renderer passes them as uniforms -- so a module opts in simply
+     *  by declaring an attribute under the matching name.
+     *
+     *  Exposing a new one means adding it here and reading it in ParticleVertex.slang; nothing in between
+     *  needs to change. */
+    namespace ParticleRenderAttribute
+    {
+        enum Type : uint8
+        {
+            SizeScaleX,
+            SizeScaleY,
+            PrevPosX,
+            PrevPosY,
+            PrevPosZ,
+            Count
+        };
+
+        inline const char* const Names[Count] =
+        {
+            "SizeScaleX", "SizeScaleY",
+            "PrevPosX", "PrevPosY", "PrevPosZ",
+        };
+    }
+
     struct SParticleSystemComponent;
 
-    /** GPU particle system asset; data-driven modules with optional graph-compiled custom compute shader. */
+    /** One emitter within a CParticleSystem: its own particle budget, module-compiled simulation shader,
+     *  and render settings.
+     *
+     *  Every field here used to sit flat on CParticleSystem, which is why a system could only ever be a
+     *  single emitter. A real effect is several at once -- an explosion is a flash, a smoke plume, sparks
+     *  and debris, each wanting its own particle count, lifetime, blend mode and texture -- so the whole
+     *  block moved here and the system became a list of these.
+     *
+     *  Emitters simulate independently: one dispatch and one draw each, with no shared buffers. */
     REFLECT()
-    class RUNTIME_API CParticleSystem : public CObject
+    class RUNTIME_API CParticleEmitter : public CObject
     {
         GENERATED_BODY()
 
     public:
 
-        CParticleSystem() = default;
+        CParticleEmitter() = default;
 
-        void Serialize(FArchive& Ar) override;
-        bool IsAsset() const override { return true; }
         void PostLoad() override;
         void OnDestroy() override;
 
@@ -151,22 +198,52 @@ namespace Lumina
         PROPERTY()
         TVector<uint32> ComputeShaderBinaries;
 
-        PROPERTY(Editable, Category = "User Parameters")
-        TVector<FParticleParameter> UserParameters;
-
+        /** Module-stack value inputs, one float4 slot per parameter, in the order the compiler assigned.
+         *  Uploaded verbatim each frame as the shader's ModuleParams array. Editing a module input
+         *  rewrites a slot here and needs no recompile; only a structural stack change rebuilds the
+         *  shader. Empty for legacy data-driven assets, which read the SimParams uniforms instead. */
         PROPERTY()
-        TVector<FParticlePropertyBinding> PropertyBindings;
+        TVector<FVector4> ModuleParamValues;
 
-        const FParticleParameter* FindUserParameter(const FName& InName) const;
+        /** Layout the compiled shader was built against. A value-only refresh compares the freshly
+         *  generated layout to this and forces a full rebuild on mismatch, so a slot can never be read
+         *  at the wrong width or index. */
+        PROPERTY()
+        uint64 CompiledCodeHash = 0;
 
-        /** Returns NAME_None if no binding exists. */
-        FName GetPropertyBinding(const FName& PropertyName) const;
+        /** Floats per particle in the declared-attribute buffer, matching PARTICLE_ATTR_FLOATS in the
+         *  compiled shader. 1 when no module declared anything (the buffer still exists so indexing stays
+         *  well-formed). Structural, so it only changes when the shader is rebuilt. */
+        PROPERTY()
+        uint32 AttributeFloatCount = 1;
 
-        /** Pass NAME_None as ParameterName to clear. */
-        void SetPropertyBinding(const FName& PropertyName, const FName& ParameterName);
+        /** Slot index per ParticleRenderAttribute::Type, or -1 when the stack never declared it. Resolved
+         *  at compile time, so it only moves with a rebuild -- same lifetime as AttributeFloatCount. */
+        PROPERTY()
+        TVector<int32> RenderAttributeSlots;
 
-        void ClearPropertyBinding(const FName& PropertyName);
-        bool HasPropertyBinding(const FName& PropertyName) const;
+        /** Slot for a renderer-consumed attribute, or -1. Safe on an asset saved before the entry existed. */
+        int32 GetRenderAttributeSlot(ParticleRenderAttribute::Type Attr) const
+        {
+            return (int32)Attr < (int32)RenderAttributeSlots.size() ? RenderAttributeSlots[(int32)Attr] : -1;
+        }
+
+        /** Shown as the column header in the editor. Purely cosmetic, but an effect with four emitters is
+         *  unreadable when they are all called "Emitter". */
+        PROPERTY(Editable, Category = "Emitter")
+        FString EmitterName = "Emitter";
+
+        /** Skipped entirely when false -- no dispatch, no draw, no GPU state. Lets one emitter of an effect
+         *  be muted while tuning the others, which is most of what emitter iteration actually is. */
+        PROPERTY(Editable, Category = "Emitter")
+        bool bEnabled = true;
+
+        /** Package-local name of this emitter's authoring module stack. The stack is an editor-only class,
+         *  so it is linked by NAME rather than by TObjectPtr: a hard reference from a runtime asset would
+         *  drag editor-only data into cooked builds. Stable across reorder and rename, and empty only until
+         *  the editor first opens the emitter. */
+        PROPERTY()
+        FString AuthoringStackName;
 
         PROPERTY(Editable, Category = "Simulation", ClampMin = 1)
         int32 MaxParticles = 1024;
@@ -257,12 +334,83 @@ namespace Lumina
         TObjectPtr<CTexture> Texture;
 
         PROPERTY(Editable, Category = "Render")
+        EParticleFacingMode FacingMode = EParticleFacingMode::CameraFacing;
+
+        /** Extra length along the velocity axis, in seconds of travel: the quad is stretched by
+         *  speed * this. 0 leaves it square. Only meaningful with VelocityAligned facing.
+         *  Note that a Trail module overrides facing entirely -- see EParticleFacingMode. */
+        PROPERTY(Editable, Category = "Render", ClampMin = 0.0f)
+        float VelocityStretch = 0.0f;
+
+        /** Sprite-sheet subdivisions. 1x1 (the default) uses the whole texture; anything larger plays the
+         *  cells as a flipbook across the particle's life, which is what most smoke and explosion sheets
+         *  need. The frame comes from age, so it costs no per-particle storage. */
+        PROPERTY(Editable, Category = "Render", ClampMin = 1)
+        int32 SubUVColumns = 1;
+
+        PROPERTY(Editable, Category = "Render", ClampMin = 1)
+        int32 SubUVRows = 1;
+
+        /** Kept so assets authored before FacingMode still load; FacingMode supersedes it. */
+        PROPERTY()
         bool bBillboardToCamera = true;
 
         PROPERTY(Editable, Category = "Render")
         bool bWriteDepth = false;
 
         const FShaderEntry* ComputeShader = nullptr;
+    };
+
+    /** GPU particle system asset: an ordered list of emitters plus the parameters they share.
+     *
+     *  Only user parameters and their property bindings live at the system level -- they are addressed by
+     *  name from a component override, so they have to be one namespace per asset rather than per emitter.
+     *  Everything else is a property OF an emitter and lives on CParticleEmitter. */
+    REFLECT()
+    class RUNTIME_API CParticleSystem : public CObject
+    {
+        GENERATED_BODY()
+
+    public:
+
+        CParticleSystem() = default;
+
+        void Serialize(FArchive& Ar) override;
+        bool IsAsset() const override { return true; }
+        void PostLoad() override;
+
+        /** Emitters in draw order. Never empty after PostLoad: an asset that somehow has none gets one, so
+         *  no caller has to handle a system that cannot render anything. */
+        PROPERTY()
+        TVector<TObjectPtr<CParticleEmitter>> Emitters;
+
+        /** Appends a new emitter with a unique display name. Returns it. */
+        CParticleEmitter* AddEmitter();
+
+        /** Removes an emitter. Refuses to remove the last one -- a system with no emitters has no meaning
+         *  and every consumer would need a special case for it. Returns whether it removed anything. */
+        bool RemoveEmitter(CParticleEmitter* Emitter);
+
+        /** Moves an emitter earlier (-1) or later (+1) in draw order. No-op at the ends. */
+        void MoveEmitter(CParticleEmitter* Emitter, int32 Direction);
+
+        PROPERTY(Editable, Category = "User Parameters")
+        TVector<FParticleParameter> UserParameters;
+
+        PROPERTY()
+        TVector<FParticlePropertyBinding> PropertyBindings;
+
+        const FParticleParameter* FindUserParameter(const FName& InName) const;
+
+        /** Returns NAME_None if no binding exists. */
+        FName GetPropertyBinding(const FName& PropertyName) const;
+
+        /** Pass NAME_None as ParameterName to clear. */
+        void SetPropertyBinding(const FName& PropertyName, const FName& ParameterName);
+
+        void ClearPropertyBinding(const FName& PropertyName);
+        bool HasPropertyBinding(const FName& PropertyName) const;
+
     };
 
     /** Render-thread-only GPU + sim state per emitter; lives in FForwardRenderScene::ParticleGPUStates,
@@ -272,6 +420,10 @@ namespace Lumina
         RHI::GPUPtr     ParticleBuffer     = 0;  // RW structured buffer of FGPUParticle (64B stride)
         uint64          ParticleBufferSize = 0;
         RHI::GPUPtr     SpawnCounterBuffer = 0;  // Single uint, cleared per frame
+        // Declared per-particle attributes, parallel to ParticleBuffer and indexed by the same index.
+        RHI::GPUPtr     AttributeBuffer     = 0;
+        uint64          AttributeBufferSize = 0;
+        uint32          AllocatedAttributeFloats = 0;
         uint32          AllocatedMax        = 0;
         float           SpawnAccumulator    = 0.0f;
         float           TotalTime           = 0.0f;
@@ -320,10 +472,15 @@ namespace Lumina
         float                   NoiseSpeed              = 1.0f;
 
         EParticleBlendMode      BlendMode               = EParticleBlendMode::Additive;
-        bool                    bBillboardToCamera      = true;
+        EParticleFacingMode     FacingMode              = EParticleFacingMode::CameraFacing;
+        float                   VelocityStretch         = 0.0f;
+        int32                   SubUVColumns            = 1;
+        int32                   SubUVRows               = 1;
         bool                    bWriteDepth             = false;
     };
 
-    /** Bound properties read through component overrides, falling back to asset parameter default. */
-    RUNTIME_API FResolvedParticleParams ResolveParticleParams(const CParticleSystem& Asset, const SParticleSystemComponent& Component);
+    /** Bound properties read through component overrides, falling back to the emitter's authored value.
+     *  Takes both: the values come from the emitter, but the property bindings that redirect them to a
+     *  named user parameter are declared once per system. */
+    RUNTIME_API FResolvedParticleParams ResolveParticleParams(const CParticleSystem& Asset, const CParticleEmitter& Emitter, const SParticleSystemComponent& Component);
 }

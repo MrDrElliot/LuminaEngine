@@ -54,6 +54,7 @@
 #include "Core/Object/Package/Thumbnail/PackageThumbnail.h"
 #include "Thumbnails/AssetTilePainters.h"
 #include "Thumbnails/ThumbnailManager.h"
+#include "Assets/AssetEvents.h"
 #include <LuminaEditor.h>
 #include "Scripting/DotNet/DotNetHost.h"
 #include <atomic>
@@ -2454,6 +2455,226 @@ namespace Lumina
         return FAssetRegistry::Get().GetAssetByPath(Path);
     }
 
+    void FContentBrowserEditorTool::DrawReimportAssetMenuItem(const FContentBrowserTileViewItem* ContentItem, bool bIsProtected)
+    {
+        const FFixedString AssetPath(ContentItem->GetVirtualPath().data(), ContentItem->GetVirtualPath().size());
+        const FAssetData*  Data = FAssetRegistry::Get().GetAssetByPath(AssetPath);
+        if (Data == nullptr)
+        {
+            return;
+        }
+
+        // Decided from the registry's class name, so drawing the menu never loads the asset.
+        CClass* AssetClass = FindObject<CClass>(Data->AssetClass);
+        CFactory* Factory = CFactory::FindReimportFactory(AssetClass);
+        if (Factory == nullptr)
+        {
+            return;
+        }
+
+        const FGuid AssetGUID = Data->AssetGUID;
+
+        if (ImGui::MenuItem(LE_ICON_FILE_REPLACE " Reimport From File...", nullptr, false, !bIsProtected))
+        {
+            // One options window at a time; the modal manager allows a single owner, and a reimport
+            // launched underneath a running batch import would lose its dialogue.
+            if (bImportWindowOpen)
+            {
+                ImGuiX::Notifications::NotifyWarning("An import is already in progress; finish it first.");
+                return;
+            }
+
+            CObject* Asset = LoadObject<CObject>(AssetGUID);
+            if (Asset == nullptr)
+            {
+                ImGuiX::Notifications::NotifyError("Could not load '{0}' to reimport it.", AssetPath);
+                return;
+            }
+
+            // Filter comes from the factory, so the dialog only offers files this asset type can actually
+            // be built from -- the whole reason this is safer than "import over the top".
+            const FFixedString Filter = Factory->BuildFileDialogFilter();
+            const FString      Previous = Factory->GetReimportSourcePath(Asset);
+
+            FFixedString Picked;
+            if (!Platform::OpenFileDialogue(Picked, "Reimport From File", Filter.c_str(),
+                                            Previous.empty() ? nullptr : Previous.c_str()))
+            {
+                return;
+            }
+
+            // The dialog's "All Files" entry can hand back anything, so the extension is re-checked here
+            // rather than trusted; the importers assume they were given a format they parse.
+            if (!Factory->IsExtensionSupported(VFS::Extension(Picked)))
+            {
+                ImGuiX::Notifications::NotifyError("'{0}' is not a supported source file for this asset type.",
+                                                   VFS::FileName(Picked).data());
+                return;
+            }
+
+            StartReimport(AssetGUID, Factory, Picked);
+        }
+        ImGuiX::TextTooltip("{}", "Replace this asset's contents from a source file. The asset keeps its "
+                                  "name, path and GUID, so everything referencing it stays pointed at it.");
+    }
+
+    void FContentBrowserEditorTool::StartReimport(const FGuid& AssetGUID, CFactory* Factory, const FFixedString& SourceFile)
+    {
+        CObject* Asset = LoadObject<CObject>(AssetGUID);
+        if (Asset == nullptr)
+        {
+            return;
+        }
+
+        // The asset's own package path, so the options window's header reads as the thing being replaced
+        // rather than as a destination that would be created.
+        CPackage* Package = Asset->GetPackage();
+        const FFixedString AssetPath = Package != nullptr ? Package->GetPackagePath() : FFixedString();
+
+        bImportWindowOpen = true;
+
+        Factory->PrepareImportAsync(SourceFile, AssetPath,
+            [this, AssetGUID, Factory, SourceFile, AssetPath](TUniquePtr<Import::FImportSettings> Settings)
+            {
+                if (!Settings)
+                {
+                    ImGuiX::Notifications::NotifyError("Failed to read \"{0}\"", SourceFile);
+                    bImportWindowOpen = false;
+                    return;
+                }
+
+                // Importers with no options (texture, font, audio) go straight through, matching what a
+                // fresh import of the same file does.
+                if (!Factory->HasImportDialogue())
+                {
+                    Factory->CommitImportSettings(*Settings);
+                    FinishReimport(AssetGUID, Factory, SourceFile, Move(Settings));
+                    bImportWindowOpen = false;
+                    return;
+                }
+
+                struct FModalState
+                {
+                    TUniquePtr<Import::FImportSettings> ImportSettings;
+                    bool bShouldClose = false;
+                };
+
+                auto SharedState = MakeShared<FModalState>();
+                SharedState->ImportSettings = Move(Settings);
+
+                ToolContext->PushModal("Reimport", {940, 900},
+                    [this, AssetGUID, Factory, SourceFile, AssetPath, SharedState]() mutable
+                    {
+                        // RemainingCount 0: a reimport is always a single file, so the window shows no
+                        // "apply to all" affordance and the flag it returns is ignored.
+                        bool bApplyToAll = false;
+
+                        if (DrawImportWindow(Factory, SourceFile, AssetPath, *SharedState->ImportSettings,
+                                             0, SharedState->bShouldClose, bApplyToAll))
+                        {
+                            FinishReimport(AssetGUID, Factory, SourceFile, Move(SharedState->ImportSettings));
+                        }
+
+                        if (SharedState->bShouldClose)
+                        {
+                            bImportWindowOpen = false;
+                        }
+
+                        return SharedState->bShouldClose;
+                    });
+            });
+    }
+
+    void FContentBrowserEditorTool::FinishReimport(const FGuid& AssetGUID, CFactory* Factory,
+                                                   const FFixedString& SourceFile,
+                                                   TUniquePtr<Import::FImportSettings> Settings)
+    {
+        // Stays on a worker like the import path does: the RHI takes multi-threaded submission, and the
+        // geometry finalize is seconds of work that would otherwise freeze the editor.
+        Task::AsyncTask(1, 1, [this, AssetGUID, Factory, SourceFile, Settings = Move(Settings)](uint32, uint32, uint32)
+        {
+            CObject* Asset = LoadObject<CObject>(AssetGUID);
+            if (Asset == nullptr)
+            {
+                MainThread::Enqueue([SourceFile]()
+                {
+                    ImGuiX::Notifications::NotifyError("The asset was gone before \"{0}\" could be applied.", SourceFile);
+                });
+                return;
+            }
+
+            if (!Factory->TryReimport(Asset, SourceFile, Settings.get()))
+            {
+                MainThread::Enqueue([SourceFile]()
+                {
+                    // TryReimport leaves the asset untouched when it fails, so there is nothing to undo.
+                    ImGuiX::Notifications::NotifyError("Reimport failed; \"{0}\" was left unchanged.", SourceFile);
+                });
+                return;
+            }
+
+            // Thumbnail first, and on the main thread: it RENDERS the asset into the package's thumbnail
+            // slot, so it has to happen before the save that embeds it -- and it would otherwise keep
+            // showing the old contents, since nothing about the package path changed.
+            MainThread::Enqueue([this, AssetGUID, SourceFile]()
+            {
+                CObject* Asset = LoadObject<CObject>(AssetGUID);
+                if (Asset == nullptr)
+                {
+                    ImGuiX::Notifications::NotifyError("The asset was gone before \"{0}\" could be applied.", SourceFile);
+                    return;
+                }
+
+                CPackage* Package = Asset->GetPackage();
+                if (Package != nullptr)
+                {
+                    // No registered renderer (or a type with none) just leaves the old image; the cache
+                    // drop below still forces the browser to re-read whatever the package now holds.
+                    CThumbnailManager::Get().GenerateThumbnail(Asset, Package);
+                    CThumbnailManager::Get().InvalidateThumbnail(Package->GetName());
+                }
+
+                // Back off the main thread for the write: a mesh package is megabytes of meshlet data.
+                Task::AsyncTask(1, 1, [this, AssetGUID, SourceFile](uint32, uint32, uint32)
+                {
+                    bool bSaved = false;
+                    if (CObject* Asset = LoadObject<CObject>(AssetGUID))
+                    {
+                        if (CPackage* Package = Asset->GetPackage())
+                        {
+                            bSaved = CPackage::SavePackage(Package, Package->GetPackagePath());
+                        }
+                    }
+
+                    MainThread::Enqueue([this, AssetGUID, SourceFile, bSaved]()
+                    {
+                        if (CObject* Asset = LoadObject<CObject>(AssetGUID))
+                        {
+                            // The asset already existed, so this is a save notification and not a creation:
+                            // the registry entry keeps its GUID and path, only the on-disk state moved.
+                            FAssetRegistry::Get().AssetSaved(Asset);
+
+                            // Nothing about the reference changed, so no open tool would otherwise notice
+                            // that what it is showing is a different mesh/texture than the one it cached.
+                            AssetEvents::BroadcastAssetDataChanged(Asset);
+                        }
+
+                        RefreshContentBrowser();
+
+                        if (bSaved)
+                        {
+                            ImGuiX::Notifications::NotifySuccess("Reimported from \"{0}\"", SourceFile);
+                        }
+                        else
+                        {
+                            ImGuiX::Notifications::NotifyWarning("Reimported from \"{0}\", but saving the package failed.", SourceFile);
+                        }
+                    });
+                });
+            });
+        });
+    }
+
     void FContentBrowserEditorTool::DrawDuplicateAssetMenuItem(const FContentBrowserTileViewItem* ContentItem, bool bIsProtected)
     {
         const FFixedString SourcePath(ContentItem->GetVirtualPath().data(), ContentItem->GetVirtualPath().size());
@@ -2623,6 +2844,7 @@ namespace Lumina
         if (bIsAsset)
         {
             DrawDuplicateAssetMenuItem(ContentItem, bIsProtected);
+            DrawReimportAssetMenuItem(ContentItem, bIsProtected);
         }
 
         if (ImGui::MenuItem(LE_ICON_RENAME " Rename", "F2", false, !bIsProtected))

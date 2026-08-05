@@ -155,6 +155,10 @@ namespace Lumina
 
         void DrawTitleBarMenu(const FUpdateContext& UpdateContext);
 
+        // Packages with unsaved changes, skipping deleted assets awaiting the deferred drain. Walks every
+        // package, so callers on a per-frame path must throttle it.
+        uint32 CountDirtyPackages() const;
+
         // Titlebar stats, composed once per frame so the right-hand region can be sized from their
         // measured width rather than a constant that silently clips when a stat is added.
         struct FTitleBarStats
@@ -162,6 +166,7 @@ namespace Lumina
             TFixedString<64> Perf;
             TFixedString<64> Objects;
             TFixedString<64> Memory;
+            TFixedString<64> GPUMemory;
             float            Width = 0.0f;
         };
 
@@ -217,6 +222,11 @@ namespace Lumina
         // each registry update instead of blocking the main thread until the scan drains.
         FDelegateHandle PendingStartupMapHandle;
 
+        // Global reaction to a texture's data being replaced: re-upload the texture bindings of every
+        // material that binds it. Lives here rather than in the material editor because a material whose
+        // editor is closed is still being rendered, and is stale in exactly the same way.
+        FDelegateHandle AssetDataChangedHandle;
+
         void HandleUserInput(const FUpdateContext& UpdateContext);
 
     private:
@@ -224,7 +234,7 @@ namespace Lumina
         FEditorModalManager                             ModalManager;
         TFunction<void()>                               PendingDialogAction;
 
-        ImGuiX::ApplicationTitleBar                     TitleBar;
+        ImGuiX::FApplicationTitleBar                    TitleBar;
         ImGuiWindowClass                                EditorWindowClass;
 
         FGamePreviewTool*                               GamePreviewTool = nullptr;
@@ -289,12 +299,20 @@ namespace Lumina
         float                                           SmoothedFPS = 0.0f;
         float                                           SmoothedFrameTime = 0.0f;   // <= 0 seeds from the first sample
         float                                           SmoothedMemoryMiB = 0.0f;   // <= 0 seeds from the first sample
+        float                                           SmoothedGPUMemoryMiB = 0.0f; // <= 0 seeds from the first sample
+        float                                           GPUMemoryBudgetMiB = 0.0f;  // device-local budget; not smoothed, it does not move
 
         // Time constants, not per-frame blend factors: a fixed factor makes the settling time depend on
         // the frame rate, so the readout was sluggish at 30 fps and twitchy at 300 -- worst at exactly the
         // moment you are reading it. Seconds to reach ~63% of a step change, frame rate independent.
         static constexpr float                          FrameTimeSmoothingSeconds = 0.2f;
         static constexpr float                          MemorySmoothingSeconds = 1.0f;
+
+        // Drives the title bar's unsaved-changes hint. Counting means walking every package, so it is
+        // recounted on a timer instead of per frame -- a hint does not need to be frame-accurate.
+        uint32                                          DirtyPackageCount = 0;
+        float                                           DirtyPackageScanCountdown = 0.0f;
+        static constexpr float                          DirtyPackageScanInterval = 0.5f;
     };
 
     template <typename T, typename ... Args>

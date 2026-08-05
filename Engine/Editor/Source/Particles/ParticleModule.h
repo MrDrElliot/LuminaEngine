@@ -17,10 +17,13 @@ namespace Lumina
         Update,     // Runs every frame on live particles; applies forces / over-life curves.
     };
 
+    // Exported: a plugin or game editor module defines its own modules by deriving from this, which needs
+    // the base's vtable and StaticClass out of the Editor DLL. Discovery alone is not enough -- reflection
+    // would find the subclass, but it could not have linked in the first place.
     // One behavior in an emitter stack (Niagara-style): typed PROPERTY() inputs + emitted HLSL into the Spawn/Update compute, reading/writing P.* attributes and SimParams.
     // Editor-time authoring concept: serialized into the asset, but the runtime only consumes the compiled shader.
     REFLECT()
-    class CParticleModule : public CObject
+    class EDITOR_API CParticleModule : public CObject
     {
         GENERATED_BODY()
 
@@ -43,6 +46,12 @@ namespace Lumina
 
         /** Emit this module's HLSL into the compiler's active (stage-matched) chunk. */
         virtual void Generate(FParticleCompiler& Compiler, int32 ModuleIndex) {}
+
+        /** Whether this class appears in the add-module palette. The palette is discovered by reflection,
+         *  so every CParticleModule subclass shows up by default -- including an intermediate base a plugin
+         *  defines to share code between several real modules, which is not something anyone can usefully
+         *  add to a stack. Such a base overrides this to false; concrete modules never need to. */
+        virtual bool IsPaletteVisible() const { return true; }
 
         /** When false the module is skipped at compile time (kept in the stack for quick toggling). */
         PROPERTY(Editable, Category = "Module")

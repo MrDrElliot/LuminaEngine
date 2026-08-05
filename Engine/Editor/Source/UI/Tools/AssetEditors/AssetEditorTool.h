@@ -44,6 +44,11 @@ namespace Lumina
                 // Property edits on the asset become undoable CObject snapshots -- undo for free, no per-editor code.
                 SetupPropertyUndo();
             }
+
+            // Subscribed HERE and not in OnInitialize: every asset editor overrides OnInitialize to build
+            // its windows and none of them call the base, so a subscription there would silently never
+            // happen for any tool in the editor.
+            SubscribeToAssetDataChanges();
         }
 
         // For tools on raw non-CObject content (e.g. .rml). Subclasses override OnSave
@@ -54,12 +59,22 @@ namespace Lumina
         }
 
 
+        ~FAssetEditorTool() override;
+
         void OnInitialize() override;
         void Deinitialize(const FUpdateContext& UpdateContext) override;
         void Update(const FUpdateContext& UpdateContext) override;
 
         FName GetToolName() const override;
         virtual void OnAssetLoadFinished() { }
+
+        /** This tool's asset had its data replaced by something else (a reimport, an external re-cook).
+         *  The base rebuilds the property table, which is the state that goes stale for every tool -- a
+         *  reimport can change the shape of the reflected data (mesh material slots being the obvious one)
+         *  and the table's rows describe the old shape until something rebuilds them.
+         *
+         *  Override to drop tool-specific caches too, and call the base. */
+        virtual void OnAssetDataChangedExternally();
         void OnSave() override;
 
         bool IsAssetEditorTool() const override;
@@ -103,6 +118,9 @@ namespace Lumina
         // Wires the PropertyTable start/finish edit callbacks to record a CObject snapshot transaction.
         void SetupPropertyUndo();
 
+        void SubscribeToAssetDataChanges();
+        void UnsubscribeFromAssetDataChanges();
+
     protected:
 
         template<Concept::IsACObject T>
@@ -116,6 +134,10 @@ namespace Lumina
         TObjectPtr<CObject>         Asset;
         FPropertyTable              PropertyTable;
         uint8                       bAssetLoadBroadcasted:1;
+
+        // Subscription to AssetEvents::OnAssetDataChanged, dropped in Deinitialize. Held per tool rather
+        // than polled, because the swap happens on a worker and there is no frame the tool could notice it.
+        FDelegateHandle             AssetDataChangedHandle;
 
         // Cached "DisplayName###GUID" ImGui window title; rebuilt only when the asset is renamed.
         mutable FName               CachedWindowName;

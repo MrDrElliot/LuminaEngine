@@ -248,24 +248,41 @@ namespace Lumina::ImGuiX
         }
     }
     
-    struct RUNTIME_API ApplicationTitleBar
+    // Stand-in for the OS title bar, drawn as the main viewport's top side bar. Laid out left to right as
+    // [menu section][info section][window controls]. Every pixel not covered by a widget is reported to the
+    // platform window as caption, so the whole bar drags without any section having to reserve a gap.
+    class RUNTIME_API FApplicationTitleBar
     {
-        constexpr static float WindowControlButtonWidth = 45;
-        constexpr static float s_minimumDraggableGap = 24; // Minimum open gap left open to allow dragging
-        constexpr static float s_sectionPadding = 8; // Padding between the window frame/window controls and the menu/control sections
-
-        static inline float GetWindowsControlsWidth() { return WindowControlButtonWidth * 3; }
-        static void DrawWindowControls();
-
     public:
 
-        // This function takes two delegates and sizes each representing the title bar menu and an extra optional controls section
-        void Draw(TFunction<void()>&& menuSectionDrawFunction = TFunction<void()>(), float menuSectionWidth = 0, TFunction<void()>&& controlsSectionDrawFunction = TFunction<void()>(), float controlsSectionWidth = 0);
+        // Draws the bar for this frame. Only the info section is measured by the caller; the menu section
+        // takes every pixel that is left, so long content (a project name) is bounded by the window rather
+        // than clipped against a fixed section width.
+        void Draw(TFunction<void()>&& MenuSectionDrawFunction = TFunction<void()>(),
+                  TFunction<void()>&& InfoSectionDrawFunction = TFunction<void()>(),
+                  float InfoSectionWidth = 0.0f);
 
-        // Get the screen space rectangle for this title bar
-        FVector4 const& GetScreenRectangle() const { return Rect; }
+        // Screen space rectangle (X, Y, Width, Height) of the bar, as of the last Draw.
+        const FVector4& GetScreenRectangle() const { return Rect; }
+
+        // Scaled bar height. Valid before Draw, so callers can reserve space up front.
+        static float GetHeight();
+
+        // Scaled width of the minimize/maximize/close cluster.
+        static float GetWindowControlsWidth();
+
+        // Height of the single row the sections draw on. Content taller than a line of text (icons,
+        // images) must be offset up by half the difference to stay centered on the bar.
+        static float GetContentRowHeight();
 
     private:
+
+        static void DrawWindowControls();
+
+        // Design metrics in unscaled pixels; multiply by the UI scale before use.
+        static constexpr float UnscaledButtonWidth     = 45.0f;
+        static constexpr float UnscaledBarHeight       = 40.0f;
+        static constexpr float UnscaledSectionPadding  = 8.0f;
 
         FVector4 Rect = FVector4(0.0f);
     };

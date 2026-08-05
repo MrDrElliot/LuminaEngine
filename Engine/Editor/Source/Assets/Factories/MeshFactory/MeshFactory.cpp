@@ -439,6 +439,194 @@ namespace Lumina
         static_cast<Import::Mesh::FMeshImportData&>(Settings).CommitOptions = GMeshImportOptions;
     }
 
+    bool CMeshFactory::CanReimport(const CStruct* AssetClass) const
+    {
+        return AssetClass != nullptr && AssetClass->IsChildOf(CMesh::StaticClass());
+    }
+
+    FString CMeshFactory::GetReimportSourcePath(const CObject* Asset) const
+    {
+        const CMesh* Mesh = Cast<CMesh>(Asset);
+        return Mesh != nullptr ? Mesh->SourcePath : FString();
+    }
+
+    namespace
+    {
+        // Which parsed sub-mesh replaces the asset. A source file routinely holds several meshes, so this
+        // prefers the one whose internal name matches the asset (survives reordered exports) and falls back
+        // to the first (covers the single-mesh file, and the case where the artist renamed the mesh).
+        int32 FindResourceForAsset(const Import::Mesh::FMeshImportData& Data, const FName& AssetName, bool bWantSkinned)
+        {
+            int32 FirstCompatible = INDEX_NONE;
+
+            const FString TargetName = Import::SanitizeAssetName(AssetName.c_str());
+
+            for (size_t i = 0; i < Data.Resources.size(); ++i)
+            {
+                const TUniquePtr<FMeshResource>& Resource = Data.Resources[i];
+                if (!Resource)
+                {
+                    continue;
+                }
+
+                // A skinned resource cannot stand in for a CStaticMesh (or the reverse): the vertex stream
+                // it populates is the other one, so the swap would leave every reader looking at an empty
+                // buffer rather than at wrong-but-present data.
+                if (Resource->bSkinnedMesh != bWantSkinned)
+                {
+                    continue;
+                }
+
+                if (FirstCompatible == INDEX_NONE)
+                {
+                    FirstCompatible = (int32)i;
+                }
+
+                // Compared sanitized, because the asset name went through the same cleanup on the way in.
+                if (Import::SanitizeAssetName(Resource->Name.c_str()) == TargetName)
+                {
+                    return (int32)i;
+                }
+            }
+
+            return FirstCompatible;
+        }
+
+        // Carries the old material assignments onto the new slots. Keyed off surface names rather than raw
+        // slot index, so a source whose materials were reordered keeps its overrides; index is the fallback
+        // for surfaces that were renamed or added.
+        void RemapMaterialSlots(const FMeshResource& OldResource,
+                                const TVector<TObjectPtr<CMaterialInterface>>& OldMaterials,
+                                const FMeshResource& NewResource,
+                                TVector<TObjectPtr<CMaterialInterface>>& OutMaterials)
+        {
+            size_t SlotCount = 0;
+            bool bAnyExplicitMaterial = false;
+            for (const FGeometrySurface& Surface : NewResource.GeometrySurfaces)
+            {
+                if (Surface.MaterialIndex >= 0)
+                {
+                    bAnyExplicitMaterial = true;
+                    SlotCount = eastl::max(SlotCount, (size_t)Surface.MaterialIndex + 1);
+                }
+            }
+            if (!bAnyExplicitMaterial)
+            {
+                SlotCount = NewResource.GeometrySurfaces.size();
+            }
+
+            OutMaterials.clear();
+            OutMaterials.resize(SlotCount);
+
+            TVector<bool> bSlotResolved;
+            bSlotResolved.resize(SlotCount, false);
+
+            for (const FGeometrySurface& NewSurface : NewResource.GeometrySurfaces)
+            {
+                const int32 NewSlot = NewSurface.MaterialIndex;
+                if (NewSlot < 0 || (size_t)NewSlot >= SlotCount || bSlotResolved[NewSlot])
+                {
+                    continue;
+                }
+
+                for (const FGeometrySurface& OldSurface : OldResource.GeometrySurfaces)
+                {
+                    if (OldSurface.ID != NewSurface.ID)
+                    {
+                        continue;
+                    }
+
+                    if (OldSurface.MaterialIndex >= 0 && (size_t)OldSurface.MaterialIndex < OldMaterials.size())
+                    {
+                        OutMaterials[NewSlot] = OldMaterials[OldSurface.MaterialIndex];
+                        bSlotResolved[NewSlot] = true;
+                    }
+                    break;
+                }
+            }
+
+            // Slots no surface name accounted for keep whatever sat at the same index before.
+            for (size_t Slot = 0; Slot < SlotCount; ++Slot)
+            {
+                if (!bSlotResolved[Slot] && Slot < OldMaterials.size())
+                {
+                    OutMaterials[Slot] = OldMaterials[Slot];
+                }
+            }
+        }
+    }
+
+    bool CMeshFactory::TryReimport(CObject* Asset, const FFixedString& SourceFile, const Import::FImportSettings* Settings)
+    {
+        using namespace Import::Mesh;
+
+        CMesh* Mesh = Cast<CMesh>(Asset);
+        if (Mesh == nullptr || Settings == nullptr)
+        {
+            return false;
+        }
+
+        FMeshImportData& ImportData = const_cast<FMeshImportData&>(Settings->As<FMeshImportData>());
+
+        const FStringView SourceName = VFS::FileName(SourceFile, true);
+        FFixedString SlowTaskTitle(FFixedString::CtorSprintf(), "Reimporting %.*s", (int)SourceName.length(), SourceName.data());
+        FScopedSlowTask SlowTask(1.0f, SlowTaskTitle, "Processing geometry...");
+
+        // Only the geometry matters here. Reimport replaces one asset's data; it does not mint the
+        // skeletons, animations, materials and textures a fresh import of the same file would, because
+        // those are separate assets with their own identities and references.
+        FMeshImportOptions Options = ImportData.CommitOptions;
+        Options.bImportMeshes     = true;
+        Options.bImportSkeleton   = false;
+        Options.bImportAnimations = false;
+        Options.bImportMaterials  = false;
+        Options.bImportTextures   = false;
+
+        FinalizeMeshImportData(ImportData, Options, &SlowTask, 0.9f);
+
+        const int32 ResourceIndex = FindResourceForAsset(ImportData, Mesh->GetName(), Mesh->IsSkinned());
+        if (ResourceIndex == INDEX_NONE)
+        {
+            LOG_ERROR("Reimport: '{0}' contains no {1} mesh to replace '{2}' with.",
+                      SourceFile.c_str(), Mesh->IsSkinned() ? "skinned" : "static", Mesh->GetName().c_str());
+            return false;
+        }
+
+        TUniquePtr<FMeshResource>& NewResource = const_cast<TUniquePtr<FMeshResource>&>(ImportData.Resources[ResourceIndex]);
+        if (!NewResource || NewResource->GeometrySurfaces.empty())
+        {
+            LOG_ERROR("Reimport: the mesh selected from '{0}' has no surfaces; leaving '{1}' untouched.",
+                      SourceFile.c_str(), Mesh->GetName().c_str());
+            return false;
+        }
+
+        SlowTask.EnterProgressFrame(0.1f, "Replacing mesh data...");
+
+        // Name follows the ASSET, not the source: the object keeps its identity through a reimport, and a
+        // resource labelled with the source's internal name would show up in every debug view as a rename.
+        NewResource->Name = Mesh->GetName();
+
+        TVector<TObjectPtr<CMaterialInterface>> RemappedMaterials;
+        RemapMaterialSlots(Mesh->GetMeshResource(), Mesh->Materials, *NewResource, RemappedMaterials);
+        Mesh->Materials = Move(RemappedMaterials);
+
+        // The swap itself. Same CObject, same GUID, same package: SetMeshResource rebuilds the bounds and
+        // GPU buffers and invalidates the mesh-resolve cache entries that point at this asset, so live
+        // components pick the new geometry up without anything re-resolving the reference.
+        Mesh->SetMeshResource(Move(NewResource));
+        Mesh->SourcePath = FString(SourceFile.c_str());
+
+        if (CPackage* Package = Mesh->GetPackage())
+        {
+            Package->MarkDirty();
+        }
+
+        // Deliberately NOT touched: a skeletal mesh's Skeleton reference. Rebinding it is a separate
+        // decision from replacing geometry, and the existing RequiredBoneCount check already reports a rig
+        // whose bone count outruns the skeleton it is still pointing at.
+        return true;
+    }
+
     void CMeshFactory::TryImport(const FFixedString& RawPath, const FFixedString& DestinationPath, const Import::FImportSettings* Settings)
     {
         using namespace Import::Mesh;
@@ -606,6 +794,9 @@ namespace Lumina
             }
             NewMesh->Materials.clear();
             NewMesh->Materials.resize(MaterialSlotCount);
+
+            // Recorded so "Reimport From File..." opens on the file this came from.
+            NewMesh->SourcePath = FString(RawPath.c_str());
 
             NewMesh->MeshResources = Move(MeshResource);
             CreatedObjects.push_back(NewMesh);

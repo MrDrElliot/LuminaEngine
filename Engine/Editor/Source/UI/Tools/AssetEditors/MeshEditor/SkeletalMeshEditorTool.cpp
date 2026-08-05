@@ -41,6 +41,15 @@ namespace Lumina
 
     void FSkeletalMeshEditorTool::OnInitialize()
     {
+        // Scrolling disabled: the UV canvas claims the wheel for zoom, and a scrollable host would fight it.
+        CreateToolWindow(UVViewerName, [&](bool bFocused)
+        {
+            if (CSkeletalMesh* SkeletalMesh = Cast<CSkeletalMesh>(Asset.Get()))
+            {
+                UVViewer.Draw(SkeletalMesh->GetMeshResource());
+            }
+        }, ImVec2(-1, -1), true);
+
         CreateToolWindow(MeshPropertiesName, [&](bool bFocused)
         {
             CSkeletalMesh* SkeletalMesh = CastAsserted<CSkeletalMesh>(Asset.Get());
@@ -485,6 +494,14 @@ namespace Lumina
     {
     }
 
+    void FSkeletalMeshEditorTool::OnAssetDataChangedExternally()
+    {
+        FAssetEditorTool::OnAssetDataChangedExternally();
+
+        // The unwrap was built from meshlets that no longer exist.
+        UVViewer.Invalidate();
+    }
+
     void FSkeletalMeshEditorTool::DrawHelpMenu()
     {
         DrawHelpTextRow("Skeleton",
@@ -544,6 +561,9 @@ namespace Lumina
         ImGui::DockBuilderSplitNode(InDockspaceID, ImGuiDir_Right, 0.3f, &rightDockID, &leftDockID);
 
         ImGui::DockBuilderDockWindow(GetToolWindowName(ViewportWindowName).c_str(), leftDockID);
+        // Tabbed with the viewport rather than split off it: the unwrap wants the same large canvas, and
+        // it is an inspect-one-then-the-other workflow, not a side-by-side one.
+        ImGui::DockBuilderDockWindow(GetToolWindowName(UVViewerName.data()).c_str(), leftDockID);
         ImGui::DockBuilderDockWindow(GetToolWindowName(MeshPropertiesName.data()).c_str(), rightDockID);
     }
 }

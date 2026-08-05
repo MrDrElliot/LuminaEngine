@@ -860,6 +860,13 @@ namespace Lumina::Import::Mesh
         }
     }
 
+    float GetDefaultLODScreenThreshold(uint32 Index)
+    {
+        // Reads the same table GenerateMeshlets bakes from, so the editor's reset and the importer can
+        // never drift apart.
+        return Index < MAX_MESH_LODS ? kLODs[Index].Threshold : FLT_MAX;
+    }
+
     void AnalyzeMeshStatistics(FMeshResource& MeshResource, FMeshStatistics& OutMeshStats)
     {
         OutMeshStats.VertexFetchStatics.emplace_back(meshopt_analyzeVertexFetch(MeshResource.Indices.data(), MeshResource.Indices.size(), MeshResource.GetNumVertices(), MeshResource.GetVertexTypeSize()));

@@ -1,5 +1,7 @@
 ﻿#include "RuntimePCH.h"
 #include "FoliageComponent.h"
+#include "World/Scene/RenderScene/ScenePrimitiveSet.h"
+#include "World/World.h"
 
 namespace Lumina
 {
@@ -83,5 +85,29 @@ namespace Lumina
         }
 
         BakedVersion = InstancesVersion;
+    }
+
+    void MarkFoliageChanged(CWorld& World, entt::entity Entity, SFoliageComponent& Foliage)
+    {
+        Foliage.MarkInstancesChanged();
+
+        // Third cache, and the one that actually makes the instances DRAWABLE. A foliage type owns its own
+        // mesh reference, so assigning or swapping it changes nothing about any mesh COMPONENT -- and
+        // ResolveDirtyMeshComponents, the only pass that stamps a type's ResolveHandle, does nothing unless
+        // the pending-work generation has moved. Without this a painted type never resolves, SyncFoliage
+        // creates primitives whose Surfaces stay null, and the foliage is invisible until some unrelated
+        // mesh edit happens to bump the generation for us. That is the "paint shows up only after I add
+        // another entity" bug.
+        FMeshResolveCache::MarkPendingWork();
+
+        // CWorld keeps its registry private; ECS::GetWorldRegistry is the sanctioned accessor, and taking
+        // the world here means callers never need one at all.
+        FEntityRegistry& Registry = ECS::GetWorldRegistry(World);
+
+        // Membership as well as Data: painting and erasing change the instance COUNT, and the primitive
+        // set keys foliage primitives per instance index. Data alone would refresh the ones that already
+        // exist and never create or drop any.
+        FRenderDirtyTracker::Ensure(Registry).Mark(Entity, EPrimitiveSource::Foliage,
+                                                   EPrimitiveDirty::Data | EPrimitiveDirty::Membership);
     }
 }

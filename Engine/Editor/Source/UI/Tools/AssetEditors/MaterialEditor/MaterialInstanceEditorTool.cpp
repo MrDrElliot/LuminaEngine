@@ -5,6 +5,7 @@
 #include "Assets/AssetTypes/Material/Material.h"
 #include "Assets/AssetTypes/Material/MaterialInstance.h"
 #include "Assets/AssetTypes/Textures/Texture.h"
+#include "UI/Properties/Customizations/CoreTypeCustomization.h"
 #include "Core/Math/Math.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/ObjectArray.h"
@@ -325,139 +326,33 @@ namespace Lumina
             DisplayTexture = Instance->Material->Textures[Param.Index].Get();
         }
 
-        const ImVec2 ThumbSize(64, 64);
-        const ImVec2 ButtonSize(64 + ImGui::GetStyle().FramePadding.x * 2.0f,
-                                64 + ImGui::GetStyle().FramePadding.y * 2.0f);
-
-        // ImageButton gives us a real interactive item: click opens the picker, drag-drop targets work,
-        // and double-click jumps to the texture asset editor.
-        bool bClicked = false;
-        if (DisplayTexture && DisplayTexture->GetResourceID() >= 0)
+        // Delegates to the engine's object picker rather than the bespoke thumbnail + drop target + browse
+        // popup this used to carry: that was a second implementation of the same widget, with its own
+        // asset-registry query and search box, which drifted from the standard one and had to re-solve
+        // problems (disabled-state handling inside the popup) already solved there.
+        if (TexturePicker == nullptr)
         {
-            bClicked = ImGui::ImageButton("##TexThumb",
-                ImGuiX::ToImTextureRef((uint32)DisplayTexture->GetResourceID()),
-                ThumbSize);
-        }
-        else
-        {
-            bClicked = ImGui::Button("(none)##TexThumb", ButtonSize);
-        }
-
-        // Drag-drop target, works on the ImageButton's hit rect even while the row is BeginDisabled.
-        if (ImGui::BeginDragDropTarget())
-        {
-            if (CTexture* DroppedTexture = DragDrop::AcceptAsset<CTexture>())
+            FProperty* TextureProp = FMaterialParameterOverride::StaticStruct()->GetProperty(FName("Texture"));
+            if (TextureProp == nullptr)
             {
-                Instance->SetTextureValue(Param.ParameterName, DroppedTexture);
-                Asset->GetPackage()->MarkDirty();
+                return;
             }
-            ImGui::EndDragDropTarget();
+            TexturePicker = FCObjectPropertyCustomization::MakeInstance();
+            TextureHandle = MakeShared<FPropertyHandle>(&TextureScratch, TextureProp);
         }
 
-        // Click → open searchable picker; respects the disabled state so click-to-pick is gated by override toggle.
-        if (bClicked && bEnabled)
-        {
-            TexturePickerFilter.Clear();
-            ImGui::OpenPopup("##TexturePickerPopup");
-        }
+        // Seeded before the draw: UpdateAndDraw syncs the picker from the handle first, so this is what
+        // decides which texture the row displays.
+        TextureScratch.Texture = DisplayTexture;
 
-        ImGui::SameLine();
-        ImGui::BeginGroup();
-
-        // Name + clear button next to the thumbnail.
-        if (DisplayTexture)
+        const EPropertyChangeOp Op = TexturePicker->UpdateAndDraw(TextureHandle, !bEnabled);
+        if (Op != EPropertyChangeOp::None && bEnabled)
         {
-            ImGui::TextUnformatted(DisplayTexture->GetName().c_str());
-        }
-        else
-        {
-            ImGui::TextDisabled("None");
-        }
-
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.2f, 0.2f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.7f, 0.25f, 0.25f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.5f, 0.15f, 0.15f, 1.0f));
-        if (ImGui::SmallButton(LE_ICON_CLOSE_CIRCLE " Clear"))
-        {
-            Instance->SetTextureValue(Param.ParameterName, nullptr);
+            // UpdateAndDraw leaves the write-back to its caller; commit into the scratch, then push the
+            // result through the instance so the override list and uniform upload stay authoritative.
+            TexturePicker->UpdatePropertyValue(TextureHandle);
+            Instance->SetTextureValue(Param.ParameterName, TextureScratch.Texture.Get());
             Asset->GetPackage()->MarkDirty();
-        }
-        ImGui::PopStyleColor(3);
-
-        ImGui::SameLine();
-        if (ImGui::SmallButton(LE_ICON_FILE_SEARCH " Browse"))
-        {
-            TexturePickerFilter.Clear();
-            ImGui::OpenPopup("##TexturePickerPopup");
-        }
-
-        ImGui::EndGroup();
-        
-        ImGui::SetNextWindowSize(ImVec2(360, 400));
-        if (ImGui::BeginPopup("##TexturePickerPopup"))
-        {
-            // Re-enable input inside the popup; the parent table sits inside BeginDisabled.
-            ImGui::EndDisabled();
-
-            const ImGuiStyle& Style = ImGui::GetStyle();
-            TexturePickerFilter.Draw("##Search", ImGui::GetContentRegionAvail().x - Style.FramePadding.x);
-
-            if (ImGui::BeginChild("##TextureList", ImVec2(0, 0), ImGuiChildFlags_None, ImGuiWindowFlags_None))
-            {
-                static const FName TextureClassName = "CTexture";
-
-                TVector<FAssetData*> TextureAssets = FAssetRegistry::Get().FindByPredicate([](const FAssetData& Data)
-                {
-                    return Data.AssetClass == TextureClassName;
-                });
-
-                if (ImGui::BeginTable("##TexTable", 2, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_ScrollY | ImGuiTableFlags_BordersInner))
-                {
-                    ImGui::TableSetupColumn("##Thumb", ImGuiTableColumnFlags_WidthFixed, 42.0f);
-                    ImGui::TableSetupColumn("##Name", ImGuiTableColumnFlags_WidthStretch);
-
-                    for (FAssetData* AssetData : TextureAssets)
-                    {
-                        if (!TexturePickerFilter.PassFilter(AssetData->AssetName.c_str()))
-                        {
-                            continue;
-                        }
-
-                        ImGui::PushID(AssetData);
-                        ImGui::TableNextRow(ImGuiTableRowFlags_None, 42.0f);
-                        ImGui::TableSetColumnIndex(0);
-
-                        const bool bSelected = ImGui::Selectable("##sel", false,
-                            ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap, ImVec2(0, 42.0f));
-
-                        ImGuiX::TextTooltip("{}", AssetData->Path);
-
-                        ImGui::TableSetColumnIndex(1);
-                        ImGui::AlignTextToFramePadding();
-                        ImGui::TextUnformatted(AssetData->AssetName.c_str());
-
-                        if (bSelected)
-                        {
-                            if (CObject* Loaded = LoadObject<CObject>(AssetData->AssetGUID))
-                            {
-                                if (CTexture* PickedTexture = Cast<CTexture>(Loaded))
-                                {
-                                    Instance->SetTextureValue(Param.ParameterName, PickedTexture);
-                                    Asset->GetPackage()->MarkDirty();
-                                }
-                            }
-                            ImGui::CloseCurrentPopup();
-                        }
-                        ImGui::PopID();
-                    }
-                    ImGui::EndTable();
-                }
-            }
-            ImGui::EndChild();
-
-            // Restore disabled state expected by the surrounding row.
-            ImGui::BeginDisabled(!bEnabled);
-            ImGui::EndPopup();
         }
     }
 

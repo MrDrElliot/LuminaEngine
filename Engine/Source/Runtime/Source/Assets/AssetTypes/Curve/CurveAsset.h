@@ -2,6 +2,7 @@
 
 #include "Containers/Array.h"
 #include "Core/Object/Object.h"
+#include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Object/ObjectMacros.h"
 #include "CurveAsset.generated.h"
 
@@ -135,5 +136,38 @@ namespace Lumina
 
         PROPERTY(Editable, Category = "Curve")
         SKeyedCurve Curve;
+    };
+
+    /** A float ramp usable directly as a property: either a shared CCurveAsset or a curve authored inline
+     *  on whatever owns it. Most curves are one-offs that would only clutter the content browser as
+     *  assets, but the ones worth sharing (a studio's standard falloff) should be shared -- so the source
+     *  is a per-property toggle rather than a decision baked into the owning type.
+     *
+     *  Sampling goes through Resolve()/Evaluate(); consumers never branch on the toggle themselves. */
+    REFLECT()
+    struct RUNTIME_API SCurve
+    {
+        GENERATED_BODY()
+
+        /** Asset mode ignores the inline keys but does NOT clear them, so toggling back restores whatever
+         *  was authored rather than silently discarding it. */
+        PROPERTY(Editable, Category = "Curve")
+        bool bUseAsset = false;
+
+        PROPERTY(Editable, Category = "Curve")
+        TObjectPtr<CCurveAsset> Asset;
+
+        PROPERTY(Editable, Category = "Curve")
+        SKeyedCurve Curve;
+
+        /** The curve actually in effect. Falls back to the inline one when asset mode is selected but the
+         *  reference is unset or destroyed, so this never returns a dangling or null curve. */
+        const SKeyedCurve& Resolve() const;
+
+        float Evaluate(float InTime) const { return Resolve().Evaluate(InTime); }
+
+        /** True when asset mode is selected AND the reference resolves; the editor uses this to show the
+         *  asset's shape read-only instead of the inline editor. */
+        bool IsUsingAsset() const;
     };
 }

@@ -9,6 +9,8 @@ namespace Lumina
 {
     std::atomic<uint32> FMeshResolveCache::Epoch{1};
     std::atomic<uint32> FMeshResolveCache::PendingGeneration{1};
+    std::mutex           FMeshResolveCache::PendingMutex;
+    TVector<const void*> FMeshResolveCache::PendingInvalidations;
 
     FMeshResolveCache& FMeshResolveCache::Get()
     {
@@ -20,6 +22,129 @@ namespace Lumina
     {
         Epoch.fetch_add(1, std::memory_order_acq_rel);
         MarkPendingWork();
+    }
+
+    void FMeshResolveCache::InvalidateDependency(const void* Asset)
+    {
+        if (Asset == nullptr)
+        {
+            return;
+        }
+
+        {
+            FScopeLock Lock(PendingMutex);
+            PendingInvalidations.push_back(Asset);
+        }
+
+        // The resolve pass early-outs unless this moved, so queueing without it would leave the
+        // invalidation sitting there until something unrelated happened to wake the pass up.
+        MarkPendingWork();
+    }
+
+    void FMeshResolveCache::MarkEntryStale(uint32 Handle)
+    {
+        if (Handle >= (uint32)Entries.size())
+        {
+            return;
+        }
+        Entries[Handle]->bNeedsResolve = true;
+        EntryStates[Handle]            = MESH_RESOLVE_STATE_STALE;
+    }
+
+    void FMeshResolveCache::RegisterDependencies(uint32 Handle, const FResolvedMesh& Entry)
+    {
+        for (const void* Dependency : Entry.Dependencies)
+        {
+            HandlesByDependency[Dependency].push_back(Handle);
+        }
+    }
+
+    void FMeshResolveCache::UnregisterDependencies(uint32 Handle, const FResolvedMesh& Entry)
+    {
+        for (const void* Dependency : Entry.Dependencies)
+        {
+            auto It = HandlesByDependency.find(Dependency);
+            if (It == HandlesByDependency.end())
+            {
+                continue;
+            }
+
+            TVector<uint32>& Bucket = It->second;
+            for (SIZE_T i = 0; i < Bucket.size(); ++i)
+            {
+                if (Bucket[i] == Handle)
+                {
+                    Bucket[i] = Bucket.back();
+                    Bucket.pop_back();
+                    break;
+                }
+            }
+        }
+    }
+
+    void FMeshResolveCache::RebuildEntry(uint32 Handle, CMesh* Mesh, const TVector<CMaterialInterface*>& Overrides)
+    {
+        FResolvedMesh& Entry = *Entries[Handle];
+
+        // The dependency set is rebuilt from scratch below, and a rebuild can legitimately change it -- a
+        // material that finished compiling stops falling back to the default one, so the default drops out.
+        UnregisterDependencies(Handle, Entry);
+        ResolveSurfaces(Entry, Mesh, Overrides);
+        Entry.bNeedsResolve = false;
+        RegisterDependencies(Handle, Entry);
+
+        EntryStates[Handle] = Entry.bResolved ? (Entry.Generation << 1) : MESH_RESOLVE_STATE_STALE;
+
+        if (!Entry.bResolved)
+        {
+            MarkPendingWork();
+        }
+    }
+
+    void FMeshResolveCache::ApplyPendingInvalidations()
+    {
+        TVector<const void*> Keys;
+        {
+            FScopeLock Lock(PendingMutex);
+            Keys.swap(PendingInvalidations);
+        }
+
+        // BumpEpoch is applied here rather than inside itself so that it stays callable from any thread.
+        const uint32 CurrentEpoch = GetEpoch();
+        if (CurrentEpoch != AppliedEpoch)
+        {
+            AppliedEpoch = CurrentEpoch;
+            for (uint32 Handle = 0, N = (uint32)Entries.size(); Handle < N; ++Handle)
+            {
+                MarkEntryStale(Handle);
+            }
+        }
+        else
+        {
+            for (const void* Key : Keys)
+            {
+                auto It = HandlesByDependency.find(Key);
+                if (It == HandlesByDependency.end())
+                {
+                    continue;
+                }
+                for (uint32 Handle : It->second)
+                {
+                    MarkEntryStale(Handle);
+                }
+            }
+        }
+
+        // An entry that could not finish -- GPU buffers not landed, a material still compiling -- retries
+        // once per pass. Re-arming HERE rather than letting Resolve() test bResolved is what stops a
+        // thousand instances of one unresolved mesh from each re-running the whole resolve every frame.
+        for (uint32 Handle = 0, N = (uint32)Entries.size(); Handle < N; ++Handle)
+        {
+            if (!Entries[Handle]->bResolved)
+            {
+                MarkEntryStale(Handle);
+            }
+        }
     }
 
     uint64 FMeshResolveCache::HashKey(const void* Mesh, const TVector<CMaterialInterface*>& Overrides)
@@ -40,7 +165,10 @@ namespace Lumina
             Memory::Delete(Entry);
         }
         Entries.clear();
+        EntryStates.clear();
         HandlesByHash.clear();
+        HandlesByDependency.clear();
+        ++TableGeneration;
     }
 
     uint32 FMeshResolveCache::Resolve(CMesh* Mesh, const TVector<CMaterialInterface*>& Overrides)
@@ -77,17 +205,23 @@ namespace Lumina
 
                 if (bSame)
                 {
-                    // Rebuild when the mesh/material data has moved on (ResolvedEpoch), as well as while
-                    // still waiting for it to arrive (!bResolved). Without the epoch test a resolved
-                    // entry was frozen forever: assigning a mesh's default materials keeps the key
-                    // identical, so every instance in every world kept drawing the old assignment until
-                    // something perturbed the override list into a different key.
-                    if (!Candidate.bResolved || Candidate.ResolvedEpoch != GetEpoch())
+                    // One flag, set by ApplyPendingInvalidations. It has to be a flag rather than a
+                    // condition tested here, because a resolved entry must not be frozen forever --
+                    // assigning a mesh's default materials keeps the key identical, so every instance in
+                    // every world would keep drawing the old assignment -- and it has to be CLEARED by the
+                    // rebuild, or the thousand instances sharing this entry each pay for the same rebuild.
+                    if (Candidate.bNeedsResolve)
                     {
-                        ResolveSurfaces(*Entries[Handle], Mesh, Overrides);
-                        if (!Entries[Handle]->bResolved)
+                        RebuildEntry(Handle, Mesh, Overrides);
+
+                        // Only an EXISTING entry that came out RESOLVED moves this. Consumers holding
+                        // state derived from an entry sweep when it does, so two cases must stay off it:
+                        // interning a newly added mesh (nothing was derived from it yet), and a failed
+                        // attempt at one still streaming (nothing binds an unresolved entry, and those
+                        // retry every frame -- which would put the sweep on every frame with them).
+                        if (Entries[Handle]->bResolved)
                         {
-                            MarkPendingWork();
+                            ++TableGeneration;
                         }
                     }
                     return Handle;
@@ -97,6 +231,7 @@ namespace Lumina
 
         const uint32 NewHandle = (uint32)Entries.size();
         Entries.push_back(Memory::New<FResolvedMesh>());
+        EntryStates.push_back(MESH_RESOLVE_STATE_STALE);
         FResolvedMesh& Entry = *Entries.back();
 
         Entry.MeshKey  = Mesh;
@@ -107,11 +242,9 @@ namespace Lumina
             Entry.OverrideKey.push_back((const void*)Override);
         }
 
-        ResolveSurfaces(Entry, Mesh, Overrides);
-        if (!Entry.bResolved)
-        {
-            MarkPendingWork();
-        }
+        // TableGeneration deliberately NOT bumped: nothing was resolved against this entry before now, so
+        // no consumer holds state derived from it.
+        RebuildEntry(NewHandle, Mesh, Overrides);
 
         HandlesByHash[KeyHash].push_back(NewHandle);
         return NewHandle;
@@ -223,6 +356,27 @@ namespace Lumina
         return bReady;
     }
 
+    namespace
+    {
+        // Linear scan over a list holding the mesh plus at most two materials per surface, so it stays in
+        // the low tens even for a heavily-sectioned mesh.
+        void AddDependency(FResolvedMesh& Out, const void* Dependency)
+        {
+            if (Dependency == nullptr)
+            {
+                return;
+            }
+            for (const void* Existing : Out.Dependencies)
+            {
+                if (Existing == Dependency)
+                {
+                    return;
+                }
+            }
+            Out.Dependencies.push_back(Dependency);
+        }
+    }
+
     void FMeshResolveCache::ResolveSurfaces(FResolvedMesh& Out, CMesh* Mesh, const TVector<CMaterialInterface*>& Overrides)
     {
         // IsValid covers lifetime only, so an asset still in its load phase reaches here. Its properties
@@ -230,10 +384,14 @@ namespace Lumina
         // caller re-arms until the data phase lands.
         ++Out.Generation;
 
-        // Stamped up front, including on the early-out below: this entry now reflects the epoch it was
-        // last examined at, so a mesh that is still loading is retried through bResolved rather than by
-        // re-running the whole resolve on every lookup.
-        Out.ResolvedEpoch = GetEpoch();
+        // Rebuilt from scratch, including on the early-out below: an entry that resolved against the
+        // default material while the real one was compiling must stop depending on the default once it
+        // swaps over, or every future default-material edit would re-resolve it for nothing.
+        //
+        // The mesh is a dependency of every entry unconditionally -- an unloaded one is the case that
+        // most needs waking up, because its GPU buffers landing is what makes it drawable at all.
+        Out.Dependencies.clear();
+        Out.Dependencies.push_back((const void*)Mesh);
 
         if (Mesh->HasAnyFlag(OF_NeedsLoad))
         {
@@ -290,6 +448,13 @@ namespace Lumina
             {
                 Out.bAllMaterialsReady = false;
             }
+
+            // Both, and for different reasons. The AUTHORED material is what has to wake this entry when
+            // it finishes compiling -- until then the surface is drawing the default one and R.MaterialID
+            // does not name it at all. The CONCRETE master is what a material recompile invalidates, and
+            // for an instance that is a different asset from the authored one.
+            AddDependency(Out, (const void*)RawMaterial);
+            AddDependency(Out, (const void*)(uintptr_t)R.MaterialID);
         }
 
         // MeshletHeaderAddress is 0 until the GPU buffers exist, which can lag the property data.

@@ -122,6 +122,14 @@ namespace Lumina
             256,
             "Scene primitives per task in the cull/emit gather.");
 
+        // Profiler-independent timing for the primitive sync. TRACY_CALLSTACK is defined engine-wide, so an
+        // attached profiler adds a stack unwind per zone and its own overhead becomes comparable to what this
+        // pass costs. The number that matters has to be readable without one.
+        static TConsoleVar<float> CVarSyncSlowMs(
+            "r.Scene.SyncSlowMs",
+            0.0f,
+            "Log when FScenePrimitiveSet::Sync exceeds this many milliseconds (0 = off).");
+
         // Opt-in diagnostic for the pre-skin slice arithmetic. Every base is an unsigned wrap
         // (Base = SkinCursor - BlockVertexOffset) that only lands back in range if each meshlet the GPU
         // resolves sits inside the block the descriptor covered, and LoadSkinnedVertex has no bounds
@@ -465,8 +473,9 @@ namespace Lumina
         // rather than per slot. RetainedInstanceBuffer alone is 128 B per primitive surface -- at ~900k
         // entities that is well over 100 MB, and every one of these was leaking a full copy on every scene
         // teardown because the GPU-driven cutover added them without adding them here.
-        FreeBuffer(RetainedInstanceBuffer);
-        FreeBuffer(RetainedCullDataBuffer);
+        FreeBuffer(RetainedCullEntryBuffer);
+        FreeBuffer(RetainedTransformBuffer);
+        FreeBuffer(RetainedStaticBuffer);
         FreeBuffer(SurfaceDescBuffer);
 
         for (uint32 Slot = 0; Slot < RHI::kFramesInFlight; ++Slot)
@@ -515,10 +524,14 @@ namespace Lumina
         }
         TerrainGPUStates.clear();
 
-        for (auto& [Entity, State] : ParticleGPUStates)
+        for (auto& [Entity, States] : ParticleGPUStates)
         {
-            if (State.ParticleBuffer)     { RHI::Free(State.ParticleBuffer); }
-            if (State.SpawnCounterBuffer) { RHI::Free(State.SpawnCounterBuffer); }
+            for (FParticleGPUState& State : States)
+            {
+                if (State.ParticleBuffer)     { RHI::Free(State.ParticleBuffer); }
+                if (State.SpawnCounterBuffer) { RHI::Free(State.SpawnCounterBuffer); }
+                if (State.AttributeBuffer)    { RHI::Free(State.AttributeBuffer); }
+            }
         }
         ParticleGPUStates.clear();
 
@@ -1296,7 +1309,21 @@ namespace Lumina
             }
         }
 
+        const float SyncSlowMs = CVarSyncSlowMs.GetValue();
+        const auto  SyncStart  = std::chrono::steady_clock::now();
+
         ScenePrimitives.Sync(*World);
+
+        if (SyncSlowMs > 0.0f)
+        {
+            const double ElapsedMs = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - SyncStart).count();
+            if (ElapsedMs >= (double)SyncSlowMs)
+            {
+                LOG_WARN("ScenePrimitiveSet::Sync took {:.2f}ms for {} primitives.",
+                         ElapsedMs, ScenePrimitives.Num());
+            }
+        }
 
         PublishRetainedUpload();
     }
@@ -1310,6 +1337,7 @@ namespace Lumina
         Out.SlotCount = SlotCount;
 
         Out.DirtySlots.clear();
+        Out.DirtyStaticSlots.clear();
 
         // A full re-send is needed exactly when the device allocation is about to be replaced, because a
         // replacement loses the accumulated contents. That happens when the slot count outgrows the capacity
@@ -1317,30 +1345,52 @@ namespace Lumina
         const uint32 DeviceCapacity = RetainedDeviceCapacity.load(std::memory_order_acquire);
         Out.bFull = ScenePrimitives.NeedsFullInstanceUpload() || SlotCount > DeviceCapacity;
 
+        // The raw count upper-bounds the deduped one, so a list already past the threshold below can be
+        // rejected without the filter-copy and sort. Sync's MarkInstanceDirty normally decides this much
+        // earlier and hands us an empty list; this covers what lands under its floor.
+        if (!Out.bFull
+            && (ScenePrimitives.GetDirtyInstanceSlots().size() * 4 >= (SIZE_T)SlotCount
+                || ScenePrimitives.GetDirtyStaticSlots().size() * 4 >= (SIZE_T)SlotCount))
+        {
+            Out.bFull = true;
+        }
+
         if (!Out.bFull)
         {
             // Sort and dedupe so the upload can coalesce runs of adjacent slots into ONE copy each.
             // The channel legitimately repeats a slot (a re-bind frees then re-stamps it) and hands them out
             // in whatever order the sweep hit them.
-            for (uint32 DirtySlot : ScenePrimitives.GetDirtyInstanceSlots())
+            //
+            // Both lists get the same treatment, and either one crossing the threshold takes the whole
+            // upload full -- the buffers share one device capacity and one bFull decision, so there is no
+            // meaning to re-sending two of three wholesale.
+            auto Collect = [SlotCount](const TVector<uint32>& In, TVector<uint32>& OutList)
             {
-                if (DirtySlot < SlotCount)   // a slot freed after being marked is simply dropped
+                for (uint32 DirtySlot : In)
                 {
-                    Out.DirtySlots.push_back(DirtySlot);
+                    if (DirtySlot < SlotCount)   // a slot freed after being marked is simply dropped
+                    {
+                        OutList.push_back(DirtySlot);
+                    }
                 }
-            }
-            std::sort(Out.DirtySlots.begin(), Out.DirtySlots.end());
-            Out.DirtySlots.erase(std::unique(Out.DirtySlots.begin(), Out.DirtySlots.end()), Out.DirtySlots.end());
+                std::sort(OutList.begin(), OutList.end());
+                OutList.erase(std::unique(OutList.begin(), OutList.end()), OutList.end());
+            };
+
+            Collect(ScenePrimitives.GetDirtyInstanceSlots(), Out.DirtySlots);
+            Collect(ScenePrimitives.GetDirtyStaticSlots(),   Out.DirtyStaticSlots);
 
             // Past a quarter of the scene, one contiguous upload beats scattered per-run copies outright.
             // This matters because "incremental" is badly named for a material edit: the resolve entry is
             // shared, so invalidating one mesh dirties EVERY primitive drawing it. Uploading that as
             // thousands of separate ranges was O(dirty) transient allocations, each one an insert into the
             // RHI's block list -- which is quadratic and hung the frame outright.
-            if (Out.DirtySlots.size() * 4 >= (SIZE_T)SlotCount)
+            if (Out.DirtySlots.size() * 4 >= (SIZE_T)SlotCount
+                || Out.DirtyStaticSlots.size() * 4 >= (SIZE_T)SlotCount)
             {
                 Out.bFull = true;
                 Out.DirtySlots.clear();
+                Out.DirtyStaticSlots.clear();
             }
         }
 
@@ -1368,9 +1418,70 @@ namespace Lumina
 
     namespace
     {
+        /**
+         * True when this component's cached copy of its resolve entry is still current.
+         *
+         * Two independent things can invalidate it, and both are checked here because they fail in
+         * different ways:
+         *  - the component now points at a DIFFERENT mesh (CachedMeshKey). The gather refuses to draw
+         *    anything whose key disagrees with its live mesh, so missing this strands the component --
+         *    it bails every frame and nothing ever frees it.
+         *  - the ENTRY it copied from was rebuilt (CachedEntryState). Its bounds, meshlet header and
+         *    surface list all came from that entry and are now wrong.
+         *
+         * The second test is one indexed load from FMeshResolveCache's dense state mirror. It used to be
+         * a comparison against the cache's global epoch, which meant any asset finishing its load failed
+         * this gate for EVERY mesh component in the world.
+         */
+        template <typename TComponent>
+        FORCEINLINE bool IsResolveCurrent(const TComponent& Component, const CMesh* Mesh,
+                                          const FMeshResolveCache& Cache)
+        {
+            if (Component.CachedMeshKey != (const void*)Mesh
+                || Component.CachedEntryState == MESH_RESOLVE_STATE_STALE)
+            {
+                return false;
+            }
+
+            // No handle is only settled when there is genuinely nothing to resolve. A non-null mesh with
+            // no handle failed to resolve and has to keep retrying.
+            if (Component.ResolveHandle == INVALID_MESH_RESOLVE_HANDLE)
+            {
+                return Component.CachedEntryState == MESH_RESOLVE_STATE_NO_MESH;
+            }
+
+            return Component.CachedEntryState == Cache.GetEntryState(Component.ResolveHandle);
+        }
+
+        /**
+         * FNV-1a over the override list the resolve is keyed on.
+         *
+         * A direct write to MaterialOverrides from C++ or C# signals nothing, and the resolve entry is
+         * interned by (mesh, overrides) -- so without this the component keeps its old handle forever.
+         * The global epoch used to cover this only by accident: the component re-resolved the next time
+         * any unrelated asset happened to load. Checking the content is both cheaper and actually correct.
+         *
+         * 0 is the never-resolved sentinel, so a real hash must not land on it.
+         */
+        template <typename TComponent>
+        FORCEINLINE uint32 HashOverrides(const TComponent& Component)
+        {
+            uint32 Hash = 2166136261u;
+            for (const TObjectPtr<CMaterialInterface>& Override : Component.MaterialOverrides)
+            {
+                const uint64 Bits = (uint64)(uintptr_t)Override.Get();
+                for (uint32 b = 0; b < 8u; ++b)
+                {
+                    Hash ^= (uint32)((Bits >> (b * 8u)) & 0xFFull);
+                    Hash *= 16777619u;
+                }
+            }
+            return Hash | 1u;
+        }
+
         // Copies the mesh-level values into the component so the cull path never reaches the asset.
         template <typename TComponent>
-        void ResolveMeshComponent(TComponent& Component, CMesh* Mesh, uint32 Epoch,
+        void ResolveMeshComponent(TComponent& Component, CMesh* Mesh,
                                   EInstanceFlags SeedFlags, TVector<CMaterialInterface*>& OverrideScratch)
         {
             OverrideScratch.clear();
@@ -1379,8 +1490,11 @@ namespace Lumina
             {
                 OverrideScratch.push_back(Override.Get());
             }
+            Component.CachedMaterialHash = HashOverrides(Component);
 
-            const uint32 Handle = FMeshResolveCache::Get().Resolve(Mesh, OverrideScratch);
+            FMeshResolveCache& Cache = FMeshResolveCache::Get();
+
+            const uint32 Handle = Cache.Resolve(Mesh, OverrideScratch);
             Component.ResolveHandle = Handle;
             Component.CachedMeshKey = (const void*)Mesh;
 
@@ -1390,19 +1504,20 @@ namespace Lumina
                 Component.CachedLocalRadius          = 0.0f;
                 Component.CachedMeshletHeaderAddress = 0;
                 Component.CachedBaseFlags            = EInstanceFlags::None;
-                
+
                 if (Mesh == nullptr)
                 {
-                    Component.CachedEpoch = Epoch;
+                    Component.CachedEntryState = MESH_RESOLVE_STATE_NO_MESH;
                 }
                 else
                 {
+                    Component.CachedEntryState = MESH_RESOLVE_STATE_STALE;
                     FMeshResolveCache::MarkPendingWork();
                 }
                 return;
             }
 
-            const FResolvedMesh& Entry = FMeshResolveCache::Get().GetEntry(Handle);
+            const FResolvedMesh& Entry = Cache.GetEntry(Handle);
             Component.CachedLocalCenter          = Entry.LocalCenter;
             Component.CachedLocalRadius          = Entry.LocalRadius;
             Component.CachedMeshletHeaderAddress = Entry.MeshletHeaderAddress;
@@ -1415,20 +1530,28 @@ namespace Lumina
             // Only stamp when final; anything still loading re-arms the scan instead.
             if (Entry.bResolved)
             {
-                Component.CachedEpoch = Epoch;
+                Component.CachedEntryState = Cache.GetEntryState(Handle);
             }
             else
             {
+                Component.CachedEntryState = MESH_RESOLVE_STATE_STALE;
                 FMeshResolveCache::MarkPendingWork();
             }
         }
 
+        // Returns how many components were actually re-resolved. In a settled scene that is zero even
+        // while the pass is running, which is the number to watch: it used to be the whole pool every
+        // time any asset in the process finished loading.
         template <typename TStorage, typename TGetMesh>
-        void ResolveMeshPool(TStorage& Storage, uint32 Epoch, EInstanceFlags SeedFlags,
-                             TVector<CMaterialInterface*>& OverrideScratch, TGetMesh&& GetMesh,
-                             FRenderDirtyTracker& Tracker, EPrimitiveSource Source)
+        uint32 ResolveMeshPool(TStorage& Storage, EInstanceFlags SeedFlags,
+                               TVector<CMaterialInterface*>& OverrideScratch, TGetMesh&& GetMesh,
+                               FRenderDirtyTracker& Tracker, EPrimitiveSource Source)
         {
             using TComponent = typename TStorage::value_type;
+
+            const FMeshResolveCache& Cache = FMeshResolveCache::Get();
+
+            uint32 Refreshed = 0;
 
             const uint32 Count = (uint32)Storage.size();
             for (uint32 i = 0; i < Count; ++i)
@@ -1441,24 +1564,24 @@ namespace Lumina
 
                 TComponent& Component = PackedPayloadAt(Storage, i);
 
-                // The epoch alone is not enough to call a component resolved: the gather refuses to draw
-                // anything whose CachedMeshKey does not match its live mesh, so a mesh swapped after a
-                // successful resolve leaves the two disagreeing. Skipping here would strand it -- the
-                // gather bails every frame and only an epoch bump (loading any other asset) frees it.
                 CMesh* Mesh = GetMesh(Component);
-                if (Component.CachedEpoch == Epoch && Component.CachedMeshKey == (const void*)Mesh)
+                if (IsResolveCurrent(Component, Mesh, Cache)
+                    && Component.CachedMaterialHash == HashOverrides(Component))
                 {
                     continue;
                 }
 
-                ResolveMeshComponent(Component, Mesh, Epoch, SeedFlags, OverrideScratch);
+                ResolveMeshComponent(Component, Mesh, SeedFlags, OverrideScratch);
 
                 // This pass visits exactly the components whose resolve was stale, for every reason the
                 // cache tracks (material recompiled, mesh GPU buffers landed, slot override edited, epoch
                 // bumped, mesh assigned directly). Routing them here is what keeps those invalidations
                 // flowing into the render scene without a second change-detection mechanism.
                 Tracker.Mark(Entity, Source, EPrimitiveDirty::Data);
+                ++Refreshed;
             }
+
+            return Refreshed;
         }
     }
 
@@ -1568,23 +1691,29 @@ namespace Lumina
         // past this value so the next frame runs again.
         LastResolvedPendingGeneration = PendingGeneration;
 
-        // Shared resolve entries may be rebuilt below. Marking each visited component is not enough --
-        // one entry backs every instance of that mesh, and only the individually-stale ones are visited.
-        ScenePrimitives.NotifyResolveTableChanged();
+        FMeshResolveCache& Cache = FMeshResolveCache::Get();
+
+        // Turns the queued "this asset changed" keys into per-entry staleness, before anything reads a
+        // token. Every gate below is a comparison against those tokens, so this has to run first.
+        Cache.ApplyPendingInvalidations();
+
+        // Compared at the end. It moves only when an ALREADY-RESOLVED entry is rebuilt, which is the only
+        // case the primitive set's O(primitives) sweep exists for. Interning a newly added mesh does not
+        // move it, so adding meshes no longer drags the whole scene through that sweep.
+        const uint32 TableGenerationBefore = Cache.GetTableGeneration();
 
         FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
-        const uint32 Epoch = FMeshResolveCache::GetEpoch();
 
         TVector<CMaterialInterface*>& Scratch = ResolveOverrideScratch;
         FRenderDirtyTracker& Tracker = FRenderDirtyTracker::Ensure(Registry);
 
-        ResolveMeshPool(Registry.storage<SStaticMeshComponent>(), Epoch, EInstanceFlags::None, Scratch,
+        uint32 Refreshed = ResolveMeshPool(Registry.storage<SStaticMeshComponent>(), EInstanceFlags::None, Scratch,
             [](const SStaticMeshComponent& C) -> CMesh* { return C.StaticMesh; },
             Tracker, EPrimitiveSource::StaticMesh);
-        
+
 
         // Skeletal assets always carry FSkinnedVertex, so Skinned is unconditional here.
-        ResolveMeshPool(Registry.storage<SSkeletalMeshComponent>(), Epoch, EInstanceFlags::Skinned, Scratch,
+        Refreshed += ResolveMeshPool(Registry.storage<SSkeletalMeshComponent>(), EInstanceFlags::Skinned, Scratch,
             [](const SSkeletalMeshComponent& C) -> CMesh* { return C.SkeletalMesh; },
             Tracker, EPrimitiveSource::SkeletalMesh);
 
@@ -1593,17 +1722,18 @@ namespace Lumina
         {
             for (SFoliageType& Type : Foliage.Types)
             {
-                // Same key check as ResolveMeshPool; the foliage gather gates on CachedMeshKey too.
-                if (Type.CachedEpoch == Epoch && Type.CachedMeshKey == (const void*)Type.Mesh.Get())
+                // Same gate as ResolveMeshPool; SFoliageType carries the same three cached fields.
+                if (IsResolveCurrent(Type, Type.Mesh.Get(), Cache))
                 {
                     continue;
                 }
 
                 // Every instance of this type re-binds; see ResolveMeshPool for why this belongs here.
                 Tracker.Mark(Entity, EPrimitiveSource::Foliage, EPrimitiveDirty::Data);
+                ++Refreshed;
 
                 Scratch.clear();
-                const uint32 Handle = FMeshResolveCache::Get().Resolve(Type.Mesh.Get(), Scratch);
+                const uint32 Handle = Cache.Resolve(Type.Mesh.Get(), Scratch);
                 Type.ResolveHandle = Handle;
                 Type.CachedMeshKey = (const void*)Type.Mesh.Get();
 
@@ -1615,29 +1745,46 @@ namespace Lumina
                     // Same distinction as ResolveMeshComponent: only a null mesh is settled.
                     if (Type.Mesh.Get() == nullptr)
                     {
-                        Type.CachedEpoch = Epoch;
+                        Type.CachedEntryState = MESH_RESOLVE_STATE_NO_MESH;
                     }
                     else
                     {
+                        Type.CachedEntryState = MESH_RESOLVE_STATE_STALE;
                         FMeshResolveCache::MarkPendingWork();
                     }
                     continue;
                 }
 
-                const FResolvedMesh& Entry = FMeshResolveCache::Get().GetEntry(Handle);
+                const FResolvedMesh& Entry = Cache.GetEntry(Handle);
                 Type.CachedMeshletHeaderAddress = Entry.MeshletHeaderAddress;
                 Type.CachedBaseFlags = Type.bReceiveShadow ? EInstanceFlags::ReceiveShadow : EInstanceFlags::None;
 
                 if (Entry.bResolved)
                 {
-                    Type.CachedEpoch = Epoch;
+                    Type.CachedEntryState = Cache.GetEntryState(Handle);
                 }
                 else
                 {
+                    Type.CachedEntryState = MESH_RESOLVE_STATE_STALE;
                     FMeshResolveCache::MarkPendingWork();
                 }
             }
         }
+
+        // Belt and braces on top of the per-component marks above: a shared entry can be rebuilt by
+        // ANOTHER world's resolve pass, whose components this one never visits. Gated, so the sweep is
+        // paid on a real rebuild rather than on every frame anything is streaming.
+        const uint32 EntriesRebuilt = Cache.GetTableGeneration() - TableGenerationBefore;
+        if (EntriesRebuilt != 0)
+        {
+            ScenePrimitives.NotifyResolveTableChanged();
+        }
+
+        // Both should sit at zero once a scene settles, and should track what actually changed while it
+        // is loading. Either one scaling with the SIZE of the scene rather than with the change is the
+        // signature of a global invalidation leaking back in.
+        LUMINA_PROFILE_VALUE("Resolve/ComponentsRefreshed", (int64)Refreshed);
+        LUMINA_PROFILE_VALUE("Resolve/EntriesRebuilt",      (int64)EntriesRebuilt);
     }
 
     void FForwardRenderScene::CompileDrawCommands_Extract()
@@ -2149,32 +2296,68 @@ namespace Lumina
 
                 ParticleView.each([&](entt::entity Entity, SParticleSystemComponent& Component)
                 {
-                    FFrameData::FParticleExtract& Item = Frame.Extracts.ParticleExtracts.emplace_back();
-                    Item.Entity              = Entity;
-                    Item.WorldMatrix         = TransformStorage.get(Entity).GetWorldMatrix();
-                    Item.EmitterOffset       = Component.EmitterOffset;
-                    Item.TimeScale           = Component.TimeScale;
-                    Item.SpawnRateMultiplier = Component.SpawnRateMultiplier;
-                    Item.bEmit               = Component.bEmit;
-                    Item.bBurstOnSpawn       = Component.bBurstOnSpawn;
-                    Item.bForceBurst         = Component.bForceBurst;
-                    Item.bForceReset         = Component.bForceReset;
+                    CParticleSystem* PS = Component.ParticleSystem.Get();
 
+                    // Consumed once for the whole system and then stamped onto every emitter. Reading them
+                    // per emitter would let the first emitter clear a burst the rest never saw.
+                    const bool bForceBurst = Component.bForceBurst;
+                    const bool bForceReset = Component.bForceReset;
                     Component.bForceBurst = false;
                     Component.bForceReset = false;
 
-                    CParticleSystem* PS = Component.ParticleSystem.Get();
-                    Item.bReady = PS && PS->IsReadyForSimulation();
-                    if (Item.bReady)
+                    if (PS == nullptr)
                     {
-                        Item.Resolved          = ResolveParticleParams(*PS, Component);
-                        Item.bUsesCustomShader = PS->UsesCustomShader();
-                        if (Item.bUsesCustomShader)
+                        return;
+                    }
+
+                    const FMatrix4 WorldMatrix = TransformStorage.get(Entity).GetWorldMatrix();
+                    const int32    EmitterCount = (int32)PS->Emitters.size();
+
+                    for (int32 EmitterIdx = 0; EmitterIdx < EmitterCount; ++EmitterIdx)
+                    {
+                        CParticleEmitter* Emitter = PS->Emitters[EmitterIdx].Get();
+                        // A disabled emitter extracts nothing at all, but still holds its index: slots stay
+                        // aligned with PS->Emitters, so muting one does not renumber the others' GPU state.
+                        if (Emitter == nullptr || !Emitter->bEnabled)
                         {
-                            Item.CustomComputeShader = PS->GetCustomComputeShader();
+                            continue;
                         }
-                        if (CTexture* Tex = PS->Texture.Get())
+
+                        FFrameData::FParticleExtract& Item = Frame.Extracts.ParticleExtracts.emplace_back();
+                        Item.Entity              = Entity;
+                        Item.EmitterIndex        = EmitterIdx;
+                        Item.EmitterCount        = EmitterCount;
+                        Item.WorldMatrix         = WorldMatrix;
+                        Item.EmitterOffset       = Component.EmitterOffset;
+                        Item.TimeScale           = Component.TimeScale;
+                        Item.SpawnRateMultiplier = Component.SpawnRateMultiplier;
+                        // Filled unconditionally: only the custom-shader branch below resolves real slots,
+                        // and a partially-initialised array would leave 0 (a valid slot) meaning "undeclared".
+                        for (int32 A = 0; A < (int32)ParticleRenderAttribute::Count; ++A)
                         {
+                            Item.RenderAttrSlots[A] = -1;
+                        }
+                        Item.bEmit               = Component.bEmit;
+                        Item.bBurstOnSpawn       = Component.bBurstOnSpawn;
+                        Item.bForceBurst         = bForceBurst;
+                        Item.bForceReset         = bForceReset;
+
+                        Item.bReady = Emitter->IsReadyForSimulation();
+                        if (Item.bReady)
+                        {
+                            Item.Resolved          = ResolveParticleParams(*PS, *Emitter, Component);
+                            Item.bUsesCustomShader = Emitter->UsesCustomShader();
+                            if (Item.bUsesCustomShader)
+                            {
+                                Item.CustomComputeShader = Emitter->GetCustomComputeShader();
+                                Item.ModuleParamValues   = Emitter->ModuleParamValues;
+                                Item.AttributeFloatCount = Math::Max(Emitter->AttributeFloatCount, 1u);
+                                for (int32 A = 0; A < (int32)ParticleRenderAttribute::Count; ++A)
+                                {
+                                    Item.RenderAttrSlots[A] = Emitter->GetRenderAttributeSlot((ParticleRenderAttribute::Type)A);
+                                }
+                            }
+                            if (CTexture* Tex = Emitter->Texture.Get())
                             {
                                 const int32 CacheIdx = Tex->GetResourceID();
                                 if (CacheIdx > 0)
@@ -3896,7 +4079,7 @@ namespace Lumina
                         const uint32 GlobalBoneOffset = Entity.LocalBoneOffset != ~0u ? (BoneBase + Entity.LocalBoneOffset) : 0u;
 
                         FGPUInstance& Out = Instances[WriteIdx];
-                        Out.Transform                  = Entity.Transform;
+                        Out.Transform                  = PackTransform3x4(Entity.Transform);
                         Out.SphereBounds               = Entity.SphereBounds;
                         Out.ShadowMeshletOffset        = Item.ShadowMeshletOffset;
                         Out.ShadowMeshletCount         = Item.ShadowMeshletCount;
@@ -5321,14 +5504,7 @@ namespace Lumina
         {
             return;
         }
-
-        // Every address handed to this shader is dereferenced with no null check of its own, so a
-        // failed allocation anywhere below turns into a read off address 0. NVIDIA has tolerated
-        // that; AMD faults the device outright ("Invalid read at 0x0", VK_ERROR_DEVICE_LOST on the
-        // next submit) with the breadcrumb trail pointing here. CreateSceneBuffer already reports a
-        // null Ptr and Size 0 when an allocation fails -- refusing to dispatch is the missing half.
-        //
-        // Cost is one predictable branch per pass per frame against values already in registers.
+        
         {
             const struct { const char* Name; RHI::GPUPtr Addr; } Required[] =
             {
@@ -6786,9 +6962,12 @@ namespace Lumina
             {
                 if (!IsLive(It->first))
                 {
-                    FParticleGPUState& Dead = It->second;
-                    if (Dead.ParticleBuffer)     { DeferFree(Dead.ParticleBuffer); }
-                    if (Dead.SpawnCounterBuffer) { DeferFree(Dead.SpawnCounterBuffer); }
+                    for (FParticleGPUState& Dead : It->second)
+                    {
+                        if (Dead.ParticleBuffer)     { DeferFree(Dead.ParticleBuffer); }
+                        if (Dead.SpawnCounterBuffer) { DeferFree(Dead.SpawnCounterBuffer); }
+                        if (Dead.AttributeBuffer)    { DeferFree(Dead.AttributeBuffer); }
+                    }
                     It = ParticleGPUStates.erase(It);
                 }
                 else
@@ -6815,22 +6994,47 @@ namespace Lumina
                 continue;
             }
             
-            FParticleGPUState& State = ParticleGPUStates[Item.Entity];
+            TVector<FParticleGPUState>& EntityStates = ParticleGPUStates[Item.Entity];
+            // Sized to the system's emitter count, both directions. Growing covers a newly added emitter;
+            // shrinking frees the buffers of one that was deleted, which would otherwise sit allocated
+            // until the entity itself died.
+            if ((int32)EntityStates.size() != Item.EmitterCount)
+            {
+                for (int32 Stale = Item.EmitterCount; Stale < (int32)EntityStates.size(); ++Stale)
+                {
+                    FParticleGPUState& Dropped = EntityStates[(size_t)Stale];
+                    if (Dropped.ParticleBuffer)     { DeferFree(Dropped.ParticleBuffer); }
+                    if (Dropped.SpawnCounterBuffer) { DeferFree(Dropped.SpawnCounterBuffer); }
+                    if (Dropped.AttributeBuffer)    { DeferFree(Dropped.AttributeBuffer); }
+                }
+                EntityStates.resize((size_t)Math::Max(Item.EmitterCount, 1));
+            }
+            FParticleGPUState& State = EntityStates[(size_t)Item.EmitterIndex];
 
-            const bool bNeedsAlloc = (State.ParticleBuffer == 0) || (State.AllocatedMax != MaxParticles);
+            // Attribute stride is part of the allocation identity: a recompile that declares a new
+            // attribute changes it, and the old buffer would then be indexed with the wrong stride.
+            const bool bNeedsAlloc = (State.ParticleBuffer == 0)
+                                  || (State.AllocatedMax != MaxParticles)
+                                  || (State.AllocatedAttributeFloats != Item.AttributeFloatCount);
             if (bNeedsAlloc)
             {
                 if (State.ParticleBuffer)     { DeferFree(State.ParticleBuffer); }
                 if (State.SpawnCounterBuffer) { DeferFree(State.SpawnCounterBuffer); }
+                if (State.AttributeBuffer)    { DeferFree(State.AttributeBuffer); }
 
                 State.ParticleBufferSize = (uint64)MaxParticles * 64ull;
                 State.ParticleBuffer     = RHI::Malloc(State.ParticleBufferSize, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
                 State.SpawnCounterBuffer = RHI::Malloc(sizeof(uint32), RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
 
+                State.AttributeBufferSize = (uint64)MaxParticles * (uint64)Item.AttributeFloatCount * sizeof(float);
+                State.AttributeBuffer     = RHI::Malloc(State.AttributeBufferSize, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
+
                 // Zero-fill the particle buffer so all entries start dead.
                 RHI::CmdMemset(CL, State.ParticleBuffer, State.ParticleBufferSize, 0u);
+                RHI::CmdMemset(CL, State.AttributeBuffer, State.AttributeBufferSize, 0u);
 
-                State.AllocatedMax      = MaxParticles;
+                State.AllocatedMax             = MaxParticles;
+                State.AllocatedAttributeFloats = Item.AttributeFloatCount;
                 State.SpawnAccumulator  = 0.0f;
                 State.SystemAge         = 0.0f;
                 State.bBurstPending     = true;
@@ -6977,12 +7181,21 @@ namespace Lumina
                 uint64 ParamsAddr;
                 uint64 ParticlesAddr;
                 uint64 SpawnCounterAddr;
+                uint64 ModuleParamsAddr;
+                uint64 AttributesAddr;
             };
 
             FParticleSimArgs SimArgs;
             SimArgs.ParamsAddr       = RHI::Core::CopyTransient(SimParams);
             SimArgs.ParticlesAddr    = State.ParticleBuffer;
             SimArgs.SpawnCounterAddr = State.SpawnCounterBuffer;
+            // Module-stack slots ride the same per-frame transient ring as SimParams: they are small,
+            // rewritten whenever the user edits an input, and need no lifetime tracking. 0 for the legacy
+            // data-driven sim, whose shader never calls MP().
+            SimArgs.ModuleParamsAddr = Item.ModuleParamValues.empty()
+                ? 0ull
+                : RHI::Core::CopyTransientArray(Item.ModuleParamValues.data(), Item.ModuleParamValues.size());
+            SimArgs.AttributesAddr   = State.AttributeBuffer;
 
             RHI::CmdDispatch(CL, MakeArgs(SimArgs), (MaxParticles + 63u) / 64u, 1, 1);
             bAnySimulated = true;
@@ -7087,10 +7300,21 @@ namespace Lumina
         {
             uint64   ParticlesAddr;
             uint32   TextureIndex;
-            uint32   BillboardToCamera;
+            uint32   FacingMode;
             FVector4 Tint;
+            float    VelocityStretch;
+            uint32   SubUVColumns;
+            uint32   SubUVRows;
+            uint32   AttrFloats;        // floats per particle in the attribute buffer
+            uint64   AttributesAddr;    // declared-attribute buffer, 0 when the emitter has none
+            int32    AttrSlotSizeScaleX; // -1 when the stack did not declare it
+            int32    AttrSlotSizeScaleY;
+            int32    AttrSlotPrevPosX;
+            int32    AttrSlotPrevPosY;
+            int32    AttrSlotPrevPosZ;
+            uint32   Pad1;
         };
-        static_assert(sizeof(FParticlePushConstants) == 32, "FParticlePushConstants must match the slang pass block.");
+        static_assert(sizeof(FParticlePushConstants) == 80, "FParticlePushConstants must match the slang pass block.");
 
         for (const FFrameData::FParticleExtract& Item : Frame.Extracts.ParticleExtracts)
         {
@@ -7101,11 +7325,12 @@ namespace Lumina
 
             // GPUState is render-owned; the snapshot supplies everything else.
             auto ParticleStateIt = ParticleGPUStates.find(Item.Entity);
-            if (ParticleStateIt == ParticleGPUStates.end())
+            if (ParticleStateIt == ParticleGPUStates.end()
+                || Item.EmitterIndex >= (int32)ParticleStateIt->second.size())
             {
                 continue;
             }
-            FParticleGPUState& State = ParticleStateIt->second;
+            FParticleGPUState& State = ParticleStateIt->second[(size_t)Item.EmitterIndex];
             if (!State.ParticleBuffer)
             {
                 continue;
@@ -7130,8 +7355,19 @@ namespace Lumina
             FParticlePushConstants PC = {};
             PC.ParticlesAddr     = State.ParticleBuffer;
             PC.TextureIndex      = Item.TextureIndex;
-            PC.BillboardToCamera = Resolved.bBillboardToCamera ? 1u : 0u;
+            PC.FacingMode        = (uint32)Resolved.FacingMode;
             PC.Tint              = FVector4(1.0f, 1.0f, 1.0f, 1.0f);
+            PC.VelocityStretch   = Resolved.VelocityStretch;
+            PC.SubUVColumns      = (uint32)Math::Max(Resolved.SubUVColumns, 1);
+            PC.SubUVRows         = (uint32)Math::Max(Resolved.SubUVRows, 1);
+            PC.AttrFloats        = Math::Max(Item.AttributeFloatCount, 1u);
+            PC.AttributesAddr    = State.AttributeBuffer;
+            PC.AttrSlotSizeScaleX = Item.RenderAttrSlots[ParticleRenderAttribute::SizeScaleX];
+            PC.AttrSlotSizeScaleY = Item.RenderAttrSlots[ParticleRenderAttribute::SizeScaleY];
+            PC.AttrSlotPrevPosX   = Item.RenderAttrSlots[ParticleRenderAttribute::PrevPosX];
+            PC.AttrSlotPrevPosY   = Item.RenderAttrSlots[ParticleRenderAttribute::PrevPosY];
+            PC.AttrSlotPrevPosZ   = Item.RenderAttrSlots[ParticleRenderAttribute::PrevPosZ];
+            PC.Pad1               = 0u;
 
             RHI::CmdDraw(CL, MakeArgs(PC), 6u * State.AllocatedMax, 1u, 0u, 0u);
         }
@@ -10495,8 +10731,9 @@ namespace Lumina
         // Extract decided WHAT to send; the payload is read straight from ScenePrimitives' live arrays,
         // which nothing mutates between Extract and here. See FGeometry::FRetainedUpload.
         const FFrameData::FGeometry::FRetainedUpload& Upload = Frame.Geometry.RetainedUpload;
-        const FGPUInstance*      SrcInstances = ScenePrimitives.GetRetainedInstances();
-        const FInstanceCullData* SrcCullData  = ScenePrimitives.GetRetainedCullData();
+        const FInstanceCullEntry* SrcCullEntries = ScenePrimitives.GetRetainedCullEntries();
+        const FTransform3x4*      SrcTransforms  = ScenePrimitives.GetRetainedTransforms();
+        const FInstanceStatic*    SrcStatic      = ScenePrimitives.GetRetainedStatic();
 
         const uint8  Slot          = CurrentFrameSlot;
         const uint32 RetainedSlots = Upload.SlotCount;
@@ -10524,17 +10761,19 @@ namespace Lumina
             LUMINA_PROFILE_SECTION_COLORED("Retained Upload", tracy::Color::Magenta4);
             SCENE_GPU_SCOPE(CL, "Retained Upload");
 
-            const SIZE_T InstanceBytes = Math::Max<SIZE_T>(sizeof(FGPUInstance), (SIZE_T)RetainedSlots * sizeof(FGPUInstance));
-            const SIZE_T CullBytes     = Math::Max<SIZE_T>(sizeof(FInstanceCullData), (SIZE_T)RetainedSlots * sizeof(FInstanceCullData));
+            const SIZE_T CullBytes      = Math::Max<SIZE_T>(sizeof(FInstanceCullEntry), (SIZE_T)RetainedSlots * sizeof(FInstanceCullEntry));
+            const SIZE_T TransformBytes = Math::Max<SIZE_T>(sizeof(FTransform3x4),      (SIZE_T)RetainedSlots * sizeof(FTransform3x4));
+            const SIZE_T StaticBytes    = Math::Max<SIZE_T>(sizeof(FInstanceStatic),    (SIZE_T)RetainedSlots * sizeof(FInstanceStatic));
 
             // Shrink is gated on a full-snapshot frame: reclaiming the allocation drops the accumulated
             // contents, and only a frame carrying the whole array can put them back. Growth is always
             // accompanied by a full snapshot, because Extract sets bFull precisely when the slot
             // count outgrew the capacity published below.
-            ResizeBufferIfNeeded(RetainedInstanceBuffer, InstanceBytes, 1.5f, RetainedInstanceLowUsage, Upload.bFull);
-            ResizeBufferIfNeeded(RetainedCullDataBuffer, CullBytes,     1.5f, RetainedCullDataLowUsage, Upload.bFull);
+            ResizeBufferIfNeeded(RetainedCullEntryBuffer, CullBytes,      1.5f, RetainedCullEntryLowUsage, Upload.bFull);
+            ResizeBufferIfNeeded(RetainedTransformBuffer, TransformBytes, 1.5f, RetainedTransformLowUsage, Upload.bFull);
+            ResizeBufferIfNeeded(RetainedStaticBuffer,    StaticBytes,    1.5f, RetainedStaticLowUsage,    Upload.bFull);
 
-            if (RetainedInstanceBuffer && RetainedCullDataBuffer && RetainedSlots > 0)
+            if (RetainedCullEntryBuffer && RetainedTransformBuffer && RetainedStaticBuffer && RetainedSlots > 0)
             {
                 if (Upload.bFull)
                 {
@@ -10543,10 +10782,12 @@ namespace Lumina
                     // forcing a resync. See FGeometry::FRetainedUpload.
                     LUMINA_PROFILE_SECTION_COLORED("FULL resend", tracy::Color::Red3);
 
-                    WriteBuffer(CL, RetainedInstanceBuffer.GetAddress(),
-                                SrcInstances, (SIZE_T)RetainedSlots * sizeof(FGPUInstance));
-                    WriteBuffer(CL, RetainedCullDataBuffer.GetAddress(),
-                                SrcCullData, (SIZE_T)RetainedSlots * sizeof(FInstanceCullData));
+                    WriteBuffer(CL, RetainedCullEntryBuffer.GetAddress(),
+                                SrcCullEntries, (SIZE_T)RetainedSlots * sizeof(FInstanceCullEntry));
+                    WriteBuffer(CL, RetainedTransformBuffer.GetAddress(),
+                                SrcTransforms, (SIZE_T)RetainedSlots * sizeof(FTransform3x4));
+                    WriteBuffer(CL, RetainedStaticBuffer.GetAddress(),
+                                SrcStatic, (SIZE_T)RetainedSlots * sizeof(FInstanceStatic));
                 }
                 else
                 {
@@ -10554,34 +10795,49 @@ namespace Lumina
                     // allocation, and each allocation inserts into the RHI's memory-block vector -- so a
                     // copy per slot is quadratic in the dirty count and will hang the render phase on a
                     // large invalidation. The snapshot arrives sorted and deduped precisely so this can
-                    // walk runs; in the steady state the list is empty and this loop does not execute.
-                    const SIZE_T NumDirty = Upload.DirtySlots.size();
-                    for (SIZE_T i = 0; i < NumDirty; )
+                    // walk runs; in the steady state both lists are empty and neither loop executes.
+                    //
+                    // The two lists are walked separately because they cover different buffers: a frame
+                    // where a crowd moved dirties the cull entries and transforms and leaves the static
+                    // payload alone, so its buffer is not touched at all.
+                    auto WriteRuns = [&](const TVector<uint32>& Slots, auto&& Emit)
                     {
-                        SIZE_T j = i + 1;
-                        while (j < NumDirty && Upload.DirtySlots[j] == Upload.DirtySlots[j - 1] + 1u)
+                        const SIZE_T NumDirty = Slots.size();
+                        for (SIZE_T i = 0; i < NumDirty; )
                         {
-                            ++j;
+                            SIZE_T j = i + 1;
+                            while (j < NumDirty && Slots[j] == Slots[j - 1] + 1u)
+                            {
+                                ++j;
+                            }
+                            // A run is contiguous slots, so it is contiguous in the source arrays too.
+                            Emit(Slots[i], j - i);
+                            i = j;
                         }
+                    };
 
-                        const uint32 First = Upload.DirtySlots[i];
-                        const SIZE_T Run   = j - i;
+                    WriteRuns(Upload.DirtySlots, [&](uint32 First, SIZE_T Run)
+                    {
+                        WriteBuffer(CL, RetainedCullEntryBuffer.GetAddress() + (uint64)First * sizeof(FInstanceCullEntry),
+                                    &SrcCullEntries[First], Run * sizeof(FInstanceCullEntry));
+                        WriteBuffer(CL, RetainedTransformBuffer.GetAddress() + (uint64)First * sizeof(FTransform3x4),
+                                    &SrcTransforms[First], Run * sizeof(FTransform3x4));
+                    });
 
-                        // A run is contiguous slots, so it is contiguous in the source arrays too.
-                        WriteBuffer(CL, RetainedInstanceBuffer.GetAddress() + (uint64)First * sizeof(FGPUInstance),
-                                    &SrcInstances[First], Run * sizeof(FGPUInstance));
-                        WriteBuffer(CL, RetainedCullDataBuffer.GetAddress() + (uint64)First * sizeof(FInstanceCullData),
-                                    &SrcCullData[First], Run * sizeof(FInstanceCullData));
-                        i = j;
-                    }
+                    WriteRuns(Upload.DirtyStaticSlots, [&](uint32 First, SIZE_T Run)
+                    {
+                        WriteBuffer(CL, RetainedStaticBuffer.GetAddress() + (uint64)First * sizeof(FInstanceStatic),
+                                    &SrcStatic[First], Run * sizeof(FInstanceStatic));
+                    });
                 }
             }
             // Publish the capacity Extract uses to decide whether the NEXT frame needs a full
-            // re-send. Derived from the allocation we actually got, and from the smaller of the two so a
-            // partial failure cannot advertise room that isn't there.
-            const uint32 InstanceCap = (uint32)Math::Min<uint64>(RetainedInstanceBuffer.GetSize() / sizeof(FGPUInstance), 0xFFFFFFFFull);
-            const uint32 CullCap     = (uint32)Math::Min<uint64>(RetainedCullDataBuffer.GetSize() / sizeof(FInstanceCullData), 0xFFFFFFFFull);
-            RetainedDeviceCapacity.store(Math::Min(InstanceCap, CullCap), std::memory_order_release);
+            // re-send. Derived from the allocations we actually got, and from the smallest of the three so
+            // a partial failure cannot advertise room that isn't there.
+            const uint32 CullCap      = (uint32)Math::Min<uint64>(RetainedCullEntryBuffer.GetSize() / sizeof(FInstanceCullEntry), 0xFFFFFFFFull);
+            const uint32 TransformCap = (uint32)Math::Min<uint64>(RetainedTransformBuffer.GetSize() / sizeof(FTransform3x4), 0xFFFFFFFFull);
+            const uint32 StaticCap    = (uint32)Math::Min<uint64>(RetainedStaticBuffer.GetSize() / sizeof(FInstanceStatic), 0xFFFFFFFFull);
+            RetainedDeviceCapacity.store(Math::Min(CullCap, Math::Min(TransformCap, StaticCap)), std::memory_order_release);
         }
 
         // Surface descriptors: interned, so this moves only when a new distinct LOD table appears.
@@ -10679,8 +10935,9 @@ namespace Lumina
                 uint32 MaxVisibleInstances;
                 float  ShadowCoarseLODDistSq;
                 uint32 Pad1;
-                uint64 RetainedInstancesAddr;
-                uint64 RetainedCullDataAddr;
+                uint64 RetainedCullEntriesAddr;
+                uint64 RetainedTransformsAddr;
+                uint64 RetainedStaticAddr;
                 uint64 SurfaceDescsAddr;
                 uint64 OutInstancesAddr;
                 uint64 OutInstanceCountAddr;
@@ -10688,7 +10945,7 @@ namespace Lumina
                 uint64 OutViewDrawCountAddr;
                 uint64 OutOverflowFlagAddr;
             };
-            static_assert(sizeof(FCullInstancesPC) == 96, "FCullInstancesPC must match CullInstances.slang.");
+            static_assert(sizeof(FCullInstancesPC) == 104, "FCullInstancesPC must match CullInstances.slang.");
 
             FCullInstancesPC PC = {};
             PC.NumRetained              = RetainedSlots;
@@ -10698,8 +10955,9 @@ namespace Lumina
             PC.bUseLODs                 = RenderSettings.bUseLODs ? 1u : 0u;
             PC.MaxVisibleInstances      = VisibleCapacity;
             PC.ShadowCoarseLODDistSq    = RenderSettings.ShadowCoarseLODDistance * RenderSettings.ShadowCoarseLODDistance;
-            PC.RetainedInstancesAddr    = RetainedInstanceBuffer.GetAddress();
-            PC.RetainedCullDataAddr     = RetainedCullDataBuffer.GetAddress();
+            PC.RetainedCullEntriesAddr  = RetainedCullEntryBuffer.GetAddress();
+            PC.RetainedTransformsAddr   = RetainedTransformBuffer.GetAddress();
+            PC.RetainedStaticAddr       = RetainedStaticBuffer.GetAddress();
             PC.SurfaceDescsAddr         = SurfaceDescBuffer.GetAddress();
             PC.OutInstancesAddr         = VisibleInstanceRing[Slot].GetAddress();
             PC.OutInstanceCountAddr     = GetCullCounters().GetAddress();

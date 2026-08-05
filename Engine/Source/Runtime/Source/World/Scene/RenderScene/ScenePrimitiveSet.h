@@ -316,9 +316,10 @@ namespace Lumina
         // survivors into the per-frame instance buffer -- so nothing here is rebuilt per frame and the
         // camera never touches the CPU.
 
-        const FGPUInstance*         GetRetainedInstances() const { return RetainedInstances.data(); }
-        const FInstanceCullData*    GetRetainedCullData() const  { return RetainedCullData.data(); }
-        uint32                      GetRetainedSlotCount() const { return (uint32)RetainedInstances.size(); }
+        const FInstanceCullEntry*   GetRetainedCullEntries() const { return RetainedCullEntries.data(); }
+        const FTransform3x4*        GetRetainedTransforms() const { return RetainedTransforms.data(); }
+        const FInstanceStatic*      GetRetainedStatic() const     { return RetainedStatic.data(); }
+        uint32                      GetRetainedSlotCount() const  { return (uint32)RetainedCullEntries.size(); }
 
         const FSurfaceDescGPU*      GetSurfaceDescs() const     { return SurfaceDescs.data(); }
         uint32                      GetSurfaceDescCount() const { return (uint32)SurfaceDescs.size(); }
@@ -327,8 +328,14 @@ namespace Lumina
 
         // Slots written since the last upload. Empty on a frame where nothing changed, which is what
         // makes the upload proportional to the change rather than to the scene.
+        //
+        // TWO lists, because the arrays they cover change at completely different rates. A move touches
+        // the cull entry and the transform; the static payload only moves on a re-bind. Keeping them
+        // apart is what stops a mover-heavy frame from re-sending a third buffer that did not change --
+        // and each upload run is a transient RHI allocation, so the count of them matters on its own.
         const TVector<uint32>&      GetDirtyInstanceSlots() const { return DirtyInstanceSlots; }
-        void                        ClearDirtyInstanceSlots()     { DirtyInstanceSlots.clear(); }
+        const TVector<uint32>&      GetDirtyStaticSlots() const   { return DirtyStaticSlots; }
+        void                        ClearDirtyInstanceSlots()     { DirtyInstanceSlots.clear(); DirtyStaticSlots.clear(); }
         // True when the slot array itself was reallocated, so the whole thing has to be re-sent.
         bool                        NeedsFullInstanceUpload() const { return bFullInstanceUpload; }
         void                        ClearFullInstanceUpload()       { bFullInstanceUpload = false; }
@@ -354,24 +361,6 @@ namespace Lumina
         void    RemovePrimitive(uint64 Key);
         void    RemoveEntity(FEntityRegistry& Registry, entt::entity Entity, EPrimitiveSource Source);
 
-        // Re-reads the owning component and rebuilds everything camera-independent. Returns false when
-        // the mesh is not resolvable yet, in which case the primitive stays parked as undrawable.
-        bool    RefreshPrimitiveData(FEntityRegistry& Registry, uint32 Index);
-        void    RefreshTransform(FEntityRegistry& Registry, uint32 Index);
-
-        // Binds one primitive's surfaces to the batch registry. Only called when its resolve changed.
-        void    BindSurfaces(uint32 Index);
-        void    ReleaseBindings(uint32 Index);
-
-        // Writes one primitive's surfaces into their retained instance slots and marks them dirty.
-        // Called whenever anything the GPU reads about the primitive changed.
-        void    RefreshInstances(uint32 Index);
-        uint32  AllocateInstanceSlot();
-        void    FreeInstanceSlot(uint32 Slot);
-        void    MarkInstanceDirty(uint32 Slot);
-        // Interns a surface's LOD table; identical tables collapse to one entry.
-        uint32  InternSurfaceDesc(const FResolvedSurface& Surface);
-
         /**
          * Component pools resolved ONCE per sync, defined in the .cpp so this header stays free of the
          * component headers.
@@ -381,12 +370,50 @@ namespace Lumina
          * four of those (disabled tag, the source component, the transform pool, then the transform pool
          * AGAIN to read it) for every entity it touched -- and the transform channel touches every moving
          * entity in the world once a frame. Hoisting the pools turns all of that into plain sparse probes.
+         *
+         * Everything the sync pass reaches for goes through here, including the pools RefreshPrimitiveData
+         * and SyncFoliage used to look up themselves. Registry.storage<T>() can CREATE a pool, so the
+         * constructor must stay the only caller of it in this translation unit.
          */
         struct FSyncPools;
 
+        // Re-reads the owning component and rebuilds everything camera-independent. Returns false when
+        // the mesh is not resolvable yet, in which case the primitive stays parked as undrawable.
+        bool    RefreshPrimitiveData(const FSyncPools& Pools, uint32 Index);
+
+        // Binds one primitive's surfaces to the batch registry. Only called when its resolve changed.
+        void    BindSurfaces(uint32 Index);
+        void    ReleaseBindings(uint32 Index);
+
+        /**
+         * Writes one primitive's surfaces into their retained instance slots and records them as dirty.
+         *
+         * DirtySink is what makes this callable from a worker: pass a list the caller owns and nothing
+         * shared is touched. nullptr takes the serial path -- the shared DirtyInstanceSlots plus the
+         * full-upload threshold, which cannot be evaluated concurrently because it clears the list.
+         */
+        void    RefreshInstances(uint32 Index, TVector<uint32>* DirtySink = nullptr);
+
+        /**
+         * The move-only half of RefreshInstances: world bounds and the transform, nothing else.
+         *
+         * A move cannot change the batch, the material, the surface desc, the entity id or the meshlet
+         * header, so restamping the static payload for one was pure write traffic -- and it dirtied a
+         * third buffer that had not changed.
+         */
+        void    RefreshInstanceTransform(uint32 Index, TVector<uint32>* DirtySink = nullptr);
+
+        uint32  AllocateInstanceSlot();
+        void    FreeInstanceSlot(uint32 Slot);
+        void    MarkInstanceDirty(uint32 Slot);
+        void    MarkStaticDirty(uint32 Slot);
+        // Interns a surface's LOD table; identical tables collapse to one entry.
+        uint32  InternSurfaceDesc(const FResolvedSurface& Surface);
+
         void    SyncEntity(FEntityRegistry& Registry, const FSyncPools& Pools, entt::entity Entity,
                            EPrimitiveSource Source, EPrimitiveDirty Flags);
-        void    SyncFoliage(FEntityRegistry& Registry, entt::entity Entity, EPrimitiveDirty Flags);
+        void    SyncFoliage(FEntityRegistry& Registry, const FSyncPools& Pools, entt::entity Entity,
+                            EPrimitiveDirty Flags);
         void    FullRescan(FEntityRegistry& Registry);
         void    PollUnhookedSources(FEntityRegistry& Registry, FRenderDirtyTracker& Tracker);
 
@@ -396,7 +423,40 @@ namespace Lumina
         TVector<FVector4>                   Bounds;
         TVector<FPrimitiveCullData>         CullData;
         TVector<uint64>                     Keys;           // parallel: index -> key, for swap-remove fixup
+
+        /**
+         * FOLIAGE PRIMITIVES ONLY. Everything else is indexed by LinksByEntityIndex.
+         *
+         * eastl::hash_map is node-based, so carrying the other three sources here cost a heap ALLOCATION
+         * per add and a heap FREE per remove -- for a key the flat link table already answers, maintained
+         * in the same statements. Foliage is the only source that needs it: one entity owns one primitive
+         * per baked instance, keyed with a third sub-index field that one-slot-per-source cannot express.
+         *
+         * FindPrimitive routes by source, so callers do not care which index holds their key.
+         */
         THashMap<uint64, uint32>            IndexByKey;
+
+        /**
+         * Parallel: index -> (ResolveGeneration << 32 | ResolveHandle), mirroring the same two fields on
+         * FScenePrimitive.
+         *
+         * The resolve sweep reads nothing else about a primitive, and reading it off FScenePrimitive meant
+         * striding a 160-byte element to pull eight bytes -- touching every cache line in the array to use
+         * 5% of it. Mirrored here the sweep streams a dense uint64 array that stays resident.
+         *
+         * Maintained in lockstep with Keys, in the same statements, and cross-checked against the
+         * authoritative fields under DEBUG_ASSERT in the sweep. Drift would otherwise be silent: the sweep
+         * would just re-resolve the wrong primitive forever.
+         */
+        TVector<uint64>                     ResolveKeys;
+
+        static uint64 PackResolveKey(uint32 Handle, uint32 Generation)
+        {
+            return (uint64)Handle | ((uint64)Generation << 32);
+        }
+
+        // Scratch: resolve handle -> that entry's current Generation, filled lazily during the sweep.
+        TVector<uint32>                     GenSnapshot;
 
         // Bump-allocated per-surface binding spans. Reclaimed by compaction when the dead share grows
         // past a threshold, which only happens after a lot of mesh swaps.
@@ -405,6 +465,36 @@ namespace Lumina
         void                                CompactBindings();
 
         FSceneBatchRegistry                 Batches;
+
+        /**
+         * Per resolve handle: the binding every primitive of that mesh gets, minus its instance slot.
+         *
+         * Everything on FSurfaceBinding except InstanceSlot is a pure function of the FResolvedSurface it
+         * came from, and FMeshResolveCache interns one entry per (mesh, material assignment). So a thousand
+         * instances of one rock used to ask FindOrAddBatch and InternSurfaceDesc the same question a
+         * thousand times -- each a hash plus a chained-bucket probe, and InternSurfaceDesc rebuilds and
+         * rehashes an 80-byte LOD table first. Resolving once per (handle, generation) makes that cost
+         * scale with distinct meshes rather than with instances.
+         *
+         * This lives HERE and not on FMeshResolveCache because BatchIndex and SurfaceDescIndex are indices
+         * into THIS scene's Batches and SurfaceDescs, while the resolve cache is a process-global singleton
+         * shared by every world.
+         *
+         * INVARIANT: cleared with Batches.Reset(), always, in both places that call it (FullRescan and
+         * Reset). A batch reset renumbers every index, so a surviving memo would hand out indices into an
+         * empty registry. Those two functions clear SurfaceDescs as well, so one clear covers both. The
+         * same pairing is what makes it sound to skip FindOrAddBatch's deferred-material fold on a hit.
+         *
+         * Handles are indices that are never recycled at runtime (FMeshResolveCache::Flush runs only from
+         * the destructor), so (handle, generation) is a stable key. If Flush ever gains a runtime caller,
+         * this has to clear there too.
+         */
+        struct FBindingMemo
+        {
+            uint32                      Generation = ~0u;   // FResolvedMesh::Generation it was built at
+            TVector<FSurfaceBinding>    Protos;             // InstanceSlot unused
+        };
+        TVector<FBindingMemo>               BindingMemoByHandle;
 
         TVector<uint64>                     RetryScratch;
 
@@ -453,16 +543,124 @@ namespace Lumina
         // the primitives it created without scanning.
         THashMap<entt::entity, uint32>      FoliageInstanceCount;
 
+        // Everything a baked foliage instance takes from its type, flattened once per type per rebake so
+        // the per-instance loop is pure array reads. See SyncFoliage.
+        struct FFoliageTypeResolve
+        {
+            const TVector<FResolvedSurface>*    Surfaces = nullptr;
+            uint32                              Generation = 0;
+            uint64                              MeshletHeaderAddress = 0;
+            uint32                              ResolveHandle = INVALID_MESH_RESOLVE_HANDLE;
+            float                               MaxDrawDistance = 0.0f;
+            EInstanceFlags                      BaseFlags = EInstanceFlags::None;
+            bool                                bCastShadow = true;
+        };
+        TVector<FFoliageTypeResolve>        FoliageTypeScratch;
+
         TVector<FRenderDirtyTracker::FEntry> DrainScratch;
         TVector<CMaterialInterface*>        OverrideScratch;
 
-        // Retained GPU scene. RetainedInstances / RetainedCullData are parallel and slot-addressed;
-        // freed slots keep their storage and are handed back out by AllocateInstanceSlot, so slot ids
-        // stay stable for as long as a binding holds one.
-        TVector<FGPUInstance>               RetainedInstances;
-        TVector<FInstanceCullData>          RetainedCullData;
+        /**
+         * One record per distinct entity in a drain, with flags accumulated per source.
+         *
+         * A bulk spawn queues three to four entries for the SAME entity in one frame: on_construct and
+         * on_update both mark Data|Membership (World.cpp), the resolve pass marks Data once the mesh
+         * resolves, and the transform channel marks Transform. Applying each separately re-read the
+         * component and restamped every instance slot roughly four times per new primitive. Foliage was
+         * worse: it is marked once per stale SFoliageType, and every SyncFoliage call is O(baked
+         * instances of that entity), so eight types meant eight full rebake sweeps.
+         *
+         * Folding is sound because SyncEntity and SyncFoliage are state RECONCILERS, not event appliers:
+         * both re-derive whether the primitive should exist from the live registry rather than from the
+         * flags they were handed. So OR-ing a frame's flags and applying once lands on the same state as
+         * applying them in order.
+         */
+        struct FCoalescedEntity
+        {
+            // Full entt::to_integral, version included -- entity INDICES are recycled, so the version is
+            // what stops a destroyed entity's record from absorbing its successor's. Same guard, and same
+            // reason, as FPrimitiveLink::Entity.
+            uint32          Entity = ~0u;
+            EPrimitiveDirty Flags[(uint32)EPrimitiveSource::Num] = {};
+        };
+
+        // Entity index -> record, flat-indexed like LinksByEntityIndex. Stamped so a new drain invalidates
+        // every slot without walking the table.
+        struct FCoalesceSlot
+        {
+            uint32 Stamp = 0;
+            uint32 Index = ~0u;
+        };
+
+        TVector<FCoalescedEntity>   CoalescedScratch;
+        TVector<FCoalesceSlot>      CoalesceByEntityIndex;
+        uint32                      CoalesceStamp = 0;
+
+        // Folds DrainScratch into CoalescedScratch.
+        void CoalesceDrain();
+
+        // Grows the append-target arrays once, from the coalesced record set, before the apply pass runs.
+        void ReserveForDrain();
+
+        /**
+         * Splits the coalesced records by whether applying them can mutate shared structure.
+         *
+         * Transform is the only flag that can neither create nor destroy a primitive. A record carrying
+         * nothing else therefore writes ONLY things addressed by the primitive index its entity already
+         * owns -- Primitives[i].Transform, Bounds[i], and that primitive's own instance slots. One entity
+         * owns at most one primitive per source and one record covers one entity, so no two records can
+         * target the same index and the whole set runs wide with no synchronization.
+         *
+         * Everything else stays serial and must run FIRST. Adds append, removals swap-with-last, and both
+         * renumber indices the transform pass is about to resolve through the link table.
+         */
+        void PartitionDrain();
+        void ApplyStructuralRecords(FEntityRegistry& Registry, const FSyncPools& Pools);
+        void ApplyTransformRecords(const FSyncPools& Pools);
+
+        // Body of one transform-only record. Must touch nothing except this entity's own primitives.
+        // OutDirty is nullptr on the serial fallback; see RefreshInstances.
+        void ApplyTransformRecord(const FSyncPools& Pools, uint32 RecordIndex, TVector<uint32>* OutDirty);
+
+        // Indices into CoalescedScratch, filled by PartitionDrain.
+        TVector<uint32>             TransformRecords;
+        TVector<uint32>             StructuralRecords;
+
+        /**
+         * One dirty-slot list per task-thread slot.
+         *
+         * Range.Thread is unique among concurrently running chunks and stable within one, so indexing by
+         * it needs no lock. The lists are separate heap allocations, so the per-push size bumps land on
+         * different cache lines -- the headers here are adjacent, but a worker only touches its own and
+         * the merge below reads them all serially.
+         */
+        TVector<TVector<uint32>>    ParallelDirtySlots;
+
+        // Folds the per-worker lists back into DirtyInstanceSlots, or gives up and re-sends everything.
+        void MergeParallelDirtySlots();
+
+        /**
+         * Retained GPU scene, split by ACCESS RATE rather than held as one struct.
+         *
+         * All three are parallel and slot-addressed; freed slots keep their storage and are handed back
+         * out by AllocateInstanceSlot, so slot ids stay stable for as long as a binding holds one.
+         *
+         *  - CullEntries (32 B) is streamed in full by CullInstances every frame. It holds exactly what a
+         *    REJECT needs, which is why it is worth its own array: as one 144-byte struct the cull pulled
+         *    roughly five times the bandwidth it consumed.
+         *  - Transforms is read only by survivors, and rewritten every time a primitive moves.
+         *  - Static is read only by survivors, and rewritten only when a primitive is re-bound.
+         */
+        TVector<FInstanceCullEntry>         RetainedCullEntries;
+        // 3x4, not 4x4: an instance transform is always affine, so the last row is (0,0,0,1) and storing
+        // it is 16 wasted bytes per slot on an array a moving crowd rewrites every frame. See
+        // FTransform3x4 for the convention and how it was verified.
+        TVector<FTransform3x4>              RetainedTransforms;
+        TVector<FInstanceStatic>            RetainedStatic;
+
         TVector<uint32>                     InstanceFreeSlots;
-        TVector<uint32>                     DirtyInstanceSlots;
+        TVector<uint32>                     DirtyInstanceSlots;   // cull entry + transform
+        TVector<uint32>                     DirtyStaticSlots;     // static payload
         bool                                bFullInstanceUpload = true;
 
         // Interned per distinct LOD table, keyed by a hash of its contents: every instance of one rock
@@ -474,5 +672,31 @@ namespace Lumina
         uint64                              StructureGeneration = 1;
         uint32                              SkinnedCount = 0;
         bool                                bResolveTableChanged = false;
+
+        /**
+         * Per-sync aggregates, plotted once at the end of Sync.
+         *
+         * Counters rather than per-entity profiler zones: TRACY_CALLSTACK is defined engine-wide
+         * (LuminaFeatures.BuildRules.cs), so every LUMINA_PROFILE_SCOPE carries a tracy_malloc plus an
+         * RtlWalkFrameChain stack unwind while the profiler is attached. At one zone per dirty entity that
+         * cost more than the pass it was measuring. These are one increment each, and the plots say more:
+         * DrainEntries vs CoalescedEntities is the redundancy in the change channel, and BindCalls staying
+         * flat across frames is how you tell the resolve table has settled.
+         */
+        struct FSyncStats
+        {
+            uint32 DrainEntries         = 0;
+            uint32 CoalescedEntities    = 0;
+            uint32 SyncEntityCalls      = 0;
+            uint32 SyncFoliageCalls     = 0;
+            uint32 BindCalls            = 0;
+            uint32 RefreshInstanceCalls = 0;
+            // The split PartitionDrain produced. Only the transform half runs wide, so these two say
+            // directly how much of a slow Sync/Apply is even parallelizable.
+            uint32 TransformRecords     = 0;
+            uint32 StructuralRecords    = 0;
+        };
+        FSyncStats  SyncStats;
+        void        PublishSyncStats() const;
     };
 }

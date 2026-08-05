@@ -196,6 +196,20 @@ namespace Lumina
         void TryImport(const FFixedString& Path);
         void TryImport(const TVector<FFixedString>& Paths);
 
+        // "Reimport From File...": picks a source file and swaps its contents onto an asset that already
+        // exists, keeping its object, GUID and path. Deliberately NOT "import the same file again", which
+        // would mint a second asset called "<Name>_1" and leave every existing reference on the old one.
+        void DrawReimportAssetMenuItem(const FContentBrowserTileViewItem* ContentItem, bool bIsProtected);
+
+        // Runs the factory's normal prepare + options dialogue against an existing asset, then performs the
+        // swap. AssetGUID rather than a pointer: the prepare is async, and the asset can be destroyed
+        // (project reload, asset deleted) before it comes back.
+        void StartReimport(const FGuid& AssetGUID, CFactory* Factory, const FFixedString& SourceFile);
+
+        // Off-thread half of a reimport: the swap itself, then save + registry notify.
+        void FinishReimport(const FGuid& AssetGUID, CFactory* Factory, const FFixedString& SourceFile,
+                            TUniquePtr<Import::FImportSettings> Settings);
+
         // Files still waiting on an options window. Drained one at a time by ProcessNextImport.
         TVector<FFixedString> PendingImports;
         bool bImportWindowOpen = false;

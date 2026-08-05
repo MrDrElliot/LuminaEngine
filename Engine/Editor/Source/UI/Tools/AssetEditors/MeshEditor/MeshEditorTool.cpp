@@ -3,6 +3,7 @@
 #include "ImGuiDrawUtils.h"
 #include "Core/Object/Cast.h"
 #include "Core/Math/Math.h"
+#include "Tools/Import/ImportHelpers.h"
 #include "Tools/UI/ImGui/ImGuiFonts.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "world/entity/components/environmentcomponent.h"
@@ -33,6 +34,15 @@ namespace Lumina
 
     void FStaticMeshEditorTool::OnInitialize()
     {
+        // Scrolling disabled: the UV canvas claims the wheel for zoom, and a scrollable host would fight it.
+        CreateToolWindow(UVViewerName, [&](bool bFocused)
+        {
+            if (CStaticMesh* StaticMesh = Cast<CStaticMesh>(Asset.Get()))
+            {
+                UVViewer.Draw(StaticMesh->GetMeshResource());
+            }
+        }, ImVec2(-1, -1), true);
+
         CreateToolWindow(MeshPropertiesName, [&](bool bFocused)
         {
             CStaticMesh* StaticMesh = Cast<CStaticMesh>(Asset.Get());
@@ -292,11 +302,14 @@ namespace Lumina
                 }
 
                 bool bThresholdChanged = false;
-                if (ImGui::BeginTable("##LODThresholds", 2,
+                const float ResetColW = ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x * 2.0f;
+
+                if (ImGui::BeginTable("##LODThresholds", 3,
                     ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp))
                 {
                     ImGui::TableSetupColumn("LOD",       ImGuiTableColumnFlags_WidthFixed, 50.0f);
                     ImGui::TableSetupColumn("Threshold", ImGuiTableColumnFlags_WidthStretch);
+                    ImGui::TableSetupColumn("##Reset",   ImGuiTableColumnFlags_WidthFixed, ResetColW);
                     ImGui::TableHeadersRow();
 
                     for (uint32 lod = 0; lod < MAX_MESH_LODS; ++lod)
@@ -328,10 +341,39 @@ namespace Lumina
                             bThresholdChanged = true;
                         }
 
+                        // Reset this level to the ramp the importer bakes. Clamped against the level below
+                        // it for the same reason the drag is: the picker walks the ramp and stops at the
+                        // first miss, so a non-monotonic row would make every level past it unreachable.
+                        ImGui::TableSetColumnIndex(2);
+                        const float DefaultValue = Import::Mesh::GetDefaultLODScreenThreshold(lod);
+                        ImGui::BeginDisabled(SharedThresholds[lod] == DefaultValue);
+                        if (ImGui::SmallButton(LE_ICON_REFRESH "##ResetLOD"))
+                        {
+                            SharedThresholds[lod] = Math::Max(DefaultValue, MinValue);
+                            bThresholdChanged = true;
+                        }
+                        ImGui::EndDisabled();
+                        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort | ImGuiHoveredFlags_AllowWhenDisabled))
+                        {
+                            ImGui::SetTooltip("Reset to default (%.2f)", DefaultValue);
+                        }
+
                         ImGui::PopID();
                     }
                     ImGui::EndTable();
                 }
+
+                if (ImGui::Button(LE_ICON_REFRESH " Reset All Thresholds"))
+                {
+                    // Ascending walk so each level clamps against the one already restored below it.
+                    for (uint32 lod = 1; lod < MAX_MESH_LODS; ++lod)
+                    {
+                        SharedThresholds[lod] = Math::Max(Import::Mesh::GetDefaultLODScreenThreshold(lod),
+                                                          SharedThresholds[lod - 1] + 0.01f);
+                    }
+                    bThresholdChanged = true;
+                }
+                ImGuiX::TextTooltip("{}", "Restore every level to the ramp the importer bakes, on every surface.");
 
                 if (bThresholdChanged)
                 {
@@ -455,7 +497,12 @@ namespace Lumina
                                 else
                                 {
                                     ImGui::PushID((int)lod);
-                                    ImGui::SetNextItemWidth(-FLT_MIN);
+
+                                    // Leave room for the trailing reset; -FLT_MIN would eat the whole cell.
+                                    const float SurfResetW = ImGui::GetFrameHeight();
+                                    const float Spacing    = ImGui::GetStyle().ItemInnerSpacing.x;
+                                    ImGui::SetNextItemWidth(Math::Max(ImGui::GetContentRegionAvail().x - SurfResetW - Spacing, 1.0f));
+
                                     float Value = SurfaceRW.LODScreenThreshold[lod];
                                     const float MinValue = SurfaceRW.LODScreenThreshold[lod - 1] + 0.01f;
                                     if (ImGui::DragFloat("##SurfaceThreshold", &Value, 0.5f, MinValue, 1024.0f, "%.2f"))
@@ -463,6 +510,21 @@ namespace Lumina
                                         SurfaceRW.LODScreenThreshold[lod] = Math::Max(Value, MinValue);
                                         NotifyAssetDataChanged();
                                     }
+
+                                    ImGui::SameLine(0.0f, Spacing);
+                                    const float SurfDefault = Import::Mesh::GetDefaultLODScreenThreshold(lod);
+                                    ImGui::BeginDisabled(SurfaceRW.LODScreenThreshold[lod] == SurfDefault);
+                                    if (ImGui::SmallButton(LE_ICON_REFRESH "##ResetSurfaceLOD"))
+                                    {
+                                        SurfaceRW.LODScreenThreshold[lod] = Math::Max(SurfDefault, MinValue);
+                                        NotifyAssetDataChanged();
+                                    }
+                                    ImGui::EndDisabled();
+                                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort | ImGuiHoveredFlags_AllowWhenDisabled))
+                                    {
+                                        ImGui::SetTooltip("Reset this surface's LOD %u to default (%.2f)", lod, SurfDefault);
+                                    }
+
                                     ImGui::PopID();
                                 }
                             }
@@ -625,6 +687,17 @@ namespace Lumina
     {
     }
 
+    void FStaticMeshEditorTool::OnAssetDataChangedExternally()
+    {
+        FAssetEditorTool::OnAssetDataChangedExternally();
+
+        // Every one of these describes geometry that no longer exists: the unwrap is built from the old
+        // meshlets, and the surface/LOD indices are bounds into arrays that just changed length.
+        UVViewer.Invalidate();
+        SelectedSurfaceIndex = -1;
+        PreviewLODIndex = -1;
+    }
+
     void FStaticMeshEditorTool::DrawHelpMenu()
     {
         DrawHelpTextRow("LODs",
@@ -715,6 +788,9 @@ namespace Lumina
         ImGui::DockBuilderSplitNode(InDockspaceID, ImGuiDir_Right, 0.3f, &rightDockID, &leftDockID);
 
         ImGui::DockBuilderDockWindow(GetToolWindowName(ViewportWindowName).c_str(), leftDockID);
+        // Tabbed with the viewport rather than split off it: the unwrap wants the same large canvas, and
+        // it is an inspect-one-then-the-other workflow, not a side-by-side one.
+        ImGui::DockBuilderDockWindow(GetToolWindowName(UVViewerName.data()).c_str(), leftDockID);
         ImGui::DockBuilderDockWindow(GetToolWindowName(MeshPropertiesName.data()).c_str(), rightDockID);
     }
 }

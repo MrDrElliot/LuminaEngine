@@ -5,11 +5,14 @@
 #include "Core/Math/Math.h"
 #include "Core/Math/Transform.h"
 #include "Core/Object/ObjectHandleTyped.h"
+#include "World/Entity/Registry/EntityRegistry.h"
 #include "World/Scene/RenderScene/SceneRenderTypes.h"
 #include "FoliageComponent.generated.h"
 
 namespace Lumina
 {
+    class CWorld;
+
     // One painted foliage instance, in WORLD space. Rotation is a quaternion stored as (x, y, z, w) so it
     // survives reflection (FQuat is a ManualStub the reflector can't walk). Kept deliberately small; the GPU
     // transform is composed on the fly at draw time.
@@ -97,7 +100,9 @@ namespace Lumina
         uint64          CachedMeshletHeaderAddress = 0;
         EInstanceFlags  CachedBaseFlags = EInstanceFlags::None;
         uint32          ResolveHandle = ~0u;
-        mutable uint32  CachedEpoch = 0;
+        // Staleness token of the resolve entry this type last copied from. See SMeshComponent for why
+        // this is per-entry rather than a stamp of the cache's global epoch.
+        mutable uint32  CachedEntryState = MESH_RESOLVE_STATE_STALE;
         const void*     CachedMeshKey = nullptr;
     };
 
@@ -155,4 +160,19 @@ namespace Lumina
          *  Game-thread only (called during render-command compile). */
         void EnsureRenderCache();
     };
+
+    /** Call after ANY edit to a foliage component's Instances or Types.
+     *
+     *  Foliage has two independent caches and an edit invalidates both, which is exactly the trap this
+     *  exists to close:
+     *
+     *    1. MarkInstancesChanged() bumps InstancesVersion, which rebuilds BakedInstances (the CPU-side
+     *       transform + bounds bake).
+     *    2. The render dirty tracker is what makes FScenePrimitiveSet::SyncFoliage run, and that is what
+     *       actually adds or removes primitives in the retained scene.
+     *
+     *  Doing only (1) bakes instances nothing ever draws. That was the painting bug: newly painted foliage
+     *  stayed invisible until some unrelated change happened to force a scene sync. Always use this rather
+     *  than calling MarkInstancesChanged() directly. */
+    RUNTIME_API void MarkFoliageChanged(CWorld& World, entt::entity Entity, SFoliageComponent& Foliage);
 }

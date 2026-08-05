@@ -1238,7 +1238,7 @@ namespace Lumina
 
     void FSceneEditorTool::CreateEntity()
     {
-        BeginTransaction();
+        BeginCreationTransaction();
         entt::entity NewEntity = World->ConstructEntity("Entity", GetNewEntitySpawnTransform());
         if (NewEntity != entt::null)
         {
@@ -1259,7 +1259,7 @@ namespace Lumina
 
         entt::meta_type MetaType = entt::resolve(entt::hashed_string(Component->GetName().c_str()));
 
-        BeginTransaction();
+        BeginCreationTransaction();
         entt::entity CreatedEntity = World->ConstructEntity(Component->MakeDisplayName(), GetNewEntitySpawnTransform());
         if (CreatedEntity != entt::null)
         {
@@ -1282,7 +1282,7 @@ namespace Lumina
             return;
         }
 
-        BeginTransaction();
+        BeginCreationTransaction();
         entt::entity CreatedEntity = World->ConstructEntity(DisplayName, GetNewEntitySpawnTransform());
         if (CreatedEntity != entt::null)
         {

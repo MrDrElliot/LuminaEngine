@@ -178,12 +178,12 @@ namespace Lumina
 
     void SDynamicMeshComponent::PublishRenderData(TSharedPtr<FDynamicMeshRenderData> NewData)
     {
-        // Pointer first, then the version with a release: the render scene's poll acquire-loads the
+        // Pointer first, then the version with a release, the render scene's poll acquire-loads the
         // version and only then takes a ref, so it can never see a bump advertising data that isn't
         // visible yet. The old data (and its GPU buffers) drop when the last holder releases it, which
         // may be a gather still reading the previous snapshot.
         eastl::atomic_store(&RenderData, eastl::move(NewData));
-        std::atomic_ref<uint32>(RenderDataVersion).fetch_add(1u, std::memory_order_release);
+        (void)std::atomic_ref<uint32>(RenderDataVersion).fetch_add(1u, std::memory_order_release);
     }
 
     FAABB SDynamicMeshComponent::GetAABB() const

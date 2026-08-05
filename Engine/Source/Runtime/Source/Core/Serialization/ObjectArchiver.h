@@ -25,8 +25,11 @@ namespace Lumina
         {
         }
 
-        
-        
+        // Declaring ANY operator<< here hides every one of the base's overloads, so without this a plain
+        // `Ar << SomeInt` against this archiver does not compile at all -- the scalar, string and container
+        // forwards are all invisible. Overriding two of them is not meant to withdraw the other twenty.
+        using FProxyArchive::operator<<;
+
         RUNTIME_API FArchive& operator<<(CObject*& Obj) override;
         RUNTIME_API FArchive& operator<<(FObjectHandle& Value) override;
 
@@ -53,6 +56,9 @@ namespace Lumina
             , Remap(InRemap)
         {
         }
+
+        // Same hiding rule one level down; see FObjectProxyArchiver.
+        using FObjectProxyArchiver::operator<<;
 
         RUNTIME_API FArchive& operator<<(CObject*& Obj) override;
         RUNTIME_API FArchive& operator<<(FObjectHandle& Value) override;

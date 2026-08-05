@@ -219,7 +219,7 @@ namespace Lumina::SkeletalUtils
         FBoneTransform* RESTRICT Out = reinterpret_cast<FBoneTransform*>(OutRows.data());
         for (SIZE_T i = 0; i < NumBones; ++i)
         {
-            Out[i] = PackBoneTransform(BoneTransforms[i]);
+            Out[i] = PackTransform3x4(BoneTransforms[i]);
         }
     }
 }

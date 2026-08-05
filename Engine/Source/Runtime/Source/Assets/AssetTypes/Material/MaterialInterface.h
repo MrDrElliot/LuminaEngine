@@ -9,6 +9,7 @@ namespace Lumina
 {
     struct FMaterialUniforms;
     class CMaterial;
+    class CTexture;
     struct FMaterialParameter;
     enum class EMaterialParameterType : uint8;
 }
@@ -77,6 +78,16 @@ namespace Lumina
 
         void SetReadyForRender(bool bReady) { bReadyForRender.store(bReady, std::memory_order_release); }
         bool IsReadyForRender() const { return bReadyForRender.load(std::memory_order_acquire); }
+
+        /** Re-reads this material's texture ResourceIDs into its uniform block and re-uploads it, if it
+         *  binds ChangedTexture (null = refresh unconditionally). Returns whether it did.
+         *
+         *  The bindless index itself is stable across a re-cook (RHI::Textures::Recreate repoints the slot
+         *  rather than allocating a new one), so this is NOT about a moved slot. It is about the two cases
+         *  where the baked value is simply WRONG: a texture that had no valid ResourceID when the block was
+         *  written -- an asset that failed to cook, or was not resident yet -- was baked as the fallback and
+         *  stays there forever, and a texture reference that was null at bake time never got written at all. */
+        virtual bool RefreshTextureBindings(const CTexture* ChangedTexture) { return false; }
 
     protected:
         

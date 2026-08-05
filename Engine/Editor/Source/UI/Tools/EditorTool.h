@@ -349,8 +349,28 @@ namespace Lumina
          *  serialize there causes a frame hitch (e.g. dragging the gizmo while simulating). */
         bool CanTransact() const { return World != nullptr && World->GetWorldType() == EWorldType::Editor; }
 
-        /** Begin a transaction; captures before-state. */
+        /** Begin a transaction; captures before-state as a WHOLE-REGISTRY snapshot. */
         virtual void BeginTransaction();
+
+        /**
+         * Begin a transaction that records only these entities' transforms.
+         *
+         * Use this instead of BeginTransaction for any edit that is purely a transform. The general form
+         * reflectively serializes the entire registry twice per transaction, which the gizmo cannot
+         * afford: it opens the transaction on the frame a drag starts, so in a level carrying a foliage
+         * component with hundreds of thousands of reflected instances that landed as a multi-hundred-
+         * millisecond stall the moment the user grabbed something.
+         */
+        void BeginTransformTransaction(const TVector<entt::entity>& Entities);
+
+        /**
+         * Begin a transaction for an operation that only ADDS entities (duplicate, paste, new entity).
+         *
+         * Records nothing up front and, at commit, serializes only what was created -- so the undo step
+         * is sized by the addition rather than by the level. CREATION ONLY: an entity destroyed inside
+         * one of these cannot be restored, and the command logs an error if it sees that happen.
+         */
+        void BeginCreationTransaction();
 
         /** End a transaction; captures after-state and pushes onto the undo stack. */
         virtual void EndTransaction(FName Name);

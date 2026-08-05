@@ -115,7 +115,7 @@ namespace Lumina
         {
             for (SFoliageType& Type : Registry.get<SFoliageComponent>(Entity).Types)
             {
-                Type.CachedEpoch = 0;
+                Type.CachedEntryState = MESH_RESOLVE_STATE_STALE;
             }
             FMeshResolveCache::MarkPendingWork();
             FRenderDirtyTracker::Ensure(Registry).Mark(Entity, EPrimitiveSource::Foliage,

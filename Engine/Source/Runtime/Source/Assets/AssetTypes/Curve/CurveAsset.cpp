@@ -359,4 +359,21 @@ namespace Lumina
         Curve.AddKey(0.0f, 0.0f);
         Curve.AddKey(1.0f, 1.0f);
     }
+
+    bool SCurve::IsUsingAsset() const
+    {
+        return bUseAsset && Asset.Get() != nullptr;
+    }
+
+    const SKeyedCurve& SCurve::Resolve() const
+    {
+        // Falling back to the inline curve rather than returning null keeps every consumer branch-free:
+        // an unset or destroyed asset reference degrades to whatever was authored inline instead of
+        // needing a null check at each sample site.
+        if (const CCurveAsset* Resolved = Asset.Get(); bUseAsset && Resolved != nullptr)
+        {
+            return Resolved->Curve;
+        }
+        return Curve;
+    }
 }

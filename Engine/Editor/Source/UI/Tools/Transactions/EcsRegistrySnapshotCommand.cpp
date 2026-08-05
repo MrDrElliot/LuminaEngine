@@ -23,6 +23,11 @@ namespace Lumina
 
     void FEcsRegistrySnapshotCommand::Capture(TVector<uint8>& Out) const
     {
+        // Scoped because this is a full reflective serialize of every entity and component, and it
+        // used to be completely invisible: it ran inline under the editor's "Draw Viewport" zone with
+        // no zone of its own, so a 500 ms gizmo-grab stall showed up only as unattributed SELF time.
+        LUMINA_PROFILE_SCOPE();
+
         Out.clear();
         CWorld* W = World.Get();
         if (W == nullptr)
@@ -37,6 +42,8 @@ namespace Lumina
 
     void FEcsRegistrySnapshotCommand::Restore(const TVector<uint8>& In) const
     {
+        LUMINA_PROFILE_SCOPE();
+
         CWorld* W = World.Get();   // null once the map is closed/swapped -> a stale undo safely no-ops
         if (W == nullptr || In.empty())
         {

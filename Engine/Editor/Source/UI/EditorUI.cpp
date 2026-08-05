@@ -50,6 +50,7 @@
 #include "Assets/AssetTypes/PhysicsMaterial/PhysicsMaterial.h"
 #include "Assets/AssetTypes/DataAsset/DataAssetSchema.h"
 #include "Assets/AssetTypes/GeometryCollection/GeometryCollection.h"
+#include "Assets/AssetEvents.h"
 #include "Assets/AssetTypes/Material/Material.h"
 #include "Assets/AssetTypes/MaterialFunction/MaterialFunction.h"
 #include "Assets/AssetTypes/Material/MaterialInstance.h"
@@ -77,6 +78,7 @@
 #include "Platform/CrashReporter.h"
 #include "Platform/Process/PlatformProcess.h"
 #include "Properties/Customizations/CoreTypeCustomization.h"
+#include "Properties/Customizations/CurveGradientCustomization.h"
 #include "Properties/Customizations/CustomPrimitiveDataCustomization.h"
 #include "Tools/AssetEditors/ParticleSystemEditor/ParticleParameterCustomization.h"
 #include "Properties/Customizations/CSharpScriptComponentCustomization.h"
@@ -88,6 +90,7 @@
 #include "Renderer/CustomPrimitiveData.h"
 #include "Renderer/RenderDocImpl.h"
 #include "Renderer/RenderManager.h"
+#include "Renderer/RHI.h"
 #include "Renderer/ShaderCompiler.h"
 #include "Renderer/ShaderLibrary.h"
 #include "Thumbnails/ThumbnailManager.h"
@@ -445,6 +448,22 @@ namespace Lumina
         // Content-browser tiles that draw their own body (curves, etc) instead of a rendered thumbnail.
         AssetTilePainters::RegisterBuiltin();
 
+        // A reimported texture keeps its bindless slot (RHI::Textures::Recreate repoints it), so materials
+        // sampling it are already correct. What is NOT correct is a material whose block was baked while
+        // that texture had no valid ResourceID -- it holds the fallback and nothing would ever rewrite it.
+        AssetDataChangedHandle = AssetEvents::OnAssetDataChanged().AddLambda([](CObject* Changed)
+        {
+            if (const CTexture* Texture = Cast<CTexture>(Changed))
+            {
+                const uint32 Refreshed = RefreshMaterialsReferencingTexture(Texture);
+                if (Refreshed > 0)
+                {
+                    LOG_INFO("Refreshed texture bindings on {} material(s) after '{}' changed.",
+                             Refreshed, Texture->GetName().c_str());
+                }
+            }
+        });
+
         // Editor owns input until the user hits Play (the registry flag defaults true so packaged builds work).
         FInputViewportRegistry::Get().SetGameInputFocused(false);
 
@@ -490,6 +509,16 @@ namespace Lumina
         PropertyCustomizationRegistry->RegisterPropertyCustomization(FParticleParameter::StaticStruct()->GetName(), []
         {
            return FParticleParameterCustomization::MakeInstance();
+        });
+
+        PropertyCustomizationRegistry->RegisterPropertyCustomization(SCurve::StaticStruct()->GetName(), []
+        {
+           return FCurvePropertyCustomization::MakeInstance();
+        });
+
+        PropertyCustomizationRegistry->RegisterPropertyCustomization(SGradient::StaticStruct()->GetName(), []
+        {
+           return FGradientPropertyCustomization::MakeInstance();
         });
 
         PropertyCustomizationRegistry->RegisterPropertyCustomization(SKey::StaticStruct()->GetName(), []
@@ -574,6 +603,12 @@ namespace Lumina
 
     void FEditorUI::Deinitialize(const FUpdateContext& UpdateContext)
     {
+        if (AssetDataChangedHandle.IsValid())
+        {
+            AssetEvents::OnAssetDataChanged().Remove(AssetDataChangedHandle);
+            AssetDataChangedHandle = {};
+        }
+
         // Shutting down is not the user closing their tabs; see bTearingDownTools.
         bTearingDownTools = true;
 
@@ -614,7 +649,7 @@ namespace Lumina
             bWasGameOwningInput = bGameOwnsInput;
         }
 
-        auto TitleBarLeftContents = [this, &UpdateContext] ()
+        auto TitleBarMenuContents = [this, &UpdateContext] ()
         {
             DrawTitleBarMenu(UpdateContext);
         };
@@ -623,13 +658,14 @@ namespace Lumina
         // stat -- or just a wider frame time -- silently clipped the text off the end of the bar.
         const FTitleBarStats TitleStats = BuildTitleBarStats(UpdateContext);
 
-        auto TitleBarRightContents = [this, &TitleStats] ()
+        auto TitleBarInfoContents = [this, &TitleStats] ()
         {
             DrawTitleBarInfoStats(TitleStats);
         };
 
-        const float TitleBarScale = ImGuiX::GetUIScale();
-        TitleBar.Draw(TitleBarLeftContents, 400 * TitleBarScale, TitleBarRightContents, TitleStats.Width);
+        // The menu section is not sized here: it takes whatever the info section and window controls
+        // leave, so the project name is bounded by the window rather than by a constant.
+        TitleBar.Draw(TitleBarMenuContents, TitleBarInfoContents, TitleStats.Width);
 
         // Reserve the bottom status bar before the dockspace reads the viewport work area.
         DrawStatusBar(UpdateContext);
@@ -2886,38 +2922,83 @@ namespace Lumina
         });
     }
     
+    uint32 FEditorUI::CountDirtyPackages() const
+    {
+        uint32 Count = 0;
+        for (TObjectIterator<CPackage> Itr; Itr; ++Itr)
+        {
+            CPackage* Package = *Itr;
+
+            // Marked for destroy = a deleted asset awaiting the deferred drain; it has nothing to save, so
+            // counting it would leave the editor claiming unsaved work that cannot be saved.
+            if (Package->HasAnyFlag(OF_MarkedDestroy) || !Package->IsDirty())
+            {
+                continue;
+            }
+            ++Count;
+        }
+
+        return Count;
+    }
+
     void FEditorUI::DrawTitleBarMenu(const FUpdateContext& UpdateContext)
     {
-        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 2.0f);
+        DirtyPackageScanCountdown -= UpdateContext.GetDeltaTime();
+        if (DirtyPackageScanCountdown <= 0.0f)
+        {
+            DirtyPackageScanCountdown = DirtyPackageScanInterval;
+            DirtyPackageCount = CountDirtyPackages();
+        }
+
+        const float Scale     = ImGuiX::GetUIScale();
+        const float RowHeight = ImGuiX::FApplicationTitleBar::GetContentRowHeight();
+
+        // The icon is taller than a line of text, so lift it by half the difference to keep it centered on
+        // the same row as the menus. The bar restores the row's Y after each item, so put it straight back.
+        const float IconSize = ImFloor(RowHeight * 1.5f);
+        const float IconLift = ImFloor((IconSize - RowHeight) * 0.5f);
+
         static const FString LuminaIcon = Paths::GetEngineResourceDirectory() + "/Textures/Lumina.png";
-        ImGui::Image(ImGuiX::ToImTextureRef(LuminaIcon), ImVec2(24.0f, 24.0f));
-        ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 2.0f);
-    
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 10.0f));
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 8.0f));
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
-    
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() - IconLift);
+        ImGui::Image(ImGuiX::ToImTextureRef(LuminaIcon), ImVec2(IconSize, IconSize));
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + IconLift);
+
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f * Scale, 10.0f * Scale));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f * Scale, 8.0f * Scale));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f * Scale);
+
         ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(0.08f, 0.08f, 0.1f, 0.98f));
         ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.2f, 0.2f, 0.22f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(0.25f, 0.25f, 0.27f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.9f, 0.92f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.25f, 0.35f, 0.45f, 0.8f));
-    
-        ImGui::SetNextWindowSizeConstraints(ImVec2(220, 1), ImVec2(280, 1000));
+
+        ImGui::SetNextWindowSizeConstraints(ImVec2(220 * Scale, 1), ImVec2(280 * Scale, 1000 * Scale));
         DrawFileMenu();
         DrawProjectMenu();
         DrawToolsMenu();
         DrawHelpMenu();
-        
-        if (GEditorEngine->HasLoadedProject())
-        {
-            ImGuiX::Text("[{}]", GEditorEngine->GetProjectName());
-        }
-    
-    
+
         ImGui::PopStyleColor(5);
         ImGui::PopStyleVar(3);
 
+        // Trails the menus with the rest of the bar to itself. The section is sized from what is left over
+        // rather than from a constant, so a long name is clipped only when it genuinely runs out of window.
+        if (GEditorEngine->HasLoadedProject())
+        {
+            ImGui::Separator();
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextDim());
+            ImGuiX::Text("{}", GEditorEngine->GetProjectName());
+            ImGui::PopStyleColor();
+
+            if (DirtyPackageCount > 0)
+            {
+                ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::Warning());
+                ImGui::TextUnformatted(LE_ICON_CONTENT_SAVE_ALERT " Unsaved Changes");
+                ImGui::PopStyleColor();
+                ImGuiX::TextTooltip("{} package(s) with unsaved changes. Ctrl+Shift+S saves all of them.", DirtyPackageCount);
+            }
+        }
     }
     
     FEditorUI::FTitleBarStats FEditorUI::BuildTitleBarStats(const FUpdateContext& UpdateContext)
@@ -2952,14 +3033,41 @@ namespace Lumina
             ? MemoryMiB
             : SmoothedMemoryMiB + (MemoryMiB - SmoothedMemoryMiB) * WeightFor(MemorySmoothingSeconds);
 
-        Stats.Perf.sprintf("FPS: %3.0f / %.2f ms", SmoothedFPS, SmoothedFrameTime);
-        Stats.Objects.sprintf("CObjects: %i", GObjectArray.GetNumAliveObjects());
-        Stats.Memory.sprintf("Mem: %.0f MiB", SmoothedMemoryMiB);
-        
+        // Device-local heaps only: the host-visible ones are system RAM the GPU can see, already counted
+        // by the process working set above, and adding them would read as VRAM that is not there.
+        RHI::FGPUMemoryStats GPUStats;
+        RHI::GetGPUMemoryStats(GPUStats);
+
+        uint64 GPUUsedBytes = 0;
+        uint64 GPUBudgetBytes = 0;
+        for (const RHI::FGPUMemoryHeapStats& Heap : GPUStats.Heaps)
+        {
+            if (Heap.bDeviceLocal)
+            {
+                GPUUsedBytes   += Heap.UsageBytes;
+                GPUBudgetBytes += Heap.BudgetBytes;
+            }
+        }
+
+        constexpr float BytesPerMiB = 1024.0f * 1024.0f;
+        const float GPUMemoryMiB = (float)GPUUsedBytes / BytesPerMiB;
+        SmoothedGPUMemoryMiB = (SmoothedGPUMemoryMiB <= 0.0f)
+            ? GPUMemoryMiB
+            : SmoothedGPUMemoryMiB + (GPUMemoryMiB - SmoothedGPUMemoryMiB) * WeightFor(MemorySmoothingSeconds);
+        GPUMemoryBudgetMiB = (float)GPUBudgetBytes / BytesPerMiB;
+
+        Stats.Perf.sprintf(LE_ICON_GAUGE " %3.0f FPS / %.2f ms", SmoothedFPS, SmoothedFrameTime);
+        Stats.Objects.sprintf(LE_ICON_CUBE_OUTLINE " %i", GObjectArray.GetNumAliveObjects());
+        Stats.Memory.sprintf(LE_ICON_MEMORY " %.0f MiB", SmoothedMemoryMiB);
+        Stats.GPUMemory.sprintf(LE_ICON_EXPANSION_CARD " %.0f / %.0f MiB", SmoothedGPUMemoryMiB, GPUMemoryBudgetMiB);
+
+        // Four items, so three gaps -- plus one gap of slack, since the strings change width from frame to
+        // frame and a section that is a pixel short clips the last character.
         const float Spacing = ImGui::GetStyle().ItemSpacing.x;
         Stats.Width = ImGui::CalcTextSize(Stats.Perf.c_str()).x
                     + ImGui::CalcTextSize(Stats.Objects.c_str()).x
                     + ImGui::CalcTextSize(Stats.Memory.c_str()).x
+                    + ImGui::CalcTextSize(Stats.GPUMemory.c_str()).x
                     + Spacing * 4.0f;
 
         return Stats;
@@ -2967,15 +3075,23 @@ namespace Lumina
 
     void FEditorUI::DrawTitleBarInfoStats(const FTitleBarStats& Stats)
     {
-        ImGui::SameLine();
+        // Icons rather than labels: the section competes with the menus for bar width, and every stat has a
+        // tooltip spelling out what it is.
         ImGui::TextUnformatted(Stats.Perf.c_str());
+        ImGuiX::TextTooltip("{}", "Frame rate and frame time, smoothed.");
 
         ImGui::SameLine();
         ImGui::TextUnformatted(Stats.Objects.c_str());
+        ImGuiX::TextTooltip("{}", "Live CObjects.");
 
         ImGui::SameLine();
         ImGui::TextUnformatted(Stats.Memory.c_str());
         ImGuiX::TextTooltip("{}", "Process working set (matches Task Manager), smoothed.");
+
+        ImGui::SameLine();
+        ImGui::TextUnformatted(Stats.GPUMemory.c_str());
+        ImGuiX::TextTooltip("{}", "Device-local GPU memory in use against the driver's budget for this "
+                                  "process, smoothed. Includes memory other processes forced us to share.");
     }
 
     void FEditorUI::DrawFileMenu()

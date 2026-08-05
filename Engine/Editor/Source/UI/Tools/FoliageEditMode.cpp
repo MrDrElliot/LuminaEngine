@@ -1,4 +1,5 @@
 #include "FoliageEditMode.h"
+#include "World/Scene/RenderScene/ScenePrimitiveSet.h"
 
 #include <algorithm>
 #include <cmath>
@@ -100,7 +101,7 @@ namespace Lumina
         return nullptr;
     }
 
-    SFoliageComponent* FFoliageEditMode::FindOrCreateFoliage(CWorld* World)
+    SFoliageComponent* FFoliageEditMode::FindOrCreateFoliage(CWorld* World, entt::entity* OutEntity)
     {
         if (!World)
         {
@@ -110,11 +111,33 @@ namespace Lumina
         auto View = World->View<SFoliageComponent>();
         for (auto Entity : View)
         {
+            if (OutEntity != nullptr)
+            {
+                *OutEntity = Entity;
+            }
             return &View.get<SFoliageComponent>(Entity);
         }
 
         entt::entity Entity = World->ConstructEntity("Foliage");
+        if (OutEntity != nullptr)
+        {
+            *OutEntity = Entity;
+        }
         return &World->EmplaceComponent<SFoliageComponent>(Entity);
+    }
+
+    void FFoliageEditMode::MarkFoliageDirty(CWorld* World, SFoliageComponent& Foliage)
+    {
+        if (World == nullptr)
+        {
+            return;
+        }
+
+        entt::entity Entity = entt::null;
+        if (FindOrCreateFoliage(World, &Entity) != nullptr && Entity != entt::null)
+        {
+            MarkFoliageChanged(*World, Entity, Foliage);
+        }
     }
 
     STerrainComponent* FFoliageEditMode::FindTerrain(CWorld* World, FVector3& OutOrigin) const
@@ -265,23 +288,46 @@ namespace Lumina
         AnchorPos.y += ImGui::GetWindowSize().y + 4.0f;
         ImGui::SetNextWindowPos(AnchorPos);
         ImGui::SetNextWindowBgAlpha(0.85f);
+        // Fixed width, auto height: the type settings below are a real property table, and an
+        // AlwaysAutoResize window would size itself to the widest row and jump about as rows change.
+        //
+        // The width is set by the asset picker, not by taste. The property table gives its name column a
+        // fixed width (widest header + 18) and stretches the value column, and the picker then spends 64px
+        // of that on the thumbnail before the path field and dropdown get any. At 330 the field and its
+        // buttons fell off the edge; this leaves the value column around 290.
+        constexpr float PanelWidth = 460.0f;
+        ImGui::SetNextWindowSizeConstraints(ImVec2(PanelWidth, 0.0f), ImVec2(PanelWidth, FLT_MAX));
         ImGui::Begin("##FoliageBrushSettings", nullptr,
                      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
                      ImGuiWindowFlags_NoNav | ImGuiWindowFlags_AlwaysAutoResize);
 
-        const char* ModeNames[] = { "Paint", "Erase" };
-        int ModeIndex = (int)Mode;
-        ImGui::SetNextItemWidth(140.0f);
-        if (ImGui::Combo("Mode", &ModeIndex, ModeNames, IM_ARRAYSIZE(ModeNames)))
-        {
-            Mode = (EFoliageBrushMode)ModeIndex;
-        }
+        ImGui::SeparatorText("Brush");
 
-        ImGui::SetNextItemWidth(140.0f);
-        ImGui::SliderFloat("Radius",  &Radius,  16.0f, 4096.0f, "%.0f");
-        ImGui::SetNextItemWidth(140.0f);
-        ImGui::SliderFloat("Falloff", &Falloff, 0.0f, 1.0f, "%.2f");
+        // Paint / Erase as a pair of toggles rather than a dropdown: it is the control switched most
+        // often, and a combo costs two clicks and hides the current state behind a label.
+        const float HalfWidth = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+        const bool  bPainting = (Mode == EFoliageBrushMode::Paint);
+
+        ImGui::PushStyleColor(ImGuiCol_Button, bPainting ? IM_COL32(70, 130, 80, 255) : ImGui::GetColorU32(ImGuiCol_Button));
+        if (ImGui::Button(LE_ICON_BRUSH" Paint", ImVec2(HalfWidth, 0.0f)))
+        {
+            Mode = EFoliageBrushMode::Paint;
+        }
+        ImGui::PopStyleColor();
+        ImGui::SameLine();
+
+        ImGui::PushStyleColor(ImGuiCol_Button, !bPainting ? IM_COL32(150, 70, 70, 255) : ImGui::GetColorU32(ImGuiCol_Button));
+        if (ImGui::Button(LE_ICON_ERASER" Erase", ImVec2(HalfWidth, 0.0f)))
+        {
+            Mode = EFoliageBrushMode::Erase;
+        }
+        ImGui::PopStyleColor();
+
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        ImGui::SliderFloat("##Radius",  &Radius,  16.0f, 4096.0f, "Radius  %.0f");
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        ImGui::SliderFloat("##Falloff", &Falloff, 0.0f, 1.0f, "Falloff  %.2f");
 
         if (SFoliageComponent* Foliage = FindOrCreateFoliage(World))
         {
@@ -292,99 +338,127 @@ namespace Lumina
         ImGui::End();
     }
 
+    void FFoliageEditMode::RebindTypeSettings(CWorld* World, SFoliageComponent& Foliage)
+    {
+        void* Desired = Foliage.IsValidType(ActiveType) ? (void*)&Foliage.Types[ActiveType] : nullptr;
+        if (Desired == BoundTypeData)
+        {
+            return;
+        }
+
+        BoundTypeData = Desired;
+        if (Desired != nullptr)
+        {
+            TypeSettings.SetObject(Desired, SFoliageType::StaticStruct());
+            TypeSettings.SetShowSearchBar(false);   // a search box inside a viewport overlay is noise
+
+            // Any edit can invalidate the render cache -- swapping the mesh changes the bounds every
+            // instance of this type was baked with. Cheap: the bake is skipped when the version matches,
+            // so bumping on an edit that did not need it costs one rebuild, while missing one leaves
+            // instances culled against the previous mesh's bounds.
+            TypeSettings.SetPostEditCallback([this, World, &Foliage](const FPropertyChangedEvent&)
+            {
+                MarkFoliageDirty(World, Foliage);
+            });
+        }
+        else
+        {
+            TypeSettings.SetObject(nullptr, nullptr);
+        }
+    }
+
     void FFoliageEditMode::DrawTypePanel(CWorld* World, SFoliageComponent& Foliage)
     {
         (void)World;
-        ImGui::Separator();
-        ImGui::TextUnformatted("Foliage Types");
+
+        ImGui::SeparatorText("Foliage Types");
 
         const int32 TypeCount = (int32)Foliage.Types.size();
+
+        // Instance counts, in one pass rather than a scan per type. Painted counts are the thing you
+        // actually want to see while working, and this is the only place they are visible.
+        TVector<int32> Counts;
+        Counts.resize((size_t)Math::Max(TypeCount, 1), 0);
+        for (const SFoliageInstance& Inst : Foliage.Instances)
+        {
+            if (Inst.TypeIndex >= 0 && Inst.TypeIndex < TypeCount)
+            {
+                ++Counts[(size_t)Inst.TypeIndex];
+            }
+        }
+
+        const float RowHeight = ImGui::GetTextLineHeightWithSpacing();
+        const float ListHeight = Math::Clamp(RowHeight * (float)Math::Max(TypeCount, 1) + 8.0f, RowHeight + 8.0f, RowHeight * 6.0f);
+        ImGui::BeginChild("##foliagetypes", ImVec2(-FLT_MIN, ListHeight), ImGuiChildFlags_Borders);
+
+        if (TypeCount == 0)
+        {
+            ImGui::TextDisabled("No foliage types yet.");
+        }
+
         for (int32 i = 0; i < TypeCount; ++i)
         {
             SFoliageType& Type = Foliage.Types[i];
             ImGui::PushID(i);
 
-            const bool bSelected = (ActiveType == i);
-            FString Label = Type.Name.empty() ? FString("Type") : Type.Name;
-            if (Type.Mesh.IsValid())
+            // A type with no mesh cannot paint anything, so it is called out rather than looking ready.
+            const bool bPaintable = Type.Mesh.IsValid();
+            FString Label = Type.Name.empty() ? FString("Unnamed") : Type.Name;
+            if (bPaintable)
             {
-                Label += " (";
+                Label += "  (";
                 Label += Type.Mesh->GetName().c_str();
                 Label += ")";
             }
-            if (ImGui::Selectable(Label.c_str(), bSelected))
+            else
+            {
+                Label += "  (no mesh)";
+            }
+
+            ImGui::PushStyleColor(ImGuiCol_Text, bPaintable ? IM_COL32(225, 225, 230, 255)
+                                                            : IM_COL32(210, 150, 110, 255));
+            if (ImGui::Selectable(Label.c_str(), ActiveType == i))
             {
                 ActiveType = i;
             }
+            ImGui::PopStyleColor();
+
+            // Right-aligned instance count.
+            const FString CountText = eastl::to_string(Counts[(size_t)i]).c_str();
+            const float   CountW    = ImGui::CalcTextSize(CountText.c_str()).x;
+            ImGui::SameLine(ImGui::GetContentRegionAvail().x - CountW);
+            ImGui::TextDisabled("%s", CountText.c_str());
 
             ImGui::PopID();
         }
 
-        if (ImGui::SmallButton("+ Add Type"))
+        ImGui::EndChild();
+
+        if (ImGui::Button("Add"))
         {
             SFoliageType& NewType = Foliage.Types.emplace_back();
             NewType.Name.sprintf("Type%d", TypeCount);
             ActiveType = (int32)Foliage.Types.size() - 1;
+            MarkFoliageDirty(World, Foliage);
         }
-
-        ActiveType = std::clamp(ActiveType, 0, std::max(TypeCount - 1, 0));
-        if (!Foliage.IsValidType(ActiveType))
-        {
-            ImGui::TextDisabled("Add a type to start painting.");
-            return;
-        }
-
-        SFoliageType& T = Foliage.Types[ActiveType];
-
-        ImGui::Separator();
-
-        // Mesh slot: drop target for a Static Mesh from the content browser.
-        const char* MeshLabel = T.Mesh.IsValid() ? T.Mesh->GetName().c_str() : "(drop a Static Mesh here)";
-        ImGui::Button(MeshLabel, ImVec2(220.0f, 0.0f));
-        if (ImGui::BeginDragDropTarget())
-        {
-            if (CStaticMesh* Dropped = DragDrop::AcceptAsset<CStaticMesh>())
-            {
-                T.Mesh = Dropped;
-            }
-            ImGui::EndDragDropTarget();
-        }
-        if (T.Mesh.IsValid())
-        {
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Clear"))
-            {
-                T.Mesh = nullptr;
-            }
-        }
-
-        char NameBuf[128];
-        std::strncpy(NameBuf, T.Name.c_str(), sizeof(NameBuf) - 1);
-        NameBuf[sizeof(NameBuf) - 1] = '\0';
-        ImGui::SetNextItemWidth(220.0f);
-        if (ImGui::InputText("Name", NameBuf, sizeof(NameBuf)))
-        {
-            T.Name = NameBuf;
-        }
-
-        ImGui::SetNextItemWidth(140.0f);
-        ImGui::DragFloat("Density", &T.Density, 0.01f, 0.0001f, 100.0f, "%.3f");
-        ImGui::SetNextItemWidth(140.0f);
-        ImGui::DragFloatRange2("Scale", &T.ScaleMin, &T.ScaleMax, 0.01f, 0.001f, 100.0f, "%.2f");
-        ImGui::SetNextItemWidth(140.0f);
-        ImGui::DragFloat("Z Offset", &T.ZOffset, 0.5f, -1000.0f, 1000.0f, "%.1f");
-        ImGui::SetNextItemWidth(140.0f);
-        ImGui::SliderFloat("Align To Normal", &T.AlignToNormal, 0.0f, 1.0f, "%.2f");
-        ImGui::SetNextItemWidth(140.0f);
-        ImGui::DragFloat("Cull Distance", &T.CullDistance, 16.0f, 0.0f, 1000000.0f, "%.0f");
-
-        ImGui::Checkbox("Random Yaw", &T.bRandomYaw);
-        ImGui::Checkbox("Follow Terrain", &T.bFollowTerrain);
-        ImGui::Checkbox("Cast Shadow", &T.bCastShadow);
         ImGui::SameLine();
-        ImGui::Checkbox("Receive Shadow", &T.bReceiveShadow);
 
-        if (ImGui::SmallButton("Remove Type"))
+        ImGui::BeginDisabled(!Foliage.IsValidType(ActiveType));
+        if (ImGui::Button("Duplicate"))
+        {
+            // Copied by value before the push_back: emplace_back can reallocate, and a reference into the
+            // vector would dangle exactly when it is about to be read.
+            const SFoliageType Source = Foliage.Types[ActiveType];
+            Foliage.Types.push_back(Source);
+            Foliage.Types.back().Name = Source.Name + " Copy";
+            ActiveType = (int32)Foliage.Types.size() - 1;
+            // Same reason as Add and Remove: the copy carries an unstamped resolve, so without this it
+            // paints instances that never bind a mesh.
+            MarkFoliageDirty(World, Foliage);
+        }
+        ImGui::SameLine();
+
+        if (ImGui::Button("Remove"))
         {
             Foliage.Instances.erase(
                 std::remove_if(Foliage.Instances.begin(), Foliage.Instances.end(),
@@ -400,7 +474,23 @@ namespace Lumina
             }
             Foliage.Types.erase(Foliage.Types.begin() + ActiveType);
             ActiveType = std::min(ActiveType, (int32)Foliage.Types.size() - 1);
+            // Instances were removed and the rest re-indexed; without this the render cache keeps drawing
+            // the deleted type's instances until some other edit happens to bump the version.
+            MarkFoliageDirty(World, Foliage);
         }
+        ImGui::EndDisabled();
+
+        ActiveType = std::clamp(ActiveType, 0, std::max((int32)Foliage.Types.size() - 1, 0));
+        RebindTypeSettings(World, Foliage);
+
+        if (!Foliage.IsValidType(ActiveType))
+        {
+            ImGui::TextDisabled("Add a type to start painting.");
+            return;
+        }
+
+        ImGui::SeparatorText("Type Settings");
+        TypeSettings.DrawTree();
     }
 
     void FFoliageEditMode::Tick(CWorld* World, const SCameraComponent& Camera, bool bViewportHovered, ImVec2 ViewportScreenOrigin, ImVec2 ViewportSize)
@@ -465,7 +555,8 @@ namespace Lumina
             return;
         }
 
-        SFoliageComponent* Foliage = FindOrCreateFoliage(World);
+        entt::entity FoliageEntity = entt::null;
+        SFoliageComponent* Foliage = FindOrCreateFoliage(World, &FoliageEntity);
         if (!Foliage)
         {
             return;
@@ -479,6 +570,8 @@ namespace Lumina
 
         const float RealDelta = std::max(ImGui::GetIO().DeltaTime, 1.0f / 240.0f);
 
+        const uint32 VersionBefore = Foliage->InstancesVersion;
+
         if (Mode == EFoliageBrushMode::Paint)
         {
             PaintDab(World, *Foliage, Terrain, TerrainOrigin, Hit, RealDelta);
@@ -486,6 +579,15 @@ namespace Lumina
         else
         {
             EraseDab(*Foliage, Hit);
+        }
+
+        // AddInstance/RemoveInRadius bump InstancesVersion themselves, which only rebakes the CPU cache --
+        // the primitive set still has to be told, or the instances are baked and never drawn. Gated on the
+        // version so a dab that placed nothing (density budget not yet accumulated, nothing in erase range)
+        // does not queue a resync every frame the button is held.
+        if (Foliage->InstancesVersion != VersionBefore && FoliageEntity != entt::null)
+        {
+            MarkFoliageChanged(*World, FoliageEntity, *Foliage);
         }
     }
 

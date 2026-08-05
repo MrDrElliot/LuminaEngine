@@ -290,6 +290,40 @@ namespace Lumina
         }
     }
 
+    bool CMaterialInstance::RefreshTextureBindings(const CTexture* ChangedTexture)
+    {
+        bool bReferences = (ChangedTexture == nullptr);
+
+        if (!bReferences)
+        {
+            for (const FMaterialParameterOverride& Override : Overrides)
+            {
+                if (Override.Type == EMaterialParameterType::Texture && Override.Texture.Get() == ChangedTexture)
+                {
+                    bReferences = true;
+                    break;
+                }
+            }
+        }
+
+        // An instance inherits every texture it does not override, so a change to one the PARENT binds
+        // reaches it too. RebuildUniformsFromOverrides copies the parent's block wholesale, which is why
+        // the driver has to refresh masters before instances.
+        if (!bReferences && Material != nullptr && Material->ReferencesTexture(ChangedTexture))
+        {
+            bReferences = true;
+        }
+
+        if (!bReferences)
+        {
+            return false;
+        }
+
+        RebuildUniformsFromOverrides();
+        UpdateMaterialUniforms();
+        return true;
+    }
+
     const FShaderEntry* CMaterialInstance::GetVertexShader() const
     {
         return Material ? Material->GetVertexShader() : nullptr;
@@ -390,7 +424,9 @@ namespace Lumina
 
         SetReadyForRender(true);
 
-        FMeshResolveCache::BumpEpoch();
+        // Surfaces that fell back to the default material while this was compiling still record it as a
+        // dependency, so they are woken here even though they never resolved against it.
+        FMeshResolveCache::InvalidateDependency(this);
     }
 
     void CMaterialInstance::OnDestroy()
@@ -398,7 +434,7 @@ namespace Lumina
         CMaterialInterface::OnDestroy();
 
         // Resolves are keyed partly on this pointer; drop them before it can be recycled.
-        FMeshResolveCache::BumpEpoch();
+        FMeshResolveCache::InvalidateDependency(this);
 
         if (Material)
         {

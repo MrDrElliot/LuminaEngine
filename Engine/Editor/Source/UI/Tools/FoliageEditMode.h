@@ -5,6 +5,7 @@
 #include <entt/entt.hpp>
 #include "Core/Math/Math.h"
 
+#include "UI/Properties/PropertyTable.h"
 #include "WorldEditorMode.h"
 
 namespace Lumina
@@ -36,8 +37,9 @@ namespace Lumina
         // Painting captures viewport input (suppress select/gizmo while in the mode).
         bool ConsumesViewportInput() const override { return true; }
 
-        /** Get the world's foliage component, creating the singleton foliage entity if needed. */
-        static SFoliageComponent* FindOrCreateFoliage(CWorld* World);
+        /** Get the world's foliage component, creating the singleton foliage entity if needed.
+         *  OutEntity receives the owning entity, which callers need to route render dirty marks. */
+        static SFoliageComponent* FindOrCreateFoliage(CWorld* World, entt::entity* OutEntity = nullptr);
 
     private:
         enum class EFoliageBrushMode : int32 { Paint = 0, Erase = 1 };
@@ -71,5 +73,19 @@ namespace Lumina
         void EraseDab(SFoliageComponent& Foliage, const FVector3& Center);
 
         void DrawTypePanel(CWorld* World, SFoliageComponent& Foliage);
+
+        /** Both foliage caches, together. See MarkFoliageChanged in FoliageComponent.h for why. */
+        void MarkFoliageDirty(CWorld* World, SFoliageComponent& Foliage);
+
+        /** Points TypeSettings at the active SFoliageType, rebuilding only when the binding actually moved.
+         *  Types is a TVector, so adding one can reallocate and leave the table holding a dangling pointer;
+         *  the bound address is tracked rather than just the index for exactly that reason. */
+        void RebindTypeSettings(CWorld* World, SFoliageComponent& Foliage);
+
+        // Draws the active type's reflected properties, which is what gives the mesh slot the standard
+        // asset picker and every numeric its PROPERTY clamp -- all of it was hand-rolled before, so the
+        // widgets and their limits drifted from the metadata that was already there.
+        FPropertyTable TypeSettings;
+        void*          BoundTypeData = nullptr;
     };
 }

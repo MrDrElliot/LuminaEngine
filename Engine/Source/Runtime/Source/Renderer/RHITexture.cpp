@@ -121,7 +121,7 @@ namespace Lumina::RHI::Textures
         }
     }
 
-    FManagedTexture Create(const FTexture2DDesc& Desc)
+    static FTextureDesc MakeTexture2DDesc(const FTexture2DDesc& Desc)
     {
         FTextureDesc TextureDesc;
         TextureDesc.Type      = ETextureType::Tex2D;
@@ -137,12 +137,49 @@ namespace Lumina::RHI::Textures
         {
             TextureDesc.Usage |= EImageUsageFlags::ColorAttachment;
         }
+        return TextureDesc;
+    }
 
+    FManagedTexture Create(const FTexture2DDesc& Desc)
+    {
         FManagedTexture Out;
-        Out.Texture     = CreateTexture(TextureDesc);
+        Out.Texture     = CreateTexture(MakeTexture2DDesc(Desc));
         SetDebugName(Out.Texture, Desc.DebugName);
         Out.SampledSlot = HeapWriteTexture(Core::GetGlobalHeap(), Out.Texture);
         return Out;
+    }
+
+    void Recreate(FManagedTexture& Tex, const FTexture2DDesc& Desc)
+    {
+        if (!Tex.IsValid())
+        {
+            Tex = Create(Desc);
+            return;
+        }
+
+        // Detached from the slot before release, so the deferred drain frees the IMAGE and leaves the
+        // slot alone (Tick skips HeapFreeTexture on kInvalidHeapSlot). The slot now belongs to the
+        // replacement, exactly as DetachSampledSlot works for scene images.
+        FManagedTexture Old = Tex;
+        const uint32 Slot = Old.SampledSlot;
+        Old.SampledSlot = kInvalidHeapSlot;
+
+        const FTextureH NewTexture = CreateTexture(MakeTexture2DDesc(Desc));
+        SetDebugName(NewTexture, Desc.DebugName);
+
+        Tex.Texture = NewTexture;
+        if (Slot != kInvalidHeapSlot)
+        {
+            HeapRepointTexture(Core::GetGlobalHeap(), Slot, NewTexture);
+            Tex.SampledSlot = Slot;
+        }
+        else
+        {
+            Tex.SampledSlot = HeapWriteTexture(Core::GetGlobalHeap(), NewTexture);
+        }
+
+        // Deferred by kFramesInFlight, so frames already recorded against the old image still resolve.
+        Release(Old);
     }
 
     void Upload(const FManagedTexture& Tex, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels)

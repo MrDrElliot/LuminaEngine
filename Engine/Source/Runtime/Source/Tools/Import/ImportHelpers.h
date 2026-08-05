@@ -248,6 +248,15 @@ namespace Lumina::Import
         RUNTIME_API void GenerateMeshlets(FMeshResource& MeshResource, FScopedSlowTask* Progress = nullptr, float StepPerSurface = 0.0f);
         RUNTIME_API void AnalyzeMeshStatistics(FMeshResource& MeshResource, FMeshStatistics& OutMeshStats);
 
+        /** The screen threshold GenerateMeshlets bakes into LOD slot Index, so a tool offering
+         *  "reset to default" resets to the same ramp the importer wrote instead of a second copy of the
+         *  numbers. Returns 0 for LOD 0 (always active) and FLT_MAX past the last level.
+         *
+         *  Slot, not source level: a surface that skipped a level has its survivors compacted down, so a
+         *  compacted slot was authored with a COARSER level's threshold than this returns. Reset therefore
+         *  means "restore the standard ramp", not "undo back to the imported value". */
+        RUNTIME_API float GetDefaultLODScreenThreshold(uint32 Index);
+
         /** Apply user transforms and run the heavy finalize passes on a parsed FMeshImportData.
          *  When Progress is set, advances a total of ProgressBudget across the finalize pass. */
         RUNTIME_API void FinalizeMeshImportData(FMeshImportData& Data, const FMeshImportOptions& Options, FScopedSlowTask* Progress = nullptr, float ProgressBudget = 1.0f);

@@ -24,12 +24,7 @@ namespace Lumina
         return true;
     }
 
-    void CParticleSystem::Serialize(FArchive& Ar)
-    {
-        CObject::Serialize(Ar);
-    }
-
-    void CParticleSystem::PostLoad()
+    void CParticleEmitter::PostLoad()
     {
         if (!ComputeShaderBinaries.empty())
         {
@@ -38,10 +33,110 @@ namespace Lumina
         }
     }
 
-    void CParticleSystem::OnDestroy()
+    void CParticleEmitter::OnDestroy()
     {
         CObject::OnDestroy();
         ComputeShader = nullptr;
+    }
+
+    void CParticleSystem::Serialize(FArchive& Ar)
+    {
+        CObject::Serialize(Ar);
+    }
+
+    void CParticleSystem::PostLoad()
+    {
+        // Emitters is the only thing every consumer indexes, so it is never allowed to be empty -- an asset
+        // that somehow arrives with none gets a default rather than making each caller handle the case.
+        if (Emitters.empty())
+        {
+            AddEmitter();
+        }
+
+        // Emitters are package exports, so the loader has already constructed them; PostLoad is what commits
+        // their shader binaries, and a nested export does not get one from the outer object's load.
+        for (const TObjectPtr<CParticleEmitter>& Emitter : Emitters)
+        {
+            if (Emitter.IsValid())
+            {
+                Emitter->PostLoad();
+            }
+        }
+    }
+
+    CParticleEmitter* CParticleSystem::AddEmitter()
+    {
+        CParticleEmitter* Emitter = NewObject<CParticleEmitter>(GetPackage());
+        if (Emitter == nullptr)
+        {
+            return nullptr;
+        }
+
+        // Unique by construction: names only have to disambiguate the column headers, so a running index
+        // that skips whatever is already taken is enough.
+        FString Candidate;
+        for (int32 Suffix = (int32)Emitters.size(); ; ++Suffix)
+        {
+            Candidate = FString("Emitter ") + eastl::to_string(Suffix).c_str();
+            bool bTaken = false;
+            for (const TObjectPtr<CParticleEmitter>& Existing : Emitters)
+            {
+                if (Existing.IsValid() && Existing->EmitterName == Candidate)
+                {
+                    bTaken = true;
+                    break;
+                }
+            }
+            if (!bTaken)
+            {
+                break;
+            }
+        }
+        Emitter->EmitterName = Candidate;
+
+        Emitters.push_back(Emitter);
+        return Emitter;
+    }
+
+    bool CParticleSystem::RemoveEmitter(CParticleEmitter* Emitter)
+    {
+        if (Emitter == nullptr || Emitters.size() <= 1)
+        {
+            return false;
+        }
+
+        for (auto It = Emitters.begin(); It != Emitters.end(); ++It)
+        {
+            if (It->Get() == Emitter)
+            {
+                Emitters.erase(It);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void CParticleSystem::MoveEmitter(CParticleEmitter* Emitter, int32 Direction)
+    {
+        if (Emitter == nullptr || Direction == 0)
+        {
+            return;
+        }
+
+        for (int32 i = 0; i < (int32)Emitters.size(); ++i)
+        {
+            if (Emitters[i].Get() == Emitter)
+            {
+                const int32 Target = i + (Direction < 0 ? -1 : 1);
+                if (Target >= 0 && Target < (int32)Emitters.size())
+                {
+                    TObjectPtr<CParticleEmitter> Tmp = Emitters[i];
+                    Emitters[i]      = Emitters[Target];
+                    Emitters[Target] = Tmp;
+                }
+                return;
+            }
+        }
     }
 
     const FParticleParameter* CParticleSystem::FindUserParameter(const FName& InName) const
@@ -167,44 +262,52 @@ namespace Lumina
         return Literal;
     }
 
-    FResolvedParticleParams ResolveParticleParams(const CParticleSystem& Asset, const SParticleSystemComponent& Component)
+    FResolvedParticleParams ResolveParticleParams(const CParticleSystem& Asset, const CParticleEmitter& Emitter, const SParticleSystemComponent& Component)
     {
         FResolvedParticleParams R;
 
-        R.MaxParticles            = Asset.MaxParticles;
-        R.SpawnRate               = ResolveBoundFloat(Asset, Component, "SpawnRate",              Asset.SpawnRate);
-        R.BurstCount              = ResolveBoundInt  (Asset, Component, "BurstCount",             Asset.BurstCount);
-        R.Duration                = ResolveBoundFloat(Asset, Component, "Duration",               Asset.Duration);
-        R.bLooping                = ResolveBoundBool (Asset, Component, "bLooping",               Asset.bLooping);
+        R.MaxParticles            = Emitter.MaxParticles;
+        R.SpawnRate               = ResolveBoundFloat(Asset, Component, "SpawnRate",              Emitter.SpawnRate);
+        R.BurstCount              = ResolveBoundInt  (Asset, Component, "BurstCount",             Emitter.BurstCount);
+        R.Duration                = ResolveBoundFloat(Asset, Component, "Duration",               Emitter.Duration);
+        R.bLooping                = ResolveBoundBool (Asset, Component, "bLooping",               Emitter.bLooping);
 
-        R.Shape                   = Asset.Shape;
-        R.ShapeSize               = ResolveBoundVec3 (Asset, Component, "ShapeSize",              Asset.ShapeSize);
-        R.ShapeAngle              = ResolveBoundFloat(Asset, Component, "ShapeAngle",             Asset.ShapeAngle);
+        R.Shape                   = Emitter.Shape;
+        R.ShapeSize               = ResolveBoundVec3 (Asset, Component, "ShapeSize",              Emitter.ShapeSize);
+        R.ShapeAngle              = ResolveBoundFloat(Asset, Component, "ShapeAngle",             Emitter.ShapeAngle);
 
-        R.VelocityMode            = Asset.VelocityMode;
-        R.VelocityMin             = ResolveBoundVec3 (Asset, Component, "VelocityMin",            Asset.VelocityMin);
-        R.VelocityMax             = ResolveBoundVec3 (Asset, Component, "VelocityMax",            Asset.VelocityMax);
-        R.SpeedRange              = ResolveBoundVec2 (Asset, Component, "SpeedRange",             Asset.SpeedRange);
-        R.LifetimeRange           = ResolveBoundVec2 (Asset, Component, "LifetimeRange",          Asset.LifetimeRange);
+        R.VelocityMode            = Emitter.VelocityMode;
+        R.VelocityMin             = ResolveBoundVec3 (Asset, Component, "VelocityMin",            Emitter.VelocityMin);
+        R.VelocityMax             = ResolveBoundVec3 (Asset, Component, "VelocityMax",            Emitter.VelocityMax);
+        R.SpeedRange              = ResolveBoundVec2 (Asset, Component, "SpeedRange",             Emitter.SpeedRange);
+        R.LifetimeRange           = ResolveBoundVec2 (Asset, Component, "LifetimeRange",          Emitter.LifetimeRange);
 
-        R.Gravity                 = ResolveBoundVec3 (Asset, Component, "Gravity",                Asset.Gravity);
-        R.Drag                    = ResolveBoundFloat(Asset, Component, "Drag",                   Asset.Drag);
-        R.InheritEmitterVelocity  = ResolveBoundFloat(Asset, Component, "InheritEmitterVelocity", Asset.InheritEmitterVelocity);
+        R.Gravity                 = ResolveBoundVec3 (Asset, Component, "Gravity",                Emitter.Gravity);
+        R.Drag                    = ResolveBoundFloat(Asset, Component, "Drag",                   Emitter.Drag);
+        R.InheritEmitterVelocity  = ResolveBoundFloat(Asset, Component, "InheritEmitterVelocity", Emitter.InheritEmitterVelocity);
 
-        R.StartColor              = ResolveBoundVec4 (Asset, Component, "StartColor",             Asset.StartColor);
-        R.EndColor                = ResolveBoundVec4 (Asset, Component, "EndColor",               Asset.EndColor);
-        R.StartSizeRange          = ResolveBoundVec2 (Asset, Component, "StartSizeRange",         Asset.StartSizeRange);
-        R.EndSizeRange            = ResolveBoundVec2 (Asset, Component, "EndSizeRange",           Asset.EndSizeRange);
-        R.RotationRange           = ResolveBoundVec2 (Asset, Component, "RotationRange",          Asset.RotationRange);
-        R.RotationSpeedRange      = ResolveBoundVec2 (Asset, Component, "RotationSpeedRange",     Asset.RotationSpeedRange);
+        R.StartColor              = ResolveBoundVec4 (Asset, Component, "StartColor",             Emitter.StartColor);
+        R.EndColor                = ResolveBoundVec4 (Asset, Component, "EndColor",               Emitter.EndColor);
+        R.StartSizeRange          = ResolveBoundVec2 (Asset, Component, "StartSizeRange",         Emitter.StartSizeRange);
+        R.EndSizeRange            = ResolveBoundVec2 (Asset, Component, "EndSizeRange",           Emitter.EndSizeRange);
+        R.RotationRange           = ResolveBoundVec2 (Asset, Component, "RotationRange",          Emitter.RotationRange);
+        R.RotationSpeedRange      = ResolveBoundVec2 (Asset, Component, "RotationSpeedRange",     Emitter.RotationSpeedRange);
 
-        R.NoiseStrength           = ResolveBoundVec3 (Asset, Component, "NoiseStrength",          Asset.NoiseStrength);
-        R.NoiseScale              = ResolveBoundFloat(Asset, Component, "NoiseScale",             Asset.NoiseScale);
-        R.NoiseSpeed              = ResolveBoundFloat(Asset, Component, "NoiseSpeed",             Asset.NoiseSpeed);
+        R.NoiseStrength           = ResolveBoundVec3 (Asset, Component, "NoiseStrength",          Emitter.NoiseStrength);
+        R.NoiseScale              = ResolveBoundFloat(Asset, Component, "NoiseScale",             Emitter.NoiseScale);
+        R.NoiseSpeed              = ResolveBoundFloat(Asset, Component, "NoiseSpeed",             Emitter.NoiseSpeed);
 
-        R.BlendMode               = Asset.BlendMode;
-        R.bBillboardToCamera      = ResolveBoundBool (Asset, Component, "bBillboardToCamera",     Asset.bBillboardToCamera);
-        R.bWriteDepth             = ResolveBoundBool (Asset, Component, "bWriteDepth",            Asset.bWriteDepth);
+        R.BlendMode               = Emitter.BlendMode;
+        // FacingMode supersedes the legacy bool. An asset saved before FacingMode existed has the enum at
+        // its default (CameraFacing) while the bool carries the authored intent, so the bool still decides
+        // when it says "not camera facing" -- otherwise those assets would silently start facing the camera.
+        R.FacingMode              = (!Emitter.bBillboardToCamera && Emitter.FacingMode == EParticleFacingMode::CameraFacing)
+                                  ? EParticleFacingMode::WorldXZ
+                                  : Emitter.FacingMode;
+        R.VelocityStretch         = Emitter.VelocityStretch;
+        R.SubUVColumns            = Math::Max(Emitter.SubUVColumns, 1);
+        R.SubUVRows               = Math::Max(Emitter.SubUVRows, 1);
+        R.bWriteDepth             = ResolveBoundBool (Asset, Component, "bWriteDepth",            Emitter.bWriteDepth);
 
         return R;
     }

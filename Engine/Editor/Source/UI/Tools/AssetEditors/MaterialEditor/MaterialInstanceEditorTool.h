@@ -1,4 +1,6 @@
 #pragma once
+#include "Assets/AssetTypes/Material/MaterialInstance.h"
+#include "Core/Reflection/PropertyCustomization/PropertyCustomization.h"
 #include "UI/Tools/AssetEditors/AssetEditorTool.h"
 #include <entt/entt.hpp>
 
@@ -45,6 +47,13 @@ namespace Lumina
         entt::entity DirectionalLightEntity;
         EDebugMesh   DebugMesh = EDebugMesh::Sphere;
 
-        ImGuiTextFilter TexturePickerFilter;
+        // Standard object picker, shared across every texture row. The parameter table only exposes each
+        // slot through CMaterialInstance's override list, so the picker is driven by a handle synthesized
+        // over Scratch, which is seeded from the row's resolved texture before the draw and read back after.
+        // One instance is safe because UpdateAndDraw re-syncs from the handle each frame, and the caller
+        // already pushes a per-parameter ImGui ID.
+        TSharedPtr<IPropertyTypeCustomization> TexturePicker;
+        TSharedPtr<FPropertyHandle>            TextureHandle;
+        FMaterialParameterOverride             TextureScratch;
     };
 }

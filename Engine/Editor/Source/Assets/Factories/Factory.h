@@ -68,11 +68,39 @@ namespace Lumina
         virtual CObject* CreateNew(const FName& Name, CPackage* Package) { return nullptr; }
 
         void Import(const FFixedString& ImportFile, const FFixedString& DestinationPath, const Import::FImportSettings* Settings);
-        
+
         virtual bool CanImport() { return false; }
         virtual void TryImport(const FFixedString& ImportFilePath, const FFixedString& DestinationPath, const Import::FImportSettings* Settings) { }
-        
+
         virtual bool IsExtensionSupported(FStringView Ext) { return false; }
+
+        // Reimport REPLACES THE DATA of an asset that already exists: same CObject, same GUID, same package
+        // path, so every reference to it survives. That is the whole point of it being separate from
+        // TryImport, which mints new assets and side-steps name collisions by appending "_1".
+        //
+        // Asked by CLASS, not by instance, so a context menu can decide whether to offer the item without
+        // loading the asset behind every tile it draws.
+        virtual bool CanReimport(const CStruct* AssetClass) const { return false; }
+
+        // Swaps SourceFile's contents onto Asset. Settings comes from the same PrepareImportAsync +
+        // DrawImportSettings pass a fresh import uses, so the importer's options apply here too.
+        // Returns false and leaves the asset untouched when the source cannot supply matching data.
+        virtual bool TryReimport(CObject* Asset, const FFixedString& SourceFile, const Import::FImportSettings* Settings) { return false; }
+
+        // File the asset was last imported from, so the reimport dialog opens there. Empty when unknown --
+        // an asset imported before source paths were recorded, or one with no source file at all.
+        virtual FString GetReimportSourcePath(const CObject* Asset) const { return FString(); }
+
+        // The factory that can reimport this asset class, or null when none can.
+        static CFactory* FindReimportFactory(const CStruct* AssetClass);
+
+        // "Meshes (*.fbx;*.gltf)\0*.fbx;*.gltf\0All Files (*.*)\0*.*\0" style filter built from whatever
+        // this factory's IsExtensionSupported accepts, for the OS file dialog.
+        FFixedString BuildFileDialogFilter() const;
+
+        // Extensions this factory accepts, each including the leading dot. Override alongside
+        // IsExtensionSupported; the base pair keeps the dialog filter and the accept test from drifting.
+        virtual void GetSupportedExtensions(TVector<FStringView>& OutExtensions) const { }
         
         static bool ShowCreationDialogue(CFactory* Factory, FStringView Path);
 

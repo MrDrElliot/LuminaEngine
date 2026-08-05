@@ -73,6 +73,10 @@ enum EInstanceFlags
     NoCull          = BIT(5),
     Translucent     = BIT(6),
     Masked          = BIT(7),
+
+    // Retained cull entries only; meaningless on a compacted output instance.
+    Active          = BIT(8),   // 0 = free slot; the cull skips it without reading its payload
+    HasGeometry     = BIT(9),   // the mesh's meshlet header is resident
 }
 
 // Mirror of Lumina::FMeshletVertex. Position: full mesh-local float3 (exact, gap-free).
@@ -286,16 +290,6 @@ struct FSurfaceDesc
     }
 }
 
-// Mirror of Lumina::FInstanceCullData (16 B). Parallel to the RETAINED instance array; holds what the
-// cull needs and FGPUInstance has no room for.
-struct FInstanceCullData
-{
-    uint  SurfaceDescIndex;
-    float MaxDrawDistance;   // 0 = never distance-culled
-    int   ForcedLODIndex;    // -1 = automatic
-    uint  bActive;           // 0 = free slot
-}
-
 // Mirror of Lumina::FMeshlet. Positions are full float3 in the vertex buffer (no quantization). LODIndex
 // kept for LOD selection.
 struct FMeshlet
@@ -327,6 +321,42 @@ struct FMeshletHeader
     uint*           Triangles;
 };
 
+// Mirror of Lumina::FInstanceCullEntry (32 B). The retained scene's CULL-HOT half: everything
+// CullInstances reads about a slot it is about to REJECT, and nothing else, so two slots share a cache
+// line. What a SURVIVOR needs lives in the parallel transform array and FInstanceStatic, neither of
+// which is loaded until this entry says the instance is visible.
+struct FInstanceCullEntry
+{
+    float4 SphereBounds;      // world space; xyz = center, w = radius
+    uint   DrawIDAndFlags;    // same packing as FGPUInstance; carries Active and HasGeometry
+    uint   SurfaceDescIndex;
+    float  MaxDrawDistance;   // 0 = never distance-culled
+    int    ForcedLODIndex;    // -1 = automatic
+
+    bool HasFlag(EInstanceFlags Flag)
+    {
+        uint Mask = (uint)Flag << 16;
+        return (DrawIDAndFlags & Mask) == Mask;
+    }
+
+    property uint DrawID { get { return DrawIDAndFlags & 0xFFFFu; } }
+
+    property EInstanceFlags Flags { get { return EInstanceFlags((DrawIDAndFlags >> 16) & 0xFFFFu); } }
+}
+
+// Mirror of Lumina::FInstanceStatic (32 B). The retained scene's COLD half: what a SURVIVING instance
+// needs copied into the compacted output, and which changes only on a re-bind -- never on a move.
+struct FInstanceStatic
+{
+    FMeshletHeader*      MeshletHeader;
+    FCustomPrimitiveData CustomData;   // one packed uint; same as FGPUInstance's
+    uint            MaterialIndex;
+    uint            EntityID;
+    uint            BoneOffset;
+    uint            SkinnedVertexBase;
+    uint            ShadowSkinnedVertexBase;
+}
+
 // FGPUInstance::SkinnedVertexBase sentinel: this entity was not pre-skinned this frame (it fell
 // outside r.Skinning.MaxVertices), so the draw path blends bones inline instead. The CPU reserves
 // the value, so a legitimately wrapped base can never collide with it.
@@ -342,14 +372,28 @@ struct FSkinDescriptor
     uint            Pad;
 };
 
-// Mirror of Lumina::FBoneTransform: a skinning matrix with the always-(0,0,0,1) last row
-// dropped. Blends linearly like the matrix; transform a point by explicit row dot products.
-struct FBoneTransform
+// Mirror of Lumina::FTransform3x4: an affine matrix with the always-(0,0,0,1) last row dropped.
+// Blends linearly like the matrix; transform a point by explicit row dot products.
+//
+// The rows are the MATHEMATICAL rows, so ToMatrix below rebuilds the exact float4x4 the CPU held.
+// Verified, not assumed: Slang stores float4x4 ColMajor (element (r,c) at float index 4*c+r, identical
+// to Lumina::TMat), and float4x4(v0,v1,v2,v3) fills ROWS -- a probe of the ctor plus mul(M, e0)
+// constant-folded to column 0 of a row-filled matrix.
+struct FTransform3x4
 {
     float4 Row0;
     float4 Row1;
     float4 Row2;
+
+    // Restores the dropped (0,0,0,1) row. The result is bit-identical to the float4x4 the CPU packed.
+    float4x4 ToMatrix()
+    {
+        return float4x4(Row0, Row1, Row2, float4(0.0, 0.0, 0.0, 1.0));
+    }
 };
+
+// Historical name, kept for the skinning path that is written in terms of bones.
+typealias FBoneTransform = FTransform3x4;
 
 // One entry per surviving meshlet emitted by MeshletCull.slang.
 // Draw-list entry, stamped with the frame that wrote it.
@@ -397,14 +441,10 @@ struct FMeshletDeferred
 // Mirror of Lumina::FGPUInstance.
 struct FGPUInstance
 {
-    float4x4                ModelMatrix;
+    // 3x4, not 4x4: an instance transform is always affine. Read it through the ModelMatrix property
+    // below, which expands it -- that is why every consumer of this struct was untouched by the change.
+    FTransform3x4           Transform;
     float4                  SphereBounds;
-
-    // Shadow LOD's meshlet range. CullMeshlets uses these for shadow-only
-    // views; ShadowMappingVert reads ShadowMeshletOffset to locate the
-    // emitted meshlet. Camera-side passes keep using SurfaceMeshlet*.
-    uint                    ShadowMeshletOffset;
-    uint                    ShadowMeshletCount;
     FMeshletHeader*         MeshletHeader;
 
     // Explicitly zeroed: Slang's synthesized default initializer skips private members, so
@@ -414,6 +454,11 @@ struct FGPUInstance
     private uint            DrawIDAndFlags = 0u;
     uint                    SurfaceMeshletOffset;
     uint                    SurfaceMeshletCount;
+    // Shadow LOD's meshlet range. CullMeshlets uses these for shadow-only
+    // views; ShadowMappingVert reads ShadowMeshletOffset to locate the
+    // emitted meshlet. Camera-side passes keep using SurfaceMeshlet*.
+    uint                    ShadowMeshletOffset;
+    uint                    ShadowMeshletCount;
     FCustomPrimitiveData    CustomData;
 
     // Full 32-bit index into the global bone-matrix buffer (no longer packed with the
@@ -427,26 +472,33 @@ struct FGPUInstance
     // must blend bones itself.
     uint                    SkinnedVertexBase;
     uint                    ShadowSkinnedVertexBase;
-    uint                    _Pad0;
-    uint                    _Pad1;
-    uint                    _Pad2;
+    // Declared, not implied: under scalar layout the array stride comes from the declared members, so
+    // trailing padding has to exist on both sides or the strides diverge. 116 -> 120 against the 8-byte
+    // alignment MeshletHeader imposes.
+    uint                    _Pad;
 
+    // Expands the packed 3x4. Named for what it returns so every consumer predates the packing and did
+    // not have to change; the struct is loaded once and this is a few moves off registers.
+    property float4x4 ModelMatrix { get { return Transform.ToMatrix(); } }
+
+    // DrawID low 16, flags high 16 -- matches Lumina::PackDrawIDAndFlags. The flag field is 16 bits wide
+    // so FInstanceCullEntry has somewhere to carry Active and HasGeometry without a 33rd byte.
     bool HasFlag(EInstanceFlags Flag)
     {
-        uint Mask = (uint)Flag << 24;
+        uint Mask = (uint)Flag << 16;
         return (DrawIDAndFlags & Mask) == Mask;
     }
 
     property uint DrawID
     {
-        get { return DrawIDAndFlags & 0x00FFFFFFu; }
-        set { DrawIDAndFlags = (DrawIDAndFlags & 0xFF000000u) | (newValue & 0x00FFFFFFu); }
+        get { return DrawIDAndFlags & 0xFFFFu; }
+        set { DrawIDAndFlags = (DrawIDAndFlags & 0xFFFF0000u) | (newValue & 0xFFFFu); }
     }
 
     property EInstanceFlags Flags
     {
-        get { return EInstanceFlags((DrawIDAndFlags >> 24) & 0xFFu); }
-        set { DrawIDAndFlags = (DrawIDAndFlags & 0x00FFFFFFu) | ((newValue & 0xFFu) << 24); }
+        get { return EInstanceFlags((DrawIDAndFlags >> 16) & 0xFFFFu); }
+        set { DrawIDAndFlags = (DrawIDAndFlags & 0x0000FFFFu) | ((newValue & 0xFFFFu) << 16); }
     }
 
     property float3 BoundsCenter { get { return SphereBounds.xyz; } }
@@ -764,19 +816,33 @@ float2 UnpackUV(uint Packed)
     return float2(f16tof32(Lo), f16tof32(Hi));
 }
 
+/**
+ * Inverse-transpose of the model matrix's upper-left 3x3, for transforming normals under non-uniform
+ * scale. Cofactor form -- no general inverse, and it stays finite for a singular scale.
+ *
+ * The indexing is ROW-wise and that is load-bearing, not incidental: `M[i]` on a Slang matrix is row i
+ * (verified by constant-folding `float4x4(r0,r1,r2,r3)[0]`, which yields r0), and `float3x3(a,b,c)` fills
+ * ROWS likewise. So this reads the rows of A, and returns a matrix whose ROWS are the cross products
+ * below. For a matrix B with columns b0,b1,b2, inverse(B) is exactly that arrangement -- and here
+ * b_i = row_i(A), i.e. B = A^T. The result is therefore inverse(A^T) = (A^-1)^T, the normal matrix.
+ *
+ * Reading these as COLUMNS instead would make the result inverse(A), which is wrong and differs only
+ * under non-uniform scale -- so do not "fix" the naming into columns.
+ */
 float3x3 CalculateNormalMatrix(float4x4 ModelMatrix)
 {
-    float3 C0 = ModelMatrix[0].xyz;
-    float3 C1 = ModelMatrix[1].xyz;
-    float3 C2 = ModelMatrix[2].xyz;
+    // Rows of A, despite what a column-major habit suggests.
+    float3 A0 = ModelMatrix[0].xyz;
+    float3 A1 = ModelMatrix[1].xyz;
+    float3 A2 = ModelMatrix[2].xyz;
 
-    float3 R0 = cross(C1, C2);
-    float3 R1 = cross(C2, C0);
-    float3 R2 = cross(C0, C1);
+    float3 Cof0 = cross(A1, A2);
+    float3 Cof1 = cross(A2, A0);
+    float3 Cof2 = cross(A0, A1);
 
-    float InvDet = 1.0 / dot(C0, R0);
+    float InvDet = 1.0 / dot(A0, Cof0);   // A0 . (A1 x A2) = det(A^T) = det(A)
 
-    return float3x3(R0 * InvDet, R1 * InvDet, R2 * InvDet);
+    return float3x3(Cof0 * InvDet, Cof1 * InvDet, Cof2 * InvDet);
 }
 
 float2 VogelDiskSample(int SampleIndex, int SamplesCount, float Angle)

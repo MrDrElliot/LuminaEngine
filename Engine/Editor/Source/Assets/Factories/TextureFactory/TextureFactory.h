@@ -22,9 +22,17 @@ namespace Lumina
         {
             return Ext == ".png" || Ext == ".jpg" || Ext == ".jpeg" || Ext == ".hdr";
         }
+        void GetSupportedExtensions(TVector<FStringView>& OutExtensions) const override
+        {
+            OutExtensions.insert(OutExtensions.end(), { ".png", ".jpg", ".jpeg", ".hdr" });
+        }
         bool CanImport() override { return true; }
 
         void TryImport(const FFixedString& RawPath, const FFixedString& DestinationPath, const Import::FImportSettings* Settings) override;
+
+        bool CanReimport(const CStruct* AssetClass) const override;
+        bool TryReimport(CObject* Asset, const FFixedString& SourceFile, const Import::FImportSettings* Settings) override;
+        FString GetReimportSourcePath(const CObject* Asset) const override;
 
         /** Re-runs Basis compression on Texture->SourcePath; false if path is missing or asset is mesh-embedded. */
         static EDITOR_API bool Recook(CTexture* Texture);

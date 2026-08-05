@@ -1,4 +1,5 @@
 #include "AssetEditorTool.h"
+#include "Assets/AssetEvents.h"
 #include "Core/Object/Package/Package.h"
 #include "GUID/GUID.h"
 #include "Thumbnails/ThumbnailManager.h"
@@ -11,6 +12,42 @@ namespace Lumina
 {
     void FAssetEditorTool::OnInitialize()
     {
+    }
+
+    void FAssetEditorTool::SubscribeToAssetDataChanges()
+    {
+        // Filtered to THIS tool's asset. Every open tool hears every change, which is what makes the
+        // broadcast worth having (a reimported texture reaches the material editors using it too, once
+        // those subscribe), but the base only acts on its own.
+        AssetDataChangedHandle = AssetEvents::OnAssetDataChanged().AddLambda([this](CObject* Changed)
+        {
+            if (Changed != nullptr && Changed == Asset.Get())
+            {
+                OnAssetDataChangedExternally();
+            }
+        });
+    }
+
+    void FAssetEditorTool::UnsubscribeFromAssetDataChanges()
+    {
+        if (AssetDataChangedHandle.IsValid())
+        {
+            AssetEvents::OnAssetDataChanged().Remove(AssetDataChangedHandle);
+            AssetDataChangedHandle = {};
+        }
+    }
+
+    void FAssetEditorTool::OnAssetDataChangedExternally()
+    {
+        if (!Asset.IsValid())
+        {
+            return;
+        }
+
+        // Re-point rather than just MarkDirty: a reimport can change the shape of the reflected data, and
+        // the table's rows (and the handles inside them) describe the old shape. SetObject rebuilds both.
+        PropertyTable.SetObject(Asset.Get(), Asset->GetClass());
+        PropertyTable.MarkDirty();
     }
 
     void FAssetEditorTool::SetupPropertyUndo()
@@ -33,8 +70,17 @@ namespace Lumina
         });
     }
 
+    FAssetEditorTool::~FAssetEditorTool()
+    {
+        // Backstop for a tool torn down without Deinitialize: the handle holds `this`, so leaving it
+        // subscribed means the next broadcast calls into freed memory.
+        UnsubscribeFromAssetDataChanges();
+    }
+
     void FAssetEditorTool::Deinitialize(const FUpdateContext& UpdateContext)
     {
+        UnsubscribeFromAssetDataChanges();
+
         FEditorTool::Deinitialize(UpdateContext);
     }
 

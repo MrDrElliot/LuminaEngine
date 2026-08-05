@@ -47,6 +47,19 @@ namespace Lumina::RHI
 
         RUNTIME_API FManagedTexture Create(const FTexture2DDesc& Desc);
 
+        // Replaces the image behind an existing managed texture while KEEPING its ResourceID: the heap
+        // slot is repointed at the new image and the old one is frame-deferred released.
+        //
+        // Use this, not Create-over-the-top, for any texture whose ResourceID has been published. A
+        // CTexture's ID is baked into every material uniform buffer that samples it (CMaterial /
+        // CMaterialInstance write GetResourceID() into their Textures[] block), and nothing tells those
+        // buffers to re-upload -- so re-cooking into a fresh slot leaves every material sampling the old
+        // image, which is also leaked because the handle it was reached through has been overwritten.
+        // Repointing sidesteps all of that: the published index resolves to the new image.
+        //
+        // Falls back to Create when Tex is not yet valid, so a cook path can call it unconditionally.
+        RUNTIME_API void Recreate(FManagedTexture& Tex, const FTexture2DDesc& Desc);
+
         // Upload tight pixel data for one mip. RowPitchTexels = 0 -> mip width.
         //
         // NOT synchronous: this stages the bytes and queues the copy, which the next

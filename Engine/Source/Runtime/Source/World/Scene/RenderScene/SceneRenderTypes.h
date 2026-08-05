@@ -65,7 +65,23 @@ namespace Lumina
 
     template<typename T>
     using TRenderVector = TFixedVector<T, 100>;
-    
+
+    // Index into FMeshResolveCache. Lives here rather than beside the cache so component headers can hold
+    // one without pulling in the whole resolve machinery.
+    constexpr uint32 INVALID_MESH_RESOLVE_HANDLE = ~0u;
+
+    /**
+     * Staleness token a consumer caches to decide whether its copy of a resolve entry is still current.
+     *
+     * A live entry's token is (FResolvedMesh::Generation << 1), so bit 0 is never set on one and neither
+     * sentinel below can be mistaken for a real token. Comparing tokens is what replaced the old global
+     * epoch stamp: an epoch bump is a scene-wide invalidation, and one mesh finishing its GPU upload is
+     * not one of those.
+     */
+    constexpr uint32 MESH_RESOLVE_STATE_STALE   = ~0u;  // never resolved, or invalidated since
+    constexpr uint32 MESH_RESOLVE_STATE_NO_MESH = 0u;   // settled: there is nothing to resolve
+
+
     // Mirror of MESHLET_DRAW_INDEX_BITS in Common.slang. FMeshletDraw packs the meshlet-local index into
     // this many bits and spends the rest on the frame tag, so no single surface LOD may hold more meshlets
     // than the field can address -- past it the index wraps and silently resolves the wrong meshlet, which
@@ -160,8 +176,14 @@ namespace Lumina
         IgnoreOcclusionCulling  = BIT(5),
         Translucent             = BIT(6),
         Masked                  = BIT(7),
+
+        // Retained cull entries only; meaningless on a compacted output instance. Both live here rather
+        // than in fields of their own because FInstanceCullEntry has to stay 32 bytes, and both are
+        // needed BEFORE the survivor payload is loaded.
+        Active                  = BIT(8),   // 0 = free slot; the cull skips it without reading its payload
+        HasGeometry             = BIT(9),   // the mesh's meshlet header is resident
     };
-    
+
     ENUM_CLASS_FLAGS(EInstanceFlags);
     
     struct FCameraData
@@ -727,60 +749,140 @@ namespace Lumina
     static_assert(sizeof(FSurfaceDescGPU) == 80, "FSurfaceDescGPU layout must match shader");
     VERIFY_SSBO_ALIGNMENT(FSurfaceDescGPU)
 
-    // 144B per-instance descriptor. Empty ctor skips zero-init on resize() (parallel writer overwrites everything).
-    struct alignas(16) FGPUInstance
+    /**
+     * A 4x4 AFFINE transform with the always-(0,0,0,1) last row dropped: 48 B instead of 64.
+     *
+     * Blends linearly like the matrix; transform a point with explicit row dot products. Used for both
+     * skinning matrices and retained instance transforms -- one convention, so there is one place to get
+     * it wrong rather than two.
+     *
+     * The convention, verified against the generated SPIR-V rather than assumed:
+     *  - TMat is COLUMN-MAJOR, `M[c]` is column c, so `M[c][r]` is mathematical element (r, c).
+     *  - Slang stores float4x4 as `_MatrixStorage_float4x4_ColMajor`, i.e. mathematical element (r, c) at
+     *    float index 4*c + r -- IDENTICAL to TMat. The two agree on the matrix; there is no transpose.
+     *  - Slang's `float4x4(v0, v1, v2, v3)` fills ROWS (probe: the ctor + `mul(M, e0)` constant-folded to
+     *    column 0 of a row-filled matrix). So the shader rebuilds this with
+     *    `float4x4(Row0, Row1, Row2, float4(0,0,0,1))`.
+     */
+    struct FTransform3x4
+    {
+        FVector4   Row0;
+        FVector4   Row1;
+        FVector4   Row2;
+    };
+    static_assert(sizeof(FTransform3x4) == 48, "FTransform3x4 must match shader");
+    VERIFY_SSBO_ALIGNMENT(FTransform3x4)
+
+    // Historical name, kept for the skinning path that is written in terms of bones.
+    using FBoneTransform = FTransform3x4;
+
+    // Drop the redundant 4th row of an affine matrix. p' = M*p == dot(Row_r, p4).
+    FORCEINLINE FTransform3x4 PackTransform3x4(const FMatrix4& M)
+    {
+        return {
+            FVector4(M[0][0], M[1][0], M[2][0], M[3][0]),
+            FVector4(M[0][1], M[1][1], M[2][1], M[3][1]),
+            FVector4(M[0][2], M[1][2], M[2][2], M[3][2]),
+        };
+    }
+
+    /**
+     * The retained scene's CULL-HOT half: everything CullInstances.slang reads about a slot it is about
+     * to REJECT, and nothing else.
+     *
+     * 32 bytes, so two slots share a cache line. That pass runs one lane per retained slot, over EVERY
+     * slot, EVERY frame. It used to load the whole 144-byte FGPUInstance plus a 16-byte cull record to
+     * consume about 44 bytes of them -- pulling ~5x the bandwidth it needed through the memory system,
+     * at scenes north of 900k surfaces.
+     *
+     * What a SURVIVOR needs lives in the parallel transform array and FInstanceStatic, neither of which
+     * is touched until this entry says the instance is visible.
+     */
+    struct alignas(16) FInstanceCullEntry
+    {
+        // NO empty ctor, unlike FGPUInstance. emplace_back must VALUE-initialize this, so a slot that is
+        // allocated but not yet written reads as inactive rather than as garbage flags that the cull
+        // could take for a live instance.
+        FVector4    SphereBounds;       // world space; xyz = center, w = radius
+        uint32      DrawIDAndFlags;     // PackDrawIDAndFlags; carries Active and HasGeometry
+        uint32      SurfaceDescIndex;   // into the interned LOD tables
+        float       MaxDrawDistance;    // 0 = never distance-culled
+        int32       ForcedLODIndex;     // -1 = automatic (distance / radius)
+    };
+    static_assert(sizeof(FInstanceCullEntry) == 32, "FInstanceCullEntry layout must match shader");
+    VERIFY_SSBO_ALIGNMENT(FInstanceCullEntry)
+
+    /**
+     * The retained scene's COLD half: what a SURVIVING instance needs copied into the compacted output,
+     * and which changes only when the primitive is re-bound -- never when it merely moves.
+     *
+     * Split out for both sides. The cull never reads it for a slot it rejects, and a transform update on
+     * the CPU writes 16 bytes of bounds plus one matrix instead of restamping all of this too.
+     */
+    struct alignas(16) FInstanceStatic
+    {
+        uint64      MeshletHeaderAddress;
+        uint32      CustomData;
+        uint32      MaterialIndex;
+        uint32      EntityID;
+        uint32      BoneOffset;
+        uint32      SkinnedVertexBase;
+        uint32      ShadowSkinnedVertexBase;
+    };
+    static_assert(sizeof(FInstanceStatic) == 32, "FInstanceStatic layout must match shader");
+    VERIFY_SSBO_ALIGNMENT(FInstanceStatic)
+
+    // 144B per-instance descriptor. This is the COMPACTED OUTPUT layout only -- CullInstances assembles
+    // one of these per survivor from the three retained arrays above, and every downstream pass reads it
+    // per meshlet / vertex / pixel with high per-instance locality, which is what AoS is good at.
+    // Empty ctor skips zero-init on resize() (parallel writer overwrites everything).
+    //
+    // NO alignas(16). The layout is SCALAR (Slang emits this as `_natural`), so alignment comes from the
+    // widest member -- 8, for MeshletHeaderAddress -- and the stride is the plain sum of the members.
+    // Forcing 16 here would round sizeof up to 128 while Slang keeps computing 120, and the two strides
+    // would silently disagree one element in.
+    struct FGPUInstance
     {
         FGPUInstance() noexcept {}
 
-        FMatrix4     Transform;
-        FVector4       SphereBounds;
+        // 3x4, not 4x4: an instance transform is always affine. The shader expands it through the
+        // ModelMatrix property, so readers are unchanged.
+        FTransform3x4   Transform;              // offset   0
+        FVector4        SphereBounds;           //         48
+        // Kept adjacent to the 16-byte-aligned members so it lands 8-aligned, which scalar layout
+        // requires of a 64-bit member and which sets the struct's alignment.
+        uint64          MeshletHeaderAddress;   //         64
 
-        uint32          ShadowMeshletOffset;
-        uint32          ShadowMeshletCount;
-        uint64          MeshletHeaderAddress;
-
-        uint32          DrawIDAndFlags;
-        uint32          SurfaceMeshletOffset;
-        uint32          SurfaceMeshletCount;
-        uint32          CustomData;
+        uint32          DrawIDAndFlags;         //         72
+        uint32          SurfaceMeshletOffset;   //         76
+        uint32          SurfaceMeshletCount;    //         80
+        uint32          ShadowMeshletOffset;    //         84
+        uint32          ShadowMeshletCount;     //         88
+        uint32          CustomData;             //         92
 
         // Full 32-bit bone index (was packed into 16 bits with MaterialIndex, which capped
         // the scene at 64k total bones).
-        uint32          BoneOffset;
-        uint32          MaterialIndex;
-        uint32          EntityID;
+        uint32          BoneOffset;             //         96
+        uint32          MaterialIndex;          //        100
+        uint32          EntityID;               //        104
         // Base index into the pre-skinned vertex buffer for this instance's surface-LOD meshlet block;
         // the skinning pass writes there, the draw VS reads instead of re-skinning. 0 for static
         // instances, kNoPreSkinBase when the entity lost the pre-skin budget.
-        uint32          SkinnedVertexBase;
+        uint32          SkinnedVertexBase;      //        108
         // Same, for the shadow-LOD block. Equal to SkinnedVertexBase when the shadow LOD resolved to
         // the same block, which is the common case; the two differ only when the LODs diverge.
-        uint32          ShadowSkinnedVertexBase;
+        uint32          ShadowSkinnedVertexBase;//        112
         // Declared, not implied: under scalar layout the shader's array stride comes from the
         // declared members, so trailing padding has to exist on both sides or the strides diverge.
-        uint32          _Pad[3];
+        // ONE word, not three: 116 rounds to 120 against the 8-byte alignment the pointer imposes.
+        uint32          _Pad;                   //        116
     };
 
-    static_assert(sizeof(FGPUInstance) == 144, "FGPUInstance layout must match shader");
-    VERIFY_SSBO_ALIGNMENT(FGPUInstance)
-
-    /**
-     * The cull inputs an FGPUInstance has no room for, held in a parallel retained array.
-     *
-     * The scene keeps a RETAINED FGPUInstance array (one stable slot per primitive surface, written only
-     * when that primitive changes) alongside one of these. CullInstances.slang reads both, resolves the
-     * LOD, and appends a compacted copy into the per-frame instance buffer every downstream pass already
-     * consumes -- so the GPU takes over culling and LOD selection without any other shader changing.
-     */
-    struct alignas(16) FInstanceCullData
-    {
-        uint32  SurfaceDescIndex;
-        float   MaxDrawDistance;    // 0 = never distance-culled
-        int32   ForcedLODIndex;     // -1 = automatic (distance / radius)
-        uint32  bActive;            // 0 = free slot; the cull skips it without touching the instance
-    };
-    static_assert(sizeof(FInstanceCullData) == 16, "FInstanceCullData layout must match shader");
-    VERIFY_SSBO_ALIGNMENT(FInstanceCullData)
+    // Both verified against what Slang actually emits for this struct, not merely asserted here:
+    // `slangc -target spirv-asm` reports ArrayStride 120 and member offsets 0/48/64/72/76/80/84/88/92/
+    // 96/100/104/108/112/116, matching the declaration order above exactly.
+    static_assert(sizeof(FGPUInstance) == 120, "FGPUInstance layout must match shader");
+    static_assert(alignof(FGPUInstance) == 8, "Scalar layout: alignment comes from MeshletHeaderAddress");
 
     // One per skinned vertex, produced by the skinning pass and read by every draw VS. Holds the COMPLETE
     // vertex so the VS never touches the source. Position full-precision; normal/tangent octahedral. 28 B.
@@ -817,28 +919,12 @@ namespace Lumina
 
     // Bone skinning matrix with its always-(0,0,0,1) last row dropped: first 3 rows of the 4x4.
     // 48 B vs 64 B, lossless for affine transforms. Read only by the skinning compute.
-    struct FBoneTransform
-    {
-        FVector4   Row0;
-        FVector4   Row1;
-        FVector4   Row2;
-    };
-    static_assert(sizeof(FBoneTransform) == 48, "FBoneTransform must match shader");
-    VERIFY_SSBO_ALIGNMENT(FBoneTransform)
-
-    // Drop the redundant 4th row of an affine skinning matrix. p' = M*p == dot(Row_r, p4).
-    FORCEINLINE FBoneTransform PackBoneTransform(const FMatrix4& M)
-    {
-        return {
-            FVector4(M[0][0], M[1][0], M[2][0], M[3][0]),
-            FVector4(M[0][1], M[1][1], M[2][1], M[3][1]),
-            FVector4(M[0][2], M[1][2], M[2][2], M[3][2]),
-        };
-    }
-
+    // DrawID in the low 16 bits, flags in the high 16. Batches number in the tens to hundreds, so 16 bits
+    // of draw id is enormous headroom -- and widening the flag field is what gives FInstanceCullEntry
+    // somewhere to put Active and HasGeometry without a 33rd byte. Mirrored by Common.slang's accessors.
     constexpr uint32 PackDrawIDAndFlags(uint32 DrawID, EInstanceFlags Flags)
     {
-        return (DrawID & 0x00FFFFFF) | (((uint32)Flags & 0xFF) << 24);
+        return (DrawID & 0xFFFFu) | (((uint32)Flags & 0xFFFFu) << 16);
     }
 
     // CPU FFrustum (rich, SoA tail) -> 96-byte GPU plane mirror, and back (rebuilds the SoA).

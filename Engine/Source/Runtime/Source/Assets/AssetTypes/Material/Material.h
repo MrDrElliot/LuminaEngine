@@ -200,8 +200,13 @@ namespace Lumina
         const FShaderEntry*                     MaskedVisBufferPixelShaderPrim = nullptr;
         const FShaderEntry*                     DeferredShader = nullptr;
 
+        bool RefreshTextureBindings(const CTexture* ChangedTexture) override;
+
+        /** Whether this material binds ChangedTexture in any of its texture slots. */
+        NODISCARD bool ReferencesTexture(const CTexture* ChangedTexture) const;
+
     protected:
-        
+
         void UpdateMaterialUniforms() override;
 
     private:
@@ -215,5 +220,15 @@ namespace Lumina
 
         THashMap<FName, FMaterialParameter>     ParameterLookup;
     };
-    
+
+    /** Re-uploads the texture bindings of every material that references ChangedTexture (null = all of
+     *  them), and returns how many were touched.
+     *
+     *  Masters run before instances: an instance rebuilds its uniform block by copying its parent's, so
+     *  refreshing them the other way round would copy the stale parent block and then overwrite the
+     *  instance's own correct value with it.
+     *
+     *  Deliberately global rather than a per-tool refresh: a material whose editor is closed is still being
+     *  rendered in the world, and it is exactly as wrong as one that happens to be open. */
+    RUNTIME_API uint32 RefreshMaterialsReferencingTexture(const CTexture* ChangedTexture);
 }

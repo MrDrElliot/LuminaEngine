@@ -61,7 +61,9 @@ namespace Lumina
             Materials[Slot] = NewMaterial;
         }
 
-        FMeshResolveCache::BumpEpoch();
+        // Only the entries that resolved against THIS mesh are wrong. This used to bump the global epoch,
+        // which re-resolved every mesh component in every world and re-bound every primitive.
+        FMeshResolveCache::InvalidateDependency(this);
     }
 
     void CMesh::SetMeshResource(TUniquePtr<FMeshResource>&& NewResource)
@@ -250,8 +252,11 @@ namespace Lumina
     void CMesh::GenerateGPUBuffers()
     {
         MeshBuffers::CreateForResource(*MeshResources);
-        
-        FMeshResolveCache::BumpEpoch();
+
+        // The meshlet header address just became valid, so every entry holding this mesh has to re-read
+        // it -- and nothing else does. Bumping the global epoch here is what made loading ONE mesh
+        // re-resolve every component in the world and re-upload the entire retained instance buffer.
+        FMeshResolveCache::InvalidateDependency(this);
 
         // Drop import-time scratch.
         MeshResources->ClearVertices();

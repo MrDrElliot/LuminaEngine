@@ -415,7 +415,7 @@ namespace Lumina
 
             if (!bLocked && ImGui::MenuItem(LE_ICON_CONTENT_DUPLICATE " Duplicate"))
             {
-                BeginTransaction();
+                BeginCreationTransaction();
                 entt::entity New = entt::null;
                 CopyEntity(New, Data.Entity);
                 if (New != entt::null)
@@ -850,7 +850,7 @@ namespace Lumina
             const bool bWantDuplicateTransaction = bDuplicatePressed;
             if (bWantDuplicateTransaction)
             {
-                BeginTransaction();
+                BeginCreationTransaction();
             }
 
             for (entt::entity SelectedEntity : CurrentSelection)
@@ -952,7 +952,7 @@ namespace Lumina
 
             if (!CopySources.empty())
             {
-                BeginTransaction();
+                BeginCreationTransaction();
 
                 TFixedVector<entt::entity, 64> NewlyPasted;
                 for (entt::entity Source : CopySources)
@@ -1441,7 +1441,18 @@ namespace Lumina
                     {
                         if (!bImGuizmoUsedOnce)
                         {
-                            BeginTransaction();
+                            // Transform-only, so record ONLY these entities' transforms. The general
+                            // BeginTransaction serializes the whole registry twice per drag, which in a
+                            // level with heavy foliage stalled for hundreds of ms right as the grab landed.
+                            // SelectionView is exactly the set the apply loops below write to.
+                            TVector<entt::entity> Dragged;
+                            Dragged.reserve(SelectionView.size_hint());
+                            for (entt::entity Selected : SelectionView)
+                            {
+                                Dragged.push_back(Selected);
+                            }
+                            BeginTransformTransaction(Dragged);
+
                             bImGuizmoUsedOnce = true;
                             // Click landed on the gizmo, not empty space, kill the marquee armed by IsMouseClicked.
                             SelectionBox.bActive = false;

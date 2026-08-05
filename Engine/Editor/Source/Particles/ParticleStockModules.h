@@ -2,6 +2,8 @@
 
 #include "ParticleModule.h"
 #include "Assets/AssetTypes/ParticleSystem/ParticleSystem.h"
+#include "Assets/AssetTypes/Curve/CurveAsset.h"
+#include "Assets/AssetTypes/Curve/Gradient.h"
 #include "Core/Math/Math.h"
 #include "ParticleStockModules.generated.h"
 
@@ -148,6 +150,41 @@ namespace Lumina
         FVector2 RotationSpeedRange = FVector2(0.0f, 0.0f);
     };
 
+    /** Writes a per-particle Mass attribute that force modules can divide by. */
+    REFLECT()
+    class CParticleModule_SetMass : public CParticleModule
+    {
+        GENERATED_BODY()
+    public:
+        EParticleModuleStage GetStage() const override { return EParticleModuleStage::Spawn; }
+        FString GetDisplayName() const override { return "Set Mass"; }
+        FString GetCategory() const override { return "Physics"; }
+        FString GetTooltip() const override { return "Give each particle a mass, so forces that respect it push heavy particles less."; }
+        uint32 GetAccentColor() const override { return IM_COL32(70, 160, 90, 255); }
+        void Generate(FParticleCompiler& Compiler, int32 ModuleIndex) override;
+
+        PROPERTY(Editable, Category = "Physics", ClampMin = 0.001f)
+        FVector2 MassRange = FVector2(1.0f, 1.0f);
+    };
+
+    /** Writes the SizeScaleX/SizeScaleY attributes the renderer multiplies into the billboard extent. */
+    REFLECT()
+    class CParticleModule_NonUniformSize : public CParticleModule
+    {
+        GENERATED_BODY()
+    public:
+        EParticleModuleStage GetStage() const override { return EParticleModuleStage::Spawn; }
+        FString GetDisplayName() const override { return "Non-Uniform Size"; }
+        FString GetCategory() const override { return "Size"; }
+        FString GetTooltip() const override { return "Scale the sprite independently on each axis: thin sparks, wide sheets, squashed smoke."; }
+        uint32 GetAccentColor() const override { return IM_COL32(70, 160, 90, 255); }
+        void Generate(FParticleCompiler& Compiler, int32 ModuleIndex) override;
+
+        /** Multipliers on the simulated size. 1,1 matches a square sprite. */
+        PROPERTY(Editable, Category = "Size", ClampMin = 0.0f)
+        FVector2 Scale = FVector2(1.0f, 1.0f);
+    };
+
     // Update modules
 
     /** Accelerates particles by a constant gravity vector. */
@@ -182,6 +219,12 @@ namespace Lumina
 
         PROPERTY(Editable, Category = "Forces", ClampMin = 0.0f)
         float Drag = 0.5f;
+
+        /** Divide drag by each particle's Mass attribute so heavy particles slow less. Declares the
+         *  attribute itself, so this works whether or not a Set Mass module is present -- without one
+         *  every particle takes the declared default of 1 and the result matches unscaled drag. */
+        PROPERTY(Editable, Category = "Forces")
+        bool bScaleByMass = false;
     };
 
     /** Adds turbulence via a cheap curl-noise field. */
@@ -220,11 +263,12 @@ namespace Lumina
         uint32 GetAccentColor() const override { return IM_COL32(150, 90, 180, 255); }
         void Generate(FParticleCompiler& Compiler, int32 ModuleIndex) override;
 
-        PROPERTY(Editable, Category = "Color", Color)
-        FVector4 StartColor = FVector4(1.0f, 0.6f, 0.2f, 1.0f);
+        CParticleModule_ColorOverLife();
 
-        PROPERTY(Editable, Category = "Color", Color)
-        FVector4 EndColor = FVector4(1.0f, 0.0f, 0.0f, 0.0f);
+        /** Full colour ramp across the particle's life, not just a start/end pair -- the two-stop lerp
+         *  this replaced could not express a flash, a mid-life peak, or a hold-then-fade. */
+        PROPERTY(Editable, Category = "Color")
+        SGradient Gradient;
     };
 
     /** Interpolates size from Start to End over the particle's life. */
@@ -240,11 +284,33 @@ namespace Lumina
         uint32 GetAccentColor() const override { return IM_COL32(150, 90, 180, 255); }
         void Generate(FParticleCompiler& Compiler, int32 ModuleIndex) override;
 
-        PROPERTY(Editable, Category = "Size", ClampMin = 0.0f)
-        float StartSize = 0.3f;
+        CParticleModule_SizeOverLife();
 
-        PROPERTY(Editable, Category = "Size", ClampMin = 0.0f)
-        float EndSize = 0.0f;
+        /** Size multiplier curve over life. Scales the size the Spawn stack set, so this shapes growth
+         *  independently of how large the particle started. */
+        PROPERTY(Editable, Category = "Size")
+        SCurve Curve;
+    };
+
+    /** Records a lagging previous position so the renderer can draw a streak along the path travelled. */
+    REFLECT()
+    class CParticleModule_Trail : public CParticleModule
+    {
+        GENERATED_BODY()
+    public:
+        EParticleModuleStage GetStage() const override { return EParticleModuleStage::Update; }
+        FString GetDisplayName() const override { return "Trail"; }
+        FString GetCategory() const override { return "Render"; }
+        FString GetTooltip() const override { return "Stretch each particle into a streak along the path it actually travelled. Overrides the emitter's Facing Mode."; }
+        uint32 GetAccentColor() const override { return IM_COL32(150, 90, 180, 255); }
+        void Generate(FParticleCompiler& Compiler, int32 ModuleIndex) override;
+
+        /** How far behind the particle the tail lags, in SECONDS of travel -- not world units, and not a
+         *  segment count. A fraction of a second reads as motion blur; approaching the particle's lifetime
+         *  the tail stays pinned near the spawn point and the streak spans the whole flight. Capped well
+         *  short of any value that could only be a misreading of the unit. */
+        PROPERTY(Editable, Category = "Trail", ClampMin = 0.0f, ClampMax = 5.0f)
+        float TrailLength = 0.1f;
     };
 
     /**
