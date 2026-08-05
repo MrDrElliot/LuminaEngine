@@ -252,7 +252,7 @@ namespace Lumina
 
         RUNTIME_API NODISCARD FFixedString GetPackagePath() const;
         
-        RUNTIME_API void MarkDirty() { bDirty = true; }
+        RUNTIME_API void MarkDirty() { if (!IsTransientPackage()) bDirty = true; }
         RUNTIME_API void ClearDirty() { bDirty = false; }
         RUNTIME_API NODISCARD bool IsDirty() const { return bDirty; }
         
