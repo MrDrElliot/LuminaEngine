@@ -171,6 +171,11 @@ namespace Lumina
         int32 BindTexture(CTexture* Texture);
         int32 BindTextureParameter(const FName& ParamID, CTexture* Texture);
 
+        // Texture2DArray sample (Includes/GlobalRHI.slang). NumLayers is the asset's layer count, used
+        // to clamp the Slice input at compile time; 0 means "unknown", which skips the clamp.
+        void TextureSampleArray(CMaterialGraphNode* Node, int32 TextureIndex, uint32 NumLayers,
+                                CMaterialInput* UV, CMaterialInput* Slice);
+
         // Curve operations. The curve is baked into shader constants at compile time, so no bindings
         // are involved and an edited curve only takes effect on the next material recompile.
         void CurveSample(const FString& ID, const SKeyedCurve& Curve, CMaterialInput* TimeInput);
@@ -224,6 +229,28 @@ namespace Lumina
 
         void MeshDistanceFieldThickness(CMaterialGraphNode* Node, CMaterialInput* Normal, CMaterialInput* MaxDistance,
                                         int32 StepCount, CMaterialOutput* ThicknessOut, CMaterialOutput* NormalizedOut);
+
+        // Procedural wind vertex displacement (Includes/Wind.slang). Vertex-stage only: the offset it
+        // produces is meaningful solely on the path from WorldPositionOffset. Octaves is baked into the
+        // emitted call so the fBm loop unrolls; bLODGate picks the distance fade over a constant 1.
+        struct FWindInputs
+        {
+            CMaterialInput* Position   = nullptr;
+            CMaterialInput* Direction  = nullptr;
+            CMaterialInput* Strength   = nullptr;
+            CMaterialInput* Speed      = nullptr;
+            CMaterialInput* Frequency  = nullptr;
+            CMaterialInput* Lacunarity = nullptr;
+            CMaterialInput* Gain       = nullptr;
+            CMaterialInput* Mask       = nullptr;
+            CMaterialInput* Phase      = nullptr;
+            CMaterialInput* Gustiness  = nullptr;
+            CMaterialInput* FadeStart  = nullptr;
+            CMaterialInput* FadeEnd    = nullptr;
+        };
+        void WindAnimation(CMaterialGraphNode* Node, const FWindInputs& Inputs, int32 Octaves, bool bLODGate,
+                           CMaterialOutput* OffsetOut, CMaterialOutput* WeightOut, CMaterialOutput* NoiseOut);
+
         void WorldPos(const FString& ID, CMaterialGraphNode* Node = nullptr);
         void CameraPos(const FString& ID, CMaterialGraphNode* Node = nullptr);
         void ObjectScale(const FString& ID, CMaterialGraphNode* Node = nullptr);
@@ -409,6 +436,10 @@ namespace Lumina
 
         // Sets the owning node's output type so downstream nodes see the right width/swizzle.
         void SetOwningOutputType(CMaterialInput* AnyInputOnNode, EMaterialInputType Type);
+
+        // Emits "float4x4 <ID>_M = <this stage's instance>.ModelMatrix;" and returns the local's name.
+        // The vertex and pixel lanes reach the instance differently; see the definition.
+        FString EmitInstanceModelMatrix(const FString& ID);
 
     private:
 

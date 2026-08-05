@@ -6,6 +6,10 @@
 // GGX pre-filtered environment map (Karis 2013 split-sum "first sum"); each mip = a fixed roughness,
 // sampled at runtime as mip = Roughness * (NumMips - 1). Dispatched once per mip with a Roughness push constant.
 // No pass-local set: source cube via bindless cube SRV, output mip via bindless 2D-array UAV.
+//
+// Serves both the sky prefilter (destination is a 6-layer cube, DstLayerOffset 0) and reflection probes
+// (destination is a cube ARRAY holding every probe, DstLayerOffset = ProbeSlice * 6). The dispatch is
+// always Z=6 -- one probe's worth of faces -- and the offset picks which slice of the array it lands in.
 
 struct FPushConstants
 {
@@ -13,6 +17,10 @@ struct FPushConstants
     uint  OutMipUAV;
     float Roughness;
     uint  NumSamples;
+    uint  DstLayerOffset;
+    uint  _Pad0;
+    uint  _Pad1;
+    uint  _Pad2;
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
@@ -27,7 +35,10 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     uint Width, Height, Layers;
     uOutMip.GetDimensions(Width, Height, Layers);
 
-    if (DTid.x >= Width || DTid.y >= Height || DTid.z >= Layers)
+    // DTid.z is the cube face (0-5); DstLayer is where that face lands in the destination array.
+    const uint DstLayer = DTid.z + Pass().DstLayerOffset;
+
+    if (DTid.x >= Width || DTid.y >= Height || DTid.z >= 6u || DstLayer >= Layers)
     {
         return;
     }
@@ -63,5 +74,5 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     }
 
     Sum = FireflyUntonemap(Sum / max(Weight, 1e-4));
-    uOutMip[DTid] = float4(SanitizeRadiance(Sum), 1.0);
+    uOutMip[uint3(DTid.xy, DstLayer)] = float4(SanitizeRadiance(Sum), 1.0);
 }

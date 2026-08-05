@@ -140,6 +140,22 @@ namespace Lumina::RHI::Textures
         return TextureDesc;
     }
 
+    static FTextureDesc MakeTexture2DArrayDesc(const FTexture2DArrayDesc& Desc)
+    {
+        FTextureDesc TextureDesc;
+        TextureDesc.Type       = ETextureType::Tex2DArray;
+        TextureDesc.Dimension  = FUIntVector3(Math::Max(Desc.Width, 1u), Math::Max(Desc.Height, 1u), 1u);
+        TextureDesc.MipCount   = Math::Max(Desc.Mips, 1u);
+        TextureDesc.LayerCount = Math::Max(Desc.Layers, 1u);
+        TextureDesc.Format     = Desc.Format;
+        TextureDesc.Usage      = EImageUsageFlags::Sampled | EImageUsageFlags::TransferDst | EImageUsageFlags::TransferSrc;
+        if (Desc.bStorage)
+        {
+            TextureDesc.Usage |= EImageUsageFlags::Storage;
+        }
+        return TextureDesc;
+    }
+
     static FTextureDesc MakeTexture3DDesc(const FTexture3DDesc& Desc)
     {
         FTextureDesc TextureDesc;
@@ -159,6 +175,15 @@ namespace Lumina::RHI::Textures
     {
         FManagedTexture Out;
         Out.Texture     = CreateTexture(MakeTexture2DDesc(Desc));
+        SetDebugName(Out.Texture, Desc.DebugName);
+        Out.SampledSlot = HeapWriteTexture(Core::GetGlobalHeap(), Out.Texture);
+        return Out;
+    }
+
+    FManagedTexture Create(const FTexture2DArrayDesc& Desc)
+    {
+        FManagedTexture Out;
+        Out.Texture     = CreateTexture(MakeTexture2DArrayDesc(Desc));
         SetDebugName(Out.Texture, Desc.DebugName);
         Out.SampledSlot = HeapWriteTexture(Core::GetGlobalHeap(), Out.Texture);
         return Out;
@@ -208,7 +233,12 @@ namespace Lumina::RHI::Textures
 
     void Upload(const FManagedTexture& Tex, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels)
     {
-        UploadTexture(Tex.Texture, Mip, Data, Size, RowPitchTexels);
+        UploadTexture(Tex.Texture, 0, Mip, Data, Size, RowPitchTexels);
+    }
+
+    void UploadLayer(const FManagedTexture& Tex, uint32 Layer, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels)
+    {
+        UploadTexture(Tex.Texture, Layer, Mip, Data, Size, RowPitchTexels);
     }
 
     void Clear(const FManagedTexture& Tex, const float Value[4])

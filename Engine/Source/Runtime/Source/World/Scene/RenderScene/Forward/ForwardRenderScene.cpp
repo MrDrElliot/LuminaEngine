@@ -42,6 +42,7 @@
 #include "World/Entity/Components/SkeletalMeshComponent.h"
 #include "World/Entity/Components/EnvironmentComponent.h"
 #include "World/Entity/Components/SkyLightComponent.h"
+#include "World/Entity/Components/ReflectionProbeComponent.h"
 #include "world/entity/components/staticmeshcomponent.h"
 #include "World/Entity/Components/DynamicMeshComponent.h"
 #include "World/Entity/Components/FoliageComponent.h"
@@ -82,6 +83,23 @@ namespace Lumina
             "r.Scene.CPUInstanceCull",
             true,
             "Reject instances on the CPU before upload. Disable to leave all culling to the GPU.");
+
+        // Bumped by RequestReflectionProbeRebake / the console command; each scene compares it against
+        // its own last-seen value on the next Extract, so one request reaches every live scene exactly
+        // once without the command needing a handle to any of them.
+        static TAtomic<uint32> GReflectionProbeRebakeRequests{0};
+
+        static TConsoleVar<bool> CVarProbeDebugLog(
+            "r.ReflectionProbes.DebugLog",
+            false,
+            "Log reflection-probe extract/upload/bake state on change. Pairs with the Probe Influence "
+            "and Probe Radiance view modes for tracking down probes that read as sky.");
+
+        static FAutoConsoleCommand GCmdRebakeReflectionProbes(
+            "r.ReflectionProbes.Rebake",
+            "Recapture every reflection probe. Needed after moving world geometry, which does not itself "
+            "invalidate a bake (only changing a probe does).",
+            []{ RequestReflectionProbeRebake(); });
 
         // Parallax Occlusion Mapping global quality. These scale what materials authored rather than
         // replacing it, so one setting dials the whole feature without touching or recompiling any
@@ -154,6 +172,11 @@ namespace Lumina
         {
             return (uint32)Math::Max(1, CVar.GetValue());
         }
+    }
+
+    void RequestReflectionProbeRebake()
+    {
+        GReflectionProbeRebakeRequests.fetch_add(1, std::memory_order_relaxed);
     }
 
     struct FScopedGPUMarker
@@ -295,7 +318,7 @@ namespace Lumina
         const FUIntVector2 ClampedSize = Math::Max(Size, FUIntVector2(1));
         for (int32 i = 1; i < (int32)SceneViews.size(); ++i)
         {
-            if (!SceneViews[i].bEnabled && SceneViews[i].Size == ClampedSize)
+            if (!SceneViews[i].bEnabled && !SceneViews[i].bReservedForProbeBake && SceneViews[i].Size == ClampedSize)
             {
                 return i;
             }
@@ -692,6 +715,11 @@ namespace Lumina
         // never sees half-populated containers.
         ResetPass_Extract();
 
+        // Probes are gathered (and a bake scheduled) before the gather for the same reason capture
+        // views are snapshotted here: the six face cameras need cull views, and only BuildCullViews
+        // (inside CompileDrawCommands_Extract) can allocate them.
+        ExtractReflectionProbes(ECS::GetWorldRegistry(*World), Frame);
+
         // Snapshot the enabled capture views (camera + RT) before the gather, so BuildCullViews
         // (inside CompileDrawCommands_Extract) can append a frustum-only cull view for each.
         for (int32 i = 1; i < (int32)SceneViews.size(); ++i)
@@ -731,12 +759,356 @@ namespace Lumina
             Data.CullData.Frustum             = AsGPU(VV.GetFrustum());
         }
 
+        // Same finalize for the probe bake's six faces. They share one FSceneView, so the size is one
+        // square face for all six; only the camera basis differs.
+        if (Frame.ReflectionProbes.BakingProbe >= 0)
+        {
+            const uint32 FaceSize = Frame.ReflectionProbes.BakeFaceSize;
+            for (int32 Face = 0; Face < 6; ++Face)
+            {
+                const FViewVolume& VV  = Frame.ReflectionProbes.FaceVolumes[Face];
+                FSceneGlobalData& Data = Frame.ReflectionProbes.FaceGlobals[Face];
+                Data = Frame.SceneGlobalData;
+                Data.CameraData.Location          = FVector4(VV.GetViewPosition(), 1.0f);
+                Data.CameraData.Up                = FVector4(VV.GetUpVector(), 1.0f);
+                Data.CameraData.Right             = FVector4(VV.GetRightVector(), 1.0f);
+                Data.CameraData.Forward           = FVector4(VV.GetForwardVector(), 1.0f);
+                Data.CameraData.View              = VV.GetViewMatrix();
+                Data.CameraData.InverseView       = VV.GetInverseViewMatrix();
+                Data.CameraData.Projection        = VV.GetProjectionMatrix();
+                Data.CameraData.InverseProjection = VV.GetInverseProjectionMatrix();
+                Data.ScreenSize                   = FUIntVector4(FaceSize, FaceSize, 0, 0);
+                Data.FarPlane                     = VV.GetFar();
+                Data.NearPlane                    = VV.GetNear();
+                Data.CullData.Frustum             = AsGPU(VV.GetFrustum());
+            }
+        }
+
                 
         Frame.Lighting.AtlasTiles = ShadowAtlas.GetAllocatedTiles();
 
         Frame.bExtractedThisFrame = true;
 
         ExtractFrame = nullptr;
+    }
+
+    void FForwardRenderScene::ExtractReflectionProbes(FEntityRegistry& Registry, FFrameData& Frame)
+    {
+        LUMINA_PROFILE_SECTION("Extract Reflection Probes");
+
+        auto& Probes   = Frame.ReflectionProbes.Probes;
+        auto& Captures = Frame.ReflectionProbes.Captures;
+        Probes.clear();
+        Captures.clear();
+        Frame.ReflectionProbes.bNeedsRebake = false;
+
+        auto ProbeView = Registry.view<SReflectionProbeComponent, STransformComponent>(entt::exclude<SDisabledTag>);
+
+        // Collected with their priority so the whole set can be ordered before slices are handed out;
+        // slice assignment must follow the final order, since the shader walks the array front-to-back.
+        struct FProbeSortEntry
+        {
+            int32                   Priority;
+            FGPUReflectionProbe     Gpu;
+            FReflectionProbeCapture Capture;
+        };
+        TVector<FProbeSortEntry> Sorted;
+
+        ProbeView.each([&](entt::entity Entity, const SReflectionProbeComponent& Probe, const STransformComponent& Transform)
+        {
+            if (!Probe.bEnabled || Sorted.size() >= MaxReflectionProbes)
+            {
+                return;
+            }
+
+            // Sphere mode is uniform by definition (it has one radius), so collapse the extents rather
+            // than letting a non-uniform entity scale turn the "sphere" into an ellipsoid the shader's
+            // unit-sphere intersection would not match.
+            const FVector3 Extent = (Probe.Shape == EReflectionProbeShape::Sphere)
+                                        ? FVector3(Math::Max(Probe.Extent.x, 0.001f))
+                                        : Math::Max(Probe.Extent, FVector3(0.001f));
+
+            const FMatrix4 WorldMatrix = Transform.GetWorldMatrix();
+
+            FProbeSortEntry Entry;
+            // Baking Extent into the matrix is what makes the volume the unit box/sphere in probe
+            // space, which the shader relies on for the inside test, blend, and parallax intersect.
+            Entry.Gpu.ProbeToWorld    = Math::Scale(WorldMatrix, Extent);
+            Entry.Gpu.WorldToProbe    = Math::Inverse(Entry.Gpu.ProbeToWorld);
+
+            // The capture origin is offset in the entity's own frame, so a rotated probe's offset
+            // rotates with it; the influence volume stays centered on the entity either way.
+            const FVector3 CaptureWorld = FVector3(WorldMatrix * FVector4(Probe.CaptureOffset, 1.0f));
+            Entry.Gpu.CapturePosition = FVector4(CaptureWorld, 0.0f);
+            Entry.Gpu.Params          = FVector4(Math::Max(Probe.Brightness, 0.0f),
+                                                 Probe.Shape == EReflectionProbeShape::Sphere ? 1.0f : 0.0f,
+                                                 0.0f,  // slice, assigned after sorting
+                                                 Math::Clamp(Probe.BlendDistance, 0.0f, 1.0f));
+
+            Entry.Capture.Position  = CaptureWorld;
+            Entry.Capture.NearPlane = Math::Max(Probe.CaptureNearPlane, 0.001f);
+            Entry.Capture.FarPlane  = Math::Max(Probe.CaptureFarPlane, Entry.Capture.NearPlane + 1.0f);
+            Entry.Capture.FaceSize  = GetReflectionProbeFaceSize(Probe.Resolution);
+            Entry.Capture.bAlwaysUpdate = (Probe.UpdateMode == EReflectionProbeUpdateMode::Always);
+            Entry.Capture.bClearToColor = (Probe.ClearMode == EReflectionProbeClearMode::SolidColor);
+            Entry.Capture.ClearColor    = Probe.BackgroundColor;
+
+            Entry.Priority = Probe.Priority;
+            Sorted.push_back(Entry);
+        });
+
+        // Descending priority: the shader consumes influence front-to-back, so the probe that should
+        // win an overlap has to be seen first. stable_sort keeps equal-priority probes in registry
+        // order, which keeps slice assignment (and therefore bakes) stable frame to frame.
+        eastl::stable_sort(Sorted.begin(), Sorted.end(), [](const FProbeSortEntry& A, const FProbeSortEntry& B)
+        {
+            return A.Priority > B.Priority;
+        });
+
+        Probes.reserve(Sorted.size());
+        Captures.reserve(Sorted.size());
+        for (uint32 i = 0; i < (uint32)Sorted.size(); ++i)
+        {
+            FGPUReflectionProbe Gpu = Sorted[i].Gpu;
+            Gpu.Params.z = (float)i;   // slice = final position in the array
+            Probes.push_back(Gpu);
+            Captures.push_back(Sorted[i].Capture);
+        }
+
+        // Two kinds of change, which must NOT be treated alike:
+        //
+        //  LAYOUT (probe count changed): a probe's slice is its position in the priority ordering, so
+        //  inserting or removing one shifts every lower-priority probe onto a slice holding someone
+        //  else's radiance. That data is genuinely wrong, so the baked mask has to be cleared.
+        //
+        //  CONTENT (a probe moved or resized): only its own capture is stale, and a stale capture is
+        //  far closer to right than none. Requeue it but KEEP its baked flag, so it keeps showing the
+        //  previous capture until the new one lands. Clearing here is what made a probe read as
+        //  unbaked for every frame it was being dragged, and the shader renders unbaked as pure sky --
+        //  so the probe appeared to do nothing at all for as long as you were positioning it.
+        //
+        // The content test is epsilon-based rather than an exact memcmp so that movement too small to
+        // change the capture does not spend a bake on it.
+        constexpr float ProbeEpsilon = 1e-4f;
+
+        auto MatrixNearlyEqual = [](const FMatrix4& A, const FMatrix4& B)
+        {
+            for (int32 c = 0; c < 4; ++c)
+            {
+                for (int32 r = 0; r < 4; ++r)
+                {
+                    if (Math::Abs(A[c][r] - B[c][r]) > ProbeEpsilon)
+                    {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        };
+
+        const bool bLayoutChanged = (Probes.size() != LastExtractedProbes.size());
+
+        bool bContentChanged = bLayoutChanged;
+        if (!bContentChanged)
+        {
+            for (uint32 i = 0; i < (uint32)Probes.size() && !bContentChanged; ++i)
+            {
+                bContentChanged =
+                       !MatrixNearlyEqual(Probes[i].WorldToProbe, LastExtractedProbes[i].WorldToProbe)
+                    || Math::Abs(Probes[i].CapturePosition.x - LastExtractedProbes[i].CapturePosition.x) > ProbeEpsilon
+                    || Math::Abs(Probes[i].CapturePosition.y - LastExtractedProbes[i].CapturePosition.y) > ProbeEpsilon
+                    || Math::Abs(Probes[i].CapturePosition.z - LastExtractedProbes[i].CapturePosition.z) > ProbeEpsilon
+                    || (Captures[i].FaceSize  != LastExtractedCaptures[i].FaceSize)
+                    || (Captures[i].NearPlane != LastExtractedCaptures[i].NearPlane)
+                    || (Captures[i].FarPlane  != LastExtractedCaptures[i].FarPlane);
+            }
+        }
+
+        if (bContentChanged)
+        {
+            Frame.ReflectionProbes.bNeedsRebake = true;
+            LastExtractedProbes   = Probes;
+            LastExtractedCaptures = Captures;
+        }
+        Frame.ReflectionProbes.bLayoutChanged = bLayoutChanged;
+
+        // An explicit rebuild request covers the case the comparison above cannot see: the probes are
+        // unchanged but the WORLD around them moved, which leaves every capture stale with nothing in
+        // the probe set to signal it. Compared rather than exchanged so one request fans out to every
+        // live scene exactly once.
+        const uint32 RebakeRequests = GReflectionProbeRebakeRequests.load(std::memory_order_relaxed);
+        if (RebakeRequests != LastSeenRebakeRequest)
+        {
+            LastSeenRebakeRequest = RebakeRequests;
+            Frame.ReflectionProbes.bNeedsRebake = true;
+        }
+
+        // Fold in whatever the render phase finished since the last Extract. Bakes complete at the end
+        // of RenderView, so a probe captured last frame becomes samplable now; doing it the other way
+        // (marking at schedule time) would let this frame's shading read a slice its own bake has not
+        // written yet.
+        BakedProbeMask |= CompletedProbeBakes.exchange(0, std::memory_order_acq_rel);
+
+        if (Frame.ReflectionProbes.bNeedsRebake)
+        {
+            // Only a LAYOUT change invalidates existing captures, because that is what reshuffles which
+            // probe owns which slice. A probe that merely moved keeps its baked flag and therefore keeps
+            // displaying its previous capture while the new one is queued.
+            if (Frame.ReflectionProbes.bLayoutChanged)
+            {
+                BakedProbeMask = 0;
+            }
+
+            PendingProbeBakes.clear();
+            for (uint32 i = 0; i < (uint32)Probes.size(); ++i)
+            {
+                PendingProbeBakes.push_back(i);
+            }
+        }
+
+        // Stamp the baked flag so the shader skips probes still waiting their turn. An unbaked probe
+        // must be skipped rather than sampled-as-black: consuming influence and returning black would
+        // darken the reflection instead of leaving the sky to cover that pixel.
+        for (uint32 i = 0; i < (uint32)Probes.size(); ++i)
+        {
+            Probes[i].CapturePosition.w = ((BakedProbeMask >> i) & 1u) ? 1.0f : 0.0f;
+        }
+
+        ScheduleReflectionProbeBake(Frame);
+
+        // Change-gated so it stays quiet once things settle, but catches the transitions that matter:
+        // probes extracted but never marked baked, a mask that keeps getting wiped, a bake that never
+        // gets scheduled. Behind r.ReflectionProbes.DebugLog.
+        {
+            const uint64 State = ((uint64)Probes.size())
+                               | ((uint64)BakedProbeMask << 8)
+                               | ((uint64)PendingProbeBakes.size() << 40)
+                               | ((uint64)(Frame.ReflectionProbes.BakingProbe + 1) << 48);
+            if (State != LastProbeDiagState && CVarProbeDebugLog.GetValue())
+            {
+                LastProbeDiagState = State;
+                LOG_WARN("[Probe] Extract: count={} bakedMask=0x{:X} queued={} scheduled={} view={} needsRebake={}",
+                         Probes.size(), BakedProbeMask, PendingProbeBakes.size(),
+                         Frame.ReflectionProbes.BakingProbe, Frame.ReflectionProbes.BakeViewIndex,
+                         Frame.ReflectionProbes.bNeedsRebake ? 1 : 0);
+            }
+        }
+    }
+
+    void FForwardRenderScene::ScheduleReflectionProbeBake(FFrameData& Frame)
+    {
+        auto& Bake = Frame.ReflectionProbes;
+        Bake.BakingProbe   = -1;
+        Bake.BakeViewIndex = -1;
+
+        const uint32 NumProbes = (uint32)Bake.Captures.size();
+
+        // The explicit queue drains first: a probe that has never been captured, or one invalidated by
+        // a change, matters more than refreshing an Always probe that already has usable radiance.
+        uint32 ProbeIndex = ~0u;
+        bool   bFromQueue = false;
+
+        while (!PendingProbeBakes.empty())
+        {
+            const uint32 Queued = PendingProbeBakes.front();
+            if (Queued < NumProbes)
+            {
+                ProbeIndex = Queued;
+                bFromQueue = true;
+                break;
+            }
+            // The set shrank out from under a queued index; drop it.
+            PendingProbeBakes.erase(PendingProbeBakes.begin());
+        }
+
+        if (ProbeIndex == ~0u)
+        {
+            // Nothing queued, so give one Always probe its turn. Round-robin from where the last one
+            // left off rather than always starting at 0, or with several Always probes only the first
+            // would ever refresh.
+            for (uint32 Step = 0; Step < NumProbes; ++Step)
+            {
+                const uint32 Candidate = (AlwaysProbeCursor + Step) % NumProbes;
+                if (Bake.Captures[Candidate].bAlwaysUpdate)
+                {
+                    ProbeIndex        = Candidate;
+                    AlwaysProbeCursor = (Candidate + 1) % NumProbes;
+                    break;
+                }
+            }
+        }
+
+        if (ProbeIndex == ~0u)
+        {
+            return;
+        }
+
+        const FReflectionProbeCapture& Capture = Bake.Captures[ProbeIndex];
+
+        // One FSceneView renders all six faces in sequence, rather than six views each owning a full
+        // per-view image set. Held across bakes and reserved, so the editor's camera preview can never
+        // be handed the same view (both would then render into its images in the same frame).
+        if (ProbeBakeViewIndex >= 0 && ProbeBakeViewSize != Capture.FaceSize)
+        {
+            // Tier changed. Release the reservation so the wrong-sized view returns to the pool.
+            if (ProbeBakeViewIndex < (int32)SceneViews.size())
+            {
+                SceneViews[ProbeBakeViewIndex].bReservedForProbeBake = false;
+            }
+            ProbeBakeViewIndex = -1;
+        }
+
+        if (ProbeBakeViewIndex < 0)
+        {
+            const int32 ViewIndex = RegisterCaptureView(FUIntVector2(Capture.FaceSize, Capture.FaceSize));
+            if (ViewIndex < 0)
+            {
+                // Out of view slots; leave the probe queued rather than dropping it.
+                return;
+            }
+            SceneViews[ViewIndex].bReservedForProbeBake = true;
+            ProbeBakeViewIndex = ViewIndex;
+            ProbeBakeViewSize  = Capture.FaceSize;
+        }
+
+        const int32 ViewIndex = ProbeBakeViewIndex;
+
+        // Six 90-degree cameras from the capture origin. Forward/up pairs must match
+        // CubeFaceDirection() in Sky.slang or the baked faces land rotated or swapped, which reads as
+        // reflections that jump discontinuously across a surface as the view direction crosses a face
+        // boundary. Derived against the engine's left-handed basis (right = cross(up, forward)).
+        static const FVector3 FaceForward[6] = {
+            FVector3( 1.0f,  0.0f,  0.0f), FVector3(-1.0f,  0.0f,  0.0f),
+            FVector3( 0.0f,  1.0f,  0.0f), FVector3( 0.0f, -1.0f,  0.0f),
+            FVector3( 0.0f,  0.0f,  1.0f), FVector3( 0.0f,  0.0f, -1.0f),
+        };
+        static const FVector3 FaceUp[6] = {
+            FVector3( 0.0f,  1.0f,  0.0f), FVector3( 0.0f,  1.0f,  0.0f),
+            FVector3( 0.0f,  0.0f, -1.0f), FVector3( 0.0f,  0.0f,  1.0f),
+            FVector3( 0.0f,  1.0f,  0.0f), FVector3( 0.0f,  1.0f,  0.0f),
+        };
+
+        for (int32 Face = 0; Face < 6; ++Face)
+        {
+            // 90 degrees at aspect 1 is what makes six frusta tile the sphere exactly with no seam.
+            FViewVolume& Volume = Bake.FaceVolumes[Face];
+            Volume = FViewVolume(90.0f, 1.0f, Capture.NearPlane, Capture.FarPlane);
+            Volume.SetView(Capture.Position, FaceForward[Face], FaceUp[Face]);
+            Bake.FaceCullViews[Face] = ~0u;   // filled by BuildCullViews
+        }
+
+        Bake.BakingProbe   = (int32)ProbeIndex;
+        Bake.BakeViewIndex = ViewIndex;
+        Bake.BakeFaceSize  = Capture.FaceSize;
+
+        // Dequeued optimistically: the render phase completes any bake Extract schedules, and a frame
+        // that schedules always sets bExtractedThisFrame, so RenderView cannot skip it. An Always probe
+        // was never queued, so there is nothing to pop for it; it just captures over its own slice,
+        // which is already flagged baked and stays continuously samplable.
+        if (bFromQueue)
+        {
+            PendingProbeBakes.erase(PendingProbeBakes.begin());
+        }
     }
 
     void FForwardRenderScene::PrepareRender(uint8 /*FrameIndex*/)
@@ -752,6 +1124,12 @@ namespace Lumina
         // Recreating the IBL cubes calls WaitDeviceIdle, so it can't run while sibling scenes record.
         // RenderWorlds runs this serially for every scene before the parallel RenderView pass.
         SyncIBLResolution(Frame.Volumetrics.IBLResolution);
+
+        // Same reason: the scratch cube may need resizing for this frame's bake.
+        if (Frame.ReflectionProbes.BakingProbe >= 0)
+        {
+            SyncProbeCaptureCube(Frame.ReflectionProbes.BakeFaceSize);
+        }
     }
 
     void FForwardRenderScene::RenderView(uint8 FrameIndex)
@@ -1164,6 +1542,12 @@ namespace Lumina
 
                     RenderCaptureView(CL);
                 }
+
+                // Last, so the shared shadow atlas and cascades this frame's primary sequence rendered
+                // are available to light the capture. Note the cascades are fit to the PRIMARY camera,
+                // so a probe far outside the camera's shadow range bakes with unshadowed sun -- same
+                // limitation capture views already carry.
+                ReflectionProbeBakePass(CL);
             }
 
             {
@@ -1180,6 +1564,214 @@ namespace Lumina
         RHI::Core::Submit(CL);
 
         RenderFrame = nullptr;
+    }
+
+    static constexpr uint32 GPrefilterSampleCount = 256;
+
+    // Shared by the sky prefilter and the reflection-probe prefilter; both run PrefilterEnvMap.slang,
+    // differing only in DstLayerOffset (0 for the sky's own cube, ProbeSlice * 6 for the probe array).
+    struct FPrefilterPC
+    {
+        uint32 SrcCubeSRV     = 0;
+        uint32 OutMipUAV      = 0;
+        float  Roughness      = 0.0f;
+        uint32 NumSamples     = 0;
+        uint32 DstLayerOffset = 0;
+        uint32 _Pad0          = 0;
+        uint32 _Pad1          = 0;
+        uint32 _Pad2          = 0;
+    };
+    static_assert(sizeof(FPrefilterPC) == 32, "FPrefilterPC must match PrefilterEnvMap.slang::FPushConstants.");
+
+    void FForwardRenderScene::ReflectionProbeBakePass(RHI::FCmdListH CL)
+    {
+        const FFrameData& Frame = *RenderFrame;
+        const auto& Bake = Frame.ReflectionProbes;
+
+        if (Bake.BakingProbe < 0 || Bake.BakeViewIndex <= 0 || Bake.BakeViewIndex >= (int32)SceneViews.size())
+        {
+            if (Bake.BakingProbe >= 0)
+            {
+                LOG_WARN("[Probe] Bake SKIPPED: probe={} viewIndex={} numSceneViews={}",
+                         Bake.BakingProbe, Bake.BakeViewIndex, (int32)SceneViews.size());
+            }
+            return;
+        }
+
+        // Read the shared targets from NamedImages, not GetNamedImage: both are allocated lazily, after
+        // InitViewImages already snapshotted the shared slots into every view, so the per-view copies of
+        // these two are empty.
+        const FSceneImage& CaptureCube = NamedImages[(int)ENamedImage::ProbeCaptureCube];
+        const FSceneImage& ProbeArray  = NamedImages[(int)ENamedImage::ProbePrefiltered];
+        if (!CaptureCube.IsValid() || !ProbeArray.IsValid())
+        {
+            LOG_WARN("[Probe] Bake SKIPPED: captureCube={} probeArray={} (targets not allocated)",
+                     CaptureCube.IsValid() ? 1 : 0, ProbeArray.IsValid() ? 1 : 0);
+            return;
+        }
+
+        // One line per bake: confirms the pass runs, which cull views the faces got, and how much
+        // geometry the shared cull actually produced for them to draw.
+        if (CVarProbeDebugLog.GetValue())
+        {
+            LOG_WARN("[Probe] Bake RUN: probe={} faceSize={} cullViews=[{},{},{},{},{},{}] drawCmds={} capturePos=({:.2f},{:.2f},{:.2f})",
+                     Bake.BakingProbe, Bake.BakeFaceSize,
+                     Bake.FaceCullViews[0], Bake.FaceCullViews[1], Bake.FaceCullViews[2],
+                     Bake.FaceCullViews[3], Bake.FaceCullViews[4], Bake.FaceCullViews[5],
+                     Frame.Geometry.DrawCommands.size(),
+                     Bake.FaceVolumes[0].GetViewPosition().x,
+                     Bake.FaceVolumes[0].GetViewPosition().y,
+                     Bake.FaceVolumes[0].GetViewPosition().z);
+        }
+
+        LUMINA_PROFILE_SECTION_COLORED("Reflection Probe Bake", tracy::Color::SkyBlue3);
+        SCENE_GPU_SCOPE(CL, "Reflection Probe Bake");
+
+        FSceneView& View = SceneViews[Bake.BakeViewIndex];
+
+        // Suppresses probe sampling for the duration: a capture that sampled the probe array would fold
+        // the previous bake's reflections into this one, compounding on every rebuild.
+        bCapturingProbe = true;
+
+        const uint32 FaceSize = Bake.BakeFaceSize;
+
+        // Clear policy for this probe. Read once: Captures is parallel to Probes and BakingProbe
+        // indexes both.
+        const bool     bClearToColor = Bake.Captures[Bake.BakingProbe].bClearToColor;
+        const FVector3 ClearRGB      = Bake.Captures[Bake.BakingProbe].ClearColor;
+
+        for (int32 Face = 0; Face < 6; ++Face)
+        {
+            if (Bake.FaceCullViews[Face] == ~0u)
+            {
+                continue;
+            }
+
+            PointAtView(View);
+            CurrentCameraEarlyView = Bake.FaceCullViews[Face];
+            CurrentCameraLateView  = ~0u;   // frustum-only, no late re-test
+
+            CurrentSceneRootAddr = BuildViewSceneRoot(View, RHI::Core::CopyTransient(Bake.FaceGlobals[Face]));
+
+            if (Frame.Geometry.DrawCommands.empty())
+            {
+                // VisBufferPass returns early without clearing depth when there is nothing to draw.
+                Barriers::AllToTransfer(CL);
+                const float DepthClear[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+                RHI::CmdClearTexture(CL, GetNamedImage(ENamedImage::DepthAttachment).Texture, DepthClear);
+                Barriers::TransferToAll(CL);
+            }
+
+            // Opaque + sky, lit with clustered lights and the shared shadow atlas/cascades (already
+            // rendered this frame by the primary sequence, which is why the bake runs last).
+            //
+            // Deliberately excluded: bloom/exposure/tonemap/SMAA, because the cube has to stay linear
+            // HDR -- baking display-referred data in would double-apply at runtime and break energy
+            // conservation. Also excluded: translucency and volumetric fog, which the runtime scene
+            // applies itself and would otherwise be counted twice.
+            VisBufferPass(CL, CurrentCameraEarlyView, /*bClear*/ true);
+            TerrainCullPass(CL);
+            TerrainDepthPrePass(CL);
+            ClusterBuildPass(CL);
+            LightCullPass(CL);
+
+            if (bClearToColor)
+            {
+                // Stand-in for EnvironmentPass, which owns the scene-color clear and then draws sky
+                // into it. Clearing to a flat color and skipping the sky draw is what makes a sealed
+                // interior capture only its own geometry.
+                const FSceneImage& ClearRT = GetSceneColorRT();
+
+                RHI::FRenderAttachment ClearColorAttachment;
+                ClearColorAttachment.Texture        = ClearRT.Texture;
+                ClearColorAttachment.ResolveTexture = GetSceneColorResolve();
+                ClearColorAttachment.LoadOp         = RHI::ELoadOp::Clear;
+                ClearColorAttachment.StoreOp        = RHI::EStoreOp::Store;
+                ClearColorAttachment.Color[0]       = ClearRGB.x;
+                ClearColorAttachment.Color[1]       = ClearRGB.y;
+                ClearColorAttachment.Color[2]       = ClearRGB.z;
+                ClearColorAttachment.Color[3]       = 1.0f;
+
+                RHI::FRenderPassDesc ClearPass;
+                ClearPass.ColorAttachments = TSpan<const RHI::FRenderAttachment>(&ClearColorAttachment, 1);
+                ClearPass.RenderArea       = GetNamedImage(ENamedImage::HDR).GetExtent();
+
+                RHI::CmdBeginRenderPass(CL, ClearPass);
+                RHI::CmdEndRenderPass(CL);
+                Barriers::RasterToRead(CL);
+            }
+            else
+            {
+                EnvironmentPass(CL);
+            }
+
+            DecalPass(CL);
+            MaterialDepthPass(CL);
+            DeferredMaterialPass(CL);
+            TerrainRenderPass(CL);
+
+            // HDR scene color -> this face of the scratch cube. Same format and same extent, so it is a
+            // straight copy; SyncProbeCaptureCube is what guarantees the extents match.
+            const FSceneImage& FaceColor = GetNamedImage(ENamedImage::HDR);
+
+            RHI::FTextureSlice SrcSlice;
+            SrcSlice.Mip        = 0;
+            SrcSlice.Layer      = 0;
+            SrcSlice.LayerCount = 1;
+            SrcSlice.Extent     = FUIntVector3(FaceSize, FaceSize, 1);
+
+            RHI::FTextureSlice DstSlice = SrcSlice;
+            DstSlice.Layer = (uint32)Face;
+
+            Barriers::AllToTransfer(CL);
+            RHI::CmdCopyTexture(CL, FaceColor.Texture, SrcSlice, CaptureCube.Texture, DstSlice);
+            Barriers::TransferToAll(CL);
+        }
+
+        // Prefilter the finished cube into this probe's slice. Same shader the sky prefilter runs; the
+        // destination layer offset is what redirects it into the array.
+        {
+            static const FShaderEntry* const ComputeShader = FShaderLibrary::Get("PrefilterEnvMap.slang");
+            if (ComputeShader != nullptr)
+            {
+                SCENE_GPU_SCOPE(CL, "Probe Prefilter");
+                RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(ComputeShader));
+
+                const uint32 NumMips      = ProbeArray.GetNumMips();
+                const uint32 BaseFaceSize = ProbeArray.GetSizeX();
+                constexpr uint32 PrefilterTile = 8u;
+
+                for (uint32 Mip = 0; Mip < NumMips; ++Mip)
+                {
+                    FPrefilterPC PC = {};
+                    PC.SrcCubeSRV     = (uint32)CaptureCube.GetResourceID();
+                    PC.OutMipUAV      = (uint32)ProbeArray.GetMipUAVIndex(Mip);
+                    PC.Roughness      = (NumMips <= 1u) ? 0.0f : (float)Mip / (float)(NumMips - 1u);
+                    PC.NumSamples     = GPrefilterSampleCount;
+                    PC.DstLayerOffset = (uint32)Bake.BakingProbe * 6u;
+
+                    const uint32 MipFaceSize = eastl::max<uint32>(BaseFaceSize >> Mip, 1u);
+                    const uint32 GroupsXY    = RenderUtils::GetGroupCount(MipFaceSize, PrefilterTile);
+                    RHI::CmdDispatch(CL, MakeArgs(PC), GroupsXY, GroupsXY, 6u);
+                }
+
+                Barriers::ComputeToAll(CL);
+            }
+        }
+
+        bCapturingProbe = false;
+
+        // Leave the live per-view members on the primary. The passes after this (RmlUi world UI, the
+        // final read barrier) composite onto the primary output, and the loop above left CurrentView
+        // pointing at the probe's view.
+        PointAtView(SceneViews[0]);
+        CurrentCameraEarlyView = 0u;
+        CurrentCameraLateView  = Frame.Views.CameraLateViewIndex;
+
+        // Publish for the next Extract to fold into BakedProbeMask. Deferred by a frame on purpose:
+        // the primary view for THIS frame already shaded above, so making the slice samplable now
+        // would be a lie for everything already recorded.
+        CompletedProbeBakes.fetch_or(1u << (uint32)Bake.BakingProbe, std::memory_order_acq_rel);
     }
 
     void FForwardRenderScene::RenderCaptureView(RHI::FCmdListH CL)
@@ -3129,6 +3721,38 @@ namespace Lumina
             {
                 SceneRootShared.Widgets = RHI::Core::CopyTransientArray(Frame.Primitives.WidgetInstances.data(), Frame.Primitives.WidgetInstances.size());
             }
+            // Probe array. Uploaded even when every probe is still waiting to bake: an unbaked slice
+            // reads black (cleared at allocation), which is a smooth blend toward no reflection rather
+            // than the garbage an unwritten slice would give.
+            // Probes arrive fully resolved (sorted, sliced, baked-flag stamped) from Extract; this is a
+            // straight upload. Uploaded even when every probe is still queued: an unbaked probe carries
+            // a clear baked flag and the shader skips it, leaving the sky to cover that pixel.
+            NumActiveProbes = (uint32)Frame.ReflectionProbes.Probes.size();
+            ProbeBufferAddr = 0;
+            if (NumActiveProbes > 0)
+            {
+                InitReflectionProbeTargets();
+                ProbeBufferAddr = RHI::Core::CopyTransientArray(Frame.ReflectionProbes.Probes.data(),
+                                                                Frame.ReflectionProbes.Probes.size());
+            }
+
+            // Temporary diagnostic: the render phase's half of the plumbing. Change-gated.
+            {
+                const FSceneImage& DiagArray = NamedImages[(int)ENamedImage::ProbePrefiltered];
+                const uint64 State = ((uint64)NumActiveProbes)
+                                   | ((uint64)(ProbeBufferAddr != 0 ? 1 : 0) << 8)
+                                   | ((uint64)(DiagArray.IsValid() ? 1 : 0) << 9)
+                                   | ((uint64)DiagArray.GetNumMips() << 16)
+                                   | ((uint64)(uint32)(DiagArray.GetResourceID() + 1) << 24);
+                if (State != LastProbeRenderDiagState && CVarProbeDebugLog.GetValue())
+                {
+                    LastProbeRenderDiagState = State;
+                    LOG_WARN("[Probe] Render: numActive={} bufferAddr={} arrayValid={} arraySRV={} mips={}",
+                             NumActiveProbes, ProbeBufferAddr != 0 ? "set" : "NULL",
+                             DiagArray.IsValid() ? 1 : 0, DiagArray.GetResourceID(), DiagArray.GetNumMips());
+                }
+            }
+
             // GPU-built this frame (ScanPrefix* dispatches below), read by the cull's binary search.
             SceneRootShared.InstanceMeshletPrefix = GetInstancePrefix().GetAddress();
 
@@ -4155,6 +4779,18 @@ namespace Lumina
             SceneCullContext.CaptureFrusta.push_back(Capture.ViewVolume.GetFrustum());
         }
 
+        // Same for a probe bake's six faces. Without this the CPU pre-cull drops everything outside the
+        // primary camera's frustum before upload, and the probe bakes a cube that only contains what the
+        // camera happened to be looking at -- baked in permanently, since captures are on-demand. The six
+        // faces together are a full sphere, so this effectively disables the pre-cull for the bake frame.
+        if (Frame.ReflectionProbes.BakingProbe >= 0)
+        {
+            for (int32 Face = 0; Face < 6; ++Face)
+            {
+                SceneCullContext.CaptureFrusta.push_back(Frame.ReflectionProbes.FaceVolumes[Face].GetFrustum());
+            }
+        }
+
         FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
 
         // First enabled directional light wins (matches ProcessDirectionalLight).
@@ -4357,7 +4993,15 @@ namespace Lumina
         // (camera + cascades + 6/point + 1/spot). Overflow crashes the GPU.
         {
             const uint32 SunViews        = LightData.bHasSun ? (uint32)NumCascades : 0u;
-            const uint32 ReservedViews   = 1u + SunViews;                     // Camera + CSM cascades.
+            // Everything BuildCullViews pushes that is not a shadow view. Under-reserving here does not
+            // merely trip its ASSERT: shadow views are dropped to fit whatever is left, so any view not
+            // counted overflows the cull-view buffer on the GPU. The camera-late view and the capture
+            // cameras were already missing from this before probes added six more.
+            const uint32 ReservedViews   = 1u                                     // Camera (early)
+                                         + SunViews                               // CSM cascades
+                                         + 1u                                     // Camera (late, phase 1)
+                                         + (uint32)Frame.Views.CaptureViews.size()
+                                         + (Frame.ReflectionProbes.BakingProbe >= 0 ? 6u : 0u);
             const uint32 AvailableViews  = (ReservedViews >= (uint32)GMaxCullViews)
                                          ? 0u
                                          : ((uint32)GMaxCullViews - ReservedViews);
@@ -4660,7 +5304,8 @@ namespace Lumina
             (uint32)PackedShadows[(uint32)ELightType::Point].size() * 6u +
             (uint32)PackedShadows[(uint32)ELightType::Spot].size() +
             1u +                                                        // Camera (late, phase 1)
-            (uint32)Frame.Views.CaptureViews.size();                          // Capture cameras (frustum-only)
+            (uint32)Frame.Views.CaptureViews.size() +                         // Capture cameras (frustum-only)
+            (Frame.ReflectionProbes.BakingProbe >= 0 ? 6u : 0u);              // Reflection-probe cube faces
 
         ASSERT(NumViews <= (uint32)GMaxCullViews);
 
@@ -4782,6 +5427,21 @@ namespace Lumina
             const FMatrix4 CaptureVP = Capture.ViewVolume.GetProjectionMatrix() * Capture.ViewVolume.GetViewMatrix();
             const uint32 CaptureFlags = ECullViewFlags::Frustum | ConeFlag;
             Capture.CameraViewIndex = PushView(CaptureVP, Capture.ViewVolume.GetViewPosition(), CaptureFlags);
+        }
+
+        // Reflection-probe cube faces: frustum-only, same as capture cameras. Occlusion culling is
+        // deliberately off -- the probe view has no depth pyramid of its own, and testing against the
+        // primary camera's would cull geometry the probe can see but the camera cannot, punching holes
+        // into the baked cube that persist until the next rebuild.
+        if (Frame.ReflectionProbes.BakingProbe >= 0)
+        {
+            const uint32 FaceFlags = ECullViewFlags::Frustum | ConeFlag;
+            for (int32 Face = 0; Face < 6; ++Face)
+            {
+                const FViewVolume& Volume = Frame.ReflectionProbes.FaceVolumes[Face];
+                const FMatrix4 FaceVP = Volume.GetProjectionMatrix() * Volume.GetViewMatrix();
+                Frame.ReflectionProbes.FaceCullViews[Face] = PushView(FaceVP, Volume.GetViewPosition(), FaceFlags);
+            }
         }
     }
 
@@ -9413,8 +10073,6 @@ namespace Lumina
         Barriers::RasterToRead(CL);
     }
     
-    static constexpr uint32 GPrefilterSampleCount = 256;
-
     void FForwardRenderScene::SkyCubeCapturePass(RHI::FCmdListH CL)
     {
         LUMINA_PROFILE_SECTION_COLORED("Sky Cube Capture", tracy::Color::SkyBlue);
@@ -9611,14 +10269,6 @@ namespace Lumina
         }
 
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(ComputeShader));
-
-        struct FPrefilterPC
-        {
-            uint32 SrcCubeSRV;
-            uint32 OutMipUAV;
-            float  Roughness;
-            uint32 NumSamples;
-        };
 
         const uint32 NumMips      = PrefilterCube.GetNumMips();
         const uint32 BaseFaceSize = PrefilterCube.GetSizeX();
@@ -10997,12 +11647,11 @@ namespace Lumina
             // each slot's own desc is deliberate: it stays an upper bound across a rebind, which changes
             // which desc a slot points at without touching either count, so nothing has to invalidate it.
             //
-            // Published by the game thread (FRetainedUpload::MaxSurfaceDescMeshlets), NOT re-derived here.
-            // This used to walk ScenePrimitives' live SurfaceDescs vector from the render phase, which the
-            // game thread reallocates whenever a new distinct LOD table is interned -- and since the value
-            // is a running max that never decreases, ONE torn read poisoned the ceiling for the life of the
-            // scene. A poisoned ceiling is not a wrong number: it is what stops being a clamp, and the
-            // garbage meshlet count that follows becomes a multi-billion-thread indirect dispatch.
+            // Carried in FRetainedUpload rather than rescanned here. This used to walk SurfaceDescs from
+            // the render phase and keep a running max in the scene -- correct, since extract and render are
+            // phases of one thread, but it re-derived per frame what interning already knows, and a running
+            // max that outlives the table it summarizes is a latch waiting for someone to get its reset
+            // wrong. InternSurfaceDesc folds it in once, from the value it has just clamped.
             const uint64 MaxDescMeshlets = Math::Min<uint64>(Upload.MaxSurfaceDescMeshlets,
                                                              MAX_MESHLETS_PER_SURFACE_LOD);
 
@@ -11228,6 +11877,8 @@ namespace Lumina
         case ENamedImage::SkyCube:            return "Scene.SkyCube";
         case ENamedImage::SkyIrradiance:      return "Scene.SkyIrradiance";
         case ENamedImage::SkyPrefilter:       return "Scene.SkyPrefilter";
+        case ENamedImage::ProbeCaptureCube:   return "Scene.ProbeCaptureCube";
+        case ENamedImage::ProbePrefiltered:   return "Scene.ProbePrefiltered";
 
         #if USING(WITH_EDITOR)
         case ENamedImage::PointLightIcon:       return "Scene.PointLightIcon";
@@ -11523,6 +12174,72 @@ namespace Lumina
         NameOwnedImages(NamedImages);
     }
 
+    // Allocated on first use rather than at Init: a scene with no reflection probes is the common case
+    // (and every thumbnail/preview world), and these two together run ~30 MB. Idempotent, so the bake
+    // and the extract can both call it without coordinating.
+    void FForwardRenderScene::InitReflectionProbeTargets()
+    {
+        if (NamedImages[(int)ENamedImage::ProbePrefiltered].IsValid())
+        {
+            return;
+        }
+
+        // The runtime array. One 6-layer slice per probe; R11G11B10 to match the sky prefilter it
+        // blends against, which also keeps the array a third the size of an RGBA16F one.
+        {
+            RHI::FTextureDesc Desc;
+            Desc.Type       = RHI::ETextureType::TexCubeArray;
+            Desc.Dimension  = FUIntVector3(ProbePrefilterBaseSize, ProbePrefilterBaseSize, 1);
+            Desc.LayerCount = MaxReflectionProbes * 6;
+            Desc.MipCount   = ProbePrefilterMips;
+            Desc.Format     = EFormat::R11G11B10_FLOAT;
+            Desc.Usage      = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::Storage | RHI::EImageUsageFlags::TransferDst;
+
+            NamedImages[(int)ENamedImage::ProbePrefiltered] = CreateSceneImage(Desc, /*bSampled*/ true, /*bMipUAVs*/ true);
+        }
+
+        // Unbaked slices are undefined memory, which reads as garbage radiance until the bake fills
+        // them. Clear once here so a probe that has been extracted but not yet baked contributes black
+        // rather than noise while it waits its turn in the queue.
+        RHI::FCmdListH CL = RHI::OpenCommandList();
+        const float Black[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+        Barriers::AllToTransfer(CL);
+        RHI::CmdClearTexture(CL, NamedImages[(int)ENamedImage::ProbePrefiltered].Texture, Black);
+        Barriers::TransferToAll(CL);
+        RHI::SubmitAndWait(CL);
+
+        NameOwnedImages(NamedImages);
+    }
+
+    // The capture cube must match the bake view's face size EXACTLY. It is a plain texture copy from the
+    // view's 2D HDR target into a cube face, so a cube larger than the view would leave the rest of each
+    // face unwritten -- and the prefilter samples the whole face directionally, with no way to restrict
+    // itself to the written sub-rect. Recreation needs WaitDeviceIdle, so this runs in PrepareRender
+    // (serial, before any scene records) rather than mid-RenderView, matching SyncIBLResolution.
+    void FForwardRenderScene::SyncProbeCaptureCube(uint32 FaceSize)
+    {
+        if (FaceSize == 0 || FaceSize == ProbeCaptureCubeSize)
+        {
+            return;
+        }
+
+        RHI::WaitDeviceIdle();
+        ReleaseSceneImage(NamedImages[(int)ENamedImage::ProbeCaptureCube]);
+
+        RHI::FTextureDesc Desc;
+        Desc.Type       = RHI::ETextureType::TexCube;
+        Desc.Dimension  = FUIntVector3(FaceSize, FaceSize, 1);
+        Desc.LayerCount = 6;
+        // Matches the HDR scene color it is copied from, which keeps that copy a format-identical blit.
+        Desc.Format     = EFormat::RGBA16_FLOAT;
+        Desc.Usage      = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::TransferDst;
+
+        NamedImages[(int)ENamedImage::ProbeCaptureCube] = CreateSceneImage(Desc, /*bSampled*/ true, /*bMipUAVs*/ false);
+        ProbeCaptureCubeSize = FaceSize;
+
+        NameOwnedImages(NamedImages);
+    }
+
     void FForwardRenderScene::SyncIBLResolution(const FIBLBakeResolution& Resolution)
     {
         if (Resolution == AppliedIBLResolution)
@@ -11594,6 +12311,18 @@ namespace Lumina
         Root->SkyCubeIndex       = (uint32)View.Images[(int)ENamedImage::SkyCube].GetResourceID();
         Root->ShadowCascadeIndex = (uint32)GetNamedImage(ENamedImage::Cascade).GetResourceID();
         Root->ShadowAtlasIndex   = (uint32)ShadowAtlas.GetImage().GetResourceID();
+
+        // Probes are suppressed while a probe capture is rendering: a capture that sampled the array
+        // would fold the previous bake's reflections into the new one, compounding on every rebuild.
+        // Read from NamedImages rather than View.Images because the array is allocated lazily, after
+        // InitViewImages has already snapshotted the shared slots into each view.
+        const FSceneImage& ProbeArray = NamedImages[(int)ENamedImage::ProbePrefiltered];
+        if (!bCapturingProbe && NumActiveProbes > 0 && ProbeArray.IsValid())
+        {
+            Root->ReflectionProbes    = ProbeBufferAddr;
+            Root->NumReflectionProbes = NumActiveProbes;
+            Root->ProbeCubeArrayIndex = ((uint32)ProbeArray.GetResourceID() & 0x00FFFFFFu) | (ProbeArray.GetNumMips() << 24);
+        }
         return Alloc.Gpu;
     }
 

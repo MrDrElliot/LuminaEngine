@@ -3,7 +3,7 @@
 #include "GlobalRHI.slang"
 
 // Device addresses of every scene buffer + bindless indices for the IBL/shadow textures. Must match
-// FSceneRoot in SceneRenderTypes.h (128 B, scalar layout).
+// FSceneRoot in SceneRenderTypes.h (144 B, scalar layout).
 struct FSceneRoot
 {
     FSceneGlobalData*    SceneData;
@@ -19,14 +19,18 @@ struct FSceneRoot
     FPreSkinnedVertex*   PreSkinnedVerticesPtr;
     FSkinDescriptor*     SkinDescriptorsPtr;
     FWidgetInstance*     WidgetsPtr;
+    FGPUReflectionProbe* ReflectionProbesPtr;
     uint  BRDFLutIndex;          // bindless 2D SRV
     uint  SkyIrradianceIndex;    // bindless cube SRV
     // [31:24] = prefilter cube mip count (see SamplePrefilter), [23:0] = bindless cube SRV index.
-    // Packed so the per-pixel mip count rides along without growing FSceneRoot past the 128 B push budget.
+    // Packed so the per-pixel mip count rides along without a second field.
     uint  SkyPrefilterIndex;
     uint  ShadowCascadeIndex;    // bindless 2D SRV (cascade atlas)
     uint  ShadowAtlasIndex;      // bindless 2D SRV (spot/point atlas)
     uint  SkyCubeIndex;          // bindless cube SRV (full-res sky; sharp near-mirror reflections)
+    // [31:24] = probe prefilter mip count, [23:0] = bindless cube-array SRV over every probe's slices.
+    uint  ProbeCubeArrayIndex;
+    uint  NumReflectionProbes;
 };
 
 // gRHI.Args (GlobalRHI's single 8-byte push-constant pointer) points to this transient block.

@@ -33,6 +33,7 @@ namespace Lumina::RHI
             uint64      Size           = 0;
             uint32      RowPitchTexels = 0;         // Texture
             uint32      Mip            = 0;         // Texture
+            uint32      Layer          = 0;         // Texture (array slice; 0 for non-array)
             float       ClearValue[4]  = {};        // Clear
         };
 
@@ -157,7 +158,7 @@ namespace Lumina::RHI
         EndWrite(S);
     }
 
-    void UploadTexture(FTextureH Dest, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels)
+    void UploadTexture(FTextureH Dest, uint32 Layer, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels)
     {
         if (!IsValid(Dest) || Data == nullptr || Size == 0)
         {
@@ -187,6 +188,7 @@ namespace Lumina::RHI
         Op.Size           = Size;
         Op.RowPitchTexels = RowPitchTexels;
         Op.Mip            = Mip;
+        Op.Layer          = Layer;
 
         {
             FScopeLock Lock(GUpload.Mutex);
@@ -376,7 +378,9 @@ namespace Lumina::RHI
                 case EUploadOp::Texture:
                     {
                         FTextureSlice Slice;
-                        Slice.Mip = Op.Mip;
+                        Slice.Mip        = Op.Mip;
+                        Slice.Layer      = Op.Layer;
+                        Slice.LayerCount = 1;
                         CmdCopyMemoryToTexture(CL, Op.Staging, Op.RowPitchTexels, Op.TextureDest, Slice);
                     }
                     break;

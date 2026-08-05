@@ -4,7 +4,11 @@
 float4 FragmentMain(FImGuiInterpolants Input) : SV_Target0
 {
     FImGuiArgs* Args = GetArgs<FImGuiArgs>();
-    float4 Texel = SampleTexture2D(Args.TextureID, Args.SamplerIndex, Input.UV);
+
+    // Uniform across the draw (it comes from the per-draw args block), so this is not divergent.
+    float4 Texel = (Args.bIsArray != 0u)
+                 ? SampleTexture2DArray(Args.TextureID, Args.SamplerIndex, Input.UV, Args.ArraySlice)
+                 : SampleTexture2D(Args.TextureID, Args.SamplerIndex, Input.UV);
 
     if (Args.DisplayMode == IMGUI_DISPLAY_HDR)
     {

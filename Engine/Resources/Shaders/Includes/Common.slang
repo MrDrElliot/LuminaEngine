@@ -562,6 +562,30 @@ struct FWidgetInstance
     property float4 Tint { get { return UnpackColor(ColorPack); }}
 };
 
+// One local reflection probe. 160 B, must match FGPUReflectionProbe in SceneRenderTypes.h.
+// Extraction bakes the half-extents into WorldToProbe, so the influence volume is the unit box
+// [-1,1]^3 (Box) or the unit sphere (Sphere) in probe space. Sampling helpers live in
+// Includes/ReflectionProbe.slang; this declaration sits here only because FSceneRoot points at it.
+struct FGPUReflectionProbe
+{
+    float4x4    WorldToProbe;
+    float4x4    ProbeToWorld;
+    float4      CapturePosition;   // xyz = world capture origin, w = 1 once this probe has been baked
+    float4      Params;            // x=brightness, y=shape, z=array slice, w=blend fraction
+
+    property float  Brightness   { get { return Params.x; }}
+    property bool   IsSphere     { get { return Params.y > 0.5; }}
+    property uint   Slice        { get { return (uint)Params.z; }}
+    property float  BlendFraction{ get { return Params.w; }}
+    // A probe waiting in the bake queue owns a slice but has nothing in it. It must be skipped
+    // rather than sampled-as-black: consuming influence and returning black would darken the
+    // reflection instead of leaving the sky to cover that pixel.
+    property bool   IsBaked      { get { return CapturePosition.w > 0.5; }}
+};
+
+static const float kProbeShapeBox    = 0.0;
+static const float kProbeShapeSphere = 1.0;
+
 static const uint WIDGET_FLAG_BILLBOARD = 1u;
 
 // Hot per-light data, sized to a single 64B cache line for one L2 miss per light in the
@@ -711,6 +735,12 @@ struct FCullData
 #define DEBUG_MODE_OIT_ACCUM_WEIGHT     19u
 #define DEBUG_MODE_OIT_REVEALAGE        20u
 #define DEBUG_MODE_OIT_LAYER_COUNT      21u
+// Reflection-probe inspectors. INFLUENCE answers "does a probe reach this pixel, and which one";
+// RADIANCE answers "what did that probe actually capture". The two failure modes are distinct and
+// look identical in a lit view: a probe that isn't reaching the pixel and a probe that captured the
+// wrong thing both just look like the sky.
+#define DEBUG_MODE_PROBE_INFLUENCE      22u
+#define DEBUG_MODE_PROBE_RADIANCE       23u
 
 // Global scaling applied on top of every material's authored POM settings, so a weaker GPU can dial the
 // whole feature back without recompiling materials. Matches FParallaxSettings in SceneRenderTypes.h.

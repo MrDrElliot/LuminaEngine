@@ -25,18 +25,39 @@ namespace Lumina
             uint8        NumMips = 1;
             EFormat      Format  = EFormat::UNKNOWN;
 
+            // Array slices. 1 = a plain Tex2D; >1 makes this a Tex2DArray whose slices all share the
+            // Extent/NumMips/Format above (a hardware requirement, not a convention -- one VkImage
+            // cannot hold slices of differing size or format).
+            uint16       LayerCount = 1;
+
             friend FArchive& operator << (FArchive& Ar, FDescription& Data)
             {
                 Ar << Data.Extent;
                 Ar << Data.NumMips;
                 Ar << Data.Format;
+
+                // Pre-TEXTURE_ARRAY_LAYERS files have no layer field and are single-layer by
+                // construction; the member default already says so, so there is nothing to read.
+                if (Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::TEXTURE_ARRAY_LAYERS)
+                {
+                    Ar << Data.LayerCount;
+                }
                 return Ar;
             }
         };
 
         FDescription            ImageDescription;
         RHI::FManagedTexture    NewTexture;
+
+        // Layer-major: Mips[Layer * NumMips + Mip]. A single-layer texture is the degenerate case,
+        // so every existing index expression (Mips[i] for mip i) keeps meaning what it meant.
         TFixedVector<FMip, 1>   Mips;
+
+        uint32 GetNumMips() const   { return ImageDescription.NumMips    > 0 ? (uint32)ImageDescription.NumMips    : 1u; }
+        uint32 GetNumLayers() const { return ImageDescription.LayerCount > 0 ? (uint32)ImageDescription.LayerCount : 1u; }
+        bool   IsArray() const      { return GetNumLayers() > 1; }
+
+        uint32 MipIndex(uint32 Layer, uint32 Mip) const { return Layer * GetNumMips() + Mip; }
 
         uint64 CalcTotalSizeBytes() const
         {
@@ -58,7 +79,7 @@ namespace Lumina
             if (Ar.IsReading())
             {
                 Data.Mips.clear();
-                Data.Mips.resize(Data.ImageDescription.NumMips);
+                Data.Mips.resize(Data.GetNumMips() * Data.GetNumLayers());
             }
 
             for (FMip& Mip : Data.Mips)

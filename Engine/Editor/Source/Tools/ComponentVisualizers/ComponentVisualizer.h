@@ -169,6 +169,17 @@ namespace Lumina
     };
 
     REFLECT()
+    class EDITOR_API CComponentVisualizer_ReflectionProbe : public CComponentVisualizer
+    {
+        GENERATED_BODY()
+    public:
+
+        CStruct* GetSupportedComponentType() const override;
+
+        void Draw(IPrimitiveDrawInterface* PDI, entt::registry& Registry, FEntity Entity) override;
+    };
+
+    REFLECT()
     class EDITOR_API CComponentVisualizer_TaperedCapsuleCollider : public CComponentVisualizer
     {
         GENERATED_BODY()

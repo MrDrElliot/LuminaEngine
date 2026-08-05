@@ -1,5 +1,6 @@
 ﻿#include "MaterialNode_TextureSample.h"
 #include "Assets/AssetTypes/Textures/Texture.h"
+#include "Assets/AssetTypes/Textures/TextureArray.h"
 #include "Core/Object/Cast.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "UI/Tools/NodeGraph/Material/MaterialCompiler.h"
@@ -46,6 +47,26 @@ namespace Lumina
 
     void CMaterialExpression_TextureSample::GenerateDefinition(FMaterialCompiler& Compiler)
     {
+        // CTextureArray derives from CTexture, so the asset picker on this node accepts one. Sampling it
+        // would emit SampleTexture2D against a heap slot holding a VIEW_TYPE_2D_ARRAY view -- a descriptor
+        // type mismatch that resolves to the null slot, giving a purple material with no other diagnostic.
+        // Caught here so it reads as a graph error naming the fix instead.
+        if (Texture.IsValid() && Texture->IsA<CTextureArray>())
+        {
+            // Declared even though an error aborts the compile before any shader is built: downstream
+            // nodes bind to this node's variable by name, so leaving it undeclared would turn one clear
+            // graph error into a cascade of undefined identifiers if that ordering ever changes.
+            Compiler.AddRaw("float4 " + FullName + " = float4(0.0, 0.0, 0.0, 1.0);\n");
+
+            EdNodeGraph::FError Error;
+            Error.Node        = this;
+            Error.Name        = "Texture Sample";
+            Error.Description = "TextureSample cannot sample a Texture Array. Use a TextureSampleArray node "
+                                "instead, which takes a Slice input to pick the layer.";
+            Compiler.AddError(Error);
+            return;
+        }
+
         if (bDynamic && !ParameterName.IsNone())
         {
             Compiler.TextureSampleParameter(FullName, ParameterName, Texture, UV);
@@ -63,7 +84,10 @@ namespace Lumina
 
     void CMaterialExpression_TextureSample::DrawNodeBody()
     {
-        if (Texture.IsValid() && Texture->GetResourceID() >= 0)
+        // An array assigned here is a user error the compiler rejects (see GenerateDefinition), and
+        // drawing it through the plain Texture2D path would sample the null slot anyway. Leave the body
+        // empty so the node reads as "nothing valid assigned" rather than showing a purple square.
+        if (Texture.IsValid() && Texture->GetResourceID() >= 0 && !Texture->IsA<CTextureArray>())
         {
             ImGui::Image(ImGuiX::ToImTextureRef((uint32)Texture->GetResourceID()), ImVec2(126.0f, 126.f));
         }

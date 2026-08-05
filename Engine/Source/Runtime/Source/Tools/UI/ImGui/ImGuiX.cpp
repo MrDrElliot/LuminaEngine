@@ -76,6 +76,35 @@ namespace Lumina::ImGuiX
         DrawList->AddCallback(Detail::GetDisplayStateCallback(), &State, sizeof(State));
     }
 
+    void BeginArrayPreview(ImDrawList* DrawList, uint32 Slice)
+    {
+        if (DrawList == nullptr)
+        {
+            return;
+        }
+
+        Detail::FImGuiDisplayState State;
+        State.bIsArray   = 1;
+        State.ArraySlice = Slice;
+
+        // Non-zero size: ImGui copies the payload into the draw list's own buffer, so it stays alive
+        // until the backend records this frame.
+        DrawList->AddCallback(Detail::GetDisplayStateCallback(), &State, sizeof(State));
+    }
+
+    void EndArrayPreview(ImDrawList* DrawList)
+    {
+        if (DrawList == nullptr)
+        {
+            return;
+        }
+
+        // Defaults restore the plain Texture2D path; every other ImGui draw depends on that being the
+        // state it finds, so this pair must not be left unbalanced.
+        Detail::FImGuiDisplayState State;
+        DrawList->AddCallback(Detail::GetDisplayStateCallback(), &State, sizeof(State));
+    }
+
     void TextTooltip_Internal(FStringView String)
     {
         ImGui::PushStyleVar( ImGuiStyleVar_WindowPadding, ImVec2(4, 4));

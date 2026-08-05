@@ -18,10 +18,15 @@ struct FImGuiArgs
 {
     float2   Scale;        // 2 / DisplaySize
     float2   Translate;    // -1 - DisplayPos * Scale
-    uint     TextureID;    // heap ResourceID (gTextures2D[])
+    uint     TextureID;    // heap ResourceID (gTextures2D[], or gTextures2DArray[] when bIsArray)
     uint     SamplerIndex; // SAMPLER_* heap slot
     uint     DisplayMode;  // IMGUI_DISPLAY_*
     float    Exposure;     // linear multiplier, HDR mode only
+    // Array previews. The heap arrays are aliased views of one descriptor array, so TextureID is the
+    // same ResourceID either way -- but the DESCRIPTOR TYPE has to match how the image was created, so
+    // a Tex2DArray must be read through gTextures2DArray[] or it resolves to the null slot.
+    uint     ArraySlice;   // layer to sample, bIsArray only
+    uint     bIsArray;     // 0 = Texture2D, 1 = Texture2DArray
     uint64_t VertexAddr;   // device address of the transient ImDrawVert array
 };
 

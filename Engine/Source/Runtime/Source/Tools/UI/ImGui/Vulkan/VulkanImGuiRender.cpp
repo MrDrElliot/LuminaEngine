@@ -21,7 +21,7 @@ namespace Lumina
     // The single live backend instance, so the static ImGuiPlatformIO::Renderer_* hooks can reach it.
     static FVulkanImGuiRender* GImGuiBackend = nullptr;
 
-    // Mirrors FImGuiArgs in ImGuiVert/Pixel.slang (40 B scalar).
+    // Mirrors FImGuiArgs in ImGuiVert/Pixel.slang (48 B scalar).
     struct FNewImGuiArgs
     {
         float  Scale[2];
@@ -30,9 +30,11 @@ namespace Lumina
         uint32 SamplerIndex;
         uint32 DisplayMode;
         float  Exposure;
+        uint32 ArraySlice;
+        uint32 bIsArray;
         uint64 VertexAddr;
     };
-    static_assert(sizeof(FNewImGuiArgs) == 40, "FNewImGuiArgs must match ImGuiCommon.slang::FImGuiArgs.");
+    static_assert(sizeof(FNewImGuiArgs) == 48, "FNewImGuiArgs must match ImGuiCommon.slang::FImGuiArgs.");
 
     void FVulkanImGuiRender::Initialize()
     {
@@ -227,6 +229,8 @@ namespace Lumina
             Args.SamplerIndex = (uint32)RHI::EStockSampler::LinearWrap;
             Args.DisplayMode  = 0;      // IMGUI_DISPLAY_DIRECT: UI atlases and cooked textures are already encoded.
             Args.Exposure     = 1.0f;
+            Args.ArraySlice   = 0;
+            Args.bIsArray     = 0;      // the overwhelming majority of ImGui draws are plain Texture2D
             Args.VertexAddr   = VB.Gpu;
 
             // Resolved once: ImGuiX::BeginHDRPreview stamps this marker into the draw list, and we
@@ -260,6 +264,8 @@ namespace Lumina
                             const auto* State = static_cast<const ImGuiX::Detail::FImGuiDisplayState*>(Cmd.UserCallbackData);
                             Args.DisplayMode = State->DisplayMode;
                             Args.Exposure    = State->Exposure;
+                            Args.ArraySlice  = State->ArraySlice;
+                            Args.bIsArray    = State->bIsArray;
                         }
                         continue;
                     }

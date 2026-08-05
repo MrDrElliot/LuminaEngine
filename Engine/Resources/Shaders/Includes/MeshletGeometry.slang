@@ -1,5 +1,6 @@
 #pragma once
 #include "SceneGlobals.slang"
+#include "Wind.slang"   // material-graph WindAnimation node; every material vertex template needs it
 
 // Shared meshlet geometry path for BOTH the vertex-shader emulation (non-indexed, corner-decoded draws)
 // and the mesh-shader path. Anything the two must agree on lives here so they can never drift:

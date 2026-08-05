@@ -267,7 +267,9 @@ namespace Lumina
     // EncodeThreads = total basisu encode threads (basisu counts the calling thread, so 1 = single-threaded,
     // 0 new threads). 0 = auto (use the worker count). A batch importer cooking many textures in parallel
     // passes 1 so each texture doesn't spawn its own full pool and oversubscribe the cores.
-    static bool CookTexturePixels(CTexture* Texture, const TVector<uint8>& Pixels, FUIntVector2 Dimensions, ETextureColorSpace ColorSpace, uint32 EncodeThreads = 0)
+    // bCreateGPUResource = false stops after the CPU mip chain is built, for callers that assemble
+    // several cooks into one GPU resource (see CTextureArrayFactory).
+    static bool CookTexturePixels(CTexture* Texture, const TVector<uint8>& Pixels, FUIntVector2 Dimensions, ETextureColorSpace ColorSpace, uint32 EncodeThreads = 0, bool bCreateGPUResource = true)
     {
         // basisu's image::init memcpys Width*Height*4 with no bounds knowledge; a short buffer
         // (e.g. an unconverted grayscale source) would read out of bounds and crash the import.
@@ -417,6 +419,14 @@ namespace Lumina
         // itself is single-mip rather than a full chain we then ignore.
         ApplyTextureGroupMipPolicy(Texture);
         const uint32 UploadMips = (uint32)Texture->TextureResource->Mips.size();
+
+        // Array layers cook one at a time into this same resource and are harvested by the caller,
+        // which then creates ONE Tex2DArray for the whole set. Making a throwaway 2D image per layer
+        // here would allocate and immediately orphan a full texture for every slice.
+        if (!bCreateGPUResource)
+        {
+            return true;
+        }
 
         // Recreate, not Create: on a RE-cook (reimport, or a ColorSpace change) this texture already has a
         // GPU image and a published ResourceID. Overwriting the handle would leak the old image and hand
@@ -890,6 +900,53 @@ namespace Lumina
         }
 
         NewTexture->ConditionalBeginDestroy();
+    }
+
+    bool CTextureFactory::CookLayerFromFile(CTexture* Scratch, FStringView SourcePath, ETextureColorSpace ColorSpace,
+                                            FUIntVector2 TargetSize)
+    {
+        if (Scratch == nullptr || Scratch->TextureResource == nullptr)
+        {
+            return false;
+        }
+
+        // Resampled at SOURCE pixels, before the Basis cook, not by rescaling cooked BCn blocks --
+        // which would mean decode, resample, re-encode, and two generations of block artifacts.
+        const FFixedString Path(SourcePath.data(), SourcePath.size());
+        TOptional<Import::Textures::FTextureImportResult> MaybeResult = Import::Textures::ImportTexture(Path, false, TargetSize);
+        if (!MaybeResult.has_value())
+        {
+            LOG_ERROR("TextureFactory: could not load '{0}' as an array layer.", Path.c_str());
+            return false;
+        }
+
+        Import::Textures::FTextureImportResult& Result = MaybeResult.value();
+
+        // Float sources go down the Environment path, which produces an uncompressed float chain rather
+        // than the Basis/BCn one every other layer would get. Mixing the two inside one image is not
+        // expressible, so refuse rather than cook a layer whose format silently disagrees.
+        const bool bIsFloatSource =
+            Result.Format == EFormat::R32_FLOAT    ||
+            Result.Format == EFormat::RG32_FLOAT   ||
+            Result.Format == EFormat::RGB32_FLOAT  ||
+            Result.Format == EFormat::RGBA32_FLOAT;
+        if (bIsFloatSource)
+        {
+            LOG_ERROR("TextureFactory: '{0}' is a float/HDR source; array layers must be LDR.", Path.c_str());
+            return false;
+        }
+
+        if (!NormalizeToRGBA8(Result))
+        {
+            LOG_ERROR("TextureFactory: '{0}' has an unsupported pixel layout for the Basis cook (format {1}, {2}x{3}).",
+                      Path.c_str(), (uint32)Result.Format, Result.Dimensions.x, Result.Dimensions.y);
+            return false;
+        }
+
+        // Single-threaded encode: the caller cooks layers in a loop, so a full basisu pool per layer
+        // would oversubscribe. EncodeThreads = 1 means "no new threads", not "one extra".
+        TVector<uint8> Pixels = Move(Result.Pixels);
+        return CookTexturePixels(Scratch, Pixels, Result.Dimensions, ColorSpace, 1u, /*bCreateGPUResource*/ false);
     }
 
     CTexture* CTextureFactory::CreateSolidColorTexture(FStringView Path, uint8 R, uint8 G, uint8 B, uint8 A, ETextureColorSpace ColorSpace)

@@ -126,7 +126,9 @@ namespace Lumina
         OITAccumWeight      = 19,
         OITRevealage        = 20,
         OITLayerCount       = 21,
-        Num                 = 22,
+        ProbeInfluence      = 22,
+        ProbeRadiance       = 23,
+        Num                 = 24,
     };
 
     constexpr FStringView RenderFlagsAsString(ERenderSceneDebugFlags Flags)
@@ -155,6 +157,8 @@ namespace Lumina
             case ERenderSceneDebugFlags::OITAccumWeight:    return "OIT Accum Weight";
             case ERenderSceneDebugFlags::OITRevealage:      return "OIT Revealage";
             case ERenderSceneDebugFlags::OITLayerCount:     return "OIT Layer Count";
+            case ERenderSceneDebugFlags::ProbeInfluence:    return "Reflection Probe Influence";
+            case ERenderSceneDebugFlags::ProbeRadiance:     return "Reflection Probe Radiance";
             default:                                        return "Lit";
         }
     }
@@ -688,6 +692,41 @@ namespace Lumina
     static_assert(sizeof(FGPUDecal) == 144, "FGPUDecal layout must match DecalCommon.slang");
     VERIFY_SSBO_ALIGNMENT(FGPUDecal)
 
+    // One local reflection probe. Extraction bakes the half-extents into WorldToProbe so the influence
+    // volume is the unit box [-1,1]^3 (or the unit sphere) in probe space: the inside test, the blend
+    // weight, and the parallax ray-volume intersection then all share one space and need no extents.
+    // A ray-volume intersection is invariant under the linear part of the transform, so the reflection
+    // direction can be carried into probe space unnormalized and the resulting t used directly.
+    // Must match FGPUReflectionProbe in ReflectionProbe.slang.
+    struct alignas(16) FGPUReflectionProbe
+    {
+        FMatrix4 WorldToProbe;     // world -> unit probe space
+        FMatrix4 ProbeToWorld;     // brings the parallax hit point back to world
+        FVector4 CapturePosition;  // xyz = world-space capture origin (cube center); w unused
+        // x = brightness, y = shape (0 box, 1 sphere), z = cube-array slice, w = blend fraction
+        FVector4 Params;
+    };
+
+    static_assert(sizeof(FGPUReflectionProbe) == 160, "FGPUReflectionProbe layout must match ReflectionProbe.slang");
+    VERIFY_SSBO_ALIGNMENT(FGPUReflectionProbe)
+
+    // CPU-only capture parameters for one probe, held parallel to the GPU probe array. Never uploaded:
+    // the bake reads it to build the six face cameras, and nothing on the GPU needs it.
+    struct FReflectionProbeCapture
+    {
+        FVector3 Position  = FVector3(0.0f);   // world-space capture origin (entity origin + CaptureOffset)
+        float    NearPlane = 0.1f;
+        float    FarPlane  = 500.0f;
+        uint32   FaceSize  = 128u;             // per-probe capture resolution tier
+        // EReflectionProbeUpdateMode::Always. Deliberately NOT part of the change comparison that
+        // invalidates bakes: toggling it should start or stop refreshing, not throw away every slice.
+        bool     bAlwaysUpdate = false;
+        // EReflectionProbeClearMode::SolidColor: fill uncovered directions with ClearColor instead of
+        // rendering the sky into them.
+        bool     bClearToColor = false;
+        FVector3 ClearColor    = FVector3(0.0f);
+    };
+
     // One water body. The water pass draws a procedural grid in [-0.5,0.5] (XZ) transformed by WaterToWorld
     struct alignas(16) FGPUWater
     {
@@ -1137,6 +1176,7 @@ namespace Lumina
         uint64 PreSkinnedVertices    = 0;  // GPU-written
         uint64 SkinDescriptors       = 0;
         uint64 Widgets               = 0;
+        uint64 ReflectionProbes      = 0;  // FGPUReflectionProbe array, sorted by descending priority
 
         uint32 BRDFLutIndex          = 0;
         uint32 SkyIrradianceIndex    = 0;
@@ -1144,8 +1184,12 @@ namespace Lumina
         uint32 ShadowCascadeIndex    = 0;  // bindless 2D SRV (cascade atlas)
         uint32 ShadowAtlasIndex      = 0;  // bindless 2D SRV (spot/point atlas)
         uint32 SkyCubeIndex          = 0;  // bindless cube SRV (full-res sky; sharp near-mirror reflections)
+        // [31:24] = probe prefilter mip count (mirrors the SkyPrefilterIndex packing), [23:0] = bindless
+        // cube-array SRV holding every probe's prefiltered radiance.
+        uint32 ProbeCubeArrayIndex   = 0;
+        uint32 NumReflectionProbes   = 0;
     };
-    static_assert(sizeof(FSceneRoot) == 128, "FSceneRoot must match SceneGlobals.slang");
+    static_assert(sizeof(FSceneRoot) == 144, "FSceneRoot must match SceneGlobals.slang");
 
     // The one engine-wide push constant. RootAddr -> FSceneRoot transient; PassAddr -> per-pass
     // constants transient (0 if the pass has none). Matches FRootConstants in SceneGlobals.slang.

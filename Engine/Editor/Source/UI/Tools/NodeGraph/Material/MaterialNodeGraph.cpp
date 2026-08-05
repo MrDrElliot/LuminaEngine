@@ -133,6 +133,7 @@ namespace Lumina
         RegisterGraphNode(CMaterialExpression_NumericConstant::StaticClass());
 
         RegisterGraphNode(CMaterialExpression_TextureSample::StaticClass());
+        RegisterGraphNode(CMaterialExpression_TextureSampleArray::StaticClass());
         RegisterGraphNode(CMaterialExpression_CurveSample::StaticClass());
 
         RegisterGraphNode(CMaterialExpression_Luminance::StaticClass());
@@ -174,6 +175,8 @@ namespace Lumina
         RegisterGraphNode(CMaterialExpression_SceneColor::StaticClass());
         RegisterGraphNode(CMaterialExpression_SceneDepth::StaticClass());
         RegisterGraphNode(CMaterialExpression_SceneHDRColor::StaticClass());
+
+        RegisterGraphNode(CMaterialExpression_WindAnimation::StaticClass());
 
         RegisterGraphNode(CMaterialExpression_MeshDistanceField::StaticClass());
         RegisterGraphNode(CMaterialExpression_MeshDistanceFieldOcclusion::StaticClass());
@@ -590,7 +593,14 @@ namespace Lumina
         {
             // Each accept is class-checked and only fires on release, so a non-matching drag simply
             // falls through to the next candidate.
-            if (CTexture* DroppedTexture = DragDrop::AcceptAsset<CTexture>())
+            // Arrays are checked BEFORE plain textures: CTextureArray derives from CTexture, so the
+            // CTexture accept below would happily claim one and spawn a node that samples slice 0 of it
+            // as if it were a 2D texture.
+            if (CTextureArray* DroppedArray = DragDrop::AcceptAsset<CTextureArray>())
+            {
+                SpawnAssetNode(CMaterialExpression_TextureSampleArray::StaticClass(), DroppedArray, ImGui::GetMousePos());
+            }
+            else if (CTexture* DroppedTexture = DragDrop::AcceptAsset<CTexture>())
             {
                 SpawnAssetNode(CMaterialExpression_TextureSample::StaticClass(), DroppedTexture, ImGui::GetMousePos());
             }

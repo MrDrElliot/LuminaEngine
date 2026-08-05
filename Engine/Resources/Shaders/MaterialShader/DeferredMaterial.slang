@@ -1,4 +1,5 @@
 #include "Includes/SurfaceShading.slang"
+#include "Includes/Wind.slang"   // this template substitutes the material vertex token too (WPO reconstruction)
 
 // Deferred VisBuffer material pass. Runs over the tiles this material covers (see DeferredMaterialTileVS):
 // read this pixel's triangle ID from the VisBuffer, re-fetch the meshlet triangle, reconstruct
@@ -183,6 +184,7 @@ PSOutput FragmentMain(float4 SvPosition : SV_Position)
         float4   WorldPos    = float4(W[k].WorldPos, 1.0);
         float3   NormalWS    = W[k].NormalWS;
         float3   TangentWS   = W[k].TangentWS.xyz;
+        float    TangentSignWS = W[k].TangentWS.w;   // handedness; the graph's WorldTangent alias needs it
         FVertexData VertexData = Vd[k];
 
         FMaterialVertexInputs Material;

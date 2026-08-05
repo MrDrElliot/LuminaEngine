@@ -3723,8 +3723,9 @@ namespace Lumina
                 ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.80f, 0.20f, 0.20f, 0.40f));
                 ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 4.0f);
                 ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
-                ImGui::BeginChild("##NewProjError", ImVec2(-1, 0), true,
-                    ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoScrollbar);
+                ImGui::BeginChild("##NewProjError", ImVec2(-1, 0),
+                    ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY,
+                    ImGuiWindowFlags_NoScrollbar);
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.45f, 1.0f));
                 ImGui::TextUnformatted(LE_ICON_ALERT_OCTAGON);
                 ImGui::SameLine();

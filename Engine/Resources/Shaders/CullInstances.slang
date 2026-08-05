@@ -31,8 +31,8 @@ struct FCullInstancesArgs
     uint  MaxVisibleInstances;  // capacity of OutInstances; overflow is dropped, not written past
     float ShadowCoarseLODDistSq; // past this, shadow LOD caps at MESHLET_MAX_COARSE_SHADOW_LOD; 0 = never
     // Entries of SurfaceDescs the CPU has actually uploaded. A slot's SurfaceDescIndex is stamped when it
-    // binds and the table is uploaded separately, so the two can disagree for a frame -- and this read is
-    // where that turns into a meshlet count summed straight into an indirect dispatch size.
+    // binds; the table is a separate allocation with its own upload, so the bound belongs in the shader
+    // rather than in the invariant that the two agree.
     uint  NumSurfaceDescs;
 
     // The retained scene, split by ACCESS RATE. CullEntries is streamed in full by every lane below;
@@ -112,8 +112,8 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
 
     // The index is bounded, because the consequence of trusting it is not a wrong LOD. Past the table this
     // reads whatever follows the allocation, and the meshlet counts below are accumulated into
-    // BatchMeshletCounts, which BuildDrawPrefix sums into the meshlet cull's INDIRECT DISPATCH SIZE --
-    // so one out-of-range index here is a multi-billion-thread grid and a TDR, not a visual artifact.
+    // BatchMeshletCounts, which BuildDrawPrefix sums into the meshlet cull's INDIRECT DISPATCH SIZE. An
+    // out-of-range index here is therefore a grid size, not a visual artifact.
     if (Cull.SurfaceDescIndex >= Pass().NumSurfaceDescs)
     {
         return;

@@ -36,6 +36,21 @@ namespace Lumina::RHI
         const char* DebugName = nullptr;
     };
 
+    // Array texture. Registers into the SAME global heap as a 2D one, so the returned ResourceID
+    // indexes gTextures2DArray[] in shaders (the bindless arrays are aliased views of one descriptor
+    // array). Every slice shares Width/Height/Mips/Format -- one VkImage cannot do otherwise.
+    struct FTexture2DArrayDesc
+    {
+        uint32  Width    = 1;
+        uint32  Height   = 1;
+        uint32  Layers   = 1;
+        uint32  Mips     = 1;
+        EFormat Format   = EFormat::RGBA8_UNORM;
+        bool    bStorage = false;        // also allow per-mip UAV slots (compute writes)
+
+        const char* DebugName = nullptr;
+    };
+
     // Volume texture. Registers into the SAME global heap as a 2D one, so the returned ResourceID
     // indexes gTextures3D[] in shaders (the bindless arrays are aliased views of one descriptor array).
     struct FTexture3DDesc
@@ -60,6 +75,7 @@ namespace Lumina::RHI
         void Tick();
 
         RUNTIME_API FManagedTexture Create(const FTexture2DDesc& Desc);
+        RUNTIME_API FManagedTexture Create(const FTexture2DArrayDesc& Desc);
         RUNTIME_API FManagedTexture Create(const FTexture3DDesc& Desc);
 
         // Replaces the image behind an existing managed texture while KEEPING its ResourceID: the heap
@@ -74,6 +90,9 @@ namespace Lumina::RHI
         //
         // Falls back to Create when Tex is not yet valid, so a cook path can call it unconditionally.
         RUNTIME_API void Recreate(FManagedTexture& Tex, const FTexture2DDesc& Desc);
+
+        // Upload tight pixel data for one mip of one array layer. Layer is 0 for non-array textures.
+        RUNTIME_API void UploadLayer(const FManagedTexture& Tex, uint32 Layer, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels = 0);
 
         // Upload tight pixel data for one mip. For a 3D texture pass the whole volume in one call
         // (X-major, then Y, then Z) -- the copy covers the full depth extent. RowPitchTexels = 0 -> mip width.

@@ -178,6 +178,25 @@ namespace Lumina::ImGuiX
     RUNTIME_API void BeginHDRPreview(ImDrawList* DrawList, float ExposureStops);
     RUNTIME_API void EndHDRPreview(ImDrawList* DrawList);
 
+    /**
+     * Draws the following images as one slice of a Texture2DArray.
+     *
+     * Required, not cosmetic: an array texture's heap slot holds a VIEW_TYPE_2D_ARRAY view, and the
+     * ImGui pixel shader's default path reads gTextures2D[]. Sampling a 2D_ARRAY view through a
+     * Texture2D descriptor is a type mismatch, so an array drawn without this resolves to the null
+     * slot (the purple placeholder) rather than merely looking wrong.
+     *
+     * The ResourceID handed to AddImage is the same either way -- the bindless arrays are aliased
+     * views of one descriptor array; only the descriptor type the shader reads it through changes.
+     *
+     * Does NOT compose with BeginHDRPreview: each writes the whole display state, so the later call
+     * wins. Not currently a limitation, because array layers cook through Basis and are always LDR.
+     *
+     * Always pair with EndArrayPreview -- the mode persists for the rest of the draw list otherwise.
+     */
+    RUNTIME_API void BeginArrayPreview(ImDrawList* DrawList, uint32 Slice);
+    RUNTIME_API void EndArrayPreview(ImDrawList* DrawList);
+
     namespace Detail
     {
         // Mirrors FImGuiArgs' display fields in Includes/ImGuiCommon.slang.
@@ -185,6 +204,8 @@ namespace Lumina::ImGuiX
         {
             uint32 DisplayMode = 0;     // IMGUI_DISPLAY_*
             float  Exposure    = 1.0f;  // linear multiplier
+            uint32 ArraySlice  = 0;     // layer to sample, bIsArray only
+            uint32 bIsArray    = 0;     // 0 = Texture2D, 1 = Texture2DArray
         };
 
         // Marker only; never invoked. The renderer backend compares ImDrawCmd::UserCallback against

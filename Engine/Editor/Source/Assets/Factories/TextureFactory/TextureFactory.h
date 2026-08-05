@@ -37,6 +37,15 @@ namespace Lumina
         /** Re-runs Basis compression on Texture->SourcePath; false if path is missing or asset is mesh-embedded. */
         static EDITOR_API bool Recook(CTexture* Texture);
 
+        /**
+         * Cooks one image file into Scratch->TextureResource's CPU mip chain and stops there -- no GPU
+         * image is created. For callers assembling several cooks into a single resource, which is what
+         * CTextureArrayFactory does per layer. Returns false (and logs) if the file cannot be loaded or
+         * its pixel layout is not cookable.
+         */
+        static EDITOR_API bool CookLayerFromFile(CTexture* Scratch, FStringView SourcePath, ETextureColorSpace ColorSpace,
+                                                 FUIntVector2 TargetSize = {});
+
         /** Creates a 4x4 solid-color CTexture asset at Path, cooked via the normal Basis path. Used to mint the
          *  neutral material-import defaults (white for color/MR/AO/emissive, 128,128,255 for flat normals).
          *  Returns the created object (NOT saved); the caller saves + registers it. */

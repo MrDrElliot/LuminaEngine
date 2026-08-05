@@ -9,6 +9,7 @@
 #include "world/entity/components/lightcomponent.h"
 #include "world/entity/components/physicscomponent.h"
 #include "World/Entity/Components/PerceptionComponent.h"
+#include "World/Entity/Components/ReflectionProbeComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
 
 namespace Lumina
@@ -288,6 +289,74 @@ namespace Lumina
 
         const FVector3 ProjectDir = Rotation * FVector3(0.0f, 0.0f, -1.0f);
         PDI->DrawArrow(Location, ProjectDir, HalfExtent.z, FVector4(1.0f, 0.85f, 0.2f, 1.0f), 3.0f);
+    }
+
+    CStruct* CComponentVisualizer_ReflectionProbe::GetSupportedComponentType() const
+    {
+        return SReflectionProbeComponent::StaticStruct();
+    }
+
+    void CComponentVisualizer_ReflectionProbe::Draw(IPrimitiveDrawInterface* PDI, entt::registry& Registry, entt::entity Entity)
+    {
+        const SReflectionProbeComponent& Probe = Registry.get<SReflectionProbeComponent>(Entity);
+        const STransformComponent& Transform   = Registry.get<STransformComponent>(Entity);
+
+        const FVector3 Location = Transform.GetWorldLocationCached();
+        const FQuat    Rotation = Transform.GetWorldRotationCached();
+
+        // Dim when the probe is switched off, so a disabled probe still shows where it sits without
+        // reading as an active influence volume.
+        const float Alpha = Probe.bEnabled ? 1.0f : 0.35f;
+
+        // Outer shell = where influence begins. Inner shell = where it reaches full strength; the gap
+        // between them is the cross-fade band, which is the thing you actually need to see when placing
+        // overlapping probes. BlendDistance is a fraction of the volume, matching Probe_InfluenceWeight.
+        const float InnerScale = Math::Clamp(1.0f - Probe.BlendDistance, 0.0f, 1.0f);
+
+        // Always probes draw warm instead of cyan: they cost six scene renders per turn, so leaving one
+        // switched on by accident is worth seeing without opening the details panel.
+        const bool bAlways = (Probe.UpdateMode == EReflectionProbeUpdateMode::Always);
+        const FVector3 Hue = bAlways ? FVector3(1.00f, 0.45f, 0.25f) : FVector3(0.30f, 0.85f, 1.00f);
+
+        const FVector4 OuterColor(Hue.x, Hue.y, Hue.z, Alpha);
+        const FVector4 InnerColor(Hue.x, Hue.y, Hue.z, Alpha * 0.45f);
+
+        if (Probe.Shape == EReflectionProbeShape::Sphere)
+        {
+            // Sphere mode ignores Y/Z and any non-uniform scale (extraction collapses them too, so the
+            // shader's unit-sphere test matches what is drawn here).
+            const float Radius = Math::Max(Probe.Extent.x, 0.001f) * Transform.MaxScale();
+            PDI->DrawSphere(Location, Radius, OuterColor, 24, 2.0f, true, 0.0f);
+            if (InnerScale > 0.01f)
+            {
+                PDI->DrawSphere(Location, Radius * InnerScale, InnerColor, 24, 1.0f, true, 0.0f);
+            }
+        }
+        else
+        {
+            const FVector3 HalfExtent = Math::Max(Probe.Extent, FVector3(0.001f)) * Transform.GetWorldScaleCached();
+            PDI->DrawBox(Location, HalfExtent, Rotation, OuterColor, 2.0f, true, 0.0f);
+            if (InnerScale > 0.01f)
+            {
+                PDI->DrawBox(Location, HalfExtent * InnerScale, Rotation, InnerColor, 1.0f, true, 0.0f);
+            }
+        }
+
+        // The capture origin is what the cube is actually rendered from, and CaptureOffset can put it
+        // well away from the entity origin. Drawing it (and the link back) is what makes an offset probe
+        // comprehensible instead of looking mis-centered.
+        const FVector3 CaptureWorld = Location + Rotation * Probe.CaptureOffset;
+        const FVector4 CaptureColor(1.00f, 0.80f, 0.25f, Alpha);
+
+        // Scaled off the volume so the marker stays readable on both a 1 m prop probe and a 50 m room.
+        const float MarkerRadius = Math::Max(Math::Max(Probe.Extent.x, Probe.Extent.y), Probe.Extent.z)
+                                 * Transform.MaxScale() * 0.05f;
+        PDI->DrawSphere(CaptureWorld, Math::Max(MarkerRadius, 0.05f), CaptureColor, 12, 2.0f, false, 0.0f);
+
+        if (Math::LengthSquared(Probe.CaptureOffset) > 1e-6f)
+        {
+            PDI->DrawLine(Location, CaptureWorld, CaptureColor, 1.5f, false, 0.0f);
+        }
     }
 
     CStruct* CComponentVisualizer_TaperedCapsuleCollider::GetSupportedComponentType() const

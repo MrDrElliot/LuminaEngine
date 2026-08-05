@@ -32,5 +32,8 @@ namespace Lumina
         // Exposure stop tinting HDR previews; ImGui doesn't tone-map, so >1 clips to
         // white. Lets the user dim the preview to recover bright detail.
         float ExposureStops = 0.0f;
+        // Array slice shown in the preview. Clamped against the live layer count each frame, so a
+        // rebuild that shortens the array cannot leave this pointing past the end.
+        uint32 PreviewSlice = 0;
     };
 }

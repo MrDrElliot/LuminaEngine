@@ -8,23 +8,6 @@
 
 namespace Lumina
 {
-    namespace
-    {
-        // Named output pin. These nodes publish several, so none of them calls Super::BuildNode (which
-        // creates the single unnamed Output); each output is bound individually through ResolvedVar.
-        CMaterialOutput* MakeOut(CMaterialExpression* Self, const char* Name, EMaterialInputType Type)
-        {
-            CMaterialOutput* Pin = Cast<CMaterialOutput>(
-                Self->CreatePin(CMaterialOutput::StaticClass(), Name, ENodePinDirection::Output));
-            Pin->SetPinName(Name);
-            Pin->SetShouldDrawEditor(true);
-            Pin->SetHideDuringConnection(false);
-            Pin->SetInputType(Type);
-            Pin->SetComponentMask(EComponentMask::None);
-            return Pin;
-        }
-    }
-
     void CMaterialExpression_MeshDistanceField::BuildNode()
     {
         Position = MakeIn(this, "Position", EMaterialInputType::Float3);

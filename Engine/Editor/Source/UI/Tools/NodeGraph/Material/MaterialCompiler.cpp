@@ -25,6 +25,9 @@ namespace Lumina
 		"\t// Material graph variable aliases (vertex stage).\n"
 		"\tfloat3 WorldPosition = WorldPos.xyz;\n"
 		"\tfloat3 WorldNormal   = NormalWS;\n"
+		// Same name and float4 shape the PIXEL templates declare (xyz direction, w handedness), so a
+		// node reading the tangent frame emits identical code in either stage.
+		"\tfloat4 WorldTangent  = float4(TangentWS, TangentSignWS);\n"
 		"\tfloat2 UV0           = VertexData.UV;\n"
 		"\tfloat4 VertexColor   = VertexData.Color;\n"
 		"\tuint   MaterialIndex = Inst.MaterialIndex;\n"
@@ -36,6 +39,10 @@ namespace Lumina
 		"\t// Material graph variable aliases (vertex stage, terrain).\n"
 		"\tfloat3 WorldPosition = WorldPos;\n"
 		"\tfloat3 WorldNormal   = NormalWS;\n"
+		// Terrain's analytic tangent is derived from the height slope AFTER the material token, so it
+		// cannot be aliased here. Terrain UV is WorldPos.xz, which makes world +X the U direction --
+		// the flat-ground case of the real tangent, and the closest honest stand-in at this point.
+		"\tfloat4 WorldTangent  = float4(1.0, 0.0, 0.0, 1.0);\n"
 		"\tfloat2 UV0           = HeightUV;\n"
 		"\tfloat4 VertexColor   = float4(1.0, 1.0, 1.0, 1.0);\n"
 		"\tuint   MaterialIndex = TerrainParams.MaterialIndex;\n"
@@ -924,6 +931,47 @@ namespace Lumina
 		GetActiveChunk().append("float4 " + ID + " = SampleTexture2D(GetMaterialTexture(MaterialIndex, " + eastl::to_string(Index) + "), SAMPLER_LINEAR_WRAP, " + UVStr + ");\n");
 	}
 
+	void FMaterialCompiler::TextureSampleArray(CMaterialGraphNode* Node, int32 TextureIndex, uint32 NumLayers,
+	                                           CMaterialInput* UV, CMaterialInput* Slice)
+	{
+		const FString OwningNode = GetCurrentInlinePrefix() + Node->GetNodeFullName();
+
+		// Declared and defaulted FIRST: downstream nodes read this node's variable by name, so a
+		// rejection below still has to leave a compilable shader. Opaque black is the neutral miss.
+		AddRaw("float4 " + OwningNode + " = float4(0.0, 0.0, 0.0, 1.0);\n");
+		SetOwningOutputType(UV, EMaterialInputType::Float4);
+
+		if (TextureIndex < 0)
+		{
+			EdNodeGraph::FError Error;
+			Error.Node        = Node;
+			Error.Name        = "Texture Sample Array";
+			Error.Description = "TextureSampleArray needs a Texture Array asset assigned, and that asset must "
+			                    "have at least one built layer.";
+			AddError(Error);
+			return;
+		}
+
+		FInputValue UVValue    = GetTypedInputValue(UV, "float2(UV0)");
+		FInputValue SliceValue = GetTypedInputValue(Slice, 0.0f);
+
+		const FString UVStr = UVValue.ComponentCount >= 2
+		                    ? UVValue.Value + ".xy"
+		                    : "float2(" + UVValue.Value + ")";
+
+		// Slice arrives as a float (every material pin is), so it is rounded rather than truncated: a
+		// value driven from arithmetic lands on 2.999... as readily as 3.0, and truncating would drop a
+		// whole layer. Clamped to the asset's real layer count because an out-of-range array index is
+		// undefined behaviour on the GPU, not a wrap.
+		const FString MaxLayer = eastl::to_string(NumLayers > 0 ? NumLayers - 1u : 0u);
+		AddRaw("uint " + OwningNode + "_Slice = (uint)clamp(round(" + SliceValue.Value + "), 0.0, "
+			+ MaxLayer + ".0);\n");
+
+		const FString TexStr = "GetMaterialTexture(MaterialIndex, " + eastl::to_string(TextureIndex) + ")";
+		AddRaw(OwningNode + " = SampleTexture2DArray(" + TexStr + ", SAMPLER_LINEAR_WRAP, " + UVStr + ", "
+			+ OwningNode + "_Slice);\n");
+	}
+
 	namespace
 	{
 		// Curve constants are emitted as plain literals; matches the formatting the other emitters use.
@@ -1140,6 +1188,9 @@ namespace Lumina
 				"ValueNoise(", "GradientNoise(", "PerlinNoise(",
 				"VoronoiNoise(", "SimpleNoise(",
 				"Hash11(", "Hash21(", "Hash22(", "Hash33(",
+				// One ComputeWind is an Octaves-deep sine sum, so it belongs in the noise bucket rather
+				// than counting as the single call site the line count sees.
+				"ComputeWind(",
 			};
 			uint32 Total = 0;
 			for (const char* P : Patterns)
@@ -1280,7 +1331,10 @@ namespace Lumina
 			GetActiveChunk().append("float3 " + ID + " = float3(1.0, 0.0, 0.0);\n");
 			return;
 		}
-		GetActiveChunk().append("float3 " + ID + " = Input.TangentWS.xyz;\n");
+		// WorldTangent, not Input.TangentWS: `Input` is the pixel stage's interpolant struct and does not
+		// exist in the vertex templates, so the old form made this node a shader compile failure the
+		// moment it was reached from World Position Offset. Both stages declare WorldTangent.
+		GetActiveChunk().append("float3 " + ID + " = WorldTangent.xyz;\n");
 	}
 
 	void FMaterialCompiler::VertexBitangent(const FString& ID, CMaterialGraphNode* Node)
@@ -1290,7 +1344,9 @@ namespace Lumina
 			GetActiveChunk().append("float3 " + ID + " = float3(0.0, 1.0, 0.0);\n");
 			return;
 		}
-		GetActiveChunk().append("float3 " + ID + " = cross(WorldNormal.xyz, Input.TangentWS.xyz) * Input.TangentWS.w;\n");
+		// See VertexTangent: WorldTangent is the stage-neutral name, and its w carries the handedness
+		// sign the bitangent needs (wrong-signed on mirrored UVs otherwise).
+		GetActiveChunk().append("float3 " + ID + " = cross(WorldNormal.xyz, WorldTangent.xyz) * WorldTangent.w;\n");
 	}
 
 	void FMaterialCompiler::VertexColor(const FString& ID, CMaterialGraphNode* Node)
@@ -1695,6 +1751,78 @@ namespace Lumina
 		AddRaw("}\n");
 	}
 
+	void FMaterialCompiler::WindAnimation(CMaterialGraphNode* Node, const FWindInputs& Inputs, int32 Octaves,
+	                                      bool bLODGate, CMaterialOutput* OffsetOut, CMaterialOutput* WeightOut,
+	                                      CMaterialOutput* NoiseOut)
+	{
+		const FString Prefix    = GetCurrentInlinePrefix() + Node->GetNodeFullName();
+		const FString OffsetVar = Prefix + "_Offset";
+		const FString WeightVar = Prefix + "_Weight";
+		const FString NoiseVar  = Prefix + "_Noise";
+
+		// Declared and defaulted FIRST and unconditionally: downstream nodes bind to these by ResolvedVar,
+		// so a rejected node below must still leave a compilable shader. Zero offset / zero weight is
+		// exactly "no wind", which is the right fallback for every rejection path here.
+		AddRaw("float3 " + OffsetVar + " = float3(0.0, 0.0, 0.0);\n");
+		AddRaw("float " + WeightVar + " = 0.0;\n");
+		AddRaw("float " + NoiseVar + " = 0.0;\n");
+
+		if (OffsetOut) OffsetOut->ResolvedVar = OffsetVar;
+		if (WeightOut) WeightOut->ResolvedVar = WeightVar;
+		if (NoiseOut)  NoiseOut->ResolvedVar  = NoiseVar;
+
+		// Vertex stage only. The offset this produces displaces geometry, which only World Position Offset
+		// consumes; reached from a pixel pin it would burn the whole octave sum per PIXEL and move nothing.
+		if (CurrentStage != EMaterialCompileStage::Vertex)
+		{
+			EdNodeGraph::FError Error;
+			Error.Node        = Node;
+			Error.Name        = "Wind Animation";
+			Error.Description = "WindAnimation is a vertex-stage node; connect its Offset to World Position Offset. "
+			                    "It cannot be reached from the pixel outputs.";
+			AddError(Error);
+			return;
+		}
+
+		FInputValue PositionValue   = GetTypedInputValue(Inputs.Position, "WorldPosition");
+		FInputValue DirectionValue  = GetTypedInputValue(Inputs.Direction, "float3(1.0, 0.0, 0.0)");
+		FInputValue StrengthValue   = GetTypedInputValue(Inputs.Strength, 0.25f);
+		FInputValue SpeedValue      = GetTypedInputValue(Inputs.Speed, 1.0f);
+		FInputValue FrequencyValue  = GetTypedInputValue(Inputs.Frequency, 0.15f);
+		FInputValue LacunarityValue = GetTypedInputValue(Inputs.Lacunarity, 2.1f);
+		FInputValue GainValue       = GetTypedInputValue(Inputs.Gain, 0.5f);
+		FInputValue MaskValue       = GetTypedInputValue(Inputs.Mask, 1.0f);
+		FInputValue PhaseValue      = GetTypedInputValue(Inputs.Phase, 0.0f);
+		FInputValue GustinessValue  = GetTypedInputValue(Inputs.Gustiness, 0.5f);
+		FInputValue FadeStartValue  = GetTypedInputValue(Inputs.FadeStart, 150.0f);
+		FInputValue FadeEndValue    = GetTypedInputValue(Inputs.FadeEnd, 300.0f);
+
+		const FString PositionStr = PositionValue.ComponentCount >= 3
+		                          ? PositionValue.Value + ".xyz"
+		                          : "float3(" + PositionValue.Value + ")";
+		const FString DirectionStr = DirectionValue.ComponentCount >= 3
+		                           ? DirectionValue.Value + ".xyz"
+		                           : "float3(" + DirectionValue.Value + ")";
+
+		AddRaw("float3 " + Prefix + "_P = " + PositionStr + ";\n");
+
+		// LOD gate. Off, the weight is a literal 1.0 rather than a call, so the whole distance test and its
+		// early-out fold away instead of leaving a dead compare in every vertex of every geometry pass.
+		const FString LODWeightStr = bLODGate
+			? "WindLODWeight(" + Prefix + "_P, (" + FadeStartValue.Value + "), (" + FadeEndValue.Value + "))"
+			: FString("1.0");
+
+		AddRaw("FWindResult " + Prefix + "_W = ComputeWind(" + Prefix + "_P, " + DirectionStr + ", "
+			+ "(" + StrengthValue.Value + "), (" + SpeedValue.Value + "), (" + FrequencyValue.Value + "), "
+			+ "(" + LacunarityValue.Value + "), (" + GainValue.Value + "), " + eastl::to_string(Octaves) + ", "
+			+ "(" + MaskValue.Value + "), (" + PhaseValue.Value + "), (" + GustinessValue.Value + "), "
+			+ LODWeightStr + ");\n");
+
+		AddRaw(OffsetVar + " = " + Prefix + "_W.Offset;\n");
+		AddRaw(WeightVar + " = " + Prefix + "_W.Weight;\n");
+		AddRaw(NoiseVar + " = " + Prefix + "_W.Noise;\n");
+	}
+
 	void FMaterialCompiler::PolarCoordinates(CMaterialInput* UV, CMaterialInput* Center)
 	{
 		FString OwningNode = UV->GetOwningNode()->GetNodeFullName();
@@ -1740,6 +1868,25 @@ namespace Lumina
 		GetActiveChunk().append("float3 " + ID + " = GetCameraPosition();\n");
 	}
 
+	FString FMaterialCompiler::EmitInstanceModelMatrix(const FString& ID)
+	{
+		const FString MatrixVar = ID + "_M";
+
+		// Every VERTEX template declares an `Inst` local, but of the pixel templates only the deferred
+		// one does -- and the forward base pass, the masked VisBuffer pass and the deferred pass all
+		// substitute the SAME pixel chunk. So the pixel lane resolves the instance from the interpolated
+		// index instead, exactly as the mesh-distance-field nodes do. Emitting a bare `Inst` here made
+		// these nodes a shader compile failure in two of the three pixel templates.
+		const FString Source = (CurrentStage == EMaterialCompileStage::Vertex)
+		                     ? FString("Inst.ModelMatrix")
+		                     : FString("GetInstance(Input.InstanceIndex).ModelMatrix");
+
+		// Bound to a local rather than inlined: ObjectScale reads it three times, and in the pixel lane
+		// each reference would otherwise re-fetch the instance through a BDA load.
+		GetActiveChunk().append("float4x4 " + MatrixVar + " = " + Source + ";\n");
+		return MatrixVar;
+	}
+
 	void FMaterialCompiler::ObjectScale(const FString& ID, CMaterialGraphNode* Node)
 	{
 		// Only PBR surface passes carry the per-instance FGPUInstance; others get a neutral 1.
@@ -1748,12 +1895,15 @@ namespace Lumina
 			GetActiveChunk().append("float3 " + ID + " = float3(1.0, 1.0, 1.0);\n");
 			return;
 		}
+
+		const FString M = EmitInstanceModelMatrix(ID);
+
 		// Scale = world-space length of each basis column of the object->world matrix.
 		GetActiveChunk().append(
 			"float3 " + ID + " = float3("
-			"length(mul(Inst.ModelMatrix, float4(1.0, 0.0, 0.0, 0.0)).xyz), "
-			"length(mul(Inst.ModelMatrix, float4(0.0, 1.0, 0.0, 0.0)).xyz), "
-			"length(mul(Inst.ModelMatrix, float4(0.0, 0.0, 1.0, 0.0)).xyz));\n");
+			"length(mul(" + M + ", float4(1.0, 0.0, 0.0, 0.0)).xyz), "
+			"length(mul(" + M + ", float4(0.0, 1.0, 0.0, 0.0)).xyz), "
+			"length(mul(" + M + ", float4(0.0, 0.0, 1.0, 0.0)).xyz));\n");
 	}
 
 	void FMaterialCompiler::ObjectPosition(const FString& ID, CMaterialGraphNode* Node)
@@ -1763,7 +1913,9 @@ namespace Lumina
 			GetActiveChunk().append("float3 " + ID + " = float3(0.0, 0.0, 0.0);\n");
 			return;
 		}
-		GetActiveChunk().append("float3 " + ID + " = mul(Inst.ModelMatrix, float4(0.0, 0.0, 0.0, 1.0)).xyz;\n");
+
+		const FString M = EmitInstanceModelMatrix(ID);
+		GetActiveChunk().append("float3 " + ID + " = mul(" + M + ", float4(0.0, 0.0, 0.0, 1.0)).xyz;\n");
 	}
 
 	void FMaterialCompiler::EntityID(const FString& ID)

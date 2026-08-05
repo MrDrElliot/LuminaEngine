@@ -443,11 +443,9 @@ namespace Lumina
                     bool                        bSurfaceDescsChanged = false;
                     uint32                      SurfaceDescCount = 0;
 
-                    // Largest per-LOD meshlet count in the interned table, published by the thread that
-                    // owns the table. The render phase turns it into the meshlet cull's dispatch-size
-                    // ceiling, so it must NOT be re-derived there by walking SurfaceDescs: that vector
-                    // is game-thread state, and a torn read of it becomes an unbounded indirect grid --
-                    // a multi-second GPU hang, then a TDR, with no page fault to point at it.
+                    // Largest per-LOD meshlet count in the interned table, from the set that owns it.
+                    // The render phase turns this into the meshlet cull's dispatch-size ceiling, so it
+                    // travels with SurfaceDescCount rather than being rescanned per frame off the table.
                     uint32                      MaxSurfaceDescMeshlets = 0;
                 } RetainedUpload;
             } Geometry;
@@ -510,6 +508,32 @@ namespace Lumina
                 bool                             bIBLConvolutionDirty = false;
                 FIBLBakeResolution               IBLResolution        = {};
             } Volumetrics;
+
+            struct FReflectionProbes
+            {
+                // GPU-ready probes for this frame, sorted by descending priority so the shader's
+                // front-to-back walk lets a high-priority interior probe claim influence first.
+                TVector<FGPUReflectionProbe>     Probes;
+                // Per-probe capture parameters, parallel to Probes. Only the bake reads these.
+                TVector<FReflectionProbeCapture> Captures;
+                // Set when the probe set changed shape this frame (added/removed/moved/resized), which
+                // invalidates every existing bake because slice assignment is positional.
+                bool                             bNeedsRebake = false;
+                // Probe COUNT changed, so slice assignment reshuffled and existing captures now belong
+                // to the wrong probes. Only this clears the baked mask; a probe that merely moved keeps
+                // showing its previous capture while the new one is queued.
+                bool                             bLayoutChanged = false;
+
+                // The one probe being captured this frame, or -1. Scheduled during Extract because the
+                // six face cameras need cull views, and only BuildCullViews (extract phase) can allocate
+                // those. The render phase renders the faces and prefilters them into the slice.
+                int32                            BakingProbe    = -1;
+                int32                            BakeViewIndex  = -1;      // FSceneView the faces render through
+                uint32                           BakeFaceSize   = 0;
+                TArray<uint32, 6>                FaceCullViews  = {};      // per-face cull-view index
+                TArray<FViewVolume, 6>           FaceVolumes    = {};
+                TArray<FSceneGlobalData, 6>      FaceGlobals    = {};
+            } ReflectionProbes;
 
             // Post-process material resolved + ref-held on Extract; the render phase reads
             // these instead of dereferencing a (possibly deleted) CMaterial.
@@ -578,6 +602,11 @@ namespace Lumina
             SkyCube,
             SkyIrradiance,
             SkyPrefilter,
+            // Scratch cube one probe is captured into, then prefiltered out of. Only one probe bakes at
+            // a time, so a single scratch serves every probe instead of a capture-resolution array.
+            ProbeCaptureCube,
+            // Cube ARRAY holding every probe's prefiltered radiance, one 6-layer slice per probe.
+            ProbePrefiltered,
 
             #if USING(WITH_EDITOR)
             PointLightIcon,
@@ -600,6 +629,11 @@ namespace Lumina
             bool                                            bIsPrimary = false;
             FViewVolume                                     PendingViewVolume;
             bool                                            bEnabled = false;
+            // Held by the reflection-probe bake. Such a view stays bEnabled = false (so the Extract
+            // capture snapshot never picks it up as a camera capture) yet must NOT be handed back out
+            // by RegisterCaptureView, or the editor's camera preview would land on the same view and
+            // the two would render into each other's images within a frame.
+            bool                                            bReservedForProbeBake = false;
             TArray<FSceneImage, (int)ENamedImage::Num>      Images = {};
             FSceneImage                                     BloomChainImage;
             FSceneBuffer                                    ClusterBuffer;
@@ -968,6 +1002,62 @@ namespace Lumina
 
         FIBLBakeResolution                      AppliedIBLResolution           = {};
         FIBLBakeResolution                      LastExtractedIBLResolution     = {};
+
+        // ---- Local reflection probes ----------------------------------------------------------
+        // Slices in the ProbePrefiltered cube array. Every probe costs a slice whether or not it has
+        // been baked, so this caps how many probes a scene can carry, not how many bake per frame.
+        static constexpr uint32                 MaxReflectionProbes    = 32;
+        static constexpr uint32                 ProbePrefilterBaseSize = 128;
+        static constexpr uint32                 ProbePrefilterMips     = 5;
+
+        // Address of this frame's uploaded probe array, and how many entries it holds.
+        uint64                                  ProbeBufferAddr  = 0;
+        uint32                                  NumActiveProbes  = 0;
+
+        // Bake queue. Captures are on-demand, and one probe bakes per frame so a rebuild of a
+        // 32-probe scene spreads over 32 frames instead of stalling on 192 scene renders at once.
+        TVector<uint32>                         PendingProbeBakes;
+        // Bit i set once slice i holds a finished capture. One bit per slice, which is why
+        // MaxReflectionProbes is 32. Probes still queued are skipped by the shader entirely so the
+        // sky covers them, rather than sampling an empty slice and darkening the reflection.
+        uint32                                  BakedProbeMask   = 0;
+        // Face size the scratch capture cube is currently allocated at; 0 = not yet created.
+        uint32                                  ProbeCaptureCubeSize = 0;
+        // The reserved FSceneView the six faces render through, held across bakes. -1 = none yet.
+        int32                                   ProbeBakeViewIndex = -1;
+        uint32                                  ProbeBakeViewSize  = 0;
+        // Written by the render phase as each bake finishes, folded into BakedProbeMask by the next
+        // Extract. A probe therefore becomes visible one frame after its capture, which is what keeps
+        // the shader from sampling a slice the same frame's bake has not written yet.
+        TAtomic<uint32>                         CompletedProbeBakes{0};
+        // Suppresses probe sampling while a probe capture is rendering. Without it a rebake would
+        // read the previous bake's reflections back into the new one, compounding on every rebuild.
+        // Always false until the capture pass lands; BuildViewSceneRoot already honors it.
+        bool                                    bCapturingProbe       = false;
+
+        // Last extracted set, compared against to detect the changes that invalidate existing bakes.
+        // Extract-phase state; the render phase never reads it.
+        TVector<FGPUReflectionProbe>            LastExtractedProbes;
+        TVector<FReflectionProbeCapture>        LastExtractedCaptures;
+        // Last global rebake-request counter this scene acted on. See RequestReflectionProbeRebake.
+        uint32                                  LastSeenRebakeRequest = 0;
+        // Round-robin position over UpdateMode::Always probes, so several of them share the one
+        // bake-per-frame budget instead of the lowest index monopolizing it.
+        uint32                                  AlwaysProbeCursor = 0;
+        // Temporary probe diagnostics: last logged state, so the logs fire on change only.
+        uint64                                  LastProbeDiagState = ~0ull;
+        uint64                                  LastProbeRenderDiagState = ~0ull;
+
+        void InitReflectionProbeTargets();
+        // Resizes the capture scratch cube to match the pending bake's face size. WaitIdle-gated, so
+        // it runs from PrepareRender, never mid-RenderView.
+        void SyncProbeCaptureCube(uint32 FaceSize);
+        void ExtractReflectionProbes(FEntityRegistry& Registry, FFrameData& Frame);
+        // Picks the next queued probe and builds its six face cameras. Extract phase: the faces need
+        // cull views, and only BuildCullViews can allocate those.
+        void ScheduleReflectionProbeBake(FFrameData& Frame);
+        // Renders the six faces, copies each into the scratch cube, prefilters into the probe's slice.
+        void ReflectionProbeBakePass(RHI::FCmdListH CL);
         
         FEnvironmentParams                      LastUploadedEnvironmentParams = {};
         bool                                    bEnvironmentParamsUploaded    = false;

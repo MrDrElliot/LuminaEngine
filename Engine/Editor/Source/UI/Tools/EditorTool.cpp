@@ -880,6 +880,11 @@ namespace Lumina
                     { ERenderSceneDebugFlags::ShadowCascades,  "Shadow Cascades"  },
                     { ERenderSceneDebugFlags::ShadowPenumbra,  "Shadow Penumbra"  },
                     { ERenderSceneDebugFlags::SSAO,            "SSAO"             },
+                    // Influence = does a probe reach this pixel and which one (black = none, so pure
+                    // sky). Radiance = what that probe actually captured. The two failure modes look
+                    // identical in a lit view, hence two separate inspectors.
+                    { ERenderSceneDebugFlags::ProbeInfluence,  "Probe Influence"  },
+                    { ERenderSceneDebugFlags::ProbeRadiance,   "Probe Radiance"   },
                 };
                 // Raw WBOIT target inspectors (OITResolve.slang): accum color flags INF red /
                 // NaN magenta, weight turns red near the fp16 ceiling, revealage is the

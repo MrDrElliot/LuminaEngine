@@ -49,6 +49,7 @@ FBaseVertexOutput VertexMain(uint VertexIndex: SV_VulkanVertexID, uint MeshletSl
     float4   WorldPos    = float4(W.WorldPos, 1.0);
     float3   NormalWS    = W.NormalWS;
     float3   TangentWS   = W.TangentWS.xyz;
+    float    TangentSignWS = W.TangentWS.w;   // handedness; the graph's WorldTangent alias needs it
 
     // Material vertex graph emission (e.g. WorldPositionOffset); zero-init default leaves geometry unchanged.
     FMaterialVertexInputs Material;

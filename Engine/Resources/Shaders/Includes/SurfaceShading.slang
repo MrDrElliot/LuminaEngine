@@ -933,11 +933,11 @@ FShadedSurface ShadeSurface(FBaseVertexOutput Input, FMaterialPixelInputs Materi
         float2 DFG_IBL    = SampleBRDFLUT(NdotV_IBL, Roughness);
 #ifdef TRANSLUCENT
         float3 IBLDiffuse, IBLSpec;
-        EvaluateIBLAmbientSplit(N, V, NdotV_IBL, DFG_IBL, Albedo, F0, Roughness, Metallic, AO, IBLDiffuse, IBLSpec);
+        EvaluateIBLAmbientSplit(WorldPosition, N, V, NdotV_IBL, DFG_IBL, Albedo, F0, Roughness, Metallic, AO, IBLDiffuse, IBLSpec);
         Ambient = IBLDiffuse * GetAmbientLightIntensity() * SSAO;
         LoSpec += IBLSpec * GetAmbientLightIntensity() * SSAO;
 #else
-        float3 IBLAmbient = EvaluateIBLAmbient(N, V, NdotV_IBL, DFG_IBL, Albedo, F0, Roughness, Metallic, AO);
+        float3 IBLAmbient = EvaluateIBLAmbient(WorldPosition, N, V, NdotV_IBL, DFG_IBL, Albedo, F0, Roughness, Metallic, AO);
         Ambient = IBLAmbient * GetAmbientLightIntensity() * SSAO;
 #endif
     }
@@ -1036,6 +1036,50 @@ FShadedSurface ShadeSurface(FBaseVertexOutput Input, FMaterialPixelInputs Materi
                 // material binning) and works for any surface (mesh or terrain).
                 Color = MeshletDebugColor(Input.MaterialIndex);
                 break;
+            case DEBUG_MODE_PROBE_INFLUENCE:
+            {
+                // Covered: hue = which probe won, brightness = influence consumed (a gradient toward
+                // dark is the BlendDistance cross-fade band).
+                // Not covered: a flat diagnostic color naming the reason, because all of these look
+                // identical in a lit view (the surface just reflects sky) but have different fixes.
+                // Status colors are FULLY SATURATED; covered pixels are always PASTEL (see
+                // ProbeDebugColor). Saturation, not hue, is what tells the two apart -- with enough
+                // probes some slice will always land near a given hue.
+                //   SATURATED RED     - no probes in the scene root at all (extraction or upload)
+                //   SATURATED BLUE    - probe cube array unallocated / mip count zero (target creation)
+                //   SATURATED YELLOW  - probes exist but none has finished a capture (bake never ran)
+                //   SATURATED MAGENTA - baked probes exist, pixel is outside all of them (placement)
+                //   ANY PASTEL COLOR  - working; the hue identifies which slice won
+                FProbeDebugInfo Dbg = DebugReflectionProbes(WorldPosition);
+                switch (Dbg.Status)
+                {
+                    case kProbeStatusNoProbes:   Color = float3(1.0, 0.0, 0.0); break;
+                    case kProbeStatusNoArray:    Color = float3(0.0, 0.3, 1.0); break;
+                    case kProbeStatusNoneBaked:  Color = float3(1.0, 0.85, 0.0); break;
+                    case kProbeStatusOutsideAll: Color = float3(1.0, 0.0, 1.0); break;
+                    default:
+                        // ProbeDebugColor, not MeshletDebugColor: the latter's hash maps index 0 to
+                        // pure black, which made a single probe on slice 0 look like no coverage at all.
+                        // Brightness is floored so a probe that barely reaches this pixel still reads as
+                        // its own hue rather than fading toward the no-coverage cases.
+                        Color = ProbeDebugColor((uint)Dbg.DominantSlice) * (0.25 + 0.75 * Dbg.TotalWeight);
+                        break;
+                }
+                break;
+            }
+            case DEBUG_MODE_PROBE_RADIANCE:
+            {
+                // What the winning probe actually CAPTURED, at mirror roughness and divided back out by
+                // coverage so a half-covered pixel still shows the capture at full brightness rather
+                // than a dimmed version of it. Sky here means the capture itself contains sky -- the
+                // classic cause being a room whose walls are single-sided, which cone/backface culling
+                // then lets the capture see straight through.
+                FProbeSample DbgSample = SampleReflectionProbes(WorldPosition, reflect(-V, N), 0.0);
+                Color = (DbgSample.Weight > 1e-3)
+                            ? DbgSample.Radiance / DbgSample.Weight
+                            : float3(0.0);
+                break;
+            }
         }
     }
 

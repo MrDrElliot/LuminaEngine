@@ -531,8 +531,10 @@ namespace Lumina
 
                 ImGui::PushID(static_cast<int>(i));
                 ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.20f, 0.13f, 0.13f, 1.0f));
-                ImGui::BeginChild("##err_row", ImVec2(0, 0), true,
-                    ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_AlwaysAutoResize);
+                // Height follows the wrapped text; AlwaysAutoResize is a child flag, not a window flag.
+                ImGui::BeginChild("##err_row", ImVec2(0, 0),
+                    ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY,
+                    ImGuiWindowFlags_NoScrollbar);
 
                 ImGui::PushStyleColor(ImGuiCol_Text, TitleColor);
                 ImGui::Text("[%s]", Err.Title.c_str());

@@ -25,11 +25,11 @@ namespace Lumina
     // CPU-side staging filled by the setters; consumed and cleared by Commit().
     struct FDynamicMeshBuildData
     {
-        TVector<FVector3>          Positions;
-        TVector<FVector3>          Normals;   // unpacked; octahedral-packed at Commit
-        TVector<FVector2>          UVs;
-        TVector<uint32>             Colors;    // RGBA8 packed
-        TVector<uint32>             Indices;
+        TVector<FVector3>            Positions;
+        TVector<FVector3>            Normals;   // unpacked; octahedral-packed at Commit
+        TVector<FVector2>            UVs;
+        TVector<uint32>              Colors;    // RGBA8 packed
+        TVector<uint32>              Indices;
         TVector<FDynamicMeshSection> Sections;
     };
 

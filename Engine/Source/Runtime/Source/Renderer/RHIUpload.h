@@ -23,7 +23,7 @@ namespace Lumina::RHI
 
     // Stage one mip's tightly-packed pixels and enqueue a memory->texture copy.
     // RowPitchTexels 0 = mip width. Thread-safe.
-    RUNTIME_API void UploadTexture(FTextureH Dest, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels = 0);
+    RUNTIME_API void UploadTexture(FTextureH Dest, uint32 Layer, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels = 0);
 
     // Enqueue a full-texture clear to an RGBA float value (no staging). Thread-safe.
     RUNTIME_API void UploadClearTexture(FTextureH Dest, const float Value[4]);

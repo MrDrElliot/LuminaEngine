@@ -22,6 +22,10 @@ enum class ELuminaEngineVersion : uint32
 	// FMeshResource serializes its baked signed distance field volume.
 	MESH_DISTANCE_FIELD,
 
+	// FTextureResource::FDescription serializes LayerCount, and its mips are stored layer-major
+	// (Mips[Layer * NumMips + Mip]). Older files are single-layer, so LayerCount defaults to 1.
+	TEXTURE_ARRAY_LAYERS,
+
 	AUTOMATIC_VERSION_PLUS_ONE,
 	AUTOMATIC_VERSION = AUTOMATIC_VERSION_PLUS_ONE - 1
 };

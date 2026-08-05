@@ -1,6 +1,7 @@
 #pragma once
 #include "SceneGlobals.slang"
 #include "IBL.slang"
+#include "ReflectionProbe.slang"
 
 // Runtime IBL ambient, Karis 2013 split-sum:
 //   Ambient = kD * SkyIrradiance(N) * Albedo + SkyPrefilter(R, roughness) * (F * BRDF_LUT.x + BRDF_LUT.y)
@@ -36,6 +37,19 @@ float3 SamplePrefilter(float3 R, float Roughness)
     return Prefiltered;
 }
 
+// Specular radiance arriving along R: local probes first, sky for whatever influence they leave.
+// The sky prefilter is an infinitely-distant environment, so it is the correct fallback rather than a
+// black hole -- a pixel half-covered by one probe reads half local reflection, half sky.
+float3 SampleSpecularRadiance(float3 WorldPos, float3 R, float Roughness)
+{
+    FProbeSample Probes = SampleReflectionProbes(WorldPos, R, Roughness);
+    if (Probes.Weight >= 0.999)
+    {
+        return Probes.Radiance;
+    }
+    return Probes.Radiance + (1.0 - Probes.Weight) * SamplePrefilter(R, Roughness);
+}
+
 float2 SampleBRDFLUT(float NdotV, float Roughness)
 {
     return SampleTexture2DLevel(GetSceneRoot().BRDFLutIndex, SAMPLER_LINEAR_CLAMP,
@@ -56,7 +70,7 @@ float ComputeSpecularOcclusion(float NdotV, float AO, float Roughness)
 // Split variant: the mirror-lobe specular comes back separately from the irradiance-driven terms so the
 // translucent path can keep reflections un-premultiplied (glass attenuates what's behind it, not its own
 // reflections). Opaque callers use the combined wrapper below.
-void EvaluateIBLAmbientSplit(float3 N, float3 V, float NdotV, float2 DFG, float3 Albedo, float3 F0, float Roughness, float Metallic, float AO,
+void EvaluateIBLAmbientSplit(float3 WorldPos, float3 N, float3 V, float NdotV, float2 DFG, float3 Albedo, float3 F0, float Roughness, float Metallic, float AO,
                              out float3 OutDiffuse, out float3 OutSpecular)
 {
     float3 R = reflect(-V, N);
@@ -77,7 +91,9 @@ void EvaluateIBLAmbientSplit(float3 N, float3 V, float NdotV, float2 DFG, float3
     float3 kD           = DiffuseColor * (1.0 - FssEss - FmsEms);
 
     float3 Irradiance = SampleIrradiance(N);
-    float3 PreFilt    = SamplePrefilter(R, Roughness);
+    // Local probes override the sky here; diffuse irradiance stays sky-only (probes carry no
+    // irradiance convolution, so a diffuse local bounce would need a second bake per probe).
+    float3 PreFilt    = SampleSpecularRadiance(WorldPos, R, Roughness);
 
     float SpecAO = ComputeSpecularOcclusion(NdotV, AO, Roughness);
 
@@ -85,9 +101,9 @@ void EvaluateIBLAmbientSplit(float3 N, float3 V, float NdotV, float2 DFG, float3
     OutDiffuse  = (FmsEms + kD) * Irradiance * AO;
 }
 
-float3 EvaluateIBLAmbient(float3 N, float3 V, float NdotV, float2 DFG, float3 Albedo, float3 F0, float Roughness, float Metallic, float AO)
+float3 EvaluateIBLAmbient(float3 WorldPos, float3 N, float3 V, float NdotV, float2 DFG, float3 Albedo, float3 F0, float Roughness, float Metallic, float AO)
 {
     float3 Diffuse, Specular;
-    EvaluateIBLAmbientSplit(N, V, NdotV, DFG, Albedo, F0, Roughness, Metallic, AO, Diffuse, Specular);
+    EvaluateIBLAmbientSplit(WorldPos, N, V, NdotV, DFG, Albedo, F0, Roughness, Metallic, AO, Diffuse, Specular);
     return Diffuse + Specular;
 }

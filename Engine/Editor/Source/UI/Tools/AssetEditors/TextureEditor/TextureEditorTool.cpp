@@ -1,7 +1,10 @@
 ﻿#include "TextureEditorTool.h"
 
 #include "Assets/AssetTypes/Textures/Texture.h"
+#include "Assets/AssetTypes/Textures/TextureArray.h"
 #include "Assets/Factories/TextureFactory/TextureFactory.h"
+#include "Assets/Factories/TextureFactory/TextureArrayFactory.h"
+#include "Tools/UI/ImGui/ImGuiDragDrop.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/Package/Package.h"
 #include "Core/Object/Package/Thumbnail/PackageThumbnail.h"
@@ -25,13 +28,30 @@ namespace Lumina
                 return;
             }
 
+            // An array with nothing built has no GPU image at all, so there is no slice to show and the
+            // usual path would sample the null slot. Say what to do instead of drawing a purple square.
+            const CTextureArray* PreviewArray = Cast<CTextureArray>(Texture);
+            if (PreviewArray != nullptr && PreviewArray->GetNumLayers() == 0)
+            {
+                auto CenteredText = [](const char* Text)
+                {
+                    const float Width = ImGui::GetContentRegionAvail().x;
+                    const float TextW = ImGui::CalcTextSize(Text).x;
+                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImMax((Width - TextW) * 0.5f, 0.0f));
+                    ImGui::TextUnformatted(Text);
+                };
+
+                ImGui::Dummy(ImVec2(0.0f, ImGui::GetContentRegionAvail().y * 0.4f));
+                CenteredText("No layers built yet.");
+                CenteredText("Add sources under Array Layers, then press Build Array.");
+                return;
+            }
+
             // New-heap sampling by ResourceID (per-mip preview deferred until the new RHI exposes mip SRVs).
             const int32 TexResourceID = Texture->GetResourceID();
             ImTextureID TextureID = (ImTextureID)(uint32)(TexResourceID >= 0 ? (uint32)TexResourceID : 0u);
 
             const FTextureResource::FDescription& ImageDesc = Texture->TextureResource->ImageDescription;
-            ImVec2 WindowSize = ImGui::GetContentRegionAvail();
-            ImVec2 WindowPos = ImGui::GetCursorScreenPos();
 
             // Float formats are the cooked-HDR path (Environment color space, scene captures): their
             // texels are linear radiance rather than display-encoded bytes. Drives both the display
@@ -40,6 +60,38 @@ namespace Lumina
                 ImageDesc.Format == EFormat::RGBA16_FLOAT ||
                 ImageDesc.Format == EFormat::RGBA32_FLOAT ||
                 ImageDesc.Format == EFormat::R11G11B10_FLOAT;
+
+            // Slice picker, above the image so it doesn't move as the preview is panned/zoomed.
+            // Clamped every frame against the live count: a rebuild can shorten the array, and an
+            // out-of-range layer index is undefined on the GPU rather than a wrap.
+            if (PreviewArray != nullptr)
+            {
+                const uint32 Layers = PreviewArray->GetNumLayers();
+                PreviewSlice = ImMin(PreviewSlice, Layers - 1u);
+
+                ImGui::TextUnformatted("Slice");
+                ImGui::SameLine(60);
+                ImGui::SetNextItemWidth(-1);
+                if (Layers > 1)
+                {
+                    int SliceInt = (int)PreviewSlice;
+                    if (ImGui::SliderInt("##ArraySlice", &SliceInt, 0, (int)Layers - 1, "%d"))
+                    {
+                        PreviewSlice = (uint32)ImClamp(SliceInt, 0, (int)Layers - 1);
+                    }
+                }
+                else
+                {
+                    ImGui::TextDisabled("0 (single layer)");
+                }
+                ImGui::Separator();
+            }
+
+            // Captured AFTER the slice picker, not before: the checkerboard and the image are painted
+            // from these across the whole remaining region, so a position taken above the picker would
+            // put them over it -- the slider still hit-tests, but nothing of it is visible.
+            ImVec2 WindowSize = ImGui::GetContentRegionAvail();
+            ImVec2 WindowPos  = ImGui::GetCursorScreenPos();
 
             if (ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows))
             {
@@ -99,7 +151,15 @@ namespace Lumina
             // the way the same texture does in-world; blitting them straight to the _UNORM swapchain
             // is what made cooked HDRIs look far darker here than in the viewport. Cooked color
             // textures are already display-encoded and must go through untouched.
-            if (bIsHDRPreview)
+            // Array slices must be sampled through gTextures2DArray[]; the two preview modes write the
+            // same display state, so they cannot both be active (array layers are always LDR anyway,
+            // since the layer cook rejects float sources outright).
+            const bool bIsArrayPreview = (PreviewArray != nullptr);
+            if (bIsArrayPreview)
+            {
+                ImGuiX::BeginArrayPreview(DrawList, PreviewSlice);
+            }
+            else if (bIsHDRPreview)
             {
                 ImGuiX::BeginHDRPreview(DrawList, ExposureStops);
             }
@@ -112,7 +172,11 @@ namespace Lumina
                 ImVec2(1, 1)
             );
 
-            if (bIsHDRPreview)
+            if (bIsArrayPreview)
+            {
+                ImGuiX::EndArrayPreview(DrawList);
+            }
+            else if (bIsHDRPreview)
             {
                 ImGuiX::EndHDRPreview(DrawList);
             }
@@ -469,6 +533,110 @@ namespace Lumina
             ImGui::Spacing();
             ImGui::Spacing();
             
+            // Array layer list. Only shown for CTextureArray; a plain texture has no layers and the
+            // section would just be dead UI.
+            if (CTextureArray* Array = Cast<CTextureArray>(Texture))
+            {
+                ImGuiX::Font::PushFont(ImGuiX::Font::EFont::Large);
+                ImGui::SeparatorText("Array Layers");
+                ImGuiX::Font::PopFont();
+
+                ImGui::Spacing();
+                ImGui::Text("%u layer(s) built", Array->GetNumLayers());
+                ImGuiX::TextTooltip("Sample a layer in a material with TextureSampleArray; Slice 0 is the first entry below.");
+
+                ImGui::Spacing();
+
+                int RemoveIndex = -1;
+                int MoveFrom    = -1;
+                int MoveTo      = -1;
+                for (size_t i = 0; i < Array->SourceTextures.size(); ++i)
+                {
+                    const TObjectPtr<CTexture>& Layer = Array->SourceTextures[i];
+
+                    ImGui::PushID((int)i);
+                    ImGui::Text("%2zu", i);
+                    ImGui::SameLine(40);
+                    ImGui::TextUnformatted(Layer.IsValid() ? Layer->GetName().c_str() : "<missing>");
+
+                    // Slice order is the material's Slice index, so reordering has to be possible
+                    // without clearing and re-adding the whole list.
+                    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 66.0f);
+                    ImGui::BeginDisabled(i == 0);
+                    if (ImGui::SmallButton("^")) { MoveFrom = (int)i; MoveTo = (int)i - 1; }
+                    ImGui::EndDisabled();
+
+                    ImGui::SameLine();
+                    ImGui::BeginDisabled(i + 1 >= Array->SourceTextures.size());
+                    if (ImGui::SmallButton("v")) { MoveFrom = (int)i; MoveTo = (int)i + 1; }
+                    ImGui::EndDisabled();
+
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("X")) { RemoveIndex = (int)i; }
+                    ImGui::PopID();
+                }
+
+                if (MoveFrom >= 0)
+                {
+                    eastl::swap(Array->SourceTextures[MoveFrom], Array->SourceTextures[MoveTo]);
+                    Asset->GetPackage()->MarkDirty();
+                }
+                if (RemoveIndex >= 0)
+                {
+                    Array->SourceTextures.erase(Array->SourceTextures.begin() + RemoveIndex);
+                    Asset->GetPackage()->MarkDirty();
+                }
+
+                ImGui::Spacing();
+
+                // Drop target rather than a file dialog: layers are texture ASSETS now, so they come
+                // from the content browser and keep working when the project moves machines.
+                ImGui::Button("Drop textures here to add a layer##TextureArray", ImVec2(-1, 0));
+                if (ImGui::BeginDragDropTarget())
+                {
+                    if (CTexture* Dropped = DragDrop::AcceptAsset<CTexture>())
+                    {
+                        // A nested array would recurse through layer-major mips and build a silently
+                        // wrong image; Rebuild refuses it too, but there is no reason to accept it here.
+                        if (Dropped->IsA<CTextureArray>())
+                        {
+                            ImGuiX::Notifications::NotifyError("'{0}' is a texture array; layers must be plain textures",
+                                Dropped->GetName().c_str());
+                        }
+                        else
+                        {
+                            Array->SourceTextures.push_back(Dropped);
+                            Asset->GetPackage()->MarkDirty();
+                        }
+                    }
+                    ImGui::EndDragDropTarget();
+                }
+                ImGuiX::TextTooltip("Appended as the next slice. Every layer must match layer 0's size and format, "
+                                    "or enable Resize Layers To First.");
+
+                ImGui::Spacing();
+                const bool bCanBuild = !Array->SourceTextures.empty();
+                ImGui::BeginDisabled(!bCanBuild);
+                if (ImGui::Button("Build Array##TextureArray", ImVec2(-1, 0)))
+                {
+                    if (CTextureArrayFactory::Rebuild(Array))
+                    {
+                        ImGuiX::Notifications::NotifySuccess("Built '{0}' with {1} layers",
+                            Array->GetName().c_str(), Array->GetNumLayers());
+                    }
+                    else
+                    {
+                        ImGuiX::Notifications::NotifyError("Build failed for '{0}' -- check log",
+                            Array->GetName().c_str());
+                    }
+                }
+                ImGui::EndDisabled();
+                ImGuiX::TextTooltip("Re-cooks every layer from its source file, in list order, into one Texture2DArray.");
+
+                ImGui::Spacing();
+                ImGui::Spacing();
+            }
+
             ImGuiX::Font::PushFont(ImGuiX::Font::EFont::Large);
             ImGui::SeparatorText("Compression");
             ImGuiX::Font::PopFont();

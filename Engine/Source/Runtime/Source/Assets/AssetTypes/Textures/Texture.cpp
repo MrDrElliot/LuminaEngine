@@ -39,21 +39,50 @@ namespace Lumina
         // belongs to. Read during Create only, so the local outliving the call is enough.
         const FString DebugName = "Texture." + GetName().ToString();
 
-        // New RHI: create the sampled texture in the global heap + upload every mip.
-        TextureResource->NewTexture = RHI::Textures::Create(RHI::FTexture2DDesc
-        {
-            .Width  = Desc.Extent.x,
-            .Height = Desc.Extent.y,
-            .Mips   = (uint32)TextureResource->Mips.size(),
-            .Format = Desc.Format,
-            .DebugName = DebugName.c_str(),
-        });
+        const uint32 NumMips   = TextureResource->GetNumMips();
+        const uint32 NumLayers = TextureResource->GetNumLayers();
 
-        for (uint8 i = 0; i < TextureResource->Mips.size(); ++i)
+        // New RHI: create the sampled texture in the global heap + upload every mip of every layer.
+        // Both paths land in the same heap, so the ResourceID is interchangeable -- what decides
+        // whether a shader may read it as gTextures2DArray[] is the VIEW type chosen here.
+        if (TextureResource->IsArray())
         {
-            const FTextureResource::FMip& Mip = TextureResource->Mips[i];
-            // RowPitchTexels = mip width: pixel rows are tightly packed at the mip's width.
-            RHI::Textures::Upload(TextureResource->NewTexture, i, Mip.Pixels.data(), Mip.Pixels.size(), Mip.Width);
+            TextureResource->NewTexture = RHI::Textures::Create(RHI::FTexture2DArrayDesc
+            {
+                .Width  = Desc.Extent.x,
+                .Height = Desc.Extent.y,
+                .Layers = NumLayers,
+                .Mips   = NumMips,
+                .Format = Desc.Format,
+                .DebugName = DebugName.c_str(),
+            });
+        }
+        else
+        {
+            TextureResource->NewTexture = RHI::Textures::Create(RHI::FTexture2DDesc
+            {
+                .Width  = Desc.Extent.x,
+                .Height = Desc.Extent.y,
+                .Mips   = NumMips,
+                .Format = Desc.Format,
+                .DebugName = DebugName.c_str(),
+            });
+        }
+
+        for (uint32 Layer = 0; Layer < NumLayers; ++Layer)
+        {
+            for (uint32 i = 0; i < NumMips; ++i)
+            {
+                const uint32 Index = TextureResource->MipIndex(Layer, i);
+                if (Index >= TextureResource->Mips.size())
+                {
+                    continue;
+                }
+
+                const FTextureResource::FMip& Mip = TextureResource->Mips[Index];
+                // RowPitchTexels = mip width: pixel rows are tightly packed at the mip's width.
+                RHI::Textures::UploadLayer(TextureResource->NewTexture, Layer, i, Mip.Pixels.data(), Mip.Pixels.size(), Mip.Width);
+            }
         }
 
 #if !USING(WITH_EDITOR)

@@ -326,11 +326,10 @@ namespace Lumina
         bool                        AreSurfaceDescsDirty() const { return bSurfaceDescsDirty; }
         void                        ClearSurfaceDescsDirty()     { bSurfaceDescsDirty = false; }
 
-        // Largest per-LOD meshlet count any interned surface carries. Accumulated in InternSurfaceDesc --
-        // on the game thread, from the already-clamped value that goes into the table -- because the
-        // render phase turns it into the meshlet cull's DISPATCH SIZE ceiling. Deriving it by walking
-        // SurfaceDescs from the render phase means reading a TVector the game thread can reallocate
-        // underneath it, and a torn read there is not a wrong number, it is an unbounded grid.
+        // Largest per-LOD meshlet count any interned surface carries. Accumulated in InternSurfaceDesc,
+        // from the already-clamped value that goes into the table, because that is the only place the set
+        // can change. The render phase turns it into the meshlet cull's DISPATCH SIZE ceiling, so it wants
+        // a number whose provenance is one line rather than a per-frame rescan of the whole table.
         uint32                      GetMaxSurfaceDescMeshlets() const { return MaxSurfaceDescMeshlets; }
 
         // Slots written since the last upload. Empty on a frame where nothing changed, which is what

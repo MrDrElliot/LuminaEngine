@@ -44,6 +44,8 @@ T LoadBlock<T>(uint64_t Address)
 [[vk::binding(1, 0)]] TextureCube                               gTexturesCube[];
 [[vk::binding(1, 0)]] Texture3D                                 gTextures3D[];
 [[vk::binding(1, 0)]] Texture2DArray                            gTextures2DArray[];
+// Reflection-probe radiance: every probe's 6 faces live in one array, sampled by slice index.
+[[vk::binding(1, 0)]] TextureCubeArray                          gTexturesCubeArray[];
 // Integer alias of the same heap, for R32_UINT targets (e.g. the VisBuffer triangle-ID buffer).
 [[vk::binding(1, 0)]] Texture2D<uint>                           gTextures2DUInt[];
 
@@ -89,6 +91,33 @@ float4 SampleTexture2DLevel(uint TextureIndex, uint SamplerIndex, float2 UV, flo
     return gTextures2D[TextureIndex].SampleLevel(gSamplers[SamplerIndex], UV, Lod);
 }
 
+// Array-texture sampling. Slice selects the layer and is NOT filtered between layers -- the hardware
+// treats the array index as discrete, which is the whole point (layers are independent images, so
+// blending across them would bleed unrelated content). Round/clamp before calling if the caller
+// computes it. The heap arrays are aliased views of one descriptor array, so TextureIndex is the same
+// ResourceID a Texture2D would use; it just has to name a texture actually created as Tex2DArray.
+float4 SampleTexture2DArray(uint TextureIndex, uint SamplerIndex, float2 UV, uint Slice)
+{
+    return gTextures2DArray[TextureIndex].Sample(gSamplers[SamplerIndex], float3(UV, (float)Slice));
+}
+
+float4 SampleTexture2DArrayLevel(uint TextureIndex, uint SamplerIndex, float2 UV, uint Slice, float Lod)
+{
+    return gTextures2DArray[TextureIndex].SampleLevel(gSamplers[SamplerIndex], float3(UV, (float)Slice), Lod);
+}
+
+// Explicit-gradient variant, for the deferred VisBuffer lane (see SampleTexture2DGrad above). The
+// gradients are 2D: a layer index has no derivative, so only UV drives mip selection.
+float4 SampleTexture2DArrayGrad(uint TextureIndex, uint SamplerIndex, float2 UV, uint Slice, float2 Ddx, float2 Ddy)
+{
+    return gTextures2DArray[TextureIndex].SampleGrad(gSamplers[SamplerIndex], float3(UV, (float)Slice), Ddx, Ddy);
+}
+
+float4 LoadTexture2DArray(uint TextureIndex, int2 Texel, uint Slice, int Mip = 0)
+{
+    return gTextures2DArray[TextureIndex].Load(int4(Texel, (int)Slice, Mip));
+}
+
 float4 SampleTextureCube(uint TextureIndex, uint SamplerIndex, float3 Dir)
 {
     return gTexturesCube[TextureIndex].Sample(gSamplers[SamplerIndex], Dir);
@@ -97,6 +126,11 @@ float4 SampleTextureCube(uint TextureIndex, uint SamplerIndex, float3 Dir)
 float4 SampleTextureCubeLevel(uint TextureIndex, uint SamplerIndex, float3 Dir, float Lod)
 {
     return gTexturesCube[TextureIndex].SampleLevel(gSamplers[SamplerIndex], Dir, Lod);
+}
+
+float4 SampleTextureCubeArrayLevel(uint TextureIndex, uint SamplerIndex, float3 Dir, uint Slice, float Lod)
+{
+    return gTexturesCubeArray[TextureIndex].SampleLevel(gSamplers[SamplerIndex], float4(Dir, (float)Slice), Lod);
 }
 
 float4 SampleTexture3D(uint TextureIndex, uint SamplerIndex, float3 UVW)

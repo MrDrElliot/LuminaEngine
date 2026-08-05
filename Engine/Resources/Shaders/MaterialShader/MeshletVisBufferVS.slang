@@ -44,6 +44,7 @@ FVisVertexOut VertexMain(uint VertexIndex: SV_VulkanVertexID, uint MeshletSlot: 
     float4   WorldPos    = float4(W.WorldPos, 1.0);
     float3   NormalWS    = W.NormalWS;
     float3   TangentWS   = W.TangentWS.xyz;
+    float    TangentSignWS = W.TangentWS.w;   // handedness; the graph's WorldTangent alias needs it
 
     FMaterialVertexInputs Material;
     $MATERIAL_VERTEX_INPUTS
