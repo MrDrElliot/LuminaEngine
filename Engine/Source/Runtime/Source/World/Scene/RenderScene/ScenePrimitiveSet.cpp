@@ -752,6 +752,80 @@ namespace Lumina
         Prim.BindingBase  = 0;
     }
 
+    const FScenePrimitiveSet::FBindingMemo* FScenePrimitiveSet::EnsureBindingMemo(
+        uint32 ResolveHandle, uint32 Generation, const TVector<FResolvedSurface>& Surfaces)
+    {
+        // Dynamic meshes carry no resolve handle; the caller binds them per-surface instead.
+        if (ResolveHandle == INVALID_MESH_RESOLVE_HANDLE)
+        {
+            return nullptr;
+        }
+
+        if ((uint32)BindingMemoByHandle.size() <= ResolveHandle)
+        {
+            BindingMemoByHandle.resize(ResolveHandle + 1u);
+        }
+
+        FBindingMemo& Entry = BindingMemoByHandle[ResolveHandle];
+
+        // The surface count is checked alongside the generation purely as insurance: a resolved entry
+        // always bumps its generation, so the two cannot legitimately disagree.
+        if (Entry.Generation != Generation || Entry.Protos.size() != Surfaces.size())
+        {
+            Entry.Protos.clear();
+            Entry.Protos.reserve(Surfaces.size());
+
+            for (const FResolvedSurface& Surface : Surfaces)
+            {
+                FSurfaceBinding& Proto = Entry.Protos.emplace_back();
+
+                // FindOrAddBatch also folds this surface's deferred material slot into the batch. That
+                // fold is keyed on the same surface and is idempotent, so running it once per interned
+                // entry instead of once per instance is equivalent -- provided the memo and the batch
+                // registry are only ever invalidated together, which is the stated invariant.
+                Proto.BatchIndex            = Batches.FindOrAddBatch(Surface);
+                Proto.InstanceSlot          = ~0u;
+                Proto.SurfaceDescIndex      = InternSurfaceDesc(Surface);
+                Proto.MaterialIndex         = Surface.MaterialIdx;
+                Proto.MaterialFlags         = Surface.MaterialFlags;
+                Proto.bMaterialCastsShadows = Surface.bMaterialCastsShadows;
+            }
+
+            Entry.Generation = Generation;
+        }
+
+        return &Entry;
+    }
+
+    bool FScenePrimitiveSet::BindingsMatchMemo(uint32 Index, const FBindingMemo& Memo) const
+    {
+        const FScenePrimitive& Prim = Primitives[Index];
+
+        if (Prim.SurfaceCount != (uint32)Memo.Protos.size())
+        {
+            return false;
+        }
+
+        for (uint32 s = 0; s < Prim.SurfaceCount; ++s)
+        {
+            const FSurfaceBinding& Have = Bindings[Prim.BindingBase + s];
+            const FSurfaceBinding& Want = Memo.Protos[s];
+
+            // InstanceSlot is deliberately absent: it is the primitive's own identity in the retained
+            // buffer, not something the resolve derives, and keeping it is the entire point of matching.
+            if (Have.BatchIndex            != Want.BatchIndex
+             || Have.SurfaceDescIndex      != Want.SurfaceDescIndex
+             || Have.MaterialIndex         != Want.MaterialIndex
+             || Have.MaterialFlags         != Want.MaterialFlags
+             || Have.bMaterialCastsShadows != Want.bMaterialCastsShadows)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     void FScenePrimitiveSet::BindSurfaces(uint32 Index)
     {
         ++SyncStats.BindCalls;
@@ -770,45 +844,9 @@ namespace Lumina
         const TVector<FResolvedSurface>& Surfaces = *Prim.Surfaces;
 
         // Resolve the batch and LOD-table identities once per interned mesh rather than once per instance.
-        // See BindingMemoByHandle.
-        const FBindingMemo* Memo = nullptr;
-        if (Prim.ResolveHandle != INVALID_MESH_RESOLVE_HANDLE)
-        {
-            if ((uint32)BindingMemoByHandle.size() <= Prim.ResolveHandle)
-            {
-                BindingMemoByHandle.resize(Prim.ResolveHandle + 1u);
-            }
-
-            FBindingMemo& Entry = BindingMemoByHandle[Prim.ResolveHandle];
-
-            // The surface count is checked alongside the generation purely as insurance: a resolved entry
-            // always bumps its generation, so the two cannot legitimately disagree.
-            if (Entry.Generation != Prim.ResolveGeneration || Entry.Protos.size() != Surfaces.size())
-            {
-                Entry.Protos.clear();
-                Entry.Protos.reserve(Surfaces.size());
-
-                for (const FResolvedSurface& Surface : Surfaces)
-                {
-                    FSurfaceBinding& Proto = Entry.Protos.emplace_back();
-
-                    // FindOrAddBatch also folds this surface's deferred material slot into the batch. That
-                    // fold is keyed on the same surface and is idempotent, so running it once per interned
-                    // entry instead of once per instance is equivalent -- provided the memo and the batch
-                    // registry are only ever invalidated together, which is the stated invariant.
-                    Proto.BatchIndex            = Batches.FindOrAddBatch(Surface);
-                    Proto.InstanceSlot          = ~0u;
-                    Proto.SurfaceDescIndex      = InternSurfaceDesc(Surface);
-                    Proto.MaterialIndex         = Surface.MaterialIdx;
-                    Proto.MaterialFlags         = Surface.MaterialFlags;
-                    Proto.bMaterialCastsShadows = Surface.bMaterialCastsShadows;
-                }
-
-                Entry.Generation = Prim.ResolveGeneration;
-            }
-
-            Memo = &Entry;
-        }
+        // See BindingMemoByHandle. Usually already built: the caller consulted it to decide whether this
+        // rebind was needed at all.
+        const FBindingMemo* Memo = EnsureBindingMemo(Prim.ResolveHandle, Prim.ResolveGeneration, Surfaces);
 
         Prim.BindingBase  = (uint32)Bindings.size();
         Prim.SurfaceCount = (uint32)Surfaces.size();
@@ -1264,7 +1302,32 @@ namespace Lumina
             Prim.ResolveGeneration = NewGeneration;
             if (bSurfacesChanged)
             {
-                BindSurfaces(Index);
+                /**
+                 * Almost always a generation bump with identical bindings behind it.
+                 *
+                 * Resolve entries are heap-boxed and never move, so NewSurfaces compares EQUAL across a
+                 * rebuild and only the generation differs -- which is exactly the case where a rebind
+                 * reproduces the batch index and interned LOD table it already had. Rebinding anyway cost
+                 * a release + realloc of every instance slot this entity owns, and at foliage scale that
+                 * is once per blade of grass: N batch-ref round trips, N free-list pops, N dead bindings
+                 * appended to Bindings (which then trips CompactBindings and repacks the entire array),
+                 * and two dirty marks per slot instead of one.
+                 *
+                 * The memo makes the alternative cheap: build the per-type template once, then a handful
+                 * of integer compares per surface says whether anything actually moved.
+                 */
+                const FBindingMemo* Memo = (NewSurfaces != nullptr && !NewSurfaces->empty())
+                    ? EnsureBindingMemo(Prim.ResolveHandle, NewGeneration, *NewSurfaces)
+                    : nullptr;
+
+                if (Memo != nullptr && BindingsMatchMemo(Index, *Memo))
+                {
+                    ++SyncStats.BindsSkipped;
+                }
+                else
+                {
+                    BindSurfaces(Index);
+                }
             }
 
             // The other place a resolve identity settles; mirror it for the sweep.
@@ -1845,20 +1908,38 @@ namespace Lumina
 
                 if (Generation != (uint32)(Packed >> 32))
                 {
-                    RetryScratch.push_back(Keys[i]);
+                    // The (entity, source) half of the key, dropping the sub-index. What gets re-synced is
+                    // an ENTITY, and SyncFoliage resyncs every instance its entity owns -- so one entry per
+                    // stale primitive meant a foliage entity re-synced once per stale blade, each pass
+                    // walking all of them. That is O(instances^2), and a single mesh finishing its upload
+                    // is enough to trigger it across the whole painted set.
+                    RetryScratch.push_back(Keys[i] & kSyncTargetMask);
                 }
             }
 
-            // Collected first: the refresh below can swap-remove and reorder Primitives.
-            for (uint64 Key : RetryScratch)
+            // Sorted-then-compacted rather than probed into a set: the input is one entry per stale
+            // primitive (hundreds of thousands under foliage) and the output is one per entity (a
+            // handful), so an O(n log n) pass with no allocation beats n set insertions.
+            eastl::sort(RetryScratch.begin(), RetryScratch.end());
             {
-                const uint32 Index = FindPrimitive(Key);
-                if (Index == ~0u)
+                size_t Unique = 0;
+                for (size_t i = 0; i < RetryScratch.size(); ++i)
                 {
-                    continue;
+                    if (i == 0 || RetryScratch[i] != RetryScratch[i - 1])
+                    {
+                        RetryScratch[Unique++] = RetryScratch[i];
+                    }
                 }
-                const entt::entity     Entity = Primitives[Index].Entity;
-                const EPrimitiveSource Source = Primitives[Index].Source;
+                RetryScratch.resize(Unique);
+            }
+
+            // Entity and source are unpacked from the key rather than read back off the primitive: the
+            // refresh below can swap-remove and reorder Primitives, which is why the sweep collects first
+            // in the original -- and this drops the FindPrimitive probe that re-derived them.
+            for (uint64 Target : RetryScratch)
+            {
+                const entt::entity     Entity = (entt::entity)(uint32)(Target & 0xFFFFFFFFull);
+                const EPrimitiveSource Source = (EPrimitiveSource)((Target >> kKeySourceShift) & 0xFFull);
                 if (Source == EPrimitiveSource::Foliage)
                 {
                     SyncFoliage(Registry, Pools, Entity, EPrimitiveDirty::Data);
@@ -1884,6 +1965,7 @@ namespace Lumina
         LUMINA_PROFILE_VALUE("Sync/SyncEntity",       (int64)SyncStats.SyncEntityCalls);
         LUMINA_PROFILE_VALUE("Sync/SyncFoliage",      (int64)SyncStats.SyncFoliageCalls);
         LUMINA_PROFILE_VALUE("Sync/BindSurfaces",     (int64)SyncStats.BindCalls);
+        LUMINA_PROFILE_VALUE("Sync/BindsSkipped",     (int64)SyncStats.BindsSkipped);
         LUMINA_PROFILE_VALUE("Sync/RefreshInstances", (int64)SyncStats.RefreshInstanceCalls);
         LUMINA_PROFILE_VALUE("Sync/DirtySlots",       (int64)DirtyInstanceSlots.size());
         LUMINA_PROFILE_VALUE("Sync/Primitives",       (int64)Primitives.size());

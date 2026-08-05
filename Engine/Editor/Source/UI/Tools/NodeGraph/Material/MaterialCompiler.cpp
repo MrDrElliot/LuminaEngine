@@ -1490,6 +1490,211 @@ namespace Lumina
 		AddRaw("}\n");
 	}
 
+	namespace
+	{
+		// Shared gate for every mesh-distance-field node. The field is reached through the instance's
+		// meshlet header, which exists only in the surface (PBR) domain's pixel lane: UI and PostProcess
+		// are fullscreen passes with no instance at all, Terrain and Decal run their own templates whose
+		// local contract has no FBaseVertexOutput to resolve an instance from, and the vertex stage has
+		// no per-pixel position worth sampling a field at.
+		bool RejectDistanceFieldNode(FMaterialCompiler& Compiler, CMaterialGraphNode* Node, const char* NodeName)
+		{
+			auto Fail = [&](const char* Reason)
+			{
+				EdNodeGraph::FError Error;
+				Error.Node        = Node;
+				Error.Name        = NodeName;
+				Error.Description = Reason;
+				Compiler.AddError(Error);
+				return true;
+			};
+
+			if (Compiler.GetStage() != EMaterialCompileStage::Pixel)
+			{
+				return Fail("Mesh distance field nodes are pixel-stage; they cannot be reached from World Position Offset.");
+			}
+
+			if (Compiler.GetMaterialType() != EMaterialType::PBR)
+			{
+				return Fail("Mesh distance field nodes need a mesh instance; they are only available in Surface (PBR) materials.");
+			}
+
+			return false;
+		}
+
+		/** Emits the per-node preamble: resolve this pixel's instance, its world->local matrix, its axis
+		 *  scales, and its distance field volume. Returns the variable-name prefix the caller appends to. */
+		FString EmitDistanceFieldPreamble(FMaterialCompiler& Compiler, CMaterialGraphNode* Node)
+		{
+			const FString Prefix = Compiler.GetCurrentInlinePrefix() + Node->GetNodeFullName();
+
+			// Resolved from Input.InstanceIndex rather than a bare `Inst`: the deferred material template
+			// declares that local, but the FORWARD base pass and the masked VisBuffer pass do not, and all
+			// three substitute the same pixel chunk.
+			Compiler.AddRaw("FGPUInstance " + Prefix + "_Inst = GetInstance(Input.InstanceIndex);\n");
+			Compiler.AddRaw("float4x4 " + Prefix + "_M = " + Prefix + "_Inst.ModelMatrix;\n");
+			Compiler.AddRaw("float4x4 " + Prefix + "_W2L = MakeInstanceWorldToLocal(" + Prefix + "_M);\n");
+			Compiler.AddRaw("float3 " + Prefix + "_Scale = GetInstanceScale(" + Prefix + "_M);\n");
+			Compiler.AddRaw("FDistanceFieldVolume " + Prefix + "_Vol = GetInstanceDistanceFieldVolume(" + Prefix + "_Inst);\n");
+
+			return Prefix;
+		}
+	}
+
+	void FMaterialCompiler::MeshDistanceField(CMaterialGraphNode* Node, CMaterialInput* Position,
+	                                          CMaterialOutput* DistanceOut, CMaterialOutput* GradientOut,
+	                                          CMaterialOutput* ValidOut)
+	{
+		const FString Prefix       = GetCurrentInlinePrefix() + Node->GetNodeFullName();
+		const FString DistanceVar  = Prefix + "_Distance";
+		const FString GradientVar  = Prefix + "_Gradient";
+		const FString ValidVar     = Prefix + "_Valid";
+
+		// Declared and defaulted FIRST and unconditionally: downstream nodes bind to these by ResolvedVar,
+		// so a rejected node still has to leave a compilable shader. The default distance is deliberately
+		// large -- "nothing nearby" -- because zero would read as "exactly on a surface".
+		AddRaw("float " + DistanceVar + " = 1e6;\n");
+		AddRaw("float3 " + GradientVar + " = float3(0.0, 0.0, 1.0);\n");
+		AddRaw("float " + ValidVar + " = 0.0;\n");
+
+		if (DistanceOut) DistanceOut->ResolvedVar = DistanceVar;
+		if (GradientOut) GradientOut->ResolvedVar = GradientVar;
+		if (ValidOut)    ValidOut->ResolvedVar    = ValidVar;
+
+		if (RejectDistanceFieldNode(*this, Node, "Mesh Distance Field"))
+		{
+			return;
+		}
+
+		FInputValue PositionValue = GetTypedInputValue(Position, "WorldPosition");
+		const FString PositionStr = PositionValue.ComponentCount >= 3
+		                          ? PositionValue.Value + ".xyz"
+		                          : "float3(" + PositionValue.Value + ")";
+
+		EmitDistanceFieldPreamble(*this, Node);
+
+		AddRaw("FDistanceFieldQuery " + Prefix + "_Q = QueryDistanceField(" + Prefix + "_Vol, "
+			+ Prefix + "_W2L, " + Prefix + "_Scale, " + PositionStr + ");\n");
+		AddRaw(DistanceVar + " = " + Prefix + "_Q.Distance;\n");
+		AddRaw(ValidVar + " = " + Prefix + "_Q.bValid ? 1.0 : 0.0;\n");
+		// The gradient is zero on a saturated plateau, where its direction is undefined; keep the
+		// declared default there so a normalize() downstream cannot produce NaN.
+		AddRaw("if (any(" + Prefix + "_Q.Gradient != 0.0)) { " + GradientVar + " = " + Prefix + "_Q.Gradient; }\n");
+	}
+
+	void FMaterialCompiler::MeshDistanceFieldOcclusion(CMaterialGraphNode* Node, const FDistanceFieldOcclusionInputs& Inputs,
+	                                                   int32 StepCount, CMaterialOutput* OcclusionOut)
+	{
+		const FString Prefix        = GetCurrentInlinePrefix() + Node->GetNodeFullName();
+		const FString OcclusionVar  = Prefix + "_Occlusion";
+
+		// 1 = fully unoccluded, which is the neutral value every AO consumer multiplies by.
+		AddRaw("float " + OcclusionVar + " = 1.0;\n");
+		if (OcclusionOut) OcclusionOut->ResolvedVar = OcclusionVar;
+
+		if (RejectDistanceFieldNode(*this, Node, "Mesh Distance Field Occlusion"))
+		{
+			return;
+		}
+
+		// The cone march is StepCount texture fetches per pixel; a masked material runs the whole pixel
+		// graph a second time in the VisBuffer masked pre-pass, so it is paid for twice.
+		if (IsMasked())
+		{
+			LOG_WARN("[Material] MeshDistanceFieldOcclusion in a MASKED material: the cone trace also runs in "
+			         "the VisBuffer masked pre-pass, roughly doubling its cost.");
+		}
+
+		FInputValue NormalValue    = GetTypedInputValue(Inputs.Normal, "WorldNormal");
+		FInputValue RadiusValue    = GetTypedInputValue(Inputs.Radius, 0.25f);
+		FInputValue ConeValue      = GetTypedInputValue(Inputs.ConeAngle, 0.5f);
+		FInputValue IntensityValue = GetTypedInputValue(Inputs.Intensity, 1.0f);
+
+		const FString NormalStr = NormalValue.ComponentCount >= 3
+		                        ? NormalValue.Value + ".xyz"
+		                        : "float3(" + NormalValue.Value + ")";
+
+		EmitDistanceFieldPreamble(*this, Node);
+
+		AddRaw("if (" + Prefix + "_Vol.IsValid())\n");
+		AddRaw("{\n");
+
+		// The whole trace runs in LOCAL space, the field's native space, so the direction has to be taken
+		// there too. A normal transforms by the inverse-transpose of world->local, i.e. the transpose of
+		// object->world, whose rows are the columns of the model matrix.
+		AddRaw("\tfloat3 " + Prefix + "_LP = mul(" + Prefix + "_W2L, float4(WorldPosition, 1.0)).xyz;\n");
+		AddRaw("\tfloat3 " + Prefix + "_NW = normalize(" + NormalStr + ");\n");
+		AddRaw("\tfloat3 " + Prefix + "_LN = normalize(float3("
+			"dot(float3(" + Prefix + "_M[0][0], " + Prefix + "_M[1][0], " + Prefix + "_M[2][0]), " + Prefix + "_NW), "
+			"dot(float3(" + Prefix + "_M[0][1], " + Prefix + "_M[1][1], " + Prefix + "_M[2][1]), " + Prefix + "_NW), "
+			"dot(float3(" + Prefix + "_M[0][2], " + Prefix + "_M[1][2], " + Prefix + "_M[2][2]), " + Prefix + "_NW)));\n");
+
+		// Radius is authored as a fraction of the volume's own extent, so one value works across a prop
+		// and a building without retuning; converting it to local units is just that fraction of the box.
+		AddRaw("\tfloat " + Prefix + "_R = max(" + RadiusValue.Value + ", 0.0) * "
+			"max(max(" + Prefix + "_Vol.VolumeSize.x, " + Prefix + "_Vol.VolumeSize.y), " + Prefix + "_Vol.VolumeSize.z);\n");
+
+		// Started off the surface: the field is 0 AT the surface, so a cone that begins there reads full
+		// occlusion on its first sample and never recovers.
+		AddRaw("\tfloat3 " + Prefix + "_Start = " + Prefix + "_LP + " + Prefix + "_LN * (" + Prefix + "_Vol.MaxDistance * 0.05);\n");
+
+		AddRaw("\tfloat " + Prefix + "_Vis = DistanceFieldConeOcclusion(" + Prefix + "_Vol, " + Prefix + "_Start, "
+			+ Prefix + "_LN, " + Prefix + "_R, max(" + ConeValue.Value + ", 0.01), " + eastl::to_string(StepCount) + ");\n");
+		AddRaw("\t" + OcclusionVar + " = saturate(lerp(1.0, " + Prefix + "_Vis, saturate(" + IntensityValue.Value + ")));\n");
+		AddRaw("}\n");
+	}
+
+	void FMaterialCompiler::MeshDistanceFieldThickness(CMaterialGraphNode* Node, CMaterialInput* Normal,
+	                                                   CMaterialInput* MaxDistance, int32 StepCount,
+	                                                   CMaterialOutput* ThicknessOut, CMaterialOutput* NormalizedOut)
+	{
+		const FString Prefix         = GetCurrentInlinePrefix() + Node->GetNodeFullName();
+		const FString ThicknessVar   = Prefix + "_Thickness";
+		const FString NormalizedVar  = Prefix + "_Normalized";
+
+		AddRaw("float " + ThicknessVar + " = 0.0;\n");
+		AddRaw("float " + NormalizedVar + " = 0.0;\n");
+
+		if (ThicknessOut)  ThicknessOut->ResolvedVar  = ThicknessVar;
+		if (NormalizedOut) NormalizedOut->ResolvedVar = NormalizedVar;
+
+		if (RejectDistanceFieldNode(*this, Node, "Mesh Distance Field Thickness"))
+		{
+			return;
+		}
+
+		FInputValue NormalValue = GetTypedInputValue(Normal, "WorldNormal");
+		FInputValue MaxValue    = GetTypedInputValue(MaxDistance, 0.5f);
+
+		const FString NormalStr = NormalValue.ComponentCount >= 3
+		                        ? NormalValue.Value + ".xyz"
+		                        : "float3(" + NormalValue.Value + ")";
+
+		EmitDistanceFieldPreamble(*this, Node);
+
+		AddRaw("if (" + Prefix + "_Vol.IsValid() && !" + Prefix + "_Vol.bTwoSided)\n");
+		AddRaw("{\n");
+		AddRaw("\tfloat3 " + Prefix + "_LP = mul(" + Prefix + "_W2L, float4(WorldPosition, 1.0)).xyz;\n");
+		AddRaw("\tfloat3 " + Prefix + "_NW = normalize(" + NormalStr + ");\n");
+		AddRaw("\tfloat3 " + Prefix + "_LN = normalize(float3("
+			"dot(float3(" + Prefix + "_M[0][0], " + Prefix + "_M[1][0], " + Prefix + "_M[2][0]), " + Prefix + "_NW), "
+			"dot(float3(" + Prefix + "_M[0][1], " + Prefix + "_M[1][1], " + Prefix + "_M[2][1]), " + Prefix + "_NW), "
+			"dot(float3(" + Prefix + "_M[0][2], " + Prefix + "_M[1][2], " + Prefix + "_M[2][2]), " + Prefix + "_NW)));\n");
+
+		// Max March is a fraction of the volume extent, same convention as the occlusion radius.
+		AddRaw("\tfloat " + Prefix + "_Max = max(" + MaxValue.Value + ", 0.0) * "
+			"max(max(" + Prefix + "_Vol.VolumeSize.x, " + Prefix + "_Vol.VolumeSize.y), " + Prefix + "_Vol.VolumeSize.z);\n");
+
+		AddRaw("\t" + ThicknessVar + " = DistanceFieldThickness(" + Prefix + "_Vol, " + Prefix + "_LP, "
+			+ Prefix + "_LN, " + Prefix + "_Max, " + Prefix + "_Scale, " + eastl::to_string(StepCount) + ");\n");
+
+		// Normalized against the march distance in WORLD units, so the 0..1 output is directly usable as a
+		// subsurface/transmission mask without the material having to know the mesh's size.
+		AddRaw("\t" + NormalizedVar + " = saturate(" + ThicknessVar + " / max(LocalDistanceToWorld("
+			+ Prefix + "_Max, " + Prefix + "_Scale), 1e-4));\n");
+		AddRaw("}\n");
+	}
+
 	void FMaterialCompiler::PolarCoordinates(CMaterialInput* UV, CMaterialInput* Center)
 	{
 		FString OwningNode = UV->GetOwningNode()->GetNodeFullName();

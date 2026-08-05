@@ -175,6 +175,10 @@ namespace Lumina
         RegisterGraphNode(CMaterialExpression_SceneDepth::StaticClass());
         RegisterGraphNode(CMaterialExpression_SceneHDRColor::StaticClass());
 
+        RegisterGraphNode(CMaterialExpression_MeshDistanceField::StaticClass());
+        RegisterGraphNode(CMaterialExpression_MeshDistanceFieldOcclusion::StaticClass());
+        RegisterGraphNode(CMaterialExpression_MeshDistanceFieldThickness::StaticClass());
+
         RegisterGraphNode(CMaterialExpression_If::StaticClass());
         RegisterGraphNode(CMaterialExpression_Compare::StaticClass());
 

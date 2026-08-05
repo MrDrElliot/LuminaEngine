@@ -710,6 +710,14 @@ namespace Lumina
                 ImGui::DockBuilderDockWindow(WorldEditorTool->GetToolName().c_str(), DockspaceID);
             }
 
+            // A drawer asked to be docked last frame. Resolved here, before DockSpace() consumes the node
+            // for this frame, and consumed by SubmitToolMainWindow further down the same frame.
+            if (PendingBottomDockTool != nullptr)
+            {
+                PendingBottomDockTool->DesiredDockID = GetOrCreateBottomDockID(PendingBottomDockHeightFrac);
+                PendingBottomDockTool = nullptr;
+            }
+
             // Create the actual dock space
             ImGui::PushStyleVar(ImGuiStyleVar_TabRounding, 0);
             ImGui::DockSpace(DockspaceID, viewport->WorkSize, 0, &EditorWindowClass);
@@ -1694,6 +1702,45 @@ namespace Lumina
         ImGui::PopStyleVar();
     }
 
+    ImGuiID FEditorUI::GetOrCreateBottomDockID(float HeightFrac)
+    {
+        // Still live from an earlier dock: reuse it so the Content Browser and the Output Log end up as
+        // tabs in one bottom strip, rather than each carving another slice out of the viewport.
+        if (BottomDockID != 0 && ImGui::DockBuilderGetNode(BottomDockID) != nullptr)
+        {
+            return BottomDockID;
+        }
+
+        ImGuiDockNode* Root = ImGui::DockBuilderGetNode(MainDockspaceID);
+        if (Root == nullptr)
+        {
+            // No layout to split yet. Tabbing into the root is wrong, but it is what this did before and
+            // it keeps the panel reachable instead of dropping it on the floor.
+            return MainDockspaceID;
+        }
+
+        // A restored imgui.ini brings the split back without the id we cached, so adopt an existing bottom
+        // strip before making a second one. Only the simple case is claimed -- a root split along Y, whose
+        // lower child IS that strip. Anything the user rearranged by hand gets a fresh split, because at
+        // that point there is no way to tell which node they consider "the bottom".
+        if (Root->IsSplitNode() && Root->SplitAxis == ImGuiAxis_Y && Root->ChildNodes[1] != nullptr)
+        {
+            BottomDockID = Root->ChildNodes[1]->ID;
+            return BottomDockID;
+        }
+
+        // Seeded from the height the drawer was at, so pinning it in place does not also resize it.
+        const float Ratio = Math::Clamp(HeightFrac > 0.0f ? HeightFrac : 0.3f, 0.15f, 0.6f);
+
+        ImGuiID TopID = 0;
+        ImGui::DockBuilderSplitNode(MainDockspaceID, ImGuiDir_Down, Ratio, &BottomDockID, &TopID);
+        ImGui::DockBuilderFinish(MainDockspaceID);
+
+        // Whatever was in the root (the world editor) rides along into the top child: DockBuilderSplitNode
+        // hands the existing windows to the inheritor, which for a Down split is the upper node.
+        return BottomDockID;
+    }
+
     void FEditorUI::DrawFooterDrawer(const FUpdateContext& UpdateContext)
     {
         if (OpenDrawer == nullptr)
@@ -1803,11 +1850,16 @@ namespace Lumina
             if (ImGui::Button(DockLabel) && Drawer != nullptr)
             {
                 Drawer->bDocked = true;
-                Drawer->Tool->DesiredDockID = MainDockspaceID;   // FEditorUI is a friend of FEditorTool
+
+                // Queued, not assigned: the bottom node this wants may not exist yet, and it can only be
+                // split off before DockSpace() is submitted. See PendingBottomDockTool.
+                PendingBottomDockTool       = Drawer->Tool;
+                PendingBottomDockHeightFrac = Drawer->HeightFrac;
+
                 FocusTargetWindowName = Drawer->Tool->GetToolName().c_str();
                 OpenDrawer = nullptr;
             }
-            ImGuiX::TextTooltip("Dock this panel into the main layout");
+            ImGuiX::TextTooltip("Dock this panel to the bottom of the main layout");
 
             ImGui::SameLine();
             if (ImGui::Button(LE_ICON_CLOSE))

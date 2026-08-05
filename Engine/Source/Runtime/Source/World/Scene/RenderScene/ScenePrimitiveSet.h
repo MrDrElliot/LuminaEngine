@@ -349,12 +349,27 @@ namespace Lumina
     private:
 
         // Packed identity: entity | source | foliage sub-index.
+        // Bit layout of a primitive key: entity in the low word, then source, then the sub-index that
+        // separates one foliage instance from the next. Named because kSyncTargetMask below is derived
+        // from them -- a literal there would be a second, silently divergent copy of this layout.
+        static constexpr uint32 kKeySourceShift   = 32;
+        static constexpr uint32 kKeySubIndexShift = 40;
+
         static uint64 MakeKey(entt::entity Entity, EPrimitiveSource Source, uint32 SubIndex = 0)
         {
             return (uint64)entt::to_integral(Entity)
-                 | ((uint64)Source << 32)
-                 | ((uint64)SubIndex << 40);
+                 | ((uint64)Source << kKeySourceShift)
+                 | ((uint64)SubIndex << kKeySubIndexShift);
         }
+
+        /**
+         * The (entity, source) half of a primitive key -- everything below the sub-index.
+         *
+         * A re-sync targets an ENTITY, not one of its primitives: SyncFoliage rebuilds every instance its
+         * entity owns. Masking a key down to this is what lets a sweep over stale primitives collapse to
+         * one call per entity.
+         */
+        static constexpr uint64 kSyncTargetMask = (1ull << kKeySubIndexShift) - 1ull;
 
         uint32  FindPrimitive(uint64 Key) const;
         uint32  AddPrimitive(uint64 Key);
@@ -376,6 +391,9 @@ namespace Lumina
          * constructor must stay the only caller of it in this translation unit.
          */
         struct FSyncPools;
+        // Defined further down, next to the table it indexes; declared here so the binding helpers
+        // below can take one by pointer.
+        struct FBindingMemo;
 
         // Re-reads the owning component and rebuilds everything camera-independent. Returns false when
         // the mesh is not resolvable yet, in which case the primitive stays parked as undrawable.
@@ -384,6 +402,27 @@ namespace Lumina
         // Binds one primitive's surfaces to the batch registry. Only called when its resolve changed.
         void    BindSurfaces(uint32 Index);
         void    ReleaseBindings(uint32 Index);
+
+        /**
+         * The per-interned-mesh binding template for (Handle, Generation), rebuilt only when stale.
+         * Returns nullptr for a primitive with no resolve handle (dynamic meshes), which must bind
+         * per-surface instead. Hoisted out of BindSurfaces so the match check below can consult it
+         * WITHOUT committing to a rebind.
+         */
+        const FBindingMemo* EnsureBindingMemo(uint32 ResolveHandle, uint32 Generation,
+                                              const TVector<FResolvedSurface>& Surfaces);
+
+        /**
+         * True when the bindings this primitive already holds are what a fresh bind would produce --
+         * everything except InstanceSlot, which is precisely the field a rebind would needlessly churn.
+         *
+         * A resolve generation moving means the cache entry was REBUILT, not that anything a binding
+         * derives from actually differs; a mesh finishing its GPU upload, or a material recompiling,
+         * re-interns to the identical batch index and LOD table. Treating "regenerated" as "different"
+         * is what put the whole rebind path (see BindSurfaces) behind an event that usually changes
+         * nothing -- and for foliage that path is once per baked instance.
+         */
+        bool    BindingsMatchMemo(uint32 Index, const FBindingMemo& Memo) const;
 
         /**
          * Writes one primitive's surfaces into their retained instance slots and records them as dirty.
@@ -690,6 +729,10 @@ namespace Lumina
             uint32 SyncEntityCalls      = 0;
             uint32 SyncFoliageCalls     = 0;
             uint32 BindCalls            = 0;
+            // Rebinds a generation bump asked for and BindingsMatchMemo proved unnecessary. On a foliage
+            // scene this should dwarf BindCalls whenever an asset finishes streaming; the two trading
+            // places means something is genuinely re-interning and the memo is not the problem.
+            uint32 BindsSkipped         = 0;
             uint32 RefreshInstanceCalls = 0;
             // The split PartitionDrain produced. Only the transform half runs wide, so these two say
             // directly how much of a slow Sync/Apply is even parallelizable.

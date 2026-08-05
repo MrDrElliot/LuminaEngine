@@ -11,6 +11,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <thread>
 
 using namespace Lumina;
 
@@ -801,4 +802,130 @@ TEST(Coro, ManyConcurrentWhenAll_Stress)
         const int Result = SyncWait(CoWhenAllFan(&Counter, 64));
         ASSERT_EQ(Result, 64) << "round " << Round;
     }
+}
+
+// ----------------------------------------------------------------------------
+// Assist-wait isolation (ETaskPriority::Background / EJobPriority::Background)
+//
+// An external thread that waits on a counter cannot park (it has no fiber), so it "assist-waits": it
+// dequeues and runs queued jobs inline until the counter clears. That steal is UNTARGETED -- it takes
+// the first job in any worker queue, with no relationship to the counter being awaited. Unbounded,
+// that means a main thread waiting on the draw graph can adopt an unrelated multi-hundred-millisecond
+// background build and run it to completion inside the wait (which Tracy then renders, correctly and
+// very confusingly, as the build nesting under FTaskGraph::Wait).
+//
+// Background is the band excluded from that path. Both halves of the contract are pinned here: an
+// assisting thread must NEVER run Background work, and must STILL run everything else -- the latter is
+// what keeps an external wait from starving when the work it needs is queued behind busy workers.
+//
+// Neither test saturates the pool or spins without a bound. An earlier version tried to occupy every
+// worker with blocking jobs and deadlocked when two blockers landed on the same worker: job placement
+// rotates through a shared cursor, so "N jobs reach N distinct workers" is not something a test may assume.
+// ----------------------------------------------------------------------------
+
+namespace
+{
+    struct FAssistProbe
+    {
+        std::thread::id     WaitingThread;
+        std::atomic<uint32> RanOnWaitingThread{0};
+        std::atomic<uint32> RanTotal{0};
+    };
+
+    // Real work, so the queue stays deep enough that an assisting thread gets many chances to steal
+    // from it. A trivial body would drain before the wait even starts and prove nothing.
+    void AssistProbeJob(void* Arg, uint32)
+    {
+        FAssistProbe& P = *static_cast<FAssistProbe*>(Arg);
+
+        const auto End = std::chrono::steady_clock::now() + std::chrono::microseconds(100);
+        while (std::chrono::steady_clock::now() < End)
+        {
+        }
+
+        if (std::this_thread::get_id() == P.WaitingThread)
+        {
+            P.RanOnWaitingThread.fetch_add(1, std::memory_order_relaxed);
+        }
+        P.RanTotal.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    constexpr uint32 kAssistProbeCount = 2048;
+}
+
+TEST(TaskSystem, AssistWaitNeverRunsBackgroundWork)
+{
+    FAssistProbe Probe;
+    Probe.WaitingThread = std::this_thread::get_id();
+
+    Jobs::FCounter* ProbeCounter = Jobs::AllocCounter(0);
+    for (uint32 i = 0; i < kAssistProbeCount; ++i)
+    {
+        Jobs::RunJob(&AssistProbeJob, &Probe, Jobs::EJobPriority::Background, ProbeCounter, "AssistTest.Background");
+    }
+
+    // The wait is gated by an OS thread, NOT by the Background work itself. Waiting on that work from
+    // this thread is the anti-pattern EJobPriority::Background explicitly warns about: this is exactly
+    // the thread forbidden from running it, so the wait would make no progress of its own and rest
+    // entirely on worker wake-ups. That is a fine thing to warn about and a terrible thing to build a
+    // test on -- an earlier version did, and intermittently hung the suite.
+    Jobs::FCounter* Gate = Jobs::AllocCounter(1);
+    std::thread Releaser([Gate]
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        Jobs::DecrementCounter(Gate, 1);
+    });
+
+    // Assist-waits for ~50ms with a deep Background queue alongside. Pre-fix, this drained dozens of
+    // them onto this thread.
+    Jobs::WaitForCounter(Gate, 0);
+    Releaser.join();
+
+    EXPECT_EQ(Probe.RanOnWaitingThread.load(), 0u)
+        << "an assist-waiting thread executed Background work; the exclusion in TryStealAny is not holding, "
+           "so a frame-critical wait can again inline an unrelated background build";
+
+    // Drained by polling rather than by waiting on the counter, for the same reason. Bounded, so a
+    // stalled pool fails the assertion instead of hanging the suite.
+    const auto Deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (Probe.RanTotal.load(std::memory_order_relaxed) < kAssistProbeCount
+        && std::chrono::steady_clock::now() < Deadline)
+    {
+        std::this_thread::yield();
+    }
+
+    // Proves the assertion above did not pass vacuously: the work really was there to be stolen.
+    EXPECT_EQ(Probe.RanTotal.load(), kAssistProbeCount) << "Background work never drained onto workers";
+    EXPECT_EQ(Probe.RanOnWaitingThread.load(), 0u);
+
+    Jobs::FreeCounter(Gate);
+    if (Probe.RanTotal.load() == kAssistProbeCount)
+    {
+        // Only once every job that references it has finished.
+        Jobs::FreeCounter(ProbeCounter);
+    }
+}
+
+TEST(TaskSystem, AssistWaitStillRunsNonBackgroundWork)
+{
+    // The complement, guarding against over-correcting the above into "assist nothing". The assist path
+    // is what stops an external thread's wait from starving while its own fan-out sits queued behind
+    // busy workers; if this regresses, every ParallelFor issued from the main thread gets slower and
+    // WaitForCounter can stall for as long as the pool stays saturated.
+    FAssistProbe Probe;
+    Probe.WaitingThread = std::this_thread::get_id();
+
+    Jobs::FCounter* Counter = Jobs::AllocCounter(0);
+    for (uint32 i = 0; i < kAssistProbeCount; ++i)
+    {
+        Jobs::RunJob(&AssistProbeJob, &Probe, Jobs::EJobPriority::Normal, Counter, "AssistTest.Normal");
+    }
+
+    Jobs::WaitForCounter(Counter, 0);
+
+    EXPECT_EQ(Probe.RanTotal.load(), kAssistProbeCount);
+    EXPECT_GT(Probe.RanOnWaitingThread.load(), 0u)
+        << "the assist path ran no work inline during a fan-out-and-wait; an external wait can now starve";
+
+    Jobs::FreeCounter(Counter);
 }

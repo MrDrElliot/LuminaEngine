@@ -140,10 +140,34 @@ namespace Lumina::RHI::Textures
         return TextureDesc;
     }
 
+    static FTextureDesc MakeTexture3DDesc(const FTexture3DDesc& Desc)
+    {
+        FTextureDesc TextureDesc;
+        TextureDesc.Type      = ETextureType::Tex3D;
+        TextureDesc.Dimension = FUIntVector3(Math::Max(Desc.Width, 1u), Math::Max(Desc.Height, 1u), Math::Max(Desc.Depth, 1u));
+        TextureDesc.MipCount  = Math::Max(Desc.Mips, 1u);
+        TextureDesc.Format    = Desc.Format;
+        TextureDesc.Usage     = EImageUsageFlags::Sampled | EImageUsageFlags::TransferDst | EImageUsageFlags::TransferSrc;
+        if (Desc.bStorage)
+        {
+            TextureDesc.Usage |= EImageUsageFlags::Storage;
+        }
+        return TextureDesc;
+    }
+
     FManagedTexture Create(const FTexture2DDesc& Desc)
     {
         FManagedTexture Out;
         Out.Texture     = CreateTexture(MakeTexture2DDesc(Desc));
+        SetDebugName(Out.Texture, Desc.DebugName);
+        Out.SampledSlot = HeapWriteTexture(Core::GetGlobalHeap(), Out.Texture);
+        return Out;
+    }
+
+    FManagedTexture Create(const FTexture3DDesc& Desc)
+    {
+        FManagedTexture Out;
+        Out.Texture     = CreateTexture(MakeTexture3DDesc(Desc));
         SetDebugName(Out.Texture, Desc.DebugName);
         Out.SampledSlot = HeapWriteTexture(Core::GetGlobalHeap(), Out.Texture);
         return Out;

@@ -159,6 +159,96 @@ namespace Lumina
         }
     }
 
+    namespace
+    {
+        // Uploads Resource.DistanceField into a bindless Tex3D, replacing any texture already there.
+        // Called from CreateForResource, so a mesh whose buffers are rebuilt (reimport, editor rebuild,
+        // a dynamic mesh committing) refreshes the volume with everything else.
+        void CreateDistanceFieldTexture(FMeshResource& Resource)
+        {
+            RHI::FManagedTexture& Texture = Resource.MeshBuffers.DistanceFieldTexture;
+
+            // Released unconditionally: a rebuild that turned the field OFF has to drop the old volume,
+            // and the sentinel written into the header below is what stops shaders reading it.
+            RHI::Textures::Release(Texture);
+
+            const FDistanceFieldVolume& Volume = Resource.DistanceField;
+            if (!Volume.IsValid())
+            {
+                return;
+            }
+
+            RHI::FTexture3DDesc Desc;
+            Desc.Width     = Volume.Dimensions.x;
+            Desc.Height    = Volume.Dimensions.y;
+            Desc.Depth     = Volume.Dimensions.z;
+            Desc.Format    = EFormat::R8_UNORM;
+            Desc.DebugName = "Mesh.DistanceField";
+
+            Texture = RHI::Textures::Create(Desc);
+            if (!Texture.IsValid())
+            {
+                LOG_ERROR("Distance field texture creation failed for mesh '{}'; SDF nodes will read as invalid.",
+                          Resource.Name.c_str());
+                return;
+            }
+
+            RHI::Textures::Upload(Texture, 0, Volume.Distances.data(), Volume.Distances.size());
+        }
+
+        // Fills the header from the buffer set and volume currently on Resource. Split out so the
+        // distance-field refresh path can rewrite the header in place without rebuilding anything else.
+        FMeshletHeaderGPU MakeMeshletHeader(const FMeshResource& Resource)
+        {
+            const FMeshResource::FMeshBuffers& MB = Resource.MeshBuffers;
+            const FDistanceFieldVolume& Volume    = Resource.DistanceField;
+
+            const bool bHasField = MB.DistanceFieldTexture.IsValid()
+                                && MB.DistanceFieldTexture.SampledSlot != RHI::kInvalidHeapSlot;
+
+            FMeshletHeaderGPU Header;
+            Header.MeshletsAddress          = MB.MeshletBuffer;
+            Header.BoundsAddress            = MB.MeshletBoundsBuffer;
+            Header.VerticesAddress          = MB.MeshletVertexBuffer;
+            Header.TrianglesAddress         = MB.MeshletTriangleBuffer;
+            Header.DistanceFieldIndex       = bHasField ? MB.DistanceFieldTexture.SampledSlot : DistanceField::kInvalidIndex;
+            Header.DistanceFieldFlags       = Volume.bTwoSided ? (uint32)EDistanceFieldFlags::TwoSided : 0u;
+            Header.DistanceFieldMinX        = Volume.VolumeMin.x;
+            Header.DistanceFieldMinY        = Volume.VolumeMin.y;
+            Header.DistanceFieldMinZ        = Volume.VolumeMin.z;
+            Header.DistanceFieldSizeX       = Volume.VolumeSize.x;
+            Header.DistanceFieldSizeY       = Volume.VolumeSize.y;
+            Header.DistanceFieldSizeZ       = Volume.VolumeSize.z;
+            Header.DistanceFieldMaxDistance = Volume.MaxDistance;
+            Header._Pad0 = 0;
+            Header._Pad1 = 0;
+            Header._Pad2 = 0;
+            return Header;
+        }
+    }
+
+    void MeshBuffers::RefreshDistanceField(FMeshResource& Resource)
+    {
+        // Nothing to publish through: the mesh never got its buffers, so the next CreateForResource
+        // picks the volume up anyway.
+        if (Resource.MeshBuffers.MeshletHeaderBuffer == 0)
+        {
+            return;
+        }
+
+        CreateDistanceFieldTexture(Resource);
+
+        // Rewritten in place rather than reallocated, so the header ADDRESS is unchanged and every
+        // component that cached it (SMeshComponent::CachedMeshletHeaderAddress) stays correct -- no
+        // resolve-cache invalidation, no re-upload of the retained instance buffer.
+        //
+        // Safe against frames already in flight: the four meshlet addresses are untouched, and a frame
+        // that reads the new field index resolves it to the new volume, which is live. The volume it
+        // replaced is frame-deferred, so a frame that reads the OLD index is equally fine.
+        const FMeshletHeaderGPU Header = MakeMeshletHeader(Resource);
+        RHI::UploadBuffer(Resource.MeshBuffers.MeshletHeaderBuffer, &Header, sizeof(FMeshletHeaderGPU));
+    }
+
     void MeshBuffers::CreateForResource(FMeshResource& Resource)
     {
         if (Resource.MeshletData.IsEmpty())
@@ -240,13 +330,45 @@ namespace Lumina
             return;
         }
 
-        FMeshletHeaderGPU Header;
-        Header.MeshletsAddress    = MB.MeshletBuffer;
-        Header.BoundsAddress      = MB.MeshletBoundsBuffer;
-        Header.VerticesAddress    = MB.MeshletVertexBuffer;
-        Header.TrianglesAddress   = MB.MeshletTriangleBuffer;
+        // Volume upload before the header, because the header publishes its heap slot. A field that
+        // failed to allocate leaves the sentinel in place, which is what every SDF shader path gates on.
+        CreateDistanceFieldTexture(Resource);
 
+        const FMeshletHeaderGPU Header = MakeMeshletHeader(Resource);
         MB.MeshletHeaderBuffer = CreateAndUpload(&Header, sizeof(FMeshletHeaderGPU), "Mesh.MeshletHeader");
+    }
+
+    bool CMesh::HasDistanceField() const
+    {
+        return MeshResources != nullptr && MeshResources->DistanceField.IsValid();
+    }
+
+    void CMesh::BuildDistanceField()
+    {
+        if (MeshResources == nullptr)
+        {
+            return;
+        }
+
+        // Build into a scratch volume first. Build() clears its output on every failure path, and
+        // assigning that straight onto the resource would silently destroy a good field whenever a
+        // rebuild could not run (no geometry at the chosen LOD, degenerate bounds).
+        FDistanceFieldVolume NewVolume;
+        const bool bBuilt = DistanceField::Build(*MeshResources, DistanceFieldSettings, NewVolume);
+
+        // A disabled setting is a real instruction to drop the field, not a failure, so the two are
+        // distinguished here rather than inside Build.
+        if (!bBuilt && DistanceFieldSettings.bEnabled && MeshResources->DistanceField.IsValid())
+        {
+            return;
+        }
+
+        MeshResources->DistanceField = Move(NewVolume);
+
+        // Republishes the volume through the existing meshlet header. Deliberately NOT
+        // GenerateGPUBuffers: that allocates a fresh set of meshlet buffers and leaks the current one,
+        // since nothing frees the old addresses before overwriting them.
+        MeshBuffers::RefreshDistanceField(*MeshResources);
     }
 
     void CMesh::GenerateGPUBuffers()

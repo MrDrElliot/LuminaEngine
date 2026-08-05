@@ -1226,5 +1226,25 @@ namespace Lumina::Import::Mesh
             }
             AnalyzeMeshStatistics(*MeshPtr, Data.MeshStatistics);
         }
+
+        // Distance fields last, and serially over resources: the builder parallelises over its own Z
+        // slices, so putting it inside the per-resource ParallelFor above would nest one ParallelFor
+        // inside another. It also has to run AFTER GenerateMeshlets, because it voxelises the baked
+        // meshlets rather than the import scratch (that is what lets a rebuild work on a loaded asset).
+        if (Options.DistanceField.bEnabled)
+        {
+            if (Progress)
+            {
+                Progress->UpdateMessage("Building distance fields...");
+            }
+
+            for (TUniquePtr<FMeshResource>& MeshPtr : Data.Resources)
+            {
+                if (MeshPtr)
+                {
+                    DistanceField::Build(*MeshPtr, Options.DistanceField, MeshPtr->DistanceField, Progress);
+                }
+            }
+        }
     }
 }

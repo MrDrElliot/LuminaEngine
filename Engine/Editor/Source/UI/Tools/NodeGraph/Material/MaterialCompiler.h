@@ -202,6 +202,28 @@ namespace Lumina
         };
         void ParallaxOcclusionMapping(CMaterialGraphNode* Node, int32 HeightTextureIndex, const FParallaxInputs& Inputs,
                                       CMaterialOutput* UVOut, CMaterialOutput* ShadowOut, CMaterialOutput* HeightOut);
+
+        // Mesh distance field (Includes/DistanceField.slang). All three read the CURRENT primitive's own
+        // baked SDF volume through its meshlet header, so they are surface-domain, pixel-stage nodes; the
+        // helpers below emit the shared per-node preamble that resolves the instance and its volume.
+        //
+        // A material may use several of these; the preamble is emitted once per node and each binds its
+        // own outputs by ResolvedVar, so no cross-node ordering assumption exists.
+        void MeshDistanceField(CMaterialGraphNode* Node, CMaterialInput* Position,
+                               CMaterialOutput* DistanceOut, CMaterialOutput* GradientOut, CMaterialOutput* ValidOut);
+
+        struct FDistanceFieldOcclusionInputs
+        {
+            CMaterialInput* Normal    = nullptr;
+            CMaterialInput* Radius    = nullptr;
+            CMaterialInput* ConeAngle = nullptr;
+            CMaterialInput* Intensity = nullptr;
+        };
+        void MeshDistanceFieldOcclusion(CMaterialGraphNode* Node, const FDistanceFieldOcclusionInputs& Inputs,
+                                        int32 StepCount, CMaterialOutput* OcclusionOut);
+
+        void MeshDistanceFieldThickness(CMaterialGraphNode* Node, CMaterialInput* Normal, CMaterialInput* MaxDistance,
+                                        int32 StepCount, CMaterialOutput* ThicknessOut, CMaterialOutput* NormalizedOut);
         void WorldPos(const FString& ID, CMaterialGraphNode* Node = nullptr);
         void CameraPos(const FString& ID, CMaterialGraphNode* Node = nullptr);
         void ObjectScale(const FString& ID, CMaterialGraphNode* Node = nullptr);

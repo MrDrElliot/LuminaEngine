@@ -320,7 +320,10 @@ namespace Lumina
             StatRow("In use",       "%u", LS.FibersInUse);
             StatRow("Free",         "%u", LS.FibersFree);
             StatRow("Ready",        "%u", LS.FibersReady);
+            // Background is broken out rather than folded in: a deep Background queue is normal (a
+            // terrain stream), whereas a deep Low queue during a hitch is not, and summing them hides that.
             StatRow("Queue H/N/L",  "%u / %u / %u", LS.QueueDepth[0], LS.QueueDepth[1], LS.QueueDepth[2]);
+            StatRow("Queue Bkgd",   "%u", LS.QueueDepth[3]);
             StatRow("In flight",    "%lld", (long long)LS.InFlight);
             StatRow("Jobs / frame", "%u", F.JobsRun);
             StatRow("Parks",        "%u", F.Parks);

@@ -24,6 +24,11 @@ namespace Lumina
         // a resource without owning a CMesh -- and unlike CMesh::GenerateGPUBuffers this does NOT bump the
         // resolve epoch or drop the CPU scratch, which are the asset path's concerns.
         RUNTIME_API void CreateForResource(FMeshResource& Resource);
+
+        // Re-uploads Resource.DistanceField into a fresh volume texture and rewrites the meshlet header
+        // IN PLACE with its new heap slot. The header address is preserved, so cached header addresses
+        // stay valid and no resolve-cache invalidation is needed. No-op when the mesh has no header yet.
+        RUNTIME_API void RefreshDistanceField(FMeshResource& Resource);
     }
 
     REFLECT()
@@ -42,6 +47,17 @@ namespace Lumina
 
         void GenerateBoundingBox();
         void GenerateGPUBuffers();
+
+        /** True when a field is baked and resident. */
+        bool HasDistanceField() const;
+
+        /** (Re)voxelize this mesh from its baked meshlets using DistanceFieldSettings, then refresh the
+         *  GPU buffers so the new volume and its heap slot reach the shader. Clears the field instead
+         *  when the settings are disabled. Does NOT mark the package dirty -- the caller decides that.
+         *
+         *  Runs the build synchronously on the calling thread (parallel internally), which for a default
+         *  48^3 field is well under a second, but scales cubically with Resolution. */
+        void BuildDistanceField();
 
         uint32 GetNumMaterials() const { return (uint32)Materials.size(); }
         CMaterialInterface* GetMaterialAtSlot(size_t Slot) const;
@@ -70,6 +86,12 @@ namespace Lumina
 
         PROPERTY(Script, Category = "AABB")
         FAABB BoundingBox;
+
+        /** Build inputs for this mesh's signed distance field. Edited here rather than only at import so
+         *  a field can be added, retuned, or dropped without round-tripping the source file; the mesh
+         *  editor's Build Distance Field action applies them. Seeded from the import dialog. */
+        PROPERTY(Editable, Category = "Distance Field")
+        SDistanceFieldBuildSettings DistanceFieldSettings;
 
         /** File this mesh was last imported from, so "Reimport From File..." can open on it. Empty for
          *  procedurally generated meshes and for assets imported before this was recorded. Matches the

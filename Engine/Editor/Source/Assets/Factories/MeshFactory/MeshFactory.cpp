@@ -147,6 +147,79 @@ namespace Lumina
             ImGui::PopID();
         }
 
+        void DragIntRow(const char* Label, const char* Tooltip, uint32& Value, int32 Min, int32 Max)
+        {
+            PropertyLabel(Label, Tooltip);
+            ImGui::PushID(Label);
+            int32 Temp = (int32)Value;
+            if (ImGui::DragInt("##v", &Temp, 1.0f, Min, Max))
+            {
+                Value = (uint32)eastl::clamp(Temp, Min, Max);
+            }
+            ImGui::PopID();
+        }
+
+        void DrawDistanceFieldSection(SDistanceFieldBuildSettings& Settings)
+        {
+            if (!ImGui::CollapsingHeader("Distance Field"))
+            {
+                return;
+            }
+
+            ImGui::TextWrapped(
+                "Bakes a signed distance field volume from the mesh. Materials sample it through the "
+                "Distance Field nodes for self-occlusion, thickness, soft masks and ray marching. This is "
+                "the most expensive step of an import and can be added later from the mesh editor.");
+            ImGui::Spacing();
+
+            if (BeginPropertyTable("DistanceFieldTable"))
+            {
+                CheckboxRow("Generate Distance Field",
+                            "Voxelize the mesh into a signed distance field. Off leaves the mesh without "
+                            "one; every Distance Field material node then reports invalid.",
+                            Settings.bEnabled);
+
+                if (Settings.bEnabled)
+                {
+                    DragIntRow("Resolution",
+                               "Voxels along the mesh's longest axis. Build time and memory both scale with "
+                               "the cube of this: 32 is coarse and near-free, 48 suits most props, 96+ is for "
+                               "hero assets whose creases matter.",
+                               Settings.Resolution, 4, 256);
+
+                    DragFloatRow("Narrow Band Scale",
+                                 "Width of the accurate band as a fraction of the mesh's longest extent. "
+                                 "Distances saturate past it, so raise it for effects that need to reach far "
+                                 "from the surface and lower it for finer precision close to it.",
+                                 Settings.NarrowBandScale, 0.01f, 1.0f, "%.3f");
+
+                    CheckboxRow("Two Sided",
+                                "For thin or open geometry (foliage cards, cloth, anything not closed). "
+                                "Stores unsigned distance, skipping the inside/outside test that produces "
+                                "speckle on non-closed meshes -- and builds much faster.",
+                                Settings.bTwoSided);
+
+                    DragIntRow("Source LOD",
+                               "Which baked LOD supplies the triangles. A distance field is low-frequency, so "
+                               "a coarser level usually voxelizes the same for a fraction of the cost.",
+                               Settings.SourceLOD, 0, 3);
+
+                    // The single number that decides whether this import takes a moment or a coffee break,
+                    // so it is shown rather than left to be discovered after committing.
+                    const uint32 R = eastl::clamp(Settings.Resolution, 4u, 256u);
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::TextUnformatted("Worst Case Size");
+                    ImGui::TableSetColumnIndex(1);
+                    ImGuiX::Text("{0} per mesh", ImGuiX::FormatSize((size_t)R * R * R));
+                }
+
+                ImGui::EndTable();
+            }
+            ImGui::Spacing();
+        }
+
         void DrawOptionsSection(FMeshImportOptions& Options)
         {
             if (!ImGui::CollapsingHeader("Import Options", ImGuiTreeNodeFlags_DefaultOpen))
@@ -182,6 +255,8 @@ namespace Lumina
                 ImGui::EndTable();
             }
             ImGui::Spacing();
+
+            DrawDistanceFieldSection(Options.DistanceField);
         }
 
         void DrawMeshStats(const FMeshImportData& Data)
@@ -582,6 +657,11 @@ namespace Lumina
         Options.bImportMaterials  = false;
         Options.bImportTextures   = false;
 
+        // Taken from the ASSET, not the dialog: a reimport refreshes geometry against settings the asset
+        // already carries, and the dialog's globals are whatever the last unrelated import happened to
+        // leave behind. Without this a mesh with a field silently loses it on every reimport.
+        Options.DistanceField = Mesh->DistanceFieldSettings;
+
         FinalizeMeshImportData(ImportData, Options, &SlowTask, 0.9f);
 
         const int32 ResourceIndex = FindResourceForAsset(ImportData, Mesh->GetName(), Mesh->IsSkinned());
@@ -797,6 +877,10 @@ namespace Lumina
 
             // Recorded so "Reimport From File..." opens on the file this came from.
             NewMesh->SourcePath = FString(RawPath.c_str());
+
+            // Seeded from the import dialog, so the asset remembers what its field was built with and a
+            // later rebuild from the mesh editor reproduces it rather than falling back to the defaults.
+            NewMesh->DistanceFieldSettings = Options.DistanceField;
 
             NewMesh->MeshResources = Move(MeshResource);
             CreatedObjects.push_back(NewMesh);

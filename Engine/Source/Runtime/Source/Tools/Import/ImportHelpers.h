@@ -9,6 +9,7 @@
 #include "Memory/SmartPtr.h"
 #include "Platform/Platform.h"
 #include "Renderer/Format.h"
+#include "Renderer/MeshDistanceField.h"
 #include "Renderer/RHITexture.h"
 #include "Assets/AssetTypes/Textures/Texture.h"
 
@@ -130,6 +131,11 @@ namespace Lumina::Import
             float Scale             = 1.0f;
             /** Skip heavy finalization and user transforms; dialog defers them to commit time. */
             bool bSkipFinalization  = false;
+
+            /** Seeds CMesh::DistanceFieldSettings on every mesh the import creates, and drives the
+             *  voxelisation pass in FinalizeMeshImportData. Off by default: the build is the single most
+             *  expensive step of a mesh import, and most meshes never need a field. */
+            SDistanceFieldBuildSettings DistanceField;
         };
 
         struct FMeshImportImage : FImportSettings

@@ -4,6 +4,7 @@
 #include "Includes/IBLRuntime.slang"
 #include "Includes/ShadowSampling.slang"
 #include "Includes/ParallaxOcclusion.slang"
+#include "Includes/DistanceField.slang"
 
 // Shared opaque/translucent surface shading, factored out of the geometry pixel shaders so the FORWARD
 // base pass (BasePixelPass.slang, rasterizer-interpolated FBaseVertexOutput) and the DEFERRED VisBuffer

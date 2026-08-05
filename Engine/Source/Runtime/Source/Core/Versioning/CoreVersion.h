@@ -19,6 +19,9 @@ enum class ELuminaEngineVersion : uint32
 	// display rendering, which round-tripped into a real name whose IsNone() was false.
 	FNAME_NONE_EMPTY_STRING,
 
+	// FMeshResource serializes its baked signed distance field volume.
+	MESH_DISTANCE_FIELD,
+
 	AUTOMATIC_VERSION_PLUS_ONE,
 	AUTOMATIC_VERSION = AUTOMATIC_VERSION_PLUS_ONE - 1
 };

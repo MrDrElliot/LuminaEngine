@@ -751,6 +751,48 @@ namespace Lumina
             ImGui::EndMenu();
         }
 
+        if (ImGui::BeginMenu(LE_ICON_CUBE_OUTLINE " Distance Field"))
+        {
+            CStaticMesh* Mesh = Cast<CStaticMesh>(Asset.Get());
+            const FDistanceFieldVolume& Volume = Mesh->GetMeshResource().DistanceField;
+
+            if (Volume.IsValid())
+            {
+                ImGuiX::Text("{0} x {1} x {2}", Volume.Dimensions.x, Volume.Dimensions.y, Volume.Dimensions.z);
+                ImGuiX::Text("{0}{1}", ImGuiX::FormatSize(Volume.GetSizeBytes()), Volume.bTwoSided ? ", two-sided" : "");
+                ImGuiX::Text("Band: {:.3f} units", Volume.MaxDistance);
+            }
+            else
+            {
+                ImGui::TextDisabled("No distance field baked.");
+            }
+            ImGui::Separator();
+
+            // Tune through Mesh Properties (Distance Field category); this only applies them. Keeping the
+            // settings on the property table means undo/redo and the dirty flag already work on them.
+            if (ImGui::MenuItem(LE_ICON_REFRESH " Build Distance Field"))
+            {
+                // Voxelizes the mesh's baked meshlets, so it works on a loaded asset with no source file
+                // in reach. Synchronous: a default 48^3 field is sub-second, and doing it off-thread would
+                // need the GPU upload marshalled back anyway.
+                Mesh->BuildDistanceField();
+                Asset->GetPackage()->MarkDirty();
+                PropertyTable.MarkDirty();
+            }
+            ImGuiX::TextTooltip("{}", "Rebuild from the settings in Mesh Properties > Distance Field. "
+                                      "Cost scales with the cube of Resolution.");
+
+            if (Volume.IsValid() && ImGui::MenuItem(LE_ICON_DELETE " Clear Distance Field"))
+            {
+                Mesh->DistanceFieldSettings.bEnabled = false;
+                Mesh->BuildDistanceField();
+                Asset->GetPackage()->MarkDirty();
+                PropertyTable.MarkDirty();
+            }
+
+            ImGui::EndMenu();
+        }
+
         if (ImGui::BeginMenu(LE_ICON_LINK " Sockets"))
         {
             if (ImGui::MenuItem(LE_ICON_PLUS " Add Socket"))

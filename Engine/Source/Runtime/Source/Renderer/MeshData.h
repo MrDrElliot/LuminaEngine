@@ -3,10 +3,12 @@
 #include "RenderResource.h"
 #include "RHI.h"
 #include "RHICore.h"
+#include "RHITexture.h"
 #include "Containers/Array.h"
 #include "Lumina.h"
 #include "Core/Serialization/Archiver.h"
 #include "Core/Utils/NonCopyable.h"
+#include "Renderer/MeshDistanceField.h"
 #include "Renderer/Vertex.h"
 
 namespace Lumina
@@ -108,12 +110,41 @@ namespace Lumina
 
     // Per-mesh GPU header. Reached through FGPUInstance's MeshletHeader BDA.
     // Positions are full float3 in the vertex buffer -- no per-LOD grid needed.
+    //
+    // Slang reads this through a pointer under SCALAR layout, where every member sits at its own
+    // natural alignment with no vector padding. The distance-field block is therefore declared as loose
+    // floats rather than a float3: a float3 aligns to 4 under scalar layout but to 16 in C++ (FVector3
+    // is not over-aligned today, but nothing stops it becoming so), and the two would silently disagree.
+    // Keep this member-for-member identical to FMeshletHeader in Includes/Common.slang.
     struct alignas(16) FMeshletHeaderGPU
     {
         uint64    MeshletsAddress;                  // FMeshlet*
         uint64    BoundsAddress;                    // FMeshletBounds*
         uint64    VerticesAddress;                  // uint32*
         uint64    TrianglesAddress;                 // uint32*
+
+        // gTextures3D[] slot of this mesh's distance field, or DistanceField::kInvalidIndex when the
+        // mesh has none. Every SDF material node gates on this, so it must be written on ALL paths.
+        uint32    DistanceFieldIndex;
+        // bit0 = two-sided (unsigned) encoding.
+        uint32    DistanceFieldFlags;
+
+        // Mesh-local AABB the volume spans, and the local-space distance the encoded range covers.
+        float     DistanceFieldMinX, DistanceFieldMinY, DistanceFieldMinZ;
+        float     DistanceFieldSizeX, DistanceFieldSizeY, DistanceFieldSizeZ;
+        float     DistanceFieldMaxDistance;
+
+        uint32    _Pad0;
+        uint32    _Pad1;
+        uint32    _Pad2;
+    };
+    static_assert(sizeof(FMeshletHeaderGPU) == 80, "FMeshletHeaderGPU must match FMeshletHeader in Common.slang");
+
+    /** FMeshletHeaderGPU::DistanceFieldFlags bits. Mirrored in Includes/DistanceField.slang. */
+    enum class EDistanceFieldFlags : uint32
+    {
+        None      = 0,
+        TwoSided  = BIT(0),
     };
 
     struct FGeometrySurface final
@@ -163,6 +194,12 @@ namespace Lumina
             // that sequence, and it faults in the mesh shader's vertex/triangle fetch.
             static constexpr uint32 kResolveLagFrames = 2;
 
+            // The mesh's distance field volume (Tex3D). Its heap slot is published in the meshlet
+            // header, so it dies with the same set. Release is frame-deferred by kFramesInFlight and
+            // repoints the freed slot at the magenta placeholder, so the worst a frame recorded against
+            // the old index can do is sample a constant -- not fault.
+            RHI::FManagedTexture DistanceFieldTexture;
+
             ~FMeshBuffers()
             {
                 RHI::Core::DeferredFree(MeshletBuffer,         kResolveLagFrames);
@@ -170,6 +207,7 @@ namespace Lumina
                 RHI::Core::DeferredFree(MeshletVertexBuffer,   kResolveLagFrames);
                 RHI::Core::DeferredFree(MeshletTriangleBuffer, kResolveLagFrames);
                 RHI::Core::DeferredFree(MeshletHeaderBuffer,   kResolveLagFrames);
+                RHI::Textures::Release(DistanceFieldTexture);
             }
         };
 
@@ -190,6 +228,11 @@ namespace Lumina
         FMeshletData                MeshletData;
         FMeshBuffers                MeshBuffers;
         bool                        bSkinnedMesh = false;
+
+        // Baked signed distance field, empty when the mesh has none. Kept on the CPU after upload: it is
+        // small (a 48^3 field is 108 KB), and the editor's field inspector and any future CPU query path
+        // both need it. Survives ClearVertices, like MeshletData does.
+        FDistanceFieldVolume        DistanceField;
 
         // Highest joint index any skinned vertex references, +1 (0 when not skinned). Computed from the
         // packed meshlet vertices at GPU-buffer creation, before the import scratch is dropped.
@@ -347,6 +390,13 @@ namespace Lumina
                     Ar << Surface.LODMeshletCount[i];
                     Ar << Surface.LODScreenThreshold[i];
                 }
+            }
+
+            // Assets saved before the field existed simply have none; a re-import (or the mesh editor's
+            // Build Distance Field) is what gives them one.
+            if (Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::MESH_DISTANCE_FIELD)
+            {
+                Ar << Data.DistanceField;
             }
 
             return Ar;

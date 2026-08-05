@@ -166,20 +166,20 @@ namespace Lumina::Jobs
         // serial CV ramp is the cold first-wave wake that left only ~22-30 of 30 workers engaged per frame.
         struct alignas(64) FWorkerLocal
         {
-            FJobQueue                  Queues[3];
-            moodycamel::ConsumerToken* Home[3] = { nullptr, nullptr, nullptr };
+            FJobQueue                  Queues[kNumJobPriorities];
+            moodycamel::ConsumerToken* Home[kNumJobPriorities] = {};
             TAtomic<uint32>            WakeSignal{0}; // bumped (with notify) to wake this worker from its wait
 
             FWorkerLocal()
             {
-                for (int P = 0; P < 3; ++P)
+                for (uint32 P = 0; P < kNumJobPriorities; ++P)
                 {
                     Home[P] = Memory::New<moodycamel::ConsumerToken>(Queues[P]);
                 }
             }
             ~FWorkerLocal()
             {
-                for (int P = 0; P < 3; ++P)
+                for (uint32 P = 0; P < kNumJobPriorities; ++P)
                 {
                     Memory::Delete(Home[P]);
                 }
@@ -199,6 +199,14 @@ namespace Lumina::Jobs
             FWorkerLocal*   Workers = nullptr;        // [NumWorkers] per-worker queues (the job storage)
             alignas(64) TAtomic<uint32> NextSubmitWorker{0}; // rotating distribution start, anti-bias
             alignas(64) TAtomic<int64> AvailJobs{0};   // queued, not yet popped (idle-wake hint)
+
+            // Same hint, counting only bands an assist-wait is allowed to take (see TryStealAny).
+            // Tracked separately because the two diverge exactly when it matters: a terrain stream keeps
+            // hundreds of Background jobs queued, and an assisting thread checking AvailJobs would pass
+            // the fast-fail and then scan every worker's queues to completion on every spin, finding
+            // nothing it may run. That turns the cheap idle path into the expensive one precisely while
+            // background work is in flight.
+            alignas(64) TAtomic<int64> AvailAssistJobs{0};
             alignas(64) TAtomic<int64> InFlight{0};    // submitted, not yet completed (WaitForAll)
 
             FWorkFiber*    WorkFibers = nullptr; // pool storage
@@ -328,17 +336,29 @@ namespace Lumina::Jobs
             }
         }
 
+        // Retires one job from the queued hints. Both counters move together for the assistable bands;
+        // Background is deliberately absent from the assist hint, so it must not be decremented there.
+        FORCEINLINE void NoteJobDequeued(uint32 Priority)
+        {
+            G->AvailJobs.fetch_sub(1, std::memory_order_relaxed);
+            if (Priority <= kMaxAssistPriority)
+            {
+                G->AvailAssistJobs.fetch_sub(1, std::memory_order_relaxed);
+            }
+        }
+
         // Worker fast path: drain own queues (priority order) first, then steal from other workers,
-        // resuming the scan where the last steal landed. Decrements AvailJobs on success.
+        // resuming the scan where the last steal landed. Decrements the queued hints on success.
         bool TryGetJobWorker(FQueuedJob& Out, uint32 Slot)
         {
             POPPER_SCOPE();
             FWorkerLocal& Self = G->Workers[Slot];
-            for (int P = 0; P < 3; ++P)
+            // All bands, Background included: a real worker is exactly who should run it.
+            for (uint32 P = 0; P < kNumJobPriorities; ++P)
             {
                 if (Self.Queues[P].try_dequeue(*Self.Home[P], Out))
                 {
-                    G->AvailJobs.fetch_sub(1, std::memory_order_relaxed);
+                    NoteJobDequeued(P);
                     return true;
                 }
             }
@@ -355,12 +375,12 @@ namespace Lumina::Jobs
             for (uint32 i = 1; i < W; ++i)
             {
                 const uint32 V = (Slot + Cursor + i) % W;
-                for (int P = 0; P < 3; ++P)
+                for (uint32 P = 0; P < kNumJobPriorities; ++P)
                 {
                     if (G->Workers[V].Queues[P].try_dequeue(Out))
                     {
                         TLS.StealCursor = Cursor + i;
-                        G->AvailJobs.fetch_sub(1, std::memory_order_relaxed);
+                        NoteJobDequeued(P);
                         return true;
                     }
                 }
@@ -368,13 +388,29 @@ namespace Lumina::Jobs
             return false;
         }
 
-        // External / assist path: no home queues, so steal-scan every worker's queues from a rotating
-        // cursor. Decrements AvailJobs on success.
+        /**
+         * External / assist path: no home queues, so steal-scan every worker's queues from a rotating
+         * cursor. Decrements AvailJobs on success.
+         *
+         * Stops at kMaxAssistPriority, i.e. it will NOT take Background work. This is the whole reason
+         * that band exists. An assisting thread is, by definition, in the middle of waiting for
+         * something else, and this steal has no idea whether the job it grabs has anything to do with
+         * that wait -- it takes the first thing in any queue. Before the exclusion, a main thread
+         * waiting on the draw graph would routinely dequeue an unrelated multi-hundred-millisecond
+         * chunk build and run it to completion inside the wait, which Tracy then (correctly, and very
+         * confusingly) rendered as the build nesting under FTaskGraph::Wait.
+         *
+         * Non-Background bands are still fair game: assist exists so a thread that fanned out its OWN
+         * work helps finish it instead of idling, and to keep an awaited signal that depends on queued
+         * jobs from starving. Both still hold -- only the "quietly adopt a background build" case is gone.
+         */
         bool TryStealAny(FQueuedJob& Out)
         {
             // Fast-fail an empty steal (the common case while assist-waiting on in-flight work): no scan,
-            // no diagnostic churn. Safe because AvailJobs is bumped before any job is enqueued.
-            if (G->AvailJobs.load(std::memory_order_relaxed) <= 0)
+            // no diagnostic churn. The ASSIST count, not AvailJobs: queued Background work is not
+            // stealable here, so counting it would defeat the fast-fail exactly when it matters most.
+            // Safe because the count is bumped before any job is enqueued.
+            if (G->AvailAssistJobs.load(std::memory_order_relaxed) <= 0)
             {
                 return false;
             }
@@ -384,12 +420,12 @@ namespace Lumina::Jobs
             for (uint32 i = 0; i < W; ++i)
             {
                 const uint32 V = (Cursor + i) % W;
-                for (int P = 0; P < 3; ++P)
+                for (uint32 P = 0; P <= kMaxAssistPriority; ++P)
                 {
                     if (G->Workers[V].Queues[P].try_dequeue(Out))
                     {
                         TLS.StealCursor = Cursor + i + 1;
-                        G->AvailJobs.fetch_sub(1, std::memory_order_relaxed);
+                        NoteJobDequeued(P);
                         return true;
                     }
                 }
@@ -1103,8 +1139,12 @@ namespace Lumina::Jobs
         G->InFlight.fetch_add(static_cast<int64>(Count), std::memory_order_acq_rel);
 
         const int Prio = static_cast<int>(Priority);
-        
+
         G->AvailJobs.fetch_add(static_cast<int64>(Count), std::memory_order_relaxed);
+        if ((uint32)Prio <= kMaxAssistPriority)
+        {
+            G->AvailAssistJobs.fetch_add(static_cast<int64>(Count), std::memory_order_relaxed);
+        }
         
         constexpr uint32 kBatch = 256;
         FQueuedJob Batch[kBatch];
@@ -1330,7 +1370,7 @@ namespace Lumina::Jobs
         Out.FibersReady   = Ready > 0 ? static_cast<uint32>(Ready) : 0;
         const uint32 NonRunning = Out.FibersFree + Out.FibersReady;
         Out.FibersInUse   = NonRunning < Out.NumWorkFibers ? Out.NumWorkFibers - NonRunning : 0;
-        for (int P = 0; P < 3; ++P)
+        for (uint32 P = 0; P < kNumJobPriorities; ++P)
         {
             size_t Depth = 0;
             for (uint32 w = 0; w < G->NumWorkers; ++w)

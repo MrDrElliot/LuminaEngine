@@ -267,6 +267,34 @@ namespace Lumina
         float                                           DrawerOpenAmount = 0.0f; // 0..1 slide animation
         bool                                            bDrawerActivatedThisFrame = false; // guards focus-loss auto-close
         ImGuiID                                         MainDockspaceID = 0;    // root editor dockspace, for "Dock in Layout"
+
+        /**
+         * The bottom strip a drawer docks into, split off the dockspace on first use.
+         *
+         * Docking straight into MainDockspaceID put the panel in the ROOT node -- which is where the world
+         * editor lives -- so "Dock in Layout" tabbed the Content Browser behind the viewport instead of
+         * landing under it. Cached so the second panel docked joins the first as a tab rather than
+         * splitting the split; revalidated against the dock context, because a layout reset or an
+         * imgui.ini restore can retire the node behind our back.
+         */
+        ImGuiID                                         BottomDockID = 0;
+
+        /**
+         * Drawer awaiting a bottom dock, applied at the top of the next frame.
+         *
+         * Deferred rather than done at the click: the button is drawn well after ImGui::DockSpace() has
+         * been submitted for the frame, and splitting a node the dockspace has already consumed is not
+         * something the DockBuilder API promises to survive. The dockspace setup block runs the split
+         * before DockSpace() instead, which is where every other DockBuilder call here already lives.
+         */
+        FEditorTool*                                    PendingBottomDockTool = nullptr;
+        float                                           PendingBottomDockHeightFrac = 0.0f;
+
+        // Splits the bottom strip off the dockspace, or returns the live one. HeightFrac seeds the split
+        // ratio so a docked drawer keeps the height it had as an overlay. Returns MainDockspaceID when the
+        // dockspace has no node yet, which is the pre-existing behaviour and simply tabs into the root.
+        ImGuiID GetOrCreateBottomDockID(float HeightFrac);
+
         FEditorTool*                                    LastActiveTool = nullptr;
         FString                                         FocusTargetWindowName; // If this is set we need to switch focus to this window
 

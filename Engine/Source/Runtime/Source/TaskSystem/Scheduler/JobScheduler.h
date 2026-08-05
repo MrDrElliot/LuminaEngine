@@ -23,7 +23,28 @@ namespace Lumina::Jobs
         High   = 0,
         Normal = 1,
         Low    = 2,
+
+        /**
+         * Throughput work that must never be charged to somebody else's latency.
+         *
+         * The three bands above are all urgency hints WITHIN the worker pool -- a worker with nothing
+         * else to do will happily run a Low job, and a thread assist-waiting on an unrelated counter
+         * will happily inline one. Background is the band that changes the second part: an assist-wait
+         * never dequeues from it, so a long build cannot end up executing inside a frame's wait.
+         *
+         * Use it for work whose completion nothing in the current frame depends on and whose duration
+         * dwarfs a frame -- terrain chunk builds, asset cooks, bake passes. Do NOT use it for a fan-out
+         * the submitting thread is about to wait on: that thread would spin instead of helping, since
+         * refusing to inline Background is exactly the point.
+         */
+        Background = 3,
     };
+
+    // Band count, for anything sized per priority. Bands are dense and ordered most-urgent-first.
+    static constexpr uint32 kNumJobPriorities = 4;
+
+    // Highest-numbered band an assist-wait may dequeue from. See EJobPriority::Background.
+    static constexpr uint32 kMaxAssistPriority = (uint32)EJobPriority::Low;
 
     // Opaque, pooled. A counter is "done" when its value reaches the waited-for target (default 0).
     struct FCounter;
@@ -144,7 +165,7 @@ namespace Lumina::Jobs
         uint32 FibersFree    = 0;
         uint32 FibersReady   = 0;
         uint32 FibersInUse   = 0;       // NumWorkFibers - Free - Ready (clamped)
-        uint32 QueueDepth[3] = { 0, 0, 0 }; // per priority (approx)
+        uint32 QueueDepth[kNumJobPriorities] = {}; // per priority (approx), High..Background
         int64  InFlight      = 0;
     };
     RUNTIME_API void GetLiveStats(FJobLiveStats& Out);

@@ -313,12 +313,30 @@ struct FMeshletBounds
 };
 
 // Mirror of Lumina::FMeshletHeaderGPU. Positions are full float3 in the vertex buffer -- no per-LOD grid.
+//
+// The distance-field block is loose floats, not a float3, because scalar layout aligns a float3 to 4
+// bytes while the C++ side is free to over-align FVector3 to 16. Keep this member-for-member identical
+// to FMeshletHeaderGPU (MeshData.h), which static_asserts the 80-byte total.
 struct FMeshletHeader
 {
     FMeshlet*       Meshlets;
     FMeshletBounds* Bounds;
     uint*           Vertices;
     uint*           Triangles;
+
+    uint            DistanceFieldIndex;     // gTextures3D[] slot, or kInvalidDistanceField
+    uint            DistanceFieldFlags;     // bit0 = two-sided (unsigned) encoding
+
+    float           DistanceFieldMinX, DistanceFieldMinY, DistanceFieldMinZ;
+    float           DistanceFieldSizeX, DistanceFieldSizeY, DistanceFieldSizeZ;
+    float           DistanceFieldMaxDistance;
+
+    uint            _DFPad0;
+    uint            _DFPad1;
+    uint            _DFPad2;
+
+    property float3 DistanceFieldMin  { get { return float3(DistanceFieldMinX,  DistanceFieldMinY,  DistanceFieldMinZ);  } }
+    property float3 DistanceFieldSize { get { return float3(DistanceFieldSizeX, DistanceFieldSizeY, DistanceFieldSizeZ); } }
 };
 
 // Mirror of Lumina::FInstanceCullEntry (32 B). The retained scene's CULL-HOT half: everything

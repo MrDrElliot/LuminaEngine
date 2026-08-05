@@ -14,6 +14,19 @@ namespace Lumina
         High   = 0,
         Medium = 1,
         Low    = 2,
+
+        /**
+         * Long-running throughput work, never inlined into another thread's wait.
+         *
+         * High/Medium/Low only order work within the pool; a thread that is assist-waiting on some
+         * unrelated counter will still pull one of them onto itself to avoid idling, which is how a
+         * multi-second background build ends up executing inside a frame. Background is excluded from
+         * that path -- only real workers ever run it.
+         *
+         * The rule of thumb: if nothing in the current frame is waiting on the result, and the work
+         * takes longer than a frame, it belongs here. Terrain/voxel chunk builds, cooks, bakes.
+         */
+        Background = 3,
     };
 
     FORCEINLINE Jobs::EJobPriority ToJobPriority(ETaskPriority Priority)

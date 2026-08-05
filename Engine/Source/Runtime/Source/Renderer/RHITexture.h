@@ -36,6 +36,20 @@ namespace Lumina::RHI
         const char* DebugName = nullptr;
     };
 
+    // Volume texture. Registers into the SAME global heap as a 2D one, so the returned ResourceID
+    // indexes gTextures3D[] in shaders (the bindless arrays are aliased views of one descriptor array).
+    struct FTexture3DDesc
+    {
+        uint32  Width    = 1;
+        uint32  Height   = 1;
+        uint32  Depth    = 1;
+        uint32  Mips     = 1;
+        EFormat Format   = EFormat::R8_UNORM;
+        bool    bStorage = false;        // also allow per-mip UAV slots (compute writes)
+
+        const char* DebugName = nullptr;
+    };
+
     namespace Textures
     {
         void Initialize();   // creates the 1x1 placeholder
@@ -46,6 +60,7 @@ namespace Lumina::RHI
         void Tick();
 
         RUNTIME_API FManagedTexture Create(const FTexture2DDesc& Desc);
+        RUNTIME_API FManagedTexture Create(const FTexture3DDesc& Desc);
 
         // Replaces the image behind an existing managed texture while KEEPING its ResourceID: the heap
         // slot is repointed at the new image and the old one is frame-deferred released.
@@ -60,7 +75,8 @@ namespace Lumina::RHI
         // Falls back to Create when Tex is not yet valid, so a cook path can call it unconditionally.
         RUNTIME_API void Recreate(FManagedTexture& Tex, const FTexture2DDesc& Desc);
 
-        // Upload tight pixel data for one mip. RowPitchTexels = 0 -> mip width.
+        // Upload tight pixel data for one mip. For a 3D texture pass the whole volume in one call
+        // (X-major, then Y, then Z) -- the copy covers the full depth extent. RowPitchTexels = 0 -> mip width.
         //
         // NOT synchronous: this stages the bytes and queues the copy, which the next
         // RHI::Core::BeginFrame records and submits. The texture is not resident when this returns.
