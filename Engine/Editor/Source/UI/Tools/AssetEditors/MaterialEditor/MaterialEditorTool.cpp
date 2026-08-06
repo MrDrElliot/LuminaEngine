@@ -299,6 +299,8 @@ namespace Lumina
 
         const ImGuiStyle& ImStyle = ImGui::GetStyle();
 
+        DrawViewGizmo(CursorScreenPos, ViewportSize);
+
         ImVec2 Origin = ImGui::GetCursorStartPos();
 
         ImGui::Dummy(ImStyle.ItemSpacing);

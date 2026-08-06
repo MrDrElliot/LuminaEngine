@@ -766,7 +766,9 @@ FShadedSurface ShadeSurface(FBaseVertexOutput Input, FMaterialPixelInputs Materi
 #else
 
     float3 N  = GetWorldNormal(WorldNormal, Input.TangentWS, Normal);
-    float3 V  = normalize(GetCameraPosition() - WorldPosition);
+    // Under ortho every ray is parallel, so the eye vector is constant rather than radiating from
+    // the camera position; using the position would skew specular toward the viewport center.
+    float3 V  = IsCameraOrthographic() ? -GetCameraForward() : normalize(GetCameraPosition() - WorldPosition);
 
     // DBuffer decals: composite projected decal attributes into the surface BEFORE lighting so they
     // receive lights/shadows/IBL. No-op on pixels no decal touched. Opaque base pass only, and only on

@@ -287,6 +287,20 @@ namespace Lumina
         {
             Callbacks.StartChangeCallback(Event);
         }
+        // An ATOMIC commit -- a picker, a combo, a bind menu -- has no drag to open a session with, so it
+        // reports Finished on its own. The start hook is what opens the undo transaction and snapshots the
+        // before-image, so without this the matching commit found nothing open and the edit silently left
+        // no undo entry at all. Opening it here beats making every such customization fake a two-frame
+        // Started/Finished sequence.
+        //
+        // Deliberately fires only the start CALLBACK rather than recursing through DispatchChange: a nested
+        // dispatch would also re-run PreEdit and the post-change callback, which the commit below runs
+        // anyway. And it has to happen here, above UpdatePropertyValue, or the "before" image would be
+        // snapshotted after the new value was already written.
+        else if (Op == EPropertyChangeOp::Finished && !bEditSessionActive && Callbacks.StartChangeCallback)
+        {
+            Callbacks.StartChangeCallback(Event);
+        }
 
         // Null for script-defined structs, which carry no compile-time struct ops.
         FStructOps* Ops = Callbacks.Type ? Callbacks.Type->GetStructOps() : nullptr;

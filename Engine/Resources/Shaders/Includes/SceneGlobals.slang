@@ -265,6 +265,10 @@ float4x4 GetInverseCameraView()     { return Scene().CameraView.InverseCameraVie
 float4x4 GetCameraProjection()      { return Scene().CameraView.CameraProjection;   }
 float4x4 GetInverseCameraProjection(){ return Scene().CameraView.InverseCameraProjection; }
 
+// [3][3] is 0 for a perspective projection and 1 for an orthographic one, so the mode needs no
+// extra plumbing in the scene struct. Diagonal, so it reads the same under either matrix convention.
+bool IsCameraOrthographic() { return Scene().CameraView.CameraProjection[3][3] != 0.0; }
+
 float3 WorldToView(float3 WorldPos)
 {
     return mul(GetCameraView(), float4(WorldPos, 1.0)).xyz;

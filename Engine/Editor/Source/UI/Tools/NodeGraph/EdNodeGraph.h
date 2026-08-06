@@ -252,6 +252,10 @@ namespace Lumina
         
         uint64 AddNode(CEdGraphNode* InNode);
 
+        // A free node ID, preferring PreferredID when it is usable. Node IDs must be unique within a
+        // graph and never zero; see the definition for why a duplicate is not merely cosmetic.
+        int64 GenerateUniqueNodeID(int64 PreferredID) const;
+
         /** All nodes currently in this graph. */
         PROPERTY()
         TVector<TObjectPtr<CEdGraphNode>>               Nodes;

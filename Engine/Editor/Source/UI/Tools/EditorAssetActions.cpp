@@ -6,10 +6,15 @@
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Assets/AssetTypes/Material/Material.h"
 #include "Assets/AssetTypes/Material/MaterialInstance.h"
+#include "Assets/AssetTypes/Mesh/StaticMesh/StaticMesh.h"
+#include "Assets/AssetTypes/Physics/CollisionShape.h"
+#include "Physics/CollisionShapeGen.h"
 #include "Assets/Factories/Factory.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/Package/Package.h"
+#include "Core/Reflection/Type/LuminaTypes.h"
+#include "Core/Serialization/ObjectArchiver.h"
 #include "FileSystem/FileSystem.h"
 #include "Paths/Paths.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
@@ -133,10 +138,43 @@ namespace Lumina
             Remap.emplace(Source, Copy);
         }
 
-        // Pass 2: copy properties through the remap, so intra-package references land on the copies.
+        // Pass 2: round-trip each object through its own Serialize, so the copy gets everything the asset
+        // actually owns. Copying reflected properties alone loses state a class serializes by hand -- a
+        // mesh's FMeshResource, an anim graph's bytecode -- and the copy then dereferences a resource that
+        // was never created. Remapping happens on the READ, once each GUID has resolved to an object.
         for (CObject* Source : SourceObjects)
         {
-            Source->CopyPropertiesTo(Remap[Source], &Remap);
+            CObject* Copy = Remap[Source];
+
+            TVector<uint8> Bytes;
+            {
+                FMemoryWriter Writer(Bytes);
+                FObjectProxyArchiver Proxy(Writer, true);
+                Source->Serialize(Proxy);
+            }
+            {
+                FMemoryReader Reader(Bytes);
+                FObjectRemapArchiver Proxy(Reader, Remap);
+                Copy->Serialize(Proxy);
+            }
+
+            // Serialize has no concept of DuplicateTransient, so anything marked that way arrives copied
+            // and has to be put back to its default. Node graphs rely on this to drop per-instance editor
+            // state that must not survive a duplicate.
+            if (CClass* Class = Source->GetClass())
+            {
+                const CObject* Defaults = Class->GetDefaultObject<CObject>();
+                if (Defaults != nullptr)
+                {
+                    for (FProperty* Current = Class->LinkedProperty; Current; Current = (FProperty*)Current->Next)
+                    {
+                        if (Current->HasMetadata("DuplicateTransient"))
+                        {
+                            Current->CopyCompleteValue_InContainer(Copy, Defaults);
+                        }
+                    }
+                }
+            }
         }
 
         // PostLoad after everything is wired, not per object: a PostLoad that reaches for a sibling
@@ -202,6 +240,57 @@ namespace Lumina
             }
         }
 
+        void CreateCollisionShapeFrom(const FAssetActionContext& Context)
+        {
+            CStaticMesh* Mesh = Cast<CStaticMesh>(LoadObject<CObject>(Context.Asset->AssetGUID));
+            if (Mesh == nullptr)
+            {
+                ImGuiX::Notifications::NotifyError("Could not load '{0}' to build collision for it.", Context.Asset->Path);
+                return;
+            }
+
+            const FFixedString NewPath = MakeSiblingAssetPath(
+                FStringView(Context.Asset->Path.c_str(), Context.Asset->Path.size()), "_Collision");
+
+            CCollisionShape* Shape = CFactory::CreateNewOf<CCollisionShape>(NewPath);
+            if (Shape == nullptr)
+            {
+                ImGuiX::Notifications::NotifyError("Failed to create a collision shape at '{0}'.", NewPath);
+                return;
+            }
+
+            // The only place SourceMesh is ever assigned: it is ReadOnly on the asset, because hulls baked
+            // against one mesh are meaningless on another.
+            Shape->SourceMesh = Mesh;
+
+            // Seed with a single hull so the asset is usable the moment it opens rather than empty. It is
+            // the safest default -- always convex, so it works on dynamic bodies -- and the editor offers
+            // the per-surface and triangle-mesh bakes from there.
+            if (!Physics::CollisionGen::GenerateSingleHull(Mesh, Shape))
+            {
+                ImGuiX::Notifications::NotifyWarning("'{0}' produced no hull; the collision shape was created empty.",
+                                                     Context.Asset->AssetName);
+            }
+
+            if (!CPackage::SavePackage(Shape->GetPackage(), NewPath))
+            {
+                ImGuiX::Notifications::NotifyError("Failed to save '{0}'.", NewPath);
+                return;
+            }
+
+            FAssetRegistry::Get().AssetCreated(Shape);
+
+            ImGuiX::Notifications::NotifySuccess("Created '{0}'.", NewPath);
+
+            if (Context.ToolContext != nullptr)
+            {
+                if (const FAssetData* NewData = FAssetRegistry::Get().GetAssetByPath(FStringView(NewPath.c_str(), NewPath.size())))
+                {
+                    Context.ToolContext->OpenAssetEditor(NewData->AssetGUID);
+                }
+            }
+        }
+
         void BrowseToParentMaterial(const FAssetActionContext& Context)
         {
             CMaterialInstance* Instance = Cast<CMaterialInstance>(LoadObject<CObject>(Context.Asset->AssetGUID));
@@ -240,6 +329,12 @@ namespace Lumina
         {
             .Label   = LE_ICON_CONTENT_DUPLICATE " Create Material Instance",
             .Execute = &CreateMaterialInstanceFrom,
+        });
+
+        Registry.RegisterAction(CStaticMesh::StaticClass(), FAssetAction
+        {
+            .Label   = LE_ICON_CUBE_OUTLINE " Create Collision Shape",
+            .Execute = &CreateCollisionShapeFrom,
         });
 
         // No CanExecute: answering "does this have a parent?" means loading the instance, and the menu

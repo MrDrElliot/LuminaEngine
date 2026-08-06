@@ -52,16 +52,37 @@ void ComputeMain(uint3 DispatchID : SV_DispatchThreadID)
     float3 MinTile = ScreenToView(MinTileSS);
     float3 MaxTile = ScreenToView(MaxTileSS);
 
-    float PlaneNear = -ZNear * pow(ZFar / ZNear,  float(Tile.z)      / float(GridSize.z));
-    float PlaneFar  = -ZNear * pow(ZFar / ZNear,  float(Tile.z + 1)  / float(GridSize.z));
+    // Slice depths are positive view Z (LookAt is left-handed, +Z forward) and must match the log
+    // distribution ComputeClusterIndex inverts, or fragments index a froxel they were not binned into.
+    float SliceNear = ZNear * pow(ZFar / ZNear, float(Tile.z)     / float(GridSize.z));
+    float SliceFar  = ZNear * pow(ZFar / ZNear, float(Tile.z + 1) / float(GridSize.z));
 
-    float3 MinPointNear = LineIntersectionWithZPlane(float3(0.0), MinTile, PlaneNear);
-    float3 MinPointFar  = LineIntersectionWithZPlane(float3(0.0), MinTile, PlaneFar);
-    float3 MaxPointNear = LineIntersectionWithZPlane(float3(0.0), MaxTile, PlaneNear);
-    float3 MaxPointFar  = LineIntersectionWithZPlane(float3(0.0), MaxTile, PlaneFar);
+    float3 MinBounds;
+    float3 MaxBounds;
 
-    float3 MinBounds = min(min(MinPointNear, MinPointFar), min(MaxPointNear, MaxPointFar));
-    float3 MaxBounds = max(max(MinPointNear, MinPointFar), max(MaxPointNear, MaxPointFar));
+    if (IsCameraOrthographic())
+    {
+        // Parallel rays: the tile's view-space XY extent is the same at every depth, so the froxel is
+        // just that rectangle extruded across the slice. The perspective path below cannot be reused --
+        // it scales the tile corners along rays through the eye, which do not exist here.
+        MinBounds = float3(min(MinTile.xy, MaxTile.xy), SliceNear);
+        MaxBounds = float3(max(MinTile.xy, MaxTile.xy), SliceFar);
+    }
+    else
+    {
+        // Negated to match LineIntersectionWithZPlane's -Z plane normal; the two cancel and the
+        // intersections land back at positive view Z.
+        float PlaneNear = -SliceNear;
+        float PlaneFar  = -SliceFar;
+
+        float3 MinPointNear = LineIntersectionWithZPlane(float3(0.0), MinTile, PlaneNear);
+        float3 MinPointFar  = LineIntersectionWithZPlane(float3(0.0), MinTile, PlaneFar);
+        float3 MaxPointNear = LineIntersectionWithZPlane(float3(0.0), MaxTile, PlaneNear);
+        float3 MaxPointFar  = LineIntersectionWithZPlane(float3(0.0), MaxTile, PlaneFar);
+
+        MinBounds = min(min(MinPointNear, MinPointFar), min(MaxPointNear, MaxPointFar));
+        MaxBounds = max(max(MinPointNear, MinPointFar), max(MaxPointNear, MaxPointFar));
+    }
 
     Clusters()[TileIndex].MinPoint = float4(MinBounds, 0.0);
     Clusters()[TileIndex].MaxPoint = float4(MaxBounds, 0.0);

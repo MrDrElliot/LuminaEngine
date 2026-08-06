@@ -39,6 +39,7 @@
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "TerrainEditMode.h"
 #include "FoliageEditMode.h"
+#include "SequencerEditMode.h"
 #include "World/Entity/Components/TerrainComponent.h"
 #include "UI/Tools/EditorEntityUtils.h"
 #include "UI/Properties/EntityPropertyContext.h"
@@ -51,6 +52,7 @@
 #include "World/Entity/Components/EditorComponent.h"
 #include "world/entity/components/entitytags.h"
 #include "World/Entity/Components/NameComponent.h"
+#include "World/Entity/Components/PhysicsComponent.h"
 #include "World/Entity/Components/RelationshipComponent.h"
 #include "World/Entity/Components/SocketAttachmentComponent.h"
 #include "World/Entity/Components/CSharpScriptComponent.h"
@@ -1124,6 +1126,7 @@ namespace Lumina
         EditorModes.push_back(MakeUnique<FTerrainEditMode>());
         EditorModes.push_back(MakeUnique<FFoliageEditMode>());
         EditorModes.push_back(MakeUnique<FNavigationEditMode>());
+        EditorModes.push_back(MakeUnique<FSequencerEditMode>());
 
         // Modes call back into the host for editor services (e.g. undo transactions).
         for (TUniquePtr<IWorldEditorMode>& Mode : EditorModes)
@@ -1136,6 +1139,129 @@ namespace Lumina
         {
             Active->OnEnter(World);
         }
+    }
+
+    void FWorldEditorTool::UpdateSimulationGrab(const ImVec2& ViewportOrigin, const ImVec2& ViewportSize, bool bInViewportHovered)
+    {
+        (void)ViewportOrigin;
+        (void)ViewportSize;
+
+        constexpr uint32 InvalidBody = 0xFFFFFFFFu;
+        constexpr float  GrabReach = 500.0f;
+
+        // Velocity controller, NOT a position spring. A spring is second order: it overshoots the cursor and
+        // the damping term whips it back, and since the force lands off-center that also spins the body,
+        // which moves the attach point and re-excites the whole thing. Retuning the gains only changes how
+        // fast it rings. Asking for a velocity instead makes it first order, which cannot overshoot.
+        //
+        // ApproachGain is 1/s: the gap to the cursor closes with a ~1/6s time constant.
+        constexpr float  ApproachGain = 5.0f;
+        constexpr float  MaxGrabSpeed = 6.0f;
+
+        // How hard the body is pushed to reach the velocity it was asked for. Also 1/s.
+        constexpr float  VelocityGain = 8.0f;
+        constexpr float  MaxGrabAcceleration = 120.0f;
+
+        // Only while the world is actually stepping: on a paused editor world a force does nothing, so the
+        // gesture would look broken rather than inert.
+        Physics::IPhysicsScene* Scene = HasSimulatingWorld() && World != nullptr ? World->GetPhysicsScene() : nullptr;
+        if (Scene == nullptr)
+        {
+            GrabbedBodyID = InvalidBody;
+            return;
+        }
+
+        const bool bGrabHeld = ImGui::GetIO().KeyShift && ImGui::IsMouseDown(ImGuiMouseButton_Left);
+        if (GrabbedBodyID != InvalidBody && !bGrabHeld)
+        {
+            GrabbedBodyID = InvalidBody;
+        }
+
+        FVector3 RayOrigin, RayDirection;
+        if (!BuildViewportRay(ImGui::GetMousePos(), RayOrigin, RayDirection))
+        {
+            return;
+        }
+
+        if (GrabbedBodyID == InvalidBody)
+        {
+            if (!bInViewportHovered || !ImGui::GetIO().KeyShift || !ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+            {
+                return;
+            }
+
+            SRayCastSettings Settings;
+            Settings.Start = RayOrigin;
+            Settings.End = RayOrigin + RayDirection * GrabReach;
+
+            const TOptional<SRayResult> Hit = Scene->CastRay(Settings);
+            if (!Hit.has_value())
+            {
+                return;
+            }
+
+            // Static and kinematic bodies cannot answer a force, so latching onto one would leave the drag
+            // pulling on something that can never move.
+            const entt::entity HitEntity = (entt::entity)Hit->Entity;
+            const SRigidBodyComponent* RigidBody = World->IsValidEntity(HitEntity)
+                ? World->TryGetComponent<SRigidBodyComponent>(HitEntity) : nullptr;
+
+            if (RigidBody == nullptr || RigidBody->BodyType != EBodyType::Dynamic)
+            {
+                return;
+            }
+
+            GrabbedBodyID = (uint32)Hit->BodyID;
+            GrabDistance = Math::Length(Hit->Location - RayOrigin);
+            GrabLocalOffset = Math::Inverse(Scene->GetBodyRotation(GrabbedBodyID))
+                            * (Hit->Location - Scene->GetBodyPosition(GrabbedBodyID));
+            return;
+        }
+
+        const FVector3 Target = RayOrigin + RayDirection * GrabDistance;
+        const FVector3 AttachPoint = Scene->GetBodyPosition(GrabbedBodyID)
+                                   + Scene->GetBodyRotation(GrabbedBodyID) * GrabLocalOffset;
+
+        // Speed the grab would like the attach point to be moving at, capped so a fast cursor asks for a
+        // drag rather than a launch. This cap is what stops the body arriving instantly.
+        FVector3 DesiredVelocity = (Target - AttachPoint) * ApproachGain;
+
+        const float DesiredSpeed = Math::Length(DesiredVelocity);
+        if (DesiredSpeed > MaxGrabSpeed)
+        {
+            DesiredVelocity *= MaxGrabSpeed / DesiredSpeed;
+        }
+
+        // GetVelocityAtPoint includes the spin contribution, so a body rotating under the grab is corrected
+        // by the same term rather than being left to wind up.
+        FVector3 Acceleration = (DesiredVelocity - Scene->GetVelocityAtPoint(GrabbedBodyID, AttachPoint))
+                              * VelocityGain;
+
+        const float AccelerationMagnitude = Math::Length(Acceleration);
+        if (AccelerationMagnitude > MaxGrabAcceleration)
+        {
+            Acceleration *= MaxGrabAcceleration / AccelerationMagnitude;
+        }
+
+        // Mass turns the commanded acceleration back into the force Jolt wants. A body reporting zero mass
+        // is static or kinematic and cannot be pushed, so the grab lets go rather than pulling on nothing.
+        const float BodyMass = Scene->GetBodyMass(GrabbedBodyID);
+        if (BodyMass <= 0.0f)
+        {
+            GrabbedBodyID = InvalidBody;
+            return;
+        }
+
+        SAddForceAtPositionEvent ForceEvent;
+        ForceEvent.BodyID = GrabbedBodyID;
+        ForceEvent.Force = Acceleration * BodyMass;
+        ForceEvent.Position = AttachPoint;
+
+        Scene->ActivateBody(GrabbedBodyID);
+        Scene->OnAddForceAtPositionEvent(ForceEvent);
+
+        World->DrawLine(AttachPoint, Target, FVector4(1.0f, 0.85f, 0.2f, 1.0f), 2.5f, false);
+        World->DrawSphere(Target, 0.035f, FVector4(1.0f, 0.85f, 0.2f, 1.0f), 10, 2.0f, false);
     }
 
     IWorldEditorMode* FWorldEditorTool::GetActiveMode() const
@@ -1334,8 +1460,13 @@ namespace Lumina
             ActiveMode->DrawOverlay(World, ViewportOrigin, ViewportSize, CameraComponent);
         }
 
-        // Modes that own the viewport suppress selection, marquee, and gizmo input.
-        const bool bModeOwnsInput = GetActiveMode() && GetActiveMode()->ConsumesViewportInput();
+        UpdateSimulationGrab(ViewportOrigin, ViewportSize, bViewportHovered);
+
+        // Modes that own the viewport suppress selection, marquee, and gizmo input. A live grab does the
+        // same: shift+click is also the marquee's add-to-selection chord, so without this a poke at a
+        // ragdoll would select everything it dragged across.
+        const bool bModeOwnsInput = (GetActiveMode() && GetActiveMode()->ConsumesViewportInput())
+                                 || IsSimulationGrabActive();
 
         // Same for an editor-camera drag (Alt+LMB orbit, LMB+RMB pan) or Alt merely held over the
         // viewport. TickEditorCamera runs in Update, before this draw, so the flag is current-frame.

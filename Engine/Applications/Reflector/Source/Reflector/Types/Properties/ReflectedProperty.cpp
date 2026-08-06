@@ -93,6 +93,47 @@ namespace Lumina
         }
     }
 
+    bool FReflectedProperty::FindConflictingSpecifiers(eastl::string& OutMessage) const
+    {
+        struct FConflict
+        {
+            EPropertyFlags A;
+            EPropertyFlags B;
+            const char*    NameA;
+            const char*    NameB;
+            const char*    Resolution;
+        };
+
+        // Pairs that cannot both be true of one property. Each says what to write instead, because the
+        // useful part of the error is which specifier to delete, not that a rule exists.
+        static const FConflict Conflicts[] =
+        {
+            { EPropertyFlags::Editable, EPropertyFlags::ReadOnly, "Editable", "ReadOnly",
+              "ReadOnly already shows the property in the details panel with editing disabled; drop Editable." },
+
+            { EPropertyFlags::ScriptReadOnly, EPropertyFlags::ScriptWritable, "ScriptReadOnly", "ScriptWritable",
+              "A script property is either readable-only or writable; keep one." },
+
+            { EPropertyFlags::ScriptHidden, EPropertyFlags::ScriptReadOnly, "ScriptHidden", "ScriptReadOnly",
+              "ScriptHidden removes the property from script entirely, so an access specifier cannot apply." },
+
+            { EPropertyFlags::ScriptHidden, EPropertyFlags::ScriptWritable, "ScriptHidden", "ScriptWritable",
+              "ScriptHidden removes the property from script entirely, so an access specifier cannot apply." },
+        };
+
+        for (const FConflict& Conflict : Conflicts)
+        {
+            if (EnumHasAllFlags(PropertyFlags, Conflict.A | Conflict.B))
+            {
+                OutMessage = eastl::string("PROPERTY '") + Name + "' declares both '" + Conflict.NameA
+                           + "' and '" + Conflict.NameB + "', which conflict. " + Conflict.Resolution;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     bool FReflectedProperty::GenerateLuaBinding(Reflection::FCodeWriter& Writer)
     {
         Writer.Appendf("\t\t\"%s\", &%s::%s", GetDisplayName().c_str(), Outer.c_str(), GetDisplayName().c_str());

@@ -267,6 +267,36 @@ namespace Lumina
         return Index;
     }
 
+    int32 SKeyedCurve::UpdateOrAddKey(float InTime, float InValue, float Tolerance)
+    {
+        for (int32 Index = 0; Index < (int32)Keys.size(); ++Index)
+        {
+            if (Math::Abs(Keys[Index].Time - InTime) <= Tolerance)
+            {
+                // Value only: the key's authored interpolation and tangents are the user's, not something
+                // to reset every time they re-pose the frame.
+                Keys[Index].Value = InValue;
+
+                // Collapse any duplicates already stacked here. Curves authored before AddKey stopped being
+                // called blind still carry them, and each one is a jump the user cannot see or select.
+                int32 Next = Index + 1;
+                while (Next < (int32)Keys.size() && Math::Abs(Keys[Next].Time - InTime) <= Tolerance)
+                {
+                    ++Next;
+                }
+
+                if (Next > Index + 1)
+                {
+                    Keys.erase(Keys.begin() + (Index + 1), Keys.begin() + Next);
+                }
+
+                return Index;
+            }
+        }
+
+        return AddKey(InTime, InValue);
+    }
+
     void SKeyedCurve::RemoveKey(int32 Index)
     {
         if (Index >= 0 && Index < (int32)Keys.size())

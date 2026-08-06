@@ -123,6 +123,12 @@ namespace Lumina
         // relevant entities coloured by LOD tier. Draws into the world if it has a live FNetWorldState.
         
         bool HasSimulatingWorld() const { return bSimulatingWorld || bGamePreviewRunning; }
+
+        // Shift + left-drag while simulating: springs the grabbed body toward the cursor so a running
+        // simulation can be poked at without stopping it. Mirrors the physics asset editor's grab.
+        void UpdateSimulationGrab(const ImVec2& ViewportOrigin, const ImVec2& ViewportSize, bool bInViewportHovered);
+
+        bool IsSimulationGrabActive() const { return GrabbedBodyID != 0xFFFFFFFFu; }
         
         void StopAllSimulations();
         
@@ -275,6 +281,12 @@ namespace Lumina
         bool                                    bDrawNetworkDebug = false;
         bool                                    bGamePreviewRunning = false;
         bool                                    bSimulatingWorld = false;
+
+        // Physics-body grab. Held across frames: the spring needs the attach point that was picked on the
+        // initial click, not whatever the ray hits as the body swings away.
+        uint32                                  GrabbedBodyID = 0xFFFFFFFFu;
+        float                                   GrabDistance = 0.0f;
+        FVector3                                GrabLocalOffset = FVector3(0.0f);
 
         // Set from the raw event handler (Esc during play) and consumed in Update,
         // since stopping tears down the PIE world and shouldn't run mid-dispatch.

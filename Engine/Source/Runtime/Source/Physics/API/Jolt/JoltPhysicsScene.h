@@ -25,6 +25,7 @@ namespace Lumina
 {
 	struct SImpulseEvent;
 	struct SCompoundColliderComponent;
+	class CCollisionShape;
 	struct STransformComponent;
 	class CWorld;
 	class CMesh;
@@ -185,6 +186,7 @@ namespace Lumina::Physics
     	FVector3 GetLinearVelocity(uint32 BodyID) override;
     	FVector3 GetAngularVelocity(uint32 BodyID) override;
     	FVector3 GetCenterOfMass(uint32 BodyID) override;
+    	float GetBodyMass(uint32 BodyID) override;
     	FVector3 GetBodyPosition(uint32 BodyID) override;
     	FQuat GetBodyRotation(uint32 BodyID) override;
 
@@ -227,6 +229,10 @@ namespace Lumina::Physics
     	// Build a StaticCompoundShape from an SCompoundColliderComponent's child primitives (each child reuses
     	// the cached primitive shapes). Thread-safe (called from the parallel body build). Null on failure.
     	JPH::ShapeRefC BuildCompoundShape(const SCompoundColliderComponent& Comp, const STransformComponent& Transform);
+
+    	// Compounds an authored collision asset's primitives, or builds its baked triangle mesh. Hull pieces
+    	// are uncached: a hull point set belongs to one asset, so there is nothing for a shared cache to hit.
+    	JPH::ShapeRefC BuildCollisionShapeAsset(const CCollisionShape& Asset, const FVector3& Scale);
 
     	// Mesh-collider shape cached by mesh+scale+convexity so shards reuse one hull instead of re-running
     	// QuickHull; builds outside the lock so parallel distinct-mesh builds don't serialize.

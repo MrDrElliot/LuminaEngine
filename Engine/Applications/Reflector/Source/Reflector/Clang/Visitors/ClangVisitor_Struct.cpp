@@ -723,6 +723,11 @@ namespace Lumina::Reflection::Visitor
 			CreatePropertyForType(Context, Type, NewProperty, FieldInfo.value());
 			NewProperty->GenerateMetadata(Macro.MacroContents);
 
+			if (eastl::string ConflictMessage; NewProperty->FindConflictingSpecifiers(ConflictMessage))
+			{
+				LRT_ERROR(Cursor, Reflection::EDiagId::ConflictingSpecifiers, "%s", ConflictMessage.c_str());
+			}
+
 			eastl::string Comment = GetCursorComment(Cursor);
 			if (!Comment.empty())
 			{

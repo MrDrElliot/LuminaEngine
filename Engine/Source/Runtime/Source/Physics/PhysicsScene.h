@@ -126,6 +126,10 @@ namespace Lumina::Physics
         virtual FVector3 GetAngularVelocity(uint32 BodyID) = 0;
         virtual FVector3 GetCenterOfMass(uint32 BodyID)= 0;
 
+        /** Body mass in kg, or 0 for a body that cannot move (static/kinematic have infinite mass). Default
+         *  1 so non-Jolt backends compile; callers scaling a force by it get sane behaviour either way. */
+        virtual float GetBodyMass(uint32 BodyID) { return 1.0f; }
+
         // Actual current body pose, NOT the interpolated render transform (STransformComponent is lagged).
         virtual FVector3 GetBodyPosition(uint32 BodyID) = 0;
         virtual FQuat GetBodyRotation(uint32 BodyID) = 0;

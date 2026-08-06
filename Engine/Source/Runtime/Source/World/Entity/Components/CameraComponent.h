@@ -58,8 +58,22 @@ namespace Lumina
         
         void SetAspectRatio(float NewAspect)
         {
-            ViewVolume.SetPerspective(ViewVolume.GetFOV(), NewAspect);
+            ViewVolume.SetAspectRatio(NewAspect);
         }
+
+        /** Width is the world-space span across the viewport. */
+        void SetOrthographic(float Width)
+        {
+            ViewVolume.SetOrthographic(Width, ViewVolume.GetAspectRatio());
+        }
+
+        void SetPerspectiveProjection()
+        {
+            ViewVolume.SetPerspective(FOV, ViewVolume.GetAspectRatio());
+        }
+
+        bool IsOrthographic() const { return ViewVolume.IsOrthographic(); }
+        float GetOrthoWidth() const { return ViewVolume.GetOrthoWidth(); }
 
         void SetPosition(const FVector3& NewPosition)
         {

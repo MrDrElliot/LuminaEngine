@@ -83,6 +83,12 @@ namespace Lumina
 
         /** Inserts a key at its sorted position and returns the index it landed on. */
         int32 AddKey(float InTime, float InValue);
+
+        /** Overwrites the key already sitting at InTime, inserting only when there isn't one. Re-keying a
+         *  frame has to replace: a second key at an identical time forms a zero-width segment, and
+         *  EvaluateInRange collapses those to the trailing value, so the curve steps instead of ramping. */
+        int32 UpdateOrAddKey(float InTime, float InValue, float Tolerance = 1e-4f);
+
         void RemoveKey(int32 Index);
         void SortKeys();
 

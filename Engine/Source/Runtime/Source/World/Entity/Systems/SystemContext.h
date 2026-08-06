@@ -29,6 +29,10 @@ namespace Lumina
         ~FSystemContext() = default;
         
         RUNTIME_API FORCEINLINE double GetDeltaTime() const { return DeltaTime; }
+
+        // For systems that drive world-level state rather than just components (the sequencer switching
+        // the active camera, spawning a binding's prefab).
+        RUNTIME_API FORCEINLINE CWorld* GetWorld() const { return World; }
         RUNTIME_API FORCEINLINE double GetTime() const { return Time; }
         RUNTIME_API FORCEINLINE EUpdateStage GetUpdateStage() const { return UpdateStage; }
         

@@ -11,6 +11,7 @@
 #include "Events/EventProcessor.h"
 #include "Memory/SmartPtr.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
+#include "Tools/UI/ImGui/ImViewGuizmo.h"
 #include "World/World.h"
 
 namespace Lumina
@@ -66,6 +67,20 @@ namespace Lumina
         // Last point framed by F-focus; the Free-mode tumble borrows its distance.
         bool        bHasLastFocusPoint = false;
         FVector3    LastFocusPoint     = FVector3(0.0f);
+
+        // Free-mode pivot for the view gizmo, latched for the whole drag for the same reason
+        // FreeOrbitPivot is: recomputing it per frame makes the orbit crawl toward the camera.
+        bool        bViewGizmoActive = false;
+        FVector3    ViewGizmoPivot   = FVector3(0.0f);
+
+        // Editor-only orthographic viewport. The ortho width is rebuilt each frame from the view
+        // distance so toggling keeps the framing perspective had at the pivot, and so the existing
+        // wheel zoom (which moves OrbitDistance) keeps working as a zoom.
+        bool        bOrthographic = false;
+
+        // Free mode has no orbit radius to zoom, and moving along forward is a no-op under a parallel
+        // projection, so ortho zoom needs its own distance. Seeded from the pivot when ortho is enabled.
+        float       OrthoFreeDistance = 10.0f;
 
         // Smooth focus interp; user movement input cancels mid-lerp.
         bool        bFocusInterp        = false;
@@ -148,6 +163,9 @@ namespace Lumina
          *  whether it landed ON something. */
         bool TraceViewportPlacement(ImVec2 ScreenPos, FVector3& OutLocation, entt::entity* OutHitEntity = nullptr) const;
 
+        /** Cursor -> world ray through the tool's viewport rect. False when there is no camera. */
+        bool BuildViewportRay(ImVec2 ScreenPos, FVector3& OutOrigin, FVector3& OutDirection) const;
+
         virtual void InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& InDockspaceSize) const;
         
         virtual void OnInitialize() = 0;
@@ -216,6 +234,12 @@ namespace Lumina
         /** Switch camera mode; entering Orbit derives target/yaw/pitch/distance from the current transform. */
         void SetCameraMode(EEditorCameraMode Mode);
 
+        NODISCARD bool IsEditorCameraOrthographic() const { return CameraState.bOrthographic; }
+        void SetEditorCameraOrthographic(bool bOrthographic);
+
+        /** Distance the ortho framing and the view gizmo's free-mode pivot are derived from. */
+        NODISCARD float GetEditorViewDistance() const;
+
         /** Re-anchor orbit on a new world point; updates OrbitTarget and the OrbitAnchor ResetOrbitPan returns to. */
         void SetOrbitTarget(const FVector3& Target, float Distance = -1.0f);
 
@@ -240,6 +264,17 @@ namespace Lumina
 
         /** Viewport overlay to draw any elements to the window's viewport */
         virtual void DrawViewportOverlayElements(const FUpdateContext& UpdateContext, ImTextureRef ViewportTexture, ImVec2 ViewportSize);
+
+        /** Blender-style orbit/dolly/pan gizmo pinned to the viewport's top-right. Call before the
+         *  overlay so ShouldSuppressViewportClickInput sees this frame's hover state. */
+        void DrawViewGizmo(const ImVec2& ViewportOrigin, const ImVec2& ViewportSize);
+
+        /** Perspective/orthographic toggle, drawn as part of the view gizmo cluster. */
+        void DrawProjectionToggle(const ImVec2& Position, float Radius);
+
+        /** Opt a tool out of the view gizmo. Worlds in play and tools without an editor camera
+         *  are already excluded. */
+        NODISCARD virtual bool ShouldDrawViewGizmo() const { return true; }
         
         /** Draw the optional viewport for this tool window, returns true if focused. */
         virtual bool DrawViewport(const FUpdateContext& UpdateContext, ImTextureRef ViewportTexture);
@@ -462,6 +497,8 @@ namespace Lumina
         TObjectPtr<CWorld>                  World;
         entt::entity                        EditorEntity;
         FEditorCameraState                  CameraState;
+        // Per-tool so a second visible viewport can't inherit this one's drag or snap animation.
+        ImViewGuizmo::Context               ViewGizmoContext;
         ImTextureID                         SceneViewportTexture = 0;
 
         TUniquePtr<FInputViewport>          InputViewport;
@@ -470,6 +507,8 @@ namespace Lumina
 
         bool                                bViewportFocused = false;
         bool                                bViewportHovered = false;
+        // The ortho toggle sits in the gizmo cluster, so it suppresses viewport clicks the same way.
+        bool                                bViewGizmoOrthoHovered = false;
 
         // True only for the tool that currently owns keyboard focus. Set by FEditorUI immediately
         // before Update and cleared after, exactly like bViewportFocused. Registered-action shortcuts

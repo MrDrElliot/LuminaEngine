@@ -6,6 +6,8 @@
 #include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
 #include <Jolt/Physics/Collision/RayCast.h>
 #include "Physics/Ray/RayCast.h"
+#include "Physics/CollisionShapeGen.h"
+#include "Assets/AssetTypes/Physics/CollisionShape.h"
 #include <Jolt/Physics/Collision/ShapeCast.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/CylinderShape.h>
@@ -700,6 +702,7 @@ namespace Lumina::Physics
         Registry.on_construct<STaperedCapsuleColliderComponent>().connect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
         Registry.on_construct<STaperedCylinderColliderComponent>().connect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
         Registry.on_construct<SPlaneColliderComponent>().connect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
+        Registry.on_construct<SCollisionShapeComponent>().connect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
         Registry.on_construct<SCompoundColliderComponent>().connect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
         Registry.on_construct<SMeshColliderComponent>().connect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
         Registry.on_construct<STerrainColliderComponent>().connect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
@@ -719,6 +722,7 @@ namespace Lumina::Physics
         Registry.on_construct<STaperedCapsuleColliderComponent>().disconnect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
         Registry.on_construct<STaperedCylinderColliderComponent>().disconnect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
         Registry.on_construct<SPlaneColliderComponent>().disconnect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
+        Registry.on_construct<SCollisionShapeComponent>().disconnect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
         Registry.on_construct<SCompoundColliderComponent>().disconnect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
         Registry.on_construct<SMeshColliderComponent>().disconnect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
         Registry.on_construct<STerrainColliderComponent>().disconnect<&entt::registry::get_or_emplace<SRigidBodyComponent>>();
@@ -2277,6 +2281,191 @@ namespace Lumina::Physics
         
     }
 
+    // Bake-time hull reduction for CCollisionShape. Jolt's builder already runs QuickHull, so the hull is
+    // read back off the built shape rather than reimplementing it; storing the reduced points is what keeps
+    // a collision asset from being as large as the mesh it came from.
+    bool CollisionGen::BuildHullPoints(const TVector<FVector3>& Points, TVector<FVector3>& OutHull)
+    {
+        OutHull.clear();
+
+        if (Points.size() < 4)
+        {
+            return false;
+        }
+
+        JPH::Array<JPH::Vec3> HullInput;
+        HullInput.reserve(Points.size());
+        for (const FVector3& P : Points)
+        {
+            HullInput.emplace_back(P.x, P.y, P.z);
+        }
+
+        JPH::ConvexHullShapeSettings Settings(HullInput);
+        Settings.SetEmbedded();
+
+        JPH::ShapeSettings::ShapeResult Result = Settings.Create();
+        if (Result.HasError())
+        {
+            // Coplanar or degenerate input; the caller decides whether that is fatal or just a skip.
+            return false;
+        }
+
+        const JPH::ConvexHullShape* Hull = static_cast<const JPH::ConvexHullShape*>(Result.Get().GetPtr());
+        const uint32 NumPoints = (uint32)Hull->GetNumPoints();
+
+        OutHull.reserve(NumPoints);
+        for (uint32 i = 0; i < NumPoints; ++i)
+        {
+            const JPH::Vec3 P = Hull->GetPoint(i);
+            OutHull.push_back(FVector3(P.GetX(), P.GetY(), P.GetZ()));
+        }
+
+        return OutHull.size() >= 4;
+    }
+
+    bool CollisionGen::BuildHullWireframe(const TVector<FVector3>& Points, TVector<FVector3>& OutVertices,
+                                          TVector<uint32>& OutEdges)
+    {
+        OutVertices.clear();
+        OutEdges.clear();
+
+        if (Points.size() < 4)
+        {
+            return false;
+        }
+
+        JPH::Array<JPH::Vec3> HullInput;
+        HullInput.reserve(Points.size());
+        for (const FVector3& P : Points)
+        {
+            HullInput.emplace_back(P.x, P.y, P.z);
+        }
+
+        JPH::ConvexHullShapeSettings Settings(HullInput);
+        Settings.SetEmbedded();
+
+        JPH::ShapeSettings::ShapeResult Result = Settings.Create();
+        if (Result.HasError())
+        {
+            return false;
+        }
+
+        const JPH::ConvexHullShape* Hull = static_cast<const JPH::ConvexHullShape*>(Result.Get().GetPtr());
+
+        const uint32 NumPoints = (uint32)Hull->GetNumPoints();
+        OutVertices.reserve(NumPoints);
+        for (uint32 i = 0; i < NumPoints; ++i)
+        {
+            const JPH::Vec3 P = Hull->GetPoint(i);
+            OutVertices.push_back(FVector3(P.GetX(), P.GetY(), P.GetZ()));
+        }
+
+        TVector<uint32> FaceIndices;
+
+        for (uint32 Face = 0; Face < (uint32)Hull->GetNumFaces(); ++Face)
+        {
+            const uint32 NumFaceVertices = (uint32)Hull->GetNumVerticesInFace(Face);
+            if (NumFaceVertices < 2)
+            {
+                continue;
+            }
+
+            FaceIndices.resize(NumFaceVertices);
+            Hull->GetFaceVertices(Face, NumFaceVertices, FaceIndices.data());
+
+            for (uint32 i = 0; i < NumFaceVertices; ++i)
+            {
+                uint32 A = FaceIndices[i];
+                uint32 B = FaceIndices[(i + 1) % NumFaceVertices];
+                if (A > B)
+                {
+                    eastl::swap(A, B);
+                }
+
+                // Adjacent faces share every edge, so without the dedup each one is drawn twice.
+                bool bExists = false;
+                for (SIZE_T e = 0; e + 1 < OutEdges.size(); e += 2)
+                {
+                    if (OutEdges[e] == A && OutEdges[e + 1] == B)
+                    {
+                        bExists = true;
+                        break;
+                    }
+                }
+
+                if (!bExists)
+                {
+                    OutEdges.push_back(A);
+                    OutEdges.push_back(B);
+                }
+            }
+        }
+
+        return !OutEdges.empty();
+    }
+
+    bool CollisionGen::BuildHullTriangles(const TVector<FVector3>& Points, TVector<FVector3>& OutVertices,
+                                          TVector<uint32>& OutIndices)
+    {
+        OutVertices.clear();
+        OutIndices.clear();
+
+        if (Points.size() < 4)
+        {
+            return false;
+        }
+
+        JPH::Array<JPH::Vec3> HullInput;
+        HullInput.reserve(Points.size());
+        for (const FVector3& P : Points)
+        {
+            HullInput.emplace_back(P.x, P.y, P.z);
+        }
+
+        JPH::ConvexHullShapeSettings Settings(HullInput);
+        Settings.SetEmbedded();
+
+        JPH::ShapeSettings::ShapeResult Result = Settings.Create();
+        if (Result.HasError())
+        {
+            return false;
+        }
+
+        const JPH::ConvexHullShape* Hull = static_cast<const JPH::ConvexHullShape*>(Result.Get().GetPtr());
+
+        const uint32 NumPoints = (uint32)Hull->GetNumPoints();
+        OutVertices.reserve(NumPoints);
+        for (uint32 i = 0; i < NumPoints; ++i)
+        {
+            const JPH::Vec3 P = Hull->GetPoint(i);
+            OutVertices.push_back(FVector3(P.GetX(), P.GetY(), P.GetZ()));
+        }
+
+        TVector<uint32> FaceIndices;
+
+        for (uint32 Face = 0; Face < (uint32)Hull->GetNumFaces(); ++Face)
+        {
+            const uint32 NumFaceVertices = (uint32)Hull->GetNumVerticesInFace(Face);
+            if (NumFaceVertices < 3)
+            {
+                continue;
+            }
+
+            FaceIndices.resize(NumFaceVertices);
+            Hull->GetFaceVertices(Face, NumFaceVertices, FaceIndices.data());
+
+            // Hull faces are convex and wound consistently, so a fan from the first vertex is valid.
+            for (uint32 i = 1; i + 1 < NumFaceVertices; ++i)
+            {
+                OutIndices.push_back(FaceIndices[0]);
+                OutIndices.push_back(FaceIndices[i]);
+                OutIndices.push_back(FaceIndices[i + 1]);
+            }
+        }
+
+        return !OutIndices.empty();
+    }
+
     // Collision geometry comes from LOD 0's meshlets, which every mesh keeps after upload (the raw index and
     // vertex streams are dropped). Sourced from the resource rather than a CMesh so the dynamic-mesh path --
     // which owns an FMeshResource without owning a CMesh -- shares exactly this builder.
@@ -2575,6 +2764,33 @@ namespace Lumina::Physics
 
             // PlaneShape::MustBeStatic() -> true; force the body Static (shares the triangle-mesh path below).
             bIsTriangleMesh = true;
+        }
+        else if (const SCollisionShapeComponent* CSC = Registry.try_get<SCollisionShapeComponent>(Entity))
+        {
+            ColliderTranslationOffset = CSC->TranslationOffset;
+            ColliderRotationOffset    = CSC->RotationOffset;
+            bColliderIsTrigger        = CSC->bIsTrigger;
+
+            const CCollisionShape* Asset = CSC->CollisionShape.Get();
+            if (Asset == nullptr || !Asset->HasCollision())
+            {
+                // Deliberately not a Defer: an unassigned or empty asset is an authoring mistake that
+                // would otherwise retry forever, so it reports once and stops.
+                LOG_WARN("CollisionShape on Entity {} is missing or empty; no body was built.", entt::to_integral(Entity));
+                return EBodyBuildStatus::Error;
+            }
+
+            // Instance override first, then the asset's own material.
+            ResolvedMaterial = CSC->PhysicsMaterial.IsValid() ? CSC->PhysicsMaterial.Get() : Asset->PhysicsMaterial.Get();
+
+            Shape = Scene->BuildCollisionShapeAsset(*Asset, TransformComponent->GetScale());
+            if (Shape == nullptr)
+            {
+                LOG_ERROR("Failed to build collision shape '{}' for Entity: {}", Asset->GetName(), entt::to_integral(Entity));
+                return EBodyBuildStatus::Error;
+            }
+
+            bIsTriangleMesh = Asset->IsConcave();
         }
         else if (const SCompoundColliderComponent* CompC = Registry.try_get<SCompoundColliderComponent>(Entity))
         {
@@ -3863,6 +4079,126 @@ namespace Lumina::Physics
         return Shape;
     }
 
+    JPH::ShapeRefC FJoltPhysicsScene::BuildCollisionShapeAsset(const CCollisionShape& Asset, const FVector3& Scale)
+    {
+        // A baked triangle mesh replaces the primitives rather than joining them, matching what the editor
+        // draws and what the asset's IsConcave() reports.
+        if (Asset.IsConcave())
+        {
+            JPH::VertexList Vertices;
+            Vertices.reserve(Asset.TriangleVertices.size());
+            for (const FVector3& V : Asset.TriangleVertices)
+            {
+                const FVector3 Scaled = V * Scale;
+                Vertices.push_back(JPH::Float3(Scaled.x, Scaled.y, Scaled.z));
+            }
+
+            JPH::IndexedTriangleList Triangles;
+            Triangles.reserve(Asset.TriangleIndices.size() / 3);
+            for (SIZE_T i = 0; i + 2 < Asset.TriangleIndices.size(); i += 3)
+            {
+                Triangles.emplace_back(Asset.TriangleIndices[i], Asset.TriangleIndices[i + 1], Asset.TriangleIndices[i + 2], 0);
+            }
+
+            JPH::MeshShapeSettings Settings(Vertices, Triangles);
+            Settings.SetEmbedded();
+
+            JPH::ShapeSettings::ShapeResult Result = Settings.Create();
+            return Result.HasError() ? JPH::ShapeRefC{} : Result.Get();
+        }
+
+        const float UniformScale = Math::Max(Math::Max(Math::Abs(Scale.x), Math::Abs(Scale.y)), Math::Abs(Scale.z));
+
+        auto BuildPiece = [&](const SCollisionPrimitive& Primitive) -> JPH::ShapeRefC
+        {
+            switch (Primitive.Type)
+            {
+            case ECollisionPrimitiveType::Box:
+                return GetOrCreateBoxShape(Primitive.HalfExtent * Scale);
+
+            case ECollisionPrimitiveType::Sphere:
+                return GetOrCreateSphereShape(Primitive.Radius * UniformScale);
+
+            case ECollisionPrimitiveType::Capsule:
+                return GetOrCreateCapsuleShape(Primitive.Radius * UniformScale, Primitive.HalfHeight * UniformScale);
+
+            case ECollisionPrimitiveType::ConvexHull:
+                {
+                    if (Primitive.HullPoints.size() < 4)
+                    {
+                        return {};
+                    }
+
+                    // Uncached: hull point sets are per-asset, so there is nothing for a shared cache to hit.
+                    JPH::Array<JPH::Vec3> Points;
+                    Points.reserve(Primitive.HullPoints.size());
+                    for (const FVector3& P : Primitive.HullPoints)
+                    {
+                        const FVector3 Scaled = P * Scale;
+                        Points.emplace_back(Scaled.x, Scaled.y, Scaled.z);
+                    }
+
+                    JPH::ConvexHullShapeSettings Settings(Points);
+                    Settings.SetEmbedded();
+
+                    JPH::ShapeSettings::ShapeResult Result = Settings.Create();
+                    return Result.HasError() ? JPH::ShapeRefC{} : Result.Get();
+                }
+            }
+
+            return {};
+        };
+
+        const auto HasOffset = [](const SCollisionPrimitive& Primitive)
+        {
+            return Math::LengthSquared(Primitive.Center) > LE_SMALL_NUMBER
+                || Math::LengthSquared(Primitive.Rotation) > LE_SMALL_NUMBER;
+        };
+
+        // A static compound needs >= 2 children; with exactly one, use it directly.
+        if (Asset.Primitives.size() == 1)
+        {
+            const SCollisionPrimitive& Primitive = Asset.Primitives[0];
+
+            JPH::ShapeRefC Piece = BuildPiece(Primitive);
+            if (Piece == nullptr || !HasOffset(Primitive))
+            {
+                return Piece;
+            }
+
+            JPH::RotatedTranslatedShapeSettings RTS(JoltUtils::ToJPHVec3(Primitive.Center * Scale),
+                JoltUtils::ToJPHQuat(FQuat(Math::Radians(Primitive.Rotation))), Piece);
+
+            JPH::ShapeSettings::ShapeResult Result = RTS.Create();
+            return Result.HasError() ? JPH::ShapeRefC{} : Result.Get();
+        }
+
+        JPH::StaticCompoundShapeSettings Compound;
+        Compound.SetEmbedded();
+
+        uint32 ValidChildren = 0;
+        for (const SCollisionPrimitive& Primitive : Asset.Primitives)
+        {
+            JPH::ShapeRefC Piece = BuildPiece(Primitive);
+            if (Piece == nullptr)
+            {
+                continue;
+            }
+
+            Compound.AddShape(JoltUtils::ToJPHVec3(Primitive.Center * Scale),
+                JoltUtils::ToJPHQuat(FQuat(Math::Radians(Primitive.Rotation))), Piece.GetPtr());
+            ++ValidChildren;
+        }
+
+        if (ValidChildren == 0)
+        {
+            return {};
+        }
+
+        JPH::ShapeSettings::ShapeResult Result = Compound.Create();
+        return Result.HasError() ? JPH::ShapeRefC{} : Result.Get();
+    }
+
     JPH::ShapeRefC FJoltPhysicsScene::BuildCompoundShape(const SCompoundColliderComponent& Comp, const STransformComponent& Transform)
     {
         const float Scale = Transform.MaxScale();
@@ -4340,6 +4676,26 @@ namespace Lumina::Physics
         JPH::BodyID JPHBodyID = JPH::BodyID(BodyID);
 
         return JoltUtils::FromJPHVec3(Interface.GetCenterOfMassPosition(JPHBodyID));
+    }
+
+    float FJoltPhysicsScene::GetBodyMass(uint32 BodyID)
+    {
+        JPH::BodyLockRead Lock(JoltSystem->GetBodyLockInterface(), JPH::BodyID(BodyID));
+        if (!Lock.Succeeded())
+        {
+            return 0.0f;
+        }
+
+        const JPH::Body& Body = Lock.GetBody();
+        if (Body.IsStatic() || Body.GetMotionProperties() == nullptr)
+        {
+            return 0.0f;
+        }
+
+        // Jolt stores the reciprocal; a kinematic body reports zero inverse mass, which is infinite mass and
+        // therefore not something a caller should try to scale a force by.
+        const float InverseMass = Body.GetMotionProperties()->GetInverseMass();
+        return InverseMass > 0.0f ? 1.0f / InverseMass : 0.0f;
     }
 
     FVector3 FJoltPhysicsScene::GetBodyPosition(uint32 BodyID)

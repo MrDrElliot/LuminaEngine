@@ -4,7 +4,9 @@
 #include "AI/Navigation/NavMesh.h"
 #include "AI/Navigation/NavMeshBuilder.h"
 #include "Assets/AssetTypes/Mesh/StaticMesh/StaticMesh.h"
+#include "Assets/AssetTypes/Physics/CollisionShape.h"
 #include "Core/Console/ConsoleVariable.h"
+#include "Physics/CollisionShapeGen.h"
 #include "Renderer/MeshData.h"
 #include "Renderer/Vertex.h"
 #include "TaskSystem/TaskSystem.h"
@@ -204,11 +206,18 @@ namespace Lumina
         }
 
         // Tag-bit packed into cache key so one entity may track one collider of each type.
-        enum class ENavColliderType : uint8 { Box = 0, Sphere = 1, Mesh = 2, CharacterCapsule = 3, Capsule = 4, Cylinder = 5, Terrain = 6 };
+        enum class ENavColliderType : uint8 { Box = 0, Sphere = 1, Mesh = 2, CharacterCapsule = 3, Capsule = 4, Cylinder = 5, Terrain = 6, TriangleSoup = 7 };
 
         FORCEINLINE uint64 PackSourceKey(entt::entity E, ENavColliderType T)
         {
             return ((uint64)(uint32)E << 8) | (uint64)T;
+        }
+
+        // One entity can contribute several sources (a collision asset's pieces), so the index goes above
+        // the entity bits. SubIndex 0 is byte-identical to the plain key, which the change detector relies on.
+        FORCEINLINE uint64 PackSourceKey(entt::entity E, ENavColliderType T, uint32 SubIndex)
+        {
+            return ((uint64)SubIndex << 40) | ((uint64)(uint32)E << 8) | (uint64)T;
         }
 
         // Matches Jolt body placement so nav geometry overlaps physics exactly.
@@ -473,7 +482,7 @@ namespace Lumina
             FMatrix4                        World = FMatrix4(1.0f);
             FVector3                        Shape = FVector3(0.0f);   // Box: half-extent; Sphere: x=Radius; Capsule/Cylinder: x=Radius, y=HalfHeight
             CStaticMesh*                    Mesh  = nullptr;
-            TSharedPtr<TVector<FVector3>>   TerrainTris;              // world-space tri soup (groups of 3); terrain only
+            TSharedPtr<TVector<FVector3>>   TriangleSoup;             // world-space tri soup (groups of 3); Terrain and TriangleSoup types
         };
 
         struct FNavSourceEntry
@@ -495,9 +504,10 @@ namespace Lumina
                 case ENavColliderType::CharacterCapsule: EmitCapsuleGeometry(P.World, P.Shape.y, P.Shape.x, BakeMin, BakeMax, Acc); break;
                 case ENavColliderType::Cylinder: EmitCylinderGeometry(P.World, P.Shape.y, P.Shape.x, BakeMin, BakeMax, Acc); break;
                 case ENavColliderType::Terrain:
-                    if (P.TerrainTris)
+                case ENavColliderType::TriangleSoup:
+                    if (P.TriangleSoup)
                     {
-                        const TVector<FVector3>& Tris = *P.TerrainTris;
+                        const TVector<FVector3>& Tris = *P.TriangleSoup;
                         for (size_t i = 0; i + 2 < Tris.size(); i += 3)
                         {
                             EmitTri(Acc, BakeMin, BakeMax, Tris[i], Tris[i + 1], Tris[i + 2]);
@@ -564,6 +574,128 @@ namespace Lumina
                 Entry.AABBMin = Center - FVector3(R);
                 Entry.AABBMax = Center + FVector3(R);
                 Out.push_back(std::move(Entry));
+            }
+
+            // An authored collision asset contributes one source per piece, so nav sees the same decomposed
+            // shape physics does rather than a single bound. Concave and hull pieces go through the tri-soup
+            // path because their geometry does not fit any primitive slot.
+            auto ShapeAssetView = Context.CreateView<SCollisionShapeComponent, STransformComponent>();
+            for (entt::entity E : ShapeAssetView)
+            {
+                SCollisionShapeComponent& CSC = ShapeAssetView.get<SCollisionShapeComponent>(E);
+                if (!CSC.bAffectsNavigation)
+                {
+                    continue;
+                }
+
+                const CCollisionShape* Asset = CSC.CollisionShape.Get();
+                if (Asset == nullptr || !Asset->HasCollision())
+                {
+                    continue;
+                }
+
+                const FMatrix4 ColliderWorld = ColliderToWorld(ShapeAssetView.get<STransformComponent>(E),
+                                                               CSC.TranslationOffset, CSC.RotationOffset);
+
+                if (Asset->IsConcave())
+                {
+                    FNavSourceEntry Entry;
+                    Entry.Key = PackSourceKey(E, ENavColliderType::TriangleSoup);
+                    Entry.Prim.Type = ENavColliderType::TriangleSoup;
+                    Entry.Prim.World = ColliderWorld;
+                    Entry.Prim.TriangleSoup = MakeShared<TVector<FVector3>>();
+
+                    Entry.Prim.TriangleSoup->reserve(Asset->TriangleIndices.size());
+                    for (uint32 Index : Asset->TriangleIndices)
+                    {
+                        const FVector3 P = FVector3(ColliderWorld * FVector4(Asset->TriangleVertices[Index], 1.0f));
+                        Entry.Prim.TriangleSoup->push_back(P);
+                        Entry.AABBMin = Math::Min(Entry.AABBMin, P);
+                        Entry.AABBMax = Math::Max(Entry.AABBMax, P);
+                    }
+
+                    Out.push_back(std::move(Entry));
+                    continue;
+                }
+
+                for (uint32 i = 0; i < (uint32)Asset->Primitives.size(); ++i)
+                {
+                    const SCollisionPrimitive& Primitive = Asset->Primitives[i];
+
+                    FNavSourceEntry Entry;
+                    Entry.Prim.World = ColliderWorld * Math::Translate(FMatrix4(1.0f), Primitive.Center)
+                                                     * Math::ToMatrix4(FQuat(Math::Radians(Primitive.Rotation)));
+
+                    switch (Primitive.Type)
+                    {
+                    case ECollisionPrimitiveType::Box:
+                        {
+                            Entry.Key = PackSourceKey(E, ENavColliderType::Box, i);
+                            Entry.Prim.Type = ENavColliderType::Box;
+                            Entry.Prim.Shape = Primitive.HalfExtent;
+
+                            const FVector3 H = Primitive.HalfExtent;
+                            const FVector3 Corners[8] = {
+                                {-H.x,-H.y,-H.z}, { H.x,-H.y,-H.z}, { H.x,-H.y, H.z}, {-H.x,-H.y, H.z},
+                                {-H.x, H.y,-H.z}, { H.x, H.y,-H.z}, { H.x, H.y, H.z}, {-H.x, H.y, H.z},
+                            };
+                            CornersAABB(Entry.Prim.World, Corners, 8, Entry.AABBMin, Entry.AABBMax);
+                        }
+                        break;
+
+                    case ECollisionPrimitiveType::Sphere:
+                        {
+                            Entry.Key = PackSourceKey(E, ENavColliderType::Sphere, i);
+                            Entry.Prim.Type = ENavColliderType::Sphere;
+                            Entry.Prim.Shape = FVector3(Primitive.Radius, 0.0f, 0.0f);
+
+                            const FVector3 Center = FVector3(Entry.Prim.World * FVector4(0.0f, 0.0f, 0.0f, 1.0f));
+                            const float R = ScaledRadius(Entry.Prim.World, Primitive.Radius);
+                            Entry.AABBMin = Center - FVector3(R);
+                            Entry.AABBMax = Center + FVector3(R);
+                        }
+                        break;
+
+                    case ECollisionPrimitiveType::Capsule:
+                        {
+                            Entry.Key = PackSourceKey(E, ENavColliderType::Capsule, i);
+                            Entry.Prim.Type = ENavColliderType::Capsule;
+                            Entry.Prim.Shape = FVector3(Primitive.Radius, Primitive.HalfHeight, 0.0f);
+
+                            const FVector3 Center = FVector3(Entry.Prim.World * FVector4(0.0f, 0.0f, 0.0f, 1.0f));
+                            const float R = ScaledRadius(Entry.Prim.World, Primitive.Radius + Primitive.HalfHeight);
+                            Entry.AABBMin = Center - FVector3(R);
+                            Entry.AABBMax = Center + FVector3(R);
+                        }
+                        break;
+
+                    case ECollisionPrimitiveType::ConvexHull:
+                        {
+                            TVector<FVector3> HullVertices;
+                            TVector<uint32> HullIndices;
+                            if (!Physics::CollisionGen::BuildHullTriangles(Primitive.HullPoints, HullVertices, HullIndices))
+                            {
+                                continue;
+                            }
+
+                            Entry.Key = PackSourceKey(E, ENavColliderType::TriangleSoup, i);
+                            Entry.Prim.Type = ENavColliderType::TriangleSoup;
+                            Entry.Prim.TriangleSoup = MakeShared<TVector<FVector3>>();
+
+                            Entry.Prim.TriangleSoup->reserve(HullIndices.size());
+                            for (uint32 Index : HullIndices)
+                            {
+                                const FVector3 P = FVector3(Entry.Prim.World * FVector4(HullVertices[Index], 1.0f));
+                                Entry.Prim.TriangleSoup->push_back(P);
+                                Entry.AABBMin = Math::Min(Entry.AABBMin, P);
+                                Entry.AABBMax = Math::Max(Entry.AABBMax, P);
+                            }
+                        }
+                        break;
+                    }
+
+                    Out.push_back(std::move(Entry));
+                }
             }
 
             auto MeshView = Context.CreateView<SMeshColliderComponent, STransformComponent>();
@@ -665,8 +797,8 @@ namespace Lumina
                 CornersAABB(Entry.Prim.World, Corners, 8, Entry.AABBMin, Entry.AABBMax);
                 if (bTessellateTerrain)
                 {
-                    Entry.Prim.TerrainTris = MakeShared<TVector<FVector3>>();
-                    TessellateTerrain(*Terrain, Entry.Prim.World, BakeMin, BakeMax, CellSize, *Entry.Prim.TerrainTris);
+                    Entry.Prim.TriangleSoup = MakeShared<TVector<FVector3>>();
+                    TessellateTerrain(*Terrain, Entry.Prim.World, BakeMin, BakeMax, CellSize, *Entry.Prim.TriangleSoup);
                 }
                 Out.push_back(std::move(Entry));
             }

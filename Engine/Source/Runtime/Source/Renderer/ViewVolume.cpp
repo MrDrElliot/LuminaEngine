@@ -35,10 +35,26 @@ namespace Lumina
         return P;
     }
 
+    static FMatrix4 BuildVulkanReverseZOrtho(float Width, float Aspect, float Near, float Far)
+    {
+        const float HalfWidth  = Math::Max(Width, 0.001f) * 0.5f;
+        const float HalfHeight = HalfWidth / Math::Max(Aspect, 0.001f);
+        FMatrix4 P = Math::Ortho(-HalfWidth, HalfWidth, -HalfHeight, HalfHeight, Far, Near);
+        P[1][1] *= -1.0f;
+        return P;
+    }
+
+    void FViewVolume::RebuildProjection()
+    {
+        ProjectionMatrix = (ProjectionMode == EViewProjectionMode::Orthographic)
+            ? BuildVulkanReverseZOrtho(OrthoWidth, AspectRatio, Near, Far)
+            : BuildVulkanReverseZPerspective(FOV, AspectRatio, Near, Far);
+    }
+
     FViewVolume& FViewVolume::SetNear(float InNear)
     {
         Near = InNear;
-        ProjectionMatrix = BuildVulkanReverseZPerspective(FOV, AspectRatio, Near, Far);
+        RebuildProjection();
         UpdateMatrices();
 
         return *this;
@@ -47,7 +63,7 @@ namespace Lumina
     FViewVolume& FViewVolume::SetFar(float InFar)
     {
         Far = InFar;
-        ProjectionMatrix = BuildVulkanReverseZPerspective(FOV, AspectRatio, Near, Far);
+        RebuildProjection();
         UpdateMatrices();
 
         return *this;
@@ -78,30 +94,43 @@ namespace Lumina
 
     FViewVolume& FViewVolume::SetPerspective(float fov, float aspect)
     {
+        ProjectionMode = EViewProjectionMode::Perspective;
         FOV = fov;
         AspectRatio = aspect;
 
-        ProjectionMatrix = BuildVulkanReverseZPerspective(FOV, AspectRatio, Near, Far);
+        RebuildProjection();
         UpdateMatrices();
 
         return *this;
     }
 
+    FViewVolume& FViewVolume::SetOrthographic(float InWidth, float InAspect)
+    {
+        ProjectionMode = EViewProjectionMode::Orthographic;
+        OrthoWidth = Math::Max(InWidth, 0.001f);
+        AspectRatio = InAspect;
+
+        RebuildProjection();
+        UpdateMatrices();
+
+        return *this;
+    }
 
     FViewVolume& FViewVolume::SetAspectRatio(float InAspect)
     {
         AspectRatio = InAspect;
 
-        ProjectionMatrix = BuildVulkanReverseZPerspective(FOV, AspectRatio, Near, Far);
+        RebuildProjection();
         UpdateMatrices();
 
         return *this;
     }
 
+    // Authored FOV is kept even while orthographic, so toggling back restores the user's framing.
     FViewVolume& FViewVolume::SetFOV(float InFOV)
     {
         FOV = InFOV;
-        ProjectionMatrix = BuildVulkanReverseZPerspective(FOV, AspectRatio, Near, Far);
+        RebuildProjection();
         UpdateMatrices();
 
         return *this;

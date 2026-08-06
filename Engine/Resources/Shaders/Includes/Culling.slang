@@ -46,6 +46,18 @@ bool ProjectSphereClip(float3 C, float R, float ZNear, float P00, float P11, out
         return false;
     }
 
+    // Orthographic: view rays are parallel, so the silhouette is a plain scale of the world radius
+    // (same as the cascade path below) and the tangent construction underneath -- which divides by
+    // view Z and so assumes rays converging on the eye -- does not apply. Both callers pass the
+    // camera projection, which is what IsCameraOrthographic describes.
+    if (IsCameraOrthographic())
+    {
+        float2 Center = float2(C.x * P00, C.y * P11);
+        float2 Extent = float2(R * abs(P00), R * abs(P11));
+        ClipAABB = float4(Center - Extent, Center + Extent);
+        return true;
+    }
+
     float2 cx = float2(C.x, C.z);
     float  tx = sqrt(dot(cx, cx) - R * R);
     float2 minX = float2(tx * cx.x - R * cx.y,  R * cx.x + tx * cx.y);
@@ -75,6 +87,12 @@ bool ProjectSphereClip(float3 C, float R, float ZNear, float P00, float P11, out
 // depth(z) = (N * F / z - N) / (F - N).
 float SphereFrontDepth(float FrontZ, float ZNear, float ZFar)
 {
+    // Reverse-Z ortho is linear in view Z: depth(z) = (z - F) / (N - F).
+    if (IsCameraOrthographic())
+    {
+        return (FrontZ - ZFar) / (ZNear - ZFar);
+    }
+
     return (ZNear * ZFar / FrontZ - ZNear) / (ZFar - ZNear);
 }
 

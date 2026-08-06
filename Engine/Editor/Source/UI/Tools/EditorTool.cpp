@@ -563,6 +563,206 @@ namespace Lumina
         ImGui::Dummy(ImVec2(0, 0));
     }
 
+    void FEditorTool::DrawProjectionToggle(const ImVec2& Position, float Radius)
+    {
+        const ImViewGuizmo::Style& Style = ImViewGuizmo::GetStyle();
+        const bool bOrtho = CameraState.bOrthographic;
+
+        // A real ImGui item rather than a raw hit-test, so it stacks correctly against overlapping
+        // panels; the view gizmo beside it cannot do this because it reads the mouse directly.
+        const ImVec2 Cursor = ImGui::GetCursorScreenPos();
+        ImGui::SetCursorScreenPos(Position);
+        ImGui::InvisibleButton("##ViewProjectionToggle", ImVec2(Radius * 2.0f, Radius * 2.0f));
+
+        const bool bHovered = ImGui::IsItemHovered();
+        bViewGizmoOrthoHovered = bHovered || ImGui::IsItemActive();
+
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
+        {
+            SetEditorCameraOrthographic(!bOrtho);
+        }
+
+        if (bHovered)
+        {
+            ImGui::SetTooltip(bOrtho ? "Orthographic (click for perspective)" : "Perspective (click for orthographic)");
+        }
+
+        ImDrawList* DrawList = ImGui::GetWindowDrawList();
+        const ImVec2 Center(Position.x + Radius, Position.y + Radius);
+
+        const ImU32 Background = (bHovered || bOrtho) ? Style.toolButtonHoveredColor : Style.toolButtonColor;
+        DrawList->AddCircleFilled(Center, Radius, Background);
+
+        if (bOrtho)
+        {
+            DrawList->AddCircle(Center, Radius, Style.highlightColor, 0, 2.0f * Style.scale);
+        }
+
+        const char* Icon = bOrtho ? LE_ICON_VECTOR_SQUARE : LE_ICON_ANGLE_ACUTE;
+        const float FontSize = ImGui::GetFontSize();
+        const ImVec2 IconSize = ImGui::GetFont()->CalcTextSizeA(FontSize, FLT_MAX, 0.0f, Icon);
+        DrawList->AddText(ImGui::GetFont(), FontSize,
+            ImVec2(Center.x - IconSize.x * 0.5f, Center.y - IconSize.y * 0.5f),
+            Style.toolButtonIconColor, Icon);
+
+        ImGui::SetCursorScreenPos(Cursor);
+    }
+
+    void FEditorTool::DrawViewGizmo(const ImVec2& ViewportOrigin, const ImVec2& ViewportSize)
+    {
+        const bool bHasEditorCamera = ShouldDrawViewGizmo() && HasWorld() && !World->IsGameWorld()
+            && EditorEntity != entt::null && World->IsValidEntity(EditorEntity)
+            && World->HasComponent<STransformComponent>(EditorEntity);
+
+        const float UIScale = ImGuiX::GetUIScale();
+
+        ImViewGuizmo::Style& Style = ImViewGuizmo::GetStyle();
+        Style.scale = 0.55f * UIScale;
+
+        // Upstream's near-transparent light grey vanishes against a bright viewport.
+        Style.toolButtonColor        = IM_COL32(18, 20, 24, 150);
+        Style.toolButtonHoveredColor = IM_COL32(45, 50, 58, 195);
+
+        // Distance from the gizmo's center out to the tip of an axis handle.
+        const float GizmoExtent  = 80.0f * Style.scale;
+        const float ButtonRadius = Style.toolButtonRadius * Style.scale;
+        const float ButtonSize   = ButtonRadius * 2.0f;
+        const float Margin       = 12.0f * UIScale;
+        const float Spacing      = 6.0f * UIScale;
+
+        const float NeededWidth  = (GizmoExtent * 2.0f) + (Margin * 2.0f);
+        const float NeededHeight = (GizmoExtent * 2.0f) + (ButtonSize * 3.0f) + (Spacing * 4.0f) + (Margin * 2.0f);
+        const bool bFits = ViewportSize.x >= NeededWidth && ViewportSize.y >= NeededHeight;
+
+        if (!bHasEditorCamera || !bFits)
+        {
+            // Not drawing this frame, so nothing will release a latched drag or hover.
+            ViewGizmoContext.Clear();
+            CameraState.bViewGizmoActive = false;
+            bViewGizmoOrthoHovered = false;
+            return;
+        }
+
+        ImViewGuizmo::SetContext(&ViewGizmoContext);
+        ImViewGuizmo::BeginFrame();
+        ImViewGuizmo::Enable(bViewportHovered || ImViewGuizmo::IsUsing());
+
+        STransformComponent& Transform = World->GetComponent<STransformComponent>(EditorEntity);
+
+        const FVector3 StartLocation = Transform.GetLocation();
+        const FQuat    StartRotation = Transform.GetRotation();
+
+        FVector3 Pivot = CameraState.OrbitTarget;
+        if (CameraState.Mode == EEditorCameraMode::Free)
+        {
+            if (!CameraState.bViewGizmoActive)
+            {
+                float PivotDistance = 10.0f;
+                if (CameraState.bHasLastFocusPoint)
+                {
+                    const float FocusDistance = Math::Distance(StartLocation, CameraState.LastFocusPoint);
+                    if (FocusDistance > 0.1f)
+                    {
+                        PivotDistance = FocusDistance;
+                    }
+                }
+
+                CameraState.ViewGizmoPivot = StartLocation + Transform.GetForward() * PivotDistance;
+            }
+
+            Pivot = CameraState.ViewGizmoPivot;
+        }
+
+        const float PivotDistance = Math::Max(Math::Distance(StartLocation, Pivot), 0.1f);
+
+        const ImVec2 GizmoCenter(
+            ViewportOrigin.x + ViewportSize.x - Margin - GizmoExtent,
+            ViewportOrigin.y + Margin + GizmoExtent);
+
+        const float ButtonX = GizmoCenter.x + GizmoExtent - ButtonSize;
+        const float DollyY  = GizmoCenter.y + GizmoExtent + Spacing;
+        const float PanY    = DollyY + ButtonSize + Spacing;
+        const float OrthoY  = PanY + ButtonSize + Spacing;
+
+        DrawProjectionToggle(ImVec2(ButtonX, OrthoY), ButtonRadius);
+
+        FVector3 Location = StartLocation;
+        FQuat    Rotation = StartRotation;
+
+        // 0.4 deg/px matches the RMB orbit; the translation speeds track the pivot distance so the
+        // gizmo feels the same at any working scale.
+        const bool bRotated = ImViewGuizmo::Rotate(Location, Rotation, Pivot, GizmoCenter, Math::Radians(0.4f));
+
+        const FVector3 RotatedLocation = Location;
+        const bool bDollied = ImViewGuizmo::Dolly(Location, Rotation, ImVec2(ButtonX, DollyY), PivotDistance * 0.005f);
+        const FVector3 DollyDelta = Location - RotatedLocation;
+
+        const FVector3 DolliedLocation = Location;
+        const bool bPanned = ImViewGuizmo::Pan(Location, Rotation, ImVec2(ButtonX, PanY), PivotDistance * 0.002f);
+        const FVector3 PanDelta = Location - DolliedLocation;
+
+        CameraState.bViewGizmoActive = ImViewGuizmo::IsUsing() || ImViewGuizmo::IsAnimating();
+
+        ImViewGuizmo::SetContext(nullptr);
+
+        if (!bRotated && !bDollied && !bPanned)
+        {
+            return;
+        }
+
+        // A gizmo drag is an explicit camera move; drop any focus lerp still in flight.
+        CameraState.bFocusInterp = false;
+        CameraState.Velocity = FVector3(0.0f);
+
+        if (CameraState.Mode == EEditorCameraMode::Orbit)
+        {
+            // Orbit mode regenerates the transform from these every tick, so writing it directly
+            // would be overwritten by the next ApplyOrbitTransform.
+            if (bRotated)
+            {
+                const FVector3 Offset = RotatedLocation - Pivot;
+                const float Distance = Math::Max(Math::Length(Offset), 0.05f);
+
+                CameraState.OrbitDistance = Distance;
+                CameraState.OrbitYaw   = Math::Degrees(std::atan2(Offset.x, Offset.z));
+                CameraState.OrbitPitch = Math::Clamp(Math::Degrees(std::asin(Math::Clamp(Offset.y / Distance, -1.0f, 1.0f))), -89.0f, 89.0f);
+            }
+
+            if (bDollied)
+            {
+                const FVector3 Forward = Rotation * FVector3(0.0f, 0.0f, 1.0f);
+                CameraState.OrbitDistance = Math::Max(CameraState.OrbitDistance - Math::Dot(DollyDelta, Forward), 0.05f);
+            }
+
+            if (bPanned)
+            {
+                CameraState.OrbitTarget += PanDelta;
+            }
+
+            ApplyOrbitTransform();
+            return;
+        }
+
+        // Dollying along forward is invisible under a parallel projection, so in ortho the button
+        // drives the zoom distance instead and the position delta is discarded.
+        if (bDollied && CameraState.bOrthographic)
+        {
+            const FVector3 Forward = Rotation * FVector3(0.0f, 0.0f, 1.0f);
+            CameraState.OrthoFreeDistance = Math::Max(CameraState.OrthoFreeDistance - Math::Dot(DollyDelta, Forward), 0.05f);
+            Location -= DollyDelta;
+        }
+
+        Transform.SetLocation(Location);
+        Transform.SetRotation(Rotation);
+
+        // Carry both free-mode pivots along so a following tumble doesn't snap the view.
+        CameraState.ViewGizmoPivot += PanDelta;
+        if (CameraState.bFreeOrbitPivotValid)
+        {
+            CameraState.FreeOrbitPivot += PanDelta;
+        }
+    }
+
     void FEditorTool::UpdateViewportInput(const FUpdateContext& UpdateContext)
     {
         if ((bViewportFocused || bViewportHovered) && ImGui::IsKeyPressed(ImGuiKey_F11, false))
@@ -583,6 +783,17 @@ namespace Lumina
         {
             CameraComponent->SetAspectRatio(AspectRatio);
             CameraComponent->SetFOV(NewFOV);
+
+            if (CameraState.bOrthographic && !World->IsGameWorld())
+            {
+                // Match the world-space span perspective covered at the pivot, so toggling holds framing.
+                const float Span = 2.0f * GetEditorViewDistance() * std::tan(Math::Radians(NewFOV) * 0.5f);
+                CameraComponent->SetOrthographic(Span * AspectRatio);
+            }
+            else if (CameraComponent->IsOrthographic())
+            {
+                CameraComponent->SetPerspectiveProjection();
+            }
         }
 
         if (bViewportHovered)
@@ -687,6 +898,9 @@ namespace Lumina
         );
 
         const ImGuiStyle& ImStyle = ImGui::GetStyle();
+
+        // Before the overlay: the overlay's picking/gizmo code reads ShouldSuppressViewportClickInput.
+        DrawViewGizmo(WindowPosition, ViewportSize);
 
         ImVec2 Origin = ImGui::GetCursorStartPos();
 
@@ -1152,6 +1366,55 @@ namespace Lumina
         }
     }
 
+    void FEditorTool::SetEditorCameraOrthographic(bool bOrthographic)
+    {
+        // Seed before the flag flips, so GetEditorViewDistance still reports the pivot distance and
+        // the ortho framing picks up where perspective left off.
+        if (bOrthographic && !CameraState.bOrthographic && CameraState.Mode == EEditorCameraMode::Free)
+        {
+            CameraState.OrthoFreeDistance = GetEditorViewDistance();
+        }
+
+        CameraState.bOrthographic = bOrthographic;
+
+        // UpdateViewportInput rebuilds the projection every frame, but a tool whose viewport is not
+        // drawing this frame would otherwise keep the stale one.
+        if (!bOrthographic && HasWorld() && !World->IsGameWorld())
+        {
+            if (SCameraComponent* Camera = World->GetActiveCamera())
+            {
+                Camera->SetPerspectiveProjection();
+            }
+        }
+    }
+
+    float FEditorTool::GetEditorViewDistance() const
+    {
+        if (CameraState.Mode == EEditorCameraMode::Orbit)
+        {
+            return Math::Max(CameraState.OrbitDistance, 0.05f);
+        }
+
+        if (CameraState.bOrthographic)
+        {
+            return Math::Max(CameraState.OrthoFreeDistance, 0.05f);
+        }
+
+        if (CameraState.bHasLastFocusPoint && World != nullptr
+            && EditorEntity != entt::null && World->IsValidEntity(EditorEntity)
+            && World->HasComponent<STransformComponent>(EditorEntity))
+        {
+            const FVector3 Location = World->GetComponent<STransformComponent>(EditorEntity).GetLocation();
+            const float Distance = Math::Distance(Location, CameraState.LastFocusPoint);
+            if (Distance > 0.1f)
+            {
+                return Distance;
+            }
+        }
+
+        return 10.0f;
+    }
+
     void FEditorTool::SetOrbitTarget(const FVector3& Target, float Distance)
     {
         CameraState.OrbitTarget = Target;
@@ -1373,6 +1636,15 @@ namespace Lumina
                 return;
             }
 
+            // Nothing to fly into under a parallel projection, so the wheel drives the zoom distance
+            // rather than the fly-speed multiplier. Same 10%-per-notch feel as the orbit zoom.
+            if (CameraState.bOrthographic && WheelDelta != 0.0)
+            {
+                const float Zoom = 0.1f * CameraState.OrthoFreeDistance;
+                CameraState.OrthoFreeDistance = Math::Max(
+                    CameraState.OrthoFreeDistance - static_cast<float>(WheelDelta) * Zoom, 0.05f);
+            }
+
             const FVector3 Forward = Transform.GetForward();
             const FVector3 Right   = Transform.GetRight();
             const FVector3 Up      = Transform.GetUp();
@@ -1501,9 +1773,13 @@ namespace Lumina
                 PitchDelta = Math::Clamp(PitchDelta, Elevation - PitchLimit, Elevation + PitchLimit);
                 Transform.AddPitch(PitchDelta);
 
-                const double WheelZ = WheelDelta;
-                CameraState.SpeedScale += Math::Pow(1.05f, CameraState.SpeedScale) * static_cast<float>(WheelZ);
-                CameraState.SpeedScale = Math::Clamp(CameraState.SpeedScale, 0.2f, 100.0f);
+                // In ortho the wheel is already spoken for as zoom, above.
+                if (!CameraState.bOrthographic)
+                {
+                    const double WheelZ = WheelDelta;
+                    CameraState.SpeedScale += Math::Pow(1.05f, CameraState.SpeedScale) * static_cast<float>(WheelZ);
+                    CameraState.SpeedScale = Math::Clamp(CameraState.SpeedScale, 0.2f, 100.0f);
+                }
             }
         }
         else // Orbit
@@ -1544,6 +1820,13 @@ namespace Lumina
     bool FEditorTool::ShouldSuppressViewportClickInput() const
     {
         if (CameraState.bLeftDragGesture)
+        {
+            return true;
+        }
+
+        // The view gizmo draws before the overlay, so this is current-frame hover state.
+        if (ImViewGuizmo::IsOver(ViewGizmoContext) || ImViewGuizmo::IsUsing(ViewGizmoContext)
+            || bViewGizmoOrthoHovered)
         {
             return true;
         }
@@ -1888,6 +2171,56 @@ namespace Lumina
         return Result;
     }
 
+    bool FEditorTool::BuildViewportRay(ImVec2 ScreenPos, FVector3& OutOrigin, FVector3& OutDirection) const
+    {
+        if (World == nullptr)
+        {
+            return false;
+        }
+
+        const SCameraComponent* Camera = World->GetActiveCamera();
+        if (Camera == nullptr && EditorEntity != entt::null && World->IsValidEntity(EditorEntity))
+        {
+            Camera = World->TryGetComponent<SCameraComponent>(EditorEntity);
+        }
+        if (Camera == nullptr)
+        {
+            return false;
+        }
+
+        // Same construction the terrain sculpt cursor uses, including the ImGui Y-flip; anything else and
+        // the result lands mirrored vertically about the viewport centre.
+        const ImVec2 Size = ImVec2(Math::Max(ViewportScreenSize.x, 1.0f), Math::Max(ViewportScreenSize.y, 1.0f));
+        const float  Sx   = ((ScreenPos.x - ViewportScreenMin.x) / Size.x) * 2.0f - 1.0f;
+        const float  Sy   = 1.0f - ((ScreenPos.y - ViewportScreenMin.y) / Size.y) * 2.0f;
+
+        const FViewVolume& View    = Camera->GetViewVolume();
+        const FVector3     Forward = View.GetForwardVector();
+        const FVector3     Up      = View.GetUpVector();
+        const FVector3     Right   = Math::Normalize(Math::Cross(Up, Forward));
+
+        const float AspectRatio = Size.x / Size.y;
+
+        // Ortho rays are parallel, so the pixel selects the ORIGIN rather than the direction.
+        if (View.IsOrthographic())
+        {
+            const float HalfWidth  = View.GetOrthoWidth() * 0.5f;
+            const float HalfHeight = HalfWidth / Math::Max(AspectRatio, 0.001f);
+
+            OutOrigin    = Camera->GetPosition() + Right * (Sx * HalfWidth) + Up * (Sy * HalfHeight);
+            OutDirection = Forward;
+            return true;
+        }
+
+        const float TanHalfFov = std::tan(Math::Radians(View.GetFOV()) * 0.5f);
+
+        OutOrigin    = Camera->GetPosition();
+        OutDirection = Math::Normalize(Forward
+                                     + Right * (Sx * TanHalfFov * AspectRatio)
+                                     + Up    * (Sy * TanHalfFov));
+        return true;
+    }
+
     bool FEditorTool::TraceViewportPlacement(ImVec2 ScreenPos, FVector3& OutLocation, entt::entity* OutHitEntity) const
     {
         if (OutHitEntity != nullptr)
@@ -1910,24 +2243,11 @@ namespace Lumina
             return false;
         }
 
-        // Cursor -> world ray. Same construction the terrain sculpt cursor uses, including the ImGui
-        // Y-flip; anything else and the drop lands mirrored vertically about the viewport centre.
-        const ImVec2 Size = ImVec2(Math::Max(ViewportScreenSize.x, 1.0f), Math::Max(ViewportScreenSize.y, 1.0f));
-        const float  Sx   = ((ScreenPos.x - ViewportScreenMin.x) / Size.x) * 2.0f - 1.0f;
-        const float  Sy   = 1.0f - ((ScreenPos.y - ViewportScreenMin.y) / Size.y) * 2.0f;
-
-        const FViewVolume& View    = Camera->GetViewVolume();
-        const FVector3     Forward = View.GetForwardVector();
-        const FVector3     Up      = View.GetUpVector();
-        const FVector3     Right   = Math::Normalize(Math::Cross(Up, Forward));
-
-        const float AspectRatio = Size.x / Size.y;
-        const float TanHalfFov  = std::tan(Math::Radians(View.GetFOV()) * 0.5f);
-
-        const FVector3 RayOrigin = Camera->GetPosition();
-        const FVector3 RayDir    = Math::Normalize(Forward
-                                                 + Right * (Sx * TanHalfFov * AspectRatio)
-                                                 + Up    * (Sy * TanHalfFov));
+        FVector3 RayOrigin, RayDir;
+        if (!BuildViewportRay(ScreenPos, RayOrigin, RayDir))
+        {
+            return false;
+        }
 
         constexpr float FallbackDistance = 5.0f;
         float BestDistance = FLT_MAX;

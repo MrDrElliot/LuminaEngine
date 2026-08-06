@@ -31,5 +31,8 @@ namespace Lumina
 
         void DrawViewportOverlayElements(const FUpdateContext& UpdateContext, ImTextureRef ViewportTexture, ImVec2 ViewportSize) override;
 
+        // The game drives this camera, not an editor one.
+        NODISCARD bool ShouldDrawViewGizmo() const override { return false; }
+
     };
 }

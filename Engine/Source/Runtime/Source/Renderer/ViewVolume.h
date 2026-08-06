@@ -9,10 +9,16 @@ PRAGMA_ENABLE_ALL_WARNINGS
 
 namespace Lumina
 {
+    enum class EViewProjectionMode : uint8
+    {
+        Perspective,
+        Orthographic,
+    };
+
     class RUNTIME_API FViewVolume
     {
     public:
-        
+
         static constexpr float DefaultFarPlane = 4000.0f;
         static constexpr float DefaultNearPlane = 0.01f;
 
@@ -23,9 +29,17 @@ namespace Lumina
         FViewVolume& SetViewPosition(const FVector3& Position);
         FViewVolume& SetView(const FVector3& Position, const FVector3& ViewDirection, const FVector3& UpDirection);
         FViewVolume& SetPerspective(float InFov, float InAspect);
+
+        /** InWidth is the world-space width the viewport spans; height follows from the aspect. */
+        FViewVolume& SetOrthographic(float InWidth, float InAspect);
+
         FViewVolume& SetAspectRatio(float InAspect);
         FViewVolume& SetFOV(float InFOV);
         FViewVolume& Rotate(float Angle, FVector3 Axis);
+
+        FORCEINLINE EViewProjectionMode GetProjectionMode() const { return ProjectionMode; }
+        FORCEINLINE bool IsOrthographic() const { return ProjectionMode == EViewProjectionMode::Orthographic; }
+        FORCEINLINE float GetOrthoWidth() const { return OrthoWidth; }
         
         FORCEINLINE const FVector3& GetViewPosition() const { return ViewPosition; }
 
@@ -56,6 +70,12 @@ namespace Lumina
 
         void UpdateMatrices();
 
+        // Single owner of ProjectionMatrix; every setter routes here so none of them can silently
+        // drop an orthographic volume back to perspective.
+        void RebuildProjection();
+
+        EViewProjectionMode ProjectionMode = EViewProjectionMode::Perspective;
+
         FVector3           ViewPosition;
         FVector3           ForwardVector;
         FVector3           UpVector;
@@ -70,5 +90,6 @@ namespace Lumina
         
         float               FOV = 90.0f;
         float               AspectRatio = 16.0f/9.0f;
+        float               OrthoWidth = 10.0f;
     };
 }

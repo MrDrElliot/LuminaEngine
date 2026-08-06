@@ -37,19 +37,42 @@ namespace Lumina
         Ar << SerializedInnerElementSize;
 
         const size_t CurrentInnerElementSize = Inner->GetElementSize();
+
+        // Checked before anything derived from the count is trusted, including the skip below.
+        if (ElementCount > eastl::numeric_limits<uint32>::max())
+        {
+            // The count is the only record of how much payload follows, so a garbage one leaves no way to
+            // step over it. Returning here used to leave the archive misaligned and every later property
+            // read garbage, turning one bad array into a cascade of them; failing the archive stops that
+            // at the first real symptom instead.
+            LOG_ERROR("Array property '{}' tried to serialize {} elements; failing the archive.", Name, ElementCount);
+            Ar.SetHasError(true);
+            return;
+        }
+
         // Trivial types memcpy in bulk so size must match; non-trivial types tolerate in-memory padding diffs.
         if (Ar.IsReading() && Inner->IsTrivial() && SerializedInnerElementSize != CurrentInnerElementSize)
         {
-            LOG_ERROR("Inner element size changed for array '{}' (inner '{}'), aborting load: Current=({}) Serialized=({})", Name, Inner->Name, CurrentInnerElementSize, SerializedInnerElementSize);
+            LOG_ERROR("Inner element size changed for array '{}' (inner '{}'), skipping it: Current=({}) Serialized=({})", Name, Inner->Name, CurrentInnerElementSize, SerializedInnerElementSize);
+
+            // The count is trustworthy here, so the payload can be stepped over exactly and the rest of the
+            // object still loads. Chunked through Serialize rather than Seek because Seek is a no-op on the
+            // base archive, and not every reader overrides it.
+            Resize(Value, 0);
+
+            SIZE_T Remaining = ElementCount * SerializedInnerElementSize;
+            uint8 Scratch[1024];
+            while (Remaining > 0 && !Ar.HasError())
+            {
+                const SIZE_T Chunk = Remaining < sizeof(Scratch) ? Remaining : sizeof(Scratch);
+                Ar.Serialize(Scratch, static_cast<int64>(Chunk));
+                Remaining -= Chunk;
+            }
+
             return;
         }
+
         const size_t InnerElementSize = CurrentInnerElementSize;
-        
-        if (ElementCount > eastl::numeric_limits<uint32>::max())
-        {
-            LOG_ERROR("Array Property tried to serialize {} elements. Aborted", ElementCount);
-            return;
-        }
 
         if (Ar.IsWriting())
         {

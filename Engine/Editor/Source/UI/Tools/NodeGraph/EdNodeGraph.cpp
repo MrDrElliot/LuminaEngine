@@ -1757,19 +1757,61 @@ namespace Lumina
         ValidateGraph();
     }
 
+    int64 CEdNodeGraph::GenerateUniqueNodeID(int64 PreferredID) const
+    {
+        const auto IsTaken = [this](int64 Candidate)
+        {
+            for (const TObjectPtr<CEdGraphNode>& Existing : Nodes)
+            {
+                if (Existing.IsValid() && Existing->GetNodeID() == Candidate)
+                {
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        // A deserialized node keeps its ID so links and saved positions still resolve.
+        if (PreferredID != 0 && !IsTaken(PreferredID))
+        {
+            return PreferredID;
+        }
+
+        // Never hand out 0: it is the "unassigned" sentinel AddNode tests against, so a node holding it
+        // would be re-rolled on any later pass through here.
+        for (int32 Attempt = 0; Attempt < 64; ++Attempt)
+        {
+            const int64 Candidate = (int64)Math::RandRange(1u, UINT32_MAX);
+            if (!IsTaken(Candidate))
+            {
+                return Candidate;
+            }
+        }
+
+        // Unreachable in practice against a 32-bit space, but a scan cannot fail where a roll can.
+        int64 Sequential = 1;
+        while (IsTaken(Sequential))
+        {
+            ++Sequential;
+        }
+
+        return Sequential;
+    }
+
     uint64 CEdNodeGraph::AddNode(CEdGraphNode* InNode)
     {
-        int64 NodeID;
-        
-        if (InNode->NodeID != 0)
+        // Uniqueness is not cosmetic: the node editor keys nodes on this ID and callers scope each node's
+        // ImGui widget IDs by it, so a duplicate silently merges two nodes' interaction state rather than
+        // failing outright.
+        const int64 NodeID = GenerateUniqueNodeID(InNode->NodeID);
+
+        if (InNode->NodeID != 0 && NodeID != InNode->NodeID)
         {
-            NodeID = InNode->GetNodeID();
+            LOG_WARN("Node graph: '{}' was added with an already-used node ID {}; reassigned to {}. "
+                     "Saved links referencing the old ID will not resolve.",
+                     InNode->GetNodeDisplayName(), InNode->NodeID, NodeID);
         }
-        else
-        {
-            NodeID = Math::RandRange(0u, UINT32_MAX);
-        }
-        
+
         InNode->PinHashName = FString(InNode->GetNodeDisplayName()) + "_" + eastl::to_string(NodeID);
         InNode->FullName = SanitizeNodeIdentifier(InNode->PinHashName);
         InNode->NodeID = NodeID;

@@ -11,6 +11,7 @@ namespace Lumina
 {
     class CStaticMesh;
     class CPhysicsMaterial;
+    class CCollisionShape;
 
     REFLECT(Component, Category = "Physics")
     struct RUNTIME_API CACHE_ALIGN SRigidBodyComponent
@@ -589,6 +590,38 @@ namespace Lumina
         /** Live constraint handle assigned by the physics system; 0 until created. Read-only. */
         PROPERTY(Script, ReadOnly, Category = "Constraint")
         uint32 ConstraintID = 0;
+    };
+
+    // Collision from an authored CCollisionShape rather than derived from the render mesh. Preferred over
+    // SMeshColliderComponent wherever collision should be simplified, decomposed, or shared.
+    REFLECT(Component, Category = "Physics")
+    struct RUNTIME_API SCollisionShapeComponent
+    {
+        GENERATED_BODY()
+
+        /** Authored collision. Null builds no body at all rather than silently falling back to the mesh. */
+        PROPERTY(Editable)
+        TObjectPtr<CCollisionShape> CollisionShape;
+
+        /** Local-space offset applied to the collider position relative to the entity. */
+        PROPERTY(Editable)
+        FVector3 TranslationOffset;
+
+        /** Local-space euler rotation offset applied to the collider. */
+        PROPERTY(Editable)
+        FVector3 RotationOffset;
+
+        /** Overrides the asset's material for this instance; null uses the asset's. */
+        PROPERTY(Editable)
+        TObjectPtr<CPhysicsMaterial> PhysicsMaterial;
+
+        /** When true, the body produces overlap events but no contact response (trigger volume). */
+        PROPERTY(Editable)
+        bool bIsTrigger = false;
+
+        /** When true, this collider contributes its shape to NavMesh bakes. */
+        PROPERTY(Editable, Category = "Navigation")
+        bool bAffectsNavigation = true;
     };
 
     REFLECT(Component, Category = "Physics")

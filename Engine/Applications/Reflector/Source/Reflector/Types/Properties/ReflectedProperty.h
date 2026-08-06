@@ -40,6 +40,11 @@ namespace Lumina
         bool GenerateLuaBinding(Reflection::FCodeWriter& Writer) override;
         void GenerateMetadata(const eastl::string& InMetadata) override;
 
+        // True when two of this property's specifiers contradict each other, with a message naming both
+        // and which one to remove. Call after GenerateMetadata, from somewhere holding the cursor, so the
+        // diagnostic points at the declaration rather than the file.
+        bool FindConflictingSpecifiers(eastl::string& OutMessage) const;
+
         eastl::string GetDisplayName() const { return Name; }
 
         // Emits the trailing `{ "Name", Flags, TypeFlags, Setter, Getter, Offset[, CustomData][, METADATA_PARAMS] };`
