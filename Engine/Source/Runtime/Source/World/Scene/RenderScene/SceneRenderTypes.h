@@ -1269,6 +1269,14 @@ namespace Lumina
         FSSAOSettings   SSAOSettings;
         FCullData       CullData;
         FParallaxSettings ParallaxSettings;
+
+        // Bindless SRV of this view's screen-space sun-shadow mask (ShadowMaskPass). ~0u = the pass did
+        // not run for this view (capture views, or no shadow-casting sun), in which case that view's
+        // opaque pipelines are keyed WITHOUT SF_ShadowMask and keep the inline cascade PCSS.
+        uint32          ShadowMaskIndex = ~0u;
+        uint32          _ShadowPad0     = 0;
+        uint32          _ShadowPad1     = 0;
+        uint32          _ShadowPad2     = 0;
     };
 
     struct FMeshPass
@@ -1306,6 +1314,10 @@ namespace Lumina
         uint8 bDrawBillboards:1         = true;
         uint8 bCPUInstanceCull:1        = true;
         uint8 bUseLODs:1                = true;
+        // ShadowMaskPass produced a live screen-space sun mask for the current view. Decided once,
+        // before the scene root is uploaded, and then read by BOTH the pass and every opaque pipeline
+        // key (SF_ShadowMask) so the specialization can never outlive the resource.
+        uint8 bShadowMaskValid:1        = false;
         int8  ShadowLODBias             = 1;
         float ShadowCoarseLODDistance   = 150.0f;
     };

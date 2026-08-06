@@ -95,9 +95,16 @@ namespace Lumina
             "On the CPU tab: click Set Baseline at a known-good moment, let the suspect run, then watch "
             "the Delta column. The category that keeps climbing is your leak. Tick Capture call stacks "
             "and read Top Call Sites for the exact line.");
+        DrawHelpTextRow("Memory the tracker can't see",
+            "The category tracker only sees Memory::Malloc, so anything a foreign DLL allocates from "
+            "the CRT heap (Slang, the GPU driver, basisu) or the driver takes straight from "
+            "VirtualAlloc is invisible to it. Hit Scan under Address Space to split that bucket into "
+            "rpmalloc / NT-CRT heap / unattributed, then run BuildScripts/MemoryTrace.ps1 in the mode "
+            "matching whichever is largest to get call stacks.");
         DrawHelpTextRow("Cost",
             "CPU category tracking is always on in Debug/Development and compiled out in Shipping. "
-            "Call-stack capture is a heavier, separate toggle, switched off when this window closes.");
+            "Call-stack capture is a heavier, separate toggle, switched off when this window closes. "
+            "The address-space scan is on-demand: the heap walk locks every heap process-wide.");
     }
 
     void FMemoryProfilerEditorTool::RefreshSnapshot()
@@ -416,9 +423,110 @@ namespace Lumina
         ImGui::Separator();
     }
 
+    void FMemoryProfilerEditorTool::RunAddressSpaceScan()
+    {
+        const double Start = Platform::GetTime();
+        Platform::GetAddressSpaceStats(AddressSpace, bScanHeaps);
+        LastScanCostMs = (Platform::GetTime() - Start) * 1000.0;
+        LastScanTime = Platform::GetTime();
+        bAddressSpaceValid = true;
+    }
+
+    // Splits the "external" number above into buckets the OS can actually name. This is the only
+    // panel that sees allocations no engine allocator made -- the GPU driver's raw VirtualAlloc and
+    // the CRT heap that every foreign DLL (Slang, the driver, basisu) allocates from.
+    void FMemoryProfilerEditorTool::DrawAddressSpace()
+    {
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), "Address Space  " LE_ICON_INFORMATION);
+        ImGuiX::TextTooltip("Asks the OS what's actually mapped, so it covers memory the category "
+                            "tracker structurally cannot see. 'NT / CRT heap' is the bucket for every "
+                            "DLL that doesn't route through Memory::Malloc.");
+        ImGui::Spacing();
+
+        if (ImGui::Button(LE_ICON_MAGNIFY " Scan"))
+        {
+            RunAddressSpaceScan();
+        }
+
+        ImGui::SameLine();
+        ImGui::Checkbox("Include heap walk", &bScanHeaps);
+        ImGuiX::TextTooltip("Walks every NT heap to size the CRT bucket. Takes a process-wide heap "
+                            "lock and is O(live blocks), so a multi-GB heap can stall the process "
+                            "for seconds. Untick for a fast scan of the page tables only.");
+
+        if (!bAddressSpaceValid)
+        {
+            ImGui::Spacing();
+            ImGui::TextDisabled("Not scanned yet.");
+            ImGui::Spacing();
+            ImGui::Separator();
+            return;
+        }
+
+        ImGui::SameLine();
+        ImGui::TextDisabled("| %u regions, %.1f ms, %.0fs ago",
+            AddressSpace.RegionCount, LastScanCostMs, Platform::GetTime() - LastScanTime);
+
+        auto Row = [](const char* Label, uint64 Bytes, const ImVec4& Color, const char* Note)
+        {
+            ImGui::TextColored(Color, "%14s", ImGuiX::FormatSize((size_t)Bytes).c_str());
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", Label);
+            if (Note && Note[0])
+            {
+                ImGui::SameLine();
+                ImGui::TextDisabled("- %s", Note);
+            }
+        };
+
+        ImGui::Spacing();
+        ImGui::TextDisabled("Committed");
+        Row("private", AddressSpace.PrivateCommitted, ImVec4(0.85f, 0.92f, 1.0f, 1.0f), "this process only");
+        Row("image", AddressSpace.ImageCommitted, ImVec4(0.62f, 0.68f, 0.78f, 1.0f), "code + data of loaded modules");
+        Row("mapped", AddressSpace.MappedCommitted, ImVec4(0.62f, 0.68f, 0.78f, 1.0f), "file mappings and shared sections");
+        Row("reserved", AddressSpace.Reserved, ImVec4(0.55f, 0.58f, 0.62f, 1.0f), "address space only, costs no RAM");
+
+        // Every byte of private commit belongs to exactly one of these three. Whichever is largest
+        // tells you which trace to run: rpmalloc -> the category table below; heap -> a heap ETW
+        // trace; unattributed -> a VirtualAlloc ETW trace (see BuildScripts/MemoryTrace.ps1).
+        const uint64 Rpmalloc = Memory::GetCurrentMappedMemory();
+        const uint64 Heap     = AddressSpace.bHeapWalkValid ? AddressSpace.HeapCommitted : 0;
+        const uint64 Accounted = Rpmalloc + Heap;
+        const uint64 Unattributed = AddressSpace.PrivateCommitted > Accounted
+                                  ? AddressSpace.PrivateCommitted - Accounted : 0;
+
+        ImGui::Spacing();
+        ImGui::TextDisabled("Private commit, by owner");
+        Row("rpmalloc", Rpmalloc, ImVec4(0.66f, 0.78f, 0.95f, 1.0f), "engine allocator (the category table below)");
+
+        if (AddressSpace.bHeapWalkValid)
+        {
+            Row("NT / CRT heap", Heap, ImVec4(0.95f, 0.65f, 0.35f, 1.0f), "foreign DLLs: Slang, GPU driver, basisu, ucrtbase");
+            ImGui::TextDisabled("%14s of that live, %s block overhead",
+                ImGuiX::FormatSize((size_t)AddressSpace.HeapAllocated).c_str(),
+                ImGuiX::FormatSize((size_t)AddressSpace.HeapOverhead).c_str());
+        }
+        else if (bScanHeaps)
+        {
+            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f),
+                LE_ICON_ALERT " Heap walk failed (a heap refused to lock); CRT bytes are folded into unattributed.");
+        }
+        else
+        {
+            ImGui::TextDisabled("%14s NT / CRT heap - not measured (heap walk off)", "?");
+        }
+
+        Row("unattributed", Unattributed, ImVec4(0.90f, 0.55f, 0.55f, 1.0f), "raw VirtualAlloc: GPU driver, thread + fiber stacks");
+
+        ImGui::Spacing();
+        ImGui::Separator();
+    }
+
     void FMemoryProfilerEditorTool::DrawCPUTab()
     {
         DrawCPUComposition();
+        DrawAddressSpace();
 
 #if !LUMINA_MEMORY_TRACKING
         ImGui::Spacing();
@@ -767,6 +875,38 @@ namespace Lumina
         R += FString().sprintf("- ...cached:       %s (rpmalloc global span cache)\n", SizeBoth(Cached).c_str());
         R += FString().sprintf("- External:        %s (RSS - mapped: GPU driver host memory, CRT malloc, code + stacks)\n", SizeBoth(External).c_str());
         R += FString().sprintf("- Untracked:       %s (RSS - tracked; = retained + external)\n\n", SizeBoth(Untracked).c_str());
+
+        // Address space -- the OS-level view, which is the only one that covers allocators the
+        // engine never sees. Omitted rather than faked when the user hasn't run a scan.
+        R += "## Address space (OS scan)\n";
+        if (!bAddressSpaceValid)
+        {
+            R += "- Not scanned. Run 'Scan' on the CPU tab to attribute memory outside rpmalloc.\n\n";
+        }
+        else
+        {
+            const uint64 Heap = AddressSpace.bHeapWalkValid ? AddressSpace.HeapCommitted : 0;
+            const uint64 Accounted = Mapped + Heap;
+            const uint64 Unattributed = AddressSpace.PrivateCommitted > Accounted
+                                      ? AddressSpace.PrivateCommitted - Accounted : 0;
+
+            R += FString().sprintf("- Private commit:  %s (this process only)\n", SizeBoth(AddressSpace.PrivateCommitted).c_str());
+            R += FString().sprintf("- Image commit:    %s (code + data of loaded modules)\n", SizeBoth(AddressSpace.ImageCommitted).c_str());
+            R += FString().sprintf("- Mapped commit:   %s (file mappings, shared sections)\n", SizeBoth(AddressSpace.MappedCommitted).c_str());
+            R += FString().sprintf("- Reserved:        %s (address space only, no RAM)\n", SizeBoth(AddressSpace.Reserved).c_str());
+            R += "\n  Private commit by owner:\n";
+            R += FString().sprintf("  - rpmalloc:      %s (engine allocator; see category table)\n", SizeBoth(Mapped).c_str());
+            if (AddressSpace.bHeapWalkValid)
+            {
+                R += FString().sprintf("  - NT/CRT heap:   %s committed, %s live in %u heaps (foreign DLLs: Slang, GPU driver, basisu, ucrtbase)\n",
+                    SizeBoth(AddressSpace.HeapCommitted).c_str(), SizeBoth(AddressSpace.HeapAllocated).c_str(), AddressSpace.HeapCount);
+            }
+            else
+            {
+                R += "  - NT/CRT heap:   not measured (heap walk off or failed; folded into unattributed)\n";
+            }
+            R += FString().sprintf("  - Unattributed:  %s (raw VirtualAlloc: GPU driver, thread + fiber stacks)\n\n", SizeBoth(Unattributed).c_str());
+        }
 
         // GPU summary
         const float VRAMFrac = (GPUStats.TotalBudget > 0)

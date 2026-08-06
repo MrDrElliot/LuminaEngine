@@ -504,6 +504,114 @@ namespace Lumina
         }
     }
 
+    // Hardware-truth counterpart to the source-derived stats above: local-memory arrays (from the compiled
+    // SPIR-V) and the driver's own register count / occupancy (from VK_KHR_pipeline_executable_properties).
+    //
+    // These exist because both are invisible while authoring and only show up in a GPU capture. Register
+    // count in particular is a STEP function on occupancy, not a gradient -- on Ampere 128 regs caps a
+    // shader at 16 resident warps, 96 gets 20, 80 gets 24 -- so a material can sit one register over a
+    // cliff and lose a quarter of its latency hiding with nothing in the graph looking different.
+    void FMaterialEditorTool::DrawGPUStats(float LabelWidth, const ImVec4& HeaderColor,
+                                           const ImVec4& LabelColor, const ImVec4& ValueColor)
+    {
+        CMaterial* Material = Cast<CMaterial>(Asset.Get());
+        if (Material == nullptr)
+        {
+            return;
+        }
+
+        // The DEFERRED (VisBuffer) permutation first: it is the one that shades opaque geometry, so it is
+        // the one whose register count matters. The forward pixel shader is listed too because translucent
+        // and capture views still use it, and the two can differ (different spec constants survive).
+        const struct { const char* Label; const FShaderEntry* Entry; } Lanes[] =
+        {
+            { "Deferred (VisBuffer)", Material->GetDeferredShader() },
+            { "Forward Pixel",        Material->GetPixelShader()    },
+        };
+
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Text, HeaderColor);
+        ImGui::TextUnformatted("GPU (compiled)");
+        ImGui::PopStyleColor();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        auto Row = [&](const char* Label, const char* Fmt, auto Value, ImVec4 ValColor)
+        {
+            ImGui::PushStyleColor(ImGuiCol_Text, LabelColor);
+            ImGui::TextUnformatted(Label);
+            ImGui::PopStyleColor();
+            ImGui::SameLine(LabelWidth);
+            ImGui::PushStyleColor(ImGuiCol_Text, ValColor);
+            ImGui::Text(Fmt, Value);
+            ImGui::PopStyleColor();
+        };
+
+        const ImVec4 WarnColor(1.00f, 0.65f, 0.30f, 1.0f);
+        const ImVec4 MutedColor(0.55f, 0.55f, 0.60f, 1.0f);
+
+        bool bAnyPipelineStats = false;
+
+        for (const auto& Lane : Lanes)
+        {
+            if (Lane.Entry == nullptr || !Lane.Entry->IsValid())
+            {
+                continue;
+            }
+
+            const FShaderEntry::FGPUStats Stats = FShaderLibrary::GetGPUStats(Lane.Entry);
+
+            ImGui::PushStyleColor(ImGuiCol_Text, ValueColor);
+            ImGui::TextUnformatted(Lane.Label);
+            ImGui::PopStyleColor();
+            ImGui::Indent(12.0f);
+
+            // Non-zero is a real finding, not a style note: a function-scope array does not live in
+            // registers, so each access is a local-memory round trip that stalls on the long scoreboard.
+            Row("Local Memory Arrays", "%u", Stats.LocalArrayCount,
+                Stats.LocalArrayCount > 0 ? WarnColor : ValueColor);
+            if (Stats.LocalArrayCount > 0)
+            {
+                Row("  Scalars Spilled", "%u", Stats.LocalArrayScalars, WarnColor);
+                if (ImGui::IsItemHovered())
+                {
+                    ImGui::SetTooltip("Arrays declared in function scope do not promote to registers.\n"
+                                      "The driver backs them with local memory, so every indexed read is\n"
+                                      "a memory round trip. Rewriting the indexing as constant-foldable\n"
+                                      "selects normally removes them entirely.");
+                }
+            }
+
+            for (const RHI::FPipelineStat& Stat : Stats.Pipeline)
+            {
+                bAnyPipelineStats = true;
+                const FString Label = FString("  ") + Stat.Stage + " / " + Stat.Name;
+                if (Stat.bIsFloat)
+                {
+                    Row(Label.c_str(), "%.2f", Stat.Value, ValueColor);
+                }
+                else
+                {
+                    Row(Label.c_str(), "%lld", (long long)Stat.Value, ValueColor);
+                }
+            }
+
+            ImGui::Unindent(12.0f);
+            ImGui::Spacing();
+        }
+
+        if (!bAnyPipelineStats)
+        {
+            // Two distinct causes, and the user can only act on the first: the pipeline is built lazily on
+            // first draw, so a material that has never been rendered simply has nothing to report yet.
+            ImGui::PushStyleColor(ImGuiCol_Text, MutedColor);
+            ImGui::TextWrapped("Driver pipeline statistics unavailable. They are captured the first time this "
+                               "material is drawn -- open a scene using it, or use the preview viewport. If they "
+                               "never appear, this GPU does not support VK_KHR_pipeline_executable_properties.");
+            ImGui::PopStyleColor();
+        }
+    }
+
     void FMaterialEditorTool::DrawShaderStats()
     {
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 8));
@@ -670,6 +778,12 @@ namespace Lumina
         {
             Row("Vertex Source Size",  "%u chars", ShaderStats.VertexCharacters, ValueColor);
         }
+
+        // Everything above is derived from the GENERATED SOURCE -- op counts, parameter counts, a weighted
+        // cost estimate. Useful for comparing materials, but blind to the two things that actually decide
+        // what a pixel shader costs on the hardware, both of which only appear once the driver has compiled
+        // it. That is what this section is.
+        DrawGPUStats(LabelWidth, HeaderColor, LabelColor, ValueColor);
 
         ImGui::Spacing();
         ImGui::Spacing();

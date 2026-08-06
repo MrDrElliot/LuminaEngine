@@ -60,6 +60,9 @@ namespace Lumina
         void DrawMaterialGraph();
         void DrawMaterialProperties();
         void DrawShaderStats();
+        // Compiled-shader truth (local-memory arrays + the driver's register count / occupancy), as
+        // opposed to the source-derived estimates the rest of the panel shows.
+        void DrawGPUStats(float LabelWidth, const ImVec4& HeaderColor, const ImVec4& LabelColor, const ImVec4& ValueColor);
 
         void Compile();
         void ApplyMaterialToPreview();

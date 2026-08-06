@@ -253,13 +253,6 @@ namespace Lumina
     namespace
     {
         // Shaders a surface must actually have to be VISIBLE, as opposed to merely compiled.
-        //
-        // Translucency takes the forward/WBOIT path and needs no deferred shader. Everything opaque
-        // rasterizes into the VisBuffer and is then shaded by a tile pass that bins one slot per
-        // distinct deferred shader -- and that binning SKIPS any material whose deferred shader is
-        // null. So an opaque surface missing it rasterizes correctly, occupies the VisBuffer, and is
-        // then never shaded: the geometry is "drawn" and completely invisible, indistinguishable from
-        // a missing mesh. Same for the VisBuffer geometry shaders, one step earlier.
         bool HasRequiredPassShaders(CMaterialInterface* Material)
         {
             CMaterial* Concrete = IsValid(Material) ? Material->GetMaterial() : nullptr;
@@ -303,11 +296,7 @@ namespace Lumina
             Material = CMaterial::GetDefaultMaterial();
         }
 
-        // Second gate. IsReadyForRender reports that the material finished COMPILING, not that the
-        // shaders the passes bind exist -- the two disagree while a material is part-way through, and a
-        // surface cached in that window is resolved, "ready", and permanently invisible. Fall back to
-        // the default material so the mesh at least draws, and report not-ready so the resolve retries
-        // and swaps the real material in once its shaders land.
+        // Second gate. IsReadyForRender reports that the material finished COMPILING.
         if (!HasRequiredPassShaders(Material))
         {
             bReady   = false;
@@ -316,16 +305,6 @@ namespace Lumina
 
         // Third gate, same shape as the second. Material texture refs are soft, so they sit outside the
         // load graph's Hard/Owned BFS and are not ordered ahead of the material that reads them.
-        //
-        // Non-blocking on purpose: this runs on a worker fiber inside Extract, so the load is kicked
-        // async and the surface draws with the default material until it lands, at which point
-        // InvalidateDependency wakes it.
-        //
-        // Instances used to be skipped here on the premise that their block was "already whole". It is
-        // whole only if every texture happened to be GPU-resident at the instant PostLoad baked it --
-        // lose that race and the placeholder is baked in, and nothing on a normal load rewrote it. That
-        // is why a material instance could come up untextured until its base material was recompiled,
-        // which forced the rebuild via NotifyInstancesParentChanged.
         if (Material != nullptr && !Material->RequestTexturesResolved())
         {
             bReady   = false;

@@ -126,6 +126,23 @@ namespace Lumina
         PROPERTY(Editable, Category = "Rendering")
         bool bGenerateTangents = true;
 
+        /** Keep the CPU-side meshlet streams alive after Commit has uploaded them to the GPU.
+         *
+         *  TURN THIS OFF for any mesh that is only rendered. The streams are by far the largest thing a
+         *  committed dynamic mesh holds: FMeshletVertex is 28 bytes and the meshlet vertex list is the
+         *  EXPANDED per-meshlet list across every LOD (a vertex on a meshlet boundary appears in each), so
+         *  it typically outweighs the source geometry it was built from. Nothing in the render path reads
+         *  it -- drawing goes through the GPU buffers -- so on a render-only mesh this is pure retention,
+         *  once per component, for as long as the component lives. Chunked geometry that keeps hundreds of
+         *  components alive is where it adds up.
+         *
+         *  On by default because SDynamicMeshColliderComponent builds its Jolt shape from these streams,
+         *  and it does so after the commit that produced them -- so defaulting off would silently cost
+         *  colliders their bodies. With it off, that collider logs an error naming this flag rather than
+         *  retrying forever. */
+        PROPERTY(Editable, Category = "Rendering")
+        bool bKeepCPUMeshletData = true;
+
         /// Takes a ref on the currently published data (null until the first successful Commit). Every
         /// reader outside this component goes through this rather than touching the pointer: Commit can
         /// swap it from a worker, and copying a shared_ptr while another thread reassigns that same

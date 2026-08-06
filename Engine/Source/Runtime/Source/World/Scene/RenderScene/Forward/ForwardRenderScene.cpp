@@ -1395,6 +1395,14 @@ namespace Lumina
                     SSAOBlurPass(CL);
                 }
 
+                // Resolve the sun's cascade PCSS into a screen-space mask so the opaque shading passes
+                // below read one texel instead of carrying the PCSS live range in their whole-shader
+                // register allocation. Both cascade raster phases and the full opaque depth are done.
+                {
+                    SCENE_GPU_SCOPE(CL, "Shadow Mask");
+                    ShadowMaskPass(CL);
+                }
+
                 // Stamp each covered pixel's owning material slot into MaterialDepth and bin the tiles, then
                 // shade one indirect tile draw per material against it. Both passes emit their own GPU marker.
                 {
@@ -1801,7 +1809,7 @@ namespace Lumina
     // a stale tag and zeroed bounds, so every meshlet fails IsFromFrame in MeshletGeometry.slang (nothing
     // rasterizes) and every covered texel fails the same check in MaterialDepth / DeferredMaterial (nothing
     // shades). Symptom: a capture that renders sky and terrain but no meshes.
-    FSceneGlobalData FForwardRenderScene::MakeSecondaryViewGlobals(const FSceneGlobalData& ViewGlobals) const
+    FSceneGlobalData FForwardRenderScene::MakeSecondaryViewGlobals(const FSceneGlobalData& ViewGlobals)
     {
         FSceneGlobalData Globals = ViewGlobals;
 
@@ -1810,6 +1818,16 @@ namespace Lumina
         Globals.CullData.MeshletDrawListCapacity   = Primary.MeshletDrawListCapacity;
         Globals.CullData.InstanceNum               = Primary.InstanceNum;
         Globals.CullData.BoneNum                   = Primary.BoneNum;
+
+        // Secondary views (scene captures, probe cube faces) never run ShadowMaskPass -- their opaque
+        // sequence is a trimmed subset of the primary's -- so they fall back to the inline cascade PCSS.
+        // Clearing BOTH here is the point of routing every secondary view through this one function: the
+        // index is what the shader reads, the RenderSettings bit is what the pipeline key specializes on,
+        // and a view whose two disagreed would either sample an unwritten mask or shade unshadowed.
+        // Both secondary paths run AFTER the whole primary sequence, so nothing re-reads the primary's
+        // value this frame; CompileDrawCommands_Render sets it again unconditionally next frame.
+        Globals.ShadowMaskIndex         = ~0u;
+        RenderSettings.bShadowMaskValid = false;
 
         return Globals;
     }
@@ -3831,6 +3849,26 @@ namespace Lumina
             {
                 SceneGlobalData.SSAOSettings.AOTextureIndex = (uint32)CurrentView->Images[(int)ENamedImage::SSAOBlur].GetResourceID();
             }
+
+            // Screen-space sun-shadow mask. Decided ONCE, here, and consumed by two places that must
+            // never disagree: ShadowMaskPass (does the resolve run?) and every opaque pipeline key
+            // (is the shader specialized to read a mask instead of running the PCSS inline?). A shader
+            // keyed for the mask on a view that never produced one would read fully-lit everywhere.
+            //
+            // Only the sun is deferred, so the gate is "is there a shadow-casting sun": light 0 is the
+            // sun whenever bHasSun, matching ShadeSurface's GetLightAt(0). Deliberately NOT gated on
+            // DrawCommands like SSAO is -- a terrain-only scene has no mesh draws and still needs sun
+            // shadows on the terrain.
+            RenderSettings.bShadowMaskValid = (LightData.bHasSun != 0) &&
+                                              (LightData.Lights[0].ShadowDataIndex != INDEX_NONE);
+            if (RenderSettings.bShadowMaskValid)
+            {
+                SceneGlobalData.ShadowMaskIndex = (uint32)CurrentView->Images[(int)ENamedImage::ShadowMask].GetResourceID();
+            }
+            else
+            {
+                SceneGlobalData.ShadowMaskIndex = ~0u;
+            }
             CurrentSceneRootAddr = BuildViewSceneRoot(*CurrentView, RHI::Core::CopyTransient(SceneGlobalData));
 
             // Cull, LOD-select and compact the retained scene, then build the draw-argument layout --
@@ -4317,8 +4355,7 @@ namespace Lumina
                     // The animation system packs when it evaluates a pose; writers that bypass it
                     // (ragdoll readback, editor bind-pose fills) set the dirty flag and we repack here.
                     // Frozen/off-screen skeletons hit neither and just bulk-copy the cached rows.
-                    if (MeshComponent.bRenderBonesDirty ||
-                        (uint32)MeshComponent.RenderBones.size() != SkeletonBoneCount * 3u)
+                    if (MeshComponent.bRenderBonesDirty || (uint32)MeshComponent.RenderBones.size() != SkeletonBoneCount * 3u)
                     {
                         SkeletalUtils::PackRenderBones(MeshComponent.BoneTransforms, MeshComponent.RenderBones);
                         MeshComponent.bRenderBonesDirty = false;
@@ -7824,11 +7861,18 @@ namespace Lumina
         // One indirect tile-quad draw per master DeferredShader, over exactly the tiles that shader covers.
         // The pixel shader reads each pixel's own MaterialIndex for its instance uniforms, so every instance
         // of the master shades in this one draw.
+        // ShadowMaskPass resolved the sun for this view, so specialize the sun's cascade PCSS out of every
+        // deferred material shader and read its mask instead. This is the pass the gate exists for: these
+        // shaders are the register-pressure hot spot (PS warp launch stalled on register allocation), and
+        // the PCSS live range was setting their floor even for pixels the sun never reaches.
+        const uint32 ShadingFeatures = SF_All | (RenderSettings.bShadowMaskValid ? (uint32)SF_ShadowMask : 0u);
+
         for (uint32 Slot = 0; Slot < NumSlots; ++Slot)
         {
             FGraphicsPipelineKey Key;
             Key.VS          = TileVS;
             Key.PS          = BinnedDeferredSlotShaders[Slot];
+            Key.ShadingFeatures = ShadingFeatures;
             Key.DepthFormat = EFormat::D32;
             Key.ColorTargets.push_back({ ColorImg.Desc.Format, {} });
             #if USING(WITH_EDITOR)
@@ -9096,7 +9140,8 @@ namespace Lumina
             // Terrain binds FTerrainPushConstants (not the DBuffer overlay), so decals stay specialized
             // off. SSAO is on: terrain depth now precedes the SSAO pass, and the fetch reads the scene
             // globals (no push input needed); views without SSAO (captures) fall back via AOTextureIndex.
-            Key.ShadingFeatures = SF_DebugViews | SF_SSAO;
+            Key.ShadingFeatures = SF_DebugViews | SF_SSAO |
+                                  (RenderSettings.bShadowMaskValid ? (uint32)SF_ShadowMask : 0u);
             Key.ColorTargets.push_back({ ColorRT.Desc.Format, {} });
             #if USING(WITH_EDITOR)
             Key.ColorTargets.push_back({ PickerRT.Desc.Format, {} });
@@ -9649,6 +9694,74 @@ namespace Lumina
         PC.ScreenHeight  = ScreenH;
 
         RHI::CmdDraw(CL, MakeArgs(PC), 6, Batch.Count, 0, 0);
+        RHI::CmdEndRenderPass(CL);
+        Barriers::RasterToRead(CL);
+    }
+
+    // Deferred sun-shadow projection: resolve the directional cascade PCSS once per screen pixel into a
+    // full-res R8 visibility mask, which the opaque shading passes then read with a single texel fetch.
+    //
+    // The win is REGISTER PRESSURE, not arithmetic -- it is the same PCSS over roughly the same pixels.
+    // Whole-shader VGPR allocation reserves the peak live range across every path, so the cascade PCSS
+    // (two inlined SampleDirectionalCascade bodies for the cross-fade, each holding a 4x4 cascade VP, the
+    // receiver-plane Jacobian, an atlas tile and a rolling tap loop) set the register floor for the whole
+    // deferred material shader -- graph, clustered light loop, IBL -- including for pixels that never
+    // touch the sun. Here the same code IS the whole shader, so it allocates few registers, reaches high
+    // occupancy, and the extra resident warps hide its own texture latency.
+    //
+    // Ordering: needs the full opaque depth (meshes from both VisBuffer phases + terrain) AND both
+    // cascade raster phases, so it sits after "Cascade Pyramid" alongside the other screen-space passes
+    // that consume opaque depth.
+    void FForwardRenderScene::ShadowMaskPass(RHI::FCmdListH CL)
+    {
+        // Set by CompileDrawCommands_Render, which also decides ShadowMaskIndex and SF_ShadowMask from
+        // it. Not gated on DrawCommands.empty() the way SSAO is: a terrain-only scene has no mesh draws
+        // and its terrain still receives sun shadows.
+        if (!RenderSettings.bShadowMaskValid)
+        {
+            return;
+        }
+
+        LUMINA_PROFILE_SECTION_COLORED("Shadow Mask", tracy::Color::Red);
+
+        static const FShaderEntry* const VertexShader = FShaderLibrary::Get("FullscreenQuad.slang");
+        static const FShaderEntry* const PixelShader  = FShaderLibrary::Get("ShadowMaskPixel.slang");
+        if (!VertexShader || !PixelShader)
+        {
+            return;
+        }
+
+        const FSceneImage& Output = GetNamedImage(ENamedImage::ShadowMask);
+        const FSceneImage& Depth  = GetNamedImage(ENamedImage::DepthAttachment);
+
+        RHI::FRenderAttachment Color;
+        Color.Texture = Output.Texture;
+        Color.LoadOp  = RHI::ELoadOp::Undefined;   // every pixel is written (sky included)
+        Color.StoreOp = RHI::EStoreOp::Store;
+
+        RHI::FRenderPassDesc Pass;
+        Pass.ColorAttachments = TSpan<const RHI::FRenderAttachment>(&Color, 1);
+        Pass.RenderArea       = Output.GetExtent();
+
+        RHI::CmdBeginRenderPass(CL, Pass);
+        SetViewportScissor(CL, Output.GetExtent());
+        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(RHI::FDepthStencilDesc{}));
+        RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
+
+        FGraphicsPipelineKey Key;
+        Key.VS = VertexShader;
+        Key.PS = PixelShader;
+        Key.ColorTargets.push_back({ Output.Desc.Format, {} });
+        RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
+
+        struct FData
+        {
+            uint32 DepthIndex;
+        } PC;
+
+        PC.DepthIndex = (uint32)Depth.GetResourceID();
+
+        RHI::CmdDraw(CL, MakeArgs(PC), 3, 1, 0, 0);
         RHI::CmdEndRenderPass(CL);
         Barriers::RasterToRead(CL);
     }
@@ -12086,6 +12199,7 @@ namespace Lumina
         case ENamedImage::SSAO:               return "Scene.SSAO";
         case ENamedImage::SSAODenoise:        return "Scene.SSAODenoise";
         case ENamedImage::SSAOBlur:           return "Scene.SSAOBlur";
+        case ENamedImage::ShadowMask:         return "Scene.ShadowMask";
         case ENamedImage::Cascade:            return "Scene.Cascade";
         case ENamedImage::CascadePyramid:     return "Scene.CascadePyramid";
         case ENamedImage::DepthAttachment:    return "Scene.DepthAttachment";
@@ -12197,6 +12311,13 @@ namespace Lumina
         View.Images[(int)ENamedImage::SSAODenoise] = CreateSceneImage(Desc);
         Desc.Dimension = FUIntVector3(Extent.x, Extent.y, 1);
         View.Images[(int)ENamedImage::SSAOBlur]    = CreateSceneImage(Desc);
+
+        // Screen-space sun-shadow visibility. FULL res and R8, both load-bearing: the shading passes
+        // read it with a Load() at their own SV_Position, so any other resolution would need a filtered
+        // fetch and would soften contact shadows the PCSS deliberately keeps sharp (its filter floor is
+        // 1.5 shadow texels). One channel because only the directional light is deferred -- spot/point
+        // shadows stay inline, since a pixel can receive several of them and they will not pack.
+        View.Images[(int)ENamedImage::ShadowMask]  = CreateSceneImage(Desc);
 
         // Scene depth; transfer-dst for the no-occluder clear.
         Desc.Format = EFormat::D32;
@@ -12604,9 +12725,10 @@ namespace Lumina
 
         const RHI::FShaderSource PSSource = Key.PS ? Key.PS->Source() : RHI::FShaderSource{};
 
-        // Spec constants: id 0 = EPass (geometry pass inside the merged MeshletVertex.slang); ids 1-3 =
-        // ShadeSurface feature gates (DEBUG_VIEWS/DECALS/SSAO). Shaders that don't declare an id ignore it,
-        // so the same set is fed uniformly to every pipeline (matching the existing EPass-only behavior).
+        // Spec constants: id 0 = EPass (geometry pass inside the merged MeshletVertex.slang); ids 1-3 and 6
+        // = ShadeSurface feature gates (DEBUG_VIEWS/DECALS/SSAO/SHADOW_MASK); id 4 = VISBUFFER_MASKED;
+        // id 5 = SPEC_SKINNED. Shaders that don't declare an id ignore it, so the same set is fed
+        // uniformly to every pipeline (matching the existing EPass-only behavior).
         auto MakeUInt = [](uint32 Id, uint32 Value) -> RHI::FSpecializationConstant
         {
             return RHI::FSpecializationConstant{ .ConstantID = Id, .AsInt = (uint64)Value, .Type = RHI::ESpecializationConstantType::UInt32 };
@@ -12619,12 +12741,33 @@ namespace Lumina
             MakeUInt(3, (Key.ShadingFeatures & SF_SSAO)       ? 1u : 0u),
             MakeUInt(4, Key.bVisBufferMasked ? 1u : 0u),
             MakeUInt(5, (uint32)Key.SkinnedMode),   // SPEC_SKINNED: 0=static, 1=skinned, 2=dynamic
+            MakeUInt(6, (Key.ShadingFeatures & SF_ShadowMask) ? 1u : 0u),
         };
-        const TSpan<const RHI::FSpecializationConstant> Consts(SpecConsts, 6);
+        const TSpan<const RHI::FSpecializationConstant> Consts(SpecConsts, 7);
         RHI::FPipelineH Pipeline = Key.MS
             ? RHI::CreateMeshShaderPipeline(RHI::FShaderSource{}, Key.MS->Source(), PSSource, Desc, Consts)
             : RHI::CreateGraphicsPipeline(Key.VS->Source(), PSSource, Desc, Consts);
         PipelineCache.emplace(Seed, Pipeline);
+
+#if USING(WITH_EDITOR)
+        // Attach the driver's register count / occupancy to the pixel shader entry so the material
+        // editor can show what this material actually costs the hardware. Only the FIRST pipeline built
+        // from a given PS pays the query: later permutations of the same bytecode report the same
+        // numbers, and this sits on the pipeline-cache miss path either way.
+        //
+        // Note the numbers describe THIS permutation. Spec constants change what survives dead-stripping,
+        // so a debug-views pipeline and a shipping one can allocate differently from identical source --
+        // which is exactly the kind of thing this is meant to make visible.
+        if (Key.PS != nullptr && !FShaderLibrary::HasPipelineStats(Key.PS))
+        {
+            TVector<RHI::FPipelineStat> Stats;
+            if (RHI::GetPipelineStatistics(Pipeline, Stats))
+            {
+                FShaderLibrary::PublishPipelineStats(Key.PS, Move(Stats));
+            }
+        }
+#endif
+
         return Pipeline;
     }
 

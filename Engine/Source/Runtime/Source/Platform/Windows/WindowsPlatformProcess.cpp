@@ -575,6 +575,104 @@ namespace Lumina::Platform
         return 0;
     }
 
+    void GetAddressSpaceStats(FAddressSpaceStats& Out, bool bIncludeHeaps)
+    {
+        Out = FAddressSpaceStats();
+
+        SYSTEM_INFO SystemInfo;
+        GetSystemInfo(&SystemInfo);
+
+        const uint8* Address = static_cast<const uint8*>(SystemInfo.lpMinimumApplicationAddress);
+        const uint8* const MaxAddress = static_cast<const uint8*>(SystemInfo.lpMaximumApplicationAddress);
+
+        MEMORY_BASIC_INFORMATION Info;
+        while (Address < MaxAddress && VirtualQuery(Address, &Info, sizeof(Info)) == sizeof(Info))
+        {
+            // A zero-length region can't be stepped over; bail rather than spin forever.
+            if (Info.RegionSize == 0)
+            {
+                break;
+            }
+
+            const uint64 RegionSize = static_cast<uint64>(Info.RegionSize);
+            ++Out.RegionCount;
+
+            switch (Info.State)
+            {
+            case MEM_COMMIT:
+                switch (Info.Type)
+                {
+                case MEM_IMAGE:   Out.ImageCommitted   += RegionSize; break;
+                case MEM_MAPPED:  Out.MappedCommitted  += RegionSize; break;
+                default:          Out.PrivateCommitted += RegionSize; break;
+                }
+                break;
+
+            case MEM_RESERVE:
+                Out.Reserved += RegionSize;
+                break;
+
+            default:
+                break;
+            }
+
+            Address += RegionSize;
+        }
+
+        if (!bIncludeHeaps)
+        {
+            return;
+        }
+
+        // GetProcessHeaps needs the count up front; 256 is far beyond what any real process has,
+        // and an overflowing return just means we'd miss heaps, not that we'd read out of bounds.
+        constexpr DWORD MaxHeaps = 256;
+        HANDLE Heaps[MaxHeaps];
+        const DWORD NumHeaps = GetProcessHeaps(MaxHeaps, Heaps);
+        Out.HeapCount = static_cast<uint32>(NumHeaps < MaxHeaps ? NumHeaps : MaxHeaps);
+        Out.bHeapWalkValid = Out.HeapCount > 0;
+
+        for (uint32 HeapIndex = 0; HeapIndex < Out.HeapCount; ++HeapIndex)
+        {
+            const HANDLE Heap = Heaps[HeapIndex];
+
+            // HeapWalk requires exclusive access; without the lock it can trip over another thread
+            // mid-allocation and return garbage. The lock is recursive on this thread, so our own
+            // incidental allocations during the walk are safe -- but don't add any.
+            if (!HeapLock(Heap))
+            {
+                Out.bHeapWalkValid = false;
+                continue;
+            }
+
+            PROCESS_HEAP_ENTRY Entry;
+            Entry.lpData = nullptr;
+
+            while (HeapWalk(Heap, &Entry))
+            {
+                if (Entry.wFlags & PROCESS_HEAP_ENTRY_BUSY)
+                {
+                    Out.HeapAllocated += Entry.cbData;
+                    Out.HeapOverhead  += Entry.cbOverhead;
+                }
+                else if (Entry.wFlags & PROCESS_HEAP_REGION)
+                {
+                    Out.HeapCommitted += Entry.Region.dwCommittedSize;
+                }
+            }
+
+            HeapUnlock(Heap);
+        }
+
+        // Blocks the heap manager services with its own VirtualAlloc live outside any region, so
+        // the region total can under-count. Never report less committed than we know is handed out.
+        const uint64 HeapInUse = Out.HeapAllocated + Out.HeapOverhead;
+        if (HeapInUse > Out.HeapCommitted)
+        {
+            Out.HeapCommitted = HeapInUse;
+        }
+    }
+
     size_t GetProcessMemoryUsageMegaBytes()
     {
         PROCESS_MEMORY_COUNTERS_EX pmc;

@@ -1,6 +1,7 @@
 #pragma once
 #include "UI/Tools/EditorTool.h"
 #include "Memory/MemoryTracking.h"
+#include "Platform/Process/PlatformProcess.h"
 #include "Renderer/RHI.h"
 
 namespace Lumina
@@ -43,6 +44,8 @@ namespace Lumina
 
         // CPU sub-panels.
         void DrawCPUComposition();
+        void DrawAddressSpace();
+        void RunAddressSpaceScan();
         void DrawControls();
         void DrawCategoryTable(float Height);
         void DrawCallSites();
@@ -60,6 +63,14 @@ namespace Lumina
         TVector<float>          HistVRAM;
 
         float                   RefreshTimer = 0.0f;
+
+        // On-demand OS-level scan: the only view that sees memory no engine allocator touched.
+        // Held between scans (never per-tick -- the heap walk locks every heap process-wide).
+        Platform::FAddressSpaceStats AddressSpace;
+        bool                    bAddressSpaceValid = false;
+        bool                    bScanHeaps         = true;
+        double                  LastScanTime       = 0.0;
+        double                  LastScanCostMs     = 0.0;
 
 #if LUMINA_MEMORY_TRACKING
         // CPU category snapshot, refreshed on the timer so the table reads steady.

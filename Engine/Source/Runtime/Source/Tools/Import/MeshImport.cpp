@@ -857,12 +857,6 @@ namespace Lumina::Import::Mesh
             {
                 continue;
             }
-
-            LOG_WARN("Mesh '{}' surface {} (material slot {}, {} tris) built only LOD 0 -- every LOD "
-                     "selection on it resolves to 0. Simplification could not reduce it: geometry made of "
-                     "disconnected shells (foliage cards) is all border, which meshopt_SimplifyLockBorder "
-                     "pins in place.",
-                     MeshResource.Name.c_str(), SurfaceIdx, Section.MaterialIndex, Section.IndexCount / 3u);
         }
     }
 

@@ -2848,6 +2848,17 @@ namespace Lumina::Physics
             const TSharedPtr<FDynamicMeshRenderData> MeshData = DM ? DM->LoadRenderData() : nullptr;
             if (!MeshData || MeshData->Resource.MeshletData.IsEmpty())
             {
+                // A committed mesh with no CPU meshlet data isn't "not ready yet" -- it's ready and the
+                // streams this shape is built from were dropped on upload. Deferring would retry that
+                // forever without ever saying so, so fail loudly and name the exact fix.
+                if (MeshData && MeshData->MeshletHeaderAddress != 0)
+                {
+                    LOG_ERROR("Entity {}: SDynamicMeshColliderComponent needs the mesh's CPU meshlet data, but "
+                              "SDynamicMeshComponent dropped it after upload. Set bKeepCPUMeshletData on the "
+                              "SDynamicMeshComponent to keep it.", entt::to_integral(Entity));
+                    return EBodyBuildStatus::Error;
+                }
+
                 // Nothing committed yet. Defer rather than error: a streamed chunk builds its geometry a
                 // frame or more after the entity exists, and the pending list retries.
                 return EBodyBuildStatus::Defer;

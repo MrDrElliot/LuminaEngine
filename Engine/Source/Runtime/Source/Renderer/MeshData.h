@@ -105,6 +105,19 @@ namespace Lumina
             MeshletBounds.clear();
         }
 
+        // Releases the capacity too. Clear() deliberately keeps it for callers about to refill (the
+        // importer rebuilding in place); this is for callers dropping the CPU copy for good, where
+        // leaving the capacity allocated would free nothing at all.
+        FORCEINLINE void ClearAndShrink()
+        {
+            auto Drop = [](auto& V) { V.clear(); V.shrink_to_fit(); };
+            Drop(Meshlets);
+            Drop(MeshletVertices);
+            Drop(MeshletSkinnedVertices);
+            Drop(MeshletTriangles);
+            Drop(MeshletBounds);
+        }
+
         friend FArchive& operator<<(FArchive& Ar, FMeshletData& Data)
         {
             Ar << Data.Meshlets;

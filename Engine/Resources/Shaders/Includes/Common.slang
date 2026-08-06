@@ -808,6 +808,14 @@ struct FSceneGlobalData
     FSSAOSettings     SSAOSettings;
     FCullData         CullData;
     FParallaxSettings ParallaxSettings;
+
+    // Bindless SRV of this view's screen-space sun-shadow mask (ShadowMaskPixel.slang). ~0u = the pass
+    // did not run for this view (capture views, or no shadow-casting sun) -> the opaque pipelines for
+    // that view are specialized back to the inline cascade PCSS. See SampleShadowMask.
+    uint              ShadowMaskIndex;
+    uint              _ShadowPad0;
+    uint              _ShadowPad1;
+    uint              _ShadowPad2;
 };
 
 // Octahedral 16-16 unit-normal decode (Slang lacks unpackSnorm2x16). Branchless wrap follows

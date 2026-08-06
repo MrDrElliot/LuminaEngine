@@ -529,6 +529,10 @@ namespace Lumina::RHI
         bool                            bUnifiedImageLayouts = false;
         bool                            bMemoryPriority = false;
         bool                            bMeshShaderSupported = false;
+        // VK_KHR_pipeline_executable_properties: driver-reported per-pipeline register count and
+        // occupancy. Editor-only -- it requires VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR on every
+        // pipeline, which makes the driver retain compile metadata it would otherwise discard.
+        bool                            bPipelineStats = false;
         TUniquePtr<FVulkanCrashTracker> CrashTracker;
         FGpuBreadcrumbs                 Breadcrumbs;
 
@@ -1389,6 +1393,7 @@ namespace Lumina::RHI
         bool bBufferMarker   = false;
         bool bMemoryPriority = false;
         bool bMeshShader     = false;
+        bool bPipelineStats  = false;   // editor-only; see FDevice::bPipelineStats
         {
             uint32 ExtCount = 0;
             vkEnumerateDeviceExtensionProperties(GDevice->PhysicsDevice, nullptr, &ExtCount, nullptr);
@@ -1440,6 +1445,13 @@ namespace Lumina::RHI
 
             // Mesh/task shader pipeline. Feature support is confirmed (and the feature enabled) below.
             bMeshShader = EnableIfPresent(VK_EXT_MESH_SHADER_EXTENSION_NAME);
+
+#if USING(WITH_EDITOR)
+            // Per-pipeline register count / occupancy, surfaced in the material editor's Shader Stats.
+            // Editor-only on purpose: every pipeline has to be created with CAPTURE_STATISTICS, which
+            // makes the driver keep compile metadata alive. A packaged game never reads it.
+            bPipelineStats = EnableIfPresent(VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME);
+#endif
 
             // Device extensions requested by native-access clients (see Renderer/RHINative.h). Only
             // enabled if the driver advertises them and they aren't already in the list.
@@ -1626,6 +1638,17 @@ namespace Lumina::RHI
             MeshShaderFeatures.meshShader = VK_TRUE;
             MeshShaderFeatures.taskShader = SupportedMesh.taskShader;
             Chain(MeshShaderFeatures);
+        }
+
+        // Editor diagnostics: lets vkGetPipelineExecutableStatisticsKHR report register count and
+        // occupancy per pipeline. bPipelineStats is only ever true in an editor build (see above).
+        VkPhysicalDevicePipelineExecutablePropertiesFeaturesKHR PipelineStatsFeatures
+            { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_EXECUTABLE_PROPERTIES_FEATURES_KHR };
+        if (bPipelineStats)
+        {
+            PipelineStatsFeatures.pipelineExecutableInfo = VK_TRUE;
+            Chain(PipelineStatsFeatures);
+            GDevice->bPipelineStats = true;
         }
 
         VkDeviceDiagnosticsConfigCreateInfoNV* NvDiagnostics = nullptr;
@@ -2733,7 +2756,9 @@ namespace Lumina::RHI
         {
             .sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
             .pNext               = &PipelineCreate,
-            .flags               = 0,
+            // CAPTURE_STATISTICS is what makes vkGetPipelineExecutableStatisticsKHR return anything.
+            // bPipelineStats is only ever set in an editor build, so shipping pipelines carry no flag.
+            .flags               = GDevice->bPipelineStats ? VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR : 0u,
             .stageCount          = FragModule != VK_NULL_HANDLE ? 2u : 1u,
             .pStages             = Stages,
             .pVertexInputState   = &VertexInputAssembly,
@@ -2764,6 +2789,89 @@ namespace Lumina::RHI
         return GDevice->Pipelines.Emplace(VulkanPipeline, VK_PIPELINE_BIND_POINT_GRAPHICS);
     }
 
+    // Driver-reported statistics for an already-created pipeline. The set of statistics is entirely
+    // vendor-defined -- NVIDIA and AMD report different names for what is roughly the same thing -- so
+    // this returns them verbatim rather than mapping onto fixed fields, and the UI displays whatever
+    // arrives. The one every vendor exposes in some form is the per-thread register count, which is
+    // what determines the occupancy step a shader lands on.
+    //
+    // Returns false (leaving Out untouched) when the extension is absent, which is the normal state in
+    // a non-editor build since the pipeline was then not created with CAPTURE_STATISTICS.
+    bool GetPipelineStatistics(FPipelineH Pipeline, TVector<FPipelineStat>& Out)
+    {
+        if (GDevice == nullptr || !GDevice->bPipelineStats || Pipeline.Handle == 0)
+        {
+            return false;
+        }
+
+        const FPipeline Resolved = GDevice->Pipelines[Pipeline];
+        if (Resolved.Pipeline == VK_NULL_HANDLE)
+        {
+            return false;
+        }
+
+        VkPipelineInfoKHR Info{ .sType = VK_STRUCTURE_TYPE_PIPELINE_INFO_KHR, .pipeline = Resolved.Pipeline };
+
+        uint32 ExecutableCount = 0;
+        if (vkGetPipelineExecutablePropertiesKHR(*GDevice, &Info, &ExecutableCount, nullptr) != VK_SUCCESS || ExecutableCount == 0)
+        {
+            return false;
+        }
+
+        TVector<VkPipelineExecutablePropertiesKHR> Executables(ExecutableCount,
+            VkPipelineExecutablePropertiesKHR{ .sType = VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_PROPERTIES_KHR });
+        if (vkGetPipelineExecutablePropertiesKHR(*GDevice, &Info, &ExecutableCount, Executables.data()) != VK_SUCCESS)
+        {
+            return false;
+        }
+
+        // One "executable" per compiled stage. Names are prefixed with the stage so a graphics pipeline's
+        // VS and PS numbers stay distinguishable in the UI.
+        for (uint32 Index = 0; Index < ExecutableCount; ++Index)
+        {
+            VkPipelineExecutableInfoKHR ExecInfo
+            {
+                .sType           = VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_INFO_KHR,
+                .pipeline        = Resolved.Pipeline,
+                .executableIndex = Index,
+            };
+
+            uint32 StatCount = 0;
+            if (vkGetPipelineExecutableStatisticsKHR(*GDevice, &ExecInfo, &StatCount, nullptr) != VK_SUCCESS || StatCount == 0)
+            {
+                continue;
+            }
+
+            TVector<VkPipelineExecutableStatisticKHR> Stats(StatCount,
+                VkPipelineExecutableStatisticKHR{ .sType = VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_STATISTIC_KHR });
+            if (vkGetPipelineExecutableStatisticsKHR(*GDevice, &ExecInfo, &StatCount, Stats.data()) != VK_SUCCESS)
+            {
+                continue;
+            }
+
+            for (const VkPipelineExecutableStatisticKHR& Stat : Stats)
+            {
+                FPipelineStat& Emitted = Out.emplace_back();
+                Emitted.Stage = Executables[Index].name;
+                Emitted.Name  = Stat.name;
+
+                // The value is a union tagged by format; everything is normalized to a double so the UI
+                // has one code path. Booleans render as 0/1, which is what they mean.
+                switch (Stat.format)
+                {
+                    case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_BOOL32_KHR:   Emitted.Value = Stat.value.b32 ? 1.0 : 0.0;   break;
+                    case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_INT64_KHR:    Emitted.Value = (double)Stat.value.i64;       break;
+                    case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_UINT64_KHR:   Emitted.Value = (double)Stat.value.u64;       break;
+                    case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_FLOAT64_KHR:  Emitted.Value = Stat.value.f64;               break;
+                    default:                                                   Emitted.Value = 0.0;                          break;
+                }
+                Emitted.bIsFloat = (Stat.format == VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_FLOAT64_KHR);
+            }
+        }
+
+        return !Out.empty();
+    }
+
     FPipelineH CreateComputePipeline(const FShaderSource& Compute, TSpan<const FSpecializationConstant> Constants)
     {
         // @TODO Decide if we should load this and keep a shader handle instead.
@@ -2786,8 +2894,9 @@ namespace Lumina::RHI
         {
             .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
             .pNext = nullptr,
-            .flags = 0,
-            .stage = 
+            // See the graphics path: editor-only, enables vkGetPipelineExecutableStatisticsKHR.
+            .flags = GDevice->bPipelineStats ? VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR : 0u,
+            .stage =
                 {
                     .sType                  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
                     .pNext                  = nullptr,
@@ -3029,7 +3138,9 @@ namespace Lumina::RHI
         {
             .sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
             .pNext               = &PipelineCreate,
-            .flags               = 0,
+            // CAPTURE_STATISTICS is what makes vkGetPipelineExecutableStatisticsKHR return anything.
+            // bPipelineStats is only ever set in an editor build, so shipping pipelines carry no flag.
+            .flags               = GDevice->bPipelineStats ? VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR : 0u,
             .stageCount          = StageCount,
             .pStages             = Stages,
             .pVertexInputState   = nullptr,

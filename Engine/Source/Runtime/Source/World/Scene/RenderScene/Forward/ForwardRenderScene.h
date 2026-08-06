@@ -586,6 +586,8 @@ namespace Lumina
             SSAO,
             SSAODenoise,
             SSAOBlur,
+            // Full-res R8 screen-space sun-shadow visibility, resolved by ShadowMaskPass.
+            ShadowMask,
             Cascade,
             CascadePyramid,
             DepthAttachment,
@@ -741,7 +743,9 @@ namespace Lumina
 
         // Capture / probe-face globals are snapshotted during Extract, so they predate the CullData fields
         // the render phase owns. Returns the snapshot with those fields filled in from this frame's primary.
-        FSceneGlobalData MakeSecondaryViewGlobals(const FSceneGlobalData& ViewGlobals) const;
+        // Non-const: also clears RenderSettings.bShadowMaskValid, so a secondary view can never be keyed
+        // for a screen-space shadow mask its trimmed pass sequence never resolved.
+        FSceneGlobalData MakeSecondaryViewGlobals(const FSceneGlobalData& ViewGlobals);
 
         void PointAtView(FSceneView& View)
         {
@@ -805,6 +809,11 @@ namespace Lumina
         void TerrainRenderPass(RHI::FCmdListH CL);
         void SSAOPass(RHI::FCmdListH CL);
         void SSAOBlurPass(RHI::FCmdListH CL);
+        // Resolves the sun's cascade PCSS into a full-res screen-space R8 mask, so the opaque shading
+        // passes read one texel instead of carrying the PCSS live range in their register allocation.
+        // Sets bShadowMaskValid, which gates both SF_ShadowMask on their pipeline keys and the scene
+        // root's ShadowMaskIndex -- the pass and the specialization can never disagree.
+        void ShadowMaskPass(RHI::FCmdListH CL);
         void TransparentPass(RHI::FCmdListH CL);
         void OITResolvePass(RHI::FCmdListH CL);
         void AdditiveTranslucentPass(RHI::FCmdListH CL);
@@ -894,14 +903,20 @@ namespace Lumina
         // Mesh vertex-emulation pass selector; drives the MeshletVertex.slang EPass spec constant (id 0).
         enum class EMeshPass : uint8 { Base = 0, Depth = 1, Shadow = 2 };
 
-        // ShadeSurface feature gates, fed as spec constants ids 1-3 (see SurfaceShading.slang). Default =
-        // all on, identical to the un-specialized shader; the terrain pass clears Decals|SSAO (it binds
-        // neither the DBuffer overlay nor an SSAO input, so those blocks dead-strip).
+        // ShadeSurface feature gates, fed as spec constants ids 1-3 and 6 (see SurfaceShading.slang).
+        // Default = all on, identical to the un-specialized shader; the terrain pass clears Decals|SSAO
+        // (it binds neither the DBuffer overlay nor an SSAO input, so those blocks dead-strip).
+        //
+        // SF_ShadowMask is deliberately NOT in SF_All: it is the one gate whose "on" state needs a
+        // resource the pass may not have produced, so it is opt-in per pass rather than opt-out. The
+        // three OPAQUE shading passes (deferred material, forward base, terrain) set it when
+        // bShadowMaskValid; translucency never does (the mask is resolved from opaque depth).
         enum EShadingFeature : uint32
         {
             SF_DebugViews = 1u << 0,
             SF_Decals     = 1u << 1,
             SF_SSAO       = 1u << 2,
+            SF_ShadowMask = 1u << 3,
             SF_All        = SF_DebugViews | SF_Decals | SF_SSAO,
         };
 

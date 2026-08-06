@@ -126,18 +126,34 @@ namespace Lumina
             Free.push_back(Move(Session));
         }
 
-        void Prewarm(uint32 Count)
+        // Drops idle sessions. A global session retains the Slang core module and its target caches
+        // for as long as anything holds a ref, so a pool left sized to the startup compile swarm is
+        // pure retention for the rest of the process -- and it lives on the CRT heap, invisible to
+        // the category tracker. Keeps KeepCount warm so a lone later recompile (material editor,
+        // shader hot-reload) doesn't pay a core-module load.
+        void TrimIdle(uint32 KeepCount)
         {
-            TVector<Slang::ComPtr<slang::IGlobalSession>> Sessions;
-            Sessions.reserve(Count);
-            for (uint32 i = 0; i < Count; ++i)
+            TVector<Slang::ComPtr<slang::IGlobalSession>> Dead;
             {
-                Sessions.push_back(Acquire());
+                FScopeLock Lock(Mutex);
+                if (Free.size() <= KeepCount)
+                {
+                    return;
+                }
+
+                Dead.reserve(Free.size() - KeepCount);
+                while (Free.size() > KeepCount)
+                {
+                    Dead.push_back(Move(Free.back()));
+                    Free.pop_back();
+                }
             }
-            for (auto& Session : Sessions)
-            {
-                Release(Move(Session));
-            }
+
+            // Outside Mutex (tearing down a core module is slow and must not block Acquire), but under
+            // CreateMutex: if creation has to be serialized because it touches process-global state,
+            // so does destruction, and a concurrent compile can call Acquire the moment we let go.
+            FScopeLock Lock(CreateMutex);
+            Dead.clear();
         }
 
     private:
@@ -241,8 +257,16 @@ namespace Lumina
 
             DEFER
             {
-                PendingTasks.fetch_sub(Num, std::memory_order_relaxed);
+                // DEFERs unwind in reverse declaration order, so by the time this runs the session
+                // DEFER below has already handed this chunk's session back to the pool. Reaching
+                // zero means the whole swarm is done and the pool can shed what it spun up.
+                const bool bLastChunk = PendingTasks.fetch_sub(Num, std::memory_order_acq_rel) == Num;
                 std::atomic_notify_all(&PendingTasks);
+
+                if (bLastChunk)
+                {
+                    GSlangSessionPool.TrimIdle(1);
+                }
             };
 
             // Borrow one global session for this whole chunk (reused across its shaders) and return
@@ -310,15 +334,23 @@ namespace Lumina
                 SessionDesc.searchPaths     = SearchPaths.data();
                 SessionDesc.searchPathCount = (SlangInt)SearchPaths.size();
                 
+                // PreprocessorMacroDesc only stores pointers, so the split halves have to outlive the
+                // compile call. MacroSplits is reserved to its worst case (two entries per macro) and
+                // never grows past it -- a reallocation here would dangle the pointers already handed
+                // to Macros, which is exactly what the old substr().c_str() temporaries did.
+                TVector<FString> MacroSplits;
                 TVector<slang::PreprocessorMacroDesc> Macros;
+                MacroSplits.reserve(Options[i].MacroDefinitions.size() * 2);
                 Macros.reserve(Options[i].MacroDefinitions.size());
                 for (const FString& Macro : Options[i].MacroDefinitions)
                 {
-                    auto SeparatorPos = Macro.find('=');
+                    const size_t SeparatorPos = Macro.find('=');
                     if (SeparatorPos != FString::npos)
                     {
-                        Macros.push_back({ Macro.substr(0, SeparatorPos).c_str(),
-                                           Macro.substr(SeparatorPos + 1).c_str() });
+                        MacroSplits.emplace_back(Macro.substr(0, SeparatorPos));
+                        MacroSplits.emplace_back(Macro.substr(SeparatorPos + 1));
+                        Macros.push_back({ MacroSplits[MacroSplits.size() - 2].c_str(),
+                                           MacroSplits.back().c_str() });
                     }
                     else
                     {
@@ -481,10 +513,11 @@ namespace Lumina
 
     void FSpirVShaderCompiler::Initialize()
     {
-        // Pre-warm the global-session pool so the first compile wave doesn't serialize on core-module
-        // loads. Sized to the batch target concurrency; the pool still grows on demand beyond this.
-        GSlangSessionPool.Prewarm(std::max(1u, Threading::GetNumThreads() / 2));
-
+        // No pre-warm: the pool grows on demand in Acquire, and creation is serialized either way,
+        // so warming up front only moves the same core-module loads off the critical path of the
+        // first chunk onto the calling thread. It also used to build a full pool before we knew
+        // whether there was anything to compile -- a warm shader cache or a packaged build (which
+        // ships .lsc and no sources) would create N global sessions, use none, and retain them all.
         TVector<FString> Shaders;
         auto EnumerateShadersUnder = [&](FStringView Root)
         {
@@ -551,6 +584,10 @@ namespace Lumina
     void FSpirVShaderCompiler::Shutdown()
     {
         Flush();
+
+        // Flush only guarantees no compile is in flight; the pool still holds the warm session
+        // TrimIdle(1) keeps between waves. Drop it so Slang's core module isn't alive at teardown.
+        GSlangSessionPool.TrimIdle(0);
     }
 
     bool FSpirVShaderCompiler::CompilerShaderRaw(FString ShaderString, const FShaderCompileOptions& CompileOptions, CompletedFunc OnCompleted)
@@ -575,8 +612,13 @@ namespace Lumina
         {
             DEFER
             {
-                PendingTasks.fetch_sub(1, std::memory_order_relaxed);
+                const bool bLast = PendingTasks.fetch_sub(1, std::memory_order_acq_rel) == 1;
                 std::atomic_notify_all(&PendingTasks);
+
+                if (bLast)
+                {
+                    GSlangSessionPool.TrimIdle(1);
+                }
             };
 
             Slang::ComPtr<slang::IGlobalSession> GlobalSession = GSlangSessionPool.Acquire();
@@ -618,15 +660,21 @@ namespace Lumina
             SessionDesc.searchPaths     = SearchPaths;
             SessionDesc.searchPathCount = 1;
         
+            // See the batch path: the split halves must outlive the compile call, and MacroSplits is
+            // reserved to its worst case so it never reallocates out from under Macros' pointers.
+            TVector<FString> MacroSplits;
             TVector<slang::PreprocessorMacroDesc> Macros;
+            MacroSplits.reserve(CompileOptions.MacroDefinitions.size() * 2);
             Macros.reserve(CompileOptions.MacroDefinitions.size());
             for (const FString& Macro : CompileOptions.MacroDefinitions)
             {
-                auto SeparatorPos = Macro.find('=');
+                const size_t SeparatorPos = Macro.find('=');
                 if (SeparatorPos != FString::npos)
                 {
-                    Macros.push_back({ Macro.substr(0, SeparatorPos).c_str(),
-                                       Macro.substr(SeparatorPos + 1).c_str() });
+                    MacroSplits.emplace_back(Macro.substr(0, SeparatorPos));
+                    MacroSplits.emplace_back(Macro.substr(SeparatorPos + 1));
+                    Macros.push_back({ MacroSplits[MacroSplits.size() - 2].c_str(),
+                                       MacroSplits.back().c_str() });
                 }
                 else
                 {

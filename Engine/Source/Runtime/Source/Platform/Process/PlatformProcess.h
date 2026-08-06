@@ -71,7 +71,41 @@ namespace Lumina::Platform
 
     RUNTIME_API size_t GetProcessMemoryUsageBytes();
     RUNTIME_API size_t GetProcessMemoryUsageMegaBytes();
-    
+
+    // A scan of the process's own address space, straight from the OS. Unlike the category tracker
+    // this sees memory no engine allocator ever touched -- the GPU driver, foreign-DLL CRT heaps,
+    // code pages -- so it's what turns the profiler's opaque "external" number into named buckets.
+    struct FAddressSpaceStats
+    {
+        // Committed bytes by page type. Private is the interesting one: rpmalloc's spans, the
+        // driver's raw VirtualAlloc, thread stacks. Image/Mapped are largely shared, not private.
+        uint64 PrivateCommitted = 0;
+        uint64 ImageCommitted   = 0;
+        uint64 MappedCommitted  = 0;
+
+        // Address space claimed with no RAM behind it (fiber stack reservations, allocator arenas).
+        // Costs no memory; listed so a large number here isn't mistaken for a leak.
+        uint64 Reserved         = 0;
+        uint32 RegionCount      = 0;
+
+        // NT/CRT heaps -- a subset of PrivateCommitted. This is every allocation made by a DLL that
+        // does NOT route through Memory::Malloc: slang.dll, the GPU driver, basisu, ucrtbase.
+        uint64 HeapCommitted    = 0;   // committed by the heap manager
+        uint64 HeapAllocated    = 0;   // of that, handed out to callers
+        uint64 HeapOverhead     = 0;   // block headers and alignment slack
+        uint32 HeapCount        = 0;
+        bool   bHeapWalkValid   = false;
+    };
+
+    // Fills Out by walking the address space with VirtualQuery. Cheap (a few ms) but not free --
+    // call it on demand, not per frame.
+    //
+    // bIncludeHeaps additionally walks every NT heap, which is the only way to size the CRT-heap
+    // bucket. That walk takes a process-wide heap lock and is O(number of live blocks), so on a
+    // multi-GB heap it can stall every other thread for seconds. Strictly opt-in.
+    RUNTIME_API void GetAddressSpaceStats(FAddressSpaceStats& Out, bool bIncludeHeaps);
+
+
     RUNTIME_API const TCHAR* BaseDir();
     
     RUNTIME_API FVoidFuncPtr LumGetProcAddress(void* Handle, const char* Procedure);

@@ -448,6 +448,15 @@ namespace Lumina
         NewData->Resource.Indices.clear();
         NewData->Resource.Indices.shrink_to_fit();
 
+        // The meshlet streams are dead too now that they live on the GPU -- and they are the biggest
+        // thing here, since the meshlet vertex list is the expanded per-meshlet one. Surfaces were
+        // already copied out above, and MeshletHeaderAddress is what the render path actually draws
+        // from, so nothing below this point needs the CPU copy. Only a collider does.
+        if (!bKeepCPUMeshletData)
+        {
+            NewData->Resource.MeshletData.ClearAndShrink();
+        }
+
         // Single publish point. The extract later this tick already reads the new addresses -- no
         // resolve-cache tick of lag, same as before.
         PublishRenderData(eastl::move(NewData));

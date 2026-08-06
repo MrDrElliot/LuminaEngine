@@ -539,6 +539,25 @@ namespace Lumina::RHI
     RUNTIME_API void         CmdSwapchainBarrierToRender(FCmdListH CL, FSwapchainH Swapchain);
     RUNTIME_API bool         PresentSwapchain(FSwapchainH Swapchain, FCmdListH FinalCommandList, FSemaphoreH FrameSignal, uint64 FrameSignalValue);
 
+    // One driver-reported statistic about a compiled pipeline stage (VK_KHR_pipeline_executable_properties).
+    // Names are entirely VENDOR-DEFINED -- NVIDIA and AMD report different sets for what is roughly the same
+    // information -- so these are surfaced verbatim rather than mapped onto fixed fields. The one every
+    // vendor exposes in some form is the per-thread register count, which is what decides the occupancy
+    // step a shader lands on (Ampere: 128 regs -> 16 warps, 96 -> 20, 80 -> 24, 72 -> 28, 64 -> 32).
+    struct FPipelineStat
+    {
+        FString Stage;              // executable name, e.g. "Fragment Shader" -- one per compiled stage
+        FString Name;               // driver's statistic name
+        double  Value    = 0.0;     // union normalized to double; bools arrive as 0/1
+        bool    bIsFloat = false;   // false -> render as an integer
+    };
+
+    // Statistics for an already-created pipeline, appended to Out. EDITOR ONLY in practice: it needs the
+    // pipeline to have been created with CAPTURE_STATISTICS, which only happens when the extension was
+    // enabled, which only happens in an editor build. Returns false and leaves Out alone otherwise, so
+    // callers can treat "unavailable" and "no stats" identically.
+    RUNTIME_API bool            GetPipelineStatistics(FPipelineH Pipeline, TVector<FPipelineStat>& Out);
+
     RUNTIME_API FDepthStencilH  CreateDepthStencil(const FDepthStencilDesc& Desc);
     RUNTIME_API FPipelineH      CreateGraphicsPipeline(const FShaderSource& Vertex, const FShaderSource& Fragment, const FRasterDesc& Desc, TSpan<const FSpecializationConstant> Constants = {});
     RUNTIME_API FPipelineH      CreateComputePipeline(const FShaderSource& Compute, TSpan<const FSpecializationConstant> Constants = {});
