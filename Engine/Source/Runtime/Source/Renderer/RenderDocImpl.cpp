@@ -34,6 +34,11 @@ namespace Lumina
         return GSingleton;
     }
 
+    bool FRenderDoc::IsAttached()
+    {
+        return ::GetModuleHandleW(L"renderdoc.dll") != nullptr;
+    }
+
     void FRenderDoc::StartFrameCapture() const
     {
         if (!RenderDocAPI)

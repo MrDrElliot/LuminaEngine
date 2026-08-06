@@ -13,6 +13,7 @@
 #include "Renderer/RHICore.h"
 #include "Renderer/API/Vulkan/VulkanMacros.h"
 #include "Renderer/RHINative.h"
+#include "Renderer/RenderDocImpl.h"
 #include "Renderer/ErrorHandling/Vulkan/VulkanCrashTracker.h"
 #include "Renderer/ErrorHandling/Vulkan/VulkanBreadcrumbs.h"
 #include "Platform/CrashHandler.h"
@@ -1507,6 +1508,20 @@ namespace Lumina::RHI
         VkPhysicalDeviceVulkan12Features Features12{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
         Features12.timelineSemaphore                            = VK_TRUE;
         Features12.bufferDeviceAddress                          = VK_TRUE;
+
+        // GPUPtr is a raw VkDeviceAddress, so essentially every buffer in this RHI is reached by
+        // address and a capture is unreplayable without the driver reproducing those addresses.
+        // RenderDoc's layer normally patches this feature in at vkCreateDevice itself, but that has
+        // broken across versions and with layer-ordering conflicts, so ask for it explicitly.
+        //
+        // Gated on RenderDoc actually being injected: enabling it unconditionally makes the driver
+        // reserve and track address ranges for the whole run, which is pure cost outside a capture.
+        // A module lookup, never a load -- see FRenderDoc::IsAttached.
+        if (Supported12.bufferDeviceAddressCaptureReplay && FRenderDoc::IsAttached())
+        {
+            Features12.bufferDeviceAddressCaptureReplay = VK_TRUE;
+            LOG_DISPLAY("RenderDoc attached: enabling bufferDeviceAddressCaptureReplay so captures replay.");
+        }
         Features12.descriptorIndexing                           = VK_TRUE;
         Features12.descriptorBindingPartiallyBound              = VK_TRUE;
         Features12.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
