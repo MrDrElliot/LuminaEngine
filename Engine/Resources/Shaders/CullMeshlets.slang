@@ -23,7 +23,7 @@ struct FDrawMeshTasksIndirectArguments
 struct FPushConstants
 {
     uint NumViews;
-    uint Phase;              // CULL_PHASE_EARLY or CULL_PHASE_LATE
+    uint Phase;              // CULL_PHASE_EARLY, CULL_PHASE_LATE or CULL_PHASE_CASCADE_LATE
     uint CameraLateViewIndex; // Only consumed in LATE; index into CullViews().
     // Entries SurfaceDescs actually holds (what the DEVICE buffer holds, not what the game thread has
     // interned). Bounds the per-view LOD lookup below.
@@ -55,6 +55,13 @@ struct FPushConstants
     // Entries the defer list can hold. DeferCount is an unbounded atomic, so this is what stops the
     // append from writing past the allocation -- and what stops the late phase reading past it.
     uint                             DeferListCapacity;
+    // Threads in the early phase's grid. The grid is sized to the device, not to the domain, and the
+    // walk strides by this, so no scene-derived value ever becomes a dispatch dimension. Early only.
+    uint                             GridThreads;
+    // First of NUM_CASCADES contiguous cascade-late views, indexed by FMeshletDeferred::DeferTag.
+    // CASCADE_LATE only. Sits here rather than beside CameraLateViewIndex so the leading uint block
+    // stays 4 wide and the struct keeps its 96-byte layout.
+    uint                             CascadeLateViewBase;
 };
 
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
@@ -98,6 +105,27 @@ void EmitMeshlet(FCullView View, uint DrawID, uint InstanceID, uint MeshletIdx)
     MeshletDrawList()[Slot] = Draw;
 }
 
+// Queue a meshlet for a late re-test. Tag says which Hi-Z hid it, and so which phase picks it back up.
+//
+// The counter is unbounded on purpose (it doubles as the demand measurement the CPU sizes the next
+// allocation from), so the WRITE has to be bounded here. Dropping a deferred entry costs one frame of it
+// not being re-tested -- and it was Hi-Z occluded, so it was most likely genuinely hidden anyway.
+void DeferMeshlet(uint InstanceID, uint MeshletIdx, uint DrawID, uint Tag)
+{
+    uint DeferSlot;
+    InterlockedAdd(Pass().DeferCount[0], 1, DeferSlot);
+
+    if (DeferSlot < Pass().DeferListCapacity)
+    {
+        FMeshletDeferred Entry;
+        Entry.InstanceID   = InstanceID;
+        Entry.MeshletIndex = MeshletIdx;
+        Entry.DrawID       = DrawID;
+        Entry.DeferTag     = Tag;
+        Pass().DeferList[DeferSlot] = Entry;
+    }
+}
+
 // Recover (InstanceID, MeshletWalkIdx) from a flat thread index via binary search on the inclusive
 // per-instance prefix sum: prefix[InstanceID] <= flat_idx < prefix[InstanceID + 1]. O(log NumInstances).
 bool ResolveInstanceFromFlatIndex(uint flat_idx, out uint InstanceID, out uint MeshletWalkIdx)
@@ -133,13 +161,10 @@ bool ResolveInstanceFromFlatIndex(uint flat_idx, out uint InstanceID, out uint M
     return true;
 }
 
-// Phase 0: walks every (instance, meshlet) pair, routing survivors into a view's draw list or the
-// defer list (camera + HZB-occluded). Flat 1D dispatch, one thread per meshlet; the 65535 Y fold
-// from the C++ side is reconstructed into a flat index here.
-void RunEarlyPhase(uint3 GlobalID, uint3 GroupID, uint NumViews)
+// One (instance, meshlet) pair, routed into a view's draw list or the defer list (camera +
+// HZB-occluded). Returns rather than continues: the caller's stride loop owns the walk.
+void ProcessFlatIndex(uint flat_idx, uint NumViews)
 {
-    const uint flat_idx = GlobalID.x + GroupID.y * 65535u * 64u;
-
     uint InstanceID;
     uint MeshletWalkIdx;
     if (!ResolveInstanceFromFlatIndex(flat_idx, InstanceID, MeshletWalkIdx))
@@ -326,24 +351,42 @@ void RunEarlyPhase(uint3 GlobalID, uint3 GroupID, uint NumViews)
         {
             const uint CascadeIndex = View.CascadeIndex;
 
+            // A skinned mesh's MESHLET bounds are bind-pose and say nothing about where the meshlet
+            // actually is once skinned, which is why every other cull here excludes skinned outright.
+            // The INSTANCE sphere is re-fed each frame and does track the pose, so cascades test that
+            // instead: coarser than the meshlet sphere, but a true bound rather than a stale one.
+            // Testing the meshlet sphere here punched pose-dependent holes in character shadows.
+            const float3 CullCenter = bSkinned ? InstCenter : VWorldCenter;
+            const float  CullRadius = bSkinned ? InstRadius : VWorldRadius;
+
             // The slice this cascade shades, swept toward the sun: the exact caster set, and unlike the
             // ortho box it does not nest. This is what stops cascade 3 from re-rastering cascade 0's scene.
-            if (!FrustumContainsSphere(Scene().CullData.CascadeFrustum[CascadeIndex], VWorldCenter, VWorldRadius))
+            if (!FrustumContainsSphere(Scene().CullData.CascadeFrustum[CascadeIndex], CullCenter, CullRadius))
                 continue;
 
             // Micro-poly reject. MinBoundsDiameter is a world length derived from the cascade's own texel
             // pitch, so the same meshlet survives in cascade 0 and dies in cascade 3 -- which is the point:
             // the coarse cascades are where sub-texel geometry costs the most and shows the least. What it
             // leaves behind is by construction narrower than one shadow texel.
-            if (View.MinBoundsDiameter > 0.0 && (VWorldRadius * 2.0) < View.MinBoundsDiameter)
+            //
+            // Skinned is excluded rather than switched to the instance sphere: this rejects on SMALLNESS,
+            // and the instance sphere is the whole character, so it would never reject anything. A
+            // bind-pose meshlet radius is not a safe stand-in for a size test.
+            if (!bSkinned && View.MinBoundsDiameter > 0.0 && (VWorldRadius * 2.0) < View.MinBoundsDiameter)
                 continue;
 
             // Hi-Z against LAST frame's cascade depth. Skinned meshes are excluded for the same reason they
             // are on the camera path: their bounds are re-fed each frame and the pyramid describes the pose
             // that is already gone.
+            //
+            // DEFERRED, not dropped, exactly as the camera path does it. This pyramid is a frame old, so a
+            // caster that was hidden last frame and is exposed this one would otherwise go missing for a
+            // frame -- a shadow that flickers open under camera or object motion. Phase 2 re-tests these
+            // against the pyramid rebuilt from this frame's own cascade raster.
             if (!bSkinned && Scene().CullData.bShadowOcclusionCull != 0u &&
                 IsCascadeHZBOccluded(CascadeIndex, VWorldCenter, VWorldRadius))
             {
+                DeferMeshlet(InstanceID, MeshletIdx, DrawID, CascadeIndex);
                 continue;
             }
         }
@@ -375,24 +418,9 @@ void RunEarlyPhase(uint3 GlobalID, uint3 GroupID, uint NumViews)
 
             if (IsHiZOccluded(WorldCenter, WorldRadius))
             {
-                // Defer to phase 1. Phase 1 owns the camera-late view slice
-                // and re-tests against the rebuilt HZB before emitting.
-                uint DeferSlot;
-                InterlockedAdd(Pass().DeferCount[0], 1, DeferSlot);
-
-                // The counter is unbounded on purpose (it doubles as the demand measurement the CPU sizes
-                // the next allocation from), so the WRITE has to be bounded here. Dropping a deferred
-                // meshlet costs one frame of it not being re-tested against the rebuilt HZB -- and it was
-                // HZB-occluded, so it was most likely invisible anyway.
-                if (DeferSlot < Pass().DeferListCapacity)
-                {
-                    FMeshletDeferred Entry;
-                    Entry.InstanceID   = InstanceID;
-                    Entry.MeshletIndex = MeshletIdx;
-                    Entry.DrawID       = DrawID;
-                    Entry._Pad         = 0u;
-                    Pass().DeferList[DeferSlot] = Entry;
-                }
+                // Defer to phase 1, which owns the camera-late view slice and re-tests against the
+                // rebuilt camera pyramid before emitting.
+                DeferMeshlet(InstanceID, MeshletIdx, DrawID, kDeferTagCamera);
                 continue;
             }
         }
@@ -401,8 +429,29 @@ void RunEarlyPhase(uint3 GlobalID, uint3 GroupID, uint NumViews)
     }
 }
 
-// Phase 1: one thread per deferred entry, no scene walk; every survivor goes to the camera-late view.
-void RunLatePhase(uint3 GlobalID, uint3 GroupID, uint CameraLateViewIndex)
+// Phase 0: grid-stride walk of the whole (instance, meshlet) domain.
+//
+// The grid is a CPU constant sized to fill the DEVICE, never to the work, so Totals[0] is a loop bound
+// read from memory and can no longer reach a dispatch dimension. That is what retires the old ceiling:
+// an over-large total now costs iterations instead of launching an unbounded grid, so nothing has to
+// clamp the domain and nothing gets dropped off its tail. Sizing the grid wrong only costs speed.
+void RunEarlyPhase(uint3 GlobalID, uint NumViews)
+{
+    const uint TotalWork = Pass().Totals[0];
+    // A zero stride would spin forever; the CPU always sends a positive grid, so this is pure paranoia.
+    const uint Stride = max(Pass().GridThreads, 1u);
+
+    for (uint flat_idx = GlobalID.x; flat_idx < TotalWork; flat_idx += Stride)
+    {
+        ProcessFlatIndex(flat_idx, NumViews);
+    }
+}
+
+// Phases 1 and 2: one thread per deferred entry, no scene walk. Both walk the WHOLE defer list and skip
+// entries the other owns, because the camera pyramid and the cascade pyramid are rebuilt at different
+// points in the frame and so cannot share a dispatch. The skip is a load and a compare, which is far
+// cheaper than the second list, count, capacity and feedback path a split would need.
+void RunLatePhase(uint3 GlobalID, uint3 GroupID, uint Phase, uint CameraLateViewIndex)
 {
     // Same flat-index reconstruction as RunEarlyPhase (large dispatches folded into Y on the C++ side).
     uint ThreadIdx = GlobalID.x + GroupID.y * 65535u * 64u;
@@ -413,6 +462,14 @@ void RunLatePhase(uint3 GlobalID, uint3 GroupID, uint CameraLateViewIndex)
         return;
 
     FMeshletDeferred Entry = Pass().DeferList[ThreadIdx];
+
+    // Whose entry this is. Filtered before any of the loads below, so the half of the list this phase
+    // does not own costs one load and one compare.
+    const bool bCascadeEntry = Entry.DeferTag != kDeferTagCamera;
+    if (bCascadeEntry != (Phase == CULL_PHASE_CASCADE_LATE))
+    {
+        return;
+    }
 
     // Reconstruct world-space bounds as phase 0 did; transforms are baked into the Instance buffer
     // before phase 0, so re-deriving is stable.
@@ -438,8 +495,21 @@ void RunLatePhase(uint3 GlobalID, uint3 GroupID, uint CameraLateViewIndex)
     float MaxScale = sqrt(max(SqScaleX, max(SqScaleY, SqScaleZ)));
     float WorldRadius = Bounds.Radius * MaxScale;
 
-    // Re-test against the rebuilt HZB: still-occluded meshlets are genuinely hidden and dropped;
-    // ones that now pass were hidden by a stale pyramid. Micro-poly reject already fired in phase 0.
+    // Re-test against the pyramid rebuilt from THIS frame's own raster: still-occluded meshlets are
+    // genuinely hidden and dropped; ones that now pass were hidden by a stale pyramid. The frustum, cone
+    // and micro-poly rejects already fired in phase 0 and are not repeated.
+    if (bCascadeEntry)
+    {
+        if (IsCascadeHZBOccluded(Entry.DeferTag, WorldCenter, WorldRadius, /*bMid*/ true))
+            return;
+
+        // One late view per cascade, laid out contiguously from CascadeLateViewBase in the same order as
+        // the early cascade views, so the tag indexes it directly.
+        FCullView CascadeLate = CullViews()[Pass().CascadeLateViewBase + Entry.DeferTag];
+        EmitMeshlet(CascadeLate, Entry.DrawID, Entry.InstanceID, Entry.MeshletIndex);
+        return;
+    }
+
     if (IsHiZOccluded(WorldCenter, WorldRadius))
         return;
 
@@ -451,12 +521,12 @@ void RunLatePhase(uint3 GlobalID, uint3 GroupID, uint CameraLateViewIndex)
 [numthreads(LOCAL_SIZE_X, 1, 1)]
 void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupID)
 {
-    if (Pass().Phase == CULL_PHASE_LATE)
+    if (Pass().Phase == CULL_PHASE_LATE || Pass().Phase == CULL_PHASE_CASCADE_LATE)
     {
-        RunLatePhase(GlobalID, GroupID, Pass().CameraLateViewIndex);
+        RunLatePhase(GlobalID, GroupID, Pass().Phase, Pass().CameraLateViewIndex);
     }
     else
     {
-        RunEarlyPhase(GlobalID, GroupID, Pass().NumViews);
+        RunEarlyPhase(GlobalID, Pass().NumViews);
     }
 }

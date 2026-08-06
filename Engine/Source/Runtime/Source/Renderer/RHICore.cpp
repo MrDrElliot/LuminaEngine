@@ -15,7 +15,11 @@ namespace Lumina::RHI::Core
     // outgrow it (the spike frame is covered by a one-off fallback allocation), and shrinks back after
     // sustained low use so a brief spike (e.g. 5000 skinned meshes' bone matrices) doesn't permanently
     // reserve host memory.
-    static constexpr uint64 kTransientSliceSize = 32ull * 1024 * 1024;
+    static constexpr uint64 kTransientSliceRequest = 32ull * 1024 * 1024;
+
+    // Resolved from kTransientSliceRequest against the CPU-visible VRAM aperture in Initialize. This is
+    // the floor the shrink path returns to, so it has to be the clamped value, not the request.
+    static uint64 GTransientSliceSize = kTransientSliceRequest;
 
     struct FTransientSlice
     {
@@ -62,11 +66,13 @@ namespace Lumina::RHI::Core
 
         Upload::Initialize();
 
+        GTransientSliceSize = ClampCPUWriteSlice("Transient", kTransientSliceRequest, kFramesInFlight);
+
         for (FTransientSlice& Slice : GCore.Slices)
         {
-            Slice.Gpu = Malloc(kTransientSliceSize, kDefaultAlign, EMemoryType::CPUWrite);
+            Slice.Gpu = Malloc(GTransientSliceSize, kDefaultAlign, EMemoryType::CPUWrite);
             Slice.Cpu = static_cast<std::byte*>(ToHost(Slice.Gpu));
-            Slice.Capacity = kTransientSliceSize;
+            Slice.Capacity = GTransientSliceSize;
             Slice.Cursor.store(0, std::memory_order_relaxed);
         }
 
@@ -264,9 +270,9 @@ namespace Lumina::RHI::Core
                 NewCapacity = Math::AlignUp(Demand + Demand / 2, 1024ull * 1024); // grow 1.5x, MiB-rounded
                 Slice.LowStreak = 0;
             }
-            else if (Slice.Capacity > kTransientSliceSize && Demand * 2 < Slice.Capacity && ++Slice.LowStreak >= 64)
+            else if (Slice.Capacity > GTransientSliceSize && Demand * 2 < Slice.Capacity && ++Slice.LowStreak >= 64)
             {
-                NewCapacity = Math::Max(kTransientSliceSize, Math::AlignUp(Demand + Demand / 2, 1024ull * 1024));
+                NewCapacity = Math::Max(GTransientSliceSize, Math::AlignUp(Demand + Demand / 2, 1024ull * 1024));
                 Slice.LowStreak = 0;
             }
             else if (Demand * 2 >= Slice.Capacity)

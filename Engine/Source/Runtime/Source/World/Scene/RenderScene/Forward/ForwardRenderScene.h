@@ -467,6 +467,9 @@ namespace Lumina
                 uint32                           NumDrawsPerView     = 0;
                 uint32                           CameraLateViewIndex = ~0u;
                 uint32                           CascadeViewBase     = ~0u;
+                // NumCascades contiguous phase-2 views, receiving casters the stale cascade Hi-Z hid in
+                // phase 0. Same order as CascadeViewBase, so a defer tag indexes both.
+                uint32                           CascadeLateViewBase = ~0u;
                 TVector<uint32>                  PointShadowCullViewBases;
                 TVector<uint32>                  SpotShadowCullViewBases;
                 TVector<FCaptureViewData>        CaptureViews;
@@ -781,7 +784,7 @@ namespace Lumina
         void LightCullPass(RHI::FCmdListH CL);
         void PointShadowPass(RHI::FCmdListH CL);
         void SpotShadowPass(RHI::FCmdListH CL);
-        void CascadedShowPass(RHI::FCmdListH CL);
+        void CascadedShowPass(RHI::FCmdListH CL, uint32 CascadeViewBase);
         void DecalPass(RHI::FCmdListH CL);
         void VisBufferPass(RHI::FCmdListH CL, uint32 ViewIndex, bool bClear);
         void MaterialDepthPass(RHI::FCmdListH CL);
@@ -875,6 +878,8 @@ namespace Lumina
 
         void AllocateShadowTiles();
         
+        void CullPassCascadeLate(RHI::FCmdListH CL);
+
         void BuildCullViews(const FViewVolume& ViewVolume);
         
         uint32 PrepareBatchedLines(FLineBatcherComponent& Batcher);
@@ -1103,9 +1108,6 @@ namespace Lumina
         // that read a real 0 instead of whatever the allocation came with.
         TArray<bool, RHI::kFramesInFlight>                                  TotalsZeroed = {};
 
-        // Same one-time-zero contract as TotalsZeroed, for the early cull's indirect dispatch args.
-        // Undefined bytes in a group count are a GPU hang, not a wrong number.
-        TArray<bool, RHI::kFramesInFlight>                                  EarlyCullArgsZeroed = {};
         FSceneBuffer GetTotals() const { return TotalsRing[CurrentFrameSlot]; }
 
         //~ GPU-driven scene ---------------------------------------------------------------------
@@ -1149,8 +1151,6 @@ namespace Lumina
         TArray<uint32,       RHI::kFramesInFlight>          ViewDrawOffsetLowUsage = {};
         // Skinned contribution replicated across views, staged once per frame for the V*D upload.
         TVector<uint32>                                     ViewDrawSeedScratch;
-        // {GroupCountX,Y,Z} for the EARLY cull, written by BuildDrawPrefix from the GPU-side total.
-        TArray<FSceneBuffer, RHI::kFramesInFlight>          EarlyCullDispatchArgsRing = {};
         // Per-block sums for the hierarchical instance-prefix scan, scanned in place by pass 2.
         // ceil(capacity / 256) + 1 uints; the last entry is the grand total.
         TArray<FSceneBuffer, RHI::kFramesInFlight>          ScanBlockSumRing = {};
@@ -1163,7 +1163,6 @@ namespace Lumina
         FSceneBuffer GetBatchMeshletCounts()const { return BatchMeshletCountRing[CurrentFrameSlot]; }
         FSceneBuffer GetViewDrawCounts()    const { return ViewDrawCountRing[CurrentFrameSlot]; }
         FSceneBuffer GetViewDrawOffsets()   const { return ViewDrawOffsetRing[CurrentFrameSlot]; }
-        FSceneBuffer GetEarlyCullDispatchArgs() const { return EarlyCullDispatchArgsRing[CurrentFrameSlot]; }
         FSceneBuffer GetScanBlockSums()      const { return ScanBlockSumRing[CurrentFrameSlot]; }
         FSceneBuffer GetScanDispatchArgs()   const { return ScanDispatchArgsRing[CurrentFrameSlot]; }
 
@@ -1203,11 +1202,16 @@ namespace Lumina
         FVector4                                            CascadeHZBNdcScale[NumCascades] = {};
         bool                                                bCascadeHZBTransformsValid = false;
 
+        // The active sun's CascadeMinTexels, published by ProcessDirectionalLight for BuildCullViews to
+        // turn into each cascade's MinBoundsDiameter. Written and read only during Extract, same as the
+        // HZB transforms above; the per-light property is the authority, this is just the handoff.
+        float                                               CascadeMinTexels = 1.0f;
+
         // Slots in the Totals block BuildDrawPrefix writes. The TotalsRing allocation, the feedback copy
         // and the CPU-side readback all derive their size from this: they were three separate literals,
         // and the readback kept the 2 it was born with while Totals grew to 8, so every value past
         // Totals[1] was read out of bounds.
-        static constexpr uint32                             kTotalsSlots = 8;
+        static constexpr uint32                             kTotalsSlots = 10;
 
         // TotalMeshletBound is GPU-only now, but the meshlet draw list is a CPU allocation sized by it.
         // Resolved by feedback: each frame copies the GPU total into a CPURead buffer, the CPU picks it
@@ -1236,6 +1240,11 @@ namespace Lumina
         // Totals[6]/[7]: deferred meshlets demanded, and whether that exceeded the allocation.
         uint32                                              LastDeferRequested = 0;
         uint32                                              LastDeferOverflowed = 0;
+        // Totals[8]/[9]: meshlet work domain the GPU measured, and whether GMaxMeshletCullDomain truncated
+        // it. The CPU product that produces that ceiling is a loose worst case and trips long before the
+        // clamp bites, so this flag is the only thing that means meshlets really went missing.
+        uint32                                              LastMeshletWorkRequested = 0;
+        uint32                                              LastMeshletWorkClamped = 0;
         // Monotonic per-frame counter behind CullData::MeshletDrawTag. Must not be derived from the frame
         // slot: stale entries live in the slot they were written to, so a slot-derived tag would match them.
         uint32                                              MeshletDrawTagCounter = 0;

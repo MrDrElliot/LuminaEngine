@@ -142,7 +142,12 @@ namespace Lumina
         TUniquePtr<FPropertyTable> Table = MakeUnique<FPropertyTable>((void*)CDO, SettingsClass, Snapshot);
 
         CClass* Captured = SettingsClass;
-        Table->SetPostEditCallback([Captured](const FPropertyChangedEvent&)
+        // Finish, not PostEdit: PostEdit fires on Started, Updated AND Finished, so every array
+        // mutation serialized the whole CDO three times -- once BEFORE the mutation, writing the
+        // pre-edit state to disk -- and each save broadcasts OnSettingsSaved, whose listeners
+        // live-refresh open editors while the property table that dispatched it is still drawing.
+        // A save only makes sense on the commit anyway.
+        Table->SetFinishEditCallback([Captured](const FPropertyChangedEvent&)
         {
             GConfig->SaveSettings(Captured);
         });

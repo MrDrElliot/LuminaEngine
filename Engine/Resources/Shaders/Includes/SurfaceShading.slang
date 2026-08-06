@@ -114,9 +114,13 @@ FCubemapCoord DirectionToCubemapCoord(float3 Dir)
     return Result;
 }
 
-float ComputeShadowBias(uint LightFlags, float3 Normal, float3 LightDir, int CascadeIndex)
+// ToLight is the TO-LIGHT vector (surface -> light), the same convention as FLight::Direction and the
+// spot/point branch's normalize(Light.Position - FragmentPos). Passing the travel direction instead
+// silently inverts NdotL to zero on every lit surface, which is not a compile error and not obviously
+// wrong on open ground: it just pins the bias at maximum. Hence the name rather than "LightDir".
+float ComputeShadowBias(uint LightFlags, float3 Normal, float3 ToLight, int CascadeIndex)
 {
-    float NdotL       = saturate(dot(Normal, LightDir));
+    float NdotL       = saturate(dot(Normal, ToLight));
     float SlopeFactor = sqrt(max(1.0 - NdotL * NdotL, 0.0));
 
     if (HasFlag(LightFlags, ELightFlags::Directional))
@@ -132,9 +136,9 @@ float ComputeShadowBias(uint LightFlags, float3 Normal, float3 LightDir, int Cas
 
 // Normal-offset bias (Holbert, GDC 2011): push the receiver ~one shadow texel along its normal before
 // projecting, scaled by (1 - NdotL) so it only kicks in at grazing angles. Returns the world-space offset.
-float3 NormalOffsetWS(float3 Normal, float3 LightDir, int CascadeIndex)
+float3 NormalOffsetWS(float3 Normal, float3 ToLight, int CascadeIndex)
 {
-    float NdotL       = saturate(dot(Normal, LightDir));
+    float NdotL       = saturate(dot(Normal, ToLight));
     float OffsetScale = saturate(1.0 - NdotL);
 
     // World-space size of one shadow texel: ortho width 2*Radius / per-cascade resolution.
@@ -170,10 +174,10 @@ static const float PCSS_MaxPlaneDepthBias   = 0.01;    // Cap on the receiver-pl
 
 // PCSS-filtered sample of one directional cascade. Returns 1.0 (and Inside=false) when the fragment
 // is outside the cascade's projected range so the caller can fall back to another cascade or fully-lit.
-float SampleDirectionalCascade(FLight Light, int CascadeIndex, float3 FragmentPos, float3 Normal, float3 LightDir, float Bias, float2 ScreenPos, out bool Inside)
+float SampleDirectionalCascade(FLight Light, int CascadeIndex, float3 FragmentPos, float3 Normal, float3 ToLight, float Bias, float2 ScreenPos, out bool Inside)
 {
     // Normal-offset the receiver before projecting; removes self-shadow banding depth bias can't fix.
-    float3 OffsetPos = FragmentPos + NormalOffsetWS(Normal, LightDir, CascadeIndex);
+    float3 OffsetPos = FragmentPos + NormalOffsetWS(Normal, ToLight, CascadeIndex);
 
     float4x4 CascadeVP  = GetShadowViewProjection(Light.ShadowDataIndex, CascadeIndex);
     float4 ShadowCoord  = mul(CascadeVP, float4(OffsetPos, 1.0));
@@ -337,11 +341,17 @@ float ComputeDirectionalShadow(FLight Light, float3 FragmentPos, float3 Normal, 
     if (CascadeIndex >= NUM_CASCADES)
         return 1.0;
 
-    float3 LightDirToFrag = -normalize(Light.Direction);
-    float  Bias           = ComputeShadowBias(Light.Flags, Normal, LightDirToFrag, CascadeIndex);
+    // TO-LIGHT, matching the SunL the BRDF below uses and the spot/point branch's own LightToFrag. This
+    // was negated into the light's TRAVEL direction, which inverted the NdotL both bias functions derive
+    // from it: every surface facing the sun scored NdotL = 0, so the slope bias sat at its maximum and
+    // NormalOffsetWS ran at FULL strength everywhere instead of only at grazing angles. Harmless in the
+    // open, where the offset pushes into empty air, but under an overhang it shoved the sample through
+    // the caster and the shadow read as lit.
+    float3 LightToFrag = normalize(Light.Direction);
+    float  Bias        = ComputeShadowBias(Light.Flags, Normal, LightToFrag, CascadeIndex);
 
     bool  InsideA;
-    float ShadowA = SampleDirectionalCascade(Light, CascadeIndex, FragmentPos, Normal, LightDirToFrag, Bias, ScreenPos, InsideA);
+    float ShadowA = SampleDirectionalCascade(Light, CascadeIndex, FragmentPos, Normal, LightToFrag, Bias, ScreenPos, InsideA);
 
     // Blend into the next cascade near the split boundary so the transition is smooth, not a seam.
     float CascadeNear = (CascadeIndex == 0) ? 0.0 : CascadeSplits[CascadeIndex - 1];
@@ -354,10 +364,10 @@ float ComputeDirectionalShadow(FLight Light, float3 FragmentPos, float3 Normal, 
     if (LocalT > BlendStart && CascadeIndex + 1 < NUM_CASCADES)
     {
         float BlendT  = saturate((LocalT - BlendStart) / (1.0 - BlendStart));
-        float BiasB   = ComputeShadowBias(Light.Flags, Normal, LightDirToFrag, CascadeIndex + 1);
+        float BiasB   = ComputeShadowBias(Light.Flags, Normal, LightToFrag, CascadeIndex + 1);
 
         bool  InsideB;
-        float ShadowB = SampleDirectionalCascade(Light, CascadeIndex + 1, FragmentPos, Normal, LightDirToFrag, BiasB, ScreenPos, InsideB);
+        float ShadowB = SampleDirectionalCascade(Light, CascadeIndex + 1, FragmentPos, Normal, LightToFrag, BiasB, ScreenPos, InsideB);
 
         if (InsideB)
         {

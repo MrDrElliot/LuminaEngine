@@ -727,6 +727,86 @@ namespace Lumina::RHI
         }
     }
 
+    static const char* MemoryTypeToString(EMemoryType Type)
+    {
+        switch (Type)
+        {
+        case EMemoryType::CPUWrite: return "CPUWrite";
+        case EMemoryType::CPURead:  return "CPURead";
+        case EMemoryType::GPUOnly:  return "GPUOnly";
+        }
+        return "Unknown";
+    }
+
+    // GPU allocation failure is not a recoverable application state, so every allocation path funnels
+    // here rather than growing a fallback. Dumps the heap breakdown first: the interesting case is a
+    // full CPU-visible aperture next to an empty device heap, which "out of VRAM" alone would hide.
+    [[noreturn]] static void PanicOutOfGPUMemory(const char* What, VkResult Result)
+    {
+        FGPUMemoryStats Stats;
+        GetGPUMemoryStats(Stats);
+
+        LOG_CRITICAL("GPU OUT OF MEMORY allocating {}: {}", What, Vulkan::VkResultToString(Result));
+        for (const FGPUMemoryHeapStats& Heap : Stats.Heaps)
+        {
+            const char* Kind = Heap.bReBAR      ? "Device (ReBAR)"
+                             : Heap.bDeviceLocal ? (Heap.bHostVisible ? "Device (BAR)" : "Device")
+                             : "Host";
+
+            LOG_CRITICAL("  Heap {} {}: {} / {} MiB used, {} allocations across {} blocks.",
+                Heap.HeapIndex, Kind, Heap.UsageBytes >> 20, Heap.BudgetBytes >> 20, Heap.AllocationCount, Heap.BlockCount);
+        }
+
+        LUMINA_PANIC("GPU out of memory allocating {}.", What);
+        std::unreachable();
+    }
+
+    // Share of a small (non-ReBAR) CPU-visible VRAM aperture that any one CPU-write ring may reserve.
+    static constexpr uint64 kCPUWriteApertureDivisor = 4;
+    static constexpr uint64 kMinCPUWriteSlice        = 8ull * 1024 * 1024;
+
+    uint64 ClampCPUWriteSlice(const char* RingName, uint64 DesiredSliceSize, uint32 SliceCount)
+    {
+        if (GDevice == nullptr || SliceCount == 0)
+        {
+            return DesiredSliceSize;
+        }
+
+        FGPUMemoryStats Stats;
+        GetGPUMemoryStats(Stats);
+
+        uint64 Aperture = 0;
+        for (const FGPUMemoryHeapStats& Heap : Stats.Heaps)
+        {
+            if (!Heap.bDeviceLocal || !Heap.bHostVisible)
+            {
+                continue;
+            }
+            if (Heap.bReBAR)
+            {
+                return DesiredSliceSize;
+            }
+            Aperture = Math::Max(Aperture, Heap.BudgetBytes);
+        }
+
+        // No host-visible VRAM heap: CPU-write already lands in system memory, nothing to ration.
+        if (Aperture == 0)
+        {
+            return DesiredSliceSize;
+        }
+
+        const uint64 PerSlice = (Aperture / kCPUWriteApertureDivisor) / SliceCount;
+        const uint64 Cap      = Math::Max(kMinCPUWriteSlice, (PerSlice / (1024ull * 1024)) * (1024ull * 1024));
+        if (Cap >= DesiredSliceSize)
+        {
+            return DesiredSliceSize;
+        }
+
+        LOG_DISPLAY("RHI: {} ring clamped {} MiB -> {} MiB/slice x{} (ReBAR off, {} MiB CPU-visible aperture).",
+            RingName, DesiredSliceSize >> 20, Cap >> 20, SliceCount, Aperture >> 20);
+        return Cap;
+    }
+
     FGPUDeviceInfo GetDeviceInfo()
     {
         FGPUDeviceInfo Info;
@@ -960,6 +1040,7 @@ namespace Lumina::RHI
             VkApplicationInfo AppInfo
             {
                 .sType              = VK_STRUCTURE_TYPE_APPLICATION_INFO,
+                .pNext              = nullptr, 
                 .pApplicationName   = "Lumina Engine",
                 .applicationVersion = 1,
                 .pEngineName        = "Lumina",
@@ -971,9 +1052,8 @@ namespace Lumina::RHI
             VkDebugUtilsMessengerCreateInfoEXT MessengerInfo
             {
                 .sType           = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
+                .pNext           = nullptr, 
                 .messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT,
-                // DEVICE_ADDRESS_BINDING_BIT omitted: it requires the VK_EXT_device_address_binding_report
-                // device extension + feature, else vkCreateInstance rejects the messageType as invalid.
                 .messageType     = VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
                                  | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
                 .pfnUserCallback = VkDebugCallback,
@@ -1254,7 +1334,6 @@ namespace Lumina::RHI
             }
         }
 
-        // ---- Physical device ----
         {
             uint32 GpuCount = 0;
             vkEnumeratePhysicalDevices(GDevice->Instance, &GpuCount, nullptr);
@@ -1304,13 +1383,11 @@ namespace Lumina::RHI
             vkGetPhysicalDeviceProperties(Best, &GDevice->Properties);
         }
 
-        // ---- Optional device extensions ----
         bool bDeviceFault    = false;
         bool bNvDiagnostics  = false;
         bool bBufferMarker   = false;
         bool bMemoryPriority = false;
         bool bMeshShader     = false;
-        bool bRobustness2    = false;
         {
             uint32 ExtCount = 0;
             vkEnumerateDeviceExtensionProperties(GDevice->PhysicsDevice, nullptr, &ExtCount, nullptr);
@@ -1360,11 +1437,6 @@ namespace Lumina::RHI
                 EnableIfPresent(VK_EXT_PAGEABLE_DEVICE_LOCAL_MEMORY_EXTENSION_NAME);
             }
 
-            #if defined(LE_DEBUG)
-            bRobustness2 = EnableIfPresent(VK_EXT_ROBUSTNESS_2_EXTENSION_NAME)
-                        || EnableIfPresent(VK_KHR_ROBUSTNESS_2_EXTENSION_NAME);
-            #endif
-
             // Mesh/task shader pipeline. Feature support is confirmed (and the feature enabled) below.
             bMeshShader = EnableIfPresent(VK_EXT_MESH_SHADER_EXTENSION_NAME);
 
@@ -1407,21 +1479,7 @@ namespace Lumina::RHI
         }
         GDevice->bMeshShaderSupported = bMeshShader && SupportedMesh.meshShader;
         LOG_DISPLAY("Mesh/task shaders: {}", GDevice->bMeshShaderSupported ? "supported" : "unavailable");
-
-        VkPhysicalDeviceRobustness2FeaturesKHR SupportedRobustness2{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_KHR };
-        if (bRobustness2)
-        {
-            VkPhysicalDeviceFeatures2 Robustness2Query{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &SupportedRobustness2 };
-            vkGetPhysicalDeviceFeatures2(GDevice->PhysicsDevice, &Robustness2Query);
-
-            VkPhysicalDeviceRobustness2PropertiesKHR Robustness2Props{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_PROPERTIES_KHR };
-            VkPhysicalDeviceProperties2 Props2{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &Robustness2Props };
-            vkGetPhysicalDeviceProperties2(GDevice->PhysicsDevice, &Props2);
-
-            GDevice->RobustUniformBufferAccessSizeAlignment = Robustness2Props.robustUniformBufferAccessSizeAlignment;
-            GDevice->RobustStorageBufferAccessSizeAlignment = Robustness2Props.robustStorageBufferAccessSizeAlignment;
-        }
-
+        
         VkPhysicalDeviceFeatures Features10             = {};
         Features10.fragmentStoresAndAtomics             = VK_TRUE;
         Features10.samplerAnisotropy                    = VK_TRUE;
@@ -1441,15 +1499,6 @@ namespace Lumina::RHI
         Features10.pipelineStatisticsQuery              = VK_TRUE;
         Features10.wideLines                            = Supported2.features.wideLines;
         Features10.geometryShader                       = Supported2.features.geometryShader;
-        
-        #ifndef LUMINA_SHIPPING
-        Features10.robustBufferAccess                   = Supported2.features.robustBufferAccess;
-        #endif
-        
-        VkPhysicalDeviceRobustness2FeaturesKHR Robustness2Features{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_KHR };
-        const bool bUseRobustness2 = bRobustness2
-                                  && Features10.robustBufferAccess == VK_TRUE
-                                  && SupportedRobustness2.robustBufferAccess2 == VK_TRUE;
 
         VkPhysicalDeviceVulkan11Features Features11{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
         Features11.shaderDrawParameters = VK_TRUE;
@@ -1496,14 +1545,7 @@ namespace Lumina::RHI
             UnifiedLayoutFeatures.unifiedImageLayouts = VK_TRUE;
             Chain(UnifiedLayoutFeatures);
         }
-
-        if (bUseRobustness2)
-        {
-            Robustness2Features.robustBufferAccess2 = VK_FALSE;
-            Robustness2Features.robustImageAccess2 = SupportedRobustness2.robustImageAccess2;
-            Chain(Robustness2Features);
-        }
-
+        
         VkPhysicalDeviceFaultFeaturesEXT DeviceFaultFeatures{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT };
         if (bDeviceFault)
         {
@@ -1734,33 +1776,7 @@ namespace Lumina::RHI
             const uint32 APIVer = GDevice->Properties.apiVersion;
             LOG_TRACE("Vulkan RHI - {} - API: {}.{}.{} - Validation: {}", GDevice->Properties.deviceName,
                 VK_API_VERSION_MAJOR(APIVer), VK_API_VERSION_MINOR(APIVer), VK_API_VERSION_PATCH(APIVer), DeviceDesc.bValidation);
-
-            #if defined(LE_DEBUG)
-            if (bUseRobustness2)
-            {
-                LOG_DISPLAY("Vulkan RHI - robustness2 ON: out-of-bounds buffer reads return zero and writes are "
-                            "dropped, so a Debug run reproduces rather than reading a neighbour. Bounds-check "
-                            "granularity: uniform {} B, storage {} B -- an overrun smaller than that past a "
-                            "bound range is still invisible.",
-                            GDevice->RobustUniformBufferAccessSizeAlignment,
-                            GDevice->RobustStorageBufferAccessSizeAlignment);
-
-                // Worth stating next to the number, because it is the trap: none of this reaches the path
-                // this engine actually reads geometry through. Robustness bounds-checks accesses made
-                // through a buffer DESCRIPTOR (and vertex/index fetch); a PhysicalStorageBuffer pointer
-                // carries no range, so every BDA load stays unchecked no matter what is enabled here.
-                // GPU-AV's buffer-address range check is the only thing that covers those.
-                LOG_DISPLAY("Vulkan RHI - robustness does NOT cover buffer-device-address loads. The engine "
-                            "reaches meshlet and instance data that way, so those reads are bounded only by "
-                            "the shaders themselves and by GPU-AV's --validate=bda check.");
-            }
-            else if (bRobustness2)
-            {
-                LOG_WARN("Vulkan RHI - VK_KHR_robustness2 present but robustBufferAccess2 was not enabled; "
-                         "out-of-bounds reads fall back to robustBufferAccess, which may return any value "
-                         "from the same buffer rather than zero.");
-            }
-            #endif
+            
 
             // Said out loud because it changes what a crash means. Under GPU-AV the driver is
             // compiling instrumented shaders rather than ours, so a fault is as likely to belong to
@@ -2192,7 +2208,10 @@ namespace Lumina::RHI
         switch (Type)
         {
         case EMemoryType::CPUWrite:
-            Info.flags  = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+            // WITHIN_BUDGET is what makes VMA's memory-type fallback fire on a full CPU-visible VRAM
+            // aperture. Without it the dedicated path ignores budget entirely and the driver demotes
+            // to system memory behind our back instead of letting us pick host memory deliberately.
+            Info.flags  = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT;
             Info.requiredFlags = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
             break;
         case EMemoryType::CPURead:
@@ -2227,12 +2246,11 @@ namespace Lumina::RHI
 
         // Checked explicitly rather than through VK_CHECK, which compiles to nothing in shipping.
         // A failure here used to fall through to vkGetBufferDeviceAddress on an uninitialized handle,
-        // turning a recoverable out-of-memory into a crash inside the driver.
+        // crashing inside the driver instead of reporting which heap ran dry.
         const VkResult AllocResult = vmaCreateBufferWithAlignment(GDevice->Allocator, &SampleInfo, &Info, Alignment, &VulkanBuffer, &Allocation, &AllocationInfo);
         if (AllocResult != VK_SUCCESS || VulkanBuffer == VK_NULL_HANDLE || Allocation == nullptr)
         {
-            LOG_ERROR("RHI: {} KiB buffer allocation failed ({}).", Size / 1024, Vulkan::VkResultToString(AllocResult));
-            return 0;
+            PanicOutOfGPUMemory(std::format("a {} KiB {} buffer", Size / 1024, MemoryTypeToString(Type)).c_str(), AllocResult);
         }
 
         // GPU-read memory that fell out of the BAR means every shader/transfer read crosses PCIe.
@@ -3065,7 +3083,15 @@ namespace Lumina::RHI
 
         VkImage Image = VK_NULL_HANDLE;
         VmaAllocation Allocation = VK_NULL_HANDLE;
-        VK_CHECK(vmaCreateImage(GDevice->Allocator, &Info, &AllocationCreateInfo, &Image, &Allocation, nullptr));
+
+        // Checked explicitly, not through VK_CHECK, which compiles to nothing in shipping and let a
+        // VK_NULL_HANDLE image reach vkCreateImageView.
+        const VkResult ImageResult = vmaCreateImage(GDevice->Allocator, &Info, &AllocationCreateInfo, &Image, &Allocation, nullptr);
+        if (ImageResult != VK_SUCCESS || Image == VK_NULL_HANDLE || Allocation == nullptr)
+        {
+            PanicOutOfGPUMemory(std::format("a {}x{}x{} texture, {} mips, {} layers, format {}",
+                Desc.Dimension.x, Desc.Dimension.y, Depth, Info.mipLevels, Info.arrayLayers, (uint32)Format).c_str(), ImageResult);
+        }
 
         VkImageViewCreateInfo ViewCreateInfo
         {

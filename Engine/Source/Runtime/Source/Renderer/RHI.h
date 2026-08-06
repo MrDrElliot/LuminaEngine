@@ -424,11 +424,8 @@ namespace Lumina::RHI
 
     struct FDeviceDesc
     {
-        bool bValidation = false;
-        bool bDebugUtils = true;
-
-        // GPU-assisted validation. Implies bValidation: it is a feature of the validation layer, so
-        // asking for it without the layer loaded silently does nothing.
+        bool bValidation    = false;
+        bool bDebugUtils    = true;
         bool bGpuValidation = false;
     };
 
@@ -471,6 +468,10 @@ namespace Lumina::RHI
     // Full per-heap GPU memory breakdown.
     RUNTIME_API void           GetGPUMemoryStats(FGPUMemoryStats& Out);
     RUNTIME_API FGPUDeviceInfo GetDeviceInfo();
+
+    // Per-slice cap for a CPU-write ring of SliceCount slices. Without ReBAR the whole CPU-visible
+    // VRAM aperture is ~256MiB, so fixed ring sizes reserve most of it before a scene ever loads.
+    RUNTIME_API uint64         ClampCPUWriteSlice(const char* RingName, uint64 DesiredSliceSize, uint32 SliceCount);
 
     // True when VK_EXT_mesh_shader (mesh stage) is available and enabled on the device.
     RUNTIME_API bool           SupportsMeshShaders();

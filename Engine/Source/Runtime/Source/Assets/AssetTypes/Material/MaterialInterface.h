@@ -89,6 +89,13 @@ namespace Lumina
          *  stays there forever, and a texture reference that was null at bake time never got written at all. */
         virtual bool RefreshTextureBindings(const CTexture* ChangedTexture) { return false; }
 
+        /** True when every texture this material samples is GPU-resident. False kicks async loads for the
+         *  ones that are not and asks the caller to fall back to the default material for now; the load
+         *  completion calls FMeshResolveCache::InvalidateDependency to wake the surface.
+         *
+         *  Non-blocking: the resolve gate runs on a worker fiber inside Extract. */
+        virtual bool RequestTexturesResolved() { return true; }
+
     protected:
         
         virtual void UpdateMaterialUniforms() { }

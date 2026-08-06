@@ -139,7 +139,9 @@ namespace Lumina
         nlohmann::json* CurrentContainer() { return Containers.empty() ? RootNode : Containers.back().Node; }
 
         nlohmann::json*             RootNode = nullptr;
-        nlohmann::json              MissingNode;            // null sentinel for absent keys on load
+        // Null sentinel for absent keys on load, and the discard sink on save: any node that cannot be
+        // resolved routes writes here rather than leaving PendingNode pointing at stale storage.
+        nlohmann::json              MissingNode;
         TVector<FContainer>         Containers;
     };
 }

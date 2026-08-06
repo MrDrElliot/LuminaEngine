@@ -358,6 +358,59 @@ namespace Lumina
         return true;
     }
 
+    bool CMaterialInstance::RequestTexturesResolved()
+    {
+        if (!Material)
+        {
+            return true;
+        }
+
+        // The parent owns every slot this instance does not override, and its own request handles the
+        // async kick + one-request-per-material throttle. Asking it first is also what makes the rebuild
+        // below non-blocking: by the time it reports true, ResolveTextureSlot is a pointer read.
+        if (!Material->RequestTexturesResolved())
+        {
+            return false;
+        }
+
+        // An override's texture is a hard ref, so it is loaded -- but "loaded" is not "GPU-resident".
+        // RHI::Textures::Create assigns the heap slot in the texture's own PostLoad, and material texture
+        // refs sit outside the load graph's Hard/Owned BFS, so nothing orders that ahead of this
+        // instance's PostLoad. Losing that race is what bakes the placeholder in.
+        for (const FMaterialParameterOverride& Override : Overrides)
+        {
+            if (Override.Type != EMaterialParameterType::Texture || !Override.bEnabled)
+            {
+                continue;
+            }
+            if (Override.Texture != nullptr && Override.Texture->GetResourceID() < 0)
+            {
+                return false;
+            }
+        }
+
+        // Everything resolvable now. If the block was baked while something was still missing it is
+        // holding the placeholder, and this is the only thing that rewrites it -- previously the resolve
+        // gate skipped instances outright on the premise that their block was "already whole", which is
+        // true only when the load race was won.
+        const uint32 Placeholder = RHI::Textures::DefaultResourceID();
+        for (const FMaterialParameter& Param : Parameters)
+        {
+            if (Param.Type != EMaterialParameterType::Texture || Param.Index >= MAX_TEXTURES)
+            {
+                continue;
+            }
+            if (MaterialUniforms.Textures[Param.Index] == Placeholder)
+            {
+                RebuildUniformsFromOverrides();
+                UpdateMaterialUniforms();
+                break;
+            }
+        }
+
+        return true;
+    }
+
     const FShaderEntry* CMaterialInstance::GetVertexShader() const
     {
         return Material ? Material->GetVertexShader() : nullptr;

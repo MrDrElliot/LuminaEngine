@@ -186,15 +186,22 @@ bool IsHiZOccluded(float3 CenterWS, float RadiusWS)
 // Conservative by construction: a sphere that leaves the cascade's clip box skips the test entirely, and
 // the tap is allowed to bleed into a neighbouring cascade's tile because sampling a SUPERSET of the
 // footprint can only ever raise the max, i.e. cull less.
-bool IsCascadeHZBOccluded(uint CascadeIndex, float3 CenterWS, float RadiusWS)
+// bMid selects WHICH cascade pyramid, and so which transforms: false = the one built at the end of last
+// frame (what phase 0 tests), true = the one rebuilt mid-frame from this frame's own cascade raster (what
+// phase 2 tests). The two carry different matrices whenever the camera moved, so the choice of pyramid and
+// the choice of transform have to be made together, never independently.
+bool IsCascadeHZBOccluded(uint CascadeIndex, float3 CenterWS, float RadiusWS, bool bMid = false)
 {
-    if (Scene().CullData.bCascadeHZBValid == 0u || CascadeIndex >= (uint)NUM_CASCADES)
+    const uint bValid = bMid ? Scene().CullData.bCascadeHZBMidValid : Scene().CullData.bCascadeHZBValid;
+    if (bValid == 0u || CascadeIndex >= (uint)NUM_CASCADES)
     {
         return false;
     }
 
-    const float4x4 CascadeVP = Scene().CullData.CascadeHZBViewProjection[CascadeIndex];
-    const float3   NdcScale  = Scene().CullData.CascadeHZBNdcScale[CascadeIndex].xyz;
+    const float4x4 CascadeVP = bMid ? Scene().CullData.CascadeHZBViewProjectionMid[CascadeIndex]
+                                    : Scene().CullData.CascadeHZBViewProjection[CascadeIndex];
+    const float3   NdcScale  = bMid ? Scene().CullData.CascadeHZBNdcScaleMid[CascadeIndex].xyz
+                                    : Scene().CullData.CascadeHZBNdcScale[CascadeIndex].xyz;
 
     // Ortho: w == 1, so clip space is already NDC.
     const float3 Ndc       = mul(CascadeVP, float4(CenterWS, 1.0)).xyz;

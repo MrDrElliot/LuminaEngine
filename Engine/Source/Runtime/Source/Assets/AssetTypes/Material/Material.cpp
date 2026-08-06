@@ -220,29 +220,6 @@ namespace Lumina
         return (ResourceID >= 0) ? (uint32)ResourceID : RHI::Textures::DefaultResourceID();
     }
 
-    void CMaterial::EnsureTexturesResolved()
-    {
-        const uint32 NumTextures = (uint32)Math::Min<size_t>(Textures.size(), MAX_TEXTURES);
-
-        bool bChanged = false;
-        for (uint32 i = 0; i < NumTextures; ++i)
-        {
-            const uint32 ResourceID = ResolveTextureSlot(i);
-            if (MaterialUniforms.Textures[i] != ResourceID)
-            {
-                MaterialUniforms.Textures[i] = ResourceID;
-                bChanged = true;
-            }
-        }
-
-        // Only re-push when something actually moved. This runs on every bind of a directly-rendered
-        // master, so after the first call it has to settle into a pure comparison.
-        if (bChanged)
-        {
-            UpdateMaterialUniforms();
-        }
-    }
-
     bool CMaterial::RequestTexturesResolved()
     {
         const uint32 NumTextures = (uint32)Math::Min<size_t>(Textures.size(), MAX_TEXTURES);
@@ -421,7 +398,7 @@ namespace Lumina
             // behavior this replaced: it made every default resident the moment any material loaded,
             // including the defaults of every parameter that every instance overrides. Slots start on
             // the placeholder and are demanded per-slot -- by an instance for the parameters it does
-            // NOT override, or by EnsureTexturesResolved when this master is itself bound for rendering.
+            // NOT override, or by RequestTexturesResolved when a surface resolves against this material.
             // RESIZE, never assign. The editor compile path fills ResolvedTextures with the live
             // textures the graph already holds and then calls PostLoad -- clearing here would throw
             // those away one line later and leave a freshly compiled material rendering placeholders.

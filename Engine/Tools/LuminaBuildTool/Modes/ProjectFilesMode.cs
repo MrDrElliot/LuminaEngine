@@ -51,11 +51,18 @@ public static class ProjectFilesMode
         }
 
         List<ProjectTargetInfo> Targets = new();
+        List<string> SkippedTargets = new();
 
         foreach (string TargetName in Assembly.TargetNames.OrderBy(N => N, StringComparer.OrdinalIgnoreCase))
         {
             Dictionary<ProjectConfiguration, BuildTarget> Variants = new();
             BuildTarget? Primary = null;
+
+            // First failure only: when a target resolves in NO configuration the reason is usually one
+            // rules file throwing the same diagnostic for all of them, so repeating it per configuration
+            // buries it. The rest stay at Verbose for the genuinely per-configuration cases.
+            string? FirstFailure = null;
+            string? FirstFailureConfiguration = null;
 
             foreach (ProjectConfiguration Configuration in Configurations)
             {
@@ -74,12 +81,22 @@ public static class ProjectFilesMode
                 catch (BuildException Ex)
                 {
                     Log.Verbose("Target '{0}' does not support {1}: {2}", TargetName, Configuration.DisplayName, Ex.Message);
+
+                    FirstFailure ??= Ex.Message;
+                    FirstFailureConfiguration ??= Configuration.DisplayName;
                 }
             }
 
             if (Primary is null)
             {
-                Log.Warning("Target '{0}' could not be resolved in any configuration; skipping.", TargetName);
+                // The reason used to be Verbose-only, so the default output named the skipped target and
+                // said nothing about why -- and the thing that threw is usually a rules file reporting a
+                // setup problem it already knows how to fix (an unbuilt vendored library, an uninitialised
+                // submodule). That message was being written and then swallowed.
+                Log.Warning("Target '{0}' could not be resolved in any configuration; skipping. {1} failed: {2}",
+                    TargetName, FirstFailureConfiguration ?? "No configuration", FirstFailure ?? "no reason reported.");
+
+                SkippedTargets.Add(TargetName);
                 continue;
             }
 
@@ -107,6 +124,23 @@ public static class ProjectFilesMode
         int Changed = Generator.Generate(Directories, Targets, Configurations, RulesProjectPath)
             + (bRulesProjectChanged ? 1 : 0)
             + (CompileDatabaseStep.Write(Directories, Targets, Configurations, Toolchain) ? 1 : 0);
+
+        // A workspace missing targets is a failure, not a partial success. The Targets.Count == 0 guard
+        // above does not catch it: Reflector resolves out of the engine tree whatever state a project is
+        // in, so a freshly cloned project whose every real target failed still reached here with a count
+        // of one, generated a solution containing nothing buildable, and reported success. That is what
+        // made a broken clone look like a working one.
+        //
+        // Thrown AFTER the files are written but BEFORE the stamp: the partial workspace is worth having,
+        // and leaving the stamp on the previous rules is what makes the next build try again rather than
+        // treat the incomplete generation as up to date.
+        if (SkippedTargets.Count > 0)
+        {
+            throw new BuildException(
+                $"{SkippedTargets.Count} of {SkippedTargets.Count + Targets.Count} targets could not be resolved and are "
+                + $"missing from the generated workspace: {string.Join(", ", SkippedTargets)}. "
+                + "See the warning logged for each one above.");
+        }
 
         // Written after the files it describes, so an interrupted generation leaves the stamp
         // pointing at the previous rules and the next build tries again.

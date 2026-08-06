@@ -15,7 +15,10 @@ namespace Lumina::RHI
         // Per-frame-in-flight staging slice. Sized for a steady-state burst; an upload
         // larger than the slice's remaining space falls back to a dedicated (deferred-
         // freed) allocation, so this never has to fit a worst-case load spike.
-        constexpr uint64 kStagingSliceSize = 64ull * 1024 * 1024;
+        constexpr uint64 kStagingSliceRequest = 64ull * 1024 * 1024;
+
+        // Resolved against the CPU-visible VRAM aperture in Initialize.
+        uint64 GStagingSliceSize = kStagingSliceRequest;
 
         // Staging that came from a dedicated allocation rather than one of the slices.
         constexpr uint8 kNoSlice = 0xFF;
@@ -39,9 +42,10 @@ namespace Lumina::RHI
 
         struct FStagingSlice
         {
-            GPUPtr      Gpu    = 0;
-            std::byte*  Cpu    = nullptr;
-            uint64      Cursor = 0;
+            GPUPtr      Gpu      = 0;
+            std::byte*  Cpu      = nullptr;
+            uint64      Cursor   = 0;
+            uint64      Capacity = 0;   // resolved slice size; 0 until Initialize runs
 
             // Reservations that have not yet finished their memcpy and queued their op. Callers copy
             // outside the lock, so the cursor alone says nothing about whether a slice is quiet: a
@@ -88,7 +92,7 @@ namespace Lumina::RHI
             const uint32 Slot = GUpload.CurrentSlot;
             FStagingSlice& Slice = GUpload.Slices[Slot];
             const uint64 Aligned = Math::AlignUp(Slice.Cursor, Alignment);
-            if (Aligned + Size <= kStagingSliceSize)
+            if (Aligned + Size <= Slice.Capacity)
             {
                 Slice.Cursor = Aligned + Size;
                 Slice.Writers.fetch_add(1, std::memory_order_relaxed);
@@ -96,10 +100,6 @@ namespace Lumina::RHI
             }
 
             const GPUPtr Owned = Malloc(Size, Alignment, EMemoryType::CPUWrite);
-            if (Owned == 0)
-            {
-                return {};
-            }
             return { static_cast<std::byte*>(ToHost(Owned)), Owned, true, kNoSlice };
         }
 
@@ -253,11 +253,14 @@ namespace Lumina::RHI
     {
         void Initialize()
         {
+            GStagingSliceSize = ClampCPUWriteSlice("Staging", kStagingSliceRequest, kFramesInFlight);
+
             for (FStagingSlice& Slice : GUpload.Slices)
             {
-                Slice.Gpu    = Malloc(kStagingSliceSize, kDefaultAlign, EMemoryType::CPUWrite);
-                Slice.Cpu    = static_cast<std::byte*>(ToHost(Slice.Gpu));
-                Slice.Cursor = 0;
+                Slice.Gpu      = Malloc(GStagingSliceSize, kDefaultAlign, EMemoryType::CPUWrite);
+                Slice.Cpu      = static_cast<std::byte*>(ToHost(Slice.Gpu));
+                Slice.Cursor   = 0;
+                Slice.Capacity = GStagingSliceSize;
                 Slice.Writers.store(0, std::memory_order_relaxed);
                 Slice.ReadValue = 0;
             }
@@ -291,9 +294,10 @@ namespace Lumina::RHI
             for (FStagingSlice& Slice : GUpload.Slices)
             {
                 Free(Slice.Gpu);
-                Slice.Gpu    = 0;
-                Slice.Cpu    = nullptr;
-                Slice.Cursor = 0;
+                Slice.Gpu      = 0;
+                Slice.Cpu      = nullptr;
+                Slice.Cursor   = 0;
+                Slice.Capacity = 0;
                 Slice.Writers.store(0, std::memory_order_relaxed);
                 Slice.ReadSemaphore = {};
                 Slice.ReadValue     = 0;

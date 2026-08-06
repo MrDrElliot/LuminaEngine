@@ -1039,6 +1039,14 @@ namespace Lumina
         // Avoids reconstructing the scale from the matrix rows in the shader.
         FVector4 CascadeHZBNdcScale[NumCascades];
 
+        // THIS frame's cascade transforms, for the phase-2 re-test only. The pair above describes the
+        // pyramid phase 0 tests (built at the end of last frame); phase 2 tests the pyramid rebuilt
+        // mid-frame from this frame's own raster, which is a different set of matrices whenever the camera
+        // moved. Projecting one with the other silently mis-tests every caster, so they cannot be shared.
+        // CascadeHZBTile is not duplicated: the atlas packing is constant.
+        FMatrix4 CascadeHZBViewProjectionMid[NumCascades];
+        FVector4 CascadeHZBNdcScaleMid[NumCascades];
+
         uint32 bFrustumCull;
         uint32 bOcclusionCull;
         uint32 InstanceNum;
@@ -1067,6 +1075,9 @@ namespace Lumina
         // cascade occlusion test must pass.
         uint32 CascadePyramidIndex;
         uint32 bCascadeHZBValid;
+        // Same contract for the mid-frame pyramid the phase-2 re-test reads. Raised by the render phase
+        // only once this frame's cascades have actually been rastered and pyramided.
+        uint32 bCascadeHZBMidValid;
         float  CascadePyramidWidth;
         float  CascadePyramidHeight;
         uint32 CascadePyramidMipCount;
@@ -1078,8 +1089,9 @@ namespace Lumina
         //
         // Takes a pad slot so the struct size, and the layout Common.slang mirrors, are unchanged.
         uint32 BoneNum;
+        // One pad slot spent on bCascadeHZBMidValid above, so the struct size and the layout Common.slang
+        // mirrors are unchanged. VERIFY_SSBO_ALIGNMENT below is what caught spending it without taking one.
         uint32 _CullPad1;
-        uint32 _CullPad2;
     };
 
     VERIFY_SSBO_ALIGNMENT(FCullData)
@@ -1108,8 +1120,12 @@ namespace Lumina
     {
         enum Type : uint32
         {
-            Early = 0,
-            Late  = 1,
+            Early       = 0,
+            Late        = 1,
+            // Re-tests the cascade half of the defer list against the pyramid rebuilt from this frame's
+            // own cascade raster. Separate from Late because the two pyramids are rebuilt at different
+            // points in the frame.
+            CascadeLate = 2,
         };
     }
 

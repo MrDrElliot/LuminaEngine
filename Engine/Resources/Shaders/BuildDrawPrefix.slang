@@ -25,11 +25,12 @@ struct FBuildDrawPrefixArgs
     // Entries the meshlet draw list can hold. Regions past this are clamped to zero length rather than
     // being handed offsets outside the allocation.
     uint  DrawListCapacity;
-    // Hard ceiling on the meshlet work domain, computed CPU-side as RetainedSlots * the largest per-LOD
-    // meshlet count any interned surface has, plus the skinned seed. BatchMeshletCounts is accumulated by
-    // CullInstances and nothing else bounds it, so without this a corrupt counter becomes the dispatch
-    // size below: X saturates at 65535 and Y grows without limit, launching a grid that hangs the GPU
-    // until the TDR fires (VK_ERROR_DEVICE_LOST, "No fault detected", breadcrumbs stopped in Cull Early).
+    // Ceiling on the meshlet work domain, computed CPU-side. BatchMeshletCounts is accumulated by
+    // CullInstances and nothing else bounds it, so a corrupt counter would otherwise become an
+    // unbounded walk in the early cull. It bounds a LOOP, not a grid: the cull's dispatch size is a
+    // CPU constant now, so overshooting this costs iterations rather than losing the device.
+    // Still a loose worst case (see the CPU side), which part two of this work replaces with the real
+    // per-slot sum -- at which point tripping it means corruption rather than a big scene.
     uint  MaxMeshletWork;
     uint  _Pad0;
 
@@ -37,7 +38,7 @@ struct FBuildDrawPrefixArgs
     uint* ViewDrawCounts;          // in:  NumViews * NumDraws entries, per-(view, draw) emit bound
     uint* InstanceCount;           // in:  [0] = survivor count
     uint* OutViewDrawOffsets;      // out: NumViews * NumDraws exclusive prefix over ViewDrawCounts
-    // out: [0] = meshlet work domain (the early cull's dispatch size)
+    // out: [0] = meshlet work domain (the early cull's stride-loop bound; NOT a dispatch size)
     //      [1] = instance count CLAMPED to capacity -- what downstream passes may safely index
     //      [2] = draw-list entries actually required this frame (feedback sizes the allocation from it)
     //      [3] = set when [2] exceeded DrawListCapacity, i.e. meshlets were dropped
@@ -45,14 +46,22 @@ struct FBuildDrawPrefixArgs
     //            on an overflow frame, so this is the true demand and is what the visible-instance buffer
     //            is sized from. Without it the CPU had to assume every retained slot survives.
     //      [5] = set when [4] exceeded MaxVisibleInstances, i.e. whole instances were dropped
+    //      [6]/[7] = deferred meshlets demanded / whether that overflowed, written later by the view culls
+    //      [8] = meshlet work domain REQUESTED, before the MaxMeshletWork clamp
+    //      [9] = set when [8] exceeded MaxMeshletWork, i.e. the domain was truncated and meshlets were
+    //            dropped off its tail. The CPU ceiling that produces MaxMeshletWork is a loose worst case
+    //            (retained slots x the densest LOD ANY surface has), so it trips long before this does;
+    //            this is the flag that means the truncation actually happened.
     uint* OutTotals;
-    uint* OutCullDispatchArgs;     // out: {GroupCountX, GroupCountY, GroupCountZ} for the early cull
-    uint* OutScanDispatchArgs;     // out: same, for instance-prefix scan passes 1 and 3
+    // out: {GroupCountX, GroupCountY, GroupCountZ} for instance-prefix scan passes 1 and 3. Safe to
+    // derive on the GPU because it comes from VisibleInstances, which is clamped to the CPU-supplied
+    // capacity of the buffer those instances live in -- a bound that reflects a real allocation rather
+    // than an invented one. The early cull has no such anchor (its domain is an iteration count, not a
+    // buffer), which is why its grid is a CPU constant and it reads Totals[0] as a loop bound instead.
+    uint* OutScanDispatchArgs;
 };
 FBuildDrawPrefixArgs* Pass() { return GetPassArgs<FBuildDrawPrefixArgs>(); }
 
-// Must match CullMeshlets.slang's LOCAL_SIZE_X and its 65535-group Y fold.
-#define CULL_LOCAL_SIZE_X 64
 #define MAX_GROUPS_X      65535u
 
 // Must match SCAN_BLOCK in Includes/ScanPrefixArgs.slang.
@@ -75,6 +84,7 @@ void ComputeMain()
     // Clamped before it is used for anything -- the dispatch size, the domain guard in CullMeshlets and
     // the CPU's defer-list feedback all read OutTotals[0], so they stay consistent with each other. A
     // frame that trips this drops meshlets off the tail of the domain; one that doesn't loses the GPU.
+    const uint MeshletWorkRequested = MeshletWork;
     MeshletWork = min(MeshletWork, Pass().MaxMeshletWork);
 
     // Draw-list layout. Regions are laid out view-major so a view's draws stay contiguous, which keeps the
@@ -100,15 +110,8 @@ void ComputeMain()
     Pass().OutTotals[3] = (Running > Capacity) ? 1u : 0u;      // meshlets dropped this frame
     Pass().OutTotals[4] = RequestedInstances;                  // what the instance buffer actually needed
     Pass().OutTotals[5] = (RequestedInstances > Pass().MaxVisibleInstances) ? 1u : 0u;
-
-    // Early-cull domain: one thread per (instance, meshlet) pair, folded into Y past the 65535 cap exactly
-    // as the CPU dispatch did.
-    const uint Groups = (MeshletWork + CULL_LOCAL_SIZE_X - 1u) / CULL_LOCAL_SIZE_X;
-    Pass().OutCullDispatchArgs[0] = min(Groups, MAX_GROUPS_X);
-    // Y is clamped as well, even though the MeshletWork clamp above already bounds it: this is the value
-    // that actually reaches vkCmdDispatchIndirect, so it is the last place a bad number can be stopped.
-    Pass().OutCullDispatchArgs[1] = min((Groups + MAX_GROUPS_X - 1u) / MAX_GROUPS_X, MAX_GROUPS_X);
-    Pass().OutCullDispatchArgs[2] = 1u;
+    Pass().OutTotals[8] = MeshletWorkRequested;                // pre-clamp domain, the real measured demand
+    Pass().OutTotals[9] = (MeshletWorkRequested > Pass().MaxMeshletWork) ? 1u : 0u;
 
     // Instance-prefix scan domain: one workgroup per block of surviving instances. Uses the LOCAL count,
     // never a re-read of OutTotals[1] -- scan pass 2 derives its own block count from the same value, and

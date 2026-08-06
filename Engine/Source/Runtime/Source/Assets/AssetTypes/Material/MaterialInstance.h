@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "MaterialInterface.h"
@@ -94,6 +94,8 @@ namespace Lumina
         const FMaterialParameterOverride* FindOverride(const FName& Name) const;
 
         bool RefreshTextureBindings(const CTexture* ChangedTexture) override;
+
+        bool RequestTexturesResolved() override;
         /** Drop a parameter's override entirely (discards its stored value). */
         void RemoveOverride(const FName& Name);
 

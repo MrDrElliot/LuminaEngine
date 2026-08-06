@@ -82,7 +82,9 @@ namespace Lumina
 
         if (IsSaving())
         {
-            Leaf.PendingNode = &(*Container)[Key];
+            // CurrentContainer() returns null for a null RootNode or a container entered on a null node,
+            // and this dereferenced it unconditionally.
+            Leaf.PendingNode = Container ? &(*Container)[Key] : &MissingNode;
         }
         else
         {
@@ -125,6 +127,14 @@ namespace Lumina
 
     FArchiveSlot FJsonStructuredArchive::EnterArrayElement()
     {
+        // Unbalanced Enter/Leave would make this back() UB, the way every other method here already
+        // guards for. Route to the sentinel instead so the caller writes somewhere harmless.
+        if (Containers.empty())
+        {
+            Leaf.PendingNode = &MissingNode;
+            return FArchiveSlot(*this, CurrentScope.size(), IDGenerator.Generate());
+        }
+
         FContainer& C = Containers.back();
         json* Node = C.Node;
 
@@ -134,6 +144,14 @@ namespace Lumina
             {
                 Node->push_back(json());
                 Leaf.PendingNode = &Node->back();
+            }
+            else
+            {
+                // MUST reassign. Leaving PendingNode alone left it pointing at the PREVIOUS element,
+                // whose storage a prior push_back has already reallocated (json arrays are vectors), so
+                // the caller's EnterRecord then wrote an object through a dangling pointer and the next
+                // push_back crashed on the corrupted heap.
+                Leaf.PendingNode = &MissingNode;
             }
         }
         else

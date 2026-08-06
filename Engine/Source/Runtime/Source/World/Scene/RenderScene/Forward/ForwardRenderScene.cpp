@@ -100,10 +100,7 @@ namespace Lumina
             "Recapture every reflection probe. Needed after moving world geometry, which does not itself "
             "invalidate a bake (only changing a probe does).",
             []{ RequestReflectionProbeRebake(); });
-
-        // Parallax Occlusion Mapping global quality. These scale what materials authored rather than
-        // replacing it, so one setting dials the whole feature without touching or recompiling any
-        // material. Read by Includes/ParallaxOcclusion.slang through FSceneGlobalData.
+        
         static TConsoleVar<float> CVarPOMSampleScale(
             "r.POM.SampleScale",
             1.0f,
@@ -119,42 +116,20 @@ namespace Lumina
             1.0f,
             "Scales POM self-shadow sample counts. 0 disables height-field self-shadowing globally.");
 
-        // Cascade micro-poly reject, in shadow texels of the cascade doing the rejecting. Bounds narrower
-        // than this cover less than one texel there, so what they leave behind is sub-texel. Raise it to trade
-        // shadow detail for geometry, set 0 to disable.
-        static TConsoleVar<float> CVarCascadeMinTexels(
-            "r.Shadow.Cascade.MinTexels",
-            1.0f,
-            "Drop shadow casters whose bounds cover fewer than this many texels in a given cascade (0 = off).");
+        // Cascade culling is configured per-light on SDirectionalLightComponent (CascadeMinTexels,
+        // bCascadeOcclusionCull), alongside the cascade splits and bias those knobs interact with.
 
-        // The cascade Hi-Z reads the PREVIOUS frame's cascade depth, so a caster that was hidden last frame
-        // and is exposed this frame is one frame late. Off makes cascades ignore occlusion entirely.
-        static TConsoleVar<bool> CVarCascadeOcclusionCull(
-            "r.Shadow.Cascade.OcclusionCull",
-            true,
-            "Reject shadow casters hidden behind other casters, tested against last frame's cascade Hi-Z.");
-        
         // One grain for the whole gather: all primitive types share a single dense array.
         static TConsoleVar<int32> CVarPrimitiveGrain(
             "r.Scene.PrimitiveGrain",
             256,
             "Scene primitives per task in the cull/emit gather.");
-
-        // Profiler-independent timing for the primitive sync. TRACY_CALLSTACK is defined engine-wide, so an
-        // attached profiler adds a stack unwind per zone and its own overhead becomes comparable to what this
-        // pass costs. The number that matters has to be readable without one.
+        
         static TConsoleVar<float> CVarSyncSlowMs(
             "r.Scene.SyncSlowMs",
             0.0f,
             "Log when FScenePrimitiveSet::Sync exceeds this many milliseconds (0 = off).");
-
-        // Opt-in diagnostic for the pre-skin slice arithmetic. Every base is an unsigned wrap
-        // (Base = SkinCursor - BlockVertexOffset) that only lands back in range if each meshlet the GPU
-        // resolves sits inside the block the descriptor covered, and LoadSkinnedVertex has no bounds
-        // check to catch it when that fails.
-        //
-        // OFF by default: the span check walks every meshlet of every rendered block for every skinned
-        // entity, every frame, on the gather's critical path.
+        
         static TConsoleVar<int32> CVarValidateSkinSlices(
             "r.Skinning.Validate",
             0,
@@ -521,7 +496,6 @@ namespace Lumina
             FreeBuffer(BatchMeshletCountRing[Slot]);
             FreeBuffer(ViewDrawCountRing[Slot]);
             FreeBuffer(ViewDrawOffsetRing[Slot]);
-            FreeBuffer(EarlyCullDispatchArgsRing[Slot]);
             FreeBuffer(TotalsRing[Slot]);
             FreeBuffer(ScanBlockSumRing[Slot]);
             FreeBuffer(ScanDispatchArgsRing[Slot]);
@@ -692,13 +666,20 @@ namespace Lumina
         // Fallback; ProcessDirectionalLight overrides this from the active sun's
         // ShadowMaxDistance. Only matters when no directional light is present.
         SceneGlobalData.CullData.ShadowMaxDistance      = 5000.0f;
-        // Per-scene AND global: the thumbnail scene turns it off because it renders a single frame and there
-        // is no previous cascade depth to test against.
-        SceneGlobalData.CullData.bShadowOcclusionCull   = RenderSettings.bShadowOcclusionCull && CVarCascadeOcclusionCull.GetValue();
+        // Per-scene switch; ProcessDirectionalLight ands in the active sun's own bCascadeOcclusionCull, so a
+        // scene that turned it off stays off whatever the light asks for. The thumbnail scene turns it off
+        // because it renders a single frame and there is no previous cascade depth to test against.
+        SceneGlobalData.CullData.bShadowOcclusionCull   = RenderSettings.bShadowOcclusionCull;
+        // Fallback, same contract as ShadowMaxDistance above. With no sun no cascade view is pushed, so
+        // nothing reads it.
+        CascadeMinTexels                                = 1.0f;
         SceneGlobalData.CullData.DebugMode              = (uint32)RenderSettings.Flags;
         // Cleared here, raised by ProcessDirectionalLight (transforms) and the render phase (pyramid).
         // A scene with no sun leaves it at 0, which is what makes every cascade occlusion test pass.
         SceneGlobalData.CullData.bCascadeHZBValid       = 0u;
+        // Same, for the mid-frame pyramid the phase-2 re-test reads. Raised only by ProcessDirectionalLight,
+        // so a sunless scene leaves phase 2 testing nothing (it also never runs: no cascade views exist).
+        SceneGlobalData.CullData.bCascadeHZBMidValid    = 0u;
 
 
         CMaterial* FallbackMaterial = CMaterial::GetDefaultMaterial();
@@ -1330,13 +1311,36 @@ namespace Lumina
                     SpotShadowPass(CL);
                 }
 
+                // Cascade phase 1: raster the casters the phase-0 cull kept. Casters that last frame's
+                // cascade pyramid hid were DEFERRED, not dropped, so they are still pending below.
                 {
                     SCENE_GPU_SCOPE(CL, "Cascaded Shadows");
-                    CascadedShowPass(CL);
+                    CascadedShowPass(CL, Frame.Views.CascadeViewBase);
                 }
 
-                // Cascade HZB for NEXT frame's shadow cull. It has to be here rather than beside the camera
-                // pyramid: the cascades were only just rastered, and nothing later in the frame writes them.
+                // Rebuild the cascade pyramid from what phase 1 just rastered, so the re-test below has
+                // this frame's occluders rather than last frame's.
+                {
+                    SCENE_GPU_SCOPE(CL, "Cascade Pyramid (Mid)");
+                    CascadePyramidPass(CL);
+                }
+
+                // Cascade phase 2: re-test the deferred casters against that rebuilt pyramid and emit the
+                // disoccluded ones. This is what removes the one-frame lag that made shadows flicker open
+                // under motion; a caster the stale pyramid wrongly hid gets its shadow back in-frame.
+                {
+                    SCENE_GPU_SCOPE(CL, "Cull Cascade Late");
+                    CullPassCascadeLate(CL);
+                }
+
+                {
+                    SCENE_GPU_SCOPE(CL, "Cascaded Shadows Phase 2");
+                    CascadedShowPass(CL, Frame.Views.CascadeLateViewBase);
+                }
+
+                // Cascade HZB for NEXT frame's phase-0 cull. Rebuilt AGAIN because phase 2 added depth the
+                // mid pyramid above does not describe; publishing that one would make next frame's cull
+                // test against an atlas missing every disoccluded caster.
                 {
                     SCENE_GPU_SCOPE(CL, "Cascade Pyramid");
                     CascadePyramidPass(CL);
@@ -3524,25 +3528,11 @@ namespace Lumina
             // shrink the clamp, not be trusted.
             DrawListCapacity = (uint32)Math::Min<uint64>(MeshletDrawListRing[Slot].GetSize() / (sizeof(uint32) * 2), 0xFFFFFFFFull);
 
-            // One-time zero of the indirect DISPATCH args, for the same reason Totals is zeroed below --
-            // CreateSceneBuffer is a bare device allocation and these hold undefined bytes until
-            // something writes them.
-            //
-            // The consequence is far worse here than a bad statistic. BuildDrawPrefix is the only writer
-            // and it lives inside DispatchGPUSceneCull, which early-returns if its shaders are missing;
-            // CullPassEarly guards on entirely different conditions and dispatches indirectly from this
-            // buffer regardless. When those disagree the GPU reads a garbage group count and launches an
-            // essentially unbounded grid -- a multi-second hang, then a TDR, surfacing as
-            // VK_ERROR_DEVICE_LOST with "No fault detected" because nothing ever touched a bad address.
-            //
-            // Zeroed HERE rather than next to the dispatch: this runs before every writer, so it can
-            // never clobber args that were legitimately produced this frame.
-            if (!EarlyCullArgsZeroed[Slot] && EarlyCullDispatchArgsRing[Slot])
-            {
-                RHI::CmdMemset(CL, EarlyCullDispatchArgsRing[Slot].Ptr, EarlyCullDispatchArgsRing[Slot].GetSize(), 0u);
-                Barriers::TransferToAll(CL);
-                EarlyCullArgsZeroed[Slot] = true;
-            }
+            // The early cull's indirect dispatch args used to be zeroed here, guarding a real hazard:
+            // BuildDrawPrefix was the only writer and lived behind different conditions than the
+            // dispatch, so a disagreement fed a garbage group count to vkCmdDispatchIndirect and hung
+            // the device. The early cull now dispatches a CPU-sized grid, so there is no such buffer
+            // and no such hazard. The late cull keeps its indirect dispatch, bounded by DeferListCapacity.
 
             // Draw-list overflow, reported by the GPU itself rather than inferred: BuildDrawPrefix sets
             // Totals[3] when the packed requirement exceeded the allocation it was given, which is the only
@@ -3566,6 +3556,21 @@ namespace Lumina
                     LOG_WARN("RenderScene: meshlet draw list too small -- required {} entries, allocation holds {} "
                              "({} views x {} draws). Meshlets were dropped; the next allocation grows.",
                              LastDrawListRequired, DrawListCapacity, NumCullViews, NumDraws);
+                }
+            }
+
+            // The GPU-measured domain, not the CPU ceiling that bounds it. That ceiling is a worst case
+            // (retained slots x the densest LOD any ONE surface has), so a single dense surface makes it
+            // enormous while real demand stays small -- it used to log an error on that product alone,
+            // which said meshlets were dropped on frames where nothing was.
+            if (LastMeshletWorkClamped != 0u)
+            {
+                static uint32 DomainClampLogCounter = 0;
+                if ((DomainClampLogCounter++ % 60u) == 0u)
+                {
+                    LOG_ERROR("RenderScene: meshlet cull domain truncated -- {} (instance, meshlet) pairs measured, "
+                              "ceiling {}. Meshlets are being dropped off the tail of the domain.",
+                              LastMeshletWorkRequested, (uint64)GMaxMeshletCullDomain);
                 }
             }
             ResizeBufferIfNeeded(MeshletDeferListRing[Slot], DeferListSize, 1.2f, MeshletDeferListRingLowUsage[Slot]);
@@ -5043,6 +5048,7 @@ namespace Lumina
             // cameras were already missing from this before probes added six more.
             const uint32 ReservedViews   = 1u                                     // Camera (early)
                                          + SunViews                               // CSM cascades
+                                         + SunViews                               // CSM cascades (late, phase 2)
                                          + 1u                                     // Camera (late, phase 1)
                                          + (uint32)Frame.Views.CaptureViews.size()
                                          + (Frame.ReflectionProbes.BakingProbe >= 0 ? 6u : 0u);
@@ -5304,6 +5310,7 @@ namespace Lumina
         auto& PointShadowCullViewBases = Frame.Views.PointShadowCullViewBases;
         auto& SpotShadowCullViewBases  = Frame.Views.SpotShadowCullViewBases;
         uint32& CascadeViewBase        = Frame.Views.CascadeViewBase;
+        uint32& CascadeLateViewBase    = Frame.Views.CascadeLateViewBase;
         uint32& CameraLateViewIndex    = Frame.Views.CameraLateViewIndex;
 
         // IndirectArgs slot (v,d) = v*NumDraws + d. CullMeshlets owns all atomic appends.
@@ -5356,6 +5363,7 @@ namespace Lumina
         CullViews.reserve(NumViews);
 
         CascadeViewBase = ~0u;
+        CascadeLateViewBase = ~0u;
         CameraLateViewIndex = ~0u;
         PointShadowCullViewBases.clear();
         PointShadowCullViewBases.reserve(PackedShadows[(uint32)ELightType::Point].size());
@@ -5384,15 +5392,31 @@ namespace Lumina
             if (SunShadowIndex != INDEX_NONE)
             {
                 const FLightShadowData& SunShadow = LightData.Shadows[SunShadowIndex];
+                // Frustum and Cone honour the render settings the same way the camera view above does.
+                // They used to be unconditional, so disabling either setting silently left the cascades
+                // culling -- which makes the settings useless for bisecting a missing-shadow bug, since
+                // the one view you wanted to take out of the picture kept going.
                 const uint32 CascadeFlags =
-                    ECullViewFlags::Frustum |
-                    ECullViewFlags::Cone |
+                    (RenderSettings.bFrustumCull ? (uint32)ECullViewFlags::Frustum : 0u) |
+                    ConeFlag |
                     ECullViewFlags::SunAligned |
                     ECullViewFlags::CastShadowOnly |
                     ECullViewFlags::Distance |
                     ECullViewFlags::Cascade;
 
-                const float MinTexels = Math::Max(CVarCascadeMinTexels.GetValue(), 0.0f);
+                // Published by ProcessDirectionalLight from the active sun, already clamped.
+                const float MinTexels = CascadeMinTexels;
+
+                // Phase-2 views, one per cascade, receiving casters the stale cascade Hi-Z hid in phase 0.
+                // Deliberately NOT flagged Frustum/Cone/SunAligned/Distance: those rejects already ran in
+                // phase 0 and the deferred entry passed them. PhaseLate keeps the early walk from emitting
+                // here directly, while CastShadowOnly + Cascade are what CullInstances reads to reserve the
+                // same draw-list room the early cascade view got -- without them the late emits are all
+                // rejected by EmitMeshlet's bound and the pass silently does nothing.
+                const uint32 CascadeLateFlags =
+                    ECullViewFlags::PhaseLate |
+                    ECullViewFlags::CastShadowOnly |
+                    ECullViewFlags::Cascade;
 
                 CascadeViewBase = (uint32)CullViews.size();
                 for (int32 c = 0; c < NumCascades; ++c)
@@ -5404,6 +5428,15 @@ namespace Lumina
 
                     PushView(SunShadow.ViewProjection[c], ViewVolume.GetViewPosition(), CascadeFlags,
                              (uint32)c, MinTexels * TexelWorld);
+                }
+
+                // Contiguous and in the same cascade order, so a defer tag indexes both bases identically.
+                // MinBoundsDiameter is left at 0: the micro-poly reject already ran in phase 0, and a
+                // deferred entry that passed it there must not be re-tested and dropped here.
+                CascadeLateViewBase = (uint32)CullViews.size();
+                for (int32 c = 0; c < NumCascades; ++c)
+                {
+                    PushView(SunShadow.ViewProjection[c], ViewVolume.GetViewPosition(), CascadeLateFlags, (uint32)c);
                 }
             }
         }
@@ -5421,8 +5454,8 @@ namespace Lumina
             const FLightShadowData& ShadowData = LightData.Shadows[PointShadow.ShadowDataIndex];
             const FLight& Light = LightData.Lights[PointShadow.LightIndex];
             const uint32 FaceFlags =
-                ECullViewFlags::Frustum |
-                ECullViewFlags::Cone |
+                (RenderSettings.bFrustumCull ? (uint32)ECullViewFlags::Frustum : 0u) |
+                ConeFlag |
                 ECullViewFlags::CastShadowOnly;
 
             PointShadowCullViewBases.push_back((uint32)CullViews.size());
@@ -5444,8 +5477,8 @@ namespace Lumina
             const FLightShadowData& ShadowData = LightData.Shadows[SpotShadow.ShadowDataIndex];
             const FLight& Light = LightData.Lights[SpotShadow.LightIndex];
             const uint32 SpotFlags =
-                ECullViewFlags::Frustum |
-                ECullViewFlags::Cone |
+                (RenderSettings.bFrustumCull ? (uint32)ECullViewFlags::Frustum : 0u) |
+                ConeFlag |
                 ECullViewFlags::CastShadowOnly;
 
             SpotShadowCullViewBases.push_back((uint32)CullViews.size());
@@ -5580,6 +5613,16 @@ namespace Lumina
         // Cascade shadows are now configured per-light. Feed the cull pass this
         // light's max distance so shadow-caster culling matches the cascades.
         SceneGlobalData.CullData.ShadowMaxDistance = DirectionalLight.ShadowMaxDistance;
+
+        // The cascade cull knobs travel with the light too. Only ever narrows: the scene switch set during
+        // extract already decided whether occlusion culling is allowed at all here.
+        if (!DirectionalLight.bCascadeOcclusionCull)
+        {
+            SceneGlobalData.CullData.bShadowOcclusionCull = 0u;
+        }
+        // Read by BuildCullViews, which runs later in the same extract. Clamped here so the consumer
+        // does not have to care that the property is user-authored.
+        CascadeMinTexels = Math::Max(DirectionalLight.CascadeMinTexels, 0.0f);
 
         // Shadow tuning forwarded to the lit pixel shaders via the light buffer.
         LightData.ShadowParams  = FVector4(DirectionalLight.ShadowNormalBias,
@@ -5764,11 +5807,23 @@ namespace Lumina
             CascadeHZBViewProjection[i] = CascadeVP;
             CascadeHZBNdcScale[i]       = FVector4(1.0f / Radius, 1.0f / Radius, 1.0f / OrthoRange, 0.0f);
 
+            // Same values, published for THIS frame rather than next: the phase-2 re-test reads the pyramid
+            // rebuilt mid-frame from this raster, so it needs the matrices that raster used. The pair above
+            // is the previous frame's by the time the GPU sees it, which is exactly what phase 0 wants and
+            // exactly what phase 2 must not use.
+            SceneGlobalData.CullData.CascadeHZBViewProjectionMid[i] = CascadeVP;
+            SceneGlobalData.CullData.CascadeHZBNdcScaleMid[i]       = CascadeHZBNdcScale[i];
+
             LastSplitDistance = SplitFar;
         }
 
         // Only true once the loop above has run at least once; the republish at the top reads it.
         bCascadeHZBTransformsValid = true;
+
+        // This frame's cascade transforms are now published, so the phase-2 re-test has matrices matching
+        // the pyramid it will read. Ordering within the frame is enforced on the command list, not here:
+        // CascadePyramidPass is recorded before CullPassCascadeLate, which also gates on the pyramid.
+        SceneGlobalData.CullData.bCascadeHZBMidValid = 1u;
 
         LightCount.fetch_add(1, std::memory_order_acquire);
         LightData.Lights[0] = Light;
@@ -6191,8 +6246,24 @@ namespace Lumina
         uint64 SurfaceDescsAddr;
         uint32 DrawListCapacity;    // entries in the whole allocation; outer backstop
         uint32 DeferListCapacity;   // entries the defer list holds; bounds the unbounded defer append
+        uint32 GridThreads;         // early phase only: the stride of its grid-stride walk
+        uint32 CascadeLateViewBase; // cascade-late phase only: first of NumCascades contiguous views
     };
-    static_assert(sizeof(FCullMeshletPushConstants) == 88, "FCullMeshletPushConstants must match CullMeshlets.slang FPushConstants.");
+    static_assert(sizeof(FCullMeshletPushConstants) == 96, "FCullMeshletPushConstants must match CullMeshlets.slang FPushConstants.");
+
+    // Early-cull grid, sized to the DEVICE rather than to the domain.
+    //
+    // The shader strides over the whole domain whatever grid it gets, so this decides only how much
+    // parallelism the scheduler is handed. Both bounds are therefore performance knobs, not correctness
+    // ones: too small costs extra loop iterations, too large costs a few empty workgroup launches.
+    // Neither can drop a meshlet, and no scene value reaches a dispatch dimension.
+    //
+    // The max is "comfortably saturates any consumer GPU" -- past full occupancy extra groups just queue,
+    // which is what the loop already does for free. 8192 x 64 = 524288 threads, against ~4.2M GROUPS the
+    // old exact-size indirect dispatch could ask for. The min covers the frames before the first feedback
+    // readback lands, where the measured demand still reads zero.
+    static constexpr uint32 kMinEarlyCullGroups = 256;
+    static constexpr uint32 kMaxEarlyCullGroups = 8192;
 
     void FForwardRenderScene::CullPassEarly(RHI::FCmdListH CL)
     {
@@ -6224,7 +6295,6 @@ namespace Lumina
                 { "Totals",                GetTotals().GetAddress()                },
                 { "ViewDrawCounts",        GetViewDrawCounts().GetAddress()        },
                 { "ViewDrawOffsets",       GetViewDrawOffsets().GetAddress()       },
-                { "EarlyCullDispatchArgs", GetEarlyCullDispatchArgs().GetAddress() },
             };
 
             for (const auto& Buffer : Required)
@@ -6267,7 +6337,15 @@ namespace Lumina
         PC.DrawListCapacity    = DrawListCapacity;
         PC.DeferListCapacity   = DeferListCapacity;
 
-        RHI::CmdDispatchIndirect(CL, MakeArgs(PC), GetEarlyCullDispatchArgs().Ptr, 0);
+        // Grid from the measured domain, clamped to the device. LastMeshletWorkRequested is the
+        // PRE-clamp total (Totals[8]) from kFramesInFlight ago; the post-clamp one would be
+        // self-reinforcing. Staleness is harmless here -- a scene that just got heavier only makes the
+        // loop iterate more, where it used to make the dispatch drop the tail.
+        const uint32 DemandGroups = (LastMeshletWorkRequested + 63u) / 64u;
+        const uint32 Groups       = Math::Clamp(DemandGroups, kMinEarlyCullGroups, kMaxEarlyCullGroups);
+        PC.GridThreads            = Groups * 64u;
+
+        RHI::CmdDispatch(CL, MakeArgs(PC), Groups, 1u, 1u);
         Barriers::ComputeToAll(CL);
         
         static const FShaderEntry* const DispatchArgsShader = FShaderLibrary::Get("BuildCullDispatchArgs.slang");
@@ -6396,6 +6474,70 @@ namespace Lumina
         Barriers::ComputeToAll(CL);
 
         // Late phase appended into the camera-late slice; trim before that slice is rasterized.
+        ClampDrawArgs(CL);
+    }
+
+    // Phase 2 of the CASCADE cull. Runs after CascadedShowPass rastered the early casters and
+    // CascadePyramidPass rebuilt the cascade pyramid from them, which is the whole point: phase 0 tested
+    // against a pyramid a frame old and DEFERRED what it hid rather than dropping it, so this is where a
+    // caster the stale pyramid wrongly hid gets its shadow back in the same frame.
+    //
+    // A separate dispatch from CullPassLate because the camera pyramid and the cascade pyramid are rebuilt
+    // at different points in the frame. Both walk the same defer list and filter on the entry's tag.
+    void FForwardRenderScene::CullPassCascadeLate(RHI::FCmdListH CL)
+    {
+        const FFrameData& Frame              = *RenderFrame;
+        const auto& DrawCommands             = Frame.Geometry.DrawCommands;
+        const auto& CullViews                = Frame.Views.CullViews;
+        const uint32 CascadeLateViewBase     = Frame.Views.CascadeLateViewBase;
+
+        if (DrawCommands.empty() || CullViews.empty() || CascadeLateViewBase == ~0u)
+        {
+            return;
+        }
+
+        // Nothing was deferred if the cascade Hi-Z never ran, and the pyramid it re-tests against is only
+        // meaningful if this frame actually rastered cascades.
+        if (!bCascadePyramidValid.load(std::memory_order_acquire))
+        {
+            return;
+        }
+
+        LUMINA_PROFILE_SECTION_COLORED("Cull Pass (Cascade Late)", tracy::Color::Pink4);
+
+        static const FShaderEntry* const CullShader = FShaderLibrary::Get("CullMeshlets.slang");
+        if (!CullShader)
+        {
+            return;
+        }
+
+        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(CullShader));
+
+        FCullMeshletPushConstants PC = {};
+        PC.NumViews             = (uint32)CullViews.size();
+        PC.Phase                = (uint32)ECullPhase::CascadeLate;
+        PC.CameraLateViewIndex  = Frame.Views.CameraLateViewIndex;
+        PC.CascadeLateViewBase  = CascadeLateViewBase;
+        PC.IndirectArgsAddr     = GetIndirectArgs().GetAddress();
+        PC.DeferListAddr        = GetMeshletDeferList().GetAddress();
+        PC.DeferCountAddr       = GetDeferCount().GetAddress();
+        PC.MeshDrawArgsAddr     = GetMeshDrawArgs().GetAddress();
+        PC.TotalsAddr           = GetTotals().GetAddress();
+        PC.ViewDrawCountsAddr   = GetViewDrawCounts().GetAddress();
+        PC.ViewDrawOffsetsAddr  = GetViewDrawOffsets().GetAddress();
+        PC.NumSurfaceDescs      = UploadedSurfaceDescs;
+        PC.SurfaceDescsAddr     = SurfaceDescBuffer.GetAddress();
+        PC.DrawListCapacity     = DrawListCapacity;
+        PC.DeferListCapacity    = DeferListCapacity;
+
+        // Same args the camera-late dispatch used: BuildCullDispatchArgs sized them from the whole defer
+        // list, which is what this phase walks too. It is written once after the early cull and read by
+        // both late dispatches, so nothing has to re-derive it.
+        RHI::CmdDispatchIndirect(CL, MakeArgs(PC), GetCullDispatchArgs().Ptr, 0);
+
+        Barriers::ComputeToAll(CL);
+
+        // Trim the cascade-late slices before they are rasterized.
         ClampDrawArgs(CL);
     }
 
@@ -7075,13 +7217,15 @@ namespace Lumina
         Barriers::RasterToRead(CL);
     }
 
-    void FForwardRenderScene::CascadedShowPass(RHI::FCmdListH CL)
+    // ViewBase selects which set of cascade views is rastered: the phase-0 views for the first call, the
+    // phase-2 views for the disoccluded re-test after the pyramid rebuild. Both load the atlas rather than
+    // clearing it (ResetPass owns the clear), so the second call accumulates into the first's depth.
+    void FForwardRenderScene::CascadedShowPass(RHI::FCmdListH CL, uint32 CascadeViewBase)
     {
         const FFrameData& Frame = *RenderFrame;
         const auto& DrawCommands     = Frame.Geometry.DrawCommands;
         const auto& OpaqueDrawList   = Frame.Geometry.OpaqueDrawList;
         const auto& LightData        = Frame.Lighting.LightData;
-        const uint32 CascadeViewBase = Frame.Views.CascadeViewBase;
 
         // No work without a shadow-casting sun or caster meshes; terrain-only scenes
         // still read valid (cleared 1.0) shadow data from ResetPass.
@@ -11367,7 +11511,6 @@ namespace Lumina
             BatchMeshletCountRing[Slot]     = CreateSceneBuffer(sizeof(uint32));
             ViewDrawCountRing[Slot]         = CreateSceneBuffer(sizeof(uint32));
             ViewDrawOffsetRing[Slot]        = CreateSceneBuffer(sizeof(uint32));
-            EarlyCullDispatchArgsRing[Slot] = CreateSceneBuffer(sizeof(uint32) * 3);
             ScanBlockSumRing[Slot]          = CreateSceneBuffer(sizeof(uint32) * 2);
             ScanDispatchArgsRing[Slot]      = CreateSceneBuffer(sizeof(uint32) * 3);
 
@@ -11403,7 +11546,7 @@ namespace Lumina
         // CPURead allocations are persistently mapped. Zeroed on allocation, so a slot that has not
         // completed a frame yet reads 0 everywhere -- which every consumer already treats as
         // "no measurement", falling back to its floor instead of a garbage demand.
-        static_assert(FForwardRenderScene::kTotalsSlots >= 8, "Totals[7] is read below.");
+        static_assert(FForwardRenderScene::kTotalsSlots >= 10, "Totals[9] is read below.");
         if (const uint32* Mapped = static_cast<const uint32*>(RHI::ToHost(Readback)))
         {
             LastMeshletBound         = Mapped[0];
@@ -11413,6 +11556,8 @@ namespace Lumina
             LastVisibleOverflowed    = Mapped[5];
             LastDeferRequested       = Mapped[6];
             LastDeferOverflowed      = Mapped[7];
+            LastMeshletWorkRequested = Mapped[8];
+            LastMeshletWorkClamped   = Mapped[9];
         }
     }
 
@@ -11725,23 +11870,15 @@ namespace Lumina
             // a big scene, but past some size it stops bounding anything the GPU can finish inside a TDR
             // window, and a bad input makes it 2^32. Deliberately NOT a resource bound (the draw list, say):
             // the walk is what MEASURES demand, so clamping it to what currently fits would under-report,
-            // the allocation would never grow, and the clamp would latch. This only fires in a regime that
-            // is already broken, so truncating the tail there is the lesser outcome.
+            // the allocation would never grow, and the clamp would latch.
+            //
+            // Deliberately loose, and NOT reported: MaxDescMeshlets is the global max over the interned
+            // table, so one dense surface (a dynamic mesh committed as a single section, say) becomes the
+            // assumed per-slot count for every slot in the scene and inflates this by orders of magnitude.
+            // Tripping the ceiling therefore says nothing about whether anything was dropped. BuildDrawPrefix
+            // publishes the measured domain and a truncation flag in Totals[8]/[9]; the warning lives there.
             const uint64 RawMeshletWork   = (uint64)RetainedSlots * MaxDescMeshlets + SkinnedSeedTotal;
             const uint64 MaxMeshletWork64 = Math::Min<uint64>(RawMeshletWork, GMaxMeshletCullDomain);
-
-            if (RawMeshletWork > GMaxMeshletCullDomain)
-            {
-                static uint32 DomainCeilingLogCounter = 0;
-                if ((DomainCeilingLogCounter++ % 120u) == 0u)
-                {
-                    LOG_ERROR("RenderScene: meshlet cull domain ceiling hit -- {} retained slots x {} meshlets "
-                              "+ {} skinned = {}, capped at {}. Meshlets are being dropped off the tail; a "
-                              "figure this size means a surface LOD table is wrong, not that the scene is big.",
-                              RetainedSlots, MaxDescMeshlets, SkinnedSeedTotal, RawMeshletWork,
-                              (uint64)GMaxMeshletCullDomain);
-                }
-            }
 
             struct FBuildDrawPrefixPC
             {
@@ -11756,10 +11893,9 @@ namespace Lumina
                 uint64 InstanceCountAddr;
                 uint64 OutViewDrawOffsetsAddr;
                 uint64 OutTotalsAddr;
-                uint64 OutCullDispatchArgsAddr;
                 uint64 OutScanDispatchArgsAddr;
             };
-            static_assert(sizeof(FBuildDrawPrefixPC) == 80, "FBuildDrawPrefixPC must match BuildDrawPrefix.slang.");
+            static_assert(sizeof(FBuildDrawPrefixPC) == 72, "FBuildDrawPrefixPC must match BuildDrawPrefix.slang.");
 
             FBuildDrawPrefixPC PC = {};
             PC.NumViews                  = SeedViews;
@@ -11772,7 +11908,6 @@ namespace Lumina
             PC.InstanceCountAddr         = GetCullCounters().GetAddress();
             PC.OutViewDrawOffsetsAddr    = GetViewDrawOffsets().GetAddress();
             PC.OutTotalsAddr             = GetTotals().GetAddress();
-            PC.OutCullDispatchArgsAddr   = GetEarlyCullDispatchArgs().GetAddress();
             PC.OutScanDispatchArgsAddr   = GetScanDispatchArgs().GetAddress();
 
             RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(DrawPrefixShader));

@@ -176,16 +176,10 @@ namespace Lumina
          *
          *  Loads synchronously, so call it from a load or editor context -- NOT from the render extract,
          *  which runs on worker fibers where blocking on disk I/O would stall a frame. The render-side
-         *  demand path goes through EnsureTexturesResolved at material bind time instead. */
+         *  demand path goes through RequestTexturesResolved instead. */
         uint32 ResolveTextureSlot(uint32 Index);
 
-        /** Demands every slot, then rebuilds and re-pushes the uniform block if anything changed.
-         *  Called when the MASTER itself is bound for rendering, since a directly-rendered master needs
-         *  all of its own defaults -- unlike an instance, which only needs the ones it does not override.
-         *  Blocking; same context restriction as ResolveTextureSlot. */
-        void EnsureTexturesResolved();
-
-        /** Non-blocking form for the render path. Returns true when every slot is already resolved;
+        /** Non-blocking demand for the render path. Returns true when every slot is already resolved;
          *  otherwise kicks a one-shot async load for the missing ones and returns false, leaving the
          *  caller to treat this material as not-ready.
          *
@@ -193,7 +187,7 @@ namespace Lumina
          *  the surface draws with the default material for a few frames, and the load completion calls
          *  FMeshResolveCache::InvalidateDependency to wake it. Blocking here instead would stall a
          *  worker fiber on disk I/O in the middle of Extract. */
-        bool RequestTexturesResolved();
+        bool RequestTexturesResolved() override;
 
         PROPERTY()
         TVector<uint32>                         PixelShaderBinaries;

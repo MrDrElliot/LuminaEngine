@@ -42,6 +42,14 @@ static const float INV_PI = 0.31830988618;
 // 1 walks only the defer list and re-tests against the freshly-built HZB.
 #define CULL_PHASE_EARLY 0u
 #define CULL_PHASE_LATE  1u
+// Third phase, run after the cascade atlas is rastered and its pyramid rebuilt. Separate from
+// CULL_PHASE_LATE because the two pyramids are rebuilt at different points in the frame, so they
+// cannot share a dispatch. Both walk the same defer list and filter on FMeshletDeferred::DeferTag.
+#define CULL_PHASE_CASCADE_LATE 2u
+
+// FMeshletDeferred::DeferTag value meaning "the camera pyramid deferred this"; any other value is a
+// cascade index. Cascades are bounded by NUM_CASCADES, so ~0u can never collide with a real one.
+#define kDeferTagCamera 0xFFFFFFFFu
 
 #define MAX_SCALARS  24
 #define MAX_VECTORS  24
@@ -465,7 +473,10 @@ struct FMeshletDeferred
     uint InstanceID;
     uint MeshletIndex;      // mesh-global, same meaning as FMeshletDraw's
     uint DrawID;
-    uint _Pad;
+    // Which Hi-Z deferred this, and so which one re-tests it and where it emits: kDeferTagCamera for the
+    // camera pyramid, otherwise the cascade index. One meshlet can be occluded in cascade 0 and visible
+    // in cascade 1, so a (meshlet, cascade) pair gets its own entry rather than one entry per meshlet.
+    uint DeferTag;
 };
 
 // Mirror of Lumina::FGPUInstance.
@@ -705,6 +716,10 @@ struct FCullData
     float4x4 CascadeHZBViewProjection[NUM_CASCADES];
     float4   CascadeHZBTile[NUM_CASCADES];      // xy = pyramid-UV offset of the tile, zw = UV scale
     float4   CascadeHZBNdcScale[NUM_CASCADES];  // xyz = NDC units per world unit
+    // THIS frame's transforms, for the phase-2 re-test against the mid-frame pyramid. Distinct from the
+    // pair above whenever the camera moved, and projecting one set with the other mis-tests everything.
+    float4x4 CascadeHZBViewProjectionMid[NUM_CASCADES];
+    float4   CascadeHZBNdcScaleMid[NUM_CASCADES];
     uint     bFrustumCull;
     uint     bOcclusionCull;
     uint     InstanceNum;
@@ -722,12 +737,12 @@ struct FCullData
     // and MIN-reduced). Invalid until the first cascade raster has been pyramided.
     uint     CascadePyramidIndex;
     uint     bCascadeHZBValid;
+    uint     bCascadeHZBMidValid;   // same, for the mid-frame pyramid phase 2 reads
     float    CascadePyramidWidth;
     float    CascadePyramidHeight;
     uint     CascadePyramidMipCount;
     uint     BoneNum;                   // entries in Bones(); an index bound, not a frame total
-    uint     _CullPad1;
-    uint     _CullPad2;
+    uint     _CullPad1;                 // one slot spent on bCascadeHZBMidValid above
 };
 
 // Debug visualization modes. Must match Lumina::ERenderSceneDebugFlags.
