@@ -19,6 +19,14 @@ namespace Lumina
     constexpr uint32 MESHLET_MAX_TRIANGLES      = 124;
     constexpr uint32 MESHLET_VERTICES_PER_DRAW  = MESHLET_MAX_TRIANGLES * 3;
 
+    // The mesh shaders declare their output arrays from these, and device creation validates the RHI
+    // copies against the device's limits. Raising one here without the other would validate a bound the
+    // shaders no longer use.
+    static_assert(MESHLET_MAX_VERTICES  == RHI::kMeshMaxOutputVertices,
+                  "MESHLET_MAX_VERTICES and RHI::kMeshMaxOutputVertices must agree.");
+    static_assert(MESHLET_MAX_TRIANGLES == RHI::kMeshMaxOutputPrimitives,
+                  "MESHLET_MAX_TRIANGLES and RHI::kMeshMaxOutputPrimitives must agree.");
+
     // LOD 0 is full detail. Default ladder uses meshopt_simplify for 0-3 and
     // meshopt_simplifySloppy for 4-5.
     constexpr uint32 MAX_MESH_LODS              = 6;

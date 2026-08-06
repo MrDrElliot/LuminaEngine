@@ -27,11 +27,12 @@ struct FCullInstancesArgs
     uint  NumRetained;        // slots in the retained array (dense; free slots carry bActive = 0)
     uint  NumViews;
     uint  NumBatches;
-    int   ShadowLODBias;
-
+    // ShadowLODBias and ShadowCoarseLODDistSq used to sit here. They moved to Scene().CullData because the
+    // meshlet cull now re-derives the cascade shadow pick too, and two copies of a pick's inputs is two
+    // things to drift apart.
     uint  bUseLODs;
+
     uint  MaxVisibleInstances;  // capacity of OutInstances; overflow is dropped, not written past
-    float ShadowCoarseLODDistSq; // past this, shadow LOD caps at MESHLET_MAX_COARSE_SHADOW_LOD; 0 = never
     // Entries of SurfaceDescs the CPU has actually uploaded. A slot's SurfaceDescIndex is stamped when it
     // binds; the table is a separate allocation with its own upload, so the bound belongs in the shader
     // rather than in the invariant that the two agree.
@@ -147,10 +148,10 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     // Distance drives the cap because cascade membership is essentially distance: only the far cascades
     // reach past ShadowCoarseLODDistSq, and their texel pitch is what makes the sloppy LODs safe there.
     // Must match the CPU's ResolveShadowLOD exactly -- the two seed the same cull dispatch domain.
-    const uint ShadowCap = (Pass().ShadowCoarseLODDistSq > 0.0 && DistSq >= Pass().ShadowCoarseLODDistSq)
+    const uint ShadowCap = (Scene().CullData.ShadowCoarseLODDistSq > 0.0 && DistSq >= Scene().CullData.ShadowCoarseLODDistSq)
                          ? (uint)MESHLET_MAX_COARSE_SHADOW_LOD : (uint)MESHLET_MAX_SHADOW_LOD;
     const int  MaxShadowLOD  = (int)min(NumLODs > 0u ? NumLODs - 1u : 0u, ShadowCap);
-    const uint ShadowLODIndex = (uint)clamp((int)LODIndex + Pass().ShadowLODBias, 0, MaxShadowLOD);
+    const uint ShadowLODIndex = (uint)clamp((int)LODIndex + Scene().CullData.ShadowLODBias, 0, MaxShadowLOD);
 
     // A null header with a non-zero count would page-fault the meshlet cull, so gate the count on it
     // exactly as the CPU gather did. Carried as a FLAG rather than tested on the pointer, because the
@@ -235,8 +236,23 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
             Emitted = bSelectPerView
                 ? (bHasGeometry ? SelectViewMeshletRange(Desc, View.ViewOrigin, Cull.SphereBounds).y : 0u)
                 : SurfaceMeshletCount;
-            WalkCount = max(WalkCount, Emitted);
         }
+        else if (bSelectPerView && View.HasFlag(CULL_VIEW_FLAG_CASCADE))
+        {
+            // Per-cascade shadow LOD. Cascade i's texel is wider than cascade i-1's at the same atlas
+            // resolution, so it steps one LOD coarser; cascade 0 reproduces the single shadow pick above
+            // exactly. CullMeshlets calls the same function with the same operands when it walks.
+            Emitted = bHasGeometry
+                ? SelectCascadeShadowMeshletRange(Desc, CamPos, Cull.SphereBounds, View.CascadeIndex,
+                                                  Scene().CullData.ShadowLODBias,
+                                                  Scene().CullData.ShadowCoarseLODDistSq).y
+                : 0u;
+        }
+
+        // Every view that can emit, shadow ones included. Cascade 0 resolves to ShadowMeshletCount (which
+        // already seeded WalkCount) and the rest are coarser, so today this never raises the domain -- it
+        // is here so that a future cascade pick which IS finer cannot silently outrun the walk.
+        WalkCount = max(WalkCount, Emitted);
 
         if (Emitted > 0u && bInRange)
         {

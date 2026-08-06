@@ -24,7 +24,7 @@ namespace Lumina
     
     static int GetShaderDebugInfoLevel()
     {
-        return SLANG_DEBUG_INFO_LEVEL_MINIMAL;
+        return SLANG_DEBUG_INFO_LEVEL_MAXIMAL;
     }
     static int GetShaderOptimizationLevel()
     {

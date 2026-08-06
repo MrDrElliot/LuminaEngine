@@ -62,12 +62,38 @@ namespace Lumina
             FString NodeName;
         };
 
+        // Whether a value's screen-space derivative is known analytically.
+        //
+        // The deferred pass reconstructs its surface from the VisBuffer, so a 2x2 quad there can straddle
+        // unrelated triangles and implicit ddx/ddy are garbage. It has to sample with explicit gradients,
+        // which means every UV chain needs its derivative carried alongside it. Forward lanes have correct
+        // implicit derivatives and ignore all of this (see SampleTexture2DAuto).
+        enum class EDerivState : uint8
+        {
+            Zero,       // constant / parameter / uniform -- derivative is identically zero, emit nothing
+            Valid,      // <Value>_DDX / <Value>_DDY exist and are exact
+            Unknown,    // not derivable (noise, arbitrary funcs) -- consumers fall back to UV0's gradient
+        };
+
         struct FInputValue
         {
             FString             Value;
             EMaterialInputType  Type;
             EComponentMask      Mask;
             int32               ComponentCount;
+            // Filled from DerivByVar by GetTypedInputValue. A literal default has no producing node and
+            // therefore no derivative, which is Zero rather than Unknown.
+            EDerivState         Deriv = EDerivState::Zero;
+            FString             DDX;
+            FString             DDY;
+        };
+
+        // What a producing node published about its own derivative.
+        struct FDerivInfo
+        {
+            EDerivState State = EDerivState::Unknown;
+            FString     DDX;
+            FString     DDY;
         };
 
         // Aggregated cost / complexity metrics derived from the generated chunks. Computed on demand
@@ -79,6 +105,12 @@ namespace Lumina
             uint32 TextureSamples        = 0;   // count of ".Sample(" call sites
             uint32 MathOps               = 0;   // sin/cos/lerp/normalize/dot/...
             uint32 NoiseOps              = 0;   // value/gradient/perlin/voronoi/simple noise + hash*
+            // Texture samples whose UV chain had no derivable gradient, so they fell back to UV0's. Correct
+            // in the forward lanes (implicit derivatives) but APPROXIMATE in the deferred VisBuffer pass:
+            // the mip is picked from UV0's rate of change rather than the sampled UV's. A tiled or otherwise
+            // transformed UV that lands here samples too fine a mip, which costs texture bandwidth and
+            // aliases. Non-zero means some node in that chain has no derivative rule yet.
+            uint32 UVGradientFallbacks   = 0;
             uint32 ScalarParameters      = 0;
             uint32 VectorParameters      = 0;
             uint32 TextureParameters     = 0;
@@ -119,7 +151,9 @@ namespace Lumina
 
         // Stage routing: each node-emit op writes the current stage's chunk. CompileGraph flips this around
         // the two-root walk (WPO->vertex, pixel pins->pixel); shared nodes are visited once per stage.
-        void SetStage(EMaterialCompileStage InStage) { CurrentStage = InStage; }
+        // Clears the parameter-fetch dedupe map: the two stages emit into separate scopes, so a variable
+        // hoisted in one is not reachable from the other.
+        void SetStage(EMaterialCompileStage InStage) { CurrentStage = InStage; EmittedParamFetches.clear(); }
         EMaterialCompileStage GetStage() const { return CurrentStage; }
         FString& GetActiveChunk() { return CurrentStage == EMaterialCompileStage::Vertex ? VertexChunks : PixelChunks; }
         const FString& GetActiveChunk() const { return CurrentStage == EMaterialCompileStage::Vertex ? VertexChunks : PixelChunks; }
@@ -397,6 +431,33 @@ namespace Lumina
         FInputValue GetTypedInputValue(CMaterialInput* Input, float DefaultValue = 0.0f);
         FInputValue GetTypedInputValue(CMaterialInput* Input, const FString& DefaultValueStr);
 
+        // Emit "<TypeStr> <NodeID> = <FetchExpr>;", or an alias to the first variable that already holds
+        // <FetchExpr> in this stage. Material parameters are loop- and pixel-invariant, so a repeat fetch is
+        // pure redundant load traffic; the alias is a register copy the backend coalesces away.
+        void EmitDedupedParamFetch(const FString& TypeStr, const FString& NodeID, const FString& FetchExpr);
+
+        // Publish ID's screen-space derivative. Valid emits the two companion chunks (<ID>_DDX/_DDY) from
+        // the supplied expressions; Zero and Unknown emit nothing and only record the state.
+        // Call AFTER the value chunk, so the expressions can reference it.
+        void RegisterDeriv(const FString& ID, EDerivState State,
+                           const FString& DdxExpr = FString(), const FString& DdyExpr = FString());
+
+        // The derivative of a value the caller is about to multiply by a derivative-free scale, i.e. the
+        // affine UV case (TexCoords, Panner). Returns Unknown unchanged so it keeps propagating.
+        void RegisterScaledDeriv(const FString& ID, const FInputValue& Source, const FString& ScaleExpr);
+
+        // What a texture sample should pass for explicit gradients. Valid -> the value's own pair;
+        // anything else -> UV0's, which is what every sample used before this existed.
+        void GetUVGradients(const FInputValue& UV, FString& OutDdx, FString& OutDdy) const;
+
+        // Chain rule for + - * / at the EmitBinaryOp choke point. AExpr/BExpr are the already-swizzled
+        // operand expressions. Only carries a derivative for UV-shaped values (<= 2 components); anything
+        // wider cannot feed a texture coordinate and its companion chunks would not be float2.
+        void RegisterBinaryDeriv(const FString& ID, const FString& Op,
+                                 const FInputValue& A, const FString& AExpr,
+                                 const FInputValue& B, const FString& BExpr,
+                                 EMaterialInputType ResultType);
+
         // Walks back through any passthrough nodes (plain reroutes and named reroutes) to the output
         // pin that actually produces the value. Returns nullptr when the chain dead-ends unconnected
         // or a named reroute resolves to nothing, which callers must treat as "no connection".
@@ -462,6 +523,20 @@ namespace Lumina
         THashMap<FName, FScalarParam>  ScalarParameters;
         THashMap<FName, FVectorParam>  VectorParameters;
         THashMap<FName, FTextureParam> TextureParameters;
+
+        // Derivative published per emitted variable name (the key is FInputValue::Value, i.e. the producing
+        // node's full name). Absent = Unknown, which is the safe default: consumers fall back to UV0's
+        // gradient, exactly what every sample did before derivative propagation existed.
+        THashMap<FString, FDerivInfo> DerivByVar;
+
+        // Counted by GetUVGradients (const, hence mutable) and surfaced as FShaderStats::UVGradientFallbacks.
+        mutable uint32 UVGradientFallbackCount = 0;
+
+        // Parameter fetches already emitted in the CURRENT stage, keyed by the fetch expression. Two graph
+        // nodes reading the same material parameter emit the same right-hand side; the second and later ones
+        // alias the first instead of re-issuing the load. Cleared per stage in SetStage, because the pixel
+        // and vertex chunks are separate scopes and a variable from one is not in scope in the other.
+        THashMap<FString, FString> EmittedParamFetches;
 
         uint16 NumScalarParams = 0;
         uint16 NumVectorParams = 0;

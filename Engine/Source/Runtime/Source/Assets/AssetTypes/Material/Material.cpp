@@ -44,6 +44,7 @@ namespace Lumina
             { &CMaterial::VertexShaderBinaries,                   &CMaterial::VertexShader,                   "_VS",    ERHIShaderType::Vertex   },
             { &CMaterial::MeshShaderBinaries,                     &CMaterial::MeshShader,                     "_MS",    ERHIShaderType::Mesh     },
             { &CMaterial::VisBufferMeshShaderBinaries,            &CMaterial::VisBufferMeshShader,            "_VBM",   ERHIShaderType::Mesh     },
+            { &CMaterial::VisBufferMeshShaderMaskedBinaries,      &CMaterial::VisBufferMeshShaderMasked,      "_VBMM",  ERHIShaderType::Mesh     },
             { &CMaterial::VisBufferVertexShaderBinaries,          &CMaterial::VisBufferVertexShader,          "_VBV",   ERHIShaderType::Vertex   },
             { &CMaterial::MaskedVisBufferPixelShaderBinaries,     &CMaterial::MaskedVisBufferPixelShader,     "_MVBP",  ERHIShaderType::Fragment },
             { &CMaterial::MaskedVisBufferPixelShaderPrimBinaries, &CMaterial::MaskedVisBufferPixelShaderPrim, "_MVBPP", ERHIShaderType::Fragment },
@@ -217,7 +218,20 @@ namespace Lumina
                      "slot falls back to the placeholder.", GetName(), Index, Texture->GetName());
         }
 
-        return (ResourceID >= 0) ? (uint32)ResourceID : RHI::Textures::DefaultResourceID();
+        const uint32 SlotID = (ResourceID >= 0) ? (uint32)ResourceID : RHI::Textures::DefaultResourceID();
+
+        // Keep this material's OWN block in step with what it just resolved. The usual caller is an
+        // instance demanding a slot it does not override, and it writes the return value into the
+        // instance block only -- so without this the master keeps the placeholder it was baked with
+        // while RequestTexturesResolved's all-resolved fast path reports everything fine, and the
+        // master renders magenta until something recompiles it.
+        if (Index < MAX_TEXTURES && MaterialUniforms.Textures[Index] != SlotID)
+        {
+            MaterialUniforms.Textures[Index] = SlotID;
+            UpdateMaterialUniforms();
+        }
+
+        return SlotID;
     }
 
     bool CMaterial::RequestTexturesResolved()
@@ -245,8 +259,34 @@ namespace Lumina
 
         if (bAllResolved)
         {
-            // Steady state after the first frame or two. Slots are already in the block; nothing to do.
-            return true;
+            // Steady state after the first frame or two -- but "resolved" is not "the block says so".
+            // A slot baked while its texture was loaded but not yet GPU-resident is holding the
+            // placeholder, and the load completion that would have fixed it never fires (nothing was
+            // in flight). Re-push when the block and the textures disagree, and report not-ready until
+            // every slot has a real ID so the surface retries instead of caching the placeholder.
+            bool bStaleBlock  = false;
+            bool bAllResident = true;
+            for (uint32 i = 0; i < NumTextures; ++i)
+            {
+                CTexture* Texture = ResolvedTextures[i].Get();
+                if (Texture == nullptr)
+                {
+                    continue;   // empty slot; permanently the placeholder by design
+                }
+
+                const int32  ResourceID = Texture->GetResourceID();
+                const uint32 SlotID = (ResourceID >= 0) ? (uint32)ResourceID : RHI::Textures::DefaultResourceID();
+
+                bAllResident &= (ResourceID >= 0);
+                bStaleBlock  |= (MaterialUniforms.Textures[i] != SlotID);
+            }
+
+            if (bStaleBlock)
+            {
+                RefreshTextureBindings(nullptr);
+            }
+
+            return bAllResident;
         }
 
         // One request per material, not per frame: Extract asks again every frame until the load lands,
@@ -331,6 +371,26 @@ namespace Lumina
         }
 
         UpdateMaterialUniforms();
+
+        // Instances copied this block wholesale when they were built and nothing else rewrites the
+        // slots they inherit. That matters most for a slot bound WITHOUT a parameter -- a plain Texture
+        // Sample node produces a CMaterial::Textures entry with no FMaterialParameter, so every
+        // parameter-driven path on the instance is blind to it. Those slots stayed on the placeholder
+        // the master was baked with until a recompile of the master pushed a fresh block down.
+        TVector<CMaterialInstance*> Snapshot;
+        {
+            FScopeLock Lock(InstancesMutex);
+            Snapshot = Instances;
+        }
+
+        for (CMaterialInstance* Instance : Snapshot)
+        {
+            if (Instance != nullptr && Instance->Material.Get() == this)
+            {
+                Instance->RefreshInheritedTextureSlots();
+            }
+        }
+
         return true;
     }
 
@@ -456,6 +516,7 @@ namespace Lumina
             Drop(PixelShaderBinaries);
             Drop(MeshShaderBinaries);
             Drop(VisBufferMeshShaderBinaries);
+            Drop(VisBufferMeshShaderMaskedBinaries);
             Drop(VisBufferVertexShaderBinaries);
             Drop(MaskedVisBufferPixelShaderBinaries);
             Drop(MaskedVisBufferPixelShaderPrimBinaries);

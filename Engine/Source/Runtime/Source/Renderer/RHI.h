@@ -23,6 +23,14 @@ namespace Lumina::RHI
     constexpr auto kDedicatedMemoryThreshold    = 32u * 1024 * 1024;
     constexpr auto kInvalidHeapSlot             = ~0u;
     constexpr auto kMaxInlineWrite              = 65536u;
+
+    // What the mesh-shader geometry path declares, and so the minimum device limits it needs. Device
+    // creation validates these and falls back to the vertex-emulation path rather than letting an
+    // over-limit declaration surface later as a pipeline-creation failure or as silently missing
+    // geometry. MeshData.h static_asserts its meshlet constants against the last two.
+    constexpr auto kMeshWorkGroupSize           = 128u;  // MeshletMesh.slang [numthreads(128, 1, 1)]
+    constexpr auto kMeshMaxOutputVertices       = 64u;   // out vertices Verts[MESHLET_MAX_VERTICES]
+    constexpr auto kMeshMaxOutputPrimitives     = 124u;  // out indices Tris[MESHLET_MAX_TRIANGLES]
     
     struct FTexture;
     struct FTextureHeap;

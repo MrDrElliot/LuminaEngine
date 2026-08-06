@@ -1473,12 +1473,52 @@ namespace Lumina::RHI
 
         // Mesh shader features queried separately so the struct is only chained when the extension is present.
         VkPhysicalDeviceMeshShaderFeaturesEXT SupportedMesh{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT };
+        VkPhysicalDeviceMeshShaderPropertiesEXT MeshProps{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_PROPERTIES_EXT };
         if (bMeshShader)
         {
             VkPhysicalDeviceFeatures2 MeshQuery{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &SupportedMesh };
             vkGetPhysicalDeviceFeatures2(GDevice->PhysicsDevice, &MeshQuery);
+
+            VkPhysicalDeviceProperties2 MeshPropQuery{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &MeshProps };
+            vkGetPhysicalDeviceProperties2(GDevice->PhysicsDevice, &MeshPropQuery);
         }
-        GDevice->bMeshShaderSupported = bMeshShader && SupportedMesh.meshShader;
+
+        // The geometry path hard-codes its workgroup size and output array bounds, and nothing checked
+        // them against the device. Over-limit declarations do not fail loudly: depending on the driver
+        // they either reject pipeline creation or produce no geometry at all, which is indistinguishable
+        // from the mesh path simply not working on that GPU.
+        bool bMeshLimitsOK = true;
+        if (bMeshShader && SupportedMesh.meshShader)
+        {
+            const struct { const char* Name; uint32 Required; uint32 Actual; } Limits[] =
+            {
+                { "maxMeshWorkGroupSize[0]",     kMeshWorkGroupSize,       MeshProps.maxMeshWorkGroupSize[0]   },
+                { "maxMeshWorkGroupInvocations", kMeshWorkGroupSize,       MeshProps.maxMeshWorkGroupInvocations },
+                { "maxMeshOutputVertices",       kMeshMaxOutputVertices,   MeshProps.maxMeshOutputVertices     },
+                { "maxMeshOutputPrimitives",     kMeshMaxOutputPrimitives, MeshProps.maxMeshOutputPrimitives   },
+            };
+
+            for (const auto& Limit : Limits)
+            {
+                if (Limit.Actual < Limit.Required)
+                {
+                    LOG_ERROR("Mesh shaders disabled: device reports {} = {}, the geometry path needs at least {}.",
+                              Limit.Name, Limit.Actual, Limit.Required);
+                    bMeshLimitsOK = false;
+                }
+            }
+
+            // Not hard-checked: the per-vertex/per-primitive component counts come from FBaseVertexOutput
+            // and FVisPrimitive, which only the shader compiler knows. Logged so an unexplained mesh-path
+            // failure can be compared against a GPU where it works without a debugger.
+            LOG_DISPLAY("Mesh shader limits: workgroup {} (max invocations {}), out verts {}, out prims {}, "
+                        "out components {}, out memory {} B.",
+                        MeshProps.maxMeshWorkGroupSize[0], MeshProps.maxMeshWorkGroupInvocations,
+                        MeshProps.maxMeshOutputVertices, MeshProps.maxMeshOutputPrimitives,
+                        MeshProps.maxMeshOutputComponents, MeshProps.maxMeshOutputMemorySize);
+        }
+
+        GDevice->bMeshShaderSupported = bMeshShader && SupportedMesh.meshShader && bMeshLimitsOK;
         LOG_DISPLAY("Mesh/task shaders: {}", GDevice->bMeshShaderSupported ? "supported" : "unavailable");
         
         VkPhysicalDeviceFeatures Features10             = {};

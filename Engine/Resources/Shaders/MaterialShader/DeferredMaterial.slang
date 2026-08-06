@@ -157,35 +157,38 @@ PSOutput FragmentMain(float4 SvPosition : SV_Position)
     uint SafeTri = min(TriId, max(Ref.M.TriangleCount, 1u) - 1u);
     uint3 Tri = UnpackMeshletTriangle(Ref, SafeTri);
 
-    // Load + model->world transform the three triangle vertices.
-    FVertexData Vd[3];
-    Vd[0] = LoadMeshletVertexData(Ref, Tri.x);
-    Vd[1] = LoadMeshletVertexData(Ref, Tri.y);
-    Vd[2] = LoadMeshletVertexData(Ref, Tri.z);
-
     // The three corners share the instance's ModelMatrix, so derive the world normal matrix once.
     float3x3 NormalMatrixWS = CalculateNormalMatrix(Ref.Inst.ModelMatrix);
-    FMeshletWorldVertex W[3];
-    W[0] = TransformMeshletVertex(Ref, Vd[0], NormalMatrixWS);
-    W[1] = TransformMeshletVertex(Ref, Vd[1], NormalMatrixWS);
-    W[2] = TransformMeshletVertex(Ref, Vd[2], NormalMatrixWS);
 
     // Re-apply the material vertex graph (WorldPositionOffset) per vertex so the reconstructed triangle
-    // matches what the VisBuffer geometry pass rasterized. The token appears once; the unrolled loop runs
-    // it for all three corners (same local contract as the geometry shaders). Inst/ModelMatrix are
-    // loop-invariant; hoist them so the unroll doesn't materialize the 64-byte BDA matrix three times
-    // (SPIR-V LICM doesn't hoist BDA loads -- see the FLightShadow note in SurfaceShading).
+    // matches what the VisBuffer geometry pass rasterized. The material vertex token appears once; the
+    // unrolled loop runs it for all three corners (same local contract as the geometry shaders).
+    //
+    // The LOAD and TRANSFORM are fused into this loop deliberately. They used to run as two hoisted
+    // 3-element passes, which left an FVertexData[3] (16 floats each = 48 VGPRs) live across the whole
+    // graph body purely to supply the alias preamble's VertexData.UV / .Color -- and TransformMeshletVertex
+    // copies both of those into W verbatim, so nothing else in the graph could even reach the array. Fused,
+    // exactly ONE corner's FVertexData is live at a time. Registers are the binding resource in this pass
+    // (measured 86% of PS warp launches stalled on register allocation, with local-memory spilling), so the
+    // three loads serializing behind their transforms is the right trade: the occupancy it buys back hides
+    // more latency than the lost memory-level parallelism cost.
+    //
+    // Inst/ModelMatrix stay hoisted -- loop-invariant, and SPIR-V LICM does not hoist BDA loads, so leaving
+    // them inside materializes the 64-byte matrix three times.
     FGPUInstance Inst    = Ref.Inst;
     float4x4 ModelMatrix = Inst.ModelMatrix;
+    FMeshletWorldVertex W[3];
     float3 FinalWorldPos[3];
     [unroll]
     for (int k = 0; k < 3; ++k)
     {
+        FVertexData VertexData = LoadMeshletVertexData(Ref, Tri[k]);
+        W[k] = TransformMeshletVertex(Ref, VertexData, NormalMatrixWS);
+
         float4   WorldPos    = float4(W[k].WorldPos, 1.0);
         float3   NormalWS    = W[k].NormalWS;
         float3   TangentWS   = W[k].TangentWS.xyz;
         float    TangentSignWS = W[k].TangentWS.w;   // handedness; the graph's WorldTangent alias needs it
-        FVertexData VertexData = Vd[k];
 
         FMaterialVertexInputs Material;
         $MATERIAL_VERTEX_INPUTS
@@ -257,16 +260,21 @@ PSOutput FragmentMain(float4 SvPosition : SV_Position)
     float2 UV0_DDX       = dUVdx;
     float2 UV0_DDY       = dUVdy;
 
-    // Deferred-texturing fix: redirect the codegen's UV0 texture samples to explicit-gradient sampling using
-    // the analytic perspective-correct gradients computed above. A fullscreen deferred PS has no valid 2x2
-    // quad (it straddles unrelated triangles), so implicit ddx/ddy pick wrong mips along every silhouette,
-    // meshlet seam, and instance edge -- the canonical VisBuffer pitfall. Exact for UV0-direct samples (the
-    // common case); derived UVs (tiling/panners) use UV0's gradient -- bounded and far better than garbage.
+    // Deferred texturing: sample with EXPLICIT gradients. A fullscreen deferred PS has no valid 2x2 quad
+    // (it straddles unrelated triangles), so implicit ddx/ddy pick wrong mips along every silhouette,
+    // meshlet seam, and instance edge -- the canonical VisBuffer pitfall.
+    //
+    // The gradients are per-UV-chain, not UV0's: the material compiler propagates analytic derivatives
+    // through the graph and passes each sample its own pair. Reusing UV0's for a DERIVED UV is what this
+    // used to do, and it is a real bug -- a 32x tiled UV then picks a mip 5 levels too fine (1024x the
+    // texel working set), which is what made a tiled-terrain view VRAM-bound. Chains with no derivable
+    // derivative still fall back to UV0's and the codegen marks them with a UV-GRADIENT FALLBACK comment.
+    //
     // Scoped to the material graph only: ShadeSurface (below) and the forward/masked raster passes keep
     // implicit derivatives, which are correct there.
-#define SampleTexture2D(TexIndex, SamplerIndex, UV) SampleTexture2DGrad((TexIndex), (SamplerIndex), (UV), dUVdx, dUVdy)
+#define SampleTexture2DAuto(TexIndex, SamplerIndex, UV, DDX, DDY) SampleTexture2DGrad((TexIndex), (SamplerIndex), (UV), (DDX), (DDY))
     $MATERIAL_INPUTS
-#undef SampleTexture2D
+#undef SampleTexture2DAuto
 
     FShadedSurface Shaded = ShadeSurface(Input, Material);
 

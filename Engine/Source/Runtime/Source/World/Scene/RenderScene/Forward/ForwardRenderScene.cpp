@@ -79,6 +79,14 @@ namespace Lumina
             true,
             "Use the mesh-shader geometry path (MeshletMesh.slang) instead of the vertex-emulation path.");
         
+        // Every GPU cull stage already reports its count through the Totals readback; this is the only
+        // thing that shows them. Off by default, and one log line every N frames when on.
+        static TConsoleVar<int32> CVarCullStats(
+            "r.Scene.CullStats",
+            0,
+            "Log the GPU cull's per-stage counts every N frames (0 = off): retained slots -> visible "
+            "instances -> meshlet pairs -> draw-list entries. Shows which stage a missing scene died at.");
+
         static TConsoleVar<bool> CVarCPUInstanceCull(
             "r.Scene.CPUInstanceCull",
             true,
@@ -670,6 +678,12 @@ namespace Lumina
         // scene that turned it off stays off whatever the light asks for. The thumbnail scene turns it off
         // because it renders a single frame and there is no previous cascade depth to test against.
         SceneGlobalData.CullData.bShadowOcclusionCull   = RenderSettings.bShadowOcclusionCull;
+        // Shadow LOD inputs for BOTH cull passes. CullInstances reserves each cascade's draw-list region
+        // from these and CullMeshlets re-derives the same pick when it walks, so they are published once
+        // here rather than pushed per pass.
+        SceneGlobalData.CullData.ShadowLODBias          = RenderSettings.ShadowLODBias;
+        SceneGlobalData.CullData.ShadowCoarseLODDistSq  = RenderSettings.ShadowCoarseLODDistance
+                                                        * RenderSettings.ShadowCoarseLODDistance;
         // Fallback, same contract as ShadowMaxDistance above. With no sun no cascade view is pushed, so
         // nothing reads it.
         CascadeMinTexels                                = 1.0f;
@@ -3475,6 +3489,28 @@ namespace Lumina
         // The NumCullViews multiply that used to be here is exactly what made this allocation enormous: a
         // shadow cascade that rejects almost everything was reserving as much room as the camera.
         UpdateMeshletBoundFeedback(CurrentFrameSlot);
+
+        // Every stage of the GPU cull already publishes its count into Totals and the CPU already reads
+        // them back -- but nothing logged them except on overflow, so "nothing renders" gave no clue
+        // WHICH stage emptied. Reading one of these lines localizes it immediately:
+        //   visible == 0                  -> CullInstances rejected everything (frustum/distance/flags)
+        //   visible > 0, domain == 0      -> instances survived but carry no meshlets (LOD counts/geometry flag)
+        //   domain > 0, drawlist == 0     -> CullMeshlets rejected every meshlet (frustum/cone/occlusion)
+        //   drawlist > 0 but blank screen -> the cull is fine; the fault is in raster/pipeline/material
+        // Values lag by kFramesInFlight (they are the readback), which does not matter for a steady scene.
+        if (const int32 StatsEvery = CVarCullStats.GetValue(); StatsEvery > 0)
+        {
+            static uint32 CullStatsCounter = 0;
+            if ((CullStatsCounter++ % (uint32)StatsEvery) == 0u)
+            {
+                LOG_DISPLAY("Cull: {} retained -> {} visible instances -> {} meshlet pairs (clamped {}) -> "
+                            "{} draw-list entries. Overflow: instances {}, drawlist {}, defer {}.",
+                            ScenePrimitives.GetRetainedSlotCount(), LastVisibleInstances,
+                            LastMeshletWorkRequested, LastMeshletBound, LastDrawListRequired,
+                            LastVisibleOverflowed, LastDrawListOverflowed, LastDeferOverflowed);
+            }
+        }
+
         // Lead the measured requirement by 50%: undershooting costs a frame of dropped meshlets,
         // overshooting only costs address space, so the asymmetry says bias high.
         const uint32 PredictedBound    = Math::Max(LastMeshletBound + LastMeshletBound / 2u, 65536u);
@@ -4671,6 +4707,7 @@ namespace Lumina
             Cmd.PixelShader                    = Batch.PixelShader;
             Cmd.MeshShader                     = Batch.MeshShader;
             Cmd.VisBufferMeshShader            = Batch.VisBufferMeshShader;
+            Cmd.VisBufferMeshShaderMasked      = Batch.VisBufferMeshShaderMasked;
             Cmd.VisBufferVertexShader          = Batch.VisBufferVertexShader;
             Cmd.MaskedVisBufferPixelShader     = Batch.MaskedVisBufferPixelShader;
             Cmd.MaskedVisBufferPixelShaderPrim = Batch.MaskedVisBufferPixelShaderPrim;
@@ -6784,11 +6821,16 @@ namespace Lumina
             
             const bool bUseMesh  = bMeshShaders && Batch.VisBufferMeshShader != nullptr;
             const FShaderEntry* MaskedPS = bUseMesh ? Batch.MaskedVisBufferPixelShaderPrim : Batch.MaskedVisBufferPixelShader;
-            const bool bMaskedClip = Batch.bMasked && MaskedPS != nullptr;
+            // The mesh path needs the MASKED geometry variant too: the opaque one emits position only, and
+            // pairing it with the masked PS would interpolate attributes nothing wrote. Requiring both is
+            // what keeps that combination unreachable -- without the geometry shader the batch renders
+            // unclipped rather than reading garbage.
+            const bool bMaskedClip = Batch.bMasked && MaskedPS != nullptr
+                                  && (!bUseMesh || Batch.VisBufferMeshShaderMasked != nullptr);
 
             FGraphicsPipelineKey Key;
             Key.VS               = bUseMesh ? nullptr : Batch.VisBufferVertexShader;
-            Key.MS               = bUseMesh ? Batch.VisBufferMeshShader : nullptr;
+            Key.MS               = bUseMesh ? (bMaskedClip ? Batch.VisBufferMeshShaderMasked : Batch.VisBufferMeshShader) : nullptr;
             Key.PS               = bMaskedClip ? MaskedPS : (bUseMesh ? VisPixelPrim : VisPixel);
             Key.bVisBufferMasked = bMaskedClip;   // geometry emits interpolants only when actually masked-clipping
             Key.bWireframe       = RenderSettings.bWireframe;
@@ -11792,10 +11834,10 @@ namespace Lumina
                 uint32 NumRetained;
                 uint32 NumViews;
                 uint32 NumBatches;
-                int32  ShadowLODBias;
+                // ShadowLODBias / ShadowCoarseLODDistSq moved to FCullData: the meshlet cull re-derives
+                // the cascade shadow pick and has to read the same inputs this pass reserved from.
                 uint32 bUseLODs;
                 uint32 MaxVisibleInstances;
-                float  ShadowCoarseLODDistSq;
                 uint32 NumSurfaceDescs;
                 uint64 RetainedCullEntriesAddr;
                 uint64 RetainedTransformsAddr;
@@ -11807,16 +11849,14 @@ namespace Lumina
                 uint64 OutViewDrawCountAddr;
                 uint64 OutOverflowFlagAddr;
             };
-            static_assert(sizeof(FCullInstancesPC) == 104, "FCullInstancesPC must match CullInstances.slang.");
+            static_assert(sizeof(FCullInstancesPC) == 96, "FCullInstancesPC must match CullInstances.slang.");
 
             FCullInstancesPC PC = {};
             PC.NumRetained              = RetainedSlots;
             PC.NumViews                 = NumCullViews;
             PC.NumBatches               = NumBatches;
-            PC.ShadowLODBias            = RenderSettings.ShadowLODBias;
             PC.bUseLODs                 = RenderSettings.bUseLODs ? 1u : 0u;
             PC.MaxVisibleInstances      = VisibleCapacity;
-            PC.ShadowCoarseLODDistSq    = RenderSettings.ShadowCoarseLODDistance * RenderSettings.ShadowCoarseLODDistance;
             // What the device buffer actually holds, not what the game thread has interned. A slot whose
             // binding is newer than the last upload reads past the table otherwise.
             PC.NumSurfaceDescs          = UploadedSurfaceDescs;

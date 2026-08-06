@@ -22,6 +22,7 @@ namespace Lumina
         const FShaderEntry* PixelShader                    = nullptr;
         const FShaderEntry* MeshShader                     = nullptr;
         const FShaderEntry* VisBufferMeshShader            = nullptr;
+        const FShaderEntry* VisBufferMeshShaderMasked      = nullptr;
         const FShaderEntry* VisBufferVertexShader          = nullptr;
         const FShaderEntry* MaskedVisBufferPixelShader     = nullptr;
         const FShaderEntry* MaskedVisBufferPixelShaderPrim = nullptr;

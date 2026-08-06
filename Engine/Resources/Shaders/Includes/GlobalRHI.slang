@@ -86,6 +86,20 @@ float4 SampleTexture2DGrad(uint TextureIndex, uint SamplerIndex, float2 UV, floa
     return gTextures2D[TextureIndex].SampleGrad(gSamplers[SamplerIndex], UV, Ddx, Ddy);
 }
 
+// Material-codegen texture sample. The compiler propagates analytic UV derivatives through the graph and
+// passes them here; which of the two sampling modes is right depends on the LANE, not the material:
+//
+//   * Forward lanes (base pass, masked VisBuffer, terrain): the rasterizer's 2x2 quad covers ONE triangle,
+//     so implicit derivatives are exact and cheaper. The gradient arguments go unused and dead-strip.
+//   * Deferred VisBuffer pass: a quad there straddles unrelated triangles, so implicit derivatives are
+//     garbage. DeferredMaterial.slang #defines this name to the SampleTexture2DGrad form above.
+//
+// Keeping one call shape in the codegen is what lets the same emitted pixel chunk serve every template.
+float4 SampleTexture2DAuto(uint TextureIndex, uint SamplerIndex, float2 UV, float2 Ddx, float2 Ddy)
+{
+    return SampleTexture2D(TextureIndex, SamplerIndex, UV);
+}
+
 float4 SampleTexture2DLevel(uint TextureIndex, uint SamplerIndex, float2 UV, float Lod)
 {
     return gTextures2D[TextureIndex].SampleLevel(gSamplers[SamplerIndex], UV, Lod);

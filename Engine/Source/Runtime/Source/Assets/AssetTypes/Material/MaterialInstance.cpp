@@ -111,6 +111,54 @@ namespace Lumina
         UpdateMaterialUniforms();
     }
 
+    bool CMaterialInstance::IsTextureSlotOverridden(uint32 Index) const
+    {
+        for (const FMaterialParameter& Param : Parameters)
+        {
+            if (Param.Type != EMaterialParameterType::Texture || Param.Index != Index)
+            {
+                continue;
+            }
+
+            const FMaterialParameterOverride* Override = FindOverride(Param.ParameterName);
+            return Override != nullptr && Override->bEnabled && Override->Texture != nullptr;
+        }
+
+        // No parameter names this slot, so it is a plainly bound texture on the parent and there is
+        // nothing an instance could override it with.
+        return false;
+    }
+
+    void CMaterialInstance::RefreshInheritedTextureSlots()
+    {
+        if (!Material)
+        {
+            return;
+        }
+
+        bool bChanged = false;
+
+        const uint32 NumSlots = (uint32)Math::Min<size_t>(Material->Textures.size(), MAX_TEXTURES);
+        for (uint32 i = 0; i < NumSlots; ++i)
+        {
+            if (IsTextureSlotOverridden(i))
+            {
+                continue;
+            }
+
+            if (MaterialUniforms.Textures[i] != Material->MaterialUniforms.Textures[i])
+            {
+                MaterialUniforms.Textures[i] = Material->MaterialUniforms.Textures[i];
+                bChanged = true;
+            }
+        }
+
+        if (bChanged)
+        {
+            UpdateMaterialUniforms();
+        }
+    }
+
     static FMaterialParameterOverride& FindOrAddOverride(TVector<FMaterialParameterOverride>& Overrides, const FName& Name, EMaterialParameterType Type)
     {
         for (FMaterialParameterOverride& O : Overrides)
@@ -393,19 +441,45 @@ namespace Lumina
         // holding the placeholder, and this is the only thing that rewrites it -- previously the resolve
         // gate skipped instances outright on the premise that their block was "already whole", which is
         // true only when the load race was won.
+        //
+        // Driven off the parent's SLOT COUNT rather than off Parameters. A plain Texture Sample node
+        // binds a slot in CMaterial::Textures with no FMaterialParameter behind it, so a Parameters-driven
+        // scan is blind to exactly the slots an instance can only inherit -- which is what left instances
+        // magenta until their master was recompiled.
+        bool bNeedsRebuild = false;
+
+        const uint32 NumSlots = (uint32)Math::Min<size_t>(Material->Textures.size(), MAX_TEXTURES);
+        for (uint32 i = 0; i < NumSlots && !bNeedsRebuild; ++i)
+        {
+            // Inherited slots: the parent's block is the source of truth and it is rewritten
+            // asynchronously as loads land, so any divergence means this copy is stale.
+            if (!IsTextureSlotOverridden(i))
+            {
+                bNeedsRebuild = MaterialUniforms.Textures[i] != Material->MaterialUniforms.Textures[i];
+            }
+        }
+
+        // Overridden slots have no parent value to compare against; they are wrong exactly when they are
+        // still holding the placeholder the override was baked with before its texture went resident.
         const uint32 Placeholder = RHI::Textures::DefaultResourceID();
         for (const FMaterialParameter& Param : Parameters)
         {
+            if (bNeedsRebuild)
+            {
+                break;
+            }
             if (Param.Type != EMaterialParameterType::Texture || Param.Index >= MAX_TEXTURES)
             {
                 continue;
             }
-            if (MaterialUniforms.Textures[Param.Index] == Placeholder)
-            {
-                RebuildUniformsFromOverrides();
-                UpdateMaterialUniforms();
-                break;
-            }
+            bNeedsRebuild = MaterialUniforms.Textures[Param.Index] == Placeholder
+                         && IsTextureSlotOverridden(Param.Index);
+        }
+
+        if (bNeedsRebuild)
+        {
+            RebuildUniformsFromOverrides();
+            UpdateMaterialUniforms();
         }
 
         return true;

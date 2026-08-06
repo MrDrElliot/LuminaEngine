@@ -102,8 +102,16 @@ namespace Lumina
             // masked->opaque recompile drops the stale stages (never bound for non-masked).
             Material->ClearShaderStage(EMaterialShaderStage::MaskedVisBufferPixel);
             Material->ClearShaderStage(EMaterialShaderStage::MaskedVisBufferPixelPrim);
+            Material->ClearShaderStage(EMaterialShaderStage::VisBufferMeshMasked);
             if (Material->GetBlendMode() == EBlendMode::Masked)
             {
+                // Masked geometry variant: same template, VISBUFFER_MASKED_GEOM widens the per-vertex output
+                // back to the full interpolant set the masked pixel shader reads. Opaque materials keep the
+                // position-only VisBufferMesh stage compiled above.
+                FShaderCompileOptions VisMaskedOptions; VisMaskedOptions.DebugName = MatName + " [VBMM]";
+                VisMaskedOptions.MacroDefinitions.emplace_back("VISBUFFER_MASKED_GEOM");
+                ShaderCompiler->CompilerShaderRaw(VisSource, Move(VisMaskedOptions), CommitStage(EMaterialShaderStage::VisBufferMeshMasked));
+
                 const FString MaskedPSSource = Compiler.BuildPixelShaderFromTemplate(MeshShaderDir + "VisBufferMaskedPixel.slang");
                 FShaderCompileOptions MaskedPSOptions; MaskedPSOptions.DebugName = MatName + " [MVBP]";
                 ShaderCompiler->CompilerShaderRaw(MaskedPSSource, Move(MaskedPSOptions), CommitStage(EMaterialShaderStage::MaskedVisBufferPixel));
@@ -158,6 +166,7 @@ namespace Lumina
             {
                 bStageFailed |= StageEmpty(Material->MaskedVisBufferPixelShaderBinaries, "Masked VisBuffer Pixel");
                 bStageFailed |= StageEmpty(Material->MaskedVisBufferPixelShaderPrimBinaries, "Masked VisBuffer Pixel (mesh)");
+                bStageFailed |= StageEmpty(Material->VisBufferMeshShaderMaskedBinaries, "Masked VisBuffer Geometry (mesh)");
             }
         }
         if (bStageFailed)

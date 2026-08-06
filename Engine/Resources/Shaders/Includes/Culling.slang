@@ -131,6 +131,50 @@ uint2 SelectViewMeshletRange(FSurfaceDesc Desc, float3 ViewOrigin, float4 Sphere
     return uint2(Desc.LODMeshletOffset[LOD], Desc.LODMeshletCount[LOD]);
 }
 
+// The shadow LOD a CASCADE renders an instance at.
+//
+// Cascade i covers a slice roughly twice as deep as cascade i-1 at the SAME atlas resolution, so its world
+// texel is correspondingly wider and the geometry that fills one texel is correspondingly coarser. One LOD
+// step per cascade index tracks that: cascade 0 renders what the old single shadow pick rendered (step 0,
+// bit-identical), and each further cascade drops one more level. Everything the far cascades save comes out
+// of geometry that was already narrower than their own texel.
+//
+// Same contract as SelectSurfaceLODForView: CullInstances calls this to RESERVE the (view, draw) region and
+// CullMeshlets calls it to decide which meshlets that cascade walks. Reserve for one LOD and walk another
+// and the surplus is wasted (or, the other way, meshlets vanish at the region boundary) -- so the
+// arithmetic lives here and is CALLED by both, never re-derived.
+//
+// Only for views flagged Cascade AND selectable (SurfaceDescIndex != kNoSurfaceDesc). Point/spot shadow
+// views and fixed-pick instances (skinned, forced LOD, LODs off) keep FGPUInstance's single shadow range.
+uint SelectCascadeShadowLOD(FSurfaceDesc Desc, float3 CamPos, float4 SphereBounds, uint CascadeIndex,
+                            int ShadowLODBias, float ShadowCoarseLODDistSq)
+{
+    const uint   NumLODs = min(Desc.NumLODs, (uint)MESHLET_MAX_LODS);
+    const float3 ToCam   = SphereBounds.xyz - CamPos;
+    const float  DistSq  = dot(ToCam, ToCam);
+
+    // The camera-distance pick the shadow LOD has always been biased off. Same expression and operand
+    // order as SelectSurfaceLODForView so the two stay bit-identical on both sides.
+    const uint CameraLOD = Desc.SelectLOD(DistSq, SphereBounds.w * SphereBounds.w);
+
+    // Sloppy LODs (4-5) can hole and light-leak; past ShadowCoarseLODDistance the cascade texel is wide
+    // enough that the holes stay sub-texel. Mirrors CullInstances' ShadowCap exactly.
+    const uint Cap = (ShadowCoarseLODDistSq > 0.0 && DistSq >= ShadowCoarseLODDistSq)
+                   ? (uint)MESHLET_MAX_COARSE_SHADOW_LOD : (uint)MESHLET_MAX_SHADOW_LOD;
+    const int  MaxLOD = (int)min(NumLODs > 0u ? NumLODs - 1u : 0u, Cap);
+
+    return (uint)clamp((int)CameraLOD + ShadowLODBias + (int)CascadeIndex, 0, MaxLOD);
+}
+
+// The meshlet range that cascade pick resolves to: xy = (mesh-global offset, count).
+uint2 SelectCascadeShadowMeshletRange(FSurfaceDesc Desc, float3 CamPos, float4 SphereBounds,
+                                      uint CascadeIndex, int ShadowLODBias, float ShadowCoarseLODDistSq)
+{
+    const uint LOD = SelectCascadeShadowLOD(Desc, CamPos, SphereBounds, CascadeIndex,
+                                            ShadowLODBias, ShadowCoarseLODDistSq);
+    return uint2(Desc.LODMeshletOffset[LOD], Desc.LODMeshletCount[LOD]);
+}
+
 // Tests a world-space sphere against the camera depth pyramid.
 // Returns true if the sphere is fully occluded and can be skipped.
 bool IsHiZOccluded(float3 CenterWS, float RadiusWS)

@@ -259,14 +259,24 @@ void ProcessFlatIndex(uint flat_idx, uint NumViews)
                 continue;
         }
 
-        // Which meshlet range this view rasters. A shadow view takes the pre-made shadow pick (the cascades
-        // are fit to the primary camera, so their LOD is the primary's distance, biased); every other view
-        // picks its own from its own origin -- which is the whole point of this pass being per view.
+        // Which meshlet range this view rasters. A CASCADE picks per cascade index (its texel is wider than
+        // the cascade inside it, so it renders coarser geometry); every other shadow view takes the pre-made
+        // single shadow pick; every other view picks its own from its own origin.
         const bool bShadowView = View.HasFlag(CULL_VIEW_FLAG_CAST_SHADOW_ONLY);
 
         uint RangeOffset;
         uint RangeCount;
-        if (bShadowView)
+        if (bShadowView && bPerViewLOD && View.HasFlag(CULL_VIEW_FLAG_CASCADE))
+        {
+            // Byte-for-byte the pick CullInstances reserved this cascade's draw-list region from.
+            const uint2 Range = SelectCascadeShadowMeshletRange(Desc, CamPos, Inst.SphereBounds,
+                                                                View.CascadeIndex,
+                                                                Scene().CullData.ShadowLODBias,
+                                                                Scene().CullData.ShadowCoarseLODDistSq);
+            RangeOffset = Range.x;
+            RangeCount  = Range.y;
+        }
+        else if (bShadowView)
         {
             RangeOffset = Inst.ShadowMeshletOffset;
             RangeCount  = Inst.ShadowMeshletCount;

@@ -85,6 +85,16 @@ namespace Lumina
             Called by the parent after a recompile; without the upload the instance keeps stale GPU uniforms. */
         void RefreshFromParent();
 
+        /** Copy the parent's texture slots for every slot this instance does not override, and push the block
+            if anything moved. Deliberately narrower than RefreshFromParent: no parameter rebuild and no
+            synchronous resolve, so the parent can call it from the async texture-load completion, which is
+            not on the game thread. */
+        void RefreshInheritedTextureSlots();
+
+        /** Whether an enabled texture override supplies slot Index. False for a slot the parent binds without
+            exposing a parameter for it (a plain Texture Sample node), which an instance can only inherit. */
+        bool IsTextureSlotOverridden(uint32 Index) const;
+
         /** True only when an override exists for the parameter AND is enabled (the checkbox state). */
         bool IsOverrideEnabled(const FName& Name) const;
         /** Enable/disable a parameter's override. Disabling RETAINS the stored value; enabling with no existing

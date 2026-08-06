@@ -52,7 +52,8 @@ namespace Lumina
 		const FShaderEntry*					VertexShader = nullptr;
 		const FShaderEntry*					PixelShader  = nullptr;
 		const FShaderEntry*					MeshShader   = nullptr;
-		const FShaderEntry*					VisBufferMeshShader   = nullptr;   // VisBuffer geometry, mesh path
+		const FShaderEntry*					VisBufferMeshShader   = nullptr;   // VisBuffer geometry, mesh path (opaque, position-only out)
+		const FShaderEntry*					VisBufferMeshShaderMasked = nullptr; // VisBuffer geometry, mesh path, masked (full interpolants)
 		const FShaderEntry*					VisBufferVertexShader = nullptr;   // VisBuffer geometry, VS-emulation path
 		const FShaderEntry*					MaskedVisBufferPixelShader  = nullptr;   // masked-only PS, VS path (flat VisID): opacity clip
 		const FShaderEntry*					MaskedVisBufferPixelShaderPrim = nullptr; // masked-only PS, mesh path (SV_PrimitiveID)

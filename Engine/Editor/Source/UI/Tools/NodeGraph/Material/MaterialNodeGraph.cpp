@@ -296,6 +296,70 @@ namespace Lumina
         }
     }
 
+    // Emission order for one stage, depth-first POST-ORDER from that stage's root pins.
+    //
+    // A plain topological sort is not unique, and the Kahn-style one above puts every zero-dependency node
+    // first -- so all the parameter fetches land at the top of the shader and stay live across everything
+    // between them and their consumer. Post-order instead emits a node immediately before the first
+    // consumer that needs it, which is the latest point it can legally go, so live ranges are as short as
+    // the graph allows. Registers are the binding resource in the deferred pass (PS register count is the
+    // top stall), and the downstream compiler will not sink loads this aggressively on its own.
+    //
+    // Post-order guarantees dependencies precede dependents, so the result is still a valid topological
+    // order. Cycles were already rejected before this runs; the depth cap and the in-progress set are
+    // backstops so a malformed graph cannot recurse without bound.
+    static void CollectEmitOrderDepthFirst(CEdGraphNode* Node,
+                                           const THashSet<CEdGraphNode*>& StageSet,
+                                           THashSet<CEdGraphNode*>& Emitted,
+                                           THashSet<CEdGraphNode*>& InProgress,
+                                           TVector<CEdGraphNode*>& OutOrder,
+                                           int32 Depth)
+    {
+        constexpr int32 MaxDepth = 256;
+        if (Node == nullptr || Depth > MaxDepth)
+        {
+            return;
+        }
+
+        // Reroutes emit nothing -- GetTypedInputValue resolves through them -- but their source still has
+        // to be walked, and a named reroute can point at a declaration downstream of itself.
+        if (Node->IsRerouteNode())
+        {
+            if (!InProgress.insert(Node).second)
+            {
+                return;
+            }
+            if (CEdNodeGraphPin* Source = Node->GetRerouteSourcePin())
+            {
+                for (CEdNodeGraphPin* Conn : Source->GetConnections())
+                {
+                    CollectEmitOrderDepthFirst(Conn->GetOwningNode(), StageSet, Emitted, InProgress, OutOrder, Depth + 1);
+                }
+            }
+            return;
+        }
+
+        if (StageSet.find(Node) == StageSet.end() || Emitted.find(Node) != Emitted.end())
+        {
+            return;
+        }
+        if (!InProgress.insert(Node).second)
+        {
+            return;
+        }
+
+        for (CEdNodeGraphPin* InputPin : Node->GetInputPins())
+        {
+            for (CEdNodeGraphPin* Conn : InputPin->GetConnections())
+            {
+                CollectEmitOrderDepthFirst(Conn->GetOwningNode(), StageSet, Emitted, InProgress, OutOrder, Depth + 1);
+            }
+        }
+
+        Emitted.insert(Node);
+        OutOrder.push_back(Node);
+    }
+
     // Kept as a thin alias so all reroute resolution lives in one place; see
     // FMaterialCompiler::ResolveThroughReroutes.
     static CMaterialOutput* ResolveOutputThroughReroutes(CMaterialOutput* OutputPin)
@@ -489,25 +553,66 @@ namespace Lumina
         Compiler.NewLine();
         Compiler.NewLine();
 
-        // Walk pixel set in topo order with stage = Pixel.
-        Compiler.SetStage(EMaterialCompileStage::Pixel);
-        for (size_t i = 0; i < SortedNodes.size(); ++i)
+        // Builds the late-emission order for a stage, falling back to the global topological order if the
+        // depth-first walk did not reach the whole set (a depth-capped or malformed graph). The fallback is
+        // the previous behavior, so a graph this cannot schedule still compiles correctly -- just with the
+        // longer live ranges it had before.
+        auto BuildEmitOrder = [&SortedNodes](const THashSet<CEdGraphNode*>& StageSet,
+                                             const TVector<CEdNodeGraphPin*>& RootPins) -> TVector<CEdGraphNode*>
         {
-            CEdGraphNode* Node = SortedNodes[i];
+            TVector<CEdGraphNode*> Order;
+            Order.reserve(StageSet.size());
+
+            THashSet<CEdGraphNode*> Emitted;
+            THashSet<CEdGraphNode*> InProgress;
+            for (CEdNodeGraphPin* Pin : RootPins)
+            {
+                if (Pin == nullptr || !Pin->HasConnection())
+                {
+                    continue;
+                }
+                for (CEdNodeGraphPin* Conn : Pin->GetConnections())
+                {
+                    CollectEmitOrderDepthFirst(Conn->GetOwningNode(), StageSet, Emitted, InProgress, Order, 0);
+                }
+            }
+
+            if (Order.size() != StageSet.size())
+            {
+                Order.clear();
+                for (CEdGraphNode* Node : SortedNodes)
+                {
+                    if (StageSet.find(Node) != StageSet.end() && !Node->IsRerouteNode())
+                    {
+                        Order.push_back(Node);
+                    }
+                }
+            }
+            return Order;
+        };
+
+        TVector<CEdNodeGraphPin*> PixelRoots;
+        if (OutputNode)
+        {
+            CEdNodeGraphPin* Pins[] = {
+                OutputNode->BaseColorPin, OutputNode->MetallicPin,  OutputNode->RoughnessPin,
+                OutputNode->SpecularPin,  OutputNode->EmissivePin,  OutputNode->AOPin,
+                OutputNode->NormalPin,    OutputNode->OpacityPin
+            };
+            for (CEdNodeGraphPin* P : Pins)
+            {
+                PixelRoots.push_back(P);
+            }
+        }
+
+        Compiler.SetStage(EMaterialCompileStage::Pixel);
+        const TVector<CEdGraphNode*> PixelOrder = BuildEmitOrder(PixelSet, PixelRoots);
+        for (size_t i = 0; i < PixelOrder.size(); ++i)
+        {
+            CEdGraphNode* Node = PixelOrder[i];
             Node->SetDebugExecutionOrder((uint32)i);
 
-            if (Node->GetClass() == CMaterialOutputNode::StaticClass())
-            {
-                continue;
-            }
-
-            if (PixelSet.find(Node) == PixelSet.end())
-            {
-                continue;
-            }
-
-            // Reroute nodes are resolved by GetTypedInputValue; skip them in the emit pass.
-            if (Node->IsRerouteNode())
+            if (Node->GetClass() == CMaterialOutputNode::StaticClass() || Node->IsRerouteNode())
             {
                 continue;
             }
@@ -519,17 +624,13 @@ namespace Lumina
         if (!VertexSet.empty())
         {
             Compiler.SetStage(EMaterialCompileStage::Vertex);
-            for (CEdGraphNode* Node : SortedNodes)
+
+            TVector<CEdNodeGraphPin*> VertexRoots;
+            VertexRoots.push_back(OutputNode ? OutputNode->WorldPositionOffsetPin : nullptr);
+
+            for (CEdGraphNode* Node : BuildEmitOrder(VertexSet, VertexRoots))
             {
-                if (Node->GetClass() == CMaterialOutputNode::StaticClass())
-                {
-                    continue;
-                }
-                if (VertexSet.find(Node) == VertexSet.end())
-                {
-                    continue;
-                }
-                if (Node->IsRerouteNode())
+                if (Node->GetClass() == CMaterialOutputNode::StaticClass() || Node->IsRerouteNode())
                 {
                     continue;
                 }

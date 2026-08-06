@@ -157,6 +157,7 @@ namespace Lumina
         Batch.PixelShader                     = Surface.PixelShader;
         Batch.MeshShader                      = Surface.MeshShader;
         Batch.VisBufferMeshShader             = Surface.VisBufferMeshShader;
+        Batch.VisBufferMeshShaderMasked       = Surface.VisBufferMeshShaderMasked;
         Batch.VisBufferVertexShader           = Surface.VisBufferVertexShader;
         Batch.MaskedVisBufferPixelShader      = Surface.MaskedVisBufferPixelShader;
         Batch.MaskedVisBufferPixelShaderPrim  = Surface.MaskedVisBufferPixelShaderPrim;

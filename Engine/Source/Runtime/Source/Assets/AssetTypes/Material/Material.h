@@ -28,7 +28,8 @@ namespace Lumina
         Pixel,
         Vertex,
         Mesh,                       // MeshletMesh.slang; bound only when the device has mesh shaders
-        VisBufferMesh,              // MeshletVisBuffer.slang; device-gated like Mesh
+        VisBufferMesh,              // MeshletVisBuffer.slang (opaque, position-only output); device-gated like Mesh
+        VisBufferMeshMasked,        // MeshletVisBuffer.slang + VISBUFFER_MASKED_GEOM; masked materials only
         VisBufferVertex,            // MeshletVisBufferVS.slang; vertex-emulation fallback
         MaskedVisBufferPixel,       // VisBufferMaskedPixel.slang (VS path); masked materials only
         MaskedVisBufferPixelPrim,   // VisBufferMaskedPixel.slang + VISBUFFER_PRIMID (mesh path); masked only
@@ -74,6 +75,9 @@ namespace Lumina
         // VisBuffer geometry stage; per-material for WPO. The VisBuffer pass uses the mesh variant when the
         // device supports mesh shaders, else the vertex-emulation variant -- VisBuffer never requires either.
         const FShaderEntry* GetVisBufferMeshShader() const { return VisBufferMeshShader; }
+        // Masked-only VisBuffer geometry (mesh path): emits the interpolants the masked PS needs. Null for
+        // opaque materials, which use the position-only GetVisBufferMeshShader above.
+        const FShaderEntry* GetVisBufferMeshShaderMasked() const { return VisBufferMeshShaderMasked; }
         const FShaderEntry* GetVisBufferVertexShader() const { return VisBufferVertexShader; }
 
         // Masked-only VisBuffer PIXEL shaders: run the opacity graph and alpha-clip cut-out texels BEFORE they
@@ -203,6 +207,9 @@ namespace Lumina
         PROPERTY()
         TVector<uint32>                         VisBufferMeshShaderBinaries;
 
+        /** VisBuffer geometry, masked variant (MeshletVisBuffer.slang + VISBUFFER_MASKED_GEOM); empty for non-masked. */
+        TVector<uint32>                         VisBufferMeshShaderMaskedBinaries;
+
         /** VisBuffer geometry stage, vertex-emulation fallback (MeshletVisBufferVS.slang). */
         PROPERTY()
         TVector<uint32>                         VisBufferVertexShaderBinaries;
@@ -234,6 +241,7 @@ namespace Lumina
         const FShaderEntry*                     PixelShader = nullptr;
         const FShaderEntry*                     MeshShader = nullptr;
         const FShaderEntry*                     VisBufferMeshShader = nullptr;
+        const FShaderEntry*                     VisBufferMeshShaderMasked = nullptr;
         const FShaderEntry*                     VisBufferVertexShader = nullptr;
         const FShaderEntry*                     MaskedVisBufferPixelShader = nullptr;
         const FShaderEntry*                     MaskedVisBufferPixelShaderPrim = nullptr;

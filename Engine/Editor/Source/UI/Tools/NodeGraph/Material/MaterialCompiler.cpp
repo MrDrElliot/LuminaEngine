@@ -371,6 +371,21 @@ namespace Lumina
 			Result.ComponentCount	= GetComponentCount(Result.Type);
 			Result.Value 			= NodeName;
 			Result.Mask  			= Conn->GetComponentMask();
+
+			// A connected value carries whatever its producer published. Absent = Unknown: a node with no
+			// derivative rule must not be mistaken for a constant, or its UV would silently sample the
+			// wrong mip instead of falling back to UV0's gradient.
+			auto It = DerivByVar.find(Result.Value);
+			if (It != DerivByVar.end())
+			{
+				Result.Deriv = It->second.State;
+				Result.DDX   = It->second.DDX;
+				Result.DDY   = It->second.DDY;
+			}
+			else
+			{
+				Result.Deriv = EDerivState::Unknown;
+			}
 		}
 		else
 		{
@@ -383,6 +398,149 @@ namespace Lumina
 		}
 
 		return Result;
+	}
+
+	void FMaterialCompiler::EmitDedupedParamFetch(const FString& TypeStr, const FString& NodeID, const FString& FetchExpr)
+	{
+		auto It = EmittedParamFetches.find(FetchExpr);
+		if (It != EmittedParamFetches.end())
+		{
+			// Same parameter, already loaded in this stage. Downstream nodes address this one by name, so
+			// the variable still has to exist -- it just aliases rather than repeating the fetch.
+			GetActiveChunk().append(TypeStr + " " + NodeID + " = " + It->second + ";\n");
+		}
+		else
+		{
+			GetActiveChunk().append(TypeStr + " " + NodeID + " = " + FetchExpr + ";\n");
+			EmittedParamFetches[FetchExpr] = NodeID;
+		}
+
+		// Material parameters are uniform across the surface, so their screen-space derivative is zero.
+		// Registering that (rather than leaving it Unknown) is what lets a parameter-driven tiling value
+		// still produce a Valid UV gradient downstream.
+		RegisterDeriv(NodeID, EDerivState::Zero);
+	}
+
+	void FMaterialCompiler::RegisterDeriv(const FString& ID, EDerivState State,
+	                                      const FString& DdxExpr, const FString& DdyExpr)
+	{
+		FDerivInfo Info;
+		Info.State = State;
+
+		if (State == EDerivState::Valid)
+		{
+			// Companion chunks, named off the value so a consumer can find them from FInputValue::Value
+			// alone. In the forward lanes SampleTexture2DAuto ignores its gradient arguments, so these
+			// go unreferenced and dead-strip -- the propagation costs nothing outside the deferred pass.
+			Info.DDX = ID + "_DDX";
+			Info.DDY = ID + "_DDY";
+			GetActiveChunk().append("float2 " + Info.DDX + " = " + DdxExpr + ";\n");
+			GetActiveChunk().append("float2 " + Info.DDY + " = " + DdyExpr + ";\n");
+		}
+
+		DerivByVar[ID] = Info;
+	}
+
+	void FMaterialCompiler::RegisterScaledDeriv(const FString& ID, const FInputValue& Source, const FString& ScaleExpr)
+	{
+		switch (Source.Deriv)
+		{
+		case EDerivState::Valid:
+			// d(Source * Scale) = dSource * Scale. Scale is derivative-free here (the callers check), so
+			// the product rule's second term is zero.
+			RegisterDeriv(ID, EDerivState::Valid,
+			              Source.DDX + " * " + ScaleExpr,
+			              Source.DDY + " * " + ScaleExpr);
+			break;
+
+		case EDerivState::Zero:
+			// A constant UV scaled by anything is still constant.
+			RegisterDeriv(ID, EDerivState::Zero);
+			break;
+
+		default:
+			RegisterDeriv(ID, EDerivState::Unknown);
+			break;
+		}
+	}
+
+	void FMaterialCompiler::GetUVGradients(const FInputValue& UV, FString& OutDdx, FString& OutDdy) const
+	{
+		if (UV.Deriv == EDerivState::Valid)
+		{
+			OutDdx = UV.DDX;
+			OutDdy = UV.DDY;
+			return;
+		}
+
+		// Zero and Unknown both land here. Zero would mean every pixel samples one texel, which picks mip 0
+		// and thrashes; UV0's gradient is the honest approximation and matches the pre-propagation behavior.
+		++UVGradientFallbackCount;
+		OutDdx = "UV0_DDX";
+		OutDdy = "UV0_DDY";
+	}
+
+	void FMaterialCompiler::RegisterBinaryDeriv(const FString& ID, const FString& Op,
+	                                            const FInputValue& A, const FString& AExpr,
+	                                            const FInputValue& B, const FString& BExpr,
+	                                            EMaterialInputType ResultType)
+	{
+		// A derivative is only meaningful on something that can reach a UV pin. Wider values are dropped
+		// rather than approximated: RegisterDeriv declares float2 companions, so a float4 chain would not
+		// even type-check.
+		const bool bShapeOK = GetComponentCount(ResultType) <= 2
+		                   && A.ComponentCount <= 2 && B.ComponentCount <= 2;
+
+		if (!bShapeOK || A.Deriv == EDerivState::Unknown || B.Deriv == EDerivState::Unknown)
+		{
+			RegisterDeriv(ID, EDerivState::Unknown);
+			return;
+		}
+
+		const bool bAZero = A.Deriv == EDerivState::Zero;
+		const bool bBZero = B.Deriv == EDerivState::Zero;
+
+		if (bAZero && bBZero)
+		{
+			RegisterDeriv(ID, EDerivState::Zero);
+			return;
+		}
+
+		FString Ddx, Ddy;
+
+		if (Op == "+" || Op == "-")
+		{
+			// d(A +- B) = dA +- dB. A zero side just drops out (negated for the B side of a subtract).
+			if (bAZero)      { Ddx = Op + B.DDX;                       Ddy = Op + B.DDY; }
+			else if (bBZero) { Ddx = A.DDX;                            Ddy = A.DDY; }
+			else             { Ddx = "(" + A.DDX + " " + Op + " " + B.DDX + ")";
+			                   Ddy = "(" + A.DDY + " " + Op + " " + B.DDY + ")"; }
+		}
+		else if (Op == "*")
+		{
+			// Product rule. Scalar operands broadcast against the float2 companions on their own.
+			if (bBZero)      { Ddx = "(" + A.DDX + " * " + BExpr + ")";
+			                   Ddy = "(" + A.DDY + " * " + BExpr + ")"; }
+			else if (bAZero) { Ddx = "(" + AExpr + " * " + B.DDX + ")";
+			                   Ddy = "(" + AExpr + " * " + B.DDY + ")"; }
+			else             { Ddx = "(" + A.DDX + " * " + BExpr + " + " + AExpr + " * " + B.DDX + ")";
+			                   Ddy = "(" + A.DDY + " * " + BExpr + " + " + AExpr + " * " + B.DDY + ")"; }
+		}
+		else if (Op == "/")
+		{
+			// Quotient rule; a constant divisor collapses it to a scale.
+			if (bBZero)      { Ddx = "(" + A.DDX + " / " + BExpr + ")";
+			                   Ddy = "(" + A.DDY + " / " + BExpr + ")"; }
+			else             { Ddx = "((" + A.DDX + " * " + BExpr + " - " + AExpr + " * " + B.DDX + ") / (" + BExpr + " * " + BExpr + "))";
+			                   Ddy = "((" + A.DDY + " * " + BExpr + " - " + AExpr + " * " + B.DDY + ") / (" + BExpr + " * " + BExpr + "))"; }
+		}
+		else
+		{
+			RegisterDeriv(ID, EDerivState::Unknown);
+			return;
+		}
+
+		RegisterDeriv(ID, EDerivState::Valid, Ddx, Ddy);
 	}
 
 	void FMaterialCompiler::SetOwningOutputType(CMaterialInput* AnyInputOnNode, EMaterialInputType Type)
@@ -450,6 +608,8 @@ namespace Lumina
 
 		GetActiveChunk().append(ResultTypeStr + " " + OwningNode + " = " + AValue.Value + RMask + " " + Op + " " + BValue.Value + GMask + ";\n");
 
+		RegisterBinaryDeriv(OwningNode, Op, AValue, AValue.Value + RMask, BValue, BValue.Value + GMask, ResultType);
+
 		// Stamp both type and mask; leaving Mask=None causes downstream consumers to see component count 0 and emit a broken float3() wrap for float4 inputs.
 		SetOwningOutputType(A, ResultType);
 		return ResultType;
@@ -462,6 +622,11 @@ namespace Lumina
 		FString TypeStr = GetVectorType(AValue.Type);
 
 		GetActiveChunk().append(TypeStr + " " + OwningNode + " = " + Func + "(" + AValue.Value + GetSwizzleForMask(AValue.Mask) + ");\n");
+
+		// A function of a derivative-free input is derivative-free. Anything else needs a per-function rule,
+		// so it stays Unknown and falls back rather than claiming a gradient it cannot justify.
+		RegisterDeriv(OwningNode, AValue.Deriv == EDerivState::Zero
+		                        ? EDerivState::Zero : EDerivState::Unknown);
 
 		SetOwningOutputType(A, AValue.Type);
 		return AValue.Type;
@@ -505,6 +670,11 @@ namespace Lumina
 
 		GetActiveChunk().append(TypeStr + " " + OwningNode + " = " + Func + "(" + AValue.Value + ", " + BValue.Value + ", " + CValue.Value + ");\n");
 
+		// Covers lerp/clamp/smoothstep etc. All-constant in, constant out; otherwise Unknown until the
+		// specific function earns a rule (lerp's is dA*(1-T) + dB*T + (B-A)*dT).
+		RegisterDeriv(OwningNode, (AValue.Deriv == EDerivState::Zero && BValue.Deriv == EDerivState::Zero
+		                        && CValue.Deriv == EDerivState::Zero) ? EDerivState::Zero : EDerivState::Unknown);
+
 		SetOwningOutputType(A, ResultType);
 		return ResultType;
 	}
@@ -518,7 +688,7 @@ namespace Lumina
 		}
 
 		FString IndexString = eastl::to_string(ScalarParameters[ParamID].Index);
-		GetActiveChunk().append("float " + NodeID + " = GetMaterialScalar(MaterialIndex, " + IndexString + ");\n");
+		EmitDedupedParamFetch("float", NodeID, "GetMaterialScalar(MaterialIndex, " + IndexString + ")");
 	}
 
 	void FMaterialCompiler::DefineFloat2Parameter(const FString& NodeID, const FName& ParamID, float Value[2])
@@ -530,7 +700,7 @@ namespace Lumina
 		}
 
 		FString IndexString = eastl::to_string(VectorParameters[ParamID].Index);
-		GetActiveChunk().append("float2 " + NodeID + " = GetMaterialVec4(MaterialIndex, " + IndexString + ").xy;\n");
+		EmitDedupedParamFetch("float2", NodeID, "GetMaterialVec4(MaterialIndex, " + IndexString + ").xy");
 	}
 
 	void FMaterialCompiler::DefineFloat3Parameter(const FString& NodeID, const FName& ParamID, float Value[3])
@@ -542,7 +712,7 @@ namespace Lumina
 		}
 
 		FString IndexString = eastl::to_string(VectorParameters[ParamID].Index);
-		GetActiveChunk().append("float3 " + NodeID + " = GetMaterialVec4(MaterialIndex, " + IndexString + ").xyz;\n");
+		EmitDedupedParamFetch("float3", NodeID, "GetMaterialVec4(MaterialIndex, " + IndexString + ").xyz");
 	}
 
 	void FMaterialCompiler::DefineFloat4Parameter(const FString& NodeID, const FName& ParamID, float Value[4])
@@ -554,7 +724,7 @@ namespace Lumina
 		}
 
 		FString IndexString = eastl::to_string(VectorParameters[ParamID].Index);
-		GetActiveChunk().append("float4 " + NodeID + " = GetMaterialVec4(MaterialIndex, " + IndexString + ");\n");
+		EmitDedupedParamFetch("float4", NodeID, "GetMaterialVec4(MaterialIndex, " + IndexString + ")");
 	}
 
 	void FMaterialCompiler::DefineConstantFloat(const FString& ID, float Value)
@@ -606,6 +776,10 @@ namespace Lumina
 		}
 
 		GetActiveChunk().append(TypeStr + " " + OwningNode + " = " + ValueString.Value + ".xy" + ";\n");
+		// Passing a derivative-free value through keeps it derivative-free. BreakFloatN is distinct from
+		// ComponentMask and was the last unruled link in the Break -> Append -> TexCoords tiling chain.
+		RegisterDeriv(OwningNode, ValueString.Deriv == EDerivState::Zero
+		                       ? EDerivState::Zero : EDerivState::Unknown);
 	}
 
 	void FMaterialCompiler::BreakFloat3(CMaterialInput* A)
@@ -626,6 +800,10 @@ namespace Lumina
 		}
 
 		GetActiveChunk().append(TypeStr + " " + OwningNode + " = " + ValueString.Value + ".xyz" + ";\n");
+		// Passing a derivative-free value through keeps it derivative-free. BreakFloatN is distinct from
+		// ComponentMask and was the last unruled link in the Break -> Append -> TexCoords tiling chain.
+		RegisterDeriv(OwningNode, ValueString.Deriv == EDerivState::Zero
+		                       ? EDerivState::Zero : EDerivState::Unknown);
 	}
 
 	void FMaterialCompiler::BreakFloat4(CMaterialInput* A)
@@ -647,6 +825,10 @@ namespace Lumina
 		}
 
 		GetActiveChunk().append(TypeStr + " " + OwningNode + " = " + ValueString.Value + ".xyzw" + ";\n");
+		// Passing a derivative-free value through keeps it derivative-free. BreakFloatN is distinct from
+		// ComponentMask and was the last unruled link in the Break -> Append -> TexCoords tiling chain.
+		RegisterDeriv(OwningNode, ValueString.Deriv == EDerivState::Zero
+		                       ? EDerivState::Zero : EDerivState::Unknown);
 	}
 
 	void FMaterialCompiler::MakeFloat2(CMaterialInput* R, CMaterialInput* G)
@@ -763,6 +945,13 @@ namespace Lumina
 		FString TypeStr = GetVectorType(ResultType);
 
 		GetActiveChunk().append(TypeStr + " " + OwningNode + " = " + TypeStr + "(" + AValue.Value + GetSwizzleForMask(AValue.Mask) + ", " + BValue.Value + GetSwizzleForMask(BValue.Mask) + ");\n");
+
+		// Any function of derivative-free inputs is itself derivative-free. This is what carries a uniform
+		// tiling value through Break/Append on its way to a TexCoords node; without it the whole UV chain
+		// degrades to Unknown and every sample falls back to UV0's gradient.
+		RegisterDeriv(OwningNode, (AValue.Deriv == EDerivState::Zero && BValue.Deriv == EDerivState::Zero)
+		                        ? EDerivState::Zero : EDerivState::Unknown);
+
 		SetOwningOutputType(A, ResultType);
 	}
 
@@ -851,6 +1040,12 @@ namespace Lumina
 		GetActiveChunk().append(GetVectorType(ComponentCount) + " " + ResultName + " = "
 			+ Value.Value + GetSwizzleForMask(Value.Mask) + "." + Swizzle + ";\n");
 
+		// Selecting components of a derivative-free value keeps it derivative-free -- the Break half of the
+		// Break/Append tiling chain. A varying input would need the derivative swizzled to match, which the
+		// float2 companions cannot express for arbitrary component counts, so it stays Unknown.
+		RegisterDeriv(ResultName, Value.Deriv == EDerivState::Zero
+		                        ? EDerivState::Zero : EDerivState::Unknown);
+
 		SetOwningOutputType(A, GetTypeFromComponentCount(ComponentCount));
 	}
 
@@ -909,7 +1104,21 @@ namespace Lumina
 
 		const int32 Index = BindTexture(Texture);
 
-		GetActiveChunk().append("float4 " + ID + " = SampleTexture2D(GetMaterialTexture(MaterialIndex, " + eastl::to_string(Index) + "), SAMPLER_LINEAR_WRAP, " + UVStr + ");\n");
+		// SampleTexture2DAuto carries the analytic gradients: the deferred template samples with them,
+		// the forward templates ignore them (their implicit derivatives are correct there), so the
+		// gradient chunks dead-strip outside the deferred pass.
+		FString Ddx, Ddy;
+		GetUVGradients(UVValue, Ddx, Ddy);
+
+		// Self-diagnosing: when the chain has no analytic derivative the generated shader says which
+		// variable broke it, so a captured shader dump localises the unruled node without a rebuild.
+		if (UVValue.Deriv != EDerivState::Valid)
+		{
+			GetActiveChunk().append("// UV-GRADIENT FALLBACK: '" + UVValue.Value
+				+ "' has no analytic derivative, sampling with UV0's gradient (mip may be too fine).\n");
+		}
+
+		GetActiveChunk().append("float4 " + ID + " = SampleTexture2DAuto(GetMaterialTexture(MaterialIndex, " + eastl::to_string(Index) + "), SAMPLER_LINEAR_WRAP, " + UVStr + ", " + Ddx + ", " + Ddy + ");\n");
 	}
 
 	void FMaterialCompiler::TextureSampleParameter(const FString& ID, const FName& ParamID, CTexture* Texture, CMaterialInput* Input)
@@ -928,7 +1137,21 @@ namespace Lumina
 
 		const int32 Index = BindTextureParameter(ParamID, Texture);
 
-		GetActiveChunk().append("float4 " + ID + " = SampleTexture2D(GetMaterialTexture(MaterialIndex, " + eastl::to_string(Index) + "), SAMPLER_LINEAR_WRAP, " + UVStr + ");\n");
+		// SampleTexture2DAuto carries the analytic gradients: the deferred template samples with them,
+		// the forward templates ignore them (their implicit derivatives are correct there), so the
+		// gradient chunks dead-strip outside the deferred pass.
+		FString Ddx, Ddy;
+		GetUVGradients(UVValue, Ddx, Ddy);
+
+		// Self-diagnosing: when the chain has no analytic derivative the generated shader says which
+		// variable broke it, so a captured shader dump localises the unruled node without a rebuild.
+		if (UVValue.Deriv != EDerivState::Valid)
+		{
+			GetActiveChunk().append("// UV-GRADIENT FALLBACK: '" + UVValue.Value
+				+ "' has no analytic derivative, sampling with UV0's gradient (mip may be too fine).\n");
+		}
+
+		GetActiveChunk().append("float4 " + ID + " = SampleTexture2DAuto(GetMaterialTexture(MaterialIndex, " + eastl::to_string(Index) + "), SAMPLER_LINEAR_WRAP, " + UVStr + ", " + Ddx + ", " + Ddy + ");\n");
 	}
 
 	void FMaterialCompiler::TextureSampleArray(CMaterialGraphNode* Node, int32 TextureIndex, uint32 NumLayers,
@@ -1216,6 +1439,7 @@ namespace Lumina
 		Stats.TextureSamples      = CountSubstring(PixelAll, ".Sample(") + CountSubstring(VertexAll, ".Sample(");
 		Stats.MathOps             = CountMathOps(PixelAll) + CountMathOps(VertexAll);
 		Stats.NoiseOps            = CountNoiseOps(PixelAll) + CountNoiseOps(VertexAll);
+		Stats.UVGradientFallbacks = UVGradientFallbackCount;
 
 		Stats.ScalarParameters    = NumScalarParams;
 		Stats.VectorParameters    = NumVectorParams;
@@ -1387,6 +1611,30 @@ namespace Lumina
 		}
 
 		GetActiveChunk().append("float2 " + ID + " = UV0 * " + Scale + ";\n");
+
+		// Chain rule: d(UV0 * Scale) = dUV0 * Scale. Without this the deferred pass sampled tiled materials
+		// with UV0's raw gradient, i.e. log2(Scale) mip levels too fine -- 5 levels (1024x the texel working
+		// set) at 32x tiling, which is what made a tiled-terrain view VRAM-bound.
+		//
+		// A connected Tiling pin can itself vary per pixel; the product rule's second term is dropped
+		// unless that pin is derivative-free, so a varying scale degrades to Unknown rather than lying.
+		FInputValue UV0Value;
+		UV0Value.Value = "UV0";
+		UV0Value.Deriv = EDerivState::Valid;
+		UV0Value.DDX   = "UV0_DDX";
+		UV0Value.DDY   = "UV0_DDY";
+
+		const bool bScaleIsConstant = (Tiling == nullptr || !Tiling->HasConnection())
+		                           || TilingValue.Deriv == EDerivState::Zero;
+
+		if (bScaleIsConstant)
+		{
+			RegisterScaledDeriv(ID, UV0Value, Scale);
+		}
+		else
+		{
+			RegisterDeriv(ID, EDerivState::Unknown);
+		}
 	}
 
 	void FMaterialCompiler::Panner(CMaterialInput* UV, CMaterialInput* Time, CMaterialInput* Speed)
@@ -1399,6 +1647,23 @@ namespace Lumina
 		const FString OwningNode = UV->GetOwningNode()->GetNodeFullName();
 
 		GetActiveChunk().append("float2 " + OwningNode + " = " + UVValue.Value + " + " + SpeedValue.Value + " * " + TimeValue.Value + ";\n");
+
+		// A pan is a translation, so d(UV + Speed*Time) = dUV as long as the offset does not vary per pixel
+		// (Speed/Time are uniforms in every real graph). Panning must not change the mip.
+		const bool bOffsetIsConstant = SpeedValue.Deriv == EDerivState::Zero
+		                            && TimeValue.Deriv  == EDerivState::Zero;
+		if (bOffsetIsConstant && UVValue.Deriv == EDerivState::Valid)
+		{
+			RegisterDeriv(OwningNode, EDerivState::Valid, UVValue.DDX, UVValue.DDY);
+		}
+		else if (bOffsetIsConstant && UVValue.Deriv == EDerivState::Zero)
+		{
+			RegisterDeriv(OwningNode, EDerivState::Zero);
+		}
+		else
+		{
+			RegisterDeriv(OwningNode, EDerivState::Unknown);
+		}
 
 		PannerNode->Output->SetInputType(EMaterialInputType::Float2);
 		PannerNode->Output->SetComponentMask(EComponentMask::RG);
@@ -1418,6 +1683,28 @@ namespace Lumina
 			+ OwningNode + "_C.x * " + OwningNode + "_K - " + OwningNode + "_C.y * " + OwningNode + "_S, "
 			+ OwningNode + "_C.x * " + OwningNode + "_S + " + OwningNode + "_C.y * " + OwningNode + "_K) + " + CenterValue.Value + ";\n");
 
+		// A rotation is linear: d(R*(UV - C) + C) = R*dUV, provided the angle and centre are uniform.
+		// Reuses the _S/_K sin/cos locals emitted just above.
+		if (UVValue.Deriv == EDerivState::Valid
+		 && RotValue.Deriv == EDerivState::Zero
+		 && CenterValue.Deriv == EDerivState::Zero)
+		{
+			auto Rotate = [&](const FString& D)
+			{
+				return "float2(" + D + ".x * " + OwningNode + "_K - " + D + ".y * " + OwningNode + "_S, "
+				                 + D + ".x * " + OwningNode + "_S + " + D + ".y * " + OwningNode + "_K)";
+			};
+			RegisterDeriv(OwningNode, EDerivState::Valid, Rotate(UVValue.DDX), Rotate(UVValue.DDY));
+		}
+		else if (UVValue.Deriv == EDerivState::Zero && RotValue.Deriv == EDerivState::Zero)
+		{
+			RegisterDeriv(OwningNode, EDerivState::Zero);
+		}
+		else
+		{
+			RegisterDeriv(OwningNode, EDerivState::Unknown);
+		}
+
 		SetOwningOutputType(UV, EMaterialInputType::Float2);
 	}
 
@@ -1429,6 +1716,17 @@ namespace Lumina
 		FInputValue OffsetValue = GetTypedInputValue(Offset, "float2(0.0, 0.0)");
 
 		GetActiveChunk().append("float2 " + OwningNode + " = " + UVValue.Value + " * " + TilingValue.Value + " + " + OffsetValue.Value + ";\n");
+
+		// Affine in UV: d(UV*T + O) = dUV * T, provided the tiling and offset are themselves constant.
+		if (TilingValue.Deriv == EDerivState::Zero && OffsetValue.Deriv == EDerivState::Zero)
+		{
+			RegisterScaledDeriv(OwningNode, UVValue, TilingValue.Value);
+		}
+		else
+		{
+			RegisterDeriv(OwningNode, EDerivState::Unknown);
+		}
+
 		SetOwningOutputType(UV, EMaterialInputType::Float2);
 	}
 
@@ -1926,6 +2224,8 @@ namespace Lumina
 	void FMaterialCompiler::Time(const FString& ID)
 	{
 		GetActiveChunk().append("float " + ID + " = GetTime();\n");
+		// GetTime() is frame-uniform: zero screen-space derivative.
+		RegisterDeriv(ID, EDerivState::Zero);
 	}
 
 	void FMaterialCompiler::ScreenPosition(const FString& ID, bool bRaw)
@@ -2178,6 +2478,21 @@ namespace Lumina
 		FInputValue AValue = GetTypedInputValue(A, N->ConstA);
 		FString TypeStr = GetVectorType(AValue.Type);
 		GetActiveChunk().append(TypeStr + " " + OwningNode + " = 1.0 - " + AValue.Value + GetSwizzleForMask(AValue.Mask) + ";\n");
+
+		// d(1 - A) = -dA. The constant contributes nothing.
+		if (AValue.Deriv == EDerivState::Valid && AValue.ComponentCount <= 2)
+		{
+			RegisterDeriv(OwningNode, EDerivState::Valid, "-" + AValue.DDX, "-" + AValue.DDY);
+		}
+		else if (AValue.Deriv == EDerivState::Zero)
+		{
+			RegisterDeriv(OwningNode, EDerivState::Zero);
+		}
+		else
+		{
+			RegisterDeriv(OwningNode, EDerivState::Unknown);
+		}
+
 		SetOwningOutputType(A, AValue.Type);
 	}
 

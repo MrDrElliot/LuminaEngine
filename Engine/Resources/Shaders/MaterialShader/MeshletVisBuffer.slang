@@ -4,11 +4,19 @@
 // VisBuffer geometry MESH shader: rasterize meshlets writing a per-primitive visibility ID + depth. One
 // workgroup per meshlet, like MeshletMesh.
 //
-// One module serves BOTH opaque and masked via the VISBUFFER_MASKED spec constant (mirrors MeshletVisBufferVS):
-//   - 0 (opaque): emit only clip position per vertex; the base interpolants are zeroed and dead-strip per-PSO
-//     (the opaque pixel shader reads only VisID). The lean original behavior.
-//   - 1 (masked): emit the full per-vertex base interpolants so the masked pixel shader can run the opacity
-//     graph and discard cut-out texels before they write VisID/depth.
+// Compiled TWICE, selected by the VISBUFFER_MASKED_GEOM macro, because the two cases need different OUTPUT
+// TYPES and a spec constant cannot change one:
+//   - undefined (opaque): per-vertex output is position only. The opaque mesh-path pixel shader reads
+//     SV_PrimitiveID and nothing else, so there is no interpolant for it to consume.
+//   - defined (masked): full per-vertex base interpolants, so the masked pixel shader can run the opacity
+//     graph and discard cut-out texels before they write VisID/depth. Compiled for masked materials only.
+//
+// This used to be one module branching on a spec constant, writing a zeroed FBaseVertexOutput on the opaque
+// path and claiming the interpolants "dead-strip per-PSO". They do not: mesh output storage is allocated
+// from the DECLARED type at pipeline creation, so every opaque meshlet reserved 124B per vertex (7.9KB per
+// workgroup) to carry 16B of SV_Position, and the geometry stage still fed TRAM for attributes nothing read.
+// Measured at 64.2% of warp-launch cycles stalled on PS TRAM fill. See FDepthOnlyVertexOutput.
+//
 // WPO always applies (the rasterized geometry must match what the deferred pass reconstructs).
 //
 // VisID is per-PRIMITIVE via the SV_PrimitiveID builtin (a user-defined per-primitive fragment input can't be
@@ -38,7 +46,13 @@ struct FVisPrimitive
     uint VisID : SV_PrimitiveID;
 };
 
-[vk::constant_id(4)] const uint VISBUFFER_MASKED = 0;
+// The per-vertex output type this variant declares. Masked needs the interpolant set; opaque needs a clip
+// position and nothing else (VisID is per-PRIMITIVE, below).
+#ifdef VISBUFFER_MASKED_GEOM
+typedef FBaseVertexOutput      FVisVertexOutput;
+#else
+typedef FDepthOnlyVertexOutput FVisVertexOutput;
+#endif
 
 // Sized to the VERTEX phase (MESHLET_MAX_VERTICES = 64), not the triangle cap (124): the vertex phase is the
 // expensive one (BDA load + normal matrix + WPO graph + 2 mat-vec muls), so all 64 lanes must do vertex work.
@@ -51,9 +65,9 @@ void MeshMain(
     uint3 GroupID   : SV_GroupID,
     uint  ThreadID  : SV_GroupIndex,
     uint  DrawIndex : SV_DrawIndex,
-    out vertices   FBaseVertexOutput Verts[MESHLET_MAX_VERTICES],
-    out indices    uint3             Tris[MESHLET_MAX_TRIANGLES],
-    out primitives FVisPrimitive     Prims[MESHLET_MAX_TRIANGLES])
+    out vertices   FVisVertexOutput Verts[MESHLET_MAX_VERTICES],
+    out indices    uint3            Tris[MESHLET_MAX_TRIANGLES],
+    out primitives FVisPrimitive    Prims[MESHLET_MAX_TRIANGLES])
 {
     uint MeshletSlot = LoadMeshletBase(DrawIndex) + GroupID.x;
     FMeshletRef Ref  = ResolveSurfaceMeshlet(MeshletSlot);
@@ -80,17 +94,13 @@ void MeshMain(
         $MATERIAL_VERTEX_INPUTS
         WorldPos.xyz += Material.WorldPositionOffset;
 
-        if (VISBUFFER_MASKED != 0u)
-        {
-            Verts[ThreadID] = MakeBaseVertexOutput(Ref, W, WorldPos.xyz);
-        }
-        else
-        {
-            // Opaque: only the clip position is consumed; interpolants stay zeroed and dead-strip per-PSO.
-            FBaseVertexOutput O = MakeDegenerateBaseVertexOutput();
-            O.Position = CameraClipPosition(CameraViewPosition(WorldPos.xyz));
-            Verts[ThreadID] = O;
-        }
+#ifdef VISBUFFER_MASKED_GEOM
+        Verts[ThreadID] = MakeBaseVertexOutput(Ref, W, WorldPos.xyz);
+#else
+        FVisVertexOutput O;
+        O.Position = CameraClipPosition(CameraViewPosition(WorldPos.xyz));
+        Verts[ThreadID] = O;
+#endif
     }
 
     // Triangle phase grid-strides the 64 lanes (2 iterations at the 124-tri cap). VisID packs the LOOP var.

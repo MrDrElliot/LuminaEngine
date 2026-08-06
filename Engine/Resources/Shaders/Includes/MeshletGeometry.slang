@@ -239,6 +239,20 @@ struct FBaseVertexOutput
     precise float4 Position            : SV_Position;
 };
 
+// Depth-only geometry output: position and nothing else. A mesh shader's output storage is allocated from
+// the declared type at pipeline creation, NOT from what the lanes actually write -- so a depth-only pass
+// that declares FBaseVertexOutput reserves 124B per vertex (7.9KB per workgroup at MESHLET_MAX_VERTICES) to
+// carry 16B of SV_Position. That allocation is what caps mesh-workgroup residency, and the cascade pass was
+// measured at 2.0 active warps/cycle (4.2% occupancy) because of it. Zeroing the interpolants at runtime,
+// as the old degenerate-output path did, does not give the storage back.
+//
+// Only for passes with no interpolant consumer: the cascades bind no pixel shader at all, and the point/spot
+// shadow PS (ShadowMappingPixel.slang) declares no fragment inputs.
+struct FDepthOnlyVertexOutput
+{
+    precise float4 Position : SV_Position;
+};
+
 // VisBuffer vertex-emulation geometry output: the base interpolants + the flat VisID. The interpolants are
 // only computed when the VISBUFFER_MASKED spec constant is set (so the masked pixel shader can run the opacity
 // graph -- which may read UV / normal / world position); for opaque materials the spec constant is 0 and the

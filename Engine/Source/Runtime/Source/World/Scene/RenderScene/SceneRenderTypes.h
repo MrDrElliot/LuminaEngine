@@ -1089,9 +1089,22 @@ namespace Lumina
         //
         // Takes a pad slot so the struct size, and the layout Common.slang mirrors, are unchanged.
         uint32 BoneNum;
-        // One pad slot spent on bCascadeHZBMidValid above, so the struct size and the layout Common.slang
-        // mirrors are unchanged. VERIFY_SSBO_ALIGNMENT below is what caught spending it without taking one.
-        uint32 _CullPad1;
+
+        // Shadow LOD inputs, shared by BOTH cull passes.
+        //
+        // These used to live in CullInstances' push constants, because only that pass resolved the shadow
+        // LOD -- it published the resulting meshlet range on FGPUInstance and the meshlet cull just read
+        // it. Cascades now pick per cascade index, which means the meshlet cull re-derives the pick when
+        // it walks, and a pick that disagrees with the one the reservation was sized from drops meshlets
+        // at the region boundary. Both read them from here so there is only one copy to disagree with.
+        // ShadowLODBias took the old _CullPad1 slot (the one bCascadeHZBMidValid had spent).
+        int32  ShadowLODBias;
+        // Squared FSceneRenderSettings::ShadowCoarseLODDistance. Past it a caster may use the sloppy
+        // LODs (4-5), whose holes stay sub-texel at that range. 0 disables the relaxation entirely.
+        float  ShadowCoarseLODDistSq;
+        uint32 _CullPad2;
+        uint32 _CullPad3;
+        uint32 _CullPad4;
     };
 
     VERIFY_SSBO_ALIGNMENT(FCullData)

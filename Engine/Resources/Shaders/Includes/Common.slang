@@ -742,7 +742,14 @@ struct FCullData
     float    CascadePyramidHeight;
     uint     CascadePyramidMipCount;
     uint     BoneNum;                   // entries in Bones(); an index bound, not a frame total
-    uint     _CullPad1;                 // one slot spent on bCascadeHZBMidValid above
+    // Shadow LOD inputs. They live here rather than in one pass's push constants because BOTH the
+    // instance cull (which reserves draw-list room) and the meshlet cull (which walks it) now make the
+    // per-cascade pick, and a pick that disagrees between them drops meshlets. Took _CullPad1.
+    int      ShadowLODBias;
+    float    ShadowCoarseLODDistSq;     // past this, shadow LOD caps at MESHLET_MAX_COARSE_SHADOW_LOD; 0 = never
+    uint     _CullPad2;
+    uint     _CullPad3;
+    uint     _CullPad4;
 };
 
 // Debug visualization modes. Must match Lumina::ERenderSceneDebugFlags.

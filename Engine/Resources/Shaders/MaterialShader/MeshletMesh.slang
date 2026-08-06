@@ -1,10 +1,18 @@
 #pragma once
 #include "Includes/MeshletGeometry.slang"
 
-// Mesh-shader version of the meshlet geometry path: ONE workgroup per meshlet. It shares all geometry
-// with MeshletGeometry.slang and emits the SAME FBaseVertexOutput as MeshletVertex.slang, so the
-// fragment shader (BasePixelPass) is identical across both paths. Pass is chosen by the EPass spec
-// constant, exactly mirroring MeshletVertex.slang.
+// Mesh-shader version of the meshlet geometry path: ONE workgroup per meshlet. Shares all geometry with
+// MeshletGeometry.slang.
+//
+// DEPTH-ONLY. The renderer binds this from exactly one place -- BindShadowBatchPipeline -- which always
+// sets EMeshPass::Shadow, so EPASS_BASE is unreachable here: the forward base pass now runs through
+// VisBuffer + DeferredMaterial, and MeshletVertex.slang keeps the base path for translucency. That is why
+// the output is FDepthOnlyVertexOutput and not FBaseVertexOutput: carrying the full interpolant struct
+// reserved 124B per vertex of mesh output storage for a pass whose only consumer reads SV_Position, and
+// that reservation is what held cascade occupancy at 2.0 warps/cycle. See FDepthOnlyVertexOutput.
+//
+// The vertex load and world transform below still run in full, because the material vertex graph feeding
+// World Position Offset may read the normal, tangent, UV or color. Only the OUTPUT is narrowed.
 //
 // Feeding contract (renderer, per CmdDrawMeshTasksIndirect):
 //   - groupCountX     = surviving meshlets for this (view, material batch)
@@ -48,8 +56,8 @@ void MeshMain(
     uint3 GroupID   : SV_GroupID,
     uint  ThreadID  : SV_GroupIndex,
     uint  DrawIndex : SV_DrawIndex,
-    out vertices FBaseVertexOutput Verts[MESHLET_MAX_VERTICES],
-    out indices  uint3             Tris[MESHLET_MAX_TRIANGLES])
+    out vertices FDepthOnlyVertexOutput Verts[MESHLET_MAX_VERTICES],
+    out indices  uint3                  Tris[MESHLET_MAX_TRIANGLES])
 {
     uint MeshletSlot = LoadMeshletBase(DrawIndex) + GroupID.x;
     FMeshletRef Ref  = ResolveMeshlet(MeshletSlot, EPass == EPASS_SHADOW);
@@ -79,23 +87,14 @@ void MeshMain(
 
         const float3 FinalWorldPos = WorldPos.xyz;
 
-        FBaseVertexOutput O;
-        if (EPass == EPASS_BASE)
+        FDepthOnlyVertexOutput O;
+        if (EPass == EPASS_SHADOW)
         {
-            O = MakeBaseVertexOutput(Ref, W, FinalWorldPos);
+            O.Position = mul(GetShadowViewProjection(Pass().ShadowDataIndex, (uint)Pass().ViewIndex), float4(FinalWorldPos, 1.0));
         }
-        else
+        else // EPASS_DEPTH -- identical path to the base pass's SV_Position for the equal-depth test.
         {
-            // Depth + Shadow: position only; interpolants zeroed (no fragment stage reads them).
-            O = MakeDegenerateBaseVertexOutput();
-            if (EPass == EPASS_SHADOW)
-            {
-                O.Position = mul(GetShadowViewProjection(Pass().ShadowDataIndex, (uint)Pass().ViewIndex), float4(FinalWorldPos, 1.0));
-            }
-            else // EPASS_DEPTH -- identical path to Base's SV_Position for the equal-depth test.
-            {
-                O.Position = CameraClipPosition(CameraViewPosition(FinalWorldPos));
-            }
+            O.Position = CameraClipPosition(CameraViewPosition(FinalWorldPos));
         }
         Verts[ThreadID] = O;
     }

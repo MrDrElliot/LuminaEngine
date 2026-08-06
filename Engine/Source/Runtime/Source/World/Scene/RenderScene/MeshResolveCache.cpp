@@ -344,6 +344,7 @@ namespace Lumina
         R.PixelShader                    = Material->GetPixelShader();
         R.MeshShader                     = ConcreteMaterial ? ConcreteMaterial->GetMeshShader() : nullptr;
         R.VisBufferMeshShader            = ConcreteMaterial ? ConcreteMaterial->GetVisBufferMeshShader() : nullptr;
+        R.VisBufferMeshShaderMasked      = ConcreteMaterial ? ConcreteMaterial->GetVisBufferMeshShaderMasked() : nullptr;
         R.VisBufferVertexShader          = ConcreteMaterial ? ConcreteMaterial->GetVisBufferVertexShader() : nullptr;
         R.MaskedVisBufferPixelShader     = ConcreteMaterial ? ConcreteMaterial->GetMaskedVisBufferPixelShader() : nullptr;
         R.MaskedVisBufferPixelShaderPrim = ConcreteMaterial ? ConcreteMaterial->GetMaskedVisBufferPixelShaderPrim() : nullptr;
