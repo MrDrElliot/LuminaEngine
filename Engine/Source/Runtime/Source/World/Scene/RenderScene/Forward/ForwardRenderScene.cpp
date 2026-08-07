@@ -97,12 +97,6 @@ namespace Lumina
         // once without the command needing a handle to any of them.
         static TAtomic<uint32> GReflectionProbeRebakeRequests{0};
 
-        static TConsoleVar<bool> CVarProbeDebugLog(
-            "r.ReflectionProbes.DebugLog",
-            false,
-            "Log reflection-probe extract/upload/bake state on change. Pairs with the Probe Influence "
-            "and Probe Radiance view modes for tracking down probes that read as sky.");
-
         static FAutoConsoleCommand GCmdRebakeReflectionProbes(
             "r.ReflectionProbes.Rebake",
             "Recapture every reflection probe. Needed after moving world geometry, which does not itself "
@@ -970,24 +964,6 @@ namespace Lumina
         }
 
         ScheduleReflectionProbeBake(Frame);
-
-        // Change-gated so it stays quiet once things settle, but catches the transitions that matter:
-        // probes extracted but never marked baked, a mask that keeps getting wiped, a bake that never
-        // gets scheduled. Behind r.ReflectionProbes.DebugLog.
-        {
-            const uint64 State = ((uint64)Probes.size())
-                               | ((uint64)BakedProbeMask << 8)
-                               | ((uint64)PendingProbeBakes.size() << 40)
-                               | ((uint64)(Frame.ReflectionProbes.BakingProbe + 1) << 48);
-            if (State != LastProbeDiagState && CVarProbeDebugLog.GetValue())
-            {
-                LastProbeDiagState = State;
-                LOG_WARN("[Probe] Extract: count={} bakedMask=0x{:X} queued={} scheduled={} view={} needsRebake={}",
-                         Probes.size(), BakedProbeMask, PendingProbeBakes.size(),
-                         Frame.ReflectionProbes.BakingProbe, Frame.ReflectionProbes.BakeViewIndex,
-                         Frame.ReflectionProbes.bNeedsRebake ? 1 : 0);
-            }
-        }
     }
 
     void FForwardRenderScene::ScheduleReflectionProbeBake(FFrameData& Frame)
@@ -1635,20 +1611,6 @@ namespace Lumina
             LOG_WARN("[Probe] Bake SKIPPED: captureCube={} probeArray={} (targets not allocated)",
                      CaptureCube.IsValid() ? 1 : 0, ProbeArray.IsValid() ? 1 : 0);
             return;
-        }
-
-        // One line per bake: confirms the pass runs, which cull views the faces got, and how much
-        // geometry the shared cull actually produced for them to draw.
-        if (CVarProbeDebugLog.GetValue())
-        {
-            LOG_WARN("[Probe] Bake RUN: probe={} faceSize={} cullViews=[{},{},{},{},{},{}] drawCmds={} capturePos=({:.2f},{:.2f},{:.2f})",
-                     Bake.BakingProbe, Bake.BakeFaceSize,
-                     Bake.FaceCullViews[0], Bake.FaceCullViews[1], Bake.FaceCullViews[2],
-                     Bake.FaceCullViews[3], Bake.FaceCullViews[4], Bake.FaceCullViews[5],
-                     Frame.Geometry.DrawCommands.size(),
-                     Bake.FaceVolumes[0].GetViewPosition().x,
-                     Bake.FaceVolumes[0].GetViewPosition().y,
-                     Bake.FaceVolumes[0].GetViewPosition().z);
         }
 
         LUMINA_PROFILE_SECTION_COLORED("Reflection Probe Bake", tracy::Color::SkyBlue3);
@@ -3828,23 +3790,6 @@ namespace Lumina
                 InitReflectionProbeTargets();
                 ProbeBufferAddr = RHI::Core::CopyTransientArray(Frame.ReflectionProbes.Probes.data(),
                                                                 Frame.ReflectionProbes.Probes.size());
-            }
-
-            // Temporary diagnostic: the render phase's half of the plumbing. Change-gated.
-            {
-                const FSceneImage& DiagArray = NamedImages[(int)ENamedImage::ProbePrefiltered];
-                const uint64 State = ((uint64)NumActiveProbes)
-                                   | ((uint64)(ProbeBufferAddr != 0 ? 1 : 0) << 8)
-                                   | ((uint64)(DiagArray.IsValid() ? 1 : 0) << 9)
-                                   | ((uint64)DiagArray.GetNumMips() << 16)
-                                   | ((uint64)(uint32)(DiagArray.GetResourceID() + 1) << 24);
-                if (State != LastProbeRenderDiagState && CVarProbeDebugLog.GetValue())
-                {
-                    LastProbeRenderDiagState = State;
-                    LOG_WARN("[Probe] Render: numActive={} bufferAddr={} arrayValid={} arraySRV={} mips={}",
-                             NumActiveProbes, ProbeBufferAddr != 0 ? "set" : "NULL",
-                             DiagArray.IsValid() ? 1 : 0, DiagArray.GetResourceID(), DiagArray.GetNumMips());
-                }
             }
 
             // GPU-built this frame (ScanPrefix* dispatches below), read by the cull's binary search.

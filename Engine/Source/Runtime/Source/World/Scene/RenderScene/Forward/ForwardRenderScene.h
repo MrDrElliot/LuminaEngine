@@ -1072,9 +1072,6 @@ namespace Lumina
         // Round-robin position over UpdateMode::Always probes, so several of them share the one
         // bake-per-frame budget instead of the lowest index monopolizing it.
         uint32                                  AlwaysProbeCursor = 0;
-        // Temporary probe diagnostics: last logged state, so the logs fire on change only.
-        uint64                                  LastProbeDiagState = ~0ull;
-        uint64                                  LastProbeRenderDiagState = ~0ull;
 
         void InitReflectionProbeTargets();
         // Resizes the capture scratch cube to match the pending bake's face size. WaitIdle-gated, so

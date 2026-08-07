@@ -28,6 +28,14 @@ public readonly unsafe partial struct Physics
         return new RaycastHit(new Entity(Result.Entity), Result.BodyId, Result.Point, Result.Normal, Result.Distance, Result.Fraction, Result.BoneIndex);
     }
 
+    /// Opens a rigid-body creation batch: every body spawned inside the using block is inserted into the
+    /// broadphase together when the block exits, rather than one at a time. Use this for any bulk spawn.
+    /// Bodies are not live until the block closes, so don't read BodyId or apply impulses inside it.
+    public FPhysicsBatchScope Batch()
+    {
+        return new FPhysicsBatchScope(this);
+    }
+
     /// Largest overlap/sweep result set a single allocating query returns (extras are dropped).
     public const int MaxQueryResults = 256;
 
@@ -341,4 +349,10 @@ public readonly unsafe partial struct Physics
 
     [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Physics_SetSurfaceVelocity")]
     private partial void SetSurfaceVelocity(uint Entity, FVector3 Linear, FVector3 Angular);
+
+    // Driven by FPhysicsBatchScope; call Batch() rather than these directly so the pair stays balanced.
+    [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Physics_BeginBodyBatch")]
+    internal partial void BeginBodyBatch();
+    [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Physics_EndBodyBatch")]
+    internal partial void EndBodyBatch();
 }

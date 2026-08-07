@@ -469,6 +469,18 @@ LUMINA_DOTNET_EXPORT(void, Physics_DeactivateBody)(uint64 World, uint32 Entity)
     }
 }
 
+// Collect every rigid body constructed until the matching End, then insert them with one broadphase
+// prepare/finalize instead of one per body. Nests; game thread only. See LuminaSharp.Physics.Batch().
+LUMINA_DOTNET_EXPORT(void, Physics_BeginBodyBatch)(uint64 World)
+{
+    if (Physics::IPhysicsScene* S = SceneOf(World)) { S->BeginBodyBatch(); }
+}
+
+LUMINA_DOTNET_EXPORT(void, Physics_EndBodyBatch)(uint64 World)
+{
+    if (Physics::IPhysicsScene* S = SceneOf(World)) { S->EndBodyBatch(); }
+}
+
 namespace
 {
     // Resolve one entity to its body id and stage it as an ignore list (empty if it has no body).

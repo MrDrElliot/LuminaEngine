@@ -45,10 +45,24 @@ namespace Lumina
     //
     // Compile-time only, by design: a cache hit never reaches here. The cache is keyed on the transitive
     // source hash, so anything that could change a module recompiles it and validates then.
+    //
+    // OFF by default: it costs a process spawn per module on a cold cache, and the shaders are clean as
+    // of the sweep that introduced this. Turn it on when touching shader code, and after any change to a
+    // struct reached by device address.
     static TConsoleVar<int32> CVarValidateShaders(
         "r.Shaders.Validate",
-        1,
-        "Run spirv-val over every compiled shader (editor only). Requires VULKAN_SDK.");
+        0,
+        "Run spirv-val over every compiled shader (editor only). Requires VULKAN_SDK. "
+        "Also enabled for a whole session with -validateshaders.");
+
+    // The CVar alone cannot turn this on for the startup batch: FConsoleRegistry::LoadFromConfig is a
+    // stub, so nothing has set it by the time Initialize compiles every shader. The switch is what
+    // reaches that, and it covers the per-compile path too so one flag means "validate this session".
+    static bool IsShaderValidationEnabled()
+    {
+        static const bool bForced = GCommandLine != nullptr && GCommandLine->Has("validateshaders");
+        return bForced || CVarValidateShaders.GetValue() != 0;
+    }
 
     // The engine creates its device at Vulkan 1.4, so that is the environment the module has to be legal
     // in. An older SDK's spirv-val rejects the flag itself rather than the module -- its complaint is
@@ -64,8 +78,7 @@ namespace Lumina
             const char* SDK = std::getenv("VULKAN_SDK");
             if (SDK == nullptr || *SDK == '\0')
             {
-                LOG_WARN("Shader validation is enabled but VULKAN_SDK is unset, so spirv-val cannot run. "
-                         "Install the Vulkan SDK or set r.Shaders.Validate 0.");
+                LOG_WARN("Shader validation was requested but VULKAN_SDK is unset, so spirv-val cannot run.");
                 return FString();
             }
 
@@ -78,7 +91,7 @@ namespace Lumina
             Paths::Normalize(Candidate);
             if (!Paths::Exists(Candidate))
             {
-                LOG_WARN("Shader validation is enabled but spirv-val was not found at '{}'.", Candidate.c_str());
+                LOG_WARN("Shader validation was requested but spirv-val was not found at '{}'.", Candidate.c_str());
                 return FString();
             }
 
@@ -98,7 +111,7 @@ namespace Lumina
     // turn a diagnostic into an outage.
     static void ValidateSpirv(TSpan<const uint32> Spirv, FStringView DebugName)
     {
-        if (CVarValidateShaders.GetValue() == 0 || Spirv.empty())
+        if (!IsShaderValidationEnabled() || Spirv.empty())
         {
             return;
         }
@@ -167,14 +180,7 @@ namespace Lumina
     // those modules are validated on their own when the material compiles.
     static void ValidateMaterialTemplates(IShaderCompiler& Compiler)
     {
-        if (CVarValidateShaders.GetValue() == 0 || GetSpirvValidatorPath().empty())
-        {
-            return;
-        }
-
-        // Reachable at startup, unlike the CVar: FConsoleRegistry::LoadFromConfig is still a stub, so
-        // nothing can lower r.Shaders.Validate before Initialize runs.
-        if (GCommandLine != nullptr && GCommandLine->Has("noshadervalidation"))
+        if (!IsShaderValidationEnabled() || GetSpirvValidatorPath().empty())
         {
             return;
         }
@@ -222,7 +228,7 @@ namespace Lumina
 
         if (Submitted > 0)
         {
-            LOG_INFO("Validating {} material template(s) against spirv-val (-noshadervalidation to skip).", Submitted);
+            LOG_INFO("Validating {} material template(s) against spirv-val.", Submitted);
         }
     }
 

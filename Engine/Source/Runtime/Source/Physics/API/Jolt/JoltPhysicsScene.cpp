@@ -904,6 +904,9 @@ namespace Lumina::Physics
                 PendingThisStep.swap(PendingRigidBodyCreations);
             }
 
+            // Batched, not one-by-one: a streamed chunk or a mid-step spawn burst lands here in bulk, and
+            // the per-body AddBody path would dirty the broadphase quadtree once per body.
+            PendingDrainScratch.clear();
             while (!PendingThisStep.empty())
             {
                 const entt::entity Entity = PendingThisStep.front();
@@ -911,9 +914,11 @@ namespace Lumina::Physics
 
                 if (World->IsValidEntity(Entity))
                 {
-                    CreateRigidBodyImmediate(ECS::GetWorldRegistry(*World), Entity);
+                    PendingDrainScratch.push_back(Entity);
                 }
             }
+
+            CreateRigidBodiesBatched(PendingDrainScratch);
         }
 
         // Build any component-authored joints whose bodies are now ready (pre-step, so locking is safe).
@@ -2469,9 +2474,24 @@ namespace Lumina::Physics
     // Collision geometry comes from LOD 0's meshlets, which every mesh keeps after upload (the raw index and
     // vertex streams are dropped). Sourced from the resource rather than a CMesh so the dynamic-mesh path --
     // which owns an FMeshResource without owning a CMesh -- shares exactly this builder.
+    // One LOD-0 meshlet's slice of the output arrays. Precomputing these turns the gather into disjoint
+    // writes, so it sizes each array exactly once and fills it in parallel.
+    struct FColliderMeshletSlice
+    {
+        uint32 Meshlet;
+        uint32 VertexOut;
+        uint32 TriangleOut;
+    };
+
+    // Meshlets per parallel chunk. A meshlet is ~64 verts, so anything under this runs inline rather than
+    // paying job dispatch for a handful of kilobytes.
+    static constexpr uint32 kColliderGatherGrain = 64;
+
     static JPH::ShapeRefC BuildMeshColliderShape(const FMeshResource& Resource, FStringView DebugName,
                                                  const FVector3& Scale, bool bConvex)
     {
+        LUMINA_PROFILE_SCOPE();
+
         const FMeshletData& MD = Resource.MeshletData;
 
         if (MD.IsEmpty() || Resource.bSkinnedMesh)
@@ -2479,70 +2499,131 @@ namespace Lumina::Physics
             return nullptr;
         }
 
-        JPH::VertexList         Vertices;
-        JPH::IndexedTriangleList Triangles;
-
-        for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
+        TVector<FColliderMeshletSlice> Slices;
+        uint32 TotalVertices  = 0;
+        uint32 TotalTriangles = 0;
         {
-            const uint32 Offset = Surface.LODMeshletOffset[0];
-            const uint32 Count  = Surface.LODMeshletCount[0];
-            for (uint32 i = 0; i < Count; ++i)
+            LUMINA_PROFILE_SECTION("Collider::PrefixSum");
+
+            uint32 MeshletCount = 0;
+            for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
             {
-                const FMeshlet& M       = MD.Meshlets[Offset + i];
-                const uint32 BaseVertex = (uint32)Vertices.size();
+                MeshletCount += Surface.LODMeshletCount[0];
+            }
+            Slices.reserve(MeshletCount);
 
-                for (uint32 v = 0; v < M.VertexCount; ++v)
+            for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
+            {
+                const uint32 Offset = Surface.LODMeshletOffset[0];
+                const uint32 Count  = Surface.LODMeshletCount[0];
+                for (uint32 i = 0; i < Count; ++i)
                 {
-                    FVector3 Pos = MD.MeshletVertices[M.VertexOffset + v].Position;
-                    Pos *= Scale;
-                    Vertices.push_back(JPH::Float3(Pos.x, Pos.y, Pos.z));
-                }
-
-                for (uint32 t = 0; t < M.TriangleCount; ++t)
-                {
-                    const uint32 Packed = MD.MeshletTriangles[M.TriangleOffset + t];
-                    const uint32 i0 = (Packed      ) & 0xFFu;
-                    const uint32 i1 = (Packed >>  8) & 0xFFu;
-                    const uint32 i2 = (Packed >> 16) & 0xFFu;
-                    Triangles.emplace_back(BaseVertex + i0, BaseVertex + i1, BaseVertex + i2, 0);
+                    const FMeshlet& M = MD.Meshlets[Offset + i];
+                    Slices.push_back(FColliderMeshletSlice{ Offset + i, TotalVertices, TotalTriangles });
+                    TotalVertices  += M.VertexCount;
+                    TotalTriangles += M.TriangleCount;
                 }
             }
         }
 
-        if (Vertices.empty() || Triangles.empty())
+        if (TotalVertices == 0 || (!bConvex && TotalTriangles == 0))
         {
             return nullptr;
         }
 
+        const uint32 SliceCount = (uint32)Slices.size();
+        const bool   bUnitScale = Math::IsNearlyEqual(Scale.x, 1.0f) && Math::IsNearlyEqual(Scale.y, 1.0f) && Math::IsNearlyEqual(Scale.z, 1.0f);
+        const JPH::Vec3 ScaleVec = JoltUtils::ToJPHVec3(Scale);
+
+        // Positions are the leading 12 bytes of a 28-byte FMeshletVertex, so a 16-byte load always stays
+        // inside the struct; the 4th lane is the packed normal and is dropped by Vec3's W handling.
+        auto LoadPosition = [&](const FMeshletVertex& V)
+        {
+            const JPH::Vec3 P = JPH::Vec3::sLoadFloat3Unsafe(reinterpret_cast<const JPH::Float3&>(V.Position));
+            return bUnitScale ? P : P * ScaleVec;
+        };
+
         if (bConvex)
         {
+            // The hull ignores connectivity, so the whole triangle gather is skipped and positions land
+            // straight in the Vec3 array Jolt wants, with no Float3 staging copy in between.
             JPH::Array<JPH::Vec3> Points;
-            Points.reserve(Vertices.size());
-            for (const JPH::Float3& V : Vertices)
+            Points.resize(TotalVertices);
+
             {
-                Points.emplace_back(V.x, V.y, V.z);
+                LUMINA_PROFILE_SECTION("Collider::GatherPoints");
+                Task::ParallelFor(SliceCount, [&](uint32 SliceIndex)
+                {
+                    const FColliderMeshletSlice& S = Slices[SliceIndex];
+                    const FMeshlet& M              = MD.Meshlets[S.Meshlet];
+                    const FMeshletVertex* Src      = MD.MeshletVertices.data() + M.VertexOffset;
+                    JPH::Vec3* Dst                 = Points.data() + S.VertexOut;
+
+                    for (uint32 v = 0; v < M.VertexCount; ++v)
+                    {
+                        Dst[v] = LoadPosition(Src[v]);
+                    }
+                }, kColliderGatherGrain);
             }
 
-            JPH::ConvexHullShapeSettings Settings(Points);
+            {
+                LUMINA_PROFILE_SECTION("Collider::BuildHull");
+                JPH::ConvexHullShapeSettings Settings(Points);
+                Settings.SetEmbedded();
+                auto Result = Settings.Create();
+                if (Result.HasError())
+                {
+                    LOG_ERROR("Failed to build convex hull from mesh '{}': {}", DebugName, Result.GetError());
+                    return nullptr;
+                }
+                return Result.Get();
+            }
+        }
+
+        JPH::VertexList          Vertices;
+        JPH::IndexedTriangleList Triangles;
+        Vertices.resize(TotalVertices);
+        Triangles.resize(TotalTriangles);
+
+        {
+            LUMINA_PROFILE_SECTION("Collider::GatherTriangles");
+            Task::ParallelFor(SliceCount, [&](uint32 SliceIndex)
+            {
+                const FColliderMeshletSlice& S = Slices[SliceIndex];
+                const FMeshlet& M              = MD.Meshlets[S.Meshlet];
+
+                const FMeshletVertex* Src = MD.MeshletVertices.data() + M.VertexOffset;
+                JPH::Float3* DstVertex    = Vertices.data() + S.VertexOut;
+                for (uint32 v = 0; v < M.VertexCount; ++v)
+                {
+                    LoadPosition(Src[v]).StoreFloat3(&DstVertex[v]);
+                }
+
+                const uint32* SrcTri            = MD.MeshletTriangles.data() + M.TriangleOffset;
+                JPH::IndexedTriangle* DstTri    = Triangles.data() + S.TriangleOut;
+                const uint32 BaseVertex         = S.VertexOut;
+                for (uint32 t = 0; t < M.TriangleCount; ++t)
+                {
+                    const uint32 Packed = SrcTri[t];
+                    DstTri[t] = JPH::IndexedTriangle(BaseVertex + ((Packed      ) & 0xFFu),
+                                                     BaseVertex + ((Packed >>  8) & 0xFFu),
+                                                     BaseVertex + ((Packed >> 16) & 0xFFu), 0);
+                }
+            }, kColliderGatherGrain);
+        }
+
+        {
+            LUMINA_PROFILE_SECTION("Collider::BuildMeshShape");
+            JPH::MeshShapeSettings Settings(std::move(Vertices), std::move(Triangles));
             Settings.SetEmbedded();
             auto Result = Settings.Create();
             if (Result.HasError())
             {
-                LOG_ERROR("Failed to build convex hull from mesh '{}': {}", DebugName, Result.GetError());
+                LOG_ERROR("Failed to build triangle mesh from mesh '{}': {}", DebugName, Result.GetError());
                 return nullptr;
             }
             return Result.Get();
         }
-
-        JPH::MeshShapeSettings Settings(std::move(Vertices), std::move(Triangles));
-        Settings.SetEmbedded();
-        auto Result = Settings.Create();
-        if (Result.HasError())
-        {
-            LOG_ERROR("Failed to build triangle mesh from mesh '{}': {}", DebugName, Result.GetError());
-            return nullptr;
-        }
-        return Result.Get();
     }
 
     static JPH::ShapeRefC BuildTerrainHeightFieldShape(const STerrainComponent& Terrain)
@@ -2589,34 +2670,6 @@ namespace Lumina::Physics
         }
         return Result.Get();
     }
-
-    // Outcome of TryBuildRigidBodyCreationSettings: drives whether the caller
-    // commits the body, retries later, or drops the entity.
-    enum class EBodyBuildStatus : uint8
-    {
-        Success,        // Result populated; safe to CreateBody and add.
-        Defer,          // Asset/transform not ready; push to PendingRigidBodyCreations.
-        AlreadyExists,  // Component already owns a BodyID; skip.
-        NoCollider,     // No collider component attached; nothing to build (caller decides whether to defer).
-        Error,          // Shape build failed and was logged; do not retry.
-    };
-
-    struct FRigidBodyBuildResult
-    {
-        JPH::BodyCreationSettings   Settings;
-        FVector3                   LastBodyPosition = FVector3(0.0f);
-        FQuat                   LastBodyRotation = FQuat::Identity();
-        // Resolved from the collider's PhysicsMaterial (if any), copied into BodyMaterials on commit.
-        // Cached on the build result so the parallel build never touches the registry post-commit.
-        bool                       bHasMaterial = false;
-        float                      MaterialFriction = 0.0f;
-        float                      MaterialRestitution = 0.0f;
-        uint8                      MaterialFrictionCombine = 0;
-        uint8                      MaterialRestitutionCombine = 0;
-        // Conveyor surface velocity from an SConveyorComponent (world space; zero = none).
-        FVector3                   SurfaceLinearVelocity = FVector3(0.0f);
-        FVector3                   SurfaceAngularVelocity = FVector3(0.0f);
-    };
 
     // Thread-safe: reads only registry + loaded assets; no PhysicsSystem mutation.
     static EBodyBuildStatus TryBuildRigidBodyCreationSettings(FJoltPhysicsScene* Scene, entt::registry& Registry, entt::entity Entity, FRigidBodyBuildResult& Out)
@@ -3017,6 +3070,8 @@ namespace Lumina::Physics
 
         Out.LastBodyPosition = Position;
         Out.LastBodyRotation = Rotation;
+        // Derived here rather than on commit: it walks the shape, and both commit paths want it.
+        Out.ComputedMass = Out.Settings.GetMassProperties().mMass;
 
         return EBodyBuildStatus::Success;
     }
@@ -3032,7 +3087,7 @@ namespace Lumina::Physics
         }
 
         // Inside a game-thread batch (e.g. fracture): collect and create together in EndBodyBatch.
-        if (bBatchingBodies && !bStepInProgress.load(std::memory_order_acquire))
+        if (BodyBatchDepth > 0 && !bStepInProgress.load(std::memory_order_acquire))
         {
             BatchedBodyCreations.push_back(Entity);
             return;
@@ -3051,14 +3106,25 @@ namespace Lumina::Physics
 
     void FJoltPhysicsScene::BeginBodyBatch()
     {
-        // Game-thread only; fracture is synchronous so no nesting is expected.
-        bBatchingBodies = true;
-        BatchedBodyCreations.clear();
+        // Game-thread only. Nesting collapses into the outermost batch, so the collected list is never
+        // cleared here -- an inner Begin must not discard what the outer one already gathered.
+        ++BodyBatchDepth;
     }
 
     void FJoltPhysicsScene::EndBodyBatch()
     {
-        bBatchingBodies = false;
+        if (BodyBatchDepth == 0)
+        {
+            LOG_WARN("EndBodyBatch without a matching BeginBodyBatch; ignored.");
+            return;
+        }
+
+        if (--BodyBatchDepth > 0)
+        {
+            return;
+        }
+
+        // Depth is already zero, so anything constructed by the commit itself takes the immediate path.
         CreateRigidBodiesBatched(BatchedBodyCreations);
         BatchedBodyCreations.clear();
     }
@@ -3919,22 +3985,32 @@ namespace Lumina::Physics
         RigidBodyComponent.BodyID               = Body->GetID().GetIndexAndSequenceNumber();
         RigidBodyComponent.LastBodyPosition     = BuildResult.LastBodyPosition;
         RigidBodyComponent.LastBodyRotation     = BuildResult.LastBodyRotation;
-        RigidBodyComponent.Mass                 = BuildResult.Settings.GetMassProperties().mMass;
+        RigidBodyComponent.Mass                 = BuildResult.ComputedMass;
 
         StoreBodyMaterial(Body->GetID(), BuildResult);
 
         BodyInterface.AddBody(Body->GetID(), JPH::EActivation::Activate);
     }
 
+    JPH::ShapeRefC FJoltPhysicsScene::FindCachedShape(const FShapeKey& Key) const
+    {
+        FReadScopeLock Lock(ShapeCacheMutex);
+        auto It = ShapeCache.find(Key);
+        return It != ShapeCache.end() ? It->second : JPH::ShapeRefC();
+    }
+
+    JPH::ShapeRefC FJoltPhysicsScene::PublishCachedShape(const FShapeKey& Key, const JPH::ShapeRefC& InShape)
+    {
+        FWriteScopeLock Lock(ShapeCacheMutex);
+        return ShapeCache.try_emplace(Key, InShape).first->second;
+    }
+
     JPH::ShapeRefC FJoltPhysicsScene::GetOrCreateSphereShape(float Radius)
     {
         const FShapeKey Key{ 0, Radius, 0.0f, 0.0f };
-
-        FScopeLock Lock(ShapeCacheMutex);
-        auto It = ShapeCache.find(Key);
-        if (It != ShapeCache.end())
+        if (JPH::ShapeRefC Cached = FindCachedShape(Key))
         {
-            return It->second;
+            return Cached;
         }
 
         JPH::SphereShapeSettings Settings(Radius);
@@ -3946,20 +4022,15 @@ namespace Lumina::Physics
             return {};
         }
 
-        JPH::ShapeRefC Shape = Result.Get();
-        ShapeCache.emplace(Key, Shape);
-        return Shape;
+        return PublishCachedShape(Key, Result.Get());
     }
 
     JPH::ShapeRefC FJoltPhysicsScene::GetOrCreateBoxShape(const FVector3& HalfExtent)
     {
         const FShapeKey Key{ 1, HalfExtent.x, HalfExtent.y, HalfExtent.z };
-
-        FScopeLock Lock(ShapeCacheMutex);
-        auto It = ShapeCache.find(Key);
-        if (It != ShapeCache.end())
+        if (JPH::ShapeRefC Cached = FindCachedShape(Key))
         {
-            return It->second;
+            return Cached;
         }
 
         JPH::BoxShapeSettings Settings(JoltUtils::ToJPHVec3(HalfExtent));
@@ -3971,21 +4042,16 @@ namespace Lumina::Physics
             return {};
         }
 
-        JPH::ShapeRefC Shape = Result.Get();
-        ShapeCache.emplace(Key, Shape);
-        return Shape;
+        return PublishCachedShape(Key, Result.Get());
     }
 
     JPH::ShapeRefC FJoltPhysicsScene::GetOrCreateCapsuleShape(float Radius, float HalfHeight)
     {
         // Kind = 2 (capsule). Z unused.
         const FShapeKey Key{ 2, Radius, HalfHeight, 0.0f };
-
-        FScopeLock Lock(ShapeCacheMutex);
-        auto It = ShapeCache.find(Key);
-        if (It != ShapeCache.end())
+        if (JPH::ShapeRefC Cached = FindCachedShape(Key))
         {
-            return It->second;
+            return Cached;
         }
 
         JPH::CapsuleShapeSettings Settings(HalfHeight, Radius);
@@ -3997,9 +4063,7 @@ namespace Lumina::Physics
             return {};
         }
 
-        JPH::ShapeRefC Shape = Result.Get();
-        ShapeCache.emplace(Key, Shape);
-        return Shape;
+        return PublishCachedShape(Key, Result.Get());
     }
 
     JPH::ShapeRefC FJoltPhysicsScene::GetOrCreateCylinderShape(float Radius, float HalfHeight, float CapRadius)
@@ -4007,12 +4071,9 @@ namespace Lumina::Physics
         // Kind = 3 (cylinder). Z = cap (edge-rounding) radius so two cylinders with different
         // bevels don't share a cached shape.
         const FShapeKey Key{ 3, Radius, HalfHeight, CapRadius };
-
-        FScopeLock Lock(ShapeCacheMutex);
-        auto It = ShapeCache.find(Key);
-        if (It != ShapeCache.end())
+        if (JPH::ShapeRefC Cached = FindCachedShape(Key))
         {
-            return It->second;
+            return Cached;
         }
 
         // Jolt requires CapRadius <= min(Radius, HalfHeight); clamp defensively so authoring an
@@ -4027,9 +4088,7 @@ namespace Lumina::Physics
             return {};
         }
 
-        JPH::ShapeRefC Shape = Result.Get();
-        ShapeCache.emplace(Key, Shape);
-        return Shape;
+        return PublishCachedShape(Key, Result.Get());
     }
 
     JPH::ShapeRefC FJoltPhysicsScene::GetOrCreateTaperedCapsuleShape(float HalfHeight, float TopRadius, float BottomRadius)
@@ -4038,12 +4097,9 @@ namespace Lumina::Physics
         const float Top    = Math::Max(TopRadius, 0.001f);
         const float Bottom = Math::Max(BottomRadius, 0.001f);
         const FShapeKey Key{ 4, HalfHeight, Top, Bottom, 0.0f };
-
-        FScopeLock Lock(ShapeCacheMutex);
-        auto It = ShapeCache.find(Key);
-        if (It != ShapeCache.end())
+        if (JPH::ShapeRefC Cached = FindCachedShape(Key))
         {
-            return It->second;
+            return Cached;
         }
 
         JPH::TaperedCapsuleShapeSettings Settings(HalfHeight, Top, Bottom);
@@ -4055,9 +4111,7 @@ namespace Lumina::Physics
             return {};
         }
 
-        JPH::ShapeRefC Shape = Result.Get();
-        ShapeCache.emplace(Key, Shape);
-        return Shape;
+        return PublishCachedShape(Key, Result.Get());
     }
 
     JPH::ShapeRefC FJoltPhysicsScene::GetOrCreateTaperedCylinderShape(float HalfHeight, float TopRadius, float BottomRadius, float ConvexRadius)
@@ -4068,12 +4122,9 @@ namespace Lumina::Physics
         const float Bottom = Math::Max(BottomRadius, 0.001f);
         const float Convex = Math::Clamp(ConvexRadius, 0.0f, Math::Min(Math::Min(Top, Bottom), HalfHeight));
         const FShapeKey Key{ 5, HalfHeight, Top, Bottom, Convex };
-
-        FScopeLock Lock(ShapeCacheMutex);
-        auto It = ShapeCache.find(Key);
-        if (It != ShapeCache.end())
+        if (JPH::ShapeRefC Cached = FindCachedShape(Key))
         {
-            return It->second;
+            return Cached;
         }
 
         JPH::TaperedCylinderShapeSettings Settings(HalfHeight, Top, Bottom, Convex);
@@ -4085,9 +4136,7 @@ namespace Lumina::Physics
             return {};
         }
 
-        JPH::ShapeRefC Shape = Result.Get();
-        ShapeCache.emplace(Key, Shape);
-        return Shape;
+        return PublishCachedShape(Key, Result.Get());
     }
 
     JPH::ShapeRefC FJoltPhysicsScene::BuildCollisionShapeAsset(const CCollisionShape& Asset, const FVector3& Scale)
@@ -4401,7 +4450,7 @@ namespace Lumina::Physics
 
         JPH::ShapeRefC Base;
         {
-            FScopeLock Lock(MeshShapeCacheMutex);
+            FReadScopeLock Lock(MeshShapeCacheMutex);
             auto It = MeshShapeCache.find(Key);
             if (It != MeshShapeCache.end())
             {
@@ -4420,7 +4469,7 @@ namespace Lumina::Physics
                 return {};
             }
 
-            FScopeLock Lock(MeshShapeCacheMutex);
+            FWriteScopeLock Lock(MeshShapeCacheMutex);
             Base = MeshShapeCache.try_emplace(Key, Built).first->second;
         }
 
@@ -4454,16 +4503,28 @@ namespace Lumina::Physics
 
         entt::registry& Registry = ECS::GetWorldRegistry(*World);
 
-        TVector<FRigidBodyBuildResult> Results(Count);
-        TVector<EBodyBuildStatus>      Statuses(Count, EBodyBuildStatus::Error);
+        // Grow-only: a repeat bulk spawn reuses the buffers instead of reallocating and re-zeroing
+        // ~350 bytes/body. Slots past Count hold stale data, so nothing may read beyond it.
+        if (BatchBuildScratch.size() < Count)
+        {
+            BatchBuildScratch.resize(Count);
+            BatchStatusScratch.resize(Count);
+        }
+
+        TVector<FRigidBodyBuildResult>& Results  = BatchBuildScratch;
+        TVector<EBodyBuildStatus>&      Statuses = BatchStatusScratch;
 
         Task::ParallelFor(Count, [&](uint32 Index)
         {
+            // Reset on the worker, not serially up front: TryBuild only writes some fields, so a reused
+            // slot would otherwise inherit the previous batch's material/conveyor values.
+            Results[Index] = FRigidBodyBuildResult();
             Statuses[Index] = TryBuildRigidBodyCreationSettings(this, Registry, Candidates[Index], Results[Index]);
         });
 
         JPH::BodyInterface& BodyInterface = JoltSystem->GetBodyInterface();
-        TVector<JPH::BodyID> BodyIDsToAdd;
+        TVector<JPH::BodyID>& BodyIDsToAdd = BatchBodyIDScratch;
+        BodyIDsToAdd.clear();
         BodyIDsToAdd.reserve(Count);
 
         for (uint32 i = 0; i < Count; ++i)
@@ -4486,6 +4547,11 @@ namespace Lumina::Physics
             }
 
             JPH::Body* Body = BodyInterface.CreateBody(Results[i].Settings);
+
+            // The body holds its own reference now; drop the scratch slot's so an uncached shape
+            // (dynamic mesh, hull, compound) isn't kept alive until the slot is next overwritten.
+            Results[i].Settings.SetShape(nullptr);
+
             if (Body == nullptr)
             {
                 LOG_ERROR("Failed to create body for Entity: {}", entt::to_integral(Entity));
@@ -4498,6 +4564,7 @@ namespace Lumina::Physics
             RigidBodyComponent.BodyID               = Body->GetID().GetIndexAndSequenceNumber();
             RigidBodyComponent.LastBodyPosition     = Results[i].LastBodyPosition;
             RigidBodyComponent.LastBodyRotation     = Results[i].LastBodyRotation;
+            RigidBodyComponent.Mass                 = Results[i].ComputedMass;
 
             StoreBodyMaterial(Body->GetID(), Results[i]);
 

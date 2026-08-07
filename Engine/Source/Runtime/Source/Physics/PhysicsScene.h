@@ -139,7 +139,8 @@ namespace Lumina::Physics
         virtual uint32 GetMaxBodyCount() = 0;
 
         // Between Begin/End, body constructions are queued and inserted by End in one AddBodiesPrepare/Finalize.
-        // Game-thread only, must be balanced; BodyIDs are valid after EndBodyBatch.
+        // Game-thread only, must be balanced; nests (an inner pair folds into the outermost batch, which is
+        // what commits). BodyIDs are valid only after the outermost EndBodyBatch.
         virtual void BeginBodyBatch() = 0;
         virtual void EndBodyBatch() = 0;
 

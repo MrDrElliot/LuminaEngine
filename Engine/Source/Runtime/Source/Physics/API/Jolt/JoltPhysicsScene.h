@@ -4,6 +4,7 @@
 // Jolt header expects, and was previously force-included via pch.h.
 #include <Jolt/Jolt.h>
 #include "Jolt/Physics/PhysicsSystem.h"
+#include "Jolt/Physics/Body/BodyCreationSettings.h"
 #include "Jolt/Physics/Collision/Shape/Shape.h"
 #include "Jolt/Physics/Constraints/TwoBodyConstraint.h"
 #include "Containers/Array.h"
@@ -41,6 +42,36 @@ namespace Lumina::Physics
 	{
 		Added,
 		Removed,
+	};
+
+	// Outcome of TryBuildRigidBodyCreationSettings: drives whether the caller
+	// commits the body, retries later, or drops the entity.
+	enum class EBodyBuildStatus : uint8
+	{
+		Success,        // Result populated; safe to CreateBody and add.
+		Defer,          // Asset/transform not ready; push to PendingRigidBodyCreations.
+		AlreadyExists,  // Component already owns a BodyID; skip.
+		NoCollider,     // No collider component attached; nothing to build (caller decides whether to defer).
+		Error,          // Shape build failed and was logged; do not retry.
+	};
+
+	struct FRigidBodyBuildResult
+	{
+		JPH::BodyCreationSettings	Settings;
+		FVector3					LastBodyPosition = FVector3(0.0f);
+		FQuat						LastBodyRotation = FQuat::Identity();
+		// Resolved on the parallel build so the serial commit never re-derives it from the shape.
+		float						ComputedMass = 0.0f;
+		// Resolved from the collider's PhysicsMaterial (if any), copied into BodyMaterials on commit.
+		// Cached on the build result so the parallel build never touches the registry post-commit.
+		bool						bHasMaterial = false;
+		float						MaterialFriction = 0.0f;
+		float						MaterialRestitution = 0.0f;
+		uint8						MaterialFrictionCombine = 0;
+		uint8						MaterialRestitutionCombine = 0;
+		// Conveyor surface velocity from an SConveyorComponent (world space; zero = none).
+		FVector3					SurfaceLinearVelocity = FVector3(0.0f);
+		FVector3					SurfaceAngularVelocity = FVector3(0.0f);
 	};
 
 	// Contact snapshot recorded on the physics thread, drained game-thread; pre-resolves entity ids and
@@ -250,7 +281,7 @@ namespace Lumina::Physics
 
     	// Side-table accessors for the contact listener. GetBodyMaterial is hot-path (called per
     	// contact pair during the physics step) and never resizes; Store/Clear run game-thread only.
-    	void StoreBodyMaterial(JPH::BodyID BodyID, const struct FRigidBodyBuildResult& Build);
+    	void StoreBodyMaterial(JPH::BodyID BodyID, const FRigidBodyBuildResult& Build);
     	void ClearBodyMaterial(JPH::BodyID BodyID);
     	const FBodyMaterialEntry* GetBodyMaterial(JPH::BodyID BodyID) const;
 
@@ -315,9 +346,16 @@ namespace Lumina::Physics
     			return Hash;
     		}
     	};
-    	FMutex												ShapeCacheMutex;
+    	mutable FSharedMutex								ShapeCacheMutex;
     	THashMap<FShapeKey, JPH::ShapeRefC, FShapeKeyHash>	ShapeCache;
-    	
+
+    	// Shared-shape cache halves. Lookup takes a read lock only, so a parallel body build of N identical
+    	// primitives no longer serializes on one exclusive lock; the shape is built between the two calls,
+    	// outside any lock. Publish returns the winner of a same-key race, not necessarily InShape.
+    	JPH::ShapeRefC FindCachedShape(const FShapeKey& Key) const;
+    	JPH::ShapeRefC PublishCachedShape(const FShapeKey& Key, const JPH::ShapeRefC& InShape);
+
+
     	struct FMeshShapeKey
     	{
     		const void*	Mesh;
@@ -338,7 +376,7 @@ namespace Lumina::Physics
     			return Hash;
     		}
     	};
-    	FMutex													MeshShapeCacheMutex;
+    	mutable FSharedMutex										MeshShapeCacheMutex;
     	THashMap<FMeshShapeKey, JPH::ShapeRefC, FMeshShapeKeyHash>	MeshShapeCache;
 
     	// Body-move requests ApplyDirtyTransforms could not apply because the body did not exist yet; re-tagged
@@ -358,10 +396,19 @@ namespace Lumina::Physics
     	// physics step runs as a migrating fiber job rather than a dedicated thread.
     	TAtomic<bool>								bStepInProgress{false};
 
-    	// When set (between BeginBodyBatch/EndBodyBatch on the game thread), rigid-body
-    	// constructions are collected here and created together instead of one at a time.
-    	bool										bBatchingBodies = false;
+    	// Non-zero between BeginBodyBatch/EndBodyBatch on the game thread: rigid-body constructions are
+    	// collected and created together instead of one at a time. A depth, not a flag, because the API is
+    	// script-facing now and a scoped batch can nest inside another (e.g. fracture during a spawn batch).
+    	int32										BodyBatchDepth = 0;
     	TVector<entt::entity>						BatchedBodyCreations;
+
+    	// Reused by CreateRigidBodiesBatched so a repeated bulk spawn doesn't reallocate ~350 bytes/body
+    	// every call. Grow-only and game-thread only; entries past the current count are stale.
+    	TVector<FRigidBodyBuildResult>				BatchBuildScratch;
+    	TVector<EBodyBuildStatus>					BatchStatusScratch;
+    	TVector<JPH::BodyID>						BatchBodyIDScratch;
+    	TVector<entt::entity>						PendingDrainScratch;
+
     	// Base buffer covers typical steps with no per-frame alloc; heavy frames fall back to malloc.
     	JPH::TempAllocatorImplWithMallocFallback	Allocator;
     	TVector<TUniquePtr<JPH::TempAllocatorImpl>>	CharacterAllocators;

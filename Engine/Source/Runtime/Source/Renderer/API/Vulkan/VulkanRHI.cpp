@@ -1255,28 +1255,10 @@ namespace Lumina::RHI
                 // rather than loud, which is the worst failure mode a checker has. The engine creates
                 // one VkBuffer per Malloc and a busy editor session churns a lot of them, so the
                 // default is not obviously enough.
-                //
-                // This WAS the manifest maximum (10,000,000) on the reasoning that "the cost is the
-                // layer's table, not ours". That reasoning was wrong twice over: the table is GPU-visible
-                // memory allocated out of this device, and the layer sizes its allocations from this
-                // number up front rather than growing into it. A thousand times the default is a
-                // multi-hundred-megabyte reservation, and on a 6700XT it took every driver allocation
-                // down with it -- which reads as "the driver crashes on anything", not as a setting.
-                //
-                // 65536 is ~1 MB and still 6x the default. If a check ever goes quiet because the table
-                // filled, raise it deliberately with --maxbdaaddresses rather than by reaching for the
-                // maximum again.
-                static int32 MaxTrackedAddresses = 65536;
-                if (GCommandLine != nullptr)
-                {
-                    if (const TOptional<int> Override = GCommandLine->GetInt("maxbdaaddresses"))
-                    {
-                        MaxTrackedAddresses = Override.value();
-                        LOG_WARN("Vulkan RHI - GPU-AV buffer-device-address table set to {} (--maxbdaaddresses).",
-                                 MaxTrackedAddresses);
-                    }
-                }
-                AddIntSetting("gpuav_max_buffer_device_addresses", MaxTrackedAddresses);
+                // 65536 rather than the manifest maximum: the table is GPU-visible memory on this device,
+                // not free layer-side bookkeeping. Raise it if a check ever goes quiet because it filled.
+                static constexpr int32 kMaxTrackedAddresses = 65536;
+                AddIntSetting("gpuav_max_buffer_device_addresses", kMaxTrackedAddresses);
 
                 // Runs spirv-val over what GPU-AV produced, before the driver ever sees it. This is
                 // the question a driver crash under instrumentation actually turns on -- whether the
