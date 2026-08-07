@@ -384,7 +384,7 @@ namespace Lumina
 
         EntityRegistry.on_destroy   <FRelationshipComponent>()      .connect<&ThisClass::OnRelationshipComponentDestroyed>(this);
         EntityRegistry.on_construct <STransformComponent>()         .connect<&ThisClass::OnTransformComponentConstruct>(this);
-        EntityRegistry.on_destroy   <SScriptComponent>()      .connect<&ThisClass::OnCSharpScriptComponentDestroyed>(this);
+        EntityRegistry.on_destroy   <SScriptComponent>()            .connect<&ThisClass::OnCSharpScriptComponentDestroyed>(this);
         EntityRegistry.on_destroy   <SWidgetComponent>()            .connect<&ThisClass::OnWidgetComponentDestroyed>(this);
         EntityRegistry.on_construct <SInputComponent>()             .connect<&ThisClass::OnInputComponentConstruct>(this);
         SystemContext.EventSink     <FSwitchActiveCameraEvent>()    .connect<&ThisClass::OnChangeCameraEvent>(this);

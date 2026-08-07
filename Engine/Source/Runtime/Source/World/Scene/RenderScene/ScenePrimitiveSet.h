@@ -310,6 +310,21 @@ namespace Lumina
         // any of them can never reuse a previous frame's compile.
         uint32                              GetSkinnedPrimitiveCount() const { return SkinnedCount; }
 
+        /**
+         * Source of the primitive at Index, decoded from the dense key array.
+         *
+         * Use this, not FScenePrimitive::Source, in any pass that filters by source before it decides
+         * whether it wants the primitive. Source is declared second-to-last in FScenePrimitive, after a
+         * 64-byte matrix and a shared_ptr, so it lands in the last cache line of a ~160-byte element:
+         * reading it there pulls the fattest array in the set for every primitive about to be rejected.
+         * Keys is 8 dense bytes and already carries it. Decoded here rather than at the call site so the
+         * bit layout stays in this file.
+         */
+        EPrimitiveSource                    GetSource(uint32 Index) const
+        {
+            return (EPrimitiveSource)((Keys[Index] >> kKeySourceShift) & 0xFFull);
+        }
+
         //~ Retained GPU-facing scene ---------------------------------------------------------------
         //
         // One stable FGPUInstance slot per primitive surface, written only when that primitive changes.

@@ -141,8 +141,7 @@ PSOutput FragmentMain(float4 SvPosition : SV_Position)
     // stale draw-list gap whose InstanceID/MeshletIndex are garbage). The index is mesh-global -- the view
     // that emitted it owns the LOD choice -- so it is clamped against the mesh's whole meshlet array.
     FMeshletRef Ref;
-    Ref.Inst              = GetInstance(SafeInst);
-    Ref.InstanceID        = SafeInst;
+    Ref.InstanceID        = SafeInst;   // first: every Ref.Inst read below resolves through it
     Ref.SkinnedVertexBase = Ref.Inst.SkinnedVertexBase;   // deferred pass is camera-side only
     uint MeshletCount     = max(Ref.Inst.MeshletTotalCount, 1u);
     Ref.GlobalMeshletIdx  = min(Draw.MeshletIndex, MeshletCount - 1u);
@@ -175,7 +174,7 @@ PSOutput FragmentMain(float4 SvPosition : SV_Position)
     //
     // Inst/ModelMatrix stay hoisted -- loop-invariant, and SPIR-V LICM does not hoist BDA loads, so leaving
     // them inside materializes the 64-byte matrix three times.
-    FGPUInstance Inst    = Ref.Inst;
+    FGPUInstance* Inst   = Ref.Inst;   // pointer: FMeshletRef reaches the instance, see MeshletGeometry.slang
     float4x4 ModelMatrix = Inst.ModelMatrix;
     FMeshletWorldVertex W[3];
     float3 FinalWorldPos[3];

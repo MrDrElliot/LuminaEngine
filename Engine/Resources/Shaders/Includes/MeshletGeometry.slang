@@ -22,13 +22,26 @@
 
 struct FMeshletRef
 {
-    FGPUInstance    Inst;
     FMeshlet        M;
     uint            InstanceID;
     uint            GlobalMeshletIdx;
     // Pre-skin base for the block this ref resolved into. Surface and shadow LODs get separate
     // compacted slices, so the base has to be picked alongside the meshlet range, not at load time.
     uint            SkinnedVertexBase;
+
+    // The instance is REACHED, not stored. Holding an FGPUInstance by value put a
+    // PhysicalStorageBuffer pointer (its MeshletHeader) inside a struct that ResolveMeshlet returns,
+    // and Slang materializes that pointer in a Function-storage OpVariable without the Aliased or
+    // Restrict decoration SPIR-V requires there -- so every module that resolved a meshlet failed
+    // spirv-val. Drivers accept it and then apply aliasing assumptions nothing established.
+    //
+    // Keeping only the index leaves FMeshletRef pointer-free, which is what makes the return legal.
+    // Field access through the property auto-derefs, so every Ref.Inst.Field site reads the same as
+    // before -- straight out of the retained instance buffer instead of out of a 128-byte copy.
+    //
+    // Only valid once InstanceID is assigned, and only on a ref that resolved: the failure paths below
+    // leave Instances() unchecked. They all zero M, and every caller tests M before touching Inst.
+    property FGPUInstance* Inst { get { return Instances() + InstanceID; } }
 };
 
 // bShadow selects the instance's shadow meshlet range instead of the surface (base/depth) range.
@@ -44,15 +57,14 @@ FMeshletRef ResolveMeshlet(uint MeshletSlot, bool bShadow)
         Empty.SkinnedVertexBase = kNoPreSkinBase;
         Empty.GlobalMeshletIdx  = 0u;
         Empty.InstanceID        = 0u;
-        Empty.Inst              = (FGPUInstance)0;
         Empty.M                 = (FMeshlet)0;
         return Empty;
     }
 
     FMeshletDraw Draw = MeshletDrawList()[MeshletSlot];
 
+    // InstanceID first: every Ref.Inst read below goes through it.
     FMeshletRef Ref;
-    Ref.Inst       = GetInstance(Draw.InstanceID);
     Ref.InstanceID = Draw.InstanceID;
 
     // A slot this frame never wrote resolves to a plausible-looking instance from an earlier frame, so

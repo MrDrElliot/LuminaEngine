@@ -2546,23 +2546,31 @@ namespace Lumina
             DrawTaskGraph.Reset();   // reuse the persistent graph (allocator block + capacity)
             FTaskGraph& Graph = DrawTaskGraph;
 
-            // One fan-out over the whole persistent primitive array, replacing the four per-pool passes.
-            // Static, dynamic, skeletal and foliage primitives are interleaved in one dense array, so the
-            // work balances by itself and the reject path streams two tightly packed arrays.
+            // SKELETAL MESHES ONLY. Every other source is culled on the GPU by CullInstances.slang off the
+            // retained arrays; skeletal primitives are excluded from that cull (their FGPUInstance fields
+            // can't be filled at bind time), so this is what draws them -- and what gathers their bone rows,
+            // pre-skin sizing and last-rendered feedback, none of which can be retained because the pose
+            // changes every frame.
+            //
+            // With none in the scene the node is pure cost: a fan-out over every primitive that rejects all
+            // of them. Skip it and let the merge run on the empty thread-local data (it early-outs).
             {
-                FTaskGraph::FNodeHandle CullNode = Graph.AddParallelFor(NumPrimitives, ResolveGrain(CVarPrimitiveGrain), [&](const Task::FParallelRange& Range)
-                {
-                    LUMINA_PROFILE_SECTION("Cull And Emit Primitives");
-                    FThreadLocalDrawData& Local = AcquireThreadLocalDrawData(Range.Thread);
-                    CullAndEmitPrimitives(Range, Local);
-                }, ETaskPriority::High); // critical path: MergeNode waits on this, so it runs ahead of emitters
-
                 FTaskGraph::FNodeHandle MergeNode = Graph.Add([&]
                 {
                     MergeMeshDrawData(ThreadLocal);
                 }, ETaskPriority::High);
 
-                Graph.AddDependency(MergeNode, CullNode);
+                if (ScenePrimitives.GetSkinnedPrimitiveCount() > 0)
+                {
+                    FTaskGraph::FNodeHandle CullNode = Graph.AddParallelFor(NumPrimitives, ResolveGrain(CVarPrimitiveGrain), [&](const Task::FParallelRange& Range)
+                    {
+                        LUMINA_PROFILE_SECTION("Cull And Emit Primitives");
+                        FThreadLocalDrawData& Local = AcquireThreadLocalDrawData(Range.Thread);
+                        CullAndEmitPrimitives(Range, Local);
+                    }, ETaskPriority::High); // critical path: MergeNode waits on this, so it runs ahead of emitters
+
+                    Graph.AddDependency(MergeNode, CullNode);
+                }
             }
 
             // Kick the mesh critical path NOW: the workers chew on the gather while Extract
@@ -4094,13 +4102,7 @@ namespace Lumina
             const FMeshlet& Last  = (*Meshlets)[MeshletOffset + MeshletCount - 1u];
             OutVertexOffset = First.VertexOffset;
             OutVertexCount  = (Last.VertexOffset + Last.VertexCount) - First.VertexOffset;
-
-            // The span is derived from FIRST and LAST only, which is correct exactly when the block's
-            // meshlets are vertex-contiguous and monotonically ordered. That is what the import's
-            // LOD-major pack is supposed to guarantee, and it is what makes the pre-skin base's unsigned
-            // wrap land back in range. Verify it rather than assume it: if any meshlet sits outside the
-            // span, its vertices are skinned to -- and read from -- an address outside the granted slice,
-            // which is unbounded on the GPU side and reads as wildly displaced vertices.
+            
             if (CVarValidateSkinSlices.GetValue() != 0)
             {
                 for (uint32 m = 0; m < MeshletCount; ++m)
@@ -4230,16 +4232,19 @@ namespace Lumina
     }
 
     /**
-     * The whole per-frame mesh gather.
+     * The per-frame gather for SKELETAL meshes. Everything else is culled on the GPU.
      *
-     * Walks the persistent primitive arrays, not the ECS. The reject path touches exactly two dense
-     * arrays -- the world sphere and 8 bytes of cull data -- so a culled primitive costs one streamed
-     * cache line and nothing else: no component fetch, no sparse transform lookup, no resolve-table
-     * deref, no hash lookup. Everything the survivors need beyond the camera was derived when their
-     * dirty state last fired.
+     * This is not the general mesh gather it once was: CullInstances.slang culls static, dynamic and
+     * foliage primitives off the retained instance arrays, and skeletal primitives are deliberately
+     * excluded from that cull because their FGPUInstance fields cannot be filled at bind time. What is
+     * left here is the work that genuinely cannot be retained -- the pose changes every frame, so bone
+     * rows, pre-skin slice sizing and the animation system's last-rendered feedback are all gathered
+     * fresh, from the live component, after the cull.
      *
-     * Skinned survivors are the one exception: the pose changes every frame by definition, so their
-     * component is read here (after the cull) for bone rows and the animation system's feedback.
+     * The range still spans the whole primitive array (the sources are interleaved in one dense array),
+     * so the source filter is the hot path, not the cull. It reads the dense key array via GetSource --
+     * see the note there for why FScenePrimitive::Source is the wrong place to read it from. The caller
+     * skips this node entirely when the scene holds no skeletal meshes.
      */
     void FForwardRenderScene::CullAndEmitPrimitives(const Task::FParallelRange& Range, FThreadLocalDrawData& Local)
     {
@@ -4260,12 +4265,14 @@ namespace Lumina
 
         for (uint32 i = Range.Start; i < Range.End; ++i)
         {
-            const FScenePrimitive& Prim = Prims[i];
-            
-            if (Prim.Source != EPrimitiveSource::SkeletalMesh)
+            // Filter before touching Prims: this rejects every non-skeletal primitive in the scene, and
+            // FScenePrimitive is ~160 bytes with Source in its last cache line.
+            if (ScenePrimitives.GetSource(i) != EPrimitiveSource::SkeletalMesh)
             {
                 continue;
             }
+
+            const FScenePrimitive& Prim = Prims[i];
 
             const FVector4&           Sphere = Spheres[i];
             const FPrimitiveCullData& Cull   = Culls[i];

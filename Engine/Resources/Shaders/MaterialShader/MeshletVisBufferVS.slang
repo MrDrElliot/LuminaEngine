@@ -39,7 +39,7 @@ FVisVertexOut VertexMain(uint VertexIndex: SV_VulkanVertexID, uint MeshletSlot: 
 
     // Same material vertex-graph local contract as MeshletVertex/MeshletMesh so WPO matches bit-for-bit
     // (the deferred pass re-applies the identical WPO when it reconstructs this triangle).
-    FGPUInstance Inst    = Ref.Inst;
+    FGPUInstance* Inst   = Ref.Inst;   // pointer: FMeshletRef reaches the instance, see MeshletGeometry.slang
     float4x4 ModelMatrix = Ref.Inst.ModelMatrix;
     float4   WorldPos    = float4(W.WorldPos, 1.0);
     float3   NormalWS    = W.NormalWS;

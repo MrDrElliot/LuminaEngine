@@ -6,13 +6,18 @@
 // Implements the material-codegen surface (GetScreenSize/GetTime/GetMaterial*) without SceneGlobals.
 
 // Must match FUIMaterialBrushArgs in RmlUiRenderer.cpp (scalar layout).
+// Field ORDER is load-bearing, not just layout-matching. This block is read through a
+// PhysicalStorageBuffer pointer, so it must satisfy relaxed block layout, and that forbids a vector
+// straddling a 16-byte boundary. With ScreenSize second it landed at offset 8 and spanned 8..24 --
+// illegal, and spirv-val rejected every UI material module because of it. The two scalars fill the
+// pointer's tail so the uint4 starts at 16. Keep them there; mirror is FUIMaterialBrushArgs in
+// RmlUiRenderer.cpp.
 struct FUIMaterialArgs
 {
-    FMaterialUniforms* Materials;
-    uint4 ScreenSize;    // .xy = brush resolution
-    float Time;
-    uint  MaterialIndex;
-    uint2 _Pad;
+    FMaterialUniforms* Materials;   // 0
+    uint  MaterialIndex;            // 8
+    float Time;                     // 12
+    uint4 ScreenSize;               // 16 -- .xy = brush resolution
 };
 
 FUIMaterialArgs* UIArgs() { return GetArgs<FUIMaterialArgs>(); }

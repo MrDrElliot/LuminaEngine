@@ -44,7 +44,7 @@ FBaseVertexOutput VertexMain(uint VertexIndex: SV_VulkanVertexID, uint MeshletSl
 
     // Locals the material vertex graph references; names/types kept stable for the substitution token
     // (the codegen alias preamble reads Inst / WorldPos / NormalWS / VertexData by these exact names).
-    FGPUInstance Inst    = Ref.Inst;
+    FGPUInstance* Inst   = Ref.Inst;   // pointer: FMeshletRef reaches the instance, see MeshletGeometry.slang
     float4x4 ModelMatrix = Ref.Inst.ModelMatrix;
     float4   WorldPos    = float4(W.WorldPos, 1.0);
     float3   NormalWS    = W.NormalWS;

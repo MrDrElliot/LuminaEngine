@@ -299,7 +299,13 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     // every downstream pass already reads per meshlet / vertex / pixel.
     FInstanceStatic Static = Pass().RetainedStatic[SlotIdx];
 
-    FGPUInstance Inst;
+    // Written field-by-field THROUGH the output pointer, not assembled in a local and stored once.
+    // A local FGPUInstance forces Slang to give its MeshletHeader member a Function-storage OpVariable,
+    // and a Function variable whose type is a PhysicalStorageBuffer pointer must carry Aliased or
+    // Restrict -- Slang emits neither, so the module fails spirv-val. Drivers accept it anyway and then
+    // optimize against aliasing rules nothing established. Same reason SceneGlobals.slang never loads
+    // FSceneRoot by value.
+    FGPUInstance* Inst           = Pass().OutInstances + OutSlot;
     Inst.Transform               = Pass().RetainedTransforms[SlotIdx];   // straight copy, no expansion
     Inst.SphereBounds            = Cull.SphereBounds;
     Inst.MeshletHeader           = Static.MeshletHeader;
@@ -322,6 +328,4 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     Inst.MeshletTotalCount       = bHasGeometry && NumLODs > 0u
                                  ? Desc.LODMeshletOffset[NumLODs - 1u] + Desc.LODMeshletCount[NumLODs - 1u]
                                  : 0u;
-
-    Pass().OutInstances[OutSlot] = Inst;
 }

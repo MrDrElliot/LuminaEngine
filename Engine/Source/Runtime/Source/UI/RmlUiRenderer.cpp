@@ -33,15 +33,19 @@ namespace Lumina
         RHI::GPUPtr Vertices;   // resident batch vertex buffer (vertex pulling)
     };
 
-    // Mirrors UIMaterialGlobals.slang::FUIMaterialArgs (scalar layout).
+    // Mirrors UIMaterialGlobals.slang::FUIMaterialArgs (scalar layout). ScreenSize must stay at offset
+    // 16: the shader reads this block by device address, where relaxed block layout forbids a vector
+    // straddling a 16-byte boundary -- see the note on the Slang side.
     struct FUIMaterialBrushArgs
     {
         RHI::GPUPtr Materials;
-        uint32      ScreenSize[4];   // .xy = brush resolution
-        float       Time;
         uint32      MaterialIndex;
-        uint32      _Pad[2];
+        float       Time;
+        uint32      ScreenSize[4];   // .xy = brush resolution
     };
+
+    static_assert(sizeof(FUIMaterialBrushArgs) == 32, "FUIMaterialArgs layout must match UIMaterialGlobals.slang");
+    static_assert(offsetof(FUIMaterialBrushArgs, ScreenSize) == 16, "ScreenSize must not straddle a 16-byte boundary");
 
     // RmlUi wants bilinear + clamp; stock sampler heap slot 1.
     static constexpr uint32 GRmlUiSamplerIndex = (uint32)RHI::EStockSampler::LinearClamp;

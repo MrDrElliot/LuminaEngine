@@ -83,7 +83,7 @@ void MeshMain(
 
         // Same material vertex-graph local contract as MeshletMesh/MeshletVertex (WPO must match so the
         // VisBuffer depth agrees with what the deferred pass reconstructs).
-        FGPUInstance Inst    = Ref.Inst;
+        FGPUInstance* Inst   = Ref.Inst;   // pointer: FMeshletRef reaches the instance, see MeshletGeometry.slang
         float4x4 ModelMatrix = Ref.Inst.ModelMatrix;
         float4   WorldPos    = float4(W.WorldPos, 1.0);
         float3   NormalWS    = W.NormalWS;

@@ -6,6 +6,8 @@
 #include "RHI.h"
 #include "slang-com-ptr.h"
 #include "slang.h"
+#include "Core/CommandLine/CommandLine.h"
+#include "Core/Console/ConsoleVariable.h"
 #include "Core/Plugin/Plugin.h"
 #include "Core/Plugin/PluginManager.h"
 #include "Core/Serialization/MemoryArchiver.h"
@@ -14,6 +16,7 @@
 #include "FileSystem/FileSystem.h"
 #include "Memory/Memory.h"
 #include "Paths/Paths.h"
+#include "Platform/Process/PlatformProcess.h"
 #include "TaskSystem/TaskSystem.h"
 #include "Log/Log.h"
 
@@ -30,6 +33,200 @@ namespace Lumina
     {
         return SLANG_OPTIMIZATION_LEVEL_MAXIMAL;
     }
+
+#if USING(WITH_EDITOR)
+
+    // Slang runs its own SPIR-V validation (slangc exposes -skip-spirv-validation, so it is on by
+    // default), and it does not catch everything. A Function-storage OpVariable whose type is a
+    // PhysicalStorageBuffer pointer must carry Aliased or Restrict; Slang emits neither, and the module
+    // it hands back is illegal. Every driver accepts it, then optimizes against aliasing rules nothing
+    // established, and it surfaces frames later as a device-lost page fault instead of a compile error.
+    // Found exactly that in CullInstances.slang. So the check has to be the real spirv-val.
+    //
+    // Compile-time only, by design: a cache hit never reaches here. The cache is keyed on the transitive
+    // source hash, so anything that could change a module recompiles it and validates then.
+    static TConsoleVar<int32> CVarValidateShaders(
+        "r.Shaders.Validate",
+        1,
+        "Run spirv-val over every compiled shader (editor only). Requires VULKAN_SDK.");
+
+    // The engine creates its device at Vulkan 1.4, so that is the environment the module has to be legal
+    // in. An older SDK's spirv-val rejects the flag itself rather than the module -- its complaint is
+    // captured and logged like any other, so it reads as a tooling problem, not a shader one.
+    static constexpr const char* kSpirvValTargetEnv = "vulkan1.4";
+
+    // Absolute path to spirv-val, or empty when the SDK is not installed. Resolved once; the missing-SDK
+    // warning is therefore printed once rather than per shader.
+    static const FString& GetSpirvValidatorPath()
+    {
+        static const FString Path = []() -> FString
+        {
+            const char* SDK = std::getenv("VULKAN_SDK");
+            if (SDK == nullptr || *SDK == '\0')
+            {
+                LOG_WARN("Shader validation is enabled but VULKAN_SDK is unset, so spirv-val cannot run. "
+                         "Install the Vulkan SDK or set r.Shaders.Validate 0.");
+                return FString();
+            }
+
+            #if defined(_WIN32)
+            FString Candidate = FString(SDK) + "/Bin/spirv-val.exe";
+            #else
+            FString Candidate = FString(SDK) + "/bin/spirv-val";
+            #endif
+
+            Paths::Normalize(Candidate);
+            if (!Paths::Exists(Candidate))
+            {
+                LOG_WARN("Shader validation is enabled but spirv-val was not found at '{}'.", Candidate.c_str());
+                return FString();
+            }
+
+            // The modules are staged next to the shader cache. Save() creates that directory too, but it
+            // runs after validation, so on a clean tree it would not exist yet.
+            VFS::CreateDir(FShaderCache::CACHE_DIR);
+
+            LOG_TRACE("Shader validation active: {}", Candidate.c_str());
+            return Candidate;
+        }();
+
+        return Path;
+    }
+
+    // Logs an error naming the shader when the module is illegal. Never fails the compile: an invalid
+    // module is the one we have been shipping to the driver for weeks, and refusing to load it here would
+    // turn a diagnostic into an outage.
+    static void ValidateSpirv(TSpan<const uint32> Spirv, FStringView DebugName)
+    {
+        if (CVarValidateShaders.GetValue() == 0 || Spirv.empty())
+        {
+            return;
+        }
+
+        const FString& Validator = GetSpirvValidatorPath();
+        if (Validator.empty())
+        {
+            return;
+        }
+
+        // spirv-val takes a file, so the module has to land on disk. Compiles run across the whole
+        // worker pool, so the name has to be unique per call, not per shader.
+        static TAtomic<uint32> Serial{0};
+
+        char NameBuf[32];
+        snprintf(NameBuf, sizeof(NameBuf), "/spirv-val-%u.spv", Serial.fetch_add(1, std::memory_order_relaxed));
+
+        const FString VirtualPath = FString(FShaderCache::CACHE_DIR) + NameBuf;
+
+        const TSpan<const uint8> Bytes(reinterpret_cast<const uint8*>(Spirv.data()), Spirv.size() * sizeof(uint32));
+        if (!VFS::WriteFile(VirtualPath, Bytes))
+        {
+            return;
+        }
+        DEFER { VFS::Remove(VirtualPath); };
+
+        const FFixedString RealPath = VFS::ResolvePath(VirtualPath);
+        const FString Params = FString("--target-env ") + kSpirvValTargetEnv + " \"" + RealPath.c_str() + "\"";
+
+        FString Diagnostic;
+        const int ExitCode = Platform::RunProcessAndWaitCapture(UTF8_TO_TCHAR(Validator.c_str()), UTF8_TO_TCHAR(Params.c_str()), nullptr,
+            [&Diagnostic](FStringView Line)
+            {
+                Diagnostic.append(Line.data(), Line.size());
+                Diagnostic += '\n';
+            });
+
+        // -1 is the wrapper's "could not spawn", not a verdict on the module. Reporting it as invalid
+        // SPIR-V would send someone hunting a shader bug that does not exist.
+        if (ExitCode == -1)
+        {
+            static TAtomic<bool> bWarned{false};
+            if (!bWarned.exchange(true, std::memory_order_relaxed))
+            {
+                LOG_WARN("Could not run spirv-val ('{}'); shader validation is inactive this session.", Validator.c_str());
+            }
+            return;
+        }
+
+        if (ExitCode != 0)
+        {
+            const FString Name(DebugName.data(), DebugName.size());
+            LOG_ERROR("Shader '{}' compiled to INVALID SPIR-V (spirv-val --target-env {}):\n{}",
+                      Name.c_str(), kSpirvValTargetEnv, Diagnostic.c_str());
+        }
+    }
+
+    // Material templates never compile on their own: they carry $MATERIAL_INPUTS / $MATERIAL_VERTEX_INPUTS
+    // and only become modules once a graph substitutes into them. Nothing above reaches them, which left
+    // the four Meshlet* vertex/mesh templates -- what EVERY material's vertex stage is built from --
+    // outside validation entirely.
+    //
+    // The substitution is the neutral one CMaterial::GetDefaultMaterial already uses, and deliberately not
+    // a real graph: what is under test is the template's own code, which is identical whatever the graph
+    // contributes. A template that only validates for some graphs is a graph bug, not a template bug, and
+    // those modules are validated on their own when the material compiles.
+    static void ValidateMaterialTemplates(IShaderCompiler& Compiler)
+    {
+        if (CVarValidateShaders.GetValue() == 0 || GetSpirvValidatorPath().empty())
+        {
+            return;
+        }
+
+        // Reachable at startup, unlike the CVar: FConsoleRegistry::LoadFromConfig is still a stub, so
+        // nothing can lower r.Shaders.Validate before Initialize runs.
+        if (GCommandLine != nullptr && GCommandLine->Has("noshadervalidation"))
+        {
+            return;
+        }
+
+        // Pixel templates expect the substitution to DECLARE Material, because the codegen does.
+        // Vertex templates declare it themselves and expect only the assignment.
+        static constexpr const char* kPixelToken  = "$MATERIAL_INPUTS";
+        static constexpr const char* kPixelStub   = "\tFMaterialPixelInputs Material = DefaultMaterialInputs();\n";
+        static constexpr const char* kVertexToken = "$MATERIAL_VERTEX_INPUTS";
+        static constexpr const char* kVertexStub  = "\tMaterial.WorldPositionOffset = float3(0.0);\n";
+
+        uint32 Submitted = 0;
+        VFS::DirectoryIterator("/Engine/Resources/Shaders/MaterialShader", [&](const VFS::FFileInfo& Info)
+        {
+            if (Info.GetExt() != ".slang")
+            {
+                return;
+            }
+
+            FString Source;
+            if (!VFS::ReadFile(Source, Info.VirtualPath.c_str()))
+            {
+                return;
+            }
+
+            // First occurrence only, matching the material compiler. DeferredMaterial.slang carries both.
+            if (const size_t Pos = Source.find(kVertexToken); Pos != FString::npos)
+            {
+                Source.replace(Pos, strlen(kVertexToken), kVertexStub);
+            }
+            if (const size_t Pos = Source.find(kPixelToken); Pos != FString::npos)
+            {
+                Source.replace(Pos, strlen(kPixelToken), kPixelStub);
+            }
+
+            FShaderCompileOptions Options;
+            Options.bGenerateReflectionData = false;
+            Options.DebugName = FString(VFS::FileName(Info.VirtualPath.c_str(), true)) + " (template)";
+
+            // Result discarded: ValidateSpirv ran inside the compile and logged anything wrong. The
+            // module itself is never committed to the library -- this substitution is not a material.
+            Compiler.CompilerShaderRaw(Move(Source), Options, [](const FShaderHeader&) {});
+            ++Submitted;
+        });
+
+        if (Submitted > 0)
+        {
+            LOG_INFO("Validating {} material template(s) against spirv-val (-noshadervalidation to skip).", Submitted);
+        }
+    }
+
+#endif
 
     class FSlangBlob : public ISlangBlob
     {
@@ -448,6 +645,14 @@ namespace Lumina
         
                     const uint32* SpirvData = static_cast<const uint32*>(Code->getBufferPointer());
                     size_t SpirvSize        = Code->getBufferSize() / sizeof(uint32);
+
+                    // Per entry point, not over the assembled Binaries: a file with more than one entry
+                    // point (VisBufferPixel.slang) appends a module per entry, and spirv-val takes one
+                    // module per invocation.
+                    #if USING(WITH_EDITOR)
+                    ValidateSpirv(TSpan<const uint32>(SpirvData, SpirvSize), FileName);
+                    #endif
+
                     Binaries.insert(Binaries.end(), SpirvData, SpirvData + SpirvSize);
                 }
         
@@ -456,7 +661,7 @@ namespace Lumina
                     LOG_ERROR("Slang: Shader compiled to empty SPIR-V");
                     return;
                 }
-        
+
                 FShaderHeader Shader;
                 Shader.DebugName = FileName.data();
                 Shader.Hash      = Hash::GetHash64(Binaries);
@@ -533,8 +738,14 @@ namespace Lumina
         EnumerateShadersUnder("/Engine/Resources/Shaders");
         for (const FPlugin* Plugin : FPluginManager::Get().GetAllPlugins())
         {
-            if (!Plugin->IsEnabled())        continue;
-            if (!Plugin->IsContentMounted()) continue;
+            if (!Plugin->IsEnabled())
+            {
+                continue;
+            }
+            if (!Plugin->IsContentMounted())
+            {
+                continue;
+            }
             FString Root = Plugin->GetMountAlias();
             Root += "/Shaders";
             if (VFS::Exists(Root))
@@ -579,6 +790,10 @@ namespace Lumina
                 FShaderLibrary::Commit(Header);
             });
         }
+
+        #if USING(WITH_EDITOR)
+        ValidateMaterialTemplates(*this);
+        #endif
     }
 
     void FSpirVShaderCompiler::Shutdown()
@@ -597,8 +812,14 @@ namespace Lumina
         for (size_t Pos = ShaderString.find("#pragma once"); Pos != FString::npos; Pos = ShaderString.find("#pragma once", Pos))
         {
             size_t LineEnd = ShaderString.find('\n', Pos);
-            if (LineEnd == FString::npos) LineEnd = ShaderString.size();
-            else ++LineEnd;
+            if (LineEnd == FString::npos)
+            {
+                LineEnd = ShaderString.size();
+            }
+            else
+            {
+                ++LineEnd;
+            }
             ShaderString.erase(Pos, LineEnd - Pos);
         }
 
@@ -773,6 +994,11 @@ namespace Lumina
         
                 const uint32* SpirvData = static_cast<const uint32*>(Code->getBufferPointer());
                 size_t SpirvSize        = Code->getBufferSize() / sizeof(uint32);
+
+                #if USING(WITH_EDITOR)
+                ValidateSpirv(TSpan<const uint32>(SpirvData, SpirvSize), RawName);
+                #endif
+
                 Binaries.insert(Binaries.end(), SpirvData, SpirvData + SpirvSize);
             }
         
@@ -781,7 +1007,7 @@ namespace Lumina
                 LOG_ERROR("Slang: Shader compiled to empty SPIR-V");
                 return;
             }
-        
+
             FShaderHeader Shader;
             Shader.DebugName = RawName;
             Shader.Hash      = Hash::GetHash64(Binaries);

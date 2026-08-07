@@ -1171,10 +1171,12 @@ namespace Lumina::RHI
 
             // A bare hazard report names the two accesses and nothing else, which for a buffer the
             // engine sub-allocates out of a shared VkBuffer is not enough to find the prior write.
-            // These add the prior command's index and debug region, which is what turns "some earlier
+            // This adds the prior command's index and debug region, which is what turns "some earlier
             // transfer wrote this" into a call site.
+            //
+            // The companion `_pretty_print` key was REMOVED by the layer (it now always emits the fixed,
+            // parse-friendly layout) and re-adding it only earns two warnings at vkCreateInstance.
             AddSetting("syncval_message_extra_properties", ResolveCheck("syncdetail", true) ? kEnable : kDisable);
-            AddSetting("syncval_message_extra_properties_pretty_print", ResolveCheck("syncdetail", true) ? kEnable : kDisable);
 
             // Off unless asked for: see --gpuvalidation. Pass --nogpuvalidation to rule the
             // instrumentation out of a fault entirely, without rebuilding.
@@ -2884,17 +2886,16 @@ namespace Lumina::RHI
             .pCode    = reinterpret_cast<const uint32*>(Compute.Source.data()),
         };
         
-        VkShaderModule ShaderModule;
+        VkShaderModule ShaderModule{};
         VK_CHECK(vkCreateShaderModule(*GDevice, &ModuleInfo, nullptr, &ShaderModule));
      
-        FMemMark Mark;
+        FMemMark Mark{};
         VkSpecializationInfo SpecializationInfo = ConstructSpecializationInfo(Mark, Constants);
         
         VkComputePipelineCreateInfo Info
         {
             .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
             .pNext = nullptr,
-            // See the graphics path: editor-only, enables vkGetPipelineExecutableStatisticsKHR.
             .flags = GDevice->bPipelineStats ? VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR : 0u,
             .stage =
                 {
@@ -2906,12 +2907,12 @@ namespace Lumina::RHI
                     .pName                  = Compute.EntryPoint.data(),
                     .pSpecializationInfo    = &SpecializationInfo
                 },
-            .layout = GDevice->PipelineLayout,
-            .basePipelineHandle = VK_NULL_HANDLE,
-            .basePipelineIndex = 0 
+            .layout                 = GDevice->PipelineLayout,
+            .basePipelineHandle     = VK_NULL_HANDLE,
+            .basePipelineIndex      = 0 
         };
         
-        VkPipeline Pipeline;
+        VkPipeline Pipeline{};
         VK_CHECK(vkCreateComputePipelines(*GDevice, nullptr, 1, &Info, nullptr, &Pipeline));
 
         vkDestroyShaderModule(*GDevice, ShaderModule, nullptr);
