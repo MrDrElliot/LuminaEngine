@@ -776,6 +776,14 @@ namespace Lumina
                 
         Frame.Lighting.AtlasTiles = ShadowAtlas.GetAllocatedTiles();
 
+        // Close the immediate-line write window last, so anything the extract graphs themselves drew is
+        // still counted. Nothing is copied here -- the verts are already in the mapped slot buffer and
+        // this just publishes where they end.
+        for (uint32 Channel = 0; Channel < FImmediateLineRenderer::NumChannels; ++Channel)
+        {
+            Frame.Primitives.ImmediateLines[Channel] = ImmediateLines.Snapshot((FImmediateLineRenderer::EChannel)Channel);
+        }
+
         Frame.bExtractedThisFrame = true;
 
         ExtractFrame = nullptr;
@@ -6192,6 +6200,10 @@ namespace Lumina
 
         Frame.Primitives.SimpleVertices.clear();
         Frame.Primitives.LineBatches.clear();
+        for (FImmediateLineRenderer::FDrawRange& Range : Frame.Primitives.ImmediateLines)
+        {
+            Range = {};
+        }
         Frame.Primitives.SolidVertices.clear();
         Frame.Primitives.SolidBatches.clear();
         Frame.Views.CullViews.clear();
@@ -10701,9 +10713,18 @@ namespace Lumina
         const FFrameData& Frame = *RenderFrame;
         const auto& SimpleVertices     = Frame.Primitives.SimpleVertices;
         const auto& LineBatches        = Frame.Primitives.LineBatches;
+        const auto& ImmediateRanges    = Frame.Primitives.ImmediateLines;
         const auto& DrawCommands       = Frame.Geometry.DrawCommands;
 
-        if (SimpleVertices.empty() || LineBatches.empty())
+        const bool bHasBatched = !SimpleVertices.empty() && !LineBatches.empty();
+
+        bool bHasImmediate = false;
+        for (const FImmediateLineRenderer::FDrawRange& Range : ImmediateRanges)
+        {
+            bHasImmediate |= (Range.Vertices != 0 && Range.VertexCount > 0);
+        }
+
+        if (!bHasBatched && !bHasImmediate)
         {
             return;
         }
@@ -10754,27 +10775,58 @@ namespace Lumina
         DepthTested.DepthMode = RHI::EDepthFlags::Read | RHI::EDepthFlags::Write;
         DepthTested.DepthTest = RHI::EOp::Greater;
 
-        // Vertices live in the transient ring for this submission; the VS reads them by device address.
-        const FSimpleElementPassData VertsPass
-        {
-            RHI::Core::CopyTransientArray(SimpleVertices.data(), SimpleVertices.size())
-        };
-        const RHI::GPUPtr Args = MakeArgs(VertsPass);
-
         // Re-set only when the depth mode changes between consecutive batches.
         int CurrentDepthMode = -1;
-        for (const FLineBatch& Batch : LineBatches)
-        {
-            const int DepthMode = Batch.bDepthTest ? 1 : 0;
-            if (DepthMode != CurrentDepthMode)
-            {
-                RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(Batch.bDepthTest ? DepthTested : RHI::FDepthStencilDesc{}));
-                CurrentDepthMode = DepthMode;
-            }
-            RHI::CmdSetLineWidth(CL, Batch.Thickness);
 
-            // FirstVertex feeds SV_VertexID so the VS indexes into the full vertex array.
-            RHI::CmdDraw(CL, Args, Batch.VertexCount, 1, Batch.StartVertex, 0);
+        if (bHasBatched)
+        {
+            // Vertices live in the transient ring for this submission; the VS reads them by device address.
+            const FSimpleElementPassData VertsPass
+            {
+                RHI::Core::CopyTransientArray(SimpleVertices.data(), SimpleVertices.size())
+            };
+            const RHI::GPUPtr Args = MakeArgs(VertsPass);
+
+            for (const FLineBatch& Batch : LineBatches)
+            {
+                const int DepthMode = Batch.bDepthTest ? 1 : 0;
+                if (DepthMode != CurrentDepthMode)
+                {
+                    RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(Batch.bDepthTest ? DepthTested : RHI::FDepthStencilDesc{}));
+                    CurrentDepthMode = DepthMode;
+                }
+                RHI::CmdSetLineWidth(CL, Batch.Thickness);
+
+                // FirstVertex feeds SV_VertexID so the VS indexes into the full vertex array.
+                RHI::CmdDraw(CL, Args, Batch.VertexCount, 1, Batch.StartVertex, 0);
+            }
+        }
+
+        // Immediate lines: one draw per channel, straight out of the mapped slot buffer the producers
+        // wrote. No staging copy -- the address in the range IS where the verts already live.
+        if (bHasImmediate)
+        {
+            RHI::CmdSetLineWidth(CL, 1.0f);
+
+            for (uint32 Channel = 0; Channel < FImmediateLineRenderer::NumChannels; ++Channel)
+            {
+                const FImmediateLineRenderer::FDrawRange& Range = ImmediateRanges[Channel];
+                if (Range.Vertices == 0 || Range.VertexCount == 0)
+                {
+                    continue;
+                }
+
+                const bool bDepthTest = (Channel == FImmediateLineRenderer::DepthTested);
+                const int  DepthMode  = bDepthTest ? 1 : 0;
+                if (DepthMode != CurrentDepthMode)
+                {
+                    RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(bDepthTest ? DepthTested : RHI::FDepthStencilDesc{}));
+                    CurrentDepthMode = DepthMode;
+                }
+
+                const RHI::GPUPtr ImmediateArgs = MakeArgs(FSimpleElementPassData{ Range.Vertices });
+                RHI::CmdDraw(CL, ImmediateArgs, Range.VertexCount, 1, 0, 0);
+            }
         }
 
         RHI::CmdEndRenderPass(CL);

@@ -16,6 +16,7 @@ namespace Lumina::Physics
 
     void FJoltJobSystemBridge::RunJoltJob(void* Arg, JPH::uint32 /*WorkerIndex*/)
     {
+        LUMINA_PROFILE_SCOPE();
         Job* TheJob = static_cast<Job*>(Arg);
         TheJob->Execute();   // execute-once: a no-op if the waiting thread already ran it
         TheJob->Release();   // drop the reference taken in QueueJob/QueueJobs

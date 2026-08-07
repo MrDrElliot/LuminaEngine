@@ -11,6 +11,7 @@ namespace Lumina
     class CWorld;
     class FViewVolume;
     class CMaterialInterface;
+    class FImmediateLineRenderer;
     struct SPostProcessSettings;
 
     /**
@@ -98,6 +99,15 @@ namespace Lumina
 
         void DrawBillboard(int32 ResourceID, const FVector3& Location, float Scale) override {}
         void DrawLine(const FVector3& Start, const FVector3& End, const FVector4& Color, float Thickness, bool bDepthTest, float Duration) override {}
+
+        // Immediate-mode line sink for this scene, or null if the renderer has none. Single frame,
+        // one thickness, no CPU cull -- see FImmediateLineRenderer. Producers must draw between
+        // BeginImmediateLines (frame start) and the scene's Extract.
+        virtual FImmediateLineRenderer* GetImmediateLines() { return nullptr; }
+
+        // Opens this frame's immediate-line write window. Driven by FWorldManager at frame start,
+        // ahead of every world tick, so nothing draws into a slot the GPU still owns.
+        virtual void BeginImmediateLines() {}
 
         //~ Stats / settings ----------------------------------------------------------------
 

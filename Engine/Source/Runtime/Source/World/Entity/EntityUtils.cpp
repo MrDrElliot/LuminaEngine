@@ -794,7 +794,7 @@ namespace Lumina::ECS::Utils
     struct CACHE_ALIGN FTransformDirtyState
     {
         // entt::entity is a trivially-copyable uint32; the lock-free queue lets setters on any thread
-        // (worker fibers, the physics thread) enqueue without a lock, so they stay SuppressGCTransition-safe.
+        // (worker fibers, Jolt's step jobs) enqueue without a lock, so they stay SuppressGCTransition-safe.
         using FDirtyQueue = moodycamel::ConcurrentQueue<entt::entity, Memory::FTrackedConcurrentQueueTraits>;
 
         std::atomic<bool> bAnyDirty{ true };  // cheap gate: skip the drain when nothing is dirty
@@ -1012,8 +1012,6 @@ namespace Lumina::ECS::Utils
 
     void ResolveTransformChain(FEntityRegistry& Registry, entt::entity Entity)
     {
-        LUMINA_PROFILE_SCOPE();
-
         FTransformDirtyState& DirtyState = *EnsureTransformDirtyState(Registry);
         if (!DirtyState.bAnyDirty.load(std::memory_order_acquire))
         {

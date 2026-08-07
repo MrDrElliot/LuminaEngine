@@ -27,6 +27,83 @@ namespace Lumina
             return ImVec4(0.30f, 0.78f, 0.45f, 1.0f);
         }
 
+#if LUMINA_MEMORY_TRACKING
+        bool StartsWith(const char* Text, const char* Prefix)
+        {
+            return std::strncmp(Text, Prefix, std::strlen(Prefix)) == 0;
+        }
+
+        // Frames every stack ends in: the CRT entry point, the OS thread/fiber thunks, and the window
+        // proc chain. They carry no information about the allocation and trebled the height of a stack.
+        bool IsNoiseFrame(const char* Fn)
+        {
+            static const char* const kNoise[] = {
+                "__scrt_common_main_seh", "invoke_main", "BaseThreadInitThunk", "RtlUserThreadStart",
+                "RtlUserFiberStart", "SetSecurityDescriptorControl", "wcsrchr", "CallWindowProcW",
+                "IsWindowUnicode", "LuminaMain", "Lumina::FApplication::Run",
+            };
+            for (const char* N : kNoise)
+            {
+                if (std::strcmp(Fn, N) == 0) { return true; }
+            }
+            return false;
+        }
+
+        // Container and allocator internals. They say HOW the memory was taken (a vector grew, a
+        // hashtable inserted a node); the frame below says WHO wanted it, which is what a reader is
+        // looking for -- so these never get to be the headline of a call site.
+        bool IsPlumbingFrame(const char* Fn)
+        {
+            static const char* const kPrefixes[] = {
+                "eastl::", "std::", "moodycamel::", "ImVector", "ImGui::MemAlloc",
+                "Lumina::Memory::", "Lumina::ImGuiX::ImGuiMemAlloc", "operator new", "malloc", "_malloc",
+            };
+            for (const char* P : kPrefixes)
+            {
+                if (StartsWith(Fn, P)) { return true; }
+            }
+            return false;
+        }
+
+        // Template arguments are most of the length of a name like
+        // eastl::hashtable<__int64,eastl::pair<...>,...>::insert and none of the meaning at a glance.
+        // Collapsed to <...> for the row; the tooltip still carries the full text.
+        FString CollapseTemplateArgs(const FString& In)
+        {
+            FString Out;
+            Out.reserve(In.size());
+            int32 Depth = 0;
+            for (char C : In)
+            {
+                if (C == '<')
+                {
+                    if (++Depth == 1) { Out += "<...>"; }
+                    continue;
+                }
+                if (C == '>')
+                {
+                    if (Depth > 0) { --Depth; }
+                    continue;
+                }
+                if (Depth == 0) { Out += C; }
+            }
+            return Out;
+        }
+
+        // Namespace-qualified names are long and the qualification repeats on every row. The leaf
+        // (last "::" segment plus the type it hangs off) is what distinguishes one frame from another.
+        FString ShortenForRow(const FString& Full, size_t MaxLen)
+        {
+            FString Text = Full.find('<') != FString::npos ? CollapseTemplateArgs(Full) : Full;
+            if (Text.size() <= MaxLen)
+            {
+                return Text;
+            }
+            // Keep the tail: the leaf function is at the end of a qualified name.
+            return FString("...") + Text.substr(Text.size() - MaxLen);
+        }
+#endif
+
         // "12.3 MB (12884901 bytes)" -- human-readable plus exact, so an AI gets both the
         // gestalt and a parseable number.
         FString SizeBoth(uint64 Bytes)
@@ -708,6 +785,39 @@ namespace Lumina
         }
     }
 
+    const FMemoryProfilerEditorTool::FResolvedFrame& FMemoryProfilerEditorTool::ResolveCached(void* Address)
+    {
+        auto It = SymbolCache.find(Address);
+        if (It != SymbolCache.end())
+        {
+            return It->second;
+        }
+
+        char SymBuf[512];
+        Memory::ResolveSymbol(Address, SymBuf, sizeof(SymBuf));
+
+        FResolvedFrame Frame;
+
+        // ResolveSymbol formats a located frame as "Function  (File.cpp:1234)"; everything else
+        // (no line info, no PDB, a bare address) arrives as a single token.
+        const char* Open = std::strstr(SymBuf, "  (");
+        const size_t Len = std::strlen(SymBuf);
+        if (Open != nullptr && Len > 0 && SymBuf[Len - 1] == ')')
+        {
+            Frame.Function.assign(SymBuf, (size_t)(Open - SymBuf));
+            Frame.Location.assign(Open + 3, Len - (size_t)(Open + 3 - SymBuf) - 1);
+        }
+        else
+        {
+            Frame.Function.assign(SymBuf, Len);
+        }
+
+        Frame.bNoise    = IsNoiseFrame(Frame.Function.c_str());
+        Frame.bPlumbing = IsPlumbingFrame(Frame.Function.c_str());
+
+        return SymbolCache.emplace(Address, Move(Frame)).first->second;
+    }
+
     void FMemoryProfilerEditorTool::DrawCallSites()
     {
         if (!ImGui::CollapsingHeader(LE_ICON_LIST_BOX " Top Call Sites", ImGuiTreeNodeFlags_DefaultOpen))
@@ -772,27 +882,98 @@ namespace Lumina
             ImGui::SetClipboardText(Report.c_str());
         }
         ImGui::SameLine();
+        ImGui::Checkbox("Trim boilerplate", &bHideNoiseFrames);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Hide the CRT/thread-entry frames every stack ends in.");
+        }
+        ImGui::SameLine();
         ImGui::TextDisabled("(%u sites)", NumSites);
+
+        const ImGuiTableFlags Flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg
+                                    | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY
+                                    | ImGuiTableFlags_SizingFixedFit;
+
+        if (!ImGui::BeginTable("CallSites", 5, Flags, ImVec2(0, 0)))
+        {
+            return;
+        }
+
+        ImGui::TableSetupScrollFreeze(0, 1);
+        ImGui::TableSetupColumn("Call site", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("Live",      ImGuiTableColumnFlags_WidthFixed, 90.0f);
+        ImGui::TableSetupColumn("Count",     ImGuiTableColumnFlags_WidthFixed, 70.0f);
+        ImGui::TableSetupColumn("Allocs",    ImGuiTableColumnFlags_WidthFixed, 90.0f);
+        ImGui::TableSetupColumn("Category",  ImGuiTableColumnFlags_WidthFixed, 110.0f);
+        ImGui::TableHeadersRow();
+
+        // The ranking metric is what the eye should land on first; the other column stays plain.
+        const ImVec4 RankedColor  = ImVec4(0.98f, 0.78f, 0.35f, 1.0f);
+        const ImVec4 SourceColor  = ImVec4(0.60f, 0.80f, 1.00f, 1.0f);   // frames with a file:line
+        const ImVec4 ForeignColor = ImVec4(0.60f, 0.60f, 0.65f, 1.0f);   // no source: system/plumbing
 
         for (uint32 i = 0; i < NumSites; ++i)
         {
             const Memory::FCallSiteStat& Site = Sites[i];
 
-            SymBuf[0] = '\0';
-            if (Site.FrameCount > 0)
+            // The headline is the first frame that names engine code rather than the container that
+            // happened to do the allocating -- "STerrainControllerSystem::CollectChunkCandidates",
+            // not "eastl::hashtable<...>::insert". The plumbing frame is still there when expanded.
+            uint32 HeadlineFrame = 0;
+            for (uint32 f = 0; f < Site.FrameCount; ++f)
             {
-                Memory::ResolveSymbol(Site.Frames[0], SymBuf, sizeof(SymBuf));
+                const FResolvedFrame& Candidate = ResolveCached(Site.Frames[f]);
+                if (!Candidate.bPlumbing && !Candidate.bNoise)
+                {
+                    HeadlineFrame = f;
+                    break;
+                }
             }
 
+            // By pointer: the cache is node-based, so entries stay put as later frames resolve, and a
+            // conditional-expression reference would have copied the whole struct once per row.
+            static const FResolvedFrame EmptyFrame;
+            const FResolvedFrame* Headline = &EmptyFrame;
+            if (Site.FrameCount > 0)
+            {
+                Headline = &ResolveCached(Site.Frames[HeadlineFrame]);
+            }
+
+            ImGui::TableNextRow();
             ImGui::PushID((int)i);
-            const bool bOpen = ImGui::TreeNode("site", "%s live (%llu allocs) - %s [%s]",
-                ImGuiX::FormatSize(Site.LiveBytes).c_str(),
-                (unsigned long long)Site.TotalAllocs,
-                SymBuf[0] ? SymBuf : "(no frames)",
-                Site.CatName[0] ? Site.CatName : "Default");
+
+            ImGui::TableSetColumnIndex(0);
+            const FString RowLabel = FString().sprintf("%u. %s", i + 1,
+                Site.FrameCount > 0 ? ShortenForRow(Headline->Function, 96).c_str() : "(no frames)");
+
+            const bool bOpen = ImGui::TreeNodeEx("##site", ImGuiTreeNodeFlags_SpanAllColumns
+                | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick,
+                "%s", RowLabel.c_str());
+
+            if (ImGui::IsItemHovered() && !Headline->Location.empty())
+            {
+                ImGui::SetTooltip("%s\n%s", Headline->Function.c_str(), Headline->Location.c_str());
+            }
+
+            ImGui::TableSetColumnIndex(1);
+            if (bSortCallSitesByAllocs) { ImGui::TextUnformatted(ImGuiX::FormatSize(Site.LiveBytes).c_str()); }
+            else { ImGui::TextColored(RankedColor, "%s", ImGuiX::FormatSize(Site.LiveBytes).c_str()); }
+
+            ImGui::TableSetColumnIndex(2);
+            ImGui::TextDisabled("%llu", (unsigned long long)Site.LiveCount);
+
+            ImGui::TableSetColumnIndex(3);
+            if (bSortCallSitesByAllocs) { ImGui::TextColored(RankedColor, "%llu", (unsigned long long)Site.TotalAllocs); }
+            else { ImGui::Text("%llu", (unsigned long long)Site.TotalAllocs); }
+
+            ImGui::TableSetColumnIndex(4);
+            ImGui::TextDisabled("%s", Site.CatName[0] ? Site.CatName : "Default");
 
             if (bOpen)
             {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+
                 if (ImGui::SmallButton(LE_ICON_CONTENT_COPY " Copy stack"))
                 {
                     char Clip[8192];
@@ -812,15 +993,55 @@ namespace Lumina
                     ImGui::SetClipboardText(Clip);
                 }
 
+                // Innermost frame first, matching every debugger's call-stack pane.
                 for (uint32 f = 0; f < Site.FrameCount; ++f)
                 {
-                    Memory::ResolveSymbol(Site.Frames[f], SymBuf, sizeof(SymBuf));
-                    ImGui::TextUnformatted(SymBuf);
+                    const FResolvedFrame& Frame = ResolveCached(Site.Frames[f]);
+                    if (bHideNoiseFrames && Frame.bNoise)
+                    {
+                        continue;
+                    }
+
+                    ImGui::TableNextRow();
+
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::TextDisabled("%2u", f);
+                    ImGui::SameLine();
+
+                    // Frames carrying a file:line are the ones worth reading; the rest recede.
+                    const bool bHasSource = !Frame.Location.empty();
+                    ImGui::PushStyleColor(ImGuiCol_Text, bHasSource ? SourceColor : ForeignColor);
+                    ImGui::TextUnformatted(ShortenForRow(Frame.Function, 110).c_str());
+                    ImGui::PopStyleColor();
+
+                    if (ImGui::IsItemHovered())
+                    {
+                        ImGui::SetTooltip("%s", Frame.Function.c_str());
+                    }
+
+                    // Right-aligned at the far edge of the (stretching) call-site column, the way a
+                    // debugger's stack pane reads. It lives here rather than in a stat column because
+                    // no 90px column can hold a path, and dropping it when it does not fit keeps the
+                    // function name -- the more important half -- from being pushed out.
+                    if (bHasSource)
+                    {
+                        const float Available = ImGui::GetContentRegionAvail().x;
+                        const float LocWidth  = ImGui::CalcTextSize(Frame.Location.c_str()).x;
+                        if (Available > LocWidth + ImGui::GetStyle().ItemSpacing.x)
+                        {
+                            ImGui::SameLine(0.0f, Available - LocWidth);
+                            ImGui::TextDisabled("%s", Frame.Location.c_str());
+                        }
+                    }
                 }
+
                 ImGui::TreePop();
             }
+
             ImGui::PopID();
         }
+
+        ImGui::EndTable();
     }
 
 #else // !LUMINA_MEMORY_TRACKING

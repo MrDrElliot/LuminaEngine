@@ -27,6 +27,8 @@
 #include "Input/InputProcessor.h"
 #include "Input/InputViewport.h"
 #include "Renderer/RHI.h"
+#include "Renderer/ImmediateLineRenderer.h"
+#include "World/Entity/Systems/DebugDrawSystem.h"
 #include "UI/RmlUiBridge.h"
 #include "World/WorldManager.h"
 #include "World/Entity/EntityUtils.h"
@@ -1500,6 +1502,11 @@ namespace Lumina
         }
     }
 
+    // Pointer travel, in pixels, before a held right button counts as a look instead of a context-menu
+    // tap. Deliberately under ImGui's 15px viewport tap threshold, so a gesture can never both arm the
+    // camera and still read as a tap.
+    static constexpr float RightLookArmThresholdPixels = 4.0f;
+
     void FEditorTool::TickEditorCamera(double DeltaTime)
     {
         // Cleared first so a tool that early-outs never leaves the gesture flag latched for the
@@ -1549,12 +1556,37 @@ namespace Lumina
         }
         CameraState.bLeftMouseDownPrev = bLeftDown;
 
+        // A right press only becomes a look once the pointer actually travels; until then it stays a
+        // candidate context-menu tap (see FEditorCameraState::bRightLookArmed). Pixels are accumulated
+        // rather than measured from the press point so a slow drift still arms.
+        if (!bRightDown)
+        {
+            CameraState.bRightLookArmed = false;
+            CameraState.RightLookTravel = 0.0f;
+        }
+        else if (!CameraState.bRightLookArmed)
+        {
+            CameraState.RightLookTravel += static_cast<float>(Math::Abs(Raw.GetMouseDeltaX()) + Math::Abs(Raw.GetMouseDeltaY()));
+
+            // A fly key or the wheel while the button is held is camera intent with no pointer motion at
+            // all: RMB+W must fly immediately rather than after a jiggle. These only arm because the right
+            // button is already down, which is the same gate the fly keys themselves live behind.
+            const bool bFlyKeyDown = ImGui::IsKeyDown(ImGuiKey_W) || ImGui::IsKeyDown(ImGuiKey_A)
+                                  || ImGui::IsKeyDown(ImGuiKey_S) || ImGui::IsKeyDown(ImGuiKey_D)
+                                  || ImGui::IsKeyDown(ImGuiKey_Q) || ImGui::IsKeyDown(ImGuiKey_E);
+
+            CameraState.bRightLookArmed = CameraState.RightLookTravel >= RightLookArmThresholdPixels
+                                       || bFlyKeyDown
+                                       || WheelDelta != 0.0;
+        }
+
         // Mutually exclusive, highest priority first: LMB+RMB pans, Alt+LMB orbits, RMB alone looks.
         // Both buttons held must pan only, never pan and look at once.
         const bool bLeftGesture   = bLeftDown && !CameraState.bLeftGestureBlocked;
         const bool bWantPanDrag   = bLeftGesture && bRightDown;
         const bool bWantOrbitDrag = bLeftGesture && bAltDown && !bWantPanDrag;
-        const bool bWantLook      = bRightDown && !bWantPanDrag;
+        // LMB+RMB pan is never a tap, so it engages immediately; RMB alone waits to arm.
+        const bool bWantLook      = bRightDown && CameraState.bRightLookArmed && !bWantPanDrag;
         const bool bWantPan       = bAllowInput
                                  && CameraState.Mode == EEditorCameraMode::Orbit
                                  && Raw.IsMouseButtonDown(EMouseKey::ButtonMiddle);
@@ -1886,26 +1918,43 @@ namespace Lumina
 
         const float Reach = Step * (float)HalfCount;
 
+        // Grid lines go on the immediate path: uniform thickness, single frame, and there can be
+        // thousands of them. The three axis lines keep their own thickness, which is raster state, so
+        // they stay on the batched path where a per-line thickness still means something.
+        const FDebugDrawState*  DrawState = DebugDraw::GetState(World);
+        FImmediateLineRenderer* Lines     = DebugDraw::GetLines(World);
+        const uint32            GridColor = PackColor(Settings->LineColor);
+
         for (int32 i = -HalfCount; i <= HalfCount; ++i)
         {
             const float Coord  = (float)i * Step;
             const bool  bIsAxis = (i == 0);
 
-            const FVector4 AlongZColor = bIsAxis ? FVector4(0.0f, 0.0f, 1.0f, 1.0f) : Settings->LineColor;
-            const FVector4 AlongXColor = bIsAxis ? FVector4(1.0f, 0.0f, 0.0f, 1.0f) : Settings->LineColor;
-            const float    Thickness   = bIsAxis ? Settings->AxisThickness : Settings->LineThickness;
+            if (bIsAxis)
+            {
+                World->DrawLine(FVector3(Coord, 0, -Reach), FVector3(Coord, 0, Reach),
+                                FVector4(0.0f, 0.0f, 1.0f, 1.0f), Settings->AxisThickness);
+                World->DrawLine(FVector3(-Reach, 0, Coord), FVector3(Reach, 0, Coord),
+                                FVector4(1.0f, 0.0f, 0.0f, 1.0f), Settings->AxisThickness);
+                continue;
+            }
 
-            World->DrawLine(
-                FVector3(Coord, 0, -Reach),
-                FVector3(Coord, 0,  Reach),
-                AlongZColor,
-                Thickness);
+            if (Lines == nullptr)
+            {
+                continue;
+            }
 
-            World->DrawLine(
-                FVector3(-Reach, 0, Coord),
-                FVector3( Reach, 0, Coord),
-                AlongXColor,
-                Thickness);
+            // Each grid line is axis-aligned, so its own AABB is a tight cull volume -- looking away
+            // from most of the grid actually prunes it, which a bounding sphere would never manage.
+            if (DebugDraw::ShouldDraw(*DrawState, FAABB(FVector3(Coord, 0.0f, -Reach), FVector3(Coord, 0.0f, Reach))))
+            {
+                Lines->Line(FVector3(Coord, 0, -Reach), FVector3(Coord, 0, Reach), GridColor);
+            }
+
+            if (DebugDraw::ShouldDraw(*DrawState, FAABB(FVector3(-Reach, 0.0f, Coord), FVector3(Reach, 0.0f, Coord))))
+            {
+                Lines->Line(FVector3(-Reach, 0, Coord), FVector3(Reach, 0, Coord), GridColor);
+            }
         }
 
         if (Settings->bShowVerticalAxis)

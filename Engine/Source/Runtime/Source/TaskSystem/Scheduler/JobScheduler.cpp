@@ -8,6 +8,7 @@
 #include "Memory/MemoryConcurrentQueue.h"
 #include "Platform/Process/PlatformProcess.h"
 #include "Containers/Array.h"
+#include "Containers/BoundedMPMCQueue.h"
 #include "Core/Diagnostics/HangWatchdog.h"
 #include "Core/LuminaMacros.h"
 #include "Core/Profiler/Profile.h"
@@ -123,8 +124,13 @@ namespace Lumina::Jobs
     namespace
     {
         using FJobQueue   = moodycamel::ConcurrentQueue<FQueuedJob, Memory::FTrackedConcurrentQueueTraits>;
-        using FIndexQueue = moodycamel::ConcurrentQueue<uint16, Memory::FTrackedConcurrentQueueTraits>;
-        using FFiberQueue = moodycamel::ConcurrentQueue<FWorkFiber*, Memory::FTrackedConcurrentQueueTraits>;
+
+        // Both of these hand out slots from a pool of known size, so they can never hold more than that
+        // pool -- a bounded ring is the exact shape, and unlike the unbounded queue it allocates once at
+        // startup instead of minting a per-thread producer (and its blocks) on every thread that ever
+        // touches it. The job queues stay unbounded: a submit burst has no such ceiling.
+        using FIndexQueue = TBoundedMPMCQueue<uint16>;
+        using FFiberQueue = TBoundedMPMCQueue<FWorkFiber*>;
 
         // Deferred action the scheduler fiber performs AFTER a work fiber has switched away.
         enum class EPending : uint8 { None, Park, Free, ParkFn };
@@ -447,7 +453,7 @@ namespace Lumina::Jobs
                 }
             }
 #endif
-            G->ReadyFibers.enqueue(Fiber);
+            G->ReadyFibers.Enqueue(Fiber);
             G->ReadyCount.fetch_add(1, std::memory_order_relaxed);
             WakeWorkers(1);
         }
@@ -625,7 +631,7 @@ namespace Lumina::Jobs
                 ProfEnd(TLS.WorkerIndex, false);
                 P.Fiber->State.store(static_cast<uint8>(EFiberState::Free), std::memory_order_relaxed);
 #endif
-                G->FreeFibers.enqueue(P.Fiber);
+                G->FreeFibers.Enqueue(P.Fiber);
                 return;
 
             case EPending::Park:
@@ -738,7 +744,7 @@ namespace Lumina::Jobs
                 }
 
                 FWorkFiber* Ready = nullptr;
-                if (G->ReadyFibers.try_dequeue(Ready))
+                if (G->ReadyFibers.TryDequeue(Ready))
                 {
                     G->ReadyCount.fetch_sub(1, std::memory_order_relaxed);
                     TLS.CurrentFiber = Ready;
@@ -755,7 +761,7 @@ namespace Lumina::Jobs
                 // Claim a free fiber first, then a job, so a job is never popped without somewhere to run
                 // it (avoids re-queue churn). Put the fiber back if there is no job.
                 FWorkFiber* Free = nullptr;
-                if (G->FreeFibers.try_dequeue(Free))
+                if (G->FreeFibers.TryDequeue(Free))
                 {
                     FQueuedJob Job;
                     if (TryGetJobWorker(Job, Slot))
@@ -771,7 +777,7 @@ namespace Lumina::Jobs
                         StarveSpins = 0;
                         continue;
                     }
-                    G->FreeFibers.enqueue(Free);
+                    G->FreeFibers.Enqueue(Free);
                 }
                 else if (G->AvailJobs.load(std::memory_order_relaxed) > 0)
                 {
@@ -908,13 +914,19 @@ namespace Lumina::Jobs
             new (&G->IdleMask[i]) std::atomic<uint64>(0);
         }
 
+        // Ring capacities are the pools they hand out from, so neither can ever refuse an Enqueue: a
+        // counter index or fiber only goes back in if it came out.
+        G->FreeCounters.Initialize(kCounterPoolSize);
+        G->FreeFibers.Initialize(G->NumWorkFibers);
+        G->ReadyFibers.Initialize(G->NumWorkFibers);
+
         G->CounterPool = static_cast<FCounter*>(Memory::Malloc(sizeof(FCounter) * kCounterPoolSize, alignof(FCounter)));
         for (uint32 i = 0; i < kCounterPoolSize; ++i)
         {
             FCounter* C = new (&G->CounterPool[i]) FCounter();
             C->bPooled   = true;
             C->PoolIndex = static_cast<uint16>(i);
-            G->FreeCounters.enqueue(static_cast<uint16>(i));
+            G->FreeCounters.Enqueue(static_cast<uint16>(i));
         }
 
         // Build the work-fiber pool BEFORE starting workers so FreeFibers is populated when they spin up.
@@ -929,7 +941,7 @@ namespace Lumina::Jobs
             (void)snprintf(F->TracyName, sizeof(F->TracyName), "Job Fiber %u", i);
 #endif
             F->Handle = Fibers::Create(G->FiberStackSize, &FiberMain, F);
-            G->FreeFibers.enqueue(F);
+            G->FreeFibers.Enqueue(F);
         }
 
 #if USING(WITH_EDITOR)
@@ -1072,7 +1084,7 @@ namespace Lumina::Jobs
     {
         FCounter* Counter;
         uint16 Index;
-        if (G->FreeCounters.try_dequeue(Index))
+        if (G->FreeCounters.TryDequeue(Index))
         {
             Counter = &G->CounterPool[Index];
         }
@@ -1100,7 +1112,7 @@ namespace Lumina::Jobs
         }
         if (Counter->bPooled)
         {
-            G->FreeCounters.enqueue(Counter->PoolIndex);
+            G->FreeCounters.Enqueue(Counter->PoolIndex);
         }
         else
         {
@@ -1365,7 +1377,7 @@ namespace Lumina::Jobs
         }
         Out.NumWorkers    = G->NumWorkers;
         Out.NumWorkFibers = G->NumWorkFibers;
-        Out.FibersFree    = static_cast<uint32>(G->FreeFibers.size_approx());
+        Out.FibersFree    = static_cast<uint32>(G->FreeFibers.SizeApprox());
         const int64 Ready = G->ReadyCount.load(std::memory_order_relaxed);
         Out.FibersReady   = Ready > 0 ? static_cast<uint32>(Ready) : 0;
         const uint32 NonRunning = Out.FibersFree + Out.FibersReady;

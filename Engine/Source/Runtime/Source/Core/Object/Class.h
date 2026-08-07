@@ -147,10 +147,10 @@ namespace Lumina
 
         /** Structured (named-field) variant; drives each property's SerializeItem. Used by the
          *  JSON backend so reflected data round-trips through human-readable named fields. */
-        RUNTIME_API void SerializeTaggedProperties(IStructuredArchive::FRecord Record, void* Data, void const* Defaults = nullptr) const;
-        
+        RUNTIME_API void SerializeTaggedProperties(IStructuredArchive::FRecord& Record, void* Data, void const* Defaults = nullptr) const;
+
         void Serialize(FArchive& Ar) override { }
-        void Serialize(IStructuredArchive::FRecord Slot) override { }
+        void Serialize(IStructuredArchive::FRecord& Slot) override { }
     
         /** Caller must ensure the cast is valid; no type check. */
         template<typename PropertyType>

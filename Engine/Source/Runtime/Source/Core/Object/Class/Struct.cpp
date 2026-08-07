@@ -365,7 +365,7 @@ namespace Lumina
         }
     }
 
-    void CStruct::SerializeTaggedProperties(IStructuredArchive::FRecord Record, void* Data, void const* Defaults) const
+    void CStruct::SerializeTaggedProperties(IStructuredArchive::FRecord& Record, void* Data, void const* Defaults) const
     {
         for (FProperty* Current = LinkedProperty; Current; Current = (FProperty*)Current->Next)
         {

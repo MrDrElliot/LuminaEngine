@@ -1954,24 +1954,15 @@ namespace Lumina
                     }
                 }
             }
-            else if (!bOverImGuizmo)
+            else
             {
-                ImVec2 LeftDragDelta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
-                float LeftDragDistance = sqrtf(LeftDragDelta.x * LeftDragDelta.x + LeftDragDelta.y * LeftDragDelta.y);
-                bool bLeftDragging = LeftDragDistance >= 15.0f;
-    
                 ImVec2 RightDragDelta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Right);
                 float RightDragDistance = sqrtf(RightDragDelta.x * RightDragDelta.x + RightDragDelta.y * RightDragDelta.y);
                 // Right release was a tap, not a camera-look gesture: open context menu.
                 bool bRightWasShortClick = RightDragDistance < 15.0f;
 
-                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
-                {
-                    SelectionBox.bActive = true;
-                    SelectionBox.Start = MousePosInViewport;
-                    SelectionBox.Current = SelectionBox.Start;
-                }
-
+                // Outside the bOverImGuizmo gate below: a right click is never a gizmo interaction, and the
+                // gizmo sits directly on top of the entity whose menu is being asked for.
                 if (ImGui::IsMouseReleased(ImGuiMouseButton_Right))
                 {
                     if (bRightWasShortClick)
@@ -1996,12 +1987,28 @@ namespace Lumina
                         }
                     }
                 }
-            
+            }
+
+            // Left click / marquee. Unlike the context menu this DOES yield to the gizmo, which owns the
+            // pointer while it is over a handle.
+            if (!IsEntityPickRequested() && !bOverImGuizmo)
+            {
+                ImVec2 LeftDragDelta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
+                float LeftDragDistance = sqrtf(LeftDragDelta.x * LeftDragDelta.x + LeftDragDelta.y * LeftDragDelta.y);
+                bool bLeftDragging = LeftDragDistance >= 15.0f;
+
+                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+                {
+                    SelectionBox.bActive = true;
+                    SelectionBox.Start = MousePosInViewport;
+                    SelectionBox.Current = SelectionBox.Start;
+                }
+
                 if (ImGui::IsMouseDown(ImGuiMouseButton_Left) && SelectionBox.bActive)
                 {
                     SelectionBox.Current = MousePosInViewport;
                 }
-                
+
                 if (SelectionBox.bActive && bLeftDragging)
                 {
                     ImDrawList* DrawList = ImGui::GetWindowDrawList();

@@ -32,8 +32,6 @@ public abstract class LuminaTargetRules : TargetRules
 
         GlobalDefinitions.AddRange(new[]
         {
-            "JPH_OBJECT_LAYER_BITS=32",
-            "JPH_DEBUG_RENDERER",
             "EASTL_USER_DEFINED_ALLOCATOR=1",
             "_SILENCE_CXX23_ALIGNED_UNION_DEPRECATION_WARNING",
             "_SILENCE_CXX23_ALIGNED_STORAGE_DEPRECATION_WARNING",
@@ -50,21 +48,6 @@ public abstract class LuminaTargetRules : TargetRules
             $"LUMINA_CONFIGURATION_NAME=\"{Target.Configuration}\"",
             $"LUMINA_SHAREDLIB_EXT_NAME=\"{Target.Platform.GetSharedLibraryExtension()}\"",
         });
-
-        if (Target.Configuration != BuildConfiguration.Shipping)
-        {
-            GlobalDefinitions.AddRange(new[]
-            {
-                "JPH_FLOATING_POINT_EXCEPTIONS_ENABLED",
-                "JPH_EXTERNAL_PROFILE",
-                "JPH_ENABLE_ASSERTS",
-            });
-        }
-        else
-        {
-            // Jolt's debug renderer is stripped in Shipping.
-            GlobalDefinitions.Remove("JPH_DEBUG_RENDERER");
-        }
 
         LuminaFeatures.ApplyDefinitions(Target, GlobalDefinitions);
 

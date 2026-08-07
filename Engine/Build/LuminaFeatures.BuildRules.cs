@@ -22,6 +22,8 @@ public static class LuminaFeatures
 
     public const string BugSplat = "BugSplat";
 
+    public const string JoltDebugChecks = "JoltDebugChecks";
+
     public static bool IsActive(TargetInfo Target, string Feature)
     {
         switch (Target.Options.GetMode(Feature))
@@ -45,6 +47,11 @@ public static class LuminaFeatures
         {
             // Profiler instrumentation is not worth its overhead in a shipping build.
             Tracy => bNonShipping,
+
+            // Jolt's own asserts, FP-exception scopes and profile instrumentation. Debug only: these
+            // were on in Development, which made every physics measurement taken there an instrumented
+            // one. Turn back on with -JoltDebugChecks=On when chasing a Jolt-side assert.
+            JoltDebugChecks => Target.Configuration == BuildConfiguration.Debug,
 
             // Debug only. The layer costs far too much to leave on anywhere else, and this one flag is
             // what gates all of it -- core checks and sync validation both. Debug also turns on

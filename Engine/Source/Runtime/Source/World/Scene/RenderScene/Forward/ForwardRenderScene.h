@@ -2,6 +2,7 @@
 #include "Core/Delegates/Delegate.h"
 #include "Memory/Allocators/Allocator.h"
 #include "Memory/SmartPtr.h"
+#include "Renderer/ImmediateLineRenderer.h"
 #include "Renderer/RHI.h"
 #include "Renderer/RHICore.h"
 #include "Core/Threading/Thread.h"
@@ -489,6 +490,11 @@ namespace Lumina
             {
                 TVector<FSimpleElementVertex>    SimpleVertices;
                 TVector<FLineBatch>              LineBatches;
+
+                // Immediate-mode lines: already in mapped GPU memory, so the frame carries only the
+                // address and count that Snapshot published. Indexed by FImmediateLineRenderer::EChannel.
+                FImmediateLineRenderer::FDrawRange ImmediateLines[FImmediateLineRenderer::NumChannels];
+
                 TVector<FSimpleElementVertex>    SolidVertices;
                 TVector<FSolidBatch>             SolidBatches;
                 TVector<FBillboardInstance>      BillboardInstances;
@@ -667,6 +673,9 @@ namespace Lumina
 
         void DrawBillboard(int32 ResourceID, const FVector3& Location, float Scale) override;
         void DrawLine(const FVector3& Start, const FVector3& End, const FVector4& Color, float Thickness, bool bDepthTest, float Duration) override { }
+
+        FImmediateLineRenderer* GetImmediateLines() override { return &ImmediateLines; }
+        void BeginImmediateLines() override { ImmediateLines.BeginFrame(); }
 
         FSceneBuffer GetPreSkinnedVerticesBuffer() const { return PreSkinnedVerticesBuffer; }
         const FSceneImage& GetNamedImage(ENamedImage Image) const { return CurrentView ? CurrentView->Images[(int)Image] : NamedImages[(int)Image]; }
@@ -1352,6 +1361,10 @@ namespace Lumina
         };
         TVector<FLineBatchScratch>              LineBatchScratch;
         TVector<FLineBatcherComponent::FLineInstance> LineCompactScratch;
+
+        // Immediate-mode debug lines. Owned here because its per-slot buffers are tied to this scene's
+        // frame cadence; producers reach it through IRenderScene::GetImmediateLines.
+        FImmediateLineRenderer                  ImmediateLines;
 
         // Fixed-size views over the batcher's per-worker buffers + persistent list, built each frame as the
         // balanced work units for the parallel line batch (no drain). Reused so it doesn't churn the heap.

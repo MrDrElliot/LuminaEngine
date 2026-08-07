@@ -113,6 +113,13 @@ namespace Lumina
             , StructuredArchive(InAr)
         {}
 
+        // The destructor closes the scope, so a copy would close it twice. Passing one of these by value
+        // (SerializeTaggedProperties used to) left the backend's node stack one level too shallow for
+        // everything written after the first nested struct. Pass by reference; returning by value from
+        // Enter*() is a prvalue and needs no copy.
+        FArchiveRecord(const FArchiveRecord&) = delete;
+        FArchiveRecord& operator=(const FArchiveRecord&) = delete;
+
         ~FArchiveRecord();
 
         FArchiveSlot EnterField(FName FieldName);
@@ -128,7 +135,9 @@ namespace Lumina
         IStructuredArchive& StructuredArchive;
     };
 
-    class FArchiveArray : protected FSlotPosition
+    // Exported like FArchiveRecord: a module outside Runtime that enters an array (the tests, an editor
+    // tool writing a structured file) needs its destructor and EnterElement, not just the slot API.
+    class RUNTIME_API FArchiveArray : protected FSlotPosition
     {
         friend class FArchiveSlot;
 
@@ -137,6 +146,10 @@ namespace Lumina
             : FSlotPosition(InDepth, InID)
             , StructuredArchive(InAr)
         {}
+
+        // Scope-closing destructor; see FArchiveRecord.
+        FArchiveArray(const FArchiveArray&) = delete;
+        FArchiveArray& operator=(const FArchiveArray&) = delete;
 
         ~FArchiveArray();
 
@@ -157,6 +170,10 @@ namespace Lumina
             , StructuredArchive(InAr)
         {}
 
+        // Scope-closing destructor; see FArchiveRecord.
+        FArchiveStream(const FArchiveStream&) = delete;
+        FArchiveStream& operator=(const FArchiveStream&) = delete;
+
         ~FArchiveStream();
 
         FArchiveSlot EnterElement();
@@ -174,6 +191,10 @@ namespace Lumina
             : FSlotPosition(InDepth, InID)
             , StructuredArchive(InAr)
         {}
+
+        // Scope-closing destructor; see FArchiveRecord.
+        FArchiveMap(const FArchiveMap&) = delete;
+        FArchiveMap& operator=(const FArchiveMap&) = delete;
 
         ~FArchiveMap();
 

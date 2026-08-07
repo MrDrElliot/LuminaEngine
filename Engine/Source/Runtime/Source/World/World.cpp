@@ -586,9 +586,6 @@ namespace Lumina
     {
         if (PhysicsScene == nullptr)
         {
-            // TickPhysics runs on the physics worker and early-outs while this is null, but the
-            // assignment itself must not land while a step is in flight.
-            GWorldManager->WaitForPhysics();
             PhysicsScene = Physics::GetPhysicsContext()->CreatePhysicsScene(this);
 
             // Simulate() is what connects the on_construct hook that turns SRigidBodyComponent into an
@@ -1524,6 +1521,48 @@ namespace Lumina
         AddEntityScript(Entity, ScriptClass);
     }
 
+    namespace
+    {
+        // List-scheduling: assign each system (already sorted by priority) to the LOWEST-indexed batch whose
+        // members it does not conflict with. Unlike the old consecutive batching, this groups mutually
+        // non-conflicting systems even when an exclusive/conflicting system sits between them in priority order
+        // -- that interleaving was the actual source of "everything runs serial". Batches run in ascending
+        // order; because systems are processed in priority order and a conflict pushes a system to a later
+        // batch, conflicting pairs still execute in priority order (the higher-priority one first). Returns one
+        // index list per batch (indices into Systems).
+        TVector<TVector<uint16>> ComputeSystemBatches(const TVector<CWorld::FStageSlot>& Systems)
+        {
+            TVector<TVector<uint16>> Batches;
+            for (uint16 s = 0; s < (uint16)Systems.size(); ++s)
+            {
+                int32 Chosen = -1;
+                for (uint16 b = 0; b < (uint16)Batches.size() && Chosen < 0; ++b)
+                {
+                    bool bConflicts = false;
+                    for (uint16 Member : Batches[b])
+                    {
+                        if (FSystemAccess::Conflicts(Systems[s].Access, Systems[Member].Access))
+                        {
+                            bConflicts = true;
+                            break;
+                        }
+                    }
+                    if (!bConflicts)
+                    {
+                        Chosen = (int32)b;
+                    }
+                }
+                if (Chosen < 0)
+                {
+                    Chosen = (int32)Batches.size();
+                    Batches.emplace_back();
+                }
+                Batches[(size_t)Chosen].push_back(s);
+            }
+            return Batches;
+        }
+    }
+
     void CWorld::RegisterSystems()
     {
         DestroyManagedSystems();
@@ -1617,60 +1656,25 @@ namespace Lumina
             eastl::sort(SystemUpdateList[i].begin(), SystemUpdateList[i].end(),
                 [](const FStageSlot& A, const FStageSlot& B) { return A.StagePriority < B.StagePriority; });
         }
-    }
 
-    // Read-only snapshot of how systems group into parallel batches per stage, with each system's declared
-    // access. Replays the exact TickSystems greedy batching so the Gameplay Insights editor tool can show the
-    // real schedule (replaces the old Core.Systems.LogSchedule console dump). Game thread; cheap.
-    namespace
-    {
-        // List-scheduling: assign each system (already sorted by priority) to the LOWEST-indexed batch whose
-        // members it does not conflict with. Unlike the old consecutive batching, this groups mutually
-        // non-conflicting systems even when an exclusive/conflicting system sits between them in priority order
-        // -- that interleaving was the actual source of "everything runs serial". Batches run in ascending
-        // order; because systems are processed in priority order and a conflict pushes a system to a later
-        // batch, conflicting pairs still execute in priority order (the higher-priority one first). Returns one
-        // index list per batch (indices into Systems).
-        TVector<TVector<uint16>> ComputeSystemBatches(const TVector<CWorld::FStageSlot>& Systems)
+        // The batch layout is a pure function of the (now final) stage lists, so it is computed once here.
+        // TickSystems used to rebuild it -- one outer vector plus one inner vector per batch -- for every
+        // stage of every frame, which was the single largest allocation site in the whole engine.
+        for (uint8 i = 0; i < (uint8)EUpdateStage::Max; ++i)
         {
-            TVector<TVector<uint16>> Batches;
-            for (uint16 s = 0; s < (uint16)Systems.size(); ++s)
-            {
-                int32 Chosen = -1;
-                for (uint16 b = 0; b < (uint16)Batches.size() && Chosen < 0; ++b)
-                {
-                    bool bConflicts = false;
-                    for (uint16 Member : Batches[b])
-                    {
-                        if (FSystemAccess::Conflicts(Systems[s].Access, Systems[Member].Access))
-                        {
-                            bConflicts = true;
-                            break;
-                        }
-                    }
-                    if (!bConflicts)
-                    {
-                        Chosen = (int32)b;
-                    }
-                }
-                if (Chosen < 0)
-                {
-                    Chosen = (int32)Batches.size();
-                    Batches.emplace_back();
-                }
-                Batches[(size_t)Chosen].push_back(s);
-            }
-            return Batches;
+            SystemBatches[i] = ComputeSystemBatches(SystemUpdateList[i]);
         }
     }
 
+    // Read-only snapshot of how systems group into parallel batches per stage, with each system's declared
+    // access, for the Gameplay Insights editor tool. Game thread; cheap.
     void CWorld::GetSystemSchedule(TVector<FSystemScheduleEntry>& Out) const
     {
         Out.clear();
         for (uint8 s = 0; s < (uint8)EUpdateStage::Max; ++s)
         {
             const TVector<FStageSlot>& Systems = SystemUpdateList[s];
-            const TVector<TVector<uint16>> Batches = ComputeSystemBatches(Systems);
+            const TVector<TVector<uint16>>& Batches = SystemBatches[s];
             for (uint8 b = 0; b < (uint8)Batches.size(); ++b)
             {
                 for (uint16 Index : Batches[b])
@@ -1845,6 +1849,19 @@ namespace Lumina
         LineBatcherComponent->EnqueueLine(Start, End, Color, Thickness, bDepthTest, Duration);
     }
 
+    FImmediateLineRenderer* CWorld::GetImmediateLines() const
+    {
+        // Same guard as DrawLine: a suspended world never extracts, so its window is never open and
+        // buffering for it would just leak. Returning null lets callers skip the work entirely rather
+        // than build lines that get dropped.
+        if (IsSuspended() || RenderScene == nullptr)
+        {
+            return nullptr;
+        }
+
+        return RenderScene->GetImmediateLines();
+    }
+
     void CWorld::DrawSolidTriangles(TVector<FSimpleElementVertex>&& Vertices, ESolidDrawMode Mode, float Duration)
     {
         if (IsSuspended())
@@ -1993,7 +2010,7 @@ namespace Lumina
             SetExecutingSystemAccess(nullptr);
         };
         
-        const TVector<TVector<uint16>> Batches = ComputeSystemBatches(Systems);
+        const TVector<TVector<uint16>>& Batches = SystemBatches[(uint32)Context.GetUpdateStage()];
         for (const TVector<uint16>& Batch : Batches)
         {
             if (ECS::Utils::AnyTransformsDirty(EntityRegistry))

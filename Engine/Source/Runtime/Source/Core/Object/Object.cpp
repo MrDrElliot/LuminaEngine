@@ -31,7 +31,7 @@ namespace Lumina
         }
     }
 
-    void CObject::Serialize(IStructuredArchive::FRecord Record)
+    void CObject::Serialize(IStructuredArchive::FRecord& Record)
     {
         if (CClass* Class = GetClass())
         {

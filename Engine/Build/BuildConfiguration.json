@@ -5,6 +5,8 @@
 
   "//GpuValidation": "Default state of GPU-assisted validation, which instruments every shader to catch out-of-bounds and null reads from inside them. auto means off. Only the default lives here: the switch is --gpuvalidation / --nogpuvalidation on the engine command line, so a session spent chasing a GPU fault never costs a rebuild to enter or leave. Expect a large frame-rate cost while it is on.",
 
+  "//JoltDebugChecks": "Jolt's own asserts, floating-point-exception scopes and profile instrumentation (JPH_ENABLE_ASSERTS, JPH_FLOATING_POINT_EXCEPTIONS_ENABLED, JPH_EXTERNAL_PROFILE). auto means Debug only, so a Development physics measurement is not an instrumented one. Turn on when chasing a Jolt-side assert. Note this changes Jolt struct layouts, so it is global to every module and a change here rebuilds the world.",
+
   "Features": {
     "Tracy": "auto",
     "Validation": "auto",

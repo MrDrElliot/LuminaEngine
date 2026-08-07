@@ -32,6 +32,7 @@ namespace Lumina
     class CTexture;
     class CTextureRenderTarget;
     class CWorld;
+    class FImmediateLineRenderer;
     enum class ENetMode : uint8;
 
     namespace ECS
@@ -144,10 +145,11 @@ namespace Lumina
         /** Runs systems attached to this world; called on every update stage. */
         void Update(const FUpdateContext& Context);
 
-        // Steps physics. Runs on the physics worker; pair with DispatchPhysicsEvents on the main thread post-join.
+        // Steps physics. Game thread, between the DuringPhysics and PostPhysics stages.
         void TickPhysics();
 
-        // Main-thread drain of physics events (entt::dispatcher).
+        // Drains the contact events the step queued (entt::dispatcher). Called by
+        // FWorldManager::TickPhysics right after the step; not a separate frame phase.
         void DispatchPhysicsEvents();
 
         // Read ECS to compute camera/post-process and populate the scene's per-frame state.
@@ -418,6 +420,11 @@ namespace Lumina
         void DrawBillboard(int32 ResourceID, const FVector3& Location, float Scale) override;
         void DrawLine(const FVector3& Start, const FVector3& End, const FVector4& Color, float Thickness = 1.0f, bool bDepthTest = true, float Duration = -1.0f) override;
 
+        /** Immediate-mode line sink, or null when this world has no renderer (dedicated server) or is
+         *  suspended. Single frame, thickness 1, no CPU cull -- the path for the hundred-thousand-line
+         *  cases. DrawLine above is still the one to use for timed or thick lines. */
+        FImmediateLineRenderer* GetImmediateLines() const;
+
         /** Submit a solid triangle batch (3 pre-colored verts per tri). Duration <= 0 draws one frame.
          *  Mode picks the depth/blend state: Opaque for meshes that must occlude themselves, Translucent
          *  for blended overlays, XRay to ignore scene depth entirely. */
@@ -639,6 +646,10 @@ namespace Lumina
         
         // Per-stage, priority-sorted update slots (direct-call fn-ptr + Self) consumed by TickSystems.
         TVector<FStageSlot>                                SystemUpdateList[(int32)EUpdateStage::Max];
+
+        // Which of those slots may run together, as index lists into SystemUpdateList. A pure function of
+        // the stage lists, so it is built once by RegisterSystems rather than per tick.
+        TVector<TVector<uint16>>                           SystemBatches[(int32)EUpdateStage::Max];
 
         // Unique active systems in this world; owns Startup/Teardown lifecycle (one entry per system).
         TVector<FActiveSystem>                             ActiveSystems;

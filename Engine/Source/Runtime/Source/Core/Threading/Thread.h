@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <mutex>
 #include <shared_mutex>
 #include <thread>
@@ -38,12 +38,9 @@ namespace Lumina
         RUNTIME_API void ThreadYield();
         RUNTIME_API uint64 GetThreadID();
         RUNTIME_API bool IsMainThread();
-        RUNTIME_API bool IsPhysicsThread();
 
         RUNTIME_API uint32 GetNumThreads();
 
-        RUNTIME_API void SetPhysicsThread(std::thread::id ID);
-        
         RUNTIME_API void Sleep(uint64 Milliseconds);
         
         RUNTIME_API void Initialize(const char* MainThreadName);

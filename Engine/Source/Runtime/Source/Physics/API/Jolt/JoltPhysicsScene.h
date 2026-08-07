@@ -74,8 +74,9 @@ namespace Lumina::Physics
 		FVector3					SurfaceAngularVelocity = FVector3(0.0f);
 	};
 
-	// Contact snapshot recorded on the physics thread, drained game-thread; pre-resolves entity ids and
-	// velocities so dispatch never touches a (possibly destroyed) Jolt body.
+	// Contact snapshot recorded by Jolt's own worker jobs during the step, drained right after it on the
+	// game thread; pre-resolves entity ids and velocities so dispatch never touches a (possibly
+	// destroyed) Jolt body.
 	struct FContactRecord
 	{
 		EContactEventType	Type;
@@ -160,7 +161,8 @@ namespace Lumina::Physics
     	// Latch controller input into SCharacterMovementComponent once per Update() so all substeps see it.
     	void LatchCharacterInput();
     	
-    	// Physics thread: stage interpolated transforms in InterpolatedTransforms; does NOT touch the registry.
+    	// Runs inside the step (may be on a worker): stages interpolated transforms in
+    	// InterpolatedTransforms; does NOT touch the registry.
     	void BuildInterpolatedTransforms(float Alpha);
 
     	// Game thread: write staged transforms into the ECS, resolve hierarchy, process kill-height destroys.
@@ -244,8 +246,8 @@ namespace Lumina::Physics
     	
     	void EnqueueContactRecord(const FContactRecord& Record);
 
-    	// Called by the body-activation listener (physics thread) to stage a sleep/wake transition for the
-    	// game-thread script dispatch. bActivated == true is a wake.
+    	// Called by the body-activation listener, which Jolt raises from its worker jobs, to stage a
+    	// sleep/wake transition for the game-thread script dispatch. bActivated == true is a wake.
     	void EnqueueActivation(entt::entity Entity, bool bActivated);
 
     	// Shared collision shape, built on first request so N identical bodies share one JPH::Shape.
@@ -314,7 +316,7 @@ namespace Lumina::Physics
     	// AddBodiesPrepare/Finalize. Game-thread only (outside JoltSystem->Update()).
     	void CreateRigidBodiesBatched(const TVector<entt::entity>& Entities);
 
-    	// Build + add a single body; physics thread, outside Update(). on_construct enqueues, the drain calls this.
+    	// Build + add a single body; outside Update(). on_construct enqueues, the drain calls this.
     	void CreateRigidBodyImmediate(entt::registry& Registry, entt::entity Entity);
 
 
@@ -427,7 +429,7 @@ namespace Lumina::Physics
     	TConcurrentQueue<FContactRecord>			PendingContacts;
     	TVector<FContactRecord>						ContactDrainScratch;   // game thread, reused across frames
 
-    	// Sleep/wake transitions staged by the activation listener (physics thread), drained game-thread.
+    	// Sleep/wake transitions staged by the activation listener (Jolt worker job), drained game-thread.
     	struct FActivationRecord
     	{
     		entt::entity	Entity;
@@ -475,7 +477,7 @@ namespace Lumina::Physics
     	FMutex										PendingConstraintMutex;
     	TVector<entt::entity>						PendingConstraintCreations;
 
-    	// Interp transforms staged by the physics thread, read game-thread (FrameStart join orders them).
+    	// Interp transforms staged during the step, read game-thread after it returns.
     	// SoA, grow-only: positions are flat float3, rotations deinterleaved to x/y/z/w so nlerp vectorizes.
     	enum class EInterpFlag : uint8 { Interpolate = 0, Skip = 1, BelowKill = 2 };
     	struct FInterpStaging

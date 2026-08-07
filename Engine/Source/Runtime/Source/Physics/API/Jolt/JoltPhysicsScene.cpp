@@ -890,7 +890,7 @@ namespace Lumina::Physics
         LUMINA_PROFILE_SCOPE();
 
         // Mark this scene as stepping so on_construct defers body creation (Jolt forbids it mid-step).
-        // Per-scene flag, so it survives the physics job migrating workers.
+        // Per-scene flag: the real question is whether THIS scene is mid-step, not which thread asked.
         bStepInProgress.store(true, std::memory_order_release);
         struct FStepGuard { TAtomic<bool>& F; ~FStepGuard() { F.store(false, std::memory_order_release); } } StepGuard{ bStepInProgress };
 

@@ -50,6 +50,13 @@ namespace Lumina
         // Trailing-edge: release captured mouse mode once on RMB-up, not every non-looking frame.
         bool        bWasLooking = false;
 
+        // RMB alone is ambiguous on the press frame: a tap is the viewport's context-menu gesture, a drag
+        // is a look. Capturing on press sets ImGuiConfigFlags_NoMouse, which clears ImGui's hovered window
+        // for the rest of the gesture -- and the viewport's whole click block is behind IsWindowHovered(),
+        // so the release that opens the menu was never seen. The look arms only once the pointer travels.
+        bool        bRightLookArmed  = false;
+        float       RightLookTravel  = 0.0f;
+
         // Free-mode Alt+LMB tumble. The pivot is captured on the gesture's rising edge and held for
         // the whole drag; recomputing it per frame makes the orbit crawl toward the camera.
         bool        bFreeOrbitActive     = false;

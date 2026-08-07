@@ -80,6 +80,26 @@ namespace Lumina
 
         // Top Call Sites ranking: false = live bytes (leaks), true = total allocs (churn).
         bool  bSortCallSitesByAllocs = false;
+
+        // Drops the frames every stack ends in (CRT entry, thread start thunks) and the container /
+        // allocator plumbing at the top, leaving the frames that name actual engine code.
+        bool  bHideNoiseFrames = true;
+
+        // One resolved frame, split into what you read and where it lives.
+        struct FResolvedFrame
+        {
+            FString Function;       // demangled name, or "Module.dll+0x..." when there is no PDB
+            FString Location;       // "File.cpp:1234", empty when the frame has no line info
+            bool    bPlumbing = false;   // container/allocator internals: HOW it allocated, not WHO asked
+            bool    bNoise    = false;   // CRT/OS entry frames, identical on every stack
+        };
+
+        // Symbol resolution goes through DbgHelp under a process-wide lock, so resolving a panel's
+        // worth of frames every UI frame is far too slow to do live. Addresses are stable for the
+        // process, so each one is resolved exactly once.
+        THashMap<void*, FResolvedFrame> SymbolCache;
+
+        const FResolvedFrame& ResolveCached(void* Address);
 #endif
     };
 }

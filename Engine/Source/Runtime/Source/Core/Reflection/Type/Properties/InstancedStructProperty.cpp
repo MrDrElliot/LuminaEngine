@@ -101,7 +101,8 @@ namespace Lumina
 
             if (Type != nullptr)
             {
-                Type->SerializeTaggedProperties(Record.EnterField("Data").EnterRecord(), Instance->GetMutableMemory());
+                FArchiveRecord DataRecord = Record.EnterField("Data").EnterRecord();
+                Type->SerializeTaggedProperties(DataRecord, Instance->GetMutableMemory());
             }
         }
         else
@@ -112,7 +113,8 @@ namespace Lumina
 
             if (Type != nullptr)
             {
-                Type->SerializeTaggedProperties(Record.EnterField("Data").EnterRecord(), Instance->GetMutableMemory());
+                FArchiveRecord DataRecord = Record.EnterField("Data").EnterRecord();
+                Type->SerializeTaggedProperties(DataRecord, Instance->GetMutableMemory());
             }
         }
     }

@@ -189,7 +189,7 @@ namespace Lumina
 
     void ResetThreadFrameAllocators()
     {
-        std::lock_guard<std::mutex> Lock(GFrameArenaMutex);
+        std::lock_guard Lock(GFrameArenaMutex);
         for (FFrameArenaNode* N = GFrameArenaHead; N != nullptr; N = N->Next)
         {
             N->Arena->Reset();

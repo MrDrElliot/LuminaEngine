@@ -46,7 +46,6 @@ public class Runtime : LuminaModuleRules
             "SLang",
 
             "MiniAudio",
-            "JoltPhysics",
             "Recast",
             "DotNetHost",
 
@@ -59,6 +58,11 @@ public class Runtime : LuminaModuleRules
             // profiling is off.
             "Tracy",
         });
+
+        // Private: only Runtime's Physics/API/Jolt includes <Jolt/...>, and no public header exposes it.
+        // Jolt's defines change its struct layout, so keeping the dependency private stops them at this
+        // module instead of stamping them onto every dependent's command line.
+        PrivateDependencyModuleNames.Add("JoltPhysics");
 
         if (LuminaFeatures.IsActive(Target, LuminaFeatures.Aftermath))
         {

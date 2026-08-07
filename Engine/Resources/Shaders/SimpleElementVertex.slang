@@ -30,6 +30,18 @@ VSOutput VertexMain(uint VertexID : SV_VulkanVertexID)
     FSimpleElementVertex V = Pass().Vertices[VertexID];
 
     VSOutput Output;
+
+    // Padding vertex (FImmediateLineRenderer::MakePadVertex): a thread's tail reservation is filled
+    // with infinite positions rather than left holding whatever the buffer held three frames ago.
+    // x > w on every vertex of the line puts it wholly outside one clip plane, so the clipper rejects
+    // the primitive outright and it costs no fragments.
+    if (isinf(V.Position.x))
+    {
+        Output.Position = float4(2.0f, 2.0f, 2.0f, 1.0f);
+        Output.Color    = float4(0.0f);
+        return Output;
+    }
+
     Output.Position = mul(GetCameraProjection(), mul(GetCameraView(), float4(V.Position, 1.0f)));
     Output.Color    = UnpackColor(V.Color);
     return Output;

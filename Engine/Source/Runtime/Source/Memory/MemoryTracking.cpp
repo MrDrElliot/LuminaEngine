@@ -659,8 +659,7 @@ namespace Lumina::Memory
         Symbol->SizeOfStruct = sizeof(SYMBOL_INFO);
         Symbol->MaxNameLen   = 255;
 
-        DWORD64 Disp = 0;
-        if (SymFromAddr(Process, (DWORD64)(uintptr_t)Address, &Disp, Symbol))
+        auto FormatResolved = [&]()
         {
             IMAGEHLP_LINE64 LineInfo{};
             LineInfo.SizeOfStruct = sizeof(LineInfo);
@@ -679,8 +678,55 @@ namespace Lumina::Memory
             {
                 _snprintf_s(OutText, OutTextSize, _TRUNCATE, "%s", Symbol->Name);
             }
+        };
+
+        DWORD64 Disp = 0;
+        if (SymFromAddr(Process, (DWORD64)(uintptr_t)Address, &Disp, Symbol))
+        {
+            FormatResolved();
             return true;
         }
+
+        // SymInitialize only enumerated the modules loaded at that moment. Anything mapped later -- the
+        // game DLL, editor/runtime plugins, the C# host -- has no symbols registered, so every frame in it
+        // printed as a bare address and the call site was unattributable. Pick up new modules and retry.
+        // Rate-limited because a refresh walks the whole module list, and this is on the dump path where
+        // thousands of frames resolve back to back.
+        {
+            static uint64 LastRefreshMs = 0;
+            const uint64  NowMs = GetTickCount64();
+            if (LastRefreshMs == 0 || NowMs - LastRefreshMs > 1000)
+            {
+                LastRefreshMs = NowMs;
+                SymRefreshModuleList(Process);
+                if (SymFromAddr(Process, (DWORD64)(uintptr_t)Address, &Disp, Symbol))
+                {
+                    FormatResolved();
+                    return true;
+                }
+            }
+        }
+
+        // Still nothing (module stripped, or a JIT/managed frame): name the owning module and the offset
+        // into it, which is enough to say WHERE the allocation came from even without a PDB.
+        HMODULE Module = nullptr;
+        if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                static_cast<LPCSTR>(Address), &Module) && Module != nullptr)
+        {
+            char ModulePath[MAX_PATH] = {};
+            if (GetModuleFileNameA(Module, ModulePath, MAX_PATH) != 0)
+            {
+                const char* Leaf = ModulePath;
+                for (const char* p = ModulePath; *p; ++p)
+                {
+                    if (*p == '\\' || *p == '/') { Leaf = p + 1; }
+                }
+                const uintptr_t Offset = (uintptr_t)Address - (uintptr_t)Module;
+                _snprintf_s(OutText, OutTextSize, _TRUNCATE, "%s+0x%llX", Leaf, (unsigned long long)Offset);
+                return false;
+            }
+        }
+
         _snprintf_s(OutText, OutTextSize, _TRUNCATE, "0x%016llX", (unsigned long long)(uintptr_t)Address);
         return false;
 #else

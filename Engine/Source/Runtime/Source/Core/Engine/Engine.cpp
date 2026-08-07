@@ -37,7 +37,6 @@
 #include "nlohmann/json.hpp"
 #include "Paths/Paths.h"
 #include "Physics/Physics.h"
-#include "Physics/PhysicsThread.h"
 #include "Platform/Filesystem/FileHelper.h"
 #include "Renderer/RenderManager.h"
 #include "Scripting/DotNet/DotNetHost.h"
@@ -259,9 +258,6 @@ namespace Lumina
 
         FPluginManager::Get().LoadModulesForPhase(EPluginLoadingPhase::Core);
 
-        GPhysicsThread = Memory::New<FPhysicsThread>();
-        GPhysicsThread->Start();
-
         if (!GIsHeadless)
         {
             GRenderManager = Memory::New<FRenderManager>();
@@ -361,13 +357,6 @@ namespace Lumina
             GRenderManager = nullptr;
         }
 
-        if (GPhysicsThread)
-        {
-            GPhysicsThread->Stop();
-            Memory::Delete(GPhysicsThread);
-            GPhysicsThread = nullptr;
-        }
-
         Physics::Shutdown();
         if (!GIsHeadless)
         {
@@ -406,9 +395,9 @@ namespace Lumina
 
         FCPUProfiler::Get().BeginFrame();
         FGameplayProfiler::Get().BeginFrame();
-#if USING(WITH_EDITOR)
+        #if USING(WITH_EDITOR)
         FJobProfiler::Get().BeginFrame();
-#endif
+        #endif
 
         if (!GIsHeadless)
         {
@@ -425,12 +414,6 @@ namespace Lumina
             {
                 LUMINA_PROFILE_SECTION_COLORED("FrameStart", tracy::Color::Red);
                 UpdateContext.UpdateStage = EUpdateStage::FrameStart;
-                
-                {
-                    LUMINA_PROFILE_SECTION_COLORED("WaitForPhysics", tracy::Color::DarkOliveGreen);
-                    GWorldManager->WaitForPhysics();
-                    GWorldManager->DispatchPhysicsEvents();
-                }
 
                 MainThread::ProcessQueue();
                 
@@ -497,6 +480,14 @@ namespace Lumina
             }
 
             {
+                // The step itself, between the two stages named for it. Synchronous on the game thread:
+                // PostPhysics reads THIS frame's results, and contact events fire before it rather than a
+                // frame later. Jolt still spreads the step's internal work across the job pool.
+                LUMINA_PROFILE_SECTION_COLORED("Physics", tracy::Color::DarkOliveGreen);
+                GWorldManager->TickPhysics();
+            }
+
+            {
                 LUMINA_PROFILE_SECTION_COLORED("Post-Physics", tracy::Color::Yellow);
                 UpdateContext.UpdateStage = EUpdateStage::PostPhysics;
 
@@ -528,6 +519,8 @@ namespace Lumina
                 {
                     RmlUi::TickEditorContexts();
                     GWorldManager->ExtractWorlds();
+                    
+                    GWorldManager->BeginImmediateLines();
 
                     GRenderManager->FrameEnd();
                 }
@@ -535,9 +528,6 @@ namespace Lumina
                 DotNet::Tick();
 
                 OnUpdateStage(UpdateContext);
-
-                // Kick physics after all main-thread ECS access; results land next frame.
-                GWorldManager->KickPhysics();
             }
         }
         

@@ -11,8 +11,11 @@
 #include "Jolt/Core/Factory.h"
 #include "Memory/MemoryTracking.h"
 #include "Physics/API/Jolt/JoltUtils.h"
+#include "Renderer/ImmediateLineRenderer.h"
 #include "World/World.h"
+#include "World/Entity/Systems/DebugDrawSystem.h"
 #include "Log/Log.h"
+#include <Jolt/Physics/Body/BodyFilter.h>
 
 static_assert(sizeof(JPH::ObjectLayer) == 4);
 
@@ -211,21 +214,72 @@ namespace Lumina::Physics
 
     void FJoltDebugRenderer::DrawLine(JPH::RVec3Arg inFrom, JPH::RVec3Arg inTo, JPH::ColorArg inColor)
     {
-        float DrawDuration = (float)std::max(World->GetWorldDeltaTime(), Duration);
-        World->DrawLine(JoltUtils::FromJPHVec3(inFrom), JoltUtils::FromJPHVec3(inTo), FVector4(inColor.r, inColor.g, inColor.b, inColor.a), 1.0f, DrawDuration);
+        // Jolt colors are 0-255 bytes in RGBA order; FSimpleElementVertex packs ABGR. Building the
+        // uint directly skips the float round-trip, and fixes the old path's bug of feeding 0-255
+        // values into a 0-1 clamp, which turned every collider white.
+        const uint32 Packed = ((uint32)inColor.a << 24) | ((uint32)inColor.b << 16)
+                            | ((uint32)inColor.g <<  8) |  (uint32)inColor.r;
+
+        if (Lines != nullptr)
+        {
+            Lines->Line(JoltUtils::FromJPHVec3(inFrom), JoltUtils::FromJPHVec3(inTo), Packed);
+            return;
+        }
+
+        // No immediate sink: a one-off query draw that wants a lifetime (SetDrawDuration), so it goes
+        // through the timed batcher.
+        const float DrawDuration = (float)std::max(World->GetWorldDeltaTime(), Duration);
+        World->DrawLine(JoltUtils::FromJPHVec3(inFrom), JoltUtils::FromJPHVec3(inTo),
+                        FVector4(inColor.r / 255.0f, inColor.g / 255.0f, inColor.b / 255.0f, inColor.a / 255.0f),
+                        1.0f, true, DrawDuration);
+    }
+
+    namespace
+    {
+        // Prunes bodies against SDebugDrawSystem's view before Jolt walks their shapes. This is where
+        // the immediate path's culling lives: at source granularity, not per line.
+        class FDebugDrawBodyFilter final : public JPH::BodyDrawFilter
+        {
+        public:
+
+            explicit FDebugDrawBodyFilter(const FDebugDrawState& InState)
+                : State(InState)
+            {}
+
+            bool ShouldDraw(const JPH::Body& Body) const override
+            {
+                const JPH::AABox& Bounds = Body.GetWorldSpaceBounds();
+                return DebugDraw::ShouldDraw(State,
+                    FAABB(JoltUtils::FromJPHVec3(Bounds.mMin), JoltUtils::FromJPHVec3(Bounds.mMax)));
+            }
+
+        private:
+
+            const FDebugDrawState& State;
+        };
     }
 
     void FJoltDebugRenderer::DrawBodies(JPH::PhysicsSystem* System, CWorld* InWorld)
     {
         World = InWorld;
-        
-        if (SCameraComponent* Camera = World->GetActiveCamera())
+
+        const FDebugDrawState* State = DebugDraw::GetState(World);
+        if (State == nullptr || !State->bEnabled || !State->bHasView)
         {
-            SetCameraPos(JoltUtils::ToJPHRVec3(Camera->GetPosition()));
-            #if JPH_DEBUG_RENDERER
-            System->DrawBodies(DebugDrawSettings, this);
-            #endif
+            return;
         }
+
+        // Jolt uses the camera position for its own LOD/backface decisions, so it gets the same view
+        // the cull is running against.
+        SetCameraPos(JoltUtils::ToJPHRVec3(State->ViewOrigin));
+
+        SetImmediateSink(DebugDraw::GetLines(World));
+
+        const FDebugDrawBodyFilter Filter(*State);
+        System->DrawBodies(DebugDrawSettings, this, &Filter);
+
+        // Sink is per-frame; leaving it set would let a later query draw write into a closed window.
+        SetImmediateSink(nullptr);
     }
     #endif
 }

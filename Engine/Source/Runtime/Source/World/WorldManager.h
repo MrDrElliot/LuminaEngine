@@ -17,17 +17,17 @@ namespace Lumina
 
         void UpdateWorlds(const FUpdateContext& UpdateContext);
 
+        // Opens every live scene's immediate-line write window. Must run before anything ticks or draws
+        // this frame -- producers whose window is closed drop their lines rather than write into a slot
+        // the GPU still owns. Closed again by each scene's Extract.
+        void BeginImmediateLines();
+
         // Game thread
         void ReclaimIdleRenderers(double NowSeconds);
 
-        // Kick every world's physics step onto GPhysicsThread.
-        void KickPhysics();
-
-        // Block until KickPhysics work completes.
-        void WaitForPhysics();
-
-        // Game thread
-        void DispatchPhysicsEvents();
+        // Steps every live world's physics and dispatches the contact events it raised. Game thread,
+        // synchronous, between the DuringPhysics and PostPhysics stages.
+        void TickPhysics();
 
         // Game thread
         void ExtractWorlds();

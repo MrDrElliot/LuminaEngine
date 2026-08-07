@@ -5,7 +5,7 @@
 #include "Core/Engine/Engine.h"
 #include "Core/Engine/GameInstance.h"
 #include "Core/Profiler/Profile.h"
-#include "Physics/PhysicsThread.h"
+#include "Renderer/ImmediateLineRenderer.h"
 #include "TaskSystem/TaskSystem.h"
 
 
@@ -21,9 +21,6 @@ namespace Lumina
 
     FWorldManager::~FWorldManager()
     {
-        // Worker holds raw CWorld*; drain before teardown.
-        WaitForPhysics();
-
         // Tear down in reverse so PIE/derived contexts go before their source.
         for (auto It = Contexts.rbegin(); It != Contexts.rend(); ++It)
         {
@@ -51,6 +48,35 @@ namespace Lumina
         }
     }
 
+    void FWorldManager::BeginImmediateLines()
+    {
+        LUMINA_PROFILE_SCOPE();
+
+        // Mirrors ExtractWorlds's filter exactly: a world that will not extract must not have an open
+        // window either, or its producers would fill a buffer nobody ever snapshots or resets. Worlds
+        // that fail the filter get closed rather than skipped, so a world suspended mid-frame does not
+        // leave its last window open indefinitely.
+        for (const TUniquePtr<FWorldContext>& Context : Contexts)
+        {
+            CWorld* World = Context->World.Get();
+            if (World == nullptr || World->GetRenderer() == nullptr)
+            {
+                continue;
+            }
+
+            if (World->IsSuspended())
+            {
+                if (FImmediateLineRenderer* Lines = World->GetRenderer()->GetImmediateLines())
+                {
+                    Lines->CloseFrame();
+                }
+                continue;
+            }
+
+            World->GetRenderer()->BeginImmediateLines();
+        }
+    }
+
     void FWorldManager::ReclaimIdleRenderers(double NowSeconds)
     {
         LUMINA_PROFILE_SCOPE();
@@ -68,7 +94,7 @@ namespace Lumina
         }
     }
 
-    void FWorldManager::KickPhysics()
+    void FWorldManager::TickPhysics()
     {
         LUMINA_PROFILE_SCOPE();
 
@@ -80,30 +106,11 @@ namespace Lumina
                 continue;
             }
 
-            GPhysicsThread->Enqueue("World::TickPhysics", [World]()
-            {
-                World->TickPhysics();
-            });
-        }
-    }
+            World->TickPhysics();
 
-    void FWorldManager::WaitForPhysics()
-    {
-        GPhysicsThread->Flush();
-    }
-
-    void FWorldManager::DispatchPhysicsEvents()
-    {
-        LUMINA_PROFILE_SCOPE();
-
-        for (const TUniquePtr<FWorldContext>& Context : Contexts)
-        {
-            CWorld* World = Context->World.Get();
-            if (World == nullptr || World->IsSuspended())
-            {
-                continue;
-            }
-
+            // Immediately after this world's step, on the same thread that stepped it. Jolt raises
+            // contact callbacks from its own worker jobs, so the scene still queues them rather than
+            // dispatching inline -- but the queue no longer outlives the frame that filled it.
             World->DispatchPhysicsEvents();
         }
     }
