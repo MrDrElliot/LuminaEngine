@@ -6,12 +6,18 @@
 // runtime IBL specular collapses to one multiply-add against the pre-filtered cubemap.
 
 // Matches FBRDFArgs in ForwardRenderScene.cpp (BakeBRDFLUT).
+//
+// The size is passed rather than queried. It is a compile-time constant on the CPU side, and querying it
+// made this the only shader in the engine to call GetDimensions on a DYNAMICALLY INDEXED bindless RW
+// array -- an image query on a descriptor loaded from a runtime array at an index that itself comes from
+// a device-address load. Nothing else does that, and it is the construct AMDVLK's compiler died on under
+// GPU-AV instrumentation (the first compute pipeline created, so it blocked the whole session).
 struct FBRDFArgs
 {
     uint OutUAV;    // storage heap slot of the LUT
+    uint Width;
+    uint Height;
     uint _Pad0;
-    uint _Pad1;
-    uint _Pad2;
 };
 
 FBRDFArgs* Pass() { return GetPassArgs<FBRDFArgs>(); }
@@ -22,8 +28,8 @@ FBRDFArgs* Pass() { return GetPassArgs<FBRDFArgs>(); }
 [numthreads(BRDF_LUT_TILE, BRDF_LUT_TILE, 1)]
 void ComputeMain(uint3 DTid : SV_DispatchThreadID)
 {
-    uint Width, Height;
-    gRWTextures2D[Pass().OutUAV].GetDimensions(Width, Height);
+    const uint Width  = Pass().Width;
+    const uint Height = Pass().Height;
 
     if (DTid.x >= Width || DTid.y >= Height)
     {

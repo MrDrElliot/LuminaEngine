@@ -12473,9 +12473,10 @@ namespace Lumina
         RHI::CmdSetTextureHeap(CL, RHI::Core::GetGlobalHeap());
         RHI::CmdSetPipeline(CL, Pipeline);
 
-        // Mirrors FBRDFArgs in BRDFIntegration.slang: just the output UAV heap index.
-        struct FBRDFArgs { uint32 OutUAV; uint32 _Pad0; uint32 _Pad1; uint32 _Pad2; };
-        const FBRDFArgs Args{ Shared.BRDFLutUAV, 0, 0, 0 };
+        // Mirrors FBRDFArgs in BRDFIntegration.slang: output UAV heap index + the LUT size. The size is
+        // passed rather than queried in the shader -- see the note there.
+        struct FBRDFArgs { uint32 OutUAV; uint32 Width; uint32 Height; uint32 _Pad0; };
+        const FBRDFArgs Args{ Shared.BRDFLutUAV, BRDFLutSize, BRDFLutSize, 0 };
         const RHI::GPUPtr ArgsPtr = RHI::Core::CopyTransient(FRootConstants{ 0, RHI::Core::CopyTransient(Args) });
 
         constexpr uint32 BRDFLutTile = 8u;
