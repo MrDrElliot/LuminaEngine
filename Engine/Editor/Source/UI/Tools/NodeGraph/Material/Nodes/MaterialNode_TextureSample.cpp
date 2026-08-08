@@ -69,11 +69,11 @@ namespace Lumina
 
         if (bDynamic && !ParameterName.IsNone())
         {
-            Compiler.TextureSampleParameter(FullName, ParameterName, Texture, UV);
+            Compiler.TextureSampleParameter(FullName, ParameterName, Texture, UV, this);
         }
         else
         {
-            Compiler.TextureSample(FullName, Texture, UV);
+            Compiler.TextureSample(FullName, Texture, UV, this);
         }
     }
 

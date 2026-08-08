@@ -101,7 +101,8 @@ namespace Lumina
                 
                 const float vertexSizeKB     = (Resource.GetNumVertices() * Resource.GetVertexTypeSize()) / 1024.0f;
                 const float meshletSizeKB    = (Resource.MeshletData.Meshlets.size() * sizeof(FMeshlet)
-                                              + Resource.MeshletData.MeshletBounds.size() * sizeof(FMeshletBounds)
+                                              + Resource.MeshletData.MeshletSpheres.size() * sizeof(FMeshletSphere)
+                                              + Resource.MeshletData.MeshletCones.size() * sizeof(FMeshletCone)
                                               + Resource.MeshletData.MeshletVertices.size() * sizeof(uint32)
                                               + Resource.MeshletData.MeshletTriangles.size() * sizeof(uint32)) / 1024.0f;
                 const float totalSizeKB      = vertexSizeKB + meshletSizeKB;
@@ -130,7 +131,7 @@ namespace Lumina
             ImGui::Spacing();
 
             const TVector<FMeshlet>&       Meshlets = Resource.MeshletData.Meshlets;
-            const TVector<FMeshletBounds>& Bounds   = Resource.MeshletData.MeshletBounds;
+            const TVector<FMeshletSphere>& Bounds   = Resource.MeshletData.MeshletSpheres;
             ImGui::Text("Total Meshlets: %zu", Meshlets.size());
             ImGui::Spacing();
 
@@ -159,7 +160,7 @@ namespace Lumina
                         ImGui::TableSetColumnIndex(3);
                         if (i < (int)Bounds.size())
                         {
-                            const FMeshletBounds& B = Bounds[i];
+                            const FMeshletSphere& B = Bounds[i];
                             ImGui::Text("(%.2f, %.2f, %.2f)  r=%.2f", B.Center.x, B.Center.y, B.Center.z, B.Radius);
                         }
                     }
@@ -640,7 +641,7 @@ namespace Lumina
                     const uint32 End = OverlayOffset + OverlayCount;
                     for (uint32 m = OverlayOffset; m < End; ++m)
                     {
-                        const FMeshletBounds& B = MD.MeshletBounds[m];
+                        const FMeshletSphere& B = MD.MeshletSpheres[m];
                         const FVector3 BoxLo = B.Center - FVector3(B.Radius);
                         const FVector3 BoxHi = B.Center + FVector3(B.Radius);
                         Lo = Math::Min(Lo, BoxLo);

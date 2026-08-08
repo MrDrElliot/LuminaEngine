@@ -36,8 +36,6 @@ namespace Lumina
             PendingInvalidations.push_back(Asset);
         }
 
-        // The resolve pass early-outs unless this moved, so queueing without it would leave the
-        // invalidation sitting there until something unrelated happened to wake the pass up.
         MarkPendingWork();
     }
 
@@ -86,8 +84,6 @@ namespace Lumina
     {
         FResolvedMesh& Entry = *Entries[Handle];
 
-        // The dependency set is rebuilt from scratch below, and a rebuild can legitimately change it -- a
-        // material that finished compiling stops falling back to the default one, so the default drops out.
         UnregisterDependencies(Handle, Entry);
         ResolveSurfaces(Entry, Mesh, Overrides);
         Entry.bNeedsResolve = false;
@@ -135,9 +131,6 @@ namespace Lumina
             }
         }
 
-        // An entry that could not finish -- GPU buffers not landed, a material still compiling -- retries
-        // once per pass. Re-arming HERE rather than letting Resolve() test bResolved is what stops a
-        // thousand instances of one unresolved mesh from each re-running the whole resolve every frame.
         for (uint32 Handle = 0, N = (uint32)Entries.size(); Handle < N; ++Handle)
         {
             if (!Entries[Handle]->bResolved)
@@ -205,20 +198,10 @@ namespace Lumina
 
                 if (bSame)
                 {
-                    // One flag, set by ApplyPendingInvalidations. It has to be a flag rather than a
-                    // condition tested here, because a resolved entry must not be frozen forever --
-                    // assigning a mesh's default materials keeps the key identical, so every instance in
-                    // every world would keep drawing the old assignment -- and it has to be CLEARED by the
-                    // rebuild, or the thousand instances sharing this entry each pay for the same rebuild.
                     if (Candidate.bNeedsResolve)
                     {
                         RebuildEntry(Handle, Mesh, Overrides);
 
-                        // Only an EXISTING entry that came out RESOLVED moves this. Consumers holding
-                        // state derived from an entry sweep when it does, so two cases must stay off it:
-                        // interning a newly added mesh (nothing was derived from it yet), and a failed
-                        // attempt at one still streaming (nothing binds an unresolved entry, and those
-                        // retry every frame -- which would put the sweep on every frame with them).
                         if (Entries[Handle]->bResolved)
                         {
                             ++TableGeneration;
@@ -242,8 +225,6 @@ namespace Lumina
             Entry.OverrideKey.push_back((const void*)Override);
         }
 
-        // TableGeneration deliberately NOT bumped: nothing was resolved against this entry before now, so
-        // no consumer holds state derived from it.
         RebuildEntry(NewHandle, Mesh, Overrides);
 
         HandlesByHash[KeyHash].push_back(NewHandle);
@@ -261,8 +242,8 @@ namespace Lumina
                 return false;
             }
 
-            // Either geometry path is fine; the pass picks whichever is present.
-            if (Concrete->GetVisBufferVertexShader() == nullptr && Concrete->GetVisBufferMeshShader() == nullptr)
+            // There is one geometry path, so its stage is required outright.
+            if (Concrete->GetVisBufferMeshShader() == nullptr)
             {
                 return false;
             }
@@ -303,8 +284,6 @@ namespace Lumina
             Material = CMaterial::GetDefaultMaterial();
         }
 
-        // Third gate, same shape as the second. Material texture refs are soft, so they sit outside the
-        // load graph's Hard/Owned BFS and are not ordered ahead of the material that reads them.
         if (Material != nullptr && !Material->RequestTexturesResolved())
         {
             bReady   = false;
@@ -319,19 +298,15 @@ namespace Lumina
         const bool       bAdditive    = BlendMode == EBlendMode::Additive;
         const bool       bTwoSided    = bTranslucent || Material->IsTwoSided();
 
-        R.VertexShader                   = Material->GetVertexShader();
-        R.PixelShader                    = Material->GetPixelShader();
-        R.MeshShader                     = ConcreteMaterial ? ConcreteMaterial->GetMeshShader() : nullptr;
-        R.VisBufferMeshShader            = ConcreteMaterial ? ConcreteMaterial->GetVisBufferMeshShader() : nullptr;
-        R.VisBufferMeshShaderMasked      = ConcreteMaterial ? ConcreteMaterial->GetVisBufferMeshShaderMasked() : nullptr;
-        R.VisBufferVertexShader          = ConcreteMaterial ? ConcreteMaterial->GetVisBufferVertexShader() : nullptr;
-        R.MaskedVisBufferPixelShader     = ConcreteMaterial ? ConcreteMaterial->GetMaskedVisBufferPixelShader() : nullptr;
-        R.MaskedVisBufferPixelShaderPrim = ConcreteMaterial ? ConcreteMaterial->GetMaskedVisBufferPixelShaderPrim() : nullptr;
-        R.DeferredShader                 = ConcreteMaterial ? ConcreteMaterial->GetDeferredShader() : nullptr;
+        R.PixelShader                = Material->GetPixelShader();
+        R.VertexShader               = Material->GetVertexShader();
+        R.MeshShaderShadow           = ConcreteMaterial ? ConcreteMaterial->GetMeshShaderShadow() : nullptr;
+        R.MeshShaderBase             = ConcreteMaterial ? ConcreteMaterial->GetMeshShaderBase() : nullptr;
+        R.VisBufferMeshShader        = ConcreteMaterial ? ConcreteMaterial->GetVisBufferMeshShader() : nullptr;
+        R.VisBufferMeshShaderMasked  = ConcreteMaterial ? ConcreteMaterial->GetVisBufferMeshShaderMasked() : nullptr;
+        R.MaskedVisBufferPixelShader = ConcreteMaterial ? ConcreteMaterial->GetMaskedVisBufferPixelShader() : nullptr;
+        R.DeferredShader             = ConcreteMaterial ? ConcreteMaterial->GetDeferredShader() : nullptr;
 
-        // Batch by the master material so instances sharing it collapse into one draw. This is why a
-        // dynamic mesh still batches with every other mesh using the same material: the key is the
-        // material, never the geometry.
         R.MaterialID            = (uint64)ConcreteMaterial;
         R.MaterialIdx           = (uint16)Material->GetMaterialIndex();
         R.bMaterialCastsShadows = Material->DoesCastShadows();
@@ -356,8 +331,6 @@ namespace Lumina
 
     namespace
     {
-        // Linear scan over a list holding the mesh plus at most two materials per surface, so it stays in
-        // the low tens even for a heavily-sectioned mesh.
         void AddDependency(FResolvedMesh& Out, const void* Dependency)
         {
             if (Dependency == nullptr)
@@ -377,17 +350,8 @@ namespace Lumina
 
     void FMeshResolveCache::ResolveSurfaces(FResolvedMesh& Out, CMesh* Mesh, const TVector<CMaterialInterface*>& Overrides)
     {
-        // IsValid covers lifetime only, so an asset still in its load phase reaches here. Its properties
-        // are all at defaults, so resolving now would cache an empty entry; leave it unresolved and the
-        // caller re-arms until the data phase lands.
         ++Out.Generation;
 
-        // Rebuilt from scratch, including on the early-out below: an entry that resolved against the
-        // default material while the real one was compiling must stop depending on the default once it
-        // swaps over, or every future default-material edit would re-resolve it for nothing.
-        //
-        // The mesh is a dependency of every entry unconditionally -- an unloaded one is the case that
-        // most needs waking up, because its GPU buffers landing is what makes it drawable at all.
         Out.Dependencies.clear();
         Out.Dependencies.push_back((const void*)Mesh);
 
@@ -447,10 +411,6 @@ namespace Lumina
                 Out.bAllMaterialsReady = false;
             }
 
-            // Both, and for different reasons. The AUTHORED material is what has to wake this entry when
-            // it finishes compiling -- until then the surface is drawing the default one and R.MaterialID
-            // does not name it at all. The CONCRETE master is what a material recompile invalidates, and
-            // for an instance that is a different asset from the authored one.
             AddDependency(Out, (const void*)RawMaterial);
             AddDependency(Out, (const void*)(uintptr_t)R.MaterialID);
         }
@@ -459,4 +419,3 @@ namespace Lumina
         Out.bResolved = Out.MeshletHeaderAddress != 0ull && Out.bAllMaterialsReady;
     }
 }
-

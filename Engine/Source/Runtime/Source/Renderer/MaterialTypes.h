@@ -1,12 +1,8 @@
 #pragma once
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Math/Math.h"
+#include "Shared/SharedConstants.h"
 #include "MaterialTypes.generated.h"
-
-#define MAX_VECTORS 24
-#define MAX_SCALARS 24
-#define MAX_TEXTURES 24
-
 
 namespace Lumina
 {
@@ -32,7 +28,6 @@ namespace Lumina
         uint32      Padding[2];
     };
     
-
     REFLECT()
     enum class EMaterialParameterType : uint8
     {
@@ -40,7 +35,6 @@ namespace Lumina
         Vector,
         Texture,
     };
-
 
     REFLECT()
     struct RUNTIME_API FMaterialParameter

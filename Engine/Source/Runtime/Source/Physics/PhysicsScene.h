@@ -6,6 +6,7 @@
 #include "Core/Math/Matrix/MatrixMath.h"
 #include "Ray/RayCast.h"
 #include "World/Entity/Events/ImpulseEvent.h"
+#include "Renderer/SkeletonResource.h"
 
 namespace Lumina
 {

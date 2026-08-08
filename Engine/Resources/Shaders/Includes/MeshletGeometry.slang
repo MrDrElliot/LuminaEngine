@@ -2,8 +2,8 @@
 #include "SceneGlobals.slang"
 #include "Wind.slang"   // material-graph WindAnimation node; every material vertex template needs it
 
-// Shared meshlet geometry path for BOTH the vertex-shader emulation (non-indexed, corner-decoded draws)
-// and the mesh-shader path. Anything the two must agree on lives here so they can never drift:
+// The meshlet geometry path. Every stage that touches a meshlet -- the amplification stage, the four mesh
+// variants, and the deferred reconstruction -- shares what lives here so they can never drift:
 //   - resolving a draw-list slot to its instance + meshlet,
 //   - loading a vertex (skinned/static),
 //   - unpacking a meshlet triangle,
@@ -12,7 +12,6 @@
 //   - the camera clip transform (base pass and depth pre-pass MUST match for early-Z).
 //
 // What deliberately stays in the individual shaders (it genuinely differs):
-//   - VS-emulation corner decode + degenerate cull   vs   mesh workgroup vertex/primitive loop,
 //   - the material $MATERIAL_VERTEX_INPUTS token (text-substituted inline by the material compiler),
 //   - the pass-specific final position (camera VP vs shadow VP) and which outputs are written.
 
@@ -127,6 +126,99 @@ FMeshletRef ResolveSurfaceMeshlet(uint MeshletSlot) { return ResolveMeshlet(Mesh
 FMeshletRef ResolveShadowMeshlet(uint MeshletSlot)  { return ResolveMeshlet(MeshletSlot, true);  }
 
 // ---------------------------------------------------------------------------------------------------
+// Task (amplification) payload
+//
+// Declared here rather than in either stage because BOTH stages have to agree on it byte for byte and
+// nothing checks that they do: a payload is not an interface SPIR-V links, it is a block of memory one
+// stage writes and the next reads. A drifted layout produces geometry from the wrong meshlet, not a
+// compile error. Same reason FMeshlet and FVertex live in Common.slang next to their C++ mirrors.
+// ---------------------------------------------------------------------------------------------------
+
+// The push block EVERY stage of a meshlet draw reads -- the amplification stage that culls, and the mesh
+// stage that rasters. One struct rather than two because a task and a mesh stage in the same pipeline
+// share a single push-constant range: two declarations would be two views of the same bytes, and only one
+// of them could be right.
+//
+// The cull fields are dead weight in the mesh stage and the raster fields are dead weight in the task
+// stage, and neither is padding for the other -- a field one stage ignores still has to sit at the offset
+// the other expects.
+struct FMeshletPassArgs
+{
+    uint*                   ViewDrawOffsets;   // per-(view, draw) base into MeshletDrawList()
+    // per-(view, draw) emit cursor, zeroed each frame. A bare counter: nothing issues a graphics indirect
+    // draw for meshlets any more, so the other three FDrawIndirectArguments fields had no reader.
+    uint*                   ViewDrawCursors;
+    uint*                   ViewDrawCounts;    // per-(view, draw) emit bound
+    uint*                   ViewBlockOffsets;  // per-(view, draw) base into the block list
+    FMeshletBlock*          BlockList;
+    FMeshletDeferred*       DeferList;
+    uint*                   DeferOffsets;      // per-(view, draw) base into the defer list
+    uint*                   DeferCursors;      // per-(view, draw) append cursor, zeroed each frame
+
+    uint                    ArgBase;           // CullViewIndex*NumDrawsPerView + IndirectDrawOffset
+    uint                    CullViewIndex;     // which FCullView this draw culls against
+    // Phase 0: whether an occluded meshlet is DEFERRED for a later re-test or simply rejected.
+    //
+    // Not a property of the view -- a property of WHEN in the frame this draw runs. Deferring only earns
+    // anything when the pyramid being tested is stale: the camera's phase-0 raster tests last frame's, so
+    // hiding a meshlet there may be wrong and has to be re-checked. A pass that runs after the mid rebuild
+    // (translucency, additive) tests THIS frame's own depth, so occluded means genuinely occluded and a
+    // defer would only park the meshlet in a region no later draw reads.
+    uint                    CanDefer;
+    // Phase 1 only: the EARLY view's arg base, whose defer region this late draw consumes.
+    uint                    DeferSrcArgBase;
+    int                     ShadowDataIndex;   // raster, shadow variants only
+    int                     ViewIndex;         // raster, shadow variants only (cascade / face / spot)
+    // The viewport this draw rasters into, in pixels -- for a shadow pass the atlas TILE, not the atlas.
+    // Feeds the small-primitive reject. Two scalars so the struct needs no interior padding under either
+    // block layout; the C++ push mirror matches.
+    float                   ViewportW;
+    float                   ViewportH;
+};
+FMeshletPassArgs* MeshletPass() { return GetPassArgs<FMeshletPassArgs>(); }
+
+// One resolved meshlet, 36 bytes.
+//
+// No ModelMatrix: every consuming mesh shader loads Ref.Inst for EntityID / MaterialIndex / Flags /
+// BoneOffset anyway, so the matrix is 64 free bytes off a line already in cache -- and it is
+// workgroup-uniform there, so it is a scalar load rather than a vector one. Carrying it made the payload
+// 3584 B, and on RDNA the payload spills to a per-draw VRAM ring whose capacity bounds how many task
+// workgroups can be in flight; on NVIDIA it competes directly with groupshared.
+struct FTaskMeshletEntry
+{
+    FMeshlet M;                   // amortizes the deepest dependent hop (Header -> Meshlets[idx])
+    uint     MeshletSlot;         // draw-list slot; the mesh shader packs it into VisID
+    uint     GlobalMeshletIdx;    // index into the mesh's meshlet array, for MakeBaseVertexOutput
+};
+
+// 16 + 36*32 = 1168 B.
+//
+// InstanceID and SkinnedVertexBase are workgroup-scope, not per-lane: one block is one instance, so all
+// 32 entries would otherwise carry the same two values.
+struct FVisTaskPayload
+{
+    uint InstanceID;
+    uint SkinnedVertexBase;
+    uint _Pad0;
+    uint _Pad1;
+    FTaskMeshletEntry Entries[MESHLET_TASK_GROUP_SIZE];
+};
+
+// Rebuilds the ref the task stage already paid for. The mesh shader never calls ResolveMeshlet on this
+// path, so every bound check ResolveMeshlet makes has ALREADY been made -- by the task lane that filled
+// this entry, which dropped the meshlet rather than publishing it if any of them failed. That is the
+// contract: an entry that reached the payload resolved cleanly.
+FMeshletRef MakeMeshletRefFromTask(FVisTaskPayload Payload, uint Index)
+{
+    FMeshletRef Ref;
+    Ref.M                 = Payload.Entries[Index].M;
+    Ref.GlobalMeshletIdx  = Payload.Entries[Index].GlobalMeshletIdx;
+    Ref.InstanceID        = Payload.InstanceID;
+    Ref.SkinnedVertexBase = Payload.SkinnedVertexBase;
+    return Ref;
+}
+
+// ---------------------------------------------------------------------------------------------------
 // Vertex + triangle access
 // ---------------------------------------------------------------------------------------------------
 
@@ -190,6 +282,174 @@ uint MeshletCornerVertexIndex(FMeshletRef Ref, uint TriIdx, uint Corner)
 }
 
 // ---------------------------------------------------------------------------------------------------
+// Per-triangle culling (MESH path only)
+// ---------------------------------------------------------------------------------------------------
+//
+// The meshlet cull removed whole meshlets; this removes individual triangles inside the ones that
+// survived, before they reach the rasterizer. A meshlet is a ~124-triangle patch of ONE surface, so
+// roughly half of it faces away from any given view and a distant one projects to a handful of pixels --
+// geometry the hardware would otherwise set up, clip, and only then discard at the backface/coverage
+// stage, one primitive at a time.
+//
+// Only the mesh path can do this: it owns SetMeshOutputCounts and can publish a compacted primitive
+// array. The VS-emulation path draws a fixed 3-vertices-per-triangle range and has no way to not emit one.
+//
+// Which tests run is a SPEC CONSTANT rather than a uniform, because both answers are per-PIPELINE and a
+// disabled test must cost nothing:
+//   - BACKFACE mirrors the pipeline's hardware cull mode. CmdSetCullMode is DYNAMIC state the shader
+//     cannot observe, so a two-sided material (ECullMode::None) has to compile with this OFF -- otherwise
+//     the shader silently rejects exactly the faces the hardware was told to keep.
+//   - SMALLPRIM is off under MSAA (the test assumes a single sample at the pixel centre) and under
+//     wireframe (a sub-pixel triangle still draws visible edges).
+[vk::constant_id(7)] const uint SPEC_TRI_CULL = 0;
+
+static const uint TRI_CULL_BACKFACE  = 1u;
+static const uint TRI_CULL_SMALLPRIM = 2u;
+
+// Survivor bitmask width. MESHLET_MAX_TRIANGLES is 124, so four words cover it -- and the compaction
+// below unrolls those four BY NAME, so raising the cap means updating both.
+#define MESHLET_TRI_WORDS 4
+// Triangles per lane in a MESHLET_MAX_VERTICES-wide workgroup: ceil(124 / 64).
+#define MESHLET_TRI_ITERS 2
+
+// True if the triangle cannot contribute a fragment.
+//
+// Operates in CLIP space (pre-divide) so a vertex behind the eye is handled explicitly rather than
+// divided by a negative w -- which mirrors the position, reads as a winding flip, and would cull the
+// front faces of anything straddling the near plane.
+//
+// ViewportSize is the RENDER TARGET viewport in pixels (a shadow pass passes its atlas TILE, not the
+// atlas), and is only read when TRI_CULL_SMALLPRIM is set.
+bool IsMeshletTriangleCulled(float4 C0, float4 C1, float4 C2, float2 ViewportSize)
+{
+    // Frustum reject, in clip space so it stays valid for the behind-the-eye case handled below. All
+    // three vertices outside the SAME plane means the triangle cannot intersect the volume; three
+    // vertices outside three DIFFERENT planes proves nothing, which is why these are separate tests and
+    // not one combined any().
+    //
+    // Vulkan's clip volume is -w <= x,y <= w and 0 <= z <= w. Only the z >= 0 half is tested here: which
+    // side is "far" depends on whether the pass is reverse-Z (camera) or standard Z (shadows), and depth
+    // clipping already removes that end for free.
+    if (C0.x >  C0.w && C1.x >  C1.w && C2.x >  C2.w) return true;
+    if (C0.x < -C0.w && C1.x < -C1.w && C2.x < -C2.w) return true;
+    if (C0.y >  C0.w && C1.y >  C1.w && C2.y >  C2.w) return true;
+    if (C0.y < -C0.w && C1.y < -C1.w && C2.y < -C2.w) return true;
+    if (C0.z <  0.0  && C1.z <  0.0  && C2.z <  0.0 ) return true;
+
+    // A vertex on or behind the eye plane makes the perspective divide meaningless, and every test below
+    // lives in NDC. The hardware clipper splits such a triangle correctly, so keep it.
+    if (C0.w <= 0.0 || C1.w <= 0.0 || C2.w <= 0.0)
+    {
+        return false;
+    }
+
+    const float2 P0 = C0.xy / C0.w;
+    const float2 P1 = C1.xy / C1.w;
+    const float2 P2 = C2.xy / C2.w;
+
+    // Twice the signed area in NDC. CmdSetViewport never flips Y (the projection matrix bakes Vulkan's
+    // +Y-down NDC instead) and always uses a positive height, so the viewport transform preserves
+    // orientation and this sign IS the sign Vulkan computes in framebuffer space. Front faces are
+    // VK_FRONT_FACE_COUNTER_CLOCKWISE, i.e. positive area.
+    const float Area = (P1.x - P0.x) * (P2.y - P0.y) - (P2.x - P0.x) * (P1.y - P0.y);
+
+    if ((SPEC_TRI_CULL & TRI_CULL_BACKFACE) != 0u)
+    {
+        // Spelled !(Area > 0) rather than (Area <= 0) so a NaN -- which a degenerate vertex deliberately
+        // produces -- lands in the reject too. Zero area is rejected either way.
+        if (!(Area > 0.0))
+        {
+            return true;
+        }
+    }
+    else if (!(abs(Area) > 0.0))
+    {
+        // Two-sided keeps both windings, but a zero-area (or NaN) triangle still rasterizes nothing.
+        return true;
+    }
+
+    if ((SPEC_TRI_CULL & TRI_CULL_SMALLPRIM) != 0u && all(ViewportSize > 0.0))
+    {
+        // NDC -> pixels. The rasterizer samples at pixel CENTRES (i + 0.5), so the triangle contributes
+        // nothing unless some integer i satisfies Lo <= i + 0.5 <= Hi on BOTH axes. Testing the bounding
+        // box rather than the triangle keeps this conservative: it can only reject triangles that
+        // provably cover no sample, never ones that graze one.
+        const float2 Scale = ViewportSize * 0.5;
+        const float2 Q0    = P0 * Scale + Scale;
+        const float2 Q1    = P1 * Scale + Scale;
+        const float2 Q2    = P2 * Scale + Scale;
+
+        const float2 Lo = min(min(Q0, Q1), Q2) - 0.5;
+        const float2 Hi = max(max(Q0, Q1), Q2) - 0.5;
+
+        if (any(ceil(Lo) > floor(Hi)))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// Turns the workgroup's survivor bitmask into dense output slots, so the primitives a mesh shader emits
+// are packed into [0, Total) with no gaps -- SetMeshOutputCounts publishes ONE count, so a "skipped"
+// primitive can only be spelled as one that was never emitted.
+//
+// The four words are unrolled BY NAME rather than looped over an array: indexing a local array with a
+// runtime value makes Slang lower it to an indexable temp (scratch memory) in the hottest part of the
+// shader, which costs more than the four selects it replaces.
+struct FMeshletTriCompaction
+{
+    uint W0, W1, W2, W3;
+    uint P1, P2, P3;    // exclusive prefix of set bits at the start of words 1, 2, 3
+    uint Total;
+
+    uint Word(uint WordIdx)
+    {
+        return (WordIdx == 0u) ? W0 : (WordIdx == 1u) ? W1 : (WordIdx == 2u) ? W2 : W3;
+    }
+
+    bool IsKept(uint TriIdx)
+    {
+        return (Word(TriIdx >> 5u) & (1u << (TriIdx & 31u))) != 0u;
+    }
+
+    // Dense index of TriIdx among the survivors. Only meaningful when IsKept(TriIdx).
+    uint OutputSlot(uint TriIdx)
+    {
+        const uint WordIdx = TriIdx >> 5u;
+        const uint BitIdx  = TriIdx & 31u;
+        const uint Base    = (WordIdx == 0u) ? 0u : (WordIdx == 1u) ? P1 : (WordIdx == 2u) ? P2 : P3;
+        // (1 << 0) - 1 == 0 and (1 << 31) - 1 == 0x7FFFFFFF, so both ends of the word are exact.
+        return Base + countbits(Word(WordIdx) & ((1u << BitIdx) - 1u));
+    }
+};
+
+FMeshletTriCompaction MakeTriCompaction(uint W0, uint W1, uint W2, uint W3)
+{
+    const uint N0 = countbits(W0);
+    const uint N1 = countbits(W1);
+    const uint N2 = countbits(W2);
+    const uint N3 = countbits(W3);
+
+    FMeshletTriCompaction C;
+    C.W0 = W0; C.W1 = W1; C.W2 = W2; C.W3 = W3;
+    C.P1 = N0;
+    C.P2 = N0 + N1;
+    C.P3 = N0 + N1 + N2;
+    C.Total = C.P3 + N3;
+    return C;
+}
+
+// A meshlet triangle whose three local indices are not distinct has zero area whatever the transform
+// does, so it never needs its vertices resolved. UnpackMeshletTriangleSafe also collapses an
+// out-of-range triple to (0,0,0), which this catches as the same case.
+bool IsDegenerateTriangleIndices(uint3 Idx)
+{
+    return Idx.x == Idx.y || Idx.y == Idx.z || Idx.z == Idx.x;
+}
+
+// ---------------------------------------------------------------------------------------------------
 // Model -> world transform (pre-WPO). Identical for every pass and both draw paths.
 // ---------------------------------------------------------------------------------------------------
 
@@ -205,10 +465,13 @@ struct FMeshletWorldVertex
 // Overload taking a precomputed world normal matrix: the deferred reconstruction transforms three
 // vertices of one triangle, all sharing the instance's ModelMatrix, so the inverse-transpose is computed
 // once by the caller instead of three times here.
-FMeshletWorldVertex TransformMeshletVertex(FMeshletRef Ref, FVertexData V, float3x3 NormalMatrixWS)
+// Takes the model matrix BY VALUE so the caller can hoist the load. Reaching it as Ref.Inst.ModelMatrix
+// is a dependent chain (scene root -> Instances() -> +InstanceID -> 64B matrix) that the compiler cannot
+// hoist or overlap on its own: a PhysicalStorageBuffer pointer may alias anything, so each deref has to
+// complete before the next issues. Nsight attributed more dependent stall samples to these loads than to
+// any other instruction in VisBuffer phase 1.
+FMeshletWorldVertex TransformMeshletVertex(FVertexData V, float4x4 ModelMatrix, float3x3 NormalMatrixWS)
 {
-    float4x4 ModelMatrix = Ref.Inst.ModelMatrix;
-
     FMeshletWorldVertex W;
     W.WorldPos  = mul(ModelMatrix, float4(V.Position, 1.0)).xyz;
     W.NormalWS  = mul(NormalMatrixWS, V.Normal);
@@ -219,15 +482,31 @@ FMeshletWorldVertex TransformMeshletVertex(FMeshletRef Ref, FVertexData V, float
     return W;
 }
 
+FMeshletWorldVertex TransformMeshletVertex(FMeshletRef Ref, FVertexData V, float3x3 NormalMatrixWS)
+{
+    return TransformMeshletVertex(V, Ref.Inst.ModelMatrix, NormalMatrixWS);
+}
+
 FMeshletWorldVertex TransformMeshletVertex(FMeshletRef Ref, FVertexData V)
 {
-    return TransformMeshletVertex(Ref, V, CalculateNormalMatrix(Ref.Inst.ModelMatrix));
+    // One load feeding both uses. This used to read Ref.Inst.ModelMatrix twice -- once here for the
+    // normal matrix and again inside the overload above.
+    const float4x4 ModelMatrix = Ref.Inst.ModelMatrix;
+    return TransformMeshletVertex(V, ModelMatrix, CalculateNormalMatrix(ModelMatrix));
 }
 
 // Camera view/clip. Base pass and depth pre-pass MUST derive SV_Position from this exact pair so the
 // [earlydepthstencil] equal-depth test holds bit-for-bit. Both go through CameraViewPosition first.
-float4 CameraViewPosition(float3 WorldPos) { return mul(GetCameraView(), float4(WorldPos, 1.0)); }
-float4 CameraClipPosition(float4 ViewPos)  { return mul(GetCameraProjection(), ViewPos); }
+//
+// The matrix-taking overloads exist for the same reason as above -- so a mesh shader can issue the two
+// camera loads up front rather than at the end of the vertex chain. They are the SAME two muls in the
+// same order, so SV_Position stays bit-identical either way; do not fuse them into a view-projection
+// product, which would change the rounding and break the equal-depth test.
+float4 CameraViewPosition(float3 WorldPos, float4x4 CameraView) { return mul(CameraView, float4(WorldPos, 1.0)); }
+float4 CameraClipPosition(float4 ViewPos, float4x4 CameraProj)  { return mul(CameraProj, ViewPos); }
+
+float4 CameraViewPosition(float3 WorldPos) { return CameraViewPosition(WorldPos, GetCameraView()); }
+float4 CameraClipPosition(float4 ViewPos)  { return CameraClipPosition(ViewPos, GetCameraProjection()); }
 
 // ---------------------------------------------------------------------------------------------------
 // Base-pass interpolants: the single source of truth, produced by the VS emulation AND the mesh shader,
@@ -265,23 +544,12 @@ struct FDepthOnlyVertexOutput
     precise float4 Position : SV_Position;
 };
 
-// VisBuffer vertex-emulation geometry output: the base interpolants + the flat VisID. The interpolants are
-// only computed when the VISBUFFER_MASKED spec constant is set (so the masked pixel shader can run the opacity
-// graph -- which may read UV / normal / world position); for opaque materials the spec constant is 0 and the
-// interpolant compute + outputs dead-strip at pipeline specialization (same pattern as the EPass spec constant).
-struct FVisVertexOut
-{
-    // VisID FIRST so it gets interface location 0 -- the opaque pixel shader reads only {VisID, SV_Position}
-    // and must link to the same location; the Base interpolants (locations 1+) are then unconsumed by the
-    // opaque PS (not interpolated) and consumed only by the masked PS. SPIR-V-verified.
-    nointerpolation uint VisID : VIS_ID;
-    FBaseVertexOutput   Base;
-};
-
 // FinalWorldPos is post-WPO (the shader adds Material.WorldPositionOffset before calling this).
-FBaseVertexOutput MakeBaseVertexOutput(FMeshletRef Ref, FMeshletWorldVertex W, float3 FinalWorldPos)
+// Matrix-taking overload for callers that already hoisted the camera pair (see the mesh shaders).
+FBaseVertexOutput MakeBaseVertexOutput(FMeshletRef Ref, FMeshletWorldVertex W, float3 FinalWorldPos,
+                                       float4x4 CameraView, float4x4 CameraProj)
 {
-    float4 ViewPos = CameraViewPosition(FinalWorldPos);
+    float4 ViewPos = CameraViewPosition(FinalWorldPos, CameraView);
 
     FBaseVertexOutput O;
     O.FragColor     = W.Color;
@@ -295,27 +563,11 @@ FBaseVertexOutput MakeBaseVertexOutput(FMeshletRef Ref, FMeshletWorldVertex W, f
     O.MaterialIndex = Ref.Inst.MaterialIndex;
     O.InstanceFlags = (uint)Ref.Inst.Flags;
     O.MeshletIndex  = Ref.GlobalMeshletIdx;
-    O.Position      = CameraClipPosition(ViewPos);
+    O.Position      = CameraClipPosition(ViewPos, CameraProj);
     return O;
 }
 
-// Off-screen degenerate vertex for VS-emulation invocations past the meshlet's triangle count.
-FBaseVertexOutput MakeDegenerateBaseVertexOutput()
+FBaseVertexOutput MakeBaseVertexOutput(FMeshletRef Ref, FMeshletWorldVertex W, float3 FinalWorldPos)
 {
-    const float NaN = 0.0f / 0.0f;
-
-    FBaseVertexOutput O;
-    O.FragColor     = float4(0, 0, 0, 0);
-    O.NormalVS      = float4(0, 0, 0, 0);
-    O.NormalWS      = float4(0, 0, 0, 0);
-    O.TangentWS     = float4(0, 0, 0, 0);
-    O.FragPos       = float4(0, 0, 0, 0);
-    O.UV            = float2(0, 0);
-    O.InstanceIndex = 0;
-    O.EntityID      = 0;
-    O.MaterialIndex = 0;
-    O.InstanceFlags = 0;
-    O.MeshletIndex  = 0;
-    O.Position      = float4(NaN, NaN, NaN, 1.0);
-    return O;
+    return MakeBaseVertexOutput(Ref, W, FinalWorldPos, GetCameraView(), GetCameraProjection());
 }

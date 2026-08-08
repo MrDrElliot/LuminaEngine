@@ -2,8 +2,6 @@
 
 #include <volk/volk.h>
 #if WITH_AFTERMATH
-// Aftermath exposes its SPIR-V helpers only when VULKAN_H_ is defined; volk includes vulkan_core.h
-// (not vulkan.h), so define it manually to make GFSDK_Aftermath_GetShaderHashSpirv visible.
 #ifndef VULKAN_H_
 #define VULKAN_H_ 1
 #endif
@@ -71,21 +69,15 @@ namespace Lumina::RHI
         // Keyed by combined hash of the identifier id[0]/id[1] pair
         THashMap<uint64, TVector<uint8>> ShaderDebugInfos;
 
-        // Marker strings must remain live for the full life of the command buffer;
-        // Aftermath dereferences these pointers when decoding a crash dump.
         mutable FSharedMutex MarkerMutex;
         TList<FString> MarkerStorage;
 
         const void* StoreMarker(const char* MarkerName);
 
-        // Both return a one-line summary for the crash report's attributes, or empty when the data
-        // was not available. The detail goes to the log either way.
         FString LogDeviceInfo() const;
         FString LogDeviceFaultInfo() const;
 
         #if WITH_RGD
-        // The build enables WITH_RGD from the BUILD machine's adapter, which says nothing about the
-        // machine running this binary, so the AMD-specific reporting is gated on the live driver.
         bool IsAmdDevice() const;
         void LogRgdGuidance() const;
         #endif

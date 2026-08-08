@@ -33,6 +33,15 @@ namespace Lumina
 
         void DrawWindow(bool bIsFocused);
 
+        // The numeric side of the same data the HUD plots: every metric the active preset collects, with
+        // its current value and its min/avg/max over the plot window. The plots answer "is it moving";
+        // these answer "what is it", which is what you need to write a number down or compare two runs.
+        void DrawMetricTable();
+
+        // Session/config facts that make the numbers above interpretable (chip, sample rate, how much
+        // history a plot actually covers, how many metrics are live).
+        void DrawSessionInfo();
+
         FNsightPerfState* State = nullptr;
     };
 }

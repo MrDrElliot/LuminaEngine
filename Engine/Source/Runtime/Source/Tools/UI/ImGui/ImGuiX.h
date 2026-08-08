@@ -153,6 +153,11 @@ namespace Lumina::ImGuiX
     // Searchable combo for picking an asset of (or deriving from) FilterClass from the registry.
     // Writes the chosen asset's GUID into InOutGUID and returns true when it changes.
     RUNTIME_API bool AssetReferenceCombo(const char* StrId, CClass* FilterClass, FGuid& InOutGUID, const char* ItemIcon = nullptr);
+
+    // Searchable combo over every loaded class that is-a BaseClass (BaseClass itself included). Writes
+    // the pick into InOutClass and returns true when it changes. bAllowNone adds a leading "None" entry
+    // that clears the selection; without it the combo always holds a class once one is set.
+    RUNTIME_API bool ClassCombo(const char* StrId, CClass* BaseClass, CClass*& InOutClass, bool bAllowNone = true, const char* ItemIcon = nullptr);
     
     RUNTIME_API ImTextureRef ToImTextureRef(FStringView Path);
     // Direct new-heap ResourceID (scene display targets sample the global heap). ~0u -> placeholder.

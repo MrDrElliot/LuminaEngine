@@ -5,6 +5,7 @@
 #include "Assets/AssetTypes/Physics/CollisionShape.h"
 #include "Renderer/MeshData.h"
 #include "Log/Log.h"
+#include "Renderer/MeshQuantization.h"
 
 namespace Lumina::Physics::CollisionGen
 {
@@ -27,7 +28,7 @@ namespace Lumina::Physics::CollisionGen
 
                 for (uint32 v = 0; v < M.VertexCount; ++v)
                 {
-                    OutPositions.push_back(MD.MeshletVertices[M.VertexOffset + v].Position);
+                    OutPositions.push_back(DecodeMeshletPosition(M, MD.MeshletVertices[M.VertexOffset + v]));
                 }
 
                 for (uint32 t = 0; t < M.TriangleCount; ++t)

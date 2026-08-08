@@ -36,6 +36,7 @@
 #include "World/Entity/Components/BlackboardComponent.h"
 #include "World/Entity/Components/NameComponent.h"
 #include "World/Entity/Components/SkeletalMeshComponent.h"
+#include "Renderer/SkeletonResource.h"
 
 namespace Lumina
 {

@@ -156,10 +156,10 @@ namespace Lumina::Jobs
         };
         thread_local FThreadState TLS;
 
-        // Set while this thread runs a serial pump that must never yield to the scheduler (the render
-        // drain). Fiber parks check it: parking under the guard strands the pump until the wait
-        // resolves, and the fiber can resume on a DIFFERENT thread, breaking any thread_local state
-        // the pump relies on. See Jobs::SetThreadNoParkGuard.
+        // Set while this thread runs a serial pump that must never yield to the scheduler. Fiber parks
+        // check it: parking under the guard strands the pump until the wait resolves, and the fiber can
+        // resume on a DIFFERENT thread, breaking any thread_local state the pump relies on.
+        // See Jobs::SetThreadNoParkGuard.
         thread_local const char* GNoParkGuardName = nullptr;
 
         // Per-worker job queues (one per priority) + a private wake futex. A worker drains its OWN queues
@@ -914,11 +914,15 @@ namespace Lumina::Jobs
             new (&G->IdleMask[i]) std::atomic<uint64>(0);
         }
 
-        // Ring capacities are the pools they hand out from, so neither can ever refuse an Enqueue: a
-        // counter index or fiber only goes back in if it came out.
-        G->FreeCounters.Initialize(kCounterPoolSize);
-        G->FreeFibers.Initialize(G->NumWorkFibers);
-        G->ReadyFibers.Initialize(G->NumWorkFibers);
+        // A counter index or fiber only goes back in if it came out, so these can never truly be full --
+        // and they use the spinning Enqueue, which never drops. The headroom is a throughput fix, not a
+        // correctness one: sized to exactly the pool, the ring sits at the wrap boundary permanently, so
+        // every put-back lands on the cell a consumer is mid-claim on and has to spin through it. That is
+        // the whole idle path (dequeue a fiber, find no job, put it back) on every worker at once. With
+        // 2x, a producer's cell was released a full pool ago and the retry loop is never entered.
+        G->FreeCounters.Initialize(kCounterPoolSize * 2);
+        G->FreeFibers.Initialize(G->NumWorkFibers * 2);
+        G->ReadyFibers.Initialize(G->NumWorkFibers * 2);
 
         G->CounterPool = static_cast<FCounter*>(Memory::Malloc(sizeof(FCounter) * kCounterPoolSize, alignof(FCounter)));
         for (uint32 i = 0; i < kCounterPoolSize; ++i)

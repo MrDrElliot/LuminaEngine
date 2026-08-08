@@ -2,6 +2,7 @@
 // No Hi-Z here (the inter-phase pyramid lacks full BasePass depth and caused chunk-granularity pop-out).
 // Dispatch: one workgroup per chunk, one thread per meshlet; thread 0 runs the chunk test (groupshared).
 
+#include "Includes/AppendBuffer.slang"
 #include "Includes/Culling.slang"
 #include "Includes/TerrainCommon.slang"
 
@@ -81,19 +82,20 @@ void ComputeMain(
         if (!ChunkVisible(Scene().CullData.Frustum, Meshlet.BoundsMin, Meshlet.BoundsMax))
             continue;
 
-        // Append: survivors race for a unique slot in the shared indirect-arg via atomic add.
-        uint OldCount;
-        InterlockedAdd(Pass().TerrainIndirect[0].InstanceCount, 1, OldCount);
-
-        const uint Slot = Pass().TerrainIndirect[0].FirstInstance + OldCount;
-
-        // Bounded even though it is currently safe by construction: the args are reseeded every frame with
-        // FirstInstance = 0 / InstanceCount = 0, and one append per (chunk, meshlet) pair cannot exceed
-        // MeshletCount, which is what sized VisibleMeshlets. That is three separate unwritten invariants
-        // holding up an unbounded atomic used directly as a write index -- the exact shape that took out the
-        // meshlet defer list. MeshletCount is already in the push block, so the guard is free.
+        // Append: survivors race for a unique slot in the shared indirect-arg via atomic add. The cursor
+        // IS the draw's InstanceCount, which is why it lives in the args rather than in a private counter.
+        //
+        // Base 0 rather than the args' FirstInstance, which the CPU rewrites to 0 every frame beside
+        // InstanceCount: loading it back would read a known constant out of the same 16 bytes every other
+        // lane is atomically incrementing. Same reason BuildMaterialTileList computes its base
+        // arithmetically instead of reading Args[Slot].FirstInstance.
+        //
+        // MeshletCount is what sized VisibleMeshlets, and one append per (chunk, meshlet) pair cannot
+        // exceed it -- so this is exact by construction, and bounded anyway.
         // continue, not return: this is a grid-stride loop, so the thread still owns further meshlets.
-        if (Slot >= Pass().MeshletCount)
+        const uint Slot = AppendReserve(&Pass().TerrainIndirect[0].InstanceCount,
+                                        Pass().MeshletCount, /*Base*/ 0u);
+        if (Slot == kAppendFull)
         {
             continue;
         }

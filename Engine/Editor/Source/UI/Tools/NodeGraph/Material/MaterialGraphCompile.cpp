@@ -29,6 +29,11 @@ namespace Lumina
         Graph->CompileGraph(Compiler);
         Material->SetReadyForRender(false);
 
+        // Carried out on BOTH paths. A warning is about a material that compiled, so the success path is
+        // the one that matters; the failure path keeps them so a graph with an error and a warning does not
+        // silently drop the warning once the error is fixed.
+        Result.Warnings = Compiler.GetWarnings();
+
         if (Compiler.HasErrors())
         {
             Result.Errors   = Compiler.GetErrors();
@@ -74,52 +79,60 @@ namespace Lumina
             };
         };
 
-        ShaderCompiler->CompilerShaderRaw(Result.VertexSource, Move(VSOptions), CommitStage(EMaterialShaderStage::Vertex));
+        // PBR geometry has no vertex stage -- it is task + mesh. The other domains (UI, PostProcess,
+        // Decal, Terrain) raster through a real vertex shader and still compile one.
+        if (Material->GetMaterialType() != EMaterialType::PBR)
+        {
+            ShaderCompiler->CompilerShaderRaw(Result.VertexSource, Move(VSOptions), CommitStage(EMaterialShaderStage::Vertex));
+        }
 
-        // The PBR domain also compiles the mesh-shader geometry stage, the two VisBuffer variants, and the
-        // deferred-material pixel stage so the asset is portable across all render paths (matches the default
-        // material + the material editor's compile). Non-PBR domains use only PS + VS.
+        // PBR geometry is task + mesh, end to end: four mesh binaries from two templates, no vertex stage.
+        // Each is per-material because the vertex graph's World Position Offset is compiled into it, and
+        // each is a separate compile rather than a spec-constant variant because they declare different
+        // OUTPUT types -- which a spec constant cannot change.
+        //
+        // The masked pair is compiled only for masked materials and cleared otherwise, so a masked ->
+        // opaque recompile drops the stale stages instead of leaving them bound.
         if (Material->GetMaterialType() == EMaterialType::PBR)
         {
             const FString MeshShaderDir = Paths::GetEngineResourceDirectory() + "/Shaders/MaterialShader/";
 
             const FString MeshSource = Compiler.BuildVertexShaderFromTemplate(MeshShaderDir + "MeshletMesh.slang", EMaterialType::PBR);
-            FShaderCompileOptions MeshOptions; MeshOptions.DebugName = MatName + " [MS]";
-            ShaderCompiler->CompilerShaderRaw(MeshSource, Move(MeshOptions), CommitStage(EMaterialShaderStage::Mesh));
+            const FString VisSource  = Compiler.BuildVertexShaderFromTemplate(MeshShaderDir + "MeshletVisBuffer.slang", EMaterialType::PBR);
 
-            const FString VisSource = Compiler.BuildVertexShaderFromTemplate(MeshShaderDir + "MeshletVisBuffer.slang", EMaterialType::PBR);
-            FShaderCompileOptions VisOptions; VisOptions.DebugName = MatName + " [VBM]";
-            ShaderCompiler->CompilerShaderRaw(VisSource, Move(VisOptions), CommitStage(EMaterialShaderStage::VisBufferMesh));
+            struct FGeometryStage { const FString* Source; const char* Define; const char* Tag; EMaterialShaderStage Stage; };
+            const FGeometryStage GeometryStages[] =
+            {
+                { &MeshSource, nullptr,             "MS",   EMaterialShaderStage::MeshShadow    },
+                { &MeshSource, "MESHLET_MESH_BASE", "MSB",  EMaterialShaderStage::MeshBase      },
+                { &VisSource,  nullptr,             "VBM",  EMaterialShaderStage::VisBufferMesh },
+            };
 
-            const FString VisVSSource = Compiler.BuildVertexShaderFromTemplate(MeshShaderDir + "MeshletVisBufferVS.slang", EMaterialType::PBR);
-            FShaderCompileOptions VisVSOptions; VisVSOptions.DebugName = MatName + " [VBV]";
-            ShaderCompiler->CompilerShaderRaw(VisVSSource, Move(VisVSOptions), CommitStage(EMaterialShaderStage::VisBufferVertex));
+            for (const FGeometryStage& Geo : GeometryStages)
+            {
+                FShaderCompileOptions Options;
+                Options.DebugName = MatName + " [" + Geo.Tag + "]";
+                if (Geo.Define != nullptr)
+                {
+                    Options.MacroDefinitions.emplace_back(Geo.Define);
+                }
+                ShaderCompiler->CompilerShaderRaw(*Geo.Source, Move(Options), CommitStage(Geo.Stage));
+            }
 
-            // Masked-only VisBuffer PIXEL shaders: run the opacity graph + discard cut-out texels BEFORE they
-            // write VisID/depth. The GEOMETRY stage is the SHARED VisBuffer VS/mesh above -- the VISBUFFER_MASKED
-            // spec constant makes it emit interpolants for masked materials (no separate masked geometry shader).
-            // Two PS variants: flat-VisID (VS path) + SV_PrimitiveID (mesh path). Cleared first so a
-            // masked->opaque recompile drops the stale stages (never bound for non-masked).
             Material->ClearShaderStage(EMaterialShaderStage::MaskedVisBufferPixel);
-            Material->ClearShaderStage(EMaterialShaderStage::MaskedVisBufferPixelPrim);
             Material->ClearShaderStage(EMaterialShaderStage::VisBufferMeshMasked);
             if (Material->GetBlendMode() == EBlendMode::Masked)
             {
-                // Masked geometry variant: same template, VISBUFFER_MASKED_GEOM widens the per-vertex output
-                // back to the full interpolant set the masked pixel shader reads. Opaque materials keep the
-                // position-only VisBufferMesh stage compiled above.
+                // Masked geometry widens the per-vertex output back to the full interpolant set the masked
+                // pixel shader reads; opaque materials keep the position-only stage above.
                 FShaderCompileOptions VisMaskedOptions; VisMaskedOptions.DebugName = MatName + " [VBMM]";
                 VisMaskedOptions.MacroDefinitions.emplace_back("VISBUFFER_MASKED_GEOM");
                 ShaderCompiler->CompilerShaderRaw(VisSource, Move(VisMaskedOptions), CommitStage(EMaterialShaderStage::VisBufferMeshMasked));
 
                 const FString MaskedPSSource = Compiler.BuildPixelShaderFromTemplate(MeshShaderDir + "VisBufferMaskedPixel.slang");
                 FShaderCompileOptions MaskedPSOptions; MaskedPSOptions.DebugName = MatName + " [MVBP]";
+                MaskedPSOptions.MacroDefinitions.emplace_back("VISBUFFER_PRIMID");
                 ShaderCompiler->CompilerShaderRaw(MaskedPSSource, Move(MaskedPSOptions), CommitStage(EMaterialShaderStage::MaskedVisBufferPixel));
-
-                // Mesh-path variant: same source compiled with VISBUFFER_PRIMID (VisID via SV_PrimitiveID).
-                FShaderCompileOptions MaskedPSPrimOptions; MaskedPSPrimOptions.DebugName = MatName + " [MVBPP]";
-                MaskedPSPrimOptions.MacroDefinitions.emplace_back("VISBUFFER_PRIMID");
-                ShaderCompiler->CompilerShaderRaw(MaskedPSSource, Move(MaskedPSPrimOptions), CommitStage(EMaterialShaderStage::MaskedVisBufferPixelPrim));
             }
 
             const FString DeferredSource = Compiler.BuildDeferredShaderFromTemplate(MeshShaderDir + "DeferredMaterial.slang", EMaterialType::PBR);
@@ -151,23 +164,26 @@ namespace Lumina
         };
 
         bool bStageFailed = false;
-        bStageFailed |= StageEmpty(Material->VertexShaderBinaries, "Vertex");
         bStageFailed |= StageEmpty(Material->PixelShaderBinaries, "Pixel");
         if (Material->GetMaterialType() == EMaterialType::PBR)
         {
-            // The deferred + VisBuffer (vertex-emulation) stages are always required for the VisBuffer path;
-            // the mesh-shader variants are optional (device-gated), so they're not checked here.
+            // Every geometry stage is REQUIRED now: there is no fallback to fall back to, so a material
+            // missing one renders nothing in whichever pass wanted it rather than quietly taking the
+            // other path. Shadow and base are separate entries because a material can legitimately be
+            // opaque-only or translucent-only in a scene, but both are cheap and always compiled.
             bStageFailed |= StageEmpty(Material->DeferredShaderBinaries, "Deferred");
-            bStageFailed |= StageEmpty(Material->VisBufferVertexShaderBinaries, "VisBuffer");
-            // Masked materials additionally require their masked VisBuffer PIXEL shaders so cut-outs clip in the
-            // geometry stage; without them they'd stamp full-coverage depth and occlude geometry behind. (The
-            // geometry shader is the shared VisBuffer VS/mesh, already required above, spec-gated for masked.)
+            bStageFailed |= StageEmpty(Material->VisBufferMeshShaderBinaries, "VisBuffer Geometry");
+            bStageFailed |= StageEmpty(Material->MeshShaderShadowBinaries, "Shadow Geometry");
+            bStageFailed |= StageEmpty(Material->MeshShaderBaseBinaries, "Base Geometry");
             if (Material->GetBlendMode() == EBlendMode::Masked)
             {
                 bStageFailed |= StageEmpty(Material->MaskedVisBufferPixelShaderBinaries, "Masked VisBuffer Pixel");
-                bStageFailed |= StageEmpty(Material->MaskedVisBufferPixelShaderPrimBinaries, "Masked VisBuffer Pixel (mesh)");
-                bStageFailed |= StageEmpty(Material->VisBufferMeshShaderMaskedBinaries, "Masked VisBuffer Geometry (mesh)");
+                bStageFailed |= StageEmpty(Material->VisBufferMeshShaderMaskedBinaries, "Masked VisBuffer Geometry");
             }
+        }
+        else
+        {
+            bStageFailed |= StageEmpty(Material->VertexShaderBinaries, "Vertex");
         }
         if (bStageFailed)
         {

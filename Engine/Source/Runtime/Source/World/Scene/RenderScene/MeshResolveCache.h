@@ -18,15 +18,14 @@ namespace Lumina
     // Shader entries are FShaderLibrary-owned and process-immortal, so holding them is safe.
     struct FResolvedSurface
     {
-        const FShaderEntry* VertexShader                   = nullptr;
-        const FShaderEntry* PixelShader                    = nullptr;
-        const FShaderEntry* MeshShader                     = nullptr;
-        const FShaderEntry* VisBufferMeshShader            = nullptr;
-        const FShaderEntry* VisBufferMeshShaderMasked      = nullptr;
-        const FShaderEntry* VisBufferVertexShader          = nullptr;
-        const FShaderEntry* MaskedVisBufferPixelShader     = nullptr;
-        const FShaderEntry* MaskedVisBufferPixelShaderPrim = nullptr;
-        const FShaderEntry* DeferredShader                 = nullptr;
+        const FShaderEntry* PixelShader                = nullptr;
+        const FShaderEntry* VertexShader               = nullptr;
+        const FShaderEntry* MeshShaderShadow           = nullptr;
+        const FShaderEntry* MeshShaderBase             = nullptr;
+        const FShaderEntry* VisBufferMeshShader        = nullptr;
+        const FShaderEntry* VisBufferMeshShaderMasked  = nullptr;
+        const FShaderEntry* MaskedVisBufferPixelShader = nullptr;
+        const FShaderEntry* DeferredShader             = nullptr;
 
         FDrawBatchKey   BatchKey    = {};
 
@@ -60,25 +59,10 @@ namespace Lumina
         FGuid                       MeshGuid;
         TVector<const void*>        OverrideKey;
 
-        // Bumped every time Surfaces is rebuilt. Consumers that cache anything derived from a surface
-        // (the render scene's batch/draw bindings) compare this instead of the surface addresses, which
-        // move when the vector reallocates.
         uint32                      Generation = 0;
 
-        /**
-         * Assets whose change makes this entry wrong: the mesh, plus every material each surface resolved
-         * against -- the AUTHORED one as well as the concrete master it fell back to while that was still
-         * compiling. Registered in FMeshResolveCache::HandlesByDependency.
-         *
-         * An entry is interned by (mesh, override list), so a change to the MESH's own material slots, or
-         * to a material asset itself, leaves the key identical while making the contents wrong. This is
-         * what lets that be detected by asset instead of by a global epoch: "this mesh finished uploading"
-         * now invalidates the handful of entries using it rather than the entire table.
-         */
         TVector<const void*>        Dependencies;
 
-        // Set when a dependency changed; the next Resolve() of this entry rebuilds Surfaces. Cleared by
-        // the rebuild, so N instances of one mesh cost one rebuild rather than N.
         bool                        bNeedsResolve = true;
 
         // False while a slot's material is still compiling.
@@ -100,7 +84,6 @@ namespace Lumina
         FMeshResolveCache& operator = (FMeshResolveCache&&) = default;
         ~FMeshResolveCache() { Flush(); }
 
-
         // Game thread only; mutates the table.
         uint32 Resolve(CMesh* Mesh, const TVector<CMaterialInterface*>& Overrides);
 
@@ -109,48 +92,20 @@ namespace Lumina
         // Handles are dense indices, so this doubles as the size of any per-handle side table.
         FORCEINLINE uint32 NumEntries() const { return (uint32)Entries.size(); }
 
-        /**
-         * Dense mirror of each entry's staleness token, indexed by handle.
-         *
-         * Entries are heap-boxed, so reading Generation off one is a dependent load into cold memory --
-         * and the staleness gate this serves runs once per mesh component per frame. Mirrored here it is
-         * one indexed load from an array sized by DISTINCT MESHES, which stays resident.
-         */
         FORCEINLINE uint32 GetEntryState(uint32 Handle) const
         {
             return Handle < (uint32)EntryStates.size() ? EntryStates[Handle] : MESH_RESOLVE_STATE_STALE;
         }
 
-        /**
-         * Bumped only when an EXISTING entry is rebuilt.
-         *
-         * Interning a brand new mesh does not move it, because a new entry cannot invalidate anything that
-         * was already resolved. That distinction is the whole point: it is what keeps "a mesh was added"
-         * off the primitive set's O(primitives) resolve sweep.
-         */
         FORCEINLINE uint32 GetTableGeneration() const { return TableGeneration; }
 
         // Stamp each component compares against; a mismatch means "re-resolve me".
         static FORCEINLINE uint32 GetEpoch() { return Epoch.load(std::memory_order_acquire); }
 
-        /**
-         * Invalidates EVERY cached resolve. The nuclear option -- it re-resolves every mesh component in
-         * every world and re-binds every primitive drawing them, so it belongs to editor-wide events
-         * (an asset saved from a tool) and nothing else. Prefer InvalidateDependency.
-         */
         static void BumpEpoch();
 
-        /**
-         * Marks every entry that resolved against this asset for rebuild. Any thread: the key is queued
-         * and applied by ApplyPendingInvalidations on the game thread, because the table itself is not
-         * thread-safe and asset GPU uploads do not run on the game thread.
-         *
-         * Cost is O(entries using the asset) -- typically one -- instead of BumpEpoch's O(whole scene).
-         */
         static void InvalidateDependency(const void* Asset);
 
-        // Game thread, once at the top of the resolve pass. Applies queued InvalidateDependency keys, any
-        // BumpEpoch that landed since the last call, and re-arms entries that could not finish resolving.
         void ApplyPendingInvalidations();
 
         static FORCEINLINE uint32 GetPendingGeneration() { return PendingGeneration.load(std::memory_order_acquire); }
@@ -177,8 +132,6 @@ namespace Lumina
         // Parallel to Entries. See GetEntryState.
         TVector<uint32>                     EntryStates;
 
-        // Asset -> the entries that resolved against it. Buckets hold one handle per distinct material
-        // assignment of one mesh, so they stay in the low single digits.
         THashMap<const void*, TVector<uint32>> HandlesByDependency;
 
         uint32                      TableGeneration = 1;

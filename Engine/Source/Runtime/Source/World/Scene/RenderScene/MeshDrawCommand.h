@@ -14,7 +14,6 @@ namespace Lumina
 		const FShaderEntry* PixelShader  = nullptr;
 	};
 
-
 	struct FDrawBatchKey
 	{
 		uint64 MaterialID;
@@ -45,19 +44,16 @@ namespace Lumina
 		return Seed;
 	}
 
-	// All data needed for one mesh draw call; cached in the scene. Shader entries are
-	// library-owned (immortal), so a deleted material asset can't dangle the render thread.
 	struct FMeshDrawCommand
 	{
-		const FShaderEntry*					VertexShader = nullptr;
 		const FShaderEntry*					PixelShader  = nullptr;
-		const FShaderEntry*					MeshShader   = nullptr;
-		const FShaderEntry*					VisBufferMeshShader   = nullptr;   // VisBuffer geometry, mesh path (opaque, position-only out)
-		const FShaderEntry*					VisBufferMeshShaderMasked = nullptr; // VisBuffer geometry, mesh path, masked (full interpolants)
-		const FShaderEntry*					VisBufferVertexShader = nullptr;   // VisBuffer geometry, VS-emulation path
-		const FShaderEntry*					MaskedVisBufferPixelShader  = nullptr;   // masked-only PS, VS path (flat VisID): opacity clip
-		const FShaderEntry*					MaskedVisBufferPixelShaderPrim = nullptr; // masked-only PS, mesh path (SV_PrimitiveID)
-		const FShaderEntry*					DeferredShader        = nullptr;   // deferred material pixel shader
+		const FShaderEntry*					VertexShader = nullptr;
+		const FShaderEntry*					MeshShaderShadow = nullptr;          // shadow depth (position-only out)
+		const FShaderEntry*					MeshShaderBase = nullptr;            // translucent / additive (full interpolants)
+		const FShaderEntry*					VisBufferMeshShader = nullptr;       // VisBuffer geometry, opaque (position-only out)
+		const FShaderEntry*					VisBufferMeshShaderMasked = nullptr; // VisBuffer geometry, masked (full interpolants)
+		const FShaderEntry*					MaskedVisBufferPixelShader = nullptr;// masked-only PS: opacity clip before VisID/depth
+		const FShaderEntry*					DeferredShader = nullptr;            // deferred material pixel shader
 		uint32                      		MaterialIndex = 0;                  // GPU material slot (deferred pixel classification)
 		uint32                      		IndirectDrawOffset = 0;
 		uint32                      		DrawCount = 0;

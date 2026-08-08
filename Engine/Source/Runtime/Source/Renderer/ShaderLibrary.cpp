@@ -55,8 +55,6 @@ namespace Lumina
             }
         }
 
-        // Not delivered yet (startup batch still in flight, or a variant never requested
-        // before): compile synchronously so the caller's cached pointer is usable now.
         FShaderCompileOptions Options;
         Options.bGenerateReflectionData = true;
         Options.MacroDefinitions.assign(Defines.begin(), Defines.end());
@@ -71,16 +69,6 @@ namespace Lumina
     }
 
 #if USING(WITH_EDITOR)
-    // Count function-scope arrays in a SPIR-V module.
-    //
-    // A local array that is indexed by anything the compiler cannot fold to a constant does not live in
-    // registers -- the driver spills it to local memory, and every access becomes an LDL/STL that stalls
-    // on the long scoreboard. Slang emits these for loop-indexed locals even when the loop is [unroll]'d,
-    // so a material graph or a Custom node can pick one up with nothing in the source looking wrong. It
-    // is only visible in a GPU capture (as "L1TEX Local Stores"), which is why it is worth surfacing here.
-    //
-    // Deliberately structural rather than exact: this counts DECLARATIONS, not how many survive the
-    // driver's own backend optimizer. It is a "you have N of these" warning, not a spill-byte count.
     static void ScanSpirvLocalArrays(TSpan<const uint32> Spirv, uint32& OutCount, uint32& OutScalars)
     {
         OutCount   = 0;
@@ -224,8 +212,6 @@ namespace Lumina
             return;
         }
         FScopeLock Lock(GShaderLibrary->Mutex);
-        // Entries are library-owned and immortal, so the const_cast is writing to memory this class owns;
-        // the pointer is const only because every consumer holds it that way.
         const_cast<FShaderEntry*>(Entry)->GPUStats.Pipeline = Move(Stats);
     }
 #endif
@@ -241,8 +227,6 @@ namespace Lumina
         Entry.Spirv.assign(Spirv.begin(), Spirv.end());
         Entry.Generation++;
 #if USING(WITH_EDITOR)
-        // New bytecode invalidates the driver stats; they are re-published when the next pipeline
-        // using this entry is created.
         Entry.GPUStats.Pipeline.clear();
         ScanSpirvLocalArrays(Spirv, Entry.GPUStats.LocalArrayCount, Entry.GPUStats.LocalArrayScalars);
 #endif

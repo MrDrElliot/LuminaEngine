@@ -5,6 +5,7 @@
 #include "Renderer/MeshData.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Memory/SmartPtr.h"
+#include "Renderer/SkeletonResource.h"
 #include "Skeleton.generated.h"
 
 namespace Lumina

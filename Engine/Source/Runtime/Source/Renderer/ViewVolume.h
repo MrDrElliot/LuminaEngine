@@ -70,8 +70,6 @@ namespace Lumina
 
         void UpdateMatrices();
 
-        // Single owner of ProjectionMatrix; every setter routes here so none of them can silently
-        // drop an orthographic volume back to perspective.
         void RebuildProjection();
 
         EViewProjectionMode ProjectionMode = EViewProjectionMode::Perspective;

@@ -5,7 +5,6 @@
 #include "Renderer/RHIFwd.h"
 #include "World/Entity/EntityHandle.h"
 
-
 namespace Lumina
 {
     class CWorld;
@@ -14,18 +13,6 @@ namespace Lumina
     class FImmediateLineRenderer;
     struct SPostProcessSettings;
 
-    /**
-     * A world's renderer. The engine creates one per rendered world through RenderSceneFactory,
-     * so a project or plugin can replace the default (FForwardRenderScene) with its own
-     * implementation -- see RenderSceneFactory.h.
-     *
-     * Threading contract: Extract, then PrepareRender, then RenderView, all on the same thread in
-     * the same frame. Parallelism comes from the job system inside each, not from pipelining.
-     *
-     * Only the pure-virtual core is required. Every optional feature (picking, capture views,
-     * post-process, debug draw, shadow atlas) defaults to "not supported" so a minimal renderer
-     * stays minimal.
-     */
     class IRenderScene : public IPrimitiveDrawInterface
     {
     public:
@@ -37,20 +24,13 @@ namespace Lumina
 
         //~ Required core -------------------------------------------------------------------
 
-        // Two-phase construction is required here (and only here): Init runs virtual calls and hands
-        // `this` to systems, neither of which works from a constructor. Teardown has no such excuse --
-        // each class's destructor releases what it owns, so there is no Shutdown() to pair with it.
         virtual void Init() = 0;
 
         // Gather this frame's scene from the ECS.
         virtual void Extract(const FViewVolume& ViewVolume, const SPostProcessSettings* PostProcess) = 0;
 
-        // Record + submit this frame's rendering. Safe to run concurrently across scenes
-        // (each opens its own command list; shared RHI creation is internally locked).
         virtual void RenderView(uint8 FrameIndex) = 0;
 
-        // Re-create the scene's render target at a new size. Used by transient render paths
-        // (e.g. thumbnail capture) needing a fixed RT independent of the swapchain.
         virtual void Resize(const FUIntVector2& NewSize) = 0;
 
         // Pixel extent of the scene's render target. Use this for sizing.
@@ -58,39 +38,24 @@ namespace Lumina
 
         //~ Frame hooks ---------------------------------------------------------------------
 
-        // Serial: device-wide reconciliation that can't run while other scenes record (e.g.
-        // WaitDeviceIdle-guarded resource recreation). Runs for every scene before the parallel
-        // RenderView pass, so RenderView can record off-thread.
         virtual void PrepareRender(uint8 FrameIndex) {}
 
-        // Post-process material chain for this frame, resolved by the world from the active camera +
-        // volumes. Not retained across frames -- the world rebuilds the list each tick.
         virtual void SetActivePostProcessMaterials(const TVector<CMaterialInterface*>& Materials) {}
 
         //~ Display output ------------------------------------------------------------------
 
-        // Global-heap ResourceID of the scene's final display image (for ImGui viewport sampling).
-        // ~0u = none.
         virtual uint32 GetDisplayResourceID() const { return ~0u; }
 
-        // RHI handle of the final display image, for in-CL composite passes (game present blit,
-        // RmlUi world overlay). Invalid handle = none.
         virtual RHI::FTextureH GetDisplayTexture() const { return {}; }
 
         //~ Entity picking (editor) ---------------------------------------------------------
 
         virtual entt::entity GetEntityAtPixel(uint32 X, uint32 Y) const { return entt::null; }
 
-        // Pick-cursor position (picker-RT texels) so readback copies just a region around it.
-        // bOverViewport=false skips the readback that frame.
         virtual void SetPickerCursor(uint32 X, uint32 Y, bool bOverViewport) {}
 
         //~ Scene-capture views -------------------------------------------------------------
 
-        // Render the world from an extra camera into its own RT (gather once, shade each).
-        // Register returns an opaque handle (-1 on fail); display via the capture's heap ResourceID.
-        // SetCaptureView returns false for a handle this scene doesn't know (e.g. it predates a scene
-        // rebuild); the caller must re-register. Handles are only meaningful to the scene that issued them.
         virtual int32 RegisterCaptureView(const FUIntVector2& Size) { return -1; }
         virtual bool  SetCaptureView(int32 Handle, const FViewVolume& View, bool bEnabled) { return false; }
         virtual int32 GetCaptureDisplayResourceID(int32 Handle) const { return -1; }
@@ -100,13 +65,8 @@ namespace Lumina
         void DrawBillboard(int32 ResourceID, const FVector3& Location, float Scale) override {}
         void DrawLine(const FVector3& Start, const FVector3& End, const FVector4& Color, float Thickness, bool bDepthTest, float Duration) override {}
 
-        // Immediate-mode line sink for this scene, or null if the renderer has none. Single frame,
-        // one thickness, no CPU cull -- see FImmediateLineRenderer. Producers must draw between
-        // BeginImmediateLines (frame start) and the scene's Extract.
         virtual FImmediateLineRenderer* GetImmediateLines() { return nullptr; }
 
-        // Opens this frame's immediate-line write window. Driven by FWorldManager at frame start,
-        // ahead of every world tick, so nothing draws into a slot the GPU still owns.
         virtual void BeginImmediateLines() {}
 
         //~ Stats / settings ----------------------------------------------------------------

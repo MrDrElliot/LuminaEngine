@@ -27,7 +27,11 @@ namespace Lumina
     
     static int GetShaderDebugInfoLevel()
     {
+        #if WITH_AFTERMATH
         return SLANG_DEBUG_INFO_LEVEL_MAXIMAL;
+        #else
+        return SLANG_DEBUG_INFO_LEVEL_MINIMAL;
+        #endif
     }
     static int GetShaderOptimizationLevel()
     {
@@ -35,42 +39,21 @@ namespace Lumina
     }
 
 #if USING(WITH_EDITOR)
-
-    // Slang runs its own SPIR-V validation (slangc exposes -skip-spirv-validation, so it is on by
-    // default), and it does not catch everything. A Function-storage OpVariable whose type is a
-    // PhysicalStorageBuffer pointer must carry Aliased or Restrict; Slang emits neither, and the module
-    // it hands back is illegal. Every driver accepts it, then optimizes against aliasing rules nothing
-    // established, and it surfaces frames later as a device-lost page fault instead of a compile error.
-    // Found exactly that in CullInstances.slang. So the check has to be the real spirv-val.
-    //
-    // Compile-time only, by design: a cache hit never reaches here. The cache is keyed on the transitive
-    // source hash, so anything that could change a module recompiles it and validates then.
-    //
-    // OFF by default: it costs a process spawn per module on a cold cache, and the shaders are clean as
-    // of the sweep that introduced this. Turn it on when touching shader code, and after any change to a
-    // struct reached by device address.
+    
     static TConsoleVar<int32> CVarValidateShaders(
         "r.Shaders.Validate",
         0,
         "Run spirv-val over every compiled shader (editor only). Requires VULKAN_SDK. "
         "Also enabled for a whole session with -validateshaders.");
 
-    // The CVar alone cannot turn this on for the startup batch: FConsoleRegistry::LoadFromConfig is a
-    // stub, so nothing has set it by the time Initialize compiles every shader. The switch is what
-    // reaches that, and it covers the per-compile path too so one flag means "validate this session".
     static bool IsShaderValidationEnabled()
     {
         static const bool bForced = GCommandLine != nullptr && GCommandLine->Has("validateshaders");
         return bForced || CVarValidateShaders.GetValue() != 0;
     }
 
-    // The engine creates its device at Vulkan 1.4, so that is the environment the module has to be legal
-    // in. An older SDK's spirv-val rejects the flag itself rather than the module -- its complaint is
-    // captured and logged like any other, so it reads as a tooling problem, not a shader one.
     static constexpr const char* kSpirvValTargetEnv = "vulkan1.4";
 
-    // Absolute path to spirv-val, or empty when the SDK is not installed. Resolved once; the missing-SDK
-    // warning is therefore printed once rather than per shader.
     static const FString& GetSpirvValidatorPath()
     {
         static const FString Path = []() -> FString
@@ -95,8 +78,6 @@ namespace Lumina
                 return FString();
             }
 
-            // The modules are staged next to the shader cache. Save() creates that directory too, but it
-            // runs after validation, so on a clean tree it would not exist yet.
             VFS::CreateDir(FShaderCache::CACHE_DIR);
 
             LOG_TRACE("Shader validation active: {}", Candidate.c_str());
@@ -106,9 +87,6 @@ namespace Lumina
         return Path;
     }
 
-    // Logs an error naming the shader when the module is illegal. Never fails the compile: an invalid
-    // module is the one we have been shipping to the driver for weeks, and refusing to load it here would
-    // turn a diagnostic into an outage.
     static void ValidateSpirv(TSpan<const uint32> Spirv, FStringView DebugName)
     {
         if (!IsShaderValidationEnabled() || Spirv.empty())
@@ -122,8 +100,6 @@ namespace Lumina
             return;
         }
 
-        // spirv-val takes a file, so the module has to land on disk. Compiles run across the whole
-        // worker pool, so the name has to be unique per call, not per shader.
         static TAtomic<uint32> Serial{0};
 
         char NameBuf[32];
@@ -149,8 +125,6 @@ namespace Lumina
                 Diagnostic += '\n';
             });
 
-        // -1 is the wrapper's "could not spawn", not a verdict on the module. Reporting it as invalid
-        // SPIR-V would send someone hunting a shader bug that does not exist.
         if (ExitCode == -1)
         {
             static TAtomic<bool> bWarned{false};
@@ -169,15 +143,6 @@ namespace Lumina
         }
     }
 
-    // Material templates never compile on their own: they carry $MATERIAL_INPUTS / $MATERIAL_VERTEX_INPUTS
-    // and only become modules once a graph substitutes into them. Nothing above reaches them, which left
-    // the four Meshlet* vertex/mesh templates -- what EVERY material's vertex stage is built from --
-    // outside validation entirely.
-    //
-    // The substitution is the neutral one CMaterial::GetDefaultMaterial already uses, and deliberately not
-    // a real graph: what is under test is the template's own code, which is identical whatever the graph
-    // contributes. A template that only validates for some graphs is a graph bug, not a template bug, and
-    // those modules are validated on their own when the material compiles.
     static void ValidateMaterialTemplates(IShaderCompiler& Compiler)
     {
         if (!IsShaderValidationEnabled() || GetSpirvValidatorPath().empty())
@@ -185,8 +150,6 @@ namespace Lumina
             return;
         }
 
-        // Pixel templates expect the substitution to DECLARE Material, because the codegen does.
-        // Vertex templates declare it themselves and expect only the assignment.
         static constexpr const char* kPixelToken  = "$MATERIAL_INPUTS";
         static constexpr const char* kPixelStub   = "\tFMaterialPixelInputs Material = DefaultMaterialInputs();\n";
         static constexpr const char* kVertexToken = "$MATERIAL_VERTEX_INPUTS";
@@ -220,8 +183,6 @@ namespace Lumina
             Options.bGenerateReflectionData = false;
             Options.DebugName = FString(VFS::FileName(Info.VirtualPath.c_str(), true)) + " (template)";
 
-            // Result discarded: ValidateSpirv ran inside the compile and logged anything wrong. The
-            // module itself is never committed to the library -- this substitution is not a material.
             Compiler.CompilerShaderRaw(Move(Source), Options, [](const FShaderHeader&) {});
             ++Submitted;
         });
@@ -290,10 +251,6 @@ namespace Lumina
     
     static FShaderFS FileSystem;
 
-    // Slang's global session is NOT thread-safe: objects created from one may only be touched by a
-    // single thread at a time (see slang.h IGlobalSession docs). To compile in parallel we keep a
-    // pool of global sessions and lend one to each compile task for its lifetime; the lock is only
-    // held for the brief borrow/return, never across the (hundreds-of-ms) compile itself.
     class FSlangSessionPool
     {
     public:
@@ -309,8 +266,6 @@ namespace Lumina
                 }
             }
 
-            // Grow on demand. createGlobalSession loads the Slang core module and touches
-            // process-global state, so serialize creation behind its own lock.
             Slang::ComPtr<slang::IGlobalSession> Session;
             {
                 FScopeLock Lock(CreateMutex);
@@ -329,11 +284,6 @@ namespace Lumina
             Free.push_back(Move(Session));
         }
 
-        // Drops idle sessions. A global session retains the Slang core module and its target caches
-        // for as long as anything holds a ref, so a pool left sized to the startup compile swarm is
-        // pure retention for the rest of the process -- and it lives on the CRT heap, invisible to
-        // the category tracker. Keeps KeepCount warm so a lone later recompile (material editor,
-        // shader hot-reload) doesn't pay a core-module load.
         void TrimIdle(uint32 KeepCount)
         {
             TVector<Slang::ComPtr<slang::IGlobalSession>> Dead;
@@ -352,9 +302,6 @@ namespace Lumina
                 }
             }
 
-            // Outside Mutex (tearing down a core module is slow and must not block Acquire), but under
-            // CreateMutex: if creation has to be serialized because it touches process-global state,
-            // so does destruction, and a concurrent compile can call Acquire the moment we let go.
             FScopeLock Lock(CreateMutex);
             Dead.clear();
         }
@@ -443,9 +390,6 @@ namespace Lumina
 
         LOG_INFO("Starting Shader Task Swarm - Num: {}", NumShaders);
 
-        // Spread the work across workers instead of one serial chunk. Bound concurrency so we don't
-        // spin up a global session (each loads the Slang core module) per shader; a handful of
-        // sessions, each compiling a few shaders, is the sweet spot.
         const uint32 TargetChunks = std::min(NumShaders, std::max(1u, Threading::GetNumThreads() / 2));
         const uint32 Grain        = (NumShaders + TargetChunks - 1) / TargetChunks;
 
@@ -460,9 +404,6 @@ namespace Lumina
 
             DEFER
             {
-                // DEFERs unwind in reverse declaration order, so by the time this runs the session
-                // DEFER below has already handed this chunk's session back to the pool. Reaching
-                // zero means the whole swarm is done and the pool can shed what it spun up.
                 const bool bLastChunk = PendingTasks.fetch_sub(Num, std::memory_order_acq_rel) == Num;
                 std::atomic_notify_all(&PendingTasks);
 
@@ -472,8 +413,6 @@ namespace Lumina
                 }
             };
 
-            // Borrow one global session for this whole chunk (reused across its shaders) and return
-            // it when done. Slang explicitly supports re-using one global session for many sessions.
             Slang::ComPtr<slang::IGlobalSession> GlobalSession = GSlangSessionPool.Acquire();
             DEFER { GSlangSessionPool.Release(Move(GlobalSession)); };
 
@@ -490,10 +429,6 @@ namespace Lumina
                 TargetDesc.profile = GlobalSession->findProfile("spirv_1_5");
                 TargetDesc.flags   = SLANG_TARGET_FLAG_GENERATE_SPIRV_DIRECTLY | SLANG_TARGET_FLAG_GENERATE_WHOLE_PROGRAM;
 
-                // Debug-info level is GPU/build-gated (see GetShaderDebugInfoLevel): STANDARD for Nsight
-                // source debugging on non-AMD non-Shipping, MINIMAL elsewhere (AMDVLK STANDARD crash).
-                // Optimization is forced off DEFAULT (-O1), which mis-compiles BDA pointers (see
-                // GetShaderOptimizationLevel).
                 slang::CompilerOptionEntry TargetOptions[2] = {};
                 TargetOptions[0].name = slang::CompilerOptionName::DebugInformation;
                 TargetOptions[0].value.kind = slang::CompilerOptionValueKind::Int;
@@ -515,8 +450,6 @@ namespace Lumina
                 SessionDesc.targets     = &TargetDesc;
                 SessionDesc.targetCount = 1;
 
-                // Engine first, then every enabled plugin's Shaders/ root. SlangSearchRoots keeps the
-                // FString backing live across the Slang call; SearchPaths holds pointers into it.
                 TVector<FString>     SlangSearchRoots;
                 TVector<const char*> SearchPaths;
                 SlangSearchRoots.reserve(8);
@@ -537,10 +470,6 @@ namespace Lumina
                 SessionDesc.searchPaths     = SearchPaths.data();
                 SessionDesc.searchPathCount = (SlangInt)SearchPaths.size();
                 
-                // PreprocessorMacroDesc only stores pointers, so the split halves have to outlive the
-                // compile call. MacroSplits is reserved to its worst case (two entries per macro) and
-                // never grows past it -- a reallocation here would dangle the pointers already handed
-                // to Macros, which is exactly what the old substr().c_str() temporaries did.
                 TVector<FString> MacroSplits;
                 TVector<slang::PreprocessorMacroDesc> Macros;
                 MacroSplits.reserve(Options[i].MacroDefinitions.size() * 2);
@@ -572,7 +501,6 @@ namespace Lumina
                     }
                 }
         
-                
                 const FString& Path = Paths[i];
                 FStringView FileName = VFS::FileName(Path);
                 Slang::ComPtr<slang::IModule> SlangModule;
@@ -652,9 +580,6 @@ namespace Lumina
                     const uint32* SpirvData = static_cast<const uint32*>(Code->getBufferPointer());
                     size_t SpirvSize        = Code->getBufferSize() / sizeof(uint32);
 
-                    // Per entry point, not over the assembled Binaries: a file with more than one entry
-                    // point (VisBufferPixel.slang) appends a module per entry, and spirv-val takes one
-                    // module per invocation.
                     #if USING(WITH_EDITOR)
                     ValidateSpirv(TSpan<const uint32>(SpirvData, SpirvSize), FileName);
                     #endif
@@ -724,11 +649,6 @@ namespace Lumina
 
     void FSpirVShaderCompiler::Initialize()
     {
-        // No pre-warm: the pool grows on demand in Acquire, and creation is serialized either way,
-        // so warming up front only moves the same core-module loads off the critical path of the
-        // first chunk onto the calling thread. It also used to build a full pool before we knew
-        // whether there was anything to compile -- a warm shader cache or a packaged build (which
-        // ships .lsc and no sources) would create N global sessions, use none, and retain them all.
         TVector<FString> Shaders;
         auto EnumerateShadersUnder = [&](FStringView Root)
         {
@@ -762,8 +682,6 @@ namespace Lumina
 
         if (Shaders.empty())
         {
-            // Packaged builds ship the .lsc cache instead of .slang sources;
-            // load every entry under /Engine/Intermediate/ShaderCache directly.
             uint32 Loaded = 0;
             VFS::DirectoryIterator(FShaderCache::CACHE_DIR, [&](const VFS::FFileInfo& Info)
             {
@@ -806,15 +724,11 @@ namespace Lumina
     {
         Flush();
 
-        // Flush only guarantees no compile is in flight; the pool still holds the warm session
-        // TrimIdle(1) keeps between waves. Drop it so Slang's core module isn't alive at teardown.
         GSlangSessionPool.TrimIdle(0);
     }
 
     bool FSpirVShaderCompiler::CompilerShaderRaw(FString ShaderString, const FShaderCompileOptions& CompileOptions, CompletedFunc OnCompleted)
     {
-        // Slang warns on top-level `#pragma once` (only valid inside an include).
-        // Source assembled from .slang headers carries it through, strip it here.
         for (size_t Pos = ShaderString.find("#pragma once"); Pos != FString::npos; Pos = ShaderString.find("#pragma once", Pos))
         {
             size_t LineEnd = ShaderString.find('\n', Pos);
@@ -887,8 +801,6 @@ namespace Lumina
             SessionDesc.searchPaths     = SearchPaths;
             SessionDesc.searchPathCount = 1;
         
-            // See the batch path: the split halves must outlive the compile call, and MacroSplits is
-            // reserved to its worst case so it never reallocates out from under Macros' pointers.
             TVector<FString> MacroSplits;
             TVector<slang::PreprocessorMacroDesc> Macros;
             MacroSplits.reserve(CompileOptions.MacroDefinitions.size() * 2);
@@ -920,8 +832,6 @@ namespace Lumina
         
             Slang::ComPtr<slang::IBlob> Diagnostics;
         
-            // Name the in-memory module after the caller's DebugName so crash dumps / Aftermath map source
-            // lines to "<DebugName>.slang" instead of the generic "RawShader".
             const FString& RawName    = CompileOptions.DebugName.empty() ? FString("RawShader") : CompileOptions.DebugName;
             const FString  SourcePath = RawName + ".slang";
 

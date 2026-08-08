@@ -4,10 +4,6 @@
 
 namespace Lumina
 {
-    // A single paint/clear request against a render-target texture. Enqueued game-side, drained into
-    // the frame snapshot during Extract, executed as a compute dispatch in TexturePaintPass.
-    // Asset deletion mid-flight is safe: RHI::Textures::Release is frame-deferred, so the handle and
-    // UAV slot outlive this op's frame.
     struct FTexturePaintOp
     {
         enum class EMode : uint8 { Paint, Clear };

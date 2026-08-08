@@ -8,6 +8,7 @@
 #include "Memory/Memcpy.h"
 #include "Renderer/MeshData.h"
 #include "Log/Log.h"
+#include "Renderer/SkeletonResource.h"
 
 namespace Lumina
 {

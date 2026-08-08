@@ -2,7 +2,6 @@
 #include "Containers/Array.h"
 #include "Containers/String.h"
 
-
 enum class ERHIBindingResourceType : uint8;
 enum class ERHIShaderType : uint8;
 

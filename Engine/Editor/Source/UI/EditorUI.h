@@ -217,6 +217,11 @@ namespace Lumina
         // rather than to report an error.
         bool TryOpenEditorStartupMap();
 
+        // Confirmation for opening a different world while PIE/Simulate is live, since doing so tears the
+        // session down. Takes the GUID rather than the loaded CWorld*: the modal spans frames and nothing
+        // here roots the asset, so the world is re-resolved once the user confirms.
+        void PromptOpenWorldDuringPlay(const FGuid& AssetGUID, const FString& WorldName);
+
         // Live only between a project load and the startup map opening. Discovery runs asynchronously, so
         // the map usually is not in the registry yet when the project finishes loading; this retries on
         // each registry update instead of blocking the main thread until the scan drains.

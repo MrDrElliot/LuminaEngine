@@ -73,6 +73,8 @@
 #include "World/Entity/Events/ImpulseEvent.h"
 #include "World/Subsystems/WorldSettings.h"
 #include "Log/Log.h"
+#include "Renderer/MeshQuantization.h"
+#include "Renderer/SkeletonResource.h"
 
 using namespace JPH::literals;
 
@@ -2535,11 +2537,14 @@ namespace Lumina::Physics
         const bool   bUnitScale = Math::IsNearlyEqual(Scale.x, 1.0f) && Math::IsNearlyEqual(Scale.y, 1.0f) && Math::IsNearlyEqual(Scale.z, 1.0f);
         const JPH::Vec3 ScaleVec = JoltUtils::ToJPHVec3(Scale);
 
-        // Positions are the leading 12 bytes of a 28-byte FMeshletVertex, so a 16-byte load always stays
-        // inside the struct; the 4th lane is the packed normal and is dropped by Vec3's W handling.
-        auto LoadPosition = [&](const FMeshletVertex& V)
+        // Positions are quantized against the owning meshlet's anchor, so this needs the meshlet as well
+        // as the vertex and cannot punch a raw Float3 load through the struct any more. Quantization
+        // error is relative to a ~124-triangle patch's extent, orders of magnitude under any collision
+        // tolerance, so the shape this produces is unchanged in practice.
+        auto LoadPosition = [&](const FMeshlet& M, const FMeshletVertex& V)
         {
-            const JPH::Vec3 P = JPH::Vec3::sLoadFloat3Unsafe(reinterpret_cast<const JPH::Float3&>(V.Position));
+            const FVector3 Decoded = DecodeMeshletPosition(M, V);
+            const JPH::Vec3 P = JPH::Vec3(Decoded.x, Decoded.y, Decoded.z);
             return bUnitScale ? P : P * ScaleVec;
         };
 
@@ -2561,7 +2566,7 @@ namespace Lumina::Physics
 
                     for (uint32 v = 0; v < M.VertexCount; ++v)
                     {
-                        Dst[v] = LoadPosition(Src[v]);
+                        Dst[v] = LoadPosition(M, Src[v]);
                     }
                 }, kColliderGatherGrain);
             }
@@ -2596,7 +2601,7 @@ namespace Lumina::Physics
                 JPH::Float3* DstVertex    = Vertices.data() + S.VertexOut;
                 for (uint32 v = 0; v < M.VertexCount; ++v)
                 {
-                    LoadPosition(Src[v]).StoreFloat3(&DstVertex[v]);
+                    LoadPosition(M, Src[v]).StoreFloat3(&DstVertex[v]);
                 }
 
                 const uint32* SrcTri            = MD.MeshletTriangles.data() + M.TriangleOffset;

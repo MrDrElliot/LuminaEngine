@@ -9,6 +9,7 @@
 namespace Lumina
 {
     class CEdGraphNode;
+    class CMaterialExpression_CustomSlang;
 }
 
 namespace Lumina
@@ -30,6 +31,9 @@ namespace Lumina
         {
             FString                     CompilationLog;
             TVector<FCompilationError>  Errors;
+            // Non-fatal findings. Same payload as an error so the row renderer is shared; kept apart
+            // because these do NOT set bIsError -- the material compiled and renders.
+            TVector<FCompilationError>  Warnings;
             bool                        bIsError = false;
         };
         
@@ -60,6 +64,11 @@ namespace Lumina
         void DrawMaterialGraph();
         void DrawMaterialProperties();
         void DrawShaderStats();
+
+        // Renders compile diagnostics as bordered rows with a "Focus Node" jump. Shared by the error block
+        // and the warning block -- only the palette differs, and a warning that read differently from an
+        // error would look like a second, lesser kind of thing rather than the same finding at lower severity.
+        void DrawDiagnosticRows(const TVector<FCompilationError>& Diagnostics, bool bIsError);
         // Compiled-shader truth (local-memory arrays + the driver's register count / occupancy), as
         // opposed to the source-derived estimates the rest of the panel shows.
         void DrawGPUStats(float LabelWidth, const ImVec4& HeaderColor, const ImVec4& LabelColor, const ImVec4& ValueColor);
@@ -71,6 +80,15 @@ namespace Lumina
         // Syntax-highlighted editor for the selected Custom Slang node's body. Bound lazily to the
         // selection; edits write straight back to the node (auto-compile picks them up).
         void DrawCustomCodeEditor();
+
+        // One-time editor options (tab size, line numbers, brackets, palette). Called from OnInitialize
+        // because SetTabSize only takes effect while the document is still empty.
+        void ConfigureCodeEditor();
+
+        // Rebuilds the Slang language used by the code editor so THIS node's declared pin names colour as
+        // known identifiers. The static base is shared; only the per-node names differ, which is why the
+        // tool owns a copy rather than pointing at the shared definition.
+        void RebuildCodeEditorLanguage(const CMaterialExpression_CustomSlang* Node);
         void OnSave() override;
         void InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& InDockspaceSize) const override;
 
@@ -106,7 +124,12 @@ namespace Lumina
         // Custom Slang code editor state. CodeEditorBoundNode tracks which node the buffer currently
         // holds, so switching selection reloads instead of writing one node's text into another.
         TextEditor                      CodeEditor;
+        // Tool-owned copy of the Slang language: the keyword/intrinsic sets are shared and static, but the
+        // declared pin names are per-node, so the definition the editor points at cannot be the shared one.
+        TextEditor::Language            CodeEditorLanguage;
         CEdGraphNode*                   CodeEditorBoundNode = nullptr;
+        // Pin signature the highlight was last built from; pins are edited elsewhere while this tab stays bound.
+        uint64                          CodeEditorPinSignature = 0;
         // Undo cursor at the last write-back; a change means the user actually edited the buffer,
         // so we don't rewrite (and dirty) the package every frame.
         size_t                          LastCodeEditorUndoIndex = 0;

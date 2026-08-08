@@ -4,6 +4,7 @@
 #include "Core/Math/AABB.h"
 #include "Core/Math/Matrix/MatrixMath.h"
 #include "Core/Serialization/Archiver.h"
+#include "Renderer/SkeletonResource.h"
 
 namespace Lumina
 {

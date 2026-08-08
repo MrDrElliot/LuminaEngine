@@ -106,8 +106,6 @@ namespace Lumina
     };
     static_assert(sizeof(FTerrainVisibleMeshlet) == 8);
 
-    // Render-phase-owned GPU resources for one terrain. Lives in TerrainGPUStates keyed by entity, NOT
-    // on the component, so GPU state outlives the component and no pass dereferences a freed one.
     struct FTerrainGPUState
     {
         /** R32_FLOAT mirror of CPU Heightmap. */
@@ -132,8 +130,6 @@ namespace Lumina
         uint32  AllocatedMeshletCount = 0;
     };
 
-    /** Shared TerrainBaseVertexPass/PixelPass push block (no descriptor set 2): render params + cull
-        buffers by device address, terrain textures by bindless index. Pointers first (8-byte aligned). */
     struct FTerrainPushConstants
     {
         uint64  ParamsAddr        = 0;   // ConstBufferPointer<FTerrainRenderParams>
@@ -146,8 +142,6 @@ namespace Lumina
         uint32  _Pad0             = 0;
     };
 
-    /** TerrainCull.slang push constants; frustum lives in scene globals. The four cull buffers are
-        addressed by device pointer (no descriptor set); pointers first to keep 8-byte alignment. */
     struct FTerrainCullPushConstants
     {
         uint64  ChunksAddr          = 0;

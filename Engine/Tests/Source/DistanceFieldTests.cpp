@@ -4,6 +4,7 @@
 #include "Core/Serialization/MemoryArchiver.h"
 #include "Renderer/MeshData.h"
 #include "Renderer/MeshDistanceField.h"
+#include "Renderer/MeshQuantization.h"
 
 // Distance field builder correctness. The field is built from BAKED MESHLETS, so these fixtures hand
 // GenerateMeshlets' output shape directly (one meshlet per shape) rather than going through the
@@ -28,6 +29,11 @@ namespace
         Meshlet.TriangleCount  = (uint32)Triangles.size();
         Meshlet.LODIndex       = 0;
 
+        // Positions are quantized against the meshlet, so the frame has to be derived before any vertex
+        // can be written -- exactly the order GenerateMeshlets uses.
+        const FMeshletQuantization Quant = ComputeMeshletQuantization(Positions.data(), (uint32)Positions.size());
+        ApplyMeshletQuantization(Meshlet, Quant);
+
         // Whichever stream the resource declares, so a skinned fixture is genuinely populated rather
         // than passing a test for the trivial reason that its vertex stream was empty.
         for (const FVector3& P : Positions)
@@ -35,13 +41,13 @@ namespace
             if (bSkinned)
             {
                 FMeshletSkinnedVertex V{};
-                V.Position = P;
+                EncodeMeshletPosition(Quant, P, V);
                 Resource.MeshletData.MeshletSkinnedVertices.push_back(V);
             }
             else
             {
                 FMeshletVertex V{};
-                V.Position = P;
+                EncodeMeshletPosition(Quant, P, V);
                 Resource.MeshletData.MeshletVertices.push_back(V);
             }
         }
@@ -57,7 +63,8 @@ namespace
         Surface.LODMeshletCount[0]  = 1;
 
         Resource.MeshletData.Meshlets.push_back(Meshlet);
-        Resource.MeshletData.MeshletBounds.push_back(FMeshletBounds{});
+        Resource.MeshletData.MeshletSpheres.push_back(FMeshletSphere{});
+        Resource.MeshletData.MeshletCones.push_back(FMeshletCone{});
         Resource.GeometrySurfaces.push_back(Surface);
     }
 
@@ -335,9 +342,10 @@ TEST(DistanceField, SerializationRoundTrips)
 TEST(DistanceField, MeshletHeaderMatchesGPUMirrorSize)
 {
     EXPECT_EQ(sizeof(FMeshletHeaderGPU), 80u);
-    EXPECT_EQ(offsetof(FMeshletHeaderGPU, DistanceFieldIndex), 32u);
-    EXPECT_EQ(offsetof(FMeshletHeaderGPU, DistanceFieldFlags), 36u);
-    EXPECT_EQ(offsetof(FMeshletHeaderGPU, DistanceFieldMinX), 40u);
-    EXPECT_EQ(offsetof(FMeshletHeaderGPU, DistanceFieldSizeX), 52u);
-    EXPECT_EQ(offsetof(FMeshletHeaderGPU, DistanceFieldMaxDistance), 64u);
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, ConesAddress), 32u);
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, DistanceFieldIndex), 40u);
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, DistanceFieldFlags), 44u);
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, DistanceFieldMinX), 48u);
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, DistanceFieldSizeX), 60u);
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, DistanceFieldMaxDistance), 72u);
 }

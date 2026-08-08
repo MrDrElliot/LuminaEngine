@@ -150,15 +150,14 @@ namespace Lumina
         ImGui::BeginChild("##LogMessages", ImVec2(0, LogHeight), true,
             ImGuiWindowFlags_HorizontalScrollbar);
 
+        // Read before any row is submitted, so this is last frame's scroll against last frame's content
+        // size. The queue is a fixed-size ring, so its size stops growing once saturated -- sticking has
+        // to key off the scroll position, not the message count, or it dies after the first 300 lines.
+        // Any wheel input has already been applied by BeginChild, so scrolling up unsticks immediately.
+        const bool bWasPinnedToBottom = ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 1.0f;
+
         const Logging::FLogQueue& Messages = Logging::GetConsoleLogQueue();
-        size_t NewMessageSize = Messages.size();
-
-        if (NewMessageSize > PreviousMessageSize)
-        {
-            bNeedsScrollToBottom = Settings.bAutoScroll;
-        }
-
-        PreviousMessageSize = NewMessageSize;
+        PreviousMessageSize = Messages.size();
 
         if (Settings.FontScale != 1.0f)
         {
@@ -337,7 +336,7 @@ namespace Lumina
             ImGui::EndPopup();
         }
 
-        if (bNeedsScrollToBottom)
+        if (bNeedsScrollToBottom || (Settings.bAutoScroll && bWasPinnedToBottom))
         {
             ImGui::SetScrollHereY(1.0f);
             bNeedsScrollToBottom = false;

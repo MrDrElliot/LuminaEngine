@@ -5,6 +5,7 @@
 #include "Containers/Array.h"
 #include "Core/Functional/FunctionRef.h"
 #include "Platform/GenericPlatform.h"
+#include "Shared/SharedConstants.h"
 
 namespace Lumina::RenderUtils
 {
@@ -38,6 +39,13 @@ namespace Lumina::RenderUtils
         return (ThreadCount + LocalSize - 1) / LocalSize;
     };
 
+    // The shader must undo this with the same MAX_DISPATCH_AXIS, or Y rows repeat and the tail is lost.
+    inline FUIntVector2 FoldGroupCount(uint32 GroupCount)
+    {
+        return FUIntVector2(std::min(GroupCount, (uint32)MAX_DISPATCH_AXIS),
+                            GetGroupCount(GroupCount, (uint32)MAX_DISPATCH_AXIS));
+    }
+
     constexpr uint32 CreateViewMask(TSpan<uint32> Layers)
     {
         uint32 Mask = 0;
@@ -54,7 +62,6 @@ namespace Lumina::RenderUtils
     {
         return ((1u << Layers) | ...);
     }
-
 
     inline FQuat GetCameraRotation(float yaw, float pitch)
     {

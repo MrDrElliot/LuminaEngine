@@ -32,8 +32,6 @@ namespace Lumina
 
         for (FChannel& Channel : Channels)
         {
-            // Last frame's raw cursor, which is allowed to exceed capacity precisely so an overflowed
-            // frame reports what it actually wanted rather than what it got.
             const uint32 Demand = Math::Min(Channel.LastDemand, kMaxVerts);
             const uint32 Needed = Math::Max(Demand + Demand / 2u, kMinVerts);
 
@@ -83,20 +81,12 @@ namespace Lumina
 
     void FImmediateLineRenderer::RetireChannel(FChannel& Channel)
     {
-        // Close first: a straggler job's Refill then fails instead of writing past the range we are
-        // about to publish. Safe to pad the tails below only because every producer is joined by the
-        // time this runs (physics was flushed at FrameStart, the extract graphs are waited).
         Channel.bOpen.store(false, std::memory_order_release);
 
-        // Cursor is what was actually allocated; the per-thread Dropped counts what did not fit. Their
-        // sum is the true demand, which is what next frame sizes against.
         Channel.Allocated = Channel.Cursor.load(std::memory_order_acquire);
 
         uint64 Demand = Channel.Allocated;
 
-        // Retire every thread's tail block. A reservation is only refilled once fully consumed, so the
-        // partly-used tails are the sole gap in the published range -- pad them out rather than
-        // rasterizing whatever the buffer held several frames ago.
         for (FReservation& Reservation : Channel.Reservations)
         {
             const uint32 Tail = Reservation.Remaining;
@@ -139,9 +129,6 @@ namespace Lumina
         const uint32 Base = Channel.Cursor.fetch_add(Count, std::memory_order_relaxed);
         if (Base + Count > Channel.Capacity)
         {
-            // Hand the reservation back so the cursor keeps meaning "verts actually allocated". Adds
-            // and subtracts commute, so the total lands exact even if another thread interleaves; the
-            // worst a transient overshoot costs is one more dropped line on an already-full frame.
             Channel.Cursor.fetch_sub(Count, std::memory_order_relaxed);
             return nullptr;
         }
@@ -195,8 +182,6 @@ namespace Lumina
             return Out;
         }
 
-        // Too big for what is left. Take a dedicated run instead of discarding the reservation, so a
-        // large bulk request does not strand the small writes that follow it.
         FSimpleElementVertex* Block = Reserve(Ch, VertexCount);
         if (Block == nullptr)
         {
@@ -297,8 +282,6 @@ namespace Lumina
             return;
         }
 
-        // Debug lines come and go in bursts, and this is CPU-visible VRAM, so give it back rather than
-        // sitting on a peak from one navmesh rebuild for the rest of the session.
         if (NeededVerts * 4u < Channel.SlotCapacity[Slot] && Channel.SlotCapacity[Slot] > kMinVerts)
         {
             if (++Channel.SlotLowUsage[Slot] >= 240u)

@@ -4,7 +4,6 @@
 #include "Core/Math/Math.h"
 #include "Renderer/Vertex.h"
 
-
 namespace Lumina::PrimitiveMeshes
 {
     inline void GenerateCube(TVector<FVertex>& OutVertices, TVector<uint32>& OutIndices)
@@ -325,8 +324,6 @@ namespace Lumina::PrimitiveMeshes
         OutVertices.clear();
         OutIndices.clear();
 
-        // Default radius/halfHeight gives a 2-unit-tall, 1-unit-wide capsule (1-unit cylinder section).
-        // The old (1, 1) defaults collapsed the cylinder to zero, rendering as a sphere.
         const float radius = Radius;
         const float halfHeight = HalfHeight;
 

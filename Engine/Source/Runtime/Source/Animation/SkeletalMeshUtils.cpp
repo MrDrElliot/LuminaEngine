@@ -9,6 +9,7 @@
 #include "World/Entity/Components/StaticMeshComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/Scene/RenderScene/SceneRenderTypes.h"
+#include "Renderer/SkeletonResource.h"
 
 namespace Lumina::SkeletalUtils
 {

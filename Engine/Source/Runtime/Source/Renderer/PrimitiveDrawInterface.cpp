@@ -306,7 +306,6 @@ namespace Lumina
         corners[6] = UnprojectCorner( 1,  1, zFar);
         corners[7] = UnprojectCorner(-1,  1, zFar);
 
-
         DrawLine(corners[0], corners[1], Color, Thickness, bDepthTest, Duration);
         DrawLine(corners[1], corners[2], Color, Thickness, bDepthTest, Duration);
         DrawLine(corners[2], corners[3], Color, Thickness, bDepthTest, Duration);
@@ -361,4 +360,3 @@ namespace Lumina
         DrawFrustum(ViewVolume.GetViewProjectionMatrix(), ViewVolume.GetNear(), ViewVolume.GetFar(), Color, Thickness, bDepthTest, Duration);
     }
 }
-

@@ -3,6 +3,7 @@
 #include "Animation/Pose.h"
 #include "Containers/Array.h"
 #include "Containers/Name.h"
+#include "Renderer/SkeletonResource.h"
 
 namespace Lumina
 {

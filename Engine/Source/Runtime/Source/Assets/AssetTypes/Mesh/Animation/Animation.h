@@ -7,6 +7,7 @@
 #include "Core/Versioning/CoreVersion.h"
 #include "Memory/SmartPtr.h"
 #include <atomic>
+#include "Renderer/SkeletonResource.h"
 #include "Animation.generated.h"
 
 namespace Lumina

@@ -40,15 +40,14 @@ namespace Lumina
         // Indexed by EMaterialShaderStage.
         const FMaterialStageDesc GMaterialStages[] =
         {
-            { &CMaterial::PixelShaderBinaries,                    &CMaterial::PixelShader,                    "_PS",    ERHIShaderType::Fragment },
-            { &CMaterial::VertexShaderBinaries,                   &CMaterial::VertexShader,                   "_VS",    ERHIShaderType::Vertex   },
-            { &CMaterial::MeshShaderBinaries,                     &CMaterial::MeshShader,                     "_MS",    ERHIShaderType::Mesh     },
-            { &CMaterial::VisBufferMeshShaderBinaries,            &CMaterial::VisBufferMeshShader,            "_VBM",   ERHIShaderType::Mesh     },
-            { &CMaterial::VisBufferMeshShaderMaskedBinaries,      &CMaterial::VisBufferMeshShaderMasked,      "_VBMM",  ERHIShaderType::Mesh     },
-            { &CMaterial::VisBufferVertexShaderBinaries,          &CMaterial::VisBufferVertexShader,          "_VBV",   ERHIShaderType::Vertex   },
-            { &CMaterial::MaskedVisBufferPixelShaderBinaries,     &CMaterial::MaskedVisBufferPixelShader,     "_MVBP",  ERHIShaderType::Fragment },
-            { &CMaterial::MaskedVisBufferPixelShaderPrimBinaries, &CMaterial::MaskedVisBufferPixelShaderPrim, "_MVBPP", ERHIShaderType::Fragment },
-            { &CMaterial::DeferredShaderBinaries,                 &CMaterial::DeferredShader,                 "_DM",    ERHIShaderType::Fragment },
+            { &CMaterial::PixelShaderBinaries,                &CMaterial::PixelShader,                "_PS",   ERHIShaderType::Fragment },
+            { &CMaterial::VertexShaderBinaries,               &CMaterial::VertexShader,               "_VS",   ERHIShaderType::Vertex   },
+            { &CMaterial::MeshShaderShadowBinaries,           &CMaterial::MeshShaderShadow,           "_MS",   ERHIShaderType::Mesh     },
+            { &CMaterial::MeshShaderBaseBinaries,             &CMaterial::MeshShaderBase,             "_MSB",  ERHIShaderType::Mesh     },
+            { &CMaterial::VisBufferMeshShaderBinaries,        &CMaterial::VisBufferMeshShader,        "_VBM",  ERHIShaderType::Mesh     },
+            { &CMaterial::VisBufferMeshShaderMaskedBinaries,  &CMaterial::VisBufferMeshShaderMasked,  "_VBMM", ERHIShaderType::Mesh     },
+            { &CMaterial::MaskedVisBufferPixelShaderBinaries, &CMaterial::MaskedVisBufferPixelShader, "_MVBP", ERHIShaderType::Fragment },
+            { &CMaterial::DeferredShaderBinaries,             &CMaterial::DeferredShader,             "_DM",   ERHIShaderType::Fragment },
         };
         static_assert(std::size(GMaterialStages) == (size_t)EMaterialShaderStage::Count,
             "GMaterialStages must cover every EMaterialShaderStage");
@@ -406,7 +405,18 @@ namespace Lumina
 
     void CMaterial::PostLoad()
     {
-        if (!PixelShaderBinaries.empty() && !VertexShaderBinaries.empty())
+        // "Has this material ever been compiled" -- asked of the whole stage table rather than of two
+        // named stages. Keying it on the vertex stage was correct only while every material had one:
+        // PBR geometry is task + mesh now and compiles none, so that test would classify every surface
+        // material as never-compiled and skip the commit loop below -- the load path that registers the
+        // mesh binaries the raster binds. The material would load clean and draw nothing.
+        bool bHasCompiledStage = false;
+        for (size_t i = 0; i < (size_t)EMaterialShaderStage::Count && !bHasCompiledStage; ++i)
+        {
+            bHasCompiledStage = !(this->*GMaterialStages[i].Binaries).empty();
+        }
+
+        if (bHasCompiledStage)
         {
             const bool bStale = GetPackage() != nullptr && CompiledTemplateHash != GetShaderTemplateHash();
 
@@ -510,17 +520,15 @@ namespace Lumina
             NotifyInstancesParentChanged();
 
 #if !USING(WITH_EDITOR)
-            // SPIR-V blobs are dead in cooked builds; editor keeps them for recompile/save.
-            auto Drop = [](TVector<uint32>& V) { V.clear(); V.shrink_to_fit(); };
-            Drop(VertexShaderBinaries);
-            Drop(PixelShaderBinaries);
-            Drop(MeshShaderBinaries);
-            Drop(VisBufferMeshShaderBinaries);
-            Drop(VisBufferMeshShaderMaskedBinaries);
-            Drop(VisBufferVertexShaderBinaries);
-            Drop(MaskedVisBufferPixelShaderBinaries);
-            Drop(MaskedVisBufferPixelShaderPrimBinaries);
-            Drop(DeferredShaderBinaries);
+            // SPIR-V blobs are dead in cooked builds; editor keeps them for recompile/save. Driven off
+            // the stage table rather than listed by hand -- the hand-written list silently kept dropping
+            // stages that no longer existed and missing ones that did.
+            for (const FMaterialStageDesc& Desc : GMaterialStages)
+            {
+                TVector<uint32>& Blob = this->*Desc.Binaries;
+                Blob.clear();
+                Blob.shrink_to_fit();
+            }
 #endif
         }
 
@@ -663,81 +671,52 @@ namespace Lumina
             LOG_ERROR("Missing [$MATERIAL_INPUTS] in base shader!");
         }
         
-        FString LoadedVertexString;
-        if (!VFS::ReadFile(LoadedVertexString, "/Engine/Resources/Shaders/MaterialShader/MeshletVertex.slang"))
-        {
-            LOG_ERROR("Failed to find MeshletVertex.slang!");
-            return;
-        }
-
-        // Default material: no-op WPO substitution.
         const char* VertexToken = "$MATERIAL_VERTEX_INPUTS";
-        size_t VertexPos = LoadedVertexString.find(VertexToken);
-        FString VertexReplacement = "Material.WorldPositionOffset = float3(0.0);\n";
-        if (VertexPos != FString::npos)
+        // No-op WPO: the default material moves no vertices.
+        const FString VertexReplacement = "\tMaterial.WorldPositionOffset = float3(0.0, 0.0, 0.0);\n";
+
         {
-            LoadedVertexString.replace(VertexPos, strlen(VertexToken), VertexReplacement);
+            // Every meshlet geometry stage is the same two templates compiled with a macro. Written as a
+            // loop rather than four near-identical blocks so a new variant is one row, not a copy-paste.
+            struct FGeometryStage { const char* Path; const char* Define; TVector<uint32> CMaterial::* Out; };
+            const FGeometryStage GeometryStages[] =
+            {
+                { "MeshletMesh.slang",      nullptr,                 &CMaterial::MeshShaderShadowBinaries          },
+                { "MeshletMesh.slang",      "MESHLET_MESH_BASE",     &CMaterial::MeshShaderBaseBinaries            },
+                { "MeshletVisBuffer.slang", nullptr,                 &CMaterial::VisBufferMeshShaderBinaries       },
+                { "MeshletVisBuffer.slang", "VISBUFFER_MASKED_GEOM", &CMaterial::VisBufferMeshShaderMaskedBinaries },
+            };
+
+            for (const FGeometryStage& Stage : GeometryStages)
+            {
+                FString Source;
+                if (!VFS::ReadFile(Source, FString("/Engine/Resources/Shaders/MaterialShader/") + Stage.Path))
+                {
+                    continue;
+                }
+
+                const size_t Pos = Source.find(VertexToken);
+                if (Pos == FString::npos)
+                {
+                    continue;
+                }
+                Source.replace(Pos, strlen(VertexToken), VertexReplacement);
+
+                FShaderCompileOptions Options;
+                if (Stage.Define != nullptr)
+                {
+                    Options.MacroDefinitions.emplace_back(Stage.Define);
+                }
+
+                TVector<uint32> CMaterial::* Out = Stage.Out;
+                ShaderCompiler->CompilerShaderRaw(Move(Source), Move(Options), [Out](const FShaderHeader& Header) mutable
+                {
+                    (DefaultMaterial->*Out).assign(Header.Binaries.begin(), Header.Binaries.end());
+                });
+            }
         }
-        else
+
         {
-            LOG_ERROR("Missing [$MATERIAL_VERTEX_INPUTS] in base vertex shader!");
-        }
-
-        ShaderCompiler->CompilerShaderRaw(Move(LoadedPixelString), {}, [](const FShaderHeader& Header) mutable
-        {
-            DefaultMaterial->PixelShaderBinaries.assign(Header.Binaries.begin(), Header.Binaries.end());
-        });
-
-        ShaderCompiler->CompilerShaderRaw(Move(LoadedVertexString), {}, [](const FShaderHeader& Header) mutable
-        {
-            DefaultMaterial->VertexShaderBinaries.assign(Header.Binaries.begin(), Header.Binaries.end());
-        });
-
-        // Mesh-shader variant of the default material (same no-op WPO substitution). Always compiled so the
-        // cooked asset is portable; only used at runtime when the device supports mesh shaders.
-        {
-            FString LoadedMeshString;
-            if (VFS::ReadFile(LoadedMeshString, "/Engine/Resources/Shaders/MaterialShader/MeshletMesh.slang"))
-            {
-                size_t MeshPos = LoadedMeshString.find(VertexToken);
-                if (MeshPos != FString::npos)
-                {
-                    LoadedMeshString.replace(MeshPos, strlen(VertexToken), VertexReplacement);
-                    ShaderCompiler->CompilerShaderRaw(Move(LoadedMeshString), {}, [](const FShaderHeader& Header) mutable
-                    {
-                        DefaultMaterial->MeshShaderBinaries.assign(Header.Binaries.begin(), Header.Binaries.end());
-                    });
-                }
-            }
-
-            FString LoadedVisString;
-            if (VFS::ReadFile(LoadedVisString, "/Engine/Resources/Shaders/MaterialShader/MeshletVisBuffer.slang"))
-            {
-                size_t VisPos = LoadedVisString.find(VertexToken);
-                if (VisPos != FString::npos)
-                {
-                    LoadedVisString.replace(VisPos, strlen(VertexToken), VertexReplacement);
-                    ShaderCompiler->CompilerShaderRaw(Move(LoadedVisString), {}, [](const FShaderHeader& Header) mutable
-                    {
-                        DefaultMaterial->VisBufferMeshShaderBinaries.assign(Header.Binaries.begin(), Header.Binaries.end());
-                    });
-                }
-            }
-
-            FString LoadedVisVSString;
-            if (VFS::ReadFile(LoadedVisVSString, "/Engine/Resources/Shaders/MaterialShader/MeshletVisBufferVS.slang"))
-            {
-                size_t VisVSPos = LoadedVisVSString.find(VertexToken);
-                if (VisVSPos != FString::npos)
-                {
-                    LoadedVisVSString.replace(VisVSPos, strlen(VertexToken), VertexReplacement);
-                    ShaderCompiler->CompilerShaderRaw(Move(LoadedVisVSString), {}, [](const FShaderHeader& Header) mutable
-                    {
-                        DefaultMaterial->VisBufferVertexShaderBinaries.assign(Header.Binaries.begin(), Header.Binaries.end());
-                    });
-                }
-            }
-
             // Deferred material pixel shader: BOTH tokens (WPO for reconstruction + the pixel graph).
             FString LoadedDeferredString;
             if (VFS::ReadFile(LoadedDeferredString, "/Engine/Resources/Shaders/MaterialShader/DeferredMaterial.slang"))

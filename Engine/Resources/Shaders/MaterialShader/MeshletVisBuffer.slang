@@ -24,22 +24,14 @@
 // [6:0] local triangle index; stored as VisID + 1 so clear-to-0 marks empty.
 
 // One CmdDrawMeshTasksIndirect covers a whole batch; SV_DrawIndex selects the sub-draw. The per-draw meshlet
-// base comes from ViewDrawOffsets, the same GPU-built array SeedIndirectArgs seeds FirstInstance from (so the
+// base comes from ViewDrawOffsets, the same GPU-built array the task stage appended through (so the
 // mesh and VS paths consume the same value). It used to be hand-indexed out of FDrawIndirectArguments as raw
 // uints ([arg*4 + 3]), which meant the mesh-task path reached into a struct belonging to the graphics
 // indirect path and read a cacheline other lanes were atomically incrementing (InstanceCount is element 1 of
 // the same 16 bytes).
-struct FVisPassArgs
-{
-    uint* ViewDrawOffsets;   // per-(view, draw) base into MeshletDrawList()
-    uint  ArgBase;           // first arg index for this batch: ViewIndex*NumDrawsPerView + IndirectDrawOffset
-};
-FVisPassArgs* Pass() { return GetPassArgs<FVisPassArgs>(); }
-
-uint LoadMeshletBase(uint DrawIndex)
-{
-    return Pass().ViewDrawOffsets[Pass().ArgBase + DrawIndex];
-}
+//
+// The meshlet always arrives through the task stage's payload -- there is exactly one geometry path and it
+// is task + mesh. FMeshletPassArgs (MeshletGeometry.slang) is the push block both stages share.
 
 struct FVisPrimitive
 {
@@ -54,6 +46,14 @@ typedef FBaseVertexOutput      FVisVertexOutput;
 typedef FDepthOnlyVertexOutput FVisVertexOutput;
 #endif
 
+// Clip positions of THIS workgroup's meshlet, published by the vertex phase for the triangle phase. At 64
+// threads and MESHLET_MAX_VERTICES == 64 lane i owns vertex i, so every other per-vertex result stays in
+// that lane's registers across the barrier and only this -- which the triangle phase reads for vertices it
+// does not own -- has to go through groupshared. 1KB, well under what caps mesh-workgroup residency.
+groupshared float4 gsClipPos[MESHLET_MAX_VERTICES];
+// One bit per triangle that survived the cull.
+groupshared uint   gsTriBits[MESHLET_TRI_WORDS];
+
 // Sized to the VERTEX phase (MESHLET_MAX_VERTICES = 64), not the triangle cap (124): the vertex phase is the
 // expensive one (BDA load + normal matrix + WPO graph + 2 mat-vec muls), so all 64 lanes must do vertex work.
 // The cheap triangle phase grid-strides over the 64 lanes (<=124 tris -> 2 iterations). At 128 threads the
@@ -64,27 +64,58 @@ typedef FDepthOnlyVertexOutput FVisVertexOutput;
 void MeshMain(
     uint3 GroupID   : SV_GroupID,
     uint  ThreadID  : SV_GroupIndex,
-    uint  DrawIndex : SV_DrawIndex,
+    in payload     FVisTaskPayload  TaskPayload,
     out vertices   FVisVertexOutput Verts[MESHLET_MAX_VERTICES],
     out indices    uint3            Tris[MESHLET_MAX_TRIANGLES],
     out primitives FVisPrimitive    Prims[MESHLET_MAX_TRIANGLES])
 {
-    uint MeshletSlot = LoadMeshletBase(DrawIndex) + GroupID.x;
-    FMeshletRef Ref  = ResolveSurfaceMeshlet(MeshletSlot);
+    // GroupID.x indexes the task stage's COMPACTED survivor list, not the draw-list region -- the task
+    // shader dropped the entries that failed to resolve, so there is no correspondence between this
+    // workgroup's id and a slot offset. The slot it does own is carried in the entry.
+    const uint  MeshletSlot = TaskPayload.Entries[GroupID.x].MeshletSlot;
+    FMeshletRef Ref         = MakeMeshletRefFromTask(TaskPayload, GroupID.x);
 
     const uint VertCount = Ref.M.VertexCount;
     const uint TriCount  = Ref.M.TriangleCount;
-    SetMeshOutputCounts(VertCount, TriCount);
+
+    // Zeroed here rather than in its own guarded block so the single barrier below orders BOTH this and
+    // the clip-position writes; the triangle phase is the first thing that reads either.
+    if (ThreadID < MESHLET_TRI_WORDS)
+    {
+        gsTriBits[ThreadID] = 0u;
+    }
+
+    // ------------------------------------------------------------------------------------------------
+    // Vertex phase. The output is NOT written yet: SetMeshOutputCounts has to publish the compacted
+    // primitive count first, and that is not known until the triangle phase has run. The result is held
+    // in this lane's registers instead -- lane i owns vertex i, so nothing is shared but the clip position.
+    // ------------------------------------------------------------------------------------------------
+    FVisVertexOutput VOut = (FVisVertexOutput)0;
+    float4           Clip = float4(0.0, 0.0, 0.0, 0.0);
 
     if (ThreadID < VertCount)
     {
+        // Every workgroup-uniform matrix load is issued HERE, before the vertex fetch, so all four
+        // requests are in flight together. They used to be strung end to end -- vertex data, then the
+        // model matrix inside TransformMeshletVertex (twice), then the camera view, then the camera
+        // projection -- each starting only once the previous result was consumed. Nsight put more
+        // dependent stall samples on GetCameraView/GetCameraProjection than on anything else in this
+        // pass, and the whole pass sat at 93% long-scoreboard.
+        //
+        // Deliberately INSIDE the vertex guard. A meshlet that failed to resolve leaves VertCount at 0
+        // and Instances() may be null, so Ref.Inst is null+0 -- hoisting the model-matrix load above
+        // this branch would dereference it on exactly the path the guard exists to protect.
+        const float4x4 ModelMatrix = Ref.Inst.ModelMatrix;
+        const float4x4 CameraView  = GetCameraView();
+        const float4x4 CameraProj  = GetCameraProjection();
+
         FVertexData VertexData = LoadMeshletVertexData(Ref, ThreadID);
-        FMeshletWorldVertex W  = TransformMeshletVertex(Ref, VertexData);
+        FMeshletWorldVertex W  = TransformMeshletVertex(VertexData, ModelMatrix, CalculateNormalMatrix(ModelMatrix));
 
         // Same material vertex-graph local contract as MeshletMesh/MeshletVertex (WPO must match so the
-        // VisBuffer depth agrees with what the deferred pass reconstructs).
+        // VisBuffer depth agrees with what the deferred pass reconstructs). ModelMatrix above is the
+        // graph's alias too -- it is declared here for that reason as much as for the transform.
         FGPUInstance* Inst   = Ref.Inst;   // pointer: FMeshletRef reaches the instance, see MeshletGeometry.slang
-        float4x4 ModelMatrix = Ref.Inst.ModelMatrix;
         float4   WorldPos    = float4(W.WorldPos, 1.0);
         float3   NormalWS    = W.NormalWS;
         float3   TangentWS   = W.TangentWS.xyz;
@@ -95,18 +126,79 @@ void MeshMain(
         WorldPos.xyz += Material.WorldPositionOffset;
 
 #ifdef VISBUFFER_MASKED_GEOM
-        Verts[ThreadID] = MakeBaseVertexOutput(Ref, W, WorldPos.xyz);
+        VOut = MakeBaseVertexOutput(Ref, W, WorldPos.xyz, CameraView, CameraProj);
+        Clip = VOut.Position;   // the same two muls; taken from the output so the two cannot drift
 #else
-        FVisVertexOutput O;
-        O.Position = CameraClipPosition(CameraViewPosition(WorldPos.xyz));
-        Verts[ThreadID] = O;
+        Clip          = CameraClipPosition(CameraViewPosition(WorldPos.xyz, CameraView), CameraProj);
+        VOut.Position = Clip;
 #endif
     }
 
-    // Triangle phase grid-strides the 64 lanes (2 iterations at the 124-tri cap). VisID packs the LOOP var.
-    for (uint t = ThreadID; t < TriCount; t += 64u)
+    // Lanes past VertCount publish a zero position. Nothing reads it: UnpackMeshletTriangleSafe bounds
+    // every index against VertCount, so a triangle can only ever name a vertex a lane actually wrote.
+    gsClipPos[ThreadID] = Clip;
+    GroupMemoryBarrierWithGroupSync();
+
+    // ------------------------------------------------------------------------------------------------
+    // Triangle phase: cull, then compact. Indices are decoded ONCE and kept in registers -- the loop below
+    // runs twice at the 124-triangle cap, so re-decoding for the emit would double the triangle-array
+    // traffic for nothing.
+    // ------------------------------------------------------------------------------------------------
+    uint3 TriIdx[MESHLET_TRI_ITERS];
+
+    [unroll]
+    for (uint i = 0; i < MESHLET_TRI_ITERS; ++i)
     {
-        Tris[t]        = UnpackMeshletTriangleSafe(Ref, t);
-        Prims[t].VisID = ((MeshletSlot << 7u) | (t & 0x7Fu)) + 1u;
+        TriIdx[i] = uint3(0u, 0u, 0u);
+
+        const uint t = ThreadID + i * 64u;
+        if (t >= TriCount)
+        {
+            continue;
+        }
+
+        const uint3 Idx = UnpackMeshletTriangleSafe(Ref, t);
+        TriIdx[i] = Idx;
+
+        if (IsDegenerateTriangleIndices(Idx))
+        {
+            continue;
+        }
+
+        if (IsMeshletTriangleCulled(gsClipPos[Idx.x], gsClipPos[Idx.y], gsClipPos[Idx.z],
+                                    float2(GetScreenSize())))
+        {
+            continue;
+        }
+
+        InterlockedOr(gsTriBits[t >> 5u], 1u << (t & 31u));
+    }
+
+    GroupMemoryBarrierWithGroupSync();
+
+    const FMeshletTriCompaction Keep = MakeTriCompaction(gsTriBits[0], gsTriBits[1], gsTriBits[2], gsTriBits[3]);
+
+    // Uniform across the workgroup: every lane read the same four words after the same barrier.
+    SetMeshOutputCounts(VertCount, Keep.Total);
+
+    if (ThreadID < VertCount)
+    {
+        Verts[ThreadID] = VOut;
+    }
+
+    [unroll]
+    for (uint i = 0; i < MESHLET_TRI_ITERS; ++i)
+    {
+        const uint t = ThreadID + i * 64u;
+        if (t >= TriCount || !Keep.IsKept(t))
+        {
+            continue;
+        }
+
+        // VisID packs the SOURCE triangle index, never the compacted slot: the deferred pass re-fetches
+        // the triangle out of the meshlet's own array, which this compaction does not touch.
+        const uint Slot   = Keep.OutputSlot(t);
+        Tris[Slot]        = TriIdx[i];
+        Prims[Slot].VisID = ((MeshletSlot << 7u) | (t & 0x7Fu)) + 1u;
     }
 }

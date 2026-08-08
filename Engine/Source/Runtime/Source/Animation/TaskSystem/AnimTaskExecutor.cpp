@@ -6,6 +6,7 @@
 #include "Core/Threading/Atomic.h"
 #include "Core/Threading/Thread.h"
 #include "Renderer/MeshData.h"
+#include "Renderer/SkeletonResource.h"
 
 namespace Lumina
 {

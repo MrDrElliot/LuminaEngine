@@ -1,3 +1,4 @@
+#include "Includes/AppendBuffer.slang"
 #include "Includes/Culling.slang"
 
 // Instance-level cull + LOD selection: the GPU half of the retained scene.
@@ -11,11 +12,12 @@
 //                     a sun sweep and a sphere per shadow light because it could not afford per-view work.
 //   * LOD          -- picked here from the interned FSurfaceDesc, PER VIEW, from each view's own origin
 //                     (SelectSurfaceLODForView). The pick decides how much draw-list space that view
-//                     reserves for the instance; CullMeshlets makes the identical pick when it walks.
+//                     reserves for the instance; BuildMeshletBlocks makes the identical pick when it
+//                     resolves the range that view's blocks cover.
 //                     Shadow views take the camera-distance pick, biased -- see FGPUInstance.
 //   * compaction   -- survivors are atomically appended, so the output is dense and FGPUInstance keeps
-//                     its exact existing layout. CullMeshlets, the VisBuffer passes, shadows and skinning
-//                     are untouched.
+//                     its exact existing layout. The task cull, the VisBuffer passes, shadows and
+//                     skinning are untouched.
 //
 // It also accumulates the per-batch meshlet totals BuildDrawPrefix turns into the draw-list layout
 // (ViewDrawOffsets), which is what let the CPU stop owning the draw-argument layout.
@@ -47,15 +49,14 @@ struct FCullInstancesArgs
 
     FGPUInstance*      OutInstances;        // out: compacted survivors (what SceneRoot.Instances points at)
     uint*              OutInstanceCount;    // out: [0] = survivor count, pre-zeroed
-    // out: NumBatches entries. VIEW-INDEPENDENT meshlet work: sum of MeshletWalkCount over survivors.
-    // This is the meshlet cull's dispatch domain, which must cover every surviving instance regardless of
-    // which view sees it, so it cannot be derived from the per-view counts below.
-    uint*              OutBatchMeshletCount;
     // out: NumViews * NumBatches entries. Exact upper bound on what each (view, draw) can emit, which
     // BuildDrawPrefix scans into the draw list's layout. This is what replaced slicing the draw list into
     // equal per-view chunks: a cascade that culls almost everything now costs almost no space, and the
     // camera gets what it actually needs.
     uint*              OutViewDrawCount;
+    // Same per-(view, draw) shape, counted in cull BLOCKS. The task-shader cull dispatches one workgroup
+    // per block, so this is what sizes its grid -- the draw count above sizes the region it emits into.
+    uint*              OutViewBlockCount;
     uint*              OutOverflowFlag;     // out: [0] set if MaxVisibleInstances was hit
 };
 FCullInstancesArgs* Pass() { return GetPassArgs<FCullInstancesArgs>(); }
@@ -65,7 +66,7 @@ FCullInstancesArgs* Pass() { return GetPassArgs<FCullInstancesArgs>(); }
 void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupID)
 {
     // Same 65535-group Y fold the meshlet cull uses, so a huge retained set still dispatches.
-    const uint SlotIdx = GlobalID.x + GroupID.y * 65535u * LOCAL_SIZE_X;
+    const uint SlotIdx = GlobalID.x + GroupID.y * MAX_DISPATCH_AXIS * LOCAL_SIZE_X;
     if (SlotIdx >= Pass().NumRetained)
     {
         return;
@@ -114,10 +115,10 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     // Resolved BEFORE the per-view visibility loop, because that loop also accumulates how many meshlets
     // each view could emit for this instance -- which needs the LOD's meshlet counts.
 
-    // The index is bounded, because the consequence of trusting it is not a wrong LOD. Past the table this
-    // reads whatever follows the allocation, and the meshlet counts below are accumulated into
-    // BatchMeshletCounts, which BuildDrawPrefix sums into the meshlet cull's INDIRECT DISPATCH SIZE. An
-    // out-of-range index here is therefore a grid size, not a visual artifact.
+    // The index is bounded, because the consequence of trusting it is not a wrong LOD. Past the table
+    // this reads whatever follows the allocation, and the meshlet counts below become the block counts
+    // BuildMeshletBlocks appends against. An out-of-range index here is therefore an unbounded append
+    // into the cull's work domain, not a visual artifact.
     if (Cull.SurfaceDescIndex >= Pass().NumSurfaceDescs)
     {
         return;
@@ -180,11 +181,6 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     const bool bInRange = DrawID < Pass().NumBatches;
     bool bAnyView = false;
 
-    // The meshlet cull's per-instance thread domain, accumulated over the views that can actually emit:
-    // one walk has to cover the widest LOD any of them picked, plus the shadow LOD. Seeded from the shadow
-    // count because a shadow view needs no visibility of its own to be reached.
-    uint WalkCount = ShadowMeshletCount;
-
     for (uint v = 0; v < Pass().NumViews; ++v)
     {
         FCullView View = CullViews()[v];
@@ -241,7 +237,8 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
         {
             // Per-cascade shadow LOD. Cascade i's texel is wider than cascade i-1's at the same atlas
             // resolution, so it steps one LOD coarser; cascade 0 reproduces the single shadow pick above
-            // exactly. CullMeshlets calls the same function with the same operands when it walks.
+            // exactly. BuildMeshletBlocks calls the same function with the same operands when it
+            // resolves this cascade's range.
             Emitted = bHasGeometry
                 ? SelectCascadeShadowMeshletRange(Desc, CamPos, Cull.SphereBounds, View.CascadeIndex,
                                                   Scene().CullData.ShadowLODBias,
@@ -249,14 +246,25 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
                 : 0u;
         }
 
-        // Every view that can emit, shadow ones included. Cascade 0 resolves to ShadowMeshletCount (which
-        // already seeded WalkCount) and the rest are coarser, so today this never raises the domain -- it
-        // is here so that a future cascade pick which IS finer cannot silently outrun the walk.
-        WalkCount = max(WalkCount, Emitted);
 
         if (Emitted > 0u && bInRange)
         {
-            InterlockedAdd(Pass().OutViewDrawCount[v * Pass().NumBatches + DrawID], Emitted);
+            const uint Slot = v * Pass().NumBatches + DrawID;
+            InterlockedAdd(Pass().OutViewDrawCount[Slot], Emitted);
+
+            // Blocks for the SAME range, so the two counts describe the same work at two granularities.
+            // Rounded up PER INSTANCE, not off the summed emit count: blocks never span instances, so a
+            // ceil of the sum would under-reserve by one block for every instance with a partial tail.
+            //
+            // Late views excluded: their work is whatever phase 0 deferred, so they walk the defer list
+            // and never the block list. They still reserve DRAW space above, because that is where their
+            // re-test emits. Counting blocks for them too would roughly double the block allocation for
+            // regions BuildMeshletBlocks skips outright.
+            if (!View.HasFlag(CULL_VIEW_FLAG_PHASE_LATE))
+            {
+                InterlockedAdd(Pass().OutViewBlockCount[Slot],
+                               (Emitted + (MESHLET_TASK_GROUP_SIZE - 1u)) / MESHLET_TASK_GROUP_SIZE);
+            }
         }
     }
 
@@ -267,31 +275,14 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
 
     // Append. The output order is arbitrary and that is fine: the meshlet draw list carries InstanceID
     // explicitly, and the per-instance prefix is built from whatever order lands here.
-    uint OutSlot;
-    InterlockedAdd(Pass().OutInstanceCount[0], 1u, OutSlot);
+    const uint OutSlot = AppendReserve(Pass().OutInstanceCount, Pass().MaxVisibleInstances, /*Base*/ 0u);
 
-    if (OutSlot >= Pass().MaxVisibleInstances)
+    if (OutSlot == kAppendFull)
     {
         // Feedback sizing: record it and drop. The CPU grows the buffer from the count it reads back,
         // so an overflow costs one frame of missing instances rather than a write past the allocation.
         Pass().OutOverflowFlag[0] = 1u;
         return;
-    }
-
-    // View-independent meshlet work for the meshlet cull's dispatch domain. Separate from the per-view
-    // counts above because an instance visible to three views contributes to three of those but is walked
-    // exactly once by the cull.
-    //
-    // Bounds-checked against the batch count the counter array was sized from. A retained instance is
-    // stamped with its DrawID on the game thread and the array is sized from the same registry, so a
-    // mismatch means the two drifted -- and an unchecked atomic there would silently corrupt whatever
-    // allocation follows, which then shows up as some unrelated shader faulting.
-    if (bInRange)
-    {
-        // The same per-instance number the prefix scan reads off the instance below: this is the cull's
-        // dispatch domain and the prefix is what indexes into it, so the two have to agree or the tail of
-        // the domain resolves nothing.
-        InterlockedAdd(Pass().OutBatchMeshletCount[DrawID], WalkCount);
     }
 
     // ONLY survivors get here, which is the whole point of the split: the transform and the static
@@ -322,7 +313,6 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     Inst.ShadowMeshletOffset     = ShadowMeshletOffset;
     Inst.ShadowMeshletCount      = ShadowMeshletCount;
     Inst.SurfaceDescIndex        = bSelectPerView ? Cull.SurfaceDescIndex : kNoSurfaceDesc;
-    Inst.MeshletWalkCount        = WalkCount;
     // End of the last LOD: the bound on the mesh-global meshlet index the cull emits. NumLODs is already
     // clamped to the table size above, so this cannot read past the desc.
     Inst.MeshletTotalCount       = bHasGeometry && NumLODs > 0u

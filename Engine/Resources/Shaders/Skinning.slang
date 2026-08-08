@@ -17,7 +17,7 @@ FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
 {
     // One workgroup per meshlet. Index folded across X/Y (matches the CPU dispatch's 65535 cap).
-    uint Descriptor = GroupID.y * 65535u + GroupID.x;
+    uint Descriptor = GroupID.y * MAX_DISPATCH_AXIS + GroupID.x;
     if (Descriptor >= Pass().DescriptorCount)
     {
         return;

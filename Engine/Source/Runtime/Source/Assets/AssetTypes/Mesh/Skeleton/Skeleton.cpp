@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "Skeleton.h"
+#include "Renderer/SkeletonResource.h"
 
 namespace Lumina
 {

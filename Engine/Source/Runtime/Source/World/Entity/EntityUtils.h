@@ -66,16 +66,58 @@ namespace Lumina::ECS::Utils
 	// so subsequent GetWorld* reads take the guard-free fast path (pure cached reads => safe in parallel).
 	RUNTIME_API bool AnyTransformsDirty(FEntityRegistry& Registry);
 
+	/**
+	 * The one piece of the dirty state that has to be readable INLINE: the gate every world read checks
+	 * to decide whether a resolve is owed.
+	 *
+	 * It lives in the header, and FTransformDirtyState derives from it, so STransformComponent can answer
+	 * "is anything dirty?" with a load through a pointer it already cached at Bind. Reading it through the
+	 * opaque state instead meant every GetWorld* re-derived the state from the registry context first --
+	 * a type-keyed hash lookup, per call, to discover that nothing had moved.
+	 */
+	struct FTransformDirtyGate
+	{
+		std::atomic<bool> bAnyDirty{ true };
+
+		/**
+		 * Bumped once per drain of the moved channel (i.e. once a frame). A flat setter publishes only when
+		 * its component's stamp differs, so an entity written several times in a frame -- SetLocation then
+		 * SetRotation then SetScale is the ordinary case -- enqueues once instead of once per call.
+		 *
+		 * A stamp rather than a flag because a flag would need clearing, and the only place to clear it is a
+		 * pass over the drained entities: one random-access component lookup each, which costs more for the
+		 * write-once entities than the duplicates it saves. Starts at 1 so a zero-initialized component never
+		 * matches on its first write.
+		 */
+		std::atomic<uint32> PublishEpoch{ 1 };
+	};
+
 	// Opaque per-registry transform dirty state (lock-free dirty queues + resolve guard). Lives in the
 	// registry context; cached on each STransformComponent at Bind so setters enqueue without a lookup.
+	// Derives from FTransformDirtyGate, single and non-virtual, so the two pointers are interchangeable.
 	struct FTransformDirtyState;
 	RUNTIME_API FTransformDirtyState* EnsureTransformDirtyState(FEntityRegistry& Registry);
+
+	// The same object seen as its gate. Exists because a caller that only has the forward declaration
+	// cannot perform the derived-to-base conversion itself; this is what components cache.
+	RUNTIME_API FTransformDirtyGate* EnsureTransformDirtyGate(FEntityRegistry& Registry);
+
+	// True when the entity carries no FRelationshipComponent. This is the EXACT test the resolve uses to
+	// take its flat path, so STransformComponent::bIsFlat (which caches it) can never disagree with the
+	// resolver about what flat means.
+	RUNTIME_API bool IsEntityTransformFlat(FEntityRegistry& Registry, entt::entity Entity);
+
+	// A flat entity's setter resolved itself: world == local, written in place while it was still in
+	// registers. All that is left is to record the move for the render sync and, for a bodied entity, to
+	// queue the physics re-sync. Deliberately does NOT raise the dirty signal -- there is nothing for the
+	// resolve to do, and raising it would make the next barrier drain a queue this entity is not in.
+	RUNTIME_API void PublishFlatMove(FTransformDirtyGate* Gate, entt::entity Entity, bool bPublish, bool bQueueBody);
 
 	// Enqueue an entity whose local transform changed (lock-free, any thread); raises the dirty signal.
 	// The two queues are independent, each deduped by its own guard on the caller (bWorldDirty /
 	// bBodyDirtyQueued): bQueueTransform feeds the resolve, bQueueBody feeds the physics body re-sync.
 	// Bodiless entities pass bQueueBody=false to skip that queue (and its drain) entirely.
-	RUNTIME_API void QueueDirtyTransform(FTransformDirtyState* State, entt::entity Entity, bool bQueueTransform, bool bQueueBody);
+	RUNTIME_API void QueueDirtyTransform(FTransformDirtyGate* Gate, entt::entity Entity, bool bQueueTransform, bool bQueueBody);
 
 	// Start recording which entities the resolve actually moved, so a downstream cache (the render
 	// scene's persistent primitive table) can refresh just those instead of rescanning every entity.

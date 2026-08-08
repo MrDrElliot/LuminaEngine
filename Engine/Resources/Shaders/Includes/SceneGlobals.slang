@@ -15,7 +15,6 @@ struct FSceneRoot
     FBillboardInstance*  Billboards;
     FCullView*           CullViews;
     FMeshletDraw*        MeshletDrawListPtr;
-    uint*                InstanceMeshletPrefixPtr;
     FPreSkinnedVertex*   PreSkinnedVerticesPtr;
     FSkinDescriptor*     SkinDescriptorsPtr;
     FWidgetInstance*     WidgetsPtr;
@@ -60,7 +59,6 @@ FMaterialUniforms*  Materials()             { return GetSceneRoot().Materials; }
 FBillboardInstance* Billboards()            { return GetSceneRoot().Billboards; }
 FCullView*          CullViews()             { return GetSceneRoot().CullViews; }
 FMeshletDraw*       MeshletDrawList()       { return GetSceneRoot().MeshletDrawListPtr; }
-uint*               InstanceMeshletPrefix() { return GetSceneRoot().InstanceMeshletPrefixPtr; }
 FPreSkinnedVertex*  PreSkinnedVertices()    { return GetSceneRoot().PreSkinnedVerticesPtr; }
 FSkinDescriptor*    SkinDescriptors()       { return GetSceneRoot().SkinDescriptorsPtr; }
 FWidgetInstance*    Widgets()               { return GetSceneRoot().WidgetsPtr; }
@@ -97,8 +95,8 @@ FVertexData LoadStaticVertex(FMeshletHeader* Header, FMeshlet M, uint VertexLoca
     FVertex V = reinterpret<FVertex*>(Header.Vertices)[M.VertexOffset + VertexLocalIdx];
 
     FVertexData Data;
-    Data.Position = V.Position;
-    Data.Normal   = UnpackNormal(V.Normal);
+    Data.Position = DecodeMeshletPosition(M, V.PositionX, V.PositionY, V.PositionZ);
+    Data.Normal   = UnpackNormalSNorm16(V.NormalX, V.NormalY, V.NormalZ);
     Data.Tangent  = UnpackTangent(V.Tangent);
     Data.UV       = UnpackUV(V.UV);
     Data.Color    = UnpackColor(V.Color);
@@ -109,7 +107,7 @@ FVertexData DecodePreSkinnedVertex(FPreSkinnedVertex S)
 {
     FVertexData Data;
     Data.Position = float3(S.Px, S.Py, S.Pz);
-    Data.Normal   = UnpackNormal(S.Normal);
+    Data.Normal   = UnpackNormalSNorm16(S.NormalX, S.NormalY, S.NormalZ);
     Data.Tangent  = UnpackTangent(S.Tangent);
     Data.UV       = UnpackUV(S.UV);
     Data.Color    = UnpackColor(S.Color);
@@ -126,7 +124,7 @@ FVertexData LoadSkinnedVertex(FMeshlet M, uint VertexLocalIdx, uint SkinnedVerte
 float3 LoadStaticPosition(FMeshletHeader* Header, FMeshlet M, uint VertexLocalIdx)
 {
     FVertex V = reinterpret<FVertex*>(Header.Vertices)[M.VertexOffset + VertexLocalIdx];
-    return V.Position;
+    return DecodeMeshletPosition(M, V.PositionX, V.PositionY, V.PositionZ);
 }
 
 float3 LoadSkinnedPosition(FMeshletHeader* Header, FMeshlet M, uint VertexLocalIdx, uint SkinnedVertexBase)
@@ -141,8 +139,12 @@ FPreSkinnedVertex SkinVertex(FMeshletHeader* Header, FMeshlet M, uint VertexLoca
 {
     FSkinnedVertex V = reinterpret<FSkinnedVertex*>(Header.Vertices)[M.VertexOffset + VertexLocalIdx];
 
-    float3 LocalPos     = V.Position;
-    float3 LocalNormal  = UnpackNormal(V.Normal);
+    // The SOURCE stream is quantized like the static one -- it is still the rest pose, still inside its
+    // meshlet's anchor box. The blended OUTPUT is not: a skinned vertex leaves that box entirely, which
+    // is why FPreSkinnedVertex keeps full-precision floats and this is the only place a decode is needed
+    // on the skinned path.
+    float3 LocalPos     = DecodeMeshletPosition(M, V.PositionX, V.PositionY, V.PositionZ);
+    float3 LocalNormal  = UnpackNormalSNorm16(V.NormalX, V.NormalY, V.NormalZ);
     float4 LocalTangent = UnpackTangent(V.Tangent);
 
     uint4  JointIndices = UnpackUIntToUVec4(V.JointIndices);
@@ -209,7 +211,9 @@ FPreSkinnedVertex SkinVertex(FMeshletHeader* Header, FMeshlet M, uint VertexLoca
     Out.Px      = SkinnedPos.x;
     Out.Py      = SkinnedPos.y;
     Out.Pz      = SkinnedPos.z;
-    Out.Normal  = PackNormal(SkinnedNormal);
+    Out.NormalX = FloatToSNorm16(SkinnedNormal.x);
+    Out.NormalY = FloatToSNorm16(SkinnedNormal.y);
+    Out.NormalZ = FloatToSNorm16(SkinnedNormal.z);
     Out.Tangent = PackTangent(float4(SkinnedTangent, LocalTangent.w));
     Out.UV      = V.UV;     // skin-invariant; carried so the draw VS never reads the source
     Out.Color   = V.Color;

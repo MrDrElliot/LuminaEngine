@@ -9,6 +9,7 @@
 #include "Core/Engine/Engine.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectCore.h"
+#include "Core/Object/ObjectIterator.h"
 #include "Core/Windows/Window.h"
 #include "Paths/Paths.h"
 #include "Renderer/RenderManager.h"
@@ -691,6 +692,55 @@ namespace Lumina::ImGuiX
         if (Picked != INDEX_NONE && Picked != CurrentIndex)
         {
             InOutGUID = Assets[Picked]->AssetGUID;
+            return true;
+        }
+        return false;
+    }
+
+    bool ClassCombo(const char* StrId, CClass* BaseClass, CClass*& InOutClass, bool bAllowNone, const char* ItemIcon)
+    {
+        TVector<CClass*> Candidates;
+        for (TObjectIterator<CClass> It; It; ++It)
+        {
+            CClass* Candidate = *It;
+            if (BaseClass == nullptr || Candidate->IsChildOf(BaseClass))
+            {
+                Candidates.push_back(Candidate);
+            }
+        }
+
+        eastl::sort(Candidates.begin(), Candidates.end(), [](CClass* A, CClass* B)
+        {
+            return strcmp(A->GetName().c_str(), B->GetName().c_str()) < 0;
+        });
+
+        // "None" occupies index 0 when allowed, so every candidate sits one slot further along.
+        const int32 Offset = bAllowNone ? 1 : 0;
+
+        int32 CurrentIndex = bAllowNone ? 0 : INDEX_NONE;
+        for (int32 i = 0; i < (int32)Candidates.size(); ++i)
+        {
+            if (Candidates[i] == InOutClass)
+            {
+                CurrentIndex = i + Offset;
+                break;
+            }
+        }
+
+        // Copied, not pointed at: FName::c_str() hands back a rotating thread-local buffer for a name
+        // with a numeric suffix (CWeapon_2), which the per-item labels below would overwrite.
+        const FFixedString Preview = InOutClass ? FFixedString(InOutClass->GetName().c_str())
+                                                : FFixedString(bAllowNone ? "None" : "Select a class...");
+
+        const int32 Picked = SearchableCombo(StrId, Preview.c_str(), (int32)Candidates.size() + Offset, CurrentIndex,
+            [&Candidates, Offset](int32 Index) -> FFixedString
+            {
+                return (Index < Offset) ? FFixedString("None") : FFixedString(Candidates[Index - Offset]->GetName().c_str());
+            }, ItemIcon);
+
+        if (Picked != INDEX_NONE && Picked != CurrentIndex)
+        {
+            InOutClass = (Picked < Offset) ? nullptr : Candidates[Picked - Offset];
             return true;
         }
         return false;

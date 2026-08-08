@@ -13,6 +13,7 @@
 #include "Renderer/MeshData.h"
 #include "TaskSystem/TaskSystem.h"
 #include "Log/Log.h"
+#include "Renderer/SkeletonResource.h"
 
 // Route libdeflate (OpenFBX's bundled inflate) through Lumina's tracked allocator.
 extern "C" void* LmThirdPartyMalloc(size_t Size, const char* Category);

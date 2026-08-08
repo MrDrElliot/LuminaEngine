@@ -102,7 +102,7 @@ float SphereFrontDepth(float FrontZ, float ZNear, float ZFar)
 //
 // A view's LOD is a function of that view's own origin, so a preview camera standing next to a mesh sees
 // it at the detail IT needs rather than at whatever the primary camera picked. Which means the pick is
-// made twice per (instance, view): CullInstances makes it to reserve draw-list space, CullMeshlets makes
+// made twice per (instance, view): CullInstances makes it to reserve draw-list space, BuildMeshletBlocks makes
 // it again to decide which meshlets that view walks. The two MUST return the same LOD -- reserve for LOD 2
 // and walk LOD 1 and the surplus is wasted; the other way round and meshlets are silently dropped at the
 // region boundary. That is why the arithmetic lives here and is CALLED by both, never re-derived: same
@@ -140,7 +140,7 @@ uint2 SelectViewMeshletRange(FSurfaceDesc Desc, float3 ViewOrigin, float4 Sphere
 // of geometry that was already narrower than their own texel.
 //
 // Same contract as SelectSurfaceLODForView: CullInstances calls this to RESERVE the (view, draw) region and
-// CullMeshlets calls it to decide which meshlets that cascade walks. Reserve for one LOD and walk another
+// BuildMeshletBlocks calls it to decide which meshlets that cascade walks. Reserve for one LOD and walk another
 // and the surplus is wasted (or, the other way, meshlets vanish at the region boundary) -- so the
 // arithmetic lives here and is CALLED by both, never re-derived.
 //

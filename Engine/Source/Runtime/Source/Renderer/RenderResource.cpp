@@ -75,7 +75,6 @@
         { EFormat::BC7_UNORM_SRGB,    "BC7_UNORM_SRGB",    16,  4, EFormatKind::Normalized,   true,  true,  true,  true,  false, false, false, true  },
     };
 
-
 namespace Lumina::RHI::Format
 {
     const FFormatInfo& Info(EFormat format)

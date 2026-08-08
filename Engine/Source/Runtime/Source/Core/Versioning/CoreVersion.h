@@ -5,6 +5,10 @@
 
 #define PREPROCESSOR_ENUM_PROTECT(a) ((unsigned int)(a))
 
+// Package wire format. Entries are POSITIONAL: the value is what gets stamped into every saved package,
+// so removing one renumbers every entry after it and changes what already-written files mean. Only do
+// that when the content those files hold is being regenerated wholesale -- a package stamped higher than
+// AUTOMATIC_VERSION is refused outright by LoadPackage, which is loud, but the reverse is silent.
 enum class ELuminaEngineVersion : uint32
 {
 	INITIAL_VERSION = 1000,
@@ -18,9 +22,6 @@ enum class ELuminaEngineVersion : uint32
 	// FName wire format: None serializes as the empty string. Older files stored the "NAME_None"
 	// display rendering, which round-tripped into a real name whose IsNone() was false.
 	FNAME_NONE_EMPTY_STRING,
-
-	// FMeshResource serializes its baked signed distance field volume.
-	MESH_DISTANCE_FIELD,
 
 	// FTextureResource::FDescription serializes LayerCount, and its mips are stored layer-major
 	// (Mips[Layer * NumMips + Mip]). Older files are single-layer, so LayerCount defaults to 1.

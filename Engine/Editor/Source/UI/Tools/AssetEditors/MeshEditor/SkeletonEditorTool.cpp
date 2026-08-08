@@ -10,6 +10,7 @@
 #include "World/Entity/Components/LightComponent.h"
 #include "world/entity/components/skeletalmeshcomponent.h"
 #include "World/Entity/Components/StaticMeshComponent.h"
+#include "Renderer/SkeletonResource.h"
 
 
 namespace Lumina

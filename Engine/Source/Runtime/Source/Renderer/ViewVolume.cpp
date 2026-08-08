@@ -1,7 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "ViewVolume.h"
 
-
 namespace Lumina
 {
 
@@ -69,7 +68,6 @@ namespace Lumina
         return *this;
     }
 
-
     FViewVolume& FViewVolume::SetViewPosition(const FVector3& Position)
     {
         ViewPosition = Position;
@@ -90,7 +88,6 @@ namespace Lumina
 
         return *this;
     }
-
 
     FViewVolume& FViewVolume::SetPerspective(float fov, float aspect)
     {

@@ -20,6 +20,7 @@
 #include "World/Entity/Components/SkeletalMeshComponent.h"
 #include "World/Entity/Components/SkyLightComponent.h"
 #include "imgui.h"
+#include "Renderer/SkeletonResource.h"
 
 namespace Lumina
 {

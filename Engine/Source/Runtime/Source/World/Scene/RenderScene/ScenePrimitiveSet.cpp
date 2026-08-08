@@ -16,12 +16,7 @@
 
 namespace Lumina
 {
-    //-------------------------------------------------------------------------
-    // FRenderDirtyTracker
-    //-------------------------------------------------------------------------
 
-    // Entity (32) | Source (8) | Flags (8). Packing keeps the queue element trivially copyable and
-    // one word wide, which is what makes the bulk dequeue a memcpy.
     static FORCEINLINE uint64 PackDirty(entt::entity Entity, EPrimitiveSource Source, EPrimitiveDirty Flags)
     {
         return (uint64)entt::to_integral(Entity) | ((uint64)Source << 32) | ((uint64)Flags  << 40);
@@ -69,9 +64,6 @@ namespace Lumina
 
     void FRenderDirtyTracker::MarkAllSources(entt::entity Entity, EPrimitiveDirty Flags)
     {
-        // One entry, expanded by the sync pass. Transform marks are the highest-volume producer here
-        // (one per moving entity per frame), so widening them to one entry per source would multiply
-        // the queue traffic for no benefit.
         Mark(Entity, EPrimitiveSource::Any, Flags);
     }
 
@@ -101,10 +93,6 @@ namespace Lumina
         bAnyDirty.store(false, std::memory_order_release);
         return Out.size() != Before;
     }
-
-    //-------------------------------------------------------------------------
-    // FSceneBatchRegistry
-    //-------------------------------------------------------------------------
 
     // Linear scan over a list that stays tiny (one entry per material instance of one master).
     static void NoteDeferredMaterial(FSceneBatchRegistry::FBatch& Batch, const FResolvedSurface& Surface)
@@ -142,9 +130,6 @@ namespace Lumina
 
         const uint32 NewIndex = (uint32)Batches.size();
 
-        // PackDrawIDAndFlags carries the draw id in 16 bits (the other 16 are instance flags), so past
-        // this a batch index wraps and instances silently draw against the wrong PSO. Batches number in
-        // the tens to hundreds, so reaching this means something is interning them per-instance.
         if (NewIndex == 0x10000u)
         {
             LOG_ERROR("SceneBatchRegistry: batch count reached {}, the limit PackDrawIDAndFlags can "
@@ -154,13 +139,12 @@ namespace Lumina
         FBatch& Batch = Batches.emplace_back();
         Batch.Key                             = Surface.BatchKey;
         Batch.VertexShader                    = Surface.VertexShader;
+        Batch.MeshShaderShadow                = Surface.MeshShaderShadow;
+        Batch.MeshShaderBase                  = Surface.MeshShaderBase;
         Batch.PixelShader                     = Surface.PixelShader;
-        Batch.MeshShader                      = Surface.MeshShader;
         Batch.VisBufferMeshShader             = Surface.VisBufferMeshShader;
         Batch.VisBufferMeshShaderMasked       = Surface.VisBufferMeshShaderMasked;
-        Batch.VisBufferVertexShader           = Surface.VisBufferVertexShader;
         Batch.MaskedVisBufferPixelShader      = Surface.MaskedVisBufferPixelShader;
-        Batch.MaskedVisBufferPixelShaderPrim  = Surface.MaskedVisBufferPixelShaderPrim;
         Batch.DeferredShader                  = Surface.DeferredShader;
         Batch.MaterialIdx                     = Surface.MaterialIdx;
         Batch.bMaterialCastsShadows           = Surface.bMaterialCastsShadows;
@@ -197,20 +181,6 @@ namespace Lumina
         ++LayoutGeneration;
     }
 
-    //-------------------------------------------------------------------------
-    // FScenePrimitiveSet
-    //-------------------------------------------------------------------------
-
-    /**
-     * Index of the primitive owning this key, or ~0u.
-     *
-     * Non-foliage keys are served from the flat link table, NOT from IndexByKey. One (entity, source) owns
-     * at most one primitive, which is exactly what the table already stores and already maintains in the
-     * same statements -- so carrying those keys in the hash map bought nothing and cost a node ALLOCATION
-     * on every add and a node FREE on every remove, plus the probes. Only foliage genuinely needs the map:
-     * one entity owns one primitive per baked instance, keyed with a third sub-index field that the
-     * one-slot-per-source table cannot express.
-     */
     uint32 FScenePrimitiveSet::FindPrimitive(uint64 Key) const
     {
         const entt::entity     Entity = (entt::entity)(uint32)(Key & 0xFFFFFFFFull);
@@ -276,9 +246,6 @@ namespace Lumina
         FPrimitiveLink& Link = LinksByEntityIndex[Slot];
         if (Link.Entity != entt::to_integral(Entity))
         {
-            // Slot belonged to a since-destroyed entity whose index got recycled. Its primitives were
-            // removed with it, so adopting the slot wholesale is correct -- and required, or a stale
-            // sibling index would survive into the new entity.
             Link = FPrimitiveLink{};
             Link.Entity = entt::to_integral(Entity);
         }
@@ -303,8 +270,6 @@ namespace Lumina
 
         Link.Index[(uint32)Source] = ~0u;
 
-        // Release the slot once nothing is left, so a later recycle of this index starts clean without
-        // depending on the guard alone.
         for (uint32 s = 0; s < kLinkedSources; ++s)
         {
             if (Link.Index[s] != ~0u)
@@ -322,13 +287,8 @@ namespace Lumina
         Bounds.emplace_back(FVector4(0.0f));
         CullData.emplace_back();
         Keys.push_back(Key);
-        // Lockstep with Keys. A fresh primitive has no resolve yet; RefreshPrimitiveData / SyncFoliage
-        // restamp this the moment they settle one.
         ResolveKeys.push_back(PackResolveKey(INVALID_MESH_RESOLVE_HANDLE, 0));
 
-        // Exactly one of the two indexes carries this primitive; see FindPrimitive. Foliage is absent from
-        // the link table because it owns many primitives per entity, and the other three are absent from
-        // the map because the link table already answers the same question without a heap node.
         const entt::entity     Entity = (entt::entity)(uint32)(Key & 0xFFFFFFFFull);
         const EPrimitiveSource Source = (EPrimitiveSource)((Key >> 32) & 0xFFull);
         if (Source != EPrimitiveSource::Foliage)
@@ -361,22 +321,14 @@ namespace Lumina
         // Hand this primitive's draw slots back before the entry is overwritten.
         ReleaseBindings(Index);
 
-        // Swap-with-last keeps the arrays dense so the per-frame cull never walks holes. The moved entry's
-        // index registration is the only fixup; its own key comes from the parallel Keys array.
         if (Index != Last)
         {
-            // MOVE, not copy. FScenePrimitive holds a TSharedPtr to the dynamic-mesh render data, so a copy
-            // is an atomic increment here plus an atomic decrement when the source is popped below -- per
-            // removal, on a path a mass despawn runs thousands of times.
             Primitives[Index]  = eastl::move(Primitives[Last]);
             Bounds[Index]      = Bounds[Last];
             CullData[Index]    = CullData[Last];
             Keys[Index]        = Keys[Last];
             ResolveKeys[Index] = ResolveKeys[Last];
 
-            // The moved entry's index registration has to follow it. Its own key carries the (entity,
-            // source) pair, so this needs no lookup -- and skipping it would leave that entity pointing at
-            // the slot this primitive just vacated, which is the classic swap-remove aliasing bug.
             const entt::entity     MovedEntity = (entt::entity)(uint32)(Keys[Index] & 0xFFFFFFFFull);
             const EPrimitiveSource MovedSource = (EPrimitiveSource)((Keys[Index] >> 32) & 0xFFull);
             if (MovedSource != EPrimitiveSource::Foliage)
@@ -440,8 +392,6 @@ namespace Lumina
         const FScenePrimitive& Prim = Primitives[Index];
         const FMatrix4& M = Prim.Transform;
 
-        // Transform the cached local sphere rather than rebuilding a world AABB: fewer ops, and it stays
-        // tight under rotation. BoundsScale inflates it for animation/displacement past the asset bounds.
         const FVector3& C = Prim.LocalCenter;
         const FVector3  Center = FVector3(M[0]) * C.x
                                + FVector3(M[1]) * C.y
@@ -482,10 +432,6 @@ namespace Lumina
         DeadBindings = 0;
     }
 
-    //-------------------------------------------------------------------------
-    // Retained GPU scene
-    //-------------------------------------------------------------------------
-
     uint32 FScenePrimitiveSet::AllocateInstanceSlot()
     {
         if (!InstanceFreeSlots.empty())
@@ -502,9 +448,6 @@ namespace Lumina
         RetainedTransforms.emplace_back();
         RetainedStatic.emplace_back();
 
-        // A reallocation moves every slot, so the device copy has to be re-sent wholesale rather than
-        // patched. Growth is amortized, so this is rare after the scene settles. Checked on the cull
-        // entries alone: the three grow in lockstep, so one is the whole story.
         if (RetainedCullEntries.capacity() != OldCapacity)
         {
             bFullInstanceUpload = true;
@@ -519,9 +462,6 @@ namespace Lumina
             return;
         }
 
-        // The Active flag is what the cull reads; the transform and static payload beside it are left
-        // stale on purpose, because writing 96 bytes to say "ignore me" would be pure waste. Only the
-        // cull entry is dirtied for the same reason.
         RetainedCullEntries[Slot].DrawIDAndFlags &= ~((uint32)EInstanceFlags::Active << 16);
         MarkInstanceDirty(Slot);
         InstanceFreeSlots.push_back(Slot);
@@ -535,11 +475,6 @@ namespace Lumina
             return;
         }
 
-        // PublishRetainedUpload throws the list away and uploads whole once it passes a quarter of the slot
-        // space. Deciding that HERE rather than there stops the accumulation as well as the sort+unique that
-        // used to run over a list about to be discarded -- which on a bulk add is every frame. The floor
-        // keeps a small scene from flipping to full uploads over a handful of slots, same reasoning as
-        // CompactBindings' DeadBindings floor.
         const SIZE_T SlotCount = RetainedCullEntries.size();
         if (SlotCount > 1024 && DirtyInstanceSlots.size() * 4 >= SlotCount)
         {
@@ -549,15 +484,9 @@ namespace Lumina
             return;
         }
 
-        // Duplicates are fine: the upload coalesces, and de-duplicating here would cost a set lookup on
-        // the hot path to save a repeated copy.
         DirtyInstanceSlots.push_back(Slot);
     }
 
-    // Same policy as MarkInstanceDirty, on the list that covers the static payload. Separate because the
-    // two fill at wildly different rates: a crowd moving fills the instance list every frame and leaves
-    // this one empty, and re-sending an unchanged third buffer along with them is exactly what splitting
-    // the arrays was for.
     void FScenePrimitiveSet::MarkStaticDirty(uint32 Slot)
     {
         if (bFullInstanceUpload)
@@ -587,11 +516,6 @@ namespace Lumina
             Desc.LODMeshletCount[i]      = Surface.LODMeshletCount[i];
             Desc.LODScreenThresholdSq[i] = Surface.LODScreenThresholdSq[i];
             
-            // The draw list carries a MESH-GLOBAL meshlet index, so what has to fit the field is the END of
-            // the LOD's range, not its length -- a small LOD sitting past a million earlier meshlets is
-            // just as unaddressable as an oversized one. Clamping the count is how a range is trimmed to
-            // what the index can reach; a LOD that starts past the limit ends up empty, which draws nothing
-            // rather than resolving a wrapped index to some other mesh's meshlet.
             const uint32 RangeEnd = Desc.LODMeshletOffset[i] + Desc.LODMeshletCount[i];
             if (RangeEnd > MAX_MESHLETS_PER_SURFACE_LOD)
             {
@@ -614,8 +538,6 @@ namespace Lumina
             Hash::HashCombine(Hash, Desc.LODScreenThresholdSq[i]);
         }
 
-        // Full compare on a hash hit; a collision handing back another mesh's LOD table would draw the
-        // wrong geometry, which is exactly the class of bug the resolve cache guards against too.
         TVector<uint32>& Bucket = SurfaceDescByHash[Hash];
         for (uint32 Index : Bucket)
         {
@@ -630,9 +552,6 @@ namespace Lumina
         Bucket.push_back(NewIndex);
         bSurfaceDescsDirty = true;
 
-        // Folded in HERE, from the clamped copy that just entered the table, rather than by rescanning
-        // SurfaceDescs later. The render phase multiplies this by the retained slot count to get the
-        // meshlet cull's dispatch ceiling, so it has to come from a value this thread owns.
         const uint32 DescLODs = Math::Min<uint32>(Desc.NumLODs, MAX_MESH_LODS);
         for (uint32 i = 0; i < DescLODs; ++i)
         {
@@ -642,12 +561,8 @@ namespace Lumina
         return NewIndex;
     }
 
-    // Writes everything the GPU cull reads about one primitive into its retained slots. This is the only
-    // place instance data is produced -- there is no per-frame equivalent.
     void FScenePrimitiveSet::RefreshInstances(uint32 Index, TVector<uint32>* DirtySink)
     {
-        // Counted on the serial path only; the parallel transform pass adds its records in one go, because
-        // a shared counter incremented from every worker is a data race for a number nobody reads per-item.
         if (DirtySink == nullptr)
         {
             ++SyncStats.RefreshInstanceCalls;
@@ -672,16 +587,10 @@ namespace Lumina
                 Flags |= EInstanceFlags::CastShadow;
             }
 
-            // Skeletal primitives are CPU-fed every frame (bones + pre-skin bases have no retained
-            // form); letting the GPU cull append this slot too would draw a second copy whose
-            // SkinnedVertexBase of 0 reads someone else's pre-skin slice.
             if (Prim.Surfaces != nullptr && Prim.Source != EPrimitiveSource::SkeletalMesh)
             {
                 Flags |= EInstanceFlags::Active;
             }
-            // Gates the LOD meshlet counts in the cull. A null header with a non-zero count would page
-            // fault the meshlet pass, and the cull must know this WITHOUT loading the static payload --
-            // it decides on it before an instance has earned that load.
             if (Prim.MeshletHeaderAddress != 0ull)
             {
                 Flags |= EInstanceFlags::HasGeometry;
@@ -707,16 +616,12 @@ namespace Lumina
 
             if (DirtySink != nullptr)
             {
-                // Caller-owned list: no shared state, and the full-upload threshold is evaluated once
-                // during the merge rather than raced by every worker.
                 DirtySink->push_back(Slot);
             }
             else
             {
                 MarkInstanceDirty(Slot);
             }
-            // Always the shared list: only the serial structural pass ever rewrites the static payload,
-            // so there is no parallel writer to keep off it.
             MarkStaticDirty(Slot);
         }
     }
@@ -739,9 +644,6 @@ namespace Lumina
                 continue;
             }
 
-            // The two fields a move can change, and nothing else. The flags, batch, surface desc, draw
-            // distance and LOD override in this entry are all unaffected by it, and the static payload
-            // is not touched at all -- so its buffer stays clean and is not re-sent.
             RetainedCullEntries[Slot].SphereBounds = Sphere;
             RetainedTransforms[Slot]               = PackTransform3x4(Prim.Transform);
 
@@ -756,8 +658,6 @@ namespace Lumina
         }
     }
 
-    // Drops the refs a primitive's current bindings hold, so a re-bind or a removal returns its draw
-    // slots to the registry instead of stranding them.
     void FScenePrimitiveSet::ReleaseBindings(uint32 Index)
     {
         FScenePrimitive& Prim = Primitives[Index];
@@ -788,8 +688,6 @@ namespace Lumina
 
         FBindingMemo& Entry = BindingMemoByHandle[ResolveHandle];
 
-        // The surface count is checked alongside the generation purely as insurance: a resolved entry
-        // always bumps its generation, so the two cannot legitimately disagree.
         if (Entry.Generation != Generation || Entry.Protos.size() != Surfaces.size())
         {
             Entry.Protos.clear();
@@ -799,10 +697,6 @@ namespace Lumina
             {
                 FSurfaceBinding& Proto = Entry.Protos.emplace_back();
 
-                // FindOrAddBatch also folds this surface's deferred material slot into the batch. That
-                // fold is keyed on the same surface and is idempotent, so running it once per interned
-                // entry instead of once per instance is equivalent -- provided the memo and the batch
-                // registry are only ever invalidated together, which is the stated invariant.
                 Proto.BatchIndex            = Batches.FindOrAddBatch(Surface);
                 Proto.InstanceSlot          = ~0u;
                 Proto.SurfaceDescIndex      = InternSurfaceDesc(Surface);
@@ -831,8 +725,6 @@ namespace Lumina
             const FSurfaceBinding& Have = Bindings[Prim.BindingBase + s];
             const FSurfaceBinding& Want = Memo.Protos[s];
 
-            // InstanceSlot is deliberately absent: it is the primitive's own identity in the retained
-            // buffer, not something the resolve derives, and keeping it is the entire point of matching.
             if (Have.BatchIndex            != Want.BatchIndex
              || Have.SurfaceDescIndex      != Want.SurfaceDescIndex
              || Have.MaterialIndex         != Want.MaterialIndex
@@ -863,9 +755,6 @@ namespace Lumina
 
         const TVector<FResolvedSurface>& Surfaces = *Prim.Surfaces;
 
-        // Resolve the batch and LOD-table identities once per interned mesh rather than once per instance.
-        // See BindingMemoByHandle. Usually already built: the caller consulted it to decide whether this
-        // rebind was needed at all.
         const FBindingMemo* Memo = EnsureBindingMemo(Prim.ResolveHandle, Prim.ResolveGeneration, Surfaces);
 
         Prim.BindingBase  = (uint32)Bindings.size();
@@ -878,15 +767,11 @@ namespace Lumina
                 FSurfaceBinding& Binding = Bindings.emplace_back(Proto);
                 Binding.InstanceSlot = AllocateInstanceSlot();
 
-                // Per BINDING, never memoized: ReleaseBindings drops one ref for each and the counts have
-                // to balance or a batch outlives everything drawing it.
                 Batches.AddBatchRef(Binding.BatchIndex);
             }
         }
         else
         {
-            // Dynamic meshes carry no resolve handle. Their Surfaces pointer IS their version, so a
-            // pointer-keyed memo would dangle the moment Commit republishes, and they number in the tens.
             for (const FResolvedSurface& Surface : Surfaces)
             {
                 const uint32 BatchIndex = Batches.FindOrAddBatch(Surface);
@@ -902,34 +787,23 @@ namespace Lumina
             }
         }
 
-        // 1/4 dead is where the wasted cache traffic in the emit loop starts to outweigh the compaction
-        // pass; the floor keeps small scenes from compacting on every mesh swap.
         if (DeadBindings > 1024 && DeadBindings * 4 > (uint32)Bindings.size())
         {
             CompactBindings();
         }
     }
 
-    // Physics interpolates simulated bodies to display time and parks the result in FRenderTransform;
-    // STransformComponent holds the simulated pose, which is a fixed step behind what should be on screen.
-    // Everything without an override renders straight off the resolved world matrix.
-    // See the forward declaration in the header for why these are hoisted. Sources is indexed by
-    // EPrimitiveSource, so it deliberately stops short of Foliage -- SyncEntity never handles that source.
     struct FScenePrimitiveSet::FSyncPools
     {
         entt::storage_type_t<STransformComponent>*          Transform    = nullptr;
         const entt::storage_type_t<FRenderTransform>*       RenderXform  = nullptr;
         const entt::storage_type_t<SStaticMeshComponent>*   StaticMesh   = nullptr;
         const entt::storage_type_t<SSkeletalMeshComponent>* SkeletalMesh = nullptr;
-        // Non-const: RefreshPrimitiveData stamps SyncedRenderDataVersion on the component it reads, and
-        // SyncFoliage rebakes through EnsureRenderCache.
         entt::storage_type_t<SDynamicMeshComponent>*        DynamicMesh  = nullptr;
         entt::storage_type_t<SFoliageComponent>*            Foliage      = nullptr;
         const entt::sparse_set*                             Disabled     = nullptr;
         const entt::sparse_set*                             Sources[kLinkedSources] = {};
 
-        // Same reasoning as the pools. FMeshResolveCache::Get() is a function-local static, so every call
-        // is a guard-variable load and a branch -- and SyncFoliage used to make one PER BAKED INSTANCE.
         FMeshResolveCache*                                  ResolveCache = &FMeshResolveCache::Get();
 
         explicit FSyncPools(FEntityRegistry& Registry)
@@ -947,17 +821,13 @@ namespace Lumina
         }
     };
 
-    //
-    // Takes the resolved pool rather than the registry: this runs once per moving entity per frame, and
-    // Registry.storage<T>() is a type-id hash lookup. FSyncPools exists to pay that once per sync.
-    static FORCEINLINE const FMatrix4& ReadRenderMatrix(const entt::storage_type_t<FRenderTransform>* RenderStorage,
-                                                        entt::entity Entity, const STransformComponent& Transform)
+    static FORCEINLINE FMatrix4 ReadRenderMatrix(const entt::storage_type_t<FRenderTransform>* RenderStorage,
+                                                 entt::entity Entity, const STransformComponent& Transform)
     {
-        return RenderStorage->contains(Entity) ? RenderStorage->get(Entity).Matrix : Transform.CachedMatrix;
+        return RenderStorage->contains(Entity) ? RenderStorage->get(Entity).Matrix
+                                               : Transform.WorldTransform.GetMatrix();
     }
 
-    // Copies the camera-independent render state out of one mesh component. Shared by the three mesh
-    // sources; the caller supplies the mesh pointer and the seed flags that differ between them.
     namespace
     {
         template <typename TComponent>
@@ -992,9 +862,6 @@ namespace Lumina
         case EPrimitiveSource::StaticMesh:
         case EPrimitiveSource::SkeletalMesh:
             {
-                // Both asset-backed paths share the interned resolve; the only difference is which field
-                // holds the mesh and whether the Skinned seed flag is set (already folded into
-                // CachedBaseFlags by ResolveDirtyMeshComponents).
                 const SMeshComponent* Base = nullptr;
                 const void*           LiveMesh = nullptr;
 
@@ -1021,11 +888,6 @@ namespace Lumina
                 Prim.BaseFlags            = Base->CachedBaseFlags;
                 Prim.ResolveHandle        = Base->ResolveHandle;
 
-                // Same self-heal the old gather did per frame per entity: a mesh assigned directly (editor
-                // tools, thumbnails) bypasses the setters, so the resolve can disagree with the live field.
-                // Re-arming the resolve pass is what retries this -- there is no separate retry list,
-                // because MarkPendingWork is already the engine's "come back to this" signal and
-                // ResolveDirtyMeshComponents marks every component it revisits.
                 if (Prim.ResolveHandle == INVALID_MESH_RESOLVE_HANDLE || Base->CachedMeshKey != LiveMesh)
                 {
                     if (LiveMesh != nullptr)
@@ -1045,8 +907,6 @@ namespace Lumina
                 const FResolvedMesh& Entry = Cache.GetEntry(Prim.ResolveHandle);
                 if (!Entry.bResolved)
                 {
-                    // The resolve pass leaves an unresolved entry's component unstamped and re-marks
-                    // pending work itself, so it will revisit and re-mark this primitive.
                     break;
                 }
 
@@ -1062,18 +922,8 @@ namespace Lumina
                 SDynamicMeshComponent* C = &Pools.DynamicMesh->get(Prim.Entity);
                 ReadCommonMeshState(Prim, Cull, *C);
 
-                // Stamped here, before the readiness checks below, not on success. This records "the sync
-                // has looked at this version", which is what PollUnhookedSources asks. Stamping only on a
-                // successful resolve would leave a cleared or empty mesh permanently mismatched, and the
-                // poll would re-mark it every frame forever.
                 C->SyncedRenderDataVersion = C->LoadRenderDataVersion();
 
-                // Dynamic meshes own their resolve outright: Commit publishes RenderData synchronously, so
-                // there is no cache handle, no epoch and no staleness check.
-                //
-                // Ref-taken ONCE, atomically: Commit() can swap the component's pointer from a worker, so
-                // reading it twice could see two different snapshots, and a plain copy would race the swap
-                // outright. Holding the ref also keeps the surfaces alive for the gather that reads them.
                 Prim.DynamicRenderData = C->LoadRenderData();
 
                 const FDynamicMeshRenderData* Data = Prim.DynamicRenderData.get();
@@ -1094,21 +944,15 @@ namespace Lumina
                 Prim.BaseFlags = BaseFlags;
 
                 Prim.Surfaces          = &Data->Surfaces;
-                // The component's render data has no generation; the pointer identity is the version,
-                // and Commit always publishes a fresh FDynamicMeshRenderData.
                 Prim.ResolveGeneration = 0;
                 bResolved              = true;
             }
             break;
 
         default:
-            // Foliage never reaches here: SyncEntity rejects that source outright and Sync routes it to
-            // SyncFoliage, which fills a foliage primitive wholesale from the bake.
             break;
         }
 
-        // Re-bind only when the surface set actually changed. A flags-only edit (cast shadow, LOD
-        // override, bounds scale) leaves the batch/draw identity alone, so it costs nothing here.
         const bool bSurfacesChanged = (Prim.Surfaces != OldSurfaces)
                                    || (Prim.ResolveHandle != OldHandle)
                                    || (Prim.ResolveGeneration != OldGen);
@@ -1130,9 +974,6 @@ namespace Lumina
     void FScenePrimitiveSet::SyncEntity(FEntityRegistry& Registry, const FSyncPools& Pools, entt::entity Entity,
                                         EPrimitiveSource Source, EPrimitiveDirty Flags)
     {
-        // Counted, not scoped. TRACY_CALLSTACK is defined engine-wide, so every LUMINA_PROFILE_SCOPE is a
-        // tracy_malloc plus an RtlWalkFrameChain unwind while the profiler is attached -- microseconds, on a
-        // function that runs once per dirty entity per frame. It swamped what it was measuring.
         ++SyncStats.SyncEntityCalls;
 
         const uint64 Key = MakeKey(Entity, Source);
@@ -1189,8 +1030,6 @@ namespace Lumina
             Flags |= EPrimitiveDirty::Data | EPrimitiveDirty::Transform;
         }
 
-        // Transform first: a data refresh rebuilds the world sphere from it. No contains() guard -- reaching
-        // here required bShouldExist, which already established the transform pool holds this entity.
         if (EnumHasAnyFlags(Flags, EPrimitiveDirty::Transform))
         {
             Primitives[Index].Transform = ReadRenderMatrix(Pools.RenderXform, Entity, Pools.Transform->get(Entity));
@@ -1229,8 +1068,6 @@ namespace Lumina
             return;
         }
 
-        // Foliage already caches its per-instance world transform + cull sphere and rebakes only when
-        // InstancesVersion moves, so this is where a paint/erase turns into primitive churn.
         Foliage->EnsureRenderCache();
 
         const TVector<FFoliageBakedInstance>& Baked = Foliage->BakedInstances;
@@ -1244,14 +1081,6 @@ namespace Lumina
             RemovePrimitive(MakeKey(Entity, EPrimitiveSource::Foliage, i));
         }
 
-        /**
-         * Everything an instance takes from its type, resolved ONCE per type.
-         *
-         * Types number in the single digits; instances number in the hundreds of thousands. Doing this per
-         * instance meant, for every blade of grass: a random index into a large SFoliageType, a
-         * FMeshResolveCache::Get() guard check, a TObjectPtr->CMesh handle resolve, and a dependent load
-         * into a heap-boxed resolve entry. None of it varies within a type.
-         */
         const uint32 TypeCount = (uint32)Foliage->Types.size();
         FoliageTypeScratch.clear();
         FoliageTypeScratch.resize(TypeCount);
@@ -1322,20 +1151,6 @@ namespace Lumina
             Prim.ResolveGeneration = NewGeneration;
             if (bSurfacesChanged)
             {
-                /**
-                 * Almost always a generation bump with identical bindings behind it.
-                 *
-                 * Resolve entries are heap-boxed and never move, so NewSurfaces compares EQUAL across a
-                 * rebuild and only the generation differs -- which is exactly the case where a rebind
-                 * reproduces the batch index and interned LOD table it already had. Rebinding anyway cost
-                 * a release + realloc of every instance slot this entity owns, and at foliage scale that
-                 * is once per blade of grass: N batch-ref round trips, N free-list pops, N dead bindings
-                 * appended to Bindings (which then trips CompactBindings and repacks the entire array),
-                 * and two dirty marks per slot instead of one.
-                 *
-                 * The memo makes the alternative cheap: build the per-type template once, then a handful
-                 * of integer compares per surface says whether anything actually moved.
-                 */
                 const FBindingMemo* Memo = (NewSurfaces != nullptr && !NewSurfaces->empty())
                     ? EnsureBindingMemo(Prim.ResolveHandle, NewGeneration, *NewSurfaces)
                     : nullptr;
@@ -1362,9 +1177,6 @@ namespace Lumina
             RefreshInstances(Index);
         }
 
-        // No retry list for foliage: a type whose mesh is still loading leaves its CachedEntryState stale,
-        // so ResolveDirtyMeshComponents revisits it and marks this entity. A type with no mesh at all is
-        // permanently undrawable and should NOT retry -- which is exactly what having no retry list gives.
         OldCount = NewCount;
         ++StructureGeneration;
     }
@@ -1373,9 +1185,6 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
-        // Everything currently known is re-derived below; anything that no longer exists simply never
-        // gets re-added. Cheaper and far less error-prone than diffing. The batch registry goes with it:
-        // dropping the primitives without releasing their bindings would strand every refcount.
         Batches.Reset();
         // Paired with Batches.Reset(), always: a reset renumbers every batch index the memo cached.
         BindingMemoByHandle.clear();
@@ -1399,8 +1208,6 @@ namespace Lumina
         SurfaceDescs.clear();
         SurfaceDescByHash.clear();
         bSurfaceDescsDirty = true;
-        // Dropped with the table it summarizes; carrying a bound for descs that are gone would leave the
-        // cull's dispatch ceiling permanently wider than the scene.
         MaxSurfaceDescMeshlets = 0;
         FoliageInstanceCount.clear();
 
@@ -1413,8 +1220,6 @@ namespace Lumina
         CullData.reserve(MeshCount);
         Keys.reserve(MeshCount);
         ResolveKeys.reserve(MeshCount);
-        // IndexByKey deliberately NOT reserved from MeshCount: it holds foliage primitives only now, and
-        // mesh components say nothing about how many baked instances a level has.
         Bindings.reserve(MeshCount);
         RetainedCullEntries.reserve(MeshCount);
         RetainedTransforms.reserve(MeshCount);
@@ -1440,16 +1245,6 @@ namespace Lumina
         ++StructureGeneration;
     }
 
-    /**
-     * Two sources cannot route their invalidation through an entt hook: SFoliageComponent's paint/erase/
-     * terrain-follow all go through MarkInstancesChanged(), and SDynamicMeshComponent republishes its
-     * geometry from Commit(). Both are plain component methods with no registry access, so there is
-     * nothing to fire a signal from.
-     *
-     * They are polled instead. The cost is O(components), never O(instances): one foliage component owns
-     * every blade of grass in a level, one dynamic mesh component owns its whole geometry. Giving those
-     * two component types a registry back-pointer just to emit a signal would be a worse trade.
-     */
     void FScenePrimitiveSet::PollUnhookedSources(FEntityRegistry& Registry, FRenderDirtyTracker& Tracker)
     {
         for (auto&& [Entity, Foliage] : Registry.view<SFoliageComponent>().each())
@@ -1462,8 +1257,6 @@ namespace Lumina
         
         for (auto&& [Entity, Mesh] : Registry.view<SDynamicMeshComponent>().each())
         {
-            // Acquire-load: Commit may bump this from a worker. On x86 it still compiles to the same
-            // plain load, so the dense sequential scan this comment block is about is unchanged.
             if (Mesh.SyncedRenderDataVersion != Mesh.LoadRenderDataVersion())
             {
                 Tracker.Mark(Entity, EPrimitiveSource::DynamicMesh, EPrimitiveDirty::Data);
@@ -1491,8 +1284,6 @@ namespace Lumina
 
             FCoalesceSlot& Mapped = CoalesceByEntityIndex[Slot];
 
-            // The entity compare is the authoritative test, not the stamp. It catches an index recycled
-            // WITHIN this drain, and it makes a wrapped stamp harmless.
             uint32 RecordIndex = ~0u;
             if (Mapped.Stamp == CoalesceStamp
                 && Mapped.Index < (uint32)CoalescedScratch.size()
@@ -1503,9 +1294,6 @@ namespace Lumina
 
             if (RecordIndex == ~0u)
             {
-                // A recycled index appends a SECOND record rather than overwriting the first. The dead
-                // entity's Membership still has to be applied, or its primitive outlives it pointing at
-                // an entity that no longer exists.
                 RecordIndex = (uint32)CoalescedScratch.size();
                 CoalescedScratch.emplace_back().Entity = entt::to_integral(Entry.Entity);
                 Mapped.Stamp = CoalesceStamp;
@@ -1520,9 +1308,6 @@ namespace Lumina
                 Record.Flags[(uint32)EPrimitiveSource::DynamicMesh]  |= Entry.Flags;
                 Record.Flags[(uint32)EPrimitiveSource::SkeletalMesh] |= Entry.Flags;
 
-                // A foliage instance bakes its own world transform rather than following the owning
-                // entity's, so a transform-only mark must never reach it. Letting one through would turn
-                // every moving entity in the world into a full rebake sweep, which is O(baked instances).
                 if (Entry.Flags != EPrimitiveDirty::Transform)
                 {
                     Record.Flags[(uint32)EPrimitiveSource::Foliage] |= Entry.Flags;
@@ -1541,17 +1326,6 @@ namespace Lumina
         SyncStats.CoalescedEntities = (uint32)CoalescedScratch.size();
     }
 
-    /**
-     * Grows a vector to hold at least Target elements while KEEPING geometric growth.
-     *
-     * eastl::vector::reserve(n) allocates exactly n. Calling it with (size + what this frame adds) is
-     * therefore not a hint, it is a set_capacity: capacity comes back equal to size, so the NEXT frame
-     * that adds a primitive reallocates again. A world gaining one mesh per frame -- streaming, a bulk
-     * spawn spread over frames, the editor dropping actors in -- reallocated and moved every parallel
-     * array in the set EVERY frame, at 144 bytes per FGPUInstance and 160 per FScenePrimitive, and each
-     * of those reallocations also forced a full retained-instance re-upload. Overshooting is what makes
-     * the amortization real.
-     */
     template <typename TArray>
     static void ReserveGeometric(TArray& Array, SIZE_T Target)
     {
@@ -1563,17 +1337,6 @@ namespace Lumina
         Array.reserve(Math::Max(Target, Capacity + Capacity / 2u));
     }
 
-    /**
-     * Grows every array the apply pass appends to, once, before any of it runs.
-     *
-     * Without this a bulk add walks roughly fourteen doublings of arrays whose elements are 144 bytes
-     * (FGPUInstance) and 160 (FScenePrimitive), and each of those reallocations sets bFullInstanceUpload
-     * in AllocateInstanceSlot, so the whole retained buffer is re-sent that frame.
-     *
-     * Over-counting is harmless: Transform alone can never create a primitive, so it is excluded, but a
-     * Membership mark for a component that has since been destroyed still counts here and simply reserves
-     * a slot nothing uses.
-     */
     void FScenePrimitiveSet::ReserveForDrain()
     {
         uint32 NewPrimitives = 0;
@@ -1603,13 +1366,8 @@ namespace Lumina
         ReserveGeometric(Keys, PrimitiveTarget);
         ReserveGeometric(ResolveKeys, PrimitiveTarget);
 
-        // One binding and one instance slot per new primitive is the floor, not the truth -- a multi-surface
-        // mesh takes more. Geometric growth covers the rest; the point is to skip the doublings.
         ReserveGeometric(Bindings, Bindings.size() + NewPrimitives);
 
-        // Only slots that cannot be served from the free list grow the array. Counting the whole add here
-        // made a scene that constantly swaps meshes grow its slot space without bound, and every one of
-        // those growths is a full retained re-upload.
         const SIZE_T FreeSlots         = InstanceFreeSlots.size();
         const SIZE_T NeededSlots       = NewPrimitives > FreeSlots ? NewPrimitives - FreeSlots : 0;
         const SIZE_T InstanceTarget    = RetainedCullEntries.size() + NeededSlots;
@@ -1618,16 +1376,12 @@ namespace Lumina
         ReserveGeometric(RetainedTransforms, InstanceTarget);
         ReserveGeometric(RetainedStatic, InstanceTarget);
 
-        // Same conclusion AllocateInstanceSlot draws when it grows: the slot array moved, so the device
-        // copy has to be re-sent wholesale rather than patched. Drawn once here instead of per slot.
         if (RetainedCullEntries.capacity() != OldSlotCapacity)
         {
             bFullInstanceUpload = true;
         }
     }
 
-    // See the header for why this split is sound. The short version: Transform is the only flag that can
-    // neither create nor destroy a primitive.
     void FScenePrimitiveSet::PartitionDrain()
     {
         TransformRecords.clear();
@@ -1649,8 +1403,6 @@ namespace Lumina
                 continue;
             }
 
-            // CoalesceDrain never lets a transform-only mark reach the foliage slot, so All == Transform
-            // also means this record has no foliage work -- which the parallel body could not do anyway.
             if (All == EPrimitiveDirty::Transform)
             {
                 TransformRecords.push_back(i);
@@ -1682,10 +1434,6 @@ namespace Lumina
                 }
             }
 
-            // Gated on the entity actually being foliage. An `Any` mark carries no source, so the old path
-            // ran the whole foliage reconcile for every entity that was enabled, disabled or respawned.
-            // FoliageInstanceCount is the second half of the test: a destroyed component is gone from the
-            // pool, and SyncFoliage is what has to run to reclaim the primitives it left behind.
             const EPrimitiveDirty FoliageFlags = Record.Flags[(uint32)EPrimitiveSource::Foliage];
             if (FoliageFlags != EPrimitiveDirty::None
                 && (Pools.Foliage->contains(Entity)
@@ -1695,9 +1443,6 @@ namespace Lumina
             }
         }
 
-        // Same threshold BindSurfaces uses, checked once for the whole pass. Without it a mass despawn
-        // left the dead share high until the next bind happened to come along -- and until then every
-        // RefreshInstances streamed a Bindings array mostly full of holes.
         if (DeadBindings > 1024 && DeadBindings * 4 > (uint32)Bindings.size())
         {
             CompactBindings();
@@ -1710,22 +1455,18 @@ namespace Lumina
         const FCoalescedEntity& Record = CoalescedScratch[RecordIndex];
         const entt::entity      Entity = (entt::entity)Record.Entity;
 
-        // One flat-array load, and it is the single hottest line in the pass: every moving entity in the
-        // world lands here once per frame and most are not renderable at all, so "0, skip" must be cheap.
         const uint8 Mask = GetSourceMask(Entity);
         if (Mask == 0)
         {
             return;
         }
 
-        // Marks are produced concurrently and drained in arbitrary order, so a move can be processed after
-        // its entity was destroyed. Reading a pool that no longer contains it is UB.
         if (!Pools.Transform->contains(Entity))
         {
             return;
         }
 
-        const FMatrix4& Matrix = ReadRenderMatrix(Pools.RenderXform, Entity, Pools.Transform->get(Entity));
+        const FMatrix4 Matrix = ReadRenderMatrix(Pools.RenderXform, Entity, Pools.Transform->get(Entity));
 
         for (uint32 s = 0; s < kLinkedSources; ++s)
         {
@@ -1759,9 +1500,6 @@ namespace Lumina
             return;
         }
 
-        // Decided BEFORE the merge, on the combined count. Past a quarter of the slot space the whole
-        // buffer is re-sent anyway, so copying the per-worker lists into a list about to be discarded is
-        // pure waste -- which on a frame where the whole crowd moved is every frame.
         const SIZE_T SlotCount = RetainedCullEntries.size();
         if (SlotCount > 1024 && (DirtyInstanceSlots.size() + Total) * 4 >= SlotCount)
         {
@@ -1790,12 +1528,8 @@ namespace Lumina
 
         SyncStats.SyncEntityCalls += Count;
 
-        // One bump for the batch. The value only has to CHANGE, and a shared counter incremented from
-        // every worker would be a data race for no benefit.
         ++StructureGeneration;
 
-        // Below this the dispatch costs more than the work: the body is ~100ns per record against a
-        // ParallelFor round trip measured in tens of microseconds.
         constexpr uint32 kParallelThreshold = 1024;
 
         const uint32 NumSlots = (GTaskSystem != nullptr) ? GTaskSystem->GetNumTaskThreads() : 0u;
@@ -1838,8 +1572,6 @@ namespace Lumina
         FEntityRegistry&     Registry = ECS::GetWorldRegistry(World);
         FRenderDirtyTracker& Tracker  = FRenderDirtyTracker::Ensure(Registry);
 
-        // Reset ahead of the early-out, so a frame that does nothing reports zeros rather than last
-        // frame's numbers.
         SyncStats = FSyncStats{};
 
         {
@@ -1884,8 +1616,6 @@ namespace Lumina
 
             PartitionDrain();
 
-            // Structural FIRST, and serially. It appends and swap-removes, which renumbers the very
-            // indices the transform pass is about to resolve through the link table.
             ApplyStructuralRecords(Registry, Pools);
 
             ApplyTransformRecords(Pools);
@@ -1899,10 +1629,6 @@ namespace Lumina
             FMeshResolveCache& Cache = FMeshResolveCache::Get();
             RetryScratch.clear();
 
-            // Entries are heap-boxed so growth never moves one a frame holds, which makes every GetEntry a
-            // dependent load into cold memory. At one per primitive that WAS this sweep's cost, and the
-            // sweep re-runs every frame an asset is still streaming in. Snapshot instead: one deref per
-            // distinct mesh (tens to hundreds) against a table small enough to stay resident.
             GenSnapshot.assign(Cache.NumEntries(), ~0u);
 
             for (uint32 i = 0, N = (uint32)Primitives.size(); i < N; ++i)
@@ -1910,15 +1636,11 @@ namespace Lumina
                 const uint64 Packed = ResolveKeys[i];
                 const uint32 Handle = (uint32)(Packed & 0xFFFFFFFFull);
 
-                // Covers INVALID_MESH_RESOLVE_HANDLE and anything past the table, so it subsumes the
-                // IsValidHandle check this loop used to make.
                 if (Handle >= (uint32)GenSnapshot.size())
                 {
                     continue;
                 }
 
-                // The mirror is maintained by hand in four places. Drift would be silent -- the sweep would
-                // re-resolve the wrong primitive forever -- so it is worth catching in development.
                 DEBUG_ASSERT(Primitives[i].ResolveHandle == Handle);
                 DEBUG_ASSERT(Primitives[i].ResolveGeneration == (uint32)(Packed >> 32));
 
@@ -1931,18 +1653,10 @@ namespace Lumina
 
                 if (Generation != (uint32)(Packed >> 32))
                 {
-                    // The (entity, source) half of the key, dropping the sub-index. What gets re-synced is
-                    // an ENTITY, and SyncFoliage resyncs every instance its entity owns -- so one entry per
-                    // stale primitive meant a foliage entity re-synced once per stale blade, each pass
-                    // walking all of them. That is O(instances^2), and a single mesh finishing its upload
-                    // is enough to trigger it across the whole painted set.
                     RetryScratch.push_back(Keys[i] & kSyncTargetMask);
                 }
             }
 
-            // Sorted-then-compacted rather than probed into a set: the input is one entry per stale
-            // primitive (hundreds of thousands under foliage) and the output is one per entity (a
-            // handful), so an O(n log n) pass with no allocation beats n set insertions.
             eastl::sort(RetryScratch.begin(), RetryScratch.end());
             {
                 size_t Unique = 0;
@@ -1956,9 +1670,6 @@ namespace Lumina
                 RetryScratch.resize(Unique);
             }
 
-            // Entity and source are unpacked from the key rather than read back off the primitive: the
-            // refresh below can swap-remove and reorder Primitives, which is why the sweep collects first
-            // in the original -- and this drops the FindPrimitive probe that re-derived them.
             for (uint64 Target : RetryScratch)
             {
                 const entt::entity     Entity = (entt::entity)(uint32)(Target & 0xFFFFFFFFull);
@@ -1981,8 +1692,6 @@ namespace Lumina
     {
         LUMINA_PROFILE_VALUE("Sync/DrainEntries",     (int64)SyncStats.DrainEntries);
         LUMINA_PROFILE_VALUE("Sync/Coalesced",        (int64)SyncStats.CoalescedEntities);
-        // Only the transform half runs wide. If a slow Sync/Apply is mostly Structural, threading is not
-        // the lever -- the work there mutates the shared index tables and has to stay serial.
         LUMINA_PROFILE_VALUE("Sync/TransformRecords", (int64)SyncStats.TransformRecords);
         LUMINA_PROFILE_VALUE("Sync/StructuralRecords",(int64)SyncStats.StructuralRecords);
         LUMINA_PROFILE_VALUE("Sync/SyncEntity",       (int64)SyncStats.SyncEntityCalls);
@@ -2016,8 +1725,6 @@ namespace Lumina
         SurfaceDescs.clear();
         SurfaceDescByHash.clear();
         bSurfaceDescsDirty = true;
-        // Dropped with the table it summarizes; carrying a bound for descs that are gone would leave the
-        // cull's dispatch ceiling permanently wider than the scene.
         MaxSurfaceDescMeshlets = 0;
         FoliageInstanceCount.clear();
         Batches.Reset();

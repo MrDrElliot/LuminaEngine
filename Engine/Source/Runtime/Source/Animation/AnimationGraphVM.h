@@ -7,6 +7,7 @@
 #include "Containers/Array.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Serialization/Archiver.h"
+#include "Renderer/SkeletonResource.h"
 #include "AnimationGraphVM.generated.h"
 
 namespace Lumina

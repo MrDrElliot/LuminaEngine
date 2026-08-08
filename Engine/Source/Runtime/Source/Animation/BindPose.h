@@ -2,6 +2,7 @@
 
 #include "Animation/Pose.h"
 #include "Renderer/MeshData.h"
+#include "Renderer/SkeletonResource.h"
 
 // Bind-pose access shared by the animation resource and the pose kernels. Its own header rather
 // than a copy in each .cpp: the two copies were identical, and identical file-scope definitions

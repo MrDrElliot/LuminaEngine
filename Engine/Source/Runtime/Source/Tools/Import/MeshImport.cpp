@@ -10,6 +10,8 @@
 #include "Memory/MemoryTracking.h"
 #include <mikktspace.h>
 #include <meshoptimizer.h>
+#include "Renderer/MeshQuantization.h"
+#include "Renderer/SkeletonResource.h"
 
 namespace Lumina::Import::Mesh
 {
@@ -342,7 +344,8 @@ namespace Lumina::Import::Mesh
             TVector<uint32>          Vertices;
             TVector<uint8>           Triangles;
             TVector<FMeshlet>        OutMeshlets;
-            TVector<FMeshletBounds>  Bounds;
+            TVector<FMeshletSphere>  Spheres;
+            TVector<FMeshletCone>    Cones;
             TVector<FVector3>       MeshletLo;
             FVector3                MaxExtent = FVector3(0.0f);
             bool                     bHasData  = false;
@@ -418,7 +421,8 @@ namespace Lumina::Import::Mesh
             }
 
             Result.OutMeshlets.reserve(MeshletCount);
-            Result.Bounds.reserve(MeshletCount);
+            Result.Spheres.reserve(MeshletCount);
+            Result.Cones.reserve(MeshletCount);
             Result.MeshletLo.reserve(MeshletCount);
             
             {
@@ -442,7 +446,8 @@ namespace Lumina::Import::Mesh
                     Hi = Math::Max(Hi, P);
                 }
 
-                FMeshletBounds Bounds{};
+                FMeshletSphere Sphere{};
+                FMeshletCone   Cone{};
                 if (bConeCulling)
                 {
                     const meshopt_Bounds B = meshopt_computeMeshletBounds(
@@ -451,20 +456,21 @@ namespace Lumina::Import::Mesh
                         M.triangle_count,
                         VertexPositions, NumVertices, VertexSize);
 
-                    Bounds.Center     = FVector3(B.center[0],    B.center[1],    B.center[2]);
-                    Bounds.Radius     = B.radius;
-                    Bounds.ConeApex   = FVector3(B.cone_apex[0], B.cone_apex[1], B.cone_apex[2]);
-                    Bounds.ConeAxis   = FVector3(B.cone_axis[0], B.cone_axis[1], B.cone_axis[2]);
-                    Bounds.ConeCutoff = B.cone_cutoff;
+                    Sphere.Center = FVector3(B.center[0],    B.center[1],    B.center[2]);
+                    Sphere.Radius = B.radius;
+                    Cone.Apex     = FVector3(B.cone_apex[0], B.cone_apex[1], B.cone_apex[2]);
+                    Cone.Axis     = FVector3(B.cone_axis[0], B.cone_axis[1], B.cone_axis[2]);
+                    Cone.Cutoff   = B.cone_cutoff;
                 }
                 else
                 {
-                    Bounds.Center     = (Lo + Hi) * 0.5f;
-                    Bounds.Radius     = Math::Length(Hi - Bounds.Center);
-                    Bounds.ConeAxis   = FVector3(0.0f, 0.0f, 1.0f);
-                    Bounds.ConeCutoff = 1.0f;
+                    Sphere.Center = (Lo + Hi) * 0.5f;
+                    Sphere.Radius = Math::Length(Hi - Sphere.Center);
+                    Cone.Axis     = FVector3(0.0f, 0.0f, 1.0f);
+                    Cone.Cutoff   = 1.0f;
                 }
-                Result.Bounds.push_back(Bounds);
+                Result.Spheres.push_back(Sphere);
+                Result.Cones.push_back(Cone);
 
                 Result.MeshletLo.push_back(Lo);
                 Result.MaxExtent = Math::Max(Result.MaxExtent, Hi - Lo);
@@ -726,7 +732,8 @@ namespace Lumina::Import::Mesh
         }
 
         MeshResource.MeshletData.Meshlets.reserve(TotalMeshlets);
-        MeshResource.MeshletData.MeshletBounds.reserve(TotalMeshlets);
+        MeshResource.MeshletData.MeshletSpheres.reserve(TotalMeshlets);
+        MeshResource.MeshletData.MeshletCones.reserve(TotalMeshlets);
         MeshResource.MeshletData.MeshletTriangles.reserve(TotalTriangles);
         if (MeshResource.bSkinnedMesh)
         {
@@ -779,11 +786,27 @@ namespace Lumina::Import::Mesh
                 Section.LODScreenThreshold[Slot] = kLODs[SourceLOD].Threshold;
                 Section.NumLODs                  = Slot + 1u;
 
+                TVector<FVector3> QuantScratch;
+                QuantScratch.reserve(MESHLET_MAX_VERTICES);
+
                 for (size_t MeshletIdx = 0; MeshletIdx < Result.OutMeshlets.size(); ++MeshletIdx)
                 {
                     FMeshlet Out = Result.OutMeshlets[MeshletIdx];
 
                     Out.LODIndex = Slot;
+
+                    // Quantization frame first -- the encodes below need it. It is derived from the
+                    // source positions this meshlet references, which Out.VertexOffset still indexes;
+                    // that field is rewritten to PackedVertexStart at the bottom of this loop.
+                    QuantScratch.clear();
+                    for (uint32 i = 0; i < Out.VertexCount; ++i)
+                    {
+                        QuantScratch.push_back(MeshResource.Positions[Result.Vertices[Out.VertexOffset + i]]);
+                    }
+
+                    const FMeshletQuantization Quant =
+                        ComputeMeshletQuantization(QuantScratch.data(), (uint32)QuantScratch.size());
+                    ApplyMeshletQuantization(Out, Quant);
 
                     const uint32 PackedVertexStart = MeshResource.bSkinnedMesh
                         ? (uint32)MeshResource.MeshletData.MeshletSkinnedVertices.size()
@@ -796,8 +819,11 @@ namespace Lumina::Import::Mesh
                             const uint32 GlobalIdx = Result.Vertices[Out.VertexOffset + i];
 
                             FMeshletSkinnedVertex Packed;
-                            Packed.Position = MeshResource.Positions[GlobalIdx];
-                            Packed.Normal   = MeshResource.Normals[GlobalIdx];
+                            EncodeMeshletPosition(Quant, MeshResource.Positions[GlobalIdx], Packed);
+                            const FVector3 N = UnpackNormal(MeshResource.Normals[GlobalIdx]);
+                            Packed.NormalX  = Math::FloatToSNorm16(N.x);
+                            Packed.NormalY  = Math::FloatToSNorm16(N.y);
+                            Packed.NormalZ  = Math::FloatToSNorm16(N.z);
                             Packed.Tangent  = MeshResource.Tangents[GlobalIdx];
                             Packed.UV       = MeshResource.UVs[GlobalIdx];
                             Packed.Color    = MeshResource.Colors[GlobalIdx];
@@ -813,8 +839,11 @@ namespace Lumina::Import::Mesh
                             const uint32 GlobalIdx = Result.Vertices[Out.VertexOffset + i];
 
                             FMeshletVertex Packed;
-                            Packed.Position = MeshResource.Positions[GlobalIdx];
-                            Packed.Normal   = MeshResource.Normals[GlobalIdx];
+                            EncodeMeshletPosition(Quant, MeshResource.Positions[GlobalIdx], Packed);
+                            const FVector3 N = UnpackNormal(MeshResource.Normals[GlobalIdx]);
+                            Packed.NormalX  = Math::FloatToSNorm16(N.x);
+                            Packed.NormalY  = Math::FloatToSNorm16(N.y);
+                            Packed.NormalZ  = Math::FloatToSNorm16(N.z);
                             Packed.Tangent  = MeshResource.Tangents[GlobalIdx];
                             Packed.UV       = MeshResource.UVs[GlobalIdx];
                             Packed.Color    = MeshResource.Colors[GlobalIdx];
@@ -836,7 +865,8 @@ namespace Lumina::Import::Mesh
                     Out.VertexOffset   = PackedVertexStart;
                     Out.TriangleOffset = PackedDwordStart;
                     MeshResource.MeshletData.Meshlets.push_back(Out);
-                    MeshResource.MeshletData.MeshletBounds.push_back(Result.Bounds[MeshletIdx]);
+                    MeshResource.MeshletData.MeshletSpheres.push_back(Result.Spheres[MeshletIdx]);
+                    MeshResource.MeshletData.MeshletCones.push_back(Result.Cones[MeshletIdx]);
                 }
             }
         }
@@ -1048,7 +1078,7 @@ namespace Lumina::Import::Mesh
                 {
                     if (bScaleEnabled)
                     {
-                        M.SetPositionAt(i, M.GetPositionAt(i) * Scale);
+                        M.Positions[i] *= Scale;
                     }
                     if (bFlipUVs || bFlipU)
                     {
@@ -1059,8 +1089,7 @@ namespace Lumina::Import::Mesh
                     }
                     if (bFlipNormals)
                     {
-                        FVector3 N = UnpackNormal(M.GetNormalAt(i));
-                        M.SetNormalAt(i, PackNormal(-N));
+                        M.Normals[i] = PackNormal(-UnpackNormal(M.Normals[i]));
                     }
                 }
             });

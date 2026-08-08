@@ -20,11 +20,8 @@ namespace Lumina
     {
         bool bGenerateReflectionData = true;
         TVector<FString> MacroDefinitions;
-        // Human-readable name for this shader: used as the Slang source path (so crash dumps / Aftermath
-        // map to "<DebugName>.slang:line" instead of the generic "RawShader") and the registered debug name.
         FString DebugName = "RawShader";
     };
-    
     
     class IShaderCompiler
     {
@@ -44,7 +41,6 @@ namespace Lumina
         virtual void Flush() const = 0;
         
     };
-    
     
     class FSpirVShaderCompiler : public IShaderCompiler
     {
@@ -67,7 +63,6 @@ namespace Lumina
 
         bool HasPendingRequests() const override;
         void Flush() const override;
-        
         
         FMutex                      RequestMutex;
         TAtomic<uint32>             PendingTasks;

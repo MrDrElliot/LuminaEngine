@@ -2,6 +2,7 @@
 
 #include "Containers/Name.h"
 #include "Core/Math/AABB.h"
+#include "Renderer/SkeletonResource.h"
 
 namespace Lumina
 {

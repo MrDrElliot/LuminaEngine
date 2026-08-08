@@ -14,15 +14,8 @@ namespace Lumina
     constexpr uint32 GSkyMode_SolidColor = 0u;
     constexpr uint32 GSkyMode_Gradient   = 1u;
     constexpr uint32 GSkyMode_Dynamic    = 2u;
-    // Visible sky reads the SkyCube (filled by the HDRI in the Equirect->Cube pass). HDRI mode with
-    // no EnvironmentMap bound falls back to a black sky (documented in SEnvironmentComponent).
     constexpr uint32 GSkyMode_HDRI       = 3u;
 
-    // Resolved IBL bake resolution, mapped from SEnvironmentComponent::IBLQuality during extraction.
-    // The render phase recreates the sky/irradiance/prefilter cubes whenever this changes; comparison
-    // gates that (rare, WaitIdle-guarded) rebuild. The default is the cheap (Low) baseline so scenes
-    // without an environment (e.g. thumbnail scenes) stay small; the active env's tier bumps it on the
-    // first rendered frame.
     struct FIBLBakeResolution
     {
         uint32 SkyCube    = 256u;   // sky-cube face size (IBL source + procedural sky)
@@ -37,8 +30,6 @@ namespace Lumina
         bool operator!=(const FIBLBakeResolution& O) const { return !(*this == O); }
     };
 
-    // CPU mirror of the per-frame environment CB; layout must match FEnvironmentParams in Environment.slang.
-    // EnvironmentPass uploads one per frame; the shader switches on Misc.x (sky mode).
     struct alignas(16) FEnvironmentParams
     {
         FVector4   SolidSkyColor    = FVector4(0.45f, 0.65f, 1.0f, 0.0f); // rgb=color, w unused
@@ -49,8 +40,6 @@ namespace Lumina
         // x=skyMode (uint cast to float), y=sunDiscScale, z=skyExposure, w=mieAnisotropy
         FVector4   Misc             = FVector4(2.0f, 1.0f, 1.5f, 0.76f);
 
-        // Procedural night additions (Dynamic mode only)
-        // rgb = night zenith tint (deep blue/purple), w = brightness scalar
         FVector4   NightSkyColor    = FVector4(0.012f, 0.018f, 0.04f, 0.4f);
         // x=density, y=brightness, z=twinkleSpeed, w=size
         FVector4   StarParams       = FVector4(0.55f, 1.0f, 2.5f, 0.5f);
@@ -61,17 +50,10 @@ namespace Lumina
         // x = milky-way band intensity, y = band tilt (radians), z/w reserved
         FVector4   GalaxyParams     = FVector4(0.06f, 0.45f, 0.0f, 0.0f);
 
-        // HDRI mode only. x = radiance multiplier, y = cos(yaw), z = sin(yaw), w reserved. The yaw is
-        // pre-resolved to cos/sin here so the sky pass and the equirect->cube bake consume the same two
-        // numbers; a bake that disagreed with the visible sky by even a degree shows up as reflections
-        // sliding against the background.
         FVector4   HDRIParams       = FVector4(1.0f, 1.0f, 0.0f, 0.0f);
     };
     VERIFY_SSBO_ALIGNMENT(FEnvironmentParams);
 
-    // CPU mirror of the per-frame exponential-height-fog CB; layout must match Includes/Fog.slang.
-    // Read by the froxel inject (near-range shadowed scattering) and the fog apply pass (froxel
-    // composite + analytic far fog/sky).
     struct alignas(16) FExponentialHeightFogParams
     {
         // rgb = fog albedo, w = fog density at base height
@@ -80,8 +62,6 @@ namespace Lumina
         FVector4   HeightParams      = FVector4(0.2f, 0.0f, 0.0f, 1.0f);
         // rgb = directional (sun) inscatter tint, w = directional exponent
         FVector4   DirectionalColor  = FVector4(1.0f, 0.9f, 0.7f, 4.0f);
-        // x = volumetric scattering intensity, y = volumetric anisotropy,
-        // z = froxel volume far plane, w = directional inscatter start distance
         FVector4   VolumetricParams  = FVector4(1.0f, 0.6f, 200.0f, 0.0f);
     };
     VERIFY_SSBO_ALIGNMENT(FExponentialHeightFogParams);

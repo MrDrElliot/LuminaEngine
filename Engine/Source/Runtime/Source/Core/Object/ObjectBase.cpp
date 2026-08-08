@@ -66,6 +66,12 @@ namespace Lumina
         ClassPrivate = const_cast<CClass*>(OI.Params.Class);
         PackagePrivate = OI.Package;
 
+        // The flags the construction asked for. Additive, so they join whatever the constructor set, and
+        // applied before AddObject/PostInitProperties so the object is registered and initialized as the
+        // caller declared it. Without this every flag passed to NewObject was silently dropped, and the
+        // only one that stuck anywhere was OF_DefaultObject, re-stamped by hand after the fact.
+        EnumAddFlags(ObjectFlags, OI.Params.Flags);
+
         AddObject();
     }
 

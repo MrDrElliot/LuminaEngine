@@ -2,6 +2,7 @@
 
 #include "Containers/Array.h"
 #include "Renderer/MeshData.h"
+#include "Renderer/SkeletonResource.h"
 
 namespace Lumina::BonePickerContext
 {

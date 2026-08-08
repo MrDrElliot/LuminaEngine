@@ -5,6 +5,7 @@
 #include "Renderer/MeshData.h"
 #include "Core/Math/SIMD/SIMD.h"
 #include "Memory/Memcpy.h"
+#include "Renderer/SkeletonResource.h"
 
 namespace Lumina
 {

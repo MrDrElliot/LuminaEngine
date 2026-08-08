@@ -1,16 +1,29 @@
 #pragma once
 
 #include "Core/Object/Object.h"
-#include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Object/ObjectMacros.h"
-#include "Core/Reflection/PropertyBag/PropertyBag.h"
-#include "DataAssetSchema.h"
 #include "DataAsset.generated.h"
 
 namespace Lumina
 {
-    // Data instance: a CDataAssetSchema ref + that schema's field values in an FPropertyBag. The schema owns
-    // the structure; SyncToSchema rebuilds the value layout (preserving values by name) on edit/load.
+    /**
+     * Base class for designer-authored data assets. Subclass it in C++, declare PROPERTY() fields, and
+     * that is the whole type:
+     *
+     *     REFLECT()
+     *     class CWeaponData : public CDataAsset
+     *     {
+     *         GENERATED_BODY()
+     *     public:
+     *         PROPERTY(Editable, Category = "Damage") float BaseDamage = 10.0f;
+     *         PROPERTY(Editable) TObjectPtr<CStaticMesh> Mesh;
+     *     };
+     *
+     * The content browser's Data Asset entry lists every class deriving from this one and mints the
+     * one you pick, so a new type needs no factory, no editor tool and no registration. The property
+     * grid and serialization both come from reflection, exactly as they do for any other asset, which
+     * is why a subclass gets a working editor for free.
+     */
     REFLECT()
     class RUNTIME_API CDataAsset : public CObject
     {
@@ -19,31 +32,5 @@ namespace Lumina
     public:
 
         bool IsAsset() const override { return true; }
-
-        void PostLoad() override;
-        void Serialize(FArchive& Ar) override;
-
-        CDataAssetSchema* GetSchema() const { return Schema; }
-
-        // Assigns the schema and immediately rebuilds the value layout to match it.
-        void SetSchema(CDataAssetSchema* InSchema);
-
-        // Rebuilds the value bag to the schema's field list (values kept by name, new fields from defaults).
-        void SyncToSchema();
-
-        // On schema delete: drops the dangling reference and clears the value bag.
-        void OnSchemaDeleted();
-
-        FPropertyBag& GetPropertyBag()             { return PropertyBag; }
-        const FPropertyBag& GetPropertyBag() const { return PropertyBag; }
-
-        // Serialized; set at creation. Not marked Editable, so it stays out of the value grid.
-        PROPERTY()
-        TObjectPtr<CDataAssetSchema> Schema;
-
-    private:
-
-        // The instance's values; layout mirrors Schema. Not a reflected PROPERTY.
-        FPropertyBag PropertyBag;
     };
 }

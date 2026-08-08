@@ -39,15 +39,11 @@ namespace Lumina::RHI::Textures
     {
         GState.bInitialized = true;
 
-        // 1x1 magenta placeholder: distinct enough that a missing/invalid texture is obvious.
-        // It backs every invalid ResourceID, so it must be resident before any sampling.
         GState.Default = Create(FTexture2DDesc{ .Width = 1, .Height = 1, .Format = EFormat::RGBA8_UNORM });
         const uint8 Magenta[4] = { 255, 0, 255, 255 };
         Upload(GState.Default, 0, Magenta, sizeof(Magenta), 1);
         FlushUploadsAndWait();
 
-        // Every slot the heap hands back gets repointed here, so a stale ResourceID held past its
-        // texture's death samples magenta instead of faulting on freed memory.
         HeapSetFallbackTexture(Core::GetGlobalHeap(), GState.Default.Texture);
     }
 
@@ -60,8 +56,6 @@ namespace Lumina::RHI::Textures
 
         WaitDeviceIdle();
 
-        // Drop the fallback before the texture backing it dies, or the frees below would repoint
-        // slots at a view this function is about to destroy.
         HeapSetFallbackTexture(Core::GetGlobalHeap(), FTextureH{});
 
         // Flush every deferred release immediately; the device is idle.
@@ -206,9 +200,6 @@ namespace Lumina::RHI::Textures
             return;
         }
 
-        // Detached from the slot before release, so the deferred drain frees the IMAGE and leaves the
-        // slot alone (Tick skips HeapFreeTexture on kInvalidHeapSlot). The slot now belongs to the
-        // replacement, exactly as DetachSampledSlot works for scene images.
         FManagedTexture Old = Tex;
         const uint32 Slot = Old.SampledSlot;
         Old.SampledSlot = kInvalidHeapSlot;

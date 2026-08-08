@@ -138,7 +138,9 @@ namespace Lumina
 
     private:
 
-        mutable EObjectFlags    ObjectFlags;
+        // Initialized here, not left to the allocator zeroing the block: ConstructInternal ADDS the
+        // requested flags to whatever this holds, so it has to start from a known value.
+        mutable EObjectFlags    ObjectFlags = OF_None;
         CClass*                 ClassPrivate = nullptr;
         CPackage*               PackagePrivate = nullptr;
         FName                   NamePrivate;

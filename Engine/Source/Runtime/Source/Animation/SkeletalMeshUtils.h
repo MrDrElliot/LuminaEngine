@@ -5,6 +5,7 @@
 #include "Core/Math/Math.h"
 #include "Platform/GenericPlatform.h"
 #include "World/Entity/Registry/EntityRegistry.h"
+#include "Renderer/SkeletonResource.h"
 
 namespace Lumina
 {

@@ -12,6 +12,36 @@
 namespace Lumina
 {
     
+    /**
+     * OWNERSHIP AND SYNCHRONIZATION CONTRACT
+     *
+     * The scheduler, not this component, is what orders transform access. Systems declare Read/Write and
+     * are batched so that conflicting ones never run together, batches run in sequence, and the frame's
+     * stages (FrameStart -> PrePhysics -> DuringPhysics -> physics step -> PostPhysics -> FrameEnd ->
+     * Extract) are strictly ordered on the game thread. Nothing here re-implements that.
+     *
+     *   LocalTransform  -- authored state. Owned by whichever system declared Write this batch. Safe to
+     *                      write from ANY thread, including a bare user job, as long as writers touch
+     *                      disjoint entities: every setter mutates only this component and a lock-free
+     *                      channel. What it does NOT promise is immediate visibility, see below.
+     *
+     *   WorldTransform  -- derived state, owned by the resolve. Guaranteed correct at the start of every
+     *                      batch, because CWorld::TickSystems resolves before each one. Never write it
+     *                      from outside the resolve or the flat fast path in MarkDirty.
+     *
+     *   The visibility rule -- a write becomes visible to other systems at the NEXT BARRIER, not at the
+     *                      instant it happens. That is the whole contract, and it is why writing from an
+     *                      arbitrary thread is safe without a lock.
+     *
+     * Deferral exists for exactly one reason: HIERARCHY. Locals are written in arbitrary order, so a
+     * parent may be written after its child and world transforms cannot be composed incrementally. A flat
+     * entity has no such dependency -- world IS local -- so its setter resolves itself inline and never
+     * touches the queue at all (see bIsFlat). The queue is not a race fix; it is a dependency-ordering
+     * mechanism that only hierarchical entities need.
+     *
+     * Display poses live elsewhere and are never authored here: FRenderTransform holds the interpolated
+     * matrix for physics-driven entities, and the render scene keeps its own snapshot taken at Extract.
+     */
     // ScriptFastCalls: local accessors are bound SuppressGCTransition. World getters opt out (they resolve).
     REFLECT(Component, HideInComponentList, ScriptFastCalls)
     struct RUNTIME_API CACHE_ALIGN STransformComponent
@@ -24,7 +54,6 @@ namespace Lumina
         explicit STransformComponent(const FTransform& InTransform)
             : LocalTransform(InTransform)
             , WorldTransform(InTransform)
-            , CachedMatrix(InTransform.GetMatrix())
         {}
     
         FUNCTION(Script)
@@ -140,11 +169,14 @@ namespace Lumina
             return Math::Degrees(Math::EulerAngles(WorldTransform.GetRotation()));
         }
 
+        // Composed on demand rather than cached: the matrix is ~20 SIMD instructions out of a
+        // WorldTransform that is already in cache here, where storing it cost 64 bytes -- a third of the
+        // component -- on every entity, paid by every pass that strides this pool for anything else.
         FUNCTION(Script, NoSuppressGCTransition)
         FMatrix4 GetWorldMatrix() const
         {
             ResolveIfDirty();
-            return CachedMatrix;
+            return WorldTransform.GetMatrix();
         }
 
         FUNCTION(Script, NoSuppressGCTransition)
@@ -154,12 +186,12 @@ namespace Lumina
             return WorldTransform;
         }
 
-        // Cached world transform WITHOUT a resolve. By value (the SIMD transform has no scalar member to
-        // reference); CachedMatrix is still returned by const ref.
-        FVector3        GetWorldLocationCached() const { return WorldTransform.GetLocation(); }
-        FQuat           GetWorldRotationCached() const { return WorldTransform.GetRotation(); }
-        FVector3        GetWorldScaleCached()    const { return WorldTransform.GetScale(); }
-        const FMatrix4& GetWorldMatrixCached()   const { return CachedMatrix; }
+        // Cached world transform WITHOUT a resolve. All by value; the SIMD transform has no scalar member
+        // to reference and the matrix is composed on the spot.
+        FVector3 GetWorldLocationCached() const { return WorldTransform.GetLocation(); }
+        FQuat    GetWorldRotationCached() const { return WorldTransform.GetRotation(); }
+        FVector3 GetWorldScaleCached()    const { return WorldTransform.GetScale(); }
+        FMatrix4 GetWorldMatrixCached()   const { return WorldTransform.GetMatrix(); }
 
         FUNCTION(Script, NoSuppressGCTransition)
         void SetWorldTransform(const FTransform& InTransform)
@@ -241,7 +273,11 @@ namespace Lumina
         {
             Registry = &InRegistry;
             Entity = InEntity;
-            DirtyState = ECS::Utils::EnsureTransformDirtyState(InRegistry);
+            DirtyState = ECS::Utils::EnsureTransformDirtyGate(InRegistry);
+
+            // Re-derived rather than carried over: a bit-copied component's flag describes the SOURCE
+            // entity's hierarchy, and this copy may be parented differently.
+            bIsFlat = ECS::Utils::IsEntityTransformFlat(InRegistry, InEntity);
         }
         
         void SetRaw(const FVector3& Location, const FQuat& Rotation)
@@ -264,7 +300,6 @@ namespace Lumina
         FTransform LocalTransform;
 
         FTransform WorldTransform;
-        FMatrix4  CachedMatrix = FMatrix4(1.f);
 
         // Set by setters, cleared by the resolver. Component-local so writes are ParallelFor-safe.
         mutable bool bWorldDirty = false;
@@ -276,6 +311,23 @@ namespace Lumina
         // Dedup guard for the DirtyBodies queue
         mutable bool bBodyDirtyQueued = false;
 
+        /**
+         * Cached "this entity has no FRelationshipComponent", which is exactly what the resolve tests to
+         * take its flat path. When set, a setter resolves itself (world == local) instead of queueing --
+         * see MarkDirty.
+         *
+         * FALSE IS ALWAYS SAFE; only true is a claim. A missed update costs the slow path, never a wrong
+         * transform, which is what makes maintaining it out of band acceptable. Kept current by
+         * CWorld::OnTransformComponentConstruct, the on_construct<FRelationshipComponent> hook, and Bind
+         * (duplication / post-load). Lands in existing padding, so it costs no bytes.
+         */
+        bool bIsFlat = false;
+
+        // Publish-once-per-frame guard for the flat path, compared against FTransformDirtyGate::PublishEpoch.
+        // Also lands in existing padding. Wraps after 2^32 drains, where the only consequence is one entity
+        // skipping one frame's render notification.
+        mutable uint32 LastPublishEpoch = 0;
+
         // Clear both dirty guards without touching the queues. For a freshly bit-copied component, whose flags
         // describe the *source* entity's queue state and would otherwise suppress the copy's own enqueues.
         void ResetDirtyState()
@@ -286,10 +338,37 @@ namespace Lumina
 
     private:
         
-        void MarkDirty() const
+        void MarkDirty()
         {
+            const bool bQueueBody = bHasPhysicsBody && !bBodyDirtyQueued;
+
+            // Flat fast path. For an entity with no relationship component the resolve's whole job is
+            // "world = local", so doing it here -- with the transform still in registers -- skips the dirty
+            // enqueue, the drain, and the random-access get the resolve would have paid to come back for it.
+            // The deferral cost more than the work it deferred.
+            if (bIsFlat)
+            {
+                // Unconditional: the world pose must track every write. Only the NOTIFICATION below is
+                // deduped -- writing location, rotation and scale in turn is one move, not three.
+                WorldTransform = LocalTransform;
+
+                const uint32 Epoch   = (DirtyState != nullptr)
+                                     ? DirtyState->PublishEpoch.load(std::memory_order_relaxed) : 0u;
+                const bool bPublish  = (LastPublishEpoch != Epoch);
+                LastPublishEpoch     = Epoch;
+                bBodyDirtyQueued    |= bQueueBody;
+
+                // bWorldDirty stays clear: nothing is owed. The dirty signal stays down too, so the next
+                // barrier can still skip, and later GetWorld* reads take the guard-free path and find the
+                // value already correct.
+                if (bPublish || bQueueBody)
+                {
+                    ECS::Utils::PublishFlatMove(DirtyState, Entity, bPublish, bQueueBody);
+                }
+                return;
+            }
+
             const bool bQueueTransform = !bWorldDirty;
-            const bool bQueueBody      = bHasPhysicsBody && !bBodyDirtyQueued;
 
             if (!bQueueTransform && !bQueueBody)
             {
@@ -304,19 +383,40 @@ namespace Lumina
 
         void ResolveIfDirty() const
         {
+            // The whole point of the pre-batch barrier is that this is the common case: nothing has moved
+            // since the last resolve, so the read is already correct. Answered here with one relaxed load
+            // through a pointer cached at Bind. ResolveTransformChain would make the same decision, but only
+            // after re-deriving the dirty state from the registry context -- a type-keyed hash lookup on
+            // every world read in the engine.
+            if (DirtyState != nullptr && !DirtyState->bAnyDirty.load(std::memory_order_acquire))
+            {
+                return;
+            }
+
             if (Registry)
             {
                 ECS::Utils::ResolveTransformChain(*Registry, Entity);
             }
         }
 
-        FEntityRegistry*              Registry = nullptr;
-        entt::entity                  Entity   = entt::null;
-        ECS::Utils::FTransformDirtyState* DirtyState = nullptr;
+        FEntityRegistry*                 Registry = nullptr;
+        entt::entity                     Entity   = entt::null;
+        ECS::Utils::FTransformDirtyGate* DirtyState = nullptr;
     };
 
+    // CACHE_ALIGN is load-bearing, not decoration: the parallel resolve writes WorldTransform and the
+    // dirty flag for arbitrary entities across worker threads, and neighbours in the dense pool land on
+    // different threads, so anything that lets two components share a line false-shares.
+    //
+    // The corollary is that this size is QUANTIZED to 64. Shaving a few bytes off the tail buys nothing --
+    // it pads straight back up -- and only a cut that crosses a boundary changes what a pass fetches. This
+    // caught the 192 -> 128 step (deleting a cached world matrix); the next one is 128 -> 64, which needs
+    // WorldTransform to move to its own pool.
+    static_assert(sizeof(STransformComponent) == 128,
+        "STransformComponent changed size. It is quantized to 64B; see the note above before adjusting this.");
+
     // Display-time world matrix, present only on entities the physics step interpolates. Render reads it in
-    // preference to STransformComponent::CachedMatrix; nothing else may. STransformComponent holds the
+    // preference to STransformComponent's own world pose; nothing else may. STransformComponent holds the
     // simulated pose, so gameplay, queries and the body re-sync all agree with what Jolt believes, while the
     // visual is free to sit between two fixed steps. Not reflected: pure per-frame render state.
     struct FRenderTransform

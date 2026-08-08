@@ -109,10 +109,10 @@ namespace Lumina
         Params.Package  = GetPackage();
         Params.Guid     = FGuid::New();
         
+        // OF_DefaultObject rides in on Params; ConstructInternal applies it, so it is already live inside
+        // PostInitProperties. It used to need a re-stamp here because construction dropped the flag.
         ClassDefaultObject = StaticAllocateObject(Params);
         ClassDefaultObject->AddToRoot();
-        
-        ClassDefaultObject->SetFlag(OF_DefaultObject);
 
         ClassDefaultObject->PostCreateCDO();
         

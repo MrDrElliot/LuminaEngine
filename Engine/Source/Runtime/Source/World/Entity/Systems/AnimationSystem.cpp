@@ -21,6 +21,7 @@
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/Entity/Systems/SystemResources.h"
 #include "Log/Log.h"
+#include "Renderer/SkeletonResource.h"
 
 namespace Lumina
 {

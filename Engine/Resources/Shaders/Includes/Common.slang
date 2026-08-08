@@ -1,31 +1,19 @@
 #pragma once
 
+#include "Shared/SharedConstants.h"
+
 static const float PHI    = 1.618033988749895;
 static const float PI     = 3.1415926535897932384626433832795;
 static const float TWO_PI = 6.28318530718;
 static const float INV_PI = 0.31830988618;
 
 
-#define LIGHT_INDEX_MASK 0x1FFFu
-#define LIGHTS_PER_UINT  2
-#define LIGHTS_PER_CLUSTER 100
 #define SHADOW_SAMPLE_COUNT 8
 // Upper bound for the directional cascade's runtime-tunable tap count
 // (SDirectionalLightComponent::ShadowSampleCount, forwarded via ShadowParams2.y).
 #define SHADOW_MAX_SAMPLE_COUNT 16
 
 #define INDEX_NONE -1
-
-#define COL_R_SHIFT 0
-#define COL_G_SHIFT 8
-#define COL_B_SHIFT 16
-#define COL_A_SHIFT 24
-#define COL_A_MASK  0xFF000000
-
-#define MAX_LIGHTS      8192
-#define MAX_SHADOWS     256
-#define NUM_CASCADES    4
-#define MAX_CULL_VIEWS  128
 
 // Bits inside FCullView.Flags, gating which culling stages run for the view.
 // PhaseLate views re-test last-frame's HZB-occluded defer list against the rebuilt HZB.
@@ -38,22 +26,6 @@ static const float INV_PI = 0.31830988618;
 #define CULL_VIEW_FLAG_PHASE_LATE       BIT(6)
 #define CULL_VIEW_FLAG_CASCADE          BIT(7)
 
-// CullMeshlets phase: 0 walks all instance/meshlet pairs (emit or defer occluded);
-// 1 walks only the defer list and re-tests against the freshly-built HZB.
-#define CULL_PHASE_EARLY 0u
-#define CULL_PHASE_LATE  1u
-// Third phase, run after the cascade atlas is rastered and its pyramid rebuilt. Separate from
-// CULL_PHASE_LATE because the two pyramids are rebuilt at different points in the frame, so they
-// cannot share a dispatch. Both walk the same defer list and filter on FMeshletDeferred::DeferTag.
-#define CULL_PHASE_CASCADE_LATE 2u
-
-// FMeshletDeferred::DeferTag value meaning "the camera pyramid deferred this"; any other value is a
-// cascade index. Cascades are bounded by NUM_CASCADES, so ~0u can never collide with a real one.
-#define kDeferTagCamera 0xFFFFFFFFu
-
-#define MAX_SCALARS  24
-#define MAX_VECTORS  24
-#define MAX_TEXTURES 24
 
 #define BIT(X) (1u << (X))
 
@@ -87,40 +59,66 @@ enum EInstanceFlags
     HasGeometry     = BIT(9),   // the mesh's meshlet header is resident
 }
 
-// Mirror of Lumina::FMeshletVertex. Position: full mesh-local float3 (exact, gap-free).
+// Mirror of Lumina::FMeshletVertex. Position: three 16-bit offsets from the owning meshlet's anchor,
+// packed into dwords -- decode with DecodeMeshletPosition below, never by hand.
 // Tangent: 15-15 octahedral + 1-bit handedness (see UnpackTangent).
 struct FVertex
 {
-    float3  Position;
-    uint    Normal;
-    uint    Tangent;
-    uint    UV;
-    uint    Color;
+    uint16_t PositionX;
+    uint16_t PositionY;
+    uint16_t PositionZ;
+    int16_t  NormalX;
+    int16_t  NormalY;
+    int16_t  NormalZ;
+    uint     Tangent;
+    uint     UV;
+    uint     Color;
 };
 
 struct FSkinnedVertex
 {
-    float3  Position;
-    uint    Normal;
-    uint    Tangent;
-    uint    UV;
-    uint    Color;
-    uint    JointIndices;
-    uint    JointWeights;
+    uint16_t PositionX;
+    uint16_t PositionY;
+    uint16_t PositionZ;
+    int16_t  NormalX;
+    int16_t  NormalY;
+    int16_t  NormalZ;
+    uint     Tangent;
+    uint     UV;
+    uint     Color;
+    uint     JointIndices;
+    uint     JointWeights;
 };
+
+float SNorm16ToFloat(int16_t V)
+{
+    return max((float)V * (1.0 / 32767.0), -1.0);
+}
+
+float3 UnpackNormalSNorm16(int16_t X, int16_t Y, int16_t Z)
+{
+    return float3(SNorm16ToFloat(X), SNorm16ToFloat(Y), SNorm16ToFloat(Z));
+}
+
+int16_t FloatToSNorm16(float V)
+{
+    return (int16_t)(clamp(V, -1.0, 1.0) * 32767.0 + (V >= 0.0 ? 0.5 : -0.5));
+}
 
 // Mirror of Lumina::FPreSkinnedVertex. Written by Skinning.slang, read by every draw VS as the
 // only vertex source. Position is full-precision (skinning breaks meshlet quantization); all-scalar
 // for a tight 28 B stride.
 struct FPreSkinnedVertex
 {
-    float   Px;
-    float   Py;
-    float   Pz;
-    uint    Normal;     // PackNormal
-    uint    Tangent;    // PackTangent
-    uint    UV;         // carried through from the source vertex (skin-invariant)
-    uint    Color;
+    float    Px;
+    float    Py;
+    float    Pz;
+    int16_t  NormalX;
+    int16_t  NormalY;
+    int16_t  NormalZ;
+    uint     Tangent;   // PackTangent
+    uint     UV;        // carried through from the source vertex (skin-invariant)
+    uint     Color;
 };
 
 struct FVertexData
@@ -252,24 +250,13 @@ struct FCustomPrimitiveData
     property float4 AsColor     { get { return float4(unpack_u8u32(Packed)) / 255.0; } }
 }
 
-// Meshlet limits must match Lumina::MESHLET_MAX_VERTICES / MAX_TRIANGLES / MAX_MESH_LODS.
-#define MESHLET_MAX_VERTICES  64
-#define MESHLET_MAX_TRIANGLES 124
-#define MESHLET_VERTICES_PER_DRAW (MESHLET_MAX_TRIANGLES * 3)  // 372
-#define MESHLET_MAX_LODS      6
-// Matches Lumina::MAX_SHADOW_LOD: shadow views never take a LOD past this, however far the bias pushes.
-#define MESHLET_MAX_SHADOW_LOD 3
-// Matches Lumina::MAX_COARSE_SHADOW_LOD: the cap past ShadowCoarseLODDistance, where one cascade texel is
-// wide enough that a sloppy LOD's holes stay sub-texel.
-#define MESHLET_MAX_COARSE_SHADOW_LOD 5
-
 // Mirror of Lumina::FSurfaceDescGPU (80 B). Per-surface LOD table, interned per distinct resolved
 // surface, so a cull view can pick the LOD the CPU gather used to pick -- per view, from its own origin.
 //
 // FGPUInstance::SurfaceDescIndex carries this sentinel when the instance's LOD is fixed and must not be
 // re-selected: skinned instances (CPU-fed, and their pre-skin blocks are built for one specific LOD),
 // an authored ForcedLODIndex, or LODs disabled scene-wide.
-static const uint kNoSurfaceDesc = 0xFFFFFFFFu;
+static const uint kNoSurfaceDesc = NO_SURFACE_DESC_INDEX;
 
 struct FSurfaceDesc
 {
@@ -313,20 +300,81 @@ struct FMeshlet
     uint VertexCount;
     uint TriangleCount;
     uint LODIndex;
+
+    // bits 0..23 = signed 24-bit anchor component. PackedAnchorX additionally carries the signed
+    // 8-bit shared exponent in bits 24..31; the Y and Z high bytes are reserved.
+    uint PackedAnchorX;
+    uint PackedAnchorY;
+    uint PackedAnchorZ;
 };
 
+// ----------------------------------------------------------------------------------------------------
+// Meshlet position decode (DXR2 COMPRESSED1). Twin of the block in MeshData.h -- these two are the ONLY
+// places that know the encoding.
+//
+// Every geometry path funnels here through LoadStaticVertex / LoadStaticPosition / SkinVertex, and that
+// is not a stylistic preference. The VisBuffer stores a triangle ID, so DeferredMaterial reconstructs
+// the same three vertices independently and derives barycentrics from them; the depth prepass and the
+// geometry pass rely on identical positions for early-Z. A decode that differs by one ULP between any
+// two of those paths shows up as UV and normal error growing toward triangle edges, plus depth
+// rejection failures -- not as a visible offset anyone would spot immediately.
+//
+// Exactness: anchor + offset tops out at 8388607 + 65535, below 2^24, so the int-to-float conversion is
+// exact; the scale is an exact power of two assembled from the exponent field, so the multiply only
+// decrements the exponent. Same argument as MaterialSlotToDepth in MaterialTiles.slang.
+// ----------------------------------------------------------------------------------------------------
+
+int UnpackMeshletAnchor(uint Packed)
+{
+    // Sign-extend from 24 bits.
+    uint Field = Packed & MESHLET_ANCHOR_MASK;
+    return int(Field ^ MESHLET_ANCHOR_SIGN) - int(MESHLET_ANCHOR_SIGN);
+}
+
+int UnpackMeshletExponent(uint PackedAnchorX)
+{
+    // Sign-extend the signed 8-bit exponent out of the high byte.
+    uint Byte = (PackedAnchorX >> MESHLET_EXPONENT_SHIFT) & 0xFFu;
+    return int(Byte ^ 0x80u) - int(0x80u);
+}
+
+// Exponent -> exact power of two, built from the float exponent field rather than exp2 so both
+// languages produce identical bits and the decode stays one multiply instead of a transcendental.
+float MeshletExponentScale(int Exponent)
+{
+    return asfloat(uint(clamp(Exponent, -126, 127) + 127) << 23);
+}
+
+float3 DecodeMeshletPosition(FMeshlet M, uint16_t PosX, uint16_t PosY, uint16_t PosZ)
+{
+    float Scale = MeshletExponentScale(UnpackMeshletExponent(M.PackedAnchorX));
+
+    int Ox = int(PosX);
+    int Oy = int(PosY);
+    int Oz = int(PosZ);
+
+    return float3(
+        float(UnpackMeshletAnchor(M.PackedAnchorX) + Ox) * Scale,
+        float(UnpackMeshletAnchor(M.PackedAnchorY) + Oy) * Scale,
+        float(UnpackMeshletAnchor(M.PackedAnchorZ) + Oz) * Scale);
+}
+
 // Mirror of Lumina::FMeshletBounds. Sphere + cone drive culling.
-struct FMeshletBounds
+struct FMeshletSphere
 {
     float3 Center;
     float  Radius;
-    float3 ConeApex;
-    float  ConeCutoff;
-    float3 ConeAxis;
-    float  _Pad0;
 };
 
-// Mirror of Lumina::FMeshletHeaderGPU. Positions are full float3 in the vertex buffer -- no per-LOD grid.
+struct FMeshletCone
+{
+    float3 Apex;
+    float  Cutoff;
+    float3 Axis;
+};
+
+// Mirror of Lumina::FMeshletHeaderGPU. Positions are quantized per meshlet, so no mesh-wide position
+// frame lives here -- the anchor and exponent are on FMeshlet, which every vertex load already holds.
 //
 // The distance-field block is loose floats, not a float3, because scalar layout aligns a float3 to 4
 // bytes while the C++ side is free to over-align FVector3 to 16. Keep this member-for-member identical
@@ -334,9 +382,10 @@ struct FMeshletBounds
 struct FMeshletHeader
 {
     FMeshlet*       Meshlets;
-    FMeshletBounds* Bounds;
+    FMeshletSphere* Spheres;
     uint*           Vertices;
     uint*           Triangles;
+    FMeshletCone*   Cones;
 
     uint            DistanceFieldIndex;     // gTextures3D[] slot, or kInvalidDistanceField
     uint            DistanceFieldFlags;     // bit0 = two-sided (unsigned) encoding
@@ -346,8 +395,6 @@ struct FMeshletHeader
     float           DistanceFieldMaxDistance;
 
     uint            _DFPad0;
-    uint            _DFPad1;
-    uint            _DFPad2;
 
     property float3 DistanceFieldMin  { get { return float3(DistanceFieldMinX,  DistanceFieldMinY,  DistanceFieldMinZ);  } }
     property float3 DistanceFieldSize { get { return float3(DistanceFieldSizeX, DistanceFieldSizeY, DistanceFieldSizeZ); } }
@@ -444,7 +491,6 @@ typealias FBoneTransform = FTransform3x4;
 // 20 bits of index (a mesh's meshlet array, all LODs together, never has a million entries -- interning
 // clamps it) leaves 12 for the tag. The CPU never issues tag 0, and a freshly allocated draw list is
 // zeroed, so untouched memory always fails the check.
-#define MESHLET_DRAW_INDEX_BITS  20u
 #define MESHLET_DRAW_INDEX_MASK  ((1u << MESHLET_DRAW_INDEX_BITS) - 1u)
 #define MESHLET_DRAW_TAG_INVALID 0u
 
@@ -465,18 +511,47 @@ struct FMeshletDraw
     }
 };
 
+// One unit of meshlet cull work: up to MESHLET_TASK_GROUP_SIZE consecutive meshlets of ONE instance,
+// with that instance's range for ONE view already resolved. Declared here rather than in either shader
+// because both index the same allocation and a layout they disagreed on would resolve the wrong
+// instance -- the same reason FMeshletDraw and the task payload live in shared headers.
+//
+// The length IS carried, and it is load-bearing: the range is now per-view and resolved at build time,
+// so a partial last block's spare lanes would otherwise address meshlets belonging to the NEXT LOD --
+// legal indices, wrong detail, no bound anywhere to catch it. (Before the range was per-view, the
+// instance-wide walk bound covered this, which is why the field was not needed then.)
+struct FMeshletBlock
+{
+    uint InstanceID;          // slot in the visible-instance buffer
+    // MeshletBase[19:0] | Count[25:20]. Base is MESH-GLOBAL -- the view's LOD pick is already folded in,
+    // so the cull makes no LOD decision at all.
+    uint PackedBaseAndCount;
+
+    static uint Pack(uint MeshletBase, uint Count)
+    {
+        return (MeshletBase & MESHLET_DRAW_INDEX_MASK) | ((Count & 63u) << MESHLET_DRAW_INDEX_BITS);
+    }
+
+    property uint MeshletBase { get { return PackedBaseAndCount & MESHLET_DRAW_INDEX_MASK; } }
+    property uint Count       { get { return (PackedBaseAndCount >> MESHLET_DRAW_INDEX_BITS) & 63u; } }
+};
+
 // Camera meshlets the early pass deferred via Hi-Z; the late pass re-tests
 // against the rebuilt HZB. DrawID is captured at defer time because the
 // late pass increments uIndirectArgs[...DrawID].InstanceCount.
+// A meshlet some Hi-Z hid in phase 0, queued for the late re-test.
+//
+// 8 bytes, and nothing else is needed: the defer list is laid out per (view, draw) exactly like the draw
+// list, so the batch to re-emit into and the pyramid to re-test against are both implied by which region
+// the entry sits in. A meshlet occluded in cascade 0 and visible in cascade 1 lands in two different
+// regions, which is the same distinction the old per-entry cascade tag was drawing.
+//
+// The region is bounded by the DRAW region's length and needs no feedback of its own: a meshlet either
+// emits or defers, never both, so the emit reservation is already an exact upper bound on defers.
 struct FMeshletDeferred
 {
     uint InstanceID;
-    uint MeshletIndex;      // mesh-global, same meaning as FMeshletDraw's
-    uint DrawID;
-    // Which Hi-Z deferred this, and so which one re-tests it and where it emits: kDeferTagCamera for the
-    // camera pyramid, otherwise the cascade index. One meshlet can be occluded in cascade 0 and visible
-    // in cascade 1, so a (meshlet, cascade) pair gets its own entry rather than one entry per meshlet.
-    uint DeferTag;
+    uint MeshletIndex;   // mesh-global, same meaning as FMeshletDraw's
 };
 
 // Mirror of Lumina::FGPUInstance.
@@ -520,10 +595,6 @@ struct FGPUInstance
     // Into SurfaceDescs, so a cull view can re-select this instance's LOD from its OWN origin.
     // kNoSurfaceDesc means "not selectable": use SurfaceMeshletOffset/Count as they stand.
     uint                    SurfaceDescIndex;
-    // The meshlet cull's per-instance thread domain: max over (every non-shadow view's picked surface LOD
-    // count, the shadow LOD count). Has to be a stored value rather than re-derived, because the prefix
-    // scan indexes into the same domain and the two must agree exactly.
-    uint                    MeshletWalkCount;
     // Entries in this mesh's meshlet array (end of the last LOD). The bound on a mesh-global meshlet index,
     // and the only bound the raster resolve needs now that the index is not LOD-relative.
     uint                    MeshletTotalCount;
@@ -819,23 +890,6 @@ struct FSceneGlobalData
 };
 
 // Octahedral 16-16 unit-normal decode (Slang lacks unpackSnorm2x16). Branchless wrap follows
-// Cigolle et al, "A Survey of Efficient Representations for Independent Unit Vectors" (2014).
-float3 UnpackNormal(uint Packed)
-{
-    // BFE folds to a single sign-extending bitfield op per channel rather
-    // than relying on the compiler to recognize the shift-pair idiom.
-    int2 i = int2(bitfieldExtract(int(Packed),  0, 16),
-                  bitfieldExtract(int(Packed), 16, 16));
-    float2 e = float2(i) * (1.0 / 32767.0);
-
-    float3 n = float3(e, 1.0 - abs(e.x) - abs(e.y));
-
-    float t = max(-n.z, 0.0);
-    n.xy -= float2(n.x >= 0.0 ? t : -t, n.y >= 0.0 ? t : -t);
-
-    return normalize(n);
-}
-
 // Octahedral 15-15 tangent direction + 1-bit handedness sign. Matches
 // Lumina::PackTangent. Returns (tangent.xyz, sign) where sign is +1 or -1
 // and the bitangent is reconstructed as cross(N, tangent) * sign.
@@ -854,19 +908,6 @@ float4 UnpackTangent(uint Packed)
 }
 
 // Inverse of UnpackNormal: 16-16 signed octahedral. Standard oct encode (the decode above
-// is the matching closed form), so re-packing a decoded normal round-trips.
-uint PackNormal(float3 n)
-{
-    n = normalize(n);
-    float2 e = n.xy * (1.0 / (abs(n.x) + abs(n.y) + abs(n.z)));
-    if (n.z < 0.0)
-    {
-        e = (1.0 - abs(float2(e.y, e.x))) * float2(e.x >= 0.0 ? 1.0 : -1.0, e.y >= 0.0 ? 1.0 : -1.0);
-    }
-    int2 i = int2(round(clamp(e, -1.0, 1.0) * 32767.0));
-    return (uint(i.x) & 0xFFFFu) | ((uint(i.y) & 0xFFFFu) << 16);
-}
-
 // Inverse of UnpackTangent: 15-15 signed octahedral + handedness sign at bit 30.
 uint PackTangent(float4 t)
 {

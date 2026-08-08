@@ -4,78 +4,75 @@
 // Mesh-shader version of the meshlet geometry path: ONE workgroup per meshlet. Shares all geometry with
 // MeshletGeometry.slang.
 //
-// DEPTH-ONLY. The renderer binds this from exactly one place -- BindShadowBatchPipeline -- which always
-// sets EMeshPass::Shadow, so EPASS_BASE is unreachable here: the forward base pass now runs through
-// VisBuffer + DeferredMaterial, and MeshletVertex.slang keeps the base path for translucency. That is why
-// the output is FDepthOnlyVertexOutput and not FBaseVertexOutput: carrying the full interpolant struct
-// reserved 124B per vertex of mesh output storage for a pass whose only consumer reads SV_Position, and
-// that reservation is what held cascade occupancy at 2.0 warps/cycle. See FDepthOnlyVertexOutput.
+// Compiled TWICE, selected by MESHLET_MESH_BASE, because the two cases need different OUTPUT TYPES and a
+// spec constant cannot change one -- the same constraint that splits MeshletVisBuffer's masked variant:
+//   - undefined (shadow): FDepthOnlyVertexOutput, position only. Carrying the full interpolant struct
+//     reserved 124B per vertex of mesh output storage for a pass whose only consumer reads SV_Position,
+//     and that reservation is what held cascade occupancy at 2.0 warps/cycle.
+//   - defined (base): FBaseVertexOutput, for translucent and additive geometry, whose pixel shader shades
+//     forward and needs the whole interpolant set.
 //
-// The vertex load and world transform below still run in full, because the material vertex graph feeding
+// The vertex load and world transform run in full either way, because the material vertex graph feeding
 // World Position Offset may read the normal, tangent, UV or color. Only the OUTPUT is narrowed.
 //
-// Feeding contract (renderer, per CmdDrawMeshTasksIndirect):
-//   - groupCountX     = surviving meshlets for this (view, material batch)
-//   - Pass().MeshletBase = global MeshletDrawList offset for this draw -- the VS path's FirstInstance,
-//     since mesh dispatch has no firstInstance. Workgroup meshlet = MeshletDrawList[MeshletBase + GroupID].
-//   - Pass().ShadowDataIndex / ViewIndex are read only on the EPass == Shadow branch.
+// The meshlet arrives through the task stage's payload; FMeshletPassArgs (MeshletGeometry.slang) is the
+// push block both stages share. ShadowDataIndex / ViewIndex are read on the shadow variant only, and
+// ViewportW/H is the viewport being rastered (for a shadow pass the atlas TILE) for the small-primitive
+// reject.
 
-[vk::constant_id(0)]
-const uint EPass = 0;
+#ifdef MESHLET_MESH_BASE
+typedef FBaseVertexOutput      FMeshVertexOutput;
+#else
+typedef FDepthOnlyVertexOutput FMeshVertexOutput;
+#endif
 
-static const uint EPASS_BASE   = 0u;
-static const uint EPASS_DEPTH  = 1u;
-static const uint EPASS_SHADOW = 2u;
+// See MeshletVisBuffer.slang: lane i owns vertex i, so only the clip position crosses lanes.
+groupshared float4 gsClipPos[MESHLET_MAX_VERTICES];
+groupshared uint   gsTriBits[MESHLET_TRI_WORDS];
 
-// One CmdDrawMeshTasksIndirect covers a whole batch; SV_DrawIndex selects the sub-draw. The per-draw meshlet
-// base comes from ViewDrawOffsets, the same GPU-built array SeedIndirectArgs seeds FirstInstance from (so the
-// mesh and VS paths consume the same value). It used to be hand-indexed out of FDrawIndirectArguments as raw
-// uints ([arg*4 + 3]), which meant the mesh-task path reached into a struct belonging to the graphics
-// indirect path and read a cacheline other lanes were atomically incrementing (InstanceCount is element 1 of
-// the same 16 bytes).
-struct FMeshPassArgs
-{
-    uint* ViewDrawOffsets; // per-(view, draw) base into MeshletDrawList()
-    uint  ArgBase;         // first arg index for this batch (CullViewIndex*NumDrawsPerView + IndirectDrawOffset)
-    int   ShadowDataIndex; // EPass == Shadow only
-    int   ViewIndex;       // EPass == Shadow only (CSM cascade / point face / spot)
-};
-FMeshPassArgs* Pass() { return GetPassArgs<FMeshPassArgs>(); }
-
-uint LoadMeshletBase(uint DrawIndex)
-{
-    return Pass().ViewDrawOffsets[Pass().ArgBase + DrawIndex];
-}
-
-// 128 threads covers a full meshlet in one pass: up to MESHLET_MAX_VERTICES (64) verts and
-// MESHLET_MAX_TRIANGLES (124) prims, one of each per thread under the count guards.
+// 64 threads = MESHLET_MAX_VERTICES, so the expensive vertex phase runs at full lane utilization; the
+// cheap triangle phase strides those 64 lanes over the 124-triangle cap (2 iterations). This used to be
+// 128 threads with one triangle per lane, which left lanes 64..127 idle through the whole vertex phase --
+// the same shape MeshletVisBuffer.slang was already fixed for.
 [shader("mesh")]
 [outputtopology("triangle")]
-[numthreads(128, 1, 1)]
+[numthreads(64, 1, 1)]
 void MeshMain(
     uint3 GroupID   : SV_GroupID,
     uint  ThreadID  : SV_GroupIndex,
-    uint  DrawIndex : SV_DrawIndex,
-    out vertices FDepthOnlyVertexOutput Verts[MESHLET_MAX_VERTICES],
-    out indices  uint3                  Tris[MESHLET_MAX_TRIANGLES])
+    in payload   FVisTaskPayload    TaskPayload,
+    out vertices FMeshVertexOutput  Verts[MESHLET_MAX_VERTICES],
+    out indices  uint3              Tris[MESHLET_MAX_TRIANGLES])
 {
-    uint MeshletSlot = LoadMeshletBase(DrawIndex) + GroupID.x;
-    FMeshletRef Ref  = ResolveMeshlet(MeshletSlot, EPass == EPASS_SHADOW);
+    // Compacted survivor index, not a draw-list offset -- see MeshletVisBuffer.slang.
+    FMeshletRef Ref = MakeMeshletRefFromTask(TaskPayload, GroupID.x);
 
     const uint VertCount = Ref.M.VertexCount;
     const uint TriCount  = Ref.M.TriangleCount;
-    SetMeshOutputCounts(VertCount, TriCount);
 
-    // One unique vertex per thread (no over-launch -- the mesh shader emits exactly VertexCount).
+    if (ThreadID < MESHLET_TRI_WORDS)
+    {
+        gsTriBits[ThreadID] = 0u;
+    }
+
+    // One unique vertex per thread (no over-launch -- the mesh shader emits exactly VertexCount). The
+    // output is held in registers until the compacted primitive count is known; see MeshletVisBuffer.slang.
+    FMeshVertexOutput VOut = (FMeshVertexOutput)0;
+    float4            Clip = float4(0.0, 0.0, 0.0, 0.0);
+
     if (ThreadID < VertCount)
     {
-        FVertexData VertexData = LoadMeshletVertexData(Ref, ThreadID);
-        FMeshletWorldVertex W  = TransformMeshletVertex(Ref, VertexData);
+        // Issued before the vertex fetch so the loads overlap rather than serialize; see the same
+        // block in MeshletVisBuffer.slang. Kept inside the guard because an unresolved meshlet leaves
+        // Instances() possibly null, making Ref.Inst a null base.
+        const float4x4 ModelMatrix = Ref.Inst.ModelMatrix;
 
-        // Same material vertex-graph local contract as MeshletVertex.slang
+        FVertexData VertexData = LoadMeshletVertexData(Ref, ThreadID);
+        FMeshletWorldVertex W  = TransformMeshletVertex(VertexData, ModelMatrix, CalculateNormalMatrix(ModelMatrix));
+
+        // Same material vertex-graph local contract as MeshletVisBuffer.slang
         // (the codegen alias preamble reads Inst / WorldPos / NormalWS / VertexData by these names).
         FGPUInstance* Inst   = Ref.Inst;   // pointer: FMeshletRef reaches the instance, see MeshletGeometry.slang
-        float4x4 ModelMatrix = Ref.Inst.ModelMatrix;
         float4   WorldPos    = float4(W.WorldPos, 1.0);
         float3   NormalWS    = W.NormalWS;
         float3   TangentWS   = W.TangentWS.xyz;
@@ -87,21 +84,73 @@ void MeshMain(
 
         const float3 FinalWorldPos = WorldPos.xyz;
 
-        FDepthOnlyVertexOutput O;
-        if (EPass == EPASS_SHADOW)
-        {
-            O.Position = mul(GetShadowViewProjection(Pass().ShadowDataIndex, (uint)Pass().ViewIndex), float4(FinalWorldPos, 1.0));
-        }
-        else // EPASS_DEPTH -- identical path to the base pass's SV_Position for the equal-depth test.
-        {
-            O.Position = CameraClipPosition(CameraViewPosition(FinalWorldPos));
-        }
-        Verts[ThreadID] = O;
+#ifdef MESHLET_MESH_BASE
+        VOut = MakeBaseVertexOutput(Ref, W, FinalWorldPos, GetCameraView(), GetCameraProjection());
+        Clip = VOut.Position;   // taken from the output so the two cannot drift
+#else
+        Clip = mul(GetShadowViewProjection(MeshletPass().ShadowDataIndex, (uint)MeshletPass().ViewIndex),
+                   float4(FinalWorldPos, 1.0));
+#endif
     }
 
-    // One triangle per thread; UnpackMeshletTriangle returns the 3 local vertex indices.
-    if (ThreadID < TriCount)
+    gsClipPos[ThreadID] = Clip;
+    GroupMemoryBarrierWithGroupSync();
+
+    // Triangle cull. The clip positions above are in THIS pass's space (the shadow VP for a shadow view,
+    // the camera VP for depth), so the frustum reject is against the volume actually being rastered and
+    // the winding is the one the hardware will see.
+    const float2 ViewportSize = float2(MeshletPass().ViewportW, MeshletPass().ViewportH);
+
+    uint3 TriIdx[MESHLET_TRI_ITERS];
+
+    [unroll]
+    for (uint i = 0; i < MESHLET_TRI_ITERS; ++i)
     {
-        Tris[ThreadID] = UnpackMeshletTriangleSafe(Ref, ThreadID);
+        TriIdx[i] = uint3(0u, 0u, 0u);
+
+        const uint t = ThreadID + i * 64u;
+        if (t >= TriCount)
+        {
+            continue;
+        }
+
+        const uint3 Idx = UnpackMeshletTriangleSafe(Ref, t);
+        TriIdx[i] = Idx;
+
+        if (IsDegenerateTriangleIndices(Idx))
+        {
+            continue;
+        }
+
+        if (IsMeshletTriangleCulled(gsClipPos[Idx.x], gsClipPos[Idx.y], gsClipPos[Idx.z], ViewportSize))
+        {
+            continue;
+        }
+
+        InterlockedOr(gsTriBits[t >> 5u], 1u << (t & 31u));
+    }
+
+    GroupMemoryBarrierWithGroupSync();
+
+    const FMeshletTriCompaction Keep = MakeTriCompaction(gsTriBits[0], gsTriBits[1], gsTriBits[2], gsTriBits[3]);
+
+    SetMeshOutputCounts(VertCount, Keep.Total);
+
+    if (ThreadID < VertCount)
+    {
+        VOut.Position   = Clip;
+        Verts[ThreadID] = VOut;
+    }
+
+    [unroll]
+    for (uint i = 0; i < MESHLET_TRI_ITERS; ++i)
+    {
+        const uint t = ThreadID + i * 64u;
+        if (t >= TriCount || !Keep.IsKept(t))
+        {
+            continue;
+        }
+
+        Tris[Keep.OutputSlot(t)] = TriIdx[i];
     }
 }

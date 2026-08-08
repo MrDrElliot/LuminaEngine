@@ -74,6 +74,8 @@ namespace Lumina
             DrawCustomCodeEditor();
         });
 
+        ConfigureCodeEditor();
+
         FString GraphName = "AssetMaterialGraph";
         NodeGraph = Cast<CMaterialNodeGraph>(Asset->GetPackage()->LoadObjectByName(GraphName));
         
@@ -417,6 +419,153 @@ namespace Lumina
         }
     }
     
+    namespace
+    {
+        // Slang for the Custom Slang node's body.
+        //
+        // Built by COPYING the editor's HLSL definition rather than authoring one from scratch: Slang is
+        // HLSL plus extensions, and the copy carries the pieces that are not data -- isPunctuation,
+        // getIdentifier, getNumber -- which are file-static inside TextEditor.cpp and cannot be reached
+        // from here. Only the additions below are ours.
+        //
+        // The split between `keywords` and `identifiers` is the reason this is worth doing at all: keywords
+        // colour as language syntax, identifiers as knownIdentifier. Putting the intrinsics and the node's
+        // own pin names in the second bucket is what makes "this is a thing the engine gave me" visually
+        // distinct from "this is Slang", which a plain HLSL definition cannot express.
+        const TextEditor::Language& GetSlangLanguageBase()
+        {
+            static bool bInitialized = false;
+            static TextEditor::Language Language;
+
+            if (bInitialized)
+            {
+                return Language;
+            }
+
+            Language = *TextEditor::Language::Hlsl();
+            Language.name = "Slang";
+
+            // Slang-only syntax the HLSL set has no reason to know about.
+            static const char* const SlangKeywords[] =
+            {
+                "__generic", "__init", "__subscript", "__exported", "associatedtype", "extension",
+                "interface", "property", "typealias", "func", "let", "var", "enum", "is", "as",
+                "where", "This", "no_diff", "nodiff", "differentiable", "bwd_diff", "fwd_diff",
+                "module", "import", "implementing", "public", "internal", "private", "override",
+                "dynamic_uniform", "groupshared", "ConstantBuffer", "ParameterBlock", "StructuredBuffer",
+                "Ptr", "Optional", "none", "each", "expand", "reinterpret", "spirv_asm",
+                "int8_t", "int16_t", "int32_t", "int64_t", "uint8_t", "uint16_t", "uint32_t", "uint64_t",
+                "float16_t", "float32_t", "float64_t", "matrix", "vector",
+            };
+            for (const char* Keyword : SlangKeywords)
+            {
+                Language.keywords.insert(Keyword);
+            }
+
+            // Intrinsics. The HLSL definition ships keywords only, so before this every call in a custom
+            // node body -- saturate, lerp, dot -- rendered as plain text.
+            static const char* const Intrinsics[] =
+            {
+                "abs", "acos", "all", "any", "asin", "atan", "atan2", "ceil", "clamp", "cos", "cosh",
+                "cross", "ddx", "ddy", "degrees", "determinant", "distance", "dot", "exp", "exp2",
+                "faceforward", "floor", "fmod", "frac", "frexp", "fwidth", "isfinite", "isinf", "isnan",
+                "ldexp", "length", "lerp", "log", "log2", "log10", "mad", "max", "min", "modf", "mul",
+                "normalize", "pow", "radians", "rcp", "reflect", "refract", "round", "rsqrt", "saturate",
+                "sign", "sin", "sincos", "sinh", "smoothstep", "sqrt", "step", "tan", "tanh", "transpose",
+                "trunc", "clip", "countbits", "firstbithigh", "firstbitlow", "reversebits", "asfloat",
+                "asint", "asuint", "f16tof32", "f32tof16", "select", "InterlockedAdd", "InterlockedOr",
+                "GroupMemoryBarrierWithGroupSync", "AllMemoryBarrierWithGroupSync",
+                "WaveActiveSum", "WaveActiveMax", "WaveActiveMin", "WaveActiveCountBits",
+                "WavePrefixCountBits", "WaveReadLaneFirst", "WaveIsFirstLane", "WaveGetLaneIndex",
+            };
+            for (const char* Intrinsic : Intrinsics)
+            {
+                Language.identifiers.insert(Intrinsic);
+            }
+
+            // Engine-side names reachable from a material body. These are what the material compiler
+            // substitutes around the node, so they are in scope whether or not the author declared them.
+            static const char* const EngineIdentifiers[] =
+            {
+                "MaterialIndex", "EntityID", "UV0", "UV0_DDX", "UV0_DDY", "WorldPosition", "WorldNormal",
+                "WorldTangent", "ViewPosition", "VertexColor", "Material", "Inst", "ModelMatrix",
+                "SampleTexture2D", "SampleTexture2DGrad", "SampleTexture2DLevel", "SampleTexture2DArray",
+                "SampleTextureCube", "GetMaterialTexture", "GetMaterialScalar", "GetMaterialVector",
+                "GetCameraPosition", "GetCameraForward", "GetTime", "Scene",
+            };
+            for (const char* Identifier : EngineIdentifiers)
+            {
+                Language.identifiers.insert(Identifier);
+            }
+
+            bInitialized = true;
+            return Language;
+        }
+
+        // Change detector for the highlight only, so it deliberately covers pin NAMES and nothing else --
+        // the node's own signature hash is private, and it also folds in pin types, which would rebuild
+        // the language on edits that cannot change a single colour.
+        uint64 HashPinNames(const CMaterialExpression_CustomSlang* Node)
+        {
+            uint64 Hash = 1469598103934665603ull;   // FNV-1a
+            auto Mix = [&Hash](const char* Text)
+            {
+                for (const char* C = Text; *C != '\0'; ++C)
+                {
+                    Hash ^= (uint64)(uint8)*C;
+                    Hash *= 1099511628211ull;
+                }
+                Hash ^= 0xFFull;   // separator, so {"AB","C"} and {"A","BC"} differ
+                Hash *= 1099511628211ull;
+            };
+
+            for (const FCustomSlangPin& Pin : Node->Inputs)  { Mix(Pin.Name.c_str()); }
+            Mix("|");
+            for (const FCustomSlangPin& Pin : Node->Outputs) { Mix(Pin.Name.c_str()); }
+            return Hash;
+        }
+    }
+
+    void FMaterialEditorTool::ConfigureCodeEditor()
+    {
+        // SetTabSize is only honoured while the document is empty and has no transactions, so this has to
+        // run before the first SetText -- hence OnInitialize rather than the first draw.
+        CodeEditor.SetTabSize(4);
+        CodeEditor.SetInsertSpacesOnTabs(true);
+        CodeEditor.SetAutoIndentEnabled(true);
+        CodeEditor.SetShowLineNumbersEnabled(true);
+        CodeEditor.SetShowMatchingBrackets(true);
+        CodeEditor.SetCompletePairedGlyphs(true);
+        CodeEditor.SetShowScrollbarMiniMapEnabled(true);
+        CodeEditor.SetPalette(TextEditor::GetDarkPalette());
+
+        CodeEditorLanguage = GetSlangLanguageBase();
+        CodeEditor.SetLanguage(&CodeEditorLanguage);
+    }
+
+    void FMaterialEditorTool::RebuildCodeEditorLanguage(const CMaterialExpression_CustomSlang* Node)
+    {
+        CodeEditorLanguage = GetSlangLanguageBase();
+
+        // The node's own pins, so an author sees at a glance whether they spelled a declared name right --
+        // a misspelled output is otherwise a silent no-op that only surfaces as "nothing changed".
+        if (Node != nullptr)
+        {
+            for (const FCustomSlangPin& Pin : Node->Inputs)
+            {
+                CodeEditorLanguage.identifiers.insert(Pin.Name.c_str());
+            }
+            for (const FCustomSlangPin& Pin : Node->Outputs)
+            {
+                CodeEditorLanguage.identifiers.insert(Pin.Name.c_str());
+            }
+        }
+
+        // Re-point even though the address is unchanged: SetLanguage raises the dirty flag that makes the
+        // colorizer re-run over the whole document, which is what picks up the new identifier set.
+        CodeEditor.SetLanguage(&CodeEditorLanguage);
+    }
+
     void FMaterialEditorTool::DrawCustomCodeEditor()
     {
         CMaterialExpression_CustomSlang* Node = Cast<CMaterialExpression_CustomSlang>(SelectedNode);
@@ -437,8 +586,17 @@ namespace Lumina
         if (CodeEditorBoundNode != Node)
         {
             CodeEditorBoundNode = Node;
+            RebuildCodeEditorLanguage(Node);
             CodeEditor.SetText(std::string_view(Node->Code.c_str(), Node->Code.size()));
             LastCodeEditorUndoIndex = CodeEditor.GetUndoIndex();
+            CodeEditorPinSignature = HashPinNames(Node);
+        }
+        else if (const uint64 Signature = HashPinNames(Node); Signature != CodeEditorPinSignature)
+        {
+            // Pins are edited in the details panel while this tab stays bound, so the highlight has to
+            // follow them -- otherwise a freshly renamed output keeps colouring under its old name.
+            CodeEditorPinSignature = Signature;
+            RebuildCodeEditorLanguage(Node);
         }
 
         // Signature reference: what the body can actually read and must assign.
@@ -478,6 +636,54 @@ namespace Lumina
 
         ImGui::Separator();
 
+        // Captured at the START of the toolbar line: SameLine's offset is measured from the line start, so
+        // reading the remaining width after the buttons would place the status by the wrong origin.
+        const float ToolbarWidth = ImGui::GetContentRegionAvail().x;
+
+        // Toolbar. Find/replace is built into the editor but has no discoverable entry point, so it gets a
+        // button as well as its shortcut.
+        if (ImGui::SmallButton(LE_ICON_MAGNIFY " Find"))
+        {
+            CodeEditor.OpenFindReplaceWindow();
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Find / replace (Ctrl+F)");
+        }
+
+        ImGui::SameLine();
+        bool bShowWhitespace = CodeEditor.IsShowWhitespacesEnabled();
+        if (ImGui::Checkbox("Whitespace", &bShowWhitespace))
+        {
+            CodeEditor.SetShowWhitespacesEnabled(bShowWhitespace);
+        }
+
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Tabs " LE_ICON_ARROW_RIGHT " Spaces"))
+        {
+            CodeEditor.TabsToSpaces();
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Converts leading tabs to spaces at the editor's tab size.");
+        }
+
+        // Right-aligned status: language and cursor. The language name is worth showing because the
+        // highlight includes THIS node's pin names, so it is not a generic Slang mode.
+        const TextEditor::CursorPosition Cursor = CodeEditor.GetCursorPosition(0);
+        FFixedString Status;
+        Status.sprintf("%s  |  Ln %d, Col %d  |  %d lines",
+            CodeEditor.GetLanguageName().c_str(), Cursor.line + 1, Cursor.column + 1, CodeEditor.GetLineCount());
+
+        const float StatusWidth = ImGui::CalcTextSize(Status.c_str()).x;
+        const float StatusX     = ToolbarWidth - StatusWidth;
+        // A narrow panel would push the status left of the buttons and overlap them; let it wrap instead.
+        if (StatusX > 0.0f)
+        {
+            ImGui::SameLine(StatusX);
+            ImGui::TextColored(EditorColors::TextDim(), "%s", Status.c_str());
+        }
+
         // Same monospaced face the RmlUi code editor uses -- column alignment is the whole point of a
         // code view, and the proportional UI font makes indented shader code unreadable.
         ImGuiX::Font::PushFont(ImGuiX::Font::EFont::Mono);
@@ -511,6 +717,89 @@ namespace Lumina
     // count in particular is a STEP function on occupancy, not a gradient -- on Ampere 128 regs caps a
     // shader at 16 resident warps, 96 gets 20, 80 gets 24 -- so a material can sit one register over a
     // cliff and lose a quarter of its latency hiding with nothing in the graph looking different.
+    namespace
+    {
+        // Register-limited warp occupancy on an NVIDIA SM.
+        //
+        // Occupancy is a STEP function of the per-thread register count: an SM partition has a fixed
+        // register budget and hands it out in fixed-size blocks, so shedding registers buys EXACTLY NOTHING
+        // until the count crosses into the next block. That is the whole reason this exists -- a raw
+        // "84 registers" tells an author nothing they can act on, while "4 fewer registers gains a warp"
+        // (or "you are 1 register into a new block, 7 more are free") does.
+        //
+        // Assumes the layout every NVIDIA part since Turing shares: 65536 32-bit registers per SM across 4
+        // partitions, allocated per warp in blocks of 8 registers/thread. AMD's register file and wave
+        // sizing are different enough that this model does not transfer, which is why it is only applied to
+        // a statistic the driver named like an NVIDIA register count (AMD names its "VGPRs"/"SGPRs" and
+        // reports an occupancy statistic of its own, which is displayed verbatim).
+        struct FOccupancyStep
+        {
+            bool   bValid            = false;
+            uint32 WarpsPerSM        = 0;
+            uint32 NextStepRegs      = 0;   // register count that reaches the next step (0 = none better)
+            uint32 NextStepWarpsPerSM = 0;
+        };
+
+        constexpr uint32 kRegsPerPartition   = 16384u;   // 65536 per SM / 4 partitions
+        constexpr uint32 kRegAllocGranularity = 8u;
+        constexpr uint32 kThreadsPerWarp     = 32u;
+        // Slot cap, not a register cap. Ampere/Ada consumer parts top out at 48 warps/SM; Turing at 32.
+        // Taking the higher value keeps this an upper bound on the REGISTER-limited figure, which is the
+        // component the author actually controls.
+        constexpr uint32 kMaxWarpsPerSM      = 48u;
+
+        uint32 WarpsPerSMForRegs(uint32 RegsPerThread)
+        {
+            if (RegsPerThread == 0u)
+            {
+                return kMaxWarpsPerSM;
+            }
+            const uint32 Rounded = ((RegsPerThread + kRegAllocGranularity - 1u) / kRegAllocGranularity) * kRegAllocGranularity;
+            const uint32 PerWarp = Rounded * kThreadsPerWarp;
+            const uint32 Warps   = (kRegsPerPartition / PerWarp) * 4u;
+            return Warps < kMaxWarpsPerSM ? Warps : kMaxWarpsPerSM;
+        }
+
+        FOccupancyStep ComputeOccupancyStep(uint32 RegsPerThread)
+        {
+            FOccupancyStep Out;
+            if (RegsPerThread == 0u || RegsPerThread > 255u)
+            {
+                return Out;
+            }
+
+            Out.bValid     = true;
+            Out.WarpsPerSM = WarpsPerSMForRegs(RegsPerThread);
+
+            // Walk down to the first register count that yields MORE warps. Stepping by the allocation
+            // granularity is what makes the answer honest: any target that is not on a block boundary
+            // would be advice that cannot pay off.
+            for (uint32 Candidate = (RegsPerThread / kRegAllocGranularity) * kRegAllocGranularity;
+                 Candidate >= kRegAllocGranularity; Candidate -= kRegAllocGranularity)
+            {
+                const uint32 Warps = WarpsPerSMForRegs(Candidate);
+                if (Warps > Out.WarpsPerSM)
+                {
+                    Out.NextStepRegs       = Candidate;
+                    Out.NextStepWarpsPerSM = Warps;
+                    break;
+                }
+            }
+            return Out;
+        }
+
+        // NVIDIA names it "Register Count"; AMD uses "VGPRs"/"SGPRs", which this deliberately does not match.
+        bool IsNvidiaRegisterStat(const FString& Name)
+        {
+            FString Lower = Name;
+            for (char& C : Lower)
+            {
+                C = (char)eastl::CharToLower(C);
+            }
+            return Lower.find("register") != FString::npos;
+        }
+    }
+
     void FMaterialEditorTool::DrawGPUStats(float LabelWidth, const ImVec4& HeaderColor,
                                            const ImVec4& LabelColor, const ImVec4& ValueColor)
     {
@@ -594,6 +883,39 @@ namespace Lumina
                 {
                     Row(Label.c_str(), "%lld", (long long)Stat.Value, ValueColor);
                 }
+
+                // Turn the raw count into the thing an author can act on. Only for a fragment stage: the
+                // step matters everywhere, but the deferred/forward PS is the shader a material controls.
+                if (!Stat.bIsFloat && IsNvidiaRegisterStat(Stat.Name))
+                {
+                    const FOccupancyStep Step = ComputeOccupancyStep((uint32)Stat.Value);
+                    if (Step.bValid)
+                    {
+                        // Under ~4 warps/SM the shader is starved regardless of what else is going on.
+                        const ImVec4 OccColor = Step.WarpsPerSM <= 16u ? WarnColor : ValueColor;
+                        Row("    Occupancy (reg-limited)", "%u warps/SM", Step.WarpsPerSM, OccColor);
+
+                        if (Step.NextStepRegs > 0u)
+                        {
+                            ImGui::PushStyleColor(ImGuiCol_Text, MutedColor);
+                            ImGui::TextWrapped("      Next step at %u registers (-%u) -> %u warps/SM. "
+                                               "Shedding fewer than that gains nothing.",
+                                               Step.NextStepRegs,
+                                               (uint32)Stat.Value - Step.NextStepRegs,
+                                               Step.NextStepWarpsPerSM);
+                            ImGui::PopStyleColor();
+                        }
+
+                        if (ImGui::IsItemHovered())
+                        {
+                            ImGui::SetTooltip("Occupancy is a step function of register count: an SM\n"
+                                              "partition allocates registers in fixed blocks, so a\n"
+                                              "reduction that does not cross a block boundary buys\n"
+                                              "nothing. Estimated for NVIDIA (64K registers/SM, 4\n"
+                                              "partitions, 8-register granularity).");
+                        }
+                    }
+                }
             }
 
             ImGui::Unindent(12.0f);
@@ -609,6 +931,62 @@ namespace Lumina
                                "material is drawn -- open a scene using it, or use the preview viewport. If they "
                                "never appear, this GPU does not support VK_KHR_pipeline_executable_properties.");
             ImGui::PopStyleColor();
+        }
+    }
+
+    void FMaterialEditorTool::DrawDiagnosticRows(const TVector<FCompilationError>& Diagnostics, bool bIsError)
+    {
+        const ImVec4 RowBg      = bIsError ? ImVec4(0.20f, 0.13f, 0.13f, 1.0f) : ImVec4(0.20f, 0.17f, 0.11f, 1.0f);
+        const ImVec4 TitleColor = bIsError ? ImVec4(1.00f, 0.55f, 0.55f, 1.0f) : ImVec4(1.00f, 0.78f, 0.35f, 1.0f);
+        const ImVec4 BodyColor  = bIsError ? ImVec4(1.00f, 0.80f, 0.80f, 1.0f) : ImVec4(0.95f, 0.90f, 0.78f, 1.0f);
+        constexpr ImVec4 NodeColor(1.00f, 0.85f, 0.55f, 1.0f);
+        constexpr ImVec4 HintColor(0.65f, 0.65f, 0.70f, 1.0f);
+
+        for (size_t i = 0; i < Diagnostics.size(); ++i)
+        {
+            const FCompilationError& Diag = Diagnostics[i];
+
+            ImGui::PushID(static_cast<int>(i));
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, RowBg);
+            // Height follows the wrapped text; AlwaysAutoResize is a child flag, not a window flag.
+            ImGui::BeginChild("##diag_row", ImVec2(0, 0),
+                ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY,
+                ImGuiWindowFlags_NoScrollbar);
+
+            ImGui::PushStyleColor(ImGuiCol_Text, TitleColor);
+            ImGui::Text("[%s]", Diag.Title.c_str());
+            ImGui::PopStyleColor();
+
+            if (Diag.Node != nullptr)
+            {
+                ImGui::SameLine();
+                ImGui::PushStyleColor(ImGuiCol_Text, NodeColor);
+                ImGui::Text("%s", Diag.Node->GetNodeFullName().c_str());
+                ImGui::PopStyleColor();
+            }
+
+            ImGui::PushStyleColor(ImGuiCol_Text, BodyColor);
+            ImGui::TextWrapped("%s", Diag.Description.c_str());
+            ImGui::PopStyleColor();
+
+            if (Diag.Node != nullptr)
+            {
+                ImGui::Spacing();
+                if (ImGui::SmallButton("Focus Node"))
+                {
+                    FocusGraphNode(Diag.Node);
+                }
+                ImGui::SameLine();
+                ImGui::PushStyleColor(ImGuiCol_Text, HintColor);
+                ImGui::TextUnformatted("(selects and centers in graph)");
+                ImGui::PopStyleColor();
+            }
+
+            ImGui::EndChild();
+            ImGui::PopStyleColor();
+            ImGui::PopID();
+
+            ImGui::Spacing();
         }
     }
 
@@ -630,56 +1008,20 @@ namespace Lumina
             ImGui::Separator();
             ImGui::Spacing();
 
-            constexpr ImVec4 TitleColor (1.00f, 0.55f, 0.55f, 1.0f);
-            constexpr ImVec4 NodeColor  (1.00f, 0.85f, 0.55f, 1.0f);
-            constexpr ImVec4 BodyColor  (1.00f, 0.80f, 0.80f, 1.0f);
-            constexpr ImVec4 HintColor  (0.65f, 0.65f, 0.70f, 1.0f);
+            DrawDiagnosticRows(CompilationResult.Errors, /*bIsError*/ true);
 
-            for (size_t i = 0; i < CompilationResult.Errors.size(); ++i)
+            // A failed compile can still have produced warnings; dropping them here would make them appear
+            // only once the error is fixed, which reads as the fix having caused them.
+            if (!CompilationResult.Warnings.empty())
             {
-                const FCompilationError& Err = CompilationResult.Errors[i];
-
-                ImGui::PushID(static_cast<int>(i));
-                ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.20f, 0.13f, 0.13f, 1.0f));
-                // Height follows the wrapped text; AlwaysAutoResize is a child flag, not a window flag.
-                ImGui::BeginChild("##err_row", ImVec2(0, 0),
-                    ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY,
-                    ImGuiWindowFlags_NoScrollbar);
-
-                ImGui::PushStyleColor(ImGuiCol_Text, TitleColor);
-                ImGui::Text("[%s]", Err.Title.c_str());
-                ImGui::PopStyleColor();
-
-                if (Err.Node != nullptr)
-                {
-                    ImGui::SameLine();
-                    ImGui::PushStyleColor(ImGuiCol_Text, NodeColor);
-                    ImGui::Text("%s", Err.Node->GetNodeFullName().c_str());
-                    ImGui::PopStyleColor();
-                }
-
-                ImGui::PushStyleColor(ImGuiCol_Text, BodyColor);
-                ImGui::TextWrapped("%s", Err.Description.c_str());
-                ImGui::PopStyleColor();
-
-                if (Err.Node != nullptr)
-                {
-                    ImGui::Spacing();
-                    if (ImGui::SmallButton("Focus Node"))
-                    {
-                        FocusGraphNode(Err.Node);
-                    }
-                    ImGui::SameLine();
-                    ImGui::PushStyleColor(ImGuiCol_Text, HintColor);
-                    ImGui::TextUnformatted("(selects and centers in graph)");
-                    ImGui::PopStyleColor();
-                }
-
-                ImGui::EndChild();
-                ImGui::PopStyleColor();
-                ImGui::PopID();
-
                 ImGui::Spacing();
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.72f, 0.30f, 1.0f));
+                ImGui::Text("%d warning%s", static_cast<int>(CompilationResult.Warnings.size()),
+                    CompilationResult.Warnings.size() == 1 ? "" : "s");
+                ImGui::PopStyleColor();
+                ImGui::Separator();
+                ImGui::Spacing();
+                DrawDiagnosticRows(CompilationResult.Warnings, /*bIsError*/ false);
             }
 
             ImGui::EndChild();
@@ -714,6 +1056,22 @@ namespace Lumina
         const ImVec4 LabelColor (0.65f, 0.65f, 0.72f, 1.0f);
         const ImVec4 ValueColor (1.00f, 1.00f, 1.00f, 1.0f);
         const ImVec4 HeaderColor(0.70f, 0.85f, 1.00f, 1.0f);
+
+        // FIRST, above the stats. These describe a material that compiled and renders, so nothing else
+        // flags them -- put anywhere lower they would sit below a fold nobody scrolls past.
+        if (!CompilationResult.Warnings.empty())
+        {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.72f, 0.30f, 1.0f));
+            ImGui::Text("%d warning%s", static_cast<int>(CompilationResult.Warnings.size()),
+                CompilationResult.Warnings.size() == 1 ? "" : "s");
+            ImGui::PopStyleColor();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            DrawDiagnosticRows(CompilationResult.Warnings, /*bIsError*/ false);
+
+            ImGui::Spacing();
+        }
 
         // Cost color thresholds.
         ImVec4 CostColor;
@@ -857,6 +1215,19 @@ namespace Lumina
         // Stamped even on failure: the compile ran against this exact graph, so nagging about it again
         // until something else changes would just be noise on top of the errors already surfaced.
         CompiledContentVersion = NodeGraph != nullptr ? NodeGraph->GetContentVersion() : 0;
+
+        // Before the failure branch: warnings survive a failed compile, and the log should carry them
+        // whether or not the material built.
+        for (const EdNodeGraph::FError& Warning : CompileResult.Warnings)
+        {
+            CompilationResult.CompilationLog += "WARNING - [" + Warning.Name + "]: " + Warning.Description + "\n";
+
+            FCompilationError Structured;
+            Structured.Title       = Warning.Name;
+            Structured.Description = Warning.Description;
+            Structured.Node        = Warning.Node;
+            CompilationResult.Warnings.push_back(Move(Structured));
+        }
 
         if (!CompileResult.bSuccess)
         {

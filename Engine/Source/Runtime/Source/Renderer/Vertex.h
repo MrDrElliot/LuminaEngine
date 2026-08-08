@@ -60,9 +60,6 @@ namespace Lumina
         return Math::Normalize(n);
     }
 
-
-    // Octahedral 15-15 tangent + 1-bit handedness packed into uint32 (4-byte aligned).
-    // Layout: [0..14]=qx, [15..29]=qy, [30]=hand (1=+, 0=-), [31]=reserved.
     inline uint32 PackTangent(FVector3 t, float Sign)
     {
         t /= Math::Abs(t.x) + Math::Abs(t.y) + Math::Abs(t.z) + 1e-12f;
@@ -104,8 +101,6 @@ namespace Lumina
         return FVector4(Math::Normalize(t), Sign);
     }
 
-    // Importers must zero Tangent: dedup byte-compares before MikkTSpace runs.
-    // Cannot use member initializer, would break TCanBulkSerialize (needs trivial).
     struct FVertex
     {
         FVector3       Position;
@@ -125,20 +120,6 @@ namespace Lumina
         }
     };
 
-    /** Normalizes a vertex's four blend weights and quantizes them to u8 summing to EXACTLY 255.
-     *
-     *  Both parts matter. The GPU divides by 255 and blends the bone rows, so the quantized quartet IS the
-     *  weight set -- and an unnormalized set scales the whole blended affine matrix, translation row
-     *  included, dragging the vertex toward the model origin by (1 - sum). Plain `FU8Vector4(W * 255.0f)`
-     *  truncates each component, so even a perfectly normalized input lands at a sum of 252-255: a silent
-     *  ~1% shrink toward the root on every skinned vertex. Rounding alone still misses by +/-2.
-     *
-     *  Largest-remainder: floor each scaled weight, then hand the leftover units to the components with the
-     *  biggest discarded fractions. Exact by construction and stable.
-     *
-     *  A zero-sum input (no usable influence -- e.g. a mesh whose skin data never bound) becomes rigid to
-     *  joint 0 rather than all-zeroes, so it renders in bind pose instead of collapsing onto the origin.
-     */
     inline FU8Vector4 PackSkinWeights(FVector4 Weights)
     {
         float W[4] = { Weights.x, Weights.y, Weights.z, Weights.w };
@@ -185,8 +166,6 @@ namespace Lumina
             Remainder[Best] = -1.0f;   // each component can only win one unit
         }
 
-        // Each component is in [0,255] by construction (non-negative floors of values summing to 255, plus at
-        // most one extra unit each), so no clamp is needed.
         return FU8Vector4((uint8)Quantized[0], (uint8)Quantized[1], (uint8)Quantized[2], (uint8)Quantized[3]);
     }
 
@@ -208,15 +187,25 @@ namespace Lumina
         }
     };
 
-    // 28-byte runtime vertex. Position is full mesh-local float3 (exact, gap-free across meshlet boundaries);
-    // Normal/Tangent octahedral; UV half2; Color RGBA8.
+    // Position is a 16-bit offset per axis from the owning meshlet's anchor; decode via MeshQuantization.h.
     struct FMeshletVertex
     {
-        FVector3 Position;
-        uint32 Normal;
+        uint16 PositionX;
+        uint16 PositionY;
+        uint16 PositionZ;
+        int16  NormalX;
+        int16  NormalY;
+        int16  NormalZ;
         uint32 Tangent;
         uint32 UV;
         uint32 Color;
+        
+        [[nodiscard]] constexpr FVector3 GetNormal() const
+        {
+            return FVector3(Math::SNorm16ToFloat(NormalX),
+                            Math::SNorm16ToFloat(NormalY),
+                            Math::SNorm16ToFloat(NormalZ));
+        }
     };
 
     struct FMeshletSkinnedVertex : FMeshletVertex
@@ -239,8 +228,8 @@ namespace Lumina
 
     static_assert(sizeof(FVertex) == 28);
     static_assert(sizeof(FSkinnedVertex) == 36);
-    static_assert(sizeof(FMeshletVertex) == 28);
-    static_assert(sizeof(FMeshletSkinnedVertex) == 36);
+    static_assert(sizeof(FMeshletVertex) == 24);
+    static_assert(sizeof(FMeshletSkinnedVertex) == 32);
     static_assert(offsetof(FVertex, Position) == 0);
     static_assert(TCanBulkSerialize<FVertex>::value);
     static_assert(TCanBulkSerialize<FSkinnedVertex>::value);

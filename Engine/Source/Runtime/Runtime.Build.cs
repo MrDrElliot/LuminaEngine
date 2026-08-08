@@ -54,6 +54,11 @@ public class Runtime : LuminaModuleRules
             "BasicUniversal",
             "MSDFGen",
 
+            // Header-only. Puts Engine/Resources/Shaders on the include path so C++ can include
+            // Shared/SharedConstants.h -- the one definition of the constants both languages use.
+            // Public because Runtime's own public headers (MeshData.h, SceneRenderTypes.h) include it.
+            "Shaders",
+
             // Header path is always needed; the module itself becomes header only when
             // profiling is off.
             "Tracy",

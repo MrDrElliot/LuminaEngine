@@ -12,6 +12,7 @@
 #include "Renderer/MeshDistanceField.h"
 #include "Renderer/RHITexture.h"
 #include "Assets/AssetTypes/Textures/Texture.h"
+#include "Renderer/SkeletonResource.h"
 
 namespace Lumina
 {

@@ -6,8 +6,6 @@
 // for silhouette edges; this one fixes coverage/occlusion.
 //
 // Two entry points share one opacity evaluation:
-//   - default        : VS-emulation path. Input = FVisVertexOut (interpolants + flat VisID).
-//   - VISBUFFER_PRIMID: mesh-shader path. Input = FBaseVertexOutput (per-vertex) + VisID via SV_PrimitiveID.
 // The material-graph token appears exactly once (inside MaskedVisKeep): the compiler substitutes the FIRST
 // occurrence, so it must never appear in a comment above it -- that would inject the codegen at file scope.
 
@@ -32,7 +30,6 @@ bool MaskedVisKeep(FBaseVertexOutput Input)
     return Material.Opacity >= Materials()[MaterialIndex].OpacityClipValue;
 }
 
-#ifdef VISBUFFER_PRIMID
 
 [shader("fragment")]
 uint FragmentMain(FBaseVertexOutput Input, uint VisID : SV_PrimitiveID) : SV_Target0
@@ -44,16 +41,3 @@ uint FragmentMain(FBaseVertexOutput Input, uint VisID : SV_PrimitiveID) : SV_Tar
     return VisID;
 }
 
-#else
-
-[shader("fragment")]
-uint FragmentMain(FVisVertexOut In) : SV_Target0
-{
-    if (!MaskedVisKeep(In.Base))
-    {
-        discard;
-    }
-    return In.VisID;
-}
-
-#endif

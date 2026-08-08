@@ -9,7 +9,7 @@
 //
 // Per-material because the geometry reconstruction re-applies the material's WorldPositionOffset (so the
 // reconstructed triangle matches what the VisBuffer geometry pass rasterized) and runs the material's
-// pixel graph. The VisID packing matches MeshletVisBuffer/MeshletVisBufferVS: [31:7] global meshlet slot,
+// pixel graph. The VisID packing matches MeshletVisBuffer: [31:7] global meshlet slot,
 // [6:0] local triangle index.
 
 // Layout overlays FDBufferPushConstants (DBuffer.slang) on its first 16 bytes so the shared ShadeSurface ->
@@ -156,8 +156,17 @@ PSOutput FragmentMain(float4 SvPosition : SV_Position)
     uint SafeTri = min(TriId, max(Ref.M.TriangleCount, 1u) - 1u);
     uint3 Tri = UnpackMeshletTriangle(Ref, SafeTri);
 
-    // The three corners share the instance's ModelMatrix, so derive the world normal matrix once.
-    float3x3 NormalMatrixWS = CalculateNormalMatrix(Ref.Inst.ModelMatrix);
+    // The three corners share the instance's ModelMatrix, so load it ONCE here and derive the world normal
+    // matrix from that local. Every use below -- the normal matrix, the three corner transforms, and the
+    // material graph's ModelMatrix alias -- takes this value.
+    //
+    // It used to be fetched three separate times: here, again into the hoisted local below, and once per
+    // corner inside TransformMeshletVertex's FMeshletRef overload, which reaches Ref.Inst.ModelMatrix
+    // itself -- so the hoist below never actually stopped the per-corner refetch it was added to stop.
+    // SPIR-V LICM will not merge them: these are PhysicalStorageBuffer loads through a pointer that may
+    // alias anything, so each is a fresh dependent fetch.
+    const float4x4 ModelMatrix    = Ref.Inst.ModelMatrix;
+    float3x3       NormalMatrixWS = CalculateNormalMatrix(ModelMatrix);
 
     // Re-apply the material vertex graph (WorldPositionOffset) per vertex so the reconstructed triangle
     // matches what the VisBuffer geometry pass rasterized. The material vertex token appears once; the
@@ -172,17 +181,17 @@ PSOutput FragmentMain(float4 SvPosition : SV_Position)
     // three loads serializing behind their transforms is the right trade: the occupancy it buys back hides
     // more latency than the lost memory-level parallelism cost.
     //
-    // Inst/ModelMatrix stay hoisted -- loop-invariant, and SPIR-V LICM does not hoist BDA loads, so leaving
-    // them inside materializes the 64-byte matrix three times.
+    // Inst stays hoisted -- loop-invariant, and SPIR-V LICM does not hoist BDA loads. ModelMatrix is the
+    // single load made above; the by-value TransformMeshletVertex overload takes it, so the loop adds no
+    // matrix fetch of its own.
     FGPUInstance* Inst   = Ref.Inst;   // pointer: FMeshletRef reaches the instance, see MeshletGeometry.slang
-    float4x4 ModelMatrix = Inst.ModelMatrix;
     FMeshletWorldVertex W[3];
     float3 FinalWorldPos[3];
     [unroll]
     for (int k = 0; k < 3; ++k)
     {
         FVertexData VertexData = LoadMeshletVertexData(Ref, Tri[k]);
-        W[k] = TransformMeshletVertex(Ref, VertexData, NormalMatrixWS);
+        W[k] = TransformMeshletVertex(VertexData, ModelMatrix, NormalMatrixWS);
 
         float4   WorldPos    = float4(W[k].WorldPos, 1.0);
         float3   NormalWS    = W[k].NormalWS;

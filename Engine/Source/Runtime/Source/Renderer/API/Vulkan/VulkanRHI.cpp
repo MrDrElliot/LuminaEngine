@@ -1,4 +1,5 @@
-﻿#include "RuntimePCH.h"
+﻿#include "Containers/HandleAllocator.h"
+#include "RuntimePCH.h"
 #include "Core/Templates/LuminaTemplate.h"
 
 #define VOLK_IMPLEMENTATION
@@ -23,8 +24,6 @@
 #define VMA_IMPLEMENTATION
 #include <vk_mem_alloc.h>
 
-// GPU timing for Tracy. Self-stubs to no-ops when Tracy is inactive; all usage below
-// is additionally guarded by TRACY_ENABLE so it compiles out cleanly in non-profiled builds.
 #include "tracy/TracyVulkan.hpp"
 #include "Log/Log.h"
 
@@ -140,8 +139,6 @@ namespace Lumina
 
 namespace Lumina::Vulkan
 {
-    // Modal Win32 dialog with the failing call site; WindowedApp builds have no console,
-    // so this is what the user sees when VK_CHECK trips outside a debugger.
     void ShowVulkanCheckFailureDialog(const FString& Expr, const char* File, int Line, const FString& ResultString)
     {
         FString Body = "Vulkan call failed:\n\n";
@@ -170,7 +167,6 @@ namespace Lumina::RHI
         | VK_BUFFER_USAGE_TRANSFER_SRC_BIT
         | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
         | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
-    
     
     static constexpr VkPipelineStageFlags2 ToVkPipelineState(EStageFlags Flags)
     {
@@ -404,8 +400,6 @@ namespace Lumina::RHI
         };
     }
     
-    // One GPU memory allocation. The public API hands out only GPUPtr (a device address);
-    // the VkBuffer is an implementation detail required by Vulkan for copies/binds.
     struct FMemoryBlock
     {
         VkBuffer        Buffer;
@@ -433,9 +427,9 @@ namespace Lumina::RHI
     {
         VkDescriptorSet     DescriptorSet;
         VkDescriptorPool    DescriptorPool;
-        FBitVector          SamplersBitset;
-        FBitVector          SampledImagesBitset;
-        FBitVector          RWImagesBitset;
+        FHandleAllocator    SamplerSlots;
+        FHandleAllocator    SampledImageSlots;
+        FHandleAllocator    RWImageSlots;
         
         TVector<VkSampler>   Samplers;
         TVector<VkImageView> ImageViews;
@@ -463,14 +457,13 @@ namespace Lumina::RHI
     
     struct FDepthStencilState : FDepthStencilDesc {};
     
-    
 #if defined(TRACY_ENABLE)
-    // Shared GPU profiling context (one query pool / timeline for every queue). Created at
-    // device init, drained once per frame in PresentSwapchain. Null until init completes.
-    static tracy::VkCtx* GTracyGPUContext = nullptr;
+    static tracy::VkCtx* GTracyGPUContexts[3] = {};
+    static tracy::VkCtx* GTracyOwnedContexts[3] = {};
 
-    // Max marker nesting tracked per command list. Marker brackets are balanced and shallow
-    // (RenderView > pass), so 16 is generous; deeper markers still emit debug labels, just no GPU zone.
+    // The graphics context, for the paths that are graphics-only by construction (present/collect).
+    static tracy::VkCtx*& GTracyGPUContext = GTracyGPUContexts[0];
+
     static constexpr uint32 kMaxGPUZoneDepth = 16;
 #endif
 
@@ -483,20 +476,14 @@ namespace Lumina::RHI
         EQueueType      Queue;
 
 #if defined(TRACY_ENABLE)
-        // Stack of live GPU zones (placement-constructed tracy::VkCtxScope) opened by CmdBeginMarker
-        // and closed by CmdEndMarker. Recording is single-threaded per list, so no lock is needed.
         alignas(tracy::VkCtxScope) uint8 GPUZoneStack[kMaxGPUZoneDepth * sizeof(tracy::VkCtxScope)];
         uint32 GPUZoneDepth = 0;
 #endif
 
-        // Breadcrumb slot per open marker, so CmdEndMarker knows which one to close. Same
-        // single-threaded-per-list assumption as the Tracy stack above.
         uint32 BreadcrumbStack[FGpuBreadcrumbs::MaxDepth] = {};
         uint32 BreadcrumbDepth = 0;
     };
 
-    // A window-system surface awaiting a swapchain. Lives only between CreateSurface and
-    // CreateSwapchain, which moves the VkSurfaceKHR into the swapchain.
     struct FSurface
     {
         VkSurfaceKHR Surface = VK_NULL_HANDLE;
@@ -529,9 +516,8 @@ namespace Lumina::RHI
         bool                            bUnifiedImageLayouts = false;
         bool                            bMemoryPriority = false;
         bool                            bMeshShaderSupported = false;
-        // VK_KHR_pipeline_executable_properties: driver-reported per-pipeline register count and
-        // occupancy. Editor-only -- it requires VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR on every
-        // pipeline, which makes the driver retain compile metadata it would otherwise discard.
+        bool                            bTaskShaderSupported = false;
+        uint32                          MaxTaskWorkGroupTotalCount = 0;
         bool                            bPipelineStats = false;
         TUniquePtr<FVulkanCrashTracker> CrashTracker;
         FGpuBreadcrumbs                 Breadcrumbs;
@@ -542,27 +528,26 @@ namespace Lumina::RHI
         TArray<VkQueue, 3>              Queues;
         TArray<uint32, 3>               QueueFamilies;
 
+        TArray<uint32, 3>               SharedQueueFamilies;
+        uint32                          NumSharedQueueFamilies = 0;
+        bool                            bHasAsyncComputeQueue = false;
+        bool                            bHasAsyncTransferQueue = false;
+
         VkDescriptorPool                DescriptorPool;
         VkDescriptorSetLayout           DescriptorLayout;
         VkPipelineLayout                PipelineLayout;
 
-        VkCommandPool                   TransientPool;
-        // One-shot transition buffers, stamped with the frame they were submitted in;
-        // TickFrame frees them once the frame ring guarantees retirement.
+        TArray<VkCommandPool, 3>        TransientPools;
         struct FPendingTransition
         {
             VkCommandBuffer Buffer;
+            VkCommandPool   Pool;
             uint64          Frame;
         };
         TVector<FPendingTransition>     PendingTransient;
-        // Read under HeapMutex by the bindless free path as well as under SubmitMutex here.
+        // Read under HeapMutex by the bindless free path as well as under TransientMutex here.
         TAtomic<uint64>                 FrameNumber{0};
 
-        // Bindless views/samplers retire on the frame ring rather than immediately. The heap's
-        // descriptor set stays bound on every command list, so a slot freed this frame is still
-        // named by work already submitted; destroying the object now leaves that work pointing at
-        // a dead handle. HeapFreeTexture sidesteps this by repointing the slot at the fallback
-        // view, but storage images and samplers have no fallback to repoint to.
         struct FPendingHeapDestroy
         {
             VkImageView View;
@@ -589,7 +574,9 @@ namespace Lumina::RHI
         VkMemoryRequirements            MemoryRequirements;
 
         FMutex                          MemoryMutex;
-        FMutex                          SubmitMutex;
+        TArray<FMutex, 3>               QueueMutexes;
+        TArray<uint32, 3>               QueueLockIndex;
+        FMutex                          TransientMutex;
         FMutex                          CommandPoolMutex;
         FMutex                          InitMutex;
         FMutex                          HeapMutex;
@@ -600,10 +587,46 @@ namespace Lumina::RHI
 
     static FDeviceImpl* GDevice;
 
+    // The mutex owning the VkQueue that Type resolves to. Aliased types share the owner's lock.
+    static FMutex& QueueLockFor(EQueueType Type)
+    {
+        return GDevice->QueueMutexes[GDevice->QueueLockIndex[(uint32)Type]];
+    }
+
+    class FAllQueuesLock
+    {
+    public:
+        FAllQueuesLock()
+        {
+            for (uint32 i = 0; i < 3; ++i)
+            {
+                // Only the owner of a lock index takes it; aliased types would double-lock.
+                if (GDevice->QueueLockIndex[i] == i)
+                {
+                    GDevice->QueueMutexes[i].lock();
+                    Held[Count++] = i;
+                }
+            }
+        }
+
+        ~FAllQueuesLock()
+        {
+            while (Count > 0)
+            {
+                GDevice->QueueMutexes[Held[--Count]].unlock();
+            }
+        }
+
+        FAllQueuesLock(const FAllQueuesLock&) = delete;
+        FAllQueuesLock& operator=(const FAllQueuesLock&) = delete;
+
+    private:
+        uint32 Held[3] = {};
+        uint32 Count = 0;
+    };
+
     static void FlushPendingHeapDestroysLocked(uint64 Frame, bool bForce);
 
-    // Native-access extension/feature injection requests, populated before CreateDevice runs
-    // (see Renderer/RHINative.h). Consumed once during device/instance creation.
     static TVector<Native::FDeviceCreationRequest> GPendingDeviceRequests;
 
     // Resolve a GPUPtr (possibly interior) to its owning allocation. Caller holds MemoryMutex.
@@ -743,9 +766,6 @@ namespace Lumina::RHI
         return "Unknown";
     }
 
-    // GPU allocation failure is not a recoverable application state, so every allocation path funnels
-    // here rather than growing a fallback. Dumps the heap breakdown first: the interesting case is a
-    // full CPU-visible aperture next to an empty device heap, which "out of VRAM" alone would hide.
     [[noreturn]] static void PanicOutOfGPUMemory(const char* What, VkResult Result)
     {
         FGPUMemoryStats Stats;
@@ -833,9 +853,6 @@ namespace Lumina::RHI
         return Info;
     }
 
-    // Native escape hatch for backend-coupled tooling. Vulkan handles are handed out as opaque
-    // void* so no Vk types leak past this .cpp; callers reinterpret per the active backend. See
-    // Renderer/RHINative.h.
     namespace Native
     {
         FNativeDeviceHandles GetNativeDeviceHandles()
@@ -873,13 +890,17 @@ namespace Lumina::RHI
             GPendingDeviceRequests.push_back(Request);
         }
 
-        // Same mutex Submit()/PresentSwapchain()/TickFrame() take, so a tool's external submit is
-        // serialized with the engine's. Tolerate a null device (no-op) for unbalanced edge cases.
         void AcquireSubmitLock()
         {
             if (GDevice)
             {
-                GDevice->SubmitMutex.lock();
+                for (uint32 i = 0; i < 3; ++i)
+                {
+                    if (GDevice->QueueLockIndex[i] == i)
+                    {
+                        GDevice->QueueMutexes[i].lock();
+                    }
+                }
             }
         }
 
@@ -887,7 +908,13 @@ namespace Lumina::RHI
         {
             if (GDevice)
             {
-                GDevice->SubmitMutex.unlock();
+                for (uint32 i = 3; i-- > 0; )
+                {
+                    if (GDevice->QueueLockIndex[i] == i)
+                    {
+                        GDevice->QueueMutexes[i].unlock();
+                    }
+                }
             }
         }
     }
@@ -896,10 +923,6 @@ namespace Lumina::RHI
     {
         LOG_ERROR("[DeviceLost] Vulkan device lost.");
 
-        // Breadcrumbs first, before anything that calls back into the driver. This is a plain read
-        // of mapped host memory and cannot fail, whereas the vendor paths below query a device that
-        // has just died and may hang or bail. Losing the pass trail to that would be the worst
-        // possible trade, since it is the only part that says *what* was running.
         if (GDevice != nullptr)
         {
             const FString Innermost = GDevice->Breadcrumbs.ReportOutstanding();
@@ -909,18 +932,11 @@ namespace Lumina::RHI
             }
         }
 
-        // Then the vendor detail: fault addresses, the GPU dump files, and the attributes and
-        // attachments the report needs. All of it has to be registered before the report is built.
         if (GDevice != nullptr && GDevice->CrashTracker)
         {
             GDevice->CrashTracker->OnDeviceLost();
         }
 
-        // Then reports. This shows the send dialog and uploads before the process goes away -- a GPU
-        // crash is not a CPU exception, so nothing else in the process would have reported it.
-        // ReportFatal owns the user-facing dialog too (BugSplat's, or the fatal-error modal when
-        // there is no reporter), so there is no separate Dialogs::ShowInternal here to stack a
-        // second modal on top of it.
         CrashHandler::ReportFatal("Vulkan device lost", CrashHandler::EFatalKind::Gpu);
 
         std::abort();
@@ -973,8 +989,6 @@ namespace Lumina::RHI
                 {
                     LOG_WARN("Vulkan validation requested but VK_LAYER_KHRONOS_validation is not installed.");
 
-                    // The layer is what implements GPU-AV, so without it the request is not merely
-                    // degraded, it does nothing at all. Never let that pass as a quiet success.
                     if (DeviceDesc.bGpuValidation)
                     {
                         LOG_ERROR("GPU-assisted validation was requested but the validation layer is missing, "
@@ -993,9 +1007,6 @@ namespace Lumina::RHI
                 InstanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
             }
 
-            // Merge instance extensions requested by native-access clients (e.g. GPU profiler plugins).
-            // Validate each against what the loader actually advertises and skip unsupported/duplicate
-            // ones, so a bad request can never make vkCreateInstance fail. See RHINative.h.
             if (!GPendingDeviceRequests.empty())
             {
                 uint32 AvailCount = 0;
@@ -1064,16 +1075,8 @@ namespace Lumina::RHI
                 .pfnUserCallback = VkDebugCallback,
             };
 
-            // VK_EXT_layer_settings, not VkValidationFeaturesEXT. The latter has been deprecated since
-            // Vulkan header 272 and could only flip whole features on or off; this reaches every
-            // individual knob the layer exposes, which is what makes GPU-AV usable at all here.
-            //
-            // Keys and types are taken from VkLayer_khronos_validation.json in the SDK -- an unknown
-            // key is silently ignored, so they are not guesses.
             static constexpr const char* kValidationLayer = "VK_LAYER_KHRONOS_validation";
 
-            // Static storage on purpose: pValues keeps a pointer to these until vkCreateInstance reads
-            // them, which is long after this scope would have gone.
             static constexpr VkBool32 kEnable  = VK_TRUE;
             static constexpr VkBool32 kDisable = VK_FALSE;
 
@@ -1108,9 +1111,6 @@ namespace Lumina::RHI
                 };
             };
 
-            // The manifest types some settings INT rather than UINT32, and the layer reads pValues
-            // according to the type it is told -- so the wrong one here is a silently misread value,
-            // not a rejected setting.
             auto AddIntSetting = [&](const char* Name, const int32& Value)
             {
                 LUMINA_ASSERT(LayerSettingCount < std::size(LayerSettings));
@@ -1125,11 +1125,6 @@ namespace Lumina::RHI
                 };
             };
 
-            // Individual checks can be forced either way with --validate=a,b,c and --novalidate=a,b,c.
-            // GPU-AV rewrites shader SPIR-V, so when a driver falls over under it the module it
-            // compiled is not the one we produced, and the only way to say which check did it is to
-            // switch them one at a time. A rebuild per attempt would make that bisection cost an
-            // afternoon.
             auto IsListed = [](const char* Argument, const char* Check)
             {
                 if (GCommandLine == nullptr)
@@ -1143,8 +1138,6 @@ namespace Lumina::RHI
                     return false;
                 }
 
-                // Substring match against a comma-joined list, with the separators kept on both sides
-                // so "bda" cannot match a longer name that merely contains it.
                 const FString Haystack = FString(",") + List.value().c_str() + ",";
                 const FString Needle   = FString(",") + Check + ",";
                 return Haystack.find(Needle) != FString::npos;
@@ -1163,73 +1156,25 @@ namespace Lumina::RHI
                 return bDefault;
             };
 
-            // Sync validation belongs to the plain layer, not to GPU-AV: it is a CPU-side hazard
-            // tracker that instruments nothing, and it is the half most likely to name a missing
-            // barrier. Gating it behind GPU validation would mean paying for shader instrumentation
-            // to get it.
             AddSetting("validate_sync", ResolveCheck("sync", true) ? kEnable : kDisable);
 
-            // A bare hazard report names the two accesses and nothing else, which for a buffer the
-            // engine sub-allocates out of a shared VkBuffer is not enough to find the prior write.
-            // This adds the prior command's index and debug region, which is what turns "some earlier
-            // transfer wrote this" into a call site.
-            //
-            // The companion `_pretty_print` key was REMOVED by the layer (it now always emits the fixed,
-            // parse-friendly layout) and re-adding it only earns two warnings at vkCreateInstance.
             AddSetting("syncval_message_extra_properties", ResolveCheck("syncdetail", true) ? kEnable : kDisable);
 
-            // Off unless asked for: see --gpuvalidation. Pass --nogpuvalidation to rule the
-            // instrumentation out of a fault entirely, without rebuilding.
             if (DeviceDesc.bGpuValidation)
             {
                 AddSetting("gpuav_enable", kEnable);
 
-                // Every individually switchable GPU-AV check, the token --validate/--novalidate take
-                // for it, and whether it is on by default. Setting names are the keys from
-                // VkLayer_khronos_validation.json; an unknown key is silently ignored by the layer,
-                // so a typo here would read as a check that simply never fires.
                 struct FCheck { const char* Setting; const char* Token; bool bDefault; };
                 static constexpr FCheck kChecks[] =
                 {
-                    // The SPIR-V rewrite itself. Off keeps GPU-AV's CPU-side half and stops changing
-                    // what the driver compiles -- the first thing to try when the driver is the one
-                    // crashing, and the switch that turns off most of the others by implication.
                     { "gpuav_shader_instrumentation",          "instrument",       true  },
 
-                    // OFF, and the other half of the same story as post_process below: on this heap it
-                    // reports descriptors that provably are written.
-                    //
-                    // Measured 2026-08-04. The heap seeds every sampled slot with the fallback view at
-                    // init and writes the real view on registration, so binding 1 stands at 8192 of 8192
-                    // descriptors written -- the layer processed every one of those updates itself and
-                    // raised nothing. It then reported indices 11 (Scene.SkyCube), 29 (Scene.VisBuffer)
-                    // and 198 (the ImGui atlas) on that binding as uninitialized, each naming a live
-                    // view, and slot 198's descriptor had been written at submit 2 and was still being
-                    // reported at submit 21. There is no unwritten descriptor on the binding for the
-                    // report to be describing.
-                    //
-                    // Left switchable rather than deleted: it is the right check for this engine on a
-                    // layer version that gets it right, and --validate=descriptor brings it back.
                     { "gpuav_descriptor_checks",               "descriptor",       false },
 
-                    // Range-checks every buffer-device-address dereference -- the other half of the
-                    // same story, and the one that matters most here because every pass reaches its
-                    // arguments through a BDA pointer and nothing enables robustBufferAccess.
                     { "gpuav_buffer_address_oob",              "bda",              true  },
 
-                    // OFF, and it is the descriptor_checks pair that decides it. Bisected against
-                    // NVIDIA 610.88 on 2026-08-03: either of these two alone is fine, both together
-                    // take the ICD down before the first frame executes. Since only one can be on,
-                    // this is the one to drop -- descriptor_checks is what actually catches a read of
-                    // an unwritten slot, whereas post-process only attributes accesses after the
-                    // fact, and its attribution here was demonstrably wrong: it reported a draw
-                    // reading gRWTextures2DArray, a variable that appears in no graphics shader in
-                    // the build (verified against the compiled SPIR-V).
                     { "gpuav_post_process_descriptor_indexing","postprocess",      false },
 
-                    // Buffer-content checks. These inject extra dispatches ahead of the real work to
-                    // read indirect args and index data, which is why a GPU-driven renderer feels
-                    // them more than a CPU-driven one.
                     { "gpuav_buffers_validation",              "buffers",          true  },
                     { "gpuav_indirect_draws_buffers",          "indirectdraw",     true  },
                     { "gpuav_indirect_dispatches_buffers",     "indirectdispatch", true  },
@@ -1238,9 +1183,6 @@ namespace Lumina::RHI
 
                     { "gpuav_image_layout",                    "imagelayout",      true  },
 
-                    // Takes a descriptor set slot for the instrumentation's own bindings and hides it
-                    // by reporting one fewer in maxBoundDescriptorSets. Without it GPU-AV would
-                    // either collide with the bindless sets or turn itself off.
                     { "gpuav_reserve_binding_slot",            "slot",             true  },
                 };
 
@@ -1249,30 +1191,15 @@ namespace Lumina::RHI
                     AddSetting(Check.Setting, ResolveCheck(Check.Token, Check.bDefault) ? kEnable : kDisable);
                 }
 
-                // GPU-AV tracks live buffer device addresses in a fixed-size table so the instrumented
-                // shader can resolve an address to an allocation. The default is 10000; past that it
-                // cannot resolve, and an unresolvable address is not reported -- the check goes quiet
-                // rather than loud, which is the worst failure mode a checker has. The engine creates
-                // one VkBuffer per Malloc and a busy editor session churns a lot of them, so the
-                // default is not obviously enough.
-                // 65536 rather than the manifest maximum: the table is GPU-visible memory on this device,
-                // not free layer-side bookkeeping. Raise it if a check ever goes quiet because it filled.
                 static constexpr int32 kMaxTrackedAddresses = 65536;
                 AddIntSetting("gpuav_max_buffer_device_addresses", kMaxTrackedAddresses);
 
-                // Runs spirv-val over what GPU-AV produced, before the driver ever sees it. This is
-                // the question a driver crash under instrumentation actually turns on -- whether the
-                // module handed down was valid -- and it is not answerable from our side any other
-                // way, because the module is the layer's, not ours.
                 AddSetting("gpuav_debug_validate_instrumented_shaders",
                     ResolveCheck("validateinstrumented", false) ? kEnable : kDisable);
 
                 AddSetting("gpuav_debug_print_instrumentation_info",
                     ResolveCheck("printinstrumentation", false) ? kEnable : kDisable);
 
-                // Instrument only the first N shaders. Bisects a driver that dies on one particular
-                // module: raise it until the crash returns and the last one named is the culprit.
-                // Zero means the layer's own default, which is "all of them".
                 static uint32 MaxInstrumentations = 0;
                 if (GCommandLine != nullptr)
                 {
@@ -1289,8 +1216,6 @@ namespace Lumina::RHI
             }
             else
             {
-                // Stated rather than left to the layer's own default, so the off state is a decision
-                // the log can be held to and not whatever the installed SDK happens to ship with.
                 AddSetting("gpuav_enable", kDisable);
             }
 
@@ -1446,17 +1371,12 @@ namespace Lumina::RHI
             }
 
             // Mesh/task shader pipeline. Feature support is confirmed (and the feature enabled) below.
-            bMeshShader = EnableIfPresent(VK_EXT_MESH_SHADER_EXTENSION_NAME);
+            bMeshShader = EnableIfPresent(VK_EXT_MESH_SHADER_EXTENSION_NAME);   // required; validated below
 
 #if USING(WITH_EDITOR)
-            // Per-pipeline register count / occupancy, surfaced in the material editor's Shader Stats.
-            // Editor-only on purpose: every pipeline has to be created with CAPTURE_STATISTICS, which
-            // makes the driver keep compile metadata alive. A packaged game never reads it.
             bPipelineStats = EnableIfPresent(VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME);
 #endif
 
-            // Device extensions requested by native-access clients (see Renderer/RHINative.h). Only
-            // enabled if the driver advertises them and they aren't already in the list.
             for (const Native::FDeviceCreationRequest& Request : GPendingDeviceRequests)
             {
                 for (const char* Name : Request.DeviceExtensions)
@@ -1497,10 +1417,6 @@ namespace Lumina::RHI
             vkGetPhysicalDeviceProperties2(GDevice->PhysicsDevice, &MeshPropQuery);
         }
 
-        // The geometry path hard-codes its workgroup size and output array bounds, and nothing checked
-        // them against the device. Over-limit declarations do not fail loudly: depending on the driver
-        // they either reject pipeline creation or produce no geometry at all, which is indistinguishable
-        // from the mesh path simply not working on that GPU.
         bool bMeshLimitsOK = true;
         if (bMeshShader && SupportedMesh.meshShader)
         {
@@ -1522,9 +1438,6 @@ namespace Lumina::RHI
                 }
             }
 
-            // Not hard-checked: the per-vertex/per-primitive component counts come from FBaseVertexOutput
-            // and FVisPrimitive, which only the shader compiler knows. Logged so an unexplained mesh-path
-            // failure can be compared against a GPU where it works without a debugger.
             LOG_DISPLAY("Mesh shader limits: workgroup {} (max invocations {}), out verts {}, out prims {}, "
                         "out components {}, out memory {} B.",
                         MeshProps.maxMeshWorkGroupSize[0], MeshProps.maxMeshWorkGroupInvocations,
@@ -1532,8 +1445,67 @@ namespace Lumina::RHI
                         MeshProps.maxMeshOutputComponents, MeshProps.maxMeshOutputMemorySize);
         }
 
-        GDevice->bMeshShaderSupported = bMeshShader && SupportedMesh.meshShader && bMeshLimitsOK;
-        LOG_DISPLAY("Mesh/task shaders: {}", GDevice->bMeshShaderSupported ? "supported" : "unavailable");
+        if (!bMeshShader || !SupportedMesh.meshShader || !bMeshLimitsOK)
+        {
+            ShowVulkanInitFailure("Vulkan Device Unsuitable",
+                FString("This GPU does not support VK_EXT_mesh_shader, which the renderer requires.\n\n")
+                + "Extension present: " + (bMeshShader ? "yes" : "no") + "\n"
+                + "meshShader feature: " + (SupportedMesh.meshShader ? "yes" : "no") + "\n"
+                + "Limits sufficient: " + (bMeshLimitsOK ? "yes" : "no") + "\n\n"
+                + "Mesh shaders need Turing (GTX 16-series / RTX 20-series) or newer on NVIDIA, "
+                + "RDNA2 (RX 6000) or newer on AMD, or Arc on Intel.");
+            std::abort();
+        }
+
+        GDevice->bMeshShaderSupported = true;
+
+        bool bTaskLimitsOK = true;
+        {
+            const struct { const char* Name; uint32 Required; uint32 Actual; } Limits[] =
+            {
+                { "maxTaskWorkGroupSize[0]",           kTaskWorkGroupSize,   MeshProps.maxTaskWorkGroupSize[0]     },
+                { "maxTaskWorkGroupInvocations",       kTaskWorkGroupSize,   MeshProps.maxTaskWorkGroupInvocations },
+                { "maxTaskPayloadSize",                kMaxTaskPayloadBytes, MeshProps.maxTaskPayloadSize          },
+                { "maxTaskPayloadAndSharedMemorySize", kMaxTaskPayloadBytes, MeshProps.maxTaskPayloadAndSharedMemorySize },
+            };
+
+            for (const auto& Limit : Limits)
+            {
+                if (Limit.Actual < Limit.Required)
+                {
+                    LOG_ERROR("Task shaders disabled: device reports {} = {}, the cull path needs at least {}.",
+                              Limit.Name, Limit.Actual, Limit.Required);
+                    bTaskLimitsOK = false;
+                }
+            }
+
+            if (MeshProps.maxPreferredTaskWorkGroupInvocations != kTaskWorkGroupSize)
+            {
+                LOG_WARN("Device prefers task workgroups of {} invocations; the block layout is fixed at {}.",
+                         MeshProps.maxPreferredTaskWorkGroupInvocations, kTaskWorkGroupSize);
+            }
+
+            GDevice->MaxTaskWorkGroupTotalCount = MeshProps.maxTaskWorkGroupTotalCount;
+
+            LOG_DISPLAY("Task shader limits: workgroup {} (max invocations {}), total groups {}, "
+                        "payload {} B, payload+shared {} B.",
+                        MeshProps.maxTaskWorkGroupSize[0], MeshProps.maxTaskWorkGroupInvocations,
+                        MeshProps.maxTaskWorkGroupTotalCount,
+                        MeshProps.maxTaskPayloadSize, MeshProps.maxTaskPayloadAndSharedMemorySize);
+        }
+
+        if (!SupportedMesh.taskShader || !bTaskLimitsOK)
+        {
+            ShowVulkanInitFailure("Vulkan Device Unsuitable",
+                FString("This GPU supports mesh shaders but not the task (amplification) stage, which the "
+                        "renderer also requires.\n\n")
+                + "taskShader feature: " + (SupportedMesh.taskShader ? "yes" : "no") + "\n"
+                + "Limits sufficient: " + (bTaskLimitsOK ? "yes" : "no"));
+            std::abort();
+        }
+
+        GDevice->bTaskShaderSupported = true;
+        LOG_DISPLAY("Mesh + task shaders: required and present.");
         
         VkPhysicalDeviceFeatures Features10             = {};
         Features10.fragmentStoresAndAtomics             = VK_TRUE;
@@ -1556,21 +1528,18 @@ namespace Lumina::RHI
         Features10.geometryShader                       = Supported2.features.geometryShader;
 
         VkPhysicalDeviceVulkan11Features Features11{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
-        Features11.shaderDrawParameters = VK_TRUE;
-        Features11.multiview            = VK_TRUE;
+        Features11.shaderDrawParameters   = VK_TRUE;
+        Features11.multiview              = VK_TRUE;
+        // Lets a storage-buffer struct declare 16-bit members directly, so FVertex can mirror
+        // Lumina::FMeshletVertex field for field. Gated because today's Slang output does not require
+        // it -- it loads the whole struct and extracts -- so this only matters if a shader ever takes a
+        // pointer to one 16-bit member, and a device without it should still boot.
+        Features11.storageBuffer16BitAccess = Supported11.storageBuffer16BitAccess;
 
         VkPhysicalDeviceVulkan12Features Features12{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
         Features12.timelineSemaphore                            = VK_TRUE;
         Features12.bufferDeviceAddress                          = VK_TRUE;
 
-        // GPUPtr is a raw VkDeviceAddress, so essentially every buffer in this RHI is reached by
-        // address and a capture is unreplayable without the driver reproducing those addresses.
-        // RenderDoc's layer normally patches this feature in at vkCreateDevice itself, but that has
-        // broken across versions and with layer-ordering conflicts, so ask for it explicitly.
-        //
-        // Gated on RenderDoc actually being injected: enabling it unconditionally makes the driver
-        // reserve and track address ranges for the whole run, which is pure cost outside a capture.
-        // A module lookup, never a load -- see FRenderDoc::IsAttached.
         if (Supported12.bufferDeviceAddressCaptureReplay && FRenderDoc::IsAttached())
         {
             Features12.bufferDeviceAddressCaptureReplay = VK_TRUE;
@@ -1642,8 +1611,6 @@ namespace Lumina::RHI
             Chain(MeshShaderFeatures);
         }
 
-        // Editor diagnostics: lets vkGetPipelineExecutableStatisticsKHR report register count and
-        // occupancy per pipeline. bPipelineStats is only ever true in an editor build (see above).
         VkPhysicalDevicePipelineExecutablePropertiesFeaturesKHR PipelineStatsFeatures
             { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_EXECUTABLE_PROPERTIES_FEATURES_KHR };
         if (bPipelineStats)
@@ -1664,8 +1631,6 @@ namespace Lumina::RHI
             }
         }
 
-        // Splice native-access feature chains (caller-owned, valid for this scope) onto the head.
-        // Each request's chain is walked to its tail so the engine's chain stays linked behind it.
         for (const Native::FDeviceCreationRequest& Request : GPendingDeviceRequests)
         {
             if (Request.DeviceCreatePNext == nullptr)
@@ -1779,9 +1744,6 @@ namespace Lumina::RHI
         {
             GDevice->Breadcrumbs.Initialize(GDevice->Device, GDevice->PhysicsDevice);
 
-            // Registered for every crash, not just device loss. A CPU crash on the render thread is
-            // exactly when knowing which pass the GPU was in matters, and the crash handler cannot
-            // reach into the RHI on its own.
             CrashHandler::AddDiagnosticProvider([]
             {
                 if (GDevice != nullptr)
@@ -1830,6 +1792,31 @@ namespace Lumina::RHI
             GDevice->QueueFamilies[(uint32)EQueueType::Graphics] = GraphicsFamily;
             GDevice->QueueFamilies[(uint32)EQueueType::Compute]  = ComputeQueueFamily;
             GDevice->QueueFamilies[(uint32)EQueueType::Transfer] = TransferQueueFamily;
+
+            GDevice->QueueLockIndex[(uint32)EQueueType::Graphics] = (uint32)EQueueType::Graphics;
+            GDevice->QueueLockIndex[(uint32)EQueueType::Compute]  = (ComputeFamily != UINT32_MAX)
+                ? (uint32)EQueueType::Compute  : (uint32)EQueueType::Graphics;
+            GDevice->QueueLockIndex[(uint32)EQueueType::Transfer] = (TransferFamily != UINT32_MAX)
+                ? (uint32)EQueueType::Transfer : (uint32)EQueueType::Graphics;
+
+            GDevice->bHasAsyncComputeQueue  = (ComputeFamily != UINT32_MAX);
+            GDevice->bHasAsyncTransferQueue = (TransferFamily != UINT32_MAX);
+
+            GDevice->NumSharedQueueFamilies = 0;
+            GDevice->SharedQueueFamilies[GDevice->NumSharedQueueFamilies++] = GraphicsFamily;
+            if (ComputeFamily != UINT32_MAX)
+            {
+                GDevice->SharedQueueFamilies[GDevice->NumSharedQueueFamilies++] = ComputeFamily;
+            }
+            if (TransferFamily != UINT32_MAX)
+            {
+                GDevice->SharedQueueFamilies[GDevice->NumSharedQueueFamilies++] = TransferFamily;
+            }
+
+            LOG_DISPLAY("Queue families: graphics {}, compute {}, transfer {}. Async compute {}, async transfer {}.",
+                GraphicsFamily, ComputeQueueFamily, TransferQueueFamily,
+                GDevice->bHasAsyncComputeQueue  ? "available" : "unavailable (aliased to graphics)",
+                GDevice->bHasAsyncTransferQueue ? "available" : "unavailable (aliased to graphics)");
         }
 
         {
@@ -1857,10 +1844,6 @@ namespace Lumina::RHI
             LOG_TRACE("Vulkan RHI - {} - API: {}.{}.{} - Validation: {}", GDevice->Properties.deviceName,
                 VK_API_VERSION_MAJOR(APIVer), VK_API_VERSION_MINOR(APIVer), VK_API_VERSION_PATCH(APIVer), DeviceDesc.bValidation);
             
-
-            // Said out loud because it changes what a crash means. Under GPU-AV the driver is
-            // compiling instrumented shaders rather than ours, so a fault is as likely to belong to
-            // the instrumentation as to the engine, and every log has to state which run it was.
             if (DeviceDesc.bGpuValidation)
             {
                 LOG_WARN("Vulkan RHI - GPU-assisted validation is ON. Shaders are instrumented, frame rate "
@@ -1874,9 +1857,6 @@ namespace Lumina::RHI
             }
         }
 
-        // Every SetDebugName call is a silent no-op without this entry point, and an unnamed resource
-        // is the difference between a crash report naming the buffer and reporting a bare address.
-        // Worth saying out loud rather than discovering it while reading an unhelpful dump.
         if (DeviceDesc.bValidation || DeviceDesc.bDebugUtils)
         {
             if (vkSetDebugUtilsObjectNameEXT != nullptr)
@@ -1992,35 +1972,70 @@ namespace Lumina::RHI
         
         VK_CHECK(vkCreatePipelineLayout(*GDevice, &CreateInfo, nullptr, &GDevice->PipelineLayout));
 
-        VkCommandPoolCreateInfo TransientPoolInfo
+        for (uint32 QueueIndex = 0; QueueIndex < 3; ++QueueIndex)
         {
-            .sType              = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-            .pNext              = nullptr,
-            .flags              = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT | VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
-            .queueFamilyIndex   = GDevice->QueueFamilies[(uint32)EQueueType::Graphics]
-        };
-        VK_CHECK(vkCreateCommandPool(*GDevice, &TransientPoolInfo, nullptr, &GDevice->TransientPool));
+            VkCommandPoolCreateInfo TransientPoolInfo
+            {
+                .sType              = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+                .pNext              = nullptr,
+                .flags              = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT | VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+                .queueFamilyIndex   = GDevice->QueueFamilies[QueueIndex]
+            };
+            VK_CHECK(vkCreateCommandPool(*GDevice, &TransientPoolInfo, nullptr, &GDevice->TransientPools[QueueIndex]));
+        }
 
 #if defined(TRACY_ENABLE)
-        // Tracy GPU context: calibrates against the graphics queue with a one-shot command buffer,
-        // then owns its own timestamp query pool. Non-calibrated (DEVICE time domain) keeps it
-        // extension-free; timestamps still resolve via the device's timestampPeriod.
         {
-            VkCommandBufferAllocateInfo TracyAllocInfo
+            uint32 FamilyCount = 0;
+            vkGetPhysicalDeviceQueueFamilyProperties(GDevice->PhysicsDevice, &FamilyCount, nullptr);
+            TVector<VkQueueFamilyProperties> Families(FamilyCount);
+            vkGetPhysicalDeviceQueueFamilyProperties(GDevice->PhysicsDevice, &FamilyCount, Families.data());
+
+            auto CreateQueueContext = [&](EQueueType Queue, const char* Name, uint32 NameLength)
             {
-                .sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-                .commandPool        = GDevice->TransientPool,
-                .level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-                .commandBufferCount = 1
+                const uint32 QueueIndex  = (uint32)Queue;
+                const uint32 QueueFamily = GDevice->QueueFamilies[QueueIndex];
+
+                if (QueueFamily >= FamilyCount || Families[QueueFamily].timestampValidBits == 0)
+                {
+                    LOG_WARN("Queue '{}' reports no valid timestamp bits; GPU zones disabled for it.", Name);
+                    return;
+                }
+
+                VkCommandBufferAllocateInfo TracyAllocInfo
+                {
+                    .sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+                    .commandPool        = GDevice->TransientPools[QueueIndex],
+                    .level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+                    .commandBufferCount = 1
+                };
+                VkCommandBuffer TracyCmd = VK_NULL_HANDLE;
+                VK_CHECK(vkAllocateCommandBuffers(*GDevice, &TracyAllocInfo, &TracyCmd));
+
+                tracy::VkCtx* Context = TracyVkContext(GDevice->PhysicsDevice, GDevice->Device,
+                    GDevice->Queues[QueueIndex], TracyCmd);
+                TracyVkContextName(Context, Name, NameLength);
+
+                GTracyGPUContexts[QueueIndex]   = Context;
+                GTracyOwnedContexts[QueueIndex] = Context;
+
+                // TEMPORARY DIAGNOSTIC (leaked query pool at vkDestroyDevice).
+                LOG_DISPLAY("Tracy ctx '{}' queue {} -> ctx {:#x}, query pool {:#x}",
+                    Name, QueueIndex, (uint64)(uintptr_t)Context, (uint64)Context->GetQueryPool());
+
+                vkFreeCommandBuffers(*GDevice, GDevice->TransientPools[QueueIndex], 1, &TracyCmd);
             };
-            VkCommandBuffer TracyCmd = VK_NULL_HANDLE;
-            VK_CHECK(vkAllocateCommandBuffers(*GDevice, &TracyAllocInfo, &TracyCmd));
 
-            GTracyGPUContext = TracyVkContext(GDevice->PhysicsDevice, GDevice->Device,
-                GDevice->Queues[(uint32)EQueueType::Graphics], TracyCmd);
-            TracyVkContextName(GTracyGPUContext, "Graphics", 8);
+            CreateQueueContext(EQueueType::Graphics, "Graphics", 8);
 
-            vkFreeCommandBuffers(*GDevice, GDevice->TransientPool, 1, &TracyCmd);
+            if (GDevice->bHasAsyncComputeQueue)
+            {
+                CreateQueueContext(EQueueType::Compute, "Async Compute", 13);
+            }
+            else
+            {
+                GTracyGPUContexts[(uint32)EQueueType::Compute] = GTracyGPUContexts[(uint32)EQueueType::Graphics];
+            }
         }
 #endif
 
@@ -2124,10 +2139,14 @@ namespace Lumina::RHI
         vkDeviceWaitIdle(*GDevice);
 
 #if defined(TRACY_ENABLE)
-        if (GTracyGPUContext)
+        for (uint32 QueueIndex = 0; QueueIndex < 3; ++QueueIndex)
         {
-            TracyVkDestroy(GTracyGPUContext);
-            GTracyGPUContext = nullptr;
+            if (GTracyOwnedContexts[QueueIndex] != nullptr)
+            {
+                TracyVkDestroy(GTracyOwnedContexts[QueueIndex]);
+                GTracyOwnedContexts[QueueIndex] = nullptr;
+            }
+            GTracyGPUContexts[QueueIndex] = nullptr;
         }
 #endif
 
@@ -2135,7 +2154,7 @@ namespace Lumina::RHI
         {
             for (const FDeviceImpl::FPendingTransition& Pending : GDevice->PendingTransient)
             {
-                vkFreeCommandBuffers(*GDevice, GDevice->TransientPool, 1, &Pending.Buffer);
+                vkFreeCommandBuffers(*GDevice, Pending.Pool, 1, &Pending.Buffer);
             }
             GDevice->PendingTransient.clear();
         }
@@ -2157,11 +2176,12 @@ namespace Lumina::RHI
         }
         GDevice->MemoryBlocks.clear();
 
-        // Only on a clean shutdown. The device-lost path deliberately never frees this: the mapping
-        // is what the crash report is read out of.
         GDevice->Breadcrumbs.Shutdown(GDevice->Device);
 
-        vkDestroyCommandPool(*GDevice, GDevice->TransientPool, nullptr);
+        for (VkCommandPool TransientPool : GDevice->TransientPools)
+        {
+            vkDestroyCommandPool(*GDevice, TransientPool, nullptr);
+        }
         vkDestroyPipelineLayout(*GDevice, GDevice->PipelineLayout, nullptr);
         vkDestroyDescriptorPool(*GDevice, GDevice->DescriptorPool, nullptr);
         vkDestroyDescriptorSetLayout(*GDevice, GDevice->DescriptorLayout, nullptr);
@@ -2212,7 +2232,7 @@ namespace Lumina::RHI
     {
         uint64 Frame;
         {
-            FScopeLock Lock(GDevice->SubmitMutex);
+            FScopeLock Lock(GDevice->TransientMutex);
             Frame = ++GDevice->FrameNumber;
 
             for (size_t i = 0; i < GDevice->PendingTransient.size(); )
@@ -2220,7 +2240,7 @@ namespace Lumina::RHI
                 const FDeviceImpl::FPendingTransition& Pending = GDevice->PendingTransient[i];
                 if (Frame - Pending.Frame > kFramesInFlight)
                 {
-                    vkFreeCommandBuffers(*GDevice, GDevice->TransientPool, 1, &Pending.Buffer);
+                    vkFreeCommandBuffers(*GDevice, Pending.Pool, 1, &Pending.Buffer);
                     GDevice->PendingTransient[i] = GDevice->PendingTransient.back();
                     GDevice->PendingTransient.pop_back();
                 }
@@ -2237,7 +2257,7 @@ namespace Lumina::RHI
 
     void WaitDeviceIdle()
     {
-        FScopeLock Lock(GDevice->SubmitMutex);
+        FAllQueuesLock QueueLock;
         vkDeviceWaitIdle(*GDevice);
 
         {
@@ -2245,14 +2265,22 @@ namespace Lumina::RHI
             FlushPendingHeapDestroysLocked(0, /*bForce*/ true);
         }
 
+        FScopeLock TransientLock(GDevice->TransientMutex);
         if (!GDevice->PendingTransient.empty())
         {
             for (const FDeviceImpl::FPendingTransition& Pending : GDevice->PendingTransient)
             {
-                vkFreeCommandBuffers(*GDevice, GDevice->TransientPool, 1, &Pending.Buffer);
+                vkFreeCommandBuffers(*GDevice, Pending.Pool, 1, &Pending.Buffer);
             }
             GDevice->PendingTransient.clear();
         }
+    }
+
+    uint64 GetSemaphoreValue(FSemaphoreH Semaphore)
+    {
+        uint64 Value = 0;
+        VK_CHECK(vkGetSemaphoreCounterValue(*GDevice, GDevice->Semaphores[Semaphore].Semaphore, &Value));
+        return Value;
     }
 
     void WaitSemaphore(FSemaphoreH Semaphore, uint64 Value)
@@ -2274,9 +2302,6 @@ namespace Lumina::RHI
 
     GPUPtr Malloc(uint64 Size, uint64 Alignment, EMemoryType Type)
     {
-        // A zero-size VkBuffer is invalid, and callers legitimately reach this with an empty array
-        // (a mesh whose meshlet bounds did not generate, for one). Hand back a null GPUPtr instead
-        // of letting the driver see size 0.
         if (Size == 0)
         {
             return 0;
@@ -2288,9 +2313,6 @@ namespace Lumina::RHI
         switch (Type)
         {
         case EMemoryType::CPUWrite:
-            // WITHIN_BUDGET is what makes VMA's memory-type fallback fire on a full CPU-visible VRAM
-            // aperture. Without it the dedicated path ignores budget entirely and the driver demotes
-            // to system memory behind our back instead of letting us pick host memory deliberately.
             Info.flags  = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT;
             Info.requiredFlags = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
             break;
@@ -2317,16 +2339,24 @@ namespace Lumina::RHI
         SampleInfo.sType  = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
         SampleInfo.size   = Size;
         SampleInfo.usage  = kDefaultBufferUsages;
-        SampleInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        if (GDevice->NumSharedQueueFamilies > 1)
+        {
+            // Buffers only: CONCURRENT costs compression metadata on images, which stay EXCLUSIVE.
+            SampleInfo.sharingMode           = VK_SHARING_MODE_CONCURRENT;
+            SampleInfo.queueFamilyIndexCount = GDevice->NumSharedQueueFamilies;
+            SampleInfo.pQueueFamilyIndices   = GDevice->SharedQueueFamilies.data();
+        }
+        else
+        {
+            SampleInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        }
         
         VmaAllocation Allocation = nullptr;
         VmaAllocationInfo AllocationInfo = {};
 
         VkBuffer VulkanBuffer = VK_NULL_HANDLE;
 
-        // Checked explicitly rather than through VK_CHECK, which compiles to nothing in shipping.
-        // A failure here used to fall through to vkGetBufferDeviceAddress on an uninitialized handle,
-        // crashing inside the driver instead of reporting which heap ran dry.
         const VkResult AllocResult = vmaCreateBufferWithAlignment(GDevice->Allocator, &SampleInfo, &Info, Alignment, &VulkanBuffer, &Allocation, &AllocationInfo);
         if (AllocResult != VK_SUCCESS || VulkanBuffer == VK_NULL_HANDLE || Allocation == nullptr)
         {
@@ -2371,10 +2401,6 @@ namespace Lumina::RHI
         auto It = std::ranges::lower_bound(GDevice->MemoryBlocks, Gpu, {}, &FMemoryBlock::Device);
         GDevice->MemoryBlocks.insert(It, Block);
 
-        // Live buffer-device-address count, reported at each new high-water thousand. GPU-AV tracks
-        // these in a table of its own and stops validating once it overflows, so this is the number
-        // that says whether its silence means "no faults" or "no longer looking". Cheap: a comparison
-        // per allocation, and it prints a handful of times over a session.
         static uint64 HighWaterThousands = 0;
         const uint64 Thousands = GDevice->MemoryBlocks.size() / 1000;
         if (Thousands > HighWaterThousands)
@@ -2406,8 +2432,6 @@ namespace Lumina::RHI
         return nullptr;
     }
 
-    // Shared by both SetDebugName overloads. vkSetDebugUtilsObjectNameEXT is only non-null when the
-    // instance enabled VK_EXT_debug_utils, which FRenderManager does for every non-shipping build.
     static void NameObject(VkObjectType Type, uint64 Handle, const char* Name)
     {
         if (vkSetDebugUtilsObjectNameEXT == nullptr || Name == nullptr || Handle == 0)
@@ -2434,14 +2458,8 @@ namespace Lumina::RHI
             return;
         }
 
-        // Named under the lock, not after it. Free() destroys the VkBuffer while holding this same
-        // mutex, so releasing it first and naming afterwards would leave a window where a concurrent
-        // free hands vkSetDebugUtilsObjectNameEXT a dead handle. Import runs on worker threads, and
-        // this costs nothing at resource-creation frequency.
         FScopeLock Lock(GDevice->MemoryMutex);
 
-        // Interior pointers resolve to the owning allocation, so naming any address inside a
-        // block names the block. The crash report reads back the same way.
         if (const FMemoryBlock* Block = FindMemory(GPU))
         {
             NameObject(VK_OBJECT_TYPE_BUFFER, (uint64)Block->Buffer, Name);
@@ -2499,8 +2517,6 @@ namespace Lumina::RHI
     {
         if (GDevice != nullptr)
         {
-            // A texture freed before its creation barrier was drained still sits in UninitializedTextures.
-            // Drop it first, or the next Submit barriers a destroyed VkImage.
             {
                 FScopeLock Lock(GDevice->InitMutex);
                 TVector<FTextureH>& Pending = GDevice->UninitializedTextures;
@@ -2619,7 +2635,6 @@ namespace Lumina::RHI
             .topology               = ToVkTopology(Desc.Topology),
             .primitiveRestartEnable = false,
         };
-        
         
         VkFormat DepthAttachmentFormat   = ConvertFormat(Desc.DepthFormat);
         VkFormat StencilAttachmentFormat = ConvertFormat(Desc.StencilFormat);
@@ -2758,8 +2773,6 @@ namespace Lumina::RHI
         {
             .sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
             .pNext               = &PipelineCreate,
-            // CAPTURE_STATISTICS is what makes vkGetPipelineExecutableStatisticsKHR return anything.
-            // bPipelineStats is only ever set in an editor build, so shipping pipelines carry no flag.
             .flags               = GDevice->bPipelineStats ? VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR : 0u,
             .stageCount          = FragModule != VK_NULL_HANDLE ? 2u : 1u,
             .pStages             = Stages,
@@ -2791,14 +2804,6 @@ namespace Lumina::RHI
         return GDevice->Pipelines.Emplace(VulkanPipeline, VK_PIPELINE_BIND_POINT_GRAPHICS);
     }
 
-    // Driver-reported statistics for an already-created pipeline. The set of statistics is entirely
-    // vendor-defined -- NVIDIA and AMD report different names for what is roughly the same thing -- so
-    // this returns them verbatim rather than mapping onto fixed fields, and the UI displays whatever
-    // arrives. The one every vendor exposes in some form is the per-thread register count, which is
-    // what determines the occupancy step a shader lands on.
-    //
-    // Returns false (leaving Out untouched) when the extension is absent, which is the normal state in
-    // a non-editor build since the pipeline was then not created with CAPTURE_STATISTICS.
     bool GetPipelineStatistics(FPipelineH Pipeline, TVector<FPipelineStat>& Out)
     {
         if (GDevice == nullptr || !GDevice->bPipelineStats || Pipeline.Handle == 0)
@@ -2827,8 +2832,6 @@ namespace Lumina::RHI
             return false;
         }
 
-        // One "executable" per compiled stage. Names are prefixed with the stage so a graphics pipeline's
-        // VS and PS numbers stay distinguishable in the UI.
         for (uint32 Index = 0; Index < ExecutableCount; ++Index)
         {
             VkPipelineExecutableInfoKHR ExecInfo
@@ -2857,8 +2860,6 @@ namespace Lumina::RHI
                 Emitted.Stage = Executables[Index].name;
                 Emitted.Name  = Stat.name;
 
-                // The value is a union tagged by format; everything is normalized to a double so the UI
-                // has one code path. Booleans render as 0/1, which is what they mean.
                 switch (Stat.format)
                 {
                     case VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_BOOL32_KHR:   Emitted.Value = Stat.value.b32 ? 1.0 : 0.0;   break;
@@ -2920,19 +2921,18 @@ namespace Lumina::RHI
         return GDevice->Pipelines.Emplace(Pipeline, VK_PIPELINE_BIND_POINT_COMPUTE);
     }
 
-    bool SupportsMeshShaders()
+    bool SupportsAsyncTransfer()
     {
-        return GDevice != nullptr && GDevice->bMeshShaderSupported;
+        return GDevice != nullptr && GDevice->bHasAsyncTransferQueue;
+    }
+
+    bool SupportsAsyncCompute()
+    {
+        return GDevice != nullptr && GDevice->bHasAsyncComputeQueue;
     }
 
     FPipelineH CreateMeshShaderPipeline(const FShaderSource& Task, const FShaderSource& Mesh, const FShaderSource& Fragment, const FRasterDesc& Desc, TSpan<const FSpecializationConstant> Constants)
     {
-        if (!GDevice->bMeshShaderSupported)
-        {
-            LOG_ERROR("CreateMeshShaderPipeline called but the device does not support mesh shaders.");
-            return {};
-        }
-
         auto MakeModule = [](const FShaderSource& Src) -> VkShaderModule
         {
             if (Src.Source.empty())
@@ -3139,8 +3139,6 @@ namespace Lumina::RHI
         {
             .sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
             .pNext               = &PipelineCreate,
-            // CAPTURE_STATISTICS is what makes vkGetPipelineExecutableStatisticsKHR return anything.
-            // bPipelineStats is only ever set in an editor build, so shipping pipelines carry no flag.
             .flags               = GDevice->bPipelineStats ? VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR : 0u,
             .stageCount          = StageCount,
             .pStages             = Stages,
@@ -3195,7 +3193,7 @@ namespace Lumina::RHI
         
         VkSemaphore Semaphore;
         vkCreateSemaphore(*GDevice, &Info, nullptr, &Semaphore);
-        
+
         return GDevice->Semaphores.Emplace(Semaphore);
     }
 
@@ -3251,8 +3249,6 @@ namespace Lumina::RHI
         VkImage Image = VK_NULL_HANDLE;
         VmaAllocation Allocation = VK_NULL_HANDLE;
 
-        // Checked explicitly, not through VK_CHECK, which compiles to nothing in shipping and let a
-        // VK_NULL_HANDLE image reach vkCreateImageView.
         const VkResult ImageResult = vmaCreateImage(GDevice->Allocator, &Info, &AllocationCreateInfo, &Image, &Allocation, nullptr);
         if (ImageResult != VK_SUCCESS || Image == VK_NULL_HANDLE || Allocation == nullptr)
         {
@@ -3324,27 +3320,14 @@ namespace Lumina::RHI
         {
             .DescriptorSet          = DescriptorSet,
             .DescriptorPool         = GDevice->DescriptorPool,
-            .SamplersBitset         = FBitVector{SamplerCount, false},
-            .SampledImagesBitset    = FBitVector{TextureCount, false},
-            .RWImagesBitset         = FBitVector{RWTextureCount, false},
+            .SamplerSlots           = FHandleAllocator{SamplerCount},
+            .SampledImageSlots      = FHandleAllocator{TextureCount},
+            .RWImageSlots           = FHandleAllocator{RWTextureCount},
             .Samplers               = TVector<VkSampler>{SamplerCount, nullptr},
             .ImageViews             = TVector<VkImageView>{TextureCount, nullptr},
             .RWImageViews           = TVector<VkImageView>{RWTextureCount, nullptr},
             .SampledOwners          = TVector<FTextureH>{TextureCount, FTextureH{}}
         });
-    }
-
-    static uint32 AllocateHeapSlot(FBitVector& Bits)
-    {
-        for (size_t i = 0; i < Bits.size(); ++i)
-        {
-            if (!Bits[i])
-            {
-                Bits[i] = true;
-                return static_cast<uint32>(i);
-            }
-        }
-        return kInvalidHeapSlot;
     }
 
     // Caller holds HeapMutex.
@@ -3387,23 +3370,19 @@ namespace Lumina::RHI
 
     uint32 HeapWriteTexture(FTextureHeapH Heap, FTextureH Texture)
     {
-        // A null handle decomposes to index 0, which TSegmentMap resolves to the first slot of the
-        // first segment -- a real, live texture. Registration paths reach here with an empty handle
-        // routinely (an unloaded asset, a material slot left blank), and without this the heap would
-        // quietly publish some unrelated texture under the caller's slot.
         if (!IsValid(Texture))
         {
-            return kInvalidHeapSlot;
+            return FHandleAllocator::kInvalidHandle;
         }
 
         FTextureHeap& HeapData = GDevice->TextureHeaps[Heap];
 
         FScopeLock Lock(GDevice->HeapMutex);
-        const uint32 Slot = AllocateHeapSlot(HeapData.SampledImagesBitset);
-        if (Slot == kInvalidHeapSlot)
+        const uint32 Slot = HeapData.SampledImageSlots.Alloc();
+        if (Slot == FHandleAllocator::kInvalidHandle)
         {
-            LOG_ERROR("RHI: sampled texture heap exhausted ({} slots); texture not registered.", HeapData.SampledImagesBitset.size());
-            return kInvalidHeapSlot;
+            LOG_ERROR("RHI: sampled texture heap exhausted ({} slots); texture not registered.", HeapData.SampledImageSlots.GetCapacity());
+            return FHandleAllocator::kInvalidHandle;
         }
 
         PointSampledSlotAt(HeapData, Slot, Texture);
@@ -3413,9 +3392,6 @@ namespace Lumina::RHI
 
     void HeapRepointTexture(FTextureHeapH Heap, uint32 Slot, FTextureH Texture)
     {
-        // Repointing to a null handle would leave the slot published and pointing at slot 0's
-        // texture. Leaving the existing view in place is the safer failure: the slot is a stable
-        // identity that shaders are already indexing, so it must never resolve to the wrong image.
         if (!IsValid(Texture))
         {
             return;
@@ -3424,22 +3400,20 @@ namespace Lumina::RHI
         FTextureHeap& HeapData = GDevice->TextureHeaps[Heap];
 
         FScopeLock Lock(GDevice->HeapMutex);
-        if (Slot >= HeapData.SampledImagesBitset.size())
+        if (Slot >= HeapData.SampledImageSlots.GetCapacity())
         {
             return;
         }
 
-        HeapData.SampledImagesBitset[Slot] = true;
+        HeapData.SampledImageSlots.MarkAllocated(Slot);
         PointSampledSlotAt(HeapData, Slot, Texture);
     }
 
     uint32 HeapWriteRWTexture(FTextureHeapH Heap, FTextureH Texture, uint32 Mip)
     {
-        // Before the Textures[] lookup below, which would otherwise resolve a null handle to slot 0
-        // and build a storage view over a completely unrelated image.
         if (!IsValid(Texture))
         {
-            return kInvalidHeapSlot;
+            return FHandleAllocator::kInvalidHandle;
         }
 
         FTextureHeap& HeapData = GDevice->TextureHeaps[Heap];
@@ -3472,11 +3446,11 @@ namespace Lumina::RHI
         };
 
         FScopeLock Lock(GDevice->HeapMutex);
-        const uint32 Slot = AllocateHeapSlot(HeapData.RWImagesBitset);
-        if (Slot == kInvalidHeapSlot)
+        const uint32 Slot = HeapData.RWImageSlots.Alloc();
+        if (Slot == FHandleAllocator::kInvalidHandle)
         {
-            LOG_ERROR("RHI: RW texture heap exhausted ({} slots); storage view not registered.", HeapData.RWImagesBitset.size());
-            return kInvalidHeapSlot;
+            LOG_ERROR("RHI: RW texture heap exhausted ({} slots); storage view not registered.", HeapData.RWImageSlots.GetCapacity());
+            return FHandleAllocator::kInvalidHandle;
         }
 
         VkImageView View = VK_NULL_HANDLE;
@@ -3530,11 +3504,11 @@ namespace Lumina::RHI
         };
 
         FScopeLock Lock(GDevice->HeapMutex);
-        const uint32 Slot = AllocateHeapSlot(HeapData.SamplersBitset);
-        if (Slot == kInvalidHeapSlot)
+        const uint32 Slot = HeapData.SamplerSlots.Alloc();
+        if (Slot == FHandleAllocator::kInvalidHandle)
         {
-            LOG_ERROR("RHI: sampler heap exhausted ({} slots); sampler not registered.", HeapData.SamplersBitset.size());
-            return kInvalidHeapSlot;
+            LOG_ERROR("RHI: sampler heap exhausted ({} slots); sampler not registered.", HeapData.SamplerSlots.GetCapacity());
+            return FHandleAllocator::kInvalidHandle;
         }
 
         VkSampler Sampler = VK_NULL_HANDLE;
@@ -3551,16 +3525,10 @@ namespace Lumina::RHI
 
         WriteHeapDescriptor(HeapData, kSamplerBindingSlot, Slot, VK_DESCRIPTOR_TYPE_SAMPLER, ImageInfo);
 
-        // The sampler binding gets the same treatment the sampled binding gets from the fallback view,
-        // and for the same reason: an unwritten descriptor under PARTIALLY_BOUND is undefined to read,
-        // not merely unused. There is no separate fallback object to build here -- the first sampler
-        // registered is a perfectly good stand-in, and every later registration overwrites its own slot
-        // on top of it. Ten stock samplers out of 4000 slots otherwise leaves the binding almost
-        // entirely unwritten.
         if (Slot == 0)
         {
             TVector<VkDescriptorImageInfo> SeedInfos;
-            SeedInfos.resize(HeapData.SamplersBitset.size() - 1, VkDescriptorImageInfo
+            SeedInfos.resize(HeapData.SamplerSlots.GetCapacity() - 1, VkDescriptorImageInfo
             {
                 .sampler        = Sampler,
                 .imageView      = VK_NULL_HANDLE,
@@ -3599,23 +3567,11 @@ namespace Lumina::RHI
 
         if (HeapData.FallbackView == VK_NULL_HANDLE)
         {
-            // Shutdown clearing the fallback ahead of the texture's death. Leaving the seeded slots
-            // naming a view about to be destroyed is fine: the device is idle by then, and rewriting
-            // 8192 descriptors to VK_NULL_HANDLE is not a thing the spec allows anyway.
             return;
         }
 
-        // Seed EVERY unoccupied sampled slot with the fallback, not just the ones a free comes back to.
-        //
-        // The heap's contract everywhere else is that a slot always names a valid view -- that is what
-        // HeapFreeTexture's repoint is for. Slots that have never been allocated were the one hole in
-        // it: PARTIALLY_BOUND makes reading one undefined rather than diagnosable, so a bad index
-        // sampled whatever the driver felt like and nothing said so. Filling them closes the hole for
-        // the same reason freeing does, and turns any out-of-thin-air index into visible magenta.
-        //
-        // One vkUpdateDescriptorSets over the whole array, at init, once per heap.
         TVector<VkDescriptorImageInfo> ImageInfos;
-        ImageInfos.reserve(HeapData.SampledImagesBitset.size());
+        ImageInfos.reserve(HeapData.SampledImageSlots.GetCapacity());
 
         uint32 First = 0;
         auto FlushRun = [&]()
@@ -3643,9 +3599,9 @@ namespace Lumina::RHI
             ImageInfos.clear();
         };
 
-        for (uint32 Slot = 0; Slot < (uint32)HeapData.SampledImagesBitset.size(); ++Slot)
+        for (uint32 Slot = 0; Slot < HeapData.SampledImageSlots.GetCapacity(); ++Slot)
         {
-            if (HeapData.SampledImagesBitset[Slot])
+            if (HeapData.SampledImageSlots.IsAllocated(Slot))
             {
                 // A live slot must keep its own view, so the run breaks here rather than overwriting it.
                 FlushRun();
@@ -3677,7 +3633,7 @@ namespace Lumina::RHI
             return;
         }
 
-        HeapData.SampledImagesBitset[Slot] = false;
+        HeapData.SampledImageSlots.Free(Slot);
         HeapData.ImageViews[Slot] = VK_NULL_HANDLE;
         HeapData.SampledOwners[Slot] = {};
         
@@ -3699,18 +3655,19 @@ namespace Lumina::RHI
         FTextureHeap& HeapData = GDevice->TextureHeaps[Heap];
 
         FScopeLock Lock(GDevice->HeapMutex);
-        for (size_t Slot = 0; Slot < HeapData.SampledImagesBitset.size(); ++Slot)
+        // Occupied slots only, so this skips empty words wholesale rather than testing every index.
+        HeapData.SampledImageSlots.ForEachAllocated([&](uint32 Slot)
         {
-            if (!HeapData.SampledImagesBitset[Slot] || HeapData.ImageViews[Slot] == VK_NULL_HANDLE)
+            if (HeapData.ImageViews[Slot] == VK_NULL_HANDLE)
             {
-                continue;
+                return;
             }
             OutTextures.push_back(FHeapTextureInfo
             {
-                .Slot = (uint32)Slot,
+                .Slot = Slot,
                 .Desc = GDevice->Textures[HeapData.SampledOwners[Slot]].Desc
             });
-        }
+        });
     }
 
     void HeapFreeRWTexture(FTextureHeapH Heap, uint32 Slot)
@@ -3733,7 +3690,7 @@ namespace Lumina::RHI
             });
             HeapData.RWImageViews[Slot] = VK_NULL_HANDLE;
         }
-        HeapData.RWImagesBitset[Slot] = false;
+        HeapData.RWImageSlots.Free(Slot);
     }
 
     void HeapFreeSampler(FTextureHeapH Heap, uint32 Slot)
@@ -3756,7 +3713,7 @@ namespace Lumina::RHI
             });
             HeapData.Samplers[Slot] = VK_NULL_HANDLE;
         }
-        HeapData.SamplersBitset[Slot] = false;
+        HeapData.SamplerSlots.Free(Slot);
     }
     
     static bool GVSyncEnabled = true;
@@ -3954,8 +3911,6 @@ namespace Lumina::RHI
         SC.Window  = Source.Window;
         SC.Surface = Source.Surface;
 
-        // Ownership moves to the swapchain: null it out so erasing the surface entry does not destroy
-        // the VkSurfaceKHR we just took.
         Source.Surface = VK_NULL_HANDLE;
         GDevice->Surfaces.Erase(SurfaceHandle);
 
@@ -3977,8 +3932,7 @@ namespace Lumina::RHI
 
     void RecreateSwapchain(FSwapchainH Swapchain, const FUIntVector2& Extent)
     {
-        // Exclude concurrent queue submission while we wait-idle and rebuild the swapchain (see WaitDeviceIdle).
-        FScopeLock SubmitLock(GDevice->SubmitMutex);
+        FAllQueuesLock QueueLock;
         vkDeviceWaitIdle(*GDevice);
 
         FSwapchain& SC = GDevice->Swapchains[Swapchain];
@@ -4094,7 +4048,8 @@ namespace Lumina::RHI
 
         VkSemaphore PresentSem = SC.PresentSemaphores[SC.CurrentImageIndex];
 
-        FScopeLock SubmitLock(GDevice->SubmitMutex);
+        // Present submits and presents on the graphics queue, so it takes that queue's lock.
+        FScopeLock SubmitLock(QueueLockFor(EQueueType::Graphics));
 
         VkSemaphoreSubmitInfo WaitInfo
         {
@@ -4163,8 +4118,6 @@ namespace Lumina::RHI
 #if defined(TRACY_ENABLE)
                 CommandList.GPUZoneDepth = 0;
 #endif
-                // A list that was recycled with markers still open would otherwise start its next
-                // recording at a stale depth, and every breadcrumb on it would nest wrongly.
                 CommandList.BreadcrumbDepth = 0;
 
                 // Already in the initial state: ResetCommandList reset the pool when it recycled the list.
@@ -4226,7 +4179,9 @@ namespace Lumina::RHI
         auto* SignalInfos = Scratch.AllocArray<VkSemaphoreSubmitInfo>(Signals.size());
         auto* WaitInfos   = Scratch.AllocArray<VkSemaphoreSubmitInfo>(Waits.size());
 
+        // Images are EXCLUSIVE; a layout transition is a write, so transfer must never claim them.
         TVector<FTextureH> UninitializedTextures;
+        if (Queue != EQueueType::Transfer)
         {
             FScopeLock Lock(GDevice->InitMutex);
             UninitializedTextures.swap(GDevice->UninitializedTextures);
@@ -4262,11 +4217,12 @@ namespace Lumina::RHI
             SubmitInfo.deviceIndex = 0;
         }
 
-        FScopeLock SubmitLock(GDevice->SubmitMutex);
-
         VkCommandBuffer TransitionBuffer = VK_NULL_HANDLE;
+        VkCommandPool   TransitionPool   = GDevice->TransientPools[(uint32)Queue];
         if (!UninitializedTextures.empty())
         {
+            FScopeLock TransientLock(GDevice->TransientMutex);
+
             auto* TextureBarriers = Scratch.AllocArray<VkImageMemoryBarrier2>(UninitializedTextures.size());
             for (size_t i = 0; i < UninitializedTextures.size(); ++i)
             {
@@ -4300,7 +4256,7 @@ namespace Lumina::RHI
             AllocInfo.sType                 = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
             AllocInfo.level                 = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
             AllocInfo.commandBufferCount    = 1;
-            AllocInfo.commandPool           = GDevice->TransientPool;
+            AllocInfo.commandPool           = TransitionPool;
             VK_CHECK(vkAllocateCommandBuffers(*GDevice, &AllocInfo, &TransitionBuffer));
 
             VkCommandBufferBeginInfo BeginInfo
@@ -4327,7 +4283,7 @@ namespace Lumina::RHI
             vkCmdPipelineBarrier2(TransitionBuffer, &DependencyInfo);
             vkEndCommandBuffer(TransitionBuffer);
 
-            GDevice->PendingTransient.push_back({ TransitionBuffer, GDevice->FrameNumber.load(std::memory_order_relaxed) });
+            GDevice->PendingTransient.push_back({ TransitionBuffer, TransitionPool, GDevice->FrameNumber.load(std::memory_order_relaxed) });
         }
 
         const uint32 TransitionCount = TransitionBuffer != VK_NULL_HANDLE ? 1u : 0u;
@@ -4346,6 +4302,15 @@ namespace Lumina::RHI
         for (size_t i = 0; i < CommandLists.size(); ++i)
         {
             const FCommandList& CommandList = GDevice->CommandLists[CommandLists[i]];
+
+#if defined(TRACY_ENABLE)
+            if (Queue != EQueueType::Graphics
+                && i + 1 == CommandLists.size()
+                && GTracyOwnedContexts[(uint32)Queue] != nullptr)
+            {
+                TracyVkCollect(GTracyOwnedContexts[(uint32)Queue], CommandList.CommandBuffer);
+            }
+#endif
 
             vkEndCommandBuffer(CommandList.CommandBuffer);
 
@@ -4371,6 +4336,29 @@ namespace Lumina::RHI
         };
 
         VkQueue VulkanQueue = GDevice->Queues[(uint32)Queue];
+        FScopeLock SubmitLock(QueueLockFor(Queue));
+
+#if !defined(LE_SHIPPING)
+        {
+            static THashMap<uint64, uint64> HighestSignalled;
+            for (const FSemaphoreInfo& Signal : Signals)
+            {
+                const uint64 Native = (uint64)GDevice->Semaphores[Signal.Semaphore].Semaphore;
+                uint64& High = HighestSignalled[Native];
+                if (Signal.Value <= High && High != 0)
+                {
+                    LOG_ERROR("Timeline regression: native {:#x} signalled {} on queue {}, already at {}. "
+                              "{} command list(s), {} wait(s).",
+                        Native, Signal.Value, (uint32)Queue, High, CommandLists.size(), Waits.size());
+                }
+                else
+                {
+                    High = Signal.Value;
+                }
+            }
+        }
+#endif
+
         VK_CHECK(vkQueueSubmit2(VulkanQueue, 1, &SubmitInfo, VK_NULL_HANDLE));
     }
 
@@ -4411,9 +4399,6 @@ namespace Lumina::RHI
 
         auto* VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
 
-        // --logcopies: sync validation names the VkBuffer a hazard lands on, but the engine allocates
-        // one buffer per Malloc, so the handle alone does not say which of them it was. Printing the
-        // handle with the offset and size is what pairs a hazard report with a call site.
         static const bool bLogCopies = GCommandLine != nullptr && GCommandLine->Has("logcopies");
         if (bLogCopies)
         {
@@ -4549,9 +4534,6 @@ namespace Lumina::RHI
 
         const FTexture& DestTexture = GDevice->Textures[Dest];
 
-        // bufferRowLength is in texels but, for block-compressed formats, Vulkan requires it to be a
-        // multiple of the block extent (the small mips of a BCn texture have width 1/2 < block width).
-        // Rounding up to the block width equals the tightly-packed block count, so the layout is unchanged.
         const uint8 BlockW = RHI::Format::Info(DestTexture.Format).BlockSize;
         const uint32 RowLengthBlocks = (BlockW > 1) ? Math::AlignUp(RowLength, (uint32)BlockW) : RowLength;
 
@@ -4697,9 +4679,6 @@ namespace Lumina::RHI
         vkCmdClearColorImage(VkCmdBuf, TextureData.Image, VK_IMAGE_LAYOUT_GENERAL, &Clear, 1, &Range);
     }
 
-    // Narrowest access set that covers the given stages. CmdBarrier uses MEMORY_READ|MEMORY_WRITE because it
-    // is a global barrier with no resource to reason about; an image barrier can and should be precise, and
-    // the precision is the entire point (see CmdImageBarrier).
     static VkAccessFlags2 AccessForStages(EStageFlags Stages)
     {
         VkAccessFlags2 Access = 0;
@@ -4737,12 +4716,41 @@ namespace Lumina::RHI
         return Access != 0 ? Access : (VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
     }
 
+    static EStageFlags ClampStagesToQueue(EStageFlags Stages, EQueueType Queue)
+    {
+        if (Queue == EQueueType::Graphics)
+        {
+            return Stages;
+        }
+
+        constexpr EStageFlags GraphicsOnly =
+            EStageFlags::RasterColorOut | EStageFlags::PixelShader | EStageFlags::FragmentTests |
+            EStageFlags::VertexShader   | EStageFlags::MeshShader  | EStageFlags::TaskShader;
+
+        EStageFlags Clamped = Stages & ~GraphicsOnly;
+        if (Queue == EQueueType::Transfer)
+        {
+            Clamped &= ~(EStageFlags::Compute | EStageFlags::IndirectArguments);
+        }
+
+        if (Clamped == EStageFlags::None)
+        {
+            Clamped = EStageFlags::AllCommands;
+        }
+
+        return Clamped;
+    }
+
     void CmdImageBarrier(FCmdListH CL, FTextureH Texture, EStageFlags Before, EStageFlags After)
     {
         if (!IsValid(Texture))
         {
             return;
         }
+
+        const EQueueType Queue = GDevice->CommandLists[CL].Queue;
+        Before = ClampStagesToQueue(Before, Queue);
+        After  = ClampStagesToQueue(After, Queue);
 
         const FTexture& TextureData = GDevice->Textures[Texture];
 
@@ -4782,10 +4790,76 @@ namespace Lumina::RHI
         vkCmdPipelineBarrier2(GDevice->CommandLists[CL].CommandBuffer, &DepInfo);
     }
 
+    static void CmdQueueOwnershipTransfer(FCmdListH CL, FTextureH Texture, EQueueType Source, EQueueType Dest,
+                                          EStageFlags Stages, bool bRelease)
+    {
+        if (!IsValid(Texture))
+        {
+            return;
+        }
+
+        const uint32 SourceFamily = GDevice->QueueFamilies[(uint32)Source];
+        const uint32 DestFamily   = GDevice->QueueFamilies[(uint32)Dest];
+
+        if (SourceFamily == DestFamily)
+        {
+            return;
+        }
+
+        const FTexture& TextureData = GDevice->Textures[Texture];
+
+        // Layouts must MATCH between the two halves. GENERAL on both sides, same as CmdImageBarrier.
+        VkImageMemoryBarrier2 BarrierInfo
+        {
+            .sType                  = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+            .pNext                  = nullptr,
+            .srcStageMask           = bRelease ? ToVkPipelineState(ClampStagesToQueue(Stages, Source)) : VK_PIPELINE_STAGE_2_NONE,
+            .srcAccessMask          = bRelease ? AccessForStages(Stages) : 0,
+            .dstStageMask           = bRelease ? VK_PIPELINE_STAGE_2_NONE : ToVkPipelineState(ClampStagesToQueue(Stages, Dest)),
+            .dstAccessMask          = bRelease ? 0 : AccessForStages(Stages),
+            .oldLayout              = VK_IMAGE_LAYOUT_GENERAL,
+            .newLayout              = VK_IMAGE_LAYOUT_GENERAL,
+            .srcQueueFamilyIndex    = SourceFamily,
+            .dstQueueFamilyIndex    = DestFamily,
+            .image                  = TextureData.Image,
+            .subresourceRange =
+                {
+                    .aspectMask     = AspectsForFormat(TextureData.Format),
+                    .baseMipLevel   = 0,
+                    .levelCount     = VK_REMAINING_MIP_LEVELS,
+                    .baseArrayLayer = 0,
+                    .layerCount     = VK_REMAINING_ARRAY_LAYERS
+                }
+        };
+
+        VkDependencyInfo DepInfo
+        {
+            .sType                      = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+            .pNext                      = nullptr,
+            .dependencyFlags            = 0,
+            .imageMemoryBarrierCount    = 1,
+            .pImageMemoryBarriers       = &BarrierInfo
+        };
+
+        vkCmdPipelineBarrier2(GDevice->CommandLists[CL].CommandBuffer, &DepInfo);
+    }
+
+    void CmdReleaseImageToQueue(FCmdListH CL, FTextureH Texture, EQueueType Dest, EStageFlags Before)
+    {
+        CmdQueueOwnershipTransfer(CL, Texture, GDevice->CommandLists[CL].Queue, Dest, Before, /*bRelease*/ true);
+    }
+
+    void CmdAcquireImageFromQueue(FCmdListH CL, FTextureH Texture, EQueueType Source, EStageFlags After)
+    {
+        CmdQueueOwnershipTransfer(CL, Texture, Source, GDevice->CommandLists[CL].Queue, After, /*bRelease*/ false);
+    }
+
     void CmdBarrier(FCmdListH CL, EStageFlags Before, EStageFlags After)
     {
-        const VkPipelineStageFlags2 SrcStage = ToVkPipelineState(Before);
-        const VkPipelineStageFlags2 DstStage = ToVkPipelineState(After);
+        const EQueueType Queue = GDevice->CommandLists[CL].Queue;
+
+        const VkPipelineStageFlags2 SrcStage = ToVkPipelineState(ClampStagesToQueue(Before, Queue));
+        const VkPipelineStageFlags2 DstStage = ToVkPipelineState(ClampStagesToQueue(After, Queue));
         
         constexpr auto Access = VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_MEMORY_READ_BIT;
         
@@ -4913,11 +4987,14 @@ namespace Lumina::RHI
 
     void CmdSetTextureHeap(FCmdListH CL, FTextureHeapH Heap)
     {
-        auto* VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
+        const FCommandList& List = GDevice->CommandLists[CL];
         auto* DescriptorSet = GDevice->TextureHeaps[Heap].DescriptorSet;
 
-        vkCmdBindDescriptorSets(VkCmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, GDevice->PipelineLayout, 0, 1, &DescriptorSet, 0, nullptr);
-        vkCmdBindDescriptorSets(VkCmdBuf, VK_PIPELINE_BIND_POINT_COMPUTE, GDevice->PipelineLayout, 0, 1, &DescriptorSet, 0, nullptr);
+        if (List.Queue == EQueueType::Graphics)
+        {
+            vkCmdBindDescriptorSets(List.CommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, GDevice->PipelineLayout, 0, 1, &DescriptorSet, 0, nullptr);
+        }
+        vkCmdBindDescriptorSets(List.CommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, GDevice->PipelineLayout, 0, 1, &DescriptorSet, 0, nullptr);
     }
 
     void CmdSetDepthStencilState(FCmdListH CL, FDepthStencilH DepthStencil)
@@ -5272,8 +5349,6 @@ namespace Lumina::RHI
     {
         FCommandList& List = GDevice->CommandLists[CL];
 
-        // Hooked here rather than at each pass: every pass already brackets itself with these, so
-        // the breadcrumb trail comes for free and cannot drift out of sync with the debug labels.
         if (List.BreadcrumbDepth < FGpuBreadcrumbs::MaxDepth)
         {
             List.BreadcrumbStack[List.BreadcrumbDepth] =
@@ -5295,10 +5370,11 @@ namespace Lumina::RHI
         }
 
 #if defined(TRACY_ENABLE)
-        if (GTracyGPUContext != nullptr && List.GPUZoneDepth < kMaxGPUZoneDepth)
+        tracy::VkCtx* ZoneContext = GTracyGPUContexts[(uint32)List.Queue];
+        if (ZoneContext != nullptr && List.GPUZoneDepth < kMaxGPUZoneDepth)
         {
             void* Slot = &List.GPUZoneStack[List.GPUZoneDepth * sizeof(tracy::VkCtxScope)];
-            new (Slot) tracy::VkCtxScope(GTracyGPUContext, 0u, __FILE__, sizeof(__FILE__) - 1,
+            new (Slot) tracy::VkCtxScope(ZoneContext, 0u, __FILE__, sizeof(__FILE__) - 1,
                 "GPUMarker", 9, Name, strlen(Name), List.CommandBuffer, true);
         }
         ++List.GPUZoneDepth;
@@ -5309,8 +5385,6 @@ namespace Lumina::RHI
     {
         FCommandList& List = GDevice->CommandLists[CL];
 
-        // Guarded against an unbalanced end, which would otherwise underflow the depth and close a
-        // slot this list never opened.
         if (List.BreadcrumbDepth > 0)
         {
             --List.BreadcrumbDepth;
@@ -5324,7 +5398,7 @@ namespace Lumina::RHI
         if (List.GPUZoneDepth > 0)
         {
             --List.GPUZoneDepth;
-            if (GTracyGPUContext != nullptr && List.GPUZoneDepth < kMaxGPUZoneDepth)
+            if (GTracyGPUContexts[(uint32)List.Queue] != nullptr && List.GPUZoneDepth < kMaxGPUZoneDepth)
             {
                 void* Slot = &List.GPUZoneStack[List.GPUZoneDepth * sizeof(tracy::VkCtxScope)];
                 static_cast<tracy::VkCtxScope*>(Slot)->~VkCtxScope();

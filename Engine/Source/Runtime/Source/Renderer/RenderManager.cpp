@@ -51,8 +51,6 @@ namespace Lumina
 
         MaterialManager = nullptr;
 
-        // Release the shared LUT / icon heap slots while the device is still alive; member
-        // teardown would otherwise run after the device is freed below.
         if (SharedRenderResources.bInitialized)
         {
             if (SharedRenderResources.BRDFLutUAV != RHI::kInvalidHeapSlot)
@@ -98,7 +96,6 @@ namespace Lumina
         bool bValidation = false;
         #endif
 
-
         #if defined(LE_SHIPPING)
         constexpr bool bDebugUtils = false;
         #else
@@ -123,8 +120,6 @@ namespace Lumina
             }
         }
 
-        // A feature of the layer, so it does nothing without it. Turn the layer on rather than
-        // dropping the request on the floor.
         bValidation = bValidation || bGpuValidation;
 
         RHI::CreateDevice(RHI::FDeviceDesc{ bValidation, bDebugUtils, bGpuValidation });
@@ -178,8 +173,6 @@ namespace Lumina
                 RHI::Core::BeginFrame(ThisFrameIndex);
             }
 
-            // One rebuild per frame for however many resize events arrived since the last one, and
-            // before anything reads a render target this frame.
             ApplyPendingResize();
 
             GWorldManager->RenderWorlds(ThisFrameIndex);
@@ -263,8 +256,6 @@ namespace Lumina
 
     void FRenderManager::OnWindowResized(FWindow* Window, const FUIntVector2& Extent)
     {
-        // Only the primary window owns the presented swapchain. A minimized / zero-area
-        // window has no valid extent to build against.
         if (Window != Windowing::GetPrimaryWindowHandle() || Window->IsWindowMinimized())
         {
             return;

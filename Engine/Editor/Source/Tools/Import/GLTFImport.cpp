@@ -23,6 +23,7 @@
 #include "Renderer/ViewVolume.h"
 #include "TaskSystem/TaskSystem.h"
 #include "Log/Log.h"
+#include "Renderer/SkeletonResource.h"
 
 namespace Lumina::Import::Mesh::GLTF
 {

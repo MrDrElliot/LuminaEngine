@@ -64,8 +64,6 @@ namespace Lumina::RHI
             Copy = *InUniforms;
         }
 
-        // Queued onto the per-frame upload ring, copied at the next BeginFrame after any
-        // in-flight frame still reading the old slot has retired.
         UploadBuffer(MaterialBuffer + Index * sizeof(FMaterialUniforms), &Copy, sizeof(FMaterialUniforms));
     }
 }

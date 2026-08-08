@@ -145,8 +145,14 @@ namespace Lumina
 		}
 
 		// Vertex template declares FMaterialVertexInputs Material above the token; only emit assignments.
-		const FString VertexPath = BasePath + (bIsTerrain ? "TerrainBaseVertexPass.slang" : "MeshletVertex.slang");
-		OutVertexShader = BuildVertexShaderFromTemplate(VertexPath, MaterialType);
+		//
+		// Terrain is the only remaining domain that rasters meshlet-shaped geometry through a vertex
+		// stage. PBR does not reach here at all -- its geometry is task + mesh, and MaterialGraphCompile
+		// builds those templates directly rather than through this single-vertex-shader entry point.
+		if (bIsTerrain)
+		{
+			OutVertexShader = BuildVertexShaderFromTemplate(BasePath + "TerrainBaseVertexPass.slang", MaterialType);
+		}
 	}
 
 	FString FMaterialCompiler::BuildVertexShaderFromTemplate(const FString& TemplateAbsolutePath, EMaterialType MaterialType) const
@@ -1083,7 +1089,31 @@ namespace Lumina
 		return Index;
 	}
 
-	void FMaterialCompiler::TextureSample(const FString& ID, CTexture* Texture, CMaterialInput* Input)
+	// Raises the UV-gradient fallback as an editor warning. The generated shader already carries a comment
+	// naming the broken variable, but nobody reads a comment in a runtime-generated shader -- and the
+	// consequence is not cosmetic: a derived UV (say 32x tiling) sampled with UV0's gradient picks a mip
+	// about five levels too fine, which is 1024x the texel working set and is what once made a tiled
+	// terrain view VRAM-bound. It is a WARNING, not an error: the shader is valid and still renders.
+	void FMaterialCompiler::WarnUVGradientFallback(const FInputValue& UVValue, CEdGraphNode* Node)
+	{
+		if (UVValue.Deriv == EDerivState::Valid)
+		{
+			return;
+		}
+
+		EdNodeGraph::FError Warning;
+		Warning.Node        = Node;
+		Warning.Name        = "UV Gradient Fallback";
+		Warning.Description = "This sample's UV chain ('" + UVValue.Value + "') has no analytic derivative, so "
+		                      "the deferred pass samples it with UV0's gradient instead. Mips will be selected "
+		                      "too fine wherever the UV is scaled or distorted relative to UV0 -- a tiled UV is "
+		                      "the common case, and the cost is texture bandwidth, not a visible error. Feed the "
+		                      "sample from UV0 through nodes that carry derivatives, or accept the cost if the "
+		                      "UV is close to UV0 in scale.";
+		AddWarning(Warning);
+	}
+
+	void FMaterialCompiler::TextureSample(const FString& ID, CTexture* Texture, CMaterialInput* Input, CEdGraphNode* Node)
 	{
 		if (Texture == nullptr || Texture->GetResourceID() < 0)
 		{
@@ -1112,16 +1142,18 @@ namespace Lumina
 
 		// Self-diagnosing: when the chain has no analytic derivative the generated shader says which
 		// variable broke it, so a captured shader dump localises the unruled node without a rebuild.
+		// The same condition is also raised to the editor, where an author can actually act on it.
 		if (UVValue.Deriv != EDerivState::Valid)
 		{
 			GetActiveChunk().append("// UV-GRADIENT FALLBACK: '" + UVValue.Value
 				+ "' has no analytic derivative, sampling with UV0's gradient (mip may be too fine).\n");
 		}
+		WarnUVGradientFallback(UVValue, Node);
 
 		GetActiveChunk().append("float4 " + ID + " = SampleTexture2DAuto(GetMaterialTexture(MaterialIndex, " + eastl::to_string(Index) + "), SAMPLER_LINEAR_WRAP, " + UVStr + ", " + Ddx + ", " + Ddy + ");\n");
 	}
 
-	void FMaterialCompiler::TextureSampleParameter(const FString& ID, const FName& ParamID, CTexture* Texture, CMaterialInput* Input)
+	void FMaterialCompiler::TextureSampleParameter(const FString& ID, const FName& ParamID, CTexture* Texture, CMaterialInput* Input, CEdGraphNode* Node)
 	{
 		FInputValue UVValue = GetTypedInputValue(Input, "float2(UV0)");
 
@@ -1145,11 +1177,13 @@ namespace Lumina
 
 		// Self-diagnosing: when the chain has no analytic derivative the generated shader says which
 		// variable broke it, so a captured shader dump localises the unruled node without a rebuild.
+		// The same condition is also raised to the editor, where an author can actually act on it.
 		if (UVValue.Deriv != EDerivState::Valid)
 		{
 			GetActiveChunk().append("// UV-GRADIENT FALLBACK: '" + UVValue.Value
 				+ "' has no analytic derivative, sampling with UV0's gradient (mip may be too fine).\n");
 		}
+		WarnUVGradientFallback(UVValue, Node);
 
 		GetActiveChunk().append("float4 " + ID + " = SampleTexture2DAuto(GetMaterialTexture(MaterialIndex, " + eastl::to_string(Index) + "), SAMPLER_LINEAR_WRAP, " + UVStr + ", " + Ddx + ", " + Ddy + ");\n");
 	}

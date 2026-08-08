@@ -13,6 +13,8 @@ namespace Lumina
     {
         bool                            bSuccess = false;
         TVector<EdNodeGraph::FError>    Errors;
+        // Non-fatal findings; populated on SUCCESS too, which is the point of them.
+        TVector<EdNodeGraph::FError>    Warnings;
         FString                         PixelSource;
         FString                         VertexSource;
         FMaterialCompiler::FShaderStats Stats;

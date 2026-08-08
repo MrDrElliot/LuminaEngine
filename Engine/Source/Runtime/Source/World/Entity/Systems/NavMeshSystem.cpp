@@ -19,6 +19,7 @@
 #include "World/World.h"
 #include "World/WorldTypes.h"
 #include "Log/Log.h"
+#include "Renderer/MeshQuantization.h"
 
 namespace Lumina
 {
@@ -410,7 +411,7 @@ namespace Lumina
                     const uint32 V0 = Meshlet.VertexOffset;
                     for (uint32 v = 0; v < Meshlet.VertexCount; ++v)
                     {
-                        const FVector3 Local = MV[V0 + v].Position;
+                        const FVector3 Local = DecodeMeshletPosition(Meshlet, MV[V0 + v]);
                         LocalVerts[v] = FVector3(W * FVector4(Local, 1.0f));
                     }
 

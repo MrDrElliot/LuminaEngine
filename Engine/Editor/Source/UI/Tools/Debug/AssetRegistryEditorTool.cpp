@@ -145,7 +145,8 @@ namespace Lumina
             Bytes += MR.MeshletData.MeshletVertices.capacity()       * sizeof(FMeshletVertex);
             Bytes += MR.MeshletData.MeshletSkinnedVertices.capacity()* sizeof(FMeshletSkinnedVertex);
             Bytes += MR.MeshletData.MeshletTriangles.capacity()      * sizeof(uint32);
-            Bytes += MR.MeshletData.MeshletBounds.capacity()         * sizeof(FMeshletBounds);
+            Bytes += MR.MeshletData.MeshletSpheres.capacity()        * sizeof(FMeshletSphere);
+            Bytes += MR.MeshletData.MeshletCones.capacity()          * sizeof(FMeshletCone);
 
             return Bytes;
         }

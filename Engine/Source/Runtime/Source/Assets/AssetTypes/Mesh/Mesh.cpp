@@ -7,6 +7,7 @@
 #include "Renderer/Vertex.h"
 #include "Tools/Import/ImportHelpers.h"
 #include "World/Scene/RenderScene/MeshResolveCache.h"
+#include "Renderer/MeshQuantization.h"
 
 
 namespace Lumina
@@ -130,29 +131,43 @@ namespace Lumina
             const FMeshletData& MD = MeshResources->MeshletData;
 
             // Vertex positions first. A cooked mesh has no Positions array, so this is the path that
-            // actually runs for anything imported, and it is exact.
-            for (const FMeshletVertex& V : MD.MeshletVertices)
+            // actually runs for anything imported, and it is exact to the quantization step.
+            //
+            // Driven by the meshlet list rather than by a flat sweep of the vertex array: a position is
+            // only meaningful against its owning meshlet's anchor. Every entry in the vertex stream
+            // belongs to exactly one meshlet's slice, so this still visits all of them.
+            for (const FMeshlet& M : MD.Meshlets)
             {
-                BoundingBox.Min = Math::Min(BoundingBox.Min, V.Position);
-                BoundingBox.Max = Math::Max(BoundingBox.Max, V.Position);
+                for (uint32 v = 0; v < M.VertexCount; ++v)
+                {
+                    const uint32 Index = M.VertexOffset + v;
+
+                    if (Index < MD.MeshletVertices.size())
+                    {
+                        const FVector3 P = DecodeMeshletPosition(M, MD.MeshletVertices[Index]);
+                        BoundingBox.Min = Math::Min(BoundingBox.Min, P);
+                        BoundingBox.Max = Math::Max(BoundingBox.Max, P);
+                    }
+
+                    if (Index < MD.MeshletSkinnedVertices.size())
+                    {
+                        const FVector3 P = DecodeMeshletPosition(M, MD.MeshletSkinnedVertices[Index]);
+                        BoundingBox.Min = Math::Min(BoundingBox.Min, P);
+                        BoundingBox.Max = Math::Max(BoundingBox.Max, P);
+                    }
+                }
             }
 
-            for (const FMeshletSkinnedVertex& V : MD.MeshletSkinnedVertices)
-            {
-                BoundingBox.Min = Math::Min(BoundingBox.Min, V.Position);
-                BoundingBox.Max = Math::Max(BoundingBox.Max, V.Position);
-            }
-
-            if (MD.MeshletVertices.empty() && MD.MeshletSkinnedVertices.empty() && !MD.MeshletBounds.empty())
+            if (MD.MeshletVertices.empty() && MD.MeshletSkinnedVertices.empty() && !MD.MeshletSpheres.empty())
             {
                 // Last resort only. Each meshlet contributes a cube of side 2*Radius around its
                 // centre, which is its bounding SPHERE squared off: conservative, never wrong for
                 // culling, and wildly loose for anything that is not itself roughly spherical. A tall
                 // thin mesh came out looking like a cube several times its real size.
-                for (const FMeshletBounds& B : MD.MeshletBounds)
+                for (const FMeshletSphere& S : MD.MeshletSpheres)
                 {
-                    BoundingBox.Min = Math::Min(BoundingBox.Min, B.Center - FVector3(B.Radius));
-                    BoundingBox.Max = Math::Max(BoundingBox.Max, B.Center + FVector3(B.Radius));
+                    BoundingBox.Min = Math::Min(BoundingBox.Min, S.Center - FVector3(S.Radius));
+                    BoundingBox.Max = Math::Max(BoundingBox.Max, S.Center + FVector3(S.Radius));
                 }
             }
         }
@@ -209,7 +224,7 @@ namespace Lumina
 
             FMeshletHeaderGPU Header;
             Header.MeshletsAddress          = MB.MeshletBuffer;
-            Header.BoundsAddress            = MB.MeshletBoundsBuffer;
+            Header.SpheresAddress           = MB.MeshletSphereBuffer;
             Header.VerticesAddress          = MB.MeshletVertexBuffer;
             Header.TrianglesAddress         = MB.MeshletTriangleBuffer;
             Header.DistanceFieldIndex       = bHasField ? MB.DistanceFieldTexture.SampledSlot : DistanceField::kInvalidIndex;
@@ -221,9 +236,8 @@ namespace Lumina
             Header.DistanceFieldSizeY       = Volume.VolumeSize.y;
             Header.DistanceFieldSizeZ       = Volume.VolumeSize.z;
             Header.DistanceFieldMaxDistance = Volume.MaxDistance;
+            Header.ConesAddress = MB.MeshletConeBuffer;
             Header._Pad0 = 0;
-            Header._Pad1 = 0;
-            Header._Pad2 = 0;
             return Header;
         }
     }
@@ -292,7 +306,8 @@ namespace Lumina
         };
 
         MB.MeshletBuffer       = CreateAndUpload(MData.Meshlets.data(), sizeof(FMeshlet) * MData.Meshlets.size(), "Mesh.Meshlets");
-        MB.MeshletBoundsBuffer = CreateAndUpload(MData.MeshletBounds.data(), sizeof(FMeshletBounds) * MData.MeshletBounds.size(), "Mesh.MeshletBounds");
+        MB.MeshletSphereBuffer = CreateAndUpload(MData.MeshletSpheres.data(), sizeof(FMeshletSphere) * MData.MeshletSpheres.size(), "Mesh.MeshletSpheres");
+        MB.MeshletConeBuffer   = CreateAndUpload(MData.MeshletCones.data(),   sizeof(FMeshletCone)   * MData.MeshletCones.size(),   "Mesh.MeshletCones");
 
         // Highest joint index the packed vertices actually reference. Checked at resolve against the
         // skeleton's bone count -- the GPU bone fetch is unbounded, so a mesh that outruns its skeleton
@@ -330,12 +345,14 @@ namespace Lumina
             LOG_ERROR("Mesh left unrenderable: GPU buffer allocation failed for {} meshlets.", MData.Meshlets.size());
 
             RHI::Core::DeferredFree(MB.MeshletBuffer);
-            RHI::Core::DeferredFree(MB.MeshletBoundsBuffer);
+            RHI::Core::DeferredFree(MB.MeshletSphereBuffer);
+            RHI::Core::DeferredFree(MB.MeshletConeBuffer);
             RHI::Core::DeferredFree(MB.MeshletVertexBuffer);
             RHI::Core::DeferredFree(MB.MeshletTriangleBuffer);
 
             MB.MeshletBuffer         = 0;
-            MB.MeshletBoundsBuffer   = 0;
+            MB.MeshletSphereBuffer   = 0;
+            MB.MeshletConeBuffer     = 0;
             MB.MeshletVertexBuffer   = 0;
             MB.MeshletTriangleBuffer = 0;
             MB.MeshletHeaderBuffer   = 0;

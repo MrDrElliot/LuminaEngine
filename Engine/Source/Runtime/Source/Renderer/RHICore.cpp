@@ -11,14 +11,8 @@
 
 namespace Lumina::RHI::Core
 {
-    // 32 MiB INITIAL per-frame slice. Grows on demand at BeginFrame when a frame's transient allocations
-    // outgrow it (the spike frame is covered by a one-off fallback allocation), and shrinks back after
-    // sustained low use so a brief spike (e.g. 5000 skinned meshes' bone matrices) doesn't permanently
-    // reserve host memory.
     static constexpr uint64 kTransientSliceRequest = 32ull * 1024 * 1024;
 
-    // Resolved from kTransientSliceRequest against the CPU-visible VRAM aperture in Initialize. This is
-    // the floor the shrink path returns to, so it has to be the clamped value, not the request.
     static uint64 GTransientSliceSize = kTransientSliceRequest;
 
     struct FTransientSlice
@@ -38,16 +32,20 @@ namespace Lumina::RHI::Core
 
     struct FCoreState
     {
+        static constexpr uint32 kNumQueues = 3;   // EQueueType::Graphics / Transfer / Compute
+
         FTextureHeapH       GlobalHeap;
-        FSemaphoreH         FrameTimeline;
-        uint64              TimelineCounter = 0;
-        uint64              SlotWaitValue[kFramesInFlight] = {};
+
+        FSemaphoreH         QueueTimeline[kNumQueues];
+        uint64              QueueCounter[kNumQueues] = {};
+        // This slot's high-water mark on each queue, waited independently in BeginFrame.
+        uint64              SlotWaitValue[kFramesInFlight][kNumQueues] = {};
+
+        uint64              PendingTransferWait = 0;
+        bool                bQueueTookTransferWait[kNumQueues] = {};
         TVector<FCmdListH>  SlotCommandLists[kFramesInFlight];
         FTransientSlice     Slices[kFramesInFlight];
 
-        // Read by AllocTransient from frame jobs while BeginFrame advances it. Publishing it with a
-        // release store after the slice has been resized is what lets a reader that acquires it see
-        // a consistent Gpu/Cpu/Capacity triple rather than a half-updated one.
         TAtomic<uint32>     CurrentSlot{0};
         FMutex              SubmitMutex;
 
@@ -61,8 +59,12 @@ namespace Lumina::RHI::Core
 
     void Initialize()
     {
-        GCore.GlobalHeap      = CreateTextureHeap(8192, 1024, 64);
-        GCore.FrameTimeline   = CreateTimelineSemaphore(0);
+        GCore.GlobalHeap = CreateTextureHeap(8192, 1024, 64);
+
+        for (FSemaphoreH& Timeline : GCore.QueueTimeline)
+        {
+            Timeline = CreateTimelineSemaphore(0);
+        }
 
         Upload::Initialize();
 
@@ -76,8 +78,6 @@ namespace Lumina::RHI::Core
             Slice.Cursor.store(0, std::memory_order_relaxed);
         }
 
-        // Stock samplers. Registration order must match EStockSampler and the
-        // SAMPLER_* constants in GlobalRHI.slang.
         auto AddSampler = [](EStockSampler Expected, const FSamplerDesc& Desc)
         {
             const uint32 Slot = HeapWriteSampler(GCore.GlobalHeap, Desc);
@@ -164,7 +164,10 @@ namespace Lumina::RHI::Core
             Lists.clear();
         }
 
-        FreeH(GCore.FrameTimeline);
+        for (FSemaphoreH& Timeline : GCore.QueueTimeline)
+        {
+            FreeH(Timeline);
+        }
         FreeH(GCore.GlobalHeap);
         GCore.bInitialized = false;
     }
@@ -195,18 +198,19 @@ namespace Lumina::RHI::Core
 
         const uint32 Slot = SlotIndex % kFramesInFlight;
 
-        if (GCore.SlotWaitValue[Slot] != 0)
+        // Every queue that submitted into this slot, not just the last one to do so.
+        for (uint32 QueueIndex = 0; QueueIndex < FCoreState::kNumQueues; ++QueueIndex)
         {
-            WaitSemaphore(GCore.FrameTimeline, GCore.SlotWaitValue[Slot]);
+            const uint64 WaitValue = GCore.SlotWaitValue[Slot][QueueIndex];
+            if (WaitValue != 0)
+            {
+                WaitSemaphore(GCore.QueueTimeline[QueueIndex], WaitValue);
+                GCore.SlotWaitValue[Slot][QueueIndex] = 0;
+            }
         }
 
-        // Before the flush below, so an upload that reserved from this slot's slice but had not yet
-        // queued its op is guaranteed to be picked up now rather than after BeginSlot has reset the
-        // cursor and handed its staging bytes to someone else.
         Upload::DrainSliceWriters(Slot);
 
-        // Before anything destroys a resource this frame. Resetting a command list drops the
-        // recorded references it holds;
         for (FCmdListH CommandList : GCore.SlotCommandLists[Slot])
         {
             ResetCommandList(CommandList);
@@ -234,32 +238,60 @@ namespace Lumina::RHI::Core
             }
         }
 
-        // Flush queued uploads as the frame's first GPU work, on the frame timeline so
-        // slot recycling already waits for them. One submit + one Transfer->All barrier.
         {
-            const FCmdListH UploadCL = OpenCommandList(EQueueType::Graphics);
-            uint32 SliceMask = 0;
-            if (Upload::Flush(UploadCL, &SliceMask))
+            GCore.PendingTransferWait = 0;
+            for (bool& bTook : GCore.bQueueTookTransferWait)
             {
-                FScopeLock Lock(GCore.SubmitMutex);
-                const uint64 Value = ++GCore.TimelineCounter;
-                const FSemaphoreInfo Signal { GCore.FrameTimeline, Value, EStageFlags::AllCommands };
-                RHI::Submit(EQueueType::Graphics, TSpan{&UploadCL, 1}, {}, TSpan{&Signal, 1});
-                GCore.SlotWaitValue[Slot] = Value;
-                GCore.SlotCommandLists[Slot].push_back(UploadCL);
+                bTook = false;
+            }
 
-                // Slices this submission copies out of cannot be recycled until it retires.
-                Upload::NoteFlushSubmitted(SliceMask, GCore.FrameTimeline, Value);
+            const bool bAsyncTransfer = SupportsAsyncTransfer();
+
+            const FCmdListH ImageCL  = OpenCommandList(EQueueType::Graphics);
+            const FCmdListH BufferCL = bAsyncTransfer ? OpenCommandList(EQueueType::Transfer) : ImageCL;
+
+            uint32 BufferSlices = 0;
+            uint32 ImageSlices  = 0;
+            const uint32 Used = Upload::FlushSplit(BufferCL, ImageCL, &BufferSlices, &ImageSlices);
+
+            auto SubmitUpload = [&](EQueueType Queue, FCmdListH CL, uint32 SliceMask) -> uint64
+            {
+                const uint32 QueueIndex = (uint32)Queue;
+
+                FScopeLock Lock(GCore.SubmitMutex);
+                const uint64 Value = ++GCore.QueueCounter[QueueIndex];
+                const FSemaphoreInfo Signal { GCore.QueueTimeline[QueueIndex], Value, EStageFlags::AllCommands };
+                RHI::Submit(Queue, TSpan{&CL, 1}, {}, TSpan{&Signal, 1});
+                GCore.SlotWaitValue[Slot][QueueIndex] = Value;
+                GCore.SlotCommandLists[Slot].push_back(CL);
+
+                Upload::NoteFlushSubmitted(SliceMask, Queue, GCore.QueueTimeline[QueueIndex], Value);
+                return Value;
+            };
+
+            if (bAsyncTransfer && (Used & 1u) != 0u)
+            {
+                GCore.PendingTransferWait = SubmitUpload(EQueueType::Transfer, BufferCL, BufferSlices);
+            }
+            else if (bAsyncTransfer)
+            {
+                ResetCommandList(BufferCL);
+            }
+
+            // When not split, ImageCL carries both halves and both slice masks apply to it.
+            const uint32 GraphicsSlices = bAsyncTransfer ? ImageSlices : (BufferSlices | ImageSlices);
+            const uint32 GraphicsBit    = bAsyncTransfer ? 2u : 3u;
+
+            if ((Used & GraphicsBit) != 0u)
+            {
+                SubmitUpload(EQueueType::Graphics, ImageCL, GraphicsSlices);
             }
             else
             {
-                ResetCommandList(UploadCL);
+                ResetCommandList(ImageCL);
             }
         }
 
-        // Resize this slot's transient slice to last cycle's demand before resetting it. The slot's GPU
-        // work has already retired (we waited its timeline above); the CPU side is covered by the
-        // deferred free below rather than by that wait.
         {
             FTransientSlice& Slice = GCore.Slices[Slot];
             const uint64 Demand = Slice.Cursor.load(std::memory_order_relaxed);
@@ -282,10 +314,6 @@ namespace Lumina::RHI::Core
 
             if (NewCapacity != Slice.Capacity)
             {
-                // Deferred, not immediate. The slot's GPU work has retired, but AllocTransient hands
-                // out raw Cpu pointers into this buffer and a job that outlives its frame can still
-                // be writing through one. Freeing here made that a use-after-free; holding the old
-                // block for the frame ring makes the straggler's write land on memory nobody reads.
                 DeferredFree(Slice.Gpu);
                 Slice.Gpu = Malloc(NewCapacity, kDefaultAlign, EMemoryType::CPUWrite);
                 Slice.Cpu = static_cast<std::byte*>(ToHost(Slice.Gpu));
@@ -295,55 +323,91 @@ namespace Lumina::RHI::Core
             Slice.Cursor.store(0, std::memory_order_relaxed);
         }
 
-        // Release: everything above (including a resized slice) is published before a reader can
-        // observe the new slot index.
         GCore.CurrentSlot.store(Slot, std::memory_order_release);
         Upload::BeginSlot(Slot);
     }
 
-    void Submit(FCmdListH CommandList)
+    uint64 SubmitOn(EQueueType Queue, TSpan<const FCmdListH> CommandLists, TSpan<const FSemaphoreInfo> Waits)
     {
+        const uint32 QueueIndex = (uint32)Queue;
+
         FScopeLock Lock(GCore.SubmitMutex);
 
-        const uint64 Value = ++GCore.TimelineCounter;
+        const uint64 Value = ++GCore.QueueCounter[QueueIndex];
 
-        const FSemaphoreInfo Signal { GCore.FrameTimeline, Value, EStageFlags::AllCommands };
-        RHI::Submit(EQueueType::Graphics, TSpan{&CommandList, 1}, {}, TSpan{&Signal, 1});
+        FSemaphoreInfo WaitStorage[8];
+        TSpan<const FSemaphoreInfo> EffectiveWaits = Waits;
+        if (Queue != EQueueType::Transfer
+            && GCore.PendingTransferWait != 0
+            && !GCore.bQueueTookTransferWait[QueueIndex]
+            && Waits.size() < (SIZE_T)(sizeof(WaitStorage) / sizeof(WaitStorage[0])))
+        {
+            SIZE_T Count = 0;
+            for (const FSemaphoreInfo& Wait : Waits)
+            {
+                WaitStorage[Count++] = Wait;
+            }
+            WaitStorage[Count++] = FSemaphoreInfo{ GCore.QueueTimeline[(uint32)EQueueType::Transfer],
+                                                   GCore.PendingTransferWait, EStageFlags::AllCommands };
+
+            EffectiveWaits = TSpan<const FSemaphoreInfo>(WaitStorage, Count);
+            GCore.bQueueTookTransferWait[QueueIndex] = true;
+        }
+
+        const FSemaphoreInfo Signal { GCore.QueueTimeline[QueueIndex], Value, EStageFlags::AllCommands };
+        RHI::Submit(Queue, CommandLists, EffectiveWaits, TSpan{&Signal, 1});
 
         // Relaxed: only BeginFrame writes this, and both run on the frame thread.
         const uint32 Slot = GCore.CurrentSlot.load(std::memory_order_relaxed);
-        GCore.SlotWaitValue[Slot] = Value;
-        GCore.SlotCommandLists[Slot].push_back(CommandList);
+        GCore.SlotWaitValue[Slot][QueueIndex] = Value;
+        for (FCmdListH CommandList : CommandLists)
+        {
+            GCore.SlotCommandLists[Slot].push_back(CommandList);
+        }
+
+        return Value;
+    }
+
+    FSemaphoreH GetQueueTimeline(EQueueType Queue)
+    {
+        return GCore.QueueTimeline[(uint32)Queue];
+    }
+
+    void Submit(FCmdListH CommandList)
+    {
+        SubmitOn(EQueueType::Graphics, TSpan{&CommandList, 1}, {});
     }
 
     void SubmitAndWait(FCmdListH CommandList)
     {
+        constexpr uint32 GraphicsIndex = (uint32)EQueueType::Graphics;
+
         uint64 Value;
         {
             FScopeLock Lock(GCore.SubmitMutex);
-            Value = ++GCore.TimelineCounter;
+            Value = ++GCore.QueueCounter[GraphicsIndex];
 
-            const FSemaphoreInfo Signal { GCore.FrameTimeline, Value, EStageFlags::AllCommands };
+            const FSemaphoreInfo Signal { GCore.QueueTimeline[GraphicsIndex], Value, EStageFlags::AllCommands };
             RHI::Submit(EQueueType::Graphics, TSpan{&CommandList, 1}, {}, TSpan{&Signal, 1});
         }
 
-        // Wait for ONLY this submission's timeline value (not vkDeviceWaitIdle), which would block on
-        // unrelated in-flight frame work. The caller owns CommandList and resets it after this returns,
-        // so it is intentionally not tracked in the frame's slot lists.
-        WaitSemaphore(GCore.FrameTimeline, Value);
+        WaitSemaphore(GCore.QueueTimeline[GraphicsIndex], Value);
     }
 
     bool Present(FSwapchainH Swapchain, FCmdListH CommandList)
     {
+        // Present submits and presents on the graphics queue, so it rides that queue's timeline.
+        constexpr uint32 GraphicsIndex = (uint32)EQueueType::Graphics;
+
         FScopeLock Lock(GCore.SubmitMutex);
 
-        const uint64 Value = ++GCore.TimelineCounter;
+        const uint64 Value = ++GCore.QueueCounter[GraphicsIndex];
 
         // PresentSwapchain submits CommandList (wait acquire, signal present + this frame value), presents.
-        const bool bOk = PresentSwapchain(Swapchain, CommandList, GCore.FrameTimeline, Value);
+        const bool bOk = PresentSwapchain(Swapchain, CommandList, GCore.QueueTimeline[GraphicsIndex], Value);
 
         const uint32 Slot = GCore.CurrentSlot.load(std::memory_order_relaxed);
-        GCore.SlotWaitValue[Slot] = Value;
+        GCore.SlotWaitValue[Slot][GraphicsIndex] = Value;
         GCore.SlotCommandLists[Slot].push_back(CommandList);
         return bOk;
     }
@@ -353,10 +417,6 @@ namespace Lumina::RHI::Core
         return GCore.GlobalHeap;
     }
 
-    // Callable from frame jobs. The returned memory is valid for the frame that allocated it and no
-    // longer: a job that outlives its frame and allocates again gets the NEXT frame's slice, which is
-    // inherent to a per-frame linear allocator. Acquire pairs with BeginFrame's release store so the
-    // slice's Gpu/Cpu/Capacity are all observed as one consistent set.
     FTransientAlloc AllocTransient(uint64 Size, uint64 Alignment)
     {
         FTransientSlice& Slice = GCore.Slices[GCore.CurrentSlot.load(std::memory_order_acquire)];

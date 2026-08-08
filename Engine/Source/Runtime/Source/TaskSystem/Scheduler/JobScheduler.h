@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Platform/GenericPlatform.h"
 #include "Containers/Array.h"
@@ -139,11 +139,12 @@ namespace Lumina::Jobs
     // fiber can park and resume on a different worker, so thread identity does not survive a yield.
     RUNTIME_API FFiberHandle GetCurrentFiberHandle();
 
-    // Mark the calling THREAD as running a serial pump that must never yield to the scheduler (the
-    // render drain). While set, WaitForCounter on this thread does NOT park: it assist-waits instead,
-    // servicing queued jobs inline until the counter clears. Parking would strand the pump until the
-    // wait resolved, and the fiber could resume on a different thread, breaking the thread_local state
-    // the pump depends on (for the render drain, the RHI recording keyed to that thread).
+    // Mark the calling THREAD as running a serial pump that must never yield to the scheduler. While
+    // set, WaitForCounter on this thread does NOT park: it assist-waits instead, servicing queued jobs
+    // inline until the counter clears. Parking would strand the pump until the wait resolved, and the
+    // fiber could resume on a different thread, breaking any thread_local state the pump depends on.
+    // (No caller today -- the render drain that motivated it is gone -- kept as the guard for any
+    // future single-threaded pump.)
     //
     // So a fan-out inside a guarded region is safe and still parallel -- the guarded thread just helps
     // rather than yielding. It is reported once per process as a warning, since a blocking fan-out in

@@ -54,7 +54,6 @@ namespace Lumina::RHI
 }()
 #endif
 
-
     static void GpuCrashDumpCallback(const void* GpuCrashDump, uint32 GpuCrashDumpSize, void* UserData)
     {
         FVulkanCrashTracker* Tracker = static_cast<FVulkanCrashTracker*>(UserData);
@@ -250,9 +249,6 @@ namespace Lumina::RHI
             VK_API_VERSION_MINOR(ApiVer),
             VK_API_VERSION_PATCH(ApiVer));
 
-        // Attributes rather than log-only: a GPU crash is almost always a driver-version or
-        // specific-model story, and those want to be sortable columns in the dashboard rather than
-        // something to be dug out of an attached log per report.
         CrashReporting::SetAttribute("GPU", Props2.properties.deviceName);
         CrashReporting::SetAttribute("GPUDriver", DriverProps.driverInfo);
 
@@ -282,8 +278,6 @@ namespace Lumina::RHI
     {
         if (!bDeviceFaultEnabled || Device == VK_NULL_HANDLE || vkGetDeviceFaultInfoEXT == nullptr)
         {
-            // Worth saying out loud: without this extension an AMD or Intel crash reports nothing at
-            // all, and a silent absence reads like "the GPU had no complaint".
             LOG_ERROR("[DeviceLost] VK_EXT_device_fault unavailable; no vendor fault detail for this crash.");
             return {};
         }
@@ -301,9 +295,6 @@ namespace Lumina::RHI
         TVector<VkDeviceFaultAddressInfoEXT> AddressInfos(Counts.addressInfoCount);
         TVector<VkDeviceFaultVendorInfoEXT>  VendorInfos(Counts.vendorInfoCount);
 
-        // The vendor binary is the driver's own post-mortem blob, and on AMD it is by far the richest
-        // thing available -- RGD parses it into a marker tree and page-fault resource list. It was
-        // previously discarded here, which left an AMD crash with nothing but a description string.
         TVector<uint8> VendorBinary(static_cast<size_t>(Counts.vendorBinarySize));
 
         VkDeviceFaultInfoEXT Info{};
@@ -325,9 +316,6 @@ namespace Lumina::RHI
         {
             const VkDeviceFaultAddressInfoEXT& A = AddressInfos[i];
 
-            // Precision is a power-of-two mask: the faulting address is somewhere in
-            // [reported & ~(precision-1), reported | (precision-1)]. Logged as that range because the
-            // raw pair is routinely misread as an exact address.
             const uint64 Mask  = A.addressPrecision ? A.addressPrecision - 1 : 0;
             const uint64 Lower = static_cast<uint64>(A.reportedAddress) & ~Mask;
             const uint64 Upper = static_cast<uint64>(A.reportedAddress) | Mask;
@@ -369,8 +357,6 @@ namespace Lumina::RHI
             }
         }
 
-        // First address info is the useful one for a one-line summary; description alone is often
-        // just "GPU HANG" and says nothing about where.
         FString Reason = Info.description;
         if (Counts.addressInfoCount > 0)
         {
@@ -421,8 +407,6 @@ namespace Lumina::RHI
 
         const FString Reason = LogDeviceFaultInfo();
 
-        // Tagged even when empty, so a report with no vendor detail is visibly "we could not tell"
-        // rather than indistinguishable from a CPU crash in the dashboard.
         CrashReporting::SetAttribute("DeviceLostReason", Reason.empty() ? FStringView("Unknown") : FStringView(Reason));
 
         #if WITH_RGD
@@ -433,11 +417,6 @@ namespace Lumina::RHI
         #endif
 
         #if WITH_AFTERMATH
-        // Deliberately NOT AFTERMATH_CHECK_ERROR here. That macro calls exit(1) on any failure, and
-        // a status query failing is entirely likely when the device has just been lost -- which
-        // would kill the process before the local dump, the log flush or the report. exit() raises
-        // no signal, so nothing downstream would have caught it either. A failed query here just
-        // means no NVIDIA data; the rest of the report still has to go out.
         GFSDK_Aftermath_CrashDump_Status Status = GFSDK_Aftermath_CrashDump_Status_Unknown;
 
         auto PollStatus = [&Status]() -> bool
@@ -469,8 +448,6 @@ namespace Lumina::RHI
             tElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - tStart);
         }
 
-        // LOG_ERROR, not LOG_INFO: this is the line that says whether NVIDIA data exists at all, and
-        // LOG_INFO compiles to nothing in Shipping, where a user's crash is the only copy there is.
         switch (bStatusValid ? Status : GFSDK_Aftermath_CrashDump_Status_Unknown)
         {
         case GFSDK_Aftermath_CrashDump_Status_Finished:
@@ -484,26 +461,17 @@ namespace Lumina::RHI
             break;
 
         case GFSDK_Aftermath_CrashDump_Status_NotStarted:
-            // Distinct from a timeout mid-collection: the driver never began a dump at all, so it
-            // never saw a GPU fault. Either this was not a real device loss (a forced
-            // HandleDeviceLost, or a CPU-side failure misreported as one), or the fault was outside
-            // what Aftermath watches. Chasing a missing dump here is chasing the wrong thing.
             LOG_ERROR("[DeviceLost] Aftermath never started a dump: the driver did not report a GPU "
                       "fault. Not a real device loss, or the fault was outside Aftermath's scope.");
             break;
 
         default:
-            // Collection was genuinely in progress and ran past the 3s budget. The dump may still
-            // land on disk after this, but the process is about to go away.
             LOG_ERROR("[DeviceLost] Aftermath did not finish within the timeout (status {}); "
                       "the GPU dump may be missing or truncated.", static_cast<int>(Status));
             break;
         }
         #endif
 
-        // Returns rather than panicking. This function's job is to gather evidence; HandleDeviceLost
-        // owns how the process dies, and it has to run the reporter first. The PANIC that used to be
-        // here aborted mid-function, which made everything after the call site unreachable.
         Logging::Flush();
     }
 
@@ -592,8 +560,6 @@ namespace Lumina::RHI
                 LOG_ERROR("[DeviceLost] Aftermath JSON written to '{}' - decoded fault, active warps "
                           "and shader attribution are in there", JsonPath.c_str());
 
-                // The readable half of the pair, and the one that resolves to shader source when
-                // debug info was uploaded. Attached so it arrives without asking the user for it.
                 CrashReporting::AddAttachment(JsonPath);
             }
         }

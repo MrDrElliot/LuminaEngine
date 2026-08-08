@@ -15,6 +15,7 @@
 #include "Physics/PhysicsScene.h"
 #include "World/Entity/Components/DirtyComponent.h"
 #include "World/Entity/Events/ImpulseEvent.h"
+#include "Renderer/SkeletonResource.h"
 
 
 namespace JPH

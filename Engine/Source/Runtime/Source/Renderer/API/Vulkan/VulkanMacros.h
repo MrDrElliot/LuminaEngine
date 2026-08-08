@@ -10,8 +10,6 @@ namespace Lumina::RHI
 
 namespace Lumina::Vulkan
 {
-    // Modal Win32 dialog with the failing call site; WindowedApp builds have no console,
-    // so this is what the user sees when VK_CHECK trips outside a debugger.
     RUNTIME_API void ShowVulkanCheckFailureDialog(const FString& Expr, const char* File, int Line, const FString& ResultString);
 
     inline FString VkResultToString(VkResult result)

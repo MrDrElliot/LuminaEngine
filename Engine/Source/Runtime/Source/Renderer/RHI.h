@@ -7,7 +7,6 @@
 #include "Containers/Tuple.h"
 #include "Platform/GenericPlatform.h"
 
-
 namespace Lumina::RHI
 {
     constexpr auto kDefaultAlign                = 16;
@@ -24,13 +23,13 @@ namespace Lumina::RHI
     constexpr auto kInvalidHeapSlot             = ~0u;
     constexpr auto kMaxInlineWrite              = 65536u;
 
-    // What the mesh-shader geometry path declares, and so the minimum device limits it needs. Device
-    // creation validates these and falls back to the vertex-emulation path rather than letting an
-    // over-limit declaration surface later as a pipeline-creation failure or as silently missing
-    // geometry. MeshData.h static_asserts its meshlet constants against the last two.
     constexpr auto kMeshWorkGroupSize           = 128u;  // MeshletMesh.slang [numthreads(128, 1, 1)]
     constexpr auto kMeshMaxOutputVertices       = 64u;   // out vertices Verts[MESHLET_MAX_VERTICES]
     constexpr auto kMeshMaxOutputPrimitives     = 124u;  // out indices Tris[MESHLET_MAX_TRIANGLES]
+
+    constexpr auto kTaskWorkGroupSize           = 32u;   // MeshletCullTask.slang [numthreads(32, 1, 1)]
+
+    constexpr auto kMaxTaskPayloadBytes         = 4096u;
     
     struct FTexture;
     struct FTextureHeap;
@@ -57,7 +56,6 @@ namespace Lumina::RHI
     {
         
     };
-    
     
     enum class EBackend : uint8
     {
@@ -446,8 +444,6 @@ namespace Lumina::RHI
         bool    bDiscrete = false;
     };
 
-    // One GPU memory heap. Usage is OS-reported for the process; Allocated/Block come from the
-    // allocator (Block >= Allocated, the gap is fragmentation/reserve).
     struct FGPUMemoryHeapStats
     {
         uint32 HeapIndex       = 0;
@@ -477,17 +473,16 @@ namespace Lumina::RHI
     RUNTIME_API void           GetGPUMemoryStats(FGPUMemoryStats& Out);
     RUNTIME_API FGPUDeviceInfo GetDeviceInfo();
 
-    // Per-slice cap for a CPU-write ring of SliceCount slices. Without ReBAR the whole CPU-visible
-    // VRAM aperture is ~256MiB, so fixed ring sizes reserve most of it before a scene ever loads.
     RUNTIME_API uint64         ClampCPUWriteSlice(const char* RingName, uint64 DesiredSliceSize, uint32 SliceCount);
 
-    // True when VK_EXT_mesh_shader (mesh stage) is available and enabled on the device.
-    RUNTIME_API bool           SupportsMeshShaders();
+    RUNTIME_API bool           SupportsAsyncCompute();
+    RUNTIME_API bool           SupportsAsyncTransfer();
 
     RUNTIME_API void        CreateDevice(const FDeviceDesc& Desc = {});
     RUNTIME_API void        FreeDevice();
     RUNTIME_API void        TickFrame();
     RUNTIME_API void        WaitDeviceIdle();
+    RUNTIME_API uint64      GetSemaphoreValue(FSemaphoreH Semaphore);
     RUNTIME_API void        WaitSemaphore(FSemaphoreH Semaphore, uint64 Value);
 
     RUNTIME_API void        HandleDeviceLost();
@@ -495,23 +490,10 @@ namespace Lumina::RHI
     class ICrashTracker;
     RUNTIME_API ICrashTracker& GetCrashTracker();
 
-
     RUNTIME_API GPUPtr      Malloc(uint64 Size, uint64 Alignment = kDefaultAlign, EMemoryType Type = EMemoryType::Default);
     RUNTIME_API GPUPtr      Malloc(uint64 Size, EMemoryType Type);
     RUNTIME_API void*       ToHost(GPUPtr GPU);
 
-    // Attach a human-readable name to a GPU allocation or texture, via VK_EXT_debug_utils.
-    // No-ops when debug utils is unavailable (shipping), so call sites need no guard.
-    //
-    // Thread-safe against concurrent allocation, and safe to call from asset-import workers. Name a
-    // resource you own, before publishing it: Vulkan requires the named object itself to be
-    // externally synchronized, so racing a name against another thread's free of the SAME resource
-    // is the caller's problem either way.
-    //
-    // This is what turns a post-mortem crash report into something readable. Radeon GPU Detective
-    // resolves a page fault back to the resource(s) at the offending virtual address, and an
-    // unnamed allocation resolves to nothing more useful than its size. Aftermath and RenderDoc
-    // read the same names. Worth doing for anything a shader reaches through a raw address.
     RUNTIME_API void        SetDebugName(GPUPtr GPU, const char* Name);
     RUNTIME_API void        SetDebugName(FTextureH Texture, const char* Name);
     RUNTIME_API void        Free(GPUPtr GPU);
@@ -523,10 +505,6 @@ namespace Lumina::RHI
     RUNTIME_API void        FreeH(FSwapchainH Swapchain);
     RUNTIME_API void        FreeH(FSurfaceH Surface);
 
-    // Window-system surface. MUST be created on the thread that owns the window (GLFW's window calls
-    // are main-thread only), then consumed by CreateSwapchain to build a swapchain on. CreateSwapchain
-    // consumes the handle and takes ownership of the surface; FreeH is for a surface whose window died
-    // before a swapchain was ever built.
     RUNTIME_API FSurfaceH    CreateSurface(void* WindowHandle);
     RUNTIME_API FSwapchainH  CreateSwapchain(FSurfaceH Surface, const FUIntVector2& Extent);
     RUNTIME_API void         RecreateSwapchain(FSwapchainH Swapchain, const FUIntVector2& Extent);
@@ -539,11 +517,6 @@ namespace Lumina::RHI
     RUNTIME_API void         CmdSwapchainBarrierToRender(FCmdListH CL, FSwapchainH Swapchain);
     RUNTIME_API bool         PresentSwapchain(FSwapchainH Swapchain, FCmdListH FinalCommandList, FSemaphoreH FrameSignal, uint64 FrameSignalValue);
 
-    // One driver-reported statistic about a compiled pipeline stage (VK_KHR_pipeline_executable_properties).
-    // Names are entirely VENDOR-DEFINED -- NVIDIA and AMD report different sets for what is roughly the same
-    // information -- so these are surfaced verbatim rather than mapped onto fixed fields. The one every
-    // vendor exposes in some form is the per-thread register count, which is what decides the occupancy
-    // step a shader lands on (Ampere: 128 regs -> 16 warps, 96 -> 20, 80 -> 24, 72 -> 28, 64 -> 32).
     struct FPipelineStat
     {
         FString Stage;              // executable name, e.g. "Fragment Shader" -- one per compiled stage
@@ -552,16 +525,11 @@ namespace Lumina::RHI
         bool    bIsFloat = false;   // false -> render as an integer
     };
 
-    // Statistics for an already-created pipeline, appended to Out. EDITOR ONLY in practice: it needs the
-    // pipeline to have been created with CAPTURE_STATISTICS, which only happens when the extension was
-    // enabled, which only happens in an editor build. Returns false and leaves Out alone otherwise, so
-    // callers can treat "unavailable" and "no stats" identically.
     RUNTIME_API bool            GetPipelineStatistics(FPipelineH Pipeline, TVector<FPipelineStat>& Out);
 
     RUNTIME_API FDepthStencilH  CreateDepthStencil(const FDepthStencilDesc& Desc);
     RUNTIME_API FPipelineH      CreateGraphicsPipeline(const FShaderSource& Vertex, const FShaderSource& Fragment, const FRasterDesc& Desc, TSpan<const FSpecializationConstant> Constants = {});
     RUNTIME_API FPipelineH      CreateComputePipeline(const FShaderSource& Compute, TSpan<const FSpecializationConstant> Constants = {});
-    // Task stage is optional (empty Source = mesh-only). Requires SupportsMeshShaders(); returns an invalid handle otherwise.
     RUNTIME_API FPipelineH      CreateMeshShaderPipeline(const FShaderSource& Task, const FShaderSource& Mesh, const FShaderSource& Fragment, const FRasterDesc& Desc, TSpan<const FSpecializationConstant> Constants = {});
     RUNTIME_API FSemaphoreH     CreateTimelineSemaphore(uint64 Value);
     RUNTIME_API FTextureH       CreateTexture(const FTextureDesc& Desc, GPUPtr Location = 0);
@@ -570,10 +538,6 @@ namespace Lumina::RHI
     RUNTIME_API FTextureDesc    GetTextureDesc(FTextureH Texture);
 
     RUNTIME_API uint32      HeapWriteTexture(FTextureHeapH Heap, FTextureH Texture);
-    // Point an already-allocated sampled slot at a different texture. This is what makes a slot a
-    // stable published identity: anything holding the index (ImGui carries bindless indices in draw
-    // data built a frame or more before it is submitted) keeps resolving to a live texture across a
-    // resize, instead of naming a slot that was freed out from under it.
     RUNTIME_API void        HeapRepointTexture(FTextureHeapH Heap, uint32 Slot, FTextureH Texture);
     RUNTIME_API uint32      HeapWriteRWTexture(FTextureHeapH Heap, FTextureH Texture, uint32 Mip = 0);
     RUNTIME_API uint32      HeapWriteSampler(FTextureHeapH Heap, const FSamplerDesc& Desc);
@@ -597,7 +561,6 @@ namespace Lumina::RHI
     
     RUNTIME_API void        SubmitAndWait(FCmdListH CommandList);
 
-
     RUNTIME_API void        CmdMemcpy(FCmdListH CL, GPUPtr Dest, GPUPtr Source, size_t Size);
     RUNTIME_API void        CmdMemset(FCmdListH CL, GPUPtr Dest, uint64 Size, uint32 Value);
     RUNTIME_API void        CmdMemzero(FCmdListH CL, GPUPtr Dest, uint64 Size);
@@ -613,13 +576,10 @@ namespace Lumina::RHI
 
     RUNTIME_API void        CmdBarrier(FCmdListH CL, EStageFlags Before, EStageFlags After);
 
-    // Image-scoped barrier. Access masks are derived from the stages, so unlike CmdBarrier this NAMES the
-    // image and tells the driver what it is about to be used for. Under VK_KHR_unified_image_layouts the
-    // layout stays GENERAL either way -- that extension drops layout transitions, not image barriers, and
-    // its proposal is explicit that they are "still required for best performance on some hardware, even
-    // if both src and dst layouts are VK_IMAGE_LAYOUT_GENERAL". On NVIDIA that signal is what lets a depth
-    // target sit in its compressed, ZCULL-capable state instead of the conservative one.
     RUNTIME_API void        CmdImageBarrier(FCmdListH CL, FTextureH Texture, EStageFlags Before, EStageFlags After);
+
+    RUNTIME_API void        CmdReleaseImageToQueue(FCmdListH CL, FTextureH Texture, EQueueType Dest, EStageFlags Before);
+    RUNTIME_API void        CmdAcquireImageFromQueue(FCmdListH CL, FTextureH Texture, EQueueType Source, EStageFlags After);
 
     // Canonical pipeline-stage barriers.
     namespace Barriers
@@ -633,12 +593,15 @@ namespace Lumina::RHI
                 EStageFlags::IndirectArguments | EStageFlags::FragmentTests | EStageFlags::Transfer);
         }
 
+        // MeshShader/TaskShader belong in the SOURCE mask: a task shader that culls also writes.
         inline void RasterToRead(FCmdListH CL)
         {
             CmdBarrier(CL,
-                EStageFlags::RasterColorOut | EStageFlags::FragmentTests,
+                EStageFlags::RasterColorOut | EStageFlags::FragmentTests |
+                EStageFlags::MeshShader | EStageFlags::TaskShader,
                 EStageFlags::PixelShader | EStageFlags::VertexShader | EStageFlags::Compute |
                 EStageFlags::MeshShader | EStageFlags::TaskShader |
+                EStageFlags::IndirectArguments |
                 EStageFlags::RasterColorOut | EStageFlags::FragmentTests);
         }
 
@@ -662,6 +625,28 @@ namespace Lumina::RHI
         inline void AllToTransfer(FCmdListH CL)
         {
             CmdBarrier(CL, EStageFlags::AllCommands, EStageFlags::Transfer);
+        }
+
+        /** Uploads/clears feeding the GPU scene: consumed by the cull dispatches and the geometry front end. */
+        // Narrow variants: use only where every reader of every buffer written is in the destination.
+        inline void TransferToCompute(FCmdListH CL)
+        {
+            CmdBarrier(CL, EStageFlags::Transfer,
+                EStageFlags::Compute | EStageFlags::TaskShader | EStageFlags::MeshShader);
+        }
+
+        /** A cull dispatch whose output feeds later dispatches, the task/mesh stages, and indirect fetch. */
+        inline void ComputeToGeometry(FCmdListH CL)
+        {
+            CmdBarrier(CL, EStageFlags::Compute,
+                EStageFlags::Compute | EStageFlags::TaskShader | EStageFlags::MeshShader |
+                EStageFlags::IndirectArguments);
+        }
+
+        /** A dispatch that writes nothing but indirect arguments. */
+        inline void ComputeToIndirect(FCmdListH CL)
+        {
+            CmdBarrier(CL, EStageFlags::Compute, EStageFlags::IndirectArguments);
         }
     }
 
@@ -693,15 +678,12 @@ namespace Lumina::RHI
     RUNTIME_API void        CmdDrawIndirect(FCmdListH CL, GPUPtr Args, GPUPtr IndirectBuffer, uint32 Offset, uint32 DrawCount, uint32 Stride);
     RUNTIME_API void        CmdDispatchIndirect(FCmdListH CL, GPUPtr Args, GPUPtr IndirectBuffer, uint32 Offset);
 
-    // Mesh/task shader draws (require a CreateMeshShaderPipeline pipeline bound). DrawArgs is the push-constant
-    // GPUPtr (shader args), as with the other Cmd* draws. The indirect buffers hold FDrawMeshTasksIndirectArguments.
     RUNTIME_API void        CmdDrawMeshTasks(FCmdListH CL, GPUPtr DrawArgs, uint32 GroupCountX, uint32 GroupCountY, uint32 GroupCountZ);
     RUNTIME_API void        CmdDrawMeshTasksIndirect(FCmdListH CL, GPUPtr DrawArgs, GPUPtr IndirectBuffer, uint32 Offset, uint32 DrawCount, uint32 Stride);
     RUNTIME_API void        CmdDrawMeshTasksIndirectCount(FCmdListH CL, GPUPtr DrawArgs, GPUPtr IndirectBuffer, uint32 Offset, GPUPtr CountBuffer, uint32 CountOffset, uint32 MaxDrawCount, uint32 Stride);
 
     RUNTIME_API void        CmdBeginMarker(FCmdListH CL, const char* Name);
     RUNTIME_API void        CmdEndMarker(FCmdListH CL);
-
 
     template<typename T>
     TTuple<T*, GPUPtr> New(uint64 Count = 1)

@@ -12,6 +12,7 @@
 #include "World/Entity/Components/RagdollComponent.h"
 #include "World/Entity/Components/SkeletalMeshComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
+#include "Renderer/SkeletonResource.h"
 
 namespace Lumina
 {

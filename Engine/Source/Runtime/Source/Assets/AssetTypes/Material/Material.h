@@ -26,13 +26,14 @@ namespace Lumina
     enum class EMaterialShaderStage : uint8
     {
         Pixel,
+        // Non-meshlet domains only: UI, PostProcess, Decal and Terrain raster through a real vertex
+        // shader. PBR geometry has no vertex stage at all -- it is task + mesh, end to end.
         Vertex,
-        Mesh,                       // MeshletMesh.slang; bound only when the device has mesh shaders
-        VisBufferMesh,              // MeshletVisBuffer.slang (opaque, position-only output); device-gated like Mesh
+        MeshShadow,                 // MeshletMesh.slang (depth-only output); shadow geometry
+        MeshBase,                   // MeshletMesh.slang + MESHLET_MESH_BASE; translucent / additive geometry
+        VisBufferMesh,              // MeshletVisBuffer.slang (opaque, position-only output)
         VisBufferMeshMasked,        // MeshletVisBuffer.slang + VISBUFFER_MASKED_GEOM; masked materials only
-        VisBufferVertex,            // MeshletVisBufferVS.slang; vertex-emulation fallback
-        MaskedVisBufferPixel,       // VisBufferMaskedPixel.slang (VS path); masked materials only
-        MaskedVisBufferPixelPrim,   // VisBufferMaskedPixel.slang + VISBUFFER_PRIMID (mesh path); masked only
+        MaskedVisBufferPixel,       // VisBufferMaskedPixel.slang + VISBUFFER_PRIMID; masked materials only
         Deferred,                   // DeferredMaterial.slang
 
         Count,
@@ -65,27 +66,27 @@ namespace Lumina
         FMaterialUniforms* GetMaterialUniforms() override { return &MaterialUniforms; }
         
         CMaterial* GetMaterial() const override;
-        const FShaderEntry* GetVertexShader() const override;
         const FShaderEntry* GetPixelShader() const override;
+        const FShaderEntry* GetVertexShader() const override;
 
-        // Mesh-shader variant of the geometry stage (MeshletMesh.slang). Null when unavailable; the
-        // renderer uses it only when r.MeshShaders is on and the device supports VK_EXT_mesh_shader.
-        const FShaderEntry* GetMeshShader() const { return MeshShader; }
+        // Geometry stages. Every one is a MESH shader fed by the shared amplification stage -- there is no
+        // vertex path for meshlet geometry. All are per-material because the vertex graph's World Position
+        // Offset is compiled into them.
+        //
+        // Shadow emits position only; base emits the full interpolant set for forward-shaded translucency.
+        // Carrying interpolants through the shadow pass reserved 124B per vertex of mesh output storage for
+        // a consumer that reads SV_Position, which is what held cascade occupancy at 2.0 warps/cycle.
+        const FShaderEntry* GetMeshShaderShadow() const { return MeshShaderShadow; }
+        const FShaderEntry* GetMeshShaderBase() const { return MeshShaderBase; }
 
-        // VisBuffer geometry stage; per-material for WPO. The VisBuffer pass uses the mesh variant when the
-        // device supports mesh shaders, else the vertex-emulation variant -- VisBuffer never requires either.
         const FShaderEntry* GetVisBufferMeshShader() const { return VisBufferMeshShader; }
-        // Masked-only VisBuffer geometry (mesh path): emits the interpolants the masked PS needs. Null for
-        // opaque materials, which use the position-only GetVisBufferMeshShader above.
+        // Masked-only VisBuffer geometry: emits the interpolants the masked PS needs. Null for opaque
+        // materials, which use the position-only GetVisBufferMeshShader above.
         const FShaderEntry* GetVisBufferMeshShaderMasked() const { return VisBufferMeshShaderMasked; }
-        const FShaderEntry* GetVisBufferVertexShader() const { return VisBufferVertexShader; }
 
-        // Masked-only VisBuffer PIXEL shaders: run the opacity graph and alpha-clip cut-out texels BEFORE they
-        // write VisID/depth (VisBufferMaskedPixel.slang). The GEOMETRY stage is the SAME shared VisBuffer VS/mesh
-        // as opaque -- the VISBUFFER_MASKED spec constant makes it emit the interpolants the masked PS reads.
-        // Flat = VS-emulation path; Prim = mesh-shader path (SV_PrimitiveID). Null for non-masked materials.
+        // Masked-only VisBuffer PIXEL shader: runs the opacity graph and alpha-clips cut-out texels BEFORE
+        // they write VisID/depth, so they cannot stamp occluding depth. Null for non-masked materials.
         const FShaderEntry* GetMaskedVisBufferPixelShader() const { return MaskedVisBufferPixelShader; }
-        const FShaderEntry* GetMaskedVisBufferPixelShaderPrim() const { return MaskedVisBufferPixelShaderPrim; }
 
         // Deferred material pixel shader (DeferredMaterial.slang): reconstructs surface from the VisBuffer
         // triangle ID and shades. The deferred pass binds it per opaque material.
@@ -196,12 +197,18 @@ namespace Lumina
         PROPERTY()
         TVector<uint32>                         PixelShaderBinaries;
 
+        /** Vertex stage for the non-meshlet domains (UI / PostProcess / Decal / Terrain). PBR geometry
+            has none -- it is task + mesh, end to end. */
         PROPERTY()
         TVector<uint32>                         VertexShaderBinaries;
 
-        /** Mesh-shader geometry stage (MeshletMesh.slang); empty if mesh shaders weren't compiled. */
+        /** Shadow geometry stage (MeshletMesh.slang, depth-only output). */
         PROPERTY()
-        TVector<uint32>                         MeshShaderBinaries;
+        TVector<uint32>                         MeshShaderShadowBinaries;
+
+        /** Translucent / additive geometry stage (MeshletMesh.slang + MESHLET_MESH_BASE). */
+        PROPERTY()
+        TVector<uint32>                         MeshShaderBaseBinaries;
 
         /** VisBuffer geometry stage (MeshletVisBuffer.slang); empty if not compiled. */
         PROPERTY()
@@ -210,17 +217,9 @@ namespace Lumina
         /** VisBuffer geometry, masked variant (MeshletVisBuffer.slang + VISBUFFER_MASKED_GEOM); empty for non-masked. */
         TVector<uint32>                         VisBufferMeshShaderMaskedBinaries;
 
-        /** VisBuffer geometry stage, vertex-emulation fallback (MeshletVisBufferVS.slang). */
-        PROPERTY()
-        TVector<uint32>                         VisBufferVertexShaderBinaries;
-
-        /** Masked-only VisBuffer pixel stage, VS path (VisBufferMaskedPixel.slang): opacity clip; empty for non-masked. */
+        /** Masked-only VisBuffer pixel stage (VisBufferMaskedPixel.slang + VISBUFFER_PRIMID). */
         PROPERTY()
         TVector<uint32>                         MaskedVisBufferPixelShaderBinaries;
-
-        /** Masked-only VisBuffer pixel stage, mesh path (VisBufferMaskedPixel.slang + VISBUFFER_PRIMID). */
-        PROPERTY()
-        TVector<uint32>                         MaskedVisBufferPixelShaderPrimBinaries;
 
         /** Deferred material pixel stage (DeferredMaterial.slang); empty if not compiled. */
         PROPERTY()
@@ -237,14 +236,13 @@ namespace Lumina
         FMaterialUniforms                       MaterialUniforms;
 
         // Library entries keyed by asset GUID; recompiles refresh them in place.
-        const FShaderEntry*                     VertexShader = nullptr;
         const FShaderEntry*                     PixelShader = nullptr;
-        const FShaderEntry*                     MeshShader = nullptr;
+        const FShaderEntry*                     VertexShader = nullptr;
+        const FShaderEntry*                     MeshShaderShadow = nullptr;
+        const FShaderEntry*                     MeshShaderBase = nullptr;
         const FShaderEntry*                     VisBufferMeshShader = nullptr;
         const FShaderEntry*                     VisBufferMeshShaderMasked = nullptr;
-        const FShaderEntry*                     VisBufferVertexShader = nullptr;
         const FShaderEntry*                     MaskedVisBufferPixelShader = nullptr;
-        const FShaderEntry*                     MaskedVisBufferPixelShaderPrim = nullptr;
         const FShaderEntry*                     DeferredShader = nullptr;
 
         bool RefreshTextureBindings(const CTexture* ChangedTexture) override;

@@ -28,11 +28,85 @@ namespace Lumina
         std::string StatusMessage       = "Initializing...";
         std::string ChipName;
 
+        // View state for the detail sections below the HUD.
+        bool  bShowPlots      = true;
+        bool  bShowMetrics    = false;
+        char  MetricFilter[128] = {};
+
+        // Sampling parameters, kept so the session panel can report what the numbers actually mean
+        // rather than restating the constants from OnInitialize.
+        double SamplingIntervalSeconds = 0.0;
+        double PlotTimeWidthSeconds    = 0.0;
+
         nv::perf::sampler::PeriodicSamplerTimeHistoryVulkan Sampler;
         nv::perf::hud::HudPresets                           HudPresets;
         nv::perf::hud::HudDataModel                         HudDataModel;
         nv::perf::hud::HudImPlotRenderer                    HudRenderer;
     };
+
+    namespace
+    {
+        // Current value plus min/avg/max across the retained window.
+        //
+        // Reads valBuffer EXACTLY as HudImPlotRenderer does: MetricSignal::AddSample already multiplied by
+        // `multiplier` before pushing (NvPerfHudDataModel.h), so the buffer is in display units and must
+        // not be scaled again here -- doing so would silently disagree with the plot beside it.
+        struct FSignalStats
+        {
+            bool   bValid = false;
+            double Current = 0.0;
+            double Min = 0.0;
+            double Max = 0.0;
+            double Avg = 0.0;
+            size_t Samples = 0;
+        };
+
+        FSignalStats ReadSignal(const nv::perf::hud::MetricSignal& Signal)
+        {
+            FSignalStats Out;
+
+            const auto& Buffer = Signal.valBuffer;
+            const size_t Count = Buffer.Size();
+            if (Count == 0)
+            {
+                return Out;
+            }
+
+            Out.bValid  = true;
+            Out.Samples = Count;
+            Out.Current = Buffer.Front();   // Front() is the MOST RECENT write, not the oldest
+
+            double Sum = 0.0;
+            Out.Min = Buffer.Get(0);
+            Out.Max = Buffer.Get(0);
+            for (size_t i = 0; i < Count; ++i)
+            {
+                const double V = Buffer.Get(i);
+                Sum += V;
+                Out.Min = V < Out.Min ? V : Out.Min;
+                Out.Max = V > Out.Max ? V : Out.Max;
+            }
+            Out.Avg = Sum / (double)Count;
+            return Out;
+        }
+
+        bool PassesFilter(const std::string& Label, const std::string& Metric, const char* Filter)
+        {
+            if (Filter == nullptr || Filter[0] == '\0')
+            {
+                return true;
+            }
+            std::string Needle(Filter);
+            auto Lower = [](std::string S)
+            {
+                for (char& C : S) { C = (char)((C >= 'A' && C <= 'Z') ? (C - 'A' + 'a') : C); }
+                return S;
+            };
+            Needle = Lower(Needle);
+            return Lower(Label).find(Needle) != std::string::npos
+                || Lower(Metric).find(Needle) != std::string::npos;
+        }
+    }
 
     void FNsightPerfTool::OnInitialize()
     {
@@ -94,6 +168,9 @@ namespace Lumina
         {
             nv::perf::MetricConfigurations::LoadMetricConfigObject(MetricConfigObject, Ids.pChipName, MetricConfigName);
         }
+        State->SamplingIntervalSeconds = 1.0 / (double)SamplingFrequency;
+        State->PlotTimeWidthSeconds    = PlotTimeWidthSeconds;
+
         State->HudDataModel.Initialize(1.0 / (double)SamplingFrequency, PlotTimeWidthSeconds, MetricConfigObject);
         State->Sampler.SetConfig(&State->HudDataModel.GetCounterConfiguration());
         State->HudDataModel.PrepareSampleProcessing(State->Sampler.GetCounterData());
@@ -182,9 +259,201 @@ namespace Lumina
         if (!State->ChipName.empty())
         {
             ImGui::TextColored(EditorColors::TextDim(), "GPU: %s", State->ChipName.c_str());
-            ImGui::Separator();
         }
 
-        State->HudRenderer.Render();
+        ImGui::Checkbox("Plots", &State->bShowPlots);
+        ImGui::SameLine();
+        ImGui::Checkbox("Metric Values", &State->bShowMetrics);
+        ImGui::Separator();
+
+        DrawSessionInfo();
+
+        if (State->bShowPlots)
+        {
+            State->HudRenderer.Render();
+        }
+
+        if (State->bShowMetrics)
+        {
+            DrawMetricTable();
+        }
+    }
+
+    void FNsightPerfTool::DrawSessionInfo()
+    {
+        if (!ImGui::CollapsingHeader("Session"))
+        {
+            return;
+        }
+
+        // Counted rather than stored: the preset decides how many of each, and a hardcoded number here
+        // would quietly go stale the moment the preset changes.
+        size_t PanelCount  = 0;
+        size_t SignalCount = 0;
+        for (const auto& Config : State->HudDataModel.GetConfigurations())
+        {
+            PanelCount += Config.panels.size();
+            for (const auto& Panel : Config.panels)
+            {
+                for (const auto& pWidget : Panel.widgets)
+                {
+                    if (pWidget->type == nv::perf::hud::Widget::Type::ScalarText)
+                    {
+                        ++SignalCount;
+                    }
+                    else if (pWidget->type == nv::perf::hud::Widget::Type::TimePlot)
+                    {
+                        const auto& Plot = static_cast<const nv::perf::hud::TimePlot&>(*pWidget);
+                        SignalCount += Plot.signals.size() + Plot.stackedSignals.size();
+                    }
+                }
+            }
+        }
+
+        const double IntervalMs = State->SamplingIntervalSeconds * 1000.0;
+
+        ImGui::Indent(12.0f);
+        ImGui::TextColored(EditorColors::TextDim(), "Sample interval");
+        ImGui::SameLine(200.0f);
+        ImGui::Text("%.2f ms (%.0f Hz)", IntervalMs,
+            State->SamplingIntervalSeconds > 0.0 ? 1.0 / State->SamplingIntervalSeconds : 0.0);
+
+        ImGui::TextColored(EditorColors::TextDim(), "Plot window");
+        ImGui::SameLine(200.0f);
+        ImGui::Text("%.1f s", State->PlotTimeWidthSeconds);
+
+        ImGui::TextColored(EditorColors::TextDim(), "Panels / metrics");
+        ImGui::SameLine(200.0f);
+        ImGui::Text("%zu / %zu", PanelCount, SignalCount);
+
+        // The periodic sampler is asynchronous: these are GPU-side counter samples, NOT engine frames, so
+        // a rate far below the interval above means samples are being dropped rather than the GPU idling.
+        ImGui::TextColored(EditorColors::TextDim(), "Status");
+        ImGui::SameLine(200.0f);
+        ImGui::TextUnformatted(State->StatusMessage.c_str());
+        ImGui::Unindent(12.0f);
+        ImGui::Spacing();
+    }
+
+    void FNsightPerfTool::DrawMetricTable()
+    {
+        ImGui::Spacing();
+        ImGui::SetNextItemWidth(240.0f);
+        ImGui::InputTextWithHint("##metric_filter", "Filter metrics...",
+            State->MetricFilter, sizeof(State->MetricFilter));
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Clear"))
+        {
+            State->MetricFilter[0] = '\0';
+        }
+        ImGui::Spacing();
+
+        constexpr ImGuiTableFlags TableFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg
+                                             | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_ScrollY;
+
+        // Emitted per signal. Split out so the ScalarText and TimePlot walks below cannot drift in how
+        // they format or filter -- they differ only in where the signal came from.
+        auto DrawSignalRow = [this](const nv::perf::hud::MetricSignal& Signal)
+        {
+            if (!PassesFilter(Signal.label.text, Signal.metric, State->MetricFilter))
+            {
+                return;
+            }
+
+            const FSignalStats Stats = ReadSignal(Signal);
+
+            ImGui::TableNextRow();
+
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(Signal.label.text.empty() ? Signal.metric.c_str() : Signal.label.text.c_str());
+            if (ImGui::IsItemHovered() && !Signal.description.empty())
+            {
+                ImGui::SetTooltip("%s\n\n%s", Signal.metric.c_str(), Signal.description.c_str());
+            }
+            else if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip("%s", Signal.metric.c_str());
+            }
+
+            ImGui::TableNextColumn();
+            if (Stats.bValid)
+            {
+                ImGui::Text("%.2f", Stats.Current);
+            }
+            else
+            {
+                // No samples yet is a normal state for the first frames after the session opens.
+                ImGui::TextColored(EditorColors::TextDim(), "--");
+            }
+
+            ImGui::TableNextColumn();
+            ImGui::TextColored(EditorColors::TextDim(), "%s",
+                Signal.unit.empty() ? "" : Signal.unit.c_str());
+
+            ImGui::TableNextColumn();
+            if (Stats.bValid)
+            {
+                ImGui::TextColored(EditorColors::TextDim(), "%.2f / %.2f / %.2f", Stats.Min, Stats.Avg, Stats.Max);
+            }
+            else
+            {
+                ImGui::TextColored(EditorColors::TextDim(), "--");
+            }
+        };
+
+        int ScopeId = 0;
+        for (const auto& Config : State->HudDataModel.GetConfigurations())
+        {
+            for (const auto& Panel : Config.panels)
+            {
+                // A CollapsingHeader derives its ID from its LABEL, and nothing stops two configurations
+                // from carrying a panel of the same name -- they would then open and close together, and
+                // their tables would share scroll state. Scoping by position makes each one its own.
+                ImGui::PushID(ScopeId++);
+
+                const std::string Header = Panel.label.text.empty() ? Panel.name : Panel.label.text;
+                if (!ImGui::CollapsingHeader(Header.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
+                {
+                    ImGui::PopID();
+                    continue;
+                }
+
+                if (!ImGui::BeginTable("##metrics", 4, TableFlags))
+                {
+                    ImGui::PopID();
+                    continue;
+                }
+
+                ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthStretch, 0.50f);
+                ImGui::TableSetupColumn("Value",  ImGuiTableColumnFlags_WidthStretch, 0.14f);
+                ImGui::TableSetupColumn("Unit",   ImGuiTableColumnFlags_WidthStretch, 0.10f);
+                ImGui::TableSetupColumn("Min / Avg / Max", ImGuiTableColumnFlags_WidthStretch, 0.26f);
+                ImGui::TableHeadersRow();
+
+                for (const auto& pWidget : Panel.widgets)
+                {
+                    if (pWidget->type == nv::perf::hud::Widget::Type::ScalarText)
+                    {
+                        DrawSignalRow(static_cast<const nv::perf::hud::ScalarText&>(*pWidget).signal);
+                    }
+                    else if (pWidget->type == nv::perf::hud::Widget::Type::TimePlot)
+                    {
+                        const auto& Plot = static_cast<const nv::perf::hud::TimePlot&>(*pWidget);
+                        for (const auto& Signal : Plot.signals)
+                        {
+                            DrawSignalRow(Signal);
+                        }
+                        // Stacked signals are a separate list on the same plot, not a subset of the above.
+                        for (const auto& Signal : Plot.stackedSignals)
+                        {
+                            DrawSignalRow(Signal);
+                        }
+                    }
+                }
+
+                ImGui::EndTable();
+                ImGui::PopID();
+            }
+        }
     }
 }

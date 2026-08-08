@@ -63,6 +63,7 @@
 #include "World/Scene/RenderScene/SceneRenderTypes.h"
 #include "World/Subsystems/WorldSettings.h"
 #include "Log/Log.h"
+#include "Renderer/MeshQuantization.h"
 
 
 namespace Lumina
@@ -255,7 +256,7 @@ namespace Lumina
                 const FMeshlet& M = Meshlets[Offset + i];
                 for (uint32 v = 0; v < M.VertexCount; ++v)
                 {
-                    Visit(Verts[M.VertexOffset + v].Position);
+                    Visit(DecodeMeshletPosition(M, Verts[M.VertexOffset + v]));
                 }
             }
         });

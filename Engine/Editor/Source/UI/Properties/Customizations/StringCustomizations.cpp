@@ -11,6 +11,7 @@
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include <Assets/AssetRegistry/AssetData.h>
 #include <Assets/AssetRegistry/AssetRegistry.h>
+#include "Renderer/SkeletonResource.h"
 
 
 namespace Lumina

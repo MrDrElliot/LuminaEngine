@@ -3,6 +3,7 @@
 #include "Assets/AssetTypes/Blackboard/Blackboard.h"
 #include "Assets/AssetTypes/Mesh/Animation/Animation.h"
 #include "Renderer/MeshData.h"
+#include "Renderer/SkeletonResource.h"
 
 namespace Lumina
 {

@@ -33,6 +33,7 @@
 #include <Paths/Paths.h>
 #include <Platform/GenericPlatform.h>
 #include <Renderer/Shader.h>
+#include <TaskSystem/ThreadedCallback.h>
 #include <Tools/Screenshot/ScreenshotCapture.h>
 #include <World/World.h>
 #include "UI/Tools/NodeGraph/Material/MaterialGraphCompile.h"
@@ -48,7 +49,6 @@
 #include "Assets/AssetTypes/DataAsset/DataAsset.h"
 #include "Assets/AssetTypes/Font/Font.h"
 #include "Assets/AssetTypes/PhysicsMaterial/PhysicsMaterial.h"
-#include "Assets/AssetTypes/DataAsset/DataAssetSchema.h"
 #include "Assets/AssetTypes/GeometryCollection/GeometryCollection.h"
 #include "Assets/AssetEvents.h"
 #include "Assets/AssetTypes/Material/Material.h"
@@ -137,7 +137,6 @@
 #include "Tools/AssetEditors/CollisionShape/CollisionShapeEditorTool.h"
 #include "Tools/AssetEditors/PhysicsAsset/PhysicsAssetEditorTool.h"
 #include "Tools/AssetEditors/PhysicsMaterial/PhysicsMaterialEditorTool.h"
-#include "Tools/AssetEditors/DataAsset/DataAssetSchemaEditorTool.h"
 #include "Tools/AssetEditors/GeometryCollection/GeometryCollectionEditorTool.h"
 #include "Tools/AssetEditors/MaterialEditor/MaterialEditorTool.h"
 #include "Tools/AssetEditors/MaterialEditor/MaterialInstanceEditorTool.h"
@@ -1410,7 +1409,6 @@ namespace Lumina
         Registry.RegisterAssetEditor<CMaterialFunction,   FMaterialFunctionEditorTool>(Owner);
         Registry.RegisterAssetEditor<CAnimationGraph,     FAnimationGraphEditorTool>(Owner);
         Registry.RegisterAssetEditor<CBlackboard,         FBlackboardEditorTool>(Owner);
-        Registry.RegisterAssetEditor<CDataAssetSchema,    FDataAssetSchemaEditorTool>(Owner);
         Registry.RegisterAssetEditor<CDataAsset,          FDataAssetEditorTool>(Owner);
         Registry.RegisterAssetEditor<CDataTable,          FDataTableEditorTool>(Owner);
         Registry.RegisterAssetEditor<CPhysicsMaterial,    FPhysicsMaterialEditorTool>(Owner);
@@ -1452,7 +1450,14 @@ namespace Lumina
             return;
         }
 
-        if (WorldEditorTool->GetWorld() == Asset)
+        // While PIE/Simulate is running the tool's World is the transient duplicate, and the world actually
+        // being edited is stashed in ProxyWorld. Comparing against GetWorld() would never match the asset
+        // on disk, so re-opening the level you are already playing would fall through and stop the session
+        // just to re-open the same world. GetPIESourceWorld() is null whenever no session is live.
+        CWorld* PIESourceWorld = WorldEditorTool->GetPIESourceWorld();
+        const CWorld* EditedWorld = (PIESourceWorld != nullptr) ? PIESourceWorld : WorldEditorTool->GetWorld();
+
+        if (EditedWorld == Asset)
         {
             const char* Name = WorldEditorTool->GetToolName().c_str();
             ImGui::SetWindowFocus(Name);
@@ -1463,9 +1468,12 @@ namespace Lumina
         // the singleton WorldEditorTool, so this stays outside the registry.
         if (Asset->IsA<CWorld>())
         {
+            // Switching worlds mid-session kills PIE/Simulate, which is destructive enough to confirm.
+            // The same-world case never reaches here -- it focuses the tool above.
             if (WorldEditorTool->HasSimulatingWorld())
             {
-                WorldEditorTool->StopAllSimulations();
+                PromptOpenWorldDuringPlay(AssetGUID, Asset->GetName().ToString());
+                return;
             }
 
             WorldEditorTool->SetWorld(Cast<CWorld>(Asset));
@@ -1481,6 +1489,101 @@ namespace Lumina
             ActiveAssetTools.insert_or_assign(Asset, NewTool);
             RecordSessionTab(NewTool, FString(GSessionAssetPrefix) + AssetGUID.ToString());
         }
+    }
+
+    void FEditorUI::PromptOpenWorldDuringPlay(const FGuid& AssetGUID, const FString& WorldName)
+    {
+        // The source world, not WorldEditorTool->GetWorld() -- the latter is the transient PIE duplicate,
+        // whose package dirty flag says nothing about the edits the user would be walking away from.
+        const CWorld* SourceWorld = WorldEditorTool->GetPIESourceWorld();
+
+        const bool bSourceDirty = SourceWorld != nullptr
+            && SourceWorld->GetPackage() != nullptr
+            && SourceWorld->GetPackage()->IsDirty();
+
+        const FString CurrentName = (SourceWorld != nullptr) ? SourceWorld->GetName().ToString() : FString("the current world");
+
+        ModalManager.CreateDialogue("Stop Play In Editor?", ImVec2(560, 280),
+            [this, AssetGUID, WorldName, CurrentName, bSourceDirty]() -> bool
+        {
+            ImGuiX::Font::PushFont(ImGuiX::Font::EFont::MediumBold);
+            ImGui::PushStyleColor(ImGuiCol_Text, kProjDialogAccentGold);
+            ImGui::TextUnformatted(LE_ICON_ALERT_CIRCLE_OUTLINE "  Stop Play In Editor?");
+            ImGui::PopStyleColor();
+            ImGuiX::Font::PopFont();
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            ImGui::PushStyleColor(ImGuiCol_Text, kProjDialogTextDim);
+            ImGui::TextWrapped("A play session is running in '%s'. Opening '%s' will stop it.",
+                CurrentName.c_str(), WorldName.c_str());
+            ImGui::PopStyleColor();
+
+            if (bSourceDirty)
+            {
+                ImGui::Spacing();
+                ImGui::PushStyleColor(ImGuiCol_Text, kProjDialogDanger);
+                ImGui::TextWrapped(LE_ICON_ALERT "  '%s' has unsaved changes. Cancel and save it first if you want to keep them.",
+                    CurrentName.c_str());
+                ImGui::PopStyleColor();
+            }
+
+            const float BtnH = 34.0f;
+            const float Remaining = ImGui::GetContentRegionAvail().y - BtnH;
+            if (Remaining > 0.0f)
+            {
+                ImGui::Dummy(ImVec2(0.0f, Remaining));
+            }
+
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+
+            const float Gap  = 8.0f;
+            const float BtnW = (ImGui::GetContentRegionAvail().x - Gap) * 0.5f;
+
+            bool bShouldClose = false;
+
+            ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.22f, 0.22f, 0.26f, 1.00f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.30f, 0.34f, 1.00f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.18f, 0.18f, 0.20f, 1.00f));
+            if (ImGui::Button("Cancel", ImVec2(BtnW, BtnH)))
+            {
+                bShouldClose = true;
+            }
+            ImGui::PopStyleColor(3);
+
+            ImGui::SameLine(0.0f, Gap);
+
+            ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.52f, 0.20f, 0.21f, 1.00f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.66f, 0.26f, 0.27f, 1.00f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.44f, 0.16f, 0.17f, 1.00f));
+            if (ImGui::Button(LE_ICON_STOP "  Stop && Open", ImVec2(BtnW, BtnH)))
+            {
+                // Deferred a frame: stopping play can destroy the extra game-preview tools through the
+                // stop delegate, and tearing down editor tools from inside a BeginPopupModal scope would
+                // free ImGui windows the current frame is still walking.
+                MainThread::Enqueue([this, AssetGUID]()
+                {
+                    CWorld* NewWorld = Cast<CWorld>(CPackage::LoadAssetGraph(AssetGUID));
+                    if (NewWorld == nullptr)
+                    {
+                        ImGuiX::Notifications::NotifyError("Failed to load world.");
+                        return;
+                    }
+
+                    WorldEditorTool->StopAllSimulations();
+                    WorldEditorTool->SetWorld(NewWorld);
+                });
+
+                bShouldClose = true;
+            }
+            ImGui::PopStyleColor(3);
+
+            ImGui::PopStyleVar();
+
+            return bShouldClose;
+        });
     }
 
     void FEditorUI::OpenFileEditor(FStringView VirtualPath)

@@ -398,6 +398,7 @@ namespace Lumina
         void SetSystemEnabled(FName System, bool bEnabled);
 
         void OnRelationshipComponentDestroyed(entt::registry& Registry, entt::entity Entity);
+        void OnRelationshipComponentConstruct(entt::registry& Registry, entt::entity Entity);
         void OnTransformComponentConstruct(entt::registry& Registry, entt::entity Entity);
         void OnCSharpScriptComponentDestroyed(entt::registry& Registry, entt::entity Entity);
         void OnWidgetComponentDestroyed(entt::registry& Registry, entt::entity Entity);

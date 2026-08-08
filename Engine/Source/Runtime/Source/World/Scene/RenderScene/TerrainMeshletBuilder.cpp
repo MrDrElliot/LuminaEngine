@@ -20,8 +20,6 @@ namespace Lumina::TerrainMeshletBuilder
             return Heightmap[Index] * MaxHeight;
         }
 
-        // Fixed layout derived from the terrain's resolution + chunk size. Shared by the
-        // full build and the partial update so their indexing can never diverge.
         struct FLayout
         {
             int32 Resolution;
@@ -74,8 +72,6 @@ namespace Lumina::TerrainMeshletBuilder
             return true;
         }
 
-        // Recompute one meshlet's height range + world AABB from the heightmap, writing
-        // BoundsMin/Max in place. Returns the (min, max) world height for chunk aggregation.
         FVector2 ComputeMeshletBounds(FTerrainMeshletInfo& Meshlet, const FTerrainChunkInfo& Chunk,
                                        const TVector<float>& Heightmap, const FLayout& L)
         {

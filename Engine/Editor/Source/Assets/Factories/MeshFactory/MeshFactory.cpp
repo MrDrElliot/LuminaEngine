@@ -25,6 +25,7 @@
 #include "Tools/Import/MeshFormatImport.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "Log/Log.h"
+#include "Renderer/SkeletonResource.h"
 
 
 namespace Lumina

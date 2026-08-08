@@ -8,19 +8,14 @@
 #include "Log/Log.h"
 #include "Memory/MemoryTracking.h"
 #include "TaskSystem/TaskSystem.h"
+#include "Renderer/MeshQuantization.h"
 
 namespace Lumina::DistanceField
 {
     namespace
     {
-        // Leaf size. 8 keeps the tree shallow enough that traversal is mostly AABB tests while still
-        // amortising the per-leaf loop over the triangle intersection cost.
         constexpr uint32 kLeafTriangles = 8;
 
-        // Rays cast per voxel for the inside/outside vote. Backface-hit voting is used rather than a
-        // pseudonormal test because imported art is routinely non-manifold (duplicated shells, unwelded
-        // seams, inverted faces), and a single-normal test on that gives isolated wrong-sign voxels that
-        // read as holes in the field. Voting degrades gracefully instead: a handful of bad rays lose.
         constexpr uint32 kSignRayCount = 16;
 
         struct FTriangle
@@ -74,9 +69,6 @@ namespace Lumina::DistanceField
                 return;
             }
 
-            // Median split on the widest axis of the CENTROID spread, not of the node bounds. Splitting on
-            // the bounds axis puts every triangle of a long thin sliver on one side, which produces a
-            // degenerate chain; centroid spread is what actually separates them.
             FVector3 CentroidMin(FLT_MAX);
             FVector3 CentroidMax(-FLT_MAX);
             for (uint32 i = Begin; i < End; ++i)
@@ -90,8 +82,6 @@ namespace Lumina::DistanceField
             if (Spread.y > Spread[Axis]) { Axis = 1; }
             if (Spread.z > Spread[Axis]) { Axis = 2; }
 
-            // Every centroid coincident: no split can separate them, so stop here even though the leaf is
-            // oversized. Recursing would never terminate.
             if (Spread[Axis] <= 0.0f)
             {
                 Node.First = Begin;
@@ -138,9 +128,6 @@ namespace Lumina::DistanceField
             return Math::Dot(D, D);
         }
 
-        // Closest point on a triangle to P (Ericson, Real-Time Collision Detection 5.1.5): classify P
-        // against the triangle's Voronoi regions, which resolves the vertex and edge cases exactly
-        // instead of projecting onto the plane and clamping barycentrics.
         FVector3 ClosestPointOnTriangle(const FVector3& P, const FTriangle& T)
         {
             const FVector3 AB = T.V1 - T.V0;
@@ -195,8 +182,6 @@ namespace Lumina::DistanceField
             return T.V0 + AB * (VB * Denom) + AC * (VC * Denom);
         }
 
-        // Squared distance from P to the nearest triangle. Traverses nearest-child-first so the running
-        // best shrinks as fast as possible and the far subtree is usually pruned outright.
         float ClosestDistanceSquared(const FBVH& BVH, const FVector3& P)
         {
             float Best = FLT_MAX;
@@ -246,8 +231,6 @@ namespace Lumina::DistanceField
             return Best;
         }
 
-        // Moller-Trumbore, two-sided. Returns false on a miss or a backwards hit; OutT is the ray
-        // parameter and OutFacing is dot(Dir, GeometricNormal), whose sign says which face was hit.
         FORCEINLINE bool RayTriangle(const FVector3& Origin, const FVector3& Dir, const FTriangle& T,
                                      float& OutT, float& OutFacing)
         {
@@ -256,8 +239,6 @@ namespace Lumina::DistanceField
             const FVector3 Pv = Math::Cross(Dir, E2);
             const float Det = Math::Dot(E1, Pv);
 
-            // Ray parallel to the plane. Not culled by sign, because a backface hit is exactly what the
-            // vote is looking for.
             if (Math::Abs(Det) < 1e-12f)
             {
                 return false;
@@ -305,8 +286,6 @@ namespace Lumina::DistanceField
         /** True when the first surface the ray meets is a backface, i.e. this ray votes "inside". */
         bool RayHitsBackface(const FBVH& BVH, const FVector3& Origin, const FVector3& Dir)
         {
-            // Componentwise reciprocal with no zero guard: IEEE gives +/-inf, which the slab test handles
-            // correctly for an axis-parallel ray (the interval degenerates to [-inf, +inf] or empty).
             const FVector3 InvDir(1.0f / Dir.x, 1.0f / Dir.y, 1.0f / Dir.z);
 
             float BestT = FLT_MAX;
@@ -346,13 +325,9 @@ namespace Lumina::DistanceField
                 }
             }
 
-            // A ray that escaped hit nothing, which votes outside. Facing > 0 means the ray and the
-            // triangle normal point the same way, i.e. it went in through the back of the surface.
             return BestT < FLT_MAX && BestFacing > 0.0f;
         }
 
-        /** Spherical Fibonacci lattice: the cheapest way to get N directions with no clustering at the
-         *  poles, which matters because a clustered set biases the vote along one axis. */
         void BuildSignRays(FVector3 (&OutRays)[kSignRayCount])
         {
             constexpr float GoldenAngle = 2.39996322972865332f;   // pi * (3 - sqrt(5))
@@ -366,9 +341,6 @@ namespace Lumina::DistanceField
             }
         }
 
-        /** Collect LOD-slot triangles from every surface's baked meshlets. The meshlet streams are the
-         *  only geometry a loaded mesh still has on the CPU (the import scratch is dropped once the GPU
-         *  buffers exist), which is what makes an editor-side rebuild possible at all. */
         void GatherTriangles(const FMeshResource& Resource, uint32 RequestedLOD, TVector<FTriangle>& Out)
         {
             const FMeshletData& MD = Resource.MeshletData;
@@ -380,11 +352,10 @@ namespace Lumina::DistanceField
                 return;
             }
 
-            // bSkinned is still handled here even though Build refuses skeletal meshes: the gather is the
-            // piece a future skinned path would reuse, and reading the wrong stream would be silent.
-            auto ReadPosition = [&](uint32 Index) -> FVector3
+            auto ReadPosition = [&](const FMeshlet& M, uint32 Index) -> FVector3
             {
-                return bSkinned ? MD.MeshletSkinnedVertices[Index].Position : MD.MeshletVertices[Index].Position;
+                return bSkinned ? DecodeMeshletPosition(M, MD.MeshletSkinnedVertices[Index])
+                                : DecodeMeshletPosition(M, MD.MeshletVertices[Index]);
             };
 
             for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
@@ -394,8 +365,6 @@ namespace Lumina::DistanceField
                     continue;
                 }
 
-                // LOD slots are compacted per surface, so a surface that built fewer levels than another
-                // clamps to its own last one rather than reading an empty slot.
                 const uint32 Slot   = Math::Min(RequestedLOD, Surface.NumLODs - 1u);
                 const uint32 Offset = Surface.LODMeshletOffset[Slot];
                 const uint32 Count  = Surface.LODMeshletCount[Slot];
@@ -416,8 +385,6 @@ namespace Lumina::DistanceField
                             break;
                         }
 
-                        // One dword per triangle, three micro-indices packed into the low bytes and
-                        // relative to the meshlet's vertex base (see GenerateMeshlets' packing loop).
                         const uint32 Packed = MD.MeshletTriangles[DwordIndex];
                         const uint32 I0 = Meshlet.VertexOffset + (Packed & 0xFFu);
                         const uint32 I1 = Meshlet.VertexOffset + ((Packed >> 8) & 0xFFu);
@@ -428,7 +395,9 @@ namespace Lumina::DistanceField
                             continue;
                         }
 
-                        Out.push_back(FTriangle{ ReadPosition(I0), ReadPosition(I1), ReadPosition(I2) });
+                        Out.push_back(FTriangle{ ReadPosition(Meshlet, I0),
+                                                 ReadPosition(Meshlet, I1),
+                                                 ReadPosition(Meshlet, I2) });
                     }
                 }
             }
@@ -448,10 +417,6 @@ namespace Lumina::DistanceField
             return false;
         }
 
-        // Refused rather than built from the bind pose. A field is baked once in mesh-local space, so on
-        // an animated mesh it would keep describing the rest pose while the geometry moves -- self-occlusion
-        // and thickness would drift further from the surface the more the character animates, and nothing
-        // downstream could tell. Silently wrong is worse than absent, which every SDF node handles.
         if (Resource.bSkinnedMesh)
         {
             LOG_WARN("Distance field skipped for skeletal mesh '{}': a baked field cannot follow skinning, "
@@ -495,16 +460,9 @@ namespace Lumina::DistanceField
         const float  BandScale   = Math::Clamp(Settings.NarrowBandScale, 0.01f, 1.0f);
         const float  MaxDistance = MaxExtent * BandScale;
 
-        // Grown by the full band on every side so the outermost voxel can still reach +MaxDistance. A
-        // volume that stops at the mesh bounds clamps before it gets there, and a clamped plateau has a
-        // zero gradient -- which is what every gradient-based consumer (normals, sphere tracing, AO cone
-        // stepping) reads as "no surface anywhere", pointing the trace off in an arbitrary direction.
         const FVector3 PaddedMin  = BoundsMin - FVector3(MaxDistance);
         const FVector3 PaddedSize = MeshSize + FVector3(MaxDistance * 2.0f);
 
-        // Cubic voxels: derive the step from the longest axis, then give each axis however many whole
-        // steps it needs. Non-cubic voxels make the distance metric anisotropic, so a gradient computed
-        // by central difference no longer points along the true surface normal.
         const float VoxelSize = Math::Max(PaddedSize.x, Math::Max(PaddedSize.y, PaddedSize.z)) / (float)Resolution;
 
         FUIntVector3 Dimensions;
@@ -514,8 +472,6 @@ namespace Lumina::DistanceField
             Dimensions[Axis] = Math::Clamp(Steps, 2u, Resolution);
         }
 
-        // Re-derived from the whole-step counts and re-centred, so the volume the shader maps UVW across
-        // is exactly the volume that was voxelised.
         const FVector3 VolumeSize(Dimensions.x * VoxelSize, Dimensions.y * VoxelSize, Dimensions.z * VoxelSize);
         const FVector3 VolumeMin = PaddedMin + (PaddedSize - VolumeSize) * 0.5f;
 
@@ -537,8 +493,6 @@ namespace Lumina::DistanceField
         const float EncodeRcp  = 1.0f / MaxDistance;
         uint8* const Distances = OutVolume.Distances.data();
 
-        // One task per Z slice. Slices are independent and write disjoint byte ranges, and at the
-        // resolutions in play (up to 256) there are always enough of them to fill the pool.
         Task::ParallelFor(Dimensions.z, [&](uint32 Z)
         {
             LUMINA_PROFILE_SECTION("Distance Field Slice");
@@ -556,9 +510,6 @@ namespace Lumina::DistanceField
 
                     if (!bTwoSided)
                     {
-                        // Only voxels inside the mesh's own bounds can possibly be inside the mesh, and
-                        // the volume is padded by a full band on every side, so a large share of the grid
-                        // skips the vote entirely. This is the single biggest win in the build.
                         const bool bMayBeInside =
                                P.x >= BoundsMin.x && P.x <= BoundsMax.x
                             && P.y >= BoundsMin.y && P.y <= BoundsMax.y
@@ -579,8 +530,6 @@ namespace Lumina::DistanceField
                         }
                     }
 
-                    // Signed fields encode [-Max, +Max] with the surface at 0.5; two-sided fields have no
-                    // negative half, so they spend the whole byte on [0, Max] and keep twice the precision.
                     const float Normalized = bTwoSided
                         ? Math::Clamp(Distance * EncodeRcp, 0.0f, 1.0f)
                         : Math::Clamp(Distance * EncodeRcp * 0.5f + 0.5f, 0.0f, 1.0f);

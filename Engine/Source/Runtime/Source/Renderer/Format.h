@@ -1,7 +1,6 @@
 ﻿#pragma once
 #include "Platform/GenericPlatform.h"
 
-
 enum class EFormat : uint8
 {
     UNKNOWN,

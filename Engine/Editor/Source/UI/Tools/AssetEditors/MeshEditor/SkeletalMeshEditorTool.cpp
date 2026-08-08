@@ -30,6 +30,7 @@
 #include <imgui.h>
 #include <ImGuizmo.h>
 #include <imgui_internal.h>
+#include "Renderer/SkeletonResource.h"
 
 
 namespace Lumina
@@ -98,7 +99,8 @@ namespace Lumina
                 // Memory usage
                 const float vertexSizeKB  = (Resource.GetNumVertices() * Resource.GetVertexTypeSize()) / 1024.0f;
                 const float meshletSizeKB = (Resource.MeshletData.Meshlets.size() * sizeof(FMeshlet)
-                                           + Resource.MeshletData.MeshletBounds.size() * sizeof(FMeshletBounds)
+                                           + Resource.MeshletData.MeshletSpheres.size() * sizeof(FMeshletSphere)
+                                              + Resource.MeshletData.MeshletCones.size() * sizeof(FMeshletCone)
                                            + Resource.MeshletData.MeshletVertices.size() * sizeof(uint32)
                                            + Resource.MeshletData.MeshletTriangles.size() * sizeof(uint32)) / 1024.0f;
                 const float totalSizeKB   = vertexSizeKB + meshletSizeKB;
@@ -167,12 +169,12 @@ namespace Lumina
                             {
                                 for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; i++)
                                 {
-                                    const FVector3& Position = Resource.GetPositionAt(i);
-                                    FVector3 Normal = UnpackNormal(Resource.GetNormalAt(i));
+                                    const FVector3& Position = Resource.Positions[i];
+                                    FVector3 Normal = UnpackNormal(Resource.Normals[i]);
                                     FU16Vector2 UV = Resource.GetUVAt(i);
-                                    FVector4 Color = UnpackColor(Resource.GetColorAt(i));
-                                    FVector4 Weights = FVector4(Resource.GetJointWeightsAt(i)) / 255.0f;
-                                    FU8Vector4 Joints = Resource.GetJointIndicesAt(i);
+                                    FVector4 Color = UnpackColor(Resource.Colors[i]);
+                                    FVector4 Weights = FVector4(Resource.JointWeights[i]) / 255.0f;
+                                    FU8Vector4 Joints = Resource.JointIndices[i];
 
                                     ImGui::TableNextRow();
                                     ImGui::TableNextColumn();

@@ -791,13 +791,13 @@ namespace Lumina::ECS::Utils
         return false;
     }
     
-    struct CACHE_ALIGN FTransformDirtyState
+    // bAnyDirty comes from the base, which lives in the header so a component can read it inline.
+    struct CACHE_ALIGN FTransformDirtyState : FTransformDirtyGate
     {
         // entt::entity is a trivially-copyable uint32; the lock-free queue lets setters on any thread
         // (worker fibers, Jolt's step jobs) enqueue without a lock, so they stay SuppressGCTransition-safe.
         using FDirtyQueue = moodycamel::ConcurrentQueue<entt::entity, Memory::FTrackedConcurrentQueueTraits>;
 
-        std::atomic<bool> bAnyDirty{ true };  // cheap gate: skip the drain when nothing is dirty
         FDirtyQueue       DirtyTransforms;     // entities whose local transform changed (drained at resolve)
         FDirtyQueue       DirtyBodies;         // setter-moved entities to re-sync to physics (drained pre-sync)
         FFiberMutex       ResolveGuard;        // one resolver writes WorldTransform at a time (fiber-aware)
@@ -880,12 +880,55 @@ namespace Lumina::ECS::Utils
         return &State;
     }
 
-    void QueueDirtyTransform(FTransformDirtyState* State, entt::entity Entity, bool bQueueTransform, bool bQueueBody)
+    FTransformDirtyGate* EnsureTransformDirtyGate(FEntityRegistry& Registry)
     {
-        if (State == nullptr)
+        return EnsureTransformDirtyState(Registry);
+    }
+
+    bool IsEntityTransformFlat(FEntityRegistry& Registry, entt::entity Entity)
+    {
+        return !Registry.all_of<FRelationshipComponent>(Entity);
+    }
+
+    void PublishFlatMove(FTransformDirtyGate* Gate, entt::entity Entity, bool bPublish, bool bQueueBody)
+    {
+        if (Gate == nullptr)
         {
             return;
         }
+
+        // Single, non-virtual base: the gate IS the state, viewed through the part the header can see.
+        FTransformDirtyState* State = static_cast<FTransformDirtyState*>(Gate);
+
+        if (bQueueBody)
+        {
+            // Same per-slot token fast path as QueueDirtyTransform; the implicit enqueue is the always-safe
+            // fallback for an unexpected slot or a scheduler that is not up yet.
+            const uint32 Slot = State->BodyTokens.empty() ? ~0u : Jobs::GetWorkerIndex();
+            if (Slot < State->BodyTokens.size())
+            {
+                State->DirtyBodies.enqueue(State->BodyTokens[Slot], Entity);
+            }
+            else
+            {
+                State->DirtyBodies.enqueue(Entity);
+            }
+        }
+
+        if (bPublish)
+        {
+            State->PublishMoved(Entity);
+        }
+    }
+
+    void QueueDirtyTransform(FTransformDirtyGate* Gate, entt::entity Entity, bool bQueueTransform, bool bQueueBody)
+    {
+        if (Gate == nullptr)
+        {
+            return;
+        }
+
+        FTransformDirtyState* State = static_cast<FTransformDirtyState*>(Gate);
 
         // Fast path: this thread's slot token (no implicit-producer hash lookup). The slot guard skips
         // GetWorkerIndex() when tokens are unset (scheduler not up), and the implicit enqueue below is the
@@ -983,7 +1026,6 @@ namespace Lumina::ECS::Utils
 
                 STransformComponent& ChildTransform = TransformStorage.get(Child);
                 ChildTransform.WorldTransform = ParentWorld * ChildTransform.LocalTransform;
-                ChildTransform.CachedMatrix   = ChildTransform.WorldTransform.GetMatrix();
 
                 if (bClearDirty)
                 {
@@ -1073,7 +1115,6 @@ namespace Lumina::ECS::Utils
                 Transform.WorldTransform = Transform.LocalTransform;
             }
 
-            Transform.CachedMatrix = Transform.WorldTransform.GetMatrix();
             DirtyState.PublishMoved(Ancestor);
         }
 
@@ -1103,6 +1144,10 @@ namespace Lumina::ECS::Utils
         {
             Out.insert(Out.end(), Batch, Batch + Count);
         }
+
+        // Opens the next publish window: a flat setter compares its stamp against this, so bumping it here
+        // is what lets every entity publish once more. No clearing pass over the drained entities needed.
+        State->PublishEpoch.fetch_add(1, std::memory_order_relaxed);
 
         return Out.size() != Before;
     }
@@ -1189,7 +1234,6 @@ namespace Lumina::ECS::Utils
                 return;
             }
             T.WorldTransform = T.LocalTransform;
-            T.CachedMatrix   = T.WorldTransform.GetMatrix();
             T.bWorldDirty    = false;
             DirtyState.PublishMoved(E);
         };
@@ -1244,7 +1288,6 @@ namespace Lumina::ECS::Utils
                 DirtyTransform.WorldTransform = DirtyTransform.LocalTransform;
             }
 
-            DirtyTransform.CachedMatrix = DirtyTransform.WorldTransform.GetMatrix();
             DirtyState.PublishMoved(DirtyEntity);
             PropagateTransformsToDescendants(TransformStorage, RelStorage, DirtyEntity, /*bClearDirty*/ false, &DirtyState);
         };

@@ -6,9 +6,6 @@ namespace Lumina
     class FRHIImage;
     class FViewVolume;
 
-    // Draw state for a solid triangle batch. Depth writes are only meaningful with the test on
-    // (Vulkan disables them otherwise), so the three valid combinations are named rather than
-    // exposed as independent test/write flags.
     enum class ESolidDrawMode : uint8
     {
         Translucent,   // depth-tested, no depth write, alpha blended -- surface overlays (navmesh)
@@ -29,7 +26,6 @@ namespace Lumina
         
         // ResourceID = global-heap slot of the billboard texture (e.g. CTexture::GetResourceID()).
         virtual void DrawBillboard(int32 ResourceID, const FVector3& Location, float Scale) = 0;
-        
         
         virtual void DrawLine(const FVector3& Start, const FVector3& End, const FVector4& Color, float Thickness = 1.0f, bool bDepthTest = true, float Duration = 0.0f) = 0;
         void DrawBox(const FVector3& Center, const FVector3& HalfExtents, const FQuat& Rotation, const FVector4& Color, float Thickness = 1.0f, bool bDepthTest = true, float Duration = 0.0f);

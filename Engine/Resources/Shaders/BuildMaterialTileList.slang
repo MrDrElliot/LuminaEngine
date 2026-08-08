@@ -1,3 +1,4 @@
+#include "Includes/AppendBuffer.slang"
 #include "Includes/SceneGlobals.slang"
 #include "Includes/MaterialTiles.slang"
 
@@ -55,22 +56,22 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
                 continue;   // padding bits in the last word
             }
 
-            uint Local;
-            InterlockedAdd(Pass().Args[Slot].InstanceCount, 1u, Local);
-
-            // Exact by construction (one append per tile per slot), but the capacity travels in the push
-            // block beside the atomic regardless: an unbounded atomic used directly as a write index is the
-            // shape that took out the meshlet defer list.
-            if (Local >= Pass().TotalTiles)
-            {
-                continue;
-            }
-
+            // Exact by construction (one append per tile per slot), and bounded regardless. The cursor IS
+            // the draw's InstanceCount, which is why it lives in the args rather than in a private counter.
+            //
             // Base computed arithmetically rather than loaded from Args[Slot].FirstInstance: that field
             // shares its 16 bytes with the InstanceCount other lanes are atomically incrementing, and
             // reading a struct field out of a contended cacheline is exactly what the meshlet cull stopped
             // doing. The CPU seeds FirstInstance to this same value for the draw itself.
-            Pass().TileList[Slot * Pass().TotalTiles + Local] = Tile;
+            const uint Out = AppendReserve(&Pass().Args[Slot].InstanceCount,
+                                           Pass().TotalTiles,
+                                           Slot * Pass().TotalTiles);
+            if (Out == kAppendFull)
+            {
+                continue;
+            }
+
+            Pass().TileList[Out] = Tile;
         }
     }
 }

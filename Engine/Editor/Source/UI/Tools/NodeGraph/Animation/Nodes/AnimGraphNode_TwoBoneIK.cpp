@@ -1,6 +1,7 @@
 #include "AnimGraphNode_TwoBoneIK.h"
 #include "UI/Tools/NodeGraph/Animation/AnimationGraphCompiler.h"
 #include "Renderer/MeshData.h"
+#include "Renderer/SkeletonResource.h"
 
 namespace Lumina
 {

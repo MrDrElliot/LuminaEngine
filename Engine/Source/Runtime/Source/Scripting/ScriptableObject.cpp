@@ -24,8 +24,8 @@ namespace Lumina
     void FScriptableBridge::Bind(CObject* InSelf)
     {
         Self = InSelf;
-        // The class default object never has a managed counterpart. Reached lazily (via EnsureBound) after
-        // construction, by which point OF_DefaultObject is live on the CDO, so this guard is effective.
+        // The class default object never has a managed counterpart. OF_DefaultObject is applied during
+        // construction, so this guard holds on the eager path too, not just the lazy EnsureBound one.
         if (Self == nullptr || Self->HasAnyFlag(OF_DefaultObject))
         {
             Generation = DotNet::GetScriptGeneration(); // mark attempted so the CDO isn't retried every dispatch

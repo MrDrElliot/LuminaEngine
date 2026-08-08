@@ -12,9 +12,6 @@ namespace Lumina::RHI
 {
     namespace
     {
-        // Per-frame-in-flight staging slice. Sized for a steady-state burst; an upload
-        // larger than the slice's remaining space falls back to a dedicated (deferred-
-        // freed) allocation, so this never has to fit a worst-case load spike.
         constexpr uint64 kStagingSliceRequest = 64ull * 1024 * 1024;
 
         // Resolved against the CPU-visible VRAM aperture in Initialize.
@@ -40,6 +37,8 @@ namespace Lumina::RHI
             float       ClearValue[4]  = {};        // Clear
         };
 
+        static constexpr uint32 kNumUploadQueues = 3;
+
         struct FStagingSlice
         {
             GPUPtr      Gpu      = 0;
@@ -47,17 +46,14 @@ namespace Lumina::RHI
             uint64      Cursor   = 0;
             uint64      Capacity = 0;   // resolved slice size; 0 until Initialize runs
 
-            // Reservations that have not yet finished their memcpy and queued their op. Callers copy
-            // outside the lock, so the cursor alone says nothing about whether a slice is quiet: a
-            // worker that reserved before a reset can still be writing bytes a later reserve has
-            // already handed out, and an op queued after a Flush would point into recycled staging.
             TAtomic<uint32> Writers{0};
 
-            // Flush submission that last recorded copies out of this slice. The frame ring waits for
-            // the frame that WROTE a slice, but the flush that READS it is submitted a frame later
-            // and carries a higher timeline value, so recycling has to gate on this separately.
-            FSemaphoreH ReadSemaphore = {};
-            uint64      ReadValue     = 0;
+            // One gate per queue: a flush splits across two timelines whose values are unrelated.
+            FSemaphoreH ReadSemaphore[kNumUploadQueues] = {};
+            uint64      ReadValue[kNumUploadQueues]     = {};
+
+            uint64      OverflowBytes = 0;
+            uint32      LowStreak     = 0;   // consecutive cycles demand stayed below half capacity
         };
 
         struct FUploadState
@@ -83,10 +79,6 @@ namespace Lumina::RHI
             uint8       Slice  = kNoSlice;
         };
 
-        // Reserve Size bytes of CPU-write staging from the current slice; falls back to a
-        // dedicated allocation when the slice is full. Caller memcpys outside the lock and must
-        // pair this with EndWrite once the bytes are in AND the op is queued. A null Cpu means
-        // the fallback allocation failed and there is nothing to stage into.
         FStaging ReserveLocked(uint64 Size, uint64 Alignment)
         {
             const uint32 Slot = GUpload.CurrentSlot;
@@ -99,12 +91,12 @@ namespace Lumina::RHI
                 return { Slice.Cpu + Aligned, Slice.Gpu + Aligned, false, (uint8)Slot };
             }
 
+            Slice.OverflowBytes += Size + Alignment;
+
             const GPUPtr Owned = Malloc(Size, Alignment, EMemoryType::CPUWrite);
             return { static_cast<std::byte*>(ToHost(Owned)), Owned, true, kNoSlice };
         }
 
-        // Release the reservation's pin. Must run after the op is in the queue, so that a drained
-        // writer count means every op referencing the slice is visible to the next Flush.
         void EndWrite(const FStaging& Staging)
         {
             if (Staging.Slice != kNoSlice)
@@ -231,20 +223,15 @@ namespace Lumina::RHI
             return;
         }
 
-        // Counter is shared with any other thread that reaches this path.
         uint64 Value;
         {
             FScopeLock Lock(GUpload.Mutex);
             Value = ++GUpload.FlushCounter;
+
+            const FSemaphoreInfo Signal { GUpload.FlushSemaphore, Value, EStageFlags::AllCommands };
+            Submit(EQueueType::Graphics, TSpan{&CL, 1}, {}, TSpan{&Signal, 1});
         }
 
-        const FSemaphoreInfo Signal { GUpload.FlushSemaphore, Value, EStageFlags::AllCommands };
-        Submit(EQueueType::Graphics, TSpan{&CL, 1}, {}, TSpan{&Signal, 1});
-
-        // Deliberately no NoteFlushSubmitted. This path blocks until its own copies retire, so the
-        // slices it read need no gate once it returns. Recording one could only do harm: it would
-        // overwrite a still-pending gate from the BeginFrame flush with a different semaphore, and
-        // (being callable off the main thread) would race BeginSlot's read of those fields.
         WaitSemaphore(GUpload.FlushSemaphore, Value);
         ResetCommandList(CL);
     }
@@ -262,7 +249,10 @@ namespace Lumina::RHI
                 Slice.Cursor   = 0;
                 Slice.Capacity = GStagingSliceSize;
                 Slice.Writers.store(0, std::memory_order_relaxed);
-                Slice.ReadValue = 0;
+                for (uint64& Value : Slice.ReadValue)
+                {
+                    Value = 0;
+                }
             }
             GUpload.FlushSemaphore = CreateTimelineSemaphore(0);
             GUpload.CurrentSlot    = 0;
@@ -299,30 +289,31 @@ namespace Lumina::RHI
                 Slice.Cursor   = 0;
                 Slice.Capacity = 0;
                 Slice.Writers.store(0, std::memory_order_relaxed);
-                Slice.ReadSemaphore = {};
-                Slice.ReadValue     = 0;
+                for (FSemaphoreH& Semaphore : Slice.ReadSemaphore)
+                {
+                    Semaphore = {};
+                }
+                for (uint64& Value : Slice.ReadValue)
+                {
+                    Value = 0;
+                }
             }
 
             FreeH(GUpload.FlushSemaphore);
             GUpload.bInitialized = false;
         }
 
-        bool Flush(FCmdListH CL, uint32* OutSliceMask)
+        struct FFlushTarget
         {
-            TVector<FUploadOp> Ops;
-            {
-                FScopeLock Lock(GUpload.Mutex);
-                if (GUpload.Queue.empty())
-                {
-                    return false;
-                }
-                Ops.swap(GUpload.Queue);
-            }
-
-            uint32 SliceMask = 0;
-
+            FCmdListH          CL        = {};
+            uint32             SliceMask = 0;
+            bool               bAny      = false;
             TVector<FTextureH> WrittenTextures;
-            auto AlreadyWritten = [&](FTextureH Tex)
+
+            struct FWrittenRange { GPUPtr Begin; GPUPtr End; };
+            TVector<FWrittenRange> WrittenBuffers;
+
+            bool AlreadyWritten(FTextureH Tex) const
             {
                 for (const FTextureH& T : WrittenTextures)
                 {
@@ -332,16 +323,9 @@ namespace Lumina::RHI
                     }
                 }
                 return false;
-            };
+            }
 
-            // Buffer ranges written since the last transfer barrier, for the same reason the texture
-            // list above exists: two copies into one range with nothing between them are unordered,
-            // and which one survives is the driver's choice. The queue reaches here holding repeats
-            // routinely -- a material slot re-uploaded after a second parameter edit, or freed and
-            // immediately reused -- so this is the ordinary case rather than a corner.
-            struct FWrittenRange { GPUPtr Begin; GPUPtr End; };
-            TVector<FWrittenRange> WrittenBuffers;
-            auto OverlapsWritten = [&](GPUPtr Dest, uint64 Size)
+            bool OverlapsWritten(GPUPtr Dest, uint64 Size) const
             {
                 for (const FWrittenRange& Range : WrittenBuffers)
                 {
@@ -351,33 +335,53 @@ namespace Lumina::RHI
                     }
                 }
                 return false;
-            };
+            }
+        };
+
+        uint32 FlushSplit(FCmdListH BufferCL, FCmdListH ImageCL,
+                          uint32* OutBufferSliceMask, uint32* OutImageSliceMask)
+        {
+            TVector<FUploadOp> Ops;
+            {
+                FScopeLock Lock(GUpload.Mutex);
+                if (GUpload.Queue.empty())
+                {
+                    return 0u;
+                }
+                Ops.swap(GUpload.Queue);
+            }
+
+            const bool bSplit = (BufferCL.Handle != ImageCL.Handle);
+
+            FFlushTarget Targets[2];
+            Targets[0].CL = BufferCL;
+            Targets[1].CL = ImageCL;
 
             for (const FUploadOp& Op : Ops)
             {
-                if (Op.Slice != kNoSlice)
-                {
-                    SliceMask |= (1u << Op.Slice);
-                }
-
                 const bool bWritesTexture = (Op.Type == EUploadOp::Texture || Op.Type == EUploadOp::Clear);
                 const bool bWritesBuffer  = (Op.Type == EUploadOp::Buffer);
 
-                // One barrier orders every transfer issued before it, so both records reset together
-                // whichever kind tripped it -- otherwise the next repeat of the other kind would
-                // insert a second barrier that the first one already covered.
-                if ((bWritesTexture && AlreadyWritten(Op.TextureDest))
-                 || (bWritesBuffer && OverlapsWritten(Op.BufferDest, Op.Size)))
+                FFlushTarget& T = (bSplit && bWritesBuffer) ? Targets[0] : Targets[1];
+                T.bAny = true;
+
+                if (Op.Slice != kNoSlice)
                 {
-                    Barriers::TransferToTransfer(CL);
-                    WrittenTextures.clear();
-                    WrittenBuffers.clear();
+                    T.SliceMask |= (1u << Op.Slice);
+                }
+
+                if ((bWritesTexture && T.AlreadyWritten(Op.TextureDest))
+                 || (bWritesBuffer && T.OverlapsWritten(Op.BufferDest, Op.Size)))
+                {
+                    Barriers::TransferToTransfer(T.CL);
+                    T.WrittenTextures.clear();
+                    T.WrittenBuffers.clear();
                 }
 
                 switch (Op.Type)
                 {
                 case EUploadOp::Buffer:
-                    CmdMemcpy(CL, Op.BufferDest, Op.Staging, Op.Size);
+                    CmdMemcpy(T.CL, Op.BufferDest, Op.Staging, Op.Size);
                     break;
                 case EUploadOp::Texture:
                     {
@@ -385,28 +389,35 @@ namespace Lumina::RHI
                         Slice.Mip        = Op.Mip;
                         Slice.Layer      = Op.Layer;
                         Slice.LayerCount = 1;
-                        CmdCopyMemoryToTexture(CL, Op.Staging, Op.RowPitchTexels, Op.TextureDest, Slice);
+                        CmdCopyMemoryToTexture(T.CL, Op.Staging, Op.RowPitchTexels, Op.TextureDest, Slice);
                     }
                     break;
                 case EUploadOp::Clear:
-                    CmdClearTexture(CL, Op.TextureDest, Op.ClearValue);
+                    CmdClearTexture(T.CL, Op.TextureDest, Op.ClearValue);
                     break;
                 }
 
                 if (bWritesTexture)
                 {
-                    WrittenTextures.push_back(Op.TextureDest);
+                    T.WrittenTextures.push_back(Op.TextureDest);
                 }
                 if (bWritesBuffer)
                 {
-                    WrittenBuffers.push_back(FWrittenRange{ Op.BufferDest, Op.BufferDest + Op.Size });
+                    T.WrittenBuffers.push_back(FFlushTarget::FWrittenRange{ Op.BufferDest, Op.BufferDest + Op.Size });
                 }
             }
 
-            Barriers::TransferToAll(CL);
+            uint32 Result = 0u;
+            for (uint32 i = 0; i < 2u; ++i)
+            {
+                if (!Targets[i].bAny)
+                {
+                    continue;
+                }
+                Barriers::TransferToAll(Targets[i].CL);
+                Result |= (1u << i);
+            }
 
-            // Dedicated (ring-overflow) staging is consumed by the copies above; reclaim it
-            // once every in-flight frame has retired.
             for (const FUploadOp& Op : Ops)
             {
                 if (Op.bOwnedStaging)
@@ -415,11 +426,28 @@ namespace Lumina::RHI
                 }
             }
 
+            if (OutBufferSliceMask != nullptr)
+            {
+                *OutBufferSliceMask = Targets[0].SliceMask;
+            }
+            if (OutImageSliceMask != nullptr)
+            {
+                *OutImageSliceMask = Targets[1].SliceMask;
+            }
+            return Result;
+        }
+
+        bool Flush(FCmdListH CL, uint32* OutSliceMask)
+        {
+            uint32 BufferSlices = 0;
+            uint32 ImageSlices  = 0;
+            const uint32 Used = FlushSplit(CL, CL, &BufferSlices, &ImageSlices);
+
             if (OutSliceMask != nullptr)
             {
-                *OutSliceMask = SliceMask;
+                *OutSliceMask = BufferSlices | ImageSlices;
             }
-            return true;
+            return Used != 0u;
         }
 
         void DrainSliceWriters(uint32 Slot)
@@ -429,14 +457,6 @@ namespace Lumina::RHI
                 return;
             }
 
-            // Writers pin whatever CurrentSlot was at reserve time, and CurrentSlot is never this
-            // slot when BeginFrame runs, so this only ever spins on a reservation made a full frame
-            // cycle ago whose memcpy is still in progress.
-            //
-            // Read under the lock the reserve took. The pin is incremented there, and without that
-            // edge nothing orders the increment against this load: a first read could see a stale
-            // zero and let the slice recycle out from under a live writer. Rare enough to never show
-            // up in testing, which is exactly why it is not left to timing.
             const FStagingSlice& Slice = GUpload.Slices[Slot];
             for (;;)
             {
@@ -451,14 +471,15 @@ namespace Lumina::RHI
             }
         }
 
-        void NoteFlushSubmitted(uint32 SliceMask, FSemaphoreH Semaphore, uint64 Value)
+        void NoteFlushSubmitted(uint32 SliceMask, EQueueType Queue, FSemaphoreH Semaphore, uint64 Value)
         {
+            const uint32 QueueIndex = (uint32)Queue;
             for (uint32 Slot = 0; Slot < kFramesInFlight; ++Slot)
             {
                 if ((SliceMask & (1u << Slot)) != 0)
                 {
-                    GUpload.Slices[Slot].ReadSemaphore = Semaphore;
-                    GUpload.Slices[Slot].ReadValue     = Value;
+                    GUpload.Slices[Slot].ReadSemaphore[QueueIndex] = Semaphore;
+                    GUpload.Slices[Slot].ReadValue[QueueIndex]     = Value;
                 }
             }
         }
@@ -467,19 +488,56 @@ namespace Lumina::RHI
         {
             FStagingSlice& Slice = GUpload.Slices[Slot];
 
-            // The copies out of this slice were submitted by the flush at the START of a later frame
-            // than the one the frame ring waited on above, so that wait is one submission short of
-            // covering them. Without this the cursor reset below hands live source bytes to the next
-            // writer, and a mesh's vertex/index data ends up interleaved with the previous mesh's.
-            if (Slice.ReadValue != 0)
+            for (uint32 QueueIndex = 0; QueueIndex < kNumUploadQueues; ++QueueIndex)
             {
-                WaitSemaphore(Slice.ReadSemaphore, Slice.ReadValue);
-                Slice.ReadValue = 0;
+                const uint64 Gate = Slice.ReadValue[QueueIndex];
+                if (Gate == 0)
+                {
+                    continue;
+                }
+
+                if (GetSemaphoreValue(Slice.ReadSemaphore[QueueIndex]) < Gate)
+                {
+                    WaitSemaphore(Slice.ReadSemaphore[QueueIndex], Gate);
+                }
+                Slice.ReadValue[QueueIndex] = 0;
             }
 
             FScopeLock Lock(GUpload.Mutex);
-            GUpload.CurrentSlot = Slot;
-            Slice.Cursor        = 0;
+
+            const uint64 Demand = Slice.Cursor + Slice.OverflowBytes;
+
+            uint64 NewCapacity = Slice.Capacity;
+            if (Demand > Slice.Capacity)
+            {
+                NewCapacity     = Math::AlignUp(Demand + Demand / 2, 1024ull * 1024);
+                Slice.LowStreak = 0;
+            }
+            else if (Slice.Capacity > GStagingSliceSize && Demand * 2 < Slice.Capacity && ++Slice.LowStreak >= 64)
+            {
+                NewCapacity     = Math::Max(GStagingSliceSize, Math::AlignUp(Demand + Demand / 2, 1024ull * 1024));
+                Slice.LowStreak = 0;
+            }
+            else
+            {
+                Slice.LowStreak = 0;
+            }
+
+            if (NewCapacity != Slice.Capacity)
+            {
+                const GPUPtr NewGpu = Malloc(NewCapacity, kDefaultAlign, EMemoryType::CPUWrite);
+                if (NewGpu != 0)
+                {
+                    Core::DeferredFree(Slice.Gpu);
+                    Slice.Gpu      = NewGpu;
+                    Slice.Cpu      = static_cast<std::byte*>(ToHost(NewGpu));
+                    Slice.Capacity = NewCapacity;
+                }
+            }
+
+            GUpload.CurrentSlot   = Slot;
+            Slice.Cursor          = 0;
+            Slice.OverflowBytes   = 0;
         }
     }
 }

@@ -15,9 +15,10 @@ namespace Lumina
 {
     namespace
     {
-        // Picker shared by the class / struct customizations: builds the candidate list (every type
-        // that is Base or derived), renders the searchable combo, and returns the newly chosen type
-        // (or no change). Index 0 in the combo is always "None".
+        // Struct picker: builds the candidate list (every struct that is Base or derived), renders the
+        // searchable combo, and returns the newly chosen struct (or no change). Index 0 is always "None".
+        // The class analog is ImGuiX::ClassCombo -- shared with the data asset creation dialogue, which
+        // needs the same picker outside a property row.
         template<typename TType>
         TType* DrawTypePicker(const char* StrId, TType* Base, TType* Current, bool& bOutChanged)
         {
@@ -72,8 +73,9 @@ namespace Lumina
     {
         FClassProperty* ClassProperty = static_cast<FClassProperty*>(Property->Property);
 
-        bool bChanged = false;
-        Value = DrawTypePicker<CClass>("##classpicker", ClassProperty->GetMetaClass(), Value, bChanged);
+        ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x);
+        const bool bChanged = ImGuiX::ClassCombo("##classpicker", ClassProperty->GetMetaClass(), Value);
+        ImGui::PopItemWidth();
 
         return bChanged ? EPropertyChangeOp::Updated : EPropertyChangeOp::None;
     }

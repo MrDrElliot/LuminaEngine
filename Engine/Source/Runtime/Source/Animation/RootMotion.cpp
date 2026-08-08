@@ -5,6 +5,7 @@
 #include "Assets/AssetTypes/Mesh/Animation/Animation.h"
 #include "Core/Math/Transform.h"
 #include "Renderer/MeshData.h"
+#include "Renderer/SkeletonResource.h"
 
 namespace Lumina::RootMotion
 {

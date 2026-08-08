@@ -1,10 +1,9 @@
-﻿#include "EditorPCH.h"
+#include "EditorPCH.h"
 #include "DataAssetFactory.h"
 
-#include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Assets/AssetTypes/DataAsset/DataAsset.h"
-#include "Assets/AssetTypes/DataAsset/DataAssetSchema.h"
-#include "Core/Object/Cast.h"
+#include "Core/Object/Class.h"
+#include "Core/Object/ObjectCore.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "imgui.h"
@@ -20,16 +19,16 @@ namespace Lumina
     {
         if (ImGui::IsWindowAppearing())
         {
-            SelectedSchemaGUID.Invalidate();
+            SelectedClass = nullptr;
         }
 
-        ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), LE_ICON_DATABASE " Select Data Asset Schema");
+        ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), LE_ICON_DATABASE " Select Data Asset Class");
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
 
         ImGui::SetNextItemWidth(-1.0f);
-        ImGuiX::AssetReferenceCombo("##Schema", CDataAssetSchema::StaticClass(), SelectedSchemaGUID, LE_ICON_DATABASE);
+        ImGuiX::ClassCombo("##DataAssetClass", CDataAsset::StaticClass(), SelectedClass, false, LE_ICON_DATABASE);
 
         ImGui::Spacing();
         ImGui::Separator();
@@ -39,7 +38,7 @@ namespace Lumina
         ImGui::SetCursorPosX(ImGui::GetContentRegionAvail().x - ButtonWidth * 2 - Spacing);
 
         bool bConfirm = false;
-        ImGui::BeginDisabled(!SelectedSchemaGUID.IsValid());
+        ImGui::BeginDisabled(SelectedClass == nullptr);
         if (ImGui::Button(LE_ICON_CHECK " Create", ImVec2(ButtonWidth, 0)))
         {
             bConfirm = true;
@@ -49,7 +48,7 @@ namespace Lumina
         ImGui::SameLine();
         if (ImGui::Button(LE_ICON_CLOSE " Cancel", ImVec2(ButtonWidth, 0)))
         {
-            SelectedSchemaGUID.Invalidate();
+            SelectedClass = nullptr;
             bShouldClose = true;
         }
 
@@ -58,17 +57,11 @@ namespace Lumina
 
     CObject* CDataAssetFactory::CreateNew(const FName& Name, CPackage* Package)
     {
-        CDataAsset* NewDataAsset = NewObject<CDataAsset>(Package, Name);
+        // The dialogue is the only way in, so a null selection means it was dismissed without a pick;
+        // fall back to the base rather than handing back nothing.
+        CClass* Class = SelectedClass != nullptr ? SelectedClass : CDataAsset::StaticClass();
+        SelectedClass = nullptr;
 
-        if (SelectedSchemaGUID.IsValid())
-        {
-            if (CDataAssetSchema* Schema = Cast<CDataAssetSchema>(LoadObject<CObject>(SelectedSchemaGUID)))
-            {
-                NewDataAsset->SetSchema(Schema);
-            }
-        }
-
-        SelectedSchemaGUID.Invalidate();
-        return NewDataAsset;
+        return NewObject(Class, Package, Name);
     }
 }

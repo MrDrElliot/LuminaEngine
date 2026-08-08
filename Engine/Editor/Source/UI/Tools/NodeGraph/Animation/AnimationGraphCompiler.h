@@ -5,6 +5,7 @@
 #include "Assets/AssetTypes/Animation/AnimationGraph/AnimationGraph.h"
 #include "Containers/Array.h"
 #include "Core/Object/ObjectHandleTyped.h"
+#include "Renderer/SkeletonResource.h"
 
 namespace Lumina
 {

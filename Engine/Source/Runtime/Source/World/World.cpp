@@ -71,6 +71,7 @@
 #include "World/Entity/Components/RelationshipComponent.h"
 #include "World/entity/systems/EntitySystem.h"
 #include "Log/Log.h"
+#include "Renderer/SkeletonResource.h"
 
 namespace Lumina
 {
@@ -384,6 +385,7 @@ namespace Lumina
 
         EntityRegistry.on_destroy   <FRelationshipComponent>()      .connect<&ThisClass::OnRelationshipComponentDestroyed>(this);
         EntityRegistry.on_construct <STransformComponent>()         .connect<&ThisClass::OnTransformComponentConstruct>(this);
+        EntityRegistry.on_construct <FRelationshipComponent>()      .connect<&ThisClass::OnRelationshipComponentConstruct>(this);
         EntityRegistry.on_destroy   <SScriptComponent>()            .connect<&ThisClass::OnCSharpScriptComponentDestroyed>(this);
         EntityRegistry.on_destroy   <SWidgetComponent>()            .connect<&ThisClass::OnWidgetComponentDestroyed>(this);
         EntityRegistry.on_construct <SInputComponent>()             .connect<&ThisClass::OnInputComponentConstruct>(this);
@@ -413,7 +415,7 @@ namespace Lumina
         // the hooks (world load, level swap, editor world duplication).
         FRenderDirtyTracker::Ensure(EntityRegistry).RequestFullRescan();
 
-        ECS::Utils::FTransformDirtyState* DirtyState = ECS::Utils::EnsureTransformDirtyState(EntityRegistry);
+        ECS::Utils::FTransformDirtyGate* DirtyState = ECS::Utils::EnsureTransformDirtyGate(EntityRegistry);
         auto TransformView = EntityRegistry.view<STransformComponent>();
         TransformView.each([&](entt::entity Entity, STransformComponent& TransformComponent)
         {
@@ -1465,12 +1467,28 @@ namespace Lumina
         Registry.on_destroy<FRelationshipComponent>().connect<&CWorld::OnRelationshipComponentDestroyed>(this);
     }
 
+    void CWorld::OnRelationshipComponentConstruct(entt::registry& Registry, entt::entity Entity)
+    {
+        // The entity is no longer flat, so its setters must go back to queueing for the resolve. Only ever
+        // CLEARS the bit: the reverse transition (a relationship component being destroyed) means the
+        // entity is being torn down, and leaving the bit false there just keeps the slow, correct path.
+        if (STransformComponent* Transform = Registry.try_get<STransformComponent>(Entity))
+        {
+            Transform->bIsFlat = false;
+        }
+    }
+
     void CWorld::OnTransformComponentConstruct(entt::registry& Registry, entt::entity Entity)
     {
         STransformComponent& TransformComponent = Registry.get<STransformComponent>(Entity);
         TransformComponent.Registry = &EntityRegistry;
         TransformComponent.Entity = Entity;
-        TransformComponent.DirtyState = ECS::Utils::EnsureTransformDirtyState(EntityRegistry);
+        TransformComponent.DirtyState = ECS::Utils::EnsureTransformDirtyGate(EntityRegistry);
+
+        // Usually true here (the relationship component is added later, if ever), and cleared by the
+        // on_construct<FRelationshipComponent> hook when it arrives. Checked rather than assumed, since
+        // nothing orders the two components.
+        TransformComponent.bIsFlat = ECS::Utils::IsEntityTransformFlat(EntityRegistry, Entity);
 
         Registry.emplace_or_replace<FNeedsTransformUpdate>(Entity);
     }

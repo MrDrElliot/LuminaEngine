@@ -8,6 +8,7 @@
 #include "Core/Math/Math.h"
 #include "Memory/SmartPtr.h"
 #include "UI/Tools/AssetEditors/AssetEditorTool.h"
+#include "Renderer/SkeletonResource.h"
 
 namespace Lumina
 {

@@ -196,8 +196,13 @@ namespace Lumina
 
         // Texture operations
         void DefineTextureSample(const FString& ID);
-        void TextureSample(const FString& ID, CTexture* Texture, CMaterialInput* Input);
-        void TextureSampleParameter(const FString& ID, const FName& ParamID, CTexture* Texture, CMaterialInput* Input);
+        // Node is the sampling node, carried only so a UV-gradient fallback warning can name and focus it.
+        void TextureSample(const FString& ID, CTexture* Texture, CMaterialInput* Input, CEdGraphNode* Node = nullptr);
+        void TextureSampleParameter(const FString& ID, const FName& ParamID, CTexture* Texture, CMaterialInput* Input, CEdGraphNode* Node = nullptr);
+
+        // Raises a non-fatal warning when UVValue carries no analytic derivative, so the deferred pass has
+        // to sample it with UV0's gradient. No-op when the derivative is valid.
+        void WarnUVGradientFallback(const FInputValue& UVValue, CEdGraphNode* Node);
 
         // Claim a material texture slot WITHOUT emitting a sample, for nodes that need the bindless index
         // itself (a ray-march samples the same texture many times at its own UVs/mip). Deduped exactly
@@ -428,6 +433,14 @@ namespace Lumina
         FORCEINLINE void AddError(const EdNodeGraph::FError& Error) { Errors.push_back(Error); }
         FORCEINLINE const TVector<EdNodeGraph::FError>& GetErrors() const { return Errors; }
 
+        // Warnings: the graph compiled, but something about it will cost quality or performance at runtime.
+        //
+        // A SEPARATE vector rather than a severity flag on FError, because HasErrors() is what decides
+        // whether the compile succeeded -- every caller of CompileMaterialGraph branches on it. A warning
+        // pushed into Errors would fail the material outright, which is the opposite of what a warning is.
+        FORCEINLINE void AddWarning(const EdNodeGraph::FError& Warning) { Warnings.push_back(Warning); }
+        FORCEINLINE const TVector<EdNodeGraph::FError>& GetWarnings() const { return Warnings; }
+
         FInputValue GetTypedInputValue(CMaterialInput* Input, float DefaultValue = 0.0f);
         FInputValue GetTypedInputValue(CMaterialInput* Input, const FString& DefaultValueStr);
 
@@ -519,6 +532,7 @@ namespace Lumina
 
         TVector<TObjectPtr<CTexture>> BoundImages;
         TVector<EdNodeGraph::FError> Errors;
+        TVector<EdNodeGraph::FError> Warnings;   // non-fatal; see AddWarning
 
         THashMap<FName, FScalarParam>  ScalarParameters;
         THashMap<FName, FVectorParam>  VectorParameters;
