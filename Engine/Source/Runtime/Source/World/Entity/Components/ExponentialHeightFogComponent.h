@@ -73,5 +73,25 @@ namespace Lumina
         Bigger = shafts reach farther but each froxel covers more space (softer detail). */
         PROPERTY(Editable, Category = "Volumetric", ClampMin = 1.0f, Units = "m")
         float VolumetricMaxDistance = 200.0f;
+
+        /** Bounces of higher-order scattering to approximate. 1 = single scattering only (default, and
+        free). Raising it stops thick fog reading as flat gray: each extra octave adds a dimmer, more
+        isotropic pass that leaks further into shadow, so shadowed fog gains shape and the sun lobe
+        softens as density rises. Energy is additive, so more octaves means brighter fog by design --
+        trim with VolumetricScatteringIntensity. Costs one phase evaluation per octave per volumetric
+        light (no extra shadow taps), so the expensive combination is many octaves and many lights. */
+        PROPERTY(Editable, Category = "Multiple Scattering", ClampMin = 1, ClampMax = 4)
+        int32 MultiScatterOctaves = 1;
+
+        /** How fast each successive octave dims and flattens toward isotropic. Low = the extra bounces
+        barely register; high = they nearly match the direct term, for a bright, diffuse, milky medium. */
+        PROPERTY(Editable, Category = "Multiple Scattering", ClampMin = 0.0f, ClampMax = 1.0f, Delta = 0.01f)
+        float MultiScatterFalloff = 0.5f;
+
+        /** How much each successive octave ignores the shadow map. 0 = every octave is shadowed exactly
+        like the direct light (extra energy, but shafts stay hard-edged); 1 = later octaves ignore
+        shadowing entirely and fill shafts with soft light, as multiply-scattered light really does. */
+        PROPERTY(Editable, Category = "Multiple Scattering", ClampMin = 0.0f, ClampMax = 1.0f, Delta = 0.01f)
+        float MultiScatterShadowLeak = 0.5f;
     };
 }

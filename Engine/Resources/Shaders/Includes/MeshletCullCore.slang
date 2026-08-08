@@ -115,16 +115,38 @@ void EnsureMeshletCone(FGPUInstance* Inst, float4x4 Model, inout FMeshletBoundsC
     }
 }
 
-// One meshlet, one view. Nested predicates rather than early exits -- see the RULE at the top.
-//
-// No Hi-Z here: occlusion is tested per INSTANCE, in IsInstanceVisibleToView. Everything below is either
-// a frustum test or a projected-size test, so nothing in this function reads a stale pyramid and no
-// reject here can pop a meshlet in a frame late.
-bool TestMeshletAgainstView(FMeshletCullContext Ctx, FGPUInstance* Inst, FCullView View,
-                            uint MeshletIdx, inout FMeshletBoundsCache Cache)
+struct FMeshletCullResult
 {
-    bool bKeep = !(View.HasFlag(CULL_VIEW_FLAG_CAST_SHADOW_ONLY) && !Ctx.bCaster)
-              && !(View.HasFlag(CULL_VIEW_FLAG_DISTANCE) && (Ctx.DistToCamera - Ctx.InstRadius > Ctx.MaxShadowDist));
+    bool bKeep;       // survives every test this phase can apply -- rasterize it now
+    // Rejected by the EARLY Hi-Z test alone, having passed everything else. The late phase re-tests
+    // exactly these against the rebuilt pyramid. Never set in the late phase: by then the pyramid holds
+    // this frame's own depth and the answer is final.
+    bool bDeferHiZ;
+};
+
+// One meshlet, one view, one phase. Nested predicates rather than early exits -- see the RULE at the top.
+//
+// Hi-Z is the ONLY test here whose answer depends on which phase is running, because it is the only one
+// that reads state from outside this frame's transforms. Everything else -- cone, frustum, cascade,
+// sub-pixel -- is a pure function of (meshlet, view) and cannot change between the two phases. So the
+// late phase skips them outright: re-running them would burn the whole cull for a result already known.
+//
+// That is also why the late phase does not re-derive which lanes to run. The caller seeds it from the
+// early phase's defer bits; this function only decides whether the rebuilt pyramid still hides them.
+FMeshletCullResult TestMeshletAgainstView(FMeshletCullContext Ctx, FGPUInstance* Inst, FCullView View,
+                                          uint MeshletIdx, inout FMeshletBoundsCache Cache, uint Phase)
+{
+    FMeshletCullResult Result;
+    Result.bKeep     = false;
+    Result.bDeferHiZ = false;
+
+    const bool bLate = (Phase == CULL_PHASE_LATE);
+
+    // The late phase inherits the early phase's verdict on all of these, so it starts from "accepted"
+    // and only the Hi-Z block below can still reject.
+    bool bKeep = bLate
+               || (!(View.HasFlag(CULL_VIEW_FLAG_CAST_SHADOW_ONLY) && !Ctx.bCaster)
+                && !(View.HasFlag(CULL_VIEW_FLAG_DISTANCE) && (Ctx.DistToCamera - Ctx.InstRadius > Ctx.MaxShadowDist)));
 
     if (bKeep)
     {
@@ -135,10 +157,12 @@ bool TestMeshletAgainstView(FMeshletCullContext Ctx, FGPUInstance* Inst, FCullVi
 
         if (bKeep)
         {
+            // Both phases need the bounds: the late phase skips every test below but still feeds the
+            // Hi-Z tap from this cache.
             RefreshMeshletBounds(Inst, Ctx.Model, Ctx.MaxScale, MeshletIdx, Cache);
 
             // Sun views test against the sun direction; everything else against apex-to-origin.
-            if (!Ctx.bSkinned && !Ctx.bNoCull && !Ctx.bTwoSided && View.HasFlag(CULL_VIEW_FLAG_CONE))
+            if (!bLate && !Ctx.bSkinned && !Ctx.bNoCull && !Ctx.bTwoSided && View.HasFlag(CULL_VIEW_FLAG_CONE))
             {
                 EnsureMeshletCone(Inst, Ctx.Model, Cache);
 
@@ -157,14 +181,14 @@ bool TestMeshletAgainstView(FMeshletCullContext Ctx, FGPUInstance* Inst, FCullVi
                 }
             }
 
-            if (bKeep && !Ctx.bSkinned && !Ctx.bNoCull && View.HasFlag(CULL_VIEW_FLAG_FRUSTUM))
+            if (!bLate && bKeep && !Ctx.bSkinned && !Ctx.bNoCull && View.HasFlag(CULL_VIEW_FLAG_FRUSTUM))
             {
                 bKeep = FrustumContainsSphere(View.FrustumPlanes, Cache.WorldCenter, Cache.WorldRadius);
             }
 
             // The frustum test above is the cascade's ortho box, and those nest, so it barely separates
             // one cascade from the next. Everything that makes a cascade cheap is here.
-            if (bKeep && !Ctx.bNoCull && View.HasFlag(CULL_VIEW_FLAG_CASCADE))
+            if (!bLate && bKeep && !Ctx.bNoCull && View.HasFlag(CULL_VIEW_FLAG_CASCADE))
             {
                 const uint CascadeIndex = View.CascadeIndex;
 
@@ -188,9 +212,9 @@ bool TestMeshletAgainstView(FMeshletCullContext Ctx, FGPUInstance* Inst, FCullVi
                 }
             }
 
-            // Sub-pixel reject, camera view only. Hi-Z is instance-level now, so nothing here reads a
-            // stale pyramid: this is a projected-SIZE test and carries no frame latency.
-            if (bKeep && !Ctx.bSkinned && !Ctx.bNoCull && View.HasFlag(CULL_VIEW_FLAG_OCCLUSION))
+            // Sub-pixel reject, camera view only. A projected-SIZE test against THIS frame's transforms,
+            // so it is exact and never deferred -- see the note on CULL_VIEW_FLAG_OCCLUSION in Common.slang.
+            if (!bLate && bKeep && !Ctx.bSkinned && !Ctx.bNoCull && View.HasFlag(CULL_VIEW_FLAG_OCCLUSION))
             {
                 float4 ClipAABB;
                 const float4x4 CullProj = GetCullCameraProjection();
@@ -208,8 +232,29 @@ bool TestMeshletAgainstView(FMeshletCullContext Ctx, FGPUInstance* Inst, FCullVi
                     bKeep = (MinI.x != MaxI.x) && (MinI.y != MaxI.y);
                 }
             }
+
+            // Per-meshlet Hi-Z. Last, so a meshlet only ever reaches the defer list once every cheaper
+            // and exact test has already accepted it -- deferring something the frustum would have
+            // rejected would pay for it twice and re-test it against a pyramid that cannot save it.
+            //
+            // Skinned and NoCull are excluded for the same reason the frustum test excludes them: the
+            // meshlet sphere is bind-pose and does not track the animated silhouette, so an occlusion
+            // verdict drawn from it can hide geometry that has since moved out from behind the occluder.
+            // The instance-level Hi-Z in IsInstanceVisibleToView still covers those, off the live sphere.
+            if (bKeep && !Ctx.bSkinned && !Ctx.bNoCull && View.HasFlag(CULL_VIEW_FLAG_MESHLET_HIZ))
+            {
+                if (IsHiZOccluded(Cache.WorldCenter, Cache.WorldRadius))
+                {
+                    bKeep = false;
+                    // Early: hand it to the late phase, which re-tests against this frame's own depth.
+                    // Late: the pyramid already holds that depth, so this verdict is final and the
+                    // meshlet is genuinely behind something. Deferring again would loop forever.
+                    Result.bDeferHiZ = !bLate;
+                }
+            }
         }
     }
 
-    return bKeep;
+    Result.bKeep = bKeep;
+    return Result;
 }

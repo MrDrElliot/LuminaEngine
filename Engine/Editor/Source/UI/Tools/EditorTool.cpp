@@ -1096,7 +1096,7 @@ namespace Lumina
                     { ERenderSceneDebugFlags::ClusterGrid,     "Light Clusters"   },
                     { ERenderSceneDebugFlags::ShadowCascades,  "Shadow Cascades"  },
                     { ERenderSceneDebugFlags::ShadowPenumbra,  "Shadow Penumbra"  },
-                    { ERenderSceneDebugFlags::SSAO,            "SSAO"             },
+                    { ERenderSceneDebugFlags::GTAO,            "GTAO"             },
                     // Influence = does a probe reach this pixel and which one (black = none, so pure
                     // sky). Radiance = what that probe actually captured. The two failure modes look
                     // identical in a lit view, hence two separate inspectors.
@@ -1154,7 +1154,8 @@ namespace Lumina
                 {
                     "Frustum Cull",
                     "Cone Cull",
-                    "Occlusion Cull (Camera)",
+                    "Occlusion Cull (Instances)",
+                    "Occlusion Cull (Meshlets, 2-phase)",
                     "Occlusion Cull (Shadows)",
                     "CPU Instance Cull",
                     "Level of Detail",
@@ -1163,7 +1164,8 @@ namespace Lumina
                 {
                     "Rejects instances and meshlets outside a view's frustum.\nOff: everything is submitted from every angle.",
                     "Rejects meshlets whose normal cone faces away from the view.\nOff: backfacing clusters are submitted. The only cull besides occlusion that removes PARTS of a mesh.",
-                    "Single-phase Hi-Z: instances hidden by last frame's depth pyramid are rejected outright.\nOff: no occlusion culling. Geometry that becomes visible appears one frame late.",
+                    "Whole instances hidden by last frame's depth pyramid are rejected outright. Single-phase and\nexact enough at this granularity: an object is hidden or it is not.\nOff: no instance-level occlusion culling.",
+                    "Per-meshlet Hi-Z, resolved across two VisBuffer phases: the early pass defers what last frame's\npyramid hid, the pyramid is rebuilt from this frame's own depth, and the late pass re-tests exactly\nthose. No frame latency -- disoccluded meshlets still draw the same frame.\nOff: the frame collapses to a single geometry phase and meshlets are frustum-culled only.",
                     "The same test for shadow cascades, against the cascade pyramid.",
                     "Pre-upload reject of instances outside every contributing view, on the CPU.\nOff: the whole retained set is uploaded each frame.",
                     "Distance-based LOD selection.\nOff: always LOD 0, full detail.",
@@ -1174,6 +1176,7 @@ namespace Lumina
                     (bool)Settings.bFrustumCull,
                     (bool)Settings.bConeCull,
                     (bool)Settings.bOcclusionCull,
+                    (bool)Settings.bMeshletOcclusionCull,
                     (bool)Settings.bShadowOcclusionCull,
                     (bool)Settings.bCPUInstanceCull,
                     (bool)Settings.bUseLODs,
@@ -1190,28 +1193,31 @@ namespace Lumina
                     }
                 }
 
-                if (bChanged[0]) { Settings.bFrustumCull         = bValues[0]; }
-                if (bChanged[1]) { Settings.bConeCull            = bValues[1]; }
-                if (bChanged[2]) { Settings.bOcclusionCull       = bValues[2]; }
-                if (bChanged[3]) { Settings.bShadowOcclusionCull = bValues[3]; }
-                if (bChanged[4]) { Settings.bCPUInstanceCull     = bValues[4]; }
-                if (bChanged[5]) { Settings.bUseLODs             = bValues[5]; }
+                if (bChanged[0]) { Settings.bFrustumCull          = bValues[0]; }
+                if (bChanged[1]) { Settings.bConeCull             = bValues[1]; }
+                if (bChanged[2]) { Settings.bOcclusionCull        = bValues[2]; }
+                if (bChanged[3]) { Settings.bMeshletOcclusionCull = bValues[3]; }
+                if (bChanged[4]) { Settings.bShadowOcclusionCull  = bValues[4]; }
+                if (bChanged[5]) { Settings.bCPUInstanceCull      = bValues[5]; }
+                if (bChanged[6]) { Settings.bUseLODs              = bValues[6]; }
 
                 ImGui::Separator();
 
                 // The state to compare a suspicious frame against: whatever is still missing with all
                 // of these off was not culled, which is worth more than any single toggle.
                 const bool bAllOff = !Settings.bFrustumCull && !Settings.bConeCull && !Settings.bOcclusionCull
-                                  && !Settings.bShadowOcclusionCull && !Settings.bCPUInstanceCull && !Settings.bUseLODs;
+                                  && !Settings.bMeshletOcclusionCull && !Settings.bShadowOcclusionCull
+                                  && !Settings.bCPUInstanceCull && !Settings.bUseLODs;
                 if (ImGui::MenuItem("Disable All Culling", nullptr, bAllOff))
                 {
                     const uint8 bEnable = bAllOff ? 1u : 0u;
-                    Settings.bFrustumCull         = bEnable;
-                    Settings.bConeCull            = bEnable;
-                    Settings.bOcclusionCull       = bEnable;
-                    Settings.bShadowOcclusionCull = bEnable;
-                    Settings.bCPUInstanceCull     = bEnable;
-                    Settings.bUseLODs             = bEnable;
+                    Settings.bFrustumCull          = bEnable;
+                    Settings.bConeCull             = bEnable;
+                    Settings.bOcclusionCull        = bEnable;
+                    Settings.bMeshletOcclusionCull = bEnable;
+                    Settings.bShadowOcclusionCull  = bEnable;
+                    Settings.bCPUInstanceCull      = bEnable;
+                    Settings.bUseLODs              = bEnable;
                 }
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
                 {

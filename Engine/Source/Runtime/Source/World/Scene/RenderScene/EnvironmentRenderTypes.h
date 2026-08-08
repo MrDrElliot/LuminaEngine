@@ -63,6 +63,10 @@ namespace Lumina
         // rgb = directional (sun) inscatter tint, w = directional exponent
         FVector4   DirectionalColor  = FVector4(1.0f, 0.9f, 0.7f, 4.0f);
         FVector4   VolumetricParams  = FVector4(1.0f, 0.6f, 200.0f, 0.0f);
+        // Multiple-scattering octaves (Fog_MultiScatterPhaseShadow): x = octave count, y = per-octave
+        // scattering attenuation, z = per-octave shadow attenuation, w = per-octave phase attenuation.
+        // x = 1 is single scattering and is a bit-exact no-op, so this is the default.
+        FVector4   MultiScatterParams = FVector4(1.0f, 0.5f, 0.5f, 0.5f);
     };
     VERIFY_SSBO_ALIGNMENT(FExponentialHeightFogParams);
 }

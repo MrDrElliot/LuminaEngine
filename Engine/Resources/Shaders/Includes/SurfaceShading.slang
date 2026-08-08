@@ -24,11 +24,11 @@
 // entirely -- this is how one shared shading path serves passes that bind different resources:
 //   DECALS off  -> the terrain pass (which binds FTerrainPushConstants, NOT the DBuffer overlay) never reads
 //                  the decal push, so its pointer-bearing push range is not misread as bindless indices;
-//   SSAO   off  -> terrain skips the screen-space AO fetch it has no input for (ambient stays unoccluded);
+//   GTAO   off  -> terrain skips the screen-space AO fetch it has no input for (ambient stays unoccluded);
 //   DEBUG  off  -> game/shipping pipelines strip the editor view-mode switch (no runtime branch, smaller PS).
 [vk::constant_id(1)] const uint SPEC_ENABLE_DEBUG_VIEWS = 1;
 [vk::constant_id(2)] const uint SPEC_ENABLE_DECALS      = 1;
-[vk::constant_id(3)] const uint SPEC_ENABLE_SSAO        = 1;
+[vk::constant_id(3)] const uint SPEC_ENABLE_GTAO        = 1;
 
 // Deferred sun shadows: when 1, the directional branch of ComputeShadowFactor returns a screen-space
 // mask ShadowMaskPixel.slang already resolved, and the whole cascade PCSS (two inlined
@@ -671,17 +671,17 @@ FShadedSurface ShadeSurface(FBaseVertexOutput Input, FMaterialPixelInputs Materi
     }
 
     // Screen-space AO attenuates the ambient/IBL term only (direct light already has its own occlusion).
-    // AOTextureIndex is ~0u for views that didn't run the SSAO pass (e.g. captures) -> treat as unoccluded.
-    // Pipelines with no SSAO input (terrain) specialize SPEC_ENABLE_SSAO off so the fetch is dead-stripped.
-    // TRANSLUCENT surfaces skip it entirely: the SSAO texture is computed from OPAQUE depth, so at a glass
+    // AOTextureIndex is ~0u for views that didn't run the GTAO pass (e.g. captures) -> treat as unoccluded.
+    // Pipelines with no GTAO input (terrain) specialize SPEC_ENABLE_GTAO off so the fetch is dead-stripped.
+    // TRANSLUCENT surfaces skip it entirely: the GTAO texture is computed from OPAQUE depth, so at a glass
     // pixel it holds the AO of whatever is BEHIND the glass -- modulating the glass's own ambient and
     // reflections by the backdrop's occlusion is wrong and smears backdrop detail onto the surface.
-    float SSAO = 1.0;
+    float GTAO = 1.0;
 #ifndef TRANSLUCENT
-    if (SPEC_ENABLE_SSAO != 0 && Scene().SSAOSettings.AOTextureIndex != 0xFFFFFFFFu)
+    if (SPEC_ENABLE_GTAO != 0 && Scene().GTAOSettings.AOTextureIndex != 0xFFFFFFFFu)
     {
         float2 ScreenUV = Input.Position.xy / float2(Scene().ScreenSize.xy);
-        SSAO = SampleTexture2D(Scene().SSAOSettings.AOTextureIndex, SAMPLER_LINEAR_CLAMP, ScreenUV).r;
+        GTAO = SampleTexture2D(Scene().GTAOSettings.AOTextureIndex, SAMPLER_LINEAR_CLAMP, ScreenUV).r;
     }
 #endif
 
@@ -697,19 +697,19 @@ FShadedSurface ShadeSurface(FBaseVertexOutput Input, FMaterialPixelInputs Materi
 #ifdef TRANSLUCENT
         float3 IBLDiffuse, IBLSpec;
         EvaluateIBLAmbientSplit(WorldPosition, N, V, NdotV_IBL, DFG_IBL, Albedo, F0, Roughness, Metallic, AO, IBLDiffuse, IBLSpec);
-        Ambient = IBLDiffuse * GetAmbientLightIntensity() * SSAO;
-        LoSpec += IBLSpec * GetAmbientLightIntensity() * SSAO;
+        Ambient = IBLDiffuse * GetAmbientLightIntensity() * GTAO;
+        LoSpec += IBLSpec * GetAmbientLightIntensity() * GTAO;
 #else
         float3 IBLAmbient = EvaluateIBLAmbient(WorldPosition, N, V, NdotV_IBL, DFG_IBL, Albedo, F0, Roughness, Metallic, AO);
-        Ambient = IBLAmbient * GetAmbientLightIntensity() * SSAO;
+        Ambient = IBLAmbient * GetAmbientLightIntensity() * GTAO;
 #endif
     }
     else
     {
         // No environment: a SkyLight alone still lights the scene via a flat diffuse ambient fill
-        // (color * intensity from the SkyLight), occluded by material AO and SSAO. Metals carry no diffuse.
+        // (color * intensity from the SkyLight), occluded by material AO and GTAO. Metals carry no diffuse.
         float3 DiffuseColor = Albedo * (1.0 - Metallic);
-        Ambient = GetAmbientLightColor() * GetAmbientLightIntensity() * DiffuseColor * AO * SSAO;
+        Ambient = GetAmbientLightColor() * GetAmbientLightIntensity() * DiffuseColor * AO * GTAO;
     }
     float3 Color = Ambient + Lo + Material.Emissive;
 
@@ -782,14 +782,14 @@ FShadedSurface ShadeSurface(FBaseVertexOutput Input, FMaterialPixelInputs Materi
             case DEBUG_MODE_SHADOW_PENUMBRA:
                 Color = ShadowPenumbraDebug(WorldPosition, ViewPosition, Input.Position.xy);
                 break;
-            case DEBUG_MODE_SSAO:
+            case DEBUG_MODE_GTAO:
             {
-                // Show the (blurred) screen-space AO factor. White where SSAO is off for this view.
+                // Show the (blurred) screen-space AO factor. White where GTAO is off for this view.
                 float DbgAO = 1.0;
-                if (Scene().SSAOSettings.AOTextureIndex != 0xFFFFFFFFu)
+                if (Scene().GTAOSettings.AOTextureIndex != 0xFFFFFFFFu)
                 {
                     float2 DbgUV = Input.Position.xy / float2(Scene().ScreenSize.xy);
-                    DbgAO = SampleTexture2D(Scene().SSAOSettings.AOTextureIndex, SAMPLER_LINEAR_CLAMP, DbgUV).r;
+                    DbgAO = SampleTexture2D(Scene().GTAOSettings.AOTextureIndex, SAMPLER_LINEAR_CLAMP, DbgUV).r;
                 }
                 Color = float3(DbgAO, DbgAO, DbgAO);
                 break;

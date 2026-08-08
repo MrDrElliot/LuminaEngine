@@ -52,7 +52,7 @@ float4 FragmentMain(FragmentInput Input) : SV_Target0
 
     float4x4 InvProj = GetInverseCameraProjection();
 
-    // Full res, so pixel centers already land on depth texel centers -- no snap needed (unlike SSAO,
+    // Full res, so pixel centers already land on depth texel centers -- no snap needed (unlike GTAO,
     // which runs at half res).
     float2 FullTexel = 1.0 / float2(Scene().ScreenSize.xy);
     float2 UV        = Input.UV;
@@ -69,7 +69,7 @@ float4 FragmentMain(FragmentInput Input) : SV_Target0
 
     // GEOMETRIC normal from depth, side-picked per axis (take the neighbour with the smaller depth
     // delta) so the frame stays on one surface at silhouettes instead of smearing across them. Same
-    // construction as SSAOPixel.
+    // construction as GTAOPixel.
     //
     // ComputeDirectionalShadow uses the normal for exactly two things -- the slope term of the depth
     // bias and the normal-offset push -- and for BOTH the geometric normal is the right input. The

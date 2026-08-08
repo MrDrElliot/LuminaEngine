@@ -106,8 +106,14 @@ float SampleSpotShadow(FLight Light, float3 WorldPos)
 // In-scatter from the opted-in local point/spot lights at one world position. Pulled out of
 // ComputeMain so it can be supersampled at several sub-froxel positions (the near-light core and
 // cone edge are far higher frequency than the froxel grid).
-float3 LocalLightsInScatter(float3 WorldPos, float3 ToCam, float G)
+//
+// Takes the whole fog block rather than just the anisotropy so the multi-scatter octaves apply here
+// too. Interiors lit by lamps rather than the sun are exactly the case that needs them most, and
+// leaving local lights on single scattering would also split the two halves of the medium onto
+// different lighting models. Cost scales with octaves x volumetric lights x supersamples.
+float3 LocalLightsInScatter(FExponentialHeightFogParams Fog, float3 WorldPos, float3 ToCam)
 {
+    float  G         = Fog.VolumetricParams.y;
     float3 InScatter = float3(0.0);
     uint NumLocal = min(Pass().NumLocalVolumetric, (uint)FROXEL_MAX_LOCAL_LIGHTS);
     for (uint li = 0; li < NumLocal; ++li)
@@ -147,9 +153,9 @@ float3 LocalLightsInScatter(float3 WorldPos, float3 ToCam, float G)
 
         // Ldir points toward the light; the photon travels the other way, so negate
         // to match the sun's travel-direction phase convention.
-        float  Phase = Fog_Phase(dot(-Ldir, ToCam), G);
-        float3 LC    = UnpackColor(L.Color).rgb;
-        InScatter += LC * L.Intensity * Atten * Cone * Phase * Shadow * L.VolumetricIntensity;
+        float  PhaseShadow = Fog_MultiScatterPhaseShadow(Fog, dot(-Ldir, ToCam), G, Shadow);
+        float3 LC          = UnpackColor(L.Color).rgb;
+        InScatter += LC * L.Intensity * Atten * Cone * PhaseShadow * L.VolumetricIntensity;
     }
     return InScatter;
 }
@@ -210,17 +216,19 @@ void ComputeMain(uint3 DispatchID : SV_DispatchThreadID)
     float  Intensity = uFog.VolumetricParams.x;
 
     // Ambient (skylight) in-scatter, unshadowed, so shadowed fog reads as dim haze not a black void.
-    // Cheap multi-scatter stand-in; raise AmbientIntensity for brighter shadows.
+    // This is the skylight's OWN first bounce (already isotropic, already unshadowed), which is why it
+    // is not run through the octave loop -- the octaves model further bounces of the DIRECTIONAL light
+    // below, and folding the ambient in as well would double-count it. Raise AmbientIntensity for a
+    // brighter floor; raise the octave count for shadow fill that follows the sun.
     float3 InScatter = GetAmbientLightColor() * GetAmbientLightIntensity();
 
     // Sun.
     if (Pass().bSunVolumetric != 0)
     {
-        FLight Sun     = GetLightAt(0);
-        float  Phase   = Fog_Phase(CosSun, G);
-        float  Shadow  = SampleSunShadowAA(Sun, DispatchID);
+        FLight Sun      = GetLightAt(0);
+        float  Shadow   = SampleSunShadowAA(Sun, DispatchID);
         float3 SunColor = UnpackColor(Sun.Color).rgb;
-        InScatter += SunColor * Sun.Intensity * Phase * Shadow * Sun.VolumetricIntensity;
+        InScatter += SunColor * Sun.Intensity * Fog_MultiScatterPhaseShadow(uFog, CosSun, G, Shadow) * Sun.VolumetricIntensity;
     }
 
     // Opted-in local point/spot lights. A single center sample aliases the bright near-light core
@@ -238,13 +246,13 @@ void ComputeMain(uint3 DispatchID : SV_DispatchThreadID)
             {
                 float3 SubPos   = FroxelToWorld(DispatchID, float3(Offs[s], 0.5));
                 float3 SubToCam = normalize(GetCameraPosition() - SubPos);
-                LocalSum += LocalLightsInScatter(SubPos, SubToCam, G);
+                LocalSum += LocalLightsInScatter(uFog, SubPos, SubToCam);
             }
             InScatter += LocalSum * 0.25;
         }
         else
         {
-            InScatter += LocalLightsInScatter(WorldPos, ToCam, G);
+            InScatter += LocalLightsInScatter(uFog, WorldPos, ToCam);
         }
     }
 

@@ -8,8 +8,8 @@
 // terrain layer blending via TerrainData.slang), adapts the terrain interpolants to the shared
 // FBaseVertexOutput, and packs output. All terrain layer access lives in TerrainData.slang.
 //
-// The terrain pipeline is specialized with SPEC_ENABLE_DECALS = 0 and SPEC_ENABLE_SSAO = 0 (it binds
-// neither the DBuffer overlay nor an SSAO input), so ShadeSurface's decal/AO blocks are dead-stripped and
+// The terrain pipeline is specialized with SPEC_ENABLE_DECALS = 0 and SPEC_ENABLE_GTAO = 0 (it binds
+// neither the DBuffer overlay nor an GTAO input), so ShadeSurface's decal/AO blocks are dead-stripped and
 // terrain never misreads its pointer-bearing push range as bindless decal indices.
 
 struct PSInput

@@ -473,9 +473,9 @@ namespace Lumina
             SMAABlend,
             SMAAArea,
             SMAASearch,
-            SSAO,
-            SSAODenoise,
-            SSAOBlur,
+            GTAO,
+            GTAODenoise,
+            GTAOBlur,
             // Full-res R8 screen-space sun-shadow visibility, resolved by ShadowMaskPass.
             ShadowMask,
             Cascade,
@@ -562,6 +562,8 @@ namespace Lumina
         FSceneBuffer GetMeshletDrawList()  const { return MeshletDrawListRing[CurrentFrameSlot]; }
         FSceneBuffer GetTaskDrawArgs()     const { return TaskDrawArgsRing[CurrentFrameSlot]; }
         FSceneBuffer GetMeshletBlocks()    const { return MeshletBlockRing[CurrentFrameSlot]; }
+        /** One uint of lane bits per meshlet block: what the early VisBuffer phase deferred on Hi-Z. */
+        FSceneBuffer GetMeshletDeferBits() const { return MeshletDeferBitsRing[CurrentFrameSlot]; }
         FSceneBuffer GetBlockDispatchArgs() const { return BlockDispatchArgsRing[CurrentFrameSlot]; }
         FSceneBuffer GetSpdCounter()       const { return SpdCounterRing[CurrentFrameSlot]; }
 
@@ -640,7 +642,11 @@ namespace Lumina
         void SpotShadowPass(RHI::FCmdListH CL);
         void CascadedShowPass(RHI::FCmdListH CL, uint32 CascadeViewBase);
         void DecalPass(RHI::FCmdListH CL);
-        void VisBufferPass(RHI::FCmdListH CL, uint32 ViewIndex, bool bClear);
+        /** Early rasterizes everything last frame's pyramid did not hide and records what it deferred;
+            Late re-tests exactly that against the pyramid rebuilt from Early's own depth. A view without
+            ECullViewFlags::MeshletHiZ defers nothing, so its Late phase is a no-op and can be skipped. */
+        void VisBufferPass(RHI::FCmdListH CL, uint32 ViewIndex, bool bClear,
+                           ECullPhase::Type Phase = ECullPhase::Early);
         void MaterialDepthPass(RHI::FCmdListH CL);
         void DeferredMaterialPass(RHI::FCmdListH CL);
         bool BindShadowBatchPipeline(RHI::FCmdListH CL, const FMeshDrawCommand& Batch,
@@ -649,22 +655,7 @@ namespace Lumina
         void DrawShadowBatch(RHI::FCmdListH CL, const FMeshDrawCommand& Batch, bool bUseMesh,
                              uint32 CullViewIndex, int32 ShadowDataIndex, int32 ShadowViewIndex,
                              const FUIntVector2& ViewportExtent);
-        // The cull keeps running while frozen -- instances move and the visible buffer is rebuilt every
-        // frame -- but against these captured inputs, so what was selected stays selected. The render
-        // camera is deliberately NOT part of this; that is why the cull has its own (see FCullData).
-        struct FFrozenCull
-        {
-            TVector<FCullView> Views;
-            FVector4           CameraPosition   = {};
-            FMatrix4           CameraView       = {};
-            FMatrix4           CameraProjection = {};
-            FGPUFrustum        Frustum          = {};
-            FGPUFrustum        ShadowFrustum    = {};
-            FGPUFrustum        CascadeFrustum[NumCascades] = {};
-            uint32             CascadeViewBase  = ~0u;
-            bool               bValid           = false;
-        };
-        FFrozenCull FrozenCull;
+        
 
         void ApplyCullFreeze(FFrameData& Frame);
         void DrawFrozenCullFrustum(const FFrameData& Frame);
@@ -680,8 +671,8 @@ namespace Lumina
         void TerrainCullPass(RHI::FCmdListH CL);
         void TerrainDepthPrePass(RHI::FCmdListH CL);
         void TerrainRenderPass(RHI::FCmdListH CL);
-        void SSAOPass(RHI::FCmdListH CL);
-        void SSAOBlurPass(RHI::FCmdListH CL);
+        void GTAOPass(RHI::FCmdListH CL);
+        void GTAOBlurPass(RHI::FCmdListH CL);
         void ShadowMaskPass(RHI::FCmdListH CL);
         void TransparentPass(RHI::FCmdListH CL);
         void OITResolvePass(RHI::FCmdListH CL);
@@ -756,9 +747,9 @@ namespace Lumina
         {
             SF_DebugViews = 1u << 0,
             SF_Decals     = 1u << 1,
-            SF_SSAO       = 1u << 2,
+            SF_GTAO       = 1u << 2,
             SF_ShadowMask = 1u << 3,
-            SF_All        = SF_DebugViews | SF_Decals | SF_SSAO,
+            SF_All        = SF_DebugViews | SF_Decals | SF_GTAO,
         };
 
         struct FGraphicsPipelineKey
@@ -793,10 +784,6 @@ namespace Lumina
 
         static const FShaderEntry* MeshletCullTaskShader();
 
-        void DrawMeshletBatch(RHI::FCmdListH CL, const FMeshDrawCommand& Batch,
-                              uint32 CullViewIndex, int32 ShadowDataIndex, int32 ShadowViewIndex,
-                              float ViewportW, float ViewportH);
-
         /** Where a meshlet pass draws, as opposed to what. Everything here is per PASS, not per batch. */
         struct FMeshletPassContext
         {
@@ -805,7 +792,12 @@ namespace Lumina
             int32             ShadowViewIndex   = 0;
             float             ViewportW         = 0.0f;
             float             ViewportH         = 0.0f;
+            /** Early unless this pass is the second half of a two-phase occlusion draw. Every
+                single-phase pass leaves this alone -- see ECullViewFlags::MeshletHiZ. */
+            ECullPhase::Type  CullPhase         = ECullPhase::Early;
         };
+
+        void DrawMeshletBatch(RHI::FCmdListH CL, const FMeshDrawCommand& Batch, const FMeshletPassContext& Ctx);
 
         template<typename TSetup, typename TBound>
         void ForEachMeshletBatch(RHI::FCmdListH CL, const TVector<uint32>& DrawList,
@@ -821,8 +813,7 @@ namespace Lumina
                 // Decided here rather than by the caller, so it cannot disagree with the draw below.
                 Key.TS        = MeshletCullTaskShader();
                 // Homogeneous batch -> dead-strip the unused vertex-load path; mixed -> runtime branch (2).
-                Key.SkinnedMode = (Batch.bAnySkinned && Batch.bAnyStatic) ? 2u
-                                : (Batch.bAnySkinned ? 1u : 0u);
+                Key.SkinnedMode = (Batch.bAnySkinned && Batch.bAnyStatic) ? 2u : (Batch.bAnySkinned ? 1u : 0u);
 
                 if (!Setup(Key, Batch))
                 {
@@ -832,8 +823,7 @@ namespace Lumina
                 RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
                 Bound(Batch);
 
-                DrawMeshletBatch(CL, Batch, Ctx.CullViewIndex,
-                                 Ctx.ShadowDataIndex, Ctx.ShadowViewIndex, Ctx.ViewportW, Ctx.ViewportH);
+                DrawMeshletBatch(CL, Batch, Ctx);
             }
         }
 
@@ -876,6 +866,20 @@ namespace Lumina
     
     private:
         
+        struct FFrozenCull
+        {
+            TVector<FCullView> Views;
+            FVector4           CameraPosition   = {};
+            FMatrix4           CameraView       = {};
+            FMatrix4           CameraProjection = {};
+            FGPUFrustum        Frustum          = {};
+            FGPUFrustum        ShadowFrustum    = {};
+            FGPUFrustum        CascadeFrustum[NumCascades] = {};
+            uint32             CascadeViewBase  = ~0u;
+            bool               bValid           = false;
+        };
+        FFrozenCull FrozenCull;
+        
         FSceneBuffer                                        PreSkinnedVerticesBuffer;
         uint32                                              PreSkinnedVerticesLowUsage = 0;
 
@@ -886,6 +890,8 @@ namespace Lumina
         TArray<uint32, RHI::kFramesInFlight>                MeshletDrawListRingLowUsage = {};
         TArray<uint32, RHI::kFramesInFlight>                TaskDrawArgsRingLowUsage = {};
         TArray<uint32, RHI::kFramesInFlight>                MeshletBlockRingLowUsage = {};
+        TArray<FSceneBuffer, RHI::kFramesInFlight>          MeshletDeferBitsRing = {};
+        TArray<uint32, RHI::kFramesInFlight>                MeshletDeferBitsRingLowUsage = {};
         TArray<uint32, RHI::kFramesInFlight>                MaterialBinTileBitsRingLowUsage = {};
         TArray<uint32, RHI::kFramesInFlight>                MaterialTileListRingLowUsage = {};
         TArray<uint32, RHI::kFramesInFlight>                MaterialTileArgsRingLowUsage = {};

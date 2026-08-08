@@ -18,11 +18,27 @@ static const float INV_PI = 0.31830988618;
 // Bits inside FCullView.Flags, gating which culling stages run for the view.
 #define CULL_VIEW_FLAG_FRUSTUM          BIT(0)
 #define CULL_VIEW_FLAG_CONE             BIT(1)
+// INSTANCE-level Hi-Z, plus the meshlet-level SUB-PIXEL reject. Despite the name it gates no
+// meshlet occlusion test -- that is CULL_VIEW_FLAG_MESHLET_HIZ below. The two are separate because
+// they have different latency: the sub-pixel test is a projected-size measurement of this frame's
+// transforms and is exact, while any pyramid read is a frame behind and needs the two-phase
+// treatment. Folding them into one bit would drag the exact test into the deferral machinery.
 #define CULL_VIEW_FLAG_OCCLUSION        BIT(2)
 #define CULL_VIEW_FLAG_DISTANCE         BIT(3)
 #define CULL_VIEW_FLAG_CAST_SHADOW_ONLY BIT(4)
 #define CULL_VIEW_FLAG_SUN_ALIGNED      BIT(5)
+// Per-MESHLET Hi-Z, resolved across the two VisBuffer phases. Only ever set on a view that actually
+// runs both phases; a single-phase view (shadows, captures, probes) must leave it clear or the
+// meshlets its early phase defers are never re-tested and simply never draw.
+#define CULL_VIEW_FLAG_MESHLET_HIZ      BIT(6)
 #define CULL_VIEW_FLAG_CASCADE          BIT(7)
+
+// Which side of the mid-frame pyramid rebuild a meshlet cull dispatch is on. Push-constant, not a
+// spec constant or a second FCullView: both phases rasterize the same view with the same material
+// PSOs, and the only thing that differs is which contents the pyramid holds when they read it.
+// Mirrors ECullPhase in SceneRenderTypes.h.
+#define CULL_PHASE_EARLY                0u
+#define CULL_PHASE_LATE                 1u
 
 
 #define BIT(X) (1u << (X))
@@ -207,15 +223,15 @@ struct FEntityAABB
     float MaxY;
 };
 
-// GTAO tuning; matches C++ FSSAOSettings (SceneRenderTypes.h). Slice directions come from
+// GTAO tuning; matches C++ FGTAOSettings (SceneRenderTypes.h). Slice directions come from
 // per-pixel interleaved gradient noise in the shader, no CPU kernel.
-struct FSSAOSettings
+struct FGTAOSettings
 {
     float  Radius;
     float  Intensity;
     float  Power;
     float  Bias;             // reserved (unused by GTAO)
-    uint   AOTextureIndex;    // bindless SRV the base pass samples; ~0u = no SSAO for this view
+    uint   AOTextureIndex;    // bindless SRV the base pass samples; ~0u = no GTAO for this view
     uint   _Pad0;
     uint   _Pad1;
     uint   _Pad2;
@@ -534,9 +550,6 @@ struct FMeshletBlock
     property uint Count       { get { return (PackedBaseAndCount >> MESHLET_DRAW_INDEX_BITS) & 63u; } }
 };
 
-// Camera meshlets the early pass deferred via Hi-Z; the late pass re-tests
-// against the rebuilt HZB. DrawID is captured at defer time because the
-// late pass increments uIndirectArgs[...DrawID].InstanceCount.
 // One (view, draw) pair's slice of the two cull arenas. Base, capacity and cursor travel together, so an
 // appender cannot pair one region's base with another's bound. These were parallel arrays indexed by the
 // same ArgIdx, and pairing a clamped base with an unclamped length is what let the block builder write
@@ -847,7 +860,7 @@ struct FCullData
 #define DEBUG_MODE_CLUSTER_GRID         12u
 #define DEBUG_MODE_SHADOW_CASCADES      13u
 #define DEBUG_MODE_SHADOW_PENUMBRA      14u
-#define DEBUG_MODE_SSAO                 15u
+#define DEBUG_MODE_GTAO                 15u
 #define DEBUG_MODE_MATERIAL_ID          16u
 #define DEBUG_MODE_TRIANGLE_ID          17u
 // OIT target inspectors, consumed by OITResolve.slang (not the per-surface switch in SurfaceShading).
@@ -884,7 +897,7 @@ struct FSceneGlobalData
     float             DeltaTime;
     float             NearPlane;
     float             FarPlane;
-    FSSAOSettings     SSAOSettings;
+    FGTAOSettings     GTAOSettings;
     FCullData         CullData;
     FParallaxSettings ParallaxSettings;
 

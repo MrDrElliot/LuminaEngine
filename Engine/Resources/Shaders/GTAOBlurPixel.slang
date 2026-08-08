@@ -5,7 +5,7 @@
 // close its view depth is to the depth PREDICTED by the center's local slope (quad-derivative
 // plane fit), so tilted surfaces blur fully -- a flat center-depth tolerance collapses on slanted
 // faces and lets the raw slice noise through -- while silhouettes still reject. The separate
-// upsample pass (SSAOUpsamplePixel.slang) then reconstructs full res.
+// upsample pass (GTAOUpsamplePixel.slang) then reconstructs full res.
 
 struct FragmentInput
 {

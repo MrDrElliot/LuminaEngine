@@ -79,7 +79,7 @@ namespace Lumina
         ClusterGrid         = 12,
         ShadowCascades      = 13,
         ShadowPenumbra      = 14,
-        SSAO                = 15,
+        GTAO                = 15,
         MaterialID          = 16,
         TriangleID          = 17,
         OITAccumColor       = 18,
@@ -110,7 +110,7 @@ namespace Lumina
             case ERenderSceneDebugFlags::ClusterGrid:       return "Light Clusters";
             case ERenderSceneDebugFlags::ShadowCascades:    return "Shadow Cascades";
             case ERenderSceneDebugFlags::ShadowPenumbra:    return "Shadow Penumbra";
-            case ERenderSceneDebugFlags::SSAO:              return "SSAO";
+            case ERenderSceneDebugFlags::GTAO:              return "GTAO";
             case ERenderSceneDebugFlags::MaterialID:        return "Material ID";
             case ERenderSceneDebugFlags::TriangleID:        return "Triangle ID";
             case ERenderSceneDebugFlags::OITAccumColor:     return "OIT Accum Color";
@@ -539,7 +539,7 @@ namespace Lumina
         ESolidDrawMode  Mode;
     };
 
-    struct FSSAOSettings
+    struct FGTAOSettings
     {
         float  Radius    = 0.5f;
         float  Intensity = 1.0f;
@@ -895,6 +895,7 @@ namespace Lumina
     VERIFY_SSBO_ALIGNMENT(FCullData)
 
     // Bits inside FCullView::Flags. Must match CULL_VIEW_FLAG_* in Common.slang.
+    // Must match CULL_VIEW_FLAG_* in Common.slang.
     namespace ECullViewFlags
     {
         enum Type : uint32
@@ -902,22 +903,26 @@ namespace Lumina
             None            = 0,
             Frustum         = BIT(0),
             Cone            = BIT(1),
+            // Instance-level Hi-Z plus the meshlet-level sub-pixel reject; NOT meshlet occlusion.
             Occlusion       = BIT(2),
             Distance        = BIT(3),
             CastShadowOnly  = BIT(4),
             SunAligned      = BIT(5),
-                Cascade         = BIT(7),
+            // Meshlet-level Hi-Z. Only legal on a view that rasterizes BOTH VisBuffer phases -- a
+            // single-phase view would defer meshlets that nothing ever re-tests, and they would not draw.
+            MeshletHiZ      = BIT(6),
+            Cascade         = BIT(7),
         };
     }
 
-    // Phase push-constant values. Must match CULL_PHASE_* in Common.slang.
+    // Which side of the mid-frame pyramid rebuild a meshlet cull dispatch is on.
+    // Must match CULL_PHASE_* in Common.slang.
     namespace ECullPhase
     {
         enum Type : uint32
         {
-            Early       = 0,
-            Late        = 1,
-            CascadeLate = 2,
+            Early = 0,
+            Late  = 1,
         };
     }
 
@@ -1036,7 +1041,7 @@ namespace Lumina
         float           NearPlane;
         float           FarPlane;
 
-        FSSAOSettings   SSAOSettings;
+        FGTAOSettings   GTAOSettings;
         FCullData       CullData;
         FParallaxSettings ParallaxSettings;
 
@@ -1072,10 +1077,14 @@ namespace Lumina
         uint8 bUseInstancing:1          = true;
         uint8 bHasEnvironment:1         = false;
         uint8 bDrawAABB:1               = false;
-        uint8 bSSAO:1                   = false;
+        uint8 bGTAO:1                   = false;
         uint8 bFrustumCull:1            = true;
         uint8 bConeCull:1               = true;
         uint8 bOcclusionCull:1          = true;
+        // Per-MESHLET Hi-Z, resolved across the two VisBuffer phases. Separate from bOcclusionCull so the
+        // instance-level cull (which is single-phase and costs nothing extra) can stay on while this one
+        // is A/B'd -- turning it off collapses the frame back to a single geometry phase.
+        uint8 bMeshletOcclusionCull:1   = true;
         uint8 bShadowOcclusionCull:1    = true;
         uint8 bWireframe:1              = false;
         uint8 bDrawBillboards:1         = true;

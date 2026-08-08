@@ -86,7 +86,7 @@ float4 FragmentMain(FragmentInput Input) : SV_Target0
         N = -N;
     }
 
-    float Radius = Scene().SSAOSettings.Radius;
+    float Radius = Scene().GTAOSettings.Radius;
 
     // World radius -> UV-space march radius at this depth. abs() on [1][1]: the
     // projection bakes the Vulkan Y-flip.
@@ -111,12 +111,12 @@ float4 FragmentMain(FragmentInput Input) : SV_Target0
     // Distance falloff so occlusion fades smoothly at the radius edge.
     float FalloffMul = -1.0 / max(Radius, 1e-4);
     // Horizon-cos guard against depth-precision self-occlusion on flat surfaces.
-    float HorizonBias = Scene().SSAOSettings.Bias;
+    float HorizonBias = Scene().GTAOSettings.Bias;
 
     float Visibility = 0.0;
 
     // [loop] (not [unroll]): unrolling replicates the inner step march -- each copy holds the 4x4 InvProj +
-    // ReconstructViewPos temporaries live -- which is the SSAO register dominator. Rolling keeps one slice's worth.
+    // ReconstructViewPos temporaries live -- which is the GTAO register dominator. Rolling keeps one slice's worth.
     [loop]
     for (int SliceI = 0; SliceI < GTAO_SLICES; ++SliceI)
     {
@@ -144,7 +144,7 @@ float4 FragmentMain(FragmentInput Input) : SV_Target0
 
         // March both sides for the max horizon cosine.
         float2 HorizonCos = float2(-1.0, -1.0);
-        // [loop]: the per-step ReconstructViewPos (4x4 InvProj live) is the SSAO register dominator; rolling
+        // [loop]: the per-step ReconstructViewPos (4x4 InvProj live) is the GTAO register dominator; rolling
         // collapses GTAO_STEPS_PER_SIDE live tap-sets to one. Extra resident warps re-hide the depth-tap latency.
         [loop]
         for (int StepI = 0; StepI < GTAO_STEPS_PER_SIDE; ++StepI)
@@ -197,8 +197,8 @@ float4 FragmentMain(FragmentInput Input) : SV_Target0
 
     Visibility = saturate(Visibility / float(GTAO_SLICES));
 
-    float AO = saturate(1.0 - (1.0 - Visibility) * Scene().SSAOSettings.Intensity);
-    AO = pow(AO, Scene().SSAOSettings.Power);
+    float AO = saturate(1.0 - (1.0 - Visibility) * Scene().GTAOSettings.Intensity);
+    AO = pow(AO, Scene().GTAOSettings.Power);
 
     return float4(AO, AO, AO, 1.0);
 }

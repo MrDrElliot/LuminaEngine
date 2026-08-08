@@ -106,8 +106,13 @@ float4 FragmentMain(PSInput Input) : SV_Target0
             CosSun = dot(-normalize(Sun.Direction), ToCam);
             if (HasFlag(Sun.Flags, ELightFlags::Volumetric))
             {
+                // Shadow = 1: the far field is unshadowed, which also makes the octaves' shadow-leak
+                // term identity, leaving only their energy and phase contributions -- the same thing
+                // the froxel volume converges to in lit regions, so the hand-off at the froxel far
+                // plane stays continuous no matter how the octave count is tuned.
                 Light += UnpackColor(Sun.Color).rgb * Sun.Intensity
-                       * Fog_Phase(CosSun, uFog.VolumetricParams.y) * Sun.VolumetricIntensity;
+                       * Fog_MultiScatterPhaseShadow(uFog, CosSun, uFog.VolumetricParams.y, 1.0)
+                       * Sun.VolumetricIntensity;
             }
         }
 

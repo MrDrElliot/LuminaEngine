@@ -98,10 +98,16 @@ struct FMeshletPassArgs
 {
     FRenderBucket*          Buckets;           // per-(view, draw) bases, bounds and cursors
     FMeshletBlock*          BlockList;
+    // One word per BLOCK, indexed exactly as BlockList is. Written by the early phase, read by the late
+    // one. A block is MESHLET_TASK_GROUP_SIZE == 32 meshlets, so a block's defer set is one uint of lane
+    // bits and needs no allocation, no cursor and no capacity of its own -- which is the whole reason the
+    // late phase can re-dispatch the early phase's grid verbatim instead of building a compacted list.
+    uint*                   DeferBits;
 
     uint                    ArgBase;           // CullViewIndex*NumDrawsPerView + IndirectDrawOffset
     uint                    MaxTaskGroups;     // sub-draw d covers blocks [d*MaxTaskGroups, (d+1)*...)
     uint                    CullViewIndex;
+    uint                    CullPhase;         // CULL_PHASE_EARLY / CULL_PHASE_LATE
     int                     ShadowDataIndex;   // raster, shadow variants only
     int                     ViewIndex;         // raster, shadow variants only (cascade / face / spot)
     // For a shadow pass this is the atlas TILE, not the atlas. Two scalars so the struct needs no

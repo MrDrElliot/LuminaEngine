@@ -539,10 +539,10 @@ namespace Lumina
         SceneGlobalData.DeltaTime                       = Frame.CachedWorldDeltaTime;
         SceneGlobalData.FarPlane                        = ViewVolume.GetFar();
         SceneGlobalData.NearPlane                       = ViewVolume.GetNear();
-        SceneGlobalData.SSAOSettings                    = FSSAOSettings{};
-        SceneGlobalData.SSAOSettings.Radius             = Frame.CachedWorldSettings.SSAORadius;
-        SceneGlobalData.SSAOSettings.Intensity          = Frame.CachedWorldSettings.SSAOIntensity;
-        SceneGlobalData.SSAOSettings.Power              = Frame.CachedWorldSettings.SSAOPower;
+        SceneGlobalData.GTAOSettings                    = FGTAOSettings{};
+        SceneGlobalData.GTAOSettings.Radius             = Frame.CachedWorldSettings.GTAORadius;
+        SceneGlobalData.GTAOSettings.Intensity          = Frame.CachedWorldSettings.GTAOIntensity;
+        SceneGlobalData.GTAOSettings.Power              = Frame.CachedWorldSettings.GTAOPower;
         SceneGlobalData.ParallaxSettings.SampleScale       = 1.0f;
         SceneGlobalData.ParallaxSettings.LODBias           = 0.0f;
         SceneGlobalData.ParallaxSettings.ShadowSampleScale = 1.0f;
@@ -1131,9 +1131,17 @@ namespace Lumina
                     SkinningPass(CL);
                 }
 
+                // TWO-PHASE OCCLUSION, camera view.
+                //
+                // Early rasterizes everything last frame's pyramid did not hide, and records the
+                // meshlets it skipped. Terrain follows immediately -- it is the largest occluder in an
+                // outdoor scene, and it has to be in the depth buffer BEFORE the rebuild or the late
+                // phase re-tests against a pyramid that does not know the ground is there. The pyramid
+                // is then rebuilt from that combined depth, and Late re-tests exactly the deferred set
+                // against it, so anything the camera disoccluded this frame still lands this frame.
                 {
-                    SCENE_GPU_SCOPE(CL, "VisBuffer Pass");
-                    VisBufferPass(CL, CurrentCameraEarlyView, /*bClear*/ true);
+                    SCENE_GPU_SCOPE(CL, "VisBuffer Early");
+                    VisBufferPass(CL, CurrentCameraEarlyView, /*bClear*/ true, ECullPhase::Early);
                 }
 
                 {
@@ -1141,17 +1149,32 @@ namespace Lumina
                     TerrainDepthPrePass(CL);
                 }
 
-                // Rebuilt here rather than at the end of the frame so translucency culls against THIS
-                // frame's opaque depth; the opaque cull reads it next frame.
+                // Mid-frame rebuild: this is the pyramid the late phase reads, and the only one that
+                // holds this frame's own depth.
                 // Skipped while frozen: rebuilding it from the live camera would let occlusion
                 // results drift out from under the frozen views.
                 if (!RenderSettings.bFreezeCulling)
                 {
-                    SCENE_GPU_SCOPE(CL, "Depth Pyramid");
+                    SCENE_GPU_SCOPE(CL, "Depth Pyramid (Mid)");
                     DepthPyramidPass(CL);
                 }
 
-                
+                {
+                    SCENE_GPU_SCOPE(CL, "VisBuffer Late");
+                    VisBufferPass(CL, CurrentCameraEarlyView, /*bClear*/ false, ECullPhase::Late);
+                }
+
+                // Rebuilt AGAIN now that the late phase has added its depth. This is the one translucency
+                // culls against this frame and the one the opaque instance cull reads next frame, so it
+                // has to see the finished opaque depth -- stopping at the mid build would hand next
+                // frame a pyramid missing everything the late phase drew.
+                if (!RenderSettings.bFreezeCulling)
+                {
+                    SCENE_GPU_SCOPE(CL, "Depth Pyramid (End)");
+                    DepthPyramidPass(CL);
+                }
+
+
                 if (!bAsyncCompute)
                 {
                     {
@@ -1211,9 +1234,9 @@ namespace Lumina
 
                 // Full opaque depth (meshes + terrain) is in place, before the passes that sample it.
                 {
-                    SCENE_GPU_SCOPE(CL, "SSAO");
-                    SSAOPass(CL);
-                    SSAOBlurPass(CL);
+                    SCENE_GPU_SCOPE(CL, "GTAO");
+                    GTAOPass(CL);
+                    GTAOBlurPass(CL);
                 }
 
                 {
@@ -2899,7 +2922,7 @@ namespace Lumina
                 LUMINA_PROFILE_SECTION("Environment Processing");
 
                 bool bHasEnvironment           = false;
-                RenderSettings.bSSAO           = false;
+                RenderSettings.bGTAO           = false;
                 EnvironmentParams              = FEnvironmentParams{};
                 Frame.Volumetrics.EnvironmentMapID    = -1;
                 Frame.Volumetrics.EnvironmentMapWidth = 0;
@@ -3044,6 +3067,14 @@ namespace Lumina
                                                     Fog.VolumetricAnisotropy,
                                                     Fog.VolumetricMaxDistance,
                                                     Fog.DirectionalInscatteringStartDistance);
+                    // Phase attenuation reuses MultiScatterFalloff: an octave that carries less energy
+                    // is also the one that has bounced more and scattered more diffusely, so splitting
+                    // them into separate sliders would only let artists author a contradiction. The
+                    // shader reads .w separately, so decoupling them later is a one-line change here.
+                    P.MultiScatterParams = FVector4((float)Math::Clamp(Fog.MultiScatterOctaves, 1, 4),
+                                                    Fog.MultiScatterFalloff,
+                                                    Fog.MultiScatterShadowLeak,
+                                                    Fog.MultiScatterFalloff);
 
                     Frame.Volumetrics.bHasFog        = true;
                     Frame.Volumetrics.bVolumetricFog = Fog.bVolumetricFog;
@@ -3245,6 +3276,15 @@ namespace Lumina
             ResizeBufferIfNeeded(MeshletBlockRing[Slot], MeshletBlockSize, 1.2f, MeshletBlockRingLowUsage[Slot]);
             BlockListCapacity = (uint32)Math::Min<uint64>(MeshletBlockRing[Slot].GetSize() / (sizeof(uint32) * 2), 0xFFFFFFFFull);
 
+            // Two-phase defer bits: one uint of lane bits per block, so it is sized from the block
+            // list itself and can never disagree with it. Grown off BlockListCapacity rather than the
+            // high-water mark, because a block the early phase can write is one the late phase will
+            // read -- a shorter allocation here would drop exactly the meshlets waiting to be re-tested.
+            // Not cleared: the early phase writes every word the late phase reads, in the same frame.
+            ResizeBufferIfNeeded(MeshletDeferBitsRing[Slot],
+                                 Math::Max<SIZE_T>((SIZE_T)BlockListCapacity * sizeof(uint32), sizeof(uint32)),
+                                 1.2f, MeshletDeferBitsRingLowUsage[Slot]);
+
             // Reported after every resize above, and worded for what the two numbers actually are: the
             // requirement is what the frame kFramesInFlight ago needed, the capacity is what this frame
             // grew to. Printing them either side of a resize made an overflow read as a false alarm.
@@ -3365,9 +3405,9 @@ namespace Lumina
             SceneRootShared.Materials          = GRenderManager->GetMaterialManager().GetMaterialBuffer();
             SceneRootShared.MeshletDrawList    = GetMeshletDrawList().GetAddress();
             SceneRootShared.PreSkinnedVertices = GetPreSkinnedVerticesBuffer().GetAddress();
-            if (Frame.CachedWorldSettings.bEnableSSAO)
+            if (Frame.CachedWorldSettings.bEnableGTAO)
             {
-                SceneGlobalData.SSAOSettings.AOTextureIndex = (uint32)CurrentView->Images[(int)ENamedImage::SSAOBlur].GetResourceID();
+                SceneGlobalData.GTAOSettings.AOTextureIndex = (uint32)CurrentView->Images[(int)ENamedImage::GTAOBlur].GetResourceID();
             }
 
             RenderSettings.bShadowMaskValid = (LightData.bHasSun != 0) &&
@@ -4581,12 +4621,13 @@ namespace Lumina
             return ViewIndex;
         };
 
+        // Both VisBuffer phases rasterize the SAME camera view -- the phase is a push constant, not a
+        // second FCullView -- so the camera contributes one entry, not two.
         const uint32 NumViews =
-            1u +                                                        // Camera (early)
+            1u +                                                        // Camera
             (LightData.bHasSun ? (uint32)NumCascades : 0u) +            // CSM cascades
             (uint32)PackedShadows[(uint32)ELightType::Point].size() * 6u +
             (uint32)PackedShadows[(uint32)ELightType::Spot].size() +
-            1u +                                                        // Camera (late, phase 1)
             (uint32)Frame.Views.CaptureViews.size() +                         // Capture cameras (frustum-only)
             (Frame.ReflectionProbes.BakingProbe >= 0 ? 6u : 0u);              // Reflection-probe cube faces
 
@@ -4612,6 +4653,18 @@ namespace Lumina
             if (RenderSettings.bOcclusionCull && bDepthPyramidValid.load(std::memory_order_acquire))
             {
                 CameraFlags |= ECullViewFlags::Occlusion;
+            }
+            // Meshlet Hi-Z only on the primary camera, and only when the pyramid it would read actually
+            // holds last frame's depth. Without a valid pyramid the early phase must defer nothing:
+            // it draws the lot and the late phase finds an empty defer set, which is exactly the
+            // single-phase behaviour we want on the first frame and while culling is frozen.
+            //
+            // This is the ONE view allowed to carry the flag. VisBufferPass is the only pass that
+            // rasterizes twice; a capture, probe or shadow view setting it would defer meshlets that
+            // nothing re-tests, and they would silently never draw.
+            if (RenderSettings.bMeshletOcclusionCull && bDepthPyramidValid.load(std::memory_order_acquire))
+            {
+                CameraFlags |= ECullViewFlags::MeshletHiZ;
             }
             PushView(CameraVP, ViewVolume.GetViewPosition(), CameraFlags);
         }
@@ -5479,26 +5532,43 @@ namespace Lumina
         RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer | RHI::EStageFlags::Compute, RHI::EStageFlags::AllCommands);
     }
 
-    void FForwardRenderScene::VisBufferPass(RHI::FCmdListH CL, uint32 ViewIndex, bool bClear)
+    void FForwardRenderScene::VisBufferPass(RHI::FCmdListH CL, uint32 ViewIndex, bool bClear,
+                                            ECullPhase::Type Phase)
     {
         const FFrameData& Frame             = *RenderFrame;
         const auto& DrawCommands            = Frame.Geometry.DrawCommands;
         const auto& OpaqueDrawList          = Frame.Geometry.OpaqueDrawList;
-        const uint32 NumDrawsPerView        = Frame.Views.NumDrawsPerView;
 
         if (DrawCommands.empty() || ViewIndex == ~0u)
         {
             return;
         }
 
+        // A view that cannot defer has nothing for the late phase to re-test, so skip the whole draw
+        // rather than dispatching a grid of task groups that will all read a zero defer word. This is
+        // what collapses the frame back to one geometry phase on the first frame, while culling is
+        // frozen, and whenever bMeshletOcclusionCull is off.
+        if (Phase == ECullPhase::Late)
+        {
+            if (ViewIndex >= Frame.Views.CullViews.size() ||
+                (GetCullViewFlags(Frame.Views.CullViews[ViewIndex]) & ECullViewFlags::MeshletHiZ) == 0u)
+            {
+                return;
+            }
+        }
+
         {
             const RHI::GPUPtr DrawListAddr  = GetMeshletDrawList().GetAddress();
             const RHI::GPUPtr InstancesAddr = SceneRootShared.Instances;
             const RHI::GPUPtr BucketsAddr   = GetRenderBuckets().GetAddress();
+            // The task shader writes it in Early and reads it in Late, unconditionally on both sides, so
+            // a null here faults the GPU regardless of whether anything actually defers.
+            const RHI::GPUPtr DeferBitsAddr = GetMeshletDeferBits().GetAddress();
 
             const char* MissingBuffer = DrawListAddr == 0  ? "MeshletDrawList"
                                       : InstancesAddr == 0 ? "Instances (visible-instance ring)"
                                       : BucketsAddr == 0   ? "RenderBuckets"
+                                      : DeferBitsAddr == 0 ? "MeshletDeferBits"
                                                            : nullptr;
             if (MissingBuffer != nullptr)
             {
@@ -5517,9 +5587,6 @@ namespace Lumina
         LUMINA_PROFILE_SECTION_COLORED("VisBuffer Geometry Pass", tracy::Color::Red);
 
         static const FShaderEntry* const VisPixel = FShaderLibrary::Get("VisBufferPixel.slang");
-        // (slang #7019)
-        static const FString VisPrimIdDefine("VISBUFFER_PRIMID");
-        static const FShaderEntry* const VisPixelPrim = FShaderLibrary::Get("VisBufferPixel.slang", TSpan<const FString>(&VisPrimIdDefine, 1));
         if (!VisPixel)
         {
             return;
@@ -5559,6 +5626,7 @@ namespace Lumina
         Ctx.CullViewIndex     = ViewIndex;
         Ctx.ViewportW         = (float)Extent.x;
         Ctx.ViewportH         = (float)Extent.y;
+        Ctx.CullPhase         = Phase;
 
         ForEachMeshletBatch(CL, OpaqueDrawList, Ctx,
             [&](FGraphicsPipelineKey& Key, const FMeshDrawCommand& Batch)
@@ -5795,8 +5863,16 @@ namespace Lumina
             return;
         }
 
-        DrawMeshletBatch(CL, Batch, CullViewIndex, ShadowDataIndex, ShadowViewIndex,
-                         (float)ViewportExtent.x, (float)ViewportExtent.y);
+        // Shadows are single-phase: they cull against the cascade pyramid at INSTANCE level and never
+        // set MeshletHiZ, so the phase here is Early in the sense of "the only one".
+        FMeshletPassContext Ctx;
+        Ctx.CullViewIndex   = CullViewIndex;
+        Ctx.ShadowDataIndex = ShadowDataIndex;
+        Ctx.ShadowViewIndex = ShadowViewIndex;
+        Ctx.ViewportW       = (float)ViewportExtent.x;
+        Ctx.ViewportH       = (float)ViewportExtent.y;
+
+        DrawMeshletBatch(CL, Batch, Ctx);
     }
 
     void FForwardRenderScene::PointShadowPass(RHI::FCmdListH CL)
@@ -7662,7 +7738,7 @@ namespace Lumina
             Key.PS          = PixelShader;
             Key.SampleCount = MSAASampleCount;
             Key.DepthFormat = EFormat::D32;
-            Key.ShadingFeatures = SF_DebugViews | SF_SSAO |
+            Key.ShadingFeatures = SF_DebugViews | SF_GTAO |
                                   (RenderSettings.bShadowMaskValid ? (uint32)SF_ShadowMask : 0u);
             Key.ColorTargets.push_back({ ColorRT.Desc.Format, {} });
             #if USING(WITH_EDITOR)
@@ -7687,24 +7763,24 @@ namespace Lumina
         Barriers::RasterToRead(CL);
     }
     
-    void FForwardRenderScene::SSAOPass(RHI::FCmdListH CL)
+    void FForwardRenderScene::GTAOPass(RHI::FCmdListH CL)
     {
         FFrameData& Frame = *RenderFrame;
-        if (Frame.Geometry.DrawCommands.empty() || !Frame.CachedWorldSettings.bEnableSSAO)
+        if (Frame.Geometry.DrawCommands.empty() || !Frame.CachedWorldSettings.bEnableGTAO)
         {
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("SSAO Pass", tracy::Color::Red);
+        LUMINA_PROFILE_SECTION_COLORED("GTAO Pass", tracy::Color::Red);
 
         static const FShaderEntry* const VertexShader = FShaderLibrary::Get("FullscreenQuad.slang");
-        static const FShaderEntry* const PixelShader = FShaderLibrary::Get("SSAOPixel.slang");
+        static const FShaderEntry* const PixelShader = FShaderLibrary::Get("GTAOPixel.slang");
         if (!VertexShader || !PixelShader)
         {
             return;
         }
 
-        const FSceneImage& Output = GetNamedImage(ENamedImage::SSAO);
+        const FSceneImage& Output = GetNamedImage(ENamedImage::GTAO);
         const FSceneImage& Depth  = GetNamedImage(ENamedImage::DepthAttachment);
 
         RHI::FRenderAttachment Color;
@@ -7739,27 +7815,27 @@ namespace Lumina
         Barriers::RasterToRead(CL);
     }
 
-    void FForwardRenderScene::SSAOBlurPass(RHI::FCmdListH CL)
+    void FForwardRenderScene::GTAOBlurPass(RHI::FCmdListH CL)
     {
         FFrameData& Frame = *RenderFrame;
-        if (Frame.Geometry.DrawCommands.empty() || !Frame.CachedWorldSettings.bEnableSSAO)
+        if (Frame.Geometry.DrawCommands.empty() || !Frame.CachedWorldSettings.bEnableGTAO)
         {
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("SSAO Blur", tracy::Color::Red);
+        LUMINA_PROFILE_SECTION_COLORED("GTAO Blur", tracy::Color::Red);
 
         static const FShaderEntry* const VertexShader = FShaderLibrary::Get("FullscreenQuad.slang");
-        static const FShaderEntry* const DenoisePS    = FShaderLibrary::Get("SSAOBlurPixel.slang");
-        static const FShaderEntry* const UpsamplePS   = FShaderLibrary::Get("SSAOUpsamplePixel.slang");
+        static const FShaderEntry* const DenoisePS    = FShaderLibrary::Get("GTAOBlurPixel.slang");
+        static const FShaderEntry* const UpsamplePS   = FShaderLibrary::Get("GTAOUpsamplePixel.slang");
         if (!VertexShader || !DenoisePS || !UpsamplePS)
         {
             return;
         }
 
-        const FSceneImage& Raw      = GetNamedImage(ENamedImage::SSAO);
-        const FSceneImage& Denoised = GetNamedImage(ENamedImage::SSAODenoise);
-        const FSceneImage& Output   = GetNamedImage(ENamedImage::SSAOBlur);
+        const FSceneImage& Raw      = GetNamedImage(ENamedImage::GTAO);
+        const FSceneImage& Denoised = GetNamedImage(ENamedImage::GTAODenoise);
+        const FSceneImage& Output   = GetNamedImage(ENamedImage::GTAOBlur);
         const FSceneImage& Depth    = GetNamedImage(ENamedImage::DepthAttachment);
 
         struct FData
@@ -10502,9 +10578,9 @@ namespace Lumina
         case ENamedImage::SMAABlend:          return "Scene.SMAABlend";
         case ENamedImage::SMAAArea:           return "Scene.SMAAArea";
         case ENamedImage::SMAASearch:         return "Scene.SMAASearch";
-        case ENamedImage::SSAO:               return "Scene.SSAO";
-        case ENamedImage::SSAODenoise:        return "Scene.SSAODenoise";
-        case ENamedImage::SSAOBlur:           return "Scene.SSAOBlur";
+        case ENamedImage::GTAO:               return "Scene.GTAO";
+        case ENamedImage::GTAODenoise:        return "Scene.GTAODenoise";
+        case ENamedImage::GTAOBlur:           return "Scene.GTAOBlur";
         case ENamedImage::ShadowMask:         return "Scene.ShadowMask";
         case ENamedImage::Cascade:            return "Scene.Cascade";
         case ENamedImage::CascadePyramid:     return "Scene.CascadePyramid";
@@ -10600,10 +10676,10 @@ namespace Lumina
 
         Desc.Format    = EFormat::R8_UNORM;
         Desc.Dimension = FUIntVector3(Math::Max(Extent.x / 2, 1u), Math::Max(Extent.y / 2, 1u), 1);
-        View.Images[(int)ENamedImage::SSAO]        = CreateSceneImage(Desc);
-        View.Images[(int)ENamedImage::SSAODenoise] = CreateSceneImage(Desc);
+        View.Images[(int)ENamedImage::GTAO]        = CreateSceneImage(Desc);
+        View.Images[(int)ENamedImage::GTAODenoise] = CreateSceneImage(Desc);
         Desc.Dimension = FUIntVector3(Extent.x, Extent.y, 1);
-        View.Images[(int)ENamedImage::SSAOBlur]    = CreateSceneImage(Desc);
+        View.Images[(int)ENamedImage::GTAOBlur]    = CreateSceneImage(Desc);
 
         View.Images[(int)ENamedImage::ShadowMask]  = CreateSceneImage(Desc);
 
@@ -10921,36 +10997,38 @@ namespace Lumina
     }
 
     void FForwardRenderScene::DrawMeshletBatch(RHI::FCmdListH CL, const FMeshDrawCommand& Batch,
-                                               uint32 CullViewIndex,
-                                               int32 ShadowDataIndex, int32 ShadowViewIndex,
-                                               float ViewportW, float ViewportH)
+                                               const FMeshletPassContext& Ctx)
     {
         const uint32 NumDrawsPerView = RenderFrame->Views.NumDrawsPerView;
-        const uint32 ArgIndex = CullViewIndex * NumDrawsPerView + Batch.IndirectDrawOffset;
+        const uint32 ArgIndex = Ctx.CullViewIndex * NumDrawsPerView + Batch.IndirectDrawOffset;
 
         struct FMeshletPassPush
         {
             uint64 BucketsAddr;
             uint64 BlockListAddr;
+            uint64 DeferBitsAddr;
             uint32 ArgBase;
             uint32 MaxTaskGroups;
             uint32 CullViewIndex;
+            uint32 CullPhase;
             int32  ShadowDataIndex;
             int32  ViewIndex;
             float  ViewportW;
             float  ViewportH;
         } Push;
-        static_assert(sizeof(FMeshletPassPush) == 48, "FMeshletPassPush must match FMeshletPassArgs in MeshletGeometry.slang.");
+        static_assert(sizeof(FMeshletPassPush) == 56, "FMeshletPassPush must match FMeshletPassArgs in MeshletGeometry.slang.");
 
         Push.BucketsAddr          = GetRenderBuckets().GetAddress();
         Push.BlockListAddr        = GetMeshletBlocks().GetAddress();
+        Push.DeferBitsAddr        = GetMeshletDeferBits().GetAddress();
         Push.ArgBase              = ArgIndex;
         Push.MaxTaskGroups        = RHI::GetMaxTaskWorkGroupCount();
-        Push.CullViewIndex        = CullViewIndex;
-        Push.ShadowDataIndex      = ShadowDataIndex;
-        Push.ViewIndex            = ShadowViewIndex;
-        Push.ViewportW            = ViewportW;
-        Push.ViewportH            = ViewportH;
+        Push.CullViewIndex        = Ctx.CullViewIndex;
+        Push.CullPhase            = (uint32)Ctx.CullPhase;
+        Push.ShadowDataIndex      = Ctx.ShadowDataIndex;
+        Push.ViewIndex            = Ctx.ShadowViewIndex;
+        Push.ViewportW            = Ctx.ViewportW;
+        Push.ViewportH            = Ctx.ViewportH;
 
         // The count comes from the bucket the cull just wrote, so the CPU never learns how many sub-draws
         // this pair needs -- or whether it needs any. TaskSubDrawsPerBucket is only the reserved ceiling.
@@ -11018,7 +11096,7 @@ namespace Lumina
             MakeUInt(0, Key.bTaskShadow ? 1u : 0u),   // TASK_SHADOW
             MakeUInt(1, (Key.ShadingFeatures & SF_DebugViews) ? 1u : 0u),
             MakeUInt(2, (Key.ShadingFeatures & SF_Decals)     ? 1u : 0u),
-            MakeUInt(3, (Key.ShadingFeatures & SF_SSAO)       ? 1u : 0u),
+            MakeUInt(3, (Key.ShadingFeatures & SF_GTAO)       ? 1u : 0u),
             MakeUInt(4, Key.bVisBufferMasked ? 1u : 0u),
             MakeUInt(5, (uint32)Key.SkinnedMode),   // SPEC_SKINNED: 0=static, 1=skinned, 2=dynamic
             MakeUInt(6, (Key.ShadingFeatures & SF_ShadowMask) ? 1u : 0u),
