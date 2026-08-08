@@ -78,7 +78,7 @@ struct FParticleSimArgs
     FGPUParticle*       Particles;
     uint*               SpawnCounter;   // scratch counter, sized 4 bytes
     // Module-stack value inputs, one float4 slot per parameter, in the order FParticleCompiler assigned
-    // them. Null for the legacy data-driven sim, which has no module stack and never reads MP().
+    // them. Null when the stack declared no parameters, in which case nothing reads MP().
     float4*             ModuleParams;
     // Declared per-particle attributes: PARTICLE_ATTR_FLOATS floats per particle, parallel to the core
     // particle buffer and indexed by the same particle index. A plain float* rather than a generated

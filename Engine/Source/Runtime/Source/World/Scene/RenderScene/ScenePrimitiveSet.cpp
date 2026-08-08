@@ -145,9 +145,6 @@ namespace Lumina
         Batch.VisBufferMeshShader             = Surface.VisBufferMeshShader;
         Batch.VisBufferMeshShaderMasked       = Surface.VisBufferMeshShaderMasked;
         Batch.MaskedVisBufferPixelShader      = Surface.MaskedVisBufferPixelShader;
-        Batch.DeferredShader                  = Surface.DeferredShader;
-        Batch.MaterialIdx                     = Surface.MaterialIdx;
-        Batch.bMaterialCastsShadows           = Surface.bMaterialCastsShadows;
         NoteDeferredMaterial(Batch, Surface);
 
         Bucket.push_back(NewIndex);
@@ -1209,8 +1206,6 @@ namespace Lumina
         SurfaceDescByHash.clear();
         bSurfaceDescsDirty = true;
         MaxSurfaceDescMeshlets = 0;
-        WorstCaseBlocksPerView = 0;
-        WorstCaseBlocksGeneration = 0;
         FoliageInstanceCount.clear();
 
         const FSyncPools Pools(Registry);
@@ -1687,7 +1682,6 @@ namespace Lumina
             }
         }
 
-        RefreshWorstCaseBlocks();
         PublishSyncStats();
     }
 
@@ -1709,42 +1703,6 @@ namespace Lumina
     // Every active slot contributes its surface's LARGEST LOD, because a view is free to pick any of them
     // and BuildMeshletBlocks appends ceil(count / group) blocks for whichever it picked. Summing that is
     // therefore a true bound on one view's appends, whatever the camera does.
-    void FScenePrimitiveSet::RefreshWorstCaseBlocks()
-    {
-        if (WorstCaseBlocksGeneration == StructureGeneration)
-        {
-            return;
-        }
-        WorstCaseBlocksGeneration = StructureGeneration;
-
-        LUMINA_PROFILE_SECTION("Sync/WorstCaseBlocks");
-
-        constexpr uint32 Group      = (uint32)MESHLET_TASK_GROUP_SIZE;
-        constexpr uint32 ActiveMask = ((uint32)EInstanceFlags::Active | (uint32)EInstanceFlags::HasGeometry) << 16;
-
-        uint64 Blocks = 0;
-        for (const FInstanceCullEntry& Entry : RetainedCullEntries)
-        {
-            if ((Entry.DrawIDAndFlags & ActiveMask) != ActiveMask
-                || Entry.SurfaceDescIndex >= (uint32)SurfaceDescs.size())
-            {
-                continue;
-            }
-
-            const FSurfaceDescGPU& Desc = SurfaceDescs[Entry.SurfaceDescIndex];
-            const uint32 NumLODs = Math::Min<uint32>(Desc.NumLODs, MAX_MESH_LODS);
-
-            uint32 MaxMeshlets = 0;
-            for (uint32 i = 0; i < NumLODs; ++i)
-            {
-                MaxMeshlets = Math::Max(MaxMeshlets, Desc.LODMeshletCount[i]);
-            }
-            Blocks += (MaxMeshlets + Group - 1u) / Group;
-        }
-
-        WorstCaseBlocksPerView = (uint32)Math::Min<uint64>(Blocks, 0xFFFFFFFFull);
-    }
-
     void FScenePrimitiveSet::Reset(FEntityRegistry* Registry)
     {
         Primitives.clear();
@@ -1768,8 +1726,6 @@ namespace Lumina
         SurfaceDescByHash.clear();
         bSurfaceDescsDirty = true;
         MaxSurfaceDescMeshlets = 0;
-        WorstCaseBlocksPerView = 0;
-        WorstCaseBlocksGeneration = 0;
         FoliageInstanceCount.clear();
         Batches.Reset();
         // Paired with Batches.Reset(), always: a reset renumbers every batch index the memo cached.

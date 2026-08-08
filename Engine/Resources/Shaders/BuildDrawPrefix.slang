@@ -27,6 +27,12 @@ struct FBuildDrawPrefixArgs
     // Regions past capacity are clamped to zero length, never handed an offset outside the allocation.
     uint  DrawListCapacity;
     uint  BlockListCapacity;
+    // maxTaskWorkGroupCount[0]. One task workgroup per block, so a bucket needing more than this is split
+    // across consecutive sub-draws rather than truncated.
+    uint  MaxTaskGroups;
+    // Sub-draw slots reserved per bucket, ceil(BlockListCapacity / MaxTaskGroups). 1 on every GPU whose
+    // limit is in the millions; the unused slots below carry a zero grid and dispatch nothing.
+    uint  SubDrawsPerBucket;
 
     // in/out: CullInstances leaves the two capacities accumulated. This pass turns them into bases and
     // rewrites them as the room each arena actually has, which is the bound every appender then uses.
@@ -84,12 +90,22 @@ void ComputeMain()
             Bucket.DrawCapacity  = Emits;
             Bucket.BlockBase     = min(BlockRunning, BlockCapacity);
             Bucket.BlockCapacity = Blocks;
+            // The draw count itself. Zero blocks means zero sub-draws, so an empty bucket costs the
+            // command processor nothing rather than launching an empty grid.
+            Bucket.SubDrawCount  = (Blocks + Pass().MaxTaskGroups - 1u) / Pass().MaxTaskGroups;
 
-            FDrawMeshTasksIndirectArguments TaskArgs;
-            TaskArgs.GroupCountX = Blocks;
-            TaskArgs.GroupCountY = 1u;
-            TaskArgs.GroupCountZ = 1u;
-            Pass().OutTaskDrawArgs[i] = TaskArgs;
+            // One sub-draw per MaxTaskGroups blocks. The task stage recovers which slice it is from
+            // SV_DrawIndex, so the blocks stay one contiguous region.
+            for (uint sd = 0u; sd < Pass().SubDrawsPerBucket; ++sd)
+            {
+                const uint First = sd * Pass().MaxTaskGroups;
+
+                FDrawMeshTasksIndirectArguments TaskArgs;
+                TaskArgs.GroupCountX = (First < Blocks) ? min(Blocks - First, Pass().MaxTaskGroups) : 0u;
+                TaskArgs.GroupCountY = 1u;
+                TaskArgs.GroupCountZ = 1u;
+                Pass().OutTaskDrawArgs[i * Pass().SubDrawsPerBucket + sd] = TaskArgs;
+            }
 
             // Demand, from the UNCLAMPED counts. OutTotals is what the CPU sizes the next allocation
             // from, so it has to say what was needed rather than what fit.

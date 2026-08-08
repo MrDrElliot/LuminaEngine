@@ -155,6 +155,29 @@ namespace Lumina
 		}
 	}
 
+	// The alias preamble declares WorldPosition, WorldNormal and friends but never assigns
+	// Material.WorldPositionOffset, so a graph that leaves the WPO pin unconnected used to substitute
+	// aliases only and reach `WorldPos.xyz += Material.WorldPositionOffset` with an unwritten struct.
+	// The stub goes first in every case; a graph that does drive WPO simply overwrites it.
+	//
+	// The no-WPO branch deliberately omits the aliases too. Nothing reads them, and dropping them makes the
+	// generated geometry stage byte-identical for every material without WPO, which is what lets them share
+	// one compiled shader and therefore one pipeline.
+	FString FMaterialCompiler::BuildVertexStageBody(EMaterialType MaterialType) const
+	{
+		static const char* kWPOStub = "\tMaterial.WorldPositionOffset = float3(0.0, 0.0, 0.0);\n";
+
+		if (!UsesVertexStage())
+		{
+			return FString(kWPOStub);
+		}
+
+		const char* Preamble = (MaterialType == EMaterialType::Terrain)
+			? GVertexStageAliasPreambleTerrain
+			: GVertexStageAliasPreamble;
+		return FString(kWPOStub) + Preamble + VertexChunks + VertexOutputChunks;
+	}
+
 	FString FMaterialCompiler::BuildVertexShaderFromTemplate(const FString& TemplateAbsolutePath, EMaterialType MaterialType) const
 	{
 		FString Loaded;
@@ -164,11 +187,7 @@ namespace Lumina
 			return Loaded;
 		}
 
-		const char* Preamble = (MaterialType == EMaterialType::Terrain)
-			? GVertexStageAliasPreambleTerrain
-			: GVertexStageAliasPreamble;
-		FString Replacement = FString(Preamble) + VertexChunks + VertexOutputChunks;
-		SubstituteToken(Loaded, "$MATERIAL_VERTEX_INPUTS", Replacement);
+		SubstituteToken(Loaded, "$MATERIAL_VERTEX_INPUTS", BuildVertexStageBody(MaterialType));
 		return Loaded;
 	}
 
@@ -182,11 +201,7 @@ namespace Lumina
 		}
 
 		// Vertex graph (WPO) for the geometry reconstruction loop.
-		const char* Preamble = (MaterialType == EMaterialType::Terrain)
-			? GVertexStageAliasPreambleTerrain
-			: GVertexStageAliasPreamble;
-		FString VertexReplacement = FString(Preamble) + VertexChunks + VertexOutputChunks;
-		SubstituteToken(Loaded, "$MATERIAL_VERTEX_INPUTS", VertexReplacement);
+		SubstituteToken(Loaded, "$MATERIAL_VERTEX_INPUTS", BuildVertexStageBody(MaterialType));
 
 		// Pixel graph (shading). The output node declares FMaterialPixelInputs Material; we append body + assignments.
 		SubstituteToken(Loaded, "$MATERIAL_INPUTS", PixelChunks + PixelOutputChunks);

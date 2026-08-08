@@ -518,6 +518,7 @@ namespace Lumina::RHI
         bool                            bMeshShaderSupported = false;
         bool                            bTaskShaderSupported = false;
         uint32                          MaxTaskWorkGroupTotalCount = 0;
+        uint32                          MaxTaskWorkGroupCountX = 0;
         bool                            bPipelineStats = false;
         TUniquePtr<FVulkanCrashTracker> CrashTracker;
         FGpuBreadcrumbs                 Breadcrumbs;
@@ -1486,6 +1487,7 @@ namespace Lumina::RHI
             }
 
             GDevice->MaxTaskWorkGroupTotalCount = MeshProps.maxTaskWorkGroupTotalCount;
+            GDevice->MaxTaskWorkGroupCountX     = MeshProps.maxTaskWorkGroupCount[0];
 
             LOG_DISPLAY("Task shader limits: workgroup {} (max invocations {}), total groups {}, "
                         "payload {} B, payload+shared {} B.",
@@ -1538,6 +1540,9 @@ namespace Lumina::RHI
 
         VkPhysicalDeviceVulkan12Features Features12{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
         Features12.timelineSemaphore                            = VK_TRUE;
+        // vkCmdDrawMeshTasksIndirectCountEXT: the meshlet draw's sub-draw count is written by the cull,
+        // so the CPU never learns how many sub-draws a bucket needs.
+        Features12.drawIndirectCount                            = VK_TRUE;
         Features12.bufferDeviceAddress                          = VK_TRUE;
 
         if (Supported12.bufferDeviceAddressCaptureReplay && FRenderDoc::IsAttached())
@@ -2919,6 +2924,11 @@ namespace Lumina::RHI
         vkDestroyShaderModule(*GDevice, ShaderModule, nullptr);
 
         return GDevice->Pipelines.Emplace(Pipeline, VK_PIPELINE_BIND_POINT_COMPUTE);
+    }
+
+    uint32 GetMaxTaskWorkGroupCount()
+    {
+        return GDevice != nullptr ? GDevice->MaxTaskWorkGroupCountX : 1u;
     }
 
     bool SupportsAsyncTransfer()

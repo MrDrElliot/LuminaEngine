@@ -14,9 +14,22 @@ namespace Lumina
 		const FShaderEntry* PixelShader  = nullptr;
 	};
 
+	// Keyed by what forces a distinct PIPELINE, not by material identity. Two materials that compile to the
+	// same shaders share one batch and therefore one draw -- which is every material without World Position
+	// Offset, since their geometry stages are byte-identical and the shader library hands out one entry for
+	// identical bytecode.
+	//
+	// The material is carried per INSTANCE (FGPUInstance::MaterialIndex) and per deferred slot
+	// (FBatch::DeferredMaterials, which unions across every material in the batch), so nothing downstream
+	// needs a batch to be one material.
 	struct FDrawBatchKey
 	{
-		uint64 MaterialID;
+		const FShaderEntry* VisBufferMeshShader        = nullptr;
+		const FShaderEntry* VisBufferMeshShaderMasked  = nullptr;
+		const FShaderEntry* MaskedVisBufferPixelShader = nullptr;
+		const FShaderEntry* MeshShaderBase             = nullptr;
+		const FShaderEntry* MeshShaderShadow           = nullptr;
+		const FShaderEntry* PixelShader                = nullptr;
 
 		uint32 bTranslucent : 1;
 		uint32 bMasked : 1;
@@ -25,18 +38,28 @@ namespace Lumina
 
 		bool operator == (const FDrawBatchKey& Key) const
 		{
-			return MaterialID == Key.MaterialID
+			return VisBufferMeshShader        == Key.VisBufferMeshShader
+				&& VisBufferMeshShaderMasked  == Key.VisBufferMeshShaderMasked
+				&& MaskedVisBufferPixelShader == Key.MaskedVisBufferPixelShader
+				&& MeshShaderBase             == Key.MeshShaderBase
+				&& MeshShaderShadow           == Key.MeshShaderShadow
+				&& PixelShader                == Key.PixelShader
 				&& bTranslucent == Key.bTranslucent
-				&& bMasked == Key.bMasked
-				&& bAdditive == Key.bAdditive
-				&& bTwoSided == Key.bTwoSided;
+				&& bMasked      == Key.bMasked
+				&& bAdditive    == Key.bAdditive
+				&& bTwoSided    == Key.bTwoSided;
 		}
 	};
 
 	static uint64 GetTypeHash(const FDrawBatchKey& K)
 	{
 		size_t Seed = 0;
-		Hash::HashCombine(Seed, K.MaterialID);
+		for (const FShaderEntry* Entry : { K.VisBufferMeshShader, K.VisBufferMeshShaderMasked,
+										   K.MaskedVisBufferPixelShader, K.MeshShaderBase,
+										   K.MeshShaderShadow, K.PixelShader })
+		{
+			Hash::HashCombine(Seed, (uint64)(uintptr_t)Entry);
+		}
 		Hash::HashCombine(Seed, K.bTranslucent);
 		Hash::HashCombine(Seed, K.bMasked);
 		Hash::HashCombine(Seed, K.bAdditive);
@@ -53,8 +76,6 @@ namespace Lumina
 		const FShaderEntry*					VisBufferMeshShader = nullptr;       // VisBuffer geometry, opaque (position-only out)
 		const FShaderEntry*					VisBufferMeshShaderMasked = nullptr; // VisBuffer geometry, masked (full interpolants)
 		const FShaderEntry*					MaskedVisBufferPixelShader = nullptr;// masked-only PS: opacity clip before VisID/depth
-		const FShaderEntry*					DeferredShader = nullptr;            // deferred material pixel shader
-		uint32                      		MaterialIndex = 0;                  // GPU material slot (deferred pixel classification)
 		uint32                      		IndirectDrawOffset = 0;
 		uint32                      		DrawCount = 0;
 		uint32                      		bTranslucent : 1;

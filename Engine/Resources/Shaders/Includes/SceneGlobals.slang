@@ -268,6 +268,10 @@ float3   GetCameraUp()              { return Scene().CameraView.CameraUp.xyz;   
 float3   GetCameraRight()           { return Scene().CameraView.CameraRight.xyz;    }
 float3   GetCameraForward()         { return Scene().CameraView.CameraForward.xyz;  }
 float4x4 GetCameraView()            { return Scene().CameraView.CameraView;         }
+// The cull's camera. Identical to the render camera unless culling is frozen; see FCullData.
+float3   GetCullCameraPosition()    { return Scene().CullData.CullCameraPosition.xyz;  }
+float4x4 GetCullCameraView()        { return Scene().CullData.CullCameraView;          }
+float4x4 GetCullCameraProjection()  { return Scene().CullData.CullCameraProjection;    }
 float4x4 GetInverseCameraView()     { return Scene().CameraView.InverseCameraView;  }
 float4x4 GetCameraProjection()      { return Scene().CameraView.CameraProjection;   }
 float4x4 GetInverseCameraProjection(){ return Scene().CameraView.InverseCameraProjection; }

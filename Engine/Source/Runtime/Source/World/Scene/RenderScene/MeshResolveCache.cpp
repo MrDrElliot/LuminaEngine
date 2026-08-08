@@ -317,9 +317,20 @@ namespace Lumina
         if (bTwoSided)    { MaterialFlags |= EInstanceFlags::TwoSided; }
         R.MaterialFlags = MaterialFlags;
 
+        // WBOIT and the additive pass are the only ones that bind MeshShaderBase / PixelShader.
+        const bool bForwardShaded = bTranslucent || bAdditive;
+
         R.BatchKey = FDrawBatchKey
         {
-            .MaterialID   = R.MaterialID,
+            // Only the shaders the batch's OWN passes bind. An opaque batch runs the VisBuffer (which binds
+            // the shared VisPixel, not the material's) and the shadow passes (no pixel shader at all), so
+            // keying it on the forward shading pair would split it on something nothing reads.
+            .VisBufferMeshShader        = R.VisBufferMeshShader,
+            .VisBufferMeshShaderMasked  = bMasked        ? R.VisBufferMeshShaderMasked  : nullptr,
+            .MaskedVisBufferPixelShader = bMasked        ? R.MaskedVisBufferPixelShader : nullptr,
+            .MeshShaderBase             = bForwardShaded ? R.MeshShaderBase             : nullptr,
+            .MeshShaderShadow           = R.MeshShaderShadow,
+            .PixelShader                = bForwardShaded ? R.PixelShader                : nullptr,
             .bTranslucent = (bTranslucent ? 1u : 0u),
             .bMasked      = (bMasked      ? 1u : 0u),
             .bAdditive    = (bAdditive    ? 1u : 0u),

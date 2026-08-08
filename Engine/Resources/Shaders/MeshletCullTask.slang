@@ -39,7 +39,11 @@ uint EmitMeshletSlot(uint ArgIdx, uint InstanceID, uint MeshletIdx)
 [numthreads(MESHLET_TASK_GROUP_SIZE, 1, 1)]
 void TaskMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex, uint DrawIndex : SV_DrawIndex)
 {
-    const uint ArgIdx = Pass().ArgBase + DrawIndex;
+    // ArgBase is the BUCKET. DrawIndex selects which sub-draw slice of that bucket's block region this
+    // workgroup belongs to, which is how a bucket larger than maxTaskWorkGroupCount[0] still dispatches
+    // in full instead of being truncated.
+    const uint ArgIdx    = Pass().ArgBase;
+    const uint BlockSlot = DrawIndex * Pass().MaxTaskGroups + GroupID.x;
     const FCullView View = CullViews()[Pass().CullViewIndex];
 
     if (ThreadID == 0u)
@@ -49,7 +53,7 @@ void TaskMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex, uint Dr
     GroupMemoryBarrierWithGroupSync();
 
     // Workgroup-uniform, because a block is one instance.
-    const FMeshletBlock Block = Pass().BlockList[Pass().Buckets[ArgIdx].BlockBase + GroupID.x];
+    const FMeshletBlock Block = Pass().BlockList[Pass().Buckets[ArgIdx].BlockBase + BlockSlot];
     const uint InstanceID = Block.InstanceID;
     const uint MeshletIdx = Block.MeshletBase + ThreadID;
     bool       bKeep      = ThreadID < Block.Count;

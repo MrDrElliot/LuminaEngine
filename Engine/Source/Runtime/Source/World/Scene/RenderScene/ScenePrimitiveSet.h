@@ -112,9 +112,9 @@ namespace Lumina
             const FShaderEntry*             VisBufferMeshShader = nullptr;
             const FShaderEntry*             VisBufferMeshShaderMasked = nullptr;
             const FShaderEntry*             MaskedVisBufferPixelShader = nullptr;
-            const FShaderEntry*             DeferredShader = nullptr;
-            uint16                          MaterialIdx = 0;
-            bool                            bMaterialCastsShadows = true;
+            // No material identity here on purpose: a batch is a PIPELINE, and one pipeline serves every
+            // material that compiles to it. The material is carried per instance
+            // (FGPUInstance::MaterialIndex) and per deferred slot (DeferredMaterials below).
 
             uint32                          RefCount = 0;
 
@@ -231,12 +231,6 @@ namespace Lumina
         void                        ClearSurfaceDescsDirty()     { bSurfaceDescsDirty = false; }
 
         uint32                      GetMaxSurfaceDescMeshlets() const { return MaxSurfaceDescMeshlets; }
-
-        // Exact upper bound on the cull blocks ONE view can produce from the retained set. Sizing the block
-        // list from this instead of a lagged readback is what makes block overflow impossible: the readback
-        // could not see a spike until kFramesInFlight frames after it happened, and until then the builder
-        // appended against a capacity that no longer described the scene.
-        uint32                      GetWorstCaseBlocksPerView() const { return WorstCaseBlocksPerView; }
 
         const TVector<uint32>&      GetDirtyInstanceSlots() const { return DirtyInstanceSlots; }
         const TVector<uint32>&      GetDirtyStaticSlots() const   { return DirtyStaticSlots; }
@@ -420,10 +414,6 @@ namespace Lumina
         // See GetMaxSurfaceDescMeshlets. Only ever grows while the table does, and is reset with it.
         uint32                              MaxSurfaceDescMeshlets = 0;
 
-        void                                RefreshWorstCaseBlocks();
-        uint32                              WorstCaseBlocksPerView = 0;
-        // Recompute is keyed on the structure generation, so a moving scene never pays for it.
-        uint64                              WorstCaseBlocksGeneration = 0;
 
         uint64                              StructureGeneration = 1;
         uint32                              SkinnedCount = 0;

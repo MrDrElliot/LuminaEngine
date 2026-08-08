@@ -149,6 +149,10 @@ namespace Lumina
         // to "WorldPositionOffset pin had a connection."
         bool UsesVertexStage() const { return !VertexChunks.empty() || !VertexOutputChunks.empty(); }
 
+        // The body substituted for $MATERIAL_VERTEX_INPUTS. Always assigns WorldPositionOffset, and emits
+        // NOTHING else when the graph has no WPO, so every such material generates an identical stage.
+        FString BuildVertexStageBody(EMaterialType MaterialType) const;
+
         // Stage routing: each node-emit op writes the current stage's chunk. CompileGraph flips this around
         // the two-root walk (WPO->vertex, pixel pins->pixel); shared nodes are visited once per stage.
         // Clears the parameter-fetch dedupe map: the two stages emit into separate scopes, so a variable

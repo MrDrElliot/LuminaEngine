@@ -68,7 +68,7 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
     uint2 Range;
     if (bShadowView && bPerViewLOD && View.HasFlag(CULL_VIEW_FLAG_CASCADE))
     {
-        Range = SelectCascadeShadowMeshletRange(Desc, GetCameraPosition(), Inst.SphereBounds,
+        Range = SelectCascadeShadowMeshletRange(Desc, GetCullCameraPosition(), Inst.SphereBounds,
                                                 View.CascadeIndex,
                                                 Scene().CullData.ShadowLODBias,
                                                 Scene().CullData.ShadowCoarseLODDistSq);

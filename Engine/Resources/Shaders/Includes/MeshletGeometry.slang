@@ -100,6 +100,7 @@ struct FMeshletPassArgs
     FMeshletBlock*          BlockList;
 
     uint                    ArgBase;           // CullViewIndex*NumDrawsPerView + IndirectDrawOffset
+    uint                    MaxTaskGroups;     // sub-draw d covers blocks [d*MaxTaskGroups, (d+1)*...)
     uint                    CullViewIndex;
     int                     ShadowDataIndex;   // raster, shadow variants only
     int                     ViewIndex;         // raster, shadow variants only (cascade / face / spot)

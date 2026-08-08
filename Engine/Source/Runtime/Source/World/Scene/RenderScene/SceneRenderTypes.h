@@ -704,8 +704,11 @@ namespace Lumina
         uint32 BlockBase;
         uint32 BlockCapacity;
         uint32 BlockCursor;
+        uint32 SubDrawCount;   // read directly as the indirect draw count; keep last
     };
-    static_assert(sizeof(FRenderBucketGPU) == 24, "FRenderBucketGPU layout must match FRenderBucket in Common.slang");
+    static_assert(sizeof(FRenderBucketGPU) == 28, "FRenderBucketGPU layout must match FRenderBucket in Common.slang");
+    static_assert(offsetof(FRenderBucketGPU, SubDrawCount) % 4 == 0,
+                  "SubDrawCount is used as a countBufferOffset, which must be 4-byte aligned");
 
     struct FTransform3x4
     {
@@ -836,6 +839,14 @@ namespace Lumina
     struct FCullData
     {
         // Uploaded raw to the GPU -- plane-only mirrors, NOT the rich CPU FFrustum (see Frustum.h).
+    // The camera the CULL evaluates against. Normally a straight copy of the render camera; they are
+    // separate fields so freezing the cull cannot move the picture with it. Cull code must read these and
+    // never CameraView, or a frozen cull would still track the live camera for distance, LOD and the
+    // micro-poly projection.
+        FVector4 CullCameraPosition;
+        FMatrix4 CullCameraView;
+        FMatrix4 CullCameraProjection;
+
         FGPUFrustum Frustum;
         FGPUFrustum ShadowFrustum;
 
@@ -1071,6 +1082,9 @@ namespace Lumina
         uint8 bCPUInstanceCull:1        = true;
         uint8 bUseLODs:1                = true;
         uint8 bShadowMaskValid:1        = false;
+        // Debug: keep culling against the inputs captured when this went on, so the selected set holds
+        // still while the camera flies free. See FForwardRenderScene::ApplyCullFreeze.
+        uint8 bFreezeCulling:1          = false;
         int8  ShadowLODBias             = 1;
         float ShadowCoarseLODDistance   = 150.0f;
     };

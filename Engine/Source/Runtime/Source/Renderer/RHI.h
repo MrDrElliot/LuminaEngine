@@ -475,6 +475,10 @@ namespace Lumina::RHI
 
     RUNTIME_API uint64         ClampCPUWriteSlice(const char* RingName, uint64 DesiredSliceSize, uint32 SliceCount);
 
+    // maxTaskWorkGroupCount[0]. A meshlet draw's grid is one task workgroup per cull block, and a region
+    // large enough to exceed this would otherwise be dispatched as-is.
+    RUNTIME_API uint32         GetMaxTaskWorkGroupCount();
+
     RUNTIME_API bool           SupportsAsyncCompute();
     RUNTIME_API bool           SupportsAsyncTransfer();
 

@@ -552,6 +552,11 @@ namespace Lumina
         SceneGlobalData.CullData.bHasDirectional        = 0u;
         SceneGlobalData.CullData.bFrustumCull           = RenderSettings.bFrustumCull;
         SceneGlobalData.CullData.bOcclusionCull         = RenderSettings.bOcclusionCull;
+
+        // Copied, not aliased: freezing the cull replaces these and leaves the render camera alone.
+        SceneGlobalData.CullData.CullCameraPosition     = SceneGlobalData.CameraData.Location;
+        SceneGlobalData.CullData.CullCameraView         = SceneGlobalData.CameraData.View;
+        SceneGlobalData.CullData.CullCameraProjection   = SceneGlobalData.CameraData.Projection;
         SceneGlobalData.CullData.ShadowMaxDistance      = 5000.0f;
         SceneGlobalData.CullData.bShadowOcclusionCull   = RenderSettings.bShadowOcclusionCull;
         SceneGlobalData.CullData.ShadowLODBias          = RenderSettings.ShadowLODBias;
@@ -1138,6 +1143,9 @@ namespace Lumina
 
                 // Rebuilt here rather than at the end of the frame so translucency culls against THIS
                 // frame's opaque depth; the opaque cull reads it next frame.
+                // Skipped while frozen: rebuilding it from the live camera would let occlusion
+                // results drift out from under the frozen views.
+                if (!RenderSettings.bFreezeCulling)
                 {
                     SCENE_GPU_SCOPE(CL, "Depth Pyramid");
                     DepthPyramidPass(CL);
@@ -1172,6 +1180,9 @@ namespace Lumina
                 CL = OpenSegmentCommandList();
                 RHI::CmdBeginMarker(CL, "RenderView Shading");
 
+                // Skipped while frozen: rebuilding it from the live camera would let occlusion
+                // results drift out from under the frozen views.
+                if (!RenderSettings.bFreezeCulling)
                 {
                     SCENE_GPU_SCOPE(CL, "Cascade Pyramid");
                     CascadePyramidPass(CL);
@@ -1236,6 +1247,9 @@ namespace Lumina
                     TerrainRenderPass(CL);
                 }
 
+                // Skipped while frozen: rebuilding it from the live camera would let occlusion
+                // results drift out from under the frozen views.
+                if (!RenderSettings.bFreezeCulling)
                 {
                     SCENE_GPU_SCOPE(CL, "Depth Pyramid (End)");
                     DepthPyramidPass(CL);
@@ -1593,6 +1607,12 @@ namespace Lumina
         Globals.CullData.InstanceNum               = Primary.InstanceNum;
         Globals.CullData.BoneNum                   = Primary.BoneNum;
 
+        // This view's OWN camera, not the primary's: a capture culls from where it is looking, and it is
+        // never the thing a cull freeze applies to.
+        Globals.CullData.CullCameraPosition        = Globals.CameraData.Location;
+        Globals.CullData.CullCameraView            = Globals.CameraData.View;
+        Globals.CullData.CullCameraProjection      = Globals.CameraData.Projection;
+
         Globals.ShadowMaskIndex         = ~0u;
         RenderSettings.bShadowMaskValid = false;
 
@@ -1768,7 +1788,6 @@ namespace Lumina
         Out.SurfaceDescCount        = ScenePrimitives.GetSurfaceDescCount();
         Out.bSurfaceDescsChanged    = ScenePrimitives.AreSurfaceDescsDirty() || Out.bFull;
         Out.MaxSurfaceDescMeshlets  = ScenePrimitives.GetMaxSurfaceDescMeshlets();
-        Out.WorstCaseBlocksPerView  = ScenePrimitives.GetWorstCaseBlocksPerView();
 
         // Channel consumed: the decisions above are now owned by this frame.
         ScenePrimitives.ClearDirtyInstanceSlots();
@@ -3048,12 +3067,101 @@ namespace Lumina
         BuildCullViews(ExtractFrame->ViewVolume);
     }
 
+    // Runs after every extract write, so it is the last word on what the cull sees. Capturing on the
+    // frame the toggle goes on means that frame still culls live and the freeze starts on the next one.
+    void FForwardRenderScene::ApplyCullFreeze(FFrameData& Frame)
+    {
+        FCullData& Cull = Frame.SceneGlobalData.CullData;
+
+        if (!RenderSettings.bFreezeCulling)
+        {
+            FrozenCull.bValid = false;
+            return;
+        }
+
+        if (!FrozenCull.bValid)
+        {
+            FrozenCull.Views            = Frame.Views.CullViews;
+            FrozenCull.CameraPosition   = Cull.CullCameraPosition;
+            FrozenCull.CameraView       = Cull.CullCameraView;
+            FrozenCull.CameraProjection = Cull.CullCameraProjection;
+            FrozenCull.Frustum          = Cull.Frustum;
+            FrozenCull.ShadowFrustum    = Cull.ShadowFrustum;
+            for (int32 c = 0; c < NumCascades; ++c)
+            {
+                FrozenCull.CascadeFrustum[c] = Cull.CascadeFrustum[c];
+            }
+            FrozenCull.CascadeViewBase = Frame.Views.CascadeViewBase;
+            FrozenCull.bValid          = true;
+            return;
+        }
+
+        // The view COUNT is frozen with them. Every bucket index, the block dispatch grid and the
+        // per-view arg stride are derived from it, so replaying a different count would relayout the
+        // regions under a cull that was measured against the old one.
+        Frame.Views.CullViews       = FrozenCull.Views;
+        Frame.Views.CascadeViewBase = FrozenCull.CascadeViewBase;
+
+        // Batches are still live, so the only per-view field that tracks them has to be restamped.
+        const uint32 NumDraws = Frame.Views.NumDrawsPerView;
+        for (uint32 v = 0; v < (uint32)Frame.Views.CullViews.size(); ++v)
+        {
+            Frame.Views.CullViews[v].IndirectArgsOffset = v * NumDraws;
+            Frame.Views.CullViews[v].NumDraws           = NumDraws;
+        }
+
+        Cull.CullCameraPosition   = FrozenCull.CameraPosition;
+        Cull.CullCameraView       = FrozenCull.CameraView;
+        Cull.CullCameraProjection = FrozenCull.CameraProjection;
+        Cull.Frustum              = FrozenCull.Frustum;
+        Cull.ShadowFrustum        = FrozenCull.ShadowFrustum;
+        for (int32 c = 0; c < NumCascades; ++c)
+        {
+            Cull.CascadeFrustum[c] = FrozenCull.CascadeFrustum[c];
+        }
+
+        DrawFrozenCullFrustum(Frame);
+    }
+
+    // The volume the frozen cull is still evaluating against, unprojected from its own view-projection.
+    // Without it a frozen cull is indistinguishable from geometry going missing for a real reason.
+    void FForwardRenderScene::DrawFrozenCullFrustum(const FFrameData& Frame)
+    {
+        const FMatrix4 InvViewProj = Math::Inverse(FrozenCull.CameraProjection * FrozenCull.CameraView);
+
+        FVector3 Corner[8];
+        for (int32 i = 0; i < 8; ++i)
+        {
+            // Vulkan clip volume: xy in [-1, 1], z in [0, 1]. Reverse-Z puts the near plane at w = 1.
+            const FVector4 Clip((i & 1) ? 1.0f : -1.0f,
+                                (i & 2) ? 1.0f : -1.0f,
+                                (i & 4) ? 1.0f :  0.0f,
+                                1.0f);
+            const FVector4 WorldH = InvViewProj * Clip;
+            Corner[i] = FVector3(WorldH.x, WorldH.y, WorldH.z) / Math::Max(WorldH.w, 1e-6f);
+        }
+
+        static constexpr int32 kEdges[12][2] =
+        {
+            {0,1},{2,3},{0,2},{1,3},   // near face
+            {4,5},{6,7},{4,6},{5,7},   // far face
+            {0,4},{1,5},{2,6},{3,7},   // connecting
+        };
+
+        const FVector4 Color(1.0f, 0.55f, 0.1f, 1.0f);
+        for (const auto& E : kEdges)
+        {
+            ImmediateLines.Line(Corner[E[0]], Corner[E[1]], Color, FImmediateLineRenderer::XRay);
+        }
+    }
+
     void FForwardRenderScene::CompileDrawCommands_Render(RHI::FCmdListH CL)
     {
         LUMINA_PROFILE_SCOPE();
         LUMINA_MEMORY_SCOPE("Render Scene");
 
         FFrameData& Frame = *RenderFrame;
+        ApplyCullFreeze(Frame);
         auto& SceneGlobalData            = Frame.SceneGlobalData;
         const auto& Instances            = Frame.Geometry.Instances;
         const auto& BonesData            = Frame.Geometry.BonesData;
@@ -3082,10 +3190,19 @@ namespace Lumina
 
         const SIZE_T NumArgSlots = (SIZE_T)NumCullViews * (SIZE_T)NumDraws;
 
-        // Mesh-task args: one FDrawMeshTasksIndirectArguments per arg slot (same count, 12B stride).
+        // A bucket's grid is one task workgroup per block, so a bucket holding more blocks than the device
+        // will dispatch in one draw is split across consecutive sub-draws. Derived from LAST frame's block
+        // capacity: it moves only when the retained set does, and an under-split frame drops work exactly
+        // as the old clamp did rather than doing anything unsafe.
+        {
+            const uint32 MaxGroups = Math::Max(RHI::GetMaxTaskWorkGroupCount(), 1u);
+            TaskSubDrawsPerBucket  = Math::Clamp((BlockListCapacity + MaxGroups - 1u) / MaxGroups, 1u, 8u);
+        }
+
+        // Mesh-task args: TaskSubDrawsPerBucket per arg slot, 12B stride.
         const SIZE_T TaskDrawArgsSize = Math::Max<SIZE_T>(
             sizeof(RHI::FDrawMeshTasksIndirectArguments),
-            NumArgSlots * sizeof(RHI::FDrawMeshTasksIndirectArguments));
+            NumArgSlots * (SIZE_T)TaskSubDrawsPerBucket * sizeof(RHI::FDrawMeshTasksIndirectArguments));
 
         ResizeBufferIfNeeded(PreSkinnedVerticesBuffer, PreSkinnedSize, 1.2f, PreSkinnedVerticesLowUsage);
         {
@@ -3117,23 +3234,14 @@ namespace Lumina
                                  (SIZE_T)FrameVisibleInstanceCapacity * sizeof(FGPUInstance), 1.25f,
                                  VisibleInstanceLowUsage[Slot]);
 
-            // An exact bound, not a prediction: every active instance can contribute its largest LOD to every
-            // view that builds blocks, and the CPU knows both numbers without a readback. Sizing this from
-            // the lagged readback meant a mass mesh load overflowed by 11x before the feedback even arrived.
-            // Skinned instances are CPU-fed rather than retained, so their blocks are seeded, not counted.
-            uint32 SkinnedBlocksPerView = 0;
-            for (uint32 Seed : Frame.Geometry.BatchBlockSeed)
-            {
-                SkinnedBlocksPerView += Seed;
-            }
-
-            const uint64 WorstCaseBlocks =
-                (uint64)(Frame.Geometry.RetainedUpload.WorstCaseBlocksPerView + SkinnedBlocksPerView)
-                * (uint64)Math::Max((uint32)CullViews.size(), 1u);
+            // The GPU is the only thing that knows how many blocks were appended, so it is what sizes this:
+            // its counter, lagged by the frames in flight, kept as a high-water mark that only grows. A
+            // scene that loads cold under-allocates for a few frames and then never again.
+            BlockListHighWater = Math::Max(BlockListHighWater, LastBlocksRequested);
 
             const SIZE_T MeshletBlockSize = Math::Max<SIZE_T>(
                 sizeof(uint32) * 2,
-                (SIZE_T)Math::Max<uint64>(WorstCaseBlocks, 4096ull) * sizeof(uint32) * 2);
+                (SIZE_T)Math::Max<uint32>(BlockListHighWater, 1u) * sizeof(uint32) * 2);
             ResizeBufferIfNeeded(MeshletBlockRing[Slot], MeshletBlockSize, 1.2f, MeshletBlockRingLowUsage[Slot]);
             BlockListCapacity = (uint32)Math::Min<uint64>(MeshletBlockRing[Slot].GetSize() / (sizeof(uint32) * 2), 0xFFFFFFFFull);
 
@@ -3155,15 +3263,7 @@ namespace Lumina
                     if (LastVisibleOverflowed)  { LogOverflow("visible-instance buffer", LastVisibleInstances, FrameVisibleInstanceCapacity); }
                     if (LastDrawListOverflowed) { LogOverflow("meshlet draw list",       LastDrawListRequired, DrawListCapacity); }
 
-                    // Not a spike the allocation grows past: the block list is sized from an exact bound,
-                    // so reaching this means the bound itself is wrong.
-                    if (LastBlocksOverflowed)
-                    {
-                        LOG_ERROR("RenderScene: meshlet cull block list overflowed at {} blocks against a "
-                                  "capacity of {}. That list is sized from an exact CPU bound, so this is a "
-                                  "bug in FScenePrimitiveSet::RefreshWorstCaseBlocks, not a spike.",
-                                  LastBlocksRequested, BlockListCapacity);
-                    }
+                    if (LastBlocksOverflowed)   { LogOverflow("meshlet cull block list",  LastBlocksRequested,  BlockListCapacity); }
                 }
             }
         }
@@ -3872,8 +3972,6 @@ namespace Lumina
             Cmd.VisBufferMeshShader            = Batch.VisBufferMeshShader;
             Cmd.VisBufferMeshShaderMasked      = Batch.VisBufferMeshShaderMasked;
             Cmd.MaskedVisBufferPixelShader     = Batch.MaskedVisBufferPixelShader;
-            Cmd.DeferredShader                 = Batch.DeferredShader;
-            Cmd.MaterialIndex                  = Batch.MaterialIdx;
             Cmd.IndirectDrawOffset             = b;
             Cmd.DrawCount                      = 1u;
             Cmd.bTranslucent                   = Batch.Key.bTranslucent;
@@ -10219,13 +10317,15 @@ namespace Lumina
                 uint32 MaxVisibleInstances;
                 uint32 DrawListCapacityArg;
                 uint32 BlockListCapacityArg;
+                uint32 MaxTaskGroupsArg;
+                uint32 SubDrawsPerBucketArg;
                 uint64 BucketsAddr;
                 uint64 InstanceCountAddr;
                 uint64 OutTaskDrawArgsAddr;
                 uint64 OutTotalsAddr;
                 uint64 OutBlockDispatchArgsAddr;
             };
-            static_assert(sizeof(FBuildDrawPrefixPC) == 64, "FBuildDrawPrefixPC must match BuildDrawPrefix.slang.");
+            static_assert(sizeof(FBuildDrawPrefixPC) == 72, "FBuildDrawPrefixPC must match BuildDrawPrefix.slang.");
 
             FBuildDrawPrefixPC PC = {};
             PC.NumViews                 = SeedViews;
@@ -10233,6 +10333,8 @@ namespace Lumina
             PC.MaxVisibleInstances      = VisibleCapacity;
             PC.DrawListCapacityArg      = DrawListCapacity;
             PC.BlockListCapacityArg     = BlockListCapacity;
+            PC.MaxTaskGroupsArg         = RHI::GetMaxTaskWorkGroupCount();
+            PC.SubDrawsPerBucketArg     = TaskSubDrawsPerBucket;
             PC.BucketsAddr              = GetRenderBuckets().GetAddress();
             PC.InstanceCountAddr        = GetCullCounters().GetAddress();
             PC.OutTaskDrawArgsAddr      = GetTaskDrawArgs().GetAddress();
@@ -10831,26 +10933,33 @@ namespace Lumina
             uint64 BucketsAddr;
             uint64 BlockListAddr;
             uint32 ArgBase;
+            uint32 MaxTaskGroups;
             uint32 CullViewIndex;
             int32  ShadowDataIndex;
             int32  ViewIndex;
             float  ViewportW;
             float  ViewportH;
         } Push;
-        static_assert(sizeof(FMeshletPassPush) == 40, "FMeshletPassPush must match FMeshletPassArgs in MeshletGeometry.slang.");
+        static_assert(sizeof(FMeshletPassPush) == 48, "FMeshletPassPush must match FMeshletPassArgs in MeshletGeometry.slang.");
 
         Push.BucketsAddr          = GetRenderBuckets().GetAddress();
         Push.BlockListAddr        = GetMeshletBlocks().GetAddress();
         Push.ArgBase              = ArgIndex;
+        Push.MaxTaskGroups        = RHI::GetMaxTaskWorkGroupCount();
         Push.CullViewIndex        = CullViewIndex;
         Push.ShadowDataIndex      = ShadowDataIndex;
         Push.ViewIndex            = ShadowViewIndex;
         Push.ViewportW            = ViewportW;
         Push.ViewportH            = ViewportH;
 
-        RHI::CmdDrawMeshTasksIndirect(CL, MakeArgs(Push),
-            GetTaskDrawArgs().Ptr, ArgIndex * sizeof(RHI::FDrawMeshTasksIndirectArguments),
-            Batch.DrawCount, sizeof(RHI::FDrawMeshTasksIndirectArguments));
+        // The count comes from the bucket the cull just wrote, so the CPU never learns how many sub-draws
+        // this pair needs -- or whether it needs any. TaskSubDrawsPerBucket is only the reserved ceiling.
+        RHI::CmdDrawMeshTasksIndirectCount(CL, MakeArgs(Push),
+            GetTaskDrawArgs().Ptr,
+            ArgIndex * TaskSubDrawsPerBucket * sizeof(RHI::FDrawMeshTasksIndirectArguments),
+            GetRenderBuckets().Ptr,
+            ArgIndex * sizeof(FRenderBucketGPU) + offsetof(FRenderBucketGPU, SubDrawCount),
+            TaskSubDrawsPerBucket, sizeof(RHI::FDrawMeshTasksIndirectArguments));
     }
 
     RHI::FPipelineH FForwardRenderScene::GetOrCreatePipeline(const FGraphicsPipelineKey& Key)

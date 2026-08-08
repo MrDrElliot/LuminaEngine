@@ -549,6 +549,9 @@ struct FRenderBucket
     uint BlockBase;
     uint BlockCapacity;
     uint BlockCursor;
+    // Sub-draws this bucket needs, written by BuildDrawPrefix and read as the DRAW COUNT by
+    // vkCmdDrawMeshTasksIndirectCountEXT. Last field on purpose: the count offset is its byte offset.
+    uint SubDrawCount;
 };
 
 // Mirror of Lumina::FGPUInstance.
@@ -775,6 +778,14 @@ struct FCullView
 
 struct FCullData
 {
+// The camera the CULL evaluates against. Normally a straight copy of the render camera; they are
+// separate fields so freezing the cull cannot move the picture with it. Cull code must read these and
+// never CameraView, or a frozen cull would still track the live camera for distance, LOD and the
+// micro-poly projection.
+    float4   CullCameraPosition;
+    float4x4 CullCameraView;
+    float4x4 CullCameraProjection;
+
     FFrustum Frustum;
     FFrustum ShadowFrustum;
     // Tight per-cascade CASTER volume (camera sub-frustum slice swept toward the sun). Not the cascade's

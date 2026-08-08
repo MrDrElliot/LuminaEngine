@@ -50,7 +50,7 @@ FMeshletCullContext MakeMeshletCullContext(FGPUInstance* Inst)
 
     Ctx.InstCenter    = Inst.BoundsCenter;
     Ctx.InstRadius    = Inst.BoundsRadius;
-    Ctx.DistToCamera  = length(Ctx.InstCenter - GetCameraPosition());
+    Ctx.DistToCamera  = length(Ctx.InstCenter - GetCullCameraPosition());
     Ctx.MaxShadowDist = Scene().CullData.ShadowMaxDistance;
 
     return Ctx;
@@ -193,11 +193,12 @@ bool TestMeshletAgainstView(FMeshletCullContext Ctx, FGPUInstance* Inst, FCullVi
             if (bKeep && !Ctx.bSkinned && !Ctx.bNoCull && View.HasFlag(CULL_VIEW_FLAG_OCCLUSION))
             {
                 float4 ClipAABB;
-                if (ProjectSphereClip(mul(Scene().CameraView.CameraView, float4(Cache.WorldCenter, 1.0)).xyz,
+                const float4x4 CullProj = GetCullCameraProjection();
+                if (ProjectSphereClip(mul(GetCullCameraView(), float4(Cache.WorldCenter, 1.0)).xyz,
                                       Cache.WorldRadius,
                                       Scene().NearPlane,
-                                      Scene().CameraView.CameraProjection[0][0],
-                                      Scene().CameraView.CameraProjection[1][1],
+                                      CullProj[0][0],
+                                      CullProj[1][1],
                                       ClipAABB))
                 {
                     const float2 ScreenSize = float2(Scene().ScreenSize.xy);

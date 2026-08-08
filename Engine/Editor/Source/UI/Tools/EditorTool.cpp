@@ -1163,7 +1163,7 @@ namespace Lumina
                 {
                     "Rejects instances and meshlets outside a view's frustum.\nOff: everything is submitted from every angle.",
                     "Rejects meshlets whose normal cone faces away from the view.\nOff: backfacing clusters are submitted. The only cull besides occlusion that removes PARTS of a mesh.",
-                    "Two-phase Hi-Z: meshlets hidden by last frame's depth pyramid are deferred, then re-tested against this frame's.\nOff: no deferral, no late pass.",
+                    "Single-phase Hi-Z: instances hidden by last frame's depth pyramid are rejected outright.\nOff: no occlusion culling. Geometry that becomes visible appears one frame late.",
                     "The same test for shadow cascades, against the cascade pyramid.",
                     "Pre-upload reject of instances outside every contributing view, on the CPU.\nOff: the whole retained set is uploaded each frame.",
                     "Distance-based LOD selection.\nOff: always LOD 0, full detail.",
@@ -1217,6 +1217,23 @@ namespace Lumina
                 {
                     ImGui::SetTooltip("Turns every stage above off (and back on). Expensive -- for isolating "
                                       "missing geometry, not for working in.");
+                }
+
+                ImGui::Separator();
+
+                // Deliberately outside "Disable All Culling": this does not turn a stage off, it pins every
+                // stage's inputs so you can fly out and look at what they decided.
+                bool bFrozen = (bool)Settings.bFreezeCulling;
+                if (ImGui::MenuItem("Freeze Culling", nullptr, &bFrozen))
+                {
+                    Settings.bFreezeCulling = bFrozen;
+                }
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                {
+                    ImGui::SetTooltip("Pins the cull to the camera, frustums and depth pyramid as they are now, "
+                                      "then lets you fly out and see what it selected.\n"
+                                      "The frozen volume is drawn in orange. Rendering keeps following the real "
+                                      "camera; only culling is frozen.");
                 }
 
                 ImGui::EndMenu();

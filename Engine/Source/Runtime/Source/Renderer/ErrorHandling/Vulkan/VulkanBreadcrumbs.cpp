@@ -218,13 +218,25 @@ namespace Lumina::RHI
                           "The crash happened while building the frame, before any of this work ran.",
                     TotalRecorded);
             }
+            else if (LastCompleted->MarkerId >= TotalRecorded)
+            {
+                LOG_ERROR("[GPU] Breadcrumbs: {} marker(s) recorded and all of them completed -- the GPU "
+                          "had drained, so the fault was not inside a marked pass. Last completed: {} (#{}).",
+                    TotalRecorded, LastCompleted->Name, LastCompleted->MarkerId);
+            }
             else
             {
-                LOG_ERROR("[GPU] Breadcrumbs: {} marker(s) recorded, none outstanding -- the GPU had "
-                          "drained, so the fault was not inside a marked pass. Last completed: {} (#{}).",
-                    TotalRecorded,
-                    LastCompleted != nullptr ? LastCompleted->Name : "<unknown>",
-                    LastCompleted != nullptr ? LastCompleted->MarkerId : 0u);
+                // A marker the GPU never entered writes neither value, so it is absent from both
+                // tallies; an empty outstanding list past the last completed one means it stopped.
+                const FEntry& Next = Entries[(LastCompleted->MarkerId + 1) % MaxMarkers];
+                const bool bNextKnown = Next.MarkerId == LastCompleted->MarkerId + 1;
+
+                LOG_ERROR("[GPU] Breadcrumbs: the GPU stopped after {} (#{}) -- {} later marker(s) were "
+                          "recorded and it entered none of them, so it did not drain. Next pass it never "
+                          "entered: {}.",
+                    LastCompleted->Name, LastCompleted->MarkerId,
+                    TotalRecorded - LastCompleted->MarkerId,
+                    bNextKnown ? Next.Name : "<rolled out of the marker ring>");
             }
 
             return {};

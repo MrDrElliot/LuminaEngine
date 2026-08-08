@@ -64,7 +64,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     const bool   bNoCull = Cull.HasFlag(EInstanceFlags::NoCull);
 
     // Cheapest reject, and the only view-independent one.
-    const float3 CamPos = GetCameraPosition();
+    const float3 CamPos = GetCullCameraPosition();
     const float3 ToCam  = Center - CamPos;
     const float  DistSq = dot(ToCam, ToCam);
 
@@ -130,6 +130,12 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     const bool bInRange = DrawID < Pass().NumBatches;
     bool bAnyView = false;
 
+    // End of the last LOD: the bound on every mesh-global meshlet index the cull emits, and the value
+    // BuildMeshletBlocks clamps its own range against.
+    const uint MeshletTotal = bHasGeometry && NumLODs > 0u
+                            ? Desc.LODMeshletOffset[NumLODs - 1u] + Desc.LODMeshletCount[NumLODs - 1u]
+                            : 0u;
+
     for (uint v = 0; v < Pass().NumViews; ++v)
     {
         FCullView View = CullViews()[v];
@@ -140,25 +146,36 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
         }
         bAnyView = true;
 
-        // Over-estimating only wastes space; under-estimating drops meshlets.
         const bool bShadowView = View.HasFlag(CULL_VIEW_FLAG_CAST_SHADOW_ONLY);
 
-        uint Emitted = ShadowMeshletCount;
-        if (!bShadowView)
+        // Branch order, operands and clamp all mirror BuildMeshletBlocks. Reserving against a different
+        // count than the builder appends hands one bucket room nobody uses and starves the next.
+        uint2 Range;
+        if (bShadowView && bSelectPerView && View.HasFlag(CULL_VIEW_FLAG_CASCADE))
         {
-            Emitted = bSelectPerView
-                ? (bHasGeometry ? SelectViewMeshletRange(Desc, View.ViewOrigin, Cull.SphereBounds).y : 0u)
-                : SurfaceMeshletCount;
+            Range = bHasGeometry
+                  ? SelectCascadeShadowMeshletRange(Desc, CamPos, Cull.SphereBounds, View.CascadeIndex,
+                                                    Scene().CullData.ShadowLODBias,
+                                                    Scene().CullData.ShadowCoarseLODDistSq)
+                  : uint2(0u, 0u);
         }
-        else if (bSelectPerView && View.HasFlag(CULL_VIEW_FLAG_CASCADE))
+        else if (bShadowView)
         {
-            // BuildMeshletBlocks calls this with the same operands when it resolves the cascade's range.
-            Emitted = bHasGeometry
-                ? SelectCascadeShadowMeshletRange(Desc, CamPos, Cull.SphereBounds, View.CascadeIndex,
-                                                  Scene().CullData.ShadowLODBias,
-                                                  Scene().CullData.ShadowCoarseLODDistSq).y
-                : 0u;
+            Range = uint2(ShadowMeshletOffset, ShadowMeshletCount);
         }
+        else if (bSelectPerView)
+        {
+            Range = bHasGeometry ? SelectViewMeshletRange(Desc, View.ViewOrigin, Cull.SphereBounds)
+                                 : uint2(0u, 0u);
+        }
+        else
+        {
+            Range = uint2(SurfaceMeshletOffset, SurfaceMeshletCount);
+        }
+
+        const uint Emitted = (Range.y == 0u || Range.x >= MeshletTotal)
+                           ? 0u
+                           : min(Range.y, MeshletTotal - Range.x);
 
 
         if (Emitted > 0u && bInRange)
@@ -212,8 +229,5 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     Inst.ShadowMeshletOffset     = ShadowMeshletOffset;
     Inst.ShadowMeshletCount      = ShadowMeshletCount;
     Inst.SurfaceDescIndex        = bSelectPerView ? Cull.SurfaceDescIndex : kNoSurfaceDesc;
-    // End of the last LOD: the bound on every mesh-global meshlet index the cull emits.
-    Inst.MeshletTotalCount       = bHasGeometry && NumLODs > 0u
-                                 ? Desc.LODMeshletOffset[NumLODs - 1u] + Desc.LODMeshletCount[NumLODs - 1u]
-                                 : 0u;
+    Inst.MeshletTotalCount       = MeshletTotal;
 }

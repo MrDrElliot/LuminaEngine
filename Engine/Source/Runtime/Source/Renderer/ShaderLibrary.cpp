@@ -16,6 +16,19 @@ namespace Lumina
         return Hash;
     }
 
+    // Salted and multiplied so a content hash cannot land on the small integers EntryHash produces for
+    // named shaders; the two share one map.
+    static uint64 SpirvContentHash(ERHIShaderType Type, TSpan<const uint32> Spirv)
+    {
+        uint64 Hash = 0x9E3779B97F4A7C15ull ^ (uint64)Type;
+        for (uint32 Word : Spirv)
+        {
+            Hash ^= (uint64)Word;
+            Hash *= 0x100000001B3ull;
+        }
+        return Hash;
+    }
+
     FShaderLibrary::~FShaderLibrary()
     {
         for (auto& [Hash, Entry] : Entries)
@@ -221,7 +234,36 @@ namespace Lumina
         FShaderLibrary* Library = GShaderLibrary;
         FScopeLock Lock(Library->Mutex);
 
-        FShaderEntry& Entry = Library->FindOrCreate(EntryHash(Key, {}));
+        // Keyed by CONTENT, not by the caller's name. Most materials drive no World Position Offset, so
+        // their geometry stages compile to byte-identical SPIR-V; a per-material entry gave each its own
+        // ID, therefore its own PipelineHash, therefore its own PSO for the same shader.
+        //
+        // Content keying is also what makes a shared entry SAFE. If entries stayed name-keyed and this
+        // merely handed out a shared pointer, recompiling one material would rewrite the bytecode under
+        // every other material still pointing at it.
+        const uint64 ContentHash = SpirvContentHash(Type, Spirv);
+
+        uint64 Slot = ContentHash;
+        if (auto It = Library->Entries.find(ContentHash); It != Library->Entries.end())
+        {
+            const FShaderEntry* Existing = It->second;
+            const bool bIdentical = Existing->Type == Type
+                                 && Existing->Spirv.size() == Spirv.size()
+                                 && std::memcmp(Existing->Spirv.data(), Spirv.data(),
+                                                Spirv.size() * sizeof(uint32)) == 0;
+            if (bIdentical)
+            {
+                // Generation is deliberately NOT bumped: the bytecode is unchanged, so every pipeline
+                // already built from this entry stays valid. A material that recompiles to the same
+                // shader costs nothing.
+                return Existing;
+            }
+
+            // A 64-bit collision. Fall back to the caller's name so the two can never alias.
+            Slot = EntryHash(Key, {});
+        }
+
+        FShaderEntry& Entry = Library->FindOrCreate(Slot);
         Entry.Path = Key;
         Entry.Type = Type;
         Entry.Spirv.assign(Spirv.begin(), Spirv.end());

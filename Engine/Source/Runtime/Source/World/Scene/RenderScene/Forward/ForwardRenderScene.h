@@ -361,7 +361,6 @@ namespace Lumina
                     uint32                      SurfaceDescCount = 0;
 
                     uint32                      MaxSurfaceDescMeshlets = 0;
-                    uint32                      WorstCaseBlocksPerView = 0;
                 } RetainedUpload;
             } Geometry;
 
@@ -650,6 +649,26 @@ namespace Lumina
         void DrawShadowBatch(RHI::FCmdListH CL, const FMeshDrawCommand& Batch, bool bUseMesh,
                              uint32 CullViewIndex, int32 ShadowDataIndex, int32 ShadowViewIndex,
                              const FUIntVector2& ViewportExtent);
+        // The cull keeps running while frozen -- instances move and the visible buffer is rebuilt every
+        // frame -- but against these captured inputs, so what was selected stays selected. The render
+        // camera is deliberately NOT part of this; that is why the cull has its own (see FCullData).
+        struct FFrozenCull
+        {
+            TVector<FCullView> Views;
+            FVector4           CameraPosition   = {};
+            FMatrix4           CameraView       = {};
+            FMatrix4           CameraProjection = {};
+            FGPUFrustum        Frustum          = {};
+            FGPUFrustum        ShadowFrustum    = {};
+            FGPUFrustum        CascadeFrustum[NumCascades] = {};
+            uint32             CascadeViewBase  = ~0u;
+            bool               bValid           = false;
+        };
+        FFrozenCull FrozenCull;
+
+        void ApplyCullFreeze(FFrameData& Frame);
+        void DrawFrozenCullFrustum(const FFrameData& Frame);
+
         void BillboardPass(RHI::FCmdListH CL);
         void WidgetPass(RHI::FCmdListH CL);
         void TextPass(RHI::FCmdListH CL);
@@ -1019,6 +1038,12 @@ namespace Lumina
         // Totals[6]: deferred meshlets demanded. No overflow companion -- the region layout bounds it.
         // Entries the block list holds, taken from the allocation rather than the size asked for.
         uint32                                              BlockListCapacity = 0;
+
+        // High-water mark of the GPU's block counter; grows only, so the list never shrinks under a scene
+        // it has already had to hold.
+        uint32                                              BlockListHighWater = 0;
+        // Sub-draw slots reserved per (view, draw). 1 unless a bucket can exceed maxTaskWorkGroupCount[0].
+        uint32                                              TaskSubDrawsPerBucket = 1;
         uint32                                              LastBlocksRequested = 0;
         uint32                                              LastBlocksOverflowed = 0;
         uint32                                              MeshletDrawTagCounter = 0;
