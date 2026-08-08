@@ -77,6 +77,17 @@ void TaskMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex, uint Dr
     const uint BlocksWritten = min(Bucket.BlockCursor, Bucket.BlockCapacity);
     const bool bBlockInRange = BlockSlot < BlocksWritten;
 
+    // LATE: the defer word is read FIRST, before any other load. It is workgroup-uniform, so a block that
+    // deferred nothing skips the block fetch, the instance pointer chase and the entire cull, and falls
+    // straight through to a zero DispatchMesh.
+    //
+    // This ordering is the whole cost of the late phase. Reading the word after the instance chase --
+    // which is where it started -- measured 9.8% of frame to produce zero mesh invocations, because every
+    // workgroup walked Buckets -> BlockList -> Instances -> MeshletHeader before learning it had no work.
+    // Most blocks defer nothing, so most of that walk was pure waste.
+    const uint DeferWord = (bLate && bBlockInRange) ? Pass().DeferBits[BlockIdx] : 0u;
+    const bool bHasWork  = bBlockInRange && (!bLate || DeferWord != 0u);
+
     if (ThreadID == 0u)
     {
         gsKeepBits  = 0u;
@@ -84,23 +95,29 @@ void TaskMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex, uint Dr
     }
     GroupMemoryBarrierWithGroupSync();
 
-    // Workgroup-uniform, because a block is one instance. bBlockInRange is uniform too (it is built from
-    // the sub-draw index and the bucket's own bound), so this costs a uniform branch and keeps the tail
-    // workgroups of the last sub-draw from reading past the block arena entirely.
-    const FMeshletBlock Block = bBlockInRange ? Pass().BlockList[BlockIdx] : (FMeshletBlock)0;
+    // Workgroup-uniform, because a block is one instance -- and bHasWork is uniform too (sub-draw index,
+    // the bucket's own cursor, and a defer word that is one value for the whole block), so this is a
+    // uniform branch. It does double duty: it keeps blocks the builder never filled from being read at
+    // all, and it stops a late-phase workgroup with an empty defer word from fetching anything.
+    const FMeshletBlock Block = bHasWork ? Pass().BlockList[BlockIdx] : (FMeshletBlock)0;
     const uint InstanceID = Block.InstanceID;
     const uint MeshletIdx = Block.MeshletBase + ThreadID;
-    bool       bKeep      = bBlockInRange && (ThreadID < Block.Count);
-
-    FGPUInstance* Inst = Instances() + InstanceID;
-    bKeep = bKeep && (Instances() != nullptr) && (Inst.MeshletHeader != nullptr);
+    bool       bKeep      = bHasWork && (ThreadID < Block.Count);
 
     // The late phase runs ONLY what the early phase deferred. Everything else in this block either
     // already rasterized or was rejected by a test whose answer cannot have changed since.
     if (bLate)
     {
-        const uint Deferred = bBlockInRange ? Pass().DeferBits[BlockIdx] : 0u;
-        bKeep = bKeep && ((Deferred & (1u << ThreadID)) != 0u);
+        bKeep = bKeep && (((DeferWord >> ThreadID) & 1u) != 0u);
+    }
+
+    // Guarded rather than folded into the && chain: this is a dependent load off a pointer that itself
+    // came from the block fetch, and it is the deepest hop any lane makes before the cull proper. Leaving
+    // it unconditional let a workgroup with nothing to do pay for it anyway.
+    FGPUInstance* Inst = Instances() + InstanceID;
+    if (bKeep)
+    {
+        bKeep = (Instances() != nullptr) && (Inst.MeshletHeader != nullptr);
     }
 
     FMeshletRef Ref = (FMeshletRef)0;
