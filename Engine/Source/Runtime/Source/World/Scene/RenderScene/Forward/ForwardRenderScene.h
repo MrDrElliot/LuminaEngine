@@ -361,6 +361,7 @@ namespace Lumina
                     uint32                      SurfaceDescCount = 0;
 
                     uint32                      MaxSurfaceDescMeshlets = 0;
+                    uint32                      WorstCaseBlocksPerView = 0;
                 } RetainedUpload;
             } Geometry;
 
@@ -368,9 +369,7 @@ namespace Lumina
             {
                 TVector<FCullView>               CullViews;
                 uint32                           NumDrawsPerView     = 0;
-                uint32                           CameraLateViewIndex = ~0u;
                 uint32                           CascadeViewBase     = ~0u;
-                uint32                           CascadeLateViewBase = ~0u;
                 TVector<uint32>                  PointShadowCullViewBases;
                 TVector<uint32>                  SpotShadowCullViewBases;
                 TVector<FCaptureViewData>        CaptureViews;
@@ -560,16 +559,10 @@ namespace Lumina
         FSceneBuffer GetPreSkinnedVerticesBuffer() const { return PreSkinnedVerticesBuffer; }
         const FSceneImage& GetNamedImage(ENamedImage Image) const { return CurrentView ? CurrentView->Images[(int)Image] : NamedImages[(int)Image]; }
 
-        FSceneBuffer GetViewDrawCursors()  const { return ViewDrawCursorRing[CurrentFrameSlot]; }
+        FSceneBuffer GetRenderBuckets()    const { return RenderBucketRing[CurrentFrameSlot]; }
         FSceneBuffer GetMeshletDrawList()  const { return MeshletDrawListRing[CurrentFrameSlot]; }
         FSceneBuffer GetTaskDrawArgs()     const { return TaskDrawArgsRing[CurrentFrameSlot]; }
-        FSceneBuffer GetMeshletDeferList() const { return MeshletDeferListRing[CurrentFrameSlot]; }
-        FSceneBuffer GetDeferOffsets()     const { return DeferOffsetRing[CurrentFrameSlot]; }
-        FSceneBuffer GetDeferCursors()     const { return DeferCursorRing[CurrentFrameSlot]; }
         FSceneBuffer GetMeshletBlocks()    const { return MeshletBlockRing[CurrentFrameSlot]; }
-        FSceneBuffer GetViewBlockCounts()  const { return ViewBlockCountRing[CurrentFrameSlot]; }
-        FSceneBuffer GetViewBlockOffsets() const { return ViewBlockOffsetRing[CurrentFrameSlot]; }
-        FSceneBuffer GetBlockCursors()     const { return BlockCursorRing[CurrentFrameSlot]; }
         FSceneBuffer GetBlockDispatchArgs() const { return BlockDispatchArgsRing[CurrentFrameSlot]; }
         FSceneBuffer GetSpdCounter()       const { return SpdCounterRing[CurrentFrameSlot]; }
 
@@ -649,23 +642,13 @@ namespace Lumina
         void CascadedShowPass(RHI::FCmdListH CL, uint32 CascadeViewBase);
         void DecalPass(RHI::FCmdListH CL);
         void VisBufferPass(RHI::FCmdListH CL, uint32 ViewIndex, bool bClear);
-        void BuildDeferDrawArgs(RHI::FCmdListH CL, uint32 EarlyViewBase, uint32 LateViewBase,
-                                uint32 NumLateViews);
         void MaterialDepthPass(RHI::FCmdListH CL);
         void DeferredMaterialPass(RHI::FCmdListH CL);
         bool BindShadowBatchPipeline(RHI::FCmdListH CL, const FMeshDrawCommand& Batch,
-                                    const FShaderEntry* PixelShader, bool bLatePhase = false);
-        enum class EMeshletCullPhase : uint8
-        {
-            Resolve,
-            Defer,
-            // Phase 1. Walks what the early view deferred and re-tests it against the rebuilt pyramid.
-            Retest,
-        };
+                                    const FShaderEntry* PixelShader);
 
         void DrawShadowBatch(RHI::FCmdListH CL, const FMeshDrawCommand& Batch, bool bUseMesh,
-                             EMeshletCullPhase Phase, uint32 CullViewIndex, uint32 DeferSrcViewIndex,
-                             int32 ShadowDataIndex, int32 ShadowViewIndex,
+                             uint32 CullViewIndex, int32 ShadowDataIndex, int32 ShadowViewIndex,
                              const FUIntVector2& ViewportExtent);
         void BillboardPass(RHI::FCmdListH CL);
         void WidgetPass(RHI::FCmdListH CL);
@@ -775,7 +758,6 @@ namespace Lumina
             bool            bVisBufferMasked = false;        // VISBUFFER_MASKED spec constant (id 4): VisBuffer geometry emits interpolants
             uint8           SkinnedMode = 2;                 // SPEC_SKINNED spec constant (id 5): 0=static, 1=skinned, 2=dynamic (runtime branch)
             uint8           TriCullMode = 0;
-            uint8           TaskPhase = 0;
             uint8           TaskPayload = 0;
             TFixedVector<RHI::FColorTarget, 4> ColorTargets;
         };
@@ -793,16 +775,13 @@ namespace Lumina
         static const FShaderEntry* MeshletCullTaskShader();
 
         void DrawMeshletBatch(RHI::FCmdListH CL, const FMeshDrawCommand& Batch,
-                              EMeshletCullPhase Phase, uint32 CullViewIndex, uint32 DeferSrcViewIndex,
-                              int32 ShadowDataIndex, int32 ShadowViewIndex,
+                              uint32 CullViewIndex, int32 ShadowDataIndex, int32 ShadowViewIndex,
                               float ViewportW, float ViewportH);
 
         /** Where a meshlet pass draws, as opposed to what. Everything here is per PASS, not per batch. */
         struct FMeshletPassContext
         {
-            EMeshletCullPhase Phase             = EMeshletCullPhase::Resolve;
             uint32            CullViewIndex     = 0;
-            uint32            DeferSrcViewIndex = ~0u;
             int32             ShadowDataIndex   = -1;
             int32             ShadowViewIndex   = 0;
             float             ViewportW         = 0.0f;
@@ -822,7 +801,6 @@ namespace Lumina
                 FGraphicsPipelineKey Key;
                 // Decided here rather than by the caller, so it cannot disagree with the draw below.
                 Key.TS        = MeshletCullTaskShader();
-                Key.TaskPhase = (Ctx.Phase == EMeshletCullPhase::Retest) ? 1u : 0u;
                 // Homogeneous batch -> dead-strip the unused vertex-load path; mixed -> runtime branch (2).
                 Key.SkinnedMode = (Batch.bAnySkinned && Batch.bAnyStatic) ? 2u
                                 : (Batch.bAnySkinned ? 1u : 0u);
@@ -835,7 +813,7 @@ namespace Lumina
                 RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
                 Bound(Batch);
 
-                DrawMeshletBatch(CL, Batch, Ctx.Phase, Ctx.CullViewIndex, Ctx.DeferSrcViewIndex,
+                DrawMeshletBatch(CL, Batch, Ctx.CullViewIndex,
                                  Ctx.ShadowDataIndex, Ctx.ShadowViewIndex, Ctx.ViewportW, Ctx.ViewportH);
             }
         }
@@ -885,10 +863,9 @@ namespace Lumina
         TArray<FSceneBuffer, RHI::kFramesInFlight>          InstanceBufferRing = {};
         TArray<uint32,       RHI::kFramesInFlight>          InstanceBufferLowUsage = {};
         TArray<uint64,       RHI::kFramesInFlight>          InstanceBufferSerial = {};
-        TArray<uint32, RHI::kFramesInFlight>                ViewDrawCursorRingLowUsage = {};
+        TArray<uint32, RHI::kFramesInFlight>                RenderBucketRingLowUsage = {};
         TArray<uint32, RHI::kFramesInFlight>                MeshletDrawListRingLowUsage = {};
         TArray<uint32, RHI::kFramesInFlight>                TaskDrawArgsRingLowUsage = {};
-        TArray<uint32, RHI::kFramesInFlight>                MeshletDeferListRingLowUsage = {};
         TArray<uint32, RHI::kFramesInFlight>                MeshletBlockRingLowUsage = {};
         TArray<uint32, RHI::kFramesInFlight>                MaterialBinTileBitsRingLowUsage = {};
         TArray<uint32, RHI::kFramesInFlight>                MaterialTileListRingLowUsage = {};
@@ -911,7 +888,6 @@ namespace Lumina
         FSceneView*                             CurrentView = nullptr;
         
         uint32                                  CurrentCameraEarlyView = 0;
-        uint32                                  CurrentCameraLateView  = ~0u;
 
         FDelegateHandle                         SwapchainResizedHandle;
 
@@ -980,18 +956,14 @@ namespace Lumina
         // Builds the per-view FSceneRoot transient (shared addrs + view camera/clusters/IBL) -> address.
         uint64 BuildViewSceneRoot(FSceneView& View, uint64 SceneDataAddr);
 
-        TArray<FSceneBuffer, RHI::kFramesInFlight>                          ViewDrawCursorRing = {};
+        // One FRenderBucketGPU per (view, draw). Replaced eight parallel uint arrays indexed by the same
+        // ArgIdx; base, capacity and cursor now travel together so they cannot be paired wrongly.
+        TArray<FSceneBuffer, RHI::kFramesInFlight>                          RenderBucketRing = {};
         
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          MeshletDrawListRing = {};
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          TaskDrawArgsRing = {};
-        TArray<FSceneBuffer, RHI::kFramesInFlight>                          MeshletDeferListRing = {};
-        TArray<FSceneBuffer, RHI::kFramesInFlight>                          DeferOffsetRing = {};
-        TArray<FSceneBuffer, RHI::kFramesInFlight>                          DeferCursorRing = {};
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          SpdCounterRing = {};
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          MeshletBlockRing = {};
-        TArray<FSceneBuffer, RHI::kFramesInFlight>                          ViewBlockCountRing = {};
-        TArray<FSceneBuffer, RHI::kFramesInFlight>                          ViewBlockOffsetRing = {};
-        TArray<FSceneBuffer, RHI::kFramesInFlight>                          BlockCursorRing = {};
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          BlockDispatchArgsRing = {};
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          TotalsRing = {};
         TArray<bool, RHI::kFramesInFlight>                                  TotalsZeroed = {};
@@ -1011,17 +983,13 @@ namespace Lumina
         TArray<FSceneBuffer, RHI::kFramesInFlight>          VisibleInstanceRing = {};
         TArray<uint32,       RHI::kFramesInFlight>          VisibleInstanceLowUsage = {};
         TArray<FSceneBuffer, RHI::kFramesInFlight>          CullCounterRing = {};
-        TArray<FSceneBuffer, RHI::kFramesInFlight>          ViewDrawCountRing = {};
-        TArray<uint32,       RHI::kFramesInFlight>          ViewDrawCountLowUsage = {};
-        TArray<FSceneBuffer, RHI::kFramesInFlight>          ViewDrawOffsetRing = {};
-        TArray<uint32,       RHI::kFramesInFlight>          ViewDrawOffsetLowUsage = {};
+
         // Skinned contribution replicated across views, staged once per frame for the V*D upload.
-        TVector<uint32>                                     ViewDrawSeedScratch;
+        TVector<FRenderBucketGPU>                           BucketSeedScratch;
 
         FSceneBuffer GetVisibleInstances()  const { return VisibleInstanceRing[CurrentFrameSlot]; }
         FSceneBuffer GetCullCounters()      const { return CullCounterRing[CurrentFrameSlot]; }
-        FSceneBuffer GetViewDrawCounts()    const { return ViewDrawCountRing[CurrentFrameSlot]; }
-        FSceneBuffer GetViewDrawOffsets()   const { return ViewDrawOffsetRing[CurrentFrameSlot]; }
+
 
         void DispatchGPUSceneCull(RHI::FCmdListH CL, const FFrameData& Frame);
 
@@ -1039,10 +1007,7 @@ namespace Lumina
 
         float                                               CascadeMinTexels = 1.0f;
 
-        static constexpr uint32                             kTotalsSlots = 7;
-        // DIAGNOSTIC (temporary): per-(view, draw) emit cursors copied alongside Totals.
-        static constexpr uint32                             kDiagCursorSlots = 32;
-        uint32                                              LastDrawCursors[kDiagCursorSlots] = {};
+        static constexpr uint32                             kTotalsSlots = 6;
 
         TArray<RHI::GPUPtr, RHI::kFramesInFlight>           MeshletBoundReadback = {};
         uint32                                              LastDrawListRequired = 0;
@@ -1051,9 +1016,7 @@ namespace Lumina
         uint32                                              LastVisibleInstances = 0;
         uint32                                              LastVisibleOverflowed = 0;
         uint32                                              DrawListCapacity = 0;
-        uint32                                              DeferListCapacity = 0;
         // Totals[6]: deferred meshlets demanded. No overflow companion -- the region layout bounds it.
-        uint32                                              LastDeferRequested = 0;
         // Entries the block list holds, taken from the allocation rather than the size asked for.
         uint32                                              BlockListCapacity = 0;
         uint32                                              LastBlocksRequested = 0;

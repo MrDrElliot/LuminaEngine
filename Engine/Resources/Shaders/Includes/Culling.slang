@@ -287,3 +287,53 @@ bool IsCascadeHZBOccluded(uint CascadeIndex, float3 CenterWS, float RadiusWS, bo
     // i.e. every fragment it would emit fails the Less test.
     return NearZ > PyramidDepth;
 }
+
+// The per-(instance, view) reject, in ONE place. CullInstances sizes each bucket from this and
+// BuildMeshletBlocks appends against that sizing, so the two must agree exactly: a view one accepts and
+// the other rejects spends room another instance was measured into, and whoever appends into the full
+// region is granted nothing and silently never renders.
+//
+// Hi-Z lives here rather than per meshlet. It reads LAST frame's pyramid either way, so testing whole
+// instances keeps the one-frame disocclusion lag from splitting a mesh apart: an object is hidden or it
+// is not, and a partially occluded one still draws in full. Skinned instances are included, because the
+// instance sphere is re-fed each frame and does track the pose (the bind-pose MESHLET bounds do not).
+bool IsInstanceVisibleToView(FCullView View, float3 Center, float Radius, bool bNoCull, bool bCaster)
+{
+    // Outside the NoCull gate: NoCull suppresses visibility culling, not whether the instance casts.
+    if (View.HasFlag(CULL_VIEW_FLAG_CAST_SHADOW_ONLY) && !bCaster)
+    {
+        return false;
+    }
+
+    if (bNoCull)
+    {
+        return true;
+    }
+
+    if (View.HasFlag(CULL_VIEW_FLAG_FRUSTUM) && !FrustumContainsSphere(View.FrustumPlanes, Center, Radius))
+    {
+        return false;
+    }
+
+    if (View.HasFlag(CULL_VIEW_FLAG_CASCADE))
+    {
+        // The cascade's own ortho box barely separates one cascade from the next (the fitted spheres
+        // nest); CascadeFrustum is the camera slice swept toward the sun, which does not.
+        if (!FrustumContainsSphere(Scene().CullData.CascadeFrustum[View.CascadeIndex], Center, Radius))
+        {
+            return false;
+        }
+        if (Scene().CullData.bShadowOcclusionCull != 0u &&
+            IsCascadeHZBOccluded(View.CascadeIndex, Center, Radius))
+        {
+            return false;
+        }
+    }
+
+    if (View.HasFlag(CULL_VIEW_FLAG_OCCLUSION) && IsHiZOccluded(Center, Radius))
+    {
+        return false;
+    }
+
+    return true;
+}

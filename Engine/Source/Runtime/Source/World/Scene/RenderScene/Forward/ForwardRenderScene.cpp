@@ -381,17 +381,11 @@ namespace Lumina
 
         for (uint32 Slot = 0; Slot < RHI::kFramesInFlight; ++Slot)
         {
-            FreeBuffer(ViewDrawCursorRing[Slot]);
+            FreeBuffer(RenderBucketRing[Slot]);
             FreeBuffer(MeshletDrawListRing[Slot]);
             FreeBuffer(TaskDrawArgsRing[Slot]);
-            FreeBuffer(MeshletDeferListRing[Slot]);
-            FreeBuffer(DeferOffsetRing[Slot]);
-            FreeBuffer(DeferCursorRing[Slot]);
             FreeBuffer(SpdCounterRing[Slot]);
             FreeBuffer(MeshletBlockRing[Slot]);
-            FreeBuffer(ViewBlockCountRing[Slot]);
-            FreeBuffer(ViewBlockOffsetRing[Slot]);
-            FreeBuffer(BlockCursorRing[Slot]);
             FreeBuffer(BlockDispatchArgsRing[Slot]);
             FreeBuffer(MaterialBinTileBitsRing[Slot]);
             FreeBuffer(MaterialTileListRing[Slot]);
@@ -400,8 +394,6 @@ namespace Lumina
             // GPU-driven scene per-frame outputs.
             FreeBuffer(VisibleInstanceRing[Slot]);
             FreeBuffer(CullCounterRing[Slot]);
-            FreeBuffer(ViewDrawCountRing[Slot]);
-            FreeBuffer(ViewDrawOffsetRing[Slot]);
             FreeBuffer(TotalsRing[Slot]);
 
             // Raw GPUPtr rather than an FSceneBuffer (CPURead allocation, persistently mapped).
@@ -952,7 +944,6 @@ namespace Lumina
 
         PointAtView(SceneViews[0]);
         CurrentCameraEarlyView = 0u;                                // primary's early/frustum cull view
-        CurrentCameraLateView  = Frame.Views.CameraLateViewIndex;   // primary's late/occlusion cull view
 
         Frame.SceneGlobalData.CullData.PyramidWidth      = (float)GetNamedImage(ENamedImage::DepthPyramid).GetSizeX();
         Frame.SceneGlobalData.CullData.PyramidHeight     = (float)GetNamedImage(ENamedImage::DepthPyramid).GetSizeY();
@@ -1136,7 +1127,7 @@ namespace Lumina
                 }
 
                 {
-                    SCENE_GPU_SCOPE(CL, "VisBuffer Phase 1");
+                    SCENE_GPU_SCOPE(CL, "VisBuffer Pass");
                     VisBufferPass(CL, CurrentCameraEarlyView, /*bClear*/ true);
                 }
 
@@ -1145,29 +1136,13 @@ namespace Lumina
                     TerrainDepthPrePass(CL);
                 }
 
+                // Rebuilt here rather than at the end of the frame so translucency culls against THIS
+                // frame's opaque depth; the opaque cull reads it next frame.
                 {
-                    SCENE_GPU_SCOPE(CL, "Depth Pyramid (Mid)");
+                    SCENE_GPU_SCOPE(CL, "Depth Pyramid");
                     DepthPyramidPass(CL);
                 }
 
-                BuildDeferDrawArgs(CL, CurrentCameraEarlyView, CurrentCameraLateView, 1u);
-
-                {
-                    SCENE_GPU_SCOPE(CL, "VisBuffer Phase 2");
-                    VisBufferPass(CL, CurrentCameraLateView, /*bClear*/ false);
-                }
-
-                // DIAGNOSTIC (temporary): the per-(view, draw) emit cursors, copied after the geometry
-                // that bumps them. Unlike Totals these are what the task cull actually EMITTED.
-                if (MeshletBoundReadback[CurrentFrameSlot] != 0 && GetViewDrawCursors())
-                {
-                    Barriers::RasterToRead(CL);
-                    RHI::CmdMemcpy(CL,
-                        MeshletBoundReadback[CurrentFrameSlot] + sizeof(uint32) * kTotalsSlots,
-                        GetViewDrawCursors().GetAddress(),
-                        sizeof(uint32) * Math::Min<uint32>(kDiagCursorSlots,
-                            (uint32)(GetViewDrawCursors().GetSize() / sizeof(uint32))));
-                }
                 
                 if (!bAsyncCompute)
                 {
@@ -1196,19 +1171,6 @@ namespace Lumina
 
                 CL = OpenSegmentCommandList();
                 RHI::CmdBeginMarker(CL, "RenderView Shading");
-
-                {
-                    SCENE_GPU_SCOPE(CL, "Cascade Pyramid (Mid)");
-                    CascadePyramidPass(CL);
-                }
-
-                BuildDeferDrawArgs(CL, Frame.Views.CascadeViewBase, Frame.Views.CascadeLateViewBase,
-                                   (uint32)NumCascades);
-
-                {
-                    SCENE_GPU_SCOPE(CL, "Cascaded Shadows Phase 2");
-                    CascadedShowPass(CL, Frame.Views.CascadeLateViewBase);
-                }
 
                 {
                     SCENE_GPU_SCOPE(CL, "Cascade Pyramid");
@@ -1417,7 +1379,6 @@ namespace Lumina
                     PointAtView(View);
 
                     CurrentCameraEarlyView = Capture.CameraViewIndex;
-                    CurrentCameraLateView  = ~0u;
 
                     CurrentSceneRootAddr = BuildViewSceneRoot(View,
                         RHI::Core::CopyTransient(MakeSecondaryViewGlobals(Capture.SceneGlobalData)));
@@ -1518,7 +1479,6 @@ namespace Lumina
 
             PointAtView(View);
             CurrentCameraEarlyView = Bake.FaceCullViews[Face];
-            CurrentCameraLateView  = ~0u;   // frustum-only, no late re-test
 
             CurrentSceneRootAddr = BuildViewSceneRoot(View,
                 RHI::Core::CopyTransient(MakeSecondaryViewGlobals(Bake.FaceGlobals[Face])));
@@ -1619,7 +1579,6 @@ namespace Lumina
 
         PointAtView(SceneViews[0]);
         CurrentCameraEarlyView = 0u;
-        CurrentCameraLateView  = Frame.Views.CameraLateViewIndex;
 
         CompletedProbeBakes.fetch_or(1u << (uint32)Bake.BakingProbe, std::memory_order_acq_rel);
     }
@@ -1809,6 +1768,7 @@ namespace Lumina
         Out.SurfaceDescCount        = ScenePrimitives.GetSurfaceDescCount();
         Out.bSurfaceDescsChanged    = ScenePrimitives.AreSurfaceDescsDirty() || Out.bFull;
         Out.MaxSurfaceDescMeshlets  = ScenePrimitives.GetMaxSurfaceDescMeshlets();
+        Out.WorstCaseBlocksPerView  = ScenePrimitives.GetWorstCaseBlocksPerView();
 
         // Channel consumed: the decisions above are now owned by this frame.
         ScenePrimitives.ClearDirtyInstanceSlots();
@@ -3115,36 +3075,6 @@ namespace Lumina
 
         UpdateMeshletBoundFeedback(CurrentFrameSlot);
 
-        // DIAGNOSTIC (temporary): where a missing mesh died. Values lag by kFramesInFlight.
-        //   visible == 0                 -> CullInstances rejected everything
-        //   visible > 0, blocks == 0     -> survivors carry no meshlets (LOD counts / geometry flag)
-        //   blocks > 0, drawlist == 0    -> the task cull rejected every meshlet
-        //   drawlist > 0, still missing  -> raster / resolve, not the cull
-        {
-            static uint32 DiagCounter = 0;
-            if ((DiagCounter++ % 30u) == 0u)
-            {
-                FString Emitted;
-                const uint32 NumDrawsDiag = Math::Max(RenderFrame->Views.NumDrawsPerView, 1u);
-                for (uint32 v = 0; v < Math::Min(kDiagCursorSlots / NumDrawsDiag, 8u); ++v)
-                {
-                    uint32 RowTotal = 0;
-                    for (uint32 d = 0; d < NumDrawsDiag; ++d)
-                    {
-                        RowTotal += LastDrawCursors[v * NumDrawsDiag + d];
-                    }
-                    Emitted += FString(v == 0 ? "" : " ") + eastl::to_string(RowTotal).c_str();
-                }
-
-                LOG_DISPLAY("Cull: {} retained -> {} visible | reserved: {} blocks / {} draw | "
-                            "EMITTED per view [early={}]: {}",
-                            ScenePrimitives.GetRetainedSlotCount(), LastVisibleInstances,
-                            LastBlocksRequested, LastDrawListRequired,
-                            CurrentCameraEarlyView, Emitted.c_str());
-            }
-        }
-
-
         const uint32 PredictedDrawList = Math::Max(LastDrawListRequired + LastDrawListRequired / 2u, 65536u);
         const SIZE_T MeshletDrawListSize = Math::Max<SIZE_T>(
             sizeof(uint32) * 2,
@@ -3157,10 +3087,6 @@ namespace Lumina
             sizeof(RHI::FDrawMeshTasksIndirectArguments),
             NumArgSlots * sizeof(RHI::FDrawMeshTasksIndirectArguments));
 
-        const SIZE_T DeferListSize = Math::Max<SIZE_T>(
-            sizeof(uint32) * 2,
-            (SIZE_T)Math::Max(LastDeferRequested, 65536u) * sizeof(uint32) * 2);
-
         ResizeBufferIfNeeded(PreSkinnedVerticesBuffer, PreSkinnedSize, 1.2f, PreSkinnedVerticesLowUsage);
         {
             const uint8 Slot = CurrentFrameSlot;
@@ -3172,42 +3098,6 @@ namespace Lumina
                 RHI::CmdMemset(CL, MeshletDrawListRing[Slot].Ptr, MeshletDrawListRing[Slot].GetSize(), 0u);
             }
             DrawListCapacity = (uint32)Math::Min<uint64>(MeshletDrawListRing[Slot].GetSize() / (sizeof(uint32) * 2), 0xFFFFFFFFull);
-
-            if (LastVisibleOverflowed != 0u)
-            {
-                static uint32 InstanceOverflowLogCounter = 0;
-                if ((InstanceOverflowLogCounter++ % 60u) == 0u)
-                {
-                    LOG_WARN("RenderScene: visible-instance buffer too small -- {} instances requested, "
-                             "capacity {}. Whole instances were dropped; the next allocation grows.",
-                             LastVisibleInstances, FrameVisibleInstanceCapacity);
-                }
-            }
-
-            if (LastDrawListOverflowed != 0u)
-            {
-                static uint32 OverflowLogCounter = 0;
-                if ((OverflowLogCounter++ % 60u) == 0u)
-                {
-                    LOG_WARN("RenderScene: meshlet draw list too small -- required {} entries, allocation holds {} "
-                             "({} views x {} draws). Meshlets were dropped; the next allocation grows.",
-                             LastDrawListRequired, DrawListCapacity, NumCullViews, NumDraws);
-                }
-            }
-
-            if (LastBlocksOverflowed != 0u)
-            {
-                static uint32 BlockOverflowLogCounter = 0;
-                if ((BlockOverflowLogCounter++ % 60u) == 0u)
-                {
-                    LOG_ERROR("RenderScene: meshlet cull block list came up short -- {} blocks measured, "
-                              "capacity {}. Slices of instances are going unculled this frame.",
-                              LastBlocksRequested, BlockListCapacity);
-                }
-            }
-            ResizeBufferIfNeeded(MeshletDeferListRing[Slot], DeferListSize, 1.2f, MeshletDeferListRingLowUsage[Slot]);
-            // From the allocation we got, not the size asked for -- the shader bounds its append with this.
-            DeferListCapacity = (uint32)Math::Min<uint64>(MeshletDeferListRing[Slot].GetSize() / (sizeof(uint32) * 2), 0xFFFFFFFFull);
 
             const uint32 NumSkinnedHead = (uint32)Instances.size();
             const uint32 PredictedVisible = LastVisibleInstances + LastVisibleInstances / 2u;
@@ -3227,12 +3117,55 @@ namespace Lumina
                                  (SIZE_T)FrameVisibleInstanceCapacity * sizeof(FGPUInstance), 1.25f,
                                  VisibleInstanceLowUsage[Slot]);
 
-            const uint32 PredictedBlocks  = Math::Max(LastBlocksRequested + LastBlocksRequested / 2u, 4096u);
+            // An exact bound, not a prediction: every active instance can contribute its largest LOD to every
+            // view that builds blocks, and the CPU knows both numbers without a readback. Sizing this from
+            // the lagged readback meant a mass mesh load overflowed by 11x before the feedback even arrived.
+            // Skinned instances are CPU-fed rather than retained, so their blocks are seeded, not counted.
+            uint32 SkinnedBlocksPerView = 0;
+            for (uint32 Seed : Frame.Geometry.BatchBlockSeed)
+            {
+                SkinnedBlocksPerView += Seed;
+            }
+
+            const uint64 WorstCaseBlocks =
+                (uint64)(Frame.Geometry.RetainedUpload.WorstCaseBlocksPerView + SkinnedBlocksPerView)
+                * (uint64)Math::Max((uint32)CullViews.size(), 1u);
+
             const SIZE_T MeshletBlockSize = Math::Max<SIZE_T>(
                 sizeof(uint32) * 2,
-                (SIZE_T)PredictedBlocks * sizeof(uint32) * 2);
+                (SIZE_T)Math::Max<uint64>(WorstCaseBlocks, 4096ull) * sizeof(uint32) * 2);
             ResizeBufferIfNeeded(MeshletBlockRing[Slot], MeshletBlockSize, 1.2f, MeshletBlockRingLowUsage[Slot]);
             BlockListCapacity = (uint32)Math::Min<uint64>(MeshletBlockRing[Slot].GetSize() / (sizeof(uint32) * 2), 0xFFFFFFFFull);
+
+            // Reported after every resize above, and worded for what the two numbers actually are: the
+            // requirement is what the frame kFramesInFlight ago needed, the capacity is what this frame
+            // grew to. Printing them either side of a resize made an overflow read as a false alarm.
+            const auto LogOverflow = [](const char* What, uint32 Needed, uint32 GrownTo)
+            {
+                LOG_WARN("RenderScene: {} overflowed -- {} needed, capacity now {}. Geometry was dropped "
+                         "that frame; this clears once the larger allocation cycles in.",
+                         What, Needed, GrownTo);
+            };
+
+            static uint32 OverflowLogCounter = 0;
+            if (LastVisibleOverflowed || LastDrawListOverflowed || LastBlocksOverflowed)
+            {
+                if ((OverflowLogCounter++ % 60u) == 0u)
+                {
+                    if (LastVisibleOverflowed)  { LogOverflow("visible-instance buffer", LastVisibleInstances, FrameVisibleInstanceCapacity); }
+                    if (LastDrawListOverflowed) { LogOverflow("meshlet draw list",       LastDrawListRequired, DrawListCapacity); }
+
+                    // Not a spike the allocation grows past: the block list is sized from an exact bound,
+                    // so reaching this means the bound itself is wrong.
+                    if (LastBlocksOverflowed)
+                    {
+                        LOG_ERROR("RenderScene: meshlet cull block list overflowed at {} blocks against a "
+                                  "capacity of {}. That list is sized from an exact CPU bound, so this is a "
+                                  "bug in FScenePrimitiveSet::RefreshWorstCaseBlocks, not a spike.",
+                                  LastBlocksRequested, BlockListCapacity);
+                    }
+                }
+            }
         }
 
         SceneGlobalData.CullData.MeshletDrawListCapacity = DrawListCapacity;
@@ -4524,8 +4457,6 @@ namespace Lumina
         auto& PointShadowCullViewBases = Frame.Views.PointShadowCullViewBases;
         auto& SpotShadowCullViewBases  = Frame.Views.SpotShadowCullViewBases;
         uint32& CascadeViewBase        = Frame.Views.CascadeViewBase;
-        uint32& CascadeLateViewBase    = Frame.Views.CascadeLateViewBase;
-        uint32& CameraLateViewIndex    = Frame.Views.CameraLateViewIndex;
 
         const uint32 NumDraws = Frame.Views.NumDrawsPerView;
 
@@ -4566,8 +4497,6 @@ namespace Lumina
         CullViews.reserve(NumViews);
 
         CascadeViewBase = ~0u;
-        CascadeLateViewBase = ~0u;
-        CameraLateViewIndex = ~0u;
         PointShadowCullViewBases.clear();
         PointShadowCullViewBases.reserve(PackedShadows[(uint32)ELightType::Point].size());
         SpotShadowCullViewBases.clear();
@@ -4606,11 +4535,6 @@ namespace Lumina
                 // Published by ProcessDirectionalLight from the active sun, already clamped.
                 const float MinTexels = CascadeMinTexels;
 
-                const uint32 CascadeLateFlags =
-                    ECullViewFlags::PhaseLate |
-                    ECullViewFlags::CastShadowOnly |
-                    ECullViewFlags::Cascade;
-
                 CascadeViewBase = (uint32)CullViews.size();
                 for (int32 c = 0; c < NumCascades; ++c)
                 {
@@ -4623,11 +4547,6 @@ namespace Lumina
                              (uint32)c, MinTexels * TexelWorld);
                 }
 
-                CascadeLateViewBase = (uint32)CullViews.size();
-                for (int32 c = 0; c < NumCascades; ++c)
-                {
-                    PushView(SunShadow.ViewProjection[c], ViewVolume.GetViewPosition(), CascadeLateFlags, (uint32)c);
-                }
             }
         }
 
@@ -4671,16 +4590,6 @@ namespace Lumina
 
             SpotShadowCullViewBases.push_back((uint32)CullViews.size());
             PushView(ShadowData.ViewProjection[0], Light.Position, SpotFlags);
-        }
-
-        {
-            const FMatrix4 CameraVP = ViewVolume.GetProjectionMatrix() * ViewVolume.GetViewMatrix();
-            const uint32 CameraLateFlags =
-                ECullViewFlags::Occlusion |
-                ECullViewFlags::PhaseLate;
-
-            CameraLateViewIndex = (uint32)CullViews.size();
-            PushView(CameraVP, ViewVolume.GetViewPosition(), CameraLateFlags);
         }
 
         for (FFrameData::FCaptureViewData& Capture : Frame.Views.CaptureViews)
@@ -5287,7 +5196,6 @@ namespace Lumina
         Frame.Primitives.SolidBatches.clear();
         Frame.Views.CullViews.clear();
         Frame.Views.CaptureViews.clear();
-        Frame.Views.CameraLateViewIndex = ~0u;
         Memory::Memzero(&Frame.Lighting.LightData, sizeof(Frame.Lighting.LightData));
         Frame.Lighting.ShadowDataCount.store(0, std::memory_order_release);
         ShadowAtlas.FreeTiles();
@@ -5332,55 +5240,6 @@ namespace Lumina
         RHI::CmdClearTexture(CL, GetNamedImage(ENamedImage::Cascade).Texture, ShadowClear);
 
         Barriers::TransferToAll(CL);
-    }
-
-    void FForwardRenderScene::BuildDeferDrawArgs(RHI::FCmdListH CL, uint32 EarlyViewBase, uint32 LateViewBase,
-                                                 uint32 NumLateViews)
-    {
-        if (EarlyViewBase == ~0u || LateViewBase == ~0u || NumLateViews == 0u)
-        {
-            return;
-        }
-
-        const uint32 NumDraws = RenderFrame->Views.NumDrawsPerView;
-        if (NumDraws == 0u)
-        {
-            return;
-        }
-
-        static const FShaderEntry* const ArgsShader = FShaderLibrary::Get("BuildDeferDrawArgs.slang");
-        if (!ArgsShader)
-        {
-            return;
-        }
-
-        SCENE_GPU_SCOPE(CL, "Build Defer Draw Args");
-
-        struct FBuildDeferDrawArgsPC
-        {
-            uint32 NumDraws;
-            uint32 LateViewBaseArg;
-            uint32 EarlyViewBaseArg;
-            uint32 NumLateViewsArg;
-            uint64 DeferCursorsAddr;
-            uint64 ViewDrawCountsAddr;
-            uint64 OutTaskDrawArgsAddr;
-        } PC = {};
-        static_assert(sizeof(FBuildDeferDrawArgsPC) == 40, "FBuildDeferDrawArgsPC must match BuildDeferDrawArgs.slang.");
-
-        PC.NumDraws            = NumDraws;
-        PC.LateViewBaseArg     = LateViewBase;
-        PC.EarlyViewBaseArg    = EarlyViewBase;
-        PC.NumLateViewsArg     = NumLateViews;
-        PC.DeferCursorsAddr    = GetDeferCursors().GetAddress();
-        PC.ViewDrawCountsAddr  = GetViewDrawCounts().GetAddress();
-        PC.OutTaskDrawArgsAddr = GetTaskDrawArgs().GetAddress();
-
-        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(ArgsShader));
-        const uint32 Total = NumLateViews * NumDraws;
-        RHI::CmdDispatch(CL, MakeArgs(PC), RenderUtils::GetGroupCount(Total, 64u), 1u, 1u);
-
-        Barriers::ComputeToIndirect(CL);
     }
 
     void FForwardRenderScene::SkinningPass(RHI::FCmdListH CL)
@@ -5537,11 +5396,11 @@ namespace Lumina
         {
             const RHI::GPUPtr DrawListAddr  = GetMeshletDrawList().GetAddress();
             const RHI::GPUPtr InstancesAddr = SceneRootShared.Instances;
-            const RHI::GPUPtr OffsetsAddr   = GetViewDrawOffsets().GetAddress();
+            const RHI::GPUPtr BucketsAddr   = GetRenderBuckets().GetAddress();
 
             const char* MissingBuffer = DrawListAddr == 0  ? "MeshletDrawList"
                                       : InstancesAddr == 0 ? "Instances (visible-instance ring)"
-                                      : OffsetsAddr == 0   ? "ViewDrawOffsets"
+                                      : BucketsAddr == 0   ? "RenderBuckets"
                                                            : nullptr;
             if (MissingBuffer != nullptr)
             {
@@ -5598,20 +5457,8 @@ namespace Lumina
         DepthDesc.DepthTest = RHI::EOp::Greater;
         RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(DepthDesc));
 
-        const bool   bLatePhase = (CurrentCameraLateView != ~0u) && (ViewIndex == CurrentCameraLateView);
-        const uint32 DeferSrc   = bLatePhase ? CurrentCameraEarlyView : ~0u;
-        // DIAGNOSTIC (temporary): forcing Resolve stops phase 0 deferring, so nothing reaches the phase-1
-        // re-test and the whole defer path is bypassed. Restore the Defer branch below to undo.
-        //   const EMeshletCullPhase Phase = bLatePhase        ? EMeshletCullPhase::Retest
-        //                                 : (CurrentCameraLateView != ~0u) ? EMeshletCullPhase::Defer
-        //                                                                  : EMeshletCullPhase::Resolve;
-        const EMeshletCullPhase Phase = bLatePhase ? EMeshletCullPhase::Retest
-                                                   : EMeshletCullPhase::Resolve;
-
         FMeshletPassContext Ctx;
-        Ctx.Phase             = Phase;
         Ctx.CullViewIndex     = ViewIndex;
-        Ctx.DeferSrcViewIndex = DeferSrc;
         Ctx.ViewportW         = (float)Extent.x;
         Ctx.ViewportH         = (float)Extent.y;
 
@@ -5826,12 +5673,11 @@ namespace Lumina
     }
 
     bool FForwardRenderScene::BindShadowBatchPipeline(RHI::FCmdListH CL, const FMeshDrawCommand& Batch,
-                                                      const FShaderEntry* PixelShader, bool bLatePhase)
+                                                      const FShaderEntry* PixelShader)
     {
         FGraphicsPipelineKey Key;
         Key.TS          = MeshletCullTaskShader();
         Key.bTaskShadow = true;
-        Key.TaskPhase   = bLatePhase ? 1u : 0u;
         Key.MS          = Batch.MeshShaderShadow;
         Key.PS          = PixelShader;
         Key.DepthFormat = EFormat::D32;
@@ -5843,16 +5689,15 @@ namespace Lumina
     }
 
     void FForwardRenderScene::DrawShadowBatch(RHI::FCmdListH CL, const FMeshDrawCommand& Batch, bool bUseMesh,
-        EMeshletCullPhase Phase, uint32 CullViewIndex, uint32 DeferSrcViewIndex,
-        int32 ShadowDataIndex, int32 ShadowViewIndex, const FUIntVector2& ViewportExtent)
+        uint32 CullViewIndex, int32 ShadowDataIndex, int32 ShadowViewIndex,
+        const FUIntVector2& ViewportExtent)
     {
         if (!bUseMesh)
         {
             return;
         }
 
-        DrawMeshletBatch(CL, Batch, Phase, CullViewIndex, DeferSrcViewIndex,
-                         ShadowDataIndex, ShadowViewIndex,
+        DrawMeshletBatch(CL, Batch, CullViewIndex, ShadowDataIndex, ShadowViewIndex,
                          (float)ViewportExtent.x, (float)ViewportExtent.y);
     }
 
@@ -5925,8 +5770,7 @@ namespace Lumina
                     RHI::CmdSetViewport(CL, TileRect);
                     RHI::CmdSetScissor(CL, TileRect);
 
-                    DrawShadowBatch(CL, Batch, bUseMesh, EMeshletCullPhase::Resolve,
-                                    ViewBase + (uint32)Face, /*DeferSrc*/ ~0u,
+                    DrawShadowBatch(CL, Batch, bUseMesh, ViewBase + (uint32)Face,
                                     LightShadow.ShadowDataIndex, Face,
                                     FUIntVector2((uint32)TileSize, (uint32)TileSize));
                 }
@@ -6004,8 +5848,7 @@ namespace Lumina
                 RHI::CmdSetScissor(CL, TileRect);
 
                 // Spotlights only use ViewProjection[0], so the shadow ViewIndex is 0.
-                DrawShadowBatch(CL, Batch, bUseMesh, EMeshletCullPhase::Resolve, ViewIndex,
-                                /*DeferSrc*/ ~0u, Shadow.ShadowDataIndex, 0,
+                DrawShadowBatch(CL, Batch, bUseMesh, ViewIndex, Shadow.ShadowDataIndex, 0,
                                 FUIntVector2((uint32)TileSize, (uint32)TileSize));
             }
         }
@@ -6055,14 +5898,10 @@ namespace Lumina
 
         const int32 SunShadowDataIndex = LightData.Lights[0].ShadowDataIndex;
 
-        const bool   bLatePhase    = (Frame.Views.CascadeLateViewBase != ~0u)
-                                  && (CascadeViewBase == Frame.Views.CascadeLateViewBase);
-        const uint32 EarlyViewBase = Frame.Views.CascadeViewBase;
-
         for (uint32 OpaqueIdx : OpaqueDrawList)
         {
             const FMeshDrawCommand& Batch = DrawCommands[OpaqueIdx];
-            const bool bUseMesh = BindShadowBatchPipeline(CL, Batch, nullptr, bLatePhase);
+            const bool bUseMesh = BindShadowBatchPipeline(CL, Batch, nullptr);
 
             for (uint32 c = 0; c < (uint32)NumCascades; ++c)
             {
@@ -6075,10 +5914,7 @@ namespace Lumina
                 RHI::CmdSetScissor(CL, TileRect);
 
                 // Cascade is depth-only (no pixel shader); ViewIndex indexes the cascade's ViewProjection.
-                DrawShadowBatch(CL, Batch, bUseMesh,
-                                bLatePhase ? EMeshletCullPhase::Retest : EMeshletCullPhase::Defer,
-                                CascadeViewBase + c,
-                                bLatePhase ? (EarlyViewBase + c) : ~0u, SunShadowDataIndex, (int32)c,
+                DrawShadowBatch(CL, Batch, bUseMesh, CascadeViewBase + c, SunShadowDataIndex, (int32)c,
                                 FUIntVector2((uint32)TileW, (uint32)TileW));
             }
         }
@@ -8379,7 +8215,6 @@ namespace Lumina
         RevealBlend.DstColorFactor = RHI::EFactor::OneMinusSrcColor;
 
         FMeshletPassContext Ctx;
-        Ctx.Phase         = EMeshletCullPhase::Resolve;
         Ctx.CullViewIndex = CurrentCameraEarlyView;
         Ctx.ViewportW     = (float)Extent.x;
         Ctx.ViewportH     = (float)Extent.y;
@@ -8539,7 +8374,6 @@ namespace Lumina
 
         // Resolve for the same reason as the WBOIT pass above: recorded after the mid pyramid rebuild.
         FMeshletPassContext Ctx;
-        Ctx.Phase         = EMeshletCullPhase::Resolve;
         Ctx.CullViewIndex = CurrentCameraEarlyView;
         Ctx.ViewportW     = (float)Extent.x;
         Ctx.ViewportH     = (float)Extent.y;
@@ -10111,20 +9945,12 @@ namespace Lumina
         {
             MeshletDrawListRing[Slot] = CreateSceneBuffer(sizeof(uint32) * 2);
 
-            ViewDrawCursorRing[Slot] = CreateSceneBuffer(sizeof(uint32));
-
-            MeshletDeferListRing[Slot] = CreateSceneBuffer(sizeof(uint32) * 2);
-
-            // Per-(view, draw) defer layout. Sized for real in CompileDrawCommands_Render.
-            DeferOffsetRing[Slot] = CreateSceneBuffer(sizeof(uint32));
-            DeferCursorRing[Slot] = CreateSceneBuffer(sizeof(uint32));
+            // Per-(view, draw) cull layout. Sized for real in CompileDrawCommands_Render.
+            RenderBucketRing[Slot] = CreateSceneBuffer(sizeof(FRenderBucketGPU));
 
             SpdCounterRing[Slot] = CreateSceneBuffer(sizeof(uint32));
 
             MeshletBlockRing[Slot] = CreateSceneBuffer(sizeof(uint32) * 2);
-            ViewBlockCountRing[Slot]  = CreateSceneBuffer(sizeof(uint32));
-            ViewBlockOffsetRing[Slot] = CreateSceneBuffer(sizeof(uint32));
-            BlockCursorRing[Slot]     = CreateSceneBuffer(sizeof(uint32));
             // Fixed size: one grid, rewritten by BuildDrawPrefix every frame.
             BlockDispatchArgsRing[Slot] = CreateSceneBuffer(sizeof(RHI::FDispatchIndirectArguments));
 
@@ -10134,17 +9960,15 @@ namespace Lumina
             // GPU-driven scene per-frame outputs. Sized for real in CompileDrawCommands_Render.
             VisibleInstanceRing[Slot]       = CreateSceneBuffer(sizeof(FGPUInstance));
             CullCounterRing[Slot]           = CreateSceneBuffer(sizeof(uint32) * 2);
-            ViewDrawCountRing[Slot]         = CreateSceneBuffer(sizeof(uint32));
-            ViewDrawOffsetRing[Slot]        = CreateSceneBuffer(sizeof(uint32));
 
             if (MeshletBoundReadback[Slot] == 0)
             {
-                MeshletBoundReadback[Slot] = RHI::Malloc(sizeof(uint32) * (kTotalsSlots + kDiagCursorSlots),
+                MeshletBoundReadback[Slot] = RHI::Malloc(sizeof(uint32) * kTotalsSlots,
                                                          RHI::kDefaultAlign, RHI::EMemoryType::CPURead);
 
                 if (void* Host = RHI::ToHost(MeshletBoundReadback[Slot]))
                 {
-                    Memory::Memzero(Host, sizeof(uint32) * (kTotalsSlots + kDiagCursorSlots));
+                    Memory::Memzero(Host, sizeof(uint32) * kTotalsSlots);
                 }
             }
         }
@@ -10157,7 +9981,7 @@ namespace Lumina
         {
             return;
         }
-        static_assert(FForwardRenderScene::kTotalsSlots >= 7, "Totals[6] is read below.");
+        static_assert(FForwardRenderScene::kTotalsSlots >= 6, "Totals[5] is read below.");
         if (const uint32* Mapped = static_cast<const uint32*>(RHI::ToHost(Readback)))
         {
             LastVisibleInstances     = Mapped[0];
@@ -10166,11 +9990,6 @@ namespace Lumina
             LastDrawListOverflowed   = Mapped[3];
             LastBlocksRequested      = Mapped[4];
             LastBlocksOverflowed     = Mapped[5];
-            LastDeferRequested       = Mapped[6];
-            for (uint32 i = 0; i < kDiagCursorSlots; ++i)
-            {
-                LastDrawCursors[i] = Mapped[kTotalsSlots + i];
-            }
         }
     }
 
@@ -10301,16 +10120,8 @@ namespace Lumina
         const uint32 VisibleCapacity = FrameVisibleInstanceCapacity;
         const uint32 SeedViews       = Math::Max(NumCullViews, 1u);
         const SIZE_T ViewDrawEntries = (SIZE_T)SeedViews * (SIZE_T)NumBatches;
-        ResizeBufferIfNeeded(ViewDrawCountRing[Slot],
-                             ViewDrawEntries * sizeof(uint32), 1.5f, ViewDrawCountLowUsage[Slot]);
-        ResizeBufferIfNeeded(ViewDrawOffsetRing[Slot],
-                             ViewDrawEntries * sizeof(uint32), 1.5f, ViewDrawOffsetLowUsage[Slot]);
-        for (FSceneBuffer* Ring : { &ViewBlockCountRing[Slot], &ViewBlockOffsetRing[Slot], &BlockCursorRing[Slot],
-                                    &DeferOffsetRing[Slot], &DeferCursorRing[Slot], &ViewDrawCursorRing[Slot] })
-        {
-            uint32 Unused = 0;
-            ResizeBufferIfNeeded(*Ring, ViewDrawEntries * sizeof(uint32), 1.5f, Unused);
-        }
+        ResizeBufferIfNeeded(RenderBucketRing[Slot],
+                             ViewDrawEntries * sizeof(FRenderBucketGPU), 1.5f, RenderBucketRingLowUsage[Slot]);
         ResizeBufferIfNeeded(TaskDrawArgsRing[Slot],
                              ViewDrawEntries * sizeof(RHI::FDrawMeshTasksIndirectArguments), 1.5f,
                              TaskDrawArgsRingLowUsage[Slot]);
@@ -10322,48 +10133,27 @@ namespace Lumina
         }
 
         {
-            SCENE_GPU_SCOPE(CL, "Reset Cull Cursors");
-            for (const FSceneBuffer& Cursors : { GetViewDrawCursors(), GetBlockCursors(), GetDeferCursors() })
-            {
-                if (Cursors)
-                {
-                    RHI::CmdMemset(CL, Cursors.Ptr, Cursors.Size, 0u);
-                }
-            }
-        }
-
-        {
             const uint32 Counters[2] = { NumSkinned, 0u };   // {append cursor, overflow}
             WriteBuffer(CL, GetCullCounters().GetAddress(), Counters, sizeof(Counters));
 
-            const SIZE_T SeedCount = Math::Min<SIZE_T>(NumBatches, Frame.Geometry.BatchMeshletSeed.size());
+            // The whole bucket array in one write: capacities carry the CPU's skinned-batch seeds and every
+            // base and cursor starts at zero. This replaced a cursor memset plus two separate seed uploads.
+            const SIZE_T SeedCount = Math::Min<SIZE_T>(
+                Math::Min<SIZE_T>(NumBatches, Frame.Geometry.BatchMeshletSeed.size()),
+                Frame.Geometry.BatchBlockSeed.size());
 
-            ViewDrawSeedScratch.assign(ViewDrawEntries, 0u);
+            BucketSeedScratch.assign(ViewDrawEntries, FRenderBucketGPU{});
             for (uint32 v = 0; v < SeedViews; ++v)
             {
                 for (SIZE_T d = 0; d < SeedCount; ++d)
                 {
-                    ViewDrawSeedScratch[(SIZE_T)v * NumBatches + d] = Frame.Geometry.BatchMeshletSeed[d];
+                    FRenderBucketGPU& Bucket = BucketSeedScratch[(SIZE_T)v * NumBatches + d];
+                    Bucket.DrawCapacity  = Frame.Geometry.BatchMeshletSeed[d];
+                    Bucket.BlockCapacity = Frame.Geometry.BatchBlockSeed[d];
                 }
             }
-            WriteBuffer(CL, GetViewDrawCounts().GetAddress(),
-                        ViewDrawSeedScratch.data(), ViewDrawSeedScratch.size() * sizeof(uint32));
-
-            const SIZE_T BlockSeedCount = Math::Min<SIZE_T>(NumBatches, Frame.Geometry.BatchBlockSeed.size());
-            ViewDrawSeedScratch.assign(ViewDrawEntries, 0u);
-            for (uint32 v = 0; v < SeedViews; ++v)
-            {
-                if (v < Frame.Views.CullViews.size() && (GetCullViewFlags(Frame.Views.CullViews[v]) & ECullViewFlags::PhaseLate))
-                {
-                    continue;
-                }
-                for (SIZE_T d = 0; d < BlockSeedCount; ++d)
-                {
-                    ViewDrawSeedScratch[(SIZE_T)v * NumBatches + d] = Frame.Geometry.BatchBlockSeed[d];
-                }
-            }
-            WriteBuffer(CL, GetViewBlockCounts().GetAddress(),
-                        ViewDrawSeedScratch.data(), ViewDrawSeedScratch.size() * sizeof(uint32));
+            WriteBuffer(CL, GetRenderBuckets().GetAddress(),
+                        BucketSeedScratch.data(), BucketSeedScratch.size() * sizeof(FRenderBucketGPU));
         }
 
         Barriers::TransferToCompute(CL);
@@ -10388,11 +10178,10 @@ namespace Lumina
                 uint64 SurfaceDescsAddr;
                 uint64 OutInstancesAddr;
                 uint64 OutInstanceCountAddr;
-                uint64 OutViewDrawCountAddr;
-                uint64 OutViewBlockCountAddr;
+                uint64 OutBucketsAddr;
                 uint64 OutOverflowFlagAddr;
             };
-            static_assert(sizeof(FCullInstancesPC) == 96, "FCullInstancesPC must match CullInstances.slang.");
+            static_assert(sizeof(FCullInstancesPC) == 88, "FCullInstancesPC must match CullInstances.slang.");
 
             FCullInstancesPC PC = {};
             PC.NumRetained              = RetainedSlots;
@@ -10407,8 +10196,7 @@ namespace Lumina
             PC.SurfaceDescsAddr         = SurfaceDescBuffer.GetAddress();
             PC.OutInstancesAddr         = VisibleInstanceRing[Slot].GetAddress();
             PC.OutInstanceCountAddr     = GetCullCounters().GetAddress();
-            PC.OutViewDrawCountAddr     = GetViewDrawCounts().GetAddress();
-            PC.OutViewBlockCountAddr    = GetViewBlockCounts().GetAddress();
+            PC.OutBucketsAddr           = GetRenderBuckets().GetAddress();
             PC.OutOverflowFlagAddr      = GetCullCounters().GetAddress() + sizeof(uint32);
 
             RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(CullInstancesShader));
@@ -10431,18 +10219,13 @@ namespace Lumina
                 uint32 MaxVisibleInstances;
                 uint32 DrawListCapacityArg;
                 uint32 BlockListCapacityArg;
-                uint32 DeferListCapacityArg;
-                uint64 ViewDrawCountsAddr;
-                uint64 ViewBlockCountsAddr;
+                uint64 BucketsAddr;
                 uint64 InstanceCountAddr;
-                uint64 OutViewDrawOffsetsAddr;
-                uint64 OutViewBlockOffsetsAddr;
-                uint64 OutDeferOffsetsAddr;
                 uint64 OutTaskDrawArgsAddr;
                 uint64 OutTotalsAddr;
                 uint64 OutBlockDispatchArgsAddr;
             };
-            static_assert(sizeof(FBuildDrawPrefixPC) == 96, "FBuildDrawPrefixPC must match BuildDrawPrefix.slang.");
+            static_assert(sizeof(FBuildDrawPrefixPC) == 64, "FBuildDrawPrefixPC must match BuildDrawPrefix.slang.");
 
             FBuildDrawPrefixPC PC = {};
             PC.NumViews                 = SeedViews;
@@ -10450,13 +10233,8 @@ namespace Lumina
             PC.MaxVisibleInstances      = VisibleCapacity;
             PC.DrawListCapacityArg      = DrawListCapacity;
             PC.BlockListCapacityArg     = BlockListCapacity;
-            PC.DeferListCapacityArg     = DeferListCapacity;
-            PC.ViewDrawCountsAddr       = GetViewDrawCounts().GetAddress();
-            PC.ViewBlockCountsAddr      = GetViewBlockCounts().GetAddress();
+            PC.BucketsAddr              = GetRenderBuckets().GetAddress();
             PC.InstanceCountAddr        = GetCullCounters().GetAddress();
-            PC.OutViewDrawOffsetsAddr   = GetViewDrawOffsets().GetAddress();
-            PC.OutViewBlockOffsetsAddr  = GetViewBlockOffsets().GetAddress();
-            PC.OutDeferOffsetsAddr      = GetDeferOffsets().GetAddress();
             PC.OutTaskDrawArgsAddr      = GetTaskDrawArgs().GetAddress();
             PC.OutTotalsAddr            = GetTotals().GetAddress();
             PC.OutBlockDispatchArgsAddr = GetBlockDispatchArgs().GetAddress();
@@ -10484,12 +10262,10 @@ namespace Lumina
                     uint32 NumSurfaceDescs;
                     uint64 InstanceCountAddr;
                     uint64 SurfaceDescsAddr;
-                    uint64 ViewBlockOffsetsAddr;
-                    uint64 ViewBlockCountsAddr;
-                    uint64 BlockCursorsAddr;
+                    uint64 BucketsAddr;
                     uint64 OutBlockListAddr;
                 } BPC = {};
-                static_assert(sizeof(FBuildMeshletBlocksPC) == 64, "FBuildMeshletBlocksPC must match BuildMeshletBlocks.slang.");
+                static_assert(sizeof(FBuildMeshletBlocksPC) == 48, "FBuildMeshletBlocksPC must match BuildMeshletBlocks.slang.");
 
                 BPC.NumViews             = NumCullViews;
                 BPC.NumBatches           = NumBatches;
@@ -10497,9 +10273,7 @@ namespace Lumina
                 BPC.NumSurfaceDescs      = UploadedSurfaceDescs;
                 BPC.InstanceCountAddr    = GetCullCounters().GetAddress();
                 BPC.SurfaceDescsAddr     = SurfaceDescBuffer.GetAddress();
-                BPC.ViewBlockOffsetsAddr = GetViewBlockOffsets().GetAddress();
-                BPC.ViewBlockCountsAddr  = GetViewBlockCounts().GetAddress();
-                BPC.BlockCursorsAddr     = GetBlockCursors().GetAddress();
+                BPC.BucketsAddr          = GetRenderBuckets().GetAddress();
                 BPC.OutBlockListAddr     = GetMeshletBlocks().GetAddress();
 
                 RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(BlocksShader));
@@ -11045,52 +10819,30 @@ namespace Lumina
     }
 
     void FForwardRenderScene::DrawMeshletBatch(RHI::FCmdListH CL, const FMeshDrawCommand& Batch,
-                                               EMeshletCullPhase Phase, uint32 CullViewIndex,
-                                               uint32 DeferSrcViewIndex,
+                                               uint32 CullViewIndex,
                                                int32 ShadowDataIndex, int32 ShadowViewIndex,
                                                float ViewportW, float ViewportH)
     {
-        LUMINA_ASSERT((Phase == EMeshletCullPhase::Retest) == (DeferSrcViewIndex != ~0u),
-                      "Retest needs a defer source; the phase-0 paths must not carry one.");
-
         const uint32 NumDrawsPerView = RenderFrame->Views.NumDrawsPerView;
         const uint32 ArgIndex = CullViewIndex * NumDrawsPerView + Batch.IndirectDrawOffset;
 
         struct FMeshletPassPush
         {
-            uint64 ViewDrawOffsetsAddr;
-            uint64 ViewDrawCursorsAddr;
-            uint64 ViewDrawCountsAddr;
-            uint64 ViewBlockOffsetsAddr;
+            uint64 BucketsAddr;
             uint64 BlockListAddr;
-            uint64 DeferListAddr;
-            uint64 DeferOffsetsAddr;
-            uint64 DeferCursorsAddr;
             uint32 ArgBase;
             uint32 CullViewIndex;
-            uint32 CanDefer;
-            uint32 DeferSrcArgBase;
             int32  ShadowDataIndex;
             int32  ViewIndex;
             float  ViewportW;
             float  ViewportH;
         } Push;
-        static_assert(sizeof(FMeshletPassPush) == 96, "FMeshletPassPush must match FMeshletPassArgs in MeshletGeometry.slang.");
+        static_assert(sizeof(FMeshletPassPush) == 40, "FMeshletPassPush must match FMeshletPassArgs in MeshletGeometry.slang.");
 
-        Push.ViewDrawOffsetsAddr  = GetViewDrawOffsets().GetAddress();
-        Push.ViewDrawCursorsAddr  = GetViewDrawCursors().GetAddress();
-        Push.ViewDrawCountsAddr   = GetViewDrawCounts().GetAddress();
-        Push.ViewBlockOffsetsAddr = GetViewBlockOffsets().GetAddress();
+        Push.BucketsAddr          = GetRenderBuckets().GetAddress();
         Push.BlockListAddr        = GetMeshletBlocks().GetAddress();
-        Push.DeferListAddr        = GetMeshletDeferList().GetAddress();
-        Push.DeferOffsetsAddr     = GetDeferOffsets().GetAddress();
-        Push.DeferCursorsAddr     = GetDeferCursors().GetAddress();
         Push.ArgBase              = ArgIndex;
         Push.CullViewIndex        = CullViewIndex;
-        Push.CanDefer             = (Phase == EMeshletCullPhase::Defer) ? 1u : 0u;
-        Push.DeferSrcArgBase      = (DeferSrcViewIndex != ~0u)
-                                  ? (DeferSrcViewIndex * NumDrawsPerView + Batch.IndirectDrawOffset)
-                                  : ArgIndex;
         Push.ShadowDataIndex      = ShadowDataIndex;
         Push.ViewIndex            = ShadowViewIndex;
         Push.ViewportW            = ViewportW;
@@ -11113,7 +10865,7 @@ namespace Lumina
                                 ((uint64)Key.DepthFormat << 24) | ((uint64)Key.bTaskShadow << 32) |
                                 ((uint64)Key.ShadingFeatures << 40) | ((uint64)Key.bVisBufferMasked << 56) |
                                 ((uint64)Key.SkinnedMode << 57) | ((uint64)Key.TriCullMode << 59) |
-                                ((uint64)Key.TaskPhase << 61) | ((uint64)Key.TaskPayload << 62));
+                                ((uint64)Key.TaskPayload << 62));
         for (const RHI::FColorTarget& Target : Key.ColorTargets)
         {
             const RHI::FBlendDesc& B = Target.Blend;
@@ -11162,10 +10914,9 @@ namespace Lumina
             MakeUInt(5, (uint32)Key.SkinnedMode),   // SPEC_SKINNED: 0=static, 1=skinned, 2=dynamic
             MakeUInt(6, (Key.ShadingFeatures & SF_ShadowMask) ? 1u : 0u),
             MakeUInt(7, (uint32)Key.TriCullMode),   // SPEC_TRI_CULL: per-triangle rejects in the mesh shaders
-            MakeUInt(8, (uint32)Key.TaskPhase),     // SPEC_TASK_PHASE: 0=block-list cull, 1=defer re-test
             MakeUInt(9, (uint32)Key.TaskPayload),   // SPEC_TASK_PAYLOAD: 0=slot-only, 1=full
         };
-        const TSpan<const RHI::FSpecializationConstant> Consts(SpecConsts, 10);
+        const TSpan<const RHI::FSpecializationConstant> Consts(SpecConsts, 9);
 
         FWriteScopeLock Lock(PipelineCacheMutex);
         if (auto Existing = PipelineCache.find(Seed); Existing != PipelineCache.end())

@@ -694,6 +694,19 @@ namespace Lumina
     static_assert(sizeof(FSurfaceDescGPU) == 80, "FSurfaceDescGPU layout must match shader");
     VERIFY_SSBO_ALIGNMENT(FSurfaceDescGPU)
 
+    // Mirror of FRenderBucket in Common.slang: one (view, draw) pair's slice of the three cull arenas.
+    // The CPU writes only the capacity seeds; BuildDrawPrefix owns every other field.
+    struct FRenderBucketGPU
+    {
+        uint32 DrawBase;
+        uint32 DrawCapacity;
+        uint32 DrawCursor;
+        uint32 BlockBase;
+        uint32 BlockCapacity;
+        uint32 BlockCursor;
+    };
+    static_assert(sizeof(FRenderBucketGPU) == 24, "FRenderBucketGPU layout must match FRenderBucket in Common.slang");
+
     struct FTransform3x4
     {
         FVector4   Row0;
@@ -882,8 +895,7 @@ namespace Lumina
             Distance        = BIT(3),
             CastShadowOnly  = BIT(4),
             SunAligned      = BIT(5),
-            PhaseLate       = BIT(6),
-            Cascade         = BIT(7),
+                Cascade         = BIT(7),
         };
     }
 

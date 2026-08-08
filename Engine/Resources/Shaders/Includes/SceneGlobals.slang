@@ -67,10 +67,13 @@ FWidgetInstance*    Widgets()               { return GetSceneRoot().WidgetsPtr; 
 // lights). Left unguarded they poison the IBL cubes -- Inf*weight and Inf-Inf produce NaN, which the BRDF
 // renders as black/white texel blocks, and a single NaN reaching bloom spreads white across the screen.
 // Drop non-finite channels to 0 and clamp into the R11G11B10 finite range so the convolution stays stable.
+// Fully branchless, deliberately. isfinite() lowers to a SHORT-CIRCUITING `!isinf(x) && !isnan(x)`, so
+// each call cost two branches; the bloom prefilter calls this fifteen times and paid thirty. Bitwise &
+// evaluates both halves and branches on neither, and the select replaces the early return.
 float SanitizeRadianceChannel(float X)
 {
-    if (!isfinite(X)) return 0.0;       // x != x catches NaN; |x| == inf caught by isfinite
-    return clamp(X, 0.0, 64000.0);
+    const bool bFinite = !isinf(X) & !isnan(X);
+    return bFinite ? clamp(X, 0.0, 64000.0) : 0.0;
 }
 
 float3 SanitizeRadiance(float3 C)

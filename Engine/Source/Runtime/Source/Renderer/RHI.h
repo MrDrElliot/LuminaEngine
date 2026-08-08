@@ -23,9 +23,9 @@ namespace Lumina::RHI
     constexpr auto kInvalidHeapSlot             = ~0u;
     constexpr auto kMaxInlineWrite              = 65536u;
 
-    constexpr auto kMeshWorkGroupSize           = 128u;  // MeshletMesh.slang [numthreads(128, 1, 1)]
+    constexpr auto kMeshWorkGroupSize           = 32u;   // MESHLET_MESH_GROUP_SIZE (MeshletGeometry.slang)
     constexpr auto kMeshMaxOutputVertices       = 64u;   // out vertices Verts[MESHLET_MAX_VERTICES]
-    constexpr auto kMeshMaxOutputPrimitives     = 124u;  // out indices Tris[MESHLET_MAX_TRIANGLES]
+    constexpr auto kMeshMaxOutputPrimitives     = 64u;   // out indices Tris[MESHLET_MAX_TRIANGLES]
 
     constexpr auto kTaskWorkGroupSize           = 32u;   // MeshletCullTask.slang [numthreads(32, 1, 1)]
 

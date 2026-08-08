@@ -14,7 +14,7 @@
 
 // 64 verts / 124 tris = AMD/NV mesh-shader sweet spot, and satisfies meshopt's limits.
 #define MESHLET_MAX_VERTICES            64
-#define MESHLET_MAX_TRIANGLES           124
+#define MESHLET_MAX_TRIANGLES           64
 
 // LOD 0 is full detail. Sloppy LODs (4-5) can hole, which reads as a shadow light-leak, so casters
 // cap lower -- except past ShadowCoarseLODDistance, where one cascade texel keeps the holes sub-texel.
@@ -26,7 +26,7 @@
 // tag. Past the bound the index wraps and silently resolves the wrong meshlet.
 #define MESHLET_DRAW_INDEX_BITS         20u
 
-// FMeshletDeferred spends the remaining 12 bits of its packed word on the batch the entry re-emits into
+// The remaining 12 bits of the packed word are spare.
 // and, for a cascade entry, which cascade deferred it. A draw is a PSO bucket -- tens in practice -- so
 // 1024 is generous; the cull drops a defer past it rather than wrapping into the cascade field.
 #define MESHLET_DEFER_DRAWID_BITS       10u

@@ -16,14 +16,12 @@ static const float INV_PI = 0.31830988618;
 #define INDEX_NONE -1
 
 // Bits inside FCullView.Flags, gating which culling stages run for the view.
-// PhaseLate views re-test last-frame's HZB-occluded defer list against the rebuilt HZB.
 #define CULL_VIEW_FLAG_FRUSTUM          BIT(0)
 #define CULL_VIEW_FLAG_CONE             BIT(1)
 #define CULL_VIEW_FLAG_OCCLUSION        BIT(2)
 #define CULL_VIEW_FLAG_DISTANCE         BIT(3)
 #define CULL_VIEW_FLAG_CAST_SHADOW_ONLY BIT(4)
 #define CULL_VIEW_FLAG_SUN_ALIGNED      BIT(5)
-#define CULL_VIEW_FLAG_PHASE_LATE       BIT(6)
 #define CULL_VIEW_FLAG_CASCADE          BIT(7)
 
 
@@ -539,19 +537,18 @@ struct FMeshletBlock
 // Camera meshlets the early pass deferred via Hi-Z; the late pass re-tests
 // against the rebuilt HZB. DrawID is captured at defer time because the
 // late pass increments uIndirectArgs[...DrawID].InstanceCount.
-// A meshlet some Hi-Z hid in phase 0, queued for the late re-test.
-//
-// 8 bytes, and nothing else is needed: the defer list is laid out per (view, draw) exactly like the draw
-// list, so the batch to re-emit into and the pyramid to re-test against are both implied by which region
-// the entry sits in. A meshlet occluded in cascade 0 and visible in cascade 1 lands in two different
-// regions, which is the same distinction the old per-entry cascade tag was drawing.
-//
-// The region is bounded by the DRAW region's length and needs no feedback of its own: a meshlet either
-// emits or defers, never both, so the emit reservation is already an exact upper bound on defers.
-struct FMeshletDeferred
+// One (view, draw) pair's slice of the two cull arenas. Base, capacity and cursor travel together, so an
+// appender cannot pair one region's base with another's bound. These were parallel arrays indexed by the
+// same ArgIdx, and pairing a clamped base with an unclamped length is what let the block builder write
+// past its allocation.
+struct FRenderBucket
 {
-    uint InstanceID;
-    uint MeshletIndex;   // mesh-global, same meaning as FMeshletDraw's
+    uint DrawBase;
+    uint DrawCapacity;
+    uint DrawCursor;
+    uint BlockBase;
+    uint BlockCapacity;
+    uint BlockCursor;
 };
 
 // Mirror of Lumina::FGPUInstance.

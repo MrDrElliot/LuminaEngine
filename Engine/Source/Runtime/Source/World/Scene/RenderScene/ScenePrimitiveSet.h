@@ -232,6 +232,12 @@ namespace Lumina
 
         uint32                      GetMaxSurfaceDescMeshlets() const { return MaxSurfaceDescMeshlets; }
 
+        // Exact upper bound on the cull blocks ONE view can produce from the retained set. Sizing the block
+        // list from this instead of a lagged readback is what makes block overflow impossible: the readback
+        // could not see a spike until kFramesInFlight frames after it happened, and until then the builder
+        // appended against a capacity that no longer described the scene.
+        uint32                      GetWorstCaseBlocksPerView() const { return WorstCaseBlocksPerView; }
+
         const TVector<uint32>&      GetDirtyInstanceSlots() const { return DirtyInstanceSlots; }
         const TVector<uint32>&      GetDirtyStaticSlots() const   { return DirtyStaticSlots; }
         void                        ClearDirtyInstanceSlots()     { DirtyInstanceSlots.clear(); DirtyStaticSlots.clear(); }
@@ -413,6 +419,11 @@ namespace Lumina
         bool                                bSurfaceDescsDirty = true;
         // See GetMaxSurfaceDescMeshlets. Only ever grows while the table does, and is reset with it.
         uint32                              MaxSurfaceDescMeshlets = 0;
+
+        void                                RefreshWorstCaseBlocks();
+        uint32                              WorstCaseBlocksPerView = 0;
+        // Recompute is keyed on the structure generation, so a moving scene never pays for it.
+        uint64                              WorstCaseBlocksGeneration = 0;
 
         uint64                              StructureGeneration = 1;
         uint32                              SkinnedCount = 0;

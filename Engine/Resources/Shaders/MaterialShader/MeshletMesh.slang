@@ -26,23 +26,35 @@ typedef FBaseVertexOutput      FMeshVertexOutput;
 typedef FDepthOnlyVertexOutput FMeshVertexOutput;
 #endif
 
-// See MeshletVisBuffer.slang: lane i owns vertex i, so only the clip position crosses lanes.
-groupshared float4 gsClipPos[MESHLET_MAX_VERTICES];
-groupshared uint   gsTriBits[MESHLET_TRI_WORDS];
 
-// 64 threads = MESHLET_MAX_VERTICES, so the expensive vertex phase runs at full lane utilization; the
-// cheap triangle phase strides those 64 lanes over the 124-triangle cap (2 iterations). This used to be
-// 128 threads with one triangle per lane, which left lanes 64..127 idle through the whole vertex phase --
-// the same shape MeshletVisBuffer.slang was already fixed for.
+// Hardware-side reject; see FVisPrimitive in MeshletVisBuffer.slang for why this replaced compaction.
+struct FMeshPrimitiveOut
+{
+    bool CullPrimitive : SV_CullPrimitive;
+};
+
+// The material vertex graph, emitted ONCE. The token substitutes raw statements that reach these by name,
+// so they arrive as parameters: left inside the vertex loop, the whole graph body would be emitted per
+// iteration.
+FMaterialVertexInputs EvalMaterialVertex(FGPUInstance* Inst, float4x4 ModelMatrix, FVertexData VertexData,
+                                         float4 WorldPos, float3 NormalWS, float3 TangentWS,
+                                         float TangentSignWS)
+{
+    FMaterialVertexInputs Material;
+    $MATERIAL_VERTEX_INPUTS
+    return Material;
+}
+
 [shader("mesh")]
 [outputtopology("triangle")]
-[numthreads(64, 1, 1)]
+[numthreads(MESHLET_MESH_GROUP_SIZE, 1, 1)]
 void MeshMain(
     uint3 GroupID   : SV_GroupID,
     uint  ThreadID  : SV_GroupIndex,
     in payload   FVisTaskPayload    TaskPayload,
     out vertices FMeshVertexOutput  Verts[MESHLET_MAX_VERTICES],
-    out indices  uint3              Tris[MESHLET_MAX_TRIANGLES])
+    out indices    uint3             Tris[MESHLET_MAX_TRIANGLES],
+    out primitives FMeshPrimitiveOut Prims[MESHLET_MAX_TRIANGLES])
 {
     // Compacted survivor index, not a draw-list offset -- see MeshletVisBuffer.slang.
     FMeshletRef Ref = MakeMeshletRefFromTask(TaskPayload, GroupID.x);
@@ -50,107 +62,90 @@ void MeshMain(
     const uint VertCount = Ref.M.VertexCount;
     const uint TriCount  = Ref.M.TriangleCount;
 
-    if (ThreadID < MESHLET_TRI_WORDS)
+    // Held in registers until the compacted primitive count is known; see MeshletVisBuffer.slang.
+    FMeshVertexOutput VOut[MESHLET_VERT_ITERS];
+    float4            Clip[MESHLET_VERT_ITERS];
+    uint              VertSlot[MESHLET_VERT_ITERS];
+
+    [ForceUnroll]
+    for (uint v = 0; v < MESHLET_VERT_ITERS; ++v)
     {
-        gsTriBits[ThreadID] = 0u;
+        VOut[v]     = (FMeshVertexOutput)0;
+        Clip[v]     = float4(0.0, 0.0, 0.0, 0.0);
+        VertSlot[v] = 0u;
     }
 
-    // One unique vertex per thread (no over-launch -- the mesh shader emits exactly VertexCount). The
-    // output is held in registers until the compacted primitive count is known; see MeshletVisBuffer.slang.
-    FMeshVertexOutput VOut = (FMeshVertexOutput)0;
-    float4            Clip = float4(0.0, 0.0, 0.0, 0.0);
-
-    if (ThreadID < VertCount)
+    // Workgroup-UNIFORM, so this branch is free and no lane diverges on it. It stays because an
+    // unresolved meshlet leaves Instances() null, which would make Ref.Inst a null base below.
+    if (VertCount > 0u)
     {
         // Issued before the vertex fetch so the loads overlap rather than serialize; see the same
-        // block in MeshletVisBuffer.slang. Kept inside the guard because an unresolved meshlet leaves
-        // Instances() possibly null, making Ref.Inst a null base.
-        const float4x4 ModelMatrix = Ref.Inst.ModelMatrix;
+        // block in MeshletVisBuffer.slang.
+        const float4x4 ModelMatrix  = Ref.Inst.ModelMatrix;
+        const float3x3 NormalMatrix = CalculateNormalMatrix(ModelMatrix);
 
-        FVertexData VertexData = LoadMeshletVertexData(Ref, ThreadID);
-        FMeshletWorldVertex W  = TransformMeshletVertex(VertexData, ModelMatrix, CalculateNormalMatrix(ModelMatrix));
+        [ForceUnroll]
+        for (uint v = 0; v < MESHLET_VERT_ITERS; ++v)
+        {
+            // Clamped rather than guarded: surplus lanes redundantly reprocess the last vertex instead
+            // of sitting masked. They were not saving anything behind a per-lane bounds test (the wave
+            // issues the body regardless), and the duplicate store writes an identical value.
+            VertSlot[v] = min(ThreadID + v * MESHLET_MESH_GROUP_SIZE, VertCount - 1u);
 
-        // Same material vertex-graph local contract as MeshletVisBuffer.slang
-        // (the codegen alias preamble reads Inst / WorldPos / NormalWS / VertexData by these names).
-        FGPUInstance* Inst   = Ref.Inst;   // pointer: FMeshletRef reaches the instance, see MeshletGeometry.slang
-        float4   WorldPos    = float4(W.WorldPos, 1.0);
-        float3   NormalWS    = W.NormalWS;
-        float3   TangentWS   = W.TangentWS.xyz;
-        float    TangentSignWS = W.TangentWS.w;   // handedness; the graph's WorldTangent alias needs it
+            FVertexData VertexData = LoadMeshletVertexData(Ref, VertSlot[v]);
+            FMeshletWorldVertex W  = TransformMeshletVertex(VertexData, ModelMatrix, NormalMatrix);
 
-        FMaterialVertexInputs Material;
-        $MATERIAL_VERTEX_INPUTS
-        WorldPos.xyz += Material.WorldPositionOffset;
+            float4 WorldPos = float4(W.WorldPos, 1.0);
+            const FMaterialVertexInputs Material =
+                EvalMaterialVertex(Ref.Inst, ModelMatrix, VertexData, WorldPos,
+                                   W.NormalWS, W.TangentWS.xyz, W.TangentWS.w);
+            WorldPos.xyz += Material.WorldPositionOffset;
 
-        const float3 FinalWorldPos = WorldPos.xyz;
+            const float3 FinalWorldPos = WorldPos.xyz;
 
 #ifdef MESHLET_MESH_BASE
-        VOut = MakeBaseVertexOutput(Ref, W, FinalWorldPos, GetCameraView(), GetCameraProjection());
-        Clip = VOut.Position;   // taken from the output so the two cannot drift
+            VOut[v] = MakeBaseVertexOutput(Ref, W, FinalWorldPos, GetCameraView(), GetCameraProjection());
+            Clip[v] = VOut[v].Position;   // taken from the output so the two cannot drift
 #else
-        Clip = mul(GetShadowViewProjection(MeshletPass().ShadowDataIndex, (uint)MeshletPass().ViewIndex),
-                   float4(FinalWorldPos, 1.0));
+            Clip[v] = mul(GetShadowViewProjection(MeshletPass().ShadowDataIndex, (uint)MeshletPass().ViewIndex),
+                          float4(FinalWorldPos, 1.0));
 #endif
+        }
     }
-
-    gsClipPos[ThreadID] = Clip;
-    GroupMemoryBarrierWithGroupSync();
 
     // Triangle cull. The clip positions above are in THIS pass's space (the shadow VP for a shadow view,
     // the camera VP for depth), so the frustum reject is against the volume actually being rastered and
     // the winding is the one the hardware will see.
     const float2 ViewportSize = float2(MeshletPass().ViewportW, MeshletPass().ViewportH);
 
-    uint3 TriIdx[MESHLET_TRI_ITERS];
+    // Every triangle is declared and the dead ones carry SV_CullPrimitive, so there is no compaction
+    // pass, no shared bitmask and no second barrier.
+    SetMeshOutputCounts(VertCount, TriCount);
 
-    [unroll]
-    for (uint i = 0; i < MESHLET_TRI_ITERS; ++i)
+    if (VertCount > 0u)
     {
-        TriIdx[i] = uint3(0u, 0u, 0u);
-
-        const uint t = ThreadID + i * 64u;
-        if (t >= TriCount)
+        [ForceUnroll]
+        for (uint v = 0; v < MESHLET_VERT_ITERS; ++v)
         {
-            continue;
+            VOut[v].Position   = Clip[v];
+            Verts[VertSlot[v]] = VOut[v];
         }
-
-        const uint3 Idx = UnpackMeshletTriangleSafe(Ref, t);
-        TriIdx[i] = Idx;
-
-        if (IsDegenerateTriangleIndices(Idx))
-        {
-            continue;
-        }
-
-        if (IsMeshletTriangleCulled(gsClipPos[Idx.x], gsClipPos[Idx.y], gsClipPos[Idx.z], ViewportSize))
-        {
-            continue;
-        }
-
-        InterlockedOr(gsTriBits[t >> 5u], 1u << (t & 31u));
     }
 
-    GroupMemoryBarrierWithGroupSync();
-
-    const FMeshletTriCompaction Keep = MakeTriCompaction(gsTriBits[0], gsTriBits[1], gsTriBits[2], gsTriBits[3]);
-
-    SetMeshOutputCounts(VertCount, Keep.Total);
-
-    if (ThreadID < VertCount)
+    // Workgroup-UNIFORM, so no lane diverges on it; TriCount - 1u below needs the non-zero case.
+    if (TriCount > 0u)
     {
-        VOut.Position   = Clip;
-        Verts[ThreadID] = VOut;
-    }
-
-    [unroll]
-    for (uint i = 0; i < MESHLET_TRI_ITERS; ++i)
-    {
-        const uint t = ThreadID + i * 64u;
-        if (t >= TriCount || !Keep.IsKept(t))
+        [ForceUnroll]
+        for (uint i = 0; i < MESHLET_TRI_ITERS; ++i)
         {
-            continue;
-        }
+            const uint  t   = min(ThreadID + i * MESHLET_MESH_GROUP_SIZE, TriCount - 1u);
+            const uint3 Idx = UnpackMeshletTriangleSafe(Ref, t);
 
-        Tris[Keep.OutputSlot(t)] = TriIdx[i];
+            Tris[t]                = Idx;
+            Prims[t].CullPrimitive = IsDegenerateTriangleIndices(Idx)
+                                   | IsMeshletTriangleCulled(ShuffleMeshletClip(Clip, Idx.x),
+                                                             ShuffleMeshletClip(Clip, Idx.y),
+                                                             ShuffleMeshletClip(Clip, Idx.z), ViewportSize);
+        }
     }
 }
