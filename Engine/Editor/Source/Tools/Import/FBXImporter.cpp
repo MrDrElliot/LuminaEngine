@@ -745,8 +745,8 @@ namespace Lumina
         struct FFBXMeshResult
         {
             bool                        bSkinned = false;
-            TVector<FVertex>            StaticVerts;
-            TVector<FSkinnedVertex>     SkinnedVerts;
+            TVector<FSourceVertex>            StaticVerts;
+            TVector<FSourceSkinnedVertex>     SkinnedVerts;
             TVector<uint32>             Indices;
             TVector<FGeometrySurface>   Surfaces;
         };
@@ -973,11 +973,13 @@ namespace Lumina
 
                             if (bSkinned)
                             {
-                                FSkinnedVertex Vertex;
+                                FSourceSkinnedVertex Vertex;
                                 Vertex.Position = Pos;
                                 Vertex.Normal   = PackNormal(Normal);
                                 Vertex.Tangent  = 0;
                                 Vertex.UV       = Math::PackHalf2x16(UV);
+                                // FBX import reads one UV set; mirror it so set 1 is never garbage.
+                                Vertex.UV1      = Vertex.UV;
                                 Vertex.Color    = PackColor(Col);
 
                                 FU8Vector4 JointIndices{};
@@ -1009,11 +1011,13 @@ namespace Lumina
                             }
                             else
                             {
-                                FVertex Vertex;
+                                FSourceVertex Vertex;
                                 Vertex.Position = Pos;
                                 Vertex.Normal   = PackNormal(Normal);
                                 Vertex.Tangent  = 0;
                                 Vertex.UV       = Math::PackHalf2x16(UV);
+                                // FBX import reads one UV set; mirror it so set 1 is never garbage.
+                                Vertex.UV1      = Vertex.UV;
                                 Vertex.Color    = PackColor(Col);
 
                                 VertexIdx = (uint32)Result.StaticVerts.size();
@@ -1091,14 +1095,14 @@ namespace Lumina
 
             if (R.bSkinned)
             {
-                for (const FSkinnedVertex& V : R.SkinnedVerts)
+                for (const FSourceSkinnedVertex& V : R.SkinnedVerts)
                 {
                     Target.AppendVertex(V);
                 }
             }
             else
             {
-                for (const FVertex& V : R.StaticVerts)
+                for (const FSourceVertex& V : R.StaticVerts)
                 {
                     Target.AppendVertex(V);
                 }

@@ -103,10 +103,28 @@ namespace Lumina
                 ApplyOverride(Override, Parameters, MaterialUniforms);
             }
         }
+
+        // The flags came from the parent wholesale, shading model included. Re-stamp the model field so an
+        // instance override lands -- last, so nothing above can undo it.
+        const uint32 ModelBits =
+            ((uint32)GetShadingModel() & kMaterialShadingModelMask) << kMaterialShadingModelShift;
+
+        MaterialUniforms.Flags &= ~(kMaterialShadingModelMask << kMaterialShadingModelShift);
+        MaterialUniforms.Flags |= ModelBits;
     }
 
     void CMaterialInstance::RefreshFromParent()
     {
+        RebuildUniformsFromOverrides();
+        UpdateMaterialUniforms();
+    }
+
+    void CMaterialInstance::PostPropertyChange(FProperty* ChangedProperty)
+    {
+        Super::PostPropertyChange(ChangedProperty);
+
+        // Cheap enough to run for any edit on this object, and doing so means a future runtime-flag
+        // property does not have to remember to add itself here.
         RebuildUniformsFromOverrides();
         UpdateMaterialUniforms();
     }
@@ -532,7 +550,9 @@ namespace Lumina
 
     bool CMaterialInstance::IsUnlit()
     {
-        return Material ? Material->IsUnlit() : false;
+        // Through GetShadingModel so an override is honoured here too; querying the parent directly
+        // would let the two disagree about the same instance.
+        return GetShadingModel() == EMaterialShadingModel::Unlit;
     }
 
     bool CMaterialInstance::DisableDepthTest()
@@ -547,6 +567,10 @@ namespace Lumina
 
     EMaterialShadingModel CMaterialInstance::GetShadingModel()
     {
+        if (bOverrideShadingModel)
+        {
+            return ShadingModelOverride;
+        }
         return Material ? Material->GetShadingModel() : EMaterialShadingModel::Lit;
     }
 

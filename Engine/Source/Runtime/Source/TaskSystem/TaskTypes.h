@@ -42,9 +42,23 @@ namespace Lumina
         TAtomic<bool> bCompleted{false};
 
         bool IsCompleted() const { return bCompleted.load(std::memory_order_acquire); }
+
+        /**
+         * Block until the task completes.
+         *
+         * NOTE: this is a plain kernel wait -- it does NOT run queued jobs the way a counter wait does.
+         * Calling it from a worker fiber blocks the whole worker (and holds the fiber) instead of
+         * yielding, so use it only from a thread that owns its own execution: the main thread, a
+         * dedicated tool thread. Inside a job, wait on a counter or a TFuture instead.
+         */
         void Wait() const
         {
-            std::atomic_wait(&bCompleted, false);
+            // atomic_wait may return spuriously, so it is a loop, not a call. Without the re-check a
+            // spurious wakeup reports a task complete that is still running.
+            while (!IsCompleted())
+            {
+                std::atomic_wait(&bCompleted, false);
+            }
         }
     };
 

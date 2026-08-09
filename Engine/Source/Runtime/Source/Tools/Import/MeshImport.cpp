@@ -97,6 +97,10 @@ namespace Lumina::Import::Mesh
             S->Mesh->Tangents[MikkVertexIndex(Ctx, iFace, iVert)] = PackTangent(FVector3(Tangent[0], Tangent[1], Tangent[2]), Sign);
         }
 
+        // Upper bound on what BuildVertexStreams emits: the five always-on streams plus the two skinning
+        // ones. Callers size their array from this so adding a stream cannot silently overflow it.
+        constexpr uint32 kMaxVertexStreams = 8;
+
         // Describe every active SoA vertex stream for meshopt's multi-stream remap.
         uint32 BuildVertexStreams(FMeshResource& M, meshopt_Stream* OutStreams)
         {
@@ -105,12 +109,14 @@ namespace Lumina::Import::Mesh
             OutStreams[Count++] = { M.Normals.data(),   sizeof(uint32),      sizeof(uint32) };
             OutStreams[Count++] = { M.Tangents.data(),  sizeof(uint32),      sizeof(uint32) };
             OutStreams[Count++] = { M.UVs.data(),       sizeof(uint32),      sizeof(uint32) };
+            OutStreams[Count++] = { M.UVs1.data(),      sizeof(uint32),      sizeof(uint32) };
             OutStreams[Count++] = { M.Colors.data(),    sizeof(uint32),      sizeof(uint32) };
             if (M.bSkinnedMesh)
             {
                 OutStreams[Count++] = { M.JointIndices.data(), sizeof(FU8Vector4), sizeof(FU8Vector4) };
                 OutStreams[Count++] = { M.JointWeights.data(), sizeof(FU8Vector4), sizeof(FU8Vector4) };
             }
+            LUMINA_ASSERT(Count <= kMaxVertexStreams, "BuildVertexStreams overflowed the caller's array");
             return Count;
         }
 
@@ -128,6 +134,7 @@ namespace Lumina::Import::Mesh
             RemapStream(M.Normals);
             RemapStream(M.Tangents);
             RemapStream(M.UVs);
+            RemapStream(M.UVs1);
             RemapStream(M.Colors);
             if (M.bSkinnedMesh)
             {
@@ -226,7 +233,7 @@ namespace Lumina::Import::Mesh
             Progress->UpdateMessage("Removing duplicate vertices...");
         }
 
-        meshopt_Stream Streams[7];
+        meshopt_Stream Streams[kMaxVertexStreams];
         const uint32 StreamCount = BuildVertexStreams(MeshResource, Streams);
 
         TVector<uint32> Remap(NumVertices);
@@ -825,6 +832,7 @@ namespace Lumina::Import::Mesh
                             Packed.NormalZ  = Math::FloatToSNorm16(N.z);
                             Packed.Tangent  = MeshResource.Tangents[GlobalIdx];
                             Packed.UV       = MeshResource.UVs[GlobalIdx];
+                            Packed.UV1      = MeshResource.UVs1[GlobalIdx];
                             Packed.Color    = MeshResource.Colors[GlobalIdx];
                             memcpy(&Packed.JointIndices, &MeshResource.JointIndices[GlobalIdx], sizeof(uint32));
                             memcpy(&Packed.JointWeights, &MeshResource.JointWeights[GlobalIdx], sizeof(uint32));
@@ -845,6 +853,7 @@ namespace Lumina::Import::Mesh
                             Packed.NormalZ  = Math::FloatToSNorm16(N.z);
                             Packed.Tangent  = MeshResource.Tangents[GlobalIdx];
                             Packed.UV       = MeshResource.UVs[GlobalIdx];
+                            Packed.UV1      = MeshResource.UVs1[GlobalIdx];
                             Packed.Color    = MeshResource.Colors[GlobalIdx];
                             MeshResource.MeshletData.MeshletVertices.push_back(Packed);
                         }
@@ -1005,6 +1014,7 @@ namespace Lumina::Import::Mesh
             Dst.Normals.insert(Dst.Normals.end(),     Src.Normals.begin(),   Src.Normals.end());
             Dst.Tangents.insert(Dst.Tangents.end(),   Src.Tangents.begin(),  Src.Tangents.end());
             Dst.UVs.insert(Dst.UVs.end(),             Src.UVs.begin(),       Src.UVs.end());
+            Dst.UVs1.insert(Dst.UVs1.end(),           Src.UVs1.begin(),      Src.UVs1.end());
             Dst.Colors.insert(Dst.Colors.end(),       Src.Colors.begin(),    Src.Colors.end());
             if (Dst.bSkinnedMesh && Src.bSkinnedMesh)
             {
@@ -1081,10 +1091,16 @@ namespace Lumina::Import::Mesh
                     }
                     if (bFlipUVs || bFlipU)
                     {
-                        FVector2 UV = M.GetUVAt(i);
-                        if (bFlipUVs) { UV.y = 1.0f - UV.y; }
-                        if (bFlipU)   { UV.x = 1.0f - UV.x; }
-                        M.SetUVAt(i, UV);
+                        auto Flip = [&](FVector2 UV)
+                        {
+                            if (bFlipUVs) { UV.y = 1.0f - UV.y; }
+                            if (bFlipU)   { UV.x = 1.0f - UV.x; }
+                            return UV;
+                        };
+                        // Both sets: a flip is a property of the source's UV convention, so applying it to
+                        // one set would tear a material that samples the other.
+                        M.SetUVAt(i, Flip(M.GetUVAt(i)));
+                        M.SetUV1At(i, Flip(M.GetUV1At(i)));
                     }
                     if (bFlipNormals)
                     {

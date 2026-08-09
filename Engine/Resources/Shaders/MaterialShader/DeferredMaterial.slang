@@ -137,10 +137,15 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
         float3 WorldNormal    = normalize(OrientedNormalWS);
         float4 WorldTangent   = Input.TangentWS;
         float2 UV0            = S.UV;
+        float2 UV1            = S.UV1;
         float4 VertexColor    = S.VertexColor;
         float3 ViewPosition   = ViewPos.xyz;
         float2 UV0_DDX        = S.UVDDX;
         float2 UV0_DDY        = S.UVDDY;
+        // Set 1 carries its own barycentric gradients for the same reason set 0 does: there is no 2x2
+        // quad in this lane, so an implicit derivative does not exist to fall back on.
+        float2 UV1_DDX        = S.UV1DDX;
+        float2 UV1_DDY        = S.UV1DDY;
 
         // Analytic derivatives of the other varyings a graph can build a UV out of -- world-space and
         // triplanar UVs are the common case, and without these they sample with UV0's gradient. Exact:

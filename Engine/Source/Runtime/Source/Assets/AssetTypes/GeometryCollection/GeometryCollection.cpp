@@ -203,7 +203,7 @@ namespace Lumina
                 const uint32 Base = static_cast<uint32>(Out.Vertices.size());
                 for (const FVector3& P : Face)
                 {
-                    FVertex Vert;
+                    FSourceVertex Vert;
                     Vert.Position = P;
                     Vert.Normal   = PackedNormal;
                     Vert.Tangent  = PackedTangent;
@@ -430,11 +430,11 @@ namespace Lumina
 
         TUniquePtr<FMeshResource> Resource = MakeUnique<FMeshResource>();
         Resource->ReserveVertices(Piece.Vertices.size());
-        for (const FVertex& V : Piece.Vertices)
+        for (const FSourceVertex& V : Piece.Vertices)
         {
             // Recenter to the piece centroid so the mesh origin (and convex CoM) sits on the chunk;
             // callers place the entity at Piece.Center to reconstruct the original position.
-            FVertex Centered = V;
+            FSourceVertex Centered = V;
             Centered.Position -= Piece.Center;
             Resource->AppendVertex(Centered);
         }

@@ -76,7 +76,7 @@ enum EInstanceFlags
 // Mirror of Lumina::FMeshletVertex. Position: three 16-bit offsets from the owning meshlet's anchor,
 // packed into dwords -- decode with DecodeMeshletPosition below, never by hand.
 // Tangent: 15-15 octahedral + 1-bit handedness (see UnpackTangent).
-struct FVertex
+struct FMeshletVertex
 {
     uint16_t PositionX;
     uint16_t PositionY;
@@ -85,11 +85,12 @@ struct FVertex
     int16_t  NormalY;
     int16_t  NormalZ;
     uint     Tangent;
-    uint     UV;
+    uint     UV;    // TEXCOORD_0
+    uint     UV1;   // TEXCOORD_1; mirrors UV for single-set sources
     uint     Color;
 };
 
-struct FSkinnedVertex
+struct FMeshletSkinnedVertex
 {
     uint16_t PositionX;
     uint16_t PositionY;
@@ -98,7 +99,8 @@ struct FSkinnedVertex
     int16_t  NormalY;
     int16_t  NormalZ;
     uint     Tangent;
-    uint     UV;
+    uint     UV;    // TEXCOORD_0
+    uint     UV1;   // TEXCOORD_1
     uint     Color;
     uint     JointIndices;
     uint     JointWeights;
@@ -119,9 +121,9 @@ int16_t FloatToSNorm16(float V)
     return (int16_t)(clamp(V, -1.0, 1.0) * 32767.0 + (V >= 0.0 ? 0.5 : -0.5));
 }
 
-// Mirror of Lumina::FPreSkinnedVertex. Written by Skinning.slang, read by every draw VS as the
-// only vertex source. Position is full-precision (skinning breaks meshlet quantization); all-scalar
-// for a tight 28 B stride.
+// Mirror of Lumina::FPreSkinnedVertex (SceneRenderTypes.h). Written by Skinning.slang, read by every
+// draw VS as the only vertex source. Position is full-precision (skinning breaks meshlet quantization);
+// all-scalar for a tight 36 B stride.
 struct FPreSkinnedVertex
 {
     float    Px;
@@ -132,6 +134,7 @@ struct FPreSkinnedVertex
     int16_t  NormalZ;
     uint     Tangent;   // PackTangent
     uint     UV;        // carried through from the source vertex (skin-invariant)
+    uint     UV1;       // likewise
     uint     Color;
 };
 
@@ -140,7 +143,8 @@ struct FVertexData
     float3 Position;
     float3 Normal;
     float4 Tangent;    // xyz: tangent direction; w: handedness sign for B = cross(N,T)*w
-    float2 UV;
+    float2 UV;         // TEXCOORD_0
+    float2 UV1;        // TEXCOORD_1
     float4 Color;
 };
 
@@ -187,6 +191,11 @@ struct FMaterialPixelInputs
     // only the sun's contribution -- not ambient (that is AmbientOcclusion's job) and not the punctual
     // lights, which were never traced. 1 = unshadowed.
     float  SelfShadow;
+
+    // Clearcoat shading model only: a clear dielectric layer over the base. Strength 0 disables it.
+    // Ignored entirely by every other model, and the GBuffer does not carry them for those.
+    float  Clearcoat;
+    float  ClearcoatRoughness;
 };
 
 // Neutral surface. EVERY producer of FMaterialPixelInputs must start from this and then override, because
@@ -204,8 +213,10 @@ FMaterialPixelInputs DefaultMaterialInputs()
     M.Emissive         = float3(0.0, 0.0, 0.0);
     M.AmbientOcclusion = 1.0;
     M.Normal           = float3(0.0, 0.0, 1.0);
-    M.Opacity          = 1.0;
-    M.SelfShadow       = 1.0;
+    M.Opacity            = 1.0;
+    M.SelfShadow         = 1.0;
+    M.Clearcoat          = 0.0;
+    M.ClearcoatRoughness = 0.03;
     return M;
 }
 
@@ -241,7 +252,18 @@ static const uint MatFlag_None        = 0;
 static const uint MatFlag_Masked      = BIT(0);
 static const uint MatFlag_Translucent = BIT(1);
 static const uint MatFlag_Additive    = BIT(2);
+// Bits 3-5 are a 3-bit shading model field (EMaterialGPUFlags in MaterialTypes.h), not one flag per
+// model. MatFlag_Unlit is the legacy spelling of ShadingModel_Unlit sitting in that field.
 static const uint MatFlag_Unlit       = BIT(3);
+
+#define MATERIAL_SHADING_MODEL_SHIFT 3u
+#define MATERIAL_SHADING_MODEL_MASK  7u
+
+/** The material's shading model, as an EShadingModel value (GBuffer.slang). */
+uint GetMaterialShadingModel(uint MatFlags)
+{
+    return (MatFlags >> MATERIAL_SHADING_MODEL_SHIFT) & MATERIAL_SHADING_MODEL_MASK;
+}
 
 struct FMaterialUniforms
 {

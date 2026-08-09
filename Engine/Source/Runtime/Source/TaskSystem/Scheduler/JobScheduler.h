@@ -63,7 +63,17 @@ namespace Lumina::Jobs
     {
         uint32 NumWorkerThreads   = 0; // 0 => hardware_concurrency() - 1
         uint32 NumExternalThreads = 8; // reserved thread slots for non-worker threads (main/render/physics/...)
-        uint32 NumWorkFibers      = 0; // pooled fibers jobs run on; 0 => default (kDefaultWorkFibers)
+        uint32 NumWorkFibers      = 0; // fibers created up front; 0 => default (kDefaultWorkFibers)
+        // Hard ceiling on the fiber pool, which grows on demand past NumWorkFibers (0 => default).
+        //
+        // A fiber is pinned for as long as the job on it is BLOCKED, not just while it runs, so the pool
+        // has to cover peak simultaneous blocked jobs, not peak parallelism. That peak is a property of
+        // the workload (how many in-flight imports/loads/bakes each sit in a nested wait), and a fixed
+        // pool that is one short does not degrade -- it deadlocks, because the work that would release
+        // the parked fibers is queued behind the fiber they are holding. Growing past the initial size
+        // trades address space for that guarantee; the ceiling exists only to turn a runaway into a
+        // diagnosable error instead of an OOM.
+        uint32 MaxWorkFibers      = 0;
         uint32 FiberStackSize     = 0; // per-fiber reserved stack in bytes; 0 => default (kDefaultFiberStack)
     };
 
@@ -162,7 +172,8 @@ namespace Lumina::Jobs
     struct FJobLiveStats
     {
         uint32 NumWorkers    = 0;
-        uint32 NumWorkFibers = 0;
+        uint32 NumWorkFibers = 0;       // fibers created so far (the pool grows on demand)
+        uint32 MaxWorkFibers = 0;       // hard ceiling it may grow to
         uint32 FibersFree    = 0;
         uint32 FibersReady   = 0;
         uint32 FibersInUse   = 0;       // NumWorkFibers - Free - Ready (clamped)

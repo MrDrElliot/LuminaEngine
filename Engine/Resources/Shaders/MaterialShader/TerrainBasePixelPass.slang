@@ -55,6 +55,11 @@ PSOutput FragmentMain(PSInput Input)
     float2 HeightUV      = Input.HeightUV;
     float4 VertexColor   = Input.FragColor;
     float4 WorldTangent  = Input.TangentWS;
+    // Terrain parameterizes from world XZ and has no authored second set; aliasing keeps a material that
+    // samples set 1 working instead of collapsing it to zero.
+    float2 UV1           = UV0;
+    float2 UV1_DDX       = ddx(UV1);
+    float2 UV1_DDY       = ddy(UV1);
     float2 UV0_DDX       = ddx(UV0);
     float2 UV0_DDY       = ddy(UV0);
     float3 WorldPosition_DDX = ddx(WorldPosition);

@@ -78,6 +78,9 @@ namespace Lumina
         void PostLoad() override;
         void OnDestroy() override;
 
+        /** Editing the shading-model override has to re-stamp and re-upload the flags to be visible. */
+        void PostPropertyChange(FProperty* ChangedProperty) override;
+
         /** Reset uniforms to parent defaults and re-apply every override. */
         void RebuildUniformsFromOverrides();
 
@@ -111,6 +114,27 @@ namespace Lumina
 
         PROPERTY(ReadOnly, Category = "Material")
         TObjectPtr<CMaterial> Material;
+
+        /**
+         * Override the parent's shading model without recompiling anything. The model travels in the
+         * material's runtime flags (EMaterialGPUFlags bits 3-5), so an instance can simply stamp a
+         * different one -- no new shader, no new PSO.
+         *
+         * Two limits worth knowing, both from the parent's compiled shader rather than this flag:
+         *
+         *  - A parent whose own model is Unlit compiled its shaders with the UNLIT define, which strips
+         *    the lighting path outright. An instance of it cannot become Lit again. Going the other way
+         *    (Lit parent -> Unlit instance) works, because the lit shader tests the model at runtime.
+         *
+         *  - Clearcoat only shows if the parent's graph actually drives the Clearcoat pins. On a graph
+         *    that leaves them unconnected the coat strength is 0, so the override is a no-op rather than
+         *    an error.
+         */
+        PROPERTY(Editable, Category = "Material|Shading")
+        bool bOverrideShadingModel = false;
+
+        PROPERTY(Editable, Category = "Material|Shading")
+        EMaterialShadingModel ShadingModelOverride = EMaterialShadingModel::Lit;
 
         PROPERTY()
         TVector<FMaterialParameterOverride>     Overrides;

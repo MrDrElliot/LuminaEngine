@@ -6,7 +6,7 @@
 
 namespace Lumina::PrimitiveMeshes
 {
-    inline void GenerateCube(TVector<FVertex>& OutVertices, TVector<uint32>& OutIndices)
+    inline void GenerateCube(TVector<FSourceVertex>& OutVertices, TVector<uint32>& OutIndices)
     {
         const FVector3 normals[] =
         {
@@ -45,7 +45,7 @@ namespace Lumina::PrimitiveMeshes
             {
                 int idx = face * 4 + i;
             
-                FVertex vertex;
+                FSourceVertex vertex;
                 vertex.Position = positions[idx];
                 vertex.Normal = PackNormal(normals[face]);
                 vertex.Tangent = 0; // MikkTSpace fills this in GenerateMeshlets; zero so dedup byte-compare works.
@@ -65,7 +65,7 @@ namespace Lumina::PrimitiveMeshes
         }
     }
 
-    inline void GeneratePlane(TVector<FVertex>& OutVertices, TVector<uint32>& OutIndices)
+    inline void GeneratePlane(TVector<FSourceVertex>& OutVertices, TVector<uint32>& OutIndices)
     {
         const FVector3 normal = { 0, 0, 1 };
         const FVector3 positions[4] =
@@ -82,7 +82,7 @@ namespace Lumina::PrimitiveMeshes
 
         for (int i = 0; i < 4; ++i)
         {
-            FVertex v;
+            FSourceVertex v;
             v.Position = positions[i];
             v.Normal = PackNormal(normal);
             v.Tangent = 0;
@@ -94,7 +94,7 @@ namespace Lumina::PrimitiveMeshes
         OutIndices = { 0, 1, 2, 2, 3, 0 };
     }
 
-    inline void GenerateSphere(TVector<FVertex>& OutVertices, TVector<uint32>& OutIndices, int LatitudeSegments = 16, int LongitudeSegments = 32)
+    inline void GenerateSphere(TVector<FSourceVertex>& OutVertices, TVector<uint32>& OutIndices, int LatitudeSegments = 16, int LongitudeSegments = 32)
     {
         OutVertices.clear();
         OutIndices.clear();
@@ -116,7 +116,7 @@ namespace Lumina::PrimitiveMeshes
                     std::sin(phi) * std::sin(theta)
                 };
 
-                FVertex vert;
+                FSourceVertex vert;
                 vert.Position = pos;
                 vert.Normal = PackNormal(Math::Normalize(pos));
                 vert.Tangent = 0;
@@ -145,7 +145,7 @@ namespace Lumina::PrimitiveMeshes
         }
     }
 
-    inline void GenerateCylinder(TVector<FVertex>& OutVertices, TVector<uint32>& OutIndices, int Segments = 32)
+    inline void GenerateCylinder(TVector<FSourceVertex>& OutVertices, TVector<uint32>& OutIndices, int Segments = 32)
     {
         OutVertices.clear();
         OutIndices.clear();
@@ -161,7 +161,7 @@ namespace Lumina::PrimitiveMeshes
     
             for (int j = 0; j < 2; ++j)
             {
-                FVertex v;
+                FSourceVertex v;
                 v.Position = { dir.x, j ? halfHeight : -halfHeight, dir.z };
                 v.Normal = PackNormal(Math::Normalize(dir));
                 v.Tangent = 0;
@@ -189,7 +189,7 @@ namespace Lumina::PrimitiveMeshes
             FVector3 n = { 0, cap ? 1 : -1, 0 };
     
             // center vertex
-            FVertex center;
+            FSourceVertex center;
             center.Position = { 0, y, 0 };
             center.Normal = PackNormal(n);
             center.Tangent = 0;
@@ -204,7 +204,7 @@ namespace Lumina::PrimitiveMeshes
                 float theta = u * Math::TwoPi<float>();
                 FVector3 dir = { std::cos(theta), 0, std::sin(theta) };
 
-                FVertex v;
+                FSourceVertex v;
                 v.Position = { dir.x, y, dir.z };
                 v.Normal = PackNormal(n);
                 v.Tangent = 0;
@@ -230,7 +230,7 @@ namespace Lumina::PrimitiveMeshes
         }
     }
 
-    inline void GenerateCone(TVector<FVertex>& OutVertices, TVector<uint32>& OutIndices, int Segments = 32)
+    inline void GenerateCone(TVector<FSourceVertex>& OutVertices, TVector<uint32>& OutIndices, int Segments = 32)
     {
         OutVertices.clear();
         OutIndices.clear();
@@ -251,21 +251,21 @@ namespace Lumina::PrimitiveMeshes
             FVector3 normal1   = Math::Normalize(FVector3(H * std::cos(theta1),   radius, H * std::sin(theta1)));
             FVector3 normalTip = Math::Normalize(FVector3(H * std::cos(thetaMid), radius, H * std::sin(thetaMid)));
 
-            FVertex v0;
+            FSourceVertex v0;
             v0.Position = { std::cos(theta0) * radius, -halfHeight, std::sin(theta0) * radius };
             v0.Normal   = PackNormal(normal0);
             v0.Tangent  = 0;
             v0.UV       = Math::PackHalf2x16(FVector2(u0, 0));
             v0.Color    = 0xFFFFFFFF;
 
-            FVertex v1;
+            FSourceVertex v1;
             v1.Position = { std::cos(theta1) * radius, -halfHeight, std::sin(theta1) * radius };
             v1.Normal   = PackNormal(normal1);
             v1.Tangent  = 0;
             v1.UV       = Math::PackHalf2x16(FVector2(u1, 0));
             v1.Color    = 0xFFFFFFFF;
 
-            FVertex vTip;
+            FSourceVertex vTip;
             vTip.Position = { 0, halfHeight, 0 };
             vTip.Normal   = PackNormal(normalTip);
             vTip.Tangent  = 0;
@@ -285,7 +285,7 @@ namespace Lumina::PrimitiveMeshes
         // Bottom cap
         const FVector3 capNormal = { 0, -1, 0 };
 
-        FVertex centerVert;
+        FSourceVertex centerVert;
         centerVert.Position = { 0, -halfHeight, 0 };
         centerVert.Normal   = PackNormal(capNormal);
         centerVert.Tangent  = 0;
@@ -301,7 +301,7 @@ namespace Lumina::PrimitiveMeshes
             float theta = u * Math::TwoPi<float>();
             FVector3 dir = { std::cos(theta), 0, std::sin(theta) };
 
-            FVertex v;
+            FSourceVertex v;
             v.Position = { dir.x * radius, -halfHeight, dir.z * radius };
             v.Normal   = PackNormal(capNormal);
             v.Tangent  = 0;
@@ -319,7 +319,7 @@ namespace Lumina::PrimitiveMeshes
         }
     }
     
-    inline void GenerateCapsule(TVector<FVertex>& OutVertices, TVector<uint32>& OutIndices, int Segments = 32, float Radius = 0.5f, float HalfHeight = 1.0f)
+    inline void GenerateCapsule(TVector<FSourceVertex>& OutVertices, TVector<uint32>& OutIndices, int Segments = 32, float Radius = 0.5f, float HalfHeight = 1.0f)
     {
         OutVertices.clear();
         OutIndices.clear();
@@ -333,7 +333,7 @@ namespace Lumina::PrimitiveMeshes
     
         auto addVertex = [&](const FVector3& pos, const FVector3& n, const FVector2& uv)
         {
-            FVertex v;
+            FSourceVertex v;
             v.Position = pos;
             v.Normal   = PackNormal(n);
             v.Tangent  = 0;

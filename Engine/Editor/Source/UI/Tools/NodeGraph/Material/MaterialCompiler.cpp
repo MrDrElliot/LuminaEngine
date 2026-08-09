@@ -1174,7 +1174,7 @@ namespace Lumina
 		AddWarning(Warning);
 	}
 
-	void FMaterialCompiler::TextureSample(const FString& ID, CTexture* Texture, CMaterialInput* Input, CEdGraphNode* Node)
+	void FMaterialCompiler::TextureSample(const FString& ID, CTexture* Texture, CMaterialInput* Input, CEdGraphNode* Node, FStringView SamplerName)
 	{
 		if (Texture == nullptr || Texture->GetResourceID() < 0)
 		{
@@ -1194,11 +1194,12 @@ namespace Lumina
 		}
 
 		const int32 Index = BindTexture(Texture);
+		const FString SamplerStr(SamplerName.data(), SamplerName.size());
 
 		if (!LaneSamplesWithGradients())
 		{
 			GetActiveChunk().append("float4 " + ID + " = SampleTexture2DLevel(GetMaterialTexture(MaterialIndex, "
-				+ eastl::to_string(Index) + "), SAMPLER_LINEAR_WRAP, " + UVStr + ", 0.0);\n");
+				+ eastl::to_string(Index) + "), " + SamplerStr + ", " + UVStr + ", 0.0);\n");
 			return;
 		}
 
@@ -1218,10 +1219,10 @@ namespace Lumina
 		}
 		WarnUVGradientFallback(UVValue, Node);
 
-		GetActiveChunk().append("float4 " + ID + " = SampleTexture2DAuto(GetMaterialTexture(MaterialIndex, " + eastl::to_string(Index) + "), SAMPLER_LINEAR_WRAP, " + UVStr + ", " + Ddx + ", " + Ddy + ");\n");
+		GetActiveChunk().append("float4 " + ID + " = SampleTexture2DAuto(GetMaterialTexture(MaterialIndex, " + eastl::to_string(Index) + "), " + SamplerStr + ", " + UVStr + ", " + Ddx + ", " + Ddy + ");\n");
 	}
 
-	void FMaterialCompiler::TextureSampleParameter(const FString& ID, const FName& ParamID, CTexture* Texture, CMaterialInput* Input, CEdGraphNode* Node)
+	void FMaterialCompiler::TextureSampleParameter(const FString& ID, const FName& ParamID, CTexture* Texture, CMaterialInput* Input, CEdGraphNode* Node, FStringView SamplerName)
 	{
 		FInputValue UVValue = GetTypedInputValue(Input, "float2(UV0)");
 
@@ -1236,11 +1237,12 @@ namespace Lumina
 		}
 
 		const int32 Index = BindTextureParameter(ParamID, Texture);
+		const FString SamplerStr(SamplerName.data(), SamplerName.size());
 
 		if (!LaneSamplesWithGradients())
 		{
 			GetActiveChunk().append("float4 " + ID + " = SampleTexture2DLevel(GetMaterialTexture(MaterialIndex, "
-				+ eastl::to_string(Index) + "), SAMPLER_LINEAR_WRAP, " + UVStr + ", 0.0);\n");
+				+ eastl::to_string(Index) + "), " + SamplerStr + ", " + UVStr + ", 0.0);\n");
 			return;
 		}
 
@@ -1260,7 +1262,7 @@ namespace Lumina
 		}
 		WarnUVGradientFallback(UVValue, Node);
 
-		GetActiveChunk().append("float4 " + ID + " = SampleTexture2DAuto(GetMaterialTexture(MaterialIndex, " + eastl::to_string(Index) + "), SAMPLER_LINEAR_WRAP, " + UVStr + ", " + Ddx + ", " + Ddy + ");\n");
+		GetActiveChunk().append("float4 " + ID + " = SampleTexture2DAuto(GetMaterialTexture(MaterialIndex, " + eastl::to_string(Index) + "), " + SamplerStr + ", " + UVStr + ", " + Ddx + ", " + Ddy + ");\n");
 	}
 
 	void FMaterialCompiler::TextureSampleArray(CMaterialGraphNode* Node, int32 TextureIndex, uint32 NumLayers,
@@ -1712,7 +1714,8 @@ namespace Lumina
 		RegisterDeriv(ID, EDerivState::Valid, "VertexColor_DDX", "VertexColor_DDY", 4);
 	}
 
-	void FMaterialCompiler::TexCoords(const FString& ID, uint32 Index, CMaterialInput* Tiling, float UTiling, float VTiling)
+	void FMaterialCompiler::TexCoords(const FString& ID, uint32 Index, CMaterialInput* Tiling, float UTiling, float VTiling,
+	                                  CMaterialInput* Rotation, float RotationDegrees)
 	{
 		// Connected Tiling pin overrides the inline UTiling/VTiling defaults.
 		FInputValue TilingValue = GetTypedInputValue(Tiling, "float2(" + eastl::to_string(UTiling) + ", " + eastl::to_string(VTiling) + ")");
@@ -1739,31 +1742,84 @@ namespace Lumina
 			}
 		}
 
-		GetActiveChunk().append("float2 " + ID + " = UV0 * " + Scale + ";\n");
+		// The node's set index picks the stage's UV variable. Every stage declares both, aliasing set 1 onto
+		// set 0 where it has no independent meaning (terrain, UI, decals, post-process), so an out-of-range
+		// index clamping to the last real set degrades to correct-looking rather than to zero.
+		const FString SetName = (Index >= 1) ? FString("UV1") : FString("UV0");
 
-		// Chain rule: d(UV0 * Scale) = dUV0 * Scale. Without this the deferred pass sampled tiled materials
-		// with UV0's raw gradient, i.e. log2(Scale) mip levels too fine -- 5 levels (1024x the texel working
+		// Rotation is applied AFTER tiling and about the UV origin, matching glTF KHR_texture_transform's
+		// translation * rotation * scale order (the offset is a separate node downstream).
+		const bool bRotationConnected = (Rotation != nullptr && Rotation->HasConnection());
+		FInputValue RotationValue = GetTypedInputValue(Rotation, eastl::to_string(Math::Radians(RotationDegrees)));
+		const bool  bHasRotation  = bRotationConnected || RotationDegrees != 0.0f;
+
+		if (!bHasRotation)
+		{
+			GetActiveChunk().append("float2 " + ID + " = " + SetName + " * " + Scale + ";\n");
+		}
+		else
+		{
+			const FString Scaled = ID + "_Scaled";
+			const FString Cos    = ID + "_Cos";
+			const FString Sin    = ID + "_Sin";
+
+			GetActiveChunk().append("float2 " + Scaled + " = " + SetName + " * " + Scale + ";\n");
+			GetActiveChunk().append("float " + Cos + " = cos(" + RotationValue.Value + ");\n");
+			GetActiveChunk().append("float " + Sin + " = sin(" + RotationValue.Value + ");\n");
+			GetActiveChunk().append("float2 " + ID + " = float2("
+			                      + Scaled + ".x * " + Cos + " - " + Scaled + ".y * " + Sin + ", "
+			                      + Scaled + ".x * " + Sin + " + " + Scaled + ".y * " + Cos + ");\n");
+		}
+
+		// Chain rule: d(UV * Scale) = dUV * Scale. Without this the deferred pass sampled tiled materials
+		// with the raw gradient, i.e. log2(Scale) mip levels too fine -- 5 levels (1024x the texel working
 		// set) at 32x tiling, which is what made a tiled-terrain view VRAM-bound.
 		//
 		// A connected Tiling pin can itself vary per pixel; the product rule's second term is dropped
 		// unless that pin is derivative-free, so a varying scale degrades to Unknown rather than lying.
-		FInputValue UV0Value;
-		UV0Value.Value = "UV0";
-		UV0Value.Deriv = EDerivState::Valid;
-		UV0Value.DDX   = "UV0_DDX";
-		UV0Value.DDY   = "UV0_DDY";
+		FInputValue UVSetValue;
+		UVSetValue.Value = SetName;
+		UVSetValue.Deriv = EDerivState::Valid;
+		UVSetValue.DDX   = SetName + "_DDX";
+		UVSetValue.DDY   = SetName + "_DDY";
 
 		const bool bScaleIsConstant = (Tiling == nullptr || !Tiling->HasConnection())
 		                           || TilingValue.Deriv == EDerivState::Zero;
 
-		if (bScaleIsConstant)
-		{
-			RegisterScaledDeriv(ID, UV0Value, Scale);
-		}
-		else
+		// A rotation driven by a uniform (material parameter or literal) is still derivative-free, so the
+		// chain stays exact; only a per-pixel rotation forces a fallback.
+		const bool bRotationIsConstant = !bRotationConnected || RotationValue.Deriv == EDerivState::Zero;
+
+		if (!bScaleIsConstant || !bRotationIsConstant)
 		{
 			RegisterDeriv(ID, EDerivState::Unknown);
+			return;
 		}
+
+		if (!bHasRotation)
+		{
+			RegisterScaledDeriv(ID, UVSetValue, Scale);
+			return;
+		}
+
+		// Rotation is linear, so d(R * S * uv) = R * S * duv -- the same basis change applied to the
+		// gradients. Rotating them matters for anisotropic filtering direction; the magnitude (and so the
+		// mip) is preserved either way, but there is no reason to be approximate when the expression is
+		// this cheap and folds away for a literal angle.
+		const FString Cos = ID + "_Cos";
+		const FString Sin = ID + "_Sin";
+
+		auto RotateGradient = [&](const FString& Source) -> FString
+		{
+			const FString Scaled = "(" + Source + " * " + Scale + ")";
+			return "float2(" + Scaled + ".x * " + Cos + " - " + Scaled + ".y * " + Sin + ", "
+			                 + Scaled + ".x * " + Sin + " + " + Scaled + ".y * " + Cos + ")";
+		};
+
+		RegisterDeriv(ID, EDerivState::Valid,
+		              RotateGradient(UVSetValue.DDX),
+		              RotateGradient(UVSetValue.DDY),
+		              2);
 	}
 
 	void FMaterialCompiler::Panner(CMaterialInput* UV, CMaterialInput* Time, CMaterialInput* Speed)

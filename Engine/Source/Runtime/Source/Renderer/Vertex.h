@@ -101,20 +101,29 @@ namespace Lumina
         return FVector4(Math::Normalize(t), Sign);
     }
 
-    struct FVertex
+    /**
+     * CPU-side interleaved vertex. Import staging, procedural primitive generation and geometry
+     * collections build these, then scatter them into FMeshResource's SoA streams via AppendVertex.
+     *
+     * NOT a GPU format and has no Slang counterpart -- the shaders read FMeshletVertex below. Nothing
+     * here is size-constrained by a shader mirror.
+     */
+    struct FSourceVertex
     {
         FVector3       Position;
         uint32          Normal;
         uint32          Tangent;
-        uint32          UV;
+        uint32          UV;      // packHalf2x16, TEXCOORD_0
+        uint32          UV1;     // packHalf2x16, TEXCOORD_1; equals UV when the source has one set
         uint32          Color;
 
-        friend FArchive& operator<<(FArchive& Ar, FVertex& Data)
+        friend FArchive& operator<<(FArchive& Ar, FSourceVertex& Data)
         {
             Ar << Data.Position;
             Ar << Data.Normal;
             Ar << Data.Tangent;
             Ar << Data.UV;
+            Ar << Data.UV1;
             Ar << Data.Color;
             return Ar;
         }
@@ -169,17 +178,18 @@ namespace Lumina
         return FU8Vector4((uint8)Quantized[0], (uint8)Quantized[1], (uint8)Quantized[2], (uint8)Quantized[3]);
     }
 
-    struct FSkinnedVertex : FVertex
+    struct FSourceSkinnedVertex : FSourceVertex
     {
         FU8Vector4     JointIndices;
         FU8Vector4     JointWeights;
 
-        friend FArchive& operator<<(FArchive& Ar, FSkinnedVertex& Data)
+        friend FArchive& operator<<(FArchive& Ar, FSourceSkinnedVertex& Data)
         {
             Ar << Data.Position;
             Ar << Data.Normal;
             Ar << Data.Tangent;
             Ar << Data.UV;
+            Ar << Data.UV1;
             Ar << Data.Color;
             Ar << Data.JointIndices;
             Ar << Data.JointWeights;
@@ -187,7 +197,12 @@ namespace Lumina
         }
     };
 
-    // Position is a 16-bit offset per axis from the owning meshlet's anchor; decode via MeshQuantization.h.
+    /**
+     * The GPU static-vertex format. Common.slang declares an FMeshletVertex that must match this field
+     * for field -- same name on both sides deliberately, so a change here is obviously a change there.
+     *
+     * Position is a 16-bit offset per axis from the owning meshlet's anchor; decode via MeshQuantization.h.
+     */
     struct FMeshletVertex
     {
         uint16 PositionX;
@@ -197,9 +212,10 @@ namespace Lumina
         int16  NormalY;
         int16  NormalZ;
         uint32 Tangent;
-        uint32 UV;
+        uint32 UV;   // packHalf2x16, TEXCOORD_0
+        uint32 UV1;  // packHalf2x16, TEXCOORD_1
         uint32 Color;
-        
+
         [[nodiscard]] constexpr FVector3 GetNormal() const
         {
             return FVector3(Math::SNorm16ToFloat(NormalX),
@@ -226,13 +242,20 @@ namespace Lumina
         float       Size;
     };
 
-    static_assert(sizeof(FVertex) == 28);
-    static_assert(sizeof(FSkinnedVertex) == 36);
-    static_assert(sizeof(FMeshletVertex) == 24);
-    static_assert(sizeof(FMeshletSkinnedVertex) == 32);
-    static_assert(offsetof(FVertex, Position) == 0);
-    static_assert(TCanBulkSerialize<FVertex>::value);
-    static_assert(TCanBulkSerialize<FSkinnedVertex>::value);
+    // FMeshletVertex/FMeshletSkinnedVertex are the GPU formats; Common.slang declares structs of the SAME
+    // NAME that must stay identical field for field. Re-verify the Slang ArrayStride and member offsets
+    // against these whenever a field moves -- a silent stride desync corrupts every vertex past the first.
+    //
+    // FSourceVertex/FSourceSkinnedVertex are CPU-ONLY: interleaved staging for import, procedural primitive
+    // generation and geometry collections. They are never uploaded and have no Slang counterpart, so their
+    // size is free to differ.
+    static_assert(sizeof(FSourceVertex) == 32);
+    static_assert(sizeof(FSourceSkinnedVertex) == 40);
+    static_assert(sizeof(FMeshletVertex) == 28);
+    static_assert(sizeof(FMeshletSkinnedVertex) == 36);
+    static_assert(offsetof(FSourceVertex, Position) == 0);
+    static_assert(TCanBulkSerialize<FSourceVertex>::value);
+    static_assert(TCanBulkSerialize<FSourceSkinnedVertex>::value);
     static_assert(TCanBulkSerialize<FMeshletVertex>::value);
     static_assert(TCanBulkSerialize<FMeshletSkinnedVertex>::value);
     static_assert(TCanBulkSerialize<FBillboardVertex>::value);

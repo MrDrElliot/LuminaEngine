@@ -9,9 +9,11 @@
 #include "Containers/Array.h"
 #include "Log/Log.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <thread>
+#include <vector>
 
 using namespace Lumina;
 
@@ -928,4 +930,217 @@ TEST(TaskSystem, AssistWaitStillRunsNonBackgroundWork)
         << "the assist path ran no work inline during a fan-out-and-wait; an external wait can now starve";
 
     Jobs::FreeCounter(Counter);
+}
+
+// ----------------------------------------------------------------------------
+// Fiber pool saturation
+//
+// A fiber is held for as long as its job is BLOCKED, not just while it runs, so the pool has to cover
+// peak simultaneous blocked jobs. Exceed it and the scheduler does not merely slow down: the queued work
+// that would release the parked fibers needs a fiber to run on, and the only fibers are the ones parked
+// waiting for it. Nothing in the scheduler breaks that cycle, which is why the pool grows on demand.
+//
+// Both tests deliberately poll instead of waiting on a counter. An external WaitForCounter assist-runs
+// queued jobs inline, which papers over the whole failure -- and the paths that actually hang in
+// practice (FTaskCompletion::Wait, a fire-and-forget submit nobody waits on) have no such rescue.
+// ----------------------------------------------------------------------------
+
+namespace
+{
+    struct FSaturateProbe
+    {
+        Jobs::FCounter*     Gate = nullptr;
+        std::atomic<uint32> Entered{0};
+        std::atomic<uint32> Finished{0};
+    };
+
+    void SaturateBlockingJob(void* Arg, uint32 /*Worker*/)
+    {
+        FSaturateProbe* P = static_cast<FSaturateProbe*>(Arg);
+        P->Entered.fetch_add(1, std::memory_order_relaxed);
+        Jobs::WaitForCounter(P->Gate, 0); // parks this fiber and holds it until the gate opens
+        P->Finished.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // Poll a predicate up to a deadline. Never assists, so a wedged pool shows up as a failed
+    // expectation instead of being rescued by the waiting thread (or hanging the suite).
+    template<typename FPred>
+    bool PollUntil(FPred&& Pred, std::chrono::milliseconds Timeout)
+    {
+        const auto Deadline = std::chrono::steady_clock::now() + Timeout;
+        while (!Pred())
+        {
+            if (std::chrono::steady_clock::now() >= Deadline)
+            {
+                return false;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        return true;
+    }
+}
+
+TEST(TaskSystem, FiberPoolSaturation_MoreBlockedJobsThanFibers)
+{
+    Jobs::FJobLiveStats Stats;
+    Jobs::GetLiveStats(Stats);
+
+    // Past the pool by more than the workers could have in flight transiently, so the excess genuinely
+    // cannot be bound without the pool growing. Deliberately NOT guarded against MaxWorkFibers: a build
+    // whose ceiling sits at the starting size is one where this deadlocks, and that has to fail here
+    // rather than skip. The test recovers either way -- the gate opens after the deadline, which frees
+    // the parked fibers and lets the stalled jobs through.
+    const uint32 Blockers = Stats.NumWorkFibers + Stats.NumWorkers * 2 + 64;
+
+    // Static so a timed-out run cannot leave jobs pointing at a dead stack frame.
+    static FSaturateProbe Probe;
+    Probe.Entered.store(0);
+    Probe.Finished.store(0);
+    Probe.Gate = Jobs::AllocCounter(1);
+
+    for (uint32 i = 0; i < Blockers; ++i)
+    {
+        Jobs::RunJob(&SaturateBlockingJob, &Probe, Jobs::EJobPriority::Normal, nullptr, "Saturate.Block");
+    }
+
+    // Every job must get a fiber even though far more of them are blocked at once than the pool started
+    // with. Before on-demand growth this stalled at NumWorkFibers forever, with every worker pinned at
+    // 100% in the starvation spin.
+    const bool AllEntered = PollUntil([&] { return Probe.Entered.load() == Blockers; },
+        std::chrono::seconds(10));
+    EXPECT_TRUE(AllEntered) << "only " << Probe.Entered.load() << " of " << Blockers
+        << " blocking jobs ever started; the fiber pool wedged instead of growing";
+
+    Jobs::DecrementCounter(Probe.Gate, 1);
+
+    const bool AllFinished = PollUntil([&] { return Probe.Finished.load() == Blockers; },
+        std::chrono::seconds(10));
+    EXPECT_TRUE(AllFinished) << "only " << Probe.Finished.load() << " of " << Blockers
+        << " parked fibers resumed after the gate opened";
+
+    if (AllFinished)
+    {
+        Jobs::FreeCounter(Probe.Gate); // only once nothing references it
+    }
+
+    Jobs::GetLiveStats(Stats);
+    EXPECT_GE(Stats.NumWorkFibers, Blockers)
+        << "the pool did not grow to cover the blocked set";
+}
+
+TEST(TaskSystem, ManyBlockingAsyncTasks_AllComplete)
+{
+    // The same failure through the public API, in the shape it actually shows up as: a pile of
+    // fire-and-forget tasks (asset imports, thumbnails, shader compiles) that each block, then fan out.
+    //
+    // The gate is what makes it deterministic. Left to race, the outer tasks drain about as fast as they
+    // pile up and the pool is never provably exceeded -- an earlier version of this test passed on a
+    // 256-fiber build for exactly that reason. Holding every task at the same barrier forces all Outer
+    // of them to be blocked, and holding a fiber, simultaneously.
+    constexpr uint32 Outer = 400;
+    constexpr uint32 Inner = 256;
+
+    struct FProbe
+    {
+        Jobs::FCounter*     Gate = nullptr;
+        std::atomic<uint32> Entered{0};
+        std::atomic<uint32> Done{0};
+        std::atomic<uint64> Sum{0};
+    };
+    static FProbe Probe;
+    Probe.Entered.store(0);
+    Probe.Done.store(0);
+    Probe.Sum.store(0);
+    Probe.Gate = Jobs::AllocCounter(1);
+
+    for (uint32 i = 0; i < Outer; ++i)
+    {
+        Task::AsyncTask(1, 1, [](uint32, uint32, uint32)
+        {
+            Probe.Entered.fetch_add(1, std::memory_order_relaxed);
+            Jobs::WaitForCounter(Probe.Gate, 0);
+
+            Task::ParallelFor(Inner, [](uint32)
+            {
+                Probe.Sum.fetch_add(1, std::memory_order_relaxed);
+            }, 8);
+            Probe.Done.fetch_add(1, std::memory_order_relaxed);
+        });
+    }
+
+    const bool AllEntered = PollUntil([&] { return Probe.Entered.load() == Outer; },
+        std::chrono::seconds(10));
+    EXPECT_TRUE(AllEntered) << "only " << Probe.Entered.load() << " of " << Outer
+        << " async tasks ever started; the fiber pool wedged instead of growing";
+
+    Jobs::DecrementCounter(Probe.Gate, 1);
+
+    const bool AllDone = PollUntil([&] { return Probe.Done.load() == Outer; }, std::chrono::seconds(20));
+    EXPECT_TRUE(AllDone) << "only " << Probe.Done.load() << " of " << Outer
+        << " blocking async tasks completed";
+    EXPECT_EQ(Probe.Sum.load(), (uint64)Outer * Inner);
+
+    if (AllDone)
+    {
+        Jobs::FreeCounter(Probe.Gate);
+    }
+}
+
+// ----------------------------------------------------------------------------
+// External thread slots
+// ----------------------------------------------------------------------------
+
+TEST(TaskSystem, ExternalThreadSlotsAreRecycled)
+{
+    const uint32 Workers = Jobs::GetNumWorkers();
+    const uint32 Slots   = Jobs::GetNumThreadSlots() - Workers;
+    ASSERT_GT(Slots, 1u);
+
+    // Churn well past the supply. Handing slots out with a monotonic counter leaked one per cycle, and
+    // once the supply ran dry every later thread aliased a live one -- silently, since the index is what
+    // sizes and indexes every per-thread array in the engine.
+    for (uint32 Round = 0; Round < Slots * 4; ++Round)
+    {
+        std::thread T([&]
+        {
+            const uint32 Index = Jobs::RegisterExternalThread();
+            EXPECT_GE(Index, Workers);
+            EXPECT_LT(Index, Jobs::GetNumThreadSlots());
+            Jobs::UnregisterExternalThread();
+        });
+        T.join();
+    }
+
+    // After all that churn, concurrently live external threads must still get distinct slots. The main
+    // thread holds one of its own, so it is Slots - 1 that are actually available.
+    const uint32 Concurrent = Slots - 1;
+    std::vector<uint32>      Indices(Concurrent, ~0u);
+    std::vector<std::thread> Threads;
+    std::atomic<uint32>      Arrived{0};
+
+    Threads.reserve(Concurrent);
+    for (uint32 i = 0; i < Concurrent; ++i)
+    {
+        Threads.emplace_back([&, i]
+        {
+            Indices[i] = Jobs::RegisterExternalThread();
+            // Hold the slot until every thread has one, so the claims genuinely overlap.
+            Arrived.fetch_add(1, std::memory_order_acq_rel);
+            while (Arrived.load(std::memory_order_acquire) < Concurrent)
+            {
+                std::this_thread::yield();
+            }
+            Jobs::UnregisterExternalThread();
+        });
+    }
+    for (std::thread& T : Threads)
+    {
+        T.join();
+    }
+
+    std::vector<uint32> Sorted = Indices;
+    std::sort(Sorted.begin(), Sorted.end());
+    EXPECT_EQ(std::adjacent_find(Sorted.begin(), Sorted.end()), Sorted.end())
+        << "two concurrently live external threads were handed the same slot; per-thread arrays "
+           "indexed by GetWorkerIndex() are racing";
 }

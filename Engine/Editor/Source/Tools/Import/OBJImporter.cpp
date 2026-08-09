@@ -190,7 +190,7 @@ namespace Lumina
                         MeshResource->Indices.push_back((uint32)MeshResource->GetNumVertices());
                         Surface.IndexCount++;
 
-                        FSkinnedVertex Vertex;
+                        FSourceSkinnedVertex Vertex;
                         Vertex.Normal       = 0;
                         Vertex.Tangent      = 0;   // Filled by MikkTSpace in GenerateMeshlets.
                         Vertex.UV           = 0;
@@ -215,13 +215,16 @@ namespace Lumina
                                                                     Attribute.texcoords[2 * Index.texcoord_index + 1]));
                         }
 
+                        // OBJ carries a single UV channel; mirror it so a material sampling set 1 behaves.
+                        Vertex.UV1 = Vertex.UV;
+
                         if (bIsSkinned)
                         {
                             MeshResource->AppendVertex(Vertex);
                         }
                         else
                         {
-                            MeshResource->AppendVertex(static_cast<const FVertex&>(Vertex));
+                            MeshResource->AppendVertex(static_cast<const FSourceVertex&>(Vertex));
                         }
                     }
                 }

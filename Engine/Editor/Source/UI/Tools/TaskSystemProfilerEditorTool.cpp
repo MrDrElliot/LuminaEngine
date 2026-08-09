@@ -221,9 +221,10 @@ namespace Lumina
         {
             Col = IM_COL32(214, 72, 72, 255); Icon = LE_ICON_ALERT_OCTAGON; Headline = "Fiber pool starved";
             snprintf(Detail, sizeof Detail,
-                "%u episode(s): every one of the %u fibers was busy while jobs were still pending. Raise "
-                "NumWorkFibers - this is a pool-size limit, not something work-stealing would fix.",
-                F.Starvations, LS.NumWorkFibers);
+                "%u episode(s): every one of the %u fibers (of %u max) was blocked while jobs were still pending, "
+                "so the pool had to grow. Not something work-stealing would fix - it means jobs are blocking inside "
+                "jobs. Raise NumWorkFibers to skip the growth, or stop blocking in bulk-spawned work.",
+                F.Starvations, LS.NumWorkFibers, LS.MaxWorkFibers);
         }
         else if (Contended && ForkJoin)
         {
@@ -316,7 +317,7 @@ namespace Lumina
         if (ImGui::BeginTable("##live", 2, ImGuiTableFlags_SizingStretchProp))
         {
             StatRow("Workers",      "%u", LS.NumWorkers);
-            StatRow("Fibers total", "%u", LS.NumWorkFibers);
+            StatRow("Fibers total", "%u / %u", LS.NumWorkFibers, LS.MaxWorkFibers);
             StatRow("In use",       "%u", LS.FibersInUse);
             StatRow("Free",         "%u", LS.FibersFree);
             StatRow("Ready",        "%u", LS.FibersReady);

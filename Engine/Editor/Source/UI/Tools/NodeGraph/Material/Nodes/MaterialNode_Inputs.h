@@ -19,6 +19,10 @@ namespace Lumina
         // Tiling multiplier. A scalar applies to both axes; wider than float2 is truncated to xy.
         CMaterialInput* Tiling = nullptr;
 
+        // Rotation in RADIANS about the UV origin, applied after tiling. Overrides RotationDegrees when
+        // connected. A uniform (parameter or literal) keeps exact UV gradients; a per-pixel value cannot.
+        CMaterialInput* Rotation = nullptr;
+
         /** Index of the UV set to sample from the mesh. */
         PROPERTY(Editable)
         uint32 TextureIndex = 0;
@@ -30,6 +34,10 @@ namespace Lumina
         /** Default tiling multiplier applied to the V axis when the Tiling pin is unconnected. */
         PROPERTY(Editable)
         float VTiling = 1.0f;
+
+        /** Rotation about the UV origin, applied after tiling, when the Rotation pin is unconnected. */
+        PROPERTY(Editable, Units = "deg")
+        float RotationDegrees = 0.0f;
     };
 
     REFLECT()

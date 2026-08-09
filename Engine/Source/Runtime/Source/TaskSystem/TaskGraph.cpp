@@ -42,7 +42,10 @@ namespace Lumina
     {
         struct promise_type
         {
-            // The coroutine's FNode* is forwarded here so the frame lands in the graph arena.
+            // The coroutine's FNode* is forwarded here so the frame lands in the graph arena, and kept
+            // so the final awaiter can signal the graph without the body having to.
+            explicit promise_type(FNode* InNode) noexcept : Node(InNode) {}
+
             static void* operator new(std::size_t Size, FNode* Node)
             {
                 return Node->Arena->Allocate(Size, alignof(std::max_align_t));
@@ -55,10 +58,39 @@ namespace Lumina
                 return FNodeCoro{ std::coroutine_handle<promise_type>::from_promise(*this) };
             }
 
+            /**
+             * Signals the graph counter, and does it HERE rather than from the coroutine body.
+             *
+             * That decrement is what releases Wait(), and the very next thing a caller typically does
+             * is Reset() -- which resets the arena this coroutine frame is allocated in. Signalling one
+             * statement earlier, from the body before co_return, leaves the compiler still to write the
+             * frame's final suspend state afterwards, into storage the next iteration has already begun
+             * handing out. Intermittent, timing-dependent, and it presents as a segfault somewhere else
+             * entirely. await_suspend is the last point the coroutine touches its own frame, so the
+             * signal belongs at the end of it, with everything it needs read out first.
+             *
+             * Same idiom as CoroDetail::FPromiseBase::FFinalAwaiter in Task.h, for the same reason.
+             */
+            struct FFinalAwaiter
+            {
+                bool await_ready() const noexcept { return false; }
+
+                void await_suspend(std::coroutine_handle<promise_type> Handle) const noexcept
+                {
+                    // Read the counter out before the drop: the last decrement lets Wait() free it.
+                    Jobs::FCounter* Counter = Handle.promise().Node->Graph->GraphCounter;
+                    Jobs::DecrementCounter(Counter, 1);
+                }
+
+                void await_resume() const noexcept {}
+            };
+
             std::suspend_always initial_suspend() noexcept { return {}; }
-            std::suspend_always final_suspend()   noexcept { return {}; }
+            FFinalAwaiter       final_suspend()   noexcept { return {}; }
             void                return_void()     noexcept {}
             void                unhandled_exception() { ASSERT(false); }
+
+            FNode* Node = nullptr;
         };
 
         std::coroutine_handle<promise_type> Handle;
@@ -90,6 +122,9 @@ namespace Lumina
         CoroDetail::ScheduleResume(Node->CoroHandle, Node->Priority);
     }
 
+    // Schedules whatever this node unblocked. It does NOT signal the graph counter -- that happens in
+    // FNodeCoro's final awaiter, once the coroutine is finished with its own frame. Scheduling
+    // dependents here is safe because the graph cannot be reset while any node is still outstanding.
     void FTaskGraph::CompleteNode(FNode* Node)
     {
         FTaskGraph* Graph = Node->Graph;
@@ -102,8 +137,6 @@ namespace Lumina
                 StartNode(Dependent);
             }
         }
-
-        Jobs::DecrementCounter(Graph->GraphCounter, 1);
     }
 
     FTaskGraph::FTaskGraph()

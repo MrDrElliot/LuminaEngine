@@ -50,6 +50,24 @@ namespace Lumina
 
     private:
 
+        /**
+         * Rejects a source whose extensionsRequired names anything the importer cannot honour.
+         *
+         * cgltf parses such a file "successfully" -- it validates the metadata of compression extensions
+         * but never decodes them -- so without this the accessors read compressed bytes as floats and the
+         * import produces garbage geometry with no error anywhere.
+         */
+        bool ValidateRequiredExtensions(cgltf_data& Data, FString& OutError) const;
+
+        /**
+         * Decodes every EXT_meshopt_compression buffer view into DecodedBufferViews and points the view's
+         * data override at it. Must run after cgltf_load_buffers and before any accessor is read.
+         */
+        bool DecompressMeshopt(cgltf_data& Data, FString& OutError);
+
         cgltf_data* ParsedData = nullptr;
+
+        // Backing store for the meshopt-decoded views; cgltf_free does not own these.
+        TVector<TVector<uint8>> DecodedBufferViews;
     };
 }

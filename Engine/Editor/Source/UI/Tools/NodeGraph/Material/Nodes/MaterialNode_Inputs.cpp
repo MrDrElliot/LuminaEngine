@@ -43,13 +43,18 @@ namespace Lumina
         Tiling->SetPinName("Tiling");
         Tiling->SetInputType(EMaterialInputType::Float2);
 
+        Rotation = Cast<CMaterialInput>(CreatePin(CMaterialInput::StaticClass(), "Rotation", ENodePinDirection::Input));
+        Rotation->SetHideDuringConnection(false);
+        Rotation->SetPinName("Rotation");
+        Rotation->SetInputType(EMaterialInputType::Float);
+
         Output->SetInputType(EMaterialInputType::Float2);
         Output->SetComponentMask(EComponentMask::RG);
     }
 
     void CMaterialExpression_TexCoords::GenerateDefinition(FMaterialCompiler& Compiler)
     {
-        Compiler.TexCoords(FullName, TextureIndex, Tiling, UTiling, VTiling);
+        Compiler.TexCoords(FullName, TextureIndex, Tiling, UTiling, VTiling, Rotation, RotationDegrees);
     }
 
     void CMaterialExpression_WorldPos::BuildNode()

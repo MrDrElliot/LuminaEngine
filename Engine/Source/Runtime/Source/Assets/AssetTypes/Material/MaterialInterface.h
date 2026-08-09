@@ -37,11 +37,21 @@ namespace Lumina
         Additive,
     };
 
+    /**
+     * How a surface is lit. Values MUST match EShadingModel in GBuffer.slang -- they are packed into the
+     * GBuffer flags byte and read back by the lighting pass.
+     *
+     * Note the ordering: Lit is the shader's Default (0), so a material that never sets this behaves as it
+     * always has.
+     */
     REFLECT()
     enum class EMaterialShadingModel : uint8
     {
-        Lit,
-        Unlit,
+        Lit       = 0,
+        Unlit     = 1,
+
+        /** Adds a clear dielectric layer over the base: car paint, lacquer, varnish. */
+        Clearcoat = 2,
     };
 
     REFLECT()

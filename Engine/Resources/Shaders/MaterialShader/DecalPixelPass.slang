@@ -72,6 +72,10 @@ PSOutput FragmentMain(PSInput Input)
     // Graph local contract. The decal's own X axis IS its UV direction (UV0 is Local.xy), so this is a
     // genuine tangent frame, not a placeholder -- it matches the one the normal decode below builds.
     float4 WorldTangent  = float4(normalize(mul((float3x3)Decal.DecalToWorld, float3(1.0, 0.0, 0.0))), 1.0);
+    // A decal's UV is its own box projection, not mesh data; set 1 aliases it.
+    float2 UV1           = UV0;
+    float2 UV1_DDX       = ddx(UV1);
+    float2 UV1_DDY       = ddy(UV1);
     float2 UV0_DDX       = ddx(UV0);
     float2 UV0_DDY       = ddy(UV0);
     float3 WorldPosition_DDX = ddx(WorldPosition);

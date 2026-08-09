@@ -195,6 +195,9 @@ struct FVisSurface
     float2     UV;
     float2     UVDDX;
     float2     UVDDY;
+    float2     UV1;
+    float2     UV1DDX;
+    float2     UV1DDY;
 };
 
 FVisSurface InterpolateVisSurface(FMeshletWorldVertex W[3], float3 FinalWorldPos[3],
@@ -217,6 +220,14 @@ FVisSurface InterpolateVisSurface(FMeshletWorldVertex W[3], float3 FinalWorldPos
     S.UV    = float2(dot(UVx, S.Bary.Lambda), dot(UVy, S.Bary.Lambda));
     S.UVDDX = float2(dot(UVx, S.Bary.DDX),    dot(UVy, S.Bary.DDX));
     S.UVDDY = float2(dot(UVx, S.Bary.DDY),    dot(UVy, S.Bary.DDY));
+
+    // Set 1 needs its own derivatives, not set 0's: the two are independent parameterizations, so a
+    // shared gradient would pick the wrong mip wherever their texel densities differ.
+    const float3 UV1x = float3(W[0].UV1.x, W[1].UV1.x, W[2].UV1.x);
+    const float3 UV1y = float3(W[0].UV1.y, W[1].UV1.y, W[2].UV1.y);
+    S.UV1    = float2(dot(UV1x, S.Bary.Lambda), dot(UV1y, S.Bary.Lambda));
+    S.UV1DDX = float2(dot(UV1x, S.Bary.DDX),    dot(UV1y, S.Bary.DDX));
+    S.UV1DDY = float2(dot(UV1x, S.Bary.DDY),    dot(UV1y, S.Bary.DDY));
     return S;
 }
 

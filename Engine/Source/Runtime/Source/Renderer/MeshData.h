@@ -275,7 +275,8 @@ namespace Lumina
         TVector<FVector3>         Positions;
         TVector<uint32>           Normals;     // octahedral pack (PackNormal)
         TVector<uint32>           Tangents;    // octahedral + handedness (PackTangent)
-        TVector<uint32>           UVs;         // packHalf2x16
+        TVector<uint32>           UVs;         // packHalf2x16, TEXCOORD_0
+        TVector<uint32>           UVs1;        // packHalf2x16, TEXCOORD_1 (mirrors UVs for single-set sources)
         TVector<uint32>           Colors;      // RGBA8 (PackColor)
         TVector<FU8Vector4>       JointIndices;
         TVector<FU8Vector4>       JointWeights;
@@ -312,11 +313,14 @@ namespace Lumina
         // Synthetic interleaved vertex size; only meshopt fetch/overdraw analysis needs it.
         FORCEINLINE size_t GetVertexTypeSize() const
         {
-            return bSkinnedMesh ? sizeof(FSkinnedVertex) : sizeof(FVertex);
+            return bSkinnedMesh ? sizeof(FSourceSkinnedVertex) : sizeof(FSourceVertex);
         }
 
         FORCEINLINE FVector2 GetUVAt(size_t Index) const { return Math::UnpackHalf2x16(UVs[Index]); }
         FORCEINLINE void SetUVAt(size_t Index, FVector2 UV) { UVs[Index] = Math::PackHalf2x16(UV); }
+
+        FORCEINLINE FVector2 GetUV1At(size_t Index) const { return Math::UnpackHalf2x16(UVs1[Index]); }
+        FORCEINLINE void SetUV1At(size_t Index, FVector2 UV) { UVs1[Index] = Math::PackHalf2x16(UV); }
 
         void ResizeVertices(size_t N)
         {
@@ -324,6 +328,7 @@ namespace Lumina
             Normals.resize(N);
             Tangents.resize(N);
             UVs.resize(N);
+            UVs1.resize(N);
             Colors.resize(N);
             if (bSkinnedMesh)
             {
@@ -338,6 +343,7 @@ namespace Lumina
             Normals.reserve(N);
             Tangents.reserve(N);
             UVs.reserve(N);
+            UVs1.reserve(N);
             Colors.reserve(N);
             if (bSkinnedMesh)
             {
@@ -353,23 +359,25 @@ namespace Lumina
             Drop(Normals);
             Drop(Tangents);
             Drop(UVs);
+            Drop(UVs1);
             Drop(Colors);
             Drop(JointIndices);
             Drop(JointWeights);
         }
 
-        void AppendVertex(const FVertex& V)
+        void AppendVertex(const FSourceVertex& V)
         {
             Positions.push_back(V.Position);
             Normals.push_back(V.Normal);
             Tangents.push_back(V.Tangent);
             UVs.push_back(V.UV);
+            UVs1.push_back(V.UV1);
             Colors.push_back(V.Color);
         }
 
-        void AppendVertex(const FSkinnedVertex& V)
+        void AppendVertex(const FSourceSkinnedVertex& V)
         {
-            AppendVertex(static_cast<const FVertex&>(V));
+            AppendVertex(static_cast<const FSourceVertex&>(V));
             JointIndices.push_back(V.JointIndices);
             JointWeights.push_back(V.JointWeights);
         }

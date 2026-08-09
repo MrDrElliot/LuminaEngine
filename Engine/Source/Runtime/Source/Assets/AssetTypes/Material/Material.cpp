@@ -81,6 +81,11 @@ namespace Lumina
         CMaterialInterface::Serialize(Ar);
     }
 
+    // Both defaults are GENERATED -- source is read from the VFS, token-substituted and compiled -- so
+    // this hook needs a live shader compiler. The engine guarantees one: GRenderManager->Initialize()
+    // publishes GShaderCompiler before the first ProcessNewlyLoadedCObjects(). Anything that creates
+    // CDOs without bringing up the renderer (tests, tooling) does not, and the creators say so rather
+    // than dereferencing a null global.
     void CMaterial::PostCreateCDO()
     {
         if (DefaultMaterial == nullptr)
@@ -498,11 +503,13 @@ namespace Lumina
             {
                 GPUFlags |= EMaterialGPUFlags::Additive;
             }
-            if (ShadingModel == EMaterialShadingModel::Unlit)
-            {
-                GPUFlags |= EMaterialGPUFlags::Unlit;
-            }
-            MaterialUniforms.Flags = (uint32)GPUFlags;
+            // Shading model rides the flags as a 3-bit field, so the GBuffer pass can stamp it at RUNTIME
+            // instead of the shader being specialized per model. Lit is 0, so an ordinary material
+            // contributes nothing here.
+            const uint32 ShadingModelBits =
+                ((uint32)ShadingModel & kMaterialShadingModelMask) << kMaterialShadingModelShift;
+
+            MaterialUniforms.Flags = (uint32)GPUFlags | ShadingModelBits;
             MaterialUniforms.OpacityClipValue = OpacityMaskClipValue;
 
             RebuildParameterLookup();
@@ -626,9 +633,15 @@ namespace Lumina
     void CMaterial::CreateDefaultMaterial()
     {
         IShaderCompiler* ShaderCompiler = GShaderCompiler;
+        if (ShaderCompiler == nullptr)
+        {
+            LOG_WARN("CMaterial: no shader compiler (the renderer is not initialized); "
+                     "the default material was not created.");
+            return;
+        }
 
         ShaderCompiler->Flush();
-        
+
         if (DefaultMaterial)
         {
             DefaultMaterial->RemoveFromRoot();
@@ -747,9 +760,15 @@ namespace Lumina
     void CMaterial::CreateDefaultTerrainMaterial()
     {
         IShaderCompiler* ShaderCompiler = GShaderCompiler;
+        if (ShaderCompiler == nullptr)
+        {
+            LOG_WARN("CMaterial: no shader compiler (the renderer is not initialized); "
+                     "the default terrain material was not created.");
+            return;
+        }
 
         ShaderCompiler->Flush();
-        
+
         if (DefaultTerrainMaterial)
         {
             DefaultTerrainMaterial->RemoveFromRoot();

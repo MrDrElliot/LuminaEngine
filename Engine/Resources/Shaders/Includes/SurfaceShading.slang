@@ -434,22 +434,13 @@ struct FShadingContext
     half3  EnergyComp;   // multi-scatter compensation (Turquin 2019)
 };
 
-// L: unit surface->light direction (caller supplies it for every light type, including the sun, so the
-// directional Light.Direction normalize happens once at the call site). Distance is unused for directional.
-// Diffuse and specular come back separately so the translucent path can keep reflections
-// un-premultiplied; opaque callers use the combined wrapper below (identical codegen once inlined).
-void EvaluateLightContributionSplit(FLight Light, FShadingContext S, float3 L, float Distance,
-                                    out float3 OutDiffuse, out float3 OutSpecular)
+// Incident radiance from one light at one point: color x intensity, with distance attenuation and the
+// spot cone for punctual types. Directional lights are unattenuated by construction.
+//
+// Shared by the base BRDF and the clearcoat lobe so the two layers cannot disagree about how bright a
+// light is -- both inline, so factoring it out costs nothing.
+float3 ComputeLightRadiance(FLight Light, float3 L, float Distance)
 {
-    OutDiffuse  = float3(0.0);
-    OutSpecular = float3(0.0);
-
-    float NdotLf = max(dot(S.N, L), 0.0);
-    if (NdotLf <= 0.0)
-    {
-        return;
-    }
-
     float Attenuation = 1.0;
     float Falloff     = 1.0;
 
@@ -467,7 +458,58 @@ void EvaluateLightContributionSplit(FLight Light, FShadingContext S, float3 L, f
         }
     }
 
-    float3 Radiance = GetLightColor(Light).rgb * Light.Intensity * Attenuation * Falloff;
+    return GetLightColor(Light).rgb * Light.Intensity * Attenuation * Falloff;
+}
+
+// A clearcoat lobe: one extra GGX specular layer over the base, with a fixed dielectric F0 of 0.04
+// (polyurethane, IOR ~1.5 -- the coat is always a clear dielectric, so this is not worth a channel).
+//
+// Deliberately NOT folded into FShadingContext: that struct is register-budgeted down to halves and is
+// live for every pixel in the dispatch, while this is live only inside the clearcoat branch.
+//
+// Returns the specular term; the caller multiplies by NdotL and the light's radiance, and attenuates the
+// base layer by the returned Fresnel so the two layers conserve energy.
+float EvaluateClearcoatLobe(float3 N, float3 V, float3 L, float ClearcoatRoughness, out float OutFresnel)
+{
+    const float3 H     = normalize(V + L);
+    const float  NdotH = saturate(dot(N, H));
+    const float  NdotV = saturate(dot(N, V));
+    const float  NdotL = saturate(dot(N, L));
+    const float  LdotH = saturate(dot(L, H));
+
+    // Clamped like the base lobe: a perfectly smooth coat is a delta the raster path cannot resolve.
+    const float  Rough = max(ClearcoatRoughness, 0.045);
+    const float  A     = Rough * Rough;
+    const float  A2    = A * A;
+
+    const float  D_Denom = NdotH * NdotH * (A2 - 1.0) + 1.0;
+    const float  D       = A2 / max(PI * D_Denom * D_Denom, 1e-6);
+
+    // Kelemen visibility: the cheap term the coat layer is normally paired with, and accurate enough
+    // for a thin smooth layer where Smith's extra fidelity is invisible.
+    const float  Vis = 0.25 / max(LdotH * LdotH, 1e-4);
+
+    OutFresnel = 0.04 + 0.96 * pow(1.0 - LdotH, 5.0);
+    return D * Vis * OutFresnel * NdotL;
+}
+
+// L: unit surface->light direction (caller supplies it for every light type, including the sun, so the
+// directional Light.Direction normalize happens once at the call site). Distance is unused for directional.
+// Diffuse and specular come back separately so the translucent path can keep reflections
+// un-premultiplied; opaque callers use the combined wrapper below (identical codegen once inlined).
+void EvaluateLightContributionSplit(FLight Light, FShadingContext S, float3 L, float Distance,
+                                    out float3 OutDiffuse, out float3 OutSpecular)
+{
+    OutDiffuse  = float3(0.0);
+    OutSpecular = float3(0.0);
+
+    float NdotLf = max(dot(S.N, L), 0.0);
+    if (NdotLf <= 0.0)
+    {
+        return;
+    }
+
+    float3 Radiance = ComputeLightRadiance(Light, L, Distance);
     float3 H        = normalize(S.V + L);
 
     // NDF stays full precision: A2 is float and NdotH near 1.0 needs the mantissa.
@@ -522,11 +564,12 @@ float ComputeSurfaceCoverage(FBaseVertexOutput Input, FMaterialPixelInputs Mater
 {
     float Alpha = Material.Opacity;
 
-#ifdef UNLIT
-
-    return saturate(Alpha);
-
-#else
+    // An unlit surface reflects nothing, so its coverage is just its alpha. Runtime, not a define: the
+    // shading model lives in the material's flags now.
+    if (GetMaterialShadingModel(Materials()[Input.MaterialIndex].Flags) == ShadingModel_Unlit)
+    {
+        return saturate(Alpha);
+    }
 
     float3 WorldNormal   = normalize(Input.NormalWS.xyz);
     float3 WorldPosition = mul(GetInverseCameraView(), float4(Input.FragPos.xyz, 1.0)).xyz;
@@ -543,8 +586,6 @@ float ComputeSurfaceCoverage(FBaseVertexOutput Input, FMaterialPixelInputs Mater
     float3 FssEss = FresnelSchlickRoughness(NdotV, F0, Roughness) * DFG.x + DFG.y;
 
     return saturate(Alpha + (1.0 - Alpha) * saturate(Luminance(FssEss)));
-
-#endif
 }
 
 // The material graph's output resolved into GBuffer terms: the tangent-space normal rotated into world
@@ -562,16 +603,21 @@ FGBufferData BuildGBufferData(FBaseVertexOutput Input, FMaterialPixelInputs Mate
     G.Specular         = Material.Specular;
     G.Emissive         = Material.Emissive;
     G.bReceiveShadow   = (Input.InstanceFlags & (uint)EInstanceFlags::ReceiveShadow) != 0u;
-#ifdef UNLIT
-    G.bUnlit = true;
-#else
-    G.bUnlit = false;
-#endif
+
+    G.Clearcoat          = Material.Clearcoat;
+    G.ClearcoatRoughness = Material.ClearcoatRoughness;
+
+    // Read at RUNTIME from the material's flags, not specialized with a #define. The models that only
+    // reinterpret GBuffer channels do not justify a shader variant each -- one GBuffer-write shader per
+    // material already exists, and one lighting dispatch already branches, so a define here would buy
+    // nothing and cost a specialization axis.
+    G.ShadingModel = GetMaterialShadingModel(Materials()[Input.MaterialIndex].Flags);
 
     // Opaque lit surfaces only, and only on pipelines that actually bind the decal push
     // (SPEC_ENABLE_DECALS) -- terrain specializes this off. No-op on pixels no decal touched.
-#if !defined(TRANSLUCENT) && !defined(UNLIT)
-    if (SPEC_ENABLE_DECALS != 0)
+    // Unlit is a runtime test now, so an instance that overrode its model is honoured here too.
+#ifndef TRANSLUCENT
+    if (SPEC_ENABLE_DECALS != 0 && !IsUnlit(G))
     {
         float2 DBufferUV = Input.Position.xy / float2(Scene().ScreenSize.xy);
         ApplyDBuffer(G.BaseColor, G.WorldNormal, G.Roughness, G.Metallic, G.AmbientOcclusion, DBufferUV);
@@ -592,16 +638,11 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
     Out.ReflectionCoverage = 0.0;
     Out.Alpha              = 1.0;
 
-#ifdef UNLIT
-
-    Out.Color = G.BaseColor + G.Emissive;
-    return Out;
-
-#else
-
-    // One deferred shader lights every surface, so an unlit master is a runtime flag here rather than a
-    // second compiled variant. The forward lanes still specialize it away entirely.
-    if (G.bUnlit)
+    // Every lane checks the model at runtime -- forward and deferred alike. Unlit used to be a #define
+    // that stripped this whole function's body for unlit materials, which meant an unlit master's shader
+    // was hard-wired and no material instance could override its way back to Lit. The cost of dropping it
+    // is that an unlit material's shader now CONTAINS the lighting path it branches over.
+    if (IsUnlit(G))
     {
         Out.Color = G.BaseColor + G.Emissive;
         return Out;
@@ -661,6 +702,12 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
     uint TileIndex  = ComputeClusterIndex(ViewPosition.z, ScreenPos);
     uint LightCount = Clusters()[TileIndex].Count;
 
+    // Clearcoat state. Hoisted out of the loops but only meaningful inside the branch; a non-clearcoat
+    // pixel leaves Coat at 0 and every clearcoat block below is skipped whole.
+    const bool  bClearcoat = (G.ShadingModel == ShadingModel_Clearcoat);
+    const float Coat       = bClearcoat ? saturate(G.Clearcoat) : 0.0;
+    float3      LoCoat     = float3(0.0);
+
     float3 Lo = float3(0.0);
 #ifdef TRANSLUCENT
     // Reflected specular is accumulated apart from transmission-modulated terms; the extra live
@@ -688,7 +735,20 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
             Lo     += SunDiffuse * Shadow;
             LoSpec += SunSpec * Shadow;
 #else
-            Lo += EvaluateLightContribution(Light, Ctx, SunL, 0.0) * Shadow;
+            float3 SunBase = EvaluateLightContribution(Light, Ctx, SunL, 0.0);
+
+            if (Coat > 0.0)
+            {
+                // The coat reflects some of the incoming light before it ever reaches the base layer, so
+                // the base is attenuated by exactly what the coat took. Without this the surface gains
+                // energy and reads as washed out rather than lacquered.
+                float CoatF;
+                const float CoatSpec = EvaluateClearcoatLobe(N, V, SunL, G.ClearcoatRoughness, CoatF);
+                SunBase *= (1.0 - Coat * CoatF);
+                LoCoat  += ComputeLightRadiance(Light, SunL, 0.0) * (CoatSpec * Coat) * Shadow;
+            }
+
+            Lo += SunBase * Shadow;
 #endif
         }
     }
@@ -744,7 +804,17 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
         Lo     += LightDiffuse * Shadow;
         LoSpec += LightSpec * Shadow;
 #else
-        Lo += EvaluateLightContribution(Light, Ctx, L, DistToLight) * Shadow;
+        float3 LightBase = EvaluateLightContribution(Light, Ctx, L, DistToLight);
+
+        if (Coat > 0.0)
+        {
+            float CoatF;
+            const float CoatSpec = EvaluateClearcoatLobe(N, V, L, G.ClearcoatRoughness, CoatF);
+            LightBase *= (1.0 - Coat * CoatF);
+            LoCoat    += ComputeLightRadiance(Light, L, DistToLight) * (CoatSpec * Coat) * Shadow;
+        }
+
+        Lo += LightBase * Shadow;
 #endif
     }
 
@@ -791,14 +861,32 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
         float3 DiffuseColor = Albedo * (1.0 - Metallic);
         Ambient = GetAmbientLightColor() * GetAmbientLightIntensity() * DiffuseColor * AO * GTAO;
     }
-    Out.Color = Ambient + Lo + G.Emissive;
+    // The coat reflects the environment too, and on a car-paint surface that mirror sheen is most of the
+    // read. Sampled off the same prefiltered cube as the base specular, at the coat's own roughness, with
+    // the coat's fixed 0.04 F0 -- and it attenuates the ambient underneath for the same energy reason the
+    // per-light path does.
+    if (Coat > 0.0 && HasIBL())
+    {
+        const float  CoatNdotV = saturate(dot(N, V));
+        const float3 CoatR     = reflect(-V, N);
+        const float  CoatRough = max(G.ClearcoatRoughness, 0.045);
+        const float2 CoatDFG   = SampleBRDFLUT(CoatNdotV, CoatRough);
+
+        const float3 CoatPrefiltered = SamplePrefilter(CoatR, CoatRough);
+        const float  CoatF           = 0.04 + 0.96 * pow(1.0 - CoatNdotV, 5.0);
+        const float3 CoatIBL         = CoatPrefiltered * (0.04 * CoatDFG.x + CoatDFG.y);
+
+        Ambient *= (1.0 - Coat * CoatF);
+        Lo      *= (1.0 - Coat * CoatF);
+        LoCoat  += CoatIBL * Coat * GetAmbientLightIntensity() * GTAO;
+    }
+
+    Out.Color = Ambient + Lo + LoCoat + G.Emissive;
 #ifdef TRANSLUCENT
     Out.Reflection         = LoSpec;
     Out.ReflectionCoverage = ReflectionCoverage;
 #endif
     return Out;
-
-#endif // UNLIT
 }
 
 #ifndef SHADING_COMPUTE
@@ -965,8 +1053,9 @@ FShadedSurface ShadeSurface(FBaseVertexOutput Input, FMaterialPixelInputs Materi
     uint DebugMode = Scene().CullData.DebugMode;
     if (SPEC_ENABLE_DEBUG_VIEWS != 0 && DebugMode != DEBUG_MODE_NONE)
     {
-#if defined(TRANSLUCENT) && !defined(UNLIT)
-        // Debug views replace Color wholesale; don't composite reflections on top.
+#ifdef TRANSLUCENT
+        // Debug views replace Color wholesale; don't composite reflections on top. Unlit never wrote a
+        // reflection in the first place, so zeroing it unconditionally is the same result.
         Out.Reflection = float3(0.0);
 #endif
         FDebugSurfaceInfo Info;

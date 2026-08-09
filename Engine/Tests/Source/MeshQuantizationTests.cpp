@@ -164,7 +164,12 @@ TEST(MeshQuantization, StructLayoutsMatchTheGPUMirrors)
 {
     // Guarded by static_assert at their declarations too; restated here so a stride change surfaces as
     // a named failing test rather than only as a compile error in a header most people never open.
+    //
+    // Keep these in step with the static_asserts in Vertex.h AND with the Slang mirrors in
+    // Common.slang -- the numbers below are the ones the GPU reads, and a C++-only change that keeps
+    // the static_assert happy by editing it is exactly the stride bug this is here to catch.
+    // 28/36 since TEXCOORD_1 added a packed uint UV1 to both.
     EXPECT_EQ(sizeof(FMeshlet), 32u);
-    EXPECT_EQ(sizeof(FMeshletVertex), 24u);
-    EXPECT_EQ(sizeof(FMeshletSkinnedVertex), 32u);
+    EXPECT_EQ(sizeof(FMeshletVertex), 28u);
+    EXPECT_EQ(sizeof(FMeshletSkinnedVertex), 36u);
 }

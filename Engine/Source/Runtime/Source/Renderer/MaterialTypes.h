@@ -13,10 +13,20 @@ namespace Lumina
         Masked      = 1 << 0,
         Translucent = 1 << 1,
         Additive    = 1 << 2,
+
+        // Bits 3-5 are a 3-bit SHADING MODEL field holding EMaterialShadingModel, not one flag per model:
+        // models are mutually exclusive, and giving each a bit would burn the byte for no reason.
+        //
+        // Unlit keeps its historical value for free -- EMaterialShadingModel::Unlit is 1 and the field
+        // starts at bit 3, so (1 << 3) is exactly the number it always was.
         Unlit       = 1 << 3,
     };
 
     ENUM_CLASS_FLAGS(EMaterialGPUFlags);
+
+    // Mirrored by MATERIAL_SHADING_MODEL_SHIFT/MASK in Common.slang.
+    constexpr uint32 kMaterialShadingModelShift = 3;
+    constexpr uint32 kMaterialShadingModelMask  = 7;
 
     struct FMaterialUniforms
     {

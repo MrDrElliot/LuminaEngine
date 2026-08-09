@@ -1,4 +1,5 @@
 ﻿#include "MaterialNode_TextureSample.h"
+#include "Renderer/RHICore.h"
 #include "Assets/AssetTypes/Textures/Texture.h"
 #include "Assets/AssetTypes/Textures/TextureArray.h"
 #include "Core/Object/Cast.h"
@@ -7,6 +8,33 @@
 
 namespace Lumina
 {
+    // EMaterialSampler is emitted as a SAMPLER_* literal and indexes the same stock table the RHI creates,
+    // so all three orderings have to agree. GlobalRHI.slang's constants are the third copy; it has no
+    // compile-time link to these, which is why MaterialSamplerToSlang spells the names out rather than
+    // deriving them.
+    static_assert((uint32)EMaterialSampler::LinearWrap   == (uint32)RHI::EStockSampler::LinearWrap);
+    static_assert((uint32)EMaterialSampler::LinearClamp  == (uint32)RHI::EStockSampler::LinearClamp);
+    static_assert((uint32)EMaterialSampler::LinearMirror == (uint32)RHI::EStockSampler::LinearMirror);
+    static_assert((uint32)EMaterialSampler::PointWrap    == (uint32)RHI::EStockSampler::PointWrap);
+    static_assert((uint32)EMaterialSampler::PointClamp   == (uint32)RHI::EStockSampler::PointClamp);
+    static_assert((uint32)EMaterialSampler::AnisoWrap    == (uint32)RHI::EStockSampler::AnisoWrap);
+    static_assert((uint32)EMaterialSampler::AnisoClamp   == (uint32)RHI::EStockSampler::AnisoClamp);
+
+    FStringView MaterialSamplerToSlang(EMaterialSampler Sampler)
+    {
+        switch (Sampler)
+        {
+        case EMaterialSampler::LinearClamp:  return "SAMPLER_LINEAR_CLAMP";
+        case EMaterialSampler::LinearMirror: return "SAMPLER_LINEAR_MIRROR";
+        case EMaterialSampler::PointWrap:    return "SAMPLER_POINT_WRAP";
+        case EMaterialSampler::PointClamp:   return "SAMPLER_POINT_CLAMP";
+        case EMaterialSampler::AnisoWrap:    return "SAMPLER_ANISO_WRAP";
+        case EMaterialSampler::AnisoClamp:   return "SAMPLER_ANISO_CLAMP";
+        case EMaterialSampler::LinearWrap:
+        default:                             return "SAMPLER_LINEAR_WRAP";
+        }
+    }
+
     void CMaterialExpression_TextureSample::BuildNode()
     {
         CMaterialOutput* ValuePin = Cast<CMaterialOutput>(CreatePin(CMaterialOutput::StaticClass(), "RGBA", ENodePinDirection::Output));
@@ -69,11 +97,11 @@ namespace Lumina
 
         if (bDynamic && !ParameterName.IsNone())
         {
-            Compiler.TextureSampleParameter(FullName, ParameterName, Texture, UV, this);
+            Compiler.TextureSampleParameter(FullName, ParameterName, Texture, UV, this, MaterialSamplerToSlang(Sampler));
         }
         else
         {
-            Compiler.TextureSample(FullName, Texture, UV, this);
+            Compiler.TextureSample(FullName, Texture, UV, this, MaterialSamplerToSlang(Sampler));
         }
     }
 

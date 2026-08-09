@@ -61,10 +61,13 @@ namespace Lumina
         {
             Options.MacroDefinitions.emplace_back("MASKED");
         }
-        if (Material->GetShadingModel() == EMaterialShadingModel::Unlit)
-        {
-            Options.MacroDefinitions.emplace_back("UNLIT");
-        }
+        // NO shading-model defines. Every model -- Unlit included -- reaches the shader through the
+        // material's runtime flags (EMaterialGPUFlags bits 3-5) and is branched on there.
+        //
+        // Unlit used to be a define that stripped the lighting path outright. That made an unlit master's
+        // shaders hard-wired, so no material instance could override its way back to Lit, and every new
+        // model would have wanted a define of its own. The trade is that an unlit material's shader now
+        // contains the lighting code it branches over.
 
         FShaderCompileOptions VSOptions;
         VSOptions.DebugName = MatName + " [VS]";
@@ -138,22 +141,16 @@ namespace Lumina
             const FString DeferredSource = Compiler.BuildDeferredShaderFromTemplate(MeshShaderDir + "DeferredMaterial.slang", EMaterialType::PBR);
             FShaderCompileOptions DeferredOptions; DeferredOptions.DebugName = MatName + " [DM]";
 
-            // UNLIT must reach this lane too. Opaque PBR shades through the deferred VisBuffer pass, NOT the
-            // forward pixel stage above -- so an unlit master compiled without it takes the lit branch of
-            // ShadeSurface and picks up IBL/lights/shadows exactly where the shading model says it should not.
-            // The forward stage (which does get UNLIT) is the one you see in the material editor preview, so the
-            // two lanes disagreeing shows up as "correct in the editor, lit in the world".
+            // No defines on this lane at all now. Unlit used to need one here, because opaque PBR shades
+            // through the deferred VisBuffer pass rather than the forward stage, and the two lanes
+            // disagreeing showed up as "correct in the editor, lit in the world". The runtime model check
+            // is in ShadeGBuffer itself, so both lanes read the same flag and cannot drift.
             //
-            // UNLIT only. TRANSLUCENT does not belong: translucent/additive never resolve a deferred shader
+            // TRANSLUCENT still does not belong here: translucent/additive never resolve a deferred shader
             // (MeshResolve::ResolveSurfaceMaterial returns before requiring one) and this template's PSOutput
             // reads only Shaded.Color/.Alpha, never the translucent Reflection pair. MASKED does not belong
             // either: it gates [earlydepthstencil], which this template has no attribute for, and the alpha-test
             // discard inside ShadeSurface is driven by the runtime MatFlag_Masked flag rather than the define.
-            if (Material->GetShadingModel() == EMaterialShadingModel::Unlit)
-            {
-                DeferredOptions.MacroDefinitions.emplace_back("UNLIT");
-            }
-
             ShaderCompiler->CompilerShaderRaw(DeferredSource, Move(DeferredOptions), CommitStage(EMaterialShaderStage::Deferred));
         }
 
@@ -175,10 +172,8 @@ namespace Lumina
             MomentOptions.DebugName = MatName + " [MOM]";
             MomentOptions.MacroDefinitions.emplace_back("TRANSLUCENT");
             MomentOptions.MacroDefinitions.emplace_back("MOMENT_GENERATION");
-            if (Material->GetShadingModel() == EMaterialShadingModel::Unlit)
-            {
-                MomentOptions.MacroDefinitions.emplace_back("UNLIT");
-            }
+            // ComputeSurfaceCoverage tests the model at runtime, so the moment pass needs no UNLIT define
+            // to agree with the shading pass about an unlit surface's coverage.
             ShaderCompiler->CompilerShaderRaw(Result.PixelSource, Move(MomentOptions), CommitStage(EMaterialShaderStage::MomentPixel));
         }
 

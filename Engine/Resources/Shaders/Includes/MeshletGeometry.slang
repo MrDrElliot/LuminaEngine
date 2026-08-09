@@ -339,6 +339,7 @@ struct FMeshletWorldVertex
     float3 NormalWS;
     float4 TangentWS;    // xyz: world tangent, w: MikkTSpace handedness
     float2 UV;
+    float2 UV1;
     float4 Color;
 };
 
@@ -354,6 +355,7 @@ FMeshletWorldVertex TransformMeshletVertex(FVertexData V, float4x4 ModelMatrix, 
     // Tangents take the forward 3x3 (they lie in the surface); re-orthogonalized per-pixel.
     W.TangentWS = float4(mul((float3x3)ModelMatrix, V.Tangent.xyz), V.Tangent.w);
     W.UV        = V.UV;
+    W.UV1       = V.UV1;
     W.Color     = V.Color;
     return W;
 }
@@ -388,6 +390,9 @@ struct FBaseVertexOutput
     float4 TangentWS                   : TANGENT_WS;
     float4 FragPos                     : FRAG_POS;
     float2 UV                          : TEXCOORD0;
+    // Costs 8B of mesh-shader output storage per vertex on every base-pass draw, whether or not the
+    // material samples it (see the occupancy note on FDepthOnlyVertexOutput below).
+    float2 UV1                         : TEXCOORD1;
     uint   InstanceIndex               : INSTANCE;
     nointerpolation uint EntityID      : ENTITY_ID;
     nointerpolation uint MaterialIndex : MATERIAL_INDEX;
@@ -418,6 +423,7 @@ FBaseVertexOutput MakeBaseVertexOutput(FMeshletRef Ref, FMeshletWorldVertex W, f
     O.TangentWS     = W.TangentWS;
     O.FragPos       = ViewPos;
     O.UV            = W.UV;
+    O.UV1           = W.UV1;
     O.InstanceIndex = Ref.InstanceID;
     O.EntityID      = Ref.Inst.EntityID;
     O.MaterialIndex = Ref.Inst.MaterialIndex;

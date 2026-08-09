@@ -1533,8 +1533,8 @@ namespace Lumina::RHI
         VkPhysicalDeviceVulkan11Features Features11{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
         Features11.shaderDrawParameters   = VK_TRUE;
         Features11.multiview              = VK_TRUE;
-        // Lets a storage-buffer struct declare 16-bit members directly, so FVertex can mirror
-        // Lumina::FMeshletVertex field for field. Gated because today's Slang output does not require
+        // Lets a storage-buffer struct declare 16-bit members directly, so Common.slang's FMeshletVertex
+        // can mirror Lumina::FMeshletVertex field for field. Gated because today's Slang output does not require
         // it -- it loads the whole struct and extracts -- so this only matters if a shader ever takes a
         // pointer to one 16-bit member, and a device without it should still boot.
         Features11.storageBuffer16BitAccess = Supported11.storageBuffer16BitAccess;

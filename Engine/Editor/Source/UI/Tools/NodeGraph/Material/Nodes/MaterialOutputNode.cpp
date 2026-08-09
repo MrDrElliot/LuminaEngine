@@ -50,6 +50,11 @@ namespace Lumina
         if (OpacityPin)              OpacityPin->SetDisabled(bPostProcess);
         // Self-shadowing modulates the sun's direct contribution, which only surface materials receive.
         if (SelfShadowPin)           SelfShadowPin->SetDisabled(bFullscreen || bDecal);
+        // Clearcoat is a lighting layer, so the same domains that have no lighting have no coat. It also
+        // needs the material's Shading Model set to Clearcoat -- an enabled pin here is necessary, not
+        // sufficient.
+        if (ClearcoatPin)            ClearcoatPin->SetDisabled(bFullscreen || bDecal);
+        if (ClearcoatRoughnessPin)   ClearcoatRoughnessPin->SetDisabled(bFullscreen || bDecal);
         if (WorldPositionOffsetPin)  WorldPositionOffsetPin->SetDisabled(bFullscreen || bDecal);
 
         // Emissive is the fullscreen output color (PostProcess/UI); decals have no emissive DBuffer slot in v1.
@@ -96,6 +101,14 @@ namespace Lumina
         // Shadow output. Unconnected = 1 (unshadowed), which is exactly the pre-POM behavior.
         SelfShadowPin = CreatePin(CMaterialInput::StaticClass(), "Self Shadow", ENodePinDirection::Input);
         SelfShadowPin->SetPinName("Self Shadow");
+
+        // Clearcoat: read only when the material's Shading Model is Clearcoat. A clear dielectric layer
+        // over the base -- car paint, lacquer, varnish. Strength 0 is the same as not having one.
+        ClearcoatPin = CreatePin(CMaterialInput::StaticClass(), "Clearcoat", ENodePinDirection::Input);
+        ClearcoatPin->SetPinName("Clearcoat");
+
+        ClearcoatRoughnessPin = CreatePin(CMaterialInput::StaticClass(), "Clearcoat Roughness", ENodePinDirection::Input);
+        ClearcoatRoughnessPin->SetPinName("Clearcoat Roughness");
 
         // World Position Offset: vertex-stage world-space displacement routed through the vertex chunk.
         // If connected, the vertex shader adds the graph emission to WorldPos before View/Projection.
@@ -178,6 +191,8 @@ namespace Lumina
         PixelOut += EmitMaterialAssignment("Normal",           NormalPin,    "float3(0.0, 0.0, 1.0)", 3);
         PixelOut += EmitMaterialAssignment("Opacity",          OpacityPin,   "1.0",                    1);
         PixelOut += EmitMaterialAssignment("SelfShadow",       SelfShadowPin, "1.0",                   1);
+        PixelOut += EmitMaterialAssignment("Clearcoat",        ClearcoatPin,  "0.0",                   1);
+        PixelOut += EmitMaterialAssignment("ClearcoatRoughness", ClearcoatRoughnessPin, "0.03",        1);
 
         // Always reconstruct Z from the decoded XY (Z = sqrt(1 - x^2 - y^2) >= 0 for a unit normal):
         // correct for BC7 and BC5 and avoids format detection, which broke BC5 maps through intermediate nodes.

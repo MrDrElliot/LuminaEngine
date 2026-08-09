@@ -17,6 +17,7 @@
 #include "UI/Tools/NodeGraph/Material/MaterialNodeGraph.h"
 #include "UI/Tools/NodeGraph/Material/Nodes/MaterialNodeExpression.h"
 #include "UI/Tools/NodeGraph/Material/Nodes/MaterialNode_Constants.h"
+#include "UI/Tools/NodeGraph/Material/Nodes/MaterialNode_Inputs.h"
 #include "UI/Tools/NodeGraph/Material/Nodes/MaterialNode_Math.h"
 #include "UI/Tools/NodeGraph/Material/Nodes/MaterialNode_TextureSample.h"
 #include "UI/Tools/NodeGraph/Material/Nodes/MaterialOutputNode.h"
@@ -95,7 +96,90 @@ namespace Lumina
         // roughness / emissive, occlusion, and a flat-normal-defaulted normal map. Every texture and factor is
         // exposed as a named parameter so per-source-material CMaterialInstances override them. Opacity is only
         // wired for masked/translucent masters (opaque leaves the pin unconnected -> Opacity = 1).
-        void BuildPBRGraph(CMaterialNodeGraph* Graph, CTexture* White, CTexture* FlatNormal, bool bNeedsOpacity)
+        /** Parameter-name stems for the five texture slots, in EMaterialTextureSlot order. */
+        constexpr const char* GSlotNames[(size_t)EMaterialTextureSlot::Count] =
+        {
+            "BaseColor", "MetallicRoughness", "Normal", "Emissive", "Occlusion",
+        };
+
+        /**
+         * Per-slot UV topology, packed two bits per slot: which TEXCOORD set it samples, and whether it
+         * needs a scale/offset chain at all.
+         *
+         * This has to live in the master key rather than on the instance, because the UV set is compiled
+         * into the shader (the TexCoords node reads a different stage variable) and so is the presence of
+         * the chain. The scale and offset VALUES stay per-instance, so materials that differ only in how
+         * far they slide a texture still share one master.
+         */
+        uint32 BuildUVSignature(const FMeshImportMaterial& Src)
+        {
+            uint32 Signature = 0;
+            for (size_t Slot = 0; Slot < (size_t)EMaterialTextureSlot::Count; ++Slot)
+            {
+                const FTextureUVTransform& UVT = Src.UVTransforms[Slot];
+                const bool bTransformed = !UVT.IsIdentity();
+
+                Signature |= (UVT.TexCoordSet >= 1 ? 1u : 0u) << (Slot * 2);
+                Signature |= (bTransformed     ? 1u : 0u) << (Slot * 2 + 1);
+            }
+            return Signature;
+        }
+
+        /** EImportSampler and EMaterialSampler are declared with matching values; this is the documented cast. */
+        EMaterialSampler ToMaterialSampler(EImportSampler Sampler)
+        {
+            return static_cast<EMaterialSampler>(Sampler);
+        }
+
+        /**
+         * Packs the five slots' samplers into one value for the master key. Like the UV signature, the
+         * sampler index is a shader constant, so two materials that filter differently need two masters.
+         */
+        uint32 BuildSamplerSignature(const FMeshImportMaterial& Src)
+        {
+            uint32 Signature = 0;
+            for (size_t Slot = 0; Slot < (size_t)EMaterialTextureSlot::Count; ++Slot)
+            {
+                Signature |= ((uint32)Src.Samplers[Slot] & 0x7u) << (Slot * 3);
+            }
+            return Signature;
+        }
+
+        /** Dielectric reflectance the engine's Specular term encodes, derived from IOR. */
+        float ComputeEngineSpecular(const FMeshImportMaterial& Src)
+        {
+            // Schlick F0 for a dielectric against air, scaled by KHR_materials_specular, then expressed in
+            // the engine's units (BasePixelPass.slang: F0 = 0.08 * Specular). IOR 1.5 -> F0 0.04 -> 0.5.
+            const float IOR = Math::Max(Src.IOR, 1.0f);
+            const float Ratio = (IOR - 1.0f) / (IOR + 1.0f);
+            const float F0 = Ratio * Ratio * Math::Max(Src.SpecularFactor, 0.0f);
+            return Math::Clamp(F0 / 0.08f, 0.0f, 1.0f);
+        }
+
+        /** Feature-signature bits; each one adds nodes to the graph, so each has to key its own master. */
+        enum EMaterialFeatureBits : uint32
+        {
+            MFB_NormalScale      = BIT(0),
+            MFB_OcclusionStrength = BIT(1),
+            MFB_Specular         = BIT(2),
+            MFB_Clearcoat        = BIT(3),
+        };
+
+        uint32 BuildFeatureSignature(const FMeshImportMaterial& Src)
+        {
+            uint32 Signature = 0;
+            if (Src.NormalScale != 1.0f)       { Signature |= MFB_NormalScale; }
+            if (Src.OcclusionStrength != 1.0f) { Signature |= MFB_OcclusionStrength; }
+            // 0.5 is the shading default, so an unauthored IOR needs no node at all.
+            if (Math::Abs(ComputeEngineSpecular(Src) - 0.5f) > 0.001f) { Signature |= MFB_Specular; }
+            // Must match the Shading selection in GetMaster exactly: unlit wins, so a material that is both
+            // would otherwise build coat nodes and set coat parameters the Unlit model never reads.
+            if (Src.ClearcoatFactor > 0.0f && !Src.bUnlit) { Signature |= MFB_Clearcoat; }
+            return Signature;
+        }
+
+        void BuildPBRGraph(CMaterialNodeGraph* Graph, CTexture* White, CTexture* FlatNormal, bool bNeedsOpacity,
+                           uint32 UVSignature, const EImportSampler* Samplers, uint32 FeatureSignature)
         {
             using namespace MaterialGraphBuilder;
 
@@ -114,11 +198,74 @@ namespace Lumina
 
             Output->SetGridPos(ColOut, 360.0f * VS);
 
+            // UV chains sit to the LEFT of the texture column so they read as inputs to it.
+            constexpr float ColUV = -700.0f;
+
+            /**
+             * Wires a slot's TextureSample UV pin to the set and transform its signature asks for.
+             *
+             * Set 0 with no transform is left unwired, which is the default the compiler already emits --
+             * so a material that never touched KHR_texture_transform generates exactly the graph it did
+             * before this existed, with no extra nodes or parameters.
+             *
+             * Scale rides the TexCoords Tiling pin rather than a separate multiply because the compiler
+             * applies the chain rule there; a multiply node downstream would leave the deferred pass
+             * sampling with an untransformed gradient and picking the wrong mip.
+             */
+            auto ApplySlotUV = [&](CMaterialExpression_TextureSample* Sample, EMaterialTextureSlot Slot, float Y)
+            {
+                // Filtering/addressing is per slot and compiled in, so it rides the same pass as the UV set.
+                Sample->Sampler = ToMaterialSampler(Samplers[(size_t)Slot]);
+
+                const uint32 Bits         = (UVSignature >> ((size_t)Slot * 2)) & 0x3u;
+                const bool   bUseSet1     = (Bits & 0x1u) != 0;
+                const bool   bTransformed = (Bits & 0x2u) != 0;
+
+                if (!bUseSet1 && !bTransformed)
+                {
+                    return;
+                }
+
+                const FString Stem = GSlotNames[(size_t)Slot];
+
+                auto* Coords = AddNode<CMaterialExpression_TexCoords>(Graph, ColUV, Y);
+                Coords->TextureIndex = bUseSet1 ? 1u : 0u;
+
+                if (!bTransformed)
+                {
+                    Connect(Coords->GetOutputPins()[0].Get(), Sample->UV);
+                    return;
+                }
+
+                auto* ScaleParam = AddNode<CMaterialExpression_ConstantFloat2>(Graph, ColUV - 320.0f, Y);
+                ScaleParam->bDynamic      = true;
+                ScaleParam->ParameterName = FName((Stem + "UVScale").c_str());
+                ScaleParam->Value         = FVector4(1.0f, 1.0f, 0.0f, 0.0f);
+                Connect(ScaleParam->GetOutputPins()[0].Get(), Coords->Tiling);
+
+                auto* RotationParam = AddNode<CMaterialExpression_ConstantFloat>(Graph, ColUV - 320.0f, Y + 95.0f);
+                RotationParam->bDynamic      = true;
+                RotationParam->ParameterName = FName((Stem + "UVRotation").c_str());
+                RotationParam->Value         = FVector4(0.0f, 0.0f, 0.0f, 0.0f);
+                Connect(RotationParam->GetOutputPins()[0].Get(), Coords->Rotation);
+
+                auto* OffsetParam = AddNode<CMaterialExpression_ConstantFloat2>(Graph, ColUV - 320.0f, Y + 190.0f);
+                OffsetParam->bDynamic      = true;
+                OffsetParam->ParameterName = FName((Stem + "UVOffset").c_str());
+                OffsetParam->Value         = FVector4(0.0f, 0.0f, 0.0f, 0.0f);
+
+                auto* Add = AddNode<CMaterialExpression_Addition>(Graph, ColUV + 320.0f, Y);
+                Connect(Coords->GetOutputPins()[0].Get(), Add->A);
+                Connect(OffsetParam->GetOutputPins()[0].Get(), Add->B);
+                Connect(Add->Output, Sample->UV);
+            };
+
             // Base color = BaseColorTexture.rgb * BaseColorFactor.rgb.
             auto* TexBase = AddNode<CMaterialExpression_TextureSample>(Graph, ColTex, 0.0f * VS);
             TexBase->bDynamic = true;
             TexBase->ParameterName = "BaseColorTexture";
             TexBase->Texture = White;
+            ApplySlotUV(TexBase, EMaterialTextureSlot::BaseColor, 0.0f * VS);
 
             auto* FacBase = AddNode<CMaterialExpression_ConstantFloat4>(Graph, ColTex, 190.0f * VS);
             FacBase->bDynamic = true;
@@ -135,6 +282,7 @@ namespace Lumina
             TexMR->bDynamic = true;
             TexMR->ParameterName = "MetallicRoughnessTexture";
             TexMR->Texture = White;
+            ApplySlotUV(TexMR, EMaterialTextureSlot::MetallicRoughness, 380.0f * VS);
 
             auto* FacMetal = AddNode<CMaterialExpression_ConstantFloat>(Graph, ColTex, 570.0f * VS);
             FacMetal->bDynamic = true;
@@ -161,13 +309,46 @@ namespace Lumina
             TexNormal->bDynamic = true;
             TexNormal->ParameterName = "NormalTexture";
             TexNormal->Texture = FlatNormal;
-            Connect(TexNormal->GetOutputPins()[0].Get(), Output->NormalPin);
+            ApplySlotUV(TexNormal, EMaterialTextureSlot::Normal, 730.0f * VS);
+
+            if ((FeatureSignature & MFB_NormalScale) == 0)
+            {
+                Connect(TexNormal->GetOutputPins()[0].Get(), Output->NormalPin);
+            }
+            else
+            {
+                // glTF: normal = normalize((rgb*2-1) * vec3(scale, scale, 1)). The output node decodes
+                // xy*2-1 and RECONSTRUCTS z, so the texture's z is discarded either way -- which makes
+                // scaling all three channels about 0.5 in ENCODED space exactly equivalent, and lets the
+                // whole thing be three math nodes ahead of the existing decode.
+                auto* Centre = AddNode<CMaterialExpression_ConstantFloat>(Graph, ColTex - 320.0f, 730.0f * VS);
+                Centre->Value = FVector4(0.5f, 0.0f, 0.0f, 0.0f);
+
+                auto* ScaleParam = AddNode<CMaterialExpression_ConstantFloat>(Graph, ColTex - 320.0f, 790.0f * VS);
+                ScaleParam->bDynamic      = true;
+                ScaleParam->ParameterName = "NormalScale";
+                ScaleParam->Value         = FVector4(1.0f, 0.0f, 0.0f, 0.0f);
+
+                auto* Sub = AddNode<CMaterialExpression_Subtraction>(Graph, ColMul - 320.0f, 730.0f * VS);
+                Connect(TexNormal->GetOutputPins()[0].Get(), Sub->A);
+                Connect(Centre->GetOutputPins()[0].Get(), Sub->B);
+
+                auto* Mul = AddNode<CMaterialExpression_Multiplication>(Graph, ColMul - 160.0f, 730.0f * VS);
+                Connect(Sub->Output, Mul->A);
+                Connect(ScaleParam->GetOutputPins()[0].Get(), Mul->B);
+
+                auto* Add = AddNode<CMaterialExpression_Addition>(Graph, ColMul, 730.0f * VS);
+                Connect(Mul->Output, Add->A);
+                Connect(Centre->GetOutputPins()[0].Get(), Add->B);
+                Connect(Add->Output, Output->NormalPin);
+            }
 
             // Emissive = EmissiveTexture.rgb * EmissiveColor.rgb.
             auto* TexEmissive = AddNode<CMaterialExpression_TextureSample>(Graph, ColTex, 920.0f * VS);
             TexEmissive->bDynamic = true;
             TexEmissive->ParameterName = "EmissiveTexture";
             TexEmissive->Texture = White;
+            ApplySlotUV(TexEmissive, EMaterialTextureSlot::Emissive, 920.0f * VS);
 
             auto* FacEmissive = AddNode<CMaterialExpression_ConstantFloat4>(Graph, ColTex, 1110.0f * VS);
             FacEmissive->bDynamic = true;
@@ -184,7 +365,64 @@ namespace Lumina
             TexOcclusion->bDynamic = true;
             TexOcclusion->ParameterName = "OcclusionTexture";
             TexOcclusion->Texture = White;
-            Connect(TexOcclusion->GetOutputPins()[1].Get(), Output->AOPin);   // R channel
+            ApplySlotUV(TexOcclusion, EMaterialTextureSlot::Occlusion, 1300.0f * VS);
+
+            if ((FeatureSignature & MFB_OcclusionStrength) == 0)
+            {
+                Connect(TexOcclusion->GetOutputPins()[1].Get(), Output->AOPin);   // R channel
+            }
+            else
+            {
+                // glTF: ao = 1 + strength * (sampled - 1), i.e. strength fades the map toward unoccluded.
+                auto* One = AddNode<CMaterialExpression_ConstantFloat>(Graph, ColTex - 320.0f, 1300.0f * VS);
+                One->Value = FVector4(1.0f, 0.0f, 0.0f, 0.0f);
+
+                auto* StrengthParam = AddNode<CMaterialExpression_ConstantFloat>(Graph, ColTex - 320.0f, 1360.0f * VS);
+                StrengthParam->bDynamic      = true;
+                StrengthParam->ParameterName = "OcclusionStrength";
+                StrengthParam->Value         = FVector4(1.0f, 0.0f, 0.0f, 0.0f);
+
+                auto* Sub = AddNode<CMaterialExpression_Subtraction>(Graph, ColMul - 320.0f, 1300.0f * VS);
+                Connect(TexOcclusion->GetOutputPins()[1].Get(), Sub->A);   // R channel
+                Connect(One->GetOutputPins()[0].Get(), Sub->B);
+
+                auto* Mul = AddNode<CMaterialExpression_Multiplication>(Graph, ColMul - 160.0f, 1300.0f * VS);
+                Connect(Sub->Output, Mul->A);
+                Connect(StrengthParam->GetOutputPins()[0].Get(), Mul->B);
+
+                auto* Add = AddNode<CMaterialExpression_Addition>(Graph, ColMul, 1300.0f * VS);
+                Connect(Mul->Output, Add->A);
+                Connect(One->GetOutputPins()[0].Get(), Add->B);
+                Connect(Add->Output, Output->AOPin);
+            }
+
+            // Specular is a single scalar derived from IOR at import time, so it needs no math chain --
+            // just a parameter. Absent entirely when it works out to the shading default of 0.5.
+            if ((FeatureSignature & MFB_Specular) != 0)
+            {
+                auto* SpecularParam = AddNode<CMaterialExpression_ConstantFloat>(Graph, ColTex, 1600.0f * VS);
+                SpecularParam->bDynamic      = true;
+                SpecularParam->ParameterName = "Specular";
+                SpecularParam->Value         = FVector4(0.5f, 0.0f, 0.0f, 0.0f);
+                Connect(SpecularParam->GetOutputPins()[0].Get(), Output->SpecularPin);
+            }
+
+            // Clearcoat. Two scalars; the master's ShadingModel is what actually selects the coat lobe,
+            // and these only matter once it is Clearcoat.
+            if ((FeatureSignature & MFB_Clearcoat) != 0)
+            {
+                auto* CoatParam = AddNode<CMaterialExpression_ConstantFloat>(Graph, ColTex, 1700.0f * VS);
+                CoatParam->bDynamic      = true;
+                CoatParam->ParameterName = "Clearcoat";
+                CoatParam->Value         = FVector4(1.0f, 0.0f, 0.0f, 0.0f);
+                Connect(CoatParam->GetOutputPins()[0].Get(), Output->ClearcoatPin);
+
+                auto* CoatRoughParam = AddNode<CMaterialExpression_ConstantFloat>(Graph, ColTex, 1780.0f * VS);
+                CoatRoughParam->bDynamic      = true;
+                CoatRoughParam->ParameterName = "ClearcoatRoughness";
+                CoatRoughParam->Value         = FVector4(0.03f, 0.0f, 0.0f, 0.0f);
+                Connect(CoatRoughParam->GetOutputPins()[0].Get(), Output->ClearcoatRoughnessPin);
+            }
 
             if (bNeedsOpacity)
             {
@@ -289,6 +527,9 @@ namespace Lumina
                 EMaterialShadingModel   Shading;
                 bool                    bTwoSided;
                 float                   Cutoff;
+                uint32                  UVSignature;
+                uint32                  SamplerSignature;
+                uint32                  FeatureSignature;
                 CMaterial*              Master;
             };
             TVector<FMasterGroup> Groups;
@@ -296,13 +537,21 @@ namespace Lumina
             auto GetMaster = [&](const FMeshImportMaterial& Src) -> CMaterial*
             {
                 const EBlendMode            Blend    = ToBlendMode(Src.AlphaMode);
-                const EMaterialShadingModel Shading  = Src.bUnlit ? EMaterialShadingModel::Unlit : EMaterialShadingModel::Lit;
+                const EMaterialShadingModel Shading  = Src.bUnlit               ? EMaterialShadingModel::Unlit
+                                                     : (Src.ClearcoatFactor > 0.0f) ? EMaterialShadingModel::Clearcoat
+                                                                                    : EMaterialShadingModel::Lit;
                 const bool                  bTwoSided = Src.bTwoSided;
                 const float                 Cutoff   = (Blend == EBlendMode::Masked) ? Src.AlphaCutoff : 0.0f;
+                const uint32                UVSignature      = BuildUVSignature(Src);
+                const uint32                SamplerSignature = BuildSamplerSignature(Src);
+                const uint32                FeatureSignature = BuildFeatureSignature(Src);
 
                 for (const FMasterGroup& Group : Groups)
                 {
                     if (Group.Blend == Blend && Group.Shading == Shading && Group.bTwoSided == bTwoSided
+                        && Group.UVSignature == UVSignature
+                        && Group.SamplerSignature == SamplerSignature
+                        && Group.FeatureSignature == FeatureSignature
                         && Math::Abs(Group.Cutoff - Cutoff) < 0.001f)
                     {
                         return Group.Master;
@@ -315,8 +564,26 @@ namespace Lumina
                 if (Blend == EBlendMode::Masked)           { Variant.append("_Masked"); }
                 else if (Blend == EBlendMode::Translucent) { Variant.append("_Translucent"); }
                 else if (Blend == EBlendMode::Additive)    { Variant.append("_Additive"); }
-                if (Shading == EMaterialShadingModel::Unlit) { Variant.append("_Unlit"); }
+                if (Shading == EMaterialShadingModel::Unlit)     { Variant.append("_Unlit"); }
+                if (Shading == EMaterialShadingModel::Clearcoat) { Variant.append("_Clearcoat"); }
                 if (bTwoSided)                               { Variant.append("_TwoSided"); }
+                // Two masters that differ only in UV topology, filtering or feature set would otherwise
+                // fight for the same name.
+                if (UVSignature != 0)
+                {
+                    Variant.append("_UV");
+                    Variant.append_convert(eastl::to_string(UVSignature));
+                }
+                if (SamplerSignature != 0)
+                {
+                    Variant.append("_S");
+                    Variant.append_convert(eastl::to_string(SamplerSignature));
+                }
+                if (FeatureSignature != 0)
+                {
+                    Variant.append("_F");
+                    Variant.append_convert(eastl::to_string(FeatureSignature));
+                }
 
                 CMaterial* Master = CFactory::CreateNewOf<CMaterial>(EnsureUniquePath(MakeAssetPath("M_", Variant)));
                 if (Master == nullptr)
@@ -353,7 +620,8 @@ namespace Lumina
                 }
 
                 CMaterialNodeGraph* Graph = MaterialGraphBuilder::CreateHeadlessGraph(Master);
-                BuildPBRGraph(Graph, White.Get(), FlatNormal.Get(), Blend != EBlendMode::Opaque);
+                BuildPBRGraph(Graph, White.Get(), FlatNormal.Get(), Blend != EBlendMode::Opaque,
+                              UVSignature, Src.Samplers, FeatureSignature);
 
                 const FMaterialGraphCompileResult CompileResult = CompileMaterialGraph(Master, Graph);
                 if (!CompileResult.bSuccess)
@@ -380,7 +648,8 @@ namespace Lumina
                 // can actually reach refcount 0 and free -- otherwise the graph pins them resident forever.
                 OutCreated.push_back(Master);
                 OutCreated.push_back(Graph);
-                Groups.push_back({ Blend, Shading, bTwoSided, Cutoff, Master });
+                Groups.push_back({ Blend, Shading, bTwoSided, Cutoff, UVSignature, SamplerSignature,
+                                   FeatureSignature, Master });
                 return Master;
             };
 
@@ -438,6 +707,48 @@ namespace Lumina
                 BindTexture("NormalTexture", Src.NormalImage);
                 BindTexture("EmissiveTexture", Src.EmissiveImage);
                 BindTexture("OcclusionTexture", Src.OcclusionImage);
+
+                // UV scale/offset are instance parameters; the master only bakes WHICH set and whether a
+                // chain exists, so these only resolve on masters whose signature asked for them.
+                const uint32 UVSignature = BuildUVSignature(Src);
+                for (size_t Slot = 0; Slot < (size_t)EMaterialTextureSlot::Count; ++Slot)
+                {
+                    if (((UVSignature >> (Slot * 2 + 1)) & 0x1u) == 0)
+                    {
+                        continue;
+                    }
+
+                    const FTextureUVTransform& UVT = Src.UVTransforms[Slot];
+                    const FString Stem = GSlotNames[Slot];
+                    Instance->SetVectorValue(FName((Stem + "UVScale").c_str()),
+                                             FVector4(UVT.Scale.x, UVT.Scale.y, 0.0f, 0.0f));
+                    Instance->SetVectorValue(FName((Stem + "UVOffset").c_str()),
+                                             FVector4(UVT.Offset.x, UVT.Offset.y, 0.0f, 0.0f));
+                    // Radians, which is what the TexCoords Rotation pin expects.
+                    Instance->SetScalarValue(FName((Stem + "UVRotation").c_str()), UVT.Rotation);
+                }
+
+                // Only set on masters whose feature signature actually built the node; a stray write to a
+                // parameter the master does not declare is a no-op, but keeping it symmetric with the
+                // graph makes the two obviously the same decision.
+                const uint32 FeatureSignature = BuildFeatureSignature(Src);
+                if ((FeatureSignature & MFB_NormalScale) != 0)
+                {
+                    Instance->SetScalarValue("NormalScale", Src.NormalScale);
+                }
+                if ((FeatureSignature & MFB_OcclusionStrength) != 0)
+                {
+                    Instance->SetScalarValue("OcclusionStrength", Src.OcclusionStrength);
+                }
+                if ((FeatureSignature & MFB_Specular) != 0)
+                {
+                    Instance->SetScalarValue("Specular", ComputeEngineSpecular(Src));
+                }
+                if ((FeatureSignature & MFB_Clearcoat) != 0)
+                {
+                    Instance->SetScalarValue("Clearcoat", Src.ClearcoatFactor);
+                    Instance->SetScalarValue("ClearcoatRoughness", Src.ClearcoatRoughness);
+                }
 
                 if (ToBlendMode(Src.AlphaMode) != EBlendMode::Opaque)
                 {

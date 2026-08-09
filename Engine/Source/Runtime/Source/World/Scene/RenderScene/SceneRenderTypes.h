@@ -40,7 +40,7 @@ constexpr int GMaxCullViews             = MAX_CULL_VIEWS;
 namespace Lumina
 {
     class CMaterialInterface;
-    struct FVertex;
+    struct FSourceVertex;
     class CMaterial;
     class CStaticMesh;
 }
@@ -811,10 +811,11 @@ namespace Lumina
         int16       NormalY;
         int16       NormalZ;
         uint32      Tangent;    // PackTangent
-        uint32      UV;
+        uint32      UV;         // TEXCOORD_0
+        uint32      UV1;        // TEXCOORD_1
         uint32      Color;
     };
-    static_assert(sizeof(FPreSkinnedVertex) == 32, "FPreSkinnedVertex must match shader");
+    static_assert(sizeof(FPreSkinnedVertex) == 36, "FPreSkinnedVertex must match shader");
 
     constexpr uint32 kNoPreSkinBase = 0xFFFFFFFFu;
 

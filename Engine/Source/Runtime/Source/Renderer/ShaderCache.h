@@ -8,7 +8,9 @@ namespace Lumina
 {
     namespace FShaderCache
     {
-        constexpr uint32 SHADER_CACHE_VERSION = 20;
+        // 21: FMeshletVertex/FMeshletSkinnedVertex/FPreSkinnedVertex gained a UV1 field (TEXCOORD_1).
+        // 22: GBuffer flags byte carries a 3-bit shading model; Clearcoat borrows B.a and C.b.
+        constexpr uint32 SHADER_CACHE_VERSION = 22;
 
         constexpr const char* CACHE_DIR = "/Intermediates/ShaderCache";
 

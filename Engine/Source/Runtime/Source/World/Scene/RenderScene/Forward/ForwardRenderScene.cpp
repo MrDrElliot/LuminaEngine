@@ -1916,7 +1916,7 @@ namespace Lumina
             [](const SStaticMeshComponent& C) -> CMesh* { return C.StaticMesh; },
             Tracker, EPrimitiveSource::StaticMesh);
 
-        // Skeletal assets always carry FSkinnedVertex, so Skinned is unconditional here.
+        // Skeletal assets always carry FMeshletSkinnedVertex, so Skinned is unconditional here.
         Refreshed += ResolveMeshPool(Registry.storage<SSkeletalMeshComponent>(), EInstanceFlags::Skinned, Scratch,
             [](const SSkeletalMeshComponent& C) -> CMesh* { return C.SkeletalMesh; },
             Tracker, EPrimitiveSource::SkeletalMesh);
@@ -9706,7 +9706,9 @@ namespace Lumina
             PC.VignetteIntensity  = 0.0f;
             PC.VignetteSmoothness = 0.5f;
             PC.VignetteRoundness  = 1.0f;
-            PC.TonemapMode        = (uint32)EToneMapper::ACES;
+            // Matches SPostProcessSettings::ToneMapper's default, so a view with no settings (thumbnails,
+            // any camera-less scene) grades the same as one that has them.
+            PC.TonemapMode        = (uint32)EToneMapper::AGX;
             PC.Time               = Time;
             PC.BloomIntensity     = 0.0f;
             PC.ColorFilter        = FVector4(1.0f, 1.0f, 1.0f, 1.0f);

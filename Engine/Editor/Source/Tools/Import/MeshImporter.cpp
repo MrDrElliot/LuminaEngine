@@ -108,6 +108,45 @@ namespace Lumina
             return bAnyExplicit ? SlotCount : Resource.GeometrySurfaces.size();
         }
 
+        /**
+         * Rewrites one resource's surface material indices into a dense, per-mesh slot range and returns
+         * the resulting slot -> source-material mapping.
+         *
+         * A parser indexes a surface by its material's position in the WHOLE file, so a mesh that uses only
+         * the fiftieth material would otherwise be given fifty slots with a single one filled -- the rest
+         * dangling empty in the asset. Merge mode already densifies globally via
+         * FMeshImportData::MergedMaterialSlotToSource; this is the same idea applied per mesh, which is what
+         * the non-merged path (one asset per source mesh) needs.
+         */
+        TVector<int16> DensifyMaterialSlots(FMeshResource& Resource)
+        {
+            TVector<int16> SlotToSource;
+            THashMap<int16, int16> SourceToSlot;
+
+            for (FGeometrySurface& Surface : Resource.GeometrySurfaces)
+            {
+                if (Surface.MaterialIndex < 0)
+                {
+                    continue;
+                }
+
+                const int16 Source = Surface.MaterialIndex;
+                const auto It = SourceToSlot.find(Source);
+                if (It != SourceToSlot.end())
+                {
+                    Surface.MaterialIndex = It->second;
+                    continue;
+                }
+
+                const int16 NewSlot = (int16)SlotToSource.size();
+                SourceToSlot.emplace(Source, NewSlot);
+                SlotToSource.push_back(Source);
+                Surface.MaterialIndex = NewSlot;
+            }
+
+            return SlotToSource;
+        }
+
         // Which parsed sub-mesh replaces the asset on reimport. Prefers a name match (survives reordered
         // exports) and falls back to the first compatible resource.
         int32 FindResourceForAsset(const FMeshImportData& Data, const FName& AssetName, bool bWantSkinned)
@@ -269,6 +308,7 @@ namespace Lumina
                     Target.Positions[BaseVertex + i] = FVector3(World * FVector4(Source.Positions[i], 1.0f));
                     Target.Normals[BaseVertex + i]   = PackNormal(Math::Normalize(NormalMatrix * UnpackNormal(Source.Normals[i])));
                     Target.UVs[BaseVertex + i]       = Source.UVs[i];
+                    Target.UVs1[BaseVertex + i]      = Source.UVs1[i];
                     Target.Colors[BaseVertex + i]    = Source.Colors[i];
                 }
                 if (Target.bSkinnedMesh && Source.bSkinnedMesh)
@@ -836,9 +876,6 @@ namespace Lumina
         CreatedObjects.reserve(SourceData.Skeletons.size() + SourceData.Resources.size()
                              + SourceData.Animations.size() + SourceData.Images.size());
 
-        TVector<CMesh*> CreatedMeshes;
-        CreatedMeshes.reserve(SourceData.Resources.size());
-
         // Indexed by Resources index, so the prefab can resolve a scene node's mesh slot to its asset.
         TVector<CMesh*> ResourceToMesh(SourceData.Resources.size(), nullptr);
 
@@ -864,6 +901,21 @@ namespace Lumina
                 PrimarySkeleton = NewSkeleton;
             }
             CreatedObjects.push_back(NewSkeleton);
+        }
+
+        // Slot -> source-material mapping per resource. Merge mode densified globally at parse time and
+        // carries its own table; everything else is packed here, before the resources are moved into their
+        // assets. Indexed by Resources index, alongside ResourceToMesh.
+        TVector<TVector<int16>> ResourceSlotToSource(SourceData.Resources.size());
+        if (!bMergeMeshes)
+        {
+            for (size_t i = 0; i < SourceData.Resources.size(); ++i)
+            {
+                if (SourceData.Resources[i])
+                {
+                    ResourceSlotToSource[i] = DensifyMaterialSlots(*SourceData.Resources[i]);
+                }
+            }
         }
 
         const bool bMultipleMeshes = SourceData.Resources.size() > 1;
@@ -904,7 +956,6 @@ namespace Lumina
             NewMesh->MeshResources         = Move(MeshResource);
 
             CreatedObjects.push_back(NewMesh);
-            CreatedMeshes.push_back(NewMesh);
             ResourceToMesh[i] = NewMesh;
         }
 
@@ -963,11 +1014,21 @@ namespace Lumina
                 FFixedString PackagePath = Paths::Combine(TexturesDir, TextureAssetName(NameSource).c_str());
 
                 const bool bAlreadyExists = (FindObject<CPackage>(PackagePath) != nullptr);
+
+                // TextureAssetName drops the directory and the extension, so two different source images
+                // can sanitize to one name. SourceData.Images is already deduplicated by source key, so a
+                // collision inside this batch is always two genuinely different textures -- aliasing them
+                // is how a mesh ends up wearing another material's map. Give the loser its own path
+                // instead, the way every other asset type here does through BuildPath.
+                if (!bAlreadyExists && !SeenPaths.insert(PackagePath).second)
+                {
+                    PackagePath = Paths.Claim(PackagePath);
+                    SeenPaths.insert(PackagePath);
+                }
+
                 CPackage::AddPackageExt(PackagePath);
 
-                const bool bDuplicate = !SeenPaths.insert(PackagePath).second;
-
-                Work.push_back(FTextureWork{ Move(PackagePath), (uint32)i, !bAlreadyExists && !bDuplicate });
+                Work.push_back(FTextureWork{ Move(PackagePath), (uint32)i, !bAlreadyExists });
             }
 
             TVector<CTexture*> Cooked(Work.size(), nullptr);
@@ -1035,9 +1096,20 @@ namespace Lumina
                     TSpan<CTexture* const>(ImageAssets.data(), ImageAssets.size()),
                     MaterialsDir, BaseName, CreatedObjects);
 
-                const TVector<int16>& SlotToSource = SourceData.MergedMaterialSlotToSource;
-                for (CMesh* Mesh : CreatedMeshes)
+                // Every mesh's slots are dense now, so each needs its OWN slot -> source table: merge mode's
+                // global one, or the per-resource one built before the assets were created.
+                for (size_t ResIdx = 0; ResIdx < ResourceToMesh.size(); ++ResIdx)
                 {
+                    CMesh* Mesh = ResourceToMesh[ResIdx];
+                    if (Mesh == nullptr)
+                    {
+                        continue;
+                    }
+
+                    const TVector<int16>& SlotToSource = bMergeMeshes
+                        ? SourceData.MergedMaterialSlotToSource
+                        : ResourceSlotToSource[ResIdx];
+
                     Mesh->ForEachSurface([&](const FGeometrySurface& Surface, uint32)
                     {
                         const int32 Slot = Surface.MaterialIndex;
@@ -1046,7 +1118,7 @@ namespace Lumina
                             return;
                         }
 
-                        // Identity unless merge mode remapped source indices into dense slots.
+                        // Identity only for a source that never needed remapping at all.
                         int32 SourceIndex = Slot;
                         if (!SlotToSource.empty())
                         {
@@ -1176,6 +1248,13 @@ namespace Lumina
 
         // Name follows the ASSET: the object keeps its identity through a reimport.
         NewResource->Name = Mesh->GetName();
+
+        // Match the fresh-import path, or a reimport would hand the asset back its file-global slot
+        // numbering and undo the dense packing. Merge mode densifies at parse time instead.
+        if (!bMergeMeshes)
+        {
+            DensifyMaterialSlots(*NewResource);
+        }
 
         TVector<TObjectPtr<CMaterialInterface>> RemappedMaterials;
         RemapMaterialSlots(Mesh->GetMeshResource(), Mesh->Materials, *NewResource, RemappedMaterials);

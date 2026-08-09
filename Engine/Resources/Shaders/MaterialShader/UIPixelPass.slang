@@ -23,6 +23,10 @@ float4 FragmentMain(PSInput Input) : SV_Target0
     float4 VertexColor   = float4(1.0);
     uint   EntityID      = 0;
     float4 WorldTangent  = float4(1.0, 0.0, 0.0, 1.0);
+    // A UI quad has one parameterization; set 1 aliases it.
+    float2 UV1           = UV0;
+    float2 UV1_DDX       = ddx(UV1);
+    float2 UV1_DDY       = ddy(UV1);
     float2 UV0_DDX       = ddx(UV0);
     float2 UV0_DDY       = ddy(UV0);
     float3 WorldPosition_DDX = ddx(WorldPosition);

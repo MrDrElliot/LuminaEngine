@@ -74,13 +74,20 @@ namespace Lumina::SlowTaskModal
 
             ImGui::Spacing();
 
-            // Progress bar: accent fill on a faint accent track, rounded, fixed height.
+            // Progress bar: accent fill on a faint accent track, rounded.
             FFixedString Overlay(FFixedString::CtorSprintf(), "%.0f%%", Task.Fraction * 100.0f);
+
+            // ProgressBar draws the overlay percentage INSIDE the bar, clipped to it, so the bar has to be
+            // at least a line of text plus padding tall or the digits lose their top and bottom. 14 keeps
+            // the slim look at 1x; the text term is what makes it survive DPI scaling.
+            constexpr float BarPaddingY = 3.0f;
+            const float BarHeight = ImMax(14.0f, ImGui::GetTextLineHeight() + BarPaddingY * 2.0f);
+
             ImGui::PushStyleColor(ImGuiCol_PlotHistogram, GAccent);
             ImGui::PushStyleColor(ImGuiCol_FrameBg, GAccentTrack);
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
-            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, 3.0f));
-            ImGui::ProgressBar(Task.Fraction, ImVec2(-FLT_MIN, 14.0f), Overlay.c_str());
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, BarPaddingY));
+            ImGui::ProgressBar(Task.Fraction, ImVec2(-FLT_MIN, BarHeight), Overlay.c_str());
             ImGui::PopStyleVar(2);
             ImGui::PopStyleColor(2);
         }

@@ -19,7 +19,7 @@ namespace Lumina
     struct FAnimationResource;
     struct FMeshResource;
     struct FSkeletonResource;
-    struct FVertex;
+    struct FSourceVertex;
     class FScopedSlowTask;
 }
 
@@ -189,6 +189,55 @@ namespace Lumina::Import
         /** One source-file material definition (PBR metallic-roughness). Indexed by the same value that
          *  FGeometrySurface::MaterialIndex references (for merge mode, see FMeshImportData::MergedMaterialSlotToSource).
          *  Texture slots are indices into FMeshImportData::Images; INDEX_NONE means the channel has no texture. */
+        /**
+         * Filtering + address mode for one texture slot. Values mirror EMaterialSampler in the editor's
+         * material graph and RHI::EStockSampler; kept as a plain uint8 here so the runtime import types do
+         * not depend on the editor node headers.
+         */
+        enum class EImportSampler : uint8
+        {
+            LinearWrap   = 0,
+            LinearClamp  = 1,
+            LinearMirror = 2,
+            PointWrap    = 3,
+            PointClamp   = 4,
+            AnisoWrap    = 5,
+            AnisoClamp   = 6,
+        };
+
+        /** Per-texture-slot UV handling: which set to sample and the KHR_texture_transform applied to it. */
+        struct FTextureUVTransform
+        {
+            /** TEXCOORD set index the slot samples. */
+            uint32   TexCoordSet = 0;
+
+            FVector2 Offset      = FVector2(0.0f, 0.0f);
+            FVector2 Scale       = FVector2(1.0f, 1.0f);
+
+            /** Radians, counter-clockwise about the UV origin. */
+            float    Rotation    = 0.0f;
+
+            NODISCARD bool IsIdentity() const
+            {
+                return TexCoordSet == 0
+                    && Offset == FVector2(0.0f, 0.0f)
+                    && Scale  == FVector2(1.0f, 1.0f)
+                    && Rotation == 0.0f;
+            }
+        };
+
+        /** Texture slots on FMeshImportMaterial, in the order UVTransforms indexes them. */
+        enum class EMaterialTextureSlot : uint8
+        {
+            BaseColor = 0,
+            MetallicRoughness,
+            Normal,
+            Emissive,
+            Occlusion,
+
+            Count,
+        };
+
         struct FMeshImportMaterial
         {
             FString             Name;
@@ -208,6 +257,36 @@ namespace Lumina::Import
             int32               NormalImage            = INDEX_NONE;
             int32               EmissiveImage          = INDEX_NONE;
             int32               OcclusionImage         = INDEX_NONE;
+
+            /**
+             * Refractive index (KHR_materials_ior). Drives the dielectric F0, which the engine expresses as
+             * its Specular term. 1.5 is the glTF default and matches the engine's Specular = 0.5.
+             */
+            float               IOR               = 1.5f;
+
+            /** KHR_materials_specular: scales the dielectric reflectance computed from IOR. */
+            float               SpecularFactor    = 1.0f;
+
+            /** normal_texture.scale -- multiplies the tangent-space normal's XY. */
+            float               NormalScale       = 1.0f;
+
+            /** occlusion_texture.strength -- lerp(1, AO, strength). */
+            float               OcclusionStrength = 1.0f;
+
+            /** KHR_materials_clearcoat. Non-zero strength selects the Clearcoat shading model. */
+            float               ClearcoatFactor    = 0.0f;
+            float               ClearcoatRoughness = 0.0f;
+
+            /** Indexed by EMaterialTextureSlot. Identity unless the source authored a UV set or transform. */
+            FTextureUVTransform UVTransforms[(size_t)EMaterialTextureSlot::Count];
+
+            /** Indexed by EMaterialTextureSlot. */
+            EImportSampler      Samplers[(size_t)EMaterialTextureSlot::Count] = {};
+
+            NODISCARD const FTextureUVTransform& GetUVTransform(EMaterialTextureSlot Slot) const
+            {
+                return UVTransforms[(size_t)Slot];
+            }
         };
 
         /** The resources one deduplicated source mesh produced. A source mesh whose primitives are a mix of

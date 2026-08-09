@@ -201,8 +201,13 @@ namespace Lumina
         // Texture operations
         void DefineTextureSample(const FString& ID);
         // Node is the sampling node, carried only so a UV-gradient fallback warning can name and focus it.
-        void TextureSample(const FString& ID, CTexture* Texture, CMaterialInput* Input, CEdGraphNode* Node = nullptr);
-        void TextureSampleParameter(const FString& ID, const FName& ParamID, CTexture* Texture, CMaterialInput* Input, CEdGraphNode* Node = nullptr);
+        // SamplerName is the SAMPLER_* identifier from GlobalRHI.slang, emitted verbatim. Taken as a string
+        // rather than the node's EMaterialSampler because MaterialNode_TextureSample.h reaches this header
+        // through MaterialNodeExpression.h -- including it back would be circular.
+        void TextureSample(const FString& ID, CTexture* Texture, CMaterialInput* Input, CEdGraphNode* Node = nullptr,
+                           FStringView SamplerName = "SAMPLER_LINEAR_WRAP");
+        void TextureSampleParameter(const FString& ID, const FName& ParamID, CTexture* Texture, CMaterialInput* Input,
+                                    CEdGraphNode* Node = nullptr, FStringView SamplerName = "SAMPLER_LINEAR_WRAP");
 
         // Raises a non-fatal warning when UVValue carries no analytic derivative, so the deferred pass has
         // to sample it with UV0's gradient. No-op when the derivative is valid.
@@ -228,7 +233,8 @@ namespace Lumina
         void VertexTangent(const FString& ID, CMaterialGraphNode* Node = nullptr);
         void VertexBitangent(const FString& ID, CMaterialGraphNode* Node = nullptr);
         void VertexColor(const FString& ID, CMaterialGraphNode* Node = nullptr);
-        void TexCoords(const FString& ID, uint32 Index, CMaterialInput* Tiling, float UTiling, float VTiling);
+        void TexCoords(const FString& ID, uint32 Index, CMaterialInput* Tiling, float UTiling, float VTiling,
+                       CMaterialInput* Rotation = nullptr, float RotationDegrees = 0.0f);
         void Panner(CMaterialInput* UV, CMaterialInput* Time, CMaterialInput* Speed);
         void RotateUV(CMaterialInput* UV, CMaterialInput* Center, CMaterialInput* Rotation);
         void TilingAndOffset(CMaterialInput* UV, CMaterialInput* Tiling, CMaterialInput* Offset);

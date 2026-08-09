@@ -95,13 +95,14 @@ float3 FireflyUntonemap(float3 C) { return C / max(1.0 - Luminance(C), 1e-4); }
 
 FVertexData LoadStaticVertex(FMeshletHeader* Header, FMeshlet M, uint VertexLocalIdx)
 {
-    FVertex V = reinterpret<FVertex*>(Header.Vertices)[M.VertexOffset + VertexLocalIdx];
+    FMeshletVertex V = reinterpret<FMeshletVertex*>(Header.Vertices)[M.VertexOffset + VertexLocalIdx];
 
     FVertexData Data;
     Data.Position = DecodeMeshletPosition(M, V.PositionX, V.PositionY, V.PositionZ);
     Data.Normal   = UnpackNormalSNorm16(V.NormalX, V.NormalY, V.NormalZ);
     Data.Tangent  = UnpackTangent(V.Tangent);
     Data.UV       = UnpackUV(V.UV);
+    Data.UV1      = UnpackUV(V.UV1);
     Data.Color    = UnpackColor(V.Color);
     return Data;
 }
@@ -113,6 +114,7 @@ FVertexData DecodePreSkinnedVertex(FPreSkinnedVertex S)
     Data.Normal   = UnpackNormalSNorm16(S.NormalX, S.NormalY, S.NormalZ);
     Data.Tangent  = UnpackTangent(S.Tangent);
     Data.UV       = UnpackUV(S.UV);
+    Data.UV1      = UnpackUV(S.UV1);
     Data.Color    = UnpackColor(S.Color);
     return Data;
 }
@@ -126,7 +128,7 @@ FVertexData LoadSkinnedVertex(FMeshlet M, uint VertexLocalIdx, uint SkinnedVerte
 
 float3 LoadStaticPosition(FMeshletHeader* Header, FMeshlet M, uint VertexLocalIdx)
 {
-    FVertex V = reinterpret<FVertex*>(Header.Vertices)[M.VertexOffset + VertexLocalIdx];
+    FMeshletVertex V = reinterpret<FMeshletVertex*>(Header.Vertices)[M.VertexOffset + VertexLocalIdx];
     return DecodeMeshletPosition(M, V.PositionX, V.PositionY, V.PositionZ);
 }
 
@@ -140,7 +142,7 @@ float3 LoadSkinnedPosition(FMeshletHeader* Header, FMeshlet M, uint VertexLocalI
 // the pre-skinned buffer. Output is object-space (the draw VS still applies ModelMatrix).
 FPreSkinnedVertex SkinVertex(FMeshletHeader* Header, FMeshlet M, uint VertexLocalIdx, uint BoneOffset)
 {
-    FSkinnedVertex V = reinterpret<FSkinnedVertex*>(Header.Vertices)[M.VertexOffset + VertexLocalIdx];
+    FMeshletSkinnedVertex V = reinterpret<FMeshletSkinnedVertex*>(Header.Vertices)[M.VertexOffset + VertexLocalIdx];
 
     // The SOURCE stream is quantized like the static one -- it is still the rest pose, still inside its
     // meshlet's anchor box. The blended OUTPUT is not: a skinned vertex leaves that box entirely, which
@@ -219,6 +221,7 @@ FPreSkinnedVertex SkinVertex(FMeshletHeader* Header, FMeshlet M, uint VertexLoca
     Out.NormalZ = FloatToSNorm16(SkinnedNormal.z);
     Out.Tangent = PackTangent(float4(SkinnedTangent, LocalTangent.w));
     Out.UV      = V.UV;     // skin-invariant; carried so the draw VS never reads the source
+    Out.UV1     = V.UV1;
     Out.Color   = V.Color;
     return Out;
 }

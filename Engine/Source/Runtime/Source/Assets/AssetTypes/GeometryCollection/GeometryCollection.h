@@ -16,7 +16,7 @@ namespace Lumina
     /** One convex chunk of a fractured mesh: render geometry (also drives convex collision) + a local centroid. */
     struct FFracturePiece
     {
-        TVector<FVertex> Vertices;
+        TVector<FSourceVertex> Vertices;
         TVector<uint32>  Indices;
         FVector3        Center = FVector3(0.0f);   // local-space centroid, used as the launch pivot
         FAABB            Bounds;

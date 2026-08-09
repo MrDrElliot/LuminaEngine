@@ -2,6 +2,7 @@
 #include "GLTFImporter.h"
 
 #include <cgltf.h>
+#include <meshoptimizer.h>
 
 #include "Assets/AssetTypes/Mesh/Animation/Animation.h"
 #include "Core/Math/Math.h"
@@ -179,6 +180,149 @@ namespace Lumina
             cgltf_free(ParsedData);
             ParsedData = nullptr;
         }
+
+        // After cgltf_free: the views pointing at these are gone, so nothing can read them now.
+        DecodedBufferViews.clear();
+        DecodedBufferViews.shrink_to_fit();
+    }
+
+    bool CGLTFImporter::ValidateRequiredExtensions(cgltf_data& Data, FString& OutError) const
+    {
+        // Everything the importer can honour. An extension that only ADDS optional data can be ignored
+        // safely, but a REQUIRED one the file cannot be read without has to stop the import.
+        static constexpr const char* kSupported[] =
+        {
+            "KHR_lights_punctual",
+            "KHR_materials_emissive_strength",
+            "KHR_materials_ior",
+            "KHR_materials_specular",
+            "KHR_materials_unlit",
+            "KHR_texture_transform",
+            "KHR_texture_basisu",
+            "EXT_texture_webp",
+            "MSFT_texture_dds",
+            "EXT_meshopt_compression",
+        };
+
+        FFixedString Unsupported;
+        for (cgltf_size i = 0; i < Data.extensions_required_count; ++i)
+        {
+            const char* Name = Data.extensions_required[i];
+            if (Name == nullptr)
+            {
+                continue;
+            }
+
+            bool bFound = false;
+            for (const char* Supported : kSupported)
+            {
+                if (strcmp(Name, Supported) == 0)
+                {
+                    bFound = true;
+                    break;
+                }
+            }
+
+            if (!bFound)
+            {
+                if (!Unsupported.empty()) { Unsupported.append(", "); }
+                Unsupported.append(Name);
+            }
+        }
+
+        if (Unsupported.empty())
+        {
+            return true;
+        }
+
+        // Draco is the one users hit in practice: Blender's exporter has a Compression checkbox that
+        // turns it on, and the resulting file is unreadable without the Draco library (not vendored).
+        const bool bDraco = Unsupported.find("KHR_draco_mesh_compression") != FFixedString::npos;
+
+        OutError = FString(std::format(
+            "This glTF requires extension(s) the importer does not support: {}.{}",
+            Unsupported.c_str(),
+            bDraco ? " Re-export from Blender with Compression turned OFF (Draco is not supported)." : "").c_str());
+        return false;
+    }
+
+    bool CGLTFImporter::DecompressMeshopt(cgltf_data& Data, FString& OutError)
+    {
+        DecodedBufferViews.clear();
+        DecodedBufferViews.resize(Data.buffer_views_count);
+
+        for (cgltf_size i = 0; i < Data.buffer_views_count; ++i)
+        {
+            cgltf_buffer_view& View = Data.buffer_views[i];
+            if (!View.has_meshopt_compression)
+            {
+                continue;
+            }
+
+            const cgltf_meshopt_compression& MC = View.meshopt_compression;
+            if (MC.buffer == nullptr || MC.buffer->data == nullptr)
+            {
+                OutError = FString(std::format("Buffer view {} is meshopt-compressed but its source buffer never loaded.", (uint32)i).c_str());
+                return false;
+            }
+
+            TVector<uint8>& Dest = DecodedBufferViews[i];
+            Dest.resize(MC.count * MC.stride);
+
+            const uint8* Src     = (const uint8*)MC.buffer->data + MC.offset;
+            const size_t SrcSize = MC.size;
+
+            int DecodeResult = -1;
+            switch (MC.mode)
+            {
+            case cgltf_meshopt_compression_mode_attributes:
+                DecodeResult = meshopt_decodeVertexBuffer(Dest.data(), MC.count, MC.stride, Src, SrcSize);
+                break;
+
+            case cgltf_meshopt_compression_mode_triangles:
+                DecodeResult = meshopt_decodeIndexBuffer(Dest.data(), MC.count, MC.stride, Src, SrcSize);
+                break;
+
+            case cgltf_meshopt_compression_mode_indices:
+                DecodeResult = meshopt_decodeIndexSequence(Dest.data(), MC.count, MC.stride, Src, SrcSize);
+                break;
+
+            default:
+                OutError = FString(std::format("Buffer view {} uses an unknown meshopt compression mode.", (uint32)i).c_str());
+                return false;
+            }
+
+            if (DecodeResult != 0)
+            {
+                OutError = FString(std::format("Failed to decode meshopt buffer view {} (error {}).", (uint32)i, DecodeResult).c_str());
+                return false;
+            }
+
+            // Filters run in place over the decoded data, undoing the quantization the encoder applied.
+            switch (MC.filter)
+            {
+            case cgltf_meshopt_compression_filter_octahedral:
+                meshopt_decodeFilterOct(Dest.data(), MC.count, MC.stride);
+                break;
+
+            case cgltf_meshopt_compression_filter_quaternion:
+                meshopt_decodeFilterQuat(Dest.data(), MC.count, MC.stride);
+                break;
+
+            case cgltf_meshopt_compression_filter_exponential:
+                meshopt_decodeFilterExp(Dest.data(), MC.count, MC.stride);
+                break;
+
+            case cgltf_meshopt_compression_filter_none:
+            default:
+                break;
+            }
+
+            // The documented cgltf hook: accessors read this in preference to buffer->data.
+            View.data = Dest.data();
+        }
+
+        return true;
     }
 
     bool CGLTFImporter::ParseMeshSource(const FImportRequest& Request,
@@ -214,6 +358,15 @@ namespace Lumina
             return false;
         }
 
+        // Before anything reads a buffer: a required extension we cannot honour makes every subsequent
+        // accessor read meaningless, and cgltf will not have complained.
+        if (!ValidateRequiredExtensions(*ParsedData, OutError))
+        {
+            cgltf_free(ParsedData);
+            ParsedData = nullptr;
+            return false;
+        }
+
         Result = cgltf_load_buffers(&ParseOptions, ParsedData, SourcePath.c_str());
         if (Result != cgltf_result_success)
         {
@@ -222,6 +375,38 @@ namespace Lumina
             cgltf_free(ParsedData);
             ParsedData = nullptr;
             return false;
+        }
+
+        // Buffers are raw at this point; meshopt views still hold encoded bytes. Decode before any
+        // accessor is touched, or every read past this line is garbage.
+        if (!DecompressMeshopt(*ParsedData, OutError))
+        {
+            cgltf_free(ParsedData);
+            ParsedData = nullptr;
+            DecodedBufferViews.clear();
+            return false;
+        }
+
+        // Catches the structural problems cgltf's parser tolerates (accessor bounds, mismatched counts).
+        // Runs after decompression so the sizes it checks are the decoded ones.
+        //
+        // Only data_too_short is fatal: that one means an accessor reaches past its buffer, and the unpack
+        // helpers would over-read. Every other complaint is a spec violation that exporters do emit and
+        // that reads back fine, so it warns rather than blocking an import that used to work.
+        Result = cgltf_validate(ParsedData);
+        if (Result == cgltf_result_data_too_short)
+        {
+            OutError = FString(std::format(
+                "'{0}' is malformed: an accessor reads past the end of its buffer.", SourcePath.c_str()).c_str());
+            cgltf_free(ParsedData);
+            ParsedData = nullptr;
+            DecodedBufferViews.clear();
+            return false;
+        }
+        if (Result != cgltf_result_success)
+        {
+            LOG_WARN("[glTF] '{}' failed validation ({}); importing anyway. Geometry or animation may be off.",
+                     SourcePath.c_str(), ResultToString(Result).data());
         }
 
         const cgltf_data& Data = *ParsedData;
@@ -284,6 +469,61 @@ namespace Lumina
             }
         }
 
+        // KHR_texture_transform + the view's TEXCOORD set. Both are per texture SLOT, not per texture, so a
+        // material can sample one image twice with different mappings.
+        auto ResolveUVTransform = [](const cgltf_texture_view& View) -> FTextureUVTransform
+        {
+            FTextureUVTransform Out;
+            Out.TexCoordSet = (uint32)View.texcoord;
+
+            if (View.has_transform)
+            {
+                const cgltf_texture_transform& T = View.transform;
+                Out.Offset   = FVector2(T.offset[0], T.offset[1]);
+                Out.Scale    = FVector2(T.scale[0], T.scale[1]);
+                Out.Rotation = T.rotation;
+
+                // The extension's own texcoord overrides the view's when present.
+                if (T.has_texcoord)
+                {
+                    Out.TexCoordSet = (uint32)T.texcoord;
+                }
+            }
+
+            return Out;
+        };
+
+        // glTF samplers are wrap-per-axis; the engine's stock table is one mode for both. U wins, because a
+        // texture authored CLAMP/REPEAT is nearly always a gradient or atlas strip that clamps horizontally.
+        auto ResolveSampler = [](const cgltf_texture_view& View) -> EImportSampler
+        {
+            if (View.texture == nullptr || View.texture->sampler == nullptr)
+            {
+                return EImportSampler::LinearWrap;
+            }
+
+            const cgltf_sampler& S = *View.texture->sampler;
+
+            // Only mag_filter distinguishes point from linear for the stock set; the min filter's mip mode
+            // is always trilinear here, which is what every stock sampler does.
+            const bool bPoint = (S.mag_filter == cgltf_filter_type_nearest);
+
+            switch (S.wrap_s)
+            {
+            case cgltf_wrap_mode_clamp_to_edge:
+                return bPoint ? EImportSampler::PointClamp : EImportSampler::LinearClamp;
+
+            case cgltf_wrap_mode_mirrored_repeat:
+                // No point-mirror in the stock table; linear-mirror keeps the addressing, which is the part
+                // that changes what pixels you see.
+                return EImportSampler::LinearMirror;
+
+            case cgltf_wrap_mode_repeat:
+            default:
+                return bPoint ? EImportSampler::PointWrap : EImportSampler::LinearWrap;
+            }
+        };
+
         // A texture's image can come from the core image or from a compressed-texture extension.
         auto ResolveImage = [&](const cgltf_texture_view& View) -> int32
         {
@@ -343,6 +583,32 @@ namespace Lumina
 
                     Material.BaseColorImage         = ResolveImage(PBR.base_color_texture);
                     Material.MetallicRoughnessImage = ResolveImage(PBR.metallic_roughness_texture);
+
+                    Material.UVTransforms[(size_t)EMaterialTextureSlot::BaseColor] =
+                        ResolveUVTransform(PBR.base_color_texture);
+                    Material.UVTransforms[(size_t)EMaterialTextureSlot::MetallicRoughness] =
+                        ResolveUVTransform(PBR.metallic_roughness_texture);
+
+                    Material.Samplers[(size_t)EMaterialTextureSlot::BaseColor] =
+                        ResolveSampler(PBR.base_color_texture);
+                    Material.Samplers[(size_t)EMaterialTextureSlot::MetallicRoughness] =
+                        ResolveSampler(PBR.metallic_roughness_texture);
+                }
+
+                // Dielectric reflectance. The engine has no IOR term; it has Specular, where
+                // F0 = 0.08 * Specular (BasePixelPass.slang). Converting through the Fresnel formula
+                // F0 = ((ior-1)/(ior+1))^2 lands glTF's default 1.5 on the engine's default 0.5, so a
+                // material that never touched IOR imports unchanged.
+                Material.IOR            = Source.has_ior ? Source.ior.ior : 1.5f;
+                Material.SpecularFactor = Source.has_specular ? Source.specular.specular_factor : 1.0f;
+
+                Material.NormalScale       = Source.normal_texture.scale;
+                Material.OcclusionStrength = Source.occlusion_texture.scale;
+
+                if (Source.has_clearcoat)
+                {
+                    Material.ClearcoatFactor    = Source.clearcoat.clearcoat_factor;
+                    Material.ClearcoatRoughness = Source.clearcoat.clearcoat_roughness_factor;
                 }
 
                 const float EmissiveStrength = Source.has_emissive_strength ? Source.emissive_strength.emissive_strength : 1.0f;
@@ -363,6 +629,45 @@ namespace Lumina
                 Material.NormalImage    = ResolveImage(Source.normal_texture);
                 Material.OcclusionImage = ResolveImage(Source.occlusion_texture);
                 Material.EmissiveImage  = ResolveImage(Source.emissive_texture);
+
+                Material.UVTransforms[(size_t)EMaterialTextureSlot::Normal] =
+                    ResolveUVTransform(Source.normal_texture);
+                Material.UVTransforms[(size_t)EMaterialTextureSlot::Occlusion] =
+                    ResolveUVTransform(Source.occlusion_texture);
+                Material.UVTransforms[(size_t)EMaterialTextureSlot::Emissive] =
+                    ResolveUVTransform(Source.emissive_texture);
+
+                Material.Samplers[(size_t)EMaterialTextureSlot::Normal]    = ResolveSampler(Source.normal_texture);
+                Material.Samplers[(size_t)EMaterialTextureSlot::Occlusion] = ResolveSampler(Source.occlusion_texture);
+                Material.Samplers[(size_t)EMaterialTextureSlot::Emissive]  = ResolveSampler(Source.emissive_texture);
+
+                // Everything the engine's Lit/Unlit shading models cannot express. Reported per material
+                // rather than dropped silently: a glass material importing as opaque plastic is otherwise
+                // indistinguishable from a broken import.
+                {
+                    FFixedString Unsupported;
+                    auto Note = [&Unsupported](bool bPresent, const char* Name)
+                    {
+                        if (bPresent)
+                        {
+                            if (!Unsupported.empty()) { Unsupported.append(", "); }
+                            Unsupported.append(Name);
+                        }
+                    };
+
+                    Note(Source.has_transmission != 0, "transmission");
+                    Note(Source.has_volume != 0,       "volume");
+                    Note(Source.has_sheen != 0,        "sheen");
+                    Note(Source.has_iridescence != 0,  "iridescence");
+                    Note(Source.has_anisotropy != 0,   "anisotropy");
+
+                    if (!Unsupported.empty())
+                    {
+                        LOG_WARN("[glTF] Material '{}' uses {}, which the engine's Lit shading model cannot "
+                                 "represent. Imported as standard metallic-roughness; those effects are lost.",
+                                 Material.Name, Unsupported.c_str());
+                    }
+                }
 
                 MarkRole(Material.BaseColorImage,         ETextureColorSpace::SRGB);
                 MarkRole(Material.MetallicRoughnessImage, ETextureColorSpace::PackedData);
@@ -397,6 +702,30 @@ namespace Lumina
                 Key.push_back((uint32)Material.NormalImage);
                 Key.push_back((uint32)Material.EmissiveImage);
                 Key.push_back((uint32)Material.OcclusionImage);
+
+                // Two materials pointing at the same images but mapping or filtering them differently are
+                // NOT the same material; without this they collapse and one renders with the other's setup.
+                for (const FTextureUVTransform& UVT : Material.UVTransforms)
+                {
+                    Key.push_back(UVT.TexCoordSet);
+                    Key.push_back(QuantizeFloat(UVT.Offset.x));
+                    Key.push_back(QuantizeFloat(UVT.Offset.y));
+                    Key.push_back(QuantizeFloat(UVT.Scale.x));
+                    Key.push_back(QuantizeFloat(UVT.Scale.y));
+                    Key.push_back(QuantizeFloat(UVT.Rotation));
+                }
+                for (EImportSampler Sampler : Material.Samplers)
+                {
+                    Key.push_back((uint32)Sampler);
+                }
+                Key.push_back(QuantizeFloat(Material.IOR));
+                Key.push_back(QuantizeFloat(Material.SpecularFactor));
+                Key.push_back(QuantizeFloat(Material.NormalScale));
+                Key.push_back(QuantizeFloat(Material.OcclusionStrength));
+                // Clearcoat selects a different SHADING MODEL, so omitting it here would let a coated and
+                // an uncoated material collapse into one and render with whichever won.
+                Key.push_back(QuantizeFloat(Material.ClearcoatFactor));
+                Key.push_back(QuantizeFloat(Material.ClearcoatRoughness));
 
                 bool bIsNew = false;
                 const uint32 Slot = MaterialDedup.Insert(Move(Key), bIsNew);
@@ -799,6 +1128,25 @@ namespace Lumina
                     for (size_t i = 0; i < VertexCount; ++i)
                     {
                         Resource.UVs[BaseVertex + i] = Math::PackHalf2x16(FVector2(Raw[i * 2 + 0], Raw[i * 2 + 1]));
+                    }
+                }
+
+                if (const cgltf_accessor* UVs1 = cgltf_find_accessor(&Primitive, cgltf_attribute_type_texcoord, 1))
+                {
+                    float* Raw = Scratch.Reserve(VertexCount * 2);
+                    cgltf_accessor_unpack_floats(UVs1, Raw, VertexCount * 2);
+                    for (size_t i = 0; i < VertexCount; ++i)
+                    {
+                        Resource.UVs1[BaseVertex + i] = Math::PackHalf2x16(FVector2(Raw[i * 2 + 0], Raw[i * 2 + 1]));
+                    }
+                }
+                else
+                {
+                    // Mirror set 0 rather than leaving zeros: a material that asks for set 1 on a
+                    // single-set mesh then renders like set 0 instead of collapsing to a single texel.
+                    for (size_t i = 0; i < VertexCount; ++i)
+                    {
+                        Resource.UVs1[BaseVertex + i] = Resource.UVs[BaseVertex + i];
                     }
                 }
 
