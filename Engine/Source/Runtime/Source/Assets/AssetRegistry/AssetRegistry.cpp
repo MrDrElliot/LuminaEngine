@@ -134,7 +134,7 @@ namespace Lumina
             }
             if (File.IsLAsset())
             {
-                PackagePaths.emplace_back(File.VirtualPath);
+                PackagePaths.emplace_back(File.VirtualPath.c_str(), File.VirtualPath.size());
             }
         };
 

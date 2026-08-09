@@ -443,20 +443,31 @@ namespace Lumina
 	}
 
 	void FMaterialCompiler::RegisterDeriv(const FString& ID, EDerivState State,
-	                                      const FString& DdxExpr, const FString& DdyExpr)
+	                                      const FString& DdxExpr, const FString& DdyExpr,
+	                                      int32 ComponentCount)
 	{
 		FDerivInfo Info;
 		Info.State = State;
 
-		if (State == EDerivState::Valid)
+		// A vertex shader has no quad, so there is nothing to differentiate against and the vertex
+		// templates declare no companions. Record the state so the chain keeps propagating (Unknown makes
+		// any sample downstream fall back), but emit nothing.
+		if (Info.State == EDerivState::Valid && CurrentStage == EMaterialCompileStage::Vertex)
+		{
+			Info.State = EDerivState::Unknown;
+		}
+
+		if (Info.State == EDerivState::Valid)
 		{
 			// Companion chunks, named off the value so a consumer can find them from FInputValue::Value
 			// alone. In the forward lanes SampleTexture2DAuto ignores its gradient arguments, so these
 			// go unreferenced and dead-strip -- the propagation costs nothing outside the deferred pass.
 			Info.DDX = ID + "_DDX";
 			Info.DDY = ID + "_DDY";
-			GetActiveChunk().append("float2 " + Info.DDX + " = " + DdxExpr + ";\n");
-			GetActiveChunk().append("float2 " + Info.DDY + " = " + DdyExpr + ";\n");
+
+			const FString Type = GetVectorType(Math::Clamp(ComponentCount, 1, 4));
+			GetActiveChunk().append(Type + " " + Info.DDX + " = " + DdxExpr + ";\n");
+			GetActiveChunk().append(Type + " " + Info.DDY + " = " + DdyExpr + ";\n");
 		}
 
 		DerivByVar[ID] = Info;
@@ -467,12 +478,17 @@ namespace Lumina
 		switch (Source.Deriv)
 		{
 		case EDerivState::Valid:
+		{
 			// d(Source * Scale) = dSource * Scale. Scale is derivative-free here (the callers check), so
-			// the product rule's second term is zero.
+			// the product rule's second term is zero. The companion carries the SOURCE's full width, so it
+			// takes the same mask the value expression does or the two describe different channels.
+			const FString Mask = GetSwizzleForMask(Source.Mask);
 			RegisterDeriv(ID, EDerivState::Valid,
-			              Source.DDX + " * " + ScaleExpr,
-			              Source.DDY + " * " + ScaleExpr);
+			              Source.DDX + Mask + " * " + ScaleExpr,
+			              Source.DDY + Mask + " * " + ScaleExpr,
+			              Source.ComponentCount);
 			break;
+		}
 
 		case EDerivState::Zero:
 			// A constant UV scaled by anything is still constant.
@@ -489,8 +505,18 @@ namespace Lumina
 	{
 		if (UV.Deriv == EDerivState::Valid)
 		{
-			OutDdx = UV.DDX;
-			OutDdy = UV.DDY;
+			// Shaped exactly like the UV expression TextureSample builds from the same FInputValue, so the
+			// gradient describes the two channels actually sampled.
+			if (UV.ComponentCount >= 2)
+			{
+				OutDdx = UV.DDX + ".xy";
+				OutDdy = UV.DDY + ".xy";
+			}
+			else
+			{
+				OutDdx = "float2(" + UV.DDX + ")";
+				OutDdy = "float2(" + UV.DDY + ")";
+			}
 			return;
 		}
 
@@ -506,17 +532,28 @@ namespace Lumina
 	                                            const FInputValue& B, const FString& BExpr,
 	                                            EMaterialInputType ResultType)
 	{
-		// A derivative is only meaningful on something that can reach a UV pin. Wider values are dropped
-		// rather than approximated: RegisterDeriv declares float2 companions, so a float4 chain would not
-		// even type-check.
-		const bool bShapeOK = GetComponentCount(ResultType) <= 2
-		                   && A.ComponentCount <= 2 && B.ComponentCount <= 2;
+		// Any width up to float4 now, so a world-space UV chain (float3 position, scaled and offset before
+		// the swizzle down to float2) keeps its derivative instead of falling back to UV0's.
+		//
+		// The operand shapes still have to combine the way HLSL broadcasts them -- equal widths, or one
+		// side scalar -- because the companion expressions below mirror the value expression term for term.
+		const int32 ResultComponents = GetComponentCount(ResultType);
+		const bool bShapeOK = ResultComponents >= 1 && ResultComponents <= 4
+		                   && (A.ComponentCount == B.ComponentCount
+		                    || A.ComponentCount == 1 || B.ComponentCount == 1);
 
 		if (!bShapeOK || A.Deriv == EDerivState::Unknown || B.Deriv == EDerivState::Unknown)
 		{
 			RegisterDeriv(ID, EDerivState::Unknown);
 			return;
 		}
+
+		// The companions hold each operand's FULL width; the value expressions handed in are already
+		// masked. Mask the companions identically or the two describe different channels.
+		const FString ADdx = A.DDX + GetSwizzleForMask(A.Mask);
+		const FString ADdy = A.DDY + GetSwizzleForMask(A.Mask);
+		const FString BDdx = B.DDX + GetSwizzleForMask(B.Mask);
+		const FString BDdy = B.DDY + GetSwizzleForMask(B.Mask);
 
 		const bool bAZero = A.Deriv == EDerivState::Zero;
 		const bool bBZero = B.Deriv == EDerivState::Zero;
@@ -532,28 +569,28 @@ namespace Lumina
 		if (Op == "+" || Op == "-")
 		{
 			// d(A +- B) = dA +- dB. A zero side just drops out (negated for the B side of a subtract).
-			if (bAZero)      { Ddx = Op + B.DDX;                       Ddy = Op + B.DDY; }
-			else if (bBZero) { Ddx = A.DDX;                            Ddy = A.DDY; }
-			else             { Ddx = "(" + A.DDX + " " + Op + " " + B.DDX + ")";
-			                   Ddy = "(" + A.DDY + " " + Op + " " + B.DDY + ")"; }
+			if (bAZero)      { Ddx = Op + BDdx;                       Ddy = Op + BDdy; }
+			else if (bBZero) { Ddx = ADdx;                            Ddy = ADdy; }
+			else             { Ddx = "(" + ADdx + " " + Op + " " + BDdx + ")";
+			                   Ddy = "(" + ADdy + " " + Op + " " + BDdy + ")"; }
 		}
 		else if (Op == "*")
 		{
-			// Product rule. Scalar operands broadcast against the float2 companions on their own.
-			if (bBZero)      { Ddx = "(" + A.DDX + " * " + BExpr + ")";
-			                   Ddy = "(" + A.DDY + " * " + BExpr + ")"; }
-			else if (bAZero) { Ddx = "(" + AExpr + " * " + B.DDX + ")";
-			                   Ddy = "(" + AExpr + " * " + B.DDY + ")"; }
-			else             { Ddx = "(" + A.DDX + " * " + BExpr + " + " + AExpr + " * " + B.DDX + ")";
-			                   Ddy = "(" + A.DDY + " * " + BExpr + " + " + AExpr + " * " + B.DDY + ")"; }
+			// Product rule. Scalar operands broadcast against the wider companion on their own.
+			if (bBZero)      { Ddx = "(" + ADdx + " * " + BExpr + ")";
+			                   Ddy = "(" + ADdy + " * " + BExpr + ")"; }
+			else if (bAZero) { Ddx = "(" + AExpr + " * " + BDdx + ")";
+			                   Ddy = "(" + AExpr + " * " + BDdy + ")"; }
+			else             { Ddx = "(" + ADdx + " * " + BExpr + " + " + AExpr + " * " + BDdx + ")";
+			                   Ddy = "(" + ADdy + " * " + BExpr + " + " + AExpr + " * " + BDdy + ")"; }
 		}
 		else if (Op == "/")
 		{
 			// Quotient rule; a constant divisor collapses it to a scale.
-			if (bBZero)      { Ddx = "(" + A.DDX + " / " + BExpr + ")";
-			                   Ddy = "(" + A.DDY + " / " + BExpr + ")"; }
-			else             { Ddx = "((" + A.DDX + " * " + BExpr + " - " + AExpr + " * " + B.DDX + ") / (" + BExpr + " * " + BExpr + "))";
-			                   Ddy = "((" + A.DDY + " * " + BExpr + " - " + AExpr + " * " + B.DDY + ") / (" + BExpr + " * " + BExpr + "))"; }
+			if (bBZero)      { Ddx = "(" + ADdx + " / " + BExpr + ")";
+			                   Ddy = "(" + ADdy + " / " + BExpr + ")"; }
+			else             { Ddx = "((" + ADdx + " * " + BExpr + " - " + AExpr + " * " + BDdx + ") / (" + BExpr + " * " + BExpr + "))";
+			                   Ddy = "((" + ADdy + " * " + BExpr + " - " + AExpr + " * " + BDdy + ") / (" + BExpr + " * " + BExpr + "))"; }
 		}
 		else
 		{
@@ -561,7 +598,7 @@ namespace Lumina
 			return;
 		}
 
-		RegisterDeriv(ID, EDerivState::Valid, Ddx, Ddy);
+		RegisterDeriv(ID, EDerivState::Valid, Ddx, Ddy, ResultComponents);
 	}
 
 	void FMaterialCompiler::SetOwningOutputType(CMaterialInput* AnyInputOnNode, EMaterialInputType Type)
@@ -1061,11 +1098,20 @@ namespace Lumina
 		GetActiveChunk().append(GetVectorType(ComponentCount) + " " + ResultName + " = "
 			+ Value.Value + GetSwizzleForMask(Value.Mask) + "." + Swizzle + ";\n");
 
-		// Selecting components of a derivative-free value keeps it derivative-free -- the Break half of the
-		// Break/Append tiling chain. A varying input would need the derivative swizzled to match, which the
-		// float2 companions cannot express for arbitrary component counts, so it stays Unknown.
-		RegisterDeriv(ResultName, Value.Deriv == EDerivState::Zero
-		                        ? EDerivState::Zero : EDerivState::Unknown);
+		// The derivative takes the identical swizzle the value just took. This is the node that carries a
+		// world-space UV: WorldPosition.xz arrives here as a float3 varying and leaves as a float2 chain
+		// the existing propagation already handles end to end.
+		if (Value.Deriv == EDerivState::Valid)
+		{
+			const FString Selector = GetSwizzleForMask(Value.Mask) + "." + Swizzle;
+			RegisterDeriv(ResultName, EDerivState::Valid,
+			              Value.DDX + Selector, Value.DDY + Selector, ComponentCount);
+		}
+		else
+		{
+			RegisterDeriv(ResultName, Value.Deriv == EDerivState::Zero
+			                        ? EDerivState::Zero : EDerivState::Unknown);
+		}
 
 		SetOwningOutputType(A, GetTypeFromComponentCount(ComponentCount));
 	}
@@ -1149,6 +1195,13 @@ namespace Lumina
 
 		const int32 Index = BindTexture(Texture);
 
+		if (!LaneSamplesWithGradients())
+		{
+			GetActiveChunk().append("float4 " + ID + " = SampleTexture2DLevel(GetMaterialTexture(MaterialIndex, "
+				+ eastl::to_string(Index) + "), SAMPLER_LINEAR_WRAP, " + UVStr + ", 0.0);\n");
+			return;
+		}
+
 		// SampleTexture2DAuto carries the analytic gradients: the deferred template samples with them,
 		// the forward templates ignore them (their implicit derivatives are correct there), so the
 		// gradient chunks dead-strip outside the deferred pass.
@@ -1183,6 +1236,13 @@ namespace Lumina
 		}
 
 		const int32 Index = BindTextureParameter(ParamID, Texture);
+
+		if (!LaneSamplesWithGradients())
+		{
+			GetActiveChunk().append("float4 " + ID + " = SampleTexture2DLevel(GetMaterialTexture(MaterialIndex, "
+				+ eastl::to_string(Index) + "), SAMPLER_LINEAR_WRAP, " + UVStr + ", 0.0);\n");
+			return;
+		}
 
 		// SampleTexture2DAuto carries the analytic gradients: the deferred template samples with them,
 		// the forward templates ignore them (their implicit derivatives are correct there), so the
@@ -1240,8 +1300,26 @@ namespace Lumina
 			+ MaxLayer + ".0);\n");
 
 		const FString TexStr = "GetMaterialTexture(MaterialIndex, " + eastl::to_string(TextureIndex) + ")";
-		AddRaw(OwningNode + " = SampleTexture2DArray(" + TexStr + ", SAMPLER_LINEAR_WRAP, " + UVStr + ", "
-			+ OwningNode + "_Slice);\n");
+
+		if (!LaneSamplesWithGradients())
+		{
+			AddRaw(OwningNode + " = SampleTexture2DArrayLevel(" + TexStr + ", SAMPLER_LINEAR_WRAP, "
+				+ UVStr + ", " + OwningNode + "_Slice, 0.0);\n");
+			return;
+		}
+
+		FString Ddx, Ddy;
+		GetUVGradients(UVValue, Ddx, Ddy);
+
+		if (UVValue.Deriv != EDerivState::Valid)
+		{
+			AddRaw("// UV-GRADIENT FALLBACK: '" + UVValue.Value
+				+ "' has no analytic derivative, sampling with UV0's gradient (mip may be too fine).\n");
+		}
+		WarnUVGradientFallback(UVValue, Node);
+
+		AddRaw(OwningNode + " = SampleTexture2DArrayAuto(" + TexStr + ", SAMPLER_LINEAR_WRAP, " + UVStr + ", "
+			+ OwningNode + "_Slice, " + Ddx + ", " + Ddy + ");\n");
 	}
 
 	namespace
@@ -1627,9 +1705,11 @@ namespace Lumina
 		if (RejectInUI(Node, "Vertex Color"))
 		{
 			GetActiveChunk().append("float4 " + ID + " = float4(1.0, 1.0, 1.0, 1.0);\n");
+			RegisterDeriv(ID, EDerivState::Zero);
 			return;
 		}
 		GetActiveChunk().append("float4 " + ID + " = VertexColor;\n");
+		RegisterDeriv(ID, EDerivState::Valid, "VertexColor_DDX", "VertexColor_DDY", 4);
 	}
 
 	void FMaterialCompiler::TexCoords(const FString& ID, uint32 Index, CMaterialInput* Tiling, float UTiling, float VTiling)
@@ -2200,9 +2280,14 @@ namespace Lumina
 		if (RejectInUI(Node, "World Position"))
 		{
 			GetActiveChunk().append("float3 " + ID + " = float3(0.0, 0.0, 0.0);\n");
+			RegisterDeriv(ID, EDerivState::Zero);
 			return;
 		}
 		GetActiveChunk().append("float3 " + ID + " = WorldPosition;\n");
+
+		// The seed for world-space and triplanar UVs. Every pixel template declares this pair -- exact
+		// barycentric derivatives in the deferred lane, ddx/ddy in the forward ones.
+		RegisterDeriv(ID, EDerivState::Valid, "WorldPosition_DDX", "WorldPosition_DDY", 3);
 	}
 
 	void FMaterialCompiler::CameraPos(const FString& ID, CMaterialGraphNode* Node)

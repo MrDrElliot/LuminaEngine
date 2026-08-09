@@ -116,14 +116,16 @@ struct FringeScaleScope
 {
 
     FringeScaleScope(float scale)
-        : m_LastFringeScale(ImFringeScaleRef(ImGui::GetWindowDrawList()))
+        : m_LastFringeScale(ax::NodeEditor::Detail::ImFringeScaleRef(ImGui::GetWindowDrawList()))
     {
-        ImFringeScaleRef(ImGui::GetWindowDrawList()) = scale;
+        // Qualified: imgui_canvas.cpp declares a global ImFringeScaleRef(ImDrawList*), and ADL makes the
+        // unqualified call ambiguous whenever both land in one unity translation unit.
+        ax::NodeEditor::Detail::ImFringeScaleRef(ImGui::GetWindowDrawList()) = scale;
     }
 
     ~FringeScaleScope()
     {
-        ImFringeScaleRef(ImGui::GetWindowDrawList()) = m_LastFringeScale;
+        ax::NodeEditor::Detail::ImFringeScaleRef(ImGui::GetWindowDrawList()) = m_LastFringeScale;
     }
 
 private:

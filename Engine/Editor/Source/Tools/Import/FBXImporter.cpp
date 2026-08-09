@@ -1,7 +1,8 @@
 ﻿#include "EditorPCH.h"
 #include <chrono>
 #include "Core/Math/Math.h"
-#include "MeshFormatImport.h"
+#include "FBXImporter.h"
+#include "Paths/Paths.h"
 #include "Assets/AssetTypes/Mesh/Animation/Animation.h"
 #include "Core/Progress/SlowTask.h"
 #include "Core/Threading/Atomic.h"
@@ -25,8 +26,10 @@ namespace
     void  LibdeflateTrackedFree(void* Ptr)     { LmThirdPartyFree(Ptr); }
 }
 
-namespace Lumina::Import::Mesh::FBX
+namespace Lumina
 {
+    using namespace Import::Mesh;
+
     static FMatrix4 ConvertMatrix(const ofbx::DMatrix& m)
     {
         return FMatrix4(
@@ -49,8 +52,15 @@ namespace Lumina::Import::Mesh::FBX
     }
     
     
-    TExpected<FMeshImportData, FString> ImportFBX(const FMeshImportOptions& ImportOptions, FStringView FilePath, FScopedSlowTask* Progress)
+    bool CFBXImporter::ParseMeshSource(const FImportRequest& Request,
+                                       const FMeshImportOptions& ImportOptions,
+                                       FMeshImportData& OutData,
+                                       FString& OutError,
+                                       FScopedSlowTask* Progress)
     {
+        const FStringView FilePath(Request.SourcePath.c_str(), Request.SourcePath.size());
+        FMeshImportData& ImportData = OutData;
+
         // Install our tracked allocator for libdeflate once, before the first ofbx::load.
         static const bool bLibdeflateAllocInstalled = []
         {
@@ -69,7 +79,8 @@ namespace Lumina::Import::Mesh::FBX
         TVector<uint8> FileBlob;
         if (!FileHelper::LoadFileToArray(FileBlob, FilePath))
         {
-            return TUnexpected("Failed to load file path");
+            OutError = "Failed to load file path";
+            return false;
         }
 
         const auto TParseStart = std::chrono::steady_clock::now();
@@ -95,7 +106,8 @@ namespace Lumina::Import::Mesh::FBX
         ofbx::IScene* FBXScene = ofbx::load(FileBlob.data(), FileBlob.size(), (uint16)LoadFlags);
         if (!FBXScene)
         {
-            return TUnexpected("Failed to load FBX Scene");
+            OutError = "Failed to load FBX Scene";
+            return false;
         }
 
         const auto TSceneStart = std::chrono::steady_clock::now();
@@ -119,7 +131,6 @@ namespace Lumina::Import::Mesh::FBX
             FBXScene->destroy();
         };
         
-        FMeshImportData ImportData;
         FStringView FileName = VFS::FileName(FilePath, true);
         
         
@@ -425,21 +436,24 @@ namespace Lumina::Import::Mesh::FBX
                 return S;
             };
 
-            // Resolves an ofbx texture into an FMeshImportImage (embedded bytes or relative path), emits it into
-            // the texture set (when textures are imported), and returns the RelativePath key the slot links to.
+            const FStringView SourceDir = VFS::Parent(FilePath);
+            THashMap<FFixedString, int32> ImageKeyToIndex;
+
+            // Resolves an ofbx texture into a deduplicated FSourceImage (embedded bytes or an on-disk path)
+            // and returns its index into ImportData.Images.
             auto ExtractTexture = [&](const ofbx::Material* Material, ofbx::Texture::TextureType Type,
-                                      ETextureColorSpace Role, int16 GlobalIdx, const char* Suffix) -> FFixedString
+                                      ETextureColorSpace Role, int16 GlobalIdx, const char* Suffix) -> int32
             {
                 const ofbx::Texture* Tex = Material->getTexture(Type);
                 if (Tex == nullptr)
                 {
-                    return {};
+                    return INDEX_NONE;
                 }
 
                 const FString Rel = ViewToString(Tex->getRelativeFileName());
                 const ofbx::DataView Embedded = Tex->getEmbeddedData();
 
-                FMeshImportImage Image;
+                FSourceImage Image;
                 Image.IntendedColorSpace = Role;
 
                 // Filename leaf, computed once: the embedded key and the Video-table lookup both use it.
@@ -453,8 +467,8 @@ namespace Lumina::Import::Mesh::FBX
                 if (Embedded.begin != nullptr && Embedded.end > Embedded.begin)
                 {
                     const uint8* Start = reinterpret_cast<const uint8*>(Embedded.begin);
-                    Image.Bytes.assign(Start, reinterpret_cast<const uint8*>(Embedded.end));
-                    Image.RelativePath = !Leaf.empty()
+                    Image.OwnedBytes.assign(Start, reinterpret_cast<const uint8*>(Embedded.end));
+                    Image.Key = !Leaf.empty()
                         ? Leaf
                         : FFixedString(FFixedString::CtorSprintf(), "FBXMat%d_%s", (int)GlobalIdx, Suffix);
                 }
@@ -468,33 +482,50 @@ namespace Lumina::Import::Mesh::FBX
                     auto It = EmbeddedByName.find(LeafLower);
                     if (It != EmbeddedByName.end() && !It->second.empty())
                     {
-                        Image.Bytes.assign(It->second.begin(), It->second.end());
-                        Image.RelativePath = Leaf;
+                        Image.OwnedBytes.assign(It->second.begin(), It->second.end());
+                        Image.Key = Leaf;
                     }
                     else
                     {
-                        Image.RelativePath = Rel.c_str();   // external file (Rel is non-empty here)
+                        Image.Key          = Rel.c_str();   // external file (Rel is non-empty here)
+                        Image.ResolvedPath = Paths::Combine(SourceDir, Image.Key);
                     }
                 }
                 else
                 {
                     // No embedded bytes and no path at all.
-                    return {};
+                    return INDEX_NONE;
                 }
 
-                FFixedString Key = Image.RelativePath;
-                if (ImportOptions.bImportTextures)
+                if (!ImportOptions.bImportTextures)
                 {
-                    ImportData.Textures.emplace(Move(Image));
+                    return INDEX_NONE;
                 }
-                return Key;
+
+                auto Existing = ImageKeyToIndex.find(Image.Key);
+                if (Existing != ImageKeyToIndex.end())
+                {
+                    return Existing->second;
+                }
+
+                // ofbx owns its scene only until the DEFER below destroys it, so embedded payloads are the
+                // one case that has to be copied rather than viewed.
+                Image.AdoptOwnedBytes();
+
+                const int32 Index = (int32)ImportData.Images.size();
+                ImageKeyToIndex.emplace(Image.Key, Index);
+                ImportData.Images.push_back(Move(Image));
+                return Index;
             };
 
             // FBX has no masked/alpha-test flag and OpenFBX exposes no opacity texture, so alpha-tested foliage
             // would import Opaque (the cutout lives in the base-color alpha). Heuristically flag foliage-like
             // materials as Masked by name; the user can override the blend mode per-material in the editor.
-            auto IsFoliageName = [](const FString& Name, const FFixedString& TexKey) -> bool
+            auto IsFoliageName = [&](const FString& Name, int32 BaseColorImage) -> bool
             {
+                const FFixedString TexKey = (BaseColorImage >= 0 && (size_t)BaseColorImage < ImportData.Images.size())
+                    ? ImportData.Images[BaseColorImage].Key : FFixedString();
+
                 static const char* const kKeywords[] = {
                     "leaf", "leaves", "foliage", "tree", "plant", "ivy", "bush",
                     "grass", "branch", "fern", "hedge", "vine", "shrub", "flower" };
@@ -553,23 +584,23 @@ namespace Lumina::Import::Mesh::FBX
                         Out.RoughnessFactor = Math::Sqrt(2.0f / (Math::Max((float)Material->getShininessExponent(), 0.0f) + 2.0f));
                         Out.AlphaMode       = (Opacity < 0.999f) ? EImportAlphaMode::Blend : EImportAlphaMode::Opaque;
 
-                        Out.BaseColorTexture = ExtractTexture(Material, ofbx::Texture::DIFFUSE,  ETextureColorSpace::SRGB,      GlobalIdx, "D");
+                        Out.BaseColorImage = ExtractTexture(Material, ofbx::Texture::DIFFUSE,  ETextureColorSpace::SRGB,   GlobalIdx, "D");
                         // Linear (BC7 RGB), not NormalMap: the BC5-packed normal path is currently broken.
-                        Out.NormalTexture    = ExtractTexture(Material, ofbx::Texture::NORMAL,   ETextureColorSpace::Linear, GlobalIdx, "N");
-                        Out.EmissiveTexture  = ExtractTexture(Material, ofbx::Texture::EMISSIVE, ETextureColorSpace::SRGB,      GlobalIdx, "E");
+                        Out.NormalImage    = ExtractTexture(Material, ofbx::Texture::NORMAL,   ETextureColorSpace::Linear, GlobalIdx, "N");
+                        Out.EmissiveImage  = ExtractTexture(Material, ofbx::Texture::EMISSIVE, ETextureColorSpace::SRGB,   GlobalIdx, "E");
 
                         // OpenFBX returns emissive_color=(1,1,1), factor=1 for materials that DON'T author emissive
                         // (those are its struct defaults). Combined with the white default emissive texture, that makes
                         // every non-emissive material glow full white (emissive is additive + unlit). Treat the exact
                         // unauthored default (with no emissive map) as "not emissive"; any authored value/map is kept.
                         const bool bDefaultEmissive = (Emissive.r == 1.0f && Emissive.g == 1.0f && Emissive.b == 1.0f && EmissiveF == 1.0f);
-                        Out.EmissiveColor = (Out.EmissiveTexture.empty() && bDefaultEmissive)
+                        Out.EmissiveColor = (Out.EmissiveImage == INDEX_NONE && bDefaultEmissive)
                             ? FVector3(0.0f)
                             : FVector3(Emissive.r * EmissiveF, Emissive.g * EmissiveF, Emissive.b * EmissiveF);
 
                         // Foliage heuristic: promote opaque materials with a foliage-like name to alpha-test
                         // (base-color alpha drives the clip). Already-translucent materials keep their blend.
-                        if (Out.AlphaMode == EImportAlphaMode::Opaque && IsFoliageName(Out.Name, Out.BaseColorTexture))
+                        if (Out.AlphaMode == EImportAlphaMode::Opaque && IsFoliageName(Out.Name, Out.BaseColorImage))
                         {
                             Out.AlphaMode   = EImportAlphaMode::Mask;
                             Out.AlphaCutoff = 0.5f;
@@ -1109,11 +1140,6 @@ namespace Lumina::Import::Mesh::FBX
             });
         }
 
-        for (FMeshResource* Res : ToFinalize)
-        {
-            AnalyzeMeshStatistics(*Res, ImportData.MeshStatistics);
-        }
-
         if (StaticMesh->GetNumVertices() > 0)
         {
             ImportData.Resources.push_back(std::move(StaticMesh));
@@ -1123,6 +1149,7 @@ namespace Lumina::Import::Mesh::FBX
             ImportData.Resources.push_back(std::move(SkinnedMesh));
         }
 
-        return Move(ImportData);
+        ImportData.SourceNodeCount = (uint32)MeshCount;
+        return true;
     }
 }

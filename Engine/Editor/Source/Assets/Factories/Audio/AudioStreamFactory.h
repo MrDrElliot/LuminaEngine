@@ -15,10 +15,7 @@ namespace Lumina
 
 		CObject* CreateNew(const FName& Name, CPackage* Package) override;
 
-		bool IsExtensionSupported(FStringView Ext) override { return Ext == ".wav"; }
-		bool CanImport() override { return true; }
 
-		void TryImport(const FFixedString& ImportFilePath, const FFixedString& DestinationPath, const Import::FImportSettings* Settings) override;
 
 		FString GetAssetName() const override { return "Audio Stream"; }
 		FString GetCategory() const override { return "Audio"; }

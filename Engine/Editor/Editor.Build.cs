@@ -32,7 +32,7 @@ public class Editor : LuminaModuleRules
             // texture cooker.
             "TinyOBJLoader",
             "OpenFBX",
-            "FastGLTF",
+            "CGLTF",
             "MeshOptimizer",
             "BasicUniversal",
         });

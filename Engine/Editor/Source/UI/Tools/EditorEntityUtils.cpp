@@ -127,6 +127,12 @@ namespace Lumina::EditorEntityUtils
             return false;
         }
 
+        // Drained ONCE for the whole walk. GetWorldMatrix resolves lazily, and a lazy resolve propagates
+        // to the entity's entire subtree -- so calling it per descendant makes framing a hierarchy
+        // quadratic in its size. A 187k-entity prefab hung the main thread past the watchdog on this.
+        // Afterwards nothing is dirty, so every GetWorldMatrix below is a plain cached read.
+        ECS::Utils::ResolveAllDirtyTransforms(Registry);
+
         FVector3 Min(FLT_MAX);
         FVector3 Max(-FLT_MAX);
         bool bAny = false;

@@ -435,19 +435,78 @@ namespace Lumina
             return false;
         }
 
-        // Build a fresh preview world per capture and tear it down immediately, so no thumbnail world
-        // lingers in the render-scene registry.
-        FThumbnailScene Scene(512);
-        Scene.Begin();
-        if (Scene.GetWorld() == nullptr)
+        // Reuse ONE preview world across captures. This used to construct and tear down a whole
+        // FThumbnailScene per thumbnail, which meant every single capture paid a CWorld construction, an
+        // FForwardRenderScene::Init (a full RHI::WaitDeviceIdle, a sky/IBL bake, a shadow-atlas allocation
+        // and ~40 render targets) and the matching teardown -- on the game thread, once per frame for as
+        // long as the queue was non-empty. That is what made browsing a folder feel like the editor had
+        // locked up.
+        //
+        // ResetContents() destroys the previous asset's entities and keeps the camera, so each capture
+        // still starts from a clean scene. Begin() is idempotent.
+        if (!AcquireScene())
         {
             return false;
         }
 
-        (*Renderer)(Scene, Asset);
-        const bool bCaptured = Scene.Capture(Out);
-        Scene.End();
-        return bCaptured;
+        // This path BLOCKS, so an in-flight browser capture has to be collected first -- one scene means
+        // one render target, and repurposing it would corrupt that pending copy.
+        FlushPendingCapture();
+
+        PersistentScene->ResetContents();
+        (*Renderer)(*PersistentScene, Asset);
+        return PersistentScene->Capture(Out);
+    }
+
+    bool CThumbnailManager::AcquireScene()
+    {
+        if (PersistentScene == nullptr)
+        {
+            PersistentScene = MakeUnique<FThumbnailScene>(512);
+        }
+
+        PersistentScene->Begin();
+        if (PersistentScene->GetWorld() == nullptr)
+        {
+            PersistentScene    = nullptr;   // failed init: don't cache a dead scene for every later capture
+            bHasPendingRequest = false;
+            return false;
+        }
+        return true;
+    }
+
+    bool CThumbnailManager::BeginThumbnailRender(CObject* Asset)
+    {
+        FThumbnailRendererFn* Renderer = FindRenderer(Asset->GetClass());
+        if (Renderer == nullptr || !AcquireScene())
+        {
+            return false;
+        }
+
+        PersistentScene->ResetContents();
+        (*Renderer)(*PersistentScene, Asset);
+        return PersistentScene->BeginCapture();
+    }
+
+    void CThumbnailManager::FlushPendingCapture()
+    {
+        if (!bHasPendingRequest)
+        {
+            return;
+        }
+
+        FPackageThumbnail Captured;
+        if (PersistentScene != nullptr && PersistentScene->WaitAndFinishCapture(Captured))
+        {
+            ThumbnailCache::Save(PendingRequest.GUID, PendingRequest.ContentHash, Captured);
+            UploadAndStore(PendingRequest.Package, Captured);
+        }
+        else
+        {
+            SetRecordState(PendingRequest.Package, FPackageThumbnail::EState::Failed);
+        }
+
+        bHasPendingRequest = false;
     }
 
     void CThumbnailManager::ProcessRenderQueue(uint32 Budget)
@@ -455,6 +514,36 @@ namespace Lumina
         if (bRegistryDirty.exchange(false, std::memory_order_acquire))
         {
             SweepInvalidatedRecords();
+        }
+
+        // Collect the capture submitted on an earlier frame. This is the whole point of the async path: the
+        // game thread submits, returns, and picks the bytes up once the GPU has signalled -- instead of
+        // blocking on a readback per thumbnail. Nothing else may start while one is in flight, because the
+        // scene (and therefore the render target the pending copy reads) is shared.
+        if (bHasPendingRequest)
+        {
+            if (PersistentScene == nullptr || !PersistentScene->HasPendingCapture())
+            {
+                bHasPendingRequest = false;   // scene went away underneath it
+            }
+            else if (!PersistentScene->IsCaptureReady())
+            {
+                return;                       // still on the GPU -- do NOT wait for it
+            }
+            else
+            {
+                FPackageThumbnail Captured;
+                if (PersistentScene->FinishCapture(Captured))
+                {
+                    ThumbnailCache::Save(PendingRequest.GUID, PendingRequest.ContentHash, Captured);
+                    UploadAndStore(PendingRequest.Package, Captured);
+                }
+                else
+                {
+                    SetRecordState(PendingRequest.Package, FPackageThumbnail::EState::Failed);
+                }
+                bHasPendingRequest = false;
+            }
         }
 
         // Take the whole queue and render up to Budget assets that are ALREADY resident + fully loaded, keeping
@@ -470,8 +559,22 @@ namespace Lumina
         }
         if (Work.empty())
         {
+            // Nothing queued: hold the scene briefly in case more tiles scroll into view, then let it go.
+            // Keeping a 512^2 render scene (plus shadow atlas, sky cube and IBL targets) resident for the
+            // whole session to serve an empty queue is the wrong trade -- and releasing it while idle also
+            // keeps it from outliving the RHI at shutdown, which is the one ordering this class has no
+            // explicit hook for.
+            constexpr uint32 kSceneIdleFramesBeforeRelease = 240;   // ~4s at 60fps
+            if (PersistentScene != nullptr && !PersistentScene->HasPendingCapture()
+                && ++SceneIdleFrames >= kSceneIdleFramesBeforeRelease)
+            {
+                PersistentScene = nullptr;
+                SceneIdleFrames = 0;
+            }
             return;
         }
+
+        SceneIdleFrames = 0;
 
         constexpr uint32 kMaxDeferChecks = 900;   // ~15s at 60fps
         uint32 Rendered = 0;
@@ -495,7 +598,8 @@ namespace Lumina
         {
             FRenderRequest& Request = Work[Index];
 
-            if (Rendered >= Budget)
+            // bHasPendingRequest gates as hard as the budget does: only one capture can be in flight.
+            if (Rendered >= Budget || bHasPendingRequest)
             {
                 Keep.push_back(Move(Request));   // budget spent this frame; re-check next frame
                 continue;
@@ -520,11 +624,28 @@ namespace Lumina
                 }
             }
 
-            FPackageThumbnail Captured;
-            if (RenderThumbnail(Asset, Captured))
+            // Painted classes need no world, no GPU and no readback, so they still complete inline.
+            if (FThumbnailPainterFn* Painter = FindPainter(Asset->GetClass()))
             {
-                ThumbnailCache::Save(Request.GUID, Request.ContentHash, Captured);
-                UploadAndStore(Request.Package, Captured);
+                FPackageThumbnail Captured;
+                if ((*Painter)(Asset, ThumbnailUtils::kThumbnailResolution, Captured))
+                {
+                    ThumbnailCache::Save(Request.GUID, Request.ContentHash, Captured);
+                    UploadAndStore(Request.Package, Captured);
+                }
+                else
+                {
+                    SetRecordState(Request.Package, FPackageThumbnail::EState::Failed);
+                }
+                ++Rendered;
+                continue;
+            }
+
+            // Rendered classes submit here and complete on a LATER frame.
+            if (BeginThumbnailRender(Asset))
+            {
+                PendingRequest     = Request;
+                bHasPendingRequest = true;
                 ++Rendered;
             }
             else

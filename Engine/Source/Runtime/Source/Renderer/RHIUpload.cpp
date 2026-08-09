@@ -34,6 +34,8 @@ namespace Lumina::RHI
             uint32      RowPitchTexels = 0;         // Texture
             uint32      Mip            = 0;         // Texture
             uint32      Layer          = 0;         // Texture (array slice; 0 for non-array)
+            uint32      Width          = 0;         // Texture: mip extent, 0 = derive from the description
+            uint32      Height         = 0;
             float       ClearValue[4]  = {};        // Clear
         };
 
@@ -150,7 +152,7 @@ namespace Lumina::RHI
         EndWrite(S);
     }
 
-    void UploadTexture(FTextureH Dest, uint32 Layer, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels)
+    void UploadTexture(FTextureH Dest, uint32 Layer, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels, uint32 Width, uint32 Height)
     {
         if (!IsValid(Dest) || Data == nullptr || Size == 0)
         {
@@ -181,6 +183,8 @@ namespace Lumina::RHI
         Op.RowPitchTexels = RowPitchTexels;
         Op.Mip            = Mip;
         Op.Layer          = Layer;
+        Op.Width          = Width;
+        Op.Height         = Height;
 
         {
             FScopeLock Lock(GUpload.Mutex);
@@ -216,8 +220,10 @@ namespace Lumina::RHI
             return;
         }
 
+        TVector<GPUPtr> OwnedStaging;
+
         const FCmdListH CL = OpenCommandList(EQueueType::Graphics);
-        if (!Upload::Flush(CL))
+        if (!Upload::Flush(CL, OwnedStaging))
         {
             ResetCommandList(CL);
             return;
@@ -234,6 +240,13 @@ namespace Lumina::RHI
 
         WaitSemaphore(GUpload.FlushSemaphore, Value);
         ResetCommandList(CL);
+
+        // The wait above IS the fence for these copies, so the staging can go back immediately -- no retire
+        // queue, and no dependence on which frame slot happens to be current on this thread.
+        for (GPUPtr Staging : OwnedStaging)
+        {
+            Free(Staging);
+        }
     }
 
     namespace Upload
@@ -339,7 +352,8 @@ namespace Lumina::RHI
         };
 
         uint32 FlushSplit(FCmdListH BufferCL, FCmdListH ImageCL,
-                          uint32* OutBufferSliceMask, uint32* OutImageSliceMask)
+                          uint32* OutBufferSliceMask, uint32* OutImageSliceMask,
+                          TVector<GPUPtr>& OutOwnedStaging)
         {
             TVector<FUploadOp> Ops;
             {
@@ -389,6 +403,10 @@ namespace Lumina::RHI
                         Slice.Mip        = Op.Mip;
                         Slice.Layer      = Op.Layer;
                         Slice.LayerCount = 1;
+                        if (Op.Width != 0)
+                        {
+                            Slice.Extent = FUIntVector3(Op.Width, Math::Max(Op.Height, 1u), 1u);
+                        }
                         CmdCopyMemoryToTexture(T.CL, Op.Staging, Op.RowPitchTexels, Op.TextureDest, Slice);
                     }
                     break;
@@ -418,11 +436,13 @@ namespace Lumina::RHI
                 Result |= (1u << i);
             }
 
+            // Handed back, NOT retired here. See the declaration: the copies recorded above have not been
+            // submitted yet, so nothing at this point knows which fence covers them.
             for (const FUploadOp& Op : Ops)
             {
                 if (Op.bOwnedStaging)
                 {
-                    Core::DeferredFree(Op.Staging);
+                    OutOwnedStaging.push_back(Op.Staging);
                 }
             }
 
@@ -437,11 +457,11 @@ namespace Lumina::RHI
             return Result;
         }
 
-        bool Flush(FCmdListH CL, uint32* OutSliceMask)
+        bool Flush(FCmdListH CL, TVector<GPUPtr>& OutOwnedStaging, uint32* OutSliceMask)
         {
             uint32 BufferSlices = 0;
             uint32 ImageSlices  = 0;
-            const uint32 Used = FlushSplit(CL, CL, &BufferSlices, &ImageSlices);
+            const uint32 Used = FlushSplit(CL, CL, &BufferSlices, &ImageSlices, OutOwnedStaging);
 
             if (OutSliceMask != nullptr)
             {
@@ -528,7 +548,7 @@ namespace Lumina::RHI
                 const GPUPtr NewGpu = Malloc(NewCapacity, kDefaultAlign, EMemoryType::CPUWrite);
                 if (NewGpu != 0)
                 {
-                    Core::DeferredFree(Slice.Gpu);
+                    Core::Retire(Slice.Gpu);
                     Slice.Gpu      = NewGpu;
                     Slice.Cpu      = static_cast<std::byte*>(ToHost(NewGpu));
                     Slice.Capacity = NewCapacity;

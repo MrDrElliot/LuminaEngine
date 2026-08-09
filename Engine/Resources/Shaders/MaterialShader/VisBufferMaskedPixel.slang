@@ -24,6 +24,10 @@ bool MaskedVisKeep(FBaseVertexOutput Input)
     float4 WorldTangent     = Input.TangentWS;
     float2 UV0_DDX          = ddx(UV0);
     float2 UV0_DDY          = ddy(UV0);
+    float3 WorldPosition_DDX = ddx(WorldPosition);
+    float3 WorldPosition_DDY = ddy(WorldPosition);
+    float4 VertexColor_DDX   = ddx(VertexColor);
+    float4 VertexColor_DDY   = ddy(VertexColor);
 
     $MATERIAL_INPUTS
 

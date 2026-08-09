@@ -296,6 +296,13 @@ namespace Lumina
         const bool       bTranslucent = BlendMode == EBlendMode::Translucent || BlendMode == EBlendMode::Additive;
         const bool       bMasked      = BlendMode == EBlendMode::Masked;
         const bool       bAdditive    = BlendMode == EBlendMode::Additive;
+        // Translucency forces two-sided: a translucent surface with no back faces reads as a hole from
+        // behind, and MBOIT is order-independent precisely so both faces can be accumulated. Dropping the
+        // force was tried as a perf fix (halve the fragments in the two MBOIT geometry passes) and
+        // REVERTED -- an Nsight capture showed those passes are geometry-front-end bound, not fragment
+        // bound, so it cost every existing translucent material a re-author for no measurable gain. The
+        // per-batch cull-mode plumbing in MomentGenerationPass/TransparentPass is kept: it honours this
+        // flag correctly, it just resolves to two-sided for everything translucent.
         const bool       bTwoSided    = bTranslucent || Material->IsTwoSided();
 
         R.PixelShader                = Material->GetPixelShader();
@@ -306,6 +313,7 @@ namespace Lumina
         R.VisBufferMeshShaderMasked  = ConcreteMaterial ? ConcreteMaterial->GetVisBufferMeshShaderMasked() : nullptr;
         R.MaskedVisBufferPixelShader = ConcreteMaterial ? ConcreteMaterial->GetMaskedVisBufferPixelShader() : nullptr;
         R.DeferredShader             = ConcreteMaterial ? ConcreteMaterial->GetDeferredShader() : nullptr;
+        R.MomentPixelShader          = ConcreteMaterial ? ConcreteMaterial->GetMomentPixelShader() : nullptr;
 
         R.MaterialID            = (uint64)ConcreteMaterial;
         R.MaterialIdx           = (uint16)Material->GetMaterialIndex();
@@ -317,8 +325,12 @@ namespace Lumina
         if (bTwoSided)    { MaterialFlags |= EInstanceFlags::TwoSided; }
         R.MaterialFlags = MaterialFlags;
 
-        // WBOIT and the additive pass are the only ones that bind MeshShaderBase / PixelShader.
+        // The MBOIT passes and the additive pass are the only ones that bind MeshShaderBase / PixelShader.
         const bool bForwardShaded = bTranslucent || bAdditive;
+
+        // MBOIT pass 1 draws non-additive translucency only: additive blending is already
+        // order-independent, so those batches skip the moments and composite after the resolve.
+        const bool bMomentGenerated = bTranslucent && !bAdditive;
 
         R.BatchKey = FDrawBatchKey
         {
@@ -330,7 +342,8 @@ namespace Lumina
             .MaskedVisBufferPixelShader = bMasked        ? R.MaskedVisBufferPixelShader : nullptr,
             .MeshShaderBase             = bForwardShaded ? R.MeshShaderBase             : nullptr,
             .MeshShaderShadow           = R.MeshShaderShadow,
-            .PixelShader                = bForwardShaded ? R.PixelShader                : nullptr,
+            .PixelShader                = bForwardShaded  ? R.PixelShader                : nullptr,
+            .MomentPixelShader          = bMomentGenerated ? R.MomentPixelShader         : nullptr,
             .bTranslucent = (bTranslucent ? 1u : 0u),
             .bMasked      = (bMasked      ? 1u : 0u),
             .bAdditive    = (bAdditive    ? 1u : 0u),

@@ -456,8 +456,13 @@ namespace Lumina
         // Publish ID's screen-space derivative. Valid emits the two companion chunks (<ID>_DDX/_DDY) from
         // the supplied expressions; Zero and Unknown emit nothing and only record the state.
         // Call AFTER the value chunk, so the expressions can reference it.
+        //
+        // ComponentCount types the companions and must match the value's width, or the emitted chunk does
+        // not type-check. A Valid registration in the VERTEX stage is downgraded to Unknown: screen-space
+        // derivatives do not exist there and the vertex templates declare no companions.
         void RegisterDeriv(const FString& ID, EDerivState State,
-                           const FString& DdxExpr = FString(), const FString& DdyExpr = FString());
+                           const FString& DdxExpr = FString(), const FString& DdyExpr = FString(),
+                           int32 ComponentCount = 2);
 
         // The derivative of a value the caller is about to multiply by a derivative-free scale, i.e. the
         // affine UV case (TexCoords, Panner). Returns Unknown unchanged so it keeps propagating.
@@ -465,7 +470,15 @@ namespace Lumina
 
         // What a texture sample should pass for explicit gradients. Valid -> the value's own pair;
         // anything else -> UV0's, which is what every sample used before this existed.
+        // Only legal in a lane that HAS gradients -- see LaneSamplesWithGradients.
         void GetUVGradients(const FInputValue& UV, FString& OutDdx, FString& OutDdy) const;
+
+        // Pixel and the deferred compute lane both sample with gradients (the *Auto call shape, which the
+        // deferred template redirects to SampleGrad). The VERTEX lane has neither: no screen-space
+        // footprint to differentiate, no *_DDX companions declared in any vertex template, and an
+        // implicit-LOD Sample() is not even legal outside a fragment shader. It takes an explicit LOD 0,
+        // which is what a vertex texture fetch means anyway.
+        bool LaneSamplesWithGradients() const { return CurrentStage != EMaterialCompileStage::Vertex; }
 
         // Chain rule for + - * / at the EmitBinaryOp choke point. AExpr/BExpr are the already-swizzled
         // operand expressions. Only carries a derivative for UV-shaped values (<= 2 components); anything

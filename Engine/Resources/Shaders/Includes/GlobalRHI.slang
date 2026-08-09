@@ -127,6 +127,15 @@ float4 SampleTexture2DArrayGrad(uint TextureIndex, uint SamplerIndex, float2 UV,
     return gTextures2DArray[TextureIndex].SampleGrad(gSamplers[SamplerIndex], float3(UV, (float)Slice), Ddx, Ddy);
 }
 
+// Array counterpart of SampleTexture2DAuto, and it exists for the same reason: the material codegen emits
+// one call shape and the DEFERRED template redirects it to the gradient form. Without it an array sample
+// reached the deferred lane as an implicit-derivative Sample(), which is not merely wrong there -- it does
+// not compile, because a compute entry point has no derivative quad.
+float4 SampleTexture2DArrayAuto(uint TextureIndex, uint SamplerIndex, float2 UV, uint Slice, float2 Ddx, float2 Ddy)
+{
+    return SampleTexture2DArray(TextureIndex, SamplerIndex, UV, Slice);
+}
+
 float4 LoadTexture2DArray(uint TextureIndex, int2 Texel, uint Slice, int Mip = 0)
 {
     return gTextures2DArray[TextureIndex].Load(int4(Texel, (int)Slice, Mip));

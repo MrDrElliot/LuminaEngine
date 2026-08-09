@@ -22,12 +22,11 @@ namespace Lumina::Import::Mesh
     FMeshImportData::~FMeshImportData()
     {
         // Preview thumbnails are heap textures; release them with the import session.
-        for (const FMeshImportImage& Img : Textures)
+        for (FSourceImage& Image : Images)
         {
-            RHI::FManagedTexture Tmp = Img.DisplayImage;
-            if (Tmp.IsValid())
+            if (Image.Thumbnail.IsValid())
             {
-                RHI::Textures::Release(Tmp);
+                RHI::Textures::Release(Image.Thumbnail);
             }
         }
     }

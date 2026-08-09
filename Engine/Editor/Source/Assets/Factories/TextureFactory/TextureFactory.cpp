@@ -81,7 +81,8 @@ namespace Lumina
     // HDR/Environment cook: bypasses Basis (LDR-only) and stores RGBA16F with a full box-filtered mip
     // chain. The mips let the visible-sky pass sample a screen-derivative LOD so the equirect stops
     // shimmering; the IBL cube prefilter still owns its own roughness chain.
-    static bool CookEnvironmentTexture(CTexture* Texture, const Import::Textures::FTextureImportResult& Source)
+    static bool CookEnvironmentTexture(CTexture* Texture, const Import::Textures::FTextureImportResult& Source,
+                                       bool bCreateGPUResource = true)
     {
         const uint32 Width  = Source.Dimensions.x;
         const uint32 Height = Source.Dimensions.y;
@@ -188,6 +189,11 @@ namespace Lumina
         ApplyTextureGroupMipPolicy(Texture);
         const uint32 UploadMips = (uint32)Texture->TextureResource->Mips.size();
 
+        if (!bCreateGPUResource)
+        {
+            return true;
+        }
+
         // Recreate: see CookTexturePixels. A re-cook must keep the published ResourceID.
         RHI::Textures::Recreate(Texture->TextureResource->NewTexture, RHI::FTexture2DDesc
         {
@@ -199,7 +205,7 @@ namespace Lumina
         for (uint32 i = 0; i < UploadMips; ++i)
         {
             const FTextureResource::FMip& Mip = Texture->TextureResource->Mips[i];
-            RHI::Textures::Upload(Texture->TextureResource->NewTexture, i, Mip.Pixels.data(), Mip.Pixels.size(), Mip.Width);
+            RHI::Textures::Upload(Texture->TextureResource->NewTexture, i, Mip.Pixels.data(), Mip.Pixels.size(), Mip.Width, Mip.Width, Mip.Height);
         }
 
         return true;
@@ -338,8 +344,12 @@ namespace Lumina
 
         basist::basisu_image_info ImageInfo;
         Transcoder.get_image_info(BasisData.data(), BasisData.size(), ImageInfo, 0);
-        const uint32 Width  = ImageInfo.m_width;
-        const uint32 Height = ImageInfo.m_height;
+        // ORIG, not m_width/m_height: those are padded up to the block size (basisu's own comment says
+        // "always a multiple of the texture's underlying block size"). The Vulkan image's implicit mip
+        // chain is derived from the base extent, so seeding it with a padded size puts every level out of
+        // step with the data, and a copy region wider than its subresource is undefined behaviour.
+        const uint32 Width  = ImageInfo.m_orig_width;
+        const uint32 Height = ImageInfo.m_orig_height;
 
         // SRGB->BC7_UNORM_SRGB; NormalMap->BC5_UNORM (shader reconstructs Z); Linear/Packed->BC7_UNORM.
         EFormat StoredFormat;
@@ -405,8 +415,10 @@ namespace Lumina
             }
 
             FTextureResource::FMip& Mip = Texture->TextureResource->Mips[MipIndex];
-            Mip.Width      = LevelInfo.m_width;
-            Mip.Height     = LevelInfo.m_height;
+            // True texel dimensions of the level; the block padding lives in RowPitch/SlicePitch below,
+            // which is where the copy wants it (bufferRowLength) rather than in the extent.
+            Mip.Width      = LevelInfo.m_orig_width;
+            Mip.Height     = LevelInfo.m_orig_height;
             Mip.RowPitch   = RowPitch;
             Mip.Depth      = 1;
             Mip.SlicePitch = DepthPitch;
@@ -443,7 +455,7 @@ namespace Lumina
             const FTextureResource::FMip& Mip = Texture->TextureResource->Mips[i];
             if (!Mip.Pixels.empty())
             {
-                RHI::Textures::Upload(Texture->TextureResource->NewTexture, i, Mip.Pixels.data(), Mip.Pixels.size(), Mip.Width);
+                RHI::Textures::Upload(Texture->TextureResource->NewTexture, i, Mip.Pixels.data(), Mip.Pixels.size(), Mip.Width, Mip.Width, Mip.Height);
             }
         }
 
@@ -465,7 +477,8 @@ namespace Lumina
     // map the DDS format to our EFormat and upload the blocks VERBATIM (lossless; the GPU samples BCn natively).
     // sRGB-ness is taken from the texture's role (base color = SRGB, normals/data = Linear), matching the cook.
     // Returns false for non-DDS or unsupported (uncompressed/legacy) DDS so the caller can fall back to stb.
-    static bool CookDDS(CTexture* Texture, TSpan<const uint8> Data, ETextureColorSpace ColorSpace)
+    static bool CookDDS(CTexture* Texture, TSpan<const uint8> Data, ETextureColorSpace ColorSpace,
+                        bool bCreateGPUResource = true)
     {
         if (!LooksLikeDDS(Data))
         {
@@ -586,6 +599,11 @@ namespace Lumina
         ApplyTextureGroupMipPolicy(Texture);
         const uint32 UploadMips = (uint32)Texture->TextureResource->Mips.size();
 
+        if (!bCreateGPUResource)
+        {
+            return true;
+        }
+
         // Recreate: see CookTexturePixels. A re-cook must keep the published ResourceID.
         RHI::Textures::Recreate(Texture->TextureResource->NewTexture, RHI::FTexture2DDesc
         {
@@ -599,7 +617,7 @@ namespace Lumina
             const FTextureResource::FMip& Mip = Texture->TextureResource->Mips[i];
             if (!Mip.Pixels.empty())
             {
-                RHI::Textures::Upload(Texture->TextureResource->NewTexture, i, Mip.Pixels.data(), Mip.Pixels.size(), Mip.Width);
+                RHI::Textures::Upload(Texture->TextureResource->NewTexture, i, Mip.Pixels.data(), Mip.Pixels.size(), Mip.Width, Mip.Width, Mip.Height);
             }
         }
 
@@ -607,7 +625,7 @@ namespace Lumina
     }
 
     // Filename suffix heuristic for Auto; falls back to SRGB. Editable in the inspector for misclassifications.
-    static ETextureColorSpace ClassifyByFilename(FStringView Path)
+    ETextureColorSpace CTextureFactory::ClassifyColorSpaceByFilename(FStringView Path)
     {
         eastl::string Stem(Path.data(), Path.size());
 
@@ -730,32 +748,25 @@ namespace Lumina
     }
 #endif
 
-    void CTextureFactory::TryImport(const FFixedString& RawPath, const FFixedString& DestinationPath, const Import::FImportSettings* Settings)
+    bool CTextureFactory::CookIntoTexture(CTexture* Texture, const Import::Textures::FTextureCookRequest& Request)
     {
-        CTexture* NewTexture = TryCreateNew<CTexture>(DestinationPath);
-        if (NewTexture == nullptr)
+        if (Texture == nullptr)
         {
-            // Almost always a destination whose package is already loaded. The caller is responsible for
-            // handing us a free path; failing here is a refusal to clobber, not something to recover from.
-            LOG_ERROR("TextureFactory: could not create '{0}' for '{1}'; a package already exists at that path",
-                DestinationPath.c_str(), RawPath.c_str());
-            return;
+            return false;
         }
 
-        NewTexture->SetFlag(OF_NeedsPostLoad);
-
-        NewTexture->TextureResource = MakeUnique<FTextureResource>();
-        
-        TOptional<Import::Textures::FTextureImportResult> MaybeResult;
-        const Import::Mesh::FMeshImportImage* ImageSettings = nullptr;
-
-        if (Settings)
+        if (!Texture->TextureResource)
         {
-            ImageSettings = &Settings->As<Import::Mesh::FMeshImportImage>();
+            Texture->TextureResource = MakeUnique<FTextureResource>();
         }
 
-        // DDS containers hold pre-compressed BCn blocks stb_image can't read; pass them straight through to the
-        // GPU (handles both .dds bytes embedded in a mesh and external .dds files). Non-DDS falls through to stb.
+        // Embedded bytes come from a mesh source and have no file of their own; SourcePath is then only a
+        // name hint for the color-space heuristic and is deliberately not persisted.
+        const bool bEmbedded = !Request.EmbeddedBytes.empty();
+        const FFixedString& SourcePath = Request.SourcePath;
+
+        // DDS containers hold pre-compressed BCn blocks stb_image can't read; pass them straight through to
+        // the GPU. Non-DDS falls through to stb.
         {
             auto HasDDSExtension = [](const FFixedString& P) -> bool
             {
@@ -770,76 +781,55 @@ namespace Lumina
 
             TVector<uint8>     DDSStorage;
             TSpan<const uint8> DDSBytes;
-            if (ImageSettings && ImageSettings->IsBytes())
+            if (bEmbedded)
             {
-                DDSBytes = TSpan<const uint8>(ImageSettings->Bytes.data(), ImageSettings->Bytes.size());
+                DDSBytes = Request.EmbeddedBytes;
             }
-            else if (HasDDSExtension(RawPath) && FileHelper::LoadFileToArray(DDSStorage, RawPath.c_str()))
+            else if (HasDDSExtension(SourcePath) && FileHelper::LoadFileToArray(DDSStorage, SourcePath.c_str()))
             {
                 DDSBytes = TSpan<const uint8>(DDSStorage.data(), DDSStorage.size());
             }
 
             if (LooksLikeDDS(DDSBytes))
             {
-                const ETextureColorSpace Role = (ImageSettings && ImageSettings->IntendedColorSpace != ETextureColorSpace::Auto)
-                    ? ImageSettings->IntendedColorSpace
-                    : ClassifyByFilename(RawPath.c_str());
-                NewTexture->ColorSpace = Role;
+                const ETextureColorSpace Role = (Request.ColorSpace != ETextureColorSpace::Auto)
+                    ? Request.ColorSpace
+                    : ClassifyColorSpaceByFilename(SourcePath.c_str());
+                Texture->ColorSpace = Role;
 
-                if (!CookDDS(NewTexture, DDSBytes, Role))
+                if (!CookDDS(Texture, DDSBytes, Role, Request.bCreateGPUResource))
                 {
-                    LOG_WARN("TextureFactory: unsupported DDS format for '{}'; using neutral default.", RawPath.c_str());
-                    NewTexture->ConditionalBeginDestroy();
-                    return;
-                }
-
-                if (!ImageSettings || !ImageSettings->IsBytes())
-                {
-                    NewTexture->SourcePath = FString(RawPath.c_str());
+                    LOG_WARN("TextureFactory: unsupported DDS format for '{}'.", SourcePath.c_str());
+                    return false;
                 }
 
-                CPackage* NewPackage = NewTexture->GetPackage();
-                if (CPackage::SavePackage(NewPackage, NewPackage->GetPackagePath()))
+                if (!bEmbedded)
                 {
-                    FAssetRegistry::Get().AssetCreated(NewTexture);
+                    Texture->SourcePath = FString(SourcePath.c_str());
                 }
-                else
-                {
-                    LOG_ERROR("TextureFactory: failed to save imported DDS texture; asset will not be registered");
-                }
-                NewTexture->ConditionalBeginDestroy();
-                return;
+                return true;
             }
         }
 
-        // Bytes path = mesh-embedded; file path = direct or mesh-resolved URI.
-        if (ImageSettings && ImageSettings->IsBytes())
-        {
-            MaybeResult = Import::Textures::ImportTexture(ImageSettings->Bytes, false);
-        }
-        else
-        {
-            MaybeResult = Import::Textures::ImportTexture(RawPath, false);
-        }
+        TOptional<Import::Textures::FTextureImportResult> MaybeResult = bEmbedded
+            ? Import::Textures::ImportTexture(Request.EmbeddedBytes, false)
+            : Import::Textures::ImportTexture(SourcePath, false);
 
         if (!MaybeResult.has_value())
         {
-            // Refcount-safe teardown (matches the success path below): frees the unreferenced transient
-            // texture, but won't dangle a holder if one ever takes a ref.
-            NewTexture->ConditionalBeginDestroy();
-            return;
+            return false;
         }
 
         const Import::Textures::FTextureImportResult& Result = MaybeResult.value();
 
-        // Mesh-supplied role wins; otherwise classify by filename for direct drags.
-        if (ImageSettings && ImageSettings->IntendedColorSpace != ETextureColorSpace::Auto)
+        // A caller-supplied role wins; otherwise classify by filename.
+        if (Request.ColorSpace != ETextureColorSpace::Auto)
         {
-            NewTexture->ColorSpace = ImageSettings->IntendedColorSpace;
+            Texture->ColorSpace = Request.ColorSpace;
         }
-        else if (NewTexture->ColorSpace == ETextureColorSpace::Auto)
+        else if (Texture->ColorSpace == ETextureColorSpace::Auto)
         {
-            NewTexture->ColorSpace = ClassifyByFilename(RawPath.c_str());
+            Texture->ColorSpace = ClassifyColorSpaceByFilename(SourcePath.c_str());
         }
 
         // Float-source data must take the Environment path; Basis would silently corrupt it.
@@ -850,56 +840,33 @@ namespace Lumina
             Result.Format == EFormat::RGBA32_FLOAT;
         if (bIsFloatSource)
         {
-            NewTexture->ColorSpace = ETextureColorSpace::Environment;
+            Texture->ColorSpace = ETextureColorSpace::Environment;
         }
 
 #if USING(WITH_EDITOR)
-        // HDR (Environment) sources are tonemapped inside; all texture types get a thumbnail.
-        CreatePackageThumbnail(NewTexture, Result);
+        CreatePackageThumbnail(Texture, Result);
 #endif
 
-        // Persist source path for Recook; bytes-only imports leave it empty.
-        if (!ImageSettings || !ImageSettings->IsBytes())
+        if (!bEmbedded)
         {
-            NewTexture->SourcePath = FString(RawPath.c_str());
+            Texture->SourcePath = FString(SourcePath.c_str());
         }
 
-        bool bCooked = false;
-        if (NewTexture->ColorSpace == ETextureColorSpace::Environment)
+        if (Texture->ColorSpace == ETextureColorSpace::Environment)
         {
-            bCooked = CookEnvironmentTexture(NewTexture, Result);
+            return CookEnvironmentTexture(Texture, Result, Request.bCreateGPUResource);
         }
-        else if (Import::Textures::FTextureImportResult& Mutable = MaybeResult.value(); NormalizeToRGBA8(Mutable))
+
+        if (Import::Textures::FTextureImportResult& Mutable = MaybeResult.value(); NormalizeToRGBA8(Mutable))
         {
-            // Batch importers pass a per-texture encode-thread budget (1 = single-threaded) so many textures
-            // cooking in parallel don't each spawn a full basisu pool. Direct/standalone imports leave it 0 (auto).
-            const uint32 EncodeThreads = ImageSettings ? ImageSettings->EncodeThreadBudget : 0u;
             TVector<uint8> Pixels = Move(Mutable.Pixels);
-            bCooked = CookTexturePixels(NewTexture, Pixels, Mutable.Dimensions, NewTexture->ColorSpace, EncodeThreads);
-        }
-        else
-        {
-            LOG_ERROR("TextureFactory: '{0}' has an unsupported pixel layout for the Basis cook (format {1}, {2}x{3}); import skipped.",
-                      NewTexture->GetName().c_str(), (uint32)Result.Format, Result.Dimensions.x, Result.Dimensions.y);
+            return CookTexturePixels(Texture, Pixels, Mutable.Dimensions, Texture->ColorSpace,
+                                     Request.EncodeThreadBudget, Request.bCreateGPUResource);
         }
 
-        if (!bCooked)
-        {
-            NewTexture->ConditionalBeginDestroy();
-            return;
-        }
-
-        CPackage* NewPackage = NewTexture->GetPackage();
-        if (CPackage::SavePackage(NewPackage, NewPackage->GetPackagePath()))
-        {
-            FAssetRegistry::Get().AssetCreated(NewTexture);
-        }
-        else
-        {
-            LOG_ERROR("TextureFactory: failed to save imported texture; asset will not be registered");
-        }
-
-        NewTexture->ConditionalBeginDestroy();
+        LOG_ERROR("TextureFactory: '{0}' has an unsupported pixel layout for the Basis cook (format {1}, {2}x{3}); import skipped.",
+                  Texture->GetName().c_str(), (uint32)Result.Format, Result.Dimensions.x, Result.Dimensions.y);
+        return false;
     }
 
     bool CTextureFactory::CookLayerFromFile(CTexture* Scratch, FStringView SourcePath, ETextureColorSpace ColorSpace,
@@ -984,48 +951,6 @@ namespace Lumina
         return Texture;
     }
 
-    bool CTextureFactory::CanReimport(const CStruct* AssetClass) const
-    {
-        // Mesh-embedded textures qualify too: reimport supplies the file, so a texture that arrived with no
-        // SourcePath of its own is exactly the case this exists to rescue.
-        if (AssetClass == nullptr || !AssetClass->IsChildOf(CTexture::StaticClass()))
-        {
-            return false;
-        }
-
-        // Render targets are CTextures, but their contents are written by the renderer rather than cooked
-        // from a file -- anything reimported into one is gone on the next draw.
-        return !AssetClass->IsChildOf(CTextureRenderTarget::StaticClass());
-    }
-
-    FString CTextureFactory::GetReimportSourcePath(const CObject* Asset) const
-    {
-        const CTexture* Texture = Cast<CTexture>(Asset);
-        return Texture != nullptr ? Texture->SourcePath : FString();
-    }
-
-    bool CTextureFactory::TryReimport(CObject* Asset, const FFixedString& SourceFile, const Import::FImportSettings* Settings)
-    {
-        CTexture* Texture = Cast<CTexture>(Asset);
-        if (Texture == nullptr)
-        {
-            return false;
-        }
-
-        // Recook reads SourcePath, so point it at the new file first. Restored on failure: a half-applied
-        // reimport that leaves the asset claiming a source it was never cooked from is worse than no change.
-        const FString PreviousSource = Texture->SourcePath;
-        Texture->SourcePath = FString(SourceFile.c_str());
-
-        if (!Recook(Texture))
-        {
-            Texture->SourcePath = PreviousSource;
-            return false;
-        }
-
-        return true;
-    }
-
     bool CTextureFactory::Recook(CTexture* Texture)
     {
         if (Texture == nullptr)
@@ -1053,7 +978,7 @@ namespace Lumina
         // Re-cook with Auto resolves like a fresh import.
         if (Texture->ColorSpace == ETextureColorSpace::Auto)
         {
-            Texture->ColorSpace = ClassifyByFilename(Texture->SourcePath);
+            Texture->ColorSpace = ClassifyColorSpaceByFilename(Texture->SourcePath);
         }
 
         // Float-source data must stay on the Environment path even if user changed ColorSpace.

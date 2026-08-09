@@ -14,9 +14,6 @@ namespace Lumina
 
         CObject* CreateNew(const FName& Name, CPackage* Package) override;
 
-        bool IsExtensionSupported(FStringView Ext) override { return Ext == ".ttf" || Ext == ".otf"; }
-        bool CanImport() override { return true; }
-        void TryImport(const FFixedString& RawPath, const FFixedString& DestinationPath, const Import::FImportSettings* Settings) override;
 
         FString GetAssetName() const override { return "Font"; }
         FStringView GetDefaultAssetCreationName() override { return "NewFont"; }

@@ -865,11 +865,11 @@ struct FCullData
 #define DEBUG_MODE_TRIANGLE_ID          17u
 // OIT target inspectors, consumed by OITResolve.slang (not the per-surface switch in SurfaceShading).
 // LAYER_COUNT additionally changes what the translucent BasePixelPass writes: exactly 1.0 per fragment
-// into accum.a, turning the weight channel into a raw per-pixel fragment count (fp16-exact to 2048) --
+// into accum.a, turning the coverage-sum channel into a raw per-pixel fragment count (fp16-exact to 2048) --
 // separates "the fragment SET strobes" from "the fragment VALUES strobe".
 #define DEBUG_MODE_OIT_ACCUM_COLOR      18u
-#define DEBUG_MODE_OIT_ACCUM_WEIGHT     19u
-#define DEBUG_MODE_OIT_REVEALAGE        20u
+#define DEBUG_MODE_OIT_MOMENTS          19u
+#define DEBUG_MODE_OIT_TRANSMITTANCE    20u
 #define DEBUG_MODE_OIT_LAYER_COUNT      21u
 // Reflection-probe inspectors. INFLUENCE answers "does a probe reach this pixel, and which one";
 // RADIANCE answers "what did that probe actually capture". The two failure modes are distinct and
@@ -905,8 +905,11 @@ struct FSceneGlobalData
     // did not run for this view (capture views, or no shadow-casting sun) -> the opaque pipelines for
     // that view are specialized back to the inline cascade PCSS. See SampleShadowMask.
     uint              ShadowMaskIndex;
-    uint              _ShadowPad0;
-    uint              _ShadowPad1;
+
+    // MBOIT moment targets for this view (MomentOIT.slang), read by the translucent shading pass.
+    // ~0u = not published; see the sentinel guard in BasePixelPass.slang.
+    uint              MomentZerothIndex;
+    uint              MomentsIndex;
     uint              _ShadowPad2;
 };
 

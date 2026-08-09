@@ -47,7 +47,8 @@ namespace Lumina
             { &CMaterial::VisBufferMeshShaderBinaries,        &CMaterial::VisBufferMeshShader,        "_VBM",  ERHIShaderType::Mesh     },
             { &CMaterial::VisBufferMeshShaderMaskedBinaries,  &CMaterial::VisBufferMeshShaderMasked,  "_VBMM", ERHIShaderType::Mesh     },
             { &CMaterial::MaskedVisBufferPixelShaderBinaries, &CMaterial::MaskedVisBufferPixelShader, "_MVBP", ERHIShaderType::Fragment },
-            { &CMaterial::DeferredShaderBinaries,             &CMaterial::DeferredShader,             "_DM",   ERHIShaderType::Fragment },
+            { &CMaterial::DeferredShaderBinaries,             &CMaterial::DeferredShader,             "_DM",   ERHIShaderType::Compute  },
+            { &CMaterial::MomentPixelShaderBinaries,          &CMaterial::MomentPixelShader,          "_MOM",  ERHIShaderType::Fragment },
         };
         static_assert(std::size(GMaterialStages) == (size_t)EMaterialShaderStage::Count,
             "GMaterialStages must cover every EMaterialShaderStage");
@@ -717,7 +718,7 @@ namespace Lumina
         }
 
         {
-            // Deferred material pixel shader: BOTH tokens (WPO for reconstruction + the pixel graph).
+            // Deferred material compute shader: BOTH tokens (WPO for reconstruction + the pixel graph).
             FString LoadedDeferredString;
             if (VFS::ReadFile(LoadedDeferredString, "/Engine/Resources/Shaders/MaterialShader/DeferredMaterial.slang"))
             {

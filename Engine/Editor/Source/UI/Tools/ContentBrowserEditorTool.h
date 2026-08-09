@@ -18,7 +18,9 @@
 namespace Lumina
 {
     class CFactory;
-    namespace Import { struct FImportSettings; }
+    class CImporter;
+    class FPropertyTable;
+    struct FImportRequest;
 
     class CObjectRedirector;
     struct FAssetData;
@@ -110,6 +112,23 @@ namespace Lumina
             NODISCARD bool IsProtected() const { return bProtected; }
             NODISCARD EIconKind GetIconKind() const { return IconKind; }
 
+            NODISCARD FStringView GetTypeLabel() const override
+            {
+                const char* Label = TypeLabel.IsNone() ? nullptr : TypeLabel.c_str();
+                return Label != nullptr ? FStringView(Label) : FStringView();
+            }
+
+            /** Uppercased asset class / extension shown under the name, and the key the type filter and
+             *  the search box both match on. Resolved once during the rebuild; the registry lookup and the
+             *  string work behind it must never run per-frame in the draw loop.
+             *
+             *  Interned rather than stored inline: these items come from a block allocator, and an
+             *  FFixedString member is a 255-char inline buffer that pushed the item past a whole block. */
+            void SetTypeLabel(const FFixedString& InLabel)
+            {
+                TypeLabel = InLabel.empty() ? NAME_None : FName(InLabel.c_str());
+            }
+
         private:
 
             static EIconKind ClassifyIcon(const VFS::FFileInfo& Info)
@@ -126,6 +145,7 @@ namespace Lumina
             }
 
             bool            bProtected = false;
+            FName           TypeLabel;
             VFS::FFileInfo  FileInfo;
             EIconKind       IconKind = EIconKind::Generic;
         };
@@ -171,13 +191,10 @@ namespace Lumina
         void OpenDeletionWarningPopup(const FContentBrowserTileViewItem* Item, const TFunction<void(EYesNo)>& Callback = TFunction<void(EYesNo)>());
         void OnProjectLoaded();
 
-        // Shared frame around a factory's import settings: source header, scrolling body, footer
-        // buttons. Returns true when the user confirmed.
-        bool DrawImportWindow(CFactory* Factory, const FFixedString& RawPath, const FFixedString& DestinationPath,
-                              Import::FImportSettings& Settings, int32 RemainingCount,
+        // Shared frame around an importer's reflected settings: source header, scrolling property table,
+        // footer buttons. Returns true when the user confirmed.
+        bool DrawImportWindow(CImporter* Importer, const FImportRequest& Request, int32 RemainingCount,
                               bool& bShouldClose, bool& bOutApplyToAll);
-
-        CFactory* FindImportFactory(const FFixedString& Path) const;
 
         // Free package path for importing SourcePath into the current folder, or empty if none could be
         // found. Uniquifying on the source filename is not enough: imports become packages, whose names
@@ -189,8 +206,8 @@ namespace Lumina
         // two sources in one batch happily claim the same name and the second create fails.
         THashSet<FFixedString> ReservedImportPaths;
 
-        void StartImport(CFactory* Factory, const FFixedString& Path, const FFixedString& DestinationPath,
-                         TUniquePtr<Import::FImportSettings> Settings);
+        // Takes ownership of Importer: runs the build stage off-thread, then destroys it.
+        void StartImport(CImporter* Importer, const FImportRequest& Request);
         void ProcessNextImport();
 
         void TryImport(const FFixedString& Path);
@@ -201,14 +218,17 @@ namespace Lumina
         // would mint a second asset called "<Name>_1" and leave every existing reference on the old one.
         void DrawReimportAssetMenuItem(const FContentBrowserTileViewItem* ContentItem, bool bIsProtected);
 
-        // Runs the factory's normal prepare + options dialogue against an existing asset, then performs the
-        // swap. AssetGUID rather than a pointer: the prepare is async, and the asset can be destroyed
+        // Runs the importer's normal parse + options dialogue against an existing asset, then performs the
+        // swap. AssetGUID rather than a pointer: the parse is async, and the asset can be destroyed
         // (project reload, asset deleted) before it comes back.
-        void StartReimport(const FGuid& AssetGUID, CFactory* Factory, const FFixedString& SourceFile);
+        void StartReimport(const FGuid& AssetGUID, CClass* ImporterClass, const FFixedString& SourceFile);
 
-        // Off-thread half of a reimport: the swap itself, then save + registry notify.
-        void FinishReimport(const FGuid& AssetGUID, CFactory* Factory, const FFixedString& SourceFile,
-                            TUniquePtr<Import::FImportSettings> Settings);
+        // Off-thread half of a reimport: the swap itself, then save + registry notify. Takes ownership of
+        // Importer.
+        void FinishReimport(const FGuid& AssetGUID, CImporter* Importer, const FFixedString& SourceFile);
+
+        // Property table over the importer being configured; rebuilt when the dialogue opens.
+        TUniquePtr<FPropertyTable> ImportSettingsTable;
 
         // Files still waiting on an options window. Drained one at a time by ProcessNextImport.
         TVector<FFixedString> PendingImports;
@@ -267,6 +287,20 @@ namespace Lumina
         FFixedString                PendingRenamePath;
         FFixedString                PendingDirectoryReveal;
 
+        // Asset-class -> shown. Rebuilt from the classes actually present in the browsed content, so a
+        // type with no factory (meshes, skeletons, animations, prefabs) still gets an entry; user choices
+        // survive the rebuild.
         THashMap<FName, bool>       FilterState;
+
+        // Substring match over the tile name, case-insensitive. Empty shows everything.
+        FFixedString                SearchText;
+
+        // Rebuilds FilterState from the asset registry, preserving existing choices.
+        void RefreshFilterClasses();
+
+        NODISCARD bool PassesFilters(const VFS::FFileInfo& FileInfo, FStringView TypeLabel) const;
+
+        // "CStaticMesh" -> "STATICMESH"; a loose file -> its extension. Empty for directories.
+        NODISCARD static FFixedString MakeTypeLabel(const VFS::FFileInfo& FileInfo);
     };
 }

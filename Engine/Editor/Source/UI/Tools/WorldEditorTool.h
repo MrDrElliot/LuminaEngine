@@ -148,7 +148,7 @@ namespace Lumina
 
         // Selection model + outliner engine live in FSceneEditorTool; the world editor only
         // supplies this hook (the base selection methods call it on focus change).
-        void OnSelectionChanged() override { bDetailsDirty = true; }
+        void OnSelectionChanged() override { bDetailsDirty = true; bSelectionTransformRefreshPending = true; }
 
         void SetWorldPlayInEditor(bool bShouldPlay);
         void SetWorldNewSimulate(bool bShouldSimulate);

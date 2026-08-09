@@ -345,8 +345,8 @@ namespace Lumina::VFS
             FFileInfo FileInfo
             {
                 .Name               = Entry.path().filename().generic_string().c_str(),
-                .VirtualPath        = FFixedString{VirtualPath.data(),VirtualPath.size()},
-                .PathSource         = FFixedString{FilePath.data(), FilePath.size()},
+                .VirtualPath        = FString(VirtualPath.data(), VirtualPath.size()),
+                .PathSource         = FString(FilePath.data(), FilePath.size()),
                 .LastModifyTime     = LastModifyTime,
                 .Flags              = Flags
             };
@@ -444,8 +444,8 @@ namespace Lumina::VFS
             FFileInfo FileInfo
             {
                 .Name               = Entry.path().filename().generic_string().c_str(),
-                .VirtualPath        = FFixedString{VirtualPath.data(),VirtualPath.size()},
-                .PathSource         = FFixedString{FilePath.data(), FilePath.size()},
+                .VirtualPath        = FString(VirtualPath.data(), VirtualPath.size()),
+                .PathSource         = FString(FilePath.data(), FilePath.size()),
                 .LastModifyTime     = LastModifyTime,
                 .Flags              = Flags
             };

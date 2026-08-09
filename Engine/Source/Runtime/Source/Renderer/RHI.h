@@ -484,7 +484,7 @@ namespace Lumina::RHI
 
     RUNTIME_API void        CreateDevice(const FDeviceDesc& Desc = {});
     RUNTIME_API void        FreeDevice();
-    RUNTIME_API void        TickFrame();
+    RUNTIME_API void        RetireSlot(uint32 Slot);
     RUNTIME_API void        WaitDeviceIdle();
     RUNTIME_API uint64      GetSemaphoreValue(FSemaphoreH Semaphore);
     RUNTIME_API void        WaitSemaphore(FSemaphoreH Semaphore, uint64 Value);

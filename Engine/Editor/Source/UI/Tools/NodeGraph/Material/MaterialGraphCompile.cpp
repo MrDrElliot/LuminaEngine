@@ -137,17 +137,57 @@ namespace Lumina
 
             const FString DeferredSource = Compiler.BuildDeferredShaderFromTemplate(MeshShaderDir + "DeferredMaterial.slang", EMaterialType::PBR);
             FShaderCompileOptions DeferredOptions; DeferredOptions.DebugName = MatName + " [DM]";
+
+            // UNLIT must reach this lane too. Opaque PBR shades through the deferred VisBuffer pass, NOT the
+            // forward pixel stage above -- so an unlit master compiled without it takes the lit branch of
+            // ShadeSurface and picks up IBL/lights/shadows exactly where the shading model says it should not.
+            // The forward stage (which does get UNLIT) is the one you see in the material editor preview, so the
+            // two lanes disagreeing shows up as "correct in the editor, lit in the world".
+            //
+            // UNLIT only. TRANSLUCENT does not belong: translucent/additive never resolve a deferred shader
+            // (MeshResolve::ResolveSurfaceMaterial returns before requiring one) and this template's PSOutput
+            // reads only Shaded.Color/.Alpha, never the translucent Reflection pair. MASKED does not belong
+            // either: it gates [earlydepthstencil], which this template has no attribute for, and the alpha-test
+            // discard inside ShadeSurface is driven by the runtime MatFlag_Masked flag rather than the define.
+            if (Material->GetShadingModel() == EMaterialShadingModel::Unlit)
+            {
+                DeferredOptions.MacroDefinitions.emplace_back("UNLIT");
+            }
+
             ShaderCompiler->CompilerShaderRaw(DeferredSource, Move(DeferredOptions), CommitStage(EMaterialShaderStage::Deferred));
         }
 
         ShaderCompiler->CompilerShaderRaw(Result.PixelSource, Move(Options), CommitStage(EMaterialShaderStage::Pixel));
+
+        // MBOIT pass 1 (Includes/MomentOIT.slang): a second compile of the SAME pixel source that runs the
+        // opacity graph and stops there, accumulating absorbance moments instead of shading. Only PBR
+        // translucency is drawn by the moment pass -- additive materials composite order-independently on
+        // their own, and the non-meshlet domains never reach it -- so nothing else compiles the stage.
+        //
+        // Cleared first, so a translucent -> opaque recompile drops the stale binaries rather than leaving
+        // the moment pass drawing geometry that the shading pass no longer visits.
+        Material->ClearShaderStage(EMaterialShaderStage::MomentPixel);
+        const bool bNeedsMomentStage = Material->GetMaterialType() == EMaterialType::PBR
+                                    && Material->GetBlendMode()   == EBlendMode::Translucent;
+        if (bNeedsMomentStage)
+        {
+            FShaderCompileOptions MomentOptions;
+            MomentOptions.DebugName = MatName + " [MOM]";
+            MomentOptions.MacroDefinitions.emplace_back("TRANSLUCENT");
+            MomentOptions.MacroDefinitions.emplace_back("MOMENT_GENERATION");
+            if (Material->GetShadingModel() == EMaterialShadingModel::Unlit)
+            {
+                MomentOptions.MacroDefinitions.emplace_back("UNLIT");
+            }
+            ShaderCompiler->CompilerShaderRaw(Result.PixelSource, Move(MomentOptions), CommitStage(EMaterialShaderStage::MomentPixel));
+        }
 
         ShaderCompiler->Flush();
 
         // CompilerShaderRaw signals a failed stage only by leaving its output empty. A graph that passes the
         // node-level checks above can still fail to compile in a specific template (notably the deferred stage),
         // which would otherwise save a master that writes VisBuffer depth but is SKIPPED by the deferred shading
-        // pass (DeferredMaterialPass requires a non-null DeferredShader) -> the mesh renders as a depth-only
+        // pass (MaterialGBufferPass requires a non-null DeferredShader) -> the mesh renders as a depth-only
         // "ghost" in the world while still looking fine when reopened in the editor (which recompiles). Treat any
         // required stage with empty binaries as a compile failure so a broken master is never committed/saved.
         auto StageEmpty = [&](const TVector<uint32>& Binaries, const char* StageName) -> bool
@@ -165,6 +205,13 @@ namespace Lumina
 
         bool bStageFailed = false;
         bStageFailed |= StageEmpty(Material->PixelShaderBinaries, "Pixel");
+        if (bNeedsMomentStage)
+        {
+            // Required, not optional: without it the moment pass skips this material, so the shading pass
+            // reconstructs its transmittance from moments that never saw it and the surface renders at full
+            // brightness through everything in front of it.
+            bStageFailed |= StageEmpty(Material->MomentPixelShaderBinaries, "Moment Pixel");
+        }
         if (Material->GetMaterialType() == EMaterialType::PBR)
         {
             // Every geometry stage is REQUIRED now: there is no fallback to fall back to, so a material

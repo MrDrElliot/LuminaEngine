@@ -429,15 +429,32 @@ namespace Lumina
                 TargetDesc.profile = GlobalSession->findProfile("spirv_1_5");
                 TargetDesc.flags   = SLANG_TARGET_FLAG_GENERATE_SPIRV_DIRECTLY | SLANG_TARGET_FLAG_GENERATE_WHOLE_PROGRAM;
 
-                slang::CompilerOptionEntry TargetOptions[2] = {};
+                slang::CompilerOptionEntry TargetOptions[3] = {};
                 TargetOptions[0].name = slang::CompilerOptionName::DebugInformation;
                 TargetOptions[0].value.kind = slang::CompilerOptionValueKind::Int;
                 TargetOptions[0].value.intValue0 = GetShaderDebugInfoLevel();
                 TargetOptions[1].name = slang::CompilerOptionName::Optimization;
                 TargetOptions[1].value.kind = slang::CompilerOptionValueKind::Int;
                 TargetOptions[1].value.intValue0 = GetShaderOptimizationLevel();
+                uint32 TargetOptionCount = 2;
+
+                // The meshlet mesh shaders read a vertex's clip position straight out of its owning lane's
+                // registers (ShuffleMeshletClip), which needs subgroup shuffle. That is not part of the base
+                // spirv_1_5 profile, so Slang widens the profile itself and warns 41012 on every mesh entry
+                // point it compiles. Declaring it here is a DIAGNOSTIC change only -- the emitted SPIR-V is
+                // byte-identical either way (verified) -- but it states the target the engine actually
+                // requires instead of leaving a warning that trains people to ignore warnings.
+                const SlangCapabilityID ShuffleCapability = GlobalSession->findCapability("spvGroupNonUniformShuffle");
+                if (ShuffleCapability != SLANG_CAPABILITY_UNKNOWN)
+                {
+                    TargetOptions[2].name = slang::CompilerOptionName::Capability;
+                    TargetOptions[2].value.kind = slang::CompilerOptionValueKind::Int;
+                    TargetOptions[2].value.intValue0 = (int)ShuffleCapability;
+                    ++TargetOptionCount;
+                }
+
                 TargetDesc.compilerOptionEntries = TargetOptions;
-                TargetDesc.compilerOptionEntryCount = 2;
+                TargetDesc.compilerOptionEntryCount = TargetOptionCount;
 
                 // 39001: unbounded descriptor array (intentional, bindless)
                 slang::CompilerOptionEntry SessionOptions[1] = {};
@@ -776,15 +793,29 @@ namespace Lumina
             TargetDesc.profile = GlobalSession->findProfile("spirv_1_5");
             TargetDesc.flags   = SLANG_TARGET_FLAG_GENERATE_SPIRV_DIRECTLY | SLANG_TARGET_FLAG_GENERATE_WHOLE_PROGRAM;
 
-            slang::CompilerOptionEntry TargetOptions[2] = {};
+            slang::CompilerOptionEntry TargetOptions[3] = {};
             TargetOptions[0].name = slang::CompilerOptionName::DebugInformation;
             TargetOptions[0].value.kind = slang::CompilerOptionValueKind::Int;
             TargetOptions[0].value.intValue0 = GetShaderDebugInfoLevel();
             TargetOptions[1].name = slang::CompilerOptionName::Optimization;
             TargetOptions[1].value.kind = slang::CompilerOptionValueKind::Int;
             TargetOptions[1].value.intValue0 = GetShaderOptimizationLevel();
+
+            uint32 TargetOptionCount = 2;
+
+            // See the batch path above: subgroup shuffle is not in the base spirv_1_5 profile, and the
+            // meshlet mesh shaders need it. Declared, not warned about.
+            const SlangCapabilityID ShuffleCapability = GlobalSession->findCapability("spvGroupNonUniformShuffle");
+            if (ShuffleCapability != SLANG_CAPABILITY_UNKNOWN)
+            {
+                TargetOptions[2].name = slang::CompilerOptionName::Capability;
+                TargetOptions[2].value.kind = slang::CompilerOptionValueKind::Int;
+                TargetOptions[2].value.intValue0 = (int)ShuffleCapability;
+                ++TargetOptionCount;
+            }
+
             TargetDesc.compilerOptionEntries = TargetOptions;
-            TargetDesc.compilerOptionEntryCount = 2;
+            TargetDesc.compilerOptionEntryCount = TargetOptionCount;
 
             // 39001: unbounded descriptor array (intentional, bindless)
             slang::CompilerOptionEntry SessionOptions[1] = {};

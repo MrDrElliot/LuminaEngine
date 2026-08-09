@@ -305,8 +305,8 @@ namespace Lumina
         auto It = TargetBatches.find(Target.Handle);
         if (It != TargetBatches.end())
         {
-            RHI::Core::DeferredFree(It->second.VertexBuffer);
-            RHI::Core::DeferredFree(It->second.IndexBuffer);
+            RHI::Core::Retire(It->second.VertexBuffer);
+            RHI::Core::Retire(It->second.IndexBuffer);
             TargetBatches.erase(It);
         }
     }
@@ -338,14 +338,14 @@ namespace Lumina
     {
         if (Batch.VertexBuffer == 0 || Batch.VertexCapacity < VertexBytes)
         {
-            RHI::Core::DeferredFree(Batch.VertexBuffer);
+            RHI::Core::Retire(Batch.VertexBuffer);
             Batch.VertexCapacity = Math::Max<uint64>(VertexBytes + VertexBytes / 2, 4096);
             Batch.VertexBuffer   = RHI::Malloc(Batch.VertexCapacity, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
         }
 
         if (Batch.IndexBuffer == 0 || Batch.IndexCapacity < IndexBytes)
         {
-            RHI::Core::DeferredFree(Batch.IndexBuffer);
+            RHI::Core::Retire(Batch.IndexBuffer);
             Batch.IndexCapacity = Math::Max<uint64>(IndexBytes + IndexBytes / 2, 4096);
             Batch.IndexBuffer   = RHI::Malloc(Batch.IndexCapacity, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
         }

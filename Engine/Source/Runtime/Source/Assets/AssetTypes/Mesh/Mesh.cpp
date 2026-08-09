@@ -40,6 +40,31 @@ namespace Lumina
         GenerateGPUBuffers();
     }
 
+    void CMesh::OnDestroy()
+    {
+        Super::OnDestroy();
+
+        // MANDATORY, and the reason is GPU-side. MeshletHeaderAddress is a raw buffer device address that
+        // ~FMeshBuffers retires the moment this object dies, but that address has already been copied into
+        // the resolve entry, every SMeshComponent::CachedMeshletHeaderAddress resolved against this mesh,
+        // the retained primitive, and the uploaded instance buffer -- where the cull and mesh shaders
+        // dereference it as a pointer. Without this, nothing ever tells any of them to drop it: the
+        // reference-replacer sweep nulls the component's TObjectPtr with a RAW write, so there is no
+        // setter, no registry.patch, no on_update, and therefore no MarkPendingWork -- and the resolve
+        // pass early-returns unless the pending generation moved. The stale address then outlives the
+        // retire queue and the next cull dispatch page-faults the device.
+        //
+        // InvalidateDependency marks every entry that resolved against this mesh stale AND opens that
+        // gate. The rebuild is safe against this pointer already being freed: RebuildEntry only ever runs
+        // through Resolve(), which the gather calls with the component's LIVE mesh field (now null), so
+        // the stale entry is never rebuilt from its own dangling MeshKey -- the component resolves to
+        // INVALID_MESH_RESOLVE_HANDLE, zeroes its cached address, and Sync re-uploads the instance slot
+        // with 0, which every shader path already gates on.
+        //
+        // Same contract CMaterial::OnDestroy has honoured since resolves became pointer-keyed.
+        FMeshResolveCache::InvalidateDependency(this);
+    }
+
     CMaterialInterface* CMesh::GetMaterialAtSlot(size_t Slot) const
     {
         if (Materials.size() <= Slot)
@@ -281,13 +306,6 @@ namespace Lumina
         const bool bSkinned       = Resource.bSkinnedMesh;
         FMeshResource::FMeshBuffers& MB = Resource.MeshBuffers;
 
-        // Drop any previous set before building a new one. Every caller today happens to arrive with an
-        // empty set -- SetMeshResource destroys the old resource first, a dynamic mesh commits into a
-        // fresh one -- but that was an ordering accident, and overwriting live addresses orphans them
-        // permanently (nothing else knows them). RefreshDistanceField exists purely to route around
-        // this; with the free here, a rebuild through this path is simply correct.
-        MB.ReleaseBuffers();
-
         bool bAllocationFailed = false;
 
         // The name is what a GPU crash report resolves a faulting address to. These five are reached
@@ -305,9 +323,12 @@ namespace Lumina
             return Memory;
         };
 
-        MB.MeshletBuffer       = CreateAndUpload(MData.Meshlets.data(), sizeof(FMeshlet) * MData.Meshlets.size(), "Mesh.Meshlets");
-        MB.MeshletSphereBuffer = CreateAndUpload(MData.MeshletSpheres.data(), sizeof(FMeshletSphere) * MData.MeshletSpheres.size(), "Mesh.MeshletSpheres");
-        MB.MeshletConeBuffer   = CreateAndUpload(MData.MeshletCones.data(),   sizeof(FMeshletCone)   * MData.MeshletCones.size(),   "Mesh.MeshletCones");
+        // Built into locals and swapped in only once the whole set exists. Retiring first and allocating
+        // second would leave a rebuild that runs out of memory with no geometry at all; this way it keeps
+        // rendering what it had.
+        const RHI::GPUPtr NewMeshlets = CreateAndUpload(MData.Meshlets.data(), sizeof(FMeshlet) * MData.Meshlets.size(), "Mesh.Meshlets");
+        const RHI::GPUPtr NewSpheres  = CreateAndUpload(MData.MeshletSpheres.data(), sizeof(FMeshletSphere) * MData.MeshletSpheres.size(), "Mesh.MeshletSpheres");
+        const RHI::GPUPtr NewCones    = CreateAndUpload(MData.MeshletCones.data(), sizeof(FMeshletCone) * MData.MeshletCones.size(), "Mesh.MeshletCones");
 
         // Highest joint index the packed vertices actually reference. Checked at resolve against the
         // skeleton's bone count -- the GPU bone fetch is unbounded, so a mesh that outruns its skeleton
@@ -334,37 +355,52 @@ namespace Lumina
         const void*  VertSrc    = bSkinned ? (const void*)MData.MeshletSkinnedVertices.data() : (const void*)MData.MeshletVertices.data();
         const uint64 VertStride = bSkinned ? sizeof(FMeshletSkinnedVertex) : sizeof(FMeshletVertex);
         const uint64 VertCount  = bSkinned ? MData.MeshletSkinnedVertices.size() : MData.MeshletVertices.size();
-        MB.MeshletVertexBuffer   = CreateAndUpload(VertSrc, VertCount * VertStride, bSkinned ? "Mesh.SkinnedVertices" : "Mesh.Vertices");
-        MB.MeshletTriangleBuffer = CreateAndUpload(MData.MeshletTriangles.data(), sizeof(uint32) * MData.MeshletTriangles.size(), "Mesh.MeshletTriangles");
+        const RHI::GPUPtr NewVertices  = CreateAndUpload(VertSrc, VertCount * VertStride, bSkinned ? "Mesh.SkinnedVertices" : "Mesh.Vertices");
+        const RHI::GPUPtr NewTriangles = CreateAndUpload(MData.MeshletTriangles.data(), sizeof(uint32) * MData.MeshletTriangles.size(), "Mesh.MeshletTriangles");
 
-        // Nothing downstream null-checks the addresses the header carries, so a mesh that only
-        // partly allocated has to drop out entirely rather than hand the GPU a null base to fetch
-        // vertices through. IsReadyForRender gates on MeshletHeaderBuffer.
+        // Nothing downstream null-checks the addresses the header carries, so a partly allocated set can
+        // never be published -- it would hand the GPU a null base to fetch vertices through.
         if (bAllocationFailed)
         {
-            LOG_ERROR("Mesh left unrenderable: GPU buffer allocation failed for {} meshlets.", MData.Meshlets.size());
+            LOG_ERROR("Mesh rebuild failed: GPU buffer allocation for {} meshlets. Previous geometry kept.", MData.Meshlets.size());
 
-            RHI::Core::DeferredFree(MB.MeshletBuffer);
-            RHI::Core::DeferredFree(MB.MeshletSphereBuffer);
-            RHI::Core::DeferredFree(MB.MeshletConeBuffer);
-            RHI::Core::DeferredFree(MB.MeshletVertexBuffer);
-            RHI::Core::DeferredFree(MB.MeshletTriangleBuffer);
-
-            MB.MeshletBuffer         = 0;
-            MB.MeshletSphereBuffer   = 0;
-            MB.MeshletConeBuffer     = 0;
-            MB.MeshletVertexBuffer   = 0;
-            MB.MeshletTriangleBuffer = 0;
-            MB.MeshletHeaderBuffer   = 0;
+            RHI::Core::Retire(NewMeshlets);
+            RHI::Core::Retire(NewSpheres);
+            RHI::Core::Retire(NewCones);
+            RHI::Core::Retire(NewVertices);
+            RHI::Core::Retire(NewTriangles);
             return;
         }
+
+        MB.ReleaseGeometryBuffers();
+        MB.MeshletBuffer         = NewMeshlets;
+        MB.MeshletSphereBuffer   = NewSpheres;
+        MB.MeshletConeBuffer     = NewCones;
+        MB.MeshletVertexBuffer   = NewVertices;
+        MB.MeshletTriangleBuffer = NewTriangles;
 
         // Volume upload before the header, because the header publishes its heap slot. A field that
         // failed to allocate leaves the sentinel in place, which is what every SDF shader path gates on.
         CreateDistanceFieldTexture(Resource);
 
+        // The header is allocated ONCE and rewritten in place forever after. Its address is the identity
+        // every cached copy holds (SMeshComponent::CachedMeshletHeaderAddress, FResolvedMesh, the uploaded
+        // instance buffer), so moving it would mean invalidating the resolve cache and re-uploading the
+        // whole retained instance buffer just to publish new contents -- and, until those propagated,
+        // handing the GPU an address that no longer exists.
+        //
+        // A frame still in flight reads the rewritten header and picks the new geometry up early. That is
+        // safe: the new buffers are live, and the old ones are slot-retired so they outlast any command
+        // list already referencing them. Same trade RefreshDistanceField already makes.
         const FMeshletHeaderGPU Header = MakeMeshletHeader(Resource);
-        MB.MeshletHeaderBuffer = CreateAndUpload(&Header, sizeof(FMeshletHeaderGPU), "Mesh.MeshletHeader");
+        if (MB.MeshletHeaderBuffer == 0)
+        {
+            MB.MeshletHeaderBuffer = CreateAndUpload(&Header, sizeof(FMeshletHeaderGPU), "Mesh.MeshletHeader");
+        }
+        else
+        {
+            RHI::UploadBuffer(MB.MeshletHeaderBuffer, &Header, sizeof(FMeshletHeaderGPU));
+        }
     }
 
     bool CMesh::HasDistanceField() const
@@ -394,14 +430,10 @@ namespace Lumina
 
         MeshResources->DistanceField = Move(NewVolume);
 
-        // Republishes the volume through the EXISTING meshlet header, so the header address is unchanged.
-        // Deliberately NOT GenerateGPUBuffers: that rebuilds the whole meshlet set, which moves the header
-        // address that every component has cached in SMeshComponent::CachedMeshletHeaderAddress -- costing
-        // a resolve-cache invalidation and a full re-upload of the retained instance buffer to publish a
-        // volume the existing header can carry on its own.
-        //
-        // (It no longer LEAKS to go the other way -- CreateForResource frees the previous set first -- but
-        // it is still all that work for nothing.)
+        // Republishes the volume through the existing meshlet header. Deliberately NOT GenerateGPUBuffers:
+        // that rebuilds the whole meshlet set to publish a volume the existing header can carry on its own.
+        // (CreateForResource also keeps the header address stable now, so this is a cost argument rather
+        // than a correctness one.)
         MeshBuffers::RefreshDistanceField(*MeshResources);
     }
 

@@ -45,16 +45,45 @@ namespace Lumina
         // so render results are deterministic without ticking the world.
         void SetCameraTransform(const FVector3& Position, const FVector3& Target, float FOVDegrees = 35.0f);
 
-        // Renders one frame and reads back into Thumbnail (256x256 RGBA8).
-        // Returns false if the world or render target is missing.
+        // Renders one frame and reads back into Thumbnail (256x256 RGBA8). BLOCKS until the GPU copy
+        // completes. Kept for the save path, which cannot write the package without the bytes.
         bool Capture(FPackageThumbnail& Thumbnail);
+
+        // Non-blocking capture. BeginCapture records the render + readback, submits, and returns
+        // immediately; poll IsCaptureReady on later frames and then FinishCapture. This is what keeps the
+        // content browser off a synchronous GPU round-trip per thumbnail.
+        //
+        // At most ONE capture may be in flight: the scene is reused, so starting another render would
+        // overwrite the render target the pending copy is still reading from.
+        bool BeginCapture();
+        bool HasPendingCapture() const { return Pending != nullptr; }
+        bool IsCaptureReady() const;
+        bool FinishCapture(FPackageThumbnail& Thumbnail);
+
+        // Block until the pending capture lands, then finish it. For callers that must not lose it.
+        bool WaitAndFinishCapture(FPackageThumbnail& Thumbnail);
+
+        // Drop a pending capture. Still waits for the GPU first -- the readback buffer cannot be freed
+        // while a submitted copy may still write to it.
+        void AbandonCapture();
 
     private:
 
-        TObjectPtr<CWorld>        World;
-        entt::entity              CameraEntity = entt::null;
-        TVector<entt::entity>     SpawnedEntities;
-        uint32                    RTSize       = 512;
-        bool                      bInitialized = false;
+        // GPU-side state of an in-flight capture; RHI types stay out of this header.
+        struct FPendingCapture;
+
+        // Renders one frame and submits the readback copy WITHOUT waiting. Fills Out with the buffer and
+        // the timeline value that signals its completion.
+        bool RecordCapture(FPendingCapture& Out);
+
+        // Maps the finished readback into Thumbnail and frees it. Caller must have waited on the value.
+        bool ResolveCapture(FPendingCapture& In, FPackageThumbnail& Thumbnail);
+
+        TObjectPtr<CWorld>          World;
+        entt::entity                CameraEntity = entt::null;
+        TVector<entt::entity>       SpawnedEntities;
+        TUniquePtr<FPendingCapture> Pending;
+        uint32                      RTSize       = 512;
+        bool                        bInitialized = false;
     };
 }

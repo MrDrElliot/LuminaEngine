@@ -20,7 +20,7 @@ namespace Lumina::RHI
 
     FMaterialManager::~FMaterialManager()
     {
-        Core::DeferredFree(MaterialBuffer);
+        Core::Retire(MaterialBuffer);
         MaterialBuffer = 0;
     }
 

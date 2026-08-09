@@ -923,6 +923,58 @@ namespace Lumina
         }
     }
 
+    void CPrefab::RebuildStableIDLookup()
+    {
+        StableIDLookup.clear();
+        Registry.view<SPrefabComponent>().each([&](entt::entity E, const SPrefabComponent& Comp)
+        {
+            if (!Comp.StableID.IsNone())
+            {
+                // First wins, matching the old scan. A duplicate id is a bug elsewhere; picking the same
+                // entity every time at least keeps the override baseline stable.
+                StableIDLookup.try_emplace(Comp.StableID, E);
+            }
+        });
+    }
+
+    entt::entity CPrefab::FindEntityByStableID(const FName& StableID)
+    {
+        if (StableID.IsNone())
+        {
+            return entt::null;
+        }
+
+        // Every mutation path bumps the generation (the prefab editor's edits, RefreshInstance,
+        // CaptureFromWorld), so this rebuilds exactly when the data it indexes changed. It is a global
+        // counter, so an unrelated prefab's edit costs one extra rebuild -- cheap next to rescanning
+        // every entity per property, which is what the details panel used to do.
+        const uint32 Generation = GetDataGeneration();
+        if (!bStableIDLookupBuilt || StableIDLookupGeneration != Generation)
+        {
+            RebuildStableIDLookup();
+            StableIDLookupGeneration = Generation;
+            bStableIDLookupBuilt     = true;
+        }
+
+        auto It = StableIDLookup.find(StableID);
+        if (It == StableIDLookup.end())
+        {
+            return entt::null;
+        }
+
+        // Verified rather than trusted: a registry edit that skipped the generation bump would otherwise
+        // hand back a recycled entity, and a wrong component is far worse here than a missing one -- this
+        // is the baseline the details panel diffs overrides against.
+        const entt::entity Cached = It->second;
+        if (!Registry.valid(Cached))
+        {
+            return entt::null;
+        }
+
+        const SPrefabComponent* Comp = Registry.try_get<SPrefabComponent>(Cached);
+        return (Comp != nullptr && Comp->StableID == StableID) ? Cached : entt::null;
+    }
+
     void* CPrefab::ResolvePrefabComponentPtr(const FName& StableID, CStruct* Struct)
     {
         if (Struct == nullptr || StableID.IsNone())
@@ -930,14 +982,7 @@ namespace Lumina
             return nullptr;
         }
 
-        entt::entity PrefabE = entt::null;
-        Registry.view<SPrefabComponent>().each([&](entt::entity E, const SPrefabComponent& Comp)
-        {
-            if (PrefabE == entt::null && Comp.StableID == StableID)
-            {
-                PrefabE = E;
-            }
-        });
+        const entt::entity PrefabE = FindEntityByStableID(StableID);
         if (PrefabE == entt::null)
         {
             return nullptr;

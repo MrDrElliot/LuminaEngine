@@ -10,6 +10,7 @@ namespace Lumina
         constexpr float GTileSpacing  = 5.0f;   // gap between cells, horizontal and vertical
         constexpr float GLabelGap     = 4.0f;   // gap between the icon button and its label
         constexpr float GLabelHeight  = 36.0f;  // fixed label band; keeps every row the same height
+        constexpr float GTypeLabelPad = 3.0f;   // breathing room under the type line; band = font + this
         constexpr float GColumnBudget = 8.0f;   // slack for the button's frame padding when packing columns
     }
 
@@ -181,6 +182,37 @@ namespace Lumina
 
         // Reserve the fixed label band so the group (and thus every row) has a uniform height.
         ImGui::Dummy(ImVec2(TileSize, GLabelHeight));
+
+        // Type line. Reserved from the context rather than from whether THIS item has one, so a folder
+        // among assets does not shorten its own cell and break the row grid.
+        if (Context.bShowTypeLabels)
+        {
+            // Band height comes from the font, not a constant: the editor's UI scale changes the glyph
+            // size but would leave a hardcoded band behind, clipping the line it is supposed to hold.
+            // Measured for every item, label or not, so the band stays uniform across a row.
+            ImGuiX::Font::PushFont(ImGuiX::Font::EFont::Small);
+            ImFont*     TypeFont      = ImGui::GetFont();
+            const float TypeFontSize  = ImGui::GetFontSize();
+            const float TypeBandHeight = TypeFontSize + GTypeLabelPad;
+
+            const FStringView TypeLabel = Item->GetTypeLabel();
+            if (!TypeLabel.empty())
+            {
+                const char* TypeBegin = TypeLabel.data();
+                const char* TypeEnd   = TypeLabel.data() + TypeLabel.size();
+                const ImVec2 TypeSize = ImGui::CalcTextSize(TypeBegin, TypeEnd, false, TileSize);
+
+                const ImVec2 TypePos(LabelPos.x + (TileSize - std::min(TypeSize.x, TileSize)) * 0.5f,
+                                     LabelPos.y + GLabelHeight);
+                const ImVec4 TypeClip(LabelPos.x, TypePos.y, LabelPos.x + TileSize, TypePos.y + TypeBandHeight);
+
+                ImGui::GetWindowDrawList()->AddText(TypeFont, TypeFontSize, TypePos,
+                    ImGui::GetColorU32(ImVec4(0.52f, 0.55f, 0.62f, 1.0f)), TypeBegin, TypeEnd, TileSize, &TypeClip);
+            }
+            ImGuiX::Font::PopFont();
+
+            ImGui::Dummy(ImVec2(TileSize, TypeBandHeight));
+        }
 
         ImGui::EndGroup();
 

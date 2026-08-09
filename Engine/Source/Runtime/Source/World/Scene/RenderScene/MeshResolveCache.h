@@ -26,6 +26,7 @@ namespace Lumina
         const FShaderEntry* VisBufferMeshShaderMasked  = nullptr;
         const FShaderEntry* MaskedVisBufferPixelShader = nullptr;
         const FShaderEntry* DeferredShader             = nullptr;
+        const FShaderEntry* MomentPixelShader          = nullptr;
 
         FDrawBatchKey   BatchKey    = {};
 

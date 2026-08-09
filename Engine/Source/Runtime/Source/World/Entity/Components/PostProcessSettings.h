@@ -29,7 +29,7 @@ namespace Lumina
 
         /** Tone mapper applied after grading. */
         PROPERTY(Editable, Category = "Post Process")
-        EToneMapper ToneMapper = EToneMapper::ACES;
+        EToneMapper ToneMapper = EToneMapper::AGX;
 
 
         /** Exposure compensation in stops (EV); +1 doubles, -1 halves. With auto-exposure on, this biases the adapted result. */

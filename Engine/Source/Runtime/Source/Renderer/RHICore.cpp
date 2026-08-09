@@ -24,10 +24,17 @@ namespace Lumina::RHI::Core
         TAtomic<uint64> Cursor{0};
     };
 
-    struct FPendingFree
+    // One retirement queue per frame slot. Kinds rather than a queue each, so there is exactly one place
+    // in the engine that destroys a GPU resource and one invariant to check.
+    struct FRetireItem
     {
-        GPUPtr Memory;
-        uint32 TicksRemaining;
+        enum class EKind : uint8 { Buffer, Texture, SampledSlot, StorageSlot };
+
+        EKind     Kind        = EKind::Buffer;
+        uint32    ExtraCycles = 0;
+        GPUPtr    Memory      = 0;
+        FTextureH Texture     = {};
+        uint32    Slot        = kInvalidHeapSlot;
     };
 
     struct FCoreState
@@ -49,13 +56,15 @@ namespace Lumina::RHI::Core
         TAtomic<uint32>     CurrentSlot{0};
         FMutex              SubmitMutex;
 
-        TVector<FPendingFree> PendingFrees;
-        FMutex                PendingFreeMutex;
+        TVector<FRetireItem> RetireQueues[kFramesInFlight];
+        FMutex               RetireMutex;
 
         bool                bInitialized = false;
     };
 
     static FCoreState GCore;
+
+    static void DestroyRetired(const FRetireItem& Item);
 
     void Initialize()
     {
@@ -141,14 +150,18 @@ namespace Lumina::RHI::Core
         Upload::Shutdown();
         Textures::Shutdown();
 
-        // Device is idle: flush every deferred buffer free immediately.
+        // Device is idle, so every hold has expired by definition: destroy both slots outright, ignoring
+        // ExtraCycles. Runs before the heap is freed below, so slot retirements still resolve.
         {
-            FScopeLock Lock(GCore.PendingFreeMutex);
-            for (const FPendingFree& Pending : GCore.PendingFrees)
+            FScopeLock Lock(GCore.RetireMutex);
+            for (TVector<FRetireItem>& Queue : GCore.RetireQueues)
             {
-                RHI::Free(Pending.Memory);
+                for (const FRetireItem& Item : Queue)
+                {
+                    DestroyRetired(Item);
+                }
+                Queue.clear();
             }
-            GCore.PendingFrees.clear();
         }
 
         for (FTransientSlice& Slice : GCore.Slices)
@@ -172,21 +185,122 @@ namespace Lumina::RHI::Core
         GCore.bInitialized = false;
     }
 
-    void DeferredFree(GPUPtr Memory, uint32 ExtraFrames)
+    // The single point in the engine that destroys a GPU resource.
+    static void DestroyRetired(const FRetireItem& Item)
+    {
+        switch (Item.Kind)
+        {
+        case FRetireItem::EKind::Buffer:
+            RHI::Free(Item.Memory);
+            break;
+        case FRetireItem::EKind::Texture:
+            RHI::FreeH(Item.Texture);
+            break;
+        case FRetireItem::EKind::SampledSlot:
+            // After Shutdown the heap itself is gone, so its slots died with it.
+            if (GCore.bInitialized) { RHI::HeapFreeTexture(GCore.GlobalHeap, Item.Slot); }
+            break;
+        case FRetireItem::EKind::StorageSlot:
+            if (GCore.bInitialized) { RHI::HeapFreeRWTexture(GCore.GlobalHeap, Item.Slot); }
+            break;
+        }
+    }
+
+    static void PushRetire(const FRetireItem& Item)
+    {
+        // Asset destructors can outlive Core::Shutdown. With no frames in flight there is nothing to wait
+        // for, so destroy immediately rather than queueing into a drain that will never run again.
+        if (!GCore.bInitialized)
+        {
+            DestroyRetired(Item);
+            return;
+        }
+
+        const uint32 Slot = GCore.CurrentSlot.load(std::memory_order_acquire);
+
+        FScopeLock Lock(GCore.RetireMutex);
+        GCore.RetireQueues[Slot].push_back(Item);
+    }
+
+    // Called from BeginFrame once this slot's queue timelines have been waited.
+    static void DrainRetireQueue(uint32 Slot)
+    {
+        TVector<FRetireItem> Ready;
+        {
+            FScopeLock Lock(GCore.RetireMutex);
+            TVector<FRetireItem>& Queue = GCore.RetireQueues[Slot];
+            for (size_t i = 0; i < Queue.size(); )
+            {
+                if (Queue[i].ExtraCycles > 0)
+                {
+                    --Queue[i].ExtraCycles;
+                    ++i;
+                    continue;
+                }
+                Ready.push_back(Queue[i]);
+                Queue[i] = Queue.back();
+                Queue.pop_back();
+            }
+        }
+
+        // Outside the lock: the destroy paths take their own backend locks.
+        for (const FRetireItem& Item : Ready)
+        {
+            DestroyRetired(Item);
+        }
+    }
+
+    void Retire(GPUPtr Memory, uint32 ExtraCycles)
     {
         if (Memory == 0)
         {
             return;
         }
 
-        if (!GCore.bInitialized)
+        FRetireItem Item;
+        Item.Kind        = FRetireItem::EKind::Buffer;
+        Item.Memory      = Memory;
+        Item.ExtraCycles = ExtraCycles;
+        PushRetire(Item);
+    }
+
+    void Retire(FTextureH Texture)
+    {
+        if (!IsValid(Texture))
         {
-            RHI::Free(Memory);
             return;
         }
 
-        FScopeLock Lock(GCore.PendingFreeMutex);
-        GCore.PendingFrees.push_back(FPendingFree{ Memory, kFramesInFlight + ExtraFrames });
+        FRetireItem Item;
+        Item.Kind    = FRetireItem::EKind::Texture;
+        Item.Texture = Texture;
+        PushRetire(Item);
+    }
+
+    void RetireSampledSlot(uint32 HeapSlot)
+    {
+        if (HeapSlot == kInvalidHeapSlot)
+        {
+            return;
+        }
+
+        FRetireItem Item;
+        Item.Kind = FRetireItem::EKind::SampledSlot;
+        Item.Slot = HeapSlot;
+        PushRetire(Item);
+    }
+
+    void RetireStorageSlot(uint32 HeapSlot)
+    {
+        if (HeapSlot == kInvalidHeapSlot)
+        {
+            return;
+        }
+
+        FRetireItem Item;
+        Item.Kind = FRetireItem::EKind::StorageSlot;
+        Item.Slot = HeapSlot;
+        PushRetire(Item);
     }
 
     void BeginFrame(uint32 SlotIndex)
@@ -209,6 +323,11 @@ namespace Lumina::RHI::Core
             }
         }
 
+        // The waits above are the entire lifetime contract: everything recorded into this slot has now
+        // retired on the GPU. Destroy this slot's retired resources here, and nowhere else.
+        DrainRetireQueue(Slot);
+        RHI::RetireSlot(Slot);
+
         Upload::DrainSliceWriters(Slot);
 
         for (FCmdListH CommandList : GCore.SlotCommandLists[Slot])
@@ -217,26 +336,9 @@ namespace Lumina::RHI::Core
         }
         GCore.SlotCommandLists[Slot].clear();
 
-        Textures::Tick();
-        RHI::TickFrame();
-
-        {
-            FScopeLock Lock(GCore.PendingFreeMutex);
-            for (size_t i = 0; i < GCore.PendingFrees.size(); )
-            {
-                FPendingFree& Pending = GCore.PendingFrees[i];
-                if (Pending.TicksRemaining > 0)
-                {
-                    --Pending.TicksRemaining;
-                    ++i;
-                    continue;
-                }
-
-                RHI::Free(Pending.Memory);
-                GCore.PendingFrees[i] = GCore.PendingFrees.back();
-                GCore.PendingFrees.pop_back();
-            }
-        }
+        // Dedicated staging blocks the flush below reads. Released after CurrentSlot becomes Slot, so they
+        // land on THIS slot's retire queue -- the one gated by the upload submit's own timeline value.
+        TVector<GPUPtr> UploadStaging;
 
         {
             GCore.PendingTransferWait = 0;
@@ -252,7 +354,7 @@ namespace Lumina::RHI::Core
 
             uint32 BufferSlices = 0;
             uint32 ImageSlices  = 0;
-            const uint32 Used = Upload::FlushSplit(BufferCL, ImageCL, &BufferSlices, &ImageSlices);
+            const uint32 Used = Upload::FlushSplit(BufferCL, ImageCL, &BufferSlices, &ImageSlices, UploadStaging);
 
             auto SubmitUpload = [&](EQueueType Queue, FCmdListH CL, uint32 SliceMask) -> uint64
             {
@@ -314,7 +416,7 @@ namespace Lumina::RHI::Core
 
             if (NewCapacity != Slice.Capacity)
             {
-                DeferredFree(Slice.Gpu);
+                Retire(Slice.Gpu);
                 Slice.Gpu = Malloc(NewCapacity, kDefaultAlign, EMemoryType::CPUWrite);
                 Slice.Cpu = static_cast<std::byte*>(ToHost(Slice.Gpu));
                 Slice.Capacity = NewCapacity;
@@ -324,6 +426,18 @@ namespace Lumina::RHI::Core
         }
 
         GCore.CurrentSlot.store(Slot, std::memory_order_release);
+
+        // Only now, with CurrentSlot == Slot, does Retire queue onto the slot whose SlotWaitValue the
+        // upload above just set. Retiring before this point put the staging on the PREVIOUS slot's queue,
+        // which is drained after waiting a timeline value OLDER than that submit -- a monotonic timeline
+        // never waits forward, so the block could be freed while its copy was still in flight. The async
+        // transfer queue made that window wide enough to fault the copy engine on a recycled address.
+        // DrainRetireQueue(Slot) already ran above, so these survive until the next visit to this slot.
+        for (GPUPtr Staging : UploadStaging)
+        {
+            Retire(Staging);
+        }
+
         Upload::BeginSlot(Slot);
     }
 
@@ -427,7 +541,7 @@ namespace Lumina::RHI::Core
         if (RawOffset + Padded > Slice.Capacity)
         {
             const GPUPtr Mem = Malloc(Size, Alignment, EMemoryType::CPUWrite);
-            DeferredFree(Mem);
+            Retire(Mem);
             return FTransientAlloc{ .Cpu = ToHost(Mem), .Gpu = Mem };
         }
 

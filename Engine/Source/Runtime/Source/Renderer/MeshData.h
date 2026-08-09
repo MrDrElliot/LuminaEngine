@@ -192,9 +192,6 @@ namespace Lumina
             RHI::GPUPtr MeshletTriangleBuffer = 0;
             RHI::GPUPtr MeshletHeaderBuffer   = 0;
 
-            // Extra frames beyond the GPU pipeline depth.
-            static constexpr uint32 kResolveLagFrames = 2;
-
             RHI::FManagedTexture DistanceFieldTexture;
 
             FMeshBuffers()                               = default;
@@ -207,7 +204,7 @@ namespace Lumina
             {
                 if (this != &Other)
                 {
-                    ReleaseBuffers();
+                    ReleaseAll();
                     RHI::Textures::Release(DistanceFieldTexture);
                     Steal(Other);
                 }
@@ -216,25 +213,38 @@ namespace Lumina
 
             ~FMeshBuffers()
             {
-                ReleaseBuffers();
+                ReleaseAll();
                 RHI::Textures::Release(DistanceFieldTexture);
             }
 
-            void ReleaseBuffers()
+            /** Retire the five geometry buffers, leaving the header ALLOCATION in place.
+             *
+             *  The header address is long-lived identity, not just a pointer: SMeshComponent's cached
+             *  copy, FResolvedMesh and the already-uploaded retained instance buffer all hold it, and
+             *  none of them is told synchronously when a mesh rebuilds. Keeping the allocation and
+             *  rewriting its contents means a rebuild invalidates none of them. Moving it is what
+             *  RefreshDistanceField exists to avoid. */
+            void ReleaseGeometryBuffers()
             {
-                RHI::Core::DeferredFree(MeshletBuffer,         kResolveLagFrames);
-                RHI::Core::DeferredFree(MeshletSphereBuffer,   kResolveLagFrames);
-                RHI::Core::DeferredFree(MeshletConeBuffer,     kResolveLagFrames);
-                RHI::Core::DeferredFree(MeshletVertexBuffer,   kResolveLagFrames);
-                RHI::Core::DeferredFree(MeshletTriangleBuffer, kResolveLagFrames);
-                RHI::Core::DeferredFree(MeshletHeaderBuffer,   kResolveLagFrames);
+                RHI::Core::Retire(MeshletBuffer);
+                RHI::Core::Retire(MeshletSphereBuffer);
+                RHI::Core::Retire(MeshletConeBuffer);
+                RHI::Core::Retire(MeshletVertexBuffer);
+                RHI::Core::Retire(MeshletTriangleBuffer);
 
                 MeshletBuffer         = 0;
                 MeshletSphereBuffer   = 0;
                 MeshletConeBuffer     = 0;
                 MeshletVertexBuffer   = 0;
                 MeshletTriangleBuffer = 0;
-                MeshletHeaderBuffer   = 0;
+            }
+
+            /** Full teardown, header included. Destruction only -- a REBUILD must never move the header. */
+            void ReleaseAll()
+            {
+                ReleaseGeometryBuffers();
+                RHI::Core::Retire(MeshletHeaderBuffer);
+                MeshletHeaderBuffer = 0;
             }
 
         private:

@@ -50,6 +50,14 @@ namespace Lumina
         PROPERTY(Editable, Category = "Appearance", ClampMin = 0.0f, ClampMax = 3.0f, NoDrag, Delta = 0.1f)
         float UIScale = 0.0f;
         
+        /** Frame-rate cap applied only while the editor window is minimized. A minimized editor skips
+            its whole frame body but still loops, so it keeps a core busy drawing nothing; capping it
+            hands that time back to whatever you actually switched to.
+            0 = unset, meaning the normal Core.MaxFPS cap keeps applying. Never raises the rate above
+            the foreground cap, so a value larger than Core.MaxFPS simply has no effect. */
+        PROPERTY(Editable, Category = "Performance", ClampMin = 0, ClampMax = 240)
+        int32 MaxBackgroundFPS = 0;
+
         /** Chord that recompiles + hot-reloads all C# scripts. */
         PROPERTY(Editable, Category = "Hotkeys")
         SKey ReloadScriptsHotkey = SKey(EKey::B, /*Ctrl*/ true, /*Shift*/ true);

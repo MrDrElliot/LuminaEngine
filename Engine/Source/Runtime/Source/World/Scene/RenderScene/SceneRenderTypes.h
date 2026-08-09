@@ -83,8 +83,8 @@ namespace Lumina
         MaterialID          = 16,
         TriangleID          = 17,
         OITAccumColor       = 18,
-        OITAccumWeight      = 19,
-        OITRevealage        = 20,
+        OITMoments          = 19,
+        OITTransmittance    = 20,
         OITLayerCount       = 21,
         ProbeInfluence      = 22,
         ProbeRadiance       = 23,
@@ -114,8 +114,8 @@ namespace Lumina
             case ERenderSceneDebugFlags::MaterialID:        return "Material ID";
             case ERenderSceneDebugFlags::TriangleID:        return "Triangle ID";
             case ERenderSceneDebugFlags::OITAccumColor:     return "OIT Accum Color";
-            case ERenderSceneDebugFlags::OITAccumWeight:    return "OIT Accum Weight";
-            case ERenderSceneDebugFlags::OITRevealage:      return "OIT Revealage";
+            case ERenderSceneDebugFlags::OITMoments:        return "OIT Moments";
+            case ERenderSceneDebugFlags::OITTransmittance:  return "OIT Transmittance";
             case ERenderSceneDebugFlags::OITLayerCount:     return "OIT Layer Count";
             case ERenderSceneDebugFlags::ProbeInfluence:    return "Reflection Probe Influence";
             case ERenderSceneDebugFlags::ProbeRadiance:     return "Reflection Probe Radiance";
@@ -272,6 +272,25 @@ namespace Lumina
             }
         }
         RHI::FreeH(Image.Texture);
+        Image = {};
+    }
+
+    // Frame-deferred counterpart to ReleaseSceneImage: hands the texture and its heap slots to the RHI's
+    // single retirement queue, which destroys them once the GPU has finished with the slot they were
+    // retired in. Clears the source, so ownership transfers rather than being shared.
+    inline void RetireSceneImage(FSceneImage& Image)
+    {
+        if (!Image.IsValid())
+        {
+            Image = {};
+            return;
+        }
+        RHI::Core::RetireSampledSlot(Image.SampledSlot);
+        for (uint32 Slot : Image.MipUAVSlots)
+        {
+            RHI::Core::RetireStorageSlot(Slot);
+        }
+        RHI::Core::Retire(Image.Texture);
         Image = {};
     }
 
@@ -1045,10 +1064,10 @@ namespace Lumina
         FCullData       CullData;
         FParallaxSettings ParallaxSettings;
 
-        uint32          ShadowMaskIndex = ~0u;
-        uint32          _ShadowPad0     = 0;
-        uint32          _ShadowPad1     = 0;
-        uint32          _ShadowPad2     = 0;
+        uint32          ShadowMaskIndex   = ~0u;
+        uint32          MomentZerothIndex = ~0u;
+        uint32          MomentsIndex      = ~0u;
+        uint32          _ShadowPad2       = 0;
     };
 
     struct FMeshPass

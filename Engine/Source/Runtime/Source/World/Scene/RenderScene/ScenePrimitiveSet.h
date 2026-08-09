@@ -112,6 +112,7 @@ namespace Lumina
             const FShaderEntry*             VisBufferMeshShader = nullptr;
             const FShaderEntry*             VisBufferMeshShaderMasked = nullptr;
             const FShaderEntry*             MaskedVisBufferPixelShader = nullptr;
+            const FShaderEntry*             MomentPixelShader = nullptr;
             // No material identity here on purpose: a batch is a PIPELINE, and one pipeline serves every
             // material that compiles to it. The material is carried per instance
             // (FGPUInstance::MaterialIndex) and per deferred slot (DeferredMaterials below).

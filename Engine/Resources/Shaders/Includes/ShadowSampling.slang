@@ -112,6 +112,13 @@ static const float PCSS_MaxFilterTexels     = 4.0;     // ~sqrt(SHADOW_MAX_SAMPL
 static const float PCSS_BlockerDepthBias    = 0.0004;  // Bias for blocker classification
 static const float PCSS_MaxPlaneDepthBias   = 0.01;    // Cap on the receiver-plane prediction (silhouette-edge guard)
 
+// The inline cascade path is PIXEL-ONLY: its receiver-plane depth bias differentiates the shadow-space
+// projection with ddx/ddy, which does not exist outside a rasterizer quad. A compute lane reads
+// SampleShadowMask instead -- ShadowMaskPixel.slang runs exactly this code over the opaque depth buffer.
+// Guarded rather than left to dead-code elimination: an OpDPdx that survives into a compute entry point is
+// invalid SPIR-V, and that failure surfaces as a driver-specific crash rather than a compile error.
+#ifndef SHADING_COMPUTE
+
 // PCSS-filtered sample of one directional cascade. Returns 1.0 (and Inside=false) when the fragment
 // is outside the cascade's projected range so the caller can fall back to another cascade or fully-lit.
 float SampleDirectionalCascade(FLight Light, int CascadeIndex, float3 FragmentPos, float3 Normal, float3 ToLight, float Bias, float2 ScreenPos, out bool Inside)
@@ -335,3 +342,5 @@ float ComputeDirectionalShadow(FLight Light, float3 FragmentPos, float3 Normal, 
 
     return ShadowA;
 }
+
+#endif // !SHADING_COMPUTE

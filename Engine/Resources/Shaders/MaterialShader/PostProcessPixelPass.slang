@@ -53,6 +53,10 @@ float4 FragmentMain(PSInput Input) : SV_Target0
     float4 WorldTangent  = float4(1.0, 0.0, 0.0, 1.0);
     float2 UV0_DDX       = ddx(UV0);
     float2 UV0_DDY       = ddy(UV0);
+    float3 WorldPosition_DDX = ddx(WorldPosition);
+    float3 WorldPosition_DDY = ddy(WorldPosition);
+    float4 VertexColor_DDX   = ddx(VertexColor);
+    float4 VertexColor_DDY   = ddy(VertexColor);
 
     $MATERIAL_INPUTS
 

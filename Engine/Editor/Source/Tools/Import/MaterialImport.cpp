@@ -227,14 +227,14 @@ namespace Lumina
         using namespace Import::Mesh;
 
         TVector<CMaterialInstance*> GenerateMaterials(
-            const FMeshImportData&                      Data,
-            const FFixedString&                         MaterialsDir,
-            const FFixedString&                         BaseName,
-            const THashMap<FFixedString, CTexture*>&    TextureMap,
-            TVector<CObject*>&                          OutCreated)
+            TSpan<const FMeshImportMaterial>    SourceMaterials,
+            TSpan<CTexture* const>              ImageAssets,
+            const FFixedString&                 MaterialsDir,
+            const FFixedString&                 BaseName,
+            TVector<CObject*>&                  OutCreated)
         {
             TVector<CMaterialInstance*> Instances;
-            if (Data.Materials.empty())
+            if (SourceMaterials.empty())
             {
                 return Instances;
             }
@@ -324,6 +324,25 @@ namespace Lumina
                     return nullptr;
                 }
 
+                // A translucent master is the most expensive render state this engine has, and nothing
+                // downstream ever says so: classification is purely EBlendMode, so cutout foliage authored
+                // with alpha-blend imports silently into MBOIT and pays TWO full geometry passes (moments,
+                // then forward shading) with no occlusion culling, instead of one VisBuffer pass that clips
+                // in a near-empty geometry PS and shades once per pixel deferred.
+                //
+                // This is not an importer bug -- glTF BLEND legitimately means blend, and Blender's default
+                // for an alpha'd Principled BSDF is Alpha Blend, so foliage arrives tagged that way. It is a
+                // trap worth naming at the one point where the choice is made. Warned per MASTER (one per
+                // distinct render state), not per material instance, so a scene of foliage warns once.
+                if (Blend == EBlendMode::Translucent)
+                {
+                    LOG_WARN("[Import] '{}' imported as TRANSLUCENT (source alpha mode = BLEND). Translucency "
+                             "runs two full geometry passes through MBOIT and cannot be occlusion-culled. If "
+                             "this is cutout geometry (foliage, fences, decals on cards), set Blend Mode to "
+                             "Masked -- and tick Two Sided, which Translucent gets implicitly and Masked does not.",
+                             Master->GetName());
+                }
+
                 Master->MaterialType  = EMaterialType::PBR;
                 Master->BlendMode     = Blend;
                 Master->ShadingModel  = Shading;
@@ -365,21 +384,11 @@ namespace Lumina
                 return Master;
             };
 
-            auto ResolveTexture = [&](const FFixedString& Key) -> CTexture*
-            {
-                if (Key.empty())
-                {
-                    return nullptr;
-                }
-                auto It = TextureMap.find(Key);
-                return (It != TextureMap.end()) ? It->second : nullptr;
-            };
+            Instances.resize(SourceMaterials.size(), nullptr);
 
-            Instances.resize(Data.Materials.size(), nullptr);
-
-            for (size_t i = 0; i < Data.Materials.size(); ++i)
+            for (size_t i = 0; i < SourceMaterials.size(); ++i)
             {
-                const FMeshImportMaterial& Src = Data.Materials[i];
+                const FMeshImportMaterial& Src = SourceMaterials[i];
 
                 CMaterial* Master = GetMaster(Src);
                 if (Master == nullptr)
@@ -405,29 +414,30 @@ namespace Lumina
                 Instance->SetScalarValue("RoughnessFactor", Src.RoughnessFactor);
                 Instance->SetVectorValue("EmissiveColor", FVector4(Src.EmissiveColor.x, Src.EmissiveColor.y, Src.EmissiveColor.z, 1.0f));
 
-                // Binds a channel's texture; a non-empty key that fails to resolve warns (the usual cause of a
-                // flat/untextured import). Empty key = the source material has no such map (uses neutral default).
-                auto BindTexture = [&](const FName& Param, const FFixedString& Key)
+                // A channel with no image keeps the neutral default; an image that failed to cook warns,
+                // since that is the usual cause of a flat/untextured import.
+                auto BindTexture = [&](const FName& Param, int32 ImageIndex)
                 {
-                    if (Key.empty())
+                    if (ImageIndex < 0)
                     {
                         return;
                     }
-                    if (CTexture* Tex = ResolveTexture(Key))
+                    CTexture* Texture = ((size_t)ImageIndex < ImageAssets.size()) ? ImageAssets[ImageIndex] : nullptr;
+                    if (Texture != nullptr)
                     {
-                        Instance->SetTextureValue(Param, Tex);
+                        Instance->SetTextureValue(Param, Texture);
                     }
                     else
                     {
-                        LOG_WARN("[MaterialImport] '{}' texture '{}' -> '{}' did not resolve; using neutral default.", Src.Name, Param, Key);
+                        LOG_WARN("[MaterialImport] '{}' texture '{}' (image {}) did not resolve; using neutral default.", Src.Name, Param, ImageIndex);
                     }
                 };
 
-                BindTexture("BaseColorTexture", Src.BaseColorTexture);
-                BindTexture("MetallicRoughnessTexture", Src.MetallicRoughnessTexture);
-                BindTexture("NormalTexture", Src.NormalTexture);
-                BindTexture("EmissiveTexture", Src.EmissiveTexture);
-                BindTexture("OcclusionTexture", Src.OcclusionTexture);
+                BindTexture("BaseColorTexture", Src.BaseColorImage);
+                BindTexture("MetallicRoughnessTexture", Src.MetallicRoughnessImage);
+                BindTexture("NormalTexture", Src.NormalImage);
+                BindTexture("EmissiveTexture", Src.EmissiveImage);
+                BindTexture("OcclusionTexture", Src.OcclusionImage);
 
                 if (ToBlendMode(Src.AlphaMode) != EBlendMode::Opaque)
                 {

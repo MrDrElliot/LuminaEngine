@@ -24,16 +24,19 @@ namespace Lumina::VFS
     
     ENUM_CLASS_FLAGS(EFileFlags);
     
+    // Paths are heap strings, not fixed strings. A pair of 255-char inline buffers made this ~620 bytes,
+    // and consumers keep them in bulk -- one per content-browser tile, one per file the cooker walks --
+    // so the inline capacity cost far more than the allocation it was avoiding.
     struct FFileInfo
     {
         FString         Name;
-        
-        FFixedString    VirtualPath;
-        FFixedString    PathSource;
-        
+
+        FString         VirtualPath;
+        FString         PathSource;
+
         int64           LastModifyTime;
         EFileFlags      Flags;
-        
+
         
         NODISCARD FString GetExt() const
         {

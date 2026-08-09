@@ -1,17 +1,26 @@
 #include "Includes/SurfaceShading.slang"
+#ifdef TRANSLUCENT
+#include "Includes/MomentOIT.slang"
+#endif
 
-// Forward base-pass pixel shader. The fragment input is the shared FBaseVertexOutput (MeshletGeometry.slang),
-// produced identically by the VS-emulation and mesh-shader geometry paths. All lighting lives in
-// ShadeSurface (SurfaceShading.slang), shared with the deferred VisBuffer material pass so the two can't
-// drift; this file only reconstructs the material-graph locals, runs the pixel graph, and packs output.
+// Forward base-pass pixel shader. The fragment input is the shared FBaseVertexOutput
+// (MeshletGeometry.slang), produced identically by the VS-emulation and mesh-shader geometry paths. All
+// lighting lives in ShadeSurface, shared with the deferred VisBuffer material pass so the two can't drift.
+//
+// Translucent materials compile twice for MBOIT (Includes/MomentOIT.slang): MOMENT_GENERATION runs the
+// opacity graph alone and accumulates moments; the default variant shades, weighted by them.
 
 struct PSOutput
 {
-    #ifdef TRANSLUCENT
+    #if defined(TRANSLUCENT) && defined(MOMENT_GENERATION)
+
+    float   MomentB0    : SV_Target0;
+    float4  MomentB     : SV_Target1;
+
+    #elif defined(TRANSLUCENT)
 
     float4  Accum       : SV_Target0;
-    float   Revealage   : SV_Target1;
-    uint    Picker      : SV_Target2;
+    uint    Picker      : SV_Target1;
 
     #else
 
@@ -21,19 +30,17 @@ struct PSOutput
     #endif
 };
 
-// Masked materials run the alpha-test `discard` (inside ShadeSurface), which MUST execute before the depth
-// write -- so the masked variant omits early depth tests. With [earlydepthstencil] the depth write happens
-// before the shader, so a discarded cutout texel would still write depth (corrupting holes for fog, the HZB,
-// decals, etc.). Opaque/non-masked keeps forced early-Z over the heavy PBR shader; its discard branch is
-// never taken at runtime, so the early write is always correct.
+// Masked materials `discard` inside ShadeSurface, which must run before the depth write -- [earlydepthstencil]
+// would have already committed depth for a cutout texel, corrupting holes for fog, the HZB and decals.
+// Opaque keeps forced early-Z over the heavy PBR shader.
 #ifndef MASKED
 [earlydepthstencil]
 #endif
 [shader("fragment")]
 PSOutput FragmentMain(FBaseVertexOutput Input)
 {
-    // Per-instance constants come in flat from the VS -- no per-pixel 128B FGPUInstance global load.
-    // These locals are the names the material pixel graph codegen reads.
+    // Per-instance constants arrive flat from the VS -- no per-pixel 128B FGPUInstance load. These locals
+    // are the names the material pixel graph codegen reads.
     uint EntityID           = Input.EntityID;
     uint MaterialIndex      = Input.MaterialIndex;
     bool bReceiveShadow     = (Input.InstanceFlags & (uint)EInstanceFlags::ReceiveShadow) != 0u;
@@ -43,75 +50,90 @@ PSOutput FragmentMain(FBaseVertexOutput Input)
     float2 UV0              = Input.UV;
     float4 VertexColor      = Input.FragColor;
 
-    // Tangent frame + UV gradients. Part of the graph local contract that every material template
-    // declares, for nodes that ray-march in tangent space or pick their own mip -- see
-    // Includes/ParallaxOcclusion.slang. Raster passes have a real 2x2 quad, so implicit derivatives
-    // are correct here; the deferred lane substitutes analytic ones.
+    // Tangent frame + UV gradients: part of the graph local contract, for nodes that ray-march in tangent
+    // space or pick their own mip. Raster passes have a real 2x2 quad; the deferred lane substitutes
+    // analytic derivatives.
     // (Do NOT write the material token in a comment: the compiler substitutes the FIRST occurrence.)
     float4 WorldTangent     = Input.TangentWS;
     float2 UV0_DDX          = ddx(UV0);
     float2 UV0_DDY          = ddy(UV0);
+    float3 WorldPosition_DDX = ddx(WorldPosition);
+    float3 WorldPosition_DDY = ddy(WorldPosition);
+    float4 VertexColor_DDX   = ddx(VertexColor);
+    float4 VertexColor_DDY   = ddy(VertexColor);
 
     $MATERIAL_INPUTS
 
-    FShadedSurface Shaded = ShadeSurface(Input, Material);
-
     PSOutput Output;
+
+#if defined(TRANSLUCENT) && defined(MOMENT_GENERATION)
+
+    float Coverage = ComputeSurfaceCoverage(Input, Material);
+
+    // Zero absorbance contributes nothing; discarding keeps the ROP traffic off two wide moment targets.
+    // Safe under [earlydepthstencil] because the translucent passes only read depth.
+    if (Coverage < 1e-4)
+    {
+        discard;
+    }
+
+    // FragPos is view space (+Z forward), so its z is the linear depth the shading pass also warps.
+    float GenViewZ = max(abs(Input.FragPos.z), GetNearPlane());
+    MomentGenerate(MomentWarpDepth(GenViewZ), MomentAbsorbance(Coverage), Output.MomentB0, Output.MomentB);
+
+    return Output;
+
+#else
+
+    FShadedSurface Shaded = ShadeSurface(Input, Material);
 
 #ifdef TRANSLUCENT
 
-    // WBOIT weight (McGuire & Bavoil 2013, eq. 9), driven by LINEAR view depth so nearer fragments
-    // dominate the average. SV_Position.z is reverse-Z and non-linear -- the old formula built on it
-    // both inverted the ordering and saturated its own clamp, degenerating into an unweighted average
-    // (the classic uniform milky look). FragPos is view space (+Z forward), so its z is the linear depth.
-    float ViewZ  = max(abs(Input.FragPos.z), GetNearPlane());
-    float Z5     = ViewZ * (1.0 / 5.0);
-    float Z200   = ViewZ * (1.0 / 200.0);
-    float Z200_2 = Z200 * Z200;
-
-    // Coverage = opacity plus the Fresnel energy the surface reflects away; what glass mirrors never
-    // reaches the background, so stacked glasses attenuate each other's reflections instead of summing
-    // them toward white. For a single surface the resolve still reconstructs exactly Color * a +
-    // Reflection over Background * (1 - Coverage).
+    // Opacity plus the Fresnel energy the surface reflects away: what glass mirrors never reaches the
+    // background either. Mirrors ComputeSurfaceCoverage, which fed the moments.
     float Coverage = saturate(Shaded.Alpha + (1.0 - Shaded.Alpha) * Shaded.ReflectionCoverage);
 
-    // Weight clamp is 3e2 (not the paper's 3e3): accum is RGBA16F, and weighted HDR radiance summed
-    // over a few layers must stay under fp16 max (65504) or pixels flip through the resolve's isinf
-    // fallback as the camera moves (heavy flicker).
-    float Weight = Coverage * clamp(10.0 / (1e-5 + Z5 * Z5 + Z200_2 * Z200_2 * Z200_2), 1e-2, 3e2);
+    // Sentinel-guarded like SampleShadowMask: indexing the bindless table with ~0u is a device loss, not
+    // an artifact. MakeSecondaryViewGlobals publishes these for captures and probe bakes too.
+    uint  ZerothIndex   = Scene().MomentZerothIndex;
+    float Transmittance = 1.0;
+    if (ZerothIndex != 0xFFFFFFFFu)
+    {
+        int2  MomentCoords = int2(Input.Position.xy);
+        float B0           = gTextures2D[ZerothIndex].Load(int3(MomentCoords, 0)).r;
+        if (B0 >= MOMENT_MIN_ABSORBANCE)
+        {
+            float4 B      = gTextures2D[Scene().MomentsIndex].Load(int3(MomentCoords, 0));
+            float  ViewZ  = max(abs(Input.FragPos.z), GetNearPlane());
+            Transmittance = MomentTransmittanceAtDepth(B0, B, MomentWarpDepth(ViewZ));
+        }
+    }
 
-    // Transmission is premultiplied by alpha; Reflection stays full strength (glass attenuates what's
-    // BEHIND it, not its own specular). Sanitize kills NaN/INF from shading before they poison the
-    // additive accum (the resolve's isinf() does NOT catch NaN).
-    //
-    // The per-surface radiance (Premultiplied / Coverage) is Karis range-compressed (FireflyTonemap)
-    // BEFORE weighting and un-compressed after the resolve's ratio. Two properties this buys:
-    //  1. fp16 overflow is impossible with no per-fragment cap (compressed values are <= ~1, so 100+
-    //     layers fit under 65504). A cap on rgb ALONE is poison: it pins the numerator while the
-    //     weight-sum denominator keeps moving, so ANY per-frame weight variation strobes bright pixels.
-    //  2. rgb and alpha now carry the IDENTICAL Coverage * Weight factor, so the resolved ratio is
-    //     exactly the compressed radiance -- the displayed color is invariant to uniform per-fragment
-    //     weight wobble by construction.
+    // Transmission is premultiplied by alpha; Reflection stays full strength (glass attenuates what is
+    // behind it, not its own specular). Sanitize before the additive accumulation, where one bad fragment
+    // takes the whole pixel. The clamp bounds 63 layers under fp16 max by construction.
     float3 Premultiplied = SanitizeRadiance(Shaded.Color.rgb * Shaded.Alpha + Shaded.Reflection);
-    float3 Compressed    = FireflyTonemap(Premultiplied / max(Coverage, 1e-3));
-    Output.Accum     = float4(Compressed * (Coverage * Weight), Coverage * Weight);
-    Output.Revealage = Coverage;
+    float3 Weighted      = min(Premultiplied * Transmittance, 1024.0);
 
-    // Layer-count instrumentation (View Mode > OIT Layer Count): exactly 1.0 per fragment turns
-    // accum.a into a raw per-pixel fragment count (fp16-exact to 2048), so a strobing SET of
-    // fragments is directly distinguishable from strobing fragment VALUES. Stripped from
-    // game/shipping pipelines with the rest of the debug views.
+    Output.Accum = float4(Weighted, Coverage);
+
+    // View Mode > OIT Layer Count: 1.0 per fragment turns accum.a into a per-pixel fragment count,
+    // separating an unstable fragment SET from unstable fragment VALUES.
     if (SPEC_ENABLE_DEBUG_VIEWS != 0 && Scene().CullData.DebugMode == DEBUG_MODE_OIT_LAYER_COUNT)
     {
         Output.Accum = float4(0.0, 0.0, 0.0, 1.0);
     }
 
+    Output.Picker = EntityID;
+    return Output;
+
 #else
 
-    Output.Color = float4(Shaded.Color, Shaded.Alpha);
+    Output.Color  = float4(Shaded.Color, Shaded.Alpha);
+    Output.Picker = EntityID;
+    return Output;
 
 #endif // TRANSLUCENT
 
-    Output.Picker = EntityID;
-    return Output;
+#endif // MOMENT_GENERATION
 }

@@ -64,10 +64,18 @@
 // FGPUInstance::SurfaceDescIndex when the instance's LOD is fixed and no view may re-select it.
 #define NO_SURFACE_DESC_INDEX           0xFFFFFFFFu
 
-// Square tile edge in pixels: coarse enough to keep the tile count and per-tile bitmask small, fine
-// enough that over-inclusion (a tile binned for a material that only clips its corner) stays cheap.
-// The slot cap bounds that bitmask's width and the compacted tile list's per-slot stride.
-#define MATERIAL_TILE_SIZE_PX           16u
+// Deferred material classification. The count and scatter passes walk the screen in square tiles of
+// MATERIAL_CLASSIFY_TILE and aggregate through groupshared memory before touching the global counters:
+// one atomic per (tile, material) instead of one per pixel, which is the difference between ~50K and
+// ~2M atomics onto the same 64 addresses at 1080p.
+//
+// MATERIAL_PIXEL_GROUP_SIZE is the width of every dispatch that walks the compacted pixel list (the
+// per-material GBuffer pass and the lighting pass). The GPU builds those grids, so both sides must
+// derive the group count from this same number.
+//
+// MATERIAL_MAX_SLOTS bounds the per-material counter/start/cursor arrays and the indirect-args table.
+#define MATERIAL_CLASSIFY_TILE          8
+#define MATERIAL_PIXEL_GROUP_SIZE       64
 #define MATERIAL_MAX_SLOTS              64u
 
 // FMaterialUniforms layout. Changing one side reinterprets every field after it.

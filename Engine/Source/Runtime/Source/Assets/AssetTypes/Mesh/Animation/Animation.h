@@ -135,7 +135,7 @@ namespace Lumina
     {
         GENERATED_BODY()
         
-        friend class CMeshFactory;
+        friend class CMeshImporter;
         
     public:
         

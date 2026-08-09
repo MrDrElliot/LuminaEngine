@@ -67,7 +67,20 @@ namespace Lumina::RHI
             return Alloc.Gpu;
         }
 
-        RUNTIME_API void DeferredFree(GPUPtr Memory, uint32 ExtraFrames = 0);
+        // Resource retirement. A retired resource is destroyed at the top of the next BeginFrame for the
+        // slot it was retired in, immediately after that slot's queue timelines have been waited -- which
+        // is the exact point the GPU is known to be finished with it. Nothing here counts frames.
+        //
+        // Callable from any thread: items land in the slot currently being recorded, and BeginFrame
+        // publishes CurrentSlot only AFTER draining, so nothing can be dropped into a list mid-drain.
+        //
+        // ExtraCycles holds the allocation for additional full slot rotations beyond GPU retirement. Only
+        // the mesh-buffer path needs it, to outlive CPU-side memos of the meshlet header address; that is
+        // a heuristic standing in for an ownership relationship, not a GPU lifetime.
+        RUNTIME_API void Retire(GPUPtr Memory, uint32 ExtraCycles = 0);
+        RUNTIME_API void Retire(FTextureH Texture);
+        RUNTIME_API void RetireSampledSlot(uint32 HeapSlot);
+        RUNTIME_API void RetireStorageSlot(uint32 HeapSlot);
 
         FPipelineH CreateGraphicsPipeline(const FName& VertexShader, const FName& PixelShader, const FRasterDesc& Desc);
         FPipelineH CreateComputePipeline(const FName& ComputeShader);

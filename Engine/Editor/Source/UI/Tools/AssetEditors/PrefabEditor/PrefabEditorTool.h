@@ -47,6 +47,12 @@ namespace Lumina
         // GuizmoOp/GuizmoMode + snap state now live in FSceneEditorTool.
         entt::entity DirectionalLightEntity = entt::null;
 
+        /** Whether the preview studio rig is active. Auto-derived on load, then user-owned. */
+        bool bStudioLighting = true;
+
+        /** Set when the loaded prefab carries its own directional light, environment or skylight. */
+        bool bPrefabSuppliesLighting = false;
+
     protected:
 
         void OnPostUndoRedo() override;
@@ -90,6 +96,14 @@ namespace Lumina
         // Prefab world setup.
         void LoadPrefabIntoPreviewWorld();
         void CommitPreviewWorldToPrefab();
+
+        /**
+         * Adds or removes the preview studio rig to match bStudioLighting, and recomputes whether the
+         * prefab lights itself. Pass bResetToAuto on a (re)load to re-derive the default: a prefab that
+         * ships its own lighting starts with the rig off, since stacking the two double-lights the scene
+         * and leaves two singleton environments racing for the frame.
+         */
+        void SyncPreviewLighting(bool bResetToAuto);
 
         entt::entity FindPrefabRoot() const;
 

@@ -44,19 +44,18 @@ namespace Lumina
 
     namespace Import::Materials
     {
-        // Generates the PBR master material(s) + one CMaterialInstance per source material in Data.Materials,
-        // and returns the instances indexed by Data.Materials index (entries may be null on failure). One
-        // master is created per distinct render state (blend mode / shading model / two-sided / cutoff), since
-        // instances can only diverge in parameters. Texture parameters are resolved from TextureMap
-        // (FMeshImportImage::RelativePath -> loaded CTexture). MaterialsDir is the package directory every
-        // generated asset is created under (the master(s), the instances, and the two neutral default
-        // textures). Every created CObject is appended to OutCreated for the caller to save, register, and
-        // tear down alongside the rest of the import.
+        // Generates the PBR master material(s) + one CMaterialInstance per entry in SourceMaterials, and
+        // returns the instances at matching indices (null where generation failed). One master is created
+        // per distinct render state (blend mode / shading model / two-sided / cutoff), since instances can
+        // only diverge in parameters. Texture parameters resolve through ImageAssets, indexed by the source
+        // image indices the materials carry. MaterialsDir is the package directory every generated asset is
+        // created under. Every created CObject is appended to OutCreated for the caller to save, register,
+        // and tear down alongside the rest of the import.
         EDITOR_API TVector<CMaterialInstance*> GenerateMaterials(
-            const Import::Mesh::FMeshImportData&         Data,
-            const FFixedString&                          MaterialsDir,
-            const FFixedString&                          BaseName,
-            const THashMap<FFixedString, CTexture*>&     TextureMap,
-            TVector<CObject*>&                           OutCreated);
+            TSpan<const Import::Mesh::FMeshImportMaterial>  SourceMaterials,
+            TSpan<CTexture* const>                          ImageAssets,
+            const FFixedString&                             MaterialsDir,
+            const FFixedString&                             BaseName,
+            TVector<CObject*>&                              OutCreated);
     }
 }

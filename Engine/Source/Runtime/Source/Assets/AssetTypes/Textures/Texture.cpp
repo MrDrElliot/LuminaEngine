@@ -93,7 +93,7 @@ namespace Lumina
 
                 const FTextureResource::FMip& Mip = TextureResource->Mips[Index];
                 // RowPitchTexels = mip width: pixel rows are tightly packed at the mip's width.
-                RHI::Textures::UploadLayer(TextureResource->NewTexture, Layer, i, Mip.Pixels.data(), Mip.Pixels.size(), Mip.Width);
+                RHI::Textures::UploadLayer(TextureResource->NewTexture, Layer, i, Mip.Pixels.data(), Mip.Pixels.size(), Mip.Width, Mip.Width, Mip.Height);
             }
         }
 

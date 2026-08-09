@@ -55,7 +55,6 @@ namespace Lumina::RHI
         void Initialize();   // creates the 1x1 placeholder
         void Shutdown();
 
-        void Tick();
 
         RUNTIME_API FManagedTexture Create(const FTexture2DDesc& Desc);
         RUNTIME_API FManagedTexture Create(const FTexture2DArrayDesc& Desc);
@@ -64,9 +63,13 @@ namespace Lumina::RHI
         RUNTIME_API void Recreate(FManagedTexture& Tex, const FTexture2DDesc& Desc);
 
         // Upload tight pixel data for one mip of one array layer. Layer is 0 for non-array textures.
-        RUNTIME_API void UploadLayer(const FManagedTexture& Tex, uint32 Layer, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels = 0);
+        // Width/Height are the MIP's own dimensions. They must be passed for any mip past 0: the copy
+        // otherwise derives the extent as (BaseDimension >> Mip), which disagrees with a cooked mip chain
+        // whenever the base is not a clean power of two, and an extent wider than the row length the data
+        // actually has is an out-of-spec copy region that faults the copy engine.
+        RUNTIME_API void UploadLayer(const FManagedTexture& Tex, uint32 Layer, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels = 0, uint32 Width = 0, uint32 Height = 0);
 
-        RUNTIME_API void Upload(const FManagedTexture& Tex, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels = 0);
+        RUNTIME_API void Upload(const FManagedTexture& Tex, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels = 0, uint32 Width = 0, uint32 Height = 0);
 
         // Queue a full-texture clear to an RGBA float value. Same deferred semantics as Upload.
         RUNTIME_API void Clear(const FManagedTexture& Tex, const float Value[4]);

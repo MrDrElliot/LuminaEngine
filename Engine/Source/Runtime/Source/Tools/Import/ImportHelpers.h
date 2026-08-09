@@ -104,6 +104,22 @@ namespace Lumina::Import
             EFormat         Format;
         };
         
+        /** One texture cook. Bytes win when present (mesh-embedded); otherwise the file at SourcePath is read. */
+        struct FTextureCookRequest
+        {
+            TSpan<const uint8> EmbeddedBytes;
+            FFixedString       SourcePath;
+            ETextureColorSpace ColorSpace         = ETextureColorSpace::Auto;
+            uint32             EncodeThreadBudget = 0;
+
+            /**
+             * Whether to also create the GPU image and upload the cooked mips. An importer wants this off:
+             * the package only needs the CPU mip chain, CTexture::PostLoad creates the image on first real
+             * use, and uploads queued for an image the import is about to destroy fault the copy engine.
+             */
+            bool bCreateGPUResource = true;
+        };
+
         /** Gets an image's raw pixel data */
         RUNTIME_API TOptional<FTextureImportResult> ImportTexture(FStringView RawFilePath, bool bFlipVertical = true, FUIntVector2 Size = {});
         RUNTIME_API TOptional<FTextureImportResult> ImportTexture(TSpan<const uint8> ImageData, bool bFlipVertical = true, FUIntVector2 Size = {});
@@ -139,49 +155,28 @@ namespace Lumina::Import
             SDistanceFieldBuildSettings DistanceField;
         };
 
-        struct FMeshImportImage : FImportSettings
+        /** One source image, deduplicated by Key during parse. Embedded payloads are a VIEW into the
+         *  parser's own buffer (Bytes) so a GLB's textures are never copied; a parser that cannot keep its
+         *  buffer alive fills OwnedBytes instead and points Bytes at it. */
+        struct FSourceImage
         {
-            FFixedString         RelativePath;
-            RHI::FManagedTexture DisplayImage;
-            TVector<uint8>       Bytes;
+            FFixedString         Key;             // stable identity: source URI, or "<file>_Image_<n>"
+            FFixedString         ResolvedPath;    // on-disk path; empty when the payload is embedded
+            TVector<uint8>       OwnedBytes;
+            TSpan<const uint8>   Bytes;
+            RHI::FManagedTexture Thumbnail;
 
-            /** Semantic role from the mesh importer; Auto defers to filename heuristic. */
+            /** Semantic role from the mesh importer; Auto defers to the filename heuristic. */
             ETextureColorSpace IntendedColorSpace = ETextureColorSpace::Auto;
 
             // Total basisu encode threads for this texture (includes the calling thread; 1 = single-threaded).
-            // 0 = auto (use the worker count). A batch importer that cooks many textures in parallel sets this to
-            // 1 so each texture doesn't also spawn a full encode pool and oversubscribe the cores. Not part of
-            // identity (operator== / hasher ignore it).
+            // 0 = auto. A batch cooking many textures at once passes 1 so each doesn't spawn its own pool.
             uint32 EncodeThreadBudget = 0;
 
-            NODISCARD bool IsBytes() const { return !Bytes.empty(); }
+            NODISCARD bool IsEmbedded() const { return !Bytes.empty(); }
 
-            bool operator==(const FMeshImportImage& Other) const
-            {
-                return Other.RelativePath == RelativePath && Other.Bytes == Bytes;
-            }
+            void AdoptOwnedBytes() { Bytes = TSpan<const uint8>(OwnedBytes.data(), OwnedBytes.size()); }
         };
-
-        struct FMeshImportImageHasher
-        {
-            size_t operator()(const FMeshImportImage& Asset) const noexcept
-            {
-                size_t Seed = 0;
-                Hash::HashCombine(Seed, Asset.RelativePath);
-                Hash::HashCombine(Seed, Asset.Bytes.data());
-                return Seed;
-            }
-        };
-    
-        struct FMeshImportImageEqual
-        {
-            bool operator()(const FMeshImportImage& A, const FMeshImportImage& B) const noexcept
-            {
-                return A.RelativePath == B.RelativePath && A.Bytes == B.Bytes;
-            }
-        };
-
-        using FMeshImportTextureMap = THashSet<FMeshImportImage, FMeshImportImageHasher, FMeshImportImageEqual>;
 
         /** Alpha handling parsed from the source material; maps to EBlendMode at material-asset creation. */
         enum class EImportAlphaMode : uint8
@@ -193,8 +188,7 @@ namespace Lumina::Import
 
         /** One source-file material definition (PBR metallic-roughness). Indexed by the same value that
          *  FGeometrySurface::MaterialIndex references (for merge mode, see FMeshImportData::MergedMaterialSlotToSource).
-         *  Texture slots store the source image's FMeshImportImage::RelativePath key so the committed CTexture
-         *  asset can be resolved after import; an empty path means the channel has no texture. */
+         *  Texture slots are indices into FMeshImportData::Images; INDEX_NONE means the channel has no texture. */
         struct FMeshImportMaterial
         {
             FString             Name;
@@ -209,12 +203,87 @@ namespace Lumina::Import
             bool                bTwoSided         = false;
             bool                bUnlit            = false;
 
-            // RelativePath keys into FMeshImportData::Textures; empty = no texture for that channel.
-            FFixedString        BaseColorTexture;
-            FFixedString        MetallicRoughnessTexture;   // glTF packing: G = roughness, B = metallic.
-            FFixedString        NormalTexture;
-            FFixedString        EmissiveTexture;
-            FFixedString        OcclusionTexture;
+            int32               BaseColorImage         = INDEX_NONE;
+            int32               MetallicRoughnessImage = INDEX_NONE;   // glTF packing: G = roughness, B = metallic.
+            int32               NormalImage            = INDEX_NONE;
+            int32               EmissiveImage          = INDEX_NONE;
+            int32               OcclusionImage         = INDEX_NONE;
+        };
+
+        /** The resources one deduplicated source mesh produced. A source mesh whose primitives are a mix of
+         *  skinned and unskinned yields both. */
+        struct FSourceMeshSlot
+        {
+            int32 StaticResource  = INDEX_NONE;
+            int32 SkinnedResource = INDEX_NONE;
+        };
+
+        /** One placement of a source mesh in the scene graph, keyed by FMeshImportData::MeshSlots. Kept flat
+         *  and POD so a 200k-node scene costs a single contiguous array rather than an object per node. */
+        struct FSourceMeshInstance
+        {
+            uint32   SlotIndex;
+            uint32   NodeIndex;
+            FMatrix4 WorldTransform;
+        };
+
+        /** What a scene node contributes. A node with none of these is still kept when a descendant needs
+         *  its transform. */
+        enum class ESourceNodeKind : uint8
+        {
+            Empty,
+            Mesh,
+            PointLight,
+            SpotLight,
+            DirectionalLight,
+            Camera,
+        };
+
+        /** KHR_lights_punctual parameters, in glTF units (candela/lux, metres, radians). */
+        struct FSourceLight
+        {
+            FVector3 Color          = FVector3(1.0f);
+            float    Intensity      = 1.0f;
+            float    Range          = 0.0f;
+            float    InnerConeAngle = 0.0f;
+            float    OuterConeAngle = 0.0f;
+        };
+
+        /** Source camera parameters, in glTF units (radians, metres). */
+        struct FSourceCamera
+        {
+            bool  bOrthographic = false;
+
+            /** Vertical FOV. Default is 50 degrees, which is Blender's own default lens. */
+            float YFov          = 0.872664626f;
+            float ZNear         = 0.1f;
+
+            /** 0 when the source left the far plane infinite. */
+            float ZFar          = 0.0f;
+
+            /** Orthographic mode only: the world-space width the viewport spans. */
+            float OrthoWidth    = 0.0f;
+        };
+
+        /** One node of the source scene graph, flattened parents-before-children so a consumer can build a
+         *  hierarchy in a single forward pass. Transforms stay local: the parent chain reproduces the world
+         *  placement, which is what an entity hierarchy wants. */
+        struct FSourceSceneNode
+        {
+            FName           Name;
+            int32           ParentIndex = INDEX_NONE;
+
+            FVector3        Translation = FVector3(0.0f);
+            FQuat           Rotation    = FQuat(1.0f, 0.0f, 0.0f, 0.0f);
+            FVector3        Scale       = FVector3(1.0f);
+
+            ESourceNodeKind Kind      = ESourceNodeKind::Empty;
+
+            /** Index into FMeshImportData::MeshSlots when Kind is Mesh. */
+            int32           MeshSlot  = INDEX_NONE;
+
+            FSourceLight    Light;
+            FSourceCamera   Camera;
         };
 
         struct FMeshStatistics : INonCopyable
@@ -226,7 +295,10 @@ namespace Lumina::Import
         struct FMeshImportData : FImportSettings
         {
             FMeshStatistics                             MeshStatistics;
-            FMeshImportTextureMap                       Textures;
+
+            /** Deduplicated source images. Materials reference these by index. */
+            TVector<FSourceImage>                       Images;
+
             TVector<TUniquePtr<FMeshResource>>          Resources;
             TVector<TUniquePtr<FAnimationResource>>     Animations;
             TVector<TUniquePtr<FSkeletonResource>>      Skeletons;
@@ -235,12 +307,25 @@ namespace Lumina::Import
              *  (except in merge mode; see MergedMaterialSlotToSource). Empty when bImportMaterials is off. */
             TVector<FMeshImportMaterial>                Materials;
 
+            /** Every scene-graph placement of a mesh, in discovery order. Resources are the deduplicated
+             *  geometry those placements share. Empty for sources with no scene graph. */
+            TVector<FSourceMeshInstance>                MeshInstances;
+
+            /** Deduplicated source meshes, in the order MeshInstances::SlotIndex references them. */
+            TVector<FSourceMeshSlot>                    MeshSlots;
+
+            /** The source scene graph, parents before children. Empty for formats with no hierarchy. */
+            TVector<FSourceSceneNode>                   SceneNodes;
+
             /** Merge mode only: maps a merged mesh's material slot -> index into Materials. Empty otherwise
              *  (then a slot index is itself the Materials index). */
             TVector<int16>                              MergedMaterialSlotToSource;
 
             /** Populated by the dialog at commit; drives FinalizeMeshImportData and per-asset creation gates. */
             FMeshImportOptions                          CommitOptions;
+
+            /** Source-node count before dedup, for the import report. */
+            uint32                                      SourceNodeCount = 0;
 
             // Out-of-line (MeshImport.cpp): the dtor releases preview thumbnails, and all of
             // these need member TUniquePtrs' types complete, which they are not here.
@@ -268,8 +353,8 @@ namespace Lumina::Import
          *  When Progress is set, advances a total of ProgressBudget across the finalize pass. */
         RUNTIME_API void FinalizeMeshImportData(FMeshImportData& Data, const FMeshImportOptions& Options, FScopedSlowTask* Progress = nullptr, float ProgressBudget = 1.0f);
 
-        // Model-format parsers (ImportOBJ/FBX/GLTF) are editor-only (Editor's MeshFormatImport.h);
-        // they pull tinyobjloader/OpenFBX/fastgltf, which don't ship in the Game runtime.
+        // Model-format parsers live in the editor's CImporter hierarchy; they pull
+        // tinyobjloader/OpenFBX/cgltf, which don't ship in the Game runtime.
     }
 
 }

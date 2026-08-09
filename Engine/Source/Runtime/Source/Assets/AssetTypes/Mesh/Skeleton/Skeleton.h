@@ -15,7 +15,7 @@ namespace Lumina
     REFLECT()
     class RUNTIME_API CSkeleton : public CObject
     {
-        friend class CMeshFactory;
+        friend class CMeshImporter;
 
         GENERATED_BODY()
 

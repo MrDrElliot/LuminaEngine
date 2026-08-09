@@ -1103,15 +1103,16 @@ namespace Lumina
                     { ERenderSceneDebugFlags::ProbeInfluence,  "Probe Influence"  },
                     { ERenderSceneDebugFlags::ProbeRadiance,   "Probe Radiance"   },
                 };
-                // Raw WBOIT target inspectors (OITResolve.slang): accum color flags INF red /
-                // NaN magenta, weight turns red near the fp16 ceiling, revealage is the
-                // background-transmittance product. For chasing translucency artifacts.
+                // Raw MBOIT target inspectors (OITResolve.slang): accum color flags INF red / NaN
+                // magenta, moments shows the raw absorbance moments the generation pass wrote, and
+                // transmittance is exp(-b_0), what the opaque scene behind the glass is multiplied
+                // by. For chasing translucency artifacts.
                 static const FViewModeEntry Translucency[] =
                 {
-                    { ERenderSceneDebugFlags::OITAccumColor,  "OIT Accum Color"  },
-                    { ERenderSceneDebugFlags::OITAccumWeight, "OIT Accum Weight" },
-                    { ERenderSceneDebugFlags::OITRevealage,   "OIT Revealage"    },
-                    { ERenderSceneDebugFlags::OITLayerCount,  "OIT Layer Count"  },
+                    { ERenderSceneDebugFlags::OITAccumColor,   "OIT Accum Color"   },
+                    { ERenderSceneDebugFlags::OITMoments,      "OIT Moments"       },
+                    { ERenderSceneDebugFlags::OITTransmittance,"OIT Transmittance" },
+                    { ERenderSceneDebugFlags::OITLayerCount,   "OIT Layer Count"   },
                 };
 
                 auto DrawGroup = [&](const char* Header, const FViewModeEntry* Entries, size_t Count)

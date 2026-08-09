@@ -308,6 +308,12 @@ namespace Lumina
         entt::entity                     DetailsEntity = entt::null;
         bool                             bDetailsDirty = false;
 
+        // One-shot: arm a transform resolve for the newly selected entities on the next tick. Set from
+        // OnSelectionChanged (which every selection mutator already calls), consumed and cleared by the
+        // tool's tick. Selection used to arm this EVERY frame, which is O(subtree) per frame -- see the
+        // consuming site in WorldEditorTool.
+        bool                             bSelectionTransformRefreshPending = false;
+
         // Script generation the cached tables were built against. A table holds a raw pointer into a
         // component's value buffer and a CStruct* layout; a C# reload frees that buffer and destroys the
         // layout, so every table built before the bump describes memory that no longer exists.

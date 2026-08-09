@@ -30,6 +30,7 @@ namespace Lumina
 		const FShaderEntry* MeshShaderBase             = nullptr;
 		const FShaderEntry* MeshShaderShadow           = nullptr;
 		const FShaderEntry* PixelShader                = nullptr;
+		const FShaderEntry* MomentPixelShader          = nullptr;
 
 		uint32 bTranslucent : 1;
 		uint32 bMasked : 1;
@@ -44,6 +45,7 @@ namespace Lumina
 				&& MeshShaderBase             == Key.MeshShaderBase
 				&& MeshShaderShadow           == Key.MeshShaderShadow
 				&& PixelShader                == Key.PixelShader
+				&& MomentPixelShader          == Key.MomentPixelShader
 				&& bTranslucent == Key.bTranslucent
 				&& bMasked      == Key.bMasked
 				&& bAdditive    == Key.bAdditive
@@ -56,7 +58,7 @@ namespace Lumina
 		size_t Seed = 0;
 		for (const FShaderEntry* Entry : { K.VisBufferMeshShader, K.VisBufferMeshShaderMasked,
 										   K.MaskedVisBufferPixelShader, K.MeshShaderBase,
-										   K.MeshShaderShadow, K.PixelShader })
+										   K.MeshShaderShadow, K.PixelShader, K.MomentPixelShader })
 		{
 			Hash::HashCombine(Seed, (uint64)(uintptr_t)Entry);
 		}
@@ -76,6 +78,7 @@ namespace Lumina
 		const FShaderEntry*					VisBufferMeshShader = nullptr;       // VisBuffer geometry, opaque (position-only out)
 		const FShaderEntry*					VisBufferMeshShaderMasked = nullptr; // VisBuffer geometry, masked (full interpolants)
 		const FShaderEntry*					MaskedVisBufferPixelShader = nullptr;// masked-only PS: opacity clip before VisID/depth
+		const FShaderEntry*					MomentPixelShader = nullptr;         // MBOIT pass 1: opacity-only moment accumulation
 		uint32                      		IndirectDrawOffset = 0;
 		uint32                      		DrawCount = 0;
 		uint32                      		bTranslucent : 1;

@@ -2,6 +2,7 @@
 #include "Assets/Factories/Factory.h"
 #include "Containers/String.h"
 #include "Assets/AssetTypes/Textures/Texture.h"
+#include "Tools/Import/ImportHelpers.h"
 #include "TextureFactory.generated.h"
 
 
@@ -18,21 +19,15 @@ namespace Lumina
         FString GetAssetName() const override { return "Texture"; }
         FStringView GetDefaultAssetCreationName() override { return "NewTexture"; }
 
-        bool IsExtensionSupported(FStringView Ext) override
-        {
-            return Ext == ".png" || Ext == ".jpg" || Ext == ".jpeg" || Ext == ".hdr";
-        }
-        void GetSupportedExtensions(TVector<FStringView>& OutExtensions) const override
-        {
-            OutExtensions.insert(OutExtensions.end(), { ".png", ".jpg", ".jpeg", ".hdr" });
-        }
-        bool CanImport() override { return true; }
+        /**
+         * Cooks one source (embedded bytes or a file) into Texture: picks the DDS passthrough, HDR float,
+         * or Basis path, resolves Auto color spaces, and writes the package thumbnail. Does not create,
+         * save or register anything -- the caller owns the asset's lifetime.
+         */
+        static EDITOR_API bool CookIntoTexture(CTexture* Texture, const Import::Textures::FTextureCookRequest& Request);
 
-        void TryImport(const FFixedString& RawPath, const FFixedString& DestinationPath, const Import::FImportSettings* Settings) override;
-
-        bool CanReimport(const CStruct* AssetClass) const override;
-        bool TryReimport(CObject* Asset, const FFixedString& SourceFile, const Import::FImportSettings* Settings) override;
-        FString GetReimportSourcePath(const CObject* Asset) const override;
+        /** Filename-suffix heuristic used to resolve ETextureColorSpace::Auto. */
+        static EDITOR_API ETextureColorSpace ClassifyColorSpaceByFilename(FStringView Path);
 
         /** Re-runs Basis compression on Texture->SourcePath; false if path is missing or asset is mesh-embedded. */
         static EDITOR_API bool Recook(CTexture* Texture);

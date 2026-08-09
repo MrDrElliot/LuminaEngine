@@ -543,17 +543,18 @@ namespace Lumina::RHI
         {
             VkCommandBuffer Buffer;
             VkCommandPool   Pool;
-            uint64          Frame;
+            uint32          Slot;
         };
         TVector<FPendingTransition>     PendingTransient;
-        // Read under HeapMutex by the bindless free path as well as under TransientMutex here.
-        TAtomic<uint64>                 FrameNumber{0};
+        // Frame slot currently being recorded. Published by RetireSlot AFTER it drains, so a concurrent
+        // retire can never land in the list being drained.
+        TAtomic<uint32>                 CurrentRetireSlot{0};
 
         struct FPendingHeapDestroy
         {
             VkImageView View;
             VkSampler   Sampler;
-            uint64      Frame;
+            uint32      Slot;
         };
         TVector<FPendingHeapDestroy>    PendingHeapDestroys;
 
@@ -626,7 +627,7 @@ namespace Lumina::RHI
         uint32 Count = 0;
     };
 
-    static void FlushPendingHeapDestroysLocked(uint64 Frame, bool bForce);
+    static void FlushPendingHeapDestroysLocked(uint32 Slot, bool bForce);
 
     static TVector<Native::FDeviceCreationRequest> GPendingDeviceRequests;
 
@@ -2208,12 +2209,12 @@ namespace Lumina::RHI
     }
 
     // Caller holds HeapMutex, or has otherwise guaranteed the device is idle.
-    static void FlushPendingHeapDestroysLocked(uint64 Frame, bool bForce)
+    static void FlushPendingHeapDestroysLocked(uint32 Slot, bool bForce)
     {
         for (size_t i = 0; i < GDevice->PendingHeapDestroys.size(); )
         {
             const FDeviceImpl::FPendingHeapDestroy& Pending = GDevice->PendingHeapDestroys[i];
-            if (!bForce && Frame - Pending.Frame <= kFramesInFlight)
+            if (!bForce && Pending.Slot != Slot)
             {
                 ++i;
                 continue;
@@ -2233,17 +2234,16 @@ namespace Lumina::RHI
         }
     }
 
-    void TickFrame()
+    // Backend half of resource retirement. Called from Core::BeginFrame once this slot's queue timelines
+    // have been waited, i.e. at the exact point everything recorded into it is known to be done.
+    void RetireSlot(uint32 Slot)
     {
-        uint64 Frame;
         {
             FScopeLock Lock(GDevice->TransientMutex);
-            Frame = ++GDevice->FrameNumber;
-
             for (size_t i = 0; i < GDevice->PendingTransient.size(); )
             {
                 const FDeviceImpl::FPendingTransition& Pending = GDevice->PendingTransient[i];
-                if (Frame - Pending.Frame > kFramesInFlight)
+                if (Pending.Slot == Slot)
                 {
                     vkFreeCommandBuffers(*GDevice, Pending.Pool, 1, &Pending.Buffer);
                     GDevice->PendingTransient[i] = GDevice->PendingTransient.back();
@@ -2256,8 +2256,12 @@ namespace Lumina::RHI
             }
         }
 
-        FScopeLock HeapLock(GDevice->HeapMutex);
-        FlushPendingHeapDestroysLocked(Frame, /*bForce*/ false);
+        {
+            FScopeLock HeapLock(GDevice->HeapMutex);
+            FlushPendingHeapDestroysLocked(Slot, /*bForce*/ false);
+        }
+
+        GDevice->CurrentRetireSlot.store(Slot, std::memory_order_release);
     }
 
     void WaitDeviceIdle()
@@ -3696,7 +3700,7 @@ namespace Lumina::RHI
             {
                 .View    = HeapData.RWImageViews[Slot],
                 .Sampler = VK_NULL_HANDLE,
-                .Frame   = GDevice->FrameNumber.load(std::memory_order_relaxed)
+                .Slot    = GDevice->CurrentRetireSlot.load(std::memory_order_acquire)
             });
             HeapData.RWImageViews[Slot] = VK_NULL_HANDLE;
         }
@@ -3719,7 +3723,7 @@ namespace Lumina::RHI
             {
                 .View    = VK_NULL_HANDLE,
                 .Sampler = HeapData.Samplers[Slot],
-                .Frame   = GDevice->FrameNumber.load(std::memory_order_relaxed)
+                .Slot    = GDevice->CurrentRetireSlot.load(std::memory_order_acquire)
             });
             HeapData.Samplers[Slot] = VK_NULL_HANDLE;
         }
@@ -4293,7 +4297,8 @@ namespace Lumina::RHI
             vkCmdPipelineBarrier2(TransitionBuffer, &DependencyInfo);
             vkEndCommandBuffer(TransitionBuffer);
 
-            GDevice->PendingTransient.push_back({ TransitionBuffer, TransitionPool, GDevice->FrameNumber.load(std::memory_order_relaxed) });
+            GDevice->PendingTransient.push_back({ TransitionBuffer, TransitionPool,
+                GDevice->CurrentRetireSlot.load(std::memory_order_acquire) });
         }
 
         const uint32 TransitionCount = TransitionBuffer != VK_NULL_HANDLE ? 1u : 0u;
@@ -4547,6 +4552,32 @@ namespace Lumina::RHI
         const uint8 BlockW = RHI::Format::Info(DestTexture.Format).BlockSize;
         const uint32 RowLengthBlocks = (BlockW > 1) ? Math::AlignUp(RowLength, (uint32)BlockW) : RowLength;
 
+        // A copy region may never exceed the subresource it targets (VUID-vkCmdCopyBufferToImage-
+        // imageSubresource-07971/07972). Clamped rather than trusted, because the caller's idea of a mip's
+        // size comes from cooked data while the image's comes from its own implicit chain -- a package
+        // cooked before those agreed would otherwise hand the driver an out-of-bounds region.
+        VkExtent3D Extent = SliceExtent(DestTexture, Slice);
+        {
+            const FTextureDesc& Desc = DestTexture.Desc;
+            const uint32 DepthDim = (Desc.Type == ETextureType::Tex3D) ? Math::Max(Desc.Dimension.z, 1u) : 1u;
+
+            Extent.width  = Math::Min(Extent.width,  Math::Max(Desc.Dimension.x >> Slice.Mip, 1u));
+            Extent.height = Math::Min(Extent.height, Math::Max(Desc.Dimension.y >> Slice.Mip, 1u));
+            Extent.depth  = Math::Min(Extent.depth,  Math::Max(DepthDim >> Slice.Mip, 1u));
+        }
+
+        // bufferRowLength must be 0 or >= imageExtent.width (VUID-VkBufferImageCopy-bufferRowLength-09101).
+        // A shorter row is not a smaller copy: the region is out of spec and the copy engine walks past the
+        // end of the source, which surfaces only as a device-lost with a write fault at address 0. The
+        // usual cause is a caller deriving the mip extent by shifting the base dimension while the data
+        // was cooked at the mip's own width -- they disagree for non-power-of-two textures.
+        if (RowLengthBlocks != 0 && RowLengthBlocks < Extent.width)
+        {
+            LOG_ERROR("RHI: dropped a texture copy with an out-of-spec region (rowLength {} < extent width {}, mip {}). "
+                      "Pass the mip's own dimensions to Upload.", RowLengthBlocks, Extent.width, Slice.Mip);
+            return;
+        }
+
         VkBufferImageCopy Region
         {
             .bufferOffset       = SourceOffset,
@@ -4554,7 +4585,7 @@ namespace Lumina::RHI
             .bufferImageHeight  = 0,
             .imageSubresource   = SliceLayers(DestTexture, Slice),
             .imageOffset        = { (int32)Slice.Offset.x, (int32)Slice.Offset.y, (int32)Slice.Offset.z },
-            .imageExtent        = SliceExtent(DestTexture, Slice)
+            .imageExtent        = Extent
         };
 
         auto VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;

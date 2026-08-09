@@ -9,6 +9,9 @@
 #include "Assets/Factories/Factory.h"
 #include "Assets/AssetTypes/Prefabs/Prefab.h"
 #include "Core/Object/Package/Package.h"
+#include "Core/Progress/SlowTask.h"
+#include "Tools/Import/Importer.h"
+#include "UI/Properties/PropertyTable.h"
 #include "EASTL/sort.h"
 #include "FileSystem/FileSystem.h"
 #include "Paths/Paths.h"
@@ -223,6 +226,189 @@ namespace Lumina
                 if (IEquals(Ext, S)) { return true; }
             }
             return false;
+        }
+
+        // "CStaticMesh" -> "Static Mesh". Drops the reflection prefix and splits camel case, so the filter
+        // menu reads as asset types rather than as class identifiers.
+        FFixedString FriendlyClassName(const FName& ClassName)
+        {
+            const char* Raw = ClassName.c_str();
+            if (Raw == nullptr || Raw[0] == '\0')
+            {
+                return FFixedString("Unknown");
+            }
+
+            // Only a leading 'C' followed by another capital is the reflection prefix; "Curve" keeps its C.
+            size_t Start = 0;
+            if (Raw[0] == 'C' && Raw[1] >= 'A' && Raw[1] <= 'Z')
+            {
+                Start = 1;
+            }
+
+            FFixedString Out;
+            for (size_t i = Start; Raw[i] != '\0'; ++i)
+            {
+                const char C = Raw[i];
+                const bool bBoundary = (i > Start) && (C >= 'A' && C <= 'Z')
+                                    && !(Raw[i - 1] >= 'A' && Raw[i - 1] <= 'Z');
+                if (bBoundary)
+                {
+                    Out.push_back(' ');
+                }
+                Out.push_back(C);
+            }
+            return Out.empty() ? FFixedString(Raw) : Out;
+        }
+
+        // Uppercased, prefix-stripped class name for the tile's type line ("CStaticMesh" -> "STATICMESH").
+        FFixedString UpperTypeTag(const FName& ClassName)
+        {
+            const char* Raw = ClassName.c_str();
+            if (Raw == nullptr || Raw[0] == '\0')
+            {
+                return FFixedString();
+            }
+
+            size_t Start = (Raw[0] == 'C' && Raw[1] >= 'A' && Raw[1] <= 'Z') ? 1 : 0;
+
+            FFixedString Out;
+            for (size_t i = Start; Raw[i] != '\0'; ++i)
+            {
+                const char C = Raw[i];
+                Out.push_back((C >= 'a' && C <= 'z') ? (char)(C - ('a' - 'A')) : C);
+            }
+            return Out;
+        }
+
+        bool ContainsInsensitive(FStringView Haystack, FStringView Needle)
+        {
+            if (Needle.empty())
+            {
+                return true;
+            }
+            if (Needle.size() > Haystack.size())
+            {
+                return false;
+            }
+
+            auto Lower = [](char C) { return (C >= 'A' && C <= 'Z') ? (char)(C + ('a' - 'A')) : C; };
+
+            const size_t Last = Haystack.size() - Needle.size();
+            for (size_t i = 0; i <= Last; ++i)
+            {
+                size_t j = 0;
+                while (j < Needle.size() && Lower(Haystack[i + j]) == Lower(Needle[j]))
+                {
+                    ++j;
+                }
+                if (j == Needle.size())
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // Per-type accent + glyph for the fallback tile card. Keyed on the uppercased type tag rather than
+        // on CClass, so a type with no factory, no painter and no loaded CDO still gets an identity.
+        struct FTypeStyle
+        {
+            const char* Glyph;
+            ImU32       Accent;
+        };
+
+        FTypeStyle StyleForType(FStringView TypeTag)
+        {
+            struct FEntry { const char* Tag; const char* Glyph; ImU32 Accent; };
+            static const FEntry kEntries[] =
+            {
+                { "STATICMESH",       LE_ICON_CUBE_OUTLINE,        IM_COL32(102, 187, 255, 255) },
+                { "SKELETALMESH",     LE_ICON_HUMAN,               IM_COL32(129, 199, 255, 255) },
+                { "SKELETON",         LE_ICON_BONE,                IM_COL32(190, 210, 235, 255) },
+                { "ANIMATION",        LE_ICON_RUN,                 IM_COL32(140, 220, 190, 255) },
+                { "TEXTURE",          LE_ICON_IMAGE,               IM_COL32(240, 170, 120, 255) },
+                { "TEXTUREARRAY",     LE_ICON_IMAGE_MULTIPLE,      IM_COL32(240, 190, 140, 255) },
+                { "MATERIAL",         LE_ICON_SPHERE,              IM_COL32(200, 150, 255, 255) },
+                { "MATERIALINSTANCE", LE_ICON_SPHERE,              IM_COL32(180, 140, 235, 255) },
+                { "PREFAB",           LE_ICON_CUBE_SCAN,           IM_COL32(255, 205, 110, 255) },
+                { "WORLD",            LE_ICON_EARTH,               IM_COL32(120, 210, 150, 255) },
+                { "AUDIOSTREAM",      LE_ICON_VOLUME_HIGH,         IM_COL32(255, 150, 170, 255) },
+                { "FONT",             LE_ICON_FORMAT_FONT,         IM_COL32(215, 215, 225, 255) },
+                { "DATATABLE",        LE_ICON_TABLE,               IM_COL32(150, 200, 220, 255) },
+                { "FOLDER",           LE_ICON_FOLDER,              IM_COL32(255, 205, 120, 255) },
+                { "CS",               LE_ICON_LANGUAGE_CSHARP,     IM_COL32(160, 200, 130, 255) },
+                { "RML",              LE_ICON_XML,                 IM_COL32(200, 180, 140, 255) },
+                { "RCSS",             LE_ICON_LANGUAGE_CSS3,       IM_COL32(150, 190, 230, 255) },
+            };
+
+            for (const FEntry& Entry : kEntries)
+            {
+                if (IEquals(TypeTag, Entry.Tag))
+                {
+                    return { Entry.Glyph, Entry.Accent };
+                }
+            }
+            return { LE_ICON_FILE_DOCUMENT_OUTLINE, IM_COL32(170, 175, 190, 255) };
+        }
+
+        // Document card: rounded page with a folded corner, a large type glyph, and the type tag across
+        // the bottom. Drawn rather than blitted so it stays sharp at any tile size and needs no atlas.
+        void DrawTypeCard(ImDrawList& DrawList, const ImVec2& Min, const ImVec2& Max, FStringView TypeTag)
+        {
+            const FTypeStyle Style = StyleForType(TypeTag);
+
+            const float Width  = Max.x - Min.x;
+            const float Height = Max.y - Min.y;
+            const float Inset  = Math::Max(Width * 0.16f, 4.0f);
+
+            const ImVec2 PageMin(Min.x + Inset, Min.y + Inset * 0.7f);
+            const ImVec2 PageMax(Max.x - Inset, Max.y - Inset * 0.7f);
+            const float  Fold    = Math::Max((PageMax.x - PageMin.x) * 0.28f, 6.0f);
+            const float  Round   = Math::Max(Width * 0.03f, 2.0f);
+            const float  Thick   = Math::Max(Width * 0.018f, 1.25f);
+
+            // Page outline with the top-right corner cut away, then the fold drawn over the notch.
+            const ImVec2 Outline[] =
+            {
+                ImVec2(PageMin.x, PageMin.y),
+                ImVec2(PageMax.x - Fold, PageMin.y),
+                ImVec2(PageMax.x, PageMin.y + Fold),
+                ImVec2(PageMax.x, PageMax.y),
+                ImVec2(PageMin.x, PageMax.y),
+            };
+
+            DrawList.AddConvexPolyFilled(Outline, IM_ARRAYSIZE(Outline), IM_COL32(28, 30, 36, 235));
+            DrawList.AddPolyline(Outline, IM_ARRAYSIZE(Outline), Style.Accent, ImDrawFlags_Closed, Thick);
+
+            DrawList.AddLine(ImVec2(PageMax.x - Fold, PageMin.y), ImVec2(PageMax.x - Fold, PageMin.y + Fold), Style.Accent, Thick);
+            DrawList.AddLine(ImVec2(PageMax.x - Fold, PageMin.y + Fold), ImVec2(PageMax.x, PageMin.y + Fold), Style.Accent, Thick);
+
+            // Glyph sized off the page, so it tracks the zoom slider instead of snapping between fonts.
+            const float GlyphSize = (PageMax.y - PageMin.y) * 0.42f;
+            if (GlyphSize >= 8.0f)
+            {
+                ImFont* Font = ImGui::GetFont();
+                const ImVec2 GlyphExtent = Font->CalcTextSizeA(GlyphSize, FLT_MAX, 0.0f, Style.Glyph);
+                const ImVec2 GlyphPos((PageMin.x + PageMax.x - GlyphExtent.x) * 0.5f,
+                                      PageMin.y + (PageMax.y - PageMin.y) * 0.20f);
+                DrawList.AddText(Font, GlyphSize, GlyphPos, Style.Accent, Style.Glyph);
+            }
+
+            // Type tag inside the page. Dropped rather than squeezed when the tile is too small for it to
+            // be legible -- the line under the name still carries the type.
+            const float TagSize = Math::Min((PageMax.y - PageMin.y) * 0.16f, 13.0f);
+            if (TagSize >= 7.0f && !TypeTag.empty())
+            {
+                ImFont* Font = ImGui::GetFont();
+                const ImVec2 TagExtent = Font->CalcTextSizeA(TagSize, FLT_MAX, 0.0f, TypeTag.data(), TypeTag.data() + TypeTag.size());
+                if (TagExtent.x <= (PageMax.x - PageMin.x) * 0.86f)
+                {
+                    const ImVec2 TagPos((PageMin.x + PageMax.x - TagExtent.x) * 0.5f,
+                                        PageMax.y - TagExtent.y - (PageMax.y - PageMin.y) * 0.10f);
+                    DrawList.AddText(Font, TagSize, TagPos, Style.Accent,
+                        TypeTag.data(), TypeTag.data() + TypeTag.size());
+                }
+            }
         }
 
         // Build / IDE directories that never belong in the browser (regenerated on demand).
@@ -832,15 +1018,10 @@ namespace Lumina
             SelectedPath = "/Game";
         }
 
-        const TVector<CFactory*>& Factories = CFactoryRegistry::Get().GetFactories();
-        for (CFactory* Factory : Factories)
-        {
-            if (CClass* AssetClass = Factory->GetAssetClass())
-            {
-                FilterState.emplace(AssetClass->GetName().c_str(), true);
-            }
-        }
-        
+        RefreshFilterClasses();
+
+        ContentBrowserTileViewContext.bShowTypeLabels = true;
+
         CreateToolWindow("Content", [&] (bool bIsFocused)
         {
             // Starting width only. The directory pane is resizable, so its actual width is whatever
@@ -918,13 +1099,18 @@ namespace Lumina
             FAssetTilePainterFn* TilePainter = nullptr;
             CObject*             PainterAsset = nullptr;
 
+            // Set when nothing else supplies a picture: the tile draws a type card instead of an image.
+            bool bDrawTypeCard = true;
+
             ImTextureRef ImTexture;
             switch (ContentItem->GetIconKind())
             {
             case EIconKind::Directory:
                 {
+                    // Folders keep the folder image: navigation should not read as a document.
                     ImTexture = ImGuiX::ToImTextureRef(Paths::GetEngineResourceDirectory() + "/Textures/Folder.png");
-                    TintColor  = ImVec4(1.0f, 0.9f, 0.6f, 1.0f);
+                    TintColor = ImVec4(1.0f, 0.82f, 0.45f, 1.0f);
+                    bDrawTypeCard = false;
                     break;
                 }
             case EIconKind::Asset:
@@ -948,39 +1134,22 @@ namespace Lumina
                         }
                     }
 
+                    // A rendered thumbnail is the asset's own likeness and always beats a generic card.
                     if (FPackageThumbnail* MaybeThumbnail = CThumbnailManager::Get().GetThumbnailForPackage(ContentItem->GetVirtualPath()))
                     {
                         ImTexture = ImGuiX::ToImTextureRef(MaybeThumbnail->LoadedImage);
-                    }
-                    else
-                    {
-                        ImTexture = ImGuiX::ToImTextureRef(Paths::GetEngineResourceDirectory() + "/Textures/Asset.png");
+                        bDrawTypeCard = false;
                     }
                     break;
                 }
-            case EIconKind::CSharpScript:
-                {
-                    ImTexture = ImGuiX::ToImTextureRef(Paths::GetEngineResourceDirectory() + "/Textures/CSharpScript.png");
-                    break;
-                }
-            case EIconKind::Markup:
-                {
-                    ImTexture = ImGuiX::ToImTextureRef(Paths::GetEngineResourceDirectory() + "/Textures/HTML.png");
-                    break;
-                }
-            case EIconKind::Stylesheet:
-                {
-                    ImTexture = ImGuiX::ToImTextureRef(Paths::GetEngineResourceDirectory() + "/Textures/CSS.png");
-                    break;
-                }
-            case EIconKind::Audio:
-                {
-                    ImTexture = ImGuiX::ToImTextureRef(Paths::GetEngineResourceDirectory() + "/Textures/Audio.png");
-                    break;
-                }
-            case EIconKind::Generic:
-                ImTexture = ImGuiX::ToImTextureRef(Paths::GetEngineResourceDirectory() + "/Textures/File.png");
+            default:
                 break;
+            }
+
+            // A painter owns the whole body; the card would draw underneath it.
+            if (TilePainter != nullptr)
+            {
+                bDrawTypeCard = false;
             }
 
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.16f, 0.17f, 1.0f)); 
@@ -1003,16 +1172,24 @@ namespace Lumina
             // A painted tile hides the image (alpha 0) rather than skipping ImageButton: the button still
             // supplies the frame, hover/active styling, sizing and the click handling below, so the painter
             // only has to fill the body.
+            // The button always supplies the frame, hover/active styling, sizing and click handling; when
+            // a painter or a type card fills the body the image itself is drawn fully transparent.
+            const bool bHideImage = (TilePainter != nullptr) || bDrawTypeCard;
             ImGui::ImageButton("##", ImTexture, Size, ImVec2(0, 0), ImVec2(1, 1), ImVec4(0, 0, 0, 0),
-                TilePainter != nullptr ? ImVec4(TintColor.x, TintColor.y, TintColor.z, 0.0f) : TintColor);
+                bHideImage ? ImVec4(TintColor.x, TintColor.y, TintColor.z, 0.0f) : TintColor);
+
+            // Item rect, not Pos/Size: it already accounts for the frame padding pushed above, so the
+            // body bounds cannot drift if that padding is ever retuned.
+            const ImVec2 BodyMin = ImGui::GetItemRectMin();
+            const ImVec2 BodyMax = ImGui::GetItemRectMax();
 
             if (TilePainter != nullptr)
             {
-                // Item rect, not Pos/Size: it already accounts for the frame padding pushed above, so the
-                // painter's bounds cannot drift if that padding is ever retuned.
-                const ImVec2 BodyMin = ImGui::GetItemRectMin();
-                const ImVec2 BodyMax = ImGui::GetItemRectMax();
                 (*TilePainter)(PainterAsset, *DrawList, BodyMin, BodyMax);
+            }
+            else if (bDrawTypeCard)
+            {
+                DrawTypeCard(*DrawList, BodyMin, BodyMax, ContentItem->GetTypeLabel());
             }
 
             if (ImGui::IsItemHovered())
@@ -1119,24 +1296,15 @@ namespace Lumina
         {
             // The Filter menu toggles asset classes. Directories, scripts, and loose files are not
             // class-filterable, so they are always shown; assets are hidden when their class is off.
-            auto PassesFilter = [this](const VFS::FFileInfo& Info) -> bool
+            // Type label resolved ONCE per entry and carried to the tile. It costs a registry lookup and
+            // a string build, and both the filter test and the tile need it.
+            struct FBrowseEntry
             {
-                if (!Info.IsLAsset())
-                {
-                    return true;
-                }
-
-                const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(FStringView(Info.VirtualPath.c_str(), Info.VirtualPath.size()));
-                if (Data == nullptr)
-                {
-                    return true;
-                }
-
-                auto It = FilterState.find(Data->AssetClass);
-                return It == FilterState.end() || It->second;
+                VFS::FFileInfo Info;
+                FFixedString   TypeLabel;
             };
 
-            TVector<VFS::FFileInfo> SortedPaths;
+            TVector<FBrowseEntry> SortedPaths;
 
             VFS::DirectoryIterator(SelectedPath, [&](const VFS::FFileInfo& FileInfo)
             {
@@ -1152,23 +1320,29 @@ namespace Lumina
                 {
                     // Only surface extensions the engine actually authors/consumes; everything else
                     // (csproj, sidecars, IDE cruft) stays hidden.
-                    if (!IsBrowsableFileExtension(FileInfo.GetExt()) || !PassesFilter(FileInfo))
+                    if (!IsBrowsableFileExtension(FileInfo.GetExt()))
                     {
                         return;
                     }
                 }
 
-                SortedPaths.emplace_back(FileInfo);
+                FFixedString TypeLabel = MakeTypeLabel(FileInfo);
+                if (!PassesFilters(FileInfo, FStringView(TypeLabel.c_str(), TypeLabel.size())))
+                {
+                    return;
+                }
+
+                SortedPaths.push_back(FBrowseEntry{ FileInfo, Move(TypeLabel) });
             });
             
-            eastl::sort(SortedPaths.begin(), SortedPaths.end(), [&](const VFS::FFileInfo& LHS, const VFS::FFileInfo& RHS)
+            eastl::sort(SortedPaths.begin(), SortedPaths.end(), [&](const FBrowseEntry& LHS, const FBrowseEntry& RHS)
             {
-                if (LHS.IsDirectory() != RHS.IsDirectory())
+                if (LHS.Info.IsDirectory() != RHS.Info.IsDirectory())
                 {
-                    return LHS.IsDirectory();
+                    return LHS.Info.IsDirectory();
                 }
-                
-                return LHS.Name < RHS.Name;
+
+                return LHS.Info.Name < RHS.Info.Name;
             });
             
             // Extension-insensitive so a package path ("/Game/Foo.lasset") still matches however the
@@ -1178,10 +1352,12 @@ namespace Lumina
             FTileViewItem*               BrowseItem = nullptr;
             FContentBrowserTileViewItem* RenameItem = nullptr;
 
-            for (const VFS::FFileInfo& Info : SortedPaths)
+            for (const FBrowseEntry& Entry : SortedPaths)
             {
+                const VFS::FFileInfo& Info = Entry.Info;
                 const bool bProtected = IsProtectedRoot(FStringView(Info.VirtualPath.c_str(), Info.VirtualPath.size()));
                 FContentBrowserTileViewItem* NewItem = ContentBrowserTileView.AddItemToTree<FContentBrowserTileViewItem>(nullptr, Info, bProtected);
+                NewItem->SetTypeLabel(Entry.TypeLabel);
 
                 const FStringView ItemPath = VFS::RemoveExtension(NewItem->GetVirtualPath());
                 if (!BrowseTarget.empty() && ItemPath == BrowseTarget)
@@ -1341,7 +1517,7 @@ namespace Lumina
             FolderDisplay.IconText = LE_ICON_FOLDER;
             FolderDisplay.IconColor = ImVec4(0.93f, 0.79f, 0.36f, 1.0f);
 
-            if (Info.VirtualPath == SelectedPath)
+            if (FStringView(Info.VirtualPath.c_str(), Info.VirtualPath.size()) == FStringView(SelectedPath.c_str(), SelectedPath.size()))
             {
                 FTreeNodeState& State = Tree.Get<FTreeNodeState>(ItemEntity);
                 State.bSelected = true;
@@ -1485,7 +1661,7 @@ namespace Lumina
                     const FStringView Vp(FileInfo.VirtualPath.c_str(), FileInfo.VirtualPath.size());
                     if (TextAsset::IsTextAssetPath(Vp))
                     {
-                        TextPaths.emplace_back(FileInfo.VirtualPath);
+                        TextPaths.emplace_back(FileInfo.VirtualPath.c_str(), FileInfo.VirtualPath.size());
                     }
                 });
 
@@ -1680,16 +1856,175 @@ namespace Lumina
             "F2 renames the tile in place; Delete removes. Renames update inbound references via redirectors.");
     }
 
+    FFixedString FContentBrowserEditorTool::MakeTypeLabel(const VFS::FFileInfo& FileInfo)
+    {
+        if (FileInfo.IsDirectory())
+        {
+            return FFixedString("FOLDER");
+        }
+
+        if (FileInfo.IsLAsset())
+        {
+            const FStringView Path(FileInfo.VirtualPath.c_str(), FileInfo.VirtualPath.size());
+            if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(Path))
+            {
+                return UpperTypeTag(Data->AssetClass);
+            }
+            // Discovered on disk but not registered yet; the tile still needs a stable line.
+            return FFixedString("ASSET");
+        }
+
+        // Loose file: its extension, minus the dot.
+        const FString Ext = FileInfo.GetExt();
+        FFixedString Out;
+        for (size_t i = (!Ext.empty() && Ext[0] == '.') ? 1 : 0; i < Ext.size(); ++i)
+        {
+            const char C = Ext[i];
+            Out.push_back((C >= 'a' && C <= 'z') ? (char)(C - ('a' - 'A')) : C);
+        }
+        return Out;
+    }
+
+    void FContentBrowserEditorTool::RefreshFilterClasses()
+    {
+        // Driven off what the registry actually holds, not off the factories: a type with no factory
+        // (meshes, skeletons, animations, prefabs) is still something you want to filter by, and seeding
+        // from factories silently omitted them -- a checkbox that was never there cannot be unticked, and
+        // the missing entry defaulted to "show", so those types ignored the filter entirely.
+        for (const TUniquePtr<FAssetData>& Data : FAssetRegistry::Get().GetAssets())
+        {
+            if (Data && !Data->AssetClass.IsNone() && FilterState.find(Data->AssetClass) == FilterState.end())
+            {
+                // Existing choices win; only genuinely new types default to visible.
+                FilterState.emplace(Data->AssetClass, true);
+            }
+        }
+    }
+
+    bool FContentBrowserEditorTool::PassesFilters(const VFS::FFileInfo& FileInfo, FStringView TypeLabel) const
+    {
+        // Folders are navigation, not content: they stay put under a type filter, and only disappear when
+        // a search is active and their name does not match.
+        const bool bDirectory = FileInfo.IsDirectory();
+
+        if (!bDirectory && FileInfo.IsLAsset())
+        {
+            const FStringView Path(FileInfo.VirtualPath.c_str(), FileInfo.VirtualPath.size());
+            if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(Path))
+            {
+                auto It = FilterState.find(Data->AssetClass);
+                if (It != FilterState.end() && !It->second)
+                {
+                    return false;
+                }
+            }
+        }
+
+        if (SearchText.empty())
+        {
+            return true;
+        }
+
+        const FStringView Search(SearchText.c_str(), SearchText.size());
+        const FStringView Name = VFS::FileName(FileInfo.PathSource, true);
+
+        // Type is searchable too, so "texture" narrows to textures without opening the filter menu.
+        return ContainsInsensitive(Name, Search) || (!bDirectory && ContainsInsensitive(TypeLabel, Search));
+    }
+
     void FContentBrowserEditorTool::DrawToolMenu(const FUpdateContext& UpdateContext)
     {
-        if (ImGui::BeginMenu(LE_ICON_FILTER " Filter"))
+        // Search first: it is the control reached for most often, and it reads as part of the path bar.
+        ImGui::SetNextItemWidth(200.0f);
         {
+            char Buffer[128];
+            const size_t Copied = Math::Min(SearchText.size(), sizeof(Buffer) - 1);
+            memcpy(Buffer, SearchText.c_str(), Copied);
+            Buffer[Copied] = '\0';
+
+            if (ImGui::InputTextWithHint("##ContentSearch", LE_ICON_MAGNIFY " Search...", Buffer, sizeof(Buffer)))
+            {
+                SearchText = Buffer;
+                RefreshContentBrowser();
+            }
+        }
+
+        if (!SearchText.empty())
+        {
+            ImGui::SameLine();
+            if (ImGui::SmallButton(LE_ICON_CLOSE "##ClearSearch"))
+            {
+                SearchText.clear();
+                RefreshContentBrowser();
+            }
+        }
+
+        // Count of hidden types, so a filter left on is visible from the menu bar rather than being
+        // discovered later as "my assets disappeared".
+        uint32 HiddenTypes = 0;
+        for (const auto& [Name, State] : FilterState)
+        {
+            HiddenTypes += State ? 0u : 1u;
+        }
+
+        FFixedString FilterLabel(FFixedString::CtorSprintf(),
+            HiddenTypes > 0 ? LE_ICON_FILTER " Filter (%u hidden)###Filter" : LE_ICON_FILTER " Filter###Filter", HiddenTypes);
+
+        if (HiddenTypes > 0)
+        {
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::AccentAlt());
+        }
+        const bool bFilterOpen = ImGui::BeginMenu(FilterLabel.c_str());
+        if (HiddenTypes > 0)
+        {
+            ImGui::PopStyleColor();
+        }
+
+        if (bFilterOpen)
+        {
+            // Only while the menu is open: a missing entry means "shown", so the map has to be complete
+            // when it is DRAWN, not on every refresh.
+            RefreshFilterClasses();
+
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2, 2));
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 2));
 
-            for (auto& [Name, State] : FilterState)
+            if (ImGui::SmallButton("Show All"))
             {
-                if (ImGui::Checkbox(Name.c_str(), &State))
+                for (auto& [Name, State] : FilterState) { State = true; }
+                RefreshContentBrowser();
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Hide All"))
+            {
+                for (auto& [Name, State] : FilterState) { State = false; }
+                RefreshContentBrowser();
+            }
+
+            ImGui::Separator();
+
+            if (FilterState.empty())
+            {
+                ImGui::TextDisabled("No assets discovered yet.");
+            }
+
+            // Alphabetical: the map's bucket order is arbitrary and would reshuffle the menu whenever a
+            // new type is discovered.
+            TVector<FName> Names;
+            Names.reserve(FilterState.size());
+            for (const auto& [Name, State] : FilterState)
+            {
+                Names.push_back(Name);
+            }
+            eastl::sort(Names.begin(), Names.end(), [](const FName& A, const FName& B)
+            {
+                return strcmp(A.c_str(), B.c_str()) < 0;
+            });
+
+            for (const FName& Name : Names)
+            {
+                bool& State = FilterState[Name];
+                if (ImGui::Checkbox(FriendlyClassName(Name).c_str(), &State))
                 {
                     RefreshContentBrowser();
                 }
@@ -1899,10 +2234,8 @@ namespace Lumina
     }
 
     bool FContentBrowserEditorTool::DrawImportWindow(
-        CFactory* Factory,
-        const FFixedString& RawPath,
-        const FFixedString& DestinationPath,
-        Import::FImportSettings& Settings,
+        CImporter* Importer,
+        const FImportRequest& Request,
         int32 RemainingCount,
         bool& bShouldClose,
         bool& bOutApplyToAll)
@@ -1910,11 +2243,11 @@ namespace Lumina
         ImGuiX::Font::PushFont(ImGuiX::Font::EFont::LargeBold);
         ImGuiX::TextColoredUnformatted(EditorColors::Accent(), LE_ICON_IMPORT);
         ImGui::SameLine();
-        ImGui::TextUnformatted(VFS::FileName(RawPath).data());
+        ImGui::TextUnformatted(VFS::FileName(Request.SourcePath).data());
         ImGui::PopFont();
 
         ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextDim());
-        ImGui::TextUnformatted(DestinationPath.c_str());
+        ImGui::TextUnformatted(Request.DestinationPath.c_str());
         ImGui::PopStyleColor();
 
         ImGui::Spacing();
@@ -1930,7 +2263,15 @@ namespace Lumina
 
         if (ImGui::BeginChild("##ImportSettings", ImVec2(0.0f, -FooterHeight), ImGuiChildFlags_AlwaysUseWindowPadding))
         {
-            Factory->DrawImportSettings(RawPath, Settings);
+            // Options come straight off the importer's reflected properties, so a new importer gets its
+            // settings UI for free.
+            if (ImportSettingsTable)
+            {
+                ImportSettingsTable->DrawTree();
+            }
+
+            ImGui::Spacing();
+            Importer->DrawSourcePreview();
         }
         ImGui::EndChild();
 
@@ -1954,10 +2295,20 @@ namespace Lumina
         const float ButtonsWidth = ButtonWidth * ButtonCount + ImGui::GetStyle().ItemSpacing.x * (ButtonCount - 1.0f);
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - ButtonsWidth);
 
+        // The chosen values become the defaults for the next import of this type, which is what a batch
+        // wants and what the old per-factory static used to give.
+        auto CommitSettings = [Importer]()
+        {
+            if (CImporter* CDO = Importer->GetClass()->GetDefaultObject<CImporter>())
+            {
+                Importer->CopyPropertiesTo(CDO);
+            }
+        };
+
         bool bConfirmed = false;
         if (ImGui::Button("Import", ImVec2(ButtonWidth, 0.0f)))
         {
-            Factory->CommitImportSettings(Settings);
+            CommitSettings();
             bConfirmed = true;
             bShouldClose = true;
         }
@@ -1970,7 +2321,7 @@ namespace Lumina
             // without asking again.
             if (ImGui::Button("Import All", ImVec2(ButtonWidth, 0.0f)))
             {
-                Factory->CommitImportSettings(Settings);
+                CommitSettings();
                 bConfirmed = true;
                 bShouldClose = true;
                 bOutApplyToAll = true;
@@ -1987,21 +2338,6 @@ namespace Lumina
         ImGui::PopStyleColor();
 
         return bConfirmed;
-    }
-
-    CFactory* FContentBrowserEditorTool::FindImportFactory(const FFixedString& Path) const
-    {
-        const FStringView Ext = VFS::Extension(Path);
-
-        for (CFactory* Factory : CFactoryRegistry::Get().GetFactories())
-        {
-            if (Factory->CanImport() && Factory->IsExtensionSupported(Ext))
-            {
-                return Factory;
-            }
-        }
-
-        return nullptr;
     }
 
     FFixedString FContentBrowserEditorTool::MakeUniqueImportDestination(FStringView SourcePath)
@@ -2052,20 +2388,44 @@ namespace Lumina
         return {};
     }
 
-    void FContentBrowserEditorTool::StartImport(CFactory* Factory, const FFixedString& Path, const FFixedString& DestinationPath, TUniquePtr<Import::FImportSettings> Settings)
+    void FContentBrowserEditorTool::StartImport(CImporter* Importer, const FImportRequest& Request)
     {
-        Task::AsyncTask(1, 1, [this, Factory, Path, DestinationPath, Settings = Move(Settings)](uint32, uint32, uint32)
+        Task::AsyncTask(1, 1, [this, Importer, Request](uint32, uint32, uint32)
         {
-            Factory->Import(Path, DestinationPath, Settings.get());
+            const FStringView SourceName = VFS::FileName(Request.SourcePath, true);
+            FFixedString Title(FFixedString::CtorSprintf(), "Importing %.*s", (int)SourceName.length(), SourceName.data());
+            FScopedSlowTask SlowTask(1.0f, Title, "Processing...");
 
-            MainThread::Enqueue([this, Path, DestinationPath]()
+            FImportResult Result;
+            Importer->BuildAssets(Request, Result, &SlowTask);
+
+            // Reverse order: a generated graph must be destroyed before the material it back-references,
+            // and the scene prefab before the meshes it holds references to.
+            for (auto It = Result.CreatedObjects.rbegin(); It != Result.CreatedObjects.rend(); ++It)
             {
+                (*It)->ConditionalBeginDestroy();
+            }
+
+            const bool bSucceeded = Result.Succeeded();
+            const FString Error   = Result.Error;
+
+            MainThread::Enqueue([this, Importer, Request, bSucceeded, Error]()
+            {
+                CImporterRegistry::DestroyImporter(Importer);
+
                 // Released only now the import has run. On success the package is registered and saved, so
                 // the checks above see it; on failure the name goes back to being free.
-                ReservedImportPaths.erase(DestinationPath);
+                ReservedImportPaths.erase(Request.DestinationPath);
 
                 RefreshContentBrowser();
-                ImGuiX::Notifications::NotifySuccess("Successfully Imported: \"{0}\"", Path);
+                if (bSucceeded)
+                {
+                    ImGuiX::Notifications::NotifySuccess("Successfully Imported: \"{0}\"", Request.SourcePath);
+                }
+                else
+                {
+                    ImGuiX::Notifications::NotifyError("Failed to import \"{0}\": {1}", Request.SourcePath, Error);
+                }
             });
         });
     }
@@ -2079,19 +2439,19 @@ namespace Lumina
 
     void FContentBrowserEditorTool::TryImport(const TVector<FFixedString>& Paths)
     {
-        // Anything whose factory has no options dialogue imports straight away -- textures, fonts,
-        // audio. Only the importers that ask something go in the queue, so dropping forty PNGs and one
-        // FBX is one prompt, not forty-one.
+        // Anything whose importer has no options dialogue imports straight away -- textures, fonts, audio.
+        // Only importers that ask something go in the queue, so dropping forty PNGs and one FBX is one
+        // prompt, not forty-one.
         for (const FFixedString& Path : Paths)
         {
-            CFactory* Factory = FindImportFactory(Path);
-            if (Factory == nullptr)
+            CImporter* ImporterCDO = CImporterRegistry::Get().FindImporterForExtension(VFS::Extension(Path));
+            if (ImporterCDO == nullptr)
             {
                 ImGuiX::Notifications::NotifyWarning("No importer for \"{0}\"", VFS::FileName(Path).data());
                 continue;
             }
 
-            if (!Factory->HasImportDialogue())
+            if (!ImporterCDO->HasSettingsDialogue())
             {
                 const FFixedString Destination = MakeUniqueImportDestination(Path);
                 if (Destination.empty())
@@ -2100,7 +2460,8 @@ namespace Lumina
                     continue;
                 }
 
-                StartImport(Factory, Path, Destination, nullptr);
+                CImporter* Importer = CImporterRegistry::CreateImporterOfClass(ImporterCDO->GetClass());
+                StartImport(Importer, FImportRequest{ Path, Destination });
                 continue;
             }
 
@@ -2128,8 +2489,8 @@ namespace Lumina
         const FFixedString Path = PendingImports.front();
         PendingImports.erase(PendingImports.begin());
 
-        CFactory* Factory = FindImportFactory(Path);
-        if (Factory == nullptr)
+        CImporter* ImporterCDO = CImporterRegistry::Get().FindImporterForExtension(VFS::Extension(Path));
+        if (ImporterCDO == nullptr)
         {
             ProcessNextImport();
             return;
@@ -2145,16 +2506,28 @@ namespace Lumina
 
         bImportWindowOpen = true;
 
-        // Each file is parsed on its own: Import All reuses the chosen OPTIONS, not the previous
-        // file's parsed contents, which is why the prepare still runs for every one of them.
-        Factory->PrepareImportAsync(Path, DestinationPath,
-            [this, Factory, Path, DestinationPath](TUniquePtr<Import::FImportSettings> Settings)
+        const FImportRequest Request{ Path, DestinationPath };
+        CImporter* Importer = CImporterRegistry::CreateImporterOfClass(ImporterCDO->GetClass());
+
+        // Each file is parsed on its own: Import All reuses the chosen OPTIONS, not the previous file's
+        // parsed contents, which is why the parse still runs for every one of them.
+        Task::AsyncTask(1, 1, [this, Importer, Request](uint32, uint32, uint32)
+        {
+            const FStringView SourceName = VFS::FileName(Request.SourcePath, true);
+            FFixedString Title(FFixedString::CtorSprintf(), "Reading %.*s", (int)SourceName.length(), SourceName.data());
+            FScopedSlowTask SlowTask(1.0f, Title, "Parsing source file...");
+
+            FString Error;
+            const bool bParsed = Importer->ParseSource(Request, Error, &SlowTask);
+
+            MainThread::Enqueue([this, Importer, Request, bParsed, Error]() mutable
             {
-                if (!Settings)
+                if (!bParsed)
                 {
-                    ImGuiX::Notifications::NotifyError("Failed to import: \"{0}\"", Path);
+                    ImGuiX::Notifications::NotifyError("Failed to import \"{0}\": {1}", Request.SourcePath, Error);
+                    CImporterRegistry::DestroyImporter(Importer);
                     // Nothing will be created at the reserved name, so hand it back.
-                    ReservedImportPaths.erase(DestinationPath);
+                    ReservedImportPaths.erase(Request.DestinationPath);
                     bImportWindowOpen = false;
                     ProcessNextImport();
                     return;
@@ -2162,42 +2535,49 @@ namespace Lumina
 
                 if (bApplyImportSettingsToAll)
                 {
-                    Factory->CommitImportSettings(*Settings);
-                    StartImport(Factory, Path, DestinationPath, Move(Settings));
+                    StartImport(Importer, Request);
                     bImportWindowOpen = false;
                     ProcessNextImport();
                     return;
                 }
 
+                // Only once the dialogue is actually going to show them: the preview mints a GPU texture
+                // per source image, which is wasted work and live GPU state for an import that never asks.
+                Importer->PrepareSettingsPreview();
+
+                ImportSettingsTable = MakeUnique<FPropertyTable>(Importer);
+                ImportSettingsTable->SetShowSearchBar(false);
+
                 struct FModalState
                 {
-                    TUniquePtr<Import::FImportSettings> ImportSettings;
                     bool bShouldClose = false;
                     bool bStarted     = false;
                 };
-
                 auto SharedState = MakeShared<FModalState>();
-                SharedState->ImportSettings = Move(Settings);
 
                 ToolContext->PushModal("Import", {940, 900},
-                    [this, Factory, Path, DestinationPath, SharedState]() mutable
+                    [this, Importer, Request, SharedState]() mutable
                     {
                         bool bApplyToAll = false;
 
-                        if (DrawImportWindow(Factory, Path, DestinationPath, *SharedState->ImportSettings,
-                                             (int32)PendingImports.size(), SharedState->bShouldClose, bApplyToAll))
+                        if (DrawImportWindow(Importer, Request, (int32)PendingImports.size(),
+                                             SharedState->bShouldClose, bApplyToAll))
                         {
                             bApplyImportSettingsToAll = bApplyToAll;
                             SharedState->bStarted = true;
-                            StartImport(Factory, Path, DestinationPath, Move(SharedState->ImportSettings));
+                            StartImport(Importer, Request);
                         }
 
                         if (SharedState->bShouldClose)
                         {
-                            // Cancelled: StartImport never ran, so nothing else will release the name.
+                            ImportSettingsTable.reset();
+
+                            // Cancelled: StartImport never ran, so nothing else releases the name or the
+                            // importer.
                             if (!SharedState->bStarted)
                             {
-                                ReservedImportPaths.erase(DestinationPath);
+                                CImporterRegistry::DestroyImporter(Importer);
+                                ReservedImportPaths.erase(Request.DestinationPath);
                             }
 
                             // Advancing from here rather than from the confirm branch, so cancelling one
@@ -2209,6 +2589,7 @@ namespace Lumina
                         return SharedState->bShouldClose;
                     });
             });
+        });
     }
 
     void FContentBrowserEditorTool::DrawDirectoryBrowser(bool bIsFocused, ImVec2 Size)
@@ -2466,8 +2847,8 @@ namespace Lumina
 
         // Decided from the registry's class name, so drawing the menu never loads the asset.
         CClass* AssetClass = FindObject<CClass>(Data->AssetClass);
-        CFactory* Factory = CFactory::FindReimportFactory(AssetClass);
-        if (Factory == nullptr)
+        CImporter* ImporterCDO = CImporterRegistry::Get().FindReimporter(AssetClass);
+        if (ImporterCDO == nullptr)
         {
             return;
         }
@@ -2491,10 +2872,29 @@ namespace Lumina
                 return;
             }
 
-            // Filter comes from the factory, so the dialog only offers files this asset type can actually
+            // Filter comes from the importer, so the dialog only offers files this asset type can actually
             // be built from -- the whole reason this is safer than "import over the top".
-            const FFixedString Filter = Factory->BuildFileDialogFilter();
-            const FString      Previous = Factory->GetReimportSourcePath(Asset);
+            TVector<FStringView> Extensions;
+            ImporterCDO->GetSupportedExtensions(Extensions);
+
+            FFixedString Patterns;
+            for (const FStringView& Ext : Extensions)
+            {
+                if (!Patterns.empty())
+                {
+                    Patterns.append(";");
+                }
+                Patterns.append("*").append_convert(Ext.data(), Ext.length());
+            }
+
+            FFixedString Filter;
+            Filter.append("Supported Files (").append(Patterns).append(")");
+            Filter.push_back('\0');
+            Filter.append(Patterns);
+            Filter.push_back('\0');
+            Filter.push_back('\0');
+
+            const FString Previous = ImporterCDO->GetReimportSourcePath(Asset);
 
             FFixedString Picked;
             if (!Platform::OpenFileDialogue(Picked, "Reimport From File", Filter.c_str(),
@@ -2503,22 +2903,22 @@ namespace Lumina
                 return;
             }
 
-            // The dialog's "All Files" entry can hand back anything, so the extension is re-checked here
-            // rather than trusted; the importers assume they were given a format they parse.
-            if (!Factory->IsExtensionSupported(VFS::Extension(Picked)))
+            // The dialog can hand back anything, so the extension is re-checked here rather than trusted;
+            // the importers assume they were given a format they parse.
+            if (!ImporterCDO->SupportsExtension(VFS::Extension(Picked)))
             {
                 ImGuiX::Notifications::NotifyError("'{0}' is not a supported source file for this asset type.",
                                                    VFS::FileName(Picked).data());
                 return;
             }
 
-            StartReimport(AssetGUID, Factory, Picked);
+            StartReimport(AssetGUID, ImporterCDO->GetClass(), Picked);
         }
         ImGuiX::TextTooltip("{}", "Replace this asset's contents from a source file. The asset keeps its "
                                   "name, path and GUID, so everything referencing it stays pointed at it.");
     }
 
-    void FContentBrowserEditorTool::StartReimport(const FGuid& AssetGUID, CFactory* Factory, const FFixedString& SourceFile)
+    void FContentBrowserEditorTool::StartReimport(const FGuid& AssetGUID, CClass* ImporterClass, const FFixedString& SourceFile)
     {
         CObject* Asset = LoadObject<CObject>(AssetGUID);
         if (Asset == nullptr)
@@ -2533,81 +2933,106 @@ namespace Lumina
 
         bImportWindowOpen = true;
 
-        Factory->PrepareImportAsync(SourceFile, AssetPath,
-            [this, AssetGUID, Factory, SourceFile, AssetPath](TUniquePtr<Import::FImportSettings> Settings)
+        CImporter* Importer = CImporterRegistry::CreateImporterOfClass(ImporterClass);
+        const FImportRequest Request{ SourceFile, AssetPath };
+
+        Task::AsyncTask(1, 1, [this, AssetGUID, Importer, Request](uint32, uint32, uint32)
+        {
+            const FStringView SourceName = VFS::FileName(Request.SourcePath, true);
+            FFixedString Title(FFixedString::CtorSprintf(), "Reading %.*s", (int)SourceName.length(), SourceName.data());
+            FScopedSlowTask SlowTask(1.0f, Title, "Parsing source file...");
+
+            FString Error;
+            const bool bParsed = Importer->ParseSource(Request, Error, &SlowTask);
+
+            MainThread::Enqueue([this, AssetGUID, Importer, Request, bParsed, Error]() mutable
             {
-                if (!Settings)
+                if (!bParsed)
                 {
-                    ImGuiX::Notifications::NotifyError("Failed to read \"{0}\"", SourceFile);
+                    ImGuiX::Notifications::NotifyError("Failed to read \"{0}\": {1}", Request.SourcePath, Error);
+                    CImporterRegistry::DestroyImporter(Importer);
                     bImportWindowOpen = false;
                     return;
                 }
 
                 // Importers with no options (texture, font, audio) go straight through, matching what a
                 // fresh import of the same file does.
-                if (!Factory->HasImportDialogue())
+                if (!Importer->HasSettingsDialogue())
                 {
-                    Factory->CommitImportSettings(*Settings);
-                    FinishReimport(AssetGUID, Factory, SourceFile, Move(Settings));
+                    FinishReimport(AssetGUID, Importer, Request.SourcePath);
                     bImportWindowOpen = false;
                     return;
                 }
 
+                Importer->PrepareSettingsPreview();
+
+                ImportSettingsTable = MakeUnique<FPropertyTable>(Importer);
+                ImportSettingsTable->SetShowSearchBar(false);
+
                 struct FModalState
                 {
-                    TUniquePtr<Import::FImportSettings> ImportSettings;
                     bool bShouldClose = false;
+                    bool bStarted     = false;
                 };
-
                 auto SharedState = MakeShared<FModalState>();
-                SharedState->ImportSettings = Move(Settings);
 
                 ToolContext->PushModal("Reimport", {940, 900},
-                    [this, AssetGUID, Factory, SourceFile, AssetPath, SharedState]() mutable
+                    [this, AssetGUID, Importer, Request, SharedState]() mutable
                     {
                         // RemainingCount 0: a reimport is always a single file, so the window shows no
                         // "apply to all" affordance and the flag it returns is ignored.
                         bool bApplyToAll = false;
 
-                        if (DrawImportWindow(Factory, SourceFile, AssetPath, *SharedState->ImportSettings,
-                                             0, SharedState->bShouldClose, bApplyToAll))
+                        if (DrawImportWindow(Importer, Request, 0, SharedState->bShouldClose, bApplyToAll))
                         {
-                            FinishReimport(AssetGUID, Factory, SourceFile, Move(SharedState->ImportSettings));
+                            SharedState->bStarted = true;
+                            FinishReimport(AssetGUID, Importer, Request.SourcePath);
                         }
 
                         if (SharedState->bShouldClose)
                         {
+                            ImportSettingsTable.reset();
+                            if (!SharedState->bStarted)
+                            {
+                                CImporterRegistry::DestroyImporter(Importer);
+                            }
                             bImportWindowOpen = false;
                         }
 
                         return SharedState->bShouldClose;
                     });
             });
+        });
     }
 
-    void FContentBrowserEditorTool::FinishReimport(const FGuid& AssetGUID, CFactory* Factory,
-                                                   const FFixedString& SourceFile,
-                                                   TUniquePtr<Import::FImportSettings> Settings)
+    void FContentBrowserEditorTool::FinishReimport(const FGuid& AssetGUID, CImporter* Importer,
+                                                   const FFixedString& SourceFile)
     {
         // Stays on a worker like the import path does: the RHI takes multi-threaded submission, and the
         // geometry finalize is seconds of work that would otherwise freeze the editor.
-        Task::AsyncTask(1, 1, [this, AssetGUID, Factory, SourceFile, Settings = Move(Settings)](uint32, uint32, uint32)
+        Task::AsyncTask(1, 1, [this, AssetGUID, Importer, SourceFile](uint32, uint32, uint32)
         {
+            const FStringView SourceName = VFS::FileName(SourceFile, true);
+            FFixedString Title(FFixedString::CtorSprintf(), "Reimporting %.*s", (int)SourceName.length(), SourceName.data());
+            FScopedSlowTask SlowTask(1.0f, Title, "Processing...");
+
             CObject* Asset = LoadObject<CObject>(AssetGUID);
             if (Asset == nullptr)
             {
-                MainThread::Enqueue([SourceFile]()
+                MainThread::Enqueue([Importer, SourceFile]()
                 {
+                    CImporterRegistry::DestroyImporter(Importer);
                     ImGuiX::Notifications::NotifyError("The asset was gone before \"{0}\" could be applied.", SourceFile);
                 });
                 return;
             }
 
-            if (!Factory->TryReimport(Asset, SourceFile, Settings.get()))
+            if (!Importer->ReimportAsset(Asset, FImportRequest{ SourceFile, FFixedString() }, &SlowTask))
             {
-                MainThread::Enqueue([SourceFile]()
+                MainThread::Enqueue([Importer, SourceFile]()
                 {
-                    // TryReimport leaves the asset untouched when it fails, so there is nothing to undo.
+                    CImporterRegistry::DestroyImporter(Importer);
+                    // ReimportAsset leaves the asset untouched when it fails, so there is nothing to undo.
                     ImGuiX::Notifications::NotifyError("Reimport failed; \"{0}\" was left unchanged.", SourceFile);
                 });
                 return;
@@ -2616,8 +3041,10 @@ namespace Lumina
             // Thumbnail first, and on the main thread: it RENDERS the asset into the package's thumbnail
             // slot, so it has to happen before the save that embeds it -- and it would otherwise keep
             // showing the old contents, since nothing about the package path changed.
-            MainThread::Enqueue([this, AssetGUID, SourceFile]()
+            MainThread::Enqueue([this, AssetGUID, Importer, SourceFile]()
             {
+                CImporterRegistry::DestroyImporter(Importer);
+
                 CObject* Asset = LoadObject<CObject>(AssetGUID);
                 if (Asset == nullptr)
                 {
@@ -3170,7 +3597,7 @@ namespace Lumina
             TVector<FString>   Categories;
             for (CFactory* Factory : Factories)
             {
-                if (Factory->CanImport() || Factory->GetAssetClass() == nullptr)
+                if (Factory->GetAssetClass() == nullptr)
                 {
                     continue;
                 }

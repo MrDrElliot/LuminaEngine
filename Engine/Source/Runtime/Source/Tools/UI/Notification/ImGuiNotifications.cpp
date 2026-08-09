@@ -51,6 +51,26 @@ namespace Lumina::ImGuiX::Notifications
 
         NODISCARD EType GetType() const { return Type; }
 
+        NODISCARD bool Matches(EType InType, FStringView InMessage) const
+        {
+            if (Type != InType || Message.size() != InMessage.size())
+            {
+                return false;
+            }
+
+            return Message.empty() || memcmp(Message.data(), InMessage.data(), Message.size()) == 0;
+        }
+
+        // A repeat of an already visible notification restarts its lifetime instead of stacking a
+        // duplicate. Rewinding to the end of the fade-in keeps it fully opaque, so it doesn't blink.
+        void Refresh()
+        {
+            CreationTime = glfwGetTime() - DefaultFadeTime;
+            RepeatCount++;
+        }
+
+        NODISCARD uint32 GetRepeatCount() const { return RepeatCount; }
+
         NODISCARD EPhase GetPhase() const
         {
             const float ElapsedTime = static_cast<float>(glfwGetTime() - CreationTime);
@@ -141,11 +161,16 @@ namespace Lumina::ImGuiX::Notifications
         FFixedString    Message;
         double          CreationTime = -1.0f;
         float           Lifetime = DefaultLifetime;
+        uint32          RepeatCount = 1;
         EType           Type = EType::None;
     };
-    
+
+    // Hard cap on the live stack. Anything past this evicts the oldest entry, so a flood of
+    // notifications can never grow the stack off the top of the screen.
+    constexpr static size_t MaxNotifications = 6;
+
     static FMutex NotificationMutex;
-    static TFixedVector<FNotification, 10> GNotifications;
+    static TFixedVector<FNotification, MaxNotifications> GNotifications;
     static float GBottomInset = 0.0f;
 
     void SetBottomInset(float Pixels)
@@ -175,25 +200,55 @@ namespace Lumina::ImGuiX::Notifications
 
         FScopeLock Lock(NotificationMutex);
 
+        // Sweep expired entries up front so the height budget below only accounts for live toasts.
+        for (size_t i = 0; i < GNotifications.size();)
+        {
+            if (GNotifications[i].GetPhase() == FNotification::EPhase::Expired)
+            {
+                GNotifications.erase(GNotifications.begin() + i);
+            }
+            else
+            {
+                i++;
+            }
+        }
+
+        // The stack grows upwards from the bottom-right corner, so it can only ever consume the
+        // work area above the padding/inset. Stop drawing before it would run off the top edge.
+        const float AvailableHeight = WorkSize.y - PaddingY - GBottomInset;
+        if (AvailableHeight <= 0.0f)
+        {
+            return;
+        }
+
+        const float MinNotificationHeight = ImGui::GetTextLineHeightWithSpacing() * 2.0f;
+
         float NotificationStartPosY = 0.0f;
-        for (size_t i = 0; i < GNotifications.size(); i++)
+        size_t NumHidden = 0;
+        size_t NumDrawn = 0;
+
+        // Walk newest to oldest so the newest sits in the corner and older ones stack above it.
+        // Running out of height then drops the oldest, which are the ones worth losing.
+        for (size_t i = GNotifications.size(); i-- > 0;)
         {
             const FNotification& Notification = GNotifications[i];
 
-            if (Notification.GetPhase() == FNotification::EPhase::Expired)
+            // Always draw at least one, otherwise the stack silently vanishes on tiny viewports.
+            if (NumDrawn > 0 && NotificationStartPosY + MinNotificationHeight > AvailableHeight)
             {
-                GNotifications.erase(GNotifications.begin() + i);
-                i--;
-                continue;
+                NumHidden = i + 1;
+                break;
             }
-            
+
+            NumDrawn++;
+
             FStringView Icon        = Notification.GetIcon();
             FStringView Title       = Notification.GetTitle();
             FStringView Message     = Notification.GetMessageContent();
             const float Opacity     = Notification.GetFadePercentage();
             const ImVec4 TextColor  = Notification.GetColor(Opacity);
 
-            FFixedString WindowName(FFixedString::CtorSprintf(), "##Notification%d", i);
+            FFixedString WindowName(FFixedString::CtorSprintf(), "##Notification%d", (int)i);
             
             ImGuiWindowFlags Flags = 
                 ImGuiWindowFlags_AlwaysAutoResize |
@@ -226,7 +281,15 @@ namespace Lumina::ImGuiX::Notifications
                         ImGui::SameLine();
                     }
 
-                    ImGui::TextUnformatted(Title.begin(), Title.end());
+                    if (Notification.GetRepeatCount() > 1)
+                    {
+                        ImGui::Text("%.*s (x%u)", (int)Title.size(), Title.data(), Notification.GetRepeatCount());
+                    }
+                    else
+                    {
+                        ImGui::TextUnformatted(Title.begin(), Title.end());
+                    }
+
                     DrawSeparator = true;
                 }
 
@@ -254,12 +317,48 @@ namespace Lumina::ImGuiX::Notifications
             ImGui::PopStyleVar();
             ImGui::PopStyleColor();
         }
+
+        if (NumHidden > 0)
+        {
+            const ImGuiWindowFlags Flags =
+                ImGuiWindowFlags_AlwaysAutoResize |
+                ImGuiWindowFlags_NoDecoration |
+                ImGuiWindowFlags_NoInputs |
+                ImGuiWindowFlags_NoNav |
+                ImGuiWindowFlags_NoBringToFrontOnFocus |
+                ImGuiWindowFlags_NoFocusOnAppearing;
+
+            ImGui::SetNextWindowBgAlpha(1.0f);
+            ImGui::SetNextWindowPos(WorkPos + ImVec2(WorkSize.x - PaddingX, WorkSize.y - PaddingY - GBottomInset - NotificationStartPosY), ImGuiCond_Always, ImVec2(1.0f, 1.0f));
+            if (ImGui::Begin("##NotificationOverflow", nullptr, Flags))
+            {
+                ImGui::Text("%zu more...", NumHidden);
+            }
+
+            ImGui::End();
+        }
     }
 
     void NotifyInternal(EType Type, FStringView Msg)
     {
         FScopeLock Lock(NotificationMutex);
-        
+
+        // Collapse repeats of a message that's already on screen rather than stacking duplicates.
+        for (FNotification& Existing : GNotifications)
+        {
+            if (Existing.Matches(Type, Msg))
+            {
+                Existing.Refresh();
+                return;
+            }
+        }
+
+        // Bounded stack - the oldest notification makes way for the newest.
+        while (GNotifications.size() >= MaxNotifications)
+        {
+            GNotifications.erase(GNotifications.begin());
+        }
+
         FFixedString MessageContent(Msg.begin(), Msg.end());
         GNotifications.emplace_back(Type, Move(MessageContent));
     }

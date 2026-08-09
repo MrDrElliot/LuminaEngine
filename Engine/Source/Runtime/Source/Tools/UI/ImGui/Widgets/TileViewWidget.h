@@ -33,6 +33,10 @@ namespace Lumina
         LE_NO_COPYMOVE(FTileViewItem);
 
         virtual FStringView GetName() const { return {}; }
+
+        /** Short, dimmed line under the name -- the item's TYPE. Empty draws nothing, but the band is
+         *  still reserved when the context asks for it, so every row keeps the same height. */
+        virtual FStringView GetTypeLabel() const { return {}; }
         
         virtual void DrawTooltip() const { }
 
@@ -55,7 +59,8 @@ namespace Lumina
         {
             if (!bDisplayNameCached)
             {
-                CachedDisplayName = GetDisplayName();
+                const FFixedString Resolved = GetDisplayName();
+                CachedDisplayName.assign(Resolved.c_str(), Resolved.size());
                 bDisplayNameCached = true;
             }
             return FStringView(CachedDisplayName.data(), CachedDisplayName.size());
@@ -65,7 +70,9 @@ namespace Lumina
 
     protected:
 
-        FFixedString                CachedDisplayName;
+        // Heap string, not a fixed one: a 255-char inline buffer here is paid by EVERY item, and a
+        // display name is a leaf filename that fits the small-string buffer most of the time.
+        FString                     CachedDisplayName;
 
         uint8                       bExpanded:1;
         uint8                       bVisible:1;
@@ -99,6 +106,9 @@ namespace Lumina
 
         /** Called when an inline rename is committed with the new name. */
         TFunction<void(FTileViewItem*, const char*)>            ItemRenamedFunction;
+
+        /** Reserve a second label line for FTileViewItem::GetTypeLabel under every name. */
+        bool                                                    bShowTypeLabels = false;
 
     };
 
@@ -179,7 +189,10 @@ namespace Lumina
 
     private:
 
-        FBlockLinearAllocator                   Allocator;
+        // Sized off the items rather than left at the 1024-byte default: a content-browser tile carries
+        // a VFS::FFileInfo whose fixed strings make it ~1KB on its own, so the default gave one heap
+        // block per tile -- the allocator's whole point is batching, and it was doing none.
+        FBlockLinearAllocator                   Allocator{ 64 * 1024 };
 
         TVector<FTileViewItem*>                 Selections;
 

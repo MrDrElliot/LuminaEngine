@@ -821,6 +821,31 @@ namespace Lumina
 
         auto View = ECS::GetWorldRegistry(*World).view<FSelectedInEditorComponent>();
 
+        // Arm the selection's transform resolve ONCE per selection change.
+        //
+        // Both branches below used to do this unconditionally, every frame, for every selected entity --
+        // so a selected entity was never NOT being re-resolved. FNeedsTransformUpdate is not local: the
+        // resolve walks the entity's whole subtree and PublishMoved()s every descendant, SyncScenePrimitives
+        // then calls Tracker.MarkAllSources(Transform) on each, and past the dirty-slot threshold the
+        // retained instance buffer re-uploads WHOLE. Selecting the root of a 180k-entity prefab therefore
+        // re-resolved and re-uploaded 180k primitives per frame, for as long as it stayed selected.
+        //
+        // Once per selection change is what this was actually for: a newly selected entity needs a resolved
+        // world transform for the gizmo and the component visualizers. Anything that MOVES a selection
+        // already arms its own -- the gizmo re-emplaces after writing LocalTransform, and undo/redo does the
+        // same (see FEntityTransformCommand).
+        if (bSelectionTransformRefreshPending)
+        {
+            bSelectionTransformRefreshPending = false;
+            for (entt::entity Selected : SelectedEntities)
+            {
+                if (ECS::GetWorldRegistry(*World).valid(Selected))
+                {
+                    ECS::GetWorldRegistry(*World).emplace_or_replace<FNeedsTransformUpdate>(Selected);
+                }
+            }
+        }
+
         // Selection edit shortcuts (Copy/Duplicate/Delete) work over the viewport OR the
         // Scene Graph outliner. Gated off text input so renaming an entity doesn't delete it.
         const bool bSelectionEditActive = (bViewportHovered || bOutlinerActive) && !ImGui::GetIO().WantTextInput;
@@ -858,8 +883,6 @@ namespace Lumina
 
             for (entt::entity SelectedEntity : CurrentSelection)
             {
-                ECS::GetWorldRegistry(*World).emplace_or_replace<FNeedsTransformUpdate>(SelectedEntity);
-
                 const bool bLocked = IsLockedPrefabChild(ECS::GetWorldRegistry(*World), SelectedEntity);
 
                 if (bCopyPressed)
@@ -902,16 +925,6 @@ namespace Lumina
                 else
                 {
                     AbortTransaction();
-                }
-            }
-        }
-        else
-        {
-            for (entt::entity Selected : SelectedEntities)
-            {
-                if (ECS::GetWorldRegistry(*World).valid(Selected))
-                {
-                    ECS::GetWorldRegistry(*World).emplace_or_replace<FNeedsTransformUpdate>(Selected);
                 }
             }
         }

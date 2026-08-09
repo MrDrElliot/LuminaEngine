@@ -317,8 +317,8 @@ namespace Lumina::VFS
         FFileInfo Info
         {
             .Name           = FString(FileNameOf(KeyView).data(), FileNameOf(KeyView).size()),
-            .VirtualPath    = Key,
-            .PathSource     = Key,
+            .VirtualPath    = FString(Key.c_str(), Key.size()),
+            .PathSource     = FString(Key.c_str(), Key.size()),
             .LastModifyTime = Entry.LastModifyTime,
             .Flags          = FlagsForPath(KeyView, Entry.bIsDirectory, false),
         };

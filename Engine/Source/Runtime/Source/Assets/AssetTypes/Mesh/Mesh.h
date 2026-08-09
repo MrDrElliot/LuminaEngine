@@ -36,12 +36,13 @@ namespace Lumina
     {
         GENERATED_BODY()
         
-        friend class CMeshFactory;
+        friend class CMeshImporter;
         
     public:
         
         void Serialize(FArchive& Ar) override;
         void PostLoad() override;
+        void OnDestroy() override;
 
         bool IsReadyForRender() const;
 

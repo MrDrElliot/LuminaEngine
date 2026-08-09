@@ -181,7 +181,16 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
         if (Emitted > 0u && bInRange)
         {
             FRenderBucket* Bucket = Pass().OutBuckets + (v * Pass().NumBatches + DrawID);
-            InterlockedAdd(Bucket.DrawCapacity, Emitted);
+
+            // MBOIT rasterizes translucency twice per frame (moments, then shading), and the task shader
+            // appends a draw slot per KEPT meshlet on each pass. One reservation only survives while
+            // meshlet-level culling happens to reject enough of what instance-level culling emitted --
+            // past that AppendReserve refuses, and the meshlets it drops are picked by atomic arrival
+            // order, so translucency flickers by camera angle. Blocks are NOT doubled: both passes
+            // dispatch the same task grid. Additive shares the flag and over-reserves slightly; the draw
+            // list grows on demand, so that costs headroom, not geometry.
+            const bool bDoubleReserved = !bShadowView && Cull.HasFlag(EInstanceFlags::Translucent);
+            InterlockedAdd(Bucket.DrawCapacity, bDoubleReserved ? (Emitted * 2u) : Emitted);
 
             // Rounded up PER INSTANCE: blocks never span instances, so a ceil of the sum would
             // under-reserve one block for every instance with a partial tail.

@@ -26,7 +26,6 @@ namespace Lumina
         // Deliberately NOT an importer: layers are existing texture ASSETS, not files, so there is
         // nothing for TryImport to read. They are dropped onto the asset in the texture editor, which
         // then calls Rebuild below.
-        bool CanImport() override { return false; }
 
         /**
          * Assembles Array->SourceTextures into a single Tex2DArray, in list order, and republishes the

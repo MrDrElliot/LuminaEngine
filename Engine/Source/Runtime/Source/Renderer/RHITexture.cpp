@@ -14,20 +14,10 @@ namespace Lumina::RHI::Textures
         uint32 Slot;
     };
 
-    struct FPendingRelease
-    {
-        FManagedTexture Texture;
-        TVector<uint32> StorageSlots;
-        uint32          TicksRemaining;
-    };
-
     struct FState
     {
         TVector<FStorageSlot> StorageSlots;
         FMutex                StorageMutex;
-
-        TVector<FPendingRelease> PendingReleases;
-        FMutex                   ReleaseMutex;
 
         FManagedTexture     Default;
         bool                bInitialized = false;
@@ -58,23 +48,7 @@ namespace Lumina::RHI::Textures
 
         HeapSetFallbackTexture(Core::GetGlobalHeap(), FTextureH{});
 
-        // Flush every deferred release immediately; the device is idle.
-        {
-            FScopeLock Lock(GState.ReleaseMutex);
-            for (FPendingRelease& Pending : GState.PendingReleases)
-            {
-                for (uint32 Slot : Pending.StorageSlots)
-                {
-                    HeapFreeRWTexture(Core::GetGlobalHeap(), Slot);
-                }
-                if (Pending.Texture.SampledSlot != kInvalidHeapSlot)
-                {
-                    HeapFreeTexture(Core::GetGlobalHeap(), Pending.Texture.SampledSlot);
-                }
-                FreeH(Pending.Texture.Texture);
-            }
-            GState.PendingReleases.clear();
-        }
+        // Anything already retired is drained by Core::Shutdown, which runs immediately after this.
 
         if (GState.Default.SampledSlot != kInvalidHeapSlot)
         {
@@ -84,35 +58,6 @@ namespace Lumina::RHI::Textures
         GState.Default = FManagedTexture{};
 
         GState.bInitialized = false;
-    }
-
-    void Tick()
-    {
-        FScopeLock Lock(GState.ReleaseMutex);
-
-        for (size_t i = 0; i < GState.PendingReleases.size(); )
-        {
-            FPendingRelease& Pending = GState.PendingReleases[i];
-            if (Pending.TicksRemaining > 0)
-            {
-                --Pending.TicksRemaining;
-                ++i;
-                continue;
-            }
-
-            for (uint32 Slot : Pending.StorageSlots)
-            {
-                HeapFreeRWTexture(Core::GetGlobalHeap(), Slot);
-            }
-            if (Pending.Texture.SampledSlot != kInvalidHeapSlot)
-            {
-                HeapFreeTexture(Core::GetGlobalHeap(), Pending.Texture.SampledSlot);
-            }
-            FreeH(Pending.Texture.Texture);
-
-            GState.PendingReleases[i] = Move(GState.PendingReleases.back());
-            GState.PendingReleases.pop_back();
-        }
     }
 
     static FTextureDesc MakeTexture2DDesc(const FTexture2DDesc& Desc)
@@ -222,14 +167,14 @@ namespace Lumina::RHI::Textures
         Release(Old);
     }
 
-    void Upload(const FManagedTexture& Tex, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels)
+    void Upload(const FManagedTexture& Tex, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels, uint32 Width, uint32 Height)
     {
-        UploadTexture(Tex.Texture, 0, Mip, Data, Size, RowPitchTexels);
+        UploadTexture(Tex.Texture, 0, Mip, Data, Size, RowPitchTexels, Width, Height);
     }
 
-    void UploadLayer(const FManagedTexture& Tex, uint32 Layer, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels)
+    void UploadLayer(const FManagedTexture& Tex, uint32 Layer, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels, uint32 Width, uint32 Height)
     {
-        UploadTexture(Tex.Texture, Layer, Mip, Data, Size, RowPitchTexels);
+        UploadTexture(Tex.Texture, Layer, Mip, Data, Size, RowPitchTexels, Width, Height);
     }
 
     void Clear(const FManagedTexture& Tex, const float Value[4])
@@ -265,11 +210,9 @@ namespace Lumina::RHI::Textures
             return;
         }
 
-        FPendingRelease Pending;
-        Pending.Texture        = Tex;
-        Pending.TicksRemaining = kFramesInFlight;
-
-        // Collect (and forget) any storage slots this texture registered.
+        // Collect (and forget) any storage slots this texture registered. Retired outside the lock so
+        // the ordering StorageMutex -> RetireMutex never has to be reasoned about.
+        TVector<uint32> Storage;
         {
             const uint64 Handle = Tex.Texture.Handle;
             FScopeLock Lock(GState.StorageMutex);
@@ -277,7 +220,7 @@ namespace Lumina::RHI::Textures
             {
                 if (GState.StorageSlots[i].TextureHandle == Handle)
                 {
-                    Pending.StorageSlots.push_back(GState.StorageSlots[i].Slot);
+                    Storage.push_back(GState.StorageSlots[i].Slot);
                     GState.StorageSlots[i] = GState.StorageSlots.back();
                     GState.StorageSlots.pop_back();
                 }
@@ -288,10 +231,12 @@ namespace Lumina::RHI::Textures
             }
         }
 
+        for (uint32 Slot : Storage)
         {
-            FScopeLock Lock(GState.ReleaseMutex);
-            GState.PendingReleases.push_back(Move(Pending));
+            Core::RetireStorageSlot(Slot);
         }
+        Core::RetireSampledSlot(Tex.SampledSlot);
+        Core::Retire(Tex.Texture);
 
         Tex = FManagedTexture{};
     }

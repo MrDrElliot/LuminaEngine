@@ -484,9 +484,17 @@ namespace Lumina
             DepthPyramid,
             Picker,
             VisBuffer,
-            MaterialDepth,
+            // Deferred GBuffer, written by the per-material compute passes and read by the lighting pass.
+            // Channel assignments live in Includes/GBuffer.slang and nowhere else.
+            GBufferA,
+            GBufferB,
+            GBufferC,
+            GBufferD,
             Accum,
-            Revealage,
+            // MBOIT absorbance moments (MomentOIT.slang). Zeroth is the total absorbance -b_0; Moments
+            // holds the four power moments b_1..b_4. Both additively blended by the generation pass.
+            MomentZeroth,
+            Moments,
             WaterRefraction,
             DBufferA,
             DBufferB,
@@ -567,9 +575,10 @@ namespace Lumina
         FSceneBuffer GetBlockDispatchArgs() const { return BlockDispatchArgsRing[CurrentFrameSlot]; }
         FSceneBuffer GetSpdCounter()       const { return SpdCounterRing[CurrentFrameSlot]; }
 
-        FSceneBuffer GetMaterialBinTileBits() const { return MaterialBinTileBitsRing[CurrentFrameSlot]; }
-        FSceneBuffer GetMaterialTileList()    const { return MaterialTileListRing[CurrentFrameSlot]; }
-        FSceneBuffer GetMaterialTileArgs()    const { return MaterialTileArgsRing[CurrentFrameSlot]; }
+        /** Per-material counts, starts, scatter cursors, dispatch args and the frame pixel total. */
+        FSceneBuffer GetMaterialClassify()  const { return MaterialClassifyRing[CurrentFrameSlot]; }
+        /** One packed screen position per classified pixel, grouped into one contiguous run per material. */
+        FSceneBuffer GetMaterialPixelList() const { return MaterialPixelListRing[CurrentFrameSlot]; }
 
         const FSceneImage& GetSceneColorRT() const { return MSAASampleCount > 1 ? GetNamedImage(ENamedImage::HDR_MS) : GetNamedImage(ENamedImage::HDR); }
         const FSceneImage& GetSceneDepthRT() const { return MSAASampleCount > 1 ? GetNamedImage(ENamedImage::Depth_MS) : GetNamedImage(ENamedImage::DepthAttachment); }
@@ -647,8 +656,19 @@ namespace Lumina
             ECullViewFlags::MeshletHiZ defers nothing, so its Late phase is a no-op and can be skipped. */
         void VisBufferPass(RHI::FCmdListH CL, uint32 ViewIndex, bool bClear,
                            ECullPhase::Type Phase = ECullPhase::Early);
-        void MaterialDepthPass(RHI::FCmdListH CL);
-        void DeferredMaterialPass(RHI::FCmdListH CL);
+        /** Count pixels per material, prefix-sum the counts, scatter every pixel's position into its
+            material's run of the list, and build the indirect args the two passes below dispatch on. */
+        void VisBufferClassifyPass(RHI::FCmdListH CL);
+        /** One indirect compute dispatch per material over its own pixel run; writes the GBuffer. */
+        void MaterialGBufferPass(RHI::FCmdListH CL);
+        /** One indirect compute dispatch over every classified pixel; writes lit HDR. */
+        void DeferredLightingPass(RHI::FCmdListH CL);
+        #if USING(WITH_EDITOR)
+        void PickerResolvePass(RHI::FCmdListH CL);
+        #endif
+        #if !defined(LE_SHIPPING)
+        void SceneDebugViewPass(RHI::FCmdListH CL);
+        #endif
         bool BindShadowBatchPipeline(RHI::FCmdListH CL, const FMeshDrawCommand& Batch,
                                     const FShaderEntry* PixelShader);
 
@@ -674,6 +694,8 @@ namespace Lumina
         void GTAOPass(RHI::FCmdListH CL);
         void GTAOBlurPass(RHI::FCmdListH CL);
         void ShadowMaskPass(RHI::FCmdListH CL);
+        /** MBOIT pass 1: accumulate absorbance moments over the translucent draw list, opacity only. */
+        void MomentGenerationPass(RHI::FCmdListH CL);
         void TransparentPass(RHI::FCmdListH CL);
         void OITResolvePass(RHI::FCmdListH CL);
         void AdditiveTranslucentPass(RHI::FCmdListH CL);
@@ -892,9 +914,8 @@ namespace Lumina
         TArray<uint32, RHI::kFramesInFlight>                MeshletBlockRingLowUsage = {};
         TArray<FSceneBuffer, RHI::kFramesInFlight>          MeshletDeferBitsRing = {};
         TArray<uint32, RHI::kFramesInFlight>                MeshletDeferBitsRingLowUsage = {};
-        TArray<uint32, RHI::kFramesInFlight>                MaterialBinTileBitsRingLowUsage = {};
-        TArray<uint32, RHI::kFramesInFlight>                MaterialTileListRingLowUsage = {};
-        TArray<uint32, RHI::kFramesInFlight>                MaterialTileArgsRingLowUsage = {};
+        TArray<uint32, RHI::kFramesInFlight>                MaterialClassifyRingLowUsage = {};
+        TArray<uint32, RHI::kFramesInFlight>                MaterialPixelListRingLowUsage = {};
         TArray<FSceneImage, (int)ENamedImage::Num>          NamedImages = {};
 
         /** MSAA sample count cached from world settings. 1 == disabled (no overhead). */
@@ -971,8 +992,6 @@ namespace Lumina
         THashMap<uint64, RHI::FPipelineH>       PipelineCache;
         THashMap<uint64, RHI::FDepthStencilH>   DepthStateCache;
 
-        TArray<TVector<RHI::GPUPtr>,  RHI::kFramesInFlight> DeferredBufferFrees;
-        TArray<TVector<FSceneImage>,  RHI::kFramesInFlight> DeferredImageReleases;
         
         TVector<CMaterialInterface*>            PendingPostProcessMaterials;
         
@@ -1055,9 +1074,8 @@ namespace Lumina
         uint32                                              MeshletDrawTagCounter = 0;
         uint32                                              FrameVisibleInstanceCapacity = 0;
         void   UpdateMeshletBoundFeedback(uint8 Slot);
-        TArray<FSceneBuffer, RHI::kFramesInFlight>                          MaterialBinTileBitsRing = {};
-        TArray<FSceneBuffer, RHI::kFramesInFlight>                          MaterialTileListRing = {};
-        TArray<FSceneBuffer, RHI::kFramesInFlight>                          MaterialTileArgsRing = {};
+        TArray<FSceneBuffer, RHI::kFramesInFlight>                          MaterialClassifyRing = {};
+        TArray<FSceneBuffer, RHI::kFramesInFlight>                          MaterialPixelListRing = {};
         
         uint8                                                           CurrentFrameSlot = 0;
 
@@ -1082,16 +1100,17 @@ namespace Lumina
         TVector<const FShaderEntry*>            BinnedDeferredSlotShaders;
         TVector<uint32>                         BinnedDeferredSlotByMaterial;
 
-        struct FMaterialBinLayout
+        struct FMaterialClassifyLayout
         {
             uint32 NumSlots      = 0;
-            uint32 TileCountX    = 0;
-            uint32 TotalTiles    = 0;
-            uint32 TileWordCount = 0;
             uint32 ScreenW       = 0;
             uint32 ScreenH       = 0;
+            uint32 PixelCapacity = 0;   // entries the pixel list holds, taken from the allocation
         };
-        FMaterialBinLayout                      MaterialBinLayout;
+        // Derived once by VisBufferClassifyPass and read by the material and lighting passes. Zeroed at
+        // the top of the classify pass before any early return, so a bail-out frame cannot leave the
+        // later passes dispatching against a stale slot table.
+        FMaterialClassifyLayout                 MaterialClassifyLayout;
 
         bool BuildDeferredMaterialBinning();
 
@@ -1127,10 +1146,6 @@ namespace Lumina
         FTaskGraph                              DrawTaskGraph;   // mesh gather critical path; dispatched first
         FTaskGraph                              EmitTaskGraph;   // lights/primitives/extract emitters; built while DrawTaskGraph runs
         FTaskGraph                              DedupTaskGraph;  // nested inside MergeMeshDrawData
-
-        FTaskGraph                              ShadowRecordGraph;
-
-        RHI::FCmdListH                          OpenSegmentCommandList();
 
         FFrameData                              FrameData;
 

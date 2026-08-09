@@ -128,7 +128,7 @@ public sealed class RulesScanner
 
             foreach (string Descriptor in System.IO.Directory.EnumerateFiles(Root, "*.lplugin", SearchOption.AllDirectories))
             {
-                if (IsIgnoredPath(Descriptor))
+                if (IsIgnoredPath(Descriptor, Root))
                 {
                     continue;
                 }
@@ -159,7 +159,7 @@ public sealed class RulesScanner
 
         foreach (string Candidate in System.IO.Directory.EnumerateFiles(Root, "*.cs", SearchOption.AllDirectories))
         {
-            if (IsIgnoredPath(Candidate))
+            if (IsIgnoredPath(Candidate, Root))
             {
                 continue;
             }
@@ -195,9 +195,22 @@ public sealed class RulesScanner
         return null;
     }
 
-    private static bool IsIgnoredPath(string FilePath)
+    /// <summary>
+    /// Whether a discovered file sits under an ignored directory, judged RELATIVE to the tree being
+    /// scanned. The list prunes directories inside that tree; it must never get a say about the path
+    /// leading up to it, which only describes where the checkout happens to live.
+    /// </summary>
+    /// <remarks>
+    /// This split the absolute path, so any ignored name among the ancestors disqualified the whole
+    /// tree. A git worktree under '.claude/worktrees/' (where Claude Code puts them) therefore had
+    /// '.claude' in the absolute path of every rules file, all of them were ignored, and the build
+    /// died claiming no Target.cs or Build.cs existed anywhere -- in a tree visibly full of them.
+    /// Same relative-first shape ManagedProjectStep.EnumerateProjectSources uses.
+    /// </remarks>
+    private static bool IsIgnoredPath(string FilePath, string Root)
     {
-        foreach (string Segment in FilePath.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+        foreach (string Segment in PathUtils.MakeRelativeTo(FilePath, Root)
+            .Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
         {
             foreach (string Ignored in IgnoredDirectoryNames)
             {

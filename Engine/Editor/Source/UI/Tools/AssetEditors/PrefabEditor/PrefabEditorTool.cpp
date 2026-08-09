@@ -353,6 +353,10 @@ namespace Lumina
         OutlinerListView.MarkTreeDirty();
         bDetailsDirty = true;
         DetailsEntity = entt::null;
+
+        // Undoing past the add/remove of a light changes whether the prefab lights itself, but the user's
+        // own rig choice is theirs to keep.
+        SyncPreviewLighting(false);
     }
 
     void FPrefabEditorTool::LoadPrefabIntoPreviewWorld()
@@ -400,6 +404,58 @@ namespace Lumina
         {
             SetSingleSelectedEntity(Root);
         }
+
+        SyncPreviewLighting(true);
+    }
+
+    namespace
+    {
+        template<typename T>
+        void SetComponentPresent(entt::registry& Registry, entt::entity Entity, bool bPresent)
+        {
+            const bool bHas = Registry.all_of<T>(Entity);
+            if (bPresent && !bHas)
+            {
+                Registry.emplace<T>(Entity);
+            }
+            else if (!bPresent && bHas)
+            {
+                Registry.remove<T>(Entity);
+            }
+        }
+    }
+
+    void FPrefabEditorTool::SyncPreviewLighting(bool bResetToAuto)
+    {
+        if (World == nullptr || DirectionalLightEntity == entt::null)
+        {
+            return;
+        }
+
+        entt::registry& WorldRegistry = ECS::GetWorldRegistry(*World);
+        if (!WorldRegistry.valid(DirectionalLightEntity))
+        {
+            return;
+        }
+
+        // Only what the prefab itself carries counts; the studio rig lives on its own non-prefab entity.
+        bPrefabSuppliesLighting = false;
+        WorldRegistry.view<SPrefabComponent>().each([&](entt::entity Entity, const SPrefabComponent&)
+        {
+            if (WorldRegistry.any_of<SDirectionalLightComponent, SEnvironmentComponent, SSkyLightComponent>(Entity))
+            {
+                bPrefabSuppliesLighting = true;
+            }
+        });
+
+        if (bResetToAuto)
+        {
+            bStudioLighting = !bPrefabSuppliesLighting;
+        }
+
+        SetComponentPresent<SDirectionalLightComponent>(WorldRegistry, DirectionalLightEntity, bStudioLighting);
+        SetComponentPresent<SEnvironmentComponent>(WorldRegistry, DirectionalLightEntity, bStudioLighting);
+        SetComponentPresent<SSkyLightComponent>(WorldRegistry, DirectionalLightEntity, bStudioLighting);
     }
 
     void FPrefabEditorTool::CommitPreviewWorldToPrefab()
@@ -1277,6 +1333,20 @@ namespace Lumina
         {
             ImGui::Checkbox("World Grid", &bWorldGridEnabled);
             ImGui::Checkbox("Component Visualizers", &bShowComponentVisualizers);
+
+            if (ImGui::Checkbox("Studio Lighting", &bStudioLighting))
+            {
+                SyncPreviewLighting(false);
+            }
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip(bPrefabSuppliesLighting
+                    ? "This prefab carries its own lighting, so the studio rig starts off.\n"
+                      "Turning it on stacks a second sun and environment over the authored ones."
+                    : "Preview-only directional light, environment and skylight.\n"
+                      "Not part of the prefab.");
+            }
+
             if (ImGui::MenuItem(LE_ICON_HOME " Frame All", "Home"))
             {
                 FrameAllEntities();

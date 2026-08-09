@@ -35,6 +35,7 @@ namespace Lumina
         VisBufferMeshMasked,        // MeshletVisBuffer.slang + VISBUFFER_MASKED_GEOM; masked materials only
         MaskedVisBufferPixel,       // VisBufferMaskedPixel.slang + VISBUFFER_PRIMID; masked materials only
         Deferred,                   // DeferredMaterial.slang
+        MomentPixel,                // BasePixelPass.slang + TRANSLUCENT + MOMENT_GENERATION; PBR translucent only
 
         Count,
     };
@@ -91,6 +92,11 @@ namespace Lumina
         // Deferred material pixel shader (DeferredMaterial.slang): reconstructs surface from the VisBuffer
         // triangle ID and shades. The deferred pass binds it per opaque material.
         const FShaderEntry* GetDeferredShader() const { return DeferredShader; }
+
+        // MBOIT moment-generation pixel shader (BasePixelPass.slang + MOMENT_GENERATION): runs the opacity
+        // graph and accumulates absorbance moments, with no lighting at all. Null for anything that is not
+        // a PBR translucent material, since nothing else is drawn by the moment pass.
+        const FShaderEntry* GetMomentPixelShader() const { return MomentPixelShader; }
 
         static CMaterial* GetDefaultMaterial();
         static CMaterial* GetDefaultTerrainMaterial();
@@ -225,6 +231,11 @@ namespace Lumina
         PROPERTY()
         TVector<uint32>                         DeferredShaderBinaries;
 
+        /** MBOIT moment-generation pixel stage (BasePixelPass.slang + TRANSLUCENT + MOMENT_GENERATION);
+            empty for everything except PBR translucent materials. */
+        PROPERTY()
+        TVector<uint32>                         MomentPixelShaderBinaries;
+
         PROPERTY()
         TVector<FMaterialParameter>             Parameters;
 
@@ -244,6 +255,7 @@ namespace Lumina
         const FShaderEntry*                     VisBufferMeshShaderMasked = nullptr;
         const FShaderEntry*                     MaskedVisBufferPixelShader = nullptr;
         const FShaderEntry*                     DeferredShader = nullptr;
+        const FShaderEntry*                     MomentPixelShader = nullptr;
 
         bool RefreshTextureBindings(const CTexture* ChangedTexture) override;
 

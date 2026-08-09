@@ -4,7 +4,7 @@
 
 namespace Lumina::RenderUtils
 {
-    RHI::FManagedTexture CreateImageFromPixels(TSpan<uint8> PixelData, bool bFlipVertically, FUIntVector2 Size)
+    RHI::FManagedTexture CreateImageFromPixels(TSpan<const uint8> PixelData, bool bFlipVertically, FUIntVector2 Size)
     {
         TOptional<Import::Textures::FTextureImportResult> Result = Import::Textures::ImportTexture(PixelData, bFlipVertically, Size);
         if (!Result.has_value())

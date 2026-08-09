@@ -322,7 +322,7 @@ LUMINA_DOTNET_EXPORT(RHI::FTransientAlloc, RHI_CoreAllocTransient)(uint64 Size, 
 
 LUMINA_DOTNET_EXPORT(void, RHI_CoreDeferredFree)(RHI::GPUPtr Memory)
 {
-    RHI::Core::DeferredFree(Memory);
+    RHI::Core::Retire(Memory);
 }
 
 LUMINA_DOTNET_EXPORT(RHI::FPipelineH, RHI_CoreCreateGraphicsPipeline)(

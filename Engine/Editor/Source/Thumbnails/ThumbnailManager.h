@@ -106,9 +106,21 @@ namespace Lumina
         // this before queueing, so a paintable class is not written off as Failed.
         bool CanGenerateFor(CClass* AssetClass);
 
-        // Populate the persistent scene with Asset and capture into Out. Game thread only. False if there's
-        // no renderer for Asset or the capture failed.
+        // Populate the persistent scene with Asset and capture into Out, BLOCKING on the GPU. Game thread
+        // only. False if there's no renderer for Asset or the capture failed. Used by the save path, which
+        // needs the bytes before it can write the package; the browser path goes through BeginThumbnailRender.
         bool RenderThumbnail(CObject* Asset, FPackageThumbnail& Out);
+
+        // Lazily create + Begin the persistent scene. False if it could not be built.
+        bool AcquireScene();
+
+        // Populate the scene with Asset and submit its capture WITHOUT waiting. The result is collected by
+        // a later ProcessRenderQueue once the GPU signals. False if Asset has no renderer or recording failed.
+        bool BeginThumbnailRender(CObject* Asset);
+
+        // Block until any in-flight browser capture lands and store it, so the scene can be repurposed
+        // without losing that thumbnail.
+        void FlushPendingCapture();
 
         // Drop cached records whose asset changed (content hash) or that failed before the asset existed.
         void SweepInvalidatedRecords();
@@ -123,6 +135,22 @@ namespace Lumina
 
         THashMap<CClass*, FThumbnailRendererFn> ThumbnailRenderers;
         THashMap<CClass*, FThumbnailPainterFn>  ThumbnailPainters;
+
+        // Reused across captures. Building one of these is NOT cheap: CWorld + FForwardRenderScene::Init,
+        // whose first statement is RHI::WaitDeviceIdle(), then the sky cube, the IBL convolution targets,
+        // the shadow atlas and the whole named-image set (~40 render targets). That was being paid, and
+        // torn down again, once per thumbnail on the game thread. ResetContents() between captures gives
+        // the same isolation for the cost of destroying a handful of entities.
+        //
+        // Released again after a short idle (see ProcessRenderQueue): worth holding while a folder of
+        // thumbnails is streaming in, not worth holding resident for the rest of the session.
+        TUniquePtr<FThumbnailScene> PersistentScene;
+        uint32                      SceneIdleFrames = 0;
+
+        // The request whose capture is currently on the GPU. Exactly one may be in flight (one scene, one
+        // render target), and it completes on a LATER frame -- that is what makes the browser path async.
+        FRenderRequest PendingRequest;
+        bool           bHasPendingRequest = false;
 
         std::atomic<bool> bRegistryDirty{false};
     };

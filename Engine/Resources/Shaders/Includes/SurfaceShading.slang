@@ -1,18 +1,30 @@
 #pragma once
 #include "Includes/SceneGlobals.slang"
 #include "Includes/MeshletGeometry.slang"
+#include "Includes/GBuffer.slang"
 #include "Includes/IBLRuntime.slang"
 #include "Includes/ShadowSampling.slang"
 #include "Includes/ParallaxOcclusion.slang"
 #include "Includes/DistanceField.slang"
 
-// Shared opaque/translucent surface shading, factored out of the geometry pixel shaders so the FORWARD
-// base pass (BasePixelPass.slang, rasterizer-interpolated FBaseVertexOutput) and the DEFERRED VisBuffer
-// material pass (DeferredMaterial.slang, barycentric-reconstructed FBaseVertexOutput) run the exact same
-// lighting and can never drift. Everything here is independent of how the FBaseVertexOutput was produced.
+// Surface shading in two halves, so the deferred renderer can run them in different passes and the
+// forward lanes can still run them back to back:
 //
-// DBuffer decals are an opaque-only input bound at set 2; the translucent variant uses set 2 as an empty
-// placeholder, so the bindings only exist when not building TRANSLUCENT.
+//   BuildGBufferData  MATERIAL half -- normal mapping and DBuffer decals applied to the material graph's
+//                     output, producing the FGBufferData the deferred material pass stores.
+//   ShadeGBuffer      LIGHTING half -- sun, clustered lights, shadows, screen-space AO and IBL over an
+//                     FGBufferData, wherever it came from.
+//   ShadeSurface      the forward wrapper: alpha clip, both halves, debug views. Terrain and translucency
+//                     rasterize through this; opaque meshes go through the deferred pair instead.
+//
+// One lighting implementation serves both, so the deferred and forward lanes cannot drift.
+//
+// SHADING_COMPUTE marks a compute lane. It has no rasterizer, so nothing reachable from it may use
+// ddx/ddy or an implicit-derivative sample: the directional-shadow branch takes the screen-space mask
+// (ShadowMaskPixel.slang already resolved the identical cascade PCSS over opaque depth) and the debug-view
+// switch, which needs receiver-plane derivatives, is not compiled at all.
+//
+// DBuffer decals are an opaque-only input; the translucent variant never binds them.
 #ifndef TRANSLUCENT
 #include "Includes/DBuffer.slang"
 #endif
@@ -143,18 +155,24 @@ float ComputeShadowFactor(FLight Light, float3 FragmentPos, float3 Normal, float
 
     if (IsDirectionalLight)
     {
-        // Deferred: ShadowMaskPixel.slang already ran this exact cascade PCSS over the opaque depth
-        // buffer, so read its result and let the optimizer strip the whole path from this shader.
+        // ShadowMaskPixel.slang already ran this exact cascade PCSS over the opaque depth buffer, so read
+        // its result and let the optimizer strip the whole inline path from this shader. Mandatory in a
+        // compute lane -- the inline path's receiver-plane bias needs ddx/ddy, which only a pixel shader
+        // has. SampleShadowMask returns 1.0 when no mask was resolved, so an unshadowed sun stays unshadowed.
         //
         // A second SHADOWED directional light in the cluster list also lands here and gets the sun's
         // mask. That is not a regression: FLightData carries ONE cascade set (CascadeSplits/Radii/
         // Resolutions are singular), so a second directional light already shared the sun's cascades
         // and computed a near-identical factor on the inline path.
+#ifdef SHADING_COMPUTE
+        return SampleShadowMask(ScreenPos);
+#else
         if (SPEC_SHADOW_MASK != 0)
         {
             return SampleShadowMask(ScreenPos);
         }
         return ComputeDirectionalShadow(Light, FragmentPos, Normal, ViewPosition, ScreenPos);
+#endif
     }
 
     // Spot / point lights (atlas-based). Atlas stores rasterized NDC z from the shadow VS, so sample
@@ -243,6 +261,12 @@ float ComputeShadowFactor(FLight Light, float3 FragmentPos, float3 Normal, float
     }
     return Shadow / Weight;
 }
+
+// Debug visualizers, and the two helpers only they use. Not compiled into a compute lane: the penumbra
+// readout differentiates the shadow-space depth with ddx/ddy, which does not exist outside a pixel quad.
+// The deferred renderer resolves its debug views in SceneDebugViewPixel.slang, which is a pixel shader
+// for exactly this reason.
+#ifndef SHADING_COMPUTE
 
 // Walk the light table once to find the sun's shadow-data slot. Used by the
 // cascade debug visualizer; pixel-shader cost is irrelevant in that mode.
@@ -391,6 +415,8 @@ float3 ShadowPenumbraDebug(float3 FragmentPos, float3 ViewPosition, float2 Scree
                   BlockerCoverage);
 }
 
+#endif // !SHADING_COMPUTE
+
 // Per-pixel surface terms that don't change across the light loop. Precomputed once so the per-light
 // BRDF only re-derives the L-dependent half (NdotL, the light geometry term, H, Fresnel). The [0,1]-range
 // BRDF weights are stored half: they tolerate fp16 and halve register pressure in the loop. NdotV (a
@@ -475,7 +501,7 @@ float3 EvaluateLightContribution(FLight Light, FShadingContext S, float3 L, floa
 }
 
 // Result of shading a surface: the lit HDR color plus the material alpha. Callers pack their own
-// render-target output (opaque -> Color/Picker, translucent -> weighted Accum/Revealage).
+// render-target output (opaque -> Color/Picker, translucent -> transmittance-weighted Accum).
 struct FShadedSurface
 {
     float3 Color;       // opaque: full lit color. Translucent: transmission-modulated terms only (diffuse + ambient diffuse + emissive)
@@ -488,62 +514,114 @@ struct FShadedSurface
     float  ReflectionCoverage;
 };
 
-// The complete opaque/translucent lighting sequence, given a fully populated FBaseVertexOutput (however it
-// was produced -- rasterizer-interpolated in the forward base pass, or barycentric-reconstructed in the
-// deferred VisBuffer pass) and the material graph's already-evaluated FMaterialPixelInputs. Masked materials
-// `discard` here, so callers must be pixel shaders. UNLIT / TRANSLUCENT follow the same #defines as before.
-FShadedSurface ShadeSurface(FBaseVertexOutput Input, FMaterialPixelInputs Material)
+// Fraction of background light this surface blocks, without shading it. For the MBOIT moment-generation
+// pass, which would otherwise pay for every light, shadow and IBL probe twice to throw the result away.
+// Must stay in lockstep with the Coverage line in BasePixelPass.slang; if they drift, the moments
+// describe a different surface than the one weighted by them.
+float ComputeSurfaceCoverage(FBaseVertexOutput Input, FMaterialPixelInputs Material)
 {
-    uint EntityID           = Input.EntityID;
-    uint MaterialIndex      = Input.MaterialIndex;
-    bool bReceiveShadow     = (Input.InstanceFlags & (uint)EInstanceFlags::ReceiveShadow) != 0u;
-    float3 WorldNormal      = normalize(Input.NormalWS.xyz);
-    float3 ViewPosition     = Input.FragPos.xyz;
-    float3 WorldPosition    = mul(GetInverseCameraView(), float4(Input.FragPos.xyz, 1.0)).xyz;
-    float2 UV0              = Input.UV;
-    float4 VertexColor      = Input.FragColor;
-
-    float3 Albedo    = Material.Diffuse;
-    float3 Normal    = Material.Normal;
-    float  Alpha     = Material.Opacity;
-    float  AO        = Material.AmbientOcclusion;
-    float  Roughness = max(Material.Roughness, 0.045);
-    float  Metallic  = Material.Metallic;
-
-    uint MatFlags = Materials()[MaterialIndex].Flags;
-    if (HasFlag(MatFlags, MatFlag_Masked))
-    {
-        float ClipValue = Materials()[MaterialIndex].OpacityClipValue;
-        if (Alpha < ClipValue)
-        {
-            discard;
-        }
-    }
+    float Alpha = Material.Opacity;
 
 #ifdef UNLIT
 
-    float3 Color    = float3(Albedo + Material.Emissive);
+    return saturate(Alpha);
 
 #else
 
-    float3 N  = GetWorldNormal(WorldNormal, Input.TangentWS, Normal);
+    float3 WorldNormal   = normalize(Input.NormalWS.xyz);
+    float3 WorldPosition = mul(GetInverseCameraView(), float4(Input.FragPos.xyz, 1.0)).xyz;
+
+    float3 N = GetWorldNormal(WorldNormal, Input.TangentWS, Material.Normal);
+    float3 V = IsCameraOrthographic() ? -GetCameraForward() : normalize(GetCameraPosition() - WorldPosition);
+
+    float  Roughness = max(Material.Roughness, 0.045);
+    float3 F0        = lerp(float3(0.08 * Material.Specular), Material.Diffuse, Material.Metallic);
+
+    // Directional-hemisphere specular reflectance, as the shading pass derives ReflectionCoverage.
+    float  NdotV  = saturate(dot(N, V));
+    float2 DFG    = SampleBRDFLUT(NdotV, Roughness);
+    float3 FssEss = FresnelSchlickRoughness(NdotV, F0, Roughness) * DFG.x + DFG.y;
+
+    return saturate(Alpha + (1.0 - Alpha) * saturate(Luminance(FssEss)));
+
+#endif
+}
+
+// The material graph's output resolved into GBuffer terms: the tangent-space normal rotated into world
+// space, then DBuffer decals composited on top so they receive lights/shadows/IBL exactly like the surface
+// under them. The deferred material pass stores the result; the forward wrapper below hands it straight on.
+FGBufferData BuildGBufferData(FBaseVertexOutput Input, FMaterialPixelInputs Material)
+{
+    FGBufferData G;
+    G.BaseColor        = Material.Diffuse;
+    G.AmbientOcclusion = Material.AmbientOcclusion;
+    G.WorldNormal      = GetWorldNormal(normalize(Input.NormalWS.xyz), Input.TangentWS, Material.Normal);
+    G.SelfShadow       = Material.SelfShadow;
+    G.Roughness        = max(Material.Roughness, 0.045);
+    G.Metallic         = Material.Metallic;
+    G.Specular         = Material.Specular;
+    G.Emissive         = Material.Emissive;
+    G.bReceiveShadow   = (Input.InstanceFlags & (uint)EInstanceFlags::ReceiveShadow) != 0u;
+#ifdef UNLIT
+    G.bUnlit = true;
+#else
+    G.bUnlit = false;
+#endif
+
+    // Opaque lit surfaces only, and only on pipelines that actually bind the decal push
+    // (SPEC_ENABLE_DECALS) -- terrain specializes this off. No-op on pixels no decal touched.
+#if !defined(TRANSLUCENT) && !defined(UNLIT)
+    if (SPEC_ENABLE_DECALS != 0)
+    {
+        float2 DBufferUV = Input.Position.xy / float2(Scene().ScreenSize.xy);
+        ApplyDBuffer(G.BaseColor, G.WorldNormal, G.Roughness, G.Metallic, G.AmbientOcclusion, DBufferUV);
+    }
+#endif
+
+    return G;
+}
+
+// The complete lighting sequence over an already-resolved surface, wherever it came from: the deferred
+// lighting pass unpacks it out of the GBuffer, the forward lanes pass it straight from BuildGBufferData.
+// Alpha is left to the caller -- it is a material property, not a GBuffer one.
+FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPosition, float2 ScreenPos)
+{
+    FShadedSurface Out;
+    Out.Color              = float3(0.0);
+    Out.Reflection         = float3(0.0);
+    Out.ReflectionCoverage = 0.0;
+    Out.Alpha              = 1.0;
+
+#ifdef UNLIT
+
+    Out.Color = G.BaseColor + G.Emissive;
+    return Out;
+
+#else
+
+    // One deferred shader lights every surface, so an unlit master is a runtime flag here rather than a
+    // second compiled variant. The forward lanes still specialize it away entirely.
+    if (G.bUnlit)
+    {
+        Out.Color = G.BaseColor + G.Emissive;
+        return Out;
+    }
+
+    // Bound to locals rather than read through G, so the light loop below is character-for-character the
+    // code the forward path has always run.
+    float3 N              = G.WorldNormal;
+    float3 Albedo         = G.BaseColor;
+    float  Roughness      = G.Roughness;
+    float  Metallic       = G.Metallic;
+    float  AO             = G.AmbientOcclusion;
+    bool   bReceiveShadow = G.bReceiveShadow;
+
     // Under ortho every ray is parallel, so the eye vector is constant rather than radiating from
     // the camera position; using the position would skew specular toward the viewport center.
     float3 V  = IsCameraOrthographic() ? -GetCameraForward() : normalize(GetCameraPosition() - WorldPosition);
 
-    // DBuffer decals: composite projected decal attributes into the surface BEFORE lighting so they
-    // receive lights/shadows/IBL. No-op on pixels no decal touched. Opaque base pass only, and only on
-    // pipelines that actually bind the decal push (SPEC_ENABLE_DECALS) -- terrain specializes this off.
-#ifndef TRANSLUCENT
-    if (SPEC_ENABLE_DECALS != 0)
-    {
-        float2 DBufferUV = Input.Position.xy / float2(Scene().ScreenSize.xy);
-        ApplyDBuffer(Albedo, N, Roughness, Metallic, AO, DBufferUV);
-    }
-#endif
-
     // Dielectric F0 = 0.08 * Specular (UE4 convention; default 0.5 -> 0.04). Metals override F0 with albedo.
-    float3 F0_DIELECTRIC = float3(0.08 * Material.Specular);
+    float3 F0_DIELECTRIC = float3(0.08 * G.Specular);
     float3 F0 = lerp(F0_DIELECTRIC, Albedo, Metallic);
 
     // Multi-scatter energy compensation factor (Turquin 2019), constant per pixel; tinted by F0
@@ -580,7 +658,7 @@ FShadedSurface ShadeSurface(FBaseVertexOutput Input, FMaterialPixelInputs Materi
     // Shared froxel-index math (SceneGlobals). It clamps to ZNear: edge fragments below it make log()
     // negative, wrapping ZTile to a huge value that overflows Clusters() -> garbage light list and an
     // MMU fault.
-    uint TileIndex  = ComputeClusterIndex(ViewPosition.z, Input.Position.xy);
+    uint TileIndex  = ComputeClusterIndex(ViewPosition.z, ScreenPos);
     uint LightCount = Clusters()[TileIndex].Count;
 
     float3 Lo = float3(0.0);
@@ -602,8 +680,8 @@ FShadedSurface ShadeSurface(FBaseVertexOutput Input, FMaterialPixelInputs Materi
         {
             // Cascade shadow, then the material's own height-field self-occlusion. Applied here and not
             // to the whole light loop because the parallax trace only ever ran against the sun.
-            float Shadow = ComputeShadowFactor(Light, WorldPosition, N, ViewPosition, Input.Position.xy, bReceiveShadow);
-            Shadow *= Material.SelfShadow;
+            float Shadow = ComputeShadowFactor(Light, WorldPosition, N, ViewPosition, ScreenPos, bReceiveShadow);
+            Shadow *= G.SelfShadow;
 #ifdef TRANSLUCENT
             float3 SunDiffuse, SunSpec;
             EvaluateLightContributionSplit(Light, Ctx, SunL, 0.0, SunDiffuse, SunSpec);
@@ -657,7 +735,7 @@ FShadedSurface ShadeSurface(FBaseVertexOutput Input, FMaterialPixelInputs Materi
         float Shadow = 1.0;
         if (Light.ShadowDataIndex != INDEX_NONE)
         {
-            Shadow = ComputeShadowFactor(Light, WorldPosition, N, ViewPosition, Input.Position.xy, bReceiveShadow);
+            Shadow = ComputeShadowFactor(Light, WorldPosition, N, ViewPosition, ScreenPos, bReceiveShadow);
         }
 
 #ifdef TRANSLUCENT
@@ -680,8 +758,10 @@ FShadedSurface ShadeSurface(FBaseVertexOutput Input, FMaterialPixelInputs Materi
 #ifndef TRANSLUCENT
     if (SPEC_ENABLE_GTAO != 0 && Scene().GTAOSettings.AOTextureIndex != 0xFFFFFFFFu)
     {
-        float2 ScreenUV = Input.Position.xy / float2(Scene().ScreenSize.xy);
-        GTAO = SampleTexture2D(Scene().GTAOSettings.AOTextureIndex, SAMPLER_LINEAR_CLAMP, ScreenUV).r;
+        // Explicit LOD: this is a full-resolution screen-space texture read 1:1, and the deferred lighting
+        // lane is compute, where an implicit derivative does not exist.
+        float2 ScreenUV = ScreenPos / float2(Scene().ScreenSize.xy);
+        GTAO = SampleTexture2DLevel(Scene().GTAOSettings.AOTextureIndex, SAMPLER_LINEAR_CLAMP, ScreenUV, 0.0).r;
     }
 #endif
 
@@ -711,150 +791,194 @@ FShadedSurface ShadeSurface(FBaseVertexOutput Input, FMaterialPixelInputs Materi
         float3 DiffuseColor = Albedo * (1.0 - Metallic);
         Ambient = GetAmbientLightColor() * GetAmbientLightIntensity() * DiffuseColor * AO * GTAO;
     }
-    float3 Color = Ambient + Lo + Material.Emissive;
+    Out.Color = Ambient + Lo + G.Emissive;
+#ifdef TRANSLUCENT
+    Out.Reflection         = LoSpec;
+    Out.ReflectionCoverage = ReflectionCoverage;
+#endif
+    return Out;
 
 #endif // UNLIT
+}
 
-    // Editor view-mode overrides. SPEC_ENABLE_DEBUG_VIEWS lets game/shipping pipelines strip the whole
-    // switch (DebugMode is always NONE there) so there is no per-pixel branch and the PS stays small.
+#ifndef SHADING_COMPUTE
+
+// The surface identity a debug view needs but lighting does not, so it never reaches the GBuffer. The
+// forward lanes fill it from their interpolants; the deferred debug pass re-reconstructs it from the
+// VisBuffer.
+struct FDebugSurfaceInfo
+{
+    float2 UV;
+    float3 GeometricNormalWS;   // interpolated vertex normal, before the normal map
+    uint   MeshletIndex;
+    uint   MaterialIndex;
+};
+
+// Editor view-mode overrides, applied on top of the shaded color. Callers gate on
+// SPEC_ENABLE_DEBUG_VIEWS so game/shipping pipelines strip the whole switch.
+float3 ApplyDebugView(uint DebugMode, float3 Color, FGBufferData G, FDebugSurfaceInfo Info,
+                      float3 WorldPosition, float3 ViewPosition, float2 ScreenPos)
+{
+    float3 N = G.WorldNormal;
+    float3 V = IsCameraOrthographic() ? -GetCameraForward() : normalize(GetCameraPosition() - WorldPosition);
+
+    switch (DebugMode)
+    {
+    case DEBUG_MODE_UNLIT:
+        Color = G.BaseColor + G.Emissive;
+        break;
+    case DEBUG_MODE_MESHLETS:
+        Color = MeshletDebugColor(Info.MeshletIndex);
+        break;
+    case DEBUG_MODE_WORLD_NORMAL:
+        Color = normalize(Info.GeometricNormalWS) * 0.5 + 0.5;
+        break;
+    case DEBUG_MODE_SHADING_NORMAL:
+        Color = N * 0.5 + 0.5;
+        break;
+    case DEBUG_MODE_BASE_COLOR:
+        Color = G.BaseColor;
+        break;
+    case DEBUG_MODE_ROUGHNESS:
+        Color = float3(G.Roughness, G.Roughness, G.Roughness);
+        break;
+    case DEBUG_MODE_METALLIC:
+        Color = float3(G.Metallic, G.Metallic, G.Metallic);
+        break;
+    case DEBUG_MODE_AMBIENT_OCCLUSION:
+        Color = float3(G.AmbientOcclusion, G.AmbientOcclusion, G.AmbientOcclusion);
+        break;
+    case DEBUG_MODE_EMISSIVE:
+        Color = G.Emissive;
+        break;
+    case DEBUG_MODE_UV:
+        Color = float3(frac(Info.UV), 0.0);
+        break;
+    case DEBUG_MODE_LIGHT_COMPLEXITY:
+    {
+        uint DbgIndex = ComputeClusterIndex(ViewPosition.z, ScreenPos);
+        Color = LightComplexityColor(Clusters()[DbgIndex].Count);
+        break;
+    }
+    case DEBUG_MODE_CLUSTER_GRID:
+    {
+        uint DbgIndex = ComputeClusterIndex(ViewPosition.z, ScreenPos);
+        Color = ClusterDebugColor(DbgIndex, Clusters()[DbgIndex].Count);
+        break;
+    }
+    case DEBUG_MODE_SHADOW_CASCADES:
+        Color = CascadeDebugColor(WorldPosition, ViewPosition, Color);
+        break;
+    case DEBUG_MODE_SHADOW_PENUMBRA:
+        Color = ShadowPenumbraDebug(WorldPosition, ViewPosition, ScreenPos);
+        break;
+    case DEBUG_MODE_GTAO:
+    {
+        // Show the (blurred) screen-space AO factor. White where GTAO is off for this view.
+        float DbgAO = 1.0;
+        if (Scene().GTAOSettings.AOTextureIndex != 0xFFFFFFFFu)
+        {
+            float2 DbgUV = ScreenPos / float2(Scene().ScreenSize.xy);
+            DbgAO = SampleTexture2DLevel(Scene().GTAOSettings.AOTextureIndex, SAMPLER_LINEAR_CLAMP, DbgUV, 0.0).r;
+        }
+        Color = float3(DbgAO, DbgAO, DbgAO);
+        break;
+    }
+    case DEBUG_MODE_MATERIAL_ID:
+        // Stable hue per GPU material slot -- shows which material owns each pixel (the deferred
+        // material binning) and works for any surface (mesh or terrain).
+        Color = MeshletDebugColor(Info.MaterialIndex);
+        break;
+    case DEBUG_MODE_PROBE_INFLUENCE:
+    {
+        // Covered: hue = which probe won, brightness = influence consumed (a gradient toward
+        // dark is the BlendDistance cross-fade band).
+        // Not covered: a flat diagnostic color naming the reason, because all of these look
+        // identical in a lit view (the surface just reflects sky) but have different fixes.
+        // Status colors are FULLY SATURATED; covered pixels are always PASTEL (see
+        // ProbeDebugColor). Saturation, not hue, is what tells the two apart -- with enough
+        // probes some slice will always land near a given hue.
+        //   SATURATED RED     - no probes in the scene root at all (extraction or upload)
+        //   SATURATED BLUE    - probe cube array unallocated / mip count zero (target creation)
+        //   SATURATED YELLOW  - probes exist but none has finished a capture (bake never ran)
+        //   SATURATED MAGENTA - baked probes exist, pixel is outside all of them (placement)
+        //   ANY PASTEL COLOR  - working; the hue identifies which slice won
+        FProbeDebugInfo Dbg = DebugReflectionProbes(WorldPosition);
+        switch (Dbg.Status)
+        {
+            case kProbeStatusNoProbes:   Color = float3(1.0, 0.0, 0.0); break;
+            case kProbeStatusNoArray:    Color = float3(0.0, 0.3, 1.0); break;
+            case kProbeStatusNoneBaked:  Color = float3(1.0, 0.85, 0.0); break;
+            case kProbeStatusOutsideAll: Color = float3(1.0, 0.0, 1.0); break;
+            default:
+                // ProbeDebugColor, not MeshletDebugColor: the latter's hash maps index 0 to
+                // pure black, which made a single probe on slice 0 look like no coverage at all.
+                // Brightness is floored so a probe that barely reaches this pixel still reads as
+                // its own hue rather than fading toward the no-coverage cases.
+                Color = ProbeDebugColor((uint)Dbg.DominantSlice) * (0.25 + 0.75 * Dbg.TotalWeight);
+                break;
+        }
+        break;
+    }
+    case DEBUG_MODE_PROBE_RADIANCE:
+    {
+        // What the winning probe actually CAPTURED, at mirror roughness and divided back out by
+        // coverage so a half-covered pixel still shows the capture at full brightness rather
+        // than a dimmed version of it. Sky here means the capture itself contains sky -- the
+        // classic cause being a room whose walls are single-sided, which cone/backface culling
+        // then lets the capture see straight through.
+        FProbeSample DbgSample = SampleReflectionProbes(WorldPosition, reflect(-V, N), 0.0);
+        Color = (DbgSample.Weight > 1e-3)
+                    ? DbgSample.Radiance / DbgSample.Weight
+                    : float3(0.0);
+        break;
+    }
+    }
+
+    return Color;
+}
+
+// Forward wrapper: alpha clip, both halves back to back, then the debug overrides. Terrain and
+// translucency rasterize through this. Opaque meshes do not -- they run BuildGBufferData in the deferred
+// material pass and ShadeGBuffer in the deferred lighting pass, which is why those two are the split.
+FShadedSurface ShadeSurface(FBaseVertexOutput Input, FMaterialPixelInputs Material)
+{
+    uint MatFlags = Materials()[Input.MaterialIndex].Flags;
+    if (HasFlag(MatFlags, MatFlag_Masked))
+    {
+        if (Material.Opacity < Materials()[Input.MaterialIndex].OpacityClipValue)
+        {
+            discard;
+        }
+    }
+
+    FGBufferData G = BuildGBufferData(Input, Material);
+
+    float3 ViewPosition  = Input.FragPos.xyz;
+    float3 WorldPosition = mul(GetInverseCameraView(), float4(ViewPosition, 1.0)).xyz;
+
+    FShadedSurface Out = ShadeGBuffer(G, WorldPosition, ViewPosition, Input.Position.xy);
+    Out.Alpha = Material.Opacity;
+
+    // SPEC_ENABLE_DEBUG_VIEWS lets game/shipping pipelines strip the whole switch (DebugMode is always
+    // NONE there) so there is no per-pixel branch and the PS stays small.
     uint DebugMode = Scene().CullData.DebugMode;
     if (SPEC_ENABLE_DEBUG_VIEWS != 0 && DebugMode != DEBUG_MODE_NONE)
     {
 #if defined(TRANSLUCENT) && !defined(UNLIT)
         // Debug views replace Color wholesale; don't composite reflections on top.
-        LoSpec = float3(0.0);
+        Out.Reflection = float3(0.0);
 #endif
-        switch (DebugMode)
-        {
-            case DEBUG_MODE_UNLIT:
-                Color = Albedo + Material.Emissive;
-                break;
-            case DEBUG_MODE_MESHLETS:
-                Color = MeshletDebugColor(Input.MeshletIndex);
-                break;
-            case DEBUG_MODE_WORLD_NORMAL:
-                // Recompute from the interpolant so WorldNormal isn't held live across the lit/PCSS region.
-                Color = normalize(Input.NormalWS.xyz) * 0.5 + 0.5;
-                break;
-            case DEBUG_MODE_SHADING_NORMAL:
-            {
-            #ifdef UNLIT
-                float3 DebugN = GetWorldNormal(WorldNormal, Input.TangentWS, Material.Normal);
-            #else
-                float3 DebugN = N;
-            #endif
-                Color = DebugN * 0.5 + 0.5;
-                break;
-            }
-            case DEBUG_MODE_BASE_COLOR:
-                Color = Albedo;
-                break;
-            case DEBUG_MODE_ROUGHNESS:
-                Color = float3(Roughness, Roughness, Roughness);
-                break;
-            case DEBUG_MODE_METALLIC:
-                Color = float3(Metallic, Metallic, Metallic);
-                break;
-            case DEBUG_MODE_AMBIENT_OCCLUSION:
-                Color = float3(AO, AO, AO);
-                break;
-            case DEBUG_MODE_EMISSIVE:
-                Color = Material.Emissive;
-                break;
-            case DEBUG_MODE_UV:
-                Color = float3(frac(Input.UV), 0.0);
-                break;
-            case DEBUG_MODE_LIGHT_COMPLEXITY:
-            {
-                uint DbgIndex = ComputeClusterIndex(ViewPosition.z, Input.Position.xy);
-                Color = LightComplexityColor(Clusters()[DbgIndex].Count);
-                break;
-            }
-            case DEBUG_MODE_CLUSTER_GRID:
-            {
-                uint DbgIndex = ComputeClusterIndex(ViewPosition.z, Input.Position.xy);
-                Color = ClusterDebugColor(DbgIndex, Clusters()[DbgIndex].Count);
-                break;
-            }
-            case DEBUG_MODE_SHADOW_CASCADES:
-                Color = CascadeDebugColor(WorldPosition, ViewPosition, Color);
-                break;
-            case DEBUG_MODE_SHADOW_PENUMBRA:
-                Color = ShadowPenumbraDebug(WorldPosition, ViewPosition, Input.Position.xy);
-                break;
-            case DEBUG_MODE_GTAO:
-            {
-                // Show the (blurred) screen-space AO factor. White where GTAO is off for this view.
-                float DbgAO = 1.0;
-                if (Scene().GTAOSettings.AOTextureIndex != 0xFFFFFFFFu)
-                {
-                    float2 DbgUV = Input.Position.xy / float2(Scene().ScreenSize.xy);
-                    DbgAO = SampleTexture2D(Scene().GTAOSettings.AOTextureIndex, SAMPLER_LINEAR_CLAMP, DbgUV).r;
-                }
-                Color = float3(DbgAO, DbgAO, DbgAO);
-                break;
-            }
-            case DEBUG_MODE_MATERIAL_ID:
-                // Stable hue per GPU material slot -- shows which material owns each pixel (the deferred
-                // material binning) and works for any surface (mesh or terrain).
-                Color = MeshletDebugColor(Input.MaterialIndex);
-                break;
-            case DEBUG_MODE_PROBE_INFLUENCE:
-            {
-                // Covered: hue = which probe won, brightness = influence consumed (a gradient toward
-                // dark is the BlendDistance cross-fade band).
-                // Not covered: a flat diagnostic color naming the reason, because all of these look
-                // identical in a lit view (the surface just reflects sky) but have different fixes.
-                // Status colors are FULLY SATURATED; covered pixels are always PASTEL (see
-                // ProbeDebugColor). Saturation, not hue, is what tells the two apart -- with enough
-                // probes some slice will always land near a given hue.
-                //   SATURATED RED     - no probes in the scene root at all (extraction or upload)
-                //   SATURATED BLUE    - probe cube array unallocated / mip count zero (target creation)
-                //   SATURATED YELLOW  - probes exist but none has finished a capture (bake never ran)
-                //   SATURATED MAGENTA - baked probes exist, pixel is outside all of them (placement)
-                //   ANY PASTEL COLOR  - working; the hue identifies which slice won
-                FProbeDebugInfo Dbg = DebugReflectionProbes(WorldPosition);
-                switch (Dbg.Status)
-                {
-                    case kProbeStatusNoProbes:   Color = float3(1.0, 0.0, 0.0); break;
-                    case kProbeStatusNoArray:    Color = float3(0.0, 0.3, 1.0); break;
-                    case kProbeStatusNoneBaked:  Color = float3(1.0, 0.85, 0.0); break;
-                    case kProbeStatusOutsideAll: Color = float3(1.0, 0.0, 1.0); break;
-                    default:
-                        // ProbeDebugColor, not MeshletDebugColor: the latter's hash maps index 0 to
-                        // pure black, which made a single probe on slice 0 look like no coverage at all.
-                        // Brightness is floored so a probe that barely reaches this pixel still reads as
-                        // its own hue rather than fading toward the no-coverage cases.
-                        Color = ProbeDebugColor((uint)Dbg.DominantSlice) * (0.25 + 0.75 * Dbg.TotalWeight);
-                        break;
-                }
-                break;
-            }
-            case DEBUG_MODE_PROBE_RADIANCE:
-            {
-                // What the winning probe actually CAPTURED, at mirror roughness and divided back out by
-                // coverage so a half-covered pixel still shows the capture at full brightness rather
-                // than a dimmed version of it. Sky here means the capture itself contains sky -- the
-                // classic cause being a room whose walls are single-sided, which cone/backface culling
-                // then lets the capture see straight through.
-                FProbeSample DbgSample = SampleReflectionProbes(WorldPosition, reflect(-V, N), 0.0);
-                Color = (DbgSample.Weight > 1e-3)
-                            ? DbgSample.Radiance / DbgSample.Weight
-                            : float3(0.0);
-                break;
-            }
-        }
+        FDebugSurfaceInfo Info;
+        Info.UV                = Input.UV;
+        Info.GeometricNormalWS = Input.NormalWS.xyz;
+        Info.MeshletIndex      = Input.MeshletIndex;
+        Info.MaterialIndex     = Input.MaterialIndex;
+
+        Out.Color = ApplyDebugView(DebugMode, Out.Color, G, Info, WorldPosition, ViewPosition, Input.Position.xy);
     }
 
-    FShadedSurface Out;
-    Out.Color = Color;
-#if defined(TRANSLUCENT) && !defined(UNLIT)
-    Out.Reflection         = LoSpec;
-    Out.ReflectionCoverage = ReflectionCoverage;
-#else
-    Out.Reflection         = float3(0.0);
-    Out.ReflectionCoverage = 0.0;
-#endif
-    Out.Alpha = Alpha;
     return Out;
 }
+
+#endif // !SHADING_COMPUTE

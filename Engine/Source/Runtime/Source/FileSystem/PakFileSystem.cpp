@@ -122,8 +122,8 @@ namespace Lumina::VFS
                 FFileInfo Info
                 {
                     .Name           = FString(FileNameOf(EntryPath).data(), FileNameOf(EntryPath).size()),
-                    .VirtualPath    = FFixedString(EntryPath.data(), EntryPath.size()),
-                    .PathSource     = FFixedString(EntryPath.data(), EntryPath.size()),
+                    .VirtualPath    = FString(EntryPath.data(), EntryPath.size()),
+                    .PathSource     = FString(EntryPath.data(), EntryPath.size()),
                     .LastModifyTime = 0,
                     .Flags          = FlagsForPath(EntryPath, false, true),
                 };
@@ -142,8 +142,8 @@ namespace Lumina::VFS
                     FFileInfo Info
                     {
                         .Name           = FString(DirRel.data(), DirRel.size()),
-                        .VirtualPath    = DirFullPath,
-                        .PathSource     = DirFullPath,
+                        .VirtualPath    = FString(DirFullPath.c_str(), DirFullPath.size()),
+                        .PathSource     = FString(DirFullPath.c_str(), DirFullPath.size()),
                         .LastModifyTime = 0,
                         .Flags          = FlagsForPath(FStringView(DirFullPath.data(), DirFullPath.size()), true, true),
                     };
@@ -164,8 +164,8 @@ namespace Lumina::VFS
             FFileInfo Info
             {
                 .Name           = FString(FileNameOf(EntryPath).data(), FileNameOf(EntryPath).size()),
-                .VirtualPath    = FFixedString(EntryPath.data(), EntryPath.size()),
-                .PathSource     = FFixedString(EntryPath.data(), EntryPath.size()),
+                .VirtualPath    = FString(EntryPath.data(), EntryPath.size()),
+                .PathSource     = FString(EntryPath.data(), EntryPath.size()),
                 .LastModifyTime = 0,
                 .Flags          = FlagsForPath(EntryPath, false, true),
             };

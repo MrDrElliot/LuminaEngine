@@ -17,6 +17,12 @@ namespace Lumina
 
         void Serialize(FArchive& Ar) override;
 
+        // A prefab is a browsable asset. Without this it inherits CObject's false, and anything that gates
+        // registration on it (the importers' save pass) writes the package but never indexes it -- the
+        // browser then shows "not yet indexed" and cannot open it. The world editor's Create Prefab path
+        // hid this by calling AssetCreated unconditionally.
+        bool IsAsset() const override { return true; }
+
         /** Bumped whenever prefab data or a live instance's component set is rewritten. Editor details
          *  panels cache raw pointers into entt component storage (and into this registry, for the
          *  reset-to-prefab baseline); a refresh removes/re-emplaces components, which relocates neighbours
@@ -58,6 +64,11 @@ namespace Lumina
          *  null if that entity/component is absent. The per-leaf override baseline + reset-to-prefab default. */
         void* ResolvePrefabComponentPtr(const FName& StableID, CStruct* Struct);
 
+        /** Prefab entity carrying StableID, or entt::null. Backed by a lookup rebuilt only when the
+         *  prefab data generation moves, so the details panel can ask per property without rescanning
+         *  every entity each time. */
+        entt::entity FindEntityByStableID(const FName& StableID);
+
         /** Instance root (bIsRoot node) at or above Entity, or entt::null if Entity is not a prefab instance. */
         static entt::entity FindInstanceRoot(entt::registry& Registry, entt::entity Entity);
 
@@ -81,5 +92,13 @@ namespace Lumina
             bool(*ExtraSkipStorage)(entt::id_type) = nullptr);
 
         entt::registry Registry;
+
+    private:
+
+        void RebuildStableIDLookup();
+
+        THashMap<FName, entt::entity> StableIDLookup;
+        uint32                        StableIDLookupGeneration = 0;
+        bool                          bStableIDLookupBuilt     = false;
     };
 }

@@ -540,6 +540,24 @@ namespace Lumina
         UpdateContext.MarkFrameEnd(Platform::GetTime());
 
         int32 MaxFrameRate = CVarMaxFrameRate.GetValue();
+
+        // A minimized editor skipped the entire frame body above, so without this it would spin the
+        // main loop as fast as the scheduler allows to produce nothing. CEditorSettings::MaxBackgroundFPS
+        // (0 = unset) throttles that case alone -- the foreground rate is untouched. GIsHeadless is
+        // checked first because GetPrimaryWindowHandle() asserts when there is no window, and a headless
+        // server is never "in the background" anyway.
+        if (!GIsHeadless && Windowing::GetPrimaryWindowHandle()->IsWindowMinimized())
+        {
+            const int32 BackgroundFrameRate = GetDefault<CEditorSettings>()->MaxBackgroundFPS;
+
+            // Only ever slows things down: an uncapped foreground (0) takes the background rate outright,
+            // and a background value above the foreground cap is ignored rather than raising it.
+            if (BackgroundFrameRate > 0 && (MaxFrameRate <= 0 || BackgroundFrameRate < MaxFrameRate))
+            {
+                MaxFrameRate = BackgroundFrameRate;
+            }
+        }
+
         if (MaxFrameRate > 0)
         {
             LUMINA_PROFILE_SECTION_COLORED("Frame-Rate-Limiter", tracy::Color::Gray);
