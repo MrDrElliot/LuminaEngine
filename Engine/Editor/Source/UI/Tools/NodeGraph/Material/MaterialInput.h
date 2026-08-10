@@ -18,6 +18,7 @@ namespace Lumina
         float DrawPin() override;
 
         void SetInputType(EMaterialInputType InType) { InputType = InType; }
+        EMaterialInputType GetInputType() const { return InputType; }
 
         EComponentMask GetComponentMask() const { return Mask; }
         void SetComponentMask(EComponentMask InMask) { Mask = InMask; }

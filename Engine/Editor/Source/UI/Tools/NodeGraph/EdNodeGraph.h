@@ -248,8 +248,20 @@ namespace Lumina
         
     public:
 
+        // Node classes this graph offers in its palette (and accepts on paste).
+        //
+        // Built on first use from reflection -- every CEdGraphNode subclass that names this graph's class
+        // in GetSupportedGraphClass -- so nothing has to be listed here. See FGraphNodeRegistry.
+        const THashSet<CClass*>& GetSupportedNodes();
+
+        // Escape hatch for a node that discovery cannot reach: one whose supported graph is decided at
+        // runtime, or a one-off a tool wants in a single graph instance. Unioned with the discovered set,
+        // so it works called before or after the first GetSupportedNodes().
+        //
+        // Prefer GetSupportedGraphClass. This does not survive a cache rebuild for other graphs and, being
+        // per-instance, is invisible to anyone reading the node's declaration.
         void RegisterGraphNode(CClass* InClass);
-        
+
         uint64 AddNode(CEdGraphNode* InNode);
 
         // A free node ID, preferring PreferredID when it is usable. Node IDs must be unique within a
@@ -268,7 +280,11 @@ namespace Lumina
         PROPERTY()
         FString GraphSaveData;
         
+        // Reach this through GetSupportedNodes(), which fills it from reflection on first use. Touching
+        // it directly reads an empty set on a graph nobody has asked yet.
         THashSet<CClass*>                               SupportedNodes;
+        bool                                            bSupportedNodesBuilt = false;
+        uint32                                          SupportedNodesGeneration = 0;
 
         TFunction<void(CEdGraphNode*)>                  NodeSelectedCallback;
         TFunction<void(CEdGraphNode*)>                  PreNodeDeletedCallback;

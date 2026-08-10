@@ -13,6 +13,16 @@
 
 namespace Lumina
 {
+    CClass* CMaterialExpression_FunctionInput::GetSupportedGraphClass() const
+    {
+        return CMaterialFunctionGraph::StaticClass();
+    }
+
+    CClass* CMaterialFunctionOutput::GetSupportedGraphClass() const
+    {
+        return CMaterialFunctionGraph::StaticClass();
+    }
+
     // HLSL literal for a value of the given width, e.g. Float3 -> "float3(x, y, z)".
     static FString VecLiteral(EMaterialValueType Type, const FVector4& V)
     {
@@ -22,6 +32,9 @@ namespace Lumina
             case EMaterialValueType::Float2: return "float2(" + eastl::to_string(V.x) + ", " + eastl::to_string(V.y) + ")";
             case EMaterialValueType::Float3: return "float3(" + eastl::to_string(V.x) + ", " + eastl::to_string(V.y) + ", " + eastl::to_string(V.z) + ")";
             case EMaterialValueType::Float4: return "float4(" + eastl::to_string(V.x) + ", " + eastl::to_string(V.y) + ", " + eastl::to_string(V.z) + ", " + eastl::to_string(V.w) + ")";
+            // A bindless index has no meaningful default -- FVector4 cannot express one, and slot 0 is an
+            // arbitrary texture rather than a null. An unconnected handle input samples whatever is there.
+            case EMaterialValueType::TextureHandle: return "0u";
             default:                         return "0.0";
         }
     }

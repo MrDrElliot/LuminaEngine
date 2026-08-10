@@ -5,7 +5,9 @@
 
 namespace Lumina
 {
-    REFLECT()
+    // The graph creates exactly one of these itself (EnsureRootNodes), so it must never be offered
+    // in the palette -- a second one would give the compiler two roots.
+    REFLECT(NotPlaceable)
     class CMaterialOutputNode : public CMaterialGraphNode
     {
         GENERATED_BODY()

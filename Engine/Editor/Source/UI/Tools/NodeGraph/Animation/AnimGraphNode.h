@@ -24,11 +24,17 @@ namespace Lumina
 
     // Base class for animation node-graph nodes: subclasses build pins in BuildNode() and emit bytecode
     // in GenerateBytecode(); the graph walks them in topological order during compile.
-    REFLECT()
+    // NotPlaceable: family base, not a node. The specifier does not inherit, so every concrete
+    // anim node below stays discoverable.
+    REFLECT(NotPlaceable)
     class CAnimGraphNode : public CEdGraphNode
     {
         GENERATED_BODY()
     public:
+
+        // Every anim node belongs to the blend-tree graph; the two state-machine-canvas nodes
+        // override this to say otherwise.
+        CClass* GetSupportedGraphClass() const override;
 
         virtual void GenerateBytecode(FAnimationGraphCompiler& Compiler) { UNREACHABLE(); }
 

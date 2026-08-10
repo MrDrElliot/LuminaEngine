@@ -8,12 +8,6 @@
 
 namespace Lumina
 {
-    void CMaterialFunctionGraph::RegisterGraphTypeNodes()
-    {
-        RegisterGraphNode(CMaterialExpression_FunctionInput::StaticClass());
-        RegisterGraphNode(CMaterialFunctionOutput::StaticClass());
-    }
-
     bool CMaterialFunctionGraph::IsGraphRootNode(CEdGraphNode* Node) const
     {
         return Node != nullptr && Node->IsA<CMaterialFunctionOutput>();

@@ -24,6 +24,9 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
+        // Not a CMaterialGraphNode, so it names its graph itself.
+        CClass* GetSupportedGraphClass() const override;
+
         void BuildNode() override;
 
         bool IsRerouteNode() const override { return true; }
@@ -63,6 +66,9 @@ namespace Lumina
     {
         GENERATED_BODY()
     public:
+
+        // Not a CMaterialGraphNode, so it names its graph itself.
+        CClass* GetSupportedGraphClass() const override;
 
         void BuildNode() override;
 

@@ -10,8 +10,12 @@
 
 namespace Lumina
 {
-    // Material function pin value type; mirrors editor EMaterialInputType ordering (Float..Float4) for 1:1 mapping.
-    // Texture-typed function I/O is intentionally not supported yet.
+    // Material function pin value type. Mapped to/from the editor's EMaterialInputType by
+    // ToMaterialInputType / ToMaterialValueType, which restate these ordinals -- APPEND ONLY, and add the
+    // matching MaterialValueOrdinal entry (MaterialGraphTypes.h) when you do.
+    //
+    // A sampled texture is not a value type here: it is a float4, which Float4 already covers. TextureHandle
+    // is the bindless index itself (a uint), so hand-written Slang inside a function can sample it directly.
     REFLECT()
     enum class EMaterialValueType : uint8
     {
@@ -19,6 +23,7 @@ namespace Lumina
         Float2,
         Float3,
         Float4,
+        TextureHandle,
     };
 
     // One declared function input; mirrored from the editor's FunctionInput nodes on save so a call

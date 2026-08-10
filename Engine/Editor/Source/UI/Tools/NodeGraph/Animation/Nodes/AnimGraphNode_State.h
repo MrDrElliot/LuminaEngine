@@ -16,6 +16,9 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
+        // Lives on the state machine canvas, not the blend tree, so it narrows the anim-node default.
+        CClass* GetSupportedGraphClass() const override;
+
         FStringView GetNodeDisplayName() const override { return "State"; }
         FStringView GetNodeTooltip() const override { return "A named animation state. Double-click to edit its blend tree."; }
         FFixedString GetNodeCategory() const override { return "State Machine"; }
@@ -52,7 +55,8 @@ namespace Lumina
 
     // The single entry point of a state machine canvas. Whichever State its
     // Entry output wires to is the state the machine starts in. Not deletable.
-    REFLECT()
+    // The state machine graph creates its one Entry node itself; never palette-placeable.
+    REFLECT(NotPlaceable)
     class CAnimGraphNode_StateEntry : public CAnimGraphNode
     {
         GENERATED_BODY()
@@ -77,6 +81,9 @@ namespace Lumina
     {
         GENERATED_BODY()
     public:
+
+        // Lives on the state machine canvas, not the blend tree, so it narrows the anim-node default.
+        CClass* GetSupportedGraphClass() const override;
 
         FStringView GetNodeDisplayName() const override { return "Any State"; }
         FStringView GetNodeTooltip() const override { return "Transitions out of this are checked from every state, not just one."; }

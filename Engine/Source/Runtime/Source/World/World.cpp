@@ -1905,9 +1905,6 @@ namespace Lumina
 
     FImmediateLineRenderer* CWorld::GetImmediateLines() const
     {
-        // Same guard as DrawLine: a suspended world never extracts, so its window is never open and
-        // buffering for it would just leak. Returning null lets callers skip the work entirely rather
-        // than build lines that get dropped.
         if (IsSuspended() || RenderScene == nullptr)
         {
             return nullptr;

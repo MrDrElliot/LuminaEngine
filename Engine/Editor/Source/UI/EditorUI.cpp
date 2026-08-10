@@ -2574,6 +2574,11 @@ namespace Lumina
 
                     ImGuiWindowFlags ToolWindowFlags = ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_NoCollapse;
 
+                    if (Window->bDisableScrolling)
+                    {
+                        ToolWindowFlags |= ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
+                    }
+                    
                     ImGui::SetNextWindowClass(&Tool->ToolWindowsClass);
                     // Floor the size so a panel can't be dragged to a degenerate extent (child widgets assert at zero width).
                     ImGui::SetNextWindowSizeConstraints(ImVec2(100.0f, 80.0f), ImVec2(FLT_MAX, FLT_MAX));

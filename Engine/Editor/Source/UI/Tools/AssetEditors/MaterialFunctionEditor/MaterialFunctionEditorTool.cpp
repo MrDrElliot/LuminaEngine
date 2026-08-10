@@ -25,6 +25,7 @@ namespace Lumina
             case EMaterialValueType::Float2: return "float2";
             case EMaterialValueType::Float3: return "float3";
             case EMaterialValueType::Float4: return "float4";
+            case EMaterialValueType::TextureHandle: return "texture handle";
             default:                         return "float";
         }
     }

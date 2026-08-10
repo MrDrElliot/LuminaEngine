@@ -116,10 +116,11 @@ namespace Lumina
 
         public:
 
-            FToolWindow(const FName& InName, const TFunction<void(bool)>& InDrawFunction, const ImVec2& InWindowPadding = ImVec2(-1, -1), bool bDisableScrolling = false)
+            FToolWindow(const FName& InName, const TFunction<void(bool)>& InDrawFunction, const ImVec2& InWindowPadding = ImVec2(-1, -1), bool bInDisableScrolling = false)
                 : Name(InName)
                 , DrawFunction(InDrawFunction)
                 , WindowPadding(InWindowPadding)
+                , bDisableScrolling(bInDisableScrolling)
             {}
         
         protected:
@@ -127,8 +128,9 @@ namespace Lumina
             FName                 Name;
             TFunction<void(bool)> DrawFunction;
             ImVec2                WindowPadding;
-            bool                  bViewport = false;
-            bool                  bOpen = true;
+            bool                  bViewport         = false;
+            bool                  bOpen             = true;
+            bool                  bDisableScrolling = false;
             
         };
         
@@ -137,7 +139,7 @@ namespace Lumina
     public:
 
         FEditorTool(IEditorToolContext* Context, const FString& DisplayName, CWorld* InWorld = nullptr);
-        virtual ~FEditorTool();
+        ~FEditorTool() override;
         LE_NO_COPYMOVE(FEditorTool);
 
         virtual void Initialize();

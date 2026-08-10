@@ -7,7 +7,8 @@
 
 namespace Lumina
 {
-    REFLECT()
+    // Family base; concrete expressions derive from it. NotPlaceable does not inherit.
+    REFLECT(NotPlaceable)
     class CMaterialExpression : public CMaterialGraphNode
     {
         GENERATED_BODY()
@@ -38,7 +39,8 @@ namespace Lumina
         bool bRenamingParameter = false;
     };
 
-    REFLECT()
+    // Shared base for the binary/unary math nodes; not a node in its own right.
+    REFLECT(NotPlaceable)
     class CMaterialExpression_Math : public CMaterialExpression
     {
         GENERATED_BODY()

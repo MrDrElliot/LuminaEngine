@@ -1,5 +1,6 @@
 #include "MaterialNodeGraph.h"
 #include "MaterialCompiler.h"
+#include "MaterialGraphSchema.h"
 #include "MaterialNamedReroute.h"
 #include "MaterialReroute.h"
 #include "imgui_internal.h"
@@ -22,8 +23,6 @@ namespace Lumina
         Super::Initialize();
 
         EnsureRootNodes();
-        RegisterCommonMaterialNodes();
-        RegisterGraphTypeNodes();
 
         ValidateGraph();
     }
@@ -46,166 +45,14 @@ namespace Lumina
         }
     }
 
-    void CMaterialNodeGraph::RegisterCommonMaterialNodes()
-    {
-        RegisterGraphNode(CMaterialExpression_Addition::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Subtraction::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Multiplication::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Division::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Power::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Mod::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Min::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Max::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Step::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Atan2::StaticClass());
-
-        RegisterGraphNode(CMaterialExpression_Sin::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Cosin::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Tan::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Asin::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Acos::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Atan::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Sinh::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Cosh::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Tanh::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Sqrt::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Rsqrt::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Log::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Log2::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Log10::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Exp::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Exp2::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Sign::StaticClass());
-        RegisterGraphNode(CMaterialExpression_OneMinus::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Reciprocal::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Round::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Truncate::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Negate::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Square::StaticClass());
-        RegisterGraphNode(CMaterialExpression_DegreesToRadians::StaticClass());
-        RegisterGraphNode(CMaterialExpression_RadiansToDegrees::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Floor::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Fract::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Ceil::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Abs::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Saturate::StaticClass());
-
-        RegisterGraphNode(CMaterialExpression_Lerp::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Clamp::StaticClass());
-        RegisterGraphNode(CMaterialExpression_SmoothStep::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Remap::StaticClass());
-
-        RegisterGraphNode(CMaterialExpression_ComponentMask::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Append::StaticClass());
-        RegisterGraphNode(CMaterialExpression_MakeFloat2::StaticClass());
-        RegisterGraphNode(CMaterialExpression_MakeFloat3::StaticClass());
-        RegisterGraphNode(CMaterialExpression_MakeFloat4::StaticClass());
-        RegisterGraphNode(CMaterialExpression_BreakFloat2::StaticClass());
-        RegisterGraphNode(CMaterialExpression_BreakFloat3::StaticClass());
-        RegisterGraphNode(CMaterialExpression_BreakFloat4::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Normalize::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Distance::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Length::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Dot::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Cross::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Reflect::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Refract::StaticClass());
-        RegisterGraphNode(CMaterialExpression_RotateAboutAxis::StaticClass());
-
-        RegisterGraphNode(CMaterialExpression_TexCoords::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Panner::StaticClass());
-        RegisterGraphNode(CMaterialExpression_VertexNormal::StaticClass());
-        RegisterGraphNode(CMaterialExpression_VertexTangent::StaticClass());
-        RegisterGraphNode(CMaterialExpression_VertexBitangent::StaticClass());
-        RegisterGraphNode(CMaterialExpression_VertexColor::StaticClass());
-        RegisterGraphNode(CMaterialExpression_WorldPos::StaticClass());
-        RegisterGraphNode(CMaterialExpression_CameraPos::StaticClass());
-        RegisterGraphNode(CMaterialExpression_ObjectScale::StaticClass());
-        RegisterGraphNode(CMaterialExpression_ObjectPosition::StaticClass());
-        RegisterGraphNode(CMaterialExpression_EntityID::StaticClass());
-        RegisterGraphNode(CMaterialNodeGetTime::StaticClass());
-        RegisterGraphNode(CMaterialExpression_CustomPrimitiveData::StaticClass());
-
-        RegisterGraphNode(CMaterialExpression_ConstantFloat::StaticClass());
-        RegisterGraphNode(CMaterialExpression_ConstantFloat2::StaticClass());
-        RegisterGraphNode(CMaterialExpression_ConstantFloat3::StaticClass());
-        RegisterGraphNode(CMaterialExpression_ConstantFloat4::StaticClass());
-        RegisterGraphNode(CMaterialExpression_NumericConstant::StaticClass());
-
-        RegisterGraphNode(CMaterialExpression_TextureSample::StaticClass());
-        RegisterGraphNode(CMaterialExpression_TextureSampleArray::StaticClass());
-        RegisterGraphNode(CMaterialExpression_CurveSample::StaticClass());
-
-        RegisterGraphNode(CMaterialExpression_Luminance::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Desaturate::StaticClass());
-        RegisterGraphNode(CMaterialExpression_RGBToHSV::StaticClass());
-        RegisterGraphNode(CMaterialExpression_HSVToRGB::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Posterize::StaticClass());
-        RegisterGraphNode(CMaterialExpression_GammaCorrection::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Contrast::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Brightness::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Tint::StaticClass());
-        RegisterGraphNode(CMaterialExpression_LinearToSRGB::StaticClass());
-        RegisterGraphNode(CMaterialExpression_SRGBToLinear::StaticClass());
-
-        RegisterGraphNode(CMaterialExpression_Hash11::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Hash21::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Hash22::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Hash33::StaticClass());
-        RegisterGraphNode(CMaterialExpression_ValueNoise::StaticClass());
-        RegisterGraphNode(CMaterialExpression_GradientNoise::StaticClass());
-        RegisterGraphNode(CMaterialExpression_PerlinNoise::StaticClass());
-        RegisterGraphNode(CMaterialExpression_VoronoiNoise::StaticClass());
-        RegisterGraphNode(CMaterialExpression_SimpleNoise::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Checkerboard::StaticClass());
-
-        RegisterGraphNode(CMaterialExpression_RotateUV::StaticClass());
-        RegisterGraphNode(CMaterialExpression_TilingAndOffset::StaticClass());
-        RegisterGraphNode(CMaterialExpression_FlipBook::StaticClass());
-        RegisterGraphNode(CMaterialExpression_PolarCoordinates::StaticClass());
-        RegisterGraphNode(CMaterialExpression_TwirlUV::StaticClass());
-        RegisterGraphNode(CMaterialExpression_ParallaxOcclusionMapping::StaticClass());
-
-        RegisterGraphNode(CMaterialExpression_ScreenPosition::StaticClass());
-        RegisterGraphNode(CMaterialExpression_ViewDirection::StaticClass());
-        RegisterGraphNode(CMaterialExpression_ReflectionVector::StaticClass());
-        RegisterGraphNode(CMaterialExpression_FragmentDepth::StaticClass());
-        RegisterGraphNode(CMaterialExpression_ViewportSize::StaticClass());
-        RegisterGraphNode(CMaterialExpression_AspectRatio::StaticClass());
-        RegisterGraphNode(CMaterialExpression_SceneColor::StaticClass());
-        RegisterGraphNode(CMaterialExpression_SceneDepth::StaticClass());
-        RegisterGraphNode(CMaterialExpression_SceneHDRColor::StaticClass());
-
-        RegisterGraphNode(CMaterialExpression_WindAnimation::StaticClass());
-
-        RegisterGraphNode(CMaterialExpression_MeshDistanceField::StaticClass());
-        RegisterGraphNode(CMaterialExpression_MeshDistanceFieldOcclusion::StaticClass());
-        RegisterGraphNode(CMaterialExpression_MeshDistanceFieldThickness::StaticClass());
-
-        RegisterGraphNode(CMaterialExpression_If::StaticClass());
-        RegisterGraphNode(CMaterialExpression_Compare::StaticClass());
-
-        RegisterGraphNode(CMaterialExpression_Fresnel::StaticClass());
-        RegisterGraphNode(CMaterialExpression_DepthFade::StaticClass());
-        RegisterGraphNode(CMaterialExpression_NormalFromHeight::StaticClass());
-        RegisterGraphNode(CMaterialExpression_DeriveNormalZ::StaticClass());
-        RegisterGraphNode(CMaterialExpression_BlendNormals::StaticClass());
-
-        RegisterGraphNode(CMaterialExpression_TerrainLayerWeight::StaticClass());
-        RegisterGraphNode(CMaterialExpression_TerrainLayerWeights::StaticClass());
-        RegisterGraphNode(CMaterialExpression_TerrainLayerBlend::StaticClass());
-
-        RegisterGraphNode(CMaterialExpression_MaterialFunctionCall::StaticClass());
-        RegisterGraphNode(CMaterialExpression_CustomSlang::StaticClass());
-
-        RegisterGraphNode(CMaterialReroute::StaticClass());
-        RegisterGraphNode(CMaterialNamedRerouteDeclaration::StaticClass());
-        RegisterGraphNode(CMaterialNamedRerouteUsage::StaticClass());
-    }
-
     CClass* CMaterialNodeGraph::GetRerouteNodeClass() const
     {
         return CMaterialReroute::StaticClass();
+    }
+
+    const FEdGraphSchema& CMaterialNodeGraph::GetSchema() const
+    {
+        return GetMaterialGraphSchema();
     }
 
     bool CMaterialNodeGraph::IsGraphRootNode(CEdGraphNode* Node) const

@@ -3,6 +3,7 @@
 #include "EdGraphNode.h"
 #include "EdNode_Reroute.h"
 #include "GraphAlgorithms.h"
+#include "GraphNodeRegistry.h"
 #include "Core/Object/Class.h"
 #include <Core/Reflection/Type/LuminaTypes.h>
 #include "Drawing.h"
@@ -1242,7 +1243,8 @@ namespace Lumina
                             continue;
                         }
 
-                        if (SupportedNodes.find(Copied->GetClass()) != SupportedNodes.end())
+                        const THashSet<CClass*>& Supported = GetSupportedNodes();
+                        if (Supported.find(Copied->GetClass()) != Supported.end())
                         {
                             Pastable.push_back(Copied);
                         }
@@ -1686,6 +1688,26 @@ namespace Lumina
         return NewNode;
     }
     
+    const THashSet<CClass*>& CEdNodeGraph::GetSupportedNodes()
+    {
+        FGraphNodeRegistry& Registry = FGraphNodeRegistry::Get();
+
+        // Refill when a module load has invalidated the registry since we last asked, so a graph left
+        // open across a plugin load picks up its nodes.
+        if (!bSupportedNodesBuilt || SupportedNodesGeneration != Registry.GetGeneration())
+        {
+            bSupportedNodesBuilt    = true;
+            SupportedNodesGeneration = Registry.GetGeneration();
+
+            // Union rather than assign: RegisterGraphNode entries are per-instance additions the shared
+            // per-graph-class cache knows nothing about, and a refill must not drop them.
+            const THashSet<CClass*>& Discovered = Registry.GetNodesForGraphClass(GetClass());
+            SupportedNodes.insert(Discovered.begin(), Discovered.end());
+        }
+
+        return SupportedNodes;
+    }
+
     void CEdNodeGraph::RegisterGraphNode(CClass* InClass)
     {
         if (SupportedNodes.find(InClass) == SupportedNodes.end())

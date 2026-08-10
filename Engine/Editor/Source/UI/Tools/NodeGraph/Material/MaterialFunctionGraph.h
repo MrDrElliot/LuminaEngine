@@ -29,8 +29,6 @@ namespace Lumina
         // Function graphs have no material output node; the author adds FunctionInput / FunctionOutput.
         void EnsureRootNodes() override {}
 
-        void RegisterGraphTypeNodes() override;
-
         // A function graph has one output node per declared output, so every one of them is a root.
         bool IsGraphRootNode(CEdGraphNode* Node) const override;
     };

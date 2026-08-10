@@ -21,6 +21,10 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
+        // Narrows the material-node default: a function's own input declaration only means something
+        // inside a function graph, so it stays out of a plain material's palette.
+        CClass* GetSupportedGraphClass() const override;
+
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "Function"; }
         FStringView GetNodeDisplayName() const override { return "FunctionInput"; }
@@ -58,6 +62,9 @@ namespace Lumina
     {
         GENERATED_BODY()
     public:
+
+        // Function graphs only, for the same reason as CMaterialExpression_FunctionInput.
+        CClass* GetSupportedGraphClass() const override;
 
         void BuildNode() override;
         FFixedString GetNodeCategory() const override { return "Function"; }

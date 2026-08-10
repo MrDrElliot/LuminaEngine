@@ -7,7 +7,8 @@ namespace Lumina
 {
     // Terminal node: the pose wired into its single input is the frame's final pose.
     // Exactly one exists per graph and it cannot be deleted.
-    REFLECT()
+    // The graph creates the one and only Output itself, so it must never be offered in the palette.
+    REFLECT(NotPlaceable)
     class CAnimGraphNode_Output : public CAnimGraphNode
     {
         GENERATED_BODY()

@@ -3,6 +3,7 @@
 #include "EdNodeGraph.h"
 #include "EdNodeGraphPin.h"
 #include "Core/Math/Hash/Hash.h"
+#include "Core/Object/Class.h"
 #include "Core/Object/ObjectAllocator.h"
 #include "Material/MaterialGraphTypes.h"
 #include "imgui-node-editor/imgui_node_editor.h"
@@ -20,6 +21,15 @@ namespace Lumina
     void CEdGraphNode::PostCreateCDO()
     {
         CObject::PostCreateCDO();
+    }
+
+    bool CEdGraphNode::IsSupportedInGraph(CClass* GraphClass) const
+    {
+        CClass* SupportedGraph = GetSupportedGraphClass();
+
+        // IsChildOf is reflexive, so this covers the exact graph class as well as anything deriving
+        // from it -- which is what puts every material node in a material function graph too.
+        return SupportedGraph != nullptr && GraphClass != nullptr && GraphClass->IsChildOf(SupportedGraph);
     }
 
     ImVec2 CEdGraphNode::GetMinNodeTitleBarSize() const

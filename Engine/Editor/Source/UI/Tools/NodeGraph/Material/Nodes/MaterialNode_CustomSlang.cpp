@@ -475,9 +475,15 @@ namespace Lumina
         {
             // An unconnected pin falls back to its declared default expression rather than zero, so
             // the common "just give me UV" case needs nothing wired up.
-            const FString Fallback = (i < Inputs.size())
-                ? DefaultExpressionFor(Inputs[i].Default)
-                : FString("0.0");
+            // The stage aliases are all float-typed, so none of them is a sensible fallback for a texture
+            // handle -- casting UV0 to a uint would silently name some unrelated texture. An unconnected
+            // handle input falls back to the same neutral index the TextureHandle node's error path uses.
+            const bool bHandle = i < Inputs.size()
+                              && ToMaterialInputType(Inputs[i].Type) == EMaterialInputType::TextureHandle;
+
+            const FString Fallback = bHandle
+                ? ZeroLiteral(EMaterialInputType::TextureHandle)
+                : (i < Inputs.size() ? DefaultExpressionFor(Inputs[i].Default) : FString("0.0"));
 
             const FMaterialCompiler::FInputValue Value = Compiler.GetTypedInputValue(CustomInputPins[i], Fallback);
             ArgExprs.push_back(Value.Value + GetSwizzleForMask(Value.Mask));

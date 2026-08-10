@@ -2,9 +2,20 @@
 #include "Core/Object/Class.h"
 #include "Core/Object/Package/Package.h"
 #include "UI/Tools/NodeGraph/Animation/AnimationGraphNodeGraph.h"
+#include "UI/Tools/NodeGraph/Animation/AnimStateMachineGraph.h"
 
 namespace Lumina
 {
+    CClass* CAnimGraphNode_State::GetSupportedGraphClass() const
+    {
+        return CAnimStateMachineGraph::StaticClass();
+    }
+
+    CClass* CAnimGraphNode_StateAny::GetSupportedGraphClass() const
+    {
+        return CAnimStateMachineGraph::StaticClass();
+    }
+
     void CAnimGraphNode_State::BuildNode()
     {
         // StateFlow pins: the In pin accepts many incoming transitions (and the

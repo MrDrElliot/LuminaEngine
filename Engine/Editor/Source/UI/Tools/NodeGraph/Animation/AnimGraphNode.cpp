@@ -1,5 +1,7 @@
 #include "AnimGraphNode.h"
 #include "AnimationGraphCompiler.h"
+#include "AnimationGraphNodeGraph.h"
+#include "Core/Object/Class.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/Package/Package.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
@@ -11,6 +13,11 @@ namespace Lumina
     // Shared width for inline pin editors so the value / enum controls form a
     // tidy right-aligned column on the node face.
     static constexpr float GInlinePinEditorWidth = 104.0f;
+
+    CClass* CAnimGraphNode::GetSupportedGraphClass() const
+    {
+        return CAnimationGraphNodeGraph::StaticClass();
+    }
 
     CAnimGraphPin* CAnimGraphNode::CreateAnimPin(const FString& Name, ENodePinDirection Direction, EAnimPinType Type, float DefaultValue)
     {

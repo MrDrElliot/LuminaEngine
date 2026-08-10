@@ -8,7 +8,8 @@ namespace Lumina
 {
     // Shared base for binary scalar nodes (A op B). Subclasses only declare the
     // EAnimScalarOp they emit; pin building and bytecode emission live here.
-    REFLECT()
+    // Shared base for the scalar op nodes; not a node in its own right.
+    REFLECT(NotPlaceable)
     class CAnimGraphNode_ScalarBinaryOp : public CAnimGraphNode
     {
         GENERATED_BODY()
@@ -32,7 +33,8 @@ namespace Lumina
     };
 
     // Shared base for unary scalar nodes (op A).
-    REFLECT()
+    // Shared base for the scalar op nodes; not a node in its own right.
+    REFLECT(NotPlaceable)
     class CAnimGraphNode_ScalarUnaryOp : public CAnimGraphNode
     {
         GENERATED_BODY()

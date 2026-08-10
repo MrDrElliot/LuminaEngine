@@ -112,7 +112,8 @@ namespace Lumina
     };
 
     /** Shared base for binary math operators. Both inputs get promoted to a common type. */
-    REFLECT()
+    // Shared base for the binary math nodes; not a node in its own right.
+    REFLECT(NotPlaceable)
     class CParticleExpression_BinaryOp : public CParticleGraphNode
     {
         GENERATED_BODY()

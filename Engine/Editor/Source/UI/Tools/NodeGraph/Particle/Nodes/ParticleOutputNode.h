@@ -11,7 +11,8 @@ namespace Lumina
 
 namespace Lumina
 {
-    REFLECT()
+    // The graph creates its one output node itself; never palette-placeable.
+    REFLECT(NotPlaceable)
     class CParticleOutputNode : public CParticleGraphNode
     {
         GENERATED_BODY()

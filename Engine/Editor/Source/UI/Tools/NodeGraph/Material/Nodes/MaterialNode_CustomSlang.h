@@ -34,11 +34,19 @@ namespace Lumina
         PROPERTY(Editable, Category = "Custom Slang")
         FName Name = "In";
 
-        /** Width of the value. Inputs are coerced to this from whatever is wired in. */
+        /**
+         * Width of the value. Inputs are coerced to this from whatever is wired in.
+         *
+         * TextureHandle is the odd one: a uint bindless index rather than a float, fed by a TextureHandle
+         * node and passed to the GlobalRHI.slang sample helpers. It only connects to another handle pin.
+         */
         PROPERTY(Editable, Category = "Custom Slang")
         EMaterialValueType Type = EMaterialValueType::Float;
 
-        /** Value an unconnected input resolves to. Ignored on outputs. */
+        /**
+         * Value an unconnected input resolves to. Ignored on outputs, and ignored for a TextureHandle
+         * input -- the stage aliases are all float-typed, so none of them is a meaningful texture index.
+         */
         PROPERTY(Editable, Category = "Custom Slang")
         ECustomSlangInputDefault Default = ECustomSlangInputDefault::Zero;
     };

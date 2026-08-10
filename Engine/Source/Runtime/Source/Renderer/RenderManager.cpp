@@ -93,7 +93,7 @@ namespace Lumina
         #if defined(LUMINA_WITH_VALIDATION)
         bool bValidation = true;
         #else
-        bool bValidation = true;
+        bool bValidation = false;
         #endif
 
         #if defined(LE_SHIPPING)
@@ -113,12 +113,7 @@ namespace Lumina
                 bValidation = false;
             }
         }
-
-        // Designated, NOT positional. FDeviceDesc's third field is bHeadless; a positional
-        // `{ bValidation, bDebugUtils, bValidation }` quietly built a headless device whenever validation
-        // was on, and headless skips the GLFW surface extensions and VK_KHR_swapchain -- which the two
-        // lines below then need. GPU-AV is no longer a separate field; it follows bValidation inside
-        // CreateDevice.
+        
         RHI::CreateDevice(RHI::FDeviceDesc
         {
             .bValidation = bValidation,

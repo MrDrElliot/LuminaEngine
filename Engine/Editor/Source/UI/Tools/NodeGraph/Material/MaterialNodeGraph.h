@@ -47,6 +47,10 @@ namespace Lumina
         // typed CMaterialInput / CMaterialOutput pins so the existing compiler casts keep working.
         CClass* GetRerouteNodeClass() const override;
 
+        // Float widths stay freely interconnectable; the schema exists to keep TextureHandle pins
+        // (raw bindless indices) out of the float graph. See FMaterialGraphSchema.
+        const FEdGraphSchema& GetSchema() const override;
+
         // The single CMaterialOutputNode. Everything the compiler emits is reachable backwards from it,
         // which is what makes the dead-node fade and Tidy meaningful here.
         bool IsGraphRootNode(CEdGraphNode* Node) const override;
@@ -59,17 +63,9 @@ namespace Lumina
         // Shared tail of both quick-place overloads: spawn at the cursor and select.
         void QuickPlaceNode(CClass* NodeClass, ImVec2 CanvasPos);
 
-        // Registers the shared library of material expression nodes (math, inputs, textures, the
-        // function-call node, reroute, ...). Shared by material and material-function graphs.
-        void RegisterCommonMaterialNodes();
-
         // Creates always-present nodes for this graph kind: the material graph ensures one
         // CMaterialOutputNode; the function graph overrides to create nothing.
         virtual void EnsureRootNodes();
-
-        // Hook for a graph kind to register its own extra node types after the common set. The
-        // function graph registers FunctionInput / FunctionOutput here; the base adds nothing.
-        virtual void RegisterGraphTypeNodes() {}
 
     private:
 

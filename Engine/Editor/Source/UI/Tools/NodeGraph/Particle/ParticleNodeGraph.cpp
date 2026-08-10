@@ -26,24 +26,6 @@ namespace Lumina
             CreateNode(CParticleOutputNode::StaticClass());
         }
 
-        RegisterGraphNode(CParticleExpression_ConstantFloat::StaticClass());
-        RegisterGraphNode(CParticleExpression_ConstantFloat3::StaticClass());
-        RegisterGraphNode(CParticleExpression_ConstantFloat4::StaticClass());
-        RegisterGraphNode(CParticleExpression_Time::StaticClass());
-        RegisterGraphNode(CParticleExpression_ParticleAge::StaticClass());
-        RegisterGraphNode(CParticleExpression_LifeRatio::StaticClass());
-        RegisterGraphNode(CParticleExpression_Add::StaticClass());
-        RegisterGraphNode(CParticleExpression_Subtract::StaticClass());
-        RegisterGraphNode(CParticleExpression_Multiply::StaticClass());
-        RegisterGraphNode(CParticleExpression_Divide::StaticClass());
-        RegisterGraphNode(CParticleExpression_Lerp::StaticClass());
-        RegisterGraphNode(CParticleExpression_Saturate::StaticClass());
-        RegisterGraphNode(CParticleExpression_Sin::StaticClass());
-        RegisterGraphNode(CParticleExpression_Cos::StaticClass());
-        RegisterGraphNode(CParticleExpression_Normalize::StaticClass());
-        RegisterGraphNode(CParticleExpression_MakeFloat3::StaticClass());
-        RegisterGraphNode(CParticleExpression_MakeFloat4::StaticClass());
-
         ValidateGraph();
     }
 

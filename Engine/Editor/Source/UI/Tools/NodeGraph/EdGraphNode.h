@@ -45,7 +45,33 @@ namespace Lumina
         void PostCreateCDO() override;
         
         virtual void BuildNode() { }
-        
+
+        /**
+         * The graph class this node belongs to, or null for "no graph".
+         *
+         * This is how a node is FOUND: FGraphNodeRegistry walks every reflected CEdGraphNode subclass and
+         * asks its CDO, so there is no registration list to add to. Declare it once on a family base --
+         * CMaterialGraphNode answers CMaterialNodeGraph -- and every node in that family inherits the
+         * answer, including ones a game or plugin module declares, which an engine-side list could never
+         * have named. Override it lower down to narrow the answer (FunctionInput -> function graphs only).
+         *
+         * A node is offered in that graph class and in any graph deriving from it, so a material function
+         * graph gets the whole material node library for free.
+         *
+         * Null is the base's answer rather than "every graph" on purpose: a node opts IN by answering, so
+         * a CEdGraphNode subclass that is not part of any palette needs no marker.
+         */
+        virtual CClass* GetSupportedGraphClass() const { return nullptr; }
+
+        /**
+         * Whether this node should be offered in a graph of GraphClass. Defaults to the class test above.
+         *
+         * Must depend only on GraphClass, never on a particular graph instance or its asset: results are
+         * cached per graph class. A rule that needs the asset (a node valid only on terrain materials)
+         * belongs in the node's compile step as an error, not here.
+         */
+        virtual bool IsSupportedInGraph(CClass* GraphClass) const;
+
         virtual FFixedString GetNodeCategory() const { return "General"; }
         
         FString GetNodeFullName() { return FullName; }

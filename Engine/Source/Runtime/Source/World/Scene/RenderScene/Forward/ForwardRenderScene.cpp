@@ -1109,13 +1109,7 @@ namespace Lumina
                     SCENE_GPU_SCOPE(CL, "Depth Pyramid (Mid)");
                     DepthPyramidPass(CL);
                 }
-
-                // Classic two-phase: the early dispatch replayed last frame's visible set to build the
-                // pyramid above, and this one tests EVERY instance against it, drawing the ones early did
-                // not. Appends on top of the same regions, as the Late slice.
-                // Cleared here, between the phases: the early dispatch above has consumed last frame's
-                // flags, and the late one below only ever ORs a 1 in -- an instance's blocks are spread
-                // across workgroups, so a plain store would let an occluded block clear a visible one's bit.
+                
                 if (InstanceVisibilityBuffer)
                 {
                     RHI::CmdMemset(CL, InstanceVisibilityBuffer.GetAddress(), InstanceVisibilityBuffer.GetSize(), 0u);

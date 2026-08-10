@@ -136,9 +136,6 @@ namespace Lumina
             CreateNode(CAnimGraphNode_StateEntry::StaticClass());
         }
 
-        RegisterGraphNode(CAnimGraphNode_State::StaticClass());
-        RegisterGraphNode(CAnimGraphNode_StateAny::StaticClass());
-
         ValidateGraph();
     }
 

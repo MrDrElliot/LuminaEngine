@@ -222,9 +222,10 @@ namespace Lumina
             return;
         }
 
-        Actions.reserve(Graph->SupportedNodes.size());
+        const THashSet<CClass*>& SupportedNodes = Graph->GetSupportedNodes();
+        Actions.reserve(SupportedNodes.size());
 
-        for (CClass* NodeClass : Graph->SupportedNodes)
+        for (CClass* NodeClass : SupportedNodes)
         {
             CEdGraphNode* CDO = Cast<CEdGraphNode>(NodeClass->GetDefaultObject());
             if (CDO == nullptr)

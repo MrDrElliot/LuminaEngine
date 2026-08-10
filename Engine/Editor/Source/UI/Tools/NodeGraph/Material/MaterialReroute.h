@@ -18,6 +18,9 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
+        // Not a CMaterialGraphNode (it derives from the generic reroute), so it names its graph itself.
+        CClass* GetSupportedGraphClass() const override;
+
         CClass* GetInputPinClass() const override;
         CClass* GetOutputPinClass() const override;
     };

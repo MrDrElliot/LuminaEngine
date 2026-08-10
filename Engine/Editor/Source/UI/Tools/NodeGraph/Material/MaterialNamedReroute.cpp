@@ -3,11 +3,21 @@
 #include "MaterialInput.h"
 #include "MaterialOutput.h"
 #include "Core/Object/Class.h"
+#include "MaterialNodeGraph.h"
 #include "UI/Tools/NodeGraph/EdNodeGraph.h"
 #include "UI/Tools/NodeGraph/EdNodeGraphPin.h"
 
 namespace Lumina
 {
+    CClass* CMaterialNamedRerouteDeclaration::GetSupportedGraphClass() const
+    {
+        return CMaterialNodeGraph::StaticClass();
+    }
+
+    CClass* CMaterialNamedRerouteUsage::GetSupportedGraphClass() const
+    {
+        return CMaterialNodeGraph::StaticClass();
+    }
 
     namespace
     {

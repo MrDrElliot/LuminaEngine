@@ -11,6 +11,15 @@
 
 namespace Lumina
 {
+	// MaterialGraphTypes.h only forward-declares EMaterialValueType, so ToMaterialInputType /
+	// ToMaterialValueType have to restate its ordinals as plain integers. This is the one translation
+	// unit that sees both definitions, so it is where a reorder or insertion gets caught.
+	static_assert((uint8)EMaterialValueType::Float         == MaterialValueOrdinal::Float);
+	static_assert((uint8)EMaterialValueType::Float2        == MaterialValueOrdinal::Float2);
+	static_assert((uint8)EMaterialValueType::Float3        == MaterialValueOrdinal::Float3);
+	static_assert((uint8)EMaterialValueType::Float4        == MaterialValueOrdinal::Float4);
+	static_assert((uint8)EMaterialValueType::TextureHandle == MaterialValueOrdinal::TextureHandle);
+
 	FMaterialCompiler::FMaterialCompiler()
 	{
 		PixelChunks.reserve(2000);
@@ -221,6 +230,8 @@ namespace Lumina
 			case EMaterialInputType::Float3:	return "float3";
 			case EMaterialInputType::Float4:	return "float4";
 			case EMaterialInputType::Texture: return "float4";
+			// A bindless index, not a sampled colour -- the one non-float type the graph can carry.
+			case EMaterialInputType::TextureHandle: return "uint";
 			default: return "float";
 		}
 	}
@@ -276,6 +287,7 @@ namespace Lumina
 			case EMaterialInputType::Float3:	return 3;
 			case EMaterialInputType::Float4:	return 4;
 			case EMaterialInputType::Texture:	return 4;
+			case EMaterialInputType::TextureHandle:	return 1;
 			default: return 1;
 		}
 	}

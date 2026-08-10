@@ -4,9 +4,10 @@
 
 namespace Lumina
 {
-    // Declared, not defined: the conversions below are pure casts, which an opaque enum declaration
-    // fully supports. Keeps this header free of the MaterialFunction asset include, so a node needing
-    // the shared type helpers doesn't drag in (or include another node's header for) that dependency.
+    // Declared, not defined: the conversions below only cast to and from the underlying type, which an
+    // opaque enum declaration fully supports. Keeps this header free of the MaterialFunction asset
+    // include, so a node needing the shared type helpers doesn't drag in (or include another node's
+    // header for) that dependency. The cost is MaterialValueOrdinal below; see the note there.
     enum class EMaterialValueType : uint8;
 
     enum class EMaterialInputType : uint8
@@ -16,6 +17,10 @@ namespace Lumina
         Float3,
         Float4,
         Texture,
+        // A bindless texture index (uint), not a sampled value. Produced by the TextureHandle node so
+        // hand-written Slang can sample the texture itself; every other node is float-typed, which is
+        // why this one is a distinct type rather than a float carrying an index.
+        TextureHandle,
     };
 
     enum class EComponentMask : uint8
@@ -31,16 +36,45 @@ namespace Lumina
         RGB,
     };
 
-    // EMaterialValueType and EMaterialInputType share Float..Float4 ordering, so conversion is a cast.
-    // Texture-typed signature I/O is unsupported, so a Texture input type clamps to Float4 on the way back.
+    // EMaterialValueType's ordinals, restated because this header only forward-declares that enum (see
+    // above) and an opaque declaration cannot name its enumerators. MaterialCompiler.cpp includes both
+    // definitions and static_asserts every one of these, so a reorder there is a build break here.
+    namespace MaterialValueOrdinal
+    {
+        inline constexpr uint8 Float         = 0;
+        inline constexpr uint8 Float2        = 1;
+        inline constexpr uint8 Float3        = 2;
+        inline constexpr uint8 Float4        = 3;
+        inline constexpr uint8 TextureHandle = 4;
+    }
+
+    // The two enums agree on Float..Float4 but diverge past it: EMaterialInputType has a Texture entry
+    // (a sampled float4, drawn with a thumbnail editor) that signature I/O has no use for, so
+    // TextureHandle sits at a different ordinal in each and the mapping is spelled out both ways.
+    // Texture clamps to Float4 on the way back, since a sampled texture IS a float4 value.
     inline EMaterialInputType ToMaterialInputType(EMaterialValueType Type)
     {
-        return static_cast<EMaterialInputType>(Type);
+        switch (static_cast<uint8>(Type))
+        {
+        case MaterialValueOrdinal::Float2:        return EMaterialInputType::Float2;
+        case MaterialValueOrdinal::Float3:        return EMaterialInputType::Float3;
+        case MaterialValueOrdinal::Float4:        return EMaterialInputType::Float4;
+        case MaterialValueOrdinal::TextureHandle: return EMaterialInputType::TextureHandle;
+        default:                                  return EMaterialInputType::Float;
+        }
     }
 
     inline EMaterialValueType ToMaterialValueType(EMaterialInputType Type)
     {
-        return static_cast<EMaterialValueType>(Type == EMaterialInputType::Texture ? EMaterialInputType::Float4 : Type);
+        switch (Type)
+        {
+        case EMaterialInputType::Float2:        return static_cast<EMaterialValueType>(MaterialValueOrdinal::Float2);
+        case EMaterialInputType::Float3:        return static_cast<EMaterialValueType>(MaterialValueOrdinal::Float3);
+        case EMaterialInputType::Float4:
+        case EMaterialInputType::Texture:       return static_cast<EMaterialValueType>(MaterialValueOrdinal::Float4);
+        case EMaterialInputType::TextureHandle: return static_cast<EMaterialValueType>(MaterialValueOrdinal::TextureHandle);
+        default:                                return static_cast<EMaterialValueType>(MaterialValueOrdinal::Float);
+        }
     }
 
     // The mask covering every component of a type ("all of a float3" = RGB).
@@ -53,6 +87,8 @@ namespace Lumina
         case EMaterialInputType::Float3:  return EComponentMask::RGB;
         case EMaterialInputType::Float4:
         case EMaterialInputType::Texture: return EComponentMask::RGBA;
+        // No mask at all, so nothing ever appends a swizzle to a scalar uint.
+        case EMaterialInputType::TextureHandle: return EComponentMask::None;
         default:                          return EComponentMask::R;
         }
     }
@@ -67,6 +103,9 @@ namespace Lumina
         case EMaterialInputType::Float3:  return "float3(0.0, 0.0, 0.0)";
         case EMaterialInputType::Float4:
         case EMaterialInputType::Texture: return "float4(0.0, 0.0, 0.0, 0.0)";
+        // Bindless slot 0 is a real (and arbitrary) texture, so this is not a "no texture" value -- it is
+        // just the neutral uint a node emits after erroring out, so the shader still parses.
+        case EMaterialInputType::TextureHandle: return "0u";
         default:                          return "0.0";
         }
     }
