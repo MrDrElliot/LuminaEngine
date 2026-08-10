@@ -27,6 +27,9 @@ enum class ELuminaEngineVersion : uint32
 	// (Mips[Layer * NumMips + Mip]). Older files are single-layer, so LayerCount defaults to 1.
 	TEXTURE_ARRAY_LAYERS,
 
+	// FAnimationResource serializes authored float curves, and CAnimationGraph its curve tables.
+	ANIM_CURVES,
+
 	AUTOMATIC_VERSION_PLUS_ONE,
 	AUTOMATIC_VERSION = AUTOMATIC_VERSION_PLUS_ONE - 1
 };

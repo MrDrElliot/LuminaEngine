@@ -40,6 +40,7 @@
 #include "TerrainEditMode.h"
 #include "FoliageEditMode.h"
 #include "SequencerEditMode.h"
+#include "SplineEditMode.h"
 #include "World/Entity/Components/TerrainComponent.h"
 #include "UI/Tools/EditorEntityUtils.h"
 #include "UI/Properties/EntityPropertyContext.h"
@@ -1140,6 +1141,7 @@ namespace Lumina
         EditorModes.push_back(MakeUnique<FTerrainEditMode>());
         EditorModes.push_back(MakeUnique<FFoliageEditMode>());
         EditorModes.push_back(MakeUnique<FNavigationEditMode>());
+        EditorModes.push_back(MakeUnique<FSplineEditMode>());
         EditorModes.push_back(MakeUnique<FSequencerEditMode>());
 
         // Modes call back into the host for editor services (e.g. undo transactions).

@@ -22,4 +22,9 @@ namespace Lumina
         }
         return false;
     }
+
+    float SSimpleAnimationComponent::GetCurveValue(const FName& CurveName, float Default) const
+    {
+        return Animation.IsValid() ? Animation->EvaluateCurve(CurveName, CurrentTime, Default) : Default;
+    }
 }

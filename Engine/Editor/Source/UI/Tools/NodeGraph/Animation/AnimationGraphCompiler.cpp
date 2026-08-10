@@ -1,5 +1,6 @@
 #include "AnimationGraphCompiler.h"
 
+#include "Assets/AssetTypes/Animation/BlendSpace/BlendSpace.h"
 #include "Assets/AssetTypes/Blackboard/Blackboard.h"
 #include "Assets/AssetTypes/Mesh/Animation/Animation.h"
 #include "Renderer/MeshData.h"
@@ -18,6 +19,7 @@ namespace Lumina
         }
 
         Clips.push_back(Clip);
+        ClipCurveMaps.push_back(BuildClipCurveMap(Clip));
         return (uint16)(Clips.size() - 1);
     }
 
@@ -31,8 +33,55 @@ namespace Lumina
             }
         }
 
+        FAnimGraphBlendSpaceCurveMap CurveMap;
+        if (BlendSpace != nullptr)
+        {
+            CurveMap.SampleMaps.reserve(BlendSpace->Samples.size());
+            for (const SBlendSpaceSample& Sample : BlendSpace->Samples)
+            {
+                CurveMap.SampleMaps.push_back(BuildClipCurveMap(Sample.Animation.Get()));
+            }
+        }
+
         BlendSpaces.push_back(BlendSpace);
+        BlendSpaceCurveMaps.push_back(Move(CurveMap));
         return (uint16)(BlendSpaces.size() - 1);
+    }
+
+    int32 FAnimationGraphCompiler::AddCurve(const FName& Name)
+    {
+        if (Name.IsNone())
+        {
+            return INDEX_NONE;
+        }
+
+        auto It = CurveNameToIndex.find(Name);
+        if (It != CurveNameToIndex.end())
+        {
+            return It->second;
+        }
+
+        const int32 Index = (int32)CurveNames.size();
+        CurveNames.push_back(Name);
+        CurveNameToIndex[Name] = Index;
+        return Index;
+    }
+
+    FAnimGraphClipCurveMap FAnimationGraphCompiler::BuildClipCurveMap(CAnimation* Clip)
+    {
+        FAnimGraphClipCurveMap Map;
+        if (Clip == nullptr)
+        {
+            return Map;
+        }
+
+        const TVector<FAnimationCurve>& Curves = Clip->GetCurves();
+        Map.Slots.reserve(Curves.size());
+        for (const FAnimationCurve& Curve : Curves)
+        {
+            Map.Slots.push_back(AddCurve(Curve.Name));
+        }
+        return Map;
     }
 
     int32 FAnimationGraphCompiler::AddParameter(const FName& Name, EAnimGraphParamType Type, float DefaultValue)
@@ -367,6 +416,27 @@ namespace Lumina
         return Dst;
     }
 
+    uint16 FAnimationGraphCompiler::EmitGetCurve(uint16 SrcPoseReg, uint16 CurveIndex)
+    {
+        const uint16 Dst = AllocScalarReg();
+        WriteOp(EAnimOp::GetCurve);
+        Write(SrcPoseReg);
+        Write(CurveIndex);
+        Write(Dst);
+        return Dst;
+    }
+
+    uint16 FAnimationGraphCompiler::EmitSetCurve(uint16 SrcPoseReg, uint16 CurveIndex, uint16 ValueReg)
+    {
+        const uint16 Dst = AllocPoseReg();
+        WriteOp(EAnimOp::SetCurve);
+        Write(SrcPoseReg);
+        Write(CurveIndex);
+        Write(ValueReg);
+        Write(Dst);
+        return Dst;
+    }
+
     void FAnimationGraphCompiler::EmitOutput(uint16 PoseReg)
     {
         WriteOp(EAnimOp::Output);
@@ -410,17 +480,20 @@ namespace Lumina
             EmitHalt();
         }
 
-        OutGraph->Bytecode           = Bytecode;
-        OutGraph->Clips              = Clips;
-        OutGraph->BlendSpaces        = BlendSpaces;
-        OutGraph->Parameters         = Parameters;
-        OutGraph->BoneMasks          = BoneMasks;
-        OutGraph->StateMachines      = StateMachines;
-        OutGraph->NumScalarRegisters = NextScalarReg;
-        OutGraph->NumPoseRegisters   = NextPoseReg;
-        OutGraph->NumStateSlots      = NextStateSlot;
-        OutGraph->NumSyncGroups      = (uint16)SyncGroupNames.size();
-        OutGraph->BytecodeVersion    = kAnimBytecodeVersion;
+        OutGraph->Bytecode            = Bytecode;
+        OutGraph->Clips               = Clips;
+        OutGraph->BlendSpaces         = BlendSpaces;
+        OutGraph->CurveNames          = CurveNames;
+        OutGraph->ClipCurveMaps       = ClipCurveMaps;
+        OutGraph->BlendSpaceCurveMaps = BlendSpaceCurveMaps;
+        OutGraph->Parameters          = Parameters;
+        OutGraph->BoneMasks           = BoneMasks;
+        OutGraph->StateMachines       = StateMachines;
+        OutGraph->NumScalarRegisters  = NextScalarReg;
+        OutGraph->NumPoseRegisters    = NextPoseReg;
+        OutGraph->NumStateSlots       = NextStateSlot;
+        OutGraph->NumSyncGroups       = (uint16)SyncGroupNames.size();
+        OutGraph->BytecodeVersion     = kAnimBytecodeVersion;
 
         OutGraph->ResolveTransitionParameters();
     }

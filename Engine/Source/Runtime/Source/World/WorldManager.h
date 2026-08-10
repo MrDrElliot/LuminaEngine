@@ -15,6 +15,13 @@ namespace Lumina
         ~FWorldManager();
         LE_NO_COPYMOVE(FWorldManager);
 
+        /**
+         * Latches each world's throttle decision for this frame. Must run before the frame's first
+         * UpdateWorlds: every phase after it reads CWorld::IsTickingThisFrame, and UpdateWorlds alone is
+         * called once per update stage, so deciding per call could half-tick a world across the stages.
+         */
+        void BeginFrame(double NowSeconds);
+
         void UpdateWorlds(const FUpdateContext& UpdateContext);
 
         // Opens every live scene's immediate-line write window. Must run before anything ticks or draws

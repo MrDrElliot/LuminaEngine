@@ -90,6 +90,10 @@ namespace Lumina
         FUNCTION(Script)
         bool IsNotifyStateActive(const FName& NotifyName) const;
 
+        /** Value of the active clip's named curve at the current playhead, or Default if it has none. */
+        FUNCTION(Script)
+        float GetCurveValue(const FName& CurveName, float Default = 0.0f) const;
+
         /**
          * Fire-and-forget play. Resets time to 0, marks the clip dirty, and
          * starts advancing. Pass bLoop=false for one-shot animations -- the

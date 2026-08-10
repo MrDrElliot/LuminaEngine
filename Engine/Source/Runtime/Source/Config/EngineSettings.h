@@ -50,13 +50,20 @@ namespace Lumina
         PROPERTY(Editable, Category = "Appearance", ClampMin = 0.0f, ClampMax = 3.0f, NoDrag, Delta = 0.1f)
         float UIScale = 0.0f;
         
-        /** Frame-rate cap applied only while the editor window is minimized. A minimized editor skips
-            its whole frame body but still loops, so it keeps a core busy drawing nothing; capping it
-            hands that time back to whatever you actually switched to.
-            0 = unset, meaning the normal Core.MaxFPS cap keeps applying. Never raises the rate above
-            the foreground cap, so a value larger than Core.MaxFPS simply has no effect. */
+        /** Rate for anything the editor is not actively working in. Two cases share it:
+
+            - The whole editor while its window is MINIMIZED. It skips the frame body but still loops, so
+              it keeps a core busy drawing nothing; capping it hands that time back to whatever you
+              switched to.
+            - Each tool's preview world while its tab is visible but NOT focused. Six open material
+              editors are six full scene renders every frame, and five of them are being glanced at.
+              Those keep rendering, just at this rate, so their viewports stay live rather than freezing.
+
+            0 = off: the minimized case falls back to the normal Core.MaxFPS cap, and unfocused tools run
+            at full rate. Only ever slows things down -- above Core.MaxFPS it cannot raise the minimized
+            rate, and no tool is driven faster than the frame rate itself. */
         PROPERTY(Editable, Category = "Performance", ClampMin = 0, ClampMax = 240)
-        int32 MaxBackgroundFPS = 0;
+        int32 MaxBackgroundFPS = 5;
 
         /** Chord that recompiles + hot-reloads all C# scripts. */
         PROPERTY(Editable, Category = "Hotkeys")

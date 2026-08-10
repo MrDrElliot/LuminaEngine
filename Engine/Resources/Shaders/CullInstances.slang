@@ -16,6 +16,12 @@ struct FCullInstancesArgs
 
     uint  MaxVisibleInstances;
     uint  NumSurfaceDescs;
+    // Monotonic per rendered frame. A skinned slot whose side data does not carry this was not gathered, so
+    // its ranges belong to some earlier frame and it must not be emitted.
+    uint  SkinFrameTag;
+    // Elements the pre-skinned vertex buffer holds. The claim below clamps against it; anything past it
+    // gets kNoPreSkinBase and the draw path skins that block inline instead.
+    uint  PreSkinCapacity;
 
     // Split by ACCESS RATE: every lane streams CullEntries, the other two are read only by survivors.
     FInstanceCullEntry* RetainedCullEntries;
@@ -33,8 +39,47 @@ struct FCullInstancesArgs
     // turns them into the layout and owns every other field.
     FRenderBucket*     OutBuckets;
     uint*              OutOverflowFlag;
+    // Per-frame half of a SKINNED slot's payload: the LOD ranges the CPU resolved and the pre-skin slices it
+    // assigned against them. Indexed by RETAINED slot, so it is readable here, before compaction exists.
+    FSkinnedFrameData* SkinnedFrameData;
+    // Global pre-skin vertex cursor. Claimed here, beside the LOD pick that decides which vertices a block
+    // even has, so the two cannot disagree -- they used to be a CPU allocation and a GPU pick held in step
+    // only by a comment. Runs past capacity by design: what it ends at is DEMAND, which is what the CPU
+    // grows the buffer from.
+    uint*              OutPreSkinCursor;
 };
 FCullInstancesArgs* Pass() { return GetPassArgs<FCullInstancesArgs>(); }
+
+// Claims one block's slice of the pre-skinned vertex buffer. The span is [first meshlet's VertexOffset,
+// last meshlet's end), read through the header -- exactly what the CPU's BlockExtent used to walk the
+// meshlet array for. Returns kNoPreSkinBase when the block has nothing to skin or the budget is spent, and
+// the draw path then blends that block's bones inline instead.
+uint ClaimPreSkinSlice(FMeshletHeader* Header, uint MeshletOffset, uint MeshletCount)
+{
+    if (MeshletCount == 0u || Header.Meshlets == nullptr)
+    {
+        return kNoPreSkinBase;
+    }
+
+    const uint FirstVertex = Header.Meshlets[MeshletOffset].VertexOffset;
+    const FMeshlet Last    = Header.Meshlets[MeshletOffset + MeshletCount - 1u];
+    const uint EndVertex   = Last.VertexOffset + Last.VertexCount;
+
+    if (EndVertex <= FirstVertex)
+    {
+        return kNoPreSkinBase;
+    }
+
+    const uint Slot = AppendReserve(Pass().OutPreSkinCursor, Pass().PreSkinCapacity, /*Base*/ 0u,
+                                    EndVertex - FirstVertex);
+    if (Slot == kAppendFull)
+    {
+        return kNoPreSkinBase;
+    }
+
+    // Fold in the span start so the writer and the reader can both index by the meshlet's own VertexOffset.
+    return Slot - FirstVertex;
+}
 
 [shader("compute")]
 [numthreads(LOCAL_SIZE_X, 1, 1)]
@@ -55,11 +100,28 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
         return;   // freed slot; the payload beside it is stale by design
     }
 
-    // CPU-fed at the head of the visible buffer; the retained copy has no valid bone offset, so
-    // appending it would draw a garbage duplicate.
-    if (Cull.HasFlag(EInstanceFlags::Skinned))
+    // Skinned slots used to be rejected here and CPU-fed into the head of the visible buffer instead,
+    // because FInstanceStatic could not describe them: its bone offset and pre-skin bases were per-frame
+    // values. The bone offset is a stable arena base now, and the per-frame remainder arrives through
+    // SkinnedFrameData below -- so they compact through this pass like everything else, which is what earns
+    // them a RetainedSlot and therefore real two-phase occlusion.
+    const bool bSkinned = Cull.HasFlag(EInstanceFlags::Skinned);
+
+    FSkinnedFrameData Skin = (FSkinnedFrameData)0;
+    if (bSkinned)
     {
-        return;
+        if (Pass().SkinnedFrameData == nullptr)
+        {
+            return;
+        }
+
+        // The array is never cleared, so the tag is what distinguishes "gathered this frame" from a slot
+        // still holding a previous frame's ranges. An entity the CPU gather culled is simply not emitted.
+        Skin = Pass().SkinnedFrameData[SlotIdx];
+        if (!Skin.IsFromFrame(Pass().SkinFrameTag))
+        {
+            return;
+        }
     }
 
     const float3 Center = Cull.SphereBounds.xyz;
@@ -94,7 +156,9 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
 
     // A forced LOD or LODs-off is a fixed pick, so the instance publishes kNoSurfaceDesc and no view
     // re-selects.
-    const bool bSelectPerView = Cull.ForcedLODIndex < 0 && Pass().bUseLODs != 0u;
+    // Never for skinned: the pre-skin slice was assigned against the CPU's pick, and a view that re-selected
+    // a different LOD would pre-skin one LOD's meshlets while the raster read another's vertices.
+    const bool bSelectPerView = !bSkinned && Cull.ForcedLODIndex < 0 && Pass().bUseLODs != 0u;
 
     uint LODIndex = 0u;
     if (Cull.ForcedLODIndex >= 0)
@@ -116,10 +180,14 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     // that rejects here never loads.
     const bool bHasGeometry = Cull.HasFlag(EInstanceFlags::HasGeometry);
 
-    const uint SurfaceMeshletOffset = Desc.LODMeshletOffset[LODIndex];
-    const uint SurfaceMeshletCount  = bHasGeometry ? Desc.LODMeshletCount[LODIndex] : 0u;
-    const uint ShadowMeshletOffset  = Desc.LODMeshletOffset[ShadowLODIndex];
-    const uint ShadowMeshletCount   = bHasGeometry ? Desc.LODMeshletCount[ShadowLODIndex] : 0u;
+    // Skinned takes the CPU's resolved ranges verbatim, for the reason on bSelectPerView above. Those counts
+    // already fold in the header-resident test, so bHasGeometry is not applied to them a second time.
+    const uint SurfaceMeshletOffset = bSkinned ? Skin.SurfaceMeshletOffset : Desc.LODMeshletOffset[LODIndex];
+    const uint SurfaceMeshletCount  = bSkinned ? Skin.SurfaceMeshletCount
+                                               : (bHasGeometry ? Desc.LODMeshletCount[LODIndex] : 0u);
+    const uint ShadowMeshletOffset  = bSkinned ? Skin.ShadowMeshletOffset : Desc.LODMeshletOffset[ShadowLODIndex];
+    const uint ShadowMeshletCount   = bSkinned ? Skin.ShadowMeshletCount
+                                               : (bHasGeometry ? Desc.LODMeshletCount[ShadowLODIndex] : 0u);
 
     if (SurfaceMeshletCount == 0u && ShadowMeshletCount == 0u)
     {
@@ -135,9 +203,10 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
 
     // End of the last LOD: the bound on every mesh-global meshlet index the cull emits, and the value
     // BuildMeshletBlocks clamps its own range against.
-    const uint MeshletTotal = bHasGeometry && NumLODs > 0u
-                            ? Desc.LODMeshletOffset[NumLODs - 1u] + Desc.LODMeshletCount[NumLODs - 1u]
-                            : 0u;
+    const uint MeshletTotal = bSkinned ? Skin.MeshletTotalCount
+                            : (bHasGeometry && NumLODs > 0u
+                                ? Desc.LODMeshletOffset[NumLODs - 1u] + Desc.LODMeshletCount[NumLODs - 1u]
+                                : 0u);
 
     // Does ANY view see it? Breaks on the first hit, so a visible instance pays one or two iterations.
     // Needed before the compacted slot is claimed, because that slot is what indexes the range slab.
@@ -229,8 +298,34 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
         Pass().OutInstanceViewRanges[OutSlot * Pass().NumViews + v] = uint2(Range.x, Emitted);
     }
 
-    // Only survivors get here: 112 bytes a rejected slot never touches.
-    FInstanceStatic Static = Pass().RetainedStatic[SlotIdx];
+    // Only survivors get here: 112 bytes a rejected slot never touches. REACHED, not copied: passing
+    // Static.MeshletHeader to ClaimPreSkinSlice below makes Slang materialize the struct into a Function
+    // OpVariable, and SPIR-V requires one holding a PhysicalStorageBuffer pointer to carry Aliased or
+    // Restrict -- which Slang emits with neither. Invalid module, accepted by every driver, device-lost
+    // frames later. Field access auto-derefs, so every use below is unchanged.
+    FInstanceStatic* Static = Pass().RetainedStatic + SlotIdx;
+
+    // Pre-skin slices, claimed from the SAME resolved ranges the emit above used. A block's vertex span is
+    // the span of its meshlets, so it is read straight off the header rather than precomputed on the CPU.
+    // SkinnedVertexBase folds in the span start, so base + M.VertexOffset lands in the compacted slice.
+    uint SurfaceSkinBase = kNoPreSkinBase;
+    uint ShadowSkinBase  = kNoPreSkinBase;
+
+    if (bSkinned && Static.MeshletHeader != nullptr)
+    {
+        SurfaceSkinBase = ClaimPreSkinSlice(Static.MeshletHeader, SurfaceMeshletOffset, SurfaceMeshletCount);
+
+        // A shadow block that resolved to the surface block shares its slice; claiming twice would both
+        // waste the budget and skin the same vertices into two places.
+        ShadowSkinBase = (ShadowMeshletOffset == SurfaceMeshletOffset)
+                       ? SurfaceSkinBase
+                       : ClaimPreSkinSlice(Static.MeshletHeader, ShadowMeshletOffset, ShadowMeshletCount);
+
+        // Written back so the skinning passes, which are keyed by RETAINED slot, see the same bases the
+        // draw path will read off the compacted instance below.
+        Pass().SkinnedFrameData[SlotIdx].SkinnedVertexBase       = SurfaceSkinBase;
+        Pass().SkinnedFrameData[SlotIdx].ShadowSkinnedVertexBase = ShadowSkinBase;
+    }
 
     // Written THROUGH the pointer, never assembled in a local: a local FGPUInstance puts its
     // MeshletHeader in a Function OpVariable that SPIR-V requires to carry Aliased or Restrict and
@@ -245,8 +340,9 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     Inst.MaterialIndex           = Static.MaterialIndex;
     Inst.EntityID                = Static.EntityID;
     Inst.BoneOffset              = Static.BoneOffset;
-    Inst.SkinnedVertexBase       = Static.SkinnedVertexBase;
-    Inst.ShadowSkinnedVertexBase = Static.ShadowSkinnedVertexBase;
+    // Claimed just above for skinned; kNoPreSkinBase routes the block to inline skinning in the draw path.
+    Inst.SkinnedVertexBase       = bSkinned ? SurfaceSkinBase : Static.SkinnedVertexBase;
+    Inst.ShadowSkinnedVertexBase = bSkinned ? ShadowSkinBase  : Static.ShadowSkinnedVertexBase;
     Inst.SurfaceMeshletOffset    = SurfaceMeshletOffset;
     Inst.SurfaceMeshletCount     = SurfaceMeshletCount;
     Inst.ShadowMeshletOffset     = ShadowMeshletOffset;

@@ -206,14 +206,15 @@ namespace Lumina
 
         const bool bBonePicker = Property->Property->HasMetadata("BonePicker");
         const bool bParamPicker = Property->Property->HasMetadata("ParameterPicker");
+        const bool bCurvePicker = Property->Property->HasMetadata("CurvePicker");
         const bool bSocketPicker = Property->Property->HasMetadata("SocketPicker");
         const FSkeletonResource* Skeleton = bBonePicker ? BonePickerContext::GetActiveSkeleton() : nullptr;
-        CAnimationGraph* PickerGraph = bParamPicker ? ParameterPickerContext::GetActiveGraph() : nullptr;
+        CAnimationGraph* PickerGraph = (bParamPicker || bCurvePicker) ? ParameterPickerContext::GetActiveGraph() : nullptr;
         const SocketPickerContext::FSocketPickerData* SocketData = bSocketPicker ? SocketPickerContext::GetActive() : nullptr;
 
         EPropertyChangeOp Result = EPropertyChangeOp::None;
 
-        const float ButtonWidth = (bBonePicker || bParamPicker || bSocketPicker) ? ImGui::GetFrameHeight() : 0.0f;
+        const float ButtonWidth = (bBonePicker || bParamPicker || bCurvePicker || bSocketPicker) ? ImGui::GetFrameHeight() : 0.0f;
 
         char Buffer[256];
         strncpy(Buffer, DisplayValue.c_str(), sizeof(Buffer));
@@ -289,6 +290,47 @@ namespace Lumina
                         if (ImGui::Selectable(Key.Name.c_str(), bSelected))
                         {
                             DisplayValue = Key.Name;
+                            Result = EPropertyChangeOp::Updated;
+                            ImGui::CloseCurrentPopup();
+                        }
+                    }
+                }
+                ImGui::EndPopup();
+            }
+        }
+
+        if (bCurvePicker)
+        {
+            ImGui::SameLine(0, 0);
+            const bool bHasCurves = PickerGraph != nullptr && !PickerGraph->CurveNames.empty();
+            ImGui::BeginDisabled(!bHasCurves);
+            if (ImGui::Button(LE_ICON_MENU_DOWN "##CurvePick", ImVec2(ButtonWidth, 0)))
+            {
+                ImGui::OpenPopup("##CurvePicker");
+            }
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+            {
+                ImGuiX::TextTooltip_Internal(bHasCurves ? "Pick a curve authored on this graph's clips"
+                                                        : "No curves; author them on an animation clip, then compile");
+            }
+
+            if (ImGui::BeginPopup("##CurvePicker"))
+            {
+                if (ImGui::Selectable("(none)", DisplayValue.IsNone()))
+                {
+                    DisplayValue = FName();
+                    Result = EPropertyChangeOp::Updated;
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::Separator();
+                if (PickerGraph != nullptr)
+                {
+                    for (const FName& CurveName : PickerGraph->CurveNames)
+                    {
+                        if (ImGui::Selectable(CurveName.c_str(), CurveName == DisplayValue))
+                        {
+                            DisplayValue = CurveName;
                             Result = EPropertyChangeOp::Updated;
                             ImGui::CloseCurrentPopup();
                         }

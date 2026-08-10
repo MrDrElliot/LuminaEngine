@@ -1,9 +1,9 @@
-#pragma once
+﻿#pragma once
 #include "Common.slang"
 #include "GlobalRHI.slang"
 
 // Device addresses of every scene buffer + bindless indices for the IBL/shadow textures. Must match
-// FSceneRoot in SceneRenderTypes.h (144 B, scalar layout).
+// FSceneRoot in SceneRenderTypes.h (160 B, scalar layout).
 struct FSceneRoot
 {
     FSceneGlobalData*    SceneData;
@@ -16,9 +16,11 @@ struct FSceneRoot
     FCullView*           CullViews;
     FMeshletDraw*        MeshletDrawListPtr;
     FPreSkinnedVertex*   PreSkinnedVerticesPtr;
-    FSkinDescriptor*     SkinDescriptorsPtr;
     FWidgetInstance*     WidgetsPtr;
     FGPUReflectionProbe* ReflectionProbesPtr;
+    FGPUSpline*          SplinesPtr;        // one header per uploaded spline (bSendToGPU)
+    FGPUSplinePoint*     SplinePointsPtr;   // shared control-point array; headers carry the slice
+    FGPUSplineSample*    SplineSamplesPtr;  // shared arc-length tables
     uint  BRDFLutIndex;          // bindless 2D SRV
     uint  SkyIrradianceIndex;    // bindless cube SRV
     // [31:24] = prefilter cube mip count (see SamplePrefilter), [23:0] = bindless cube SRV index.
@@ -30,6 +32,8 @@ struct FSceneRoot
     // [31:24] = probe prefilter mip count, [23:0] = bindless cube-array SRV over every probe's slices.
     uint  ProbeCubeArrayIndex;
     uint  NumReflectionProbes;
+    uint  NumSplines;
+    uint  _SplinePad;
 };
 
 // gRHI.Args (GlobalRHI's single 8-byte push-constant pointer) points to this transient block.
@@ -60,8 +64,11 @@ FBillboardInstance* Billboards()            { return GetSceneRoot().Billboards; 
 FCullView*          CullViews()             { return GetSceneRoot().CullViews; }
 FMeshletDraw*       MeshletDrawList()       { return GetSceneRoot().MeshletDrawListPtr; }
 FPreSkinnedVertex*  PreSkinnedVertices()    { return GetSceneRoot().PreSkinnedVerticesPtr; }
-FSkinDescriptor*    SkinDescriptors()       { return GetSceneRoot().SkinDescriptorsPtr; }
 FWidgetInstance*    Widgets()               { return GetSceneRoot().WidgetsPtr; }
+FGPUSpline*         Splines()               { return GetSceneRoot().SplinesPtr; }
+FGPUSplinePoint*    SplinePoints()          { return GetSceneRoot().SplinePointsPtr; }
+FGPUSplineSample*   SplineSamples()         { return GetSceneRoot().SplineSamplesPtr; }
+uint                NumSplines()            { return GetSceneRoot().NumSplines; }
 
 // HDR panoramas carry +Inf/NaN texels that poison the IBL cubes and spread white through bloom.
 // Branchless deliberately: isfinite() short-circuits to two branches per call, and bloom calls it 15x.

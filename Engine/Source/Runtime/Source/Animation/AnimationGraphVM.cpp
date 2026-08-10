@@ -143,6 +143,7 @@ namespace Lumina
         State.Inertializers.assign(Graph->StateMachines.size(), FAnimInertializer());
 
         State.SyncGroups.assign(Graph->NumSyncGroups, FAnimSyncGroup());
+        State.CurveValues.assign(Graph->CurveNames.size(), 0.0f);
 
         State.SourceGraph  = Graph;
         State.bInitialized = true;
@@ -187,6 +188,7 @@ namespace Lumina
             (int32)State.ScalarRegisters.size() != Graph->NumScalarRegisters ||
             (int32)State.StateSlots.size() != Graph->NumStateSlots ||
             (int32)State.SyncGroups.size() != Graph->NumSyncGroups ||
+            State.CurveValues.size() != Graph->CurveNames.size() ||
             State.Parameters.size() != Graph->Parameters.size())
         {
             InitState(Graph, State);
@@ -311,6 +313,154 @@ namespace Lumina
             {
                 PoseSync[Reg] = Tag;
             }
+        };
+
+        // Curves ride the pose registers as a dense per-register slot array, so every op that blends
+        // poses blends the curves identically and a value tracks whatever its branch's weight does.
+        const SIZE_T NumCurves = Graph->CurveNames.size();
+
+        thread_local TVector<float> PoseCurves;
+        thread_local TVector<float> CurveScratch;
+        PoseCurves.assign(NumPose * NumCurves, 0.0f);
+        CurveScratch.assign(NumCurves, 0.0f);
+
+        if (!State.CurveValues.empty())
+        {
+            Memory::Memset(State.CurveValues.data(), 0, State.CurveValues.size() * sizeof(float));
+        }
+
+        const auto CurvesOf = [&](uint16 Reg) -> float*
+        {
+            return (NumCurves > 0 && Reg < NumPose) ? PoseCurves.data() + (SIZE_T)Reg * NumCurves : nullptr;
+        };
+
+        const auto SampleClipCurvesInto = [&](float* RESTRICT Dst, const CAnimation* Clip, const FAnimGraphClipCurveMap* Map, float Time)
+        {
+            if (Dst == nullptr)
+            {
+                return;
+            }
+
+            Memory::Memset(Dst, 0, NumCurves * sizeof(float));
+            if (Clip == nullptr || Map == nullptr)
+            {
+                return;
+            }
+
+            const TVector<FAnimationCurve>& Curves = Clip->GetCurves();
+            const SIZE_T Count = Math::Min(Curves.size(), Map->Slots.size());
+            for (SIZE_T i = 0; i < Count; ++i)
+            {
+                const int32 Slot = Map->Slots[i];
+                if (Slot >= 0 && Slot < (int32)NumCurves)
+                {
+                    Dst[Slot] = Curves[i].Curve.Evaluate(Time);
+                }
+            }
+        };
+
+        const auto ClipCurveMapFor = [&](uint16 ClipIdx) -> const FAnimGraphClipCurveMap*
+        {
+            return ClipIdx < Graph->ClipCurveMaps.size() ? &Graph->ClipCurveMaps[ClipIdx] : nullptr;
+        };
+
+        const auto ZeroCurves = [&](uint16 Dst)
+        {
+            if (float* D = CurvesOf(Dst))
+            {
+                Memory::Memset(D, 0, NumCurves * sizeof(float));
+            }
+        };
+
+        const auto CopyCurves = [&](uint16 Dst, uint16 Src)
+        {
+            float* D = CurvesOf(Dst);
+            if (D == nullptr)
+            {
+                return;
+            }
+            const float* S = CurvesOf(Src);
+            if (S == nullptr)
+            {
+                Memory::Memset(D, 0, NumCurves * sizeof(float));
+            }
+            else if (S != D)
+            {
+                Memory::Memcpy(D, S, NumCurves * sizeof(float));
+            }
+        };
+
+        // A curve missing from one side reads as 0 there, so it fades in/out with the blend.
+        const auto LerpCurves = [&](uint16 Dst, uint16 A, uint16 B, float Alpha)
+        {
+            float* D = CurvesOf(Dst);
+            if (D == nullptr)
+            {
+                return;
+            }
+            const float* SA = CurvesOf(A);
+            const float* SB = CurvesOf(B);
+            for (SIZE_T i = 0; i < NumCurves; ++i)
+            {
+                const float VA = SA != nullptr ? SA[i] : 0.0f;
+                const float VB = SB != nullptr ? SB[i] : 0.0f;
+                D[i] = VA + (VB - VA) * Alpha;
+            }
+        };
+
+        const auto AddCurves = [&](uint16 Dst, uint16 Base, uint16 Delta, float Alpha)
+        {
+            float* D = CurvesOf(Dst);
+            if (D == nullptr)
+            {
+                return;
+            }
+            const float* SBase  = CurvesOf(Base);
+            const float* SDelta = CurvesOf(Delta);
+            for (SIZE_T i = 0; i < NumCurves; ++i)
+            {
+                D[i] = (SBase != nullptr ? SBase[i] : 0.0f) + (SDelta != nullptr ? SDelta[i] : 0.0f) * Alpha;
+            }
+        };
+
+        // State-machine seam: the pose is inertialized execute-side, so the curves have to follow the
+        // same schedule here or they step at the transition. Same quintic decay with zero initial
+        // velocity, evaluated against the transition's own elapsed time.
+        const auto InertializeCurves = [&](FAnimInertializer& Inert, uint16 Dst, bool bStart)
+        {
+            float* D = CurvesOf(Dst);
+            if (D == nullptr)
+            {
+                return;
+            }
+
+            if (Inert.CurveOffsets.size() != NumCurves)
+            {
+                Inert.CurveOffsets.assign(NumCurves, 0.0f);
+                Inert.PrevCurves.assign(NumCurves, 0.0f);
+                Inert.bHasCurveHistory = false;
+            }
+
+            if (bStart)
+            {
+                for (SIZE_T i = 0; i < NumCurves; ++i)
+                {
+                    Inert.CurveOffsets[i] = Inert.bHasCurveHistory ? (Inert.PrevCurves[i] - D[i]) : 0.0f;
+                }
+            }
+
+            if (Inert.bActive && Inert.Duration > 1e-5f)
+            {
+                const float U = Math::Clamp(Inert.Elapsed / Inert.Duration, 0.0f, 1.0f);
+                const float Decay = 1.0f - U * U * U * (U * (U * 6.0f - 15.0f) + 10.0f);
+                for (SIZE_T i = 0; i < NumCurves; ++i)
+                {
+                    D[i] += Inert.CurveOffsets[i] * Decay;
+                }
+            }
+
+            Memory::Memcpy(Inert.PrevCurves.data(), D, NumCurves * sizeof(float));
+            Inert.bHasCurveHistory = true;
         };
 
         // Reading a never-written pose register wires a bind-pose leaf, so malformed graphs degrade
@@ -527,6 +677,8 @@ namespace Lumina
                 }
                 SetPoseTask(Dst, OutTasks.Add(Task));
 
+                SampleClipCurvesInto(CurvesOf(Dst), Task.Clip, ClipCurveMapFor(ClipIdx), Task.Time);
+
                 // Adopt the clock's root-motion / event / sync tags onto the sampled pose.
                 SetPoseTags(Dst,
                             TimeReg < NumScalar ? ClockDeltas[TimeReg] : FRootMotionDelta(),
@@ -558,8 +710,13 @@ namespace Lumina
                     FAnimTask Task;
                     Task.Type = EAnimTaskType::ReferencePose;
                     SetPoseTask(Dst, OutTasks.Add(Task));
+                    ZeroCurves(Dst);
                     break;
                 }
+
+                const FAnimGraphBlendSpaceCurveMap* BlendSpaceCurves = BlendSpaceIdx < Graph->BlendSpaceCurveMaps.size()
+                    ? &Graph->BlendSpaceCurveMaps[BlendSpaceIdx] : nullptr;
+                float* DstCurves = CurvesOf(Dst);
 
                 // One shared normalized phase across every contributing clip. Sampling each at the same
                 // fraction of its own duration is what keeps a walk/run blend on a single stride; the
@@ -633,11 +790,17 @@ namespace Lumina
                                                              Weights.Weights[i], EventScratch);
                     }
 
+                    const int32 SampleIndex = Weights.SampleIndices[i];
+                    const FAnimGraphClipCurveMap* SampleCurveMap =
+                        (BlendSpaceCurves != nullptr && SampleIndex >= 0 && SampleIndex < (int32)BlendSpaceCurves->SampleMaps.size())
+                        ? &BlendSpaceCurves->SampleMaps[SampleIndex] : nullptr;
+
                     if (Accumulated == FAnimTask::NoTask)
                     {
                         Accumulated = SampleTask;
                         AccumulatedWeight = Weights.Weights[i];
                         BlendedDelta = SampleDelta;
+                        SampleClipCurvesInto(DstCurves, SampleClip, SampleCurveMap, SampleTime);
                         continue;
                     }
 
@@ -654,6 +817,15 @@ namespace Lumina
 
                     Accumulated = OutTasks.Add(BlendTask);
                     BlendedDelta = RootMotion::BlendRootMotion(BlendedDelta, SampleDelta, FoldAlpha);
+
+                    if (DstCurves != nullptr)
+                    {
+                        SampleClipCurvesInto(CurveScratch.data(), SampleClip, SampleCurveMap, SampleTime);
+                        for (SIZE_T c = 0; c < NumCurves; ++c)
+                        {
+                            DstCurves[c] += (CurveScratch[c] - DstCurves[c]) * FoldAlpha;
+                        }
+                    }
                 }
 
                 SetPoseTask(Dst, Accumulated);
@@ -669,6 +841,7 @@ namespace Lumina
                 SetPoseTask(Dst, OutTasks.Add(Task));
                 SetPoseTags(Dst, FRootMotionDelta(), FEventRange());
                 SetPoseSync(Dst, FSyncTag());
+                ZeroCurves(Dst);
                 break;
             }
 
@@ -689,6 +862,7 @@ namespace Lumina
                 const float BlendAlpha = Math::Clamp(Task.Alpha, 0.0f, 1.0f);
                 ScaleEventWeights(EventsOf(A), 1.0f - BlendAlpha);
                 ScaleEventWeights(EventsOf(B), BlendAlpha);
+                LerpCurves(Dst, A, B, BlendAlpha);
                 SetPoseTags(Dst,
                             RootMotion::BlendRootMotion(DeltaOf(A), DeltaOf(B), BlendAlpha),
                             UnionEvents(EventsOf(A), EventsOf(B)));
@@ -731,6 +905,7 @@ namespace Lumina
                 // events from both layers fire at full weight (an upper-body attack still lands).
                 SetPoseTags(Dst, DeltaOf(A), UnionEvents(EventsOf(A), EventsOf(B)));
                 SetPoseSync(Dst, SyncOf(A));
+                LerpCurves(Dst, A, B, Math::Clamp(Task.Alpha, 0.0f, 1.0f));
                 break;
             }
 
@@ -744,9 +919,10 @@ namespace Lumina
                 Task.DepA = PoseTaskFor(Src);
                 SetPoseTask(Dst, OutTasks.Add(Task));
 
-                // A delta pose carries no root motion of its own; its events ride along.
+                // A delta pose carries no root motion of its own; its events and curves ride along.
                 SetPoseTags(Dst, FRootMotionDelta(), EventsOf(Src));
                 SetPoseSync(Dst, SyncOf(Src));
+                CopyCurves(Dst, Src);
                 break;
             }
 
@@ -767,6 +943,7 @@ namespace Lumina
                 ScaleEventWeights(EventsOf(Delta), Math::Clamp(Task.Alpha, 0.0f, 1.0f));
                 SetPoseTags(Dst, DeltaOf(Base), UnionEvents(EventsOf(Base), EventsOf(Delta)));
                 SetPoseSync(Dst, SyncOf(Base));
+                AddCurves(Dst, Base, Delta, Math::Clamp(Task.Alpha, 0.0f, 1.0f));
                 break;
             }
 
@@ -791,6 +968,7 @@ namespace Lumina
                     SetPoseTask(Dst, OutTasks.Add(RefTask));
                     SetPoseTags(Dst, FRootMotionDelta(), FEventRange());
                     SetPoseSync(Dst, FSyncTag());
+                    ZeroCurves(Dst);
                     break;
                 }
 
@@ -801,6 +979,7 @@ namespace Lumina
                     SetPoseTask(Dst, OutTasks.Add(RefTask));
                     SetPoseTags(Dst, FRootMotionDelta(), FEventRange());
                     SetPoseSync(Dst, FSyncTag());
+                    ZeroCurves(Dst);
                     break;
                 }
 
@@ -844,6 +1023,7 @@ namespace Lumina
                     SetPoseTask(Dst, OutTasks.Add(RefTask));
                     SetPoseTags(Dst, FRootMotionDelta(), FEventRange());
                     SetPoseSync(Dst, FSyncTag());
+                    ZeroCurves(Dst);
                     From = -1;
                 }
                 else
@@ -873,6 +1053,8 @@ namespace Lumina
                     // its events fire; inactive states' tags are simply never propagated.
                     SetPoseTags(Dst, DeltaOf(CurReg), EventsOf(CurReg));
                     SetPoseSync(Dst, SyncOf(CurReg));
+                    CopyCurves(Dst, CurReg);
+                    InertializeCurves(Inert, Dst, bStart);
 
                     if (Inert.bActive)
                     {
@@ -922,6 +1104,7 @@ namespace Lumina
                 SetPoseTask(Dst, OutTasks.Add(Task));
                 SetPoseTags(Dst, DeltaOf(Src), EventsOf(Src));
                 SetPoseSync(Dst, SyncOf(Src));
+                CopyCurves(Dst, Src);
                 break;
             }
 
@@ -950,6 +1133,7 @@ namespace Lumina
                 SetPoseTask(Dst, OutTasks.Add(Task));
                 SetPoseTags(Dst, DeltaOf(Src), EventsOf(Src));
                 SetPoseSync(Dst, SyncOf(Src));
+                CopyCurves(Dst, Src);
                 break;
             }
 
@@ -959,6 +1143,12 @@ namespace Lumina
                 OutTasks.OutputTask = PoseTaskFor(Src);
 
                 RootMotionInOut.Delta = DeltaOf(Src);
+
+                const float* OutputCurves = CurvesOf(Src);
+                if (OutputCurves != nullptr && State.CurveValues.size() == NumCurves)
+                {
+                    Memory::Memcpy(State.CurveValues.data(), OutputCurves, NumCurves * sizeof(float));
+                }
 
                 // Pin the root when locked, or when the branch that reached the output is
                 // root-motion driven (its motion moves the entity; the pose must stay centered).
@@ -979,6 +1169,42 @@ namespace Lumina
                 }
 
                 Reader.Cursor = Reader.Size;
+                break;
+            }
+
+            case EAnimOp::GetCurve:
+            {
+                const uint16 Src      = Reader.Read<uint16>();
+                const uint16 CurveIdx = Reader.Read<uint16>();
+                const uint16 Dst      = Reader.Read<uint16>();
+
+                if (Dst < NumScalar)
+                {
+                    const float* SrcCurves = CurvesOf(Src);
+                    Scalars[Dst] = (SrcCurves != nullptr && CurveIdx < NumCurves) ? SrcCurves[CurveIdx] : 0.0f;
+                }
+                break;
+            }
+
+            case EAnimOp::SetCurve:
+            {
+                const uint16 Src      = Reader.Read<uint16>();
+                const uint16 CurveIdx = Reader.Read<uint16>();
+                const uint16 ValueReg = Reader.Read<uint16>();
+                const uint16 Dst      = Reader.Read<uint16>();
+
+                // Curves live entirely in this pass, so overriding one costs no pose work: the
+                // destination register forwards the source's task and tags untouched.
+                SetPoseTask(Dst, PoseTaskFor(Src));
+                SetPoseTags(Dst, DeltaOf(Src), EventsOf(Src));
+                SetPoseSync(Dst, SyncOf(Src));
+                CopyCurves(Dst, Src);
+
+                float* DstCurves = CurvesOf(Dst);
+                if (DstCurves != nullptr && CurveIdx < NumCurves)
+                {
+                    DstCurves[CurveIdx] = ReadScalar(ValueReg, 0.0f);
+                }
                 break;
             }
 

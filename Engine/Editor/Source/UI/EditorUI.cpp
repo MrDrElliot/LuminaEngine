@@ -1005,6 +1005,33 @@ namespace Lumina
         }
     }
     
+    double FEditorUI::GetToolWorldUpdateInterval(const CWorld* ToolWorld, bool bFocused) const
+    {
+        // The tool being worked in always runs live. "Focused" is the active TOOL rather than the viewport
+        // specifically: editing a material's node graph is still working in that material, and its preview
+        // should keep up with every edit.
+        if (bFocused || ToolWorld == nullptr)
+        {
+            return 0.0;
+        }
+
+        // Editor preview worlds only. A Game/Simulation world is PIE -- throttling one because focus moved
+        // to another panel would stutter the thing being played, and on a net session it would stutter every
+        // client with it.
+        if (ToolWorld->GetWorldType() != EWorldType::Editor)
+        {
+            return 0.0;
+        }
+
+        const int32 BackgroundFPS = GetDefault<CEditorSettings>()->MaxBackgroundFPS;
+        if (BackgroundFPS <= 0)
+        {
+            return 0.0;
+        }
+
+        return 1.0 / (double)BackgroundFPS;
+    }
+
     void FEditorUI::DestroyTool(const FUpdateContext& UpdateContext, FEditorTool* Tool)
     {
         auto Itr = eastl::find(EditorTools.begin(), EditorTools.end(), Tool);
@@ -2380,6 +2407,8 @@ namespace Lumina
             CWorld* ToolWorld = Tool->GetWorld();
             const bool bKeepAlive = bVisible || ToolWorld->IsNetServer();
             ToolWorld->SetActive(bKeepAlive);
+
+            ToolWorld->SetUpdateInterval(GetToolWorldUpdateInterval(ToolWorld, bIsLastFocusedTool));
         }
         
         if (!bVisible)
@@ -2489,6 +2518,15 @@ namespace Lumina
                             ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
 
                             IRenderScene* SceneRenderer = Tool->GetWorld()->GetRenderer();
+
+                            // Size the scene to the panel that displays it, not the window. ImGui works in
+                            // physical pixels here (Io.DisplaySize is the swapchain extent), so the content
+                            // region is already the right unit. Floor matches DrawViewport's.
+                            const ImVec2 ViewportAvail = ImGui::GetContentRegionAvail();
+                            SceneRenderer->SetPrimaryViewSize(FUIntVector2(
+                                (uint32)eastl::max(ViewportAvail.x, 64.0f),
+                                (uint32)eastl::max(ViewportAvail.y, 64.0f)));
+
                             ImTextureRef ViewportTexture = ImGuiX::ToImTextureRef(SceneRenderer->GetDisplayResourceID());
 
                             Tool->bViewportFocused = ImGui::IsWindowFocused();
@@ -2510,6 +2548,15 @@ namespace Lumina
                         if (DrawViewportWindow)
                         {
                             IRenderScene* SceneRenderer = Tool->GetWorld()->GetRenderer();
+
+                            // Size the scene to the panel that displays it, not the window. ImGui works in
+                            // physical pixels here (Io.DisplaySize is the swapchain extent), so the content
+                            // region is already the right unit. Floor matches DrawViewport's.
+                            const ImVec2 ViewportAvail = ImGui::GetContentRegionAvail();
+                            SceneRenderer->SetPrimaryViewSize(FUIntVector2(
+                                (uint32)eastl::max(ViewportAvail.x, 64.0f),
+                                (uint32)eastl::max(ViewportAvail.y, 64.0f)));
+
                             ImTextureRef ViewportTexture = ImGuiX::ToImTextureRef(SceneRenderer->GetDisplayResourceID());
 
                             Tool->bViewportFocused = ImGui::IsWindowFocused();

@@ -808,6 +808,52 @@ namespace Lumina
             return;
         }
 
+        DrawBlackboardParameters(Graph);
+        DrawLiveCurveValues(Graph);
+    }
+
+    void FAnimationGraphEditorTool::DrawLiveCurveValues(CAnimationGraph* Graph)
+    {
+        if (Graph->CurveNames.empty())
+        {
+            return;
+        }
+
+        ImGui::Spacing();
+        if (!ImGui::CollapsingHeader(LE_ICON_CHART_BELL_CURVE " Curves", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            return;
+        }
+
+        const FAnimGraphVMState* VMState = nullptr;
+        CWorld* TargetWorld = nullptr;
+        entt::entity TargetEntity = entt::null;
+        if (ResolveDebugTarget(TargetWorld, TargetEntity))
+        {
+            if (SAnimationGraphComponent* Comp = TargetWorld->TryGetComponent<SAnimationGraphComponent>(TargetEntity))
+            {
+                VMState = &Comp->VMState;
+            }
+        }
+
+        for (int32 i = 0; i < (int32)Graph->CurveNames.size(); ++i)
+        {
+            const bool bHasValue = VMState != nullptr && i < (int32)VMState->CurveValues.size();
+            if (bHasValue)
+            {
+                ImGui::Text("%s", Graph->CurveNames[i].c_str());
+                ImGui::SameLine(ImGui::GetContentRegionAvail().x * 0.6f);
+                ImGui::Text("%.3f", VMState->CurveValues[i]);
+            }
+            else
+            {
+                ImGui::TextDisabled("%s", Graph->CurveNames[i].c_str());
+            }
+        }
+    }
+
+    void FAnimationGraphEditorTool::DrawBlackboardParameters(CAnimationGraph* Graph)
+    {
         ImGui::TextWrapped("Live values for the assigned Blackboard's keys. Set them here to test the "
             "graph in the preview viewport; at runtime an entity's Blackboard Component supplies these.");
         ImGui::Separator();

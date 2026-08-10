@@ -58,6 +58,12 @@ namespace Lumina
         FPose PrevOutput;
         FPose PrevPrevOutput;
         int32 HistoryCount = 0; // 0/1/2 - velocity is only estimated once 2 frames of history exist
+
+        // Curve seam, driven entirely by the graph update pass (curves never reach the executor):
+        // the offset from the last shown values decays to zero over the same transition.
+        TVector<float> CurveOffsets;
+        TVector<float> PrevCurves;
+        bool bHasCurveHistory = false;
     };
 
     // A recorded pose operation. Dependencies are indices of earlier tasks in the same list, so

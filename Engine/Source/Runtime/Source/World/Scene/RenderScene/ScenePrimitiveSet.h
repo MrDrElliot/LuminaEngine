@@ -17,6 +17,10 @@ namespace Lumina
     struct SFoliageComponent;
     struct FDynamicMeshRenderData;
 
+    /** No bone-arena slice held. CPU-side only: FInstanceStatic.BoneOffset carries 0 for anything
+     *  unskinned, and the shaders read it only when EInstanceFlags::Skinned is set. */
+    constexpr uint32 kNoBoneRange = 0xFFFFFFFFu;
+
     enum class EPrimitiveSource : uint8
     {
         StaticMesh,
@@ -183,6 +187,13 @@ namespace Lumina
         EInstanceFlags                      BaseFlags = EInstanceFlags::None;
         EPrimitiveSource                    Source = EPrimitiveSource::StaticMesh;
         bool                                bCastShadow = true;
+
+        // Stable slice in the bone arena, held for as long as this primitive is bound to a skeleton.
+        // STABLE is the whole point: a per-frame packed offset cannot live in FInstanceStatic, which is
+        // uploaded only on a re-bind -- that is what forced skinned instances out of the GPU cull.
+        // kNoBoneRange for anything that is not a skeletal mesh.
+        uint32                              BoneArenaBase = kNoBoneRange;
+        uint32                              BoneArenaCount = 0;
     };
 
     /** Cull-hot per-primitive data, kept in its own array so the reject path streams it densely. */
@@ -217,6 +228,10 @@ namespace Lumina
         uint64                              GetStructureGeneration() const { return StructureGeneration; }
 
         uint32                              GetSkinnedPrimitiveCount() const { return SkinnedCount; }
+
+        /** Bones the arena must hold. Only grows within a level, so a buffer sized from it never shrinks
+         *  under live data and a base handed out last frame is still valid this frame. */
+        uint32                              GetBoneArenaSize() const { return BoneArenaSize; }
 
         EPrimitiveSource                    GetSource(uint32 Index) const
         {
@@ -277,6 +292,9 @@ namespace Lumina
 
         bool    BindingsMatchMemo(uint32 Index, const FBindingMemo& Memo) const;
 
+        // Content compare for sources whose resolve identity cannot move -- dynamic meshes. See the .cpp.
+        bool    BindingsMatchSurfaces(uint32 Index, const TVector<FResolvedSurface>& Surfaces) const;
+
         void    RefreshInstances(uint32 Index, TVector<uint32>* DirtySink = nullptr);
 
         void    RefreshInstanceTransform(uint32 Index, TVector<uint32>* DirtySink = nullptr);
@@ -285,6 +303,15 @@ namespace Lumina
         void    FreeInstanceSlot(uint32 Slot);
         void    MarkInstanceDirty(uint32 Slot);
         void    MarkStaticDirty(uint32 Slot);
+
+        // Bone arena. Recycled by EXACT size: a skeleton's bone count is fixed by its asset, so a level
+        // has a small set of distinct sizes and same-size reuse recycles perfectly without ever splitting
+        // or coalescing a range. Growth is append-only, so a live base never moves.
+        uint32  AllocateBoneRange(uint32 Count);
+        void    FreeBoneRange(uint32 Base, uint32 Count);
+        // Claims/releases Prim.BoneArenaBase to match Count. No-op when the size already matches, which is
+        // the common case for a re-bind (same skeleton, new material).
+        void    EnsureBoneRange(uint32 Index, uint32 Count);
         // Interns a surface's LOD table; identical tables collapse to one entry.
         uint32  InternSurfaceDesc(const FResolvedSurface& Surface);
 
@@ -408,6 +435,11 @@ namespace Lumina
 
         TVector<uint32>                     InstanceFreeSlots;
         TVector<uint32>                     DirtyInstanceSlots;   // cull entry + transform
+
+        // Free bases keyed by exact range size; see AllocateBoneRange.
+        THashMap<uint32, TVector<uint32>>   BoneFreeRanges;
+        // One past the highest bone ever handed out. The arena's size, and it only grows.
+        uint32                              BoneArenaSize = 0;
         TVector<uint32>                     DirtyStaticSlots;     // static payload
         bool                                bFullInstanceUpload = true;
 

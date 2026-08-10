@@ -15,6 +15,7 @@
 #include "Nodes/AnimGraphNode_Additive.h"
 #include "Nodes/AnimGraphNode_LayeredBlendPerBone.h"
 #include "Nodes/AnimGraphNode_BoneTransform.h"
+#include "Nodes/AnimGraphNode_Curve.h"
 #include "Nodes/AnimGraphNode_TwoBoneIK.h"
 #include "AnimStateMachineGraph.h"
 #include "AnimStateTransition.h"
@@ -94,6 +95,10 @@ namespace Lumina
         // Per-bone procedural override: hand-IK / aim offsets / look-at.
         RegisterGraphNode(CAnimGraphNode_BoneTransform::StaticClass());
         RegisterGraphNode(CAnimGraphNode_TwoBoneIK::StaticClass());
+
+        // Animation curves: read a clip-authored value off a pose, or write one onto it.
+        RegisterGraphNode(CAnimGraphNode_GetCurve::StaticClass());
+        RegisterGraphNode(CAnimGraphNode_SetCurve::StaticClass());
     }
 
     void CAnimationGraphNodeGraph::Initialize()

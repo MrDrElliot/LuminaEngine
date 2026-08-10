@@ -33,6 +33,12 @@ namespace Lumina
 
         virtual void Resize(const FUIntVector2& NewSize) = 0;
 
+        /**
+         * Sizes the primary view to the surface actually displaying it, in pixels, and stops it tracking
+         * the swapchain.
+         */
+        virtual void SetPrimaryViewSize(const FUIntVector2& SizePixels) {}
+
         // Pixel extent of the scene's render target. Use this for sizing.
         virtual FUIntVector2 GetRenderExtent() const = 0;
 

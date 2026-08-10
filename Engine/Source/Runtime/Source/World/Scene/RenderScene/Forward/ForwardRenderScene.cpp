@@ -43,6 +43,7 @@
 #include "World/Entity/Components/EnvironmentComponent.h"
 #include "World/Entity/Components/SkyLightComponent.h"
 #include "World/Entity/Components/ReflectionProbeComponent.h"
+#include "World/Entity/Components/SplineComponent.h"
 #include "world/entity/components/staticmeshcomponent.h"
 #include "World/Entity/Components/DynamicMeshComponent.h"
 #include "World/Entity/Components/FoliageComponent.h"
@@ -382,6 +383,9 @@ namespace Lumina
         FreeBuffer(RetainedTransformBuffer);
         FreeBuffer(RetainedStaticBuffer);
         FreeBuffer(SurfaceDescBuffer);
+        FreeBuffer(BoneArenaBuffer);
+        FreeBuffer(SkinnedFrameDataBuffer);
+        FreeBuffer(SkinnedSlotListBuffer);
 
         for (uint32 Slot = 0; Slot < RHI::kFramesInFlight; ++Slot)
         {
@@ -392,6 +396,8 @@ namespace Lumina
             FreeBuffer(MeshletBlockRing[Slot]);
             FreeBuffer(BlockDispatchArgsRing[Slot]);
             FreeBuffer(MeshletCullDispatchArgsRing[Slot]);
+            FreeBuffer(SkinDispatchArgsRing[Slot]);
+            FreeBuffer(SkinWorkBaseRing[Slot]);
             FreeBuffer(InstanceViewRangeRing[Slot]);
             FreeBuffer(MaterialClassifyRing[Slot]);
             FreeBuffer(MaterialPixelListRing[Slot]);
@@ -570,6 +576,7 @@ namespace Lumina
         ResetPass_Extract();
 
         ExtractReflectionProbes(ECS::GetWorldRegistry(*World), Frame);
+        ExtractSplines(ECS::GetWorldRegistry(*World), Frame);
 
         for (int32 i = 1; i < (int32)SceneViews.size(); ++i)
         {
@@ -639,6 +646,81 @@ namespace Lumina
         Frame.bExtractedThisFrame = true;
 
         ExtractFrame = nullptr;
+    }
+
+    void FForwardRenderScene::ExtractSplines(FEntityRegistry& Registry, FFrameData& Frame)
+    {
+        LUMINA_PROFILE_SECTION("Extract Splines");
+
+        auto& Splines = Frame.Splines.Splines;
+        auto& Points  = Frame.Splines.Points;
+        auto& Samples = Frame.Splines.Samples;
+        Splines.clear();
+        Points.clear();
+        Samples.clear();
+
+        auto SplineView = Registry.view<SSplineComponent, STransformComponent>(entt::exclude<SDisabledTag>);
+
+        TVector<FSplineSample> ScratchSamples;
+
+        SplineView.each([&](entt::entity Entity, const SSplineComponent& Spline, const STransformComponent& Transform)
+        {
+            // The opt-in is the whole point: a spline used as pure authoring data must cost no upload.
+            if (!Spline.bSendToGPU || Spline.Points.empty())
+            {
+                return;
+            }
+
+            const FMatrix4 LocalToWorld = Transform.GetWorldMatrix();
+
+            ScratchSamples.clear();
+            const float TotalLength = BuildSplineSamples(Spline, LocalToWorld, ScratchSamples);
+
+            FGPUSpline Header;
+            Header.LocalToWorld = LocalToWorld;
+            Header.WorldToLocal = Math::Inverse(LocalToWorld);
+            Header.PointOffset  = (uint32)Points.size();
+            Header.PointCount   = (uint32)Spline.Points.size();
+            Header.SampleOffset = (uint32)Samples.size();
+            Header.SampleCount  = (uint32)ScratchSamples.size();
+            Header.TotalLength  = TotalLength;
+            Header.Flags        = Spline.bClosedLoop ? SPLINE_FLAG_CLOSED_LOOP : 0u;
+            Header.EntityID     = (uint32)entt::to_integral(Entity);
+            Header._Pad         = 0u;
+
+            // Control points go up in WORLD space to match the samples, so a shader never has to know
+            // which of the two arrays it is reading from to decide whether a transform is needed.
+            for (const SSplinePoint& Point : Spline.Points)
+            {
+                FGPUSplinePoint Gpu;
+                Gpu.Location      = FVector3(LocalToWorld * FVector4(Point.Location, 1.0f));
+                Gpu.Roll          = Point.Roll;
+                // Tangents are directions: w = 0 so the translation stays out of them.
+                Gpu.ArriveTangent = FVector3(LocalToWorld * FVector4(Point.ArriveTangent, 0.0f));
+                Gpu._Pad0         = 0.0f;
+                Gpu.LeaveTangent  = FVector3(LocalToWorld * FVector4(Point.LeaveTangent, 0.0f));
+                Gpu._Pad1         = 0.0f;
+                Gpu.Scale         = Point.Scale;
+                Gpu._Pad2         = 0.0f;
+                Points.push_back(Gpu);
+            }
+
+            for (const FSplineSample& Sample : ScratchSamples)
+            {
+                FGPUSplineSample Gpu;
+                Gpu.Position      = Sample.Position;
+                Gpu.DistanceAlong = Sample.DistanceAlong;
+                Gpu.Tangent       = Sample.Tangent;
+                Gpu.Key           = Sample.Key;
+                Gpu.Up            = Sample.Up;
+                Gpu.Roll          = Sample.Roll;
+                Gpu.Scale         = Sample.Scale;
+                Gpu._Pad          = 0.0f;
+                Samples.push_back(Gpu);
+            }
+
+            Splines.push_back(Header);
+        });
     }
 
     void FForwardRenderScene::ExtractReflectionProbes(FEntityRegistry& Registry, FFrameData& Frame)
@@ -1555,11 +1637,64 @@ namespace Lumina
 
     void FForwardRenderScene::SwapchainResized(FVector2 NewSize)
     {
+        // A scene whose view is driven by an editor panel does not care how big the window got.
+        if (!bPrimaryTracksSwapchain)
+        {
+            return;
+        }
+
+        ResizePrimaryView(FUIntVector2((uint32)Math::Max(NewSize.x, 1.0f), (uint32)Math::Max(NewSize.y, 1.0f)));
+    }
+
+    /**
+     * Quantized, with hysteresis, because the caller feeds this the live panel size every frame and each
+     * apply costs a WaitDeviceIdle plus a full realloc of the view's 22 images.
+     *
+     */
+    void FForwardRenderScene::SetPrimaryViewSize(const FUIntVector2& SizePixels)
+    {
+        bPrimaryTracksSwapchain = false;
+
+        if (SceneViews.empty())
+        {
+            return;
+        }
+
+        constexpr uint32 kViewSizeGranularity = 128;
+        constexpr uint32 kShrinkDeadBand      = 2 * kViewSizeGranularity;
+
+        auto RoundUp = [](uint32 V)
+        {
+            const uint32 Clamped = Math::Max(V, 1u);
+            return ((Clamped + kViewSizeGranularity - 1u) / kViewSizeGranularity) * kViewSizeGranularity;
+        };
+
+        const FUIntVector2 Wanted(RoundUp(SizePixels.x), RoundUp(SizePixels.y));
+        const FUIntVector2 Current = SceneViews[0].Size;
+
+        auto Pick = [](uint32 WantedAxis, uint32 CurrentAxis)
+        {
+            const bool bGrow   = WantedAxis > CurrentAxis;
+            const bool bShrink = WantedAxis + kShrinkDeadBand <= CurrentAxis;
+            return (bGrow || bShrink) ? WantedAxis : CurrentAxis;
+        };
+
+        const FUIntVector2 Target(Pick(Wanted.x, Current.x), Pick(Wanted.y, Current.y));
+        if (Target == Current)
+        {
+            return;
+        }
+
+        ResizePrimaryView(Target);
+    }
+
+    void FForwardRenderScene::ResizePrimaryView(const FUIntVector2& NewSize)
+    {
         RHI::WaitDeviceIdle();
 
-        // Only the primary view tracks the swapchain; capture views keep their own size.
+        // Only the primary view is resized here; capture views keep their own size.
         FSceneView& Primary = SceneViews[0];
-        Primary.Size = FUIntVector2(Math::Max((uint32)NewSize.x, 1u), Math::Max((uint32)NewSize.y, 1u));
+        Primary.Size = FUIntVector2(Math::Max(NewSize.x, 1u), Math::Max(NewSize.y, 1u));
 
         InitFrameResources();
 
@@ -2088,7 +2223,6 @@ namespace Lumina
         LUMINA_MEMORY_SCOPE("Render Scene");
 
         FFrameData& Frame = *ExtractFrame;
-        auto& Instances              = Frame.Geometry.Instances;
         auto& DrawCommands           = Frame.Geometry.DrawCommands;
         auto& LightData              = Frame.Lighting.LightData;
         auto& EnvironmentParams      = Frame.Volumetrics.EnvironmentParams;
@@ -2143,7 +2277,6 @@ namespace Lumina
             const uint32 NumPrimitives     = ScenePrimitives.Num();
             const size_t EstimatedProxies  = (size_t)NumPrimitives * 2;
 
-            Instances.reserve(EstimatedProxies);
             DrawCommands.reserve(EstimatedProxies);
 
             const uint32 NumThreads = GTaskSystem->GetNumTaskThreads();
@@ -2180,6 +2313,11 @@ namespace Lumina
 
                 if (ScenePrimitives.GetSkinnedPrimitiveCount() > 0)
                 {
+                    // Sized ONCE, here, before any worker can touch it: the gather writes poses straight
+                    // into disjoint arena slices, which is only safe while nothing reallocates the storage.
+                    // Untouched entries keep whatever was there -- they are never uploaded.
+                    ExtractFrame->Geometry.BonesData.resize(ScenePrimitives.GetBoneArenaSize());
+
                     FTaskGraph::FNodeHandle CullNode = Graph.AddParallelFor(NumPrimitives, GPrimitiveGrain, [&](const Task::FParallelRange& Range)
                     {
                         LUMINA_PROFILE_SECTION("Cull And Emit Primitives");
@@ -3139,6 +3277,171 @@ namespace Lumina
         }
     }
 
+    void FForwardRenderScene::UploadBoneArena(RHI::FCmdListH CL, const FFrameData& Frame)
+    {
+        const TVector<FBoneTransform>& Mirror = Frame.Geometry.BonesData;
+        if (Mirror.empty())
+        {
+            return;
+        }
+
+        LUMINA_PROFILE_SECTION("Upload Bone Arena");
+
+        const SIZE_T ArenaBytes = Mirror.size() * sizeof(FBoneTransform);
+
+        // Grown, never shrunk while primitives are live: a base handed out earlier has to stay addressable,
+        // and the arena size only rises within a level. bAllowShrink off for exactly that reason.
+        ResizeBufferIfNeeded(BoneArenaBuffer, ArenaBytes, 1.25f, BoneArenaLowUsage, /*bAllowShrink*/ false);
+        if (!BoneArenaBuffer)
+        {
+            return;
+        }
+
+        // Coalesce, so a level whose skeletons were allocated together costs one copy instead of one per
+        // character. Sorted by base; adjacent and overlapping runs merge.
+        TVector<FUIntVector2>& Ranges = BoneUploadScratch;
+        Ranges.assign(Frame.Geometry.BoneUploadRanges.begin(), Frame.Geometry.BoneUploadRanges.end());
+        if (Ranges.empty())
+        {
+            return;
+        }
+
+        eastl::sort(Ranges.begin(), Ranges.end(),
+                    [](const FUIntVector2& A, const FUIntVector2& B) { return A.x < B.x; });
+
+        const uint32 ArenaCount = (uint32)Mirror.size();
+
+        uint32 RunStart = Ranges[0].x;
+        uint32 RunEnd   = Ranges[0].x + Ranges[0].y;
+
+        const auto Flush = [&](uint32 Start, uint32 End)
+        {
+            // The gather bounds every write against the mirror, so this only ever trims a range whose
+            // primitive lost its slice between gather and upload.
+            End = Math::Min(End, ArenaCount);
+            if (Start >= End)
+            {
+                return;
+            }
+
+            WriteBuffer(CL, BoneArenaBuffer.GetAddress() + (uint64)Start * sizeof(FBoneTransform),
+                        Mirror.data() + Start, (uint64)(End - Start) * sizeof(FBoneTransform));
+        };
+
+        for (SIZE_T i = 1; i < Ranges.size(); ++i)
+        {
+            const uint32 Start = Ranges[i].x;
+            const uint32 End   = Ranges[i].x + Ranges[i].y;
+
+            if (Start <= RunEnd)
+            {
+                RunEnd = Math::Max(RunEnd, End);
+                continue;
+            }
+
+            Flush(RunStart, RunEnd);
+            RunStart = Start;
+            RunEnd   = End;
+        }
+        Flush(RunStart, RunEnd);
+    }
+
+    void FForwardRenderScene::UploadSkinnedFrameData(RHI::FCmdListH CL, FFrameData& Frame)
+    {
+        TVector<FSkinnedFrameData>& Data  = Frame.Geometry.SkinnedFrameData;
+        const TVector<uint32>&      Slots = Frame.Geometry.SkinnedSlots;
+
+        // Monotonic, and minted here rather than reused from MeshletDrawTag: that one wraps at 4095, and a
+        // slot left ungathered for exactly one wrap would match again and be emitted with ranges thousands
+        // of frames stale. A 32-bit counter cannot alias inside any session.
+        CurrentSkinnedFrameTag++;
+
+        if (Data.empty() || Slots.empty())
+        {
+            return;
+        }
+
+        LUMINA_PROFILE_SECTION("Upload Skinned Frame Data");
+
+        const RHI::GPUPtr PrevSkinnedData = SkinnedFrameDataBuffer.Ptr;
+        ResizeBufferIfNeeded(SkinnedFrameDataBuffer, Data.size() * sizeof(FSkinnedFrameData), 1.25f,
+                             SkinnedFrameDataLowUsage);
+        ResizeBufferIfNeeded(SkinnedSlotListBuffer, Slots.size() * sizeof(uint32), 1.5f,
+                             SkinnedSlotListLowUsage);
+        if (!SkinnedFrameDataBuffer || !SkinnedSlotListBuffer)
+        {
+            return;
+        }
+
+        if (SkinnedFrameDataBuffer.Ptr != PrevSkinnedData)
+        {
+            // A fresh allocation holds whatever the last owner left, and only the slots gathered THIS frame
+            // are written below. Zeroing makes every other slot's tag 0, which IsFromFrame rejects outright
+            // -- garbage that happened to equal the current tag would emit a wild meshlet range.
+            RHI::CmdMemset(CL, SkinnedFrameDataBuffer.Ptr, SkinnedFrameDataBuffer.GetSize(), 0u);
+
+            // Transfer->TRANSFER: the coalesced copies below write this same allocation, and a
+            // write-after-write between two transfer writes is not ordered by any Transfer->Compute barrier.
+            Barriers::TransferToTransfer(CL);
+        }
+
+        WriteBuffer(CL, SkinnedSlotListBuffer.GetAddress(), Slots.data(), Slots.size() * sizeof(uint32));
+
+        // Stamped now, on the render thread, because the merge that filled these entries ran against a
+        // different FFrameData and could not know the tag this frame would cull against.
+        for (uint32 Slot : Slots)
+        {
+            if (Slot < (uint32)Data.size())
+            {
+                Data[Slot].FrameTag = CurrentSkinnedFrameTag;
+            }
+        }
+
+        // Only the gathered slots, coalesced: the array spans every retained slot, and re-sending all of it
+        // to update the handful that are skeletal would be most of the traffic for none of the information.
+        // Slots ungathered this frame keep last frame's bytes; their frame tag is what rejects them.
+        TVector<FUIntVector2>& Ranges = SkinnedUploadScratch;
+        Ranges.clear();
+        Ranges.reserve(Slots.size());
+        for (uint32 Slot : Slots)
+        {
+            Ranges.push_back(FUIntVector2{ Slot, 1u });
+        }
+
+        eastl::sort(Ranges.begin(), Ranges.end(),
+                    [](const FUIntVector2& A, const FUIntVector2& B) { return A.x < B.x; });
+
+        const uint32 Count = (uint32)Data.size();
+
+        const auto Flush = [&](uint32 Start, uint32 End)
+        {
+            End = Math::Min(End, Count);
+            if (Start >= End)
+            {
+                return;
+            }
+            WriteBuffer(CL, SkinnedFrameDataBuffer.GetAddress() + (uint64)Start * sizeof(FSkinnedFrameData),
+                        Data.data() + Start, (uint64)(End - Start) * sizeof(FSkinnedFrameData));
+        };
+
+        uint32 RunStart = Ranges[0].x;
+        uint32 RunEnd   = Ranges[0].x + Ranges[0].y;
+        for (SIZE_T i = 1; i < Ranges.size(); ++i)
+        {
+            const uint32 Start = Ranges[i].x;
+            const uint32 End   = Ranges[i].x + Ranges[i].y;
+            if (Start <= RunEnd)
+            {
+                RunEnd = Math::Max(RunEnd, End);
+                continue;
+            }
+            Flush(RunStart, RunEnd);
+            RunStart = Start;
+            RunEnd   = End;
+        }
+        Flush(RunStart, RunEnd);
+    }
+
     void FForwardRenderScene::CompileDrawCommands_Render(RHI::FCmdListH CL)
     {
         LUMINA_PROFILE_SCOPE();
@@ -3147,7 +3450,6 @@ namespace Lumina
         FFrameData& Frame = *RenderFrame;
         ApplyCullFreeze(Frame);
         auto& SceneGlobalData            = Frame.SceneGlobalData;
-        const auto& Instances            = Frame.Geometry.Instances;
         const auto& BonesData            = Frame.Geometry.BonesData;
         const auto& CullViews            = Frame.Views.CullViews;
         const auto& LightData            = Frame.Lighting.LightData;
@@ -3162,8 +3464,11 @@ namespace Lumina
         const uint32 NumDraws                      = NumDrawsPerView;
         SceneGlobalData.CullData.MeshletDrawTag    = (MeshletDrawTagCounter++ % 4095u) + 1u;
 
+        // The claim is on the GPU now, so only the GPU knows the demand. Same lagged high-water mark the
+        // block list uses: an undersized frame drops blocks to inline skinning and corrects on the next.
+        PreSkinHighWater = Math::Max(PreSkinHighWater, LastPreSkinRequested);
         const SIZE_T PreSkinnedSize       = Math::Max<SIZE_T>(sizeof(FPreSkinnedVertex),
-                                            (SIZE_T)Frame.Geometry.TotalPreSkinnedVertices * sizeof(FPreSkinnedVertex));
+                                            (SIZE_T)Math::Max<uint32>(PreSkinHighWater, 1u) * sizeof(FPreSkinnedVertex));
 
         UpdateMeshletBoundFeedback(CurrentFrameSlot);
 
@@ -3189,6 +3494,8 @@ namespace Lumina
                 * sizeof(RHI::FDrawMeshTasksIndirectArguments));
 
         ResizeBufferIfNeeded(PreSkinnedVerticesBuffer, PreSkinnedSize, 1.2f, PreSkinnedVerticesLowUsage);
+        PreSkinnedVertexCapacity = (uint32)Math::Min<uint64>(
+            PreSkinnedVerticesBuffer.GetSize() / sizeof(FPreSkinnedVertex), 0xFFFFFFFFull);
         {
             const uint8 Slot = CurrentFrameSlot;
             ResizeBufferIfNeeded(MeshDrawArgsRing[Slot], MeshDrawArgsSize, 1.2f, MeshDrawArgsRingLowUsage[Slot]);
@@ -3200,12 +3507,12 @@ namespace Lumina
             }
             DrawListCapacity = (uint32)Math::Min<uint64>(MeshletDrawListRing[Slot].GetSize() / (sizeof(uint32) * 2), 0xFFFFFFFFull);
 
-            const uint32 NumSkinnedHead = (uint32)Instances.size();
+            // No skinned head to add on any more: skeletal primitives hold retained slots like everything
+            // else, so SlotCount already counts them and is a true bound on what the cull can emit.
             const uint32 PredictedVisible = LastVisibleInstances + LastVisibleInstances / 2u;
-            uint32 VisibleCapacityWanted = Math::Max(PredictedVisible,
-                                                     Math::Max(NumSkinnedHead + 1024u, 4096u));
+            uint32 VisibleCapacityWanted = Math::Max(PredictedVisible, 4096u);
 
-            const uint32 VisibleCapacityMax = Math::Max(Frame.Geometry.RetainedUpload.SlotCount + NumSkinnedHead, 1u);
+            const uint32 VisibleCapacityMax = Math::Max(Frame.Geometry.RetainedUpload.SlotCount, 1u);
 
             if (LastVisibleInstances == 0u)
             {
@@ -3227,6 +3534,7 @@ namespace Lumina
             if (InstanceViewRangeRing[Slot] && InstanceViewRangeRing[Slot].Ptr != PrevViewRanges)
             {
                 RHI::CmdMemset(CL, InstanceViewRangeRing[Slot].Ptr, InstanceViewRangeRing[Slot].GetSize(), 0u);
+
             }
 
             // Only the GPU knows how many blocks were appended, so its counter (lagged by the frames in flight)
@@ -3264,6 +3572,11 @@ namespace Lumina
 
         SceneGlobalData.CullData.MeshletDrawListCapacity = DrawListCapacity;
         SceneGlobalData.CullData.InstanceNum             = FrameVisibleInstanceCapacity;
+
+        UploadBoneArena(CL, Frame);
+        UploadSkinnedFrameData(CL, Frame);
+        // The arena's size, not a per-frame total: it bounds an INDEX, and a stable base can point anywhere
+        // in it regardless of how many skeletons were gathered.
         SceneGlobalData.CullData.BoneNum                 = (uint32)BonesData.size();
 
         {
@@ -3327,9 +3640,11 @@ namespace Lumina
             {
                 SceneRootShared.Instances = VisibleInstanceRing[CurrentFrameSlot].GetAddress();
             }
-            if (!BonesData.empty())
+            // Persistent and slot-addressed, so this is just the arena's address -- no per-frame copy of
+            // the whole pose set into the transient ring any more.
+            if (BoneArenaBuffer)
             {
-                SceneRootShared.Bones = RHI::Core::CopyTransientArray(BonesData.data(), BonesData.size());
+                SceneRootShared.Bones = BoneArenaBuffer.GetAddress();
             }
             if (!BillboardInstances.empty())
             {
@@ -3339,14 +3654,32 @@ namespace Lumina
             {
                 SceneRootShared.CullViews = RHI::Core::CopyTransientArray(CullViews.data(), CullViews.size());
             }
-            if (!Frame.Geometry.SkinDescriptors.empty())
-            {
-                SceneRootShared.SkinDescriptors = RHI::Core::CopyTransientArray(Frame.Geometry.SkinDescriptors.data(), Frame.Geometry.SkinDescriptors.size());
-            }
             if (!Frame.Primitives.WidgetInstances.empty())
             {
                 SceneRootShared.Widgets = RHI::Core::CopyTransientArray(Frame.Primitives.WidgetInstances.data(), Frame.Primitives.WidgetInstances.size());
             }
+            // Splines are small and bounded (a handful of components, tens of points each), so the shared
+            // transient ring is the right home -- see the sizing rule in feedback_transient_ring_not_for_geometry.
+            NumActiveSplines       = (uint32)Frame.Splines.Splines.size();
+            SplineBufferAddr       = 0;
+            SplinePointBufferAddr  = 0;
+            SplineSampleBufferAddr = 0;
+            if (NumActiveSplines > 0)
+            {
+                SplineBufferAddr = RHI::Core::CopyTransientArray(Frame.Splines.Splines.data(),
+                                                                 Frame.Splines.Splines.size());
+                if (!Frame.Splines.Points.empty())
+                {
+                    SplinePointBufferAddr = RHI::Core::CopyTransientArray(Frame.Splines.Points.data(),
+                                                                          Frame.Splines.Points.size());
+                }
+                if (!Frame.Splines.Samples.empty())
+                {
+                    SplineSampleBufferAddr = RHI::Core::CopyTransientArray(Frame.Splines.Samples.data(),
+                                                                           Frame.Splines.Samples.size());
+                }
+            }
+
             NumActiveProbes = (uint32)Frame.ReflectionProbes.Probes.size();
             ProbeBufferAddr = 0;
             if (NumActiveProbes > 0)
@@ -3441,45 +3774,14 @@ namespace Lumina
         return (uint32)Math::Clamp(Biased, 0, MaxLOD);
     }
 
-    namespace
-    {
-        struct FSkinSizeAccum
-        {
-            uint32 SliceSize = 0u;
-        };
-    }
-
     static void EmitPrimitiveSurfaces(FForwardRenderScene::FThreadLocalDrawData& Local,
                                       const FScenePrimitive& Prim,
                                       const FSurfaceBinding* Bindings,
                                       uint32 EntityRecordIdx,
                                       const FSceneRenderSettings& Settings,
                                       float DistSq,
-                                      float RadiusSq,
-                                      FSkinSizeAccum* SkinSize = nullptr,
-                                      const TVector<FMeshlet>* Meshlets = nullptr)
+                                      float RadiusSq)
     {
-        auto BlockExtent = [Meshlets](uint32 MeshletOffset, uint32 MeshletCount,
-                                      uint32& OutVertexOffset, uint32& OutVertexCount) -> bool
-        {
-            OutVertexOffset = 0u;
-            OutVertexCount  = 0u;
-
-            if (MeshletCount == 0u || Meshlets == nullptr
-                || (SIZE_T)MeshletOffset + MeshletCount > Meshlets->size())
-            {
-                return false;
-            }
-
-            const FMeshlet& First = (*Meshlets)[MeshletOffset];
-            const FMeshlet& Last  = (*Meshlets)[MeshletOffset + MeshletCount - 1u];
-            OutVertexOffset = First.VertexOffset;
-            OutVertexCount  = (Last.VertexOffset + Last.VertexCount) - First.VertexOffset;
-            
-
-            return OutVertexCount > 0u;
-        };
-
         const TVector<FResolvedSurface>& Surfaces = *Prim.Surfaces;
         const uint64 MeshletHeaderAddress = Prim.MeshletHeaderAddress;
         const uint32 NumSurfaces = Math::Min((uint32)Surfaces.size(), Prim.SurfaceCount);
@@ -3526,6 +3828,7 @@ namespace Lumina
             FForwardRenderScene::FProcessedDrawItem& Item = Local.Items.emplace_back();
             Item.EntityRecordIndex    = EntityRecordIdx;
             Item.BatchIndex           = BatchIndex;
+            Item.InstanceSlot         = Binding.InstanceSlot;
             Item.SurfaceMeshletOffset = SurfaceMeshletOffset;
             Item.SurfaceMeshletCount  = SurfaceMeshletCount;
             Item.ShadowMeshletOffset  = ShadowMeshletOffset;
@@ -3535,37 +3838,6 @@ namespace Lumina
             Item.MaterialIndex        = Binding.MaterialIndex;
             Item._Pad                 = 0;
 
-            Item.SurfaceVertexOffset = SkinSize ? kNoPreSkinBase : 0u;
-            Item.SurfaceVertexCount  = 0u;
-            Item.ShadowVertexOffset  = SkinSize ? kNoPreSkinBase : 0u;
-            Item.ShadowVertexCount   = 0u;
-
-            if (SkinSize)
-            {
-                if (BlockExtent(SurfaceMeshletOffset, SurfaceMeshletCount,
-                                Item.SurfaceVertexOffset, Item.SurfaceVertexCount))
-                {
-                    SkinSize->SliceSize += Item.SurfaceVertexCount;
-                }
-                else
-                {
-                    Item.SurfaceVertexOffset = kNoPreSkinBase;
-                }
-
-                const bool bNeedsShadowBlock = ShadowMeshletOffset != SurfaceMeshletOffset
-                                            && EnumHasAnyFlags(Flags, EInstanceFlags::CastShadow);
-                if (bNeedsShadowBlock
-                    && BlockExtent(ShadowMeshletOffset, ShadowMeshletCount,
-                                   Item.ShadowVertexOffset, Item.ShadowVertexCount))
-                {
-                    SkinSize->SliceSize += Item.ShadowVertexCount;
-                }
-                else
-                {
-                    Item.ShadowVertexOffset = kNoPreSkinBase;
-                    Item.ShadowVertexCount  = 0u;
-                }
-            }
         }
     }
 
@@ -3583,6 +3855,10 @@ namespace Lumina
 
         FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
         auto& SkeletalStorage = Registry.storage<SSkeletalMeshComponent>();
+
+        // Written concurrently by every worker, at disjoint per-primitive offsets. Sized once before the
+        // parallel gather is launched, so no worker can reallocate it out from under another.
+        TVector<FBoneTransform>& ArenaMirror = ExtractFrame->Geometry.BonesData;
 
         const double WorldTime = World->GetTimeSinceWorldCreation();
 
@@ -3623,10 +3899,8 @@ namespace Lumina
             EntityRecord.MeshletHeaderAddress = Prim.MeshletHeaderAddress;
             EntityRecord.CustomData           = Prim.CustomData;
             EntityRecord.EntityID             = Prim.EntityID;
-            EntityRecord.LocalBoneOffset      = ~0u;
-            EntityRecord.SkinSliceSize        = 0u;
-            EntityRecord.GlobalSkinnedBase    = 0u;
-            EntityRecord.SkinCursor           = 0u;
+            EntityRecord.BoneArenaBase        = ~0u;
+            EntityRecord.BoneArenaCount       = 0u;
 
             //~ Everything below needs the live component.
 
@@ -3666,171 +3940,54 @@ namespace Lumina
                 }
             }
 
-            uint32 LocalBoneOffset = ~0u;
-            if (SkeletonBoneCount > 0)
+            // The pose goes straight into this primitive's own arena slice. Ranges are disjoint per
+            // primitive and the base is stable, so parallel workers need no shared cursor and no
+            // per-thread base to be reconciled later -- that is the whole point of the arena.
+            uint32 BoneArenaBase  = ~0u;
+            uint32 BoneArenaCount = 0u;
+            if (SkeletonBoneCount > 0
+                && Prim.BoneArenaBase != kNoBoneRange
+                && (SIZE_T)Prim.BoneArenaBase + SkeletonBoneCount <= ArenaMirror.size())
             {
-                LocalBoneOffset = Local.BonesData.Size();
-                if ((uint32)MeshComponent.BoneTransforms.size() == SkeletonBoneCount)
+                // The sync claimed the slice from the SKELETON's bone count; a mismatch here means the
+                // asset changed and the sync has not caught up, so skip rather than write out of the slice.
+                if (SkeletonBoneCount <= Prim.BoneArenaCount)
                 {
-                    if (MeshComponent.bRenderBonesDirty || (uint32)MeshComponent.RenderBones.size() != SkeletonBoneCount * 3u)
-                    {
-                        SkeletalUtils::PackRenderBones(MeshComponent.BoneTransforms, MeshComponent.RenderBones);
-                        MeshComponent.bRenderBonesDirty = false;
-                    }
+                    BoneArenaBase  = Prim.BoneArenaBase;
+                    BoneArenaCount = SkeletonBoneCount;
 
-                    const FBoneTransform* Packed = reinterpret_cast<const FBoneTransform*>(MeshComponent.RenderBones.data());
-                    Local.BonesData.Append(Packed, SkeletonBoneCount);
-                }
-                else
-                {
-                    // No active animation: BoneWorld * InvBindMatrix collapses to identity for every bone.
-                    Local.BonesData.AppendIdentity(SkeletonBoneCount);
+                    FBoneTransform* Dst = ArenaMirror.data() + BoneArenaBase;
+
+                    if ((uint32)MeshComponent.BoneTransforms.size() == SkeletonBoneCount)
+                    {
+                        if (MeshComponent.bRenderBonesDirty || (uint32)MeshComponent.RenderBones.size() != SkeletonBoneCount * 3u)
+                        {
+                            SkeletalUtils::PackRenderBones(MeshComponent.BoneTransforms, MeshComponent.RenderBones);
+                            MeshComponent.bRenderBonesDirty = false;
+                        }
+
+                        const FBoneTransform* Packed = reinterpret_cast<const FBoneTransform*>(MeshComponent.RenderBones.data());
+                        Memory::Memcpy(Dst, Packed, (SIZE_T)SkeletonBoneCount * sizeof(FBoneTransform));
+                    }
+                    else
+                    {
+                        // No active animation: BoneWorld * InvBindMatrix collapses to identity for every bone.
+                        static constexpr FBoneTransform IdentityBone{ FVector4(1,0,0,0), FVector4(0,1,0,0), FVector4(0,0,1,0) };
+                        for (uint32 b = 0; b < SkeletonBoneCount; ++b)
+                        {
+                            Dst[b] = IdentityBone;
+                        }
+                    }
                 }
             }
 
-            EntityRecord.LocalBoneOffset = LocalBoneOffset;
+            EntityRecord.BoneArenaBase  = BoneArenaBase;
+            EntityRecord.BoneArenaCount = BoneArenaCount;
 
             MeshComponent.LastDistanceOverRadius = (Radius > 0.0f) ? (Math::Sqrt(DistSq) / Radius) : 0.0f;
 
-            const bool bAccumulateSkinSize = (LocalBoneOffset != ~0u && Prim.MeshletHeaderAddress != 0ull);
-            FSkinSizeAccum SkinSize;
             EmitPrimitiveSurfaces(Local, Prim, Bindings + Prim.BindingBase,
-                                  EntityRecordIdx, RenderSettings, DistSq, RadiusSq,
-                                  bAccumulateSkinSize ? &SkinSize : nullptr,
-                                  &Resource.MeshletData.Meshlets);
-
-            EntityRecord.SkinSliceSize = SkinSize.SliceSize;
-        }
-    }
-
-    void FForwardRenderScene::AssignPreSkinSlices(FFrameData& Frame,
-                                                  TVector<FSkinCandidate>& Candidates,
-                                                  TVector<FThreadLocalDrawData>& ThreadLocal)
-    {
-        if (Candidates.empty())
-        {
-            return;
-        }
-
-        LUMINA_PROFILE_SECTION("Assign Pre-Skin Slices");
-
-        const uint32 Budget = GMaxPreSkinnedVertices;
-
-        uint64 TotalDemand = 0;
-        for (const FSkinCandidate& Candidate : Candidates)
-        {
-            TotalDemand += Candidate.Record->SkinSliceSize;
-        }
-
-        // Ranking only matters once someone has to lose; the common case keeps merge order.
-        if (TotalDemand > Budget)
-        {
-            eastl::sort(Candidates.begin(), Candidates.end(),
-                        [](const FSkinCandidate& A, const FSkinCandidate& B) { return A.Priority > B.Priority; });
-        }
-
-        // Grant whole entities, largest on screen first, so one is never half pre-skinned.
-        uint32 Total       = Frame.Geometry.TotalPreSkinnedVertices;
-        uint32 NumDeferred = 0;
-
-        for (const FSkinCandidate& Candidate : Candidates)
-        {
-            FEntityRecord& Rec = *Candidate.Record;
-
-            if ((uint64)Total + Rec.SkinSliceSize > Budget)
-            {
-                Rec.GlobalSkinnedBase = kNoPreSkinBase;
-                Rec.SkinCursor        = kNoPreSkinBase;
-                ++NumDeferred;
-                continue;
-            }
-
-            Rec.GlobalSkinnedBase = Total;
-            Rec.SkinCursor        = Total;
-            Total                += Rec.SkinSliceSize;
-        }
-
-        Frame.Geometry.TotalPreSkinnedVertices = Total;
-
-        for (FThreadLocalDrawData& Local : ThreadLocal)
-        {
-            if (Local.BonesData.IsEmpty())
-            {
-                continue;
-            }
-
-            for (FProcessedDrawItem& Item : Local.Items)
-            {
-                FEntityRecord& Rec = Local.EntityRecords[Item.EntityRecordIndex];
-                if (Rec.LocalBoneOffset == ~0u || Rec.SkinSliceSize == 0u)
-                {
-                    continue;
-                }
-
-                if (Rec.GlobalSkinnedBase == kNoPreSkinBase)
-                {
-                    Item.SurfaceVertexOffset = kNoPreSkinBase;
-                    Item.ShadowVertexOffset  = kNoPreSkinBase;
-                    continue;
-                }
-
-                auto AllocateBlock = [&](uint32 VertexOffset, uint32 VertexCount,
-                                         uint32 MeshletOffset, uint32 MeshletCount) -> uint32
-                {
-                    const uint32 Base = Rec.SkinCursor - VertexOffset;
-
-
-                    Rec.SkinCursor   += VertexCount;
-
-                    const uint32 MeshletEnd = MeshletOffset + MeshletCount;
-                    for (uint32 m = MeshletOffset; m < MeshletEnd; ++m)
-                    {
-                        FSkinDescriptor& Desc     = Frame.Geometry.SkinDescriptors.emplace_back();
-                        Desc.MeshletHeaderAddress = Rec.MeshletHeaderAddress;
-                        Desc.BoneOffset           = Rec.SkinBoneOffset;
-                        Desc.SkinnedVertexBase    = Base;
-                        Desc.MeshletIndex         = m;
-                        Desc.Pad                  = 0u;
-                    }
-                    return Base;
-                };
-
-                const uint32 SurfaceBase = Item.SurfaceVertexCount > 0u
-                    ? AllocateBlock(Item.SurfaceVertexOffset, Item.SurfaceVertexCount,
-                                    Item.SurfaceMeshletOffset, Item.SurfaceMeshletCount)
-                    : kNoPreSkinBase;
-
-                uint32 ShadowBase;
-                if (Item.ShadowVertexCount > 0u)
-                {
-                    ShadowBase = AllocateBlock(Item.ShadowVertexOffset, Item.ShadowVertexCount,
-                                               Item.ShadowMeshletOffset, Item.ShadowMeshletCount);
-                }
-                else if (Item.ShadowMeshletOffset == Item.SurfaceMeshletOffset)
-                {
-                    // Shadow LOD resolved to the surface block; same vertices, same base.
-                    ShadowBase = SurfaceBase;
-                }
-                else
-                {
-                    ShadowBase = kNoPreSkinBase;
-                }
-
-                Item.SurfaceVertexOffset = SurfaceBase;
-                Item.ShadowVertexOffset  = ShadowBase;
-            }
-        }
-
-
-        if (NumDeferred != LastPreSkinDeferredCount)
-        {
-            LastPreSkinDeferredCount = NumDeferred;
-            if (NumDeferred > 0)
-            {
-                LOG_WARN("Skinning: {} of {} skinned entities exceed the {}-vertex pre-skin budget and fall back to "
-                         "in-draw skinning. Raise r.Skinning.MaxVertices or reduce the visible skinned set.",
-                         NumDeferred, Candidates.size(), Budget);
-            }
+                                  EntityRecordIdx, RenderSettings, DistSq, RadiusSq);
         }
     }
 
@@ -3839,8 +3996,6 @@ namespace Lumina
         LUMINA_PROFILE_SECTION("Merge Mesh Draw Data");
 
         FFrameData& Frame               = *ExtractFrame;
-        auto& Instances                 = Frame.Geometry.Instances;
-        auto& BonesData                 = Frame.Geometry.BonesData;
         auto& DrawCommands              = Frame.Geometry.DrawCommands;
         auto& OpaqueDrawList            = Frame.Geometry.OpaqueDrawList;
         auto& TranslucentDrawList       = Frame.Geometry.TranslucentDrawList;
@@ -3853,57 +4008,32 @@ namespace Lumina
 
         DeferredMaterials.clear();
 
-        TVector<uint32>& ThreadBoneBase = MergeThreadBoneBase;
-        ThreadBoneBase.assign(NumThreads, 0u);
-
-        TVector<FSkinCandidate>& SkinCandidates = MergeSkinCandidates;
-        SkinCandidates.clear();
-        const FVector3 CameraPos = FVector3(Frame.SceneGlobalData.CameraData.Location);
+        // Bone bases are stable now, so there is no per-thread base to reconcile. What the merge collects
+        // instead is which arena slices were written, so the upload can send those and nothing else.
+        TVector<FUIntVector2>& BoneUploadRanges = Frame.Geometry.BoneUploadRanges;
+        BoneUploadRanges.clear();
 
         uint32 TotalInstances = 0;
         uint64 TotalInstancesCulled = 0;
         for (uint32 t = 0; t < NumThreads; ++t)
         {
             FThreadLocalDrawData& Local = ThreadLocal[t];
-            ThreadBoneBase[t] = (uint32)BonesData.size();
             TotalInstances += (uint32)Local.Items.size();
             TotalInstancesCulled += Local.Stats.NumInstancesCulled;
 
-            if (Local.BonesData.IsEmpty())
-            {
-                continue;
-            }
-            for (const TFrameVector<FBoneTransform>& Page : Local.BonesData.Pages)
-            {
-                BonesData.insert(BonesData.end(), Page.begin(), Page.end());
-            }
-
             for (FEntityRecord& Rec : Local.EntityRecords)
             {
-                if (Rec.LocalBoneOffset == ~0u || Rec.SkinSliceSize == 0u)
+                if (Rec.BoneArenaBase == ~0u)
                 {
                     continue;
                 }
 
-                Rec.SkinBoneOffset = ThreadBoneBase[t] + Rec.LocalBoneOffset;
-
-                const FVector3 ToCamera = FVector3(Rec.SphereBounds) - CameraPos;
-                const float    DistSq   = Math::Dot(ToCamera, ToCamera);
-                const float    RadiusSq = Rec.SphereBounds.w * Rec.SphereBounds.w;
-
-                FSkinCandidate& Candidate = SkinCandidates.emplace_back();
-                Candidate.Record   = &Rec;
-                Candidate.Priority = RadiusSq / Math::Max(DistSq, 1e-4f);
+                // The pose has to reach the GPU whichever path skins it: the pre-skin pass reads it, and so
+                // does the inline fallback in the draw.
+                BoneUploadRanges.push_back(FUIntVector2{ Rec.BoneArenaBase, Rec.BoneArenaCount });
             }
         }
         FrameStats.NumInstancesCulled += TotalInstancesCulled;
-
-        AssignPreSkinSlices(Frame, SkinCandidates, ThreadLocal);
-
-        if (TotalInstances == 0)
-        {
-            Instances.clear();
-        }
 
         const uint32 SlotCapacity = Math::Max(NumSlots, 1u);
         MergeDrawInstanceCounts.assign(SlotCapacity, 0u);
@@ -3933,8 +4063,6 @@ namespace Lumina
         const uint32 NumBatches = Registry.Num();
 
         DrawCommands.clear();
-        Frame.Geometry.BatchMeshletSeed.assign(Math::Max(NumBatches, 1u), 0u);
-        Frame.Geometry.BatchBlockSeed.assign(Math::Max(NumBatches, 1u), 0u);
 
         uint32 InstanceRunning = 0u;
 
@@ -3945,8 +4073,6 @@ namespace Lumina
                 MergeDrawInstanceOffsets[b] = InstanceRunning;
                 InstanceRunning += MergeDrawInstanceCounts[b];
 
-                Frame.Geometry.BatchMeshletSeed[b] = MergeMeshletCountsPerDraw[b];
-                Frame.Geometry.BatchBlockSeed[b]   = MergeBlockCountsPerDraw[b];
             }
 
             const FSceneBatchRegistry::FBatch& Batch = Registry.Get(b);
@@ -3994,76 +4120,56 @@ namespace Lumina
         // The per-draw meshlet prefix is GPU-built by BuildDrawPrefix; the CPU only publishes the count.
         NumDrawsPerView   = NumBatches;
 
-        DEBUG_ASSERT(InstanceRunning == TotalInstances);
-
-        // Skinned instances only; the GPU appends the rigid survivors after them.
-        Instances.resize(TotalInstances);
-
-        for (uint32 t = 0; t < NumThreads; ++t)
+        // Skinned instances are no longer CPU-fed into the visible buffer at all: CullInstances emits them
+        // like everything else. What the CPU still owns is the per-frame half of their payload -- the LOD
+        // ranges it resolved and the pre-skin slices it assigned against those ranges -- published per
+        // RETAINED slot so the cull can read it before compaction exists.
         {
-            FThreadLocalDrawData& Local = ThreadLocal[t];
-            if (!Local.bTouched)
+            LUMINA_PROFILE_SECTION("Publish Skinned Frame Data");
+
+            TVector<FSkinnedFrameData>& SkinnedData = Frame.Geometry.SkinnedFrameData;
+            TVector<uint32>&            SkinnedSlots = Frame.Geometry.SkinnedSlots;
+
+            SkinnedSlots.clear();
+            // Indexed by retained slot; grown, never cleared. Ungathered slots are rejected by their tag.
+            const uint32 RetainedSlots = ScenePrimitives.GetRetainedSlotCount();
+            if ((uint32)SkinnedData.size() < RetainedSlots)
             {
-                continue;
+                SkinnedData.resize(RetainedSlots);
             }
-            for (uint32 Slot : Local.TouchedSlots)
+
+            for (uint32 t = 0; t < NumThreads; ++t)
             {
-                Local.DrawWriteBase[Slot] += MergeDrawInstanceOffsets[Slot];
-            }
-        }
-
-        const bool bParallelMerge = TotalInstances > 4096;
-
-        // Each worker only touches its own Local data; in-place cursor advance needs no sync.
-        {
-            LUMINA_PROFILE_SECTION("Parallel Instance Write");
-
-            auto InstanceWriteBody = [&](const Task::FParallelRange& Range)
-            {
-                for (uint32 t = Range.Start; t < Range.End; ++t)
+                FThreadLocalDrawData& Local = ThreadLocal[t];
+                if (!Local.bTouched)
                 {
-                    FThreadLocalDrawData& Local = ThreadLocal[t];
-                    if (!Local.bTouched)
-                    {
-                        continue;
-                    }
-                    const uint32 BoneBase = ThreadBoneBase[t];
-
-                    for (FProcessedDrawItem& Item : Local.Items)
-                    {
-                        const uint32 WriteIdx   = Local.DrawWriteBase[Item.BatchIndex]++;
-                        const uint32 GlobalDraw = Item.BatchIndex;   // DrawCommands is filled one per batch
-
-                        const FEntityRecord& Entity = Local.EntityRecords[Item.EntityRecordIndex];
-                        const uint32 GlobalBoneOffset = Entity.LocalBoneOffset != ~0u ? (BoneBase + Entity.LocalBoneOffset) : 0u;
-
-                        FGPUInstance& Out = Instances[WriteIdx];
-                        Out.Transform                  = PackTransform3x4(Entity.Transform);
-                        Out.SphereBounds               = Entity.SphereBounds;
-                        Out.ShadowMeshletOffset        = Item.ShadowMeshletOffset;
-                        Out.ShadowMeshletCount         = Item.ShadowMeshletCount;
-                        Out.MeshletHeaderAddress       = Entity.MeshletHeaderAddress;
-                        Out.DrawIDAndFlags             = PackDrawIDAndFlags(GlobalDraw, Item.Flags);
-                        Out.SurfaceMeshletOffset       = Item.SurfaceMeshletOffset;
-                        Out.SurfaceMeshletCount        = Item.SurfaceMeshletCount;
-                        Out.CustomData                 = Entity.CustomData;
-                        Out.BoneOffset                 = GlobalBoneOffset;
-                        Out.MaterialIndex              = Item.MaterialIndex;
-                        Out.EntityID                   = Entity.EntityID;
-                        // Per-block bases, resolved in AssignPreSkinSlices and stashed on the item.
-                        Out.SkinnedVertexBase          = Item.SurfaceVertexOffset;
-                        Out.ShadowSkinnedVertexBase    = Item.ShadowVertexOffset;
-                        Out.SurfaceDescIndex           = kNoSurfaceDescIndex;
-                        Out.MeshletTotalCount          = Item.MeshletTotalCount;
-                        // No retained slot to key a persistent visibility flag off, so the two-phase cull
-                        // reads "not visible last frame" and draws skinned geometry in the LATE phase only:
-                        // once, Hi-Z tested, but absent from the pyramid the late phase culls against.
-                        Out.RetainedSlot               = kNoRetainedSlot;
-                    }
+                    continue;
                 }
-            };
-            if (bParallelMerge) { Task::ParallelFor(NumThreads, InstanceWriteBody, 1); }
-            else                { InstanceWriteBody(Task::FParallelRange{ 0u, NumThreads, 0u }); }
+
+                for (const FProcessedDrawItem& Item : Local.Items)
+                {
+                    if (Item.InstanceSlot >= RetainedSlots)
+                    {
+                        continue;   // slot freed after the gather read it; the cull will reject it anyway
+                    }
+
+                    FSkinnedFrameData& Out = SkinnedData[Item.InstanceSlot];
+                    // FrameTag is stamped by UploadSkinnedFrameData, on the render thread: the tag this
+                    // frame will cull against does not exist yet here.
+                    Out.SurfaceMeshletOffset    = Item.SurfaceMeshletOffset;
+                    Out.SurfaceMeshletCount     = Item.SurfaceMeshletCount;
+                    Out.ShadowMeshletOffset     = Item.ShadowMeshletOffset;
+                    Out.ShadowMeshletCount      = Item.ShadowMeshletCount;
+                    Out.MeshletTotalCount       = Item.MeshletTotalCount;
+                    // Claimed by CullInstances, which writes them back here. Seeded to the sentinel so a
+                    // slot the cull REJECTS keeps "no slice" rather than last frame's base -- the skinning
+                    // pass walks this list and would otherwise write into someone else's slice.
+                    Out.SkinnedVertexBase       = kNoPreSkinBase;
+                    Out.ShadowSkinnedVertexBase = kNoPreSkinBase;
+
+                    SkinnedSlots.push_back(Item.InstanceSlot);
+                }
+            }
         }
 
         const uint32 NumEmittedBatches = (uint32)DrawCommands.size();
@@ -5332,9 +5438,10 @@ namespace Lumina
         Frame.Geometry.DrawCommands.clear();
         Frame.Geometry.OpaqueDrawList.clear();
         Frame.Geometry.TranslucentDrawList.clear();
-        Frame.Geometry.BonesData.clear();
-        Frame.Geometry.SkinDescriptors.clear();
-        Frame.Geometry.TotalPreSkinnedVertices = 0;
+        // BonesData is NOT cleared: it is arena-indexed, so clearing it would only force resize() to
+        // value-initialise the whole arena again every frame. Slices nobody gathered are never uploaded,
+        // so their contents are don't-care rather than stale.
+        Frame.Geometry.BoneUploadRanges.clear();
         Frame.Views.NumDrawsPerView   = 0;
     }
 
@@ -5362,31 +5469,86 @@ namespace Lumina
     void FForwardRenderScene::SkinningPass(RHI::FCmdListH CL)
     {
         const FFrameData& Frame = *RenderFrame;
-        const uint32 DescriptorCount = (uint32)Frame.Geometry.SkinDescriptors.size();
-        if (DescriptorCount == 0)
+
+        // Two blocks per gathered skinned SLOT: the surface LOD it rasterizes and the coarser shadow LOD,
+        // each with its own compacted slice. Both may be empty -- BuildSkinWork decides, and an all-empty
+        // frame costs one 1-thread dispatch and an indirect grid of zero.
+        const uint32 NumSkinned = (uint32)Frame.Geometry.SkinnedSlots.size();
+        if (NumSkinned == 0)
         {
             return;
         }
 
+        // The GPU scope is opened by the caller, not here.
         LUMINA_PROFILE_SECTION_COLORED("Skinning Pass", tracy::Color::SkyBlue);
 
+        static const FShaderH WorkShader = FShaderLibrary::Get("BuildSkinWork.slang");
         static const FShaderH SkinShader = FShaderLibrary::Get("Skinning.slang");
-        if (!SkinShader)
+        if (!SkinShader || !WorkShader)
         {
             return;
         }
 
-        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(SkinShader));
+        const uint8  Slot     = CurrentFrameSlot;
+        const uint32 NumPairs = NumSkinned * 2u;
+
+        ResizeBufferIfNeeded(SkinWorkBaseRing[Slot], (uint64)NumPairs * sizeof(uint32), 1.5f,
+                             SkinWorkBaseLowUsage[Slot]);
+        if (!SkinWorkBaseRing[Slot] || !GetSkinDispatchArgs()
+            || !SkinnedSlotListBuffer || !SkinnedFrameDataBuffer || !RetainedStaticBuffer)
+        {
+            return;
+        }
+
+        //~ Lay out the dispatch: one workgroup per (instance, block, meshlet), enumerated on the GPU.
+        {
+            struct FBuildSkinWorkPC
+            {
+                uint32 NumSlots;
+                uint32 _Pad0;
+                uint64 SlotListAddr;
+                uint64 SkinnedDataAddr;
+                uint64 OutWorkBaseAddr;
+                uint64 OutDispatchArgsAddr;
+            } WPC = {};
+            static_assert(sizeof(FBuildSkinWorkPC) == 40, "FBuildSkinWorkPC must match BuildSkinWork.slang.");
+
+            WPC.NumSlots            = NumSkinned;
+            WPC.SlotListAddr        = SkinnedSlotListBuffer.GetAddress();
+            WPC.SkinnedDataAddr     = SkinnedFrameDataBuffer.GetAddress();
+            WPC.OutWorkBaseAddr     = SkinWorkBaseRing[Slot].GetAddress();
+            WPC.OutDispatchArgsAddr = GetSkinDispatchArgs().GetAddress();
+
+            RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(WorkShader));
+            RHI::CmdDispatch(CL, MakeArgs(WPC), 1u, 1u, 1u);
+
+            RHI::CmdBarrier(CL, RHI::EStageFlags::Compute,
+                RHI::EStageFlags::Compute | RHI::EStageFlags::IndirectArguments);
+        }
 
         const uint32 VertexCapacity = (uint32)Math::Min<uint64>(
             GetPreSkinnedVerticesBuffer().GetSize() / sizeof(FPreSkinnedVertex), 0xFFFFFFFFull);
 
-        struct FSkinningPushConstants { uint32 DescriptorCount; uint32 VertexCapacity; }
-        PC{ DescriptorCount, VertexCapacity };
+        struct FSkinningPushConstants
+        {
+            uint32 NumPairs;
+            uint32 VertexCapacity;
+            uint64 WorkBaseAddr;
+            uint64 SlotListAddr;
+            uint64 SkinnedDataAddr;
+            uint64 RetainedStaticAddr;
+        } PC = {};
+        static_assert(sizeof(FSkinningPushConstants) == 40, "FSkinningPushConstants must match Skinning.slang.");
 
-        // One workgroup per skinned entity. Skinning.slang undoes the fold with GroupID.y.
-        const FUIntVector2 Grid = RenderUtils::FoldGroupCount(DescriptorCount);
-        RHI::CmdDispatch(CL, MakeArgs(PC), Grid.x, Grid.y, 1u);
+        PC.NumPairs           = NumPairs;
+        PC.VertexCapacity     = VertexCapacity;
+        PC.WorkBaseAddr       = SkinWorkBaseRing[Slot].GetAddress();
+        PC.SlotListAddr       = SkinnedSlotListBuffer.GetAddress();
+        PC.SkinnedDataAddr    = SkinnedFrameDataBuffer.GetAddress();
+        PC.RetainedStaticAddr = RetainedStaticBuffer.GetAddress();
+
+        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(SkinShader));
+        RHI::CmdDispatchIndirect(CL, MakeArgs(PC), GetSkinDispatchArgs().Ptr, 0u);
 
         // Pre-skinned vertices feed every draw VS.
         Barriers::ComputeToAll(CL);
@@ -10365,6 +10527,8 @@ namespace Lumina
             MeshletBlockRing[Slot] = CreateSceneBuffer(sizeof(uint32) * 2);
             // Fixed size: one grid, rewritten by BuildDrawPrefix every frame.
             BlockDispatchArgsRing[Slot] = CreateSceneBuffer(sizeof(RHI::FDispatchIndirectArguments));
+            SkinDispatchArgsRing[Slot]  = CreateSceneBuffer(sizeof(RHI::FDispatchIndirectArguments));
+            SkinWorkBaseRing[Slot]      = CreateSceneBuffer(sizeof(uint32) * 2);
             MeshletCullDispatchArgsRing[Slot] = CreateSceneBuffer(sizeof(RHI::FDispatchIndirectArguments));
 
             TotalsRing[Slot] = CreateSceneBuffer(sizeof(uint32) * kTotalsSlots);
@@ -10372,7 +10536,7 @@ namespace Lumina
 
             // GPU-driven scene per-frame outputs. Sized for real in CompileDrawCommands_Render.
             VisibleInstanceRing[Slot]       = CreateSceneBuffer(sizeof(FGPUInstance));
-            CullCounterRing[Slot]           = CreateSceneBuffer(sizeof(uint32) * 2);
+            CullCounterRing[Slot]           = CreateSceneBuffer(sizeof(uint32) * 4);
 
             if (MeshletBoundReadback[Slot] == 0)
             {
@@ -10394,7 +10558,7 @@ namespace Lumina
         {
             return;
         }
-        static_assert(FForwardRenderScene::kTotalsSlots >= 6, "Totals[5] is read below.");
+        static_assert(FForwardRenderScene::kTotalsSlots >= 8, "Totals[7] is read below.");
         if (const uint32* Mapped = static_cast<const uint32*>(RHI::ToHost(Readback)))
         {
             LastVisibleInstances     = Mapped[0];
@@ -10403,148 +10567,9 @@ namespace Lumina
             LastDrawListOverflowed   = Mapped[3];
             LastBlocksRequested      = Mapped[4];
             LastBlocksOverflowed     = Mapped[5];
+            LastPreSkinRequested     = Mapped[6];
+            LastPreSkinOverflowed    = Mapped[7];
         }
-    }
-
-    namespace
-    {
-        // Same predicate and the same operand order as FrustumContainsSphere in Culling.slang, over the
-        // same plane data. Deliberately not FFrustum::IntersectsSphere: that one carries an SoA tail the
-        // GPU mirror does not have, and the two must agree exactly on the boundary case.
-        FORCEINLINE bool CullPlanesContainSphere(const FVector4* Planes, const FVector3& Center, float Radius)
-        {
-            for (int i = 0; i < 6; ++i)
-            {
-                const float Dist = Planes[i].x * Center.x + Planes[i].y * Center.y + Planes[i].z * Center.z + Planes[i].w;
-                if (Dist < -Radius)
-                {
-                    return false;
-                }
-            }
-            return true;
-        }
-
-        // Mirror of IsInstanceVisibleToView (Culling.slang) for the CPU-fed skinned head. The cascade Hi-Z
-        // reject is deliberately absent -- it needs the pyramid, which only the GPU has. Omitting it can
-        // only KEEP more, never drop, and what it keeps still fits the per-view bucket seed, which reserves
-        // max(SurfaceMeshletCount, ShadowMeshletCount) per skinned instance per view.
-        bool IsSkinnedInstanceVisibleToView(const FCullView& View, uint32 ViewFlags, const FGPUFrustum* CascadeFrustums,
-                                            const FVector3& Center, float Radius, bool bNoCull, bool bCaster)
-        {
-            // Outside the NoCull gate: NoCull suppresses visibility culling, not whether the instance casts.
-            if ((ViewFlags & ECullViewFlags::CastShadowOnly) != 0u && !bCaster)
-            {
-                return false;
-            }
-
-            if (bNoCull)
-            {
-                return true;
-            }
-
-            if ((ViewFlags & ECullViewFlags::Frustum) != 0u
-                && !CullPlanesContainSphere(View.FrustumPlanes, Center, Radius))
-            {
-                return false;
-            }
-
-            if ((ViewFlags & ECullViewFlags::Cascade) != 0u)
-            {
-                // The cascade's own ortho box barely separates one cascade from the next (the fitted spheres
-                // nest); CascadeFrustum is the camera slice swept toward the sun, which does not.
-                const uint32 CascadeIndex = Math::Min(View.CascadeIndex, (uint32)NumCascades - 1u);
-                if (!CullPlanesContainSphere(CascadeFrustums[CascadeIndex].Planes, Center, Radius))
-                {
-                    return false;
-                }
-            }
-
-            return true;
-        }
-    }
-
-    void FForwardRenderScene::UploadSkinnedViewRanges(RHI::FCmdListH CL, const FFrameData& Frame,
-                                                      uint32 NumSkinned, uint32 NumViews, uint32 NumBatches)
-    {
-        const FSceneBuffer Ranges = GetInstanceViewRanges();
-        if (!Ranges || NumSkinned == 0u || NumViews == 0u)
-        {
-            return;
-        }
-
-        // The slab is sized FrameVisibleInstanceCapacity * NumCullViews and the skinned head occupies the
-        // first NumSkinned visible slots, so the pairs are contiguous at the base and always fit. Clamped
-        // anyway: writing fewer pairs costs skinned geometry, writing past the end corrupts a neighbour.
-        SIZE_T Pairs = (SIZE_T)NumSkinned * (SIZE_T)NumViews;
-        if (Pairs * sizeof(FUIntVector2) > Ranges.GetSize())
-        {
-            static uint32 ClampLogCount = 0;
-            if (ClampLogCount++ < 4u)
-            {
-                LOG_WARN("RenderScene: instance-view range slab holds {} pairs but the skinned head needs "
-                         "{} ({} instances x {} views). Skinned geometry will be dropped this frame.",
-                         Ranges.GetSize() / sizeof(FUIntVector2), Pairs, NumSkinned, NumViews);
-            }
-            Pairs = Ranges.GetSize() / sizeof(FUIntVector2);
-        }
-
-        InstanceViewRangeSeedScratch.assign(Pairs, FUIntVector2{ 0u, 0u });
-
-        // Written by ProcessDirectionalLight earlier this frame, and uploaded just before the cull dispatch.
-        const FGPUFrustum* CascadeFrustums = Frame.SceneGlobalData.CullData.CascadeFrustum;
-
-        for (uint32 i = 0; i < NumSkinned; ++i)
-        {
-            const FGPUInstance& Inst = Frame.Geometry.Instances[i];
-
-            const FVector3 Center{ Inst.SphereBounds.x, Inst.SphereBounds.y, Inst.SphereBounds.z };
-            const float    Radius = Inst.SphereBounds.w;
-
-            const uint32 Flags   = (Inst.DrawIDAndFlags >> 16) & 0xFFFFu;
-            const uint32 DrawID  = Inst.DrawIDAndFlags & 0xFFFFu;
-            const bool   bNoCull = (Flags & (uint32)EInstanceFlags::IgnoreOcclusionCulling) != 0u;
-            const bool   bCaster = (Flags & (uint32)EInstanceFlags::CastShadow) != 0u;
-
-            // End of the last LOD: the bound CullInstances publishes for its own slots, and the one
-            // BuildMeshletBlocks then inherits rather than re-deriving.
-            const uint32 MeshletTotal = Inst.MeshletTotalCount;
-
-            for (uint32 v = 0; v < NumViews; ++v)
-            {
-                const SIZE_T PairIndex = (SIZE_T)i * NumViews + v;
-                if (PairIndex >= Pairs)
-                {
-                    break;
-                }
-
-                const FCullView& View  = Frame.Views.CullViews[v];
-                const uint32 ViewFlags = GetCullViewFlags(View);
-
-                if (!IsSkinnedInstanceVisibleToView(View, ViewFlags, CascadeFrustums, Center, Radius, bNoCull, bCaster))
-                {
-                    continue;   // stays (0, 0) -- CullInstances writes that same zero for an invisible pair
-                }
-
-                // A skinned instance publishes kNoSurfaceDescIndex, so bSelectPerView is false in
-                // CullInstances and no view re-selects a LOD: the pick is whatever ResolveSurfaceLOD /
-                // ResolveShadowLOD already resolved into the instance. That is why there is no cascade
-                // LOD branch here to mirror.
-                const bool   bShadowView = (ViewFlags & ECullViewFlags::CastShadowOnly) != 0u;
-                const uint32 Base        = bShadowView ? Inst.ShadowMeshletOffset : Inst.SurfaceMeshletOffset;
-                const uint32 Count       = bShadowView ? Inst.ShadowMeshletCount  : Inst.SurfaceMeshletCount;
-
-                // Clamped here so the builder inherits a range that is already in bounds, exactly as
-                // CullInstances clamps its own.
-                const uint32 Emitted = (Count == 0u || Base >= MeshletTotal || DrawID >= NumBatches)
-                                     ? 0u
-                                     : Math::Min(Count, MeshletTotal - Base);
-
-                InstanceViewRangeSeedScratch[PairIndex] = FUIntVector2{ Base, Emitted };
-            }
-        }
-
-        WriteBuffer(CL, Ranges.GetAddress(), InstanceViewRangeSeedScratch.data(),
-                    Pairs * sizeof(FUIntVector2));
     }
 
     void FForwardRenderScene::DispatchGPUSceneCull(RHI::FCmdListH CL, const FFrameData& Frame)
@@ -10568,7 +10593,6 @@ namespace Lumina
         const uint32 RetainedSlots = Upload.SlotCount;
         const uint32 NumBatches    = Math::Max(Frame.Views.NumDrawsPerView, 1u);
         const uint32 NumCullViews  = (uint32)Frame.Views.CullViews.size();
-        const uint32 NumSkinned    = (uint32)Frame.Geometry.Instances.size();
 
         if (!TotalsZeroed[Slot] && GetTotals())
         {
@@ -10697,38 +10721,19 @@ namespace Lumina
                              ViewDrawEntries * sizeof(RHI::FDrawMeshTasksIndirectArguments), 1.5f,
                              MeshDrawArgsRingLowUsage[Slot]);
 
-        if (NumSkinned > 0 && VisibleInstanceRing[Slot])
         {
-            WriteBuffer(CL, VisibleInstanceRing[Slot].GetAddress(),
-                        Frame.Geometry.Instances.data(), (SIZE_T)NumSkinned * sizeof(FGPUInstance));
-
-            // CullInstances writes the range slab only for the slots it CLAIMS, and its append cursor is
-            // seeded past this head (the Counters write below), so nothing in that dispatch ever covers
-            // these pairs. BuildMeshletBlocks indexes the slab straight from its flat thread id, so an
-            // unwritten pair hands it a stale range belonging to a different mesh.
-            UploadSkinnedViewRanges(CL, Frame, NumSkinned, NumCullViews, NumBatches);
-        }
-
-        {
-            const uint32 Counters[2] = { NumSkinned, 0u };   // {append cursor, overflow}
+            // Starts at ZERO: there is no CPU-fed head to append past any more, so CullInstances claims
+            // every visible slot and therefore writes a range for every pair BuildMeshletBlocks reads.
+            // {instance cursor, instance overflow, pre-skin vertex cursor, pad}. The pre-skin cursor runs
+            // past capacity by design, so what BuildDrawPrefix reads back off it is demand, not what fit.
+            const uint32 Counters[4] = { 0u, 0u, 0u, 0u };
             WriteBuffer(CL, GetCullCounters().GetAddress(), Counters, sizeof(Counters));
 
             // The whole bucket array in one write: capacities carry the CPU's skinned-batch seeds and every
-            // base and cursor starts at zero. This replaced a cursor memset plus two separate seed uploads.
-            const SIZE_T SeedCount = Math::Min<SIZE_T>(
-                Math::Min<SIZE_T>(NumBatches, Frame.Geometry.BatchMeshletSeed.size()),
-                Frame.Geometry.BatchBlockSeed.size());
-
+            // Every field starts at zero. The CPU used to seed DrawCapacity/BlockCapacity here with the
+            // skinned batches' contribution, because CullInstances skipped skinned instances and so never
+            // accumulated it. It accumulates them like anything else now, so a seed would double-count.
             BucketSeedScratch.assign(ViewDrawEntries, FRenderBucketGPU{});
-            for (uint32 v = 0; v < SeedViews; ++v)
-            {
-                for (SIZE_T d = 0; d < SeedCount; ++d)
-                {
-                    FRenderBucketGPU& Bucket = BucketSeedScratch[(SIZE_T)v * NumBatches + d];
-                    Bucket.DrawCapacity  = Frame.Geometry.BatchMeshletSeed[d];
-                    Bucket.BlockCapacity = Frame.Geometry.BatchBlockSeed[d];
-                }
-            }
             WriteBuffer(CL, GetRenderBuckets().GetAddress(),
                         BucketSeedScratch.data(), BucketSeedScratch.size() * sizeof(FRenderBucketGPU));
         }
@@ -10749,6 +10754,8 @@ namespace Lumina
                 uint32 bUseLODs;
                 uint32 MaxVisibleInstances;
                 uint32 NumSurfaceDescs;
+                uint32 SkinFrameTag;
+                uint32 PreSkinCapacity;
                 uint64 RetainedCullEntriesAddr;
                 uint64 RetainedTransformsAddr;
                 uint64 RetainedStaticAddr;
@@ -10758,8 +10765,10 @@ namespace Lumina
                 uint64 OutInstanceViewRangesAddr;
                 uint64 OutBucketsAddr;
                 uint64 OutOverflowFlagAddr;
+                uint64 SkinnedFrameDataAddr;
+                uint64 OutPreSkinCursorAddr;
             };
-            static_assert(sizeof(FCullInstancesPC) == 96, "FCullInstancesPC must match CullInstances.slang.");
+            static_assert(sizeof(FCullInstancesPC) == 120, "FCullInstancesPC must match CullInstances.slang.");
 
             FCullInstancesPC PC = {};
             PC.NumRetained              = RetainedSlots;
@@ -10768,6 +10777,8 @@ namespace Lumina
             PC.bUseLODs                 = RenderSettings.bUseLODs ? 1u : 0u;
             PC.MaxVisibleInstances      = VisibleCapacity;
             PC.NumSurfaceDescs          = UploadedSurfaceDescs;
+            PC.SkinFrameTag             = CurrentSkinnedFrameTag;
+            PC.PreSkinCapacity          = PreSkinnedVertexCapacity;
             PC.RetainedCullEntriesAddr  = RetainedCullEntryBuffer.GetAddress();
             PC.RetainedTransformsAddr   = RetainedTransformBuffer.GetAddress();
             PC.RetainedStaticAddr       = RetainedStaticBuffer.GetAddress();
@@ -10777,6 +10788,8 @@ namespace Lumina
             PC.OutInstanceViewRangesAddr = GetInstanceViewRanges().GetAddress();
             PC.OutBucketsAddr           = GetRenderBuckets().GetAddress();
             PC.OutOverflowFlagAddr      = GetCullCounters().GetAddress() + sizeof(uint32);
+            PC.SkinnedFrameDataAddr     = SkinnedFrameDataBuffer.GetAddress();
+            PC.OutPreSkinCursorAddr     = GetCullCounters().GetAddress() + sizeof(uint32) * 2;
 
             RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(CullInstancesShader));
             // CullInstances.slang undoes the fold with GroupID.y * MAX_DISPATCH_AXIS * LOCAL_SIZE_X.
@@ -10798,7 +10811,7 @@ namespace Lumina
                 uint32 MaxVisibleInstances;
                 uint32 DrawListCapacityArg;
                 uint32 BlockListCapacityArg;
-                uint32 _Pad0;
+                uint32 PreSkinCapacityArg;
                 uint64 BucketsAddr;
                 uint64 InstanceCountAddr;
                 uint64 OutTotalsAddr;
@@ -10812,6 +10825,7 @@ namespace Lumina
             PC.MaxVisibleInstances      = VisibleCapacity;
             PC.DrawListCapacityArg      = DrawListCapacity;
             PC.BlockListCapacityArg     = BlockListCapacity;
+            PC.PreSkinCapacityArg       = PreSkinnedVertexCapacity;
             PC.BucketsAddr              = GetRenderBuckets().GetAddress();
             PC.InstanceCountAddr        = GetCullCounters().GetAddress();
             PC.OutTotalsAddr            = GetTotals().GetAddress();
@@ -11404,6 +11418,11 @@ namespace Lumina
         Root->SkyCubeIndex       = (uint32)View.Images[(int)ENamedImage::SkyCube].GetResourceID();
         Root->ShadowCascadeIndex = (uint32)GetNamedImage(ENamedImage::Cascade).GetResourceID();
         Root->ShadowAtlasIndex   = (uint32)ShadowAtlas.GetImage().GetResourceID();
+
+        Root->Splines       = SplineBufferAddr;
+        Root->SplinePoints  = SplinePointBufferAddr;
+        Root->SplineSamples = SplineSampleBufferAddr;
+        Root->NumSplines    = NumActiveSplines;
 
         const FSceneImage& ProbeArray = NamedImages[(int)ENamedImage::ProbePrefiltered];
         if (!bCapturingProbe && NumActiveProbes > 0 && ProbeArray.IsValid())

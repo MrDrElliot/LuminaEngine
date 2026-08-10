@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Renderer/ShaderHandle.h"
 #include "Core/Delegates/Delegate.h"
@@ -61,97 +61,34 @@ namespace Lumina
             uint64                  MeshletHeaderAddress;
             uint32                  CustomData;
             uint32                  EntityID;
-            uint32                  LocalBoneOffset;            // ~0u for static meshes.
-            uint32                  SkinSliceSize;
-            uint32                  GlobalSkinnedBase;
-            uint32                  SkinCursor;
-            uint32                  SkinBoneOffset;             // global; resolved during merge.
-        };
-
-        struct FSkinCandidate
-        {
-            FEntityRecord*          Record;
-            float                   Priority;
+            // Slice this entity's pose occupies in the bone arena, straight from its primitive. STABLE
+            // across frames, so nothing has to resolve it during the merge and workers write their poses
+            // into disjoint ranges with no cross-thread base to agree on. ~0u when there is no skeleton.
+            uint32                  BoneArenaBase;
+            uint32                  BoneArenaCount;
         };
 
         struct FProcessedDrawItem
         {
             uint32              EntityRecordIndex;
             uint32              BatchIndex;
+            // Retained slot this surface owns. The per-frame skinned side data is keyed by it, because the
+            // instance cull reaches that data before compaction has assigned a visible index.
+            uint32              InstanceSlot;
             uint32              SurfaceMeshletOffset;
             uint32              SurfaceMeshletCount;
             uint32              ShadowMeshletOffset;
             uint32              ShadowMeshletCount;
             uint32              MeshletTotalCount;
-            uint32              SurfaceVertexOffset;
-            uint32              SurfaceVertexCount;
-            uint32              ShadowVertexOffset;
-            uint32              ShadowVertexCount;
             EInstanceFlags      Flags;
             uint16              MaterialIndex;
             uint16              _Pad;
-        };
-
-        struct FBonePageArray
-        {
-            static constexpr uint32 kPageBones = 16u * 1024u; // 768 KB/page, well under the arena block
-
-            TFrameVector<TFrameVector<FBoneTransform>> Pages;
-            uint32 Count = 0;
-            FFrameArenaAllocator Allocator;
-
-            FBonePageArray() = default;
-            explicit FBonePageArray(FFrameArenaAllocator A)
-                : Pages(A), Allocator(A) {}
-
-            uint32 Size() const { return Count; }
-            bool IsEmpty() const { return Count == 0; }
-
-            void Append(const FBoneTransform* Src, uint32 Num)
-            {
-                while (Num > 0)
-                {
-                    TFrameVector<FBoneTransform>& Page = EnsureSpace();
-                    const uint32 Take = Math::Min(Num, kPageBones - (uint32)Page.size());
-                    Page.insert(Page.end(), Src, Src + Take);
-                    Src   += Take;
-                    Num   -= Take;
-                    Count += Take;
-                }
-            }
-
-            void AppendIdentity(uint32 Num)
-            {
-                static constexpr FBoneTransform IdentityBone{ FVector4(1,0,0,0), FVector4(0,1,0,0), FVector4(0,0,1,0) };
-                while (Num > 0)
-                {
-                    TFrameVector<FBoneTransform>& Page = EnsureSpace();
-                    const uint32 Take = Math::Min(Num, kPageBones - (uint32)Page.size());
-                    Page.resize(Page.size() + Take, IdentityBone);
-                    Num   -= Take;
-                    Count += Take;
-                }
-            }
-
-        private:
-
-            TFrameVector<FBoneTransform>& EnsureSpace()
-            {
-                if (Pages.empty() || (uint32)Pages.back().size() == kPageBones)
-                {
-                    TFrameVector<FBoneTransform>& Page = Pages.emplace_back(TFrameVector<FBoneTransform>(Allocator));
-                    Page.reserve(kPageBones);
-                    return Page;
-                }
-                return Pages.back();
-            }
         };
 
         struct alignas(64) FThreadLocalDrawData
         {
             TFrameVector<FProcessedDrawItem>    Items;
             TFrameVector<FEntityRecord>         EntityRecords;
-            FBonePageArray                      BonesData;
 
             TVector<uint32>                     DrawInstanceCounts;
             TVector<uint32>                     DrawMeshletCounts;
@@ -167,7 +104,7 @@ namespace Lumina
 
             FThreadLocalDrawData() = default;
             explicit FThreadLocalDrawData(FFrameArenaAllocator A)
-                : Items(A), EntityRecords(A), BonesData(A), Arena(A) {}
+                : Items(A), EntityRecords(A), Arena(A) {}
 
             FThreadLocalDrawData(FThreadLocalDrawData&&) = default;
             FThreadLocalDrawData& operator=(FThreadLocalDrawData&&) = default;
@@ -176,7 +113,6 @@ namespace Lumina
             {
                 new (&Items)              TFrameVector<FProcessedDrawItem>(A);
                 new (&EntityRecords)      TFrameVector<FEntityRecord>(A);
-                new (&BonesData)          FBonePageArray(A);
                 Arena = A;
                 Stats = {};
                 bTouched = false;
@@ -339,16 +275,22 @@ namespace Lumina
 
             struct FGeometry
             {
-                TVector<FGPUInstance>            Instances;
-                TVector<FBoneTransform>          BonesData;   // 48B/bone (last row dropped)
-                TVector<FSkinDescriptor>         SkinDescriptors;
-                uint32                           TotalPreSkinnedVertices = 0;
+                // CPU mirror of the bone arena, indexed by FScenePrimitive::BoneArenaBase -- NOT a packed
+                // concatenation. Only the slices of skeletons gathered this frame are written and uploaded;
+                // the rest holds don't-care data, because an entity that was not gathered is not drawn.
+                // 48B/bone (last row dropped).
+                TVector<FBoneTransform>          BonesData;
+                // (base, count) per gathered skeleton, coalesced into the upload. Derived in the merge from
+                // the entity records, so workers need no shared list.
+                TVector<FUIntVector2>            BoneUploadRanges;
+                // Per-frame skinned data indexed by RETAINED slot; only gathered slots are written, and
+                // SkinnedSlots lists which. Stale entries are rejected by their frame tag, not cleared.
+                TVector<FSkinnedFrameData>       SkinnedFrameData;
+                TVector<uint32>                  SkinnedSlots;
                 TVector<FMeshDrawCommand>        DrawCommands;
                 TVector<uint32>                  OpaqueDrawList;
                 TVector<uint32>                  TranslucentDrawList;
                 TVector<FDeferredMaterialEntry>  DeferredMaterials;   // distinct opaque slots for the deferred pass
-                TVector<uint32>                  BatchMeshletSeed;
-                TVector<uint32>                  BatchBlockSeed;
                 FSceneCullContext                SceneCullContext;
 
                 struct FRetainedUpload
@@ -419,6 +361,15 @@ namespace Lumina
                 bool                             bIBLConvolutionDirty = false;
                 FIBLBakeResolution               IBLResolution        = {};
             } Volumetrics;
+
+            // Splines uploaded this frame. Headers index into the two shared arrays; everything is world
+            // space (SSplineComponent authors in entity-local space and the extract bakes the transform in).
+            struct FSplines
+            {
+                TVector<FGPUSpline>              Splines;
+                TVector<FGPUSplinePoint>         Points;
+                TVector<FGPUSplineSample>        Samples;
+            } Splines;
 
             struct FReflectionProbes
             {
@@ -553,7 +504,8 @@ namespace Lumina
         void RenderView(uint8 FrameIndex) override;
         void SetActivePostProcessMaterials(const TVector<CMaterialInterface*>& Materials) override { PendingPostProcessMaterials = Materials; }
         void SwapchainResized(FVector2 NewSize);
-        void Resize(const FUIntVector2& NewSize) override { SwapchainResized(FVector2(NewSize)); }
+        void Resize(const FUIntVector2& NewSize) override { ResizePrimaryView(NewSize); }
+        void SetPrimaryViewSize(const FUIntVector2& SizePixels) override;
 
         int32 RegisterCaptureView(const FUIntVector2& Size) override;
         bool  SetCaptureView(int32 Handle, const FViewVolume& View, bool bEnabled) override;
@@ -577,6 +529,7 @@ namespace Lumina
             set, so any value here yields exactly one draw and a race can only pick the wrong phase. */
         FSceneBuffer GetInstanceVisibility() const { return InstanceVisibilityBuffer; }
         FSceneBuffer GetBlockDispatchArgs() const { return BlockDispatchArgsRing[CurrentFrameSlot]; }
+        FSceneBuffer GetSkinDispatchArgs()  const { return SkinDispatchArgsRing[CurrentFrameSlot]; }
         /** One workgroup per written meshlet block, sized by BuildMeshletCullArgs. */
         FSceneBuffer GetMeshletCullDispatchArgs() const { return MeshletCullDispatchArgsRing[CurrentFrameSlot]; }
         /** (base, count) per (visible instance, view): the one place the per-view meshlet range is
@@ -625,6 +578,13 @@ namespace Lumina
         void NameOwnedImages(TArray<FSceneImage, (int)ENamedImage::Num>& Images);
         void ReleaseViewImages(FSceneView& View, bool bDeferRelease);
         void InitFrameResources();
+
+        // Shared body of SwapchainResized / SetPrimaryViewSize. Unconditional: callers decide whether the
+        // new size is worth the WaitDeviceIdle this costs.
+        void ResizePrimaryView(const FUIntVector2& NewSize);
+
+        /** Cleared the first time something sizes the primary view explicitly (an editor tool panel). */
+        bool bPrimaryTracksSwapchain = true;
 
         FSceneView& AddSceneView(const FUIntVector2& Size, bool bPrimary);
         
@@ -755,9 +715,6 @@ namespace Lumina
 
         void BuildSceneCullContext();
         void MergeMeshDrawData(TVector<FThreadLocalDrawData>& ThreadLocal);
-        void AssignPreSkinSlices(FFrameData& Frame,
-                                 TVector<FSkinCandidate>& Candidates,
-                                 TVector<FThreadLocalDrawData>& ThreadLocal);
 
         FThreadLocalDrawData& AcquireThreadLocalDrawData(uint32 Slot);
 
@@ -996,6 +953,15 @@ namespace Lumina
         uint32                                  LastSeenRebakeRequest = 0;
         uint32                                  AlwaysProbeCursor = 0;
 
+        // Addresses of this frame's uploaded spline arrays. Splines are extracted only for components with
+        // bSendToGPU, so a world that authors splines purely as data uploads nothing.
+        uint64                                  SplineBufferAddr       = 0;
+        uint64                                  SplinePointBufferAddr  = 0;
+        uint64                                  SplineSampleBufferAddr = 0;
+        uint32                                  NumActiveSplines       = 0;
+
+        void ExtractSplines(FEntityRegistry& Registry, FFrameData& Frame);
+
         void InitReflectionProbeTargets();
         void SyncProbeCaptureCube(uint32 FaceSize);
         void ExtractReflectionProbes(FEntityRegistry& Registry, FFrameData& Frame);
@@ -1027,6 +993,11 @@ namespace Lumina
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          SpdCounterRing = {};
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          MeshletBlockRing = {};
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          BlockDispatchArgsRing = {};
+        // Pre-skinning work layout: one running base per (skinned instance, block) pair, plus the indirect
+        // grid derived from it. Both GPU-written and GPU-read within a frame; ringed like the block args.
+        TArray<FSceneBuffer, RHI::kFramesInFlight>                          SkinWorkBaseRing = {};
+        TArray<uint32,       RHI::kFramesInFlight>                          SkinWorkBaseLowUsage = {};
+        TArray<FSceneBuffer, RHI::kFramesInFlight>                          SkinDispatchArgsRing = {};
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          MeshletCullDispatchArgsRing = {};
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          InstanceViewRangeRing = {};
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          TotalsRing = {};
@@ -1038,6 +1009,22 @@ namespace Lumina
         FSceneBuffer                                        RetainedTransformBuffer;
         FSceneBuffer                                        RetainedStaticBuffer;
         FSceneBuffer                                        SurfaceDescBuffer;
+        // Slot-addressed pose storage, one persistent allocation like RetainedTransformBuffer: the base is
+        // stable, so only the slices gathered this frame are written rather than the whole thing repacked.
+        FSceneBuffer                                        BoneArenaBuffer;
+        uint32                                              BoneArenaLowUsage = 0;
+        // Per-frame skinned data, indexed by retained slot like the payloads beside it. CullInstances reads
+        // it for slots flagged Skinned; the skinning passes read it for the gathered slot list.
+        FSceneBuffer                                        SkinnedFrameDataBuffer;
+        uint32                                              SkinnedFrameDataLowUsage = 0;
+        FSceneBuffer                                        SkinnedSlotListBuffer;
+        uint32                                              SkinnedSlotListLowUsage = 0;
+        TVector<FUIntVector2>                               SkinnedUploadScratch;
+        // Monotonic per rendered frame. Stamped into every gathered slot's side data and compared by
+        // CullInstances, so a slot the gather skipped cannot be emitted with a previous frame's ranges.
+        uint32                                              CurrentSkinnedFrameTag = 0;
+        // Ranges merged out of FGeometry::BoneUploadRanges; a member so the sort/merge keeps its capacity.
+        TVector<FUIntVector2>                               BoneUploadScratch;
         uint32                                              RetainedCullEntryLowUsage = 0;
         uint32                                              RetainedTransformLowUsage = 0;
         uint32                                              RetainedStaticLowUsage = 0;
@@ -1053,18 +1040,20 @@ namespace Lumina
 
         // (base, count) per (skinned instance, view) for the CPU-fed head of the visible buffer, which
         // CullInstances never claims and therefore never writes a range for.
-        TVector<FUIntVector2>                               InstanceViewRangeSeedScratch;
 
         FSceneBuffer GetVisibleInstances()  const { return VisibleInstanceRing[CurrentFrameSlot]; }
         FSceneBuffer GetCullCounters()      const { return CullCounterRing[CurrentFrameSlot]; }
 
 
-        void DispatchGPUSceneCull(RHI::FCmdListH CL, const FFrameData& Frame);
+        // Sends only the arena slices this frame's gather wrote, coalesced. Must run before anything reads
+        // Bones() -- the skinning dispatch and the in-draw skinning fallback both do.
+        void UploadBoneArena(RHI::FCmdListH CL, const FFrameData& Frame);
 
-        // Mirrors CullInstances' per-view (base, count) decision for the CPU-fed skinned head, which that
-        // dispatch skips. Must run before BuildMeshletBlocks reads the slab.
-        void UploadSkinnedViewRanges(RHI::FCmdListH CL, const FFrameData& Frame,
-                                     uint32 NumSkinned, uint32 NumViews, uint32 NumBatches);
+        // Ships the per-frame half of every gathered skinned slot's payload, plus the compact slot list the
+        // skinning passes iterate. Must run before CullInstances and before the skinning dispatch.
+        void UploadSkinnedFrameData(RHI::FCmdListH CL, FFrameData& Frame);
+
+        void DispatchGPUSceneCull(RHI::FCmdListH CL, const FFrameData& Frame);
 
         void PublishRetainedUpload();
 
@@ -1080,7 +1069,7 @@ namespace Lumina
 
         float                                               CascadeMinTexels = 1.0f;
 
-        static constexpr uint32                             kTotalsSlots = 6;
+        static constexpr uint32                             kTotalsSlots = 8;
 
         TArray<RHI::GPUPtr, RHI::kFramesInFlight>           MeshletBoundReadback = {};
         uint32                                              LastDrawListRequired = 0;
@@ -1096,9 +1085,15 @@ namespace Lumina
         // High-water mark of the GPU's block counter; grows only, so the list never shrinks under a scene
         // it has already had to hold.
         uint32                                              BlockListHighWater = 0;
+        // Elements the pre-skinned vertex buffer must hold. GPU-claimed, so it is only knowable from the
+        // lagged readback; only grows, exactly like BlockListHighWater.
+        uint32                                              PreSkinHighWater = 0;
+        uint32                                              PreSkinnedVertexCapacity = 0;
         // Sub-draw slots reserved per (view, draw). 1 unless a bucket can exceed maxTaskWorkGroupCount[0].
         uint32                                              MeshSubDrawsPerSlice = 1;
         uint32                                              LastBlocksRequested = 0;
+        uint32                                              LastPreSkinRequested = 0;
+        uint32                                              LastPreSkinOverflowed = 0;
         uint32                                              LastBlocksOverflowed = 0;
         uint32                                              MeshletDrawTagCounter = 0;
         uint32                                              FrameVisibleInstanceCapacity = 0;
@@ -1122,9 +1117,6 @@ namespace Lumina
         TVector<uint32>                         MergeMeshletCountsPerDraw;
         TVector<uint32>                         MergeBlockCountsPerDraw;
         TVector<uint32>                         MergeDrawInstanceOffsets;
-        TVector<uint32>                         MergeThreadBoneBase;
-        TVector<FSkinCandidate>                 MergeSkinCandidates;
-        uint32                                  LastPreSkinDeferredCount = 0;
 
         TVector<FShaderH>            BinnedDeferredSlotShaders;
         TVector<uint32>                         BinnedDeferredSlotByMaterial;

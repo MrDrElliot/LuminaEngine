@@ -10,6 +10,7 @@
 #include "world/entity/components/physicscomponent.h"
 #include "World/Entity/Components/PerceptionComponent.h"
 #include "World/Entity/Components/ReflectionProbeComponent.h"
+#include "World/Entity/Components/SplineComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
 
 namespace Lumina
@@ -563,6 +564,77 @@ namespace Lumina
         if (Perception.bHearingEnabled)
         {
             PDI->DrawSphere(Location, Perception.HearingRadius, FVector4(1.0f, 0.85f, 0.2f, 1.0f), 16, 1.5f, true, 0.0f);
+        }
+    }
+
+    CStruct* CComponentVisualizer_Spline::GetSupportedComponentType() const
+    {
+        return SSplineComponent::StaticStruct();
+    }
+
+    void CComponentVisualizer_Spline::Draw(IPrimitiveDrawInterface* PDI, entt::registry& Registry, entt::entity Entity)
+    {
+        const SSplineComponent&    Spline    = Registry.get<SSplineComponent>(Entity);
+        const STransformComponent& Transform = Registry.get<STransformComponent>(Entity);
+
+        if (!Spline.bDrawDebug || Spline.Points.empty())
+        {
+            return;
+        }
+
+        const FMatrix4 LocalToWorld = Transform.GetWorldMatrix();
+        auto ToWorld = [&](const FVector3& Local) { return FVector3(LocalToWorld * FVector4(Local, 1.0f)); };
+
+        const FVector4 CurveColor(1.0f, 0.55f, 0.15f, 1.0f);
+        const FVector4 PointColor(1.0f, 0.85f, 0.30f, 1.0f);
+        const FVector4 ArriveColor(0.35f, 0.75f, 1.0f, 1.0f);
+        const FVector4 LeaveColor(0.35f, 1.00f, 0.55f, 1.0f);
+
+        // Marker size is a fraction of the curve's own extent so a 1 m spline and a 200 m road both read
+        // sensibly; clamped so a degenerate spline still shows something clickable.
+        float Extent = 0.0f;
+        for (const SSplinePoint& Point : Spline.Points)
+        {
+            Extent = Math::Max(Extent, Math::Distance(Spline.Points[0].Location, Point.Location));
+        }
+        const float MarkerRadius = Math::Clamp(Extent * 0.02f, 0.05f, 0.5f);
+
+        const int32 NumSegments = Spline.GetNumSegments();
+
+        // Walk key space to draw the curve. Independent of SamplesPerSegment: that knob sizes the GPU
+        // table, and the viewport should not get coarser just because the upload was made cheaper.
+        constexpr int32 kStepsPerSegment = 16;
+        if (NumSegments > 0)
+        {
+            FVector3 Prev = ToWorld(Spline.EvaluatePosition(0.0f));
+            const int32 TotalSteps = NumSegments * kStepsPerSegment;
+            for (int32 Step = 1; Step <= TotalSteps; ++Step)
+            {
+                const float Key = (static_cast<float>(Step) / static_cast<float>(kStepsPerSegment));
+                const FVector3 Curr = ToWorld(Spline.EvaluatePosition(Key));
+                PDI->DrawLine(Prev, Curr, CurveColor, 2.5f, true, 0.0f);
+                Prev = Curr;
+            }
+        }
+
+        for (const SSplinePoint& Point : Spline.Points)
+        {
+            const FVector3 World = ToWorld(Point.Location);
+            PDI->DrawSphere(World, MarkerRadius, PointColor, 10, 2.0f, false, 0.0f);
+
+            // Tangent handles are drawn at a third of their length: a Hermite tangent is three times the
+            // chord it produces, so drawing it raw puts the handle well past the neighbouring point.
+            if (Point.TangentMode == ESplineTangentMode::User)
+            {
+                const FVector3 Arrive = ToWorld(Point.Location - Point.ArriveTangent / 3.0f);
+                const FVector3 Leave  = ToWorld(Point.Location + Point.LeaveTangent / 3.0f);
+
+                PDI->DrawLine(World, Arrive, ArriveColor, 1.5f, false, 0.0f);
+                PDI->DrawSphere(Arrive, MarkerRadius * 0.6f, ArriveColor, 8, 1.5f, false, 0.0f);
+
+                PDI->DrawLine(World, Leave, LeaveColor, 1.5f, false, 0.0f);
+                PDI->DrawSphere(Leave, MarkerRadius * 0.6f, LeaveColor, 8, 1.5f, false, 0.0f);
+            }
         }
     }
 }

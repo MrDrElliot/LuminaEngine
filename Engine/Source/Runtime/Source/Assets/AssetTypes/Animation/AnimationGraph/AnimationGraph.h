@@ -125,6 +125,31 @@ namespace Lumina
         }
     };
 
+    // Which graph curve slot each of a clip's authored curves feeds (INDEX_NONE = not referenced).
+    // Resolved at compile so sampling a clip writes its curves by index, never by name.
+    struct FAnimGraphClipCurveMap
+    {
+        TVector<int32> Slots;
+
+        friend FArchive& operator << (FArchive& Ar, FAnimGraphClipCurveMap& Data)
+        {
+            Ar << Data.Slots;
+            return Ar;
+        }
+    };
+
+    // One clip curve map per blend-space sample, in sample order.
+    struct FAnimGraphBlendSpaceCurveMap
+    {
+        TVector<FAnimGraphClipCurveMap> SampleMaps;
+
+        friend FArchive& operator << (FArchive& Ar, FAnimGraphBlendSpaceCurveMap& Data)
+        {
+            Ar << Data.SampleMaps;
+            return Ar;
+        }
+    };
+
     // Compiled state machine; each state owns a pose register. Per-frame bookkeeping (active state,
     // timer) lives in per-instance FAnimGraphVMState.StateSlots, addressed by the *Slot indices below.
     struct FAnimGraphStateMachine
@@ -174,6 +199,8 @@ namespace Lumina
 
         int32 FindParameterIndex(const FName& Name) const;
 
+        int32 FindCurveIndex(const FName& Name) const;
+
         // Fills every transition's CachedParamIndex; call after Parameters/StateMachines change.
         void ResolveTransitionParameters();
 
@@ -207,6 +234,14 @@ namespace Lumina
 
         /** State machines referenced by EvalStateMachine opcodes, indexed by machine index. */
         TVector<FAnimGraphStateMachine> StateMachines;
+
+        /** Curve slots carried by every pose in this graph: the union of the referenced clips' curves
+         *  and any name a Get/Set Curve node uses. Slot index is what the bytecode addresses. */
+        TVector<FName> CurveNames;
+
+        /** Curve slot bindings for Clips / BlendSpaces, parallel to those arrays. */
+        TVector<FAnimGraphClipCurveMap> ClipCurveMaps;
+        TVector<FAnimGraphBlendSpaceCurveMap> BlendSpaceCurveMaps;
 
         /** Compiled instruction stream consumed by FAnimationGraphVM. */
         TVector<uint8> Bytecode;

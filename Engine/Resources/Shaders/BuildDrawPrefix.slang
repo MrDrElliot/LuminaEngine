@@ -20,7 +20,8 @@ struct FBuildDrawPrefixArgs
     // Regions past capacity are clamped to zero length, never handed an offset outside the allocation.
     uint  DrawListCapacity;
     uint  BlockListCapacity;
-    uint  _Pad0;
+    // Elements in the pre-skinned vertex buffer, so the overflow flag below reports against the right bound.
+    uint  PreSkinCapacity;
 
     // in/out: CullInstances leaves the two capacities accumulated. This pass turns them into bases and
     // rewrites them as the room each arena actually has, which is the bound every appender then uses.
@@ -29,7 +30,7 @@ struct FBuildDrawPrefixArgs
     // Read back kFramesInFlight frames later to size the next allocation. Every entry is DEMAND, not
     // what fit, which is what makes an undersized allocation self-correcting.
     //   [0] instances  [1] overflowed   [2] draw entries  [3] overflowed
-    //   [4] blocks     [5] overflowed
+    //   [4] blocks     [5] overflowed   [6] pre-skin verts [7] overflowed
     uint* OutTotals;
     // One thread per (surviving instance, view). Sized here because the survivor count only exists
     // on the GPU.
@@ -93,6 +94,13 @@ void ComputeMain()
     Pass().OutTotals[3] = (DrawRunning > DrawCapacity) ? 1u : 0u;
     Pass().OutTotals[4] = BlockRunning;
     Pass().OutTotals[5] = (BlockRunning > BlockCapacity) ? 1u : 0u;
+
+    // CullInstances' pre-skin cursor keeps advancing past capacity, so this is DEMAND -- the number the CPU
+    // grows the buffer to, not the number that fit. Slot 2 of the same counters block the instance cursor
+    // lives in.
+    const uint PreSkinRequested = Pass().InstanceCount[2];
+    Pass().OutTotals[6] = PreSkinRequested;
+    Pass().OutTotals[7] = (PreSkinRequested > Pass().PreSkinCapacity) ? 1u : 0u;
 
     // Folded across Y exactly as the CPU-side grids are; BuildMeshletBlocks undoes it.
     const uint BlockThreads = VisibleInstances * NumViews;

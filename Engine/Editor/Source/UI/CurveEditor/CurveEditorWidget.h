@@ -22,6 +22,10 @@ namespace Lumina
         /** Toolbar strip plus a canvas filling the rest of the content region. */
         void Draw(const char* ID);
 
+        /** Vertical marker drawn across the canvas, for tools that have a playhead of their own. */
+        void SetTimeMarker(float InTime) { TimeMarker = InTime; bShowTimeMarker = true; }
+        void ClearTimeMarker() { bShowTimeMarker = false; }
+
         void FrameAll();
         void FrameSelection();
 
@@ -107,6 +111,9 @@ namespace Lumina
         int32               TangentDragKey = INDEX_NONE;
         bool                bTangentDragLeave = false;
         int32               ContextKey = INDEX_NONE;
+
+        float               TimeMarker = 0.0f;
+        bool                bShowTimeMarker = false;
 
         bool                bSnapTime = false;
         bool                bSnapValue = false;

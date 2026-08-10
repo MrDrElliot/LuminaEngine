@@ -435,6 +435,10 @@ namespace Lumina
                     GWorldManager->ReclaimIdleRenderers(UpdateContext.GetFrameStartTime());
                 }
 
+                // After the editor UI's StartFrame above, which is what sets the per-tool intervals, and
+                // before the first of this frame's seven UpdateWorlds calls, which all read the result.
+                GWorldManager->BeginFrame(UpdateContext.GetFrameStartTime());
+
                 GWorldManager->UpdateWorlds(UpdateContext);
 
                 OnUpdateStage(UpdateContext);

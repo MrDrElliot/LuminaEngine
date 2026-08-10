@@ -45,6 +45,13 @@ namespace Lumina
         void OnUpdate(const FUpdateContext& UpdateContext) override;
         void OnEndFrame(const FUpdateContext& UpdateContext) override;
 
+        /**
+         * Per-frame interval for one tool's preview world: 0 for the tool being worked in, 1/MaxBackgroundFPS
+         * for a visible-but-unfocused one. Six open material editors are six full scene renders a frame; five
+         * of them are being glanced at, and glancing does not need 165Hz.
+         */
+        double GetToolWorldUpdateInterval(const CWorld* ToolWorld, bool bFocused) const;
+
         void DestroyTool(const FUpdateContext& UpdateContext, FEditorTool* Tool);
 
         void PushModal(const FString& Title, ImVec2 Size, TMoveOnlyFunction<bool()> DrawFunction) override;

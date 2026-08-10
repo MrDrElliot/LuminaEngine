@@ -690,6 +690,51 @@ namespace Lumina
 
     static_assert(sizeof(FWaterUnderwaterParams) == 64, "FWaterUnderwaterParams layout must match Includes/Water.slang");
 
+    // One spline control point, world space (the entity transform is baked in at extract).
+    struct alignas(16) FGPUSplinePoint
+    {
+        FVector3 Location;      float Roll;      // Roll in degrees
+        FVector3 ArriveTangent; float _Pad0;
+        FVector3 LeaveTangent;  float _Pad1;
+        FVector3 Scale;         float _Pad2;
+    };
+
+    static_assert(sizeof(FGPUSplinePoint) == 64, "FGPUSplinePoint layout must match Includes/Spline.slang");
+    VERIFY_SSBO_ALIGNMENT(FGPUSplinePoint)
+
+    // One entry of a spline's arc-length table. Entries are uniform in DISTANCE, not in curve key, so a
+    // shader converts a distance to an index with a single divide -- see SampleSplineAtDistance.
+    struct alignas(16) FGPUSplineSample
+    {
+        FVector3 Position; float DistanceAlong;
+        FVector3 Tangent;  float Key;           // curve key (0..NumSegments) this sample landed on
+        FVector3 Up;       float Roll;          // degrees
+        FVector3 Scale;    float _Pad;
+    };
+
+    static_assert(sizeof(FGPUSplineSample) == 64, "FGPUSplineSample layout must match Includes/Spline.slang");
+    VERIFY_SSBO_ALIGNMENT(FGPUSplineSample)
+
+    static constexpr uint32 SPLINE_FLAG_CLOSED_LOOP = 1u << 0;
+
+    // Header for one uploaded spline. Points and samples live in two shared arrays; this carries the slice.
+    struct alignas(16) FGPUSpline
+    {
+        FMatrix4 LocalToWorld;      // entity transform the points were baked with
+        FMatrix4 WorldToLocal;      // inverse, for anything projecting world positions back onto the curve
+        uint32   PointOffset;       // first entry in the shared point array
+        uint32   PointCount;
+        uint32   SampleOffset;      // first entry in the shared sample array
+        uint32   SampleCount;
+        float    TotalLength;       // world-space arc length
+        uint32   Flags;             // SPLINE_FLAG_*
+        uint32   EntityID;          // owning entity, so a shader can correlate back
+        uint32   _Pad;
+    };
+
+    static_assert(sizeof(FGPUSpline) == 160, "FGPUSpline layout must match Includes/Spline.slang");
+    VERIFY_SSBO_ALIGNMENT(FGPUSpline)
+
     struct alignas(16) FCluster
     {
         FVector4 MinPoint;
@@ -843,15 +888,27 @@ namespace Lumina
 
     constexpr uint32 kNoPreSkinBase = 0xFFFFFFFFu;
 
-    struct FSkinDescriptor
+    /** Per-frame data for one SKINNED instance slot: exactly the values that cannot live in FInstanceStatic,
+     *  because they are re-decided every frame while that payload only re-uploads on a re-bind. Indexed by
+     *  RETAINED instance slot, so the instance cull can reach it before compaction has happened.
+     *
+     *  The LOD ranges are here rather than re-derived on the GPU on purpose: the pre-skin slice below was
+     *  assigned against THIS pick, and a view that re-selected a different LOD would pre-skin one LOD's
+     *  meshlets while the raster read another's vertices. */
+    struct FSkinnedFrameData
     {
-        uint64      MeshletHeaderAddress;   // FMeshletHeader* (BDA)
-        uint32      BoneOffset;             // global index into the bone-matrix buffer
-        uint32      SkinnedVertexBase;
-        uint32      MeshletIndex;           // index into Header.Meshlets (one descriptor per meshlet)
-        uint32      Pad;
+        // CullData.MeshletDrawTag as of the frame that wrote this. Anything else means the entity was not
+        // gathered this frame, so the slot is stale and must not be emitted -- the array is never cleared.
+        uint32      FrameTag;
+        uint32      SurfaceMeshletOffset;
+        uint32      SurfaceMeshletCount;
+        uint32      ShadowMeshletOffset;
+        uint32      ShadowMeshletCount;
+        uint32      MeshletTotalCount;
+        uint32      SkinnedVertexBase;          // kNoPreSkinBase = over budget, skin inline instead
+        uint32      ShadowSkinnedVertexBase;
     };
-    static_assert(sizeof(FSkinDescriptor) == 24, "FSkinDescriptor must match shader");
+    static_assert(sizeof(FSkinnedFrameData) == 32, "FSkinnedFrameData must match shader");
 
     constexpr uint32 PackDrawIDAndFlags(uint32 DrawID, EInstanceFlags Flags)
     {
@@ -1045,9 +1102,11 @@ namespace Lumina
         uint64 CullViews             = 0;
         uint64 MeshletDrawList       = 0;  // ring, GPU-written
         uint64 PreSkinnedVertices    = 0;  // GPU-written
-        uint64 SkinDescriptors       = 0;
         uint64 Widgets               = 0;
         uint64 ReflectionProbes      = 0;  // FGPUReflectionProbe array, sorted by descending priority
+        uint64 Splines               = 0;  // FGPUSpline headers, one per component with bSendToGPU
+        uint64 SplinePoints          = 0;  // shared FGPUSplinePoint array; headers carry the slice
+        uint64 SplineSamples         = 0;  // shared FGPUSplineSample array (arc-length tables)
 
         uint32 BRDFLutIndex          = 0;
         uint32 SkyIrradianceIndex    = 0;
@@ -1057,8 +1116,12 @@ namespace Lumina
         uint32 SkyCubeIndex          = 0;  // bindless cube SRV (full-res sky; sharp near-mirror reflections)
         uint32 ProbeCubeArrayIndex   = 0;
         uint32 NumReflectionProbes   = 0;
+        uint32 NumSplines            = 0;
+        uint32 _SplinePad            = 0;   // keeps the trailing uint block a whole number of 16-byte rows
     };
-    static_assert(sizeof(FSceneRoot) == 136, "FSceneRoot must match SceneGlobals.slang");
+    // 15 pointers + 10 indices. Was 136 while SkinDescriptors lived here; the skinning dispatch derives its
+    // work from the instances now, so nothing ships a descriptor array.
+    static_assert(sizeof(FSceneRoot) == 160, "FSceneRoot must match SceneGlobals.slang");
 
     struct FRootConstants
     {

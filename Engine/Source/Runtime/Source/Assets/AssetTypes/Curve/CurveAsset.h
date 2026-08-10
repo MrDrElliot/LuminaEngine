@@ -58,6 +58,17 @@ namespace Lumina
         bool bTangentsBroken = false;
 
         bool IsCubic() const { return InterpMode == ECurveInterpMode::Cubic || InterpMode == ECurveInterpMode::CubicUser; }
+
+        friend FArchive& operator << (FArchive& Ar, SCurveKey& Data)
+        {
+            Ar << Data.Time;
+            Ar << Data.Value;
+            Ar << Data.InterpMode;
+            Ar << Data.ArriveTangent;
+            Ar << Data.LeaveTangent;
+            Ar << Data.bTangentsBroken;
+            return Ar;
+        }
     };
 
     /** One key pair baked to a cubic polynomial. Value(T) = A + B*U + C*U^2 + D*U^3 with
@@ -120,6 +131,14 @@ namespace Lumina
 
         PROPERTY(Editable, Category = "Curve")
         ECurveExtrapolation PostExtrapolation = ECurveExtrapolation::Clamp;
+
+        friend FArchive& operator << (FArchive& Ar, SKeyedCurve& Data)
+        {
+            Ar << Data.Keys;
+            Ar << Data.PreExtrapolation;
+            Ar << Data.PostExtrapolation;
+            return Ar;
+        }
 
     private:
 

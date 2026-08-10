@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Assets/AssetTypes/Curve/CurveAsset.h"
 #include "Core/Math/AABB.h"
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectHandleTyped.h"
@@ -82,6 +83,23 @@ namespace Lumina
         }
     };
         
+    // A named float track authored on the clip and sampled by the clip's playhead. Curves ride the
+    // animation graph alongside the pose: blends lerp them, so a value follows whatever the pose does.
+    struct FAnimationCurve
+    {
+        FName Name;
+        SKeyedCurve Curve;
+        FVector4 Color = FVector4(0.4f, 0.75f, 0.95f, 1.0f);
+
+        friend FArchive& operator << (FArchive& Ar, FAnimationCurve& Data)
+        {
+            Ar << Data.Name;
+            Ar << Data.Curve;
+            Ar << Data.Color;
+            return Ar;
+        }
+    };
+
     struct FAnimationResource
     {
         FName Name;
@@ -89,6 +107,7 @@ namespace Lumina
         TVector<FAnimationChannel> Channels;
         TVector<FAnimationNotify> Notifies;
         TVector<FAnimationNotifyState> NotifyStates;
+        TVector<FAnimationCurve> Curves;
 
         // Notify lanes in display order; persisted separately so empty tracks and ordering survive
         // save/reload. A notify references its lane by name (NotifyTrack).
@@ -117,6 +136,11 @@ namespace Lumina
             Ar << Data.NotifyStates;
             Ar << Data.NotifyTracks;
 
+            if (Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::ANIM_CURVES)
+            {
+                Ar << Data.Curves;
+            }
+
             Data.InvalidateResolvedChannelSets();
 
             return Ar;
@@ -138,7 +162,9 @@ namespace Lumina
         friend class CMeshImporter;
         
     public:
-        
+
+        CAnimation();
+
         void Serialize(FArchive& Ar) override;
         
         bool IsAsset() const override { return true; }
@@ -161,6 +187,14 @@ namespace Lumina
         const TVector<FAnimationNotify>& GetNotifies() const { return AnimationResource->Notifies; }
         const TVector<FAnimationNotifyState>& GetNotifyStates() const { return AnimationResource->NotifyStates; }
         bool HasNotifies() const { return !AnimationResource->Notifies.empty() || !AnimationResource->NotifyStates.empty(); }
+
+        const TVector<FAnimationCurve>& GetCurves() const { return AnimationResource->Curves; }
+        bool HasCurves() const { return !AnimationResource->Curves.empty(); }
+
+        int32 FindCurveIndex(const FName& CurveName) const;
+
+        /** Curve value at Time, or Default when the clip has no curve of that name. */
+        float EvaluateCurve(const FName& CurveName, float Time, float Default = 0.0f) const;
 
         PROPERTY(Editable, Category = "Skeleton")
         TObjectPtr<CSkeleton> Skeleton;

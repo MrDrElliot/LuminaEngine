@@ -32,6 +32,19 @@ namespace Lumina
         Contexts.clear();
     }
 
+    void FWorldManager::BeginFrame(double NowSeconds)
+    {
+        LUMINA_PROFILE_SCOPE();
+
+        for (const TUniquePtr<FWorldContext>& Context : Contexts)
+        {
+            if (CWorld* World = Context->World.Get())
+            {
+                World->AdvanceThrottle(NowSeconds);
+            }
+        }
+    }
+
     void FWorldManager::UpdateWorlds(const FUpdateContext& UpdateContext)
     {
         LUMINA_PROFILE_SCOPE();
@@ -39,7 +52,7 @@ namespace Lumina
         for (const TUniquePtr<FWorldContext>& Context : Contexts)
         {
             CWorld* World = Context->World.Get();
-            if (World == nullptr || World->IsSuspended())
+            if (World == nullptr || !World->IsTickingThisFrame())
             {
                 continue;
             }
@@ -55,7 +68,7 @@ namespace Lumina
         // Mirrors ExtractWorlds's filter exactly: a world that will not extract must not have an open
         // window either, or its producers would fill a buffer nobody ever snapshots or resets. Worlds
         // that fail the filter get closed rather than skipped, so a world suspended mid-frame does not
-        // leave its last window open indefinitely.
+        // leave its last window open indefinitely. A throttled frame counts as not extracting.
         for (const TUniquePtr<FWorldContext>& Context : Contexts)
         {
             CWorld* World = Context->World.Get();
@@ -64,7 +77,7 @@ namespace Lumina
                 continue;
             }
 
-            if (World->IsSuspended())
+            if (!World->IsTickingThisFrame())
             {
                 if (FImmediateLineRenderer* Lines = World->GetRenderer()->GetImmediateLines())
                 {
@@ -101,7 +114,7 @@ namespace Lumina
         for (const TUniquePtr<FWorldContext>& Context : Contexts)
         {
             CWorld* World = Context->World.Get();
-            if (World == nullptr || World->IsSuspended())
+            if (World == nullptr || !World->IsTickingThisFrame())
             {
                 continue;
             }
@@ -123,7 +136,7 @@ namespace Lumina
         {
             CWorld* World = Context->World.Get();
             // Skip renderer-less worlds (dedicated server) so the editor never extracts an invisible world.
-            if (World == nullptr || World->IsSuspended() || World->GetRenderer() == nullptr)
+            if (World == nullptr || !World->IsTickingThisFrame() || World->GetRenderer() == nullptr)
             {
                 continue;
             }
@@ -136,12 +149,17 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
         
+        // Preparation for a render that is not happening is waste, and it is not free: FFrameData::
+        // bExtractedThisFrame is cleared at the START of Extract, so a world that stops extracting keeps
+        // it set from its last real frame and PrepareRender's early-out never fires. Gating on the same
+        // condition as the record below also restores what happened before renderers outlived suspension
+        // -- back then a suspended world had no renderer at all and never reached this loop.
         uint32 LiveWorlds = 0;
         for (const TUniquePtr<FWorldContext>& Context : Contexts)
         {
             CWorld* World = Context->World.Get();
             IRenderScene* Renderer = World ? World->GetRenderer() : nullptr;
-            if (Renderer == nullptr)
+            if (Renderer == nullptr || !World->IsTickingThisFrame())
             {
                 continue;
             }
@@ -157,7 +175,10 @@ namespace Lumina
             {
                 return;
             }
-            if (!World->IsSuspended())
+            // Same gate as the prepare loop above, so a world either does both or neither. Skipping the
+            // record leaves SceneViews[0].Output holding the last frame it drew, which is exactly what a
+            // throttled viewport should keep showing -- low frame rate, not frozen.
+            if (World->IsTickingThisFrame())
             {
                 Renderer->RenderView(FrameIndex);
             }

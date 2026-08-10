@@ -1342,7 +1342,7 @@ namespace Lumina
             RenderScene.reset();
         }
     }
-
+    
     void CWorld::SetActive(bool bNewActive)
     {
         if (bActive != bNewActive)
@@ -1351,14 +1351,48 @@ namespace Lumina
 
             if (bActive)
             {
+                // Back before the grace ran out: CreateRenderer no-ops on a live scene, so this is free.
+                // -1 re-arms the idle clock, which ReclaimIdleRenderer stamps on the next idle frame.
                 SuspendedTime = -1.0;
                 CreateRenderer();
                 RmlUi::SetActiveWorld(this);
             }
-            else
-            {
-                DestroyRenderer();
-            }
+        }
+    }
+
+    void CWorld::SetUpdateInterval(double Seconds)
+    {
+        const double Clamped = Seconds > 0.0 ? Seconds : 0.0;
+        if (UpdateIntervalSeconds == Clamped)
+        {
+            return;
+        }
+
+        UpdateIntervalSeconds = Clamped;
+
+        // Deadline in the past = "eligible now". Without this, a tool that had been throttled to 10fps and
+        // is clicked into would still sit out the remainder of its 100ms slot before the first live frame,
+        // which reads as the editor lagging behind the click.
+        NextUpdateTime      = 0.0;
+        bThrottledThisFrame = false;
+    }
+
+    void CWorld::AdvanceThrottle(double NowSeconds)
+    {
+        if (UpdateIntervalSeconds <= 0.0 || !bActive)
+        {
+            bThrottledThisFrame = false;
+            NextUpdateTime      = 0.0;
+            return;
+        }
+
+        bThrottledThisFrame = (NowSeconds < NextUpdateTime);
+        if (!bThrottledThisFrame)
+        {
+            // Anchored to NOW rather than advanced by one interval from the old deadline: a world that was
+            // suspended behind a hidden tab, or an editor that hitched, would otherwise come back owing a
+            // burst of catch-up frames it has no use for.
+            NextUpdateTime = NowSeconds + UpdateIntervalSeconds;
         }
     }
 
@@ -1381,6 +1415,8 @@ namespace Lumina
             return false;
         }
 
+        LUMINA_PROFILE_SCOPE();
+        LOG_INFO("World - Reclaim Idle Renderer");
         DestroyRenderer();
         return true;
     }

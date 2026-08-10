@@ -64,6 +64,8 @@ namespace Lumina
         BoneTransform,   // src:pReg, alpha:sReg, boneIdx:uint16, space:sReg, mode:sReg, T:vec3, R:quat, S:vec3, dst:pReg
         TwoBoneIK,       // src:pReg, alpha:sReg, tx:sReg, ty:sReg, tz:sReg, rootIdx:uint16, midIdx:uint16, endIdx:uint16, pole:vec3, dst:pReg
         Output,          // src:pReg
+        GetCurve,        // src:pReg, curveIdx:uint16, dst:sReg
+        SetCurve,        // src:pReg, curveIdx:uint16, value:sReg, dst:pReg
     };
 
     // Append-only: the enum value is baked into compiled bytecode.
@@ -105,7 +107,8 @@ namespace Lumina
     // so the VM refuses it (bind pose + warning) until the graph is recompiled in the editor.
     // 0 = compiled before versioning existed (pre-sync-group layout). 2 = AdvanceClock syncGroup operand.
     // 3 = SampleBlendSpace opcode inserted after SampleAnim, which renumbers every opcode past it.
-    inline constexpr uint16 kAnimBytecodeVersion = 3;
+    // 4 = GetCurve / SetCurve opcodes, and the curve tables the graph carries for them.
+    inline constexpr uint16 kAnimBytecodeVersion = 4;
 
     // Clips in a sync group advance one shared normalized phase instead of independent clocks, so a
     // walk->run blend samples both clips at the same stride phase (no foot slide). The phase speed
@@ -131,6 +134,9 @@ namespace Lumina
         TVector<float> Parameters;     // current parameter values (editor / Lua driven)
         TVector<FAnimInertializer> Inertializers; // per state machine; transition smoothing state
         TVector<FAnimSyncGroup> SyncGroups;       // shared phase per sync group
+
+        // Curve values the output pose carried this update, indexed by CAnimationGraph::CurveNames.
+        TVector<float> CurveValues;
 
         // Graph this state was sized against; the VM re-initializes the state
         // when the component's graph asset changes underneath it.

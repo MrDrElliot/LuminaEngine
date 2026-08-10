@@ -30,6 +30,7 @@ namespace Lumina
         const ImU32 ColKeyOutline = IM_COL32(20, 20, 24, 255);
         const ImU32 ColTangent = IM_COL32(120, 200, 255, 200);
         const ImU32 ColTangentBroken = IM_COL32(255, 130, 120, 220);
+        const ImU32 ColTimeMarker = IM_COL32(255, 220, 60, 230);
         const ImU32 ColBoxSelect = IM_COL32(120, 180, 240, 40);
         const ImU32 ColBoxSelectBorder = IM_COL32(140, 200, 255, 180);
 
@@ -793,6 +794,17 @@ namespace Lumina
 
     void FCurveEditorWidget::DrawOverlay(ImDrawList* DrawList) const
     {
+        if (bShowTimeMarker)
+        {
+            const float X = CurveToScreen(TimeMarker, 0.0f).x;
+            if (X >= CanvasMin.x && X <= CanvasMax.x)
+            {
+                DrawList->AddLine(ImVec2(X, CanvasMin.y), ImVec2(X, CanvasMax.y), ColTimeMarker, 1.5f);
+                DrawList->AddTriangleFilled(ImVec2(X - 5.0f, CanvasMin.y), ImVec2(X + 5.0f, CanvasMin.y),
+                                            ImVec2(X, CanvasMin.y + 7.0f), ColTimeMarker);
+            }
+        }
+
         char Buffer[96];
         snprintf(Buffer, sizeof(Buffer), "T %.3f   V %.3f   (%d keys, %d selected)",
             MouseCurvePos.x, MouseCurvePos.y, Curve->NumKeys(), (int32)Selection.size());

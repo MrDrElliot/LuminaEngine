@@ -23,8 +23,26 @@ namespace Lumina
         {
             Ar << BytecodeVersion;
         }
+        if (Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::ANIM_CURVES)
+        {
+            Ar << CurveNames;
+            Ar << ClipCurveMaps;
+            Ar << BlendSpaceCurveMaps;
+        }
 
         ResolveTransitionParameters();
+    }
+
+    int32 CAnimationGraph::FindCurveIndex(const FName& Name) const
+    {
+        for (int32 i = 0; i < (int32)CurveNames.size(); ++i)
+        {
+            if (CurveNames[i] == Name)
+            {
+                return i;
+            }
+        }
+        return INDEX_NONE;
     }
 
     int32 CAnimationGraph::FindParameterIndex(const FName& Name) const

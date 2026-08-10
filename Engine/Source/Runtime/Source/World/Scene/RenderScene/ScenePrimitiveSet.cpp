@@ -2,6 +2,8 @@
 #include "ScenePrimitiveSet.h"
 
 #include "Assets/AssetTypes/Mesh/Mesh.h"
+#include "Assets/AssetTypes/Mesh/Skeleton/Skeleton.h"
+#include "Assets/AssetTypes/Mesh/SkeletalMesh/SkeletalMesh.h"
 #include "Assets/AssetTypes/Mesh/StaticMesh/StaticMesh.h"
 #include "Memory/MemoryConcurrentQueue.h"
 #include "TaskSystem/TaskSystem.h"
@@ -316,8 +318,13 @@ namespace Lumina
 
         const uint32 Last = (uint32)Primitives.size() - 1u;
 
-        // Hand this primitive's draw slots back before the entry is overwritten.
+        // Hand this primitive's draw slots and bone slice back before the entry is overwritten. Not folded
+        // into ReleaseBindings: that also runs on a re-bind, where the skeleton has not changed and the
+        // slice must survive.
         ReleaseBindings(Index);
+        FreeBoneRange(Primitives[Index].BoneArenaBase, Primitives[Index].BoneArenaCount);
+        Primitives[Index].BoneArenaBase  = kNoBoneRange;
+        Primitives[Index].BoneArenaCount = 0u;
 
         if (Index != Last)
         {
@@ -465,6 +472,53 @@ namespace Lumina
         InstanceFreeSlots.push_back(Slot);
     }
 
+    uint32 FScenePrimitiveSet::AllocateBoneRange(uint32 Count)
+    {
+        if (Count == 0u)
+        {
+            return kNoBoneRange;
+        }
+
+        auto It = BoneFreeRanges.find(Count);
+        if (It != BoneFreeRanges.end() && !It->second.empty())
+        {
+            const uint32 Base = It->second.back();
+            It->second.pop_back();
+            return Base;
+        }
+
+        const uint32 Base = BoneArenaSize;
+        BoneArenaSize += Count;
+        return Base;
+    }
+
+    void FScenePrimitiveSet::FreeBoneRange(uint32 Base, uint32 Count)
+    {
+        if (Base == kNoBoneRange || Count == 0u)
+        {
+            return;
+        }
+
+        // Never shrinks BoneArenaSize, even when this was the tail range: a base the render scene captured
+        // for a frame still in flight has to stay addressable.
+        BoneFreeRanges[Count].push_back(Base);
+    }
+
+    void FScenePrimitiveSet::EnsureBoneRange(uint32 Index, uint32 Count)
+    {
+        FScenePrimitive& Prim = Primitives[Index];
+
+        if (Prim.BoneArenaCount == Count)
+        {
+            return;
+        }
+
+        FreeBoneRange(Prim.BoneArenaBase, Prim.BoneArenaCount);
+
+        Prim.BoneArenaBase  = AllocateBoneRange(Count);
+        Prim.BoneArenaCount = (Prim.BoneArenaBase == kNoBoneRange) ? 0u : Count;
+    }
+
     void FScenePrimitiveSet::MarkInstanceDirty(uint32 Slot)
     {
         // Already committed to re-sending the whole buffer; tracking individual slots is pure waste.
@@ -585,7 +639,10 @@ namespace Lumina
                 Flags |= EInstanceFlags::CastShadow;
             }
 
-            if (Prim.Surfaces != nullptr && Prim.Source != EPrimitiveSource::SkeletalMesh)
+            // Skeletal primitives are Active now: CullInstances compacts them like everything else, taking
+            // their per-frame LOD ranges and pre-skin slices from FSkinnedFrameData. They used to be held
+            // inactive here and CPU-fed into the head of the visible buffer instead.
+            if (Prim.Surfaces != nullptr)
             {
                 Flags |= EInstanceFlags::Active;
             }
@@ -608,7 +665,12 @@ namespace Lumina
             OutStatic.CustomData              = Prim.CustomData;
             OutStatic.MaterialIndex           = Binding.MaterialIndex;
             OutStatic.EntityID                = Prim.EntityID;
-            OutStatic.BoneOffset              = 0u;
+            // Stable for as long as the primitive holds its skeleton, which is what lets it live in a
+            // payload that only re-uploads on a re-bind. 0 for anything unskinned; the shaders read it
+            // only under EInstanceFlags::Skinned.
+            OutStatic.BoneOffset              = (Prim.BoneArenaBase != kNoBoneRange) ? Prim.BoneArenaBase : 0u;
+            // Still per-frame: assigned from a global budget every frame, so it cannot be stable here.
+            // Phase 2 moves the claim onto the GPU and drops these two fields from this payload.
             OutStatic.SkinnedVertexBase       = 0u;
             OutStatic.ShadowSkinnedVertexBase = 0u;
 
@@ -726,6 +788,49 @@ namespace Lumina
             if (Have.BatchIndex            != Want.BatchIndex
              || Have.SurfaceDescIndex      != Want.SurfaceDescIndex
              || Have.MaterialIndex         != Want.MaterialIndex
+             || Have.MaterialFlags         != Want.MaterialFlags
+             || Have.bMaterialCastsShadows != Want.bMaterialCastsShadows)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // The memo above is keyed on a resolve handle, and dynamic meshes have none. They also re-resolve
+    // their materials IN PLACE, into the same FDynamicMeshRenderData::Surfaces vector, so not one of the
+    // three identity fields RefreshPrimitiveData compares can move when a material recompiles: the
+    // vector's address is unchanged, the handle is always INVALID_MESH_RESOLVE_HANDLE, and the generation
+    // is always 0. Their bindings have to be compared against the surfaces themselves.
+    //
+    // Everything BindSurfaces would produce is compared here except InstanceSlot (the rebind reallocates
+    // it) and SurfaceDescIndex: the LOD table half of a surface is written only by Commit, which always
+    // publishes a fresh FDynamicMeshRenderData, so a change there already moves the Surfaces pointer.
+    bool FScenePrimitiveSet::BindingsMatchSurfaces(uint32 Index, const TVector<FResolvedSurface>& Surfaces) const
+    {
+        const FScenePrimitive& Prim = Primitives[Index];
+
+        if (Prim.SurfaceCount != (uint32)Surfaces.size())
+        {
+            return false;
+        }
+
+        for (uint32 s = 0; s < Prim.SurfaceCount; ++s)
+        {
+            const FSurfaceBinding&  Have = Bindings[Prim.BindingBase + s];
+            const FResolvedSurface& Want = Surfaces[s];
+
+            if (Have.BatchIndex >= Batches.Num())
+            {
+                return false;
+            }
+
+            // Compares the batch's KEY rather than calling FindOrAddBatch: this runs on primitives that
+            // have usually not changed, and FindOrAdd would mint a batch on the miss that BindSurfaces is
+            // about to mint anyway.
+            if (!(Batches.Get(Have.BatchIndex).Key == Want.BatchKey)
+             || Have.MaterialIndex         != Want.MaterialIdx
              || Have.MaterialFlags         != Want.MaterialFlags
              || Have.bMaterialCastsShadows != Want.bMaterialCastsShadows)
             {
@@ -854,6 +959,8 @@ namespace Lumina
         Prim.EntityID = entt::to_integral(Prim.Entity);
 
         bool bResolved = false;
+        // Set by sources whose (Surfaces, Handle, Generation) triple cannot report their own change.
+        bool bContentChanged = false;
 
         switch (Prim.Source)
         {
@@ -878,6 +985,15 @@ namespace Lumina
                     ReadCommonMeshState(Prim, Cull, *C);
                     Base     = C;
                     LiveMesh = (const void*)C->SkeletalMesh.Get();
+
+                    // Claimed here rather than at bind: the slice is keyed to the SKELETON, so it must
+                    // survive a material re-bind and must be re-sized when the mesh itself changes. Serial
+                    // by construction -- only the structural sync path reaches this.
+                    const CSkeletalMesh*     SkelMesh = C->SkeletalMesh.Get();
+                    const FSkeletonResource* SkelRes  = (SkelMesh != nullptr && SkelMesh->Skeleton.IsValid())
+                                                      ? SkelMesh->Skeleton->GetSkeletonResource()
+                                                      : nullptr;
+                    EnsureBoneRange(Index, SkelRes != nullptr ? (uint32)SkelRes->GetNumBones() : 0u);
                 }
 
                 Prim.LocalCenter          = Base->CachedLocalCenter;
@@ -944,6 +1060,11 @@ namespace Lumina
                 Prim.Surfaces          = &Data->Surfaces;
                 Prim.ResolveGeneration = 0;
                 bResolved              = true;
+
+                // The identity test below is blind here -- see BindingsMatchSurfaces. Without this, a
+                // material recompile re-resolved the surfaces (new FShaderH, new batch key) and the
+                // primitive kept drawing through its old binding, i.e. last build's shader.
+                bContentChanged = !BindingsMatchSurfaces(Index, Data->Surfaces);
             }
             break;
 
@@ -953,7 +1074,8 @@ namespace Lumina
 
         const bool bSurfacesChanged = (Prim.Surfaces != OldSurfaces)
                                    || (Prim.ResolveHandle != OldHandle)
-                                   || (Prim.ResolveGeneration != OldGen);
+                                   || (Prim.ResolveGeneration != OldGen)
+                                   || bContentChanged;
         if (bSurfacesChanged)
         {
             BindSurfaces(Index);
@@ -1196,6 +1318,10 @@ namespace Lumina
         DeadBindings = 0;
         LinksByEntityIndex.clear();
         SkinnedCount = 0;
+        // Every BoneArenaBase died with the primitives, so the arena restarts empty rather than leaking
+        // every live range into the free lists.
+        BoneFreeRanges.clear();
+        BoneArenaSize = 0;
         RetainedCullEntries.clear();
         RetainedTransforms.clear();
         RetainedStatic.clear();
@@ -1715,6 +1841,10 @@ namespace Lumina
         DeadBindings = 0;
         LinksByEntityIndex.clear();
         SkinnedCount = 0;
+        // Every BoneArenaBase died with the primitives, so the arena restarts empty rather than leaking
+        // every live range into the free lists.
+        BoneFreeRanges.clear();
+        BoneArenaSize = 0;
         RetainedCullEntries.clear();
         RetainedTransforms.clear();
         RetainedStatic.clear();

@@ -46,14 +46,10 @@ namespace Lumina
         FUNCTION(Script)
         bool WasNotifyTriggered(const FName& NotifyName) const
         {
-            for (const FAnimNotifyEvent& Event : NotifyEvents)
+            return std::ranges::any_of(NotifyEvents, [&NotifyName](const FAnimNotifyEvent& Event)
             {
-                if (Event.Name == NotifyName)
-                {
-                    return true;
-                }
-            }
-            return false;
+                return Event.Name == NotifyName;
+            });
         }
 
         // Parameter access below writes the VM's own register table. When the entity also has an
@@ -80,6 +76,17 @@ namespace Lumina
         /** True if the graph declares a parameter with the given name. */
         FUNCTION(Script)
         bool HasParameter(const FName& ParameterName) const;
+
+        // Curve values are produced by the graph's own evaluation (clips carry the keys, blends weight
+        // them), so they are read-only here: the last evaluated frame's value of the output pose.
+
+        /** Value the named animation curve carried into the output pose this frame. */
+        FUNCTION(Script)
+        float GetCurveValue(const FName& CurveName, float Default = 0.0f) const;
+
+        /** True if the graph carries a curve slot with the given name. */
+        FUNCTION(Script)
+        bool HasCurve(const FName& CurveName) const;
 
         // Sizes VMState from the current graph if it has not been initialized
         // yet, so Lua / the system can set parameters before the VM's first tick.

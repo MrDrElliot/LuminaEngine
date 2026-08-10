@@ -139,6 +139,11 @@ namespace Lumina
         ChannelSets.clear();
     }
 
+    CAnimation::CAnimation()
+        : AnimationResource(MakeUnique<FAnimationResource>())
+    {
+    }
+
     void CAnimation::Serialize(FArchive& Ar)
     {
         CObject::Serialize(Ar);
@@ -149,6 +154,25 @@ namespace Lumina
         }
 
         Ar << *AnimationResource;
+    }
+
+    int32 CAnimation::FindCurveIndex(const FName& CurveName) const
+    {
+        const TVector<FAnimationCurve>& Curves = AnimationResource->Curves;
+        for (int32 i = 0; i < (int32)Curves.size(); ++i)
+        {
+            if (Curves[i].Name == CurveName)
+            {
+                return i;
+            }
+        }
+        return INDEX_NONE;
+    }
+
+    float CAnimation::EvaluateCurve(const FName& CurveName, float Time, float Default) const
+    {
+        const int32 Index = FindCurveIndex(CurveName);
+        return Index != INDEX_NONE ? AnimationResource->Curves[Index].Curve.Evaluate(Time) : Default;
     }
 
     void CAnimation::SamplePose(float Time, FSkeletonResource* RESTRICT InSkeleton, TVector<FMatrix4>& RESTRICT OutBoneTransforms) const

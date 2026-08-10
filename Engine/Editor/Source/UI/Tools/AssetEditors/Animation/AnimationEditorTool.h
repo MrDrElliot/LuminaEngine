@@ -4,6 +4,7 @@
 #include <imgui.h>
 
 #include "ImGuizmo.h"
+#include "UI/CurveEditor/CurveEditorWidget.h"
 #include "UI/Tools/AssetEditors/AssetEditorTool.h"
 
 namespace Lumina
@@ -45,7 +46,13 @@ namespace Lumina
         void DrawTransport(SSimpleAnimationComponent* AnimComp, float Duration);
         void DrawNotifyTimeline(CAnimation* Animation, SSimpleAnimationComponent* AnimComp, float Duration);
         void DrawNotifyInspector(CAnimation* Animation);
-        void DrawCurveEditor(CAnimation* Animation, SSimpleAnimationComponent* AnimComp, float Duration);
+        void DrawCurvesTab(CAnimation* Animation, SSimpleAnimationComponent* AnimComp, float Duration);
+        void DrawFloatCurves(CAnimation* Animation, SSimpleAnimationComponent* AnimComp, float Duration);
+        void DrawBoneChannels(CAnimation* Animation, SSimpleAnimationComponent* AnimComp, float Duration);
+
+        // Curve data helpers
+        void AddCurve(FAnimationResource* Resource);
+        void DeleteCurve(FAnimationResource* Resource, int32 Index);
 
         // Notify data helpers
         void  EnsureNotifyTracks(FAnimationResource* Resource);
@@ -89,6 +96,11 @@ namespace Lumina
 
         // Curve view
         int  SelectedChannel = -1;
+        int  SelectedCurve   = -1;
+
+        // Edits the selected authored curve. Rebound every frame: adding or removing a curve can move
+        // the array the bound pointer points into.
+        FCurveEditorWidget CurveWidget;
 
         ImGuizmo::OPERATION GuizmoOp = ImGuizmo::TRANSLATE;
         entt::entity DirectionalLightEntity = entt::null;

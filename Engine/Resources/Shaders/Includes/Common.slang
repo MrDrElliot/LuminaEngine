@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Shared/SharedConstants.h"
 
@@ -437,14 +437,24 @@ struct FInstanceStatic
 // the draw path blends bones inline. The CPU reserves the value, so a wrapped base cannot collide.
 static const uint kNoPreSkinBase = 0xFFFFFFFFu;
 
-// Mirror of Lumina::FSkinDescriptor. One per rendered-LOD meshlet; drives the skinning dispatch.
-struct FSkinDescriptor
+// Mirror of Lumina::FSkinnedFrameData. Per-frame values for one SKINNED instance slot, indexed by RETAINED
+// slot: what FInstanceStatic cannot hold because it re-uploads only on a re-bind. The LOD ranges travel with
+// the pre-skin bases deliberately -- the slice was assigned against this pick, and a view that re-selected a
+// different LOD would pre-skin one LOD's meshlets while the raster read another's vertices.
+struct FSkinnedFrameData
 {
-    FMeshletHeader* MeshletHeader;
-    uint            BoneOffset;
-    uint            SkinnedVertexBase;  // combined: compacted base - vertex span start
-    uint            MeshletIndex;       // index into Header.Meshlets (one descriptor per meshlet)
-    uint            Pad;
+    // CullData.MeshletDrawTag as of the writing frame. The array is never cleared, so a slot whose tag does
+    // not match was not gathered this frame and must not be emitted.
+    uint FrameTag;
+    uint SurfaceMeshletOffset;
+    uint SurfaceMeshletCount;
+    uint ShadowMeshletOffset;
+    uint ShadowMeshletCount;
+    uint MeshletTotalCount;
+    uint SkinnedVertexBase;
+    uint ShadowSkinnedVertexBase;
+
+    bool IsFromFrame(uint ExpectedTag) { return FrameTag == ExpectedTag && ExpectedTag != 0u; }
 };
 
 // Mirror of Lumina::FTransform3x4: affine with the always-(0,0,0,1) last row dropped. The rows are
@@ -653,6 +663,48 @@ struct FGPUReflectionProbe
     // A probe waiting in the bake queue owns a slice but has nothing in it. Skip rather than sample: it
     // would consume influence and return black, darkening instead of letting the sky cover the pixel.
     property bool   IsBaked      { get { return CapturePosition.w > 0.5; }}
+};
+
+// One spline control point, world space. 64 B, must match FGPUSplinePoint.
+struct FGPUSplinePoint
+{
+    float3 Location;      float Roll;   // Roll in degrees
+    float3 ArriveTangent; float _Pad0;
+    float3 LeaveTangent;  float _Pad1;
+    float3 Scale;         float _Pad2;
+};
+
+// One entry of a spline's arc-length table. 64 B, must match FGPUSplineSample.
+// Entries are uniform in DISTANCE (not in curve key), which is what lets a lookup be a divide.
+struct FGPUSplineSample
+{
+    float3 Position; float DistanceAlong;
+    float3 Tangent;  float Key;    // curve key (0..NumSegments) this sample landed on
+    float3 Up;       float Roll;   // degrees
+    float3 Scale;    float _Pad;
+};
+
+static const uint SPLINE_FLAG_CLOSED_LOOP = 1u;
+
+// Header for one uploaded spline; points and samples are slices of two shared arrays. 160 B,
+// must match FGPUSpline.
+struct FGPUSpline
+{
+    float4x4 LocalToWorld;
+    float4x4 WorldToLocal;
+    uint     PointOffset;
+    uint     PointCount;
+    uint     SampleOffset;
+    uint     SampleCount;
+    float    TotalLength;
+    uint     Flags;
+    uint     EntityID;
+    uint     _Pad;
+
+    property bool IsClosedLoop { get { return (Flags & SPLINE_FLAG_CLOSED_LOOP) != 0u; }}
+    // Segment count in key space -- the upper bound of FGPUSplineSample::Key. Must match
+    // SSplineComponent::GetNumSegments: fewer than two points is zero segments, closed or not.
+    property uint NumSegments  { get { return PointCount < 2u ? 0u : (IsClosedLoop ? PointCount : PointCount - 1u); }}
 };
 
 static const float kProbeShapeBox    = 0.0;

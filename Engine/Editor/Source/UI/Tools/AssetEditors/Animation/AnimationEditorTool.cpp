@@ -257,7 +257,11 @@ namespace Lumina
             "  anim:BindNotifyState(\"Trail\", onBegin, onTick, onEnd)\n"
             "Bindings are per-entity and fire as the playhead crosses the notify.");
         DrawHelpTextRow("Curves",
-            "The Curves tab plots the raw sampled keyframes per bone channel for inspection.");
+            "Float Curves are named value tracks authored on the clip. Add one, scrub the playhead and "
+            "type a value to key it, or edit keys and tangents directly in the curve view. They blend "
+            "through the animation graph with the pose: read one with a Get Curve node, or from script "
+            "with GetCurveValue(\"Name\").\n"
+            "Bone Channels plots the imported per-bone keyframes for inspection (read-only).");
     }
 
     void FAnimationEditorTool::DrawToolMenu(const FUpdateContext& UpdateContext)
@@ -344,7 +348,7 @@ namespace Lumina
 
             if (ImGui::BeginTabItem(LE_ICON_CHART_BELL_CURVE " Curves"))
             {
-                DrawCurveEditor(Animation, AnimComp, Duration);
+                DrawCurvesTab(Animation, AnimComp, Duration);
                 ImGui::EndTabItem();
             }
 
@@ -888,7 +892,196 @@ namespace Lumina
         }
     }
 
-    void FAnimationEditorTool::DrawCurveEditor(CAnimation* Animation, SSimpleAnimationComponent* AnimComp, float Duration)
+    void FAnimationEditorTool::AddCurve(FAnimationResource* Resource)
+    {
+        FAnimationCurve Curve;
+        Curve.Name  = FName(std::format("Curve {}", (int)Resource->Curves.size()).c_str());
+        Curve.Color = PaletteColor((int32)Resource->Curves.size());
+        Resource->Curves.push_back(Curve);
+
+        SelectedCurve = (int)Resource->Curves.size() - 1;
+        MarkAnimationDirty();
+    }
+
+    void FAnimationEditorTool::DeleteCurve(FAnimationResource* Resource, int32 Index)
+    {
+        if (Index < 0 || Index >= (int32)Resource->Curves.size())
+        {
+            return;
+        }
+
+        Resource->Curves.erase(Resource->Curves.begin() + Index);
+        SelectedCurve = Math::Min(SelectedCurve, (int)Resource->Curves.size() - 1);
+        CurveWidget.SetCurve(nullptr);
+        MarkAnimationDirty();
+    }
+
+    void FAnimationEditorTool::DrawCurvesTab(CAnimation* Animation, SSimpleAnimationComponent* AnimComp, float Duration)
+    {
+        if (ImGui::BeginTabBar("##CurveTabs", ImGuiTabBarFlags_None))
+        {
+            if (ImGui::BeginTabItem(LE_ICON_CHART_LINE " Float Curves"))
+            {
+                DrawFloatCurves(Animation, AnimComp, Duration);
+                ImGui::EndTabItem();
+            }
+
+            if (ImGui::BeginTabItem(LE_ICON_BONE " Bone Channels"))
+            {
+                DrawBoneChannels(Animation, AnimComp, Duration);
+                ImGui::EndTabItem();
+            }
+
+            ImGui::EndTabBar();
+        }
+    }
+
+    void FAnimationEditorTool::DrawFloatCurves(CAnimation* Animation, SSimpleAnimationComponent* AnimComp, float Duration)
+    {
+        FAnimationResource* Resource = Animation->GetAnimationResource();
+
+        ImGui::BeginChild("CurveList", ImVec2(240, 0), true);
+        if (ImGui::Button(LE_ICON_PLUS " Curve", ImVec2(-1, 0)))
+        {
+            AddCurve(Resource);
+        }
+        ImGui::Separator();
+
+        for (int i = 0; i < (int)Resource->Curves.size(); ++i)
+        {
+            FAnimationCurve& Curve = Resource->Curves[i];
+            ImGui::PushID(i);
+
+            const ImVec2 RowPos = ImGui::GetCursorScreenPos();
+            if (ImGui::Selectable(std::format("      {}", Curve.Name.c_str()).c_str(), SelectedCurve == i))
+            {
+                SelectedCurve = i;
+            }
+
+            const float RowHeight = ImGui::GetItemRectSize().y;
+            ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(RowPos.x + 2, RowPos.y + 3),
+                                                      ImVec2(RowPos.x + 12, RowPos.y + RowHeight - 3),
+                                                      ToU32(Curve.Color), 2.0f);
+
+            if (ImGui::BeginPopupContextItem("curve_ctx"))
+            {
+                SelectedCurve = i;
+
+                static char RenameBuf[128];
+                if (ImGui::IsWindowAppearing())
+                {
+                    snprintf(RenameBuf, sizeof(RenameBuf), "%s", Curve.Name.c_str());
+                }
+                ImGui::SetNextItemWidth(180);
+                if (ImGui::InputText("Name", RenameBuf, sizeof(RenameBuf), ImGuiInputTextFlags_EnterReturnsTrue))
+                {
+                    Curve.Name = FName(RenameBuf);
+                    MarkAnimationDirty();
+                }
+
+                if (ImGui::MenuItem(LE_ICON_CONTENT_COPY " Duplicate"))
+                {
+                    FAnimationCurve Copy = Curve;
+                    Copy.Name = FName((FString(Curve.Name.c_str()) + " Copy").c_str());
+                    Resource->Curves.push_back(Copy);
+                    SelectedCurve = (int)Resource->Curves.size() - 1;
+                    MarkAnimationDirty();
+                    ImGui::EndPopup();
+                    ImGui::PopID();
+                    break;
+                }
+
+                if (ImGui::MenuItem(LE_ICON_DELETE " Delete"))
+                {
+                    DeleteCurve(Resource, i);
+                    ImGui::EndPopup();
+                    ImGui::PopID();
+                    break;
+                }
+                ImGui::EndPopup();
+            }
+            ImGui::PopID();
+        }
+
+        if (Resource->Curves.empty())
+        {
+            ImGui::TextDisabled("No curves.");
+            ImGui::TextDisabled("Add one, then read it");
+            ImGui::TextDisabled("with a Get Curve node.");
+        }
+        ImGui::EndChild();
+
+        ImGui::SameLine();
+
+        ImGui::BeginChild("CurvePanel", ImVec2(0, 0), true);
+        if (SelectedCurve < 0 || SelectedCurve >= (int)Resource->Curves.size())
+        {
+            ImGui::TextDisabled("Select a curve to edit its keys.");
+            CurveWidget.SetCurve(nullptr);
+            ImGui::EndChild();
+            return;
+        }
+
+        FAnimationCurve& Curve = Resource->Curves[SelectedCurve];
+
+        char NameBuf[128];
+        snprintf(NameBuf, sizeof(NameBuf), "%s", Curve.Name.c_str());
+        ImGui::SetNextItemWidth(180);
+        if (ImGui::InputText("##CurveName", NameBuf, sizeof(NameBuf)))
+        {
+            Curve.Name = FName(NameBuf);
+            MarkAnimationDirty();
+        }
+
+        ImVec4 Col(Curve.Color.x, Curve.Color.y, Curve.Color.z, Curve.Color.w);
+        ImGui::SameLine();
+        if (ImGui::ColorEdit4("##CurveColor", &Col.x, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel))
+        {
+            Curve.Color = FVector4(Col.x, Col.y, Col.z, Col.w);
+            MarkAnimationDirty();
+        }
+
+        // Re-keying at the playhead is the primary authoring gesture: scrub, type a value, done.
+        const float PlayheadTime = SnapTime(AnimComp->CurrentTime, Duration);
+        float ValueAtPlayhead = Curve.Curve.Evaluate(PlayheadTime);
+
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(120);
+        if (ImGui::DragFloat("##CurveValue", &ValueAtPlayhead, 0.01f, 0.0f, 0.0f, "%.3f"))
+        {
+            Curve.Curve.UpdateOrAddKey(PlayheadTime, ValueAtPlayhead);
+            Curve.Curve.ComputeAutoTangents();
+            MarkAnimationDirty();
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+        {
+            ImGui::SetTooltip("Value at the playhead. Editing keys the curve at %.3fs.", PlayheadTime);
+        }
+
+        ImGui::SameLine();
+        if (ImGui::Button(LE_ICON_PLUS " Key"))
+        {
+            Curve.Curve.UpdateOrAddKey(PlayheadTime, ValueAtPlayhead);
+            Curve.Curve.ComputeAutoTangents();
+            MarkAnimationDirty();
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+        {
+            ImGui::SetTooltip("Key the current value at the playhead (%.3fs)", PlayheadTime);
+        }
+
+        ImGui::SameLine();
+        ImGui::TextDisabled("%d keys", Curve.Curve.NumKeys());
+
+        CurveWidget.SetCurve(&Curve.Curve);
+        CurveWidget.SetOnModified([this]() { MarkAnimationDirty(); });
+        CurveWidget.SetTimeMarker(AnimComp->CurrentTime);
+        CurveWidget.Draw("AnimCurve");
+
+        ImGui::EndChild();
+    }
+
+    void FAnimationEditorTool::DrawBoneChannels(CAnimation* Animation, SSimpleAnimationComponent* AnimComp, float Duration)
     {
         FAnimationResource* Resource = Animation->GetAnimationResource();
 

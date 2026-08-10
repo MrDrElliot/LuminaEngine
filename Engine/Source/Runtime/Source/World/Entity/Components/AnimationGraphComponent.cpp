@@ -67,4 +67,25 @@ namespace Lumina
     {
         return Graph.IsValid() && Graph->FindParameterIndex(ParameterName) != INDEX_NONE;
     }
+
+    float SAnimationGraphComponent::GetCurveValue(const FName& CurveName, float Default) const
+    {
+        if (!Graph.IsValid())
+        {
+            return Default;
+        }
+
+        const int32 Index = Graph->FindCurveIndex(CurveName);
+        if (Index == INDEX_NONE || Index >= (int32)VMState.CurveValues.size())
+        {
+            return Default;
+        }
+
+        return VMState.CurveValues[Index];
+    }
+
+    bool SAnimationGraphComponent::HasCurve(const FName& CurveName) const
+    {
+        return Graph.IsValid() && Graph->FindCurveIndex(CurveName) != INDEX_NONE;
+    }
 }

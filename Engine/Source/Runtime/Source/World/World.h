@@ -351,6 +351,19 @@ namespace Lumina
         void SetActive(bool bNewActive);
         bool IsSuspended() const { return !bActive; }
 
+        /**
+         * Seconds between this world's frames while throttled; 0 runs it every frame.
+         */
+        void SetUpdateInterval(double Seconds);
+        double GetUpdateInterval() const { return UpdateIntervalSeconds; }
+
+        /**
+         * Whether this world runs its phases this frame. Decided once per frame in FWorldManager::BeginFrame
+         * and read by every phase after it. Update runs seven times a frame (once per update stage), so a
+         * gate re-evaluated per call could let a world through some stages and not others and half-tick it.
+         */
+        bool IsTickingThisFrame() const { return bActive && !bThrottledThisFrame; }
+
         // Frees the render scene once suspended longer than GraceSeconds. Returns true when it
         // actually reclaimed, so callers can budget one stall/frame.
         bool ReclaimIdleRenderer(double NowSeconds, double GraceSeconds);
@@ -689,8 +702,16 @@ namespace Lumina
         // Engine-clock time this world last went suspended; -1 while active. Drives idle-reclaim grace.
         double                                              SuspendedTime = -1.0;
 
+        // Throttle state. Interval 0 means every frame; NextUpdateTime is the engine-clock deadline the
+        // next frame is allowed at, and AdvanceThrottle (FWorldManager::BeginFrame) latches the decision.
+        double                                              UpdateIntervalSeconds = 0.0;
+        double                                              NextUpdateTime = 0.0;
+
+        void AdvanceThrottle(double NowSeconds);
+
         uint32                                              bPaused:1 = true;
         uint32                                              bActive:1 = true;
+        uint32                                              bThrottledThisFrame:1 = false;
         
         
         EWorldType                                          WorldType = EWorldType::None;

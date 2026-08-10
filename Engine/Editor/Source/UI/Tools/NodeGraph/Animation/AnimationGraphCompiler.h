@@ -27,7 +27,7 @@ namespace Lumina
 
     // Bytecode-emission backend: nodes call Emit*/Alloc*/Add* during CompileGraph, BuildGraph then
     // stamps the program, resource tables, and register sizing into the runtime CAnimationGraph asset.
-    class FAnimationGraphCompiler
+    class EDITOR_API FAnimationGraphCompiler
     {
     public:
 
@@ -38,6 +38,10 @@ namespace Lumina
 
         // Registers a blend space and returns its index; dedups identical assets.
         uint16 AddBlendSpace(CBlendSpace* BlendSpace);
+
+        // Registers a curve slot and returns its index; dedups by name. Referenced clips register their
+        // authored curves automatically, so this is only needed for names a node reads or writes.
+        int32 AddCurve(const FName& Name);
 
         // Registers an exposed parameter and returns its index; dedups by name.
         // A name collision with a different type reports an error and returns the existing index.
@@ -79,6 +83,11 @@ namespace Lumina
         // Registers a compiled state machine and emits its eval opcode. The machine's
         // StatePoseRegisters / *Slot fields must be filled by the caller. Returns the resolved-pose register.
         uint16 EmitEvalStateMachine(FAnimGraphStateMachine&& StateMachine);
+
+        // Reads a curve slot off an incoming pose into a scalar register; writes one onto a pose,
+        // returning the destination pose register (which forwards the source's pose unchanged).
+        uint16 EmitGetCurve(uint16 SrcPoseReg, uint16 CurveIndex);
+        uint16 EmitSetCurve(uint16 SrcPoseReg, uint16 CurveIndex, uint16 ValueReg);
 
         void   EmitOutput(uint16 PoseReg);
         void   EmitHalt();
@@ -149,6 +158,9 @@ namespace Lumina
 
     private:
 
+        // Resolves a clip's authored curves to graph curve slots, registering names as it goes.
+        FAnimGraphClipCurveMap BuildClipCurveMap(CAnimation* Clip);
+
         template <typename T>
         void Write(const T& Value)
         {
@@ -162,6 +174,10 @@ namespace Lumina
         TVector<TObjectPtr<CAnimation>>         Clips;
         TVector<TObjectPtr<CBlendSpace>>        BlendSpaces;
         TVector<FName>                          SyncGroupNames;
+        TVector<FName>                          CurveNames;
+        THashMap<FName, int32>                  CurveNameToIndex;
+        TVector<FAnimGraphClipCurveMap>         ClipCurveMaps;
+        TVector<FAnimGraphBlendSpaceCurveMap>   BlendSpaceCurveMaps;
         TVector<FAnimGraphParameter>            Parameters;
         TVector<FAnimGraphBoneMask>             BoneMasks;
         THashMap<FName, int32>                  BoneMaskNameToIndex;
