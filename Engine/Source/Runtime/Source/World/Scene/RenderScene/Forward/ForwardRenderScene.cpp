@@ -3218,15 +3218,16 @@ namespace Lumina
                                  (SIZE_T)FrameVisibleInstanceCapacity * sizeof(FGPUInstance), 1.25f,
                                  VisibleInstanceLowUsage[Slot]);
 
-            // One (base, count) per (visible instance, view) -- exactly the domain BuildMeshletBlocks
-            // already dispatches over, so it cannot be undersized relative to its reader. Never cleared:
-            // CullInstances writes every view of every slot it claims, zero included.
             const SIZE_T InstanceViewRangeSize = Math::Max<SIZE_T>(
                 sizeof(uint32) * 2,
                 (SIZE_T)FrameVisibleInstanceCapacity * (SIZE_T)Math::Max(NumCullViews, 1u) * sizeof(uint32) * 2);
-
-            ResizeBufferIfNeeded(InstanceViewRangeRing[Slot], InstanceViewRangeSize, 1.25f,
-                                 InstanceViewRangeRingLowUsage[Slot]);
+            
+            const RHI::GPUPtr PrevViewRanges = InstanceViewRangeRing[Slot].Ptr;
+            ResizeBufferIfNeeded(InstanceViewRangeRing[Slot], InstanceViewRangeSize, 1.25f, InstanceViewRangeRingLowUsage[Slot]);
+            if (InstanceViewRangeRing[Slot] && InstanceViewRangeRing[Slot].Ptr != PrevViewRanges)
+            {
+                RHI::CmdMemset(CL, InstanceViewRangeRing[Slot].Ptr, InstanceViewRangeRing[Slot].GetSize(), 0u);
+            }
 
             // Only the GPU knows how many blocks were appended, so its counter (lagged by the frames in flight)
             // sizes this as a high-water mark that only grows.
@@ -10405,6 +10406,147 @@ namespace Lumina
         }
     }
 
+    namespace
+    {
+        // Same predicate and the same operand order as FrustumContainsSphere in Culling.slang, over the
+        // same plane data. Deliberately not FFrustum::IntersectsSphere: that one carries an SoA tail the
+        // GPU mirror does not have, and the two must agree exactly on the boundary case.
+        FORCEINLINE bool CullPlanesContainSphere(const FVector4* Planes, const FVector3& Center, float Radius)
+        {
+            for (int i = 0; i < 6; ++i)
+            {
+                const float Dist = Planes[i].x * Center.x + Planes[i].y * Center.y + Planes[i].z * Center.z + Planes[i].w;
+                if (Dist < -Radius)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        // Mirror of IsInstanceVisibleToView (Culling.slang) for the CPU-fed skinned head. The cascade Hi-Z
+        // reject is deliberately absent -- it needs the pyramid, which only the GPU has. Omitting it can
+        // only KEEP more, never drop, and what it keeps still fits the per-view bucket seed, which reserves
+        // max(SurfaceMeshletCount, ShadowMeshletCount) per skinned instance per view.
+        bool IsSkinnedInstanceVisibleToView(const FCullView& View, uint32 ViewFlags, const FGPUFrustum* CascadeFrustums,
+                                            const FVector3& Center, float Radius, bool bNoCull, bool bCaster)
+        {
+            // Outside the NoCull gate: NoCull suppresses visibility culling, not whether the instance casts.
+            if ((ViewFlags & ECullViewFlags::CastShadowOnly) != 0u && !bCaster)
+            {
+                return false;
+            }
+
+            if (bNoCull)
+            {
+                return true;
+            }
+
+            if ((ViewFlags & ECullViewFlags::Frustum) != 0u
+                && !CullPlanesContainSphere(View.FrustumPlanes, Center, Radius))
+            {
+                return false;
+            }
+
+            if ((ViewFlags & ECullViewFlags::Cascade) != 0u)
+            {
+                // The cascade's own ortho box barely separates one cascade from the next (the fitted spheres
+                // nest); CascadeFrustum is the camera slice swept toward the sun, which does not.
+                const uint32 CascadeIndex = Math::Min(View.CascadeIndex, (uint32)NumCascades - 1u);
+                if (!CullPlanesContainSphere(CascadeFrustums[CascadeIndex].Planes, Center, Radius))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+    }
+
+    void FForwardRenderScene::UploadSkinnedViewRanges(RHI::FCmdListH CL, const FFrameData& Frame,
+                                                      uint32 NumSkinned, uint32 NumViews, uint32 NumBatches)
+    {
+        const FSceneBuffer Ranges = GetInstanceViewRanges();
+        if (!Ranges || NumSkinned == 0u || NumViews == 0u)
+        {
+            return;
+        }
+
+        // The slab is sized FrameVisibleInstanceCapacity * NumCullViews and the skinned head occupies the
+        // first NumSkinned visible slots, so the pairs are contiguous at the base and always fit. Clamped
+        // anyway: writing fewer pairs costs skinned geometry, writing past the end corrupts a neighbour.
+        SIZE_T Pairs = (SIZE_T)NumSkinned * (SIZE_T)NumViews;
+        if (Pairs * sizeof(FUIntVector2) > Ranges.GetSize())
+        {
+            static uint32 ClampLogCount = 0;
+            if (ClampLogCount++ < 4u)
+            {
+                LOG_WARN("RenderScene: instance-view range slab holds {} pairs but the skinned head needs "
+                         "{} ({} instances x {} views). Skinned geometry will be dropped this frame.",
+                         Ranges.GetSize() / sizeof(FUIntVector2), Pairs, NumSkinned, NumViews);
+            }
+            Pairs = Ranges.GetSize() / sizeof(FUIntVector2);
+        }
+
+        InstanceViewRangeSeedScratch.assign(Pairs, FUIntVector2{ 0u, 0u });
+
+        // Written by ProcessDirectionalLight earlier this frame, and uploaded just before the cull dispatch.
+        const FGPUFrustum* CascadeFrustums = Frame.SceneGlobalData.CullData.CascadeFrustum;
+
+        for (uint32 i = 0; i < NumSkinned; ++i)
+        {
+            const FGPUInstance& Inst = Frame.Geometry.Instances[i];
+
+            const FVector3 Center{ Inst.SphereBounds.x, Inst.SphereBounds.y, Inst.SphereBounds.z };
+            const float    Radius = Inst.SphereBounds.w;
+
+            const uint32 Flags   = (Inst.DrawIDAndFlags >> 16) & 0xFFFFu;
+            const uint32 DrawID  = Inst.DrawIDAndFlags & 0xFFFFu;
+            const bool   bNoCull = (Flags & (uint32)EInstanceFlags::IgnoreOcclusionCulling) != 0u;
+            const bool   bCaster = (Flags & (uint32)EInstanceFlags::CastShadow) != 0u;
+
+            // End of the last LOD: the bound CullInstances publishes for its own slots, and the one
+            // BuildMeshletBlocks then inherits rather than re-deriving.
+            const uint32 MeshletTotal = Inst.MeshletTotalCount;
+
+            for (uint32 v = 0; v < NumViews; ++v)
+            {
+                const SIZE_T PairIndex = (SIZE_T)i * NumViews + v;
+                if (PairIndex >= Pairs)
+                {
+                    break;
+                }
+
+                const FCullView& View  = Frame.Views.CullViews[v];
+                const uint32 ViewFlags = GetCullViewFlags(View);
+
+                if (!IsSkinnedInstanceVisibleToView(View, ViewFlags, CascadeFrustums, Center, Radius, bNoCull, bCaster))
+                {
+                    continue;   // stays (0, 0) -- CullInstances writes that same zero for an invisible pair
+                }
+
+                // A skinned instance publishes kNoSurfaceDescIndex, so bSelectPerView is false in
+                // CullInstances and no view re-selects a LOD: the pick is whatever ResolveSurfaceLOD /
+                // ResolveShadowLOD already resolved into the instance. That is why there is no cascade
+                // LOD branch here to mirror.
+                const bool   bShadowView = (ViewFlags & ECullViewFlags::CastShadowOnly) != 0u;
+                const uint32 Base        = bShadowView ? Inst.ShadowMeshletOffset : Inst.SurfaceMeshletOffset;
+                const uint32 Count       = bShadowView ? Inst.ShadowMeshletCount  : Inst.SurfaceMeshletCount;
+
+                // Clamped here so the builder inherits a range that is already in bounds, exactly as
+                // CullInstances clamps its own.
+                const uint32 Emitted = (Count == 0u || Base >= MeshletTotal || DrawID >= NumBatches)
+                                     ? 0u
+                                     : Math::Min(Count, MeshletTotal - Base);
+
+                InstanceViewRangeSeedScratch[PairIndex] = FUIntVector2{ Base, Emitted };
+            }
+        }
+
+        WriteBuffer(CL, Ranges.GetAddress(), InstanceViewRangeSeedScratch.data(),
+                    Pairs * sizeof(FUIntVector2));
+    }
+
     void FForwardRenderScene::DispatchGPUSceneCull(RHI::FCmdListH CL, const FFrameData& Frame)
     {
         static const FShaderH CullInstancesShader = FShaderLibrary::Get("CullInstances.slang");
@@ -10559,6 +10701,12 @@ namespace Lumina
         {
             WriteBuffer(CL, VisibleInstanceRing[Slot].GetAddress(),
                         Frame.Geometry.Instances.data(), (SIZE_T)NumSkinned * sizeof(FGPUInstance));
+
+            // CullInstances writes the range slab only for the slots it CLAIMS, and its append cursor is
+            // seeded past this head (the Counters write below), so nothing in that dispatch ever covers
+            // these pairs. BuildMeshletBlocks indexes the slab straight from its flat thread id, so an
+            // unwritten pair hands it a stale range belonging to a different mesh.
+            UploadSkinnedViewRanges(CL, Frame, NumSkinned, NumCullViews, NumBatches);
         }
 
         {

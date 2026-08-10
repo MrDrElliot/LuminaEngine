@@ -101,13 +101,7 @@ namespace Lumina
         #else
         constexpr bool bDebugUtils = true;
         #endif
-
-        #if defined(LUMINA_WITH_GPU_VALIDATION)
-        bool bGpuValidation = true;
-        #else
-        bool bGpuValidation = false;
-        #endif
-
+        
         if (GCommandLine != nullptr)
         {
             if (GCommandLine->Has("validation"))
@@ -118,20 +112,19 @@ namespace Lumina
             {
                 bValidation = false;
             }
-            if (GCommandLine->Has("gpuvalidation"))
-            {
-                bGpuValidation = true;
-            }
-            if (GCommandLine->Has("nogpuvalidation"))
-            {
-                bGpuValidation = false;
-            }
         }
-        
-        bGpuValidation = false;
-        bValidation = bValidation || bGpuValidation;
 
-        RHI::CreateDevice(RHI::FDeviceDesc{ bValidation, bDebugUtils, bGpuValidation });
+        // Designated, NOT positional. FDeviceDesc's third field is bHeadless; a positional
+        // `{ bValidation, bDebugUtils, bValidation }` quietly built a headless device whenever validation
+        // was on, and headless skips the GLFW surface extensions and VK_KHR_swapchain -- which the two
+        // lines below then need. GPU-AV is no longer a separate field; it follows bValidation inside
+        // CreateDevice.
+        RHI::CreateDevice(RHI::FDeviceDesc
+        {
+            .bValidation = bValidation,
+            .bDebugUtils = bDebugUtils,
+            .bHeadless   = false,
+        });
         RHI::Core::Initialize();
 
         ShaderLibrary   = Memory::New<FShaderLibrary>();

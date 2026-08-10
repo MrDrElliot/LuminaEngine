@@ -1051,11 +1051,20 @@ namespace Lumina
         // Skinned contribution replicated across views, staged once per frame for the V*D upload.
         TVector<FRenderBucketGPU>                           BucketSeedScratch;
 
+        // (base, count) per (skinned instance, view) for the CPU-fed head of the visible buffer, which
+        // CullInstances never claims and therefore never writes a range for.
+        TVector<FUIntVector2>                               InstanceViewRangeSeedScratch;
+
         FSceneBuffer GetVisibleInstances()  const { return VisibleInstanceRing[CurrentFrameSlot]; }
         FSceneBuffer GetCullCounters()      const { return CullCounterRing[CurrentFrameSlot]; }
 
 
         void DispatchGPUSceneCull(RHI::FCmdListH CL, const FFrameData& Frame);
+
+        // Mirrors CullInstances' per-view (base, count) decision for the CPU-fed skinned head, which that
+        // dispatch skips. Must run before BuildMeshletBlocks reads the slab.
+        void UploadSkinnedViewRanges(RHI::FCmdListH CL, const FFrameData& Frame,
+                                     uint32 NumSkinned, uint32 NumViews, uint32 NumBatches);
 
         void PublishRetainedUpload();
 

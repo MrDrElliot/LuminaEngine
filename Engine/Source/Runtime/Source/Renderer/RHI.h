@@ -430,11 +430,6 @@ namespace Lumina::RHI
     {
         bool bValidation    = false;
         bool bDebugUtils    = true;
-        bool bGpuValidation = false;
-
-        /** No window system: skips the GLFW surface extensions and VK_KHR_swapchain. A headless device
-         *  cannot present, so CreateSurface / CreateSwapchain / Present are off the table -- everything
-         *  else works. For test harnesses and dedicated servers, which have no GLFW instance at all. */
         bool bHeadless      = false;
     };
 

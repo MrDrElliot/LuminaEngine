@@ -27,10 +27,12 @@ namespace
             "  --test=<G.Name>    Run exactly one test. Use this to bisect anything that can take the\n"
             "                     device down -- it is the smallest workload the harness can submit.\n"
             "  --novalidation     Bring the device up without the validation layer.\n"
-            "  --gpuvalidation    Add GPU-assisted validation (instruments shaders; much slower).\n"
+            "  --nogpuvalidation  Drop GPU-assisted validation (on by default, as in the engine).\n"
             "\n"
-            "The RHI's own GPU-AV knobs work here too, e.g. --novalidate=instrument to skip the SPIR-V\n"
-            "rewrite, --validate=descriptor, or --maxinstrumented=N to bisect which shader breaks.\n"
+            "GPU-AV runs by default with its SPIR-V shader instrumentation OFF -- buffer, copy, indirect\n"
+            "and index checks without the rewrite that takes the device down on specialized compute.\n"
+            "The RHI's own knobs work here: --validate=instrument re-enables the rewrite,\n"
+            "--validate=descriptor, --maxinstrumented=N to bisect which shader breaks.\n"
             "\n"
             "Every test records its own command list and submits it on its own, so a validation error\n"
             "or a device loss is attributable to a single RHI call.\n");
@@ -57,7 +59,6 @@ int main(int ArgC, char** ArgV)
     const char* GroupFilter = nullptr;
     const char* TestFilter  = nullptr;
     bool bValidation        = true;
-    bool bGpuValidation     = false;
 
     for (int i = 1; i < ArgC; ++i)
     {
@@ -74,11 +75,6 @@ int main(int ArgC, char** ArgV)
         if (std::strcmp(ArgV[i], "--novalidation") == 0)
         {
             bValidation = false;
-            continue;
-        }
-        if (std::strcmp(ArgV[i], "--gpuvalidation") == 0)
-        {
-            bGpuValidation = true;
             continue;
         }
         if (std::strncmp(ArgV[i], "--group=", 8) == 0)
@@ -103,15 +99,11 @@ int main(int ArgC, char** ArgV)
     // when it is null. The flags parse, print nothing, and change nothing.
     FCommandLine ParsedCommandLine{ ArgC, ArgV };
     GCommandLine = &ParsedCommandLine;
-    
-    bValidation = bValidation || bGpuValidation;
-    
 
     RHI::CreateDevice(RHI::FDeviceDesc
     {
         .bValidation    = bValidation,
         .bDebugUtils    = true,
-        .bGpuValidation = bGpuValidation,
         .bHeadless      = true,
     });
     RHI::Core::Initialize();
@@ -123,10 +115,6 @@ int main(int ArgC, char** ArgV)
     if (!bValidation)
     {
         LOG_WARN("Validation layer disabled: tests can only report their own assertion failures.");
-    }
-    if (bGpuValidation)
-    {
-        LOG_INFO("GPU-assisted validation ON.");
     }
     LOG_INFO("");
 

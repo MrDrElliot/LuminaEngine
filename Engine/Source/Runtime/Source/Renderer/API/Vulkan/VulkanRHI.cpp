@@ -529,6 +529,9 @@ namespace Lumina::RHI
         uint32                          NumSharedQueueFamilies = 0;
         bool                            bHasAsyncComputeQueue = false;
         bool                            bHasAsyncTransferQueue = false;
+        // No surface extensions and no VK_KHR_swapchain were requested. Checked by the presentation
+        // entry points so a headless device fails with a sentence rather than a null dispatch call.
+        bool                            bHeadless = false;
 
         VkDescriptorPool                DescriptorPool;
         VkDescriptorSetLayout           DescriptorLayout;
@@ -641,12 +644,12 @@ namespace Lumina::RHI
         {
             return nullptr;
         }
-        return &*It;
+        return It;
     }
 
     static TAtomic<FValidationHandlerFn> GValidationHandler{nullptr};
     static TAtomic<void*>                GValidationHandlerUserData{nullptr};
-
+    
     void SetValidationHandler(FValidationHandlerFn Handler, void* UserData)
     {
         GValidationHandlerUserData.store(UserData, std::memory_order_relaxed);
@@ -963,6 +966,7 @@ namespace Lumina::RHI
     {
         GDevice = new FDeviceImpl{};
         GDevice->CrashTracker = MakeUnique<FVulkanCrashTracker>();
+        GDevice->bHeadless    = DeviceDesc.bHeadless;
 
         // GLFW is only consulted for the window-system bits. A headless caller has no GLFW instance at
         // all, so asking it anything here would report failure on a perfectly good driver.
@@ -1005,12 +1009,6 @@ namespace Lumina::RHI
                 if (LayerCount == 0)
                 {
                     LOG_WARN("Vulkan validation requested but VK_LAYER_KHRONOS_validation is not installed.");
-
-                    if (DeviceDesc.bGpuValidation)
-                    {
-                        LOG_ERROR("GPU-assisted validation was requested but the validation layer is missing, "
-                                  "so no shader will be instrumented. Install the Vulkan SDK or unset the flag.");
-                    }
                 }
             }
 
@@ -1167,29 +1165,24 @@ namespace Lumina::RHI
 
             AddSetting("syncval_message_extra_properties", ResolveCheck("syncdetail", true) ? kEnable : kDisable);
 
-            if (DeviceDesc.bGpuValidation)
+            if (DeviceDesc.bValidation)
             {
                 AddSetting("gpuav_enable", kEnable);
 
                 struct FCheck { const char* Setting; const char* Token; bool bDefault; };
                 static constexpr FCheck kChecks[] =
                 {
-                    { "gpuav_shader_instrumentation",          "instrument",       true  },
+                    { "gpuav_shader_instrumentation",          "instrument",       false },
 
                     { "gpuav_descriptor_checks",               "descriptor",       false },
-
                     { "gpuav_buffer_address_oob",              "bda",              true  },
-
                     { "gpuav_post_process_descriptor_indexing","postprocess",      false },
-
                     { "gpuav_buffers_validation",              "buffers",          true  },
                     { "gpuav_indirect_draws_buffers",          "indirectdraw",     true  },
                     { "gpuav_indirect_dispatches_buffers",     "indirectdispatch", true  },
                     { "gpuav_index_buffers",                   "indexbuffer",      true  },
                     { "gpuav_buffer_copies",                   "buffercopy",       true  },
-
                     { "gpuav_image_layout",                    "imagelayout",      true  },
-
                     { "gpuav_reserve_binding_slot",            "slot",             true  },
                 };
 
@@ -1197,38 +1190,9 @@ namespace Lumina::RHI
                 {
                     AddSetting(Check.Setting, ResolveCheck(Check.Token, Check.bDefault) ? kEnable : kDisable);
                 }
-
-                // UINT32, not INT32: the layer type-checks this and warns that the value "may be parsed
-                // incorrectly" if it arrives as a signed setting.
+                
                 static constexpr uint32 kMaxTrackedAddresses = 65536;
                 AddUIntSetting("gpuav_max_buffer_device_addresses", kMaxTrackedAddresses);
-
-                // Only emitted when explicitly asked for. Both are debug-the-instrumentation switches that
-                // some validation-layer builds do not carry, and sending an unknown setting name costs a
-                // VALIDATION-SETTINGS warning on every single launch. Opting in still warns -- which is the
-                // correct signal that the installed layer has no such setting.
-                if (ResolveCheck("validateinstrumented", false))
-                {
-                    AddSetting("gpuav_debug_validate_instrumented_shaders", kEnable);
-                }
-                if (ResolveCheck("printinstrumentation", false))
-                {
-                    AddSetting("gpuav_debug_print_instrumentation_info", kEnable);
-                }
-
-                static uint32 MaxInstrumentations = 0;
-                if (GCommandLine != nullptr)
-                {
-                    if (const TOptional<int> Limit = GCommandLine->GetInt("maxinstrumented"))
-                    {
-                        MaxInstrumentations = (uint32)Limit.value();
-                    }
-                }
-                if (MaxInstrumentations != 0)
-                {
-                    AddUIntSetting("gpuav_debug_max_instrumentations_count", MaxInstrumentations);
-                    LOG_WARN("Vulkan RHI - instrumenting at most {} shader(s) (--maxinstrumented).", MaxInstrumentations);
-                }
             }
             else
             {
@@ -1824,18 +1788,6 @@ namespace Lumina::RHI
             const uint32 APIVer = GDevice->Properties.apiVersion;
             LOG_TRACE("Vulkan RHI - {} - API: {}.{}.{} - Validation: {}", GDevice->Properties.deviceName,
                 VK_API_VERSION_MAJOR(APIVer), VK_API_VERSION_MINOR(APIVer), VK_API_VERSION_PATCH(APIVer), DeviceDesc.bValidation);
-            
-            if (DeviceDesc.bGpuValidation)
-            {
-                LOG_WARN("Vulkan RHI - GPU-assisted validation is ON. Shaders are instrumented, frame rate "
-                         "will drop sharply, and a driver fault may belong to the instrumentation rather "
-                         "than to the engine. Re-run with --nogpuvalidation to rule it out.");
-
-                LOG_WARN("Vulkan RHI - buffer-address range checks are ON. Both descriptor-indexing "
-                         "checks are OFF: each was measured reporting written descriptors as "
-                         "uninitialized on this bindless heap. --validate=descriptor / "
-                         "--validate=postprocess brings either back.");
-            }
         }
 
         if (DeviceDesc.bValidation || DeviceDesc.bDebugUtils)
@@ -3836,6 +3788,8 @@ namespace Lumina::RHI
             VkImageViewCreateInfo ViewInfo
             {
                 .sType    = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                .pNext    = nullptr,
+                .flags    = 0,
                 .image    = Raw[i],
                 .viewType = VK_IMAGE_VIEW_TYPE_2D,
                 .format   = Format,
@@ -3886,6 +3840,16 @@ namespace Lumina::RHI
 
     FSurfaceH CreateSurface(void* WindowHandle)
     {
+        if (GDevice->bHeadless)
+        {
+            ShowVulkanInitFailure("Headless Device Cannot Present",
+                "CreateSurface was called on a device created with FDeviceDesc::bHeadless. That device "
+                "requested neither the window-system instance extensions nor VK_KHR_swapchain, so it can "
+                "never present. Check for a POSITIONAL FDeviceDesc initialiser -- bHeadless is the third "
+                "field, and a stray third argument sets it.");
+            std::abort();
+        }
+
         FSurface Surface{};
         Surface.Window = WindowHandle;
 
@@ -3996,6 +3960,7 @@ namespace Lumina::RHI
         VkImageMemoryBarrier2 Barrier
         {
             .sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+            .pNext               = nullptr,
             .srcStageMask        = SrcStage,
             .srcAccessMask       = SrcAccess,
             .dstStageMask        = DstStage,
@@ -4053,6 +4018,7 @@ namespace Lumina::RHI
         VkSemaphoreSubmitInfo WaitInfo
         {
             .sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+            .pNext     = nullptr,
             .semaphore = SC.CurrentAcquire,
             .stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
         };
@@ -4068,6 +4034,8 @@ namespace Lumina::RHI
         VkSubmitInfo2 Submit
         {
             .sType                    = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+            .pNext                    = nullptr,
+            .flags                    = 0, 
             .waitSemaphoreInfoCount   = SC.CurrentAcquire != VK_NULL_HANDLE ? 1u : 0u,
             .pWaitSemaphoreInfos      = &WaitInfo,
             .commandBufferInfoCount   = 1,
@@ -4082,11 +4050,13 @@ namespace Lumina::RHI
         VkPresentInfoKHR PresentInfo
         {
             .sType              = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+            .pNext              = nullptr,
             .waitSemaphoreCount = 1,
             .pWaitSemaphores    = &PresentSem,
             .swapchainCount     = 1,
             .pSwapchains        = &SC.Swapchain,
             .pImageIndices      = &SC.CurrentImageIndex,
+            .pResults           = nullptr
         };
 
         const VkResult Result = vkQueuePresentKHR(GraphicsQueue, &PresentInfo);
@@ -4114,9 +4084,9 @@ namespace Lumina::RHI
                 FCommandList& CommandList = GDevice->CommandLists[Reused];
                 CommandList.CurrentIndexBuffer = 0;
                 CommandList.CurrentIndexType = VK_INDEX_TYPE_UINT32;
-#if defined(TRACY_ENABLE)
+                #if defined(TRACY_ENABLE)
                 CommandList.GPUZoneDepth = 0;
-#endif
+                #endif
                 CommandList.BreadcrumbDepth = 0;
 
                 // Already in the initial state: ResetCommandList reset the pool when it recycled the list.
@@ -4303,14 +4273,14 @@ namespace Lumina::RHI
         {
             const FCommandList& CommandList = GDevice->CommandLists[CommandLists[i]];
 
-#if defined(TRACY_ENABLE)
+            #if defined(TRACY_ENABLE)
             if (Queue != EQueueType::Graphics
                 && i + 1 == CommandLists.size()
                 && GTracyOwnedContexts[(uint32)Queue] != nullptr)
             {
                 TracyVkCollect(GTracyOwnedContexts[(uint32)Queue], CommandList.CommandBuffer);
             }
-#endif
+            #endif
 
             vkEndCommandBuffer(CommandList.CommandBuffer);
 
