@@ -15,7 +15,7 @@ namespace Lumina::RHI
     constexpr auto kImageBindingSlot            = 1;
     constexpr auto kRWImageBindingSlot          = 2;
 
-    constexpr auto kFramesInFlight              = 3;
+    constexpr auto kFramesInFlight              = 2;
     constexpr auto kMaxTextureHeapSize          = INT16_MAX;
     constexpr auto kMaxNumSamplers              = 4000;
     constexpr auto kMaxNumTextureHeaps          = 1024;
