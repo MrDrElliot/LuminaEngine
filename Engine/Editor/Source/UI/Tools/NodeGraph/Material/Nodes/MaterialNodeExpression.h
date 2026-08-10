@@ -34,8 +34,7 @@ namespace Lumina
         // Draws the F2 rename field in place of the title, writing Out on commit.
         void DrawParameterRename(FName& Out);
 
-        // Transient (deliberately not a PROPERTY, so it never serializes): true only while this node's
-        // title bar is an edit field.
+        // true only while this node's title bar is an edit field.
         bool bRenamingParameter = false;
     };
 

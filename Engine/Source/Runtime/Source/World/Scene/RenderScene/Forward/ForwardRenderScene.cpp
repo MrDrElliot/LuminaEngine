@@ -3285,7 +3285,7 @@ namespace Lumina
 
         // Grown, never shrunk while primitives are live: a base handed out earlier has to stay addressable,
         // and the arena size only rises within a level. bAllowShrink off for exactly that reason.
-        ResizeBufferIfNeeded(BoneArenaBuffer, ArenaBytes, 1.25f, BoneArenaLowUsage, /*bAllowShrink*/ false);
+        ResizeBufferIfNeeded(CL, BoneArenaBuffer, ArenaBytes, 1.25f, BoneArenaLowUsage, /*bAllowShrink*/ false);
         if (!BoneArenaBuffer)
         {
             return;
@@ -3357,26 +3357,13 @@ namespace Lumina
 
         LUMINA_PROFILE_SECTION("Upload Skinned Frame Data");
 
-        const RHI::GPUPtr PrevSkinnedData = SkinnedFrameDataBuffer.Ptr;
-        ResizeBufferIfNeeded(SkinnedFrameDataBuffer, Data.size() * sizeof(FSkinnedFrameData), 1.25f,
+        ResizeBufferIfNeeded(CL, SkinnedFrameDataBuffer, Data.size() * sizeof(FSkinnedFrameData), 1.25f,
                              SkinnedFrameDataLowUsage);
-        ResizeBufferIfNeeded(SkinnedSlotListBuffer, Slots.size() * sizeof(uint32), 1.5f,
+        ResizeBufferIfNeeded(CL, SkinnedSlotListBuffer, Slots.size() * sizeof(uint32), 1.5f,
                              SkinnedSlotListLowUsage);
         if (!SkinnedFrameDataBuffer || !SkinnedSlotListBuffer)
         {
             return;
-        }
-
-        if (SkinnedFrameDataBuffer.Ptr != PrevSkinnedData)
-        {
-            // A fresh allocation holds whatever the last owner left, and only the slots gathered THIS frame
-            // are written below. Zeroing makes every other slot's tag 0, which IsFromFrame rejects outright
-            // -- garbage that happened to equal the current tag would emit a wild meshlet range.
-            RHI::CmdMemset(CL, SkinnedFrameDataBuffer.Ptr, SkinnedFrameDataBuffer.GetSize(), 0u);
-
-            // Transfer->TRANSFER: the coalesced copies below write this same allocation, and a
-            // write-after-write between two transfer writes is not ordered by any Transfer->Compute barrier.
-            Barriers::TransferToTransfer(CL);
         }
 
         WriteBuffer(CL, SkinnedSlotListBuffer.GetAddress(), Slots.data(), Slots.size() * sizeof(uint32));
@@ -3487,18 +3474,13 @@ namespace Lumina
             NumArgSlots * (SIZE_T)kMeshletSliceCount * (SIZE_T)MeshSubDrawsPerSlice
                 * sizeof(RHI::FDrawMeshTasksIndirectArguments));
 
-        ResizeBufferIfNeeded(PreSkinnedVerticesBuffer, PreSkinnedSize, 1.2f, PreSkinnedVerticesLowUsage);
+        ResizeBufferIfNeeded(CL, PreSkinnedVerticesBuffer, PreSkinnedSize, 1.2f, PreSkinnedVerticesLowUsage);
         PreSkinnedVertexCapacity = (uint32)Math::Min<uint64>(
             PreSkinnedVerticesBuffer.GetSize() / sizeof(FPreSkinnedVertex), 0xFFFFFFFFull);
         {
             const uint8 Slot = CurrentFrameSlot;
-            ResizeBufferIfNeeded(MeshDrawArgsRing[Slot], MeshDrawArgsSize, 1.2f, MeshDrawArgsRingLowUsage[Slot]);
-            const RHI::GPUPtr PrevDrawList = MeshletDrawListRing[Slot].Ptr;
-            ResizeBufferIfNeeded(MeshletDrawListRing[Slot], MeshletDrawListSize, 1.2f, MeshletDrawListRingLowUsage[Slot]);
-            if (MeshletDrawListRing[Slot] && MeshletDrawListRing[Slot].Ptr != PrevDrawList)
-            {
-                RHI::CmdMemset(CL, MeshletDrawListRing[Slot].Ptr, MeshletDrawListRing[Slot].GetSize(), 0u);
-            }
+            ResizeBufferIfNeeded(CL, MeshDrawArgsRing[Slot], MeshDrawArgsSize, 1.2f, MeshDrawArgsRingLowUsage[Slot]);
+            ResizeBufferIfNeeded(CL, MeshletDrawListRing[Slot], MeshletDrawListSize, 1.2f, MeshletDrawListRingLowUsage[Slot]);
             DrawListCapacity = (uint32)Math::Min<uint64>(MeshletDrawListRing[Slot].GetSize() / (sizeof(uint32) * 2), 0xFFFFFFFFull);
 
             // No skinned head to add on any more: skeletal primitives hold retained slots like everything
@@ -3515,7 +3497,7 @@ namespace Lumina
 
             FrameVisibleInstanceCapacity = Math::Min(VisibleCapacityWanted, VisibleCapacityMax);
 
-            ResizeBufferIfNeeded(VisibleInstanceRing[Slot],
+            ResizeBufferIfNeeded(CL, VisibleInstanceRing[Slot],
                                  (SIZE_T)FrameVisibleInstanceCapacity * sizeof(FGPUInstance), 1.25f,
                                  VisibleInstanceLowUsage[Slot]);
 
@@ -3523,13 +3505,7 @@ namespace Lumina
                 sizeof(uint32) * 2,
                 (SIZE_T)FrameVisibleInstanceCapacity * (SIZE_T)Math::Max(NumCullViews, 1u) * sizeof(uint32) * 2);
             
-            const RHI::GPUPtr PrevViewRanges = InstanceViewRangeRing[Slot].Ptr;
-            ResizeBufferIfNeeded(InstanceViewRangeRing[Slot], InstanceViewRangeSize, 1.25f, InstanceViewRangeRingLowUsage[Slot]);
-            if (InstanceViewRangeRing[Slot] && InstanceViewRangeRing[Slot].Ptr != PrevViewRanges)
-            {
-                RHI::CmdMemset(CL, InstanceViewRangeRing[Slot].Ptr, InstanceViewRangeRing[Slot].GetSize(), 0u);
-
-            }
+            ResizeBufferIfNeeded(CL, InstanceViewRangeRing[Slot], InstanceViewRangeSize, 1.25f, InstanceViewRangeRingLowUsage[Slot]);
 
             // Only the GPU knows how many blocks were appended, so its counter (lagged by the frames in flight)
             // sizes this as a high-water mark that only grows.
@@ -3538,7 +3514,7 @@ namespace Lumina
             const SIZE_T MeshletBlockSize = Math::Max<SIZE_T>(
                 sizeof(uint32) * 2,
                 (SIZE_T)Math::Max<uint32>(BlockListHighWater, 1u) * sizeof(uint32) * 2);
-            ResizeBufferIfNeeded(MeshletBlockRing[Slot], MeshletBlockSize, 1.2f, MeshletBlockRingLowUsage[Slot]);
+            ResizeBufferIfNeeded(CL, MeshletBlockRing[Slot], MeshletBlockSize, 1.2f, MeshletBlockRingLowUsage[Slot]);
             BlockListCapacity = (uint32)Math::Min<uint64>(MeshletBlockRing[Slot].GetSize() / (sizeof(uint32) * 2), 0xFFFFFFFFull);
 
             // The requirement is what the frame kFramesInFlight ago needed; the capacity is what this frame
@@ -3809,13 +3785,11 @@ namespace Lumina
 
             const uint32 BatchIndex = Binding.BatchIndex;
 
+            // Counted only to mark the batch touched, so PrepareCounters knows what to reset.
             if (Local.DrawInstanceCounts[BatchIndex]++ == 0u)
             {
                 Local.TouchedSlots.push_back(BatchIndex);
             }
-            const uint32 SeedMeshlets = Math::Max(SurfaceMeshletCount, ShadowMeshletCount);
-            Local.DrawMeshletCounts[BatchIndex] += SeedMeshlets;
-            Local.DrawBlockCounts[BatchIndex]   += (SeedMeshlets + (RHI::kMeshletCullGroupSize - 1u)) / RHI::kMeshletCullGroupSize;
             Local.BatchSkinFlags[Binding.BatchIndex] |=
                 EnumHasAnyFlags(Flags, EInstanceFlags::Skinned) ? 1u : 2u;
 
@@ -3998,7 +3972,6 @@ namespace Lumina
         uint32& NumDrawsPerView         = Frame.Views.NumDrawsPerView;
 
         const uint32 NumThreads = (uint32)ThreadLocal.size();
-        const uint32 NumSlots   = ScenePrimitives.GetBatches().Num();   // one draw per batch
 
         DeferredMaterials.clear();
 
@@ -4007,12 +3980,10 @@ namespace Lumina
         TVector<FUIntVector2>& BoneUploadRanges = Frame.Geometry.BoneUploadRanges;
         BoneUploadRanges.clear();
 
-        uint32 TotalInstances = 0;
         uint64 TotalInstancesCulled = 0;
         for (uint32 t = 0; t < NumThreads; ++t)
         {
             FThreadLocalDrawData& Local = ThreadLocal[t];
-            TotalInstances += (uint32)Local.Items.size();
             TotalInstancesCulled += Local.Stats.NumInstancesCulled;
 
             for (FEntityRecord& Rec : Local.EntityRecords)
@@ -4029,46 +4000,13 @@ namespace Lumina
         }
         FrameStats.NumInstancesCulled += TotalInstancesCulled;
 
-        const uint32 SlotCapacity = Math::Max(NumSlots, 1u);
-        MergeDrawInstanceCounts.assign(SlotCapacity, 0u);
-        MergeMeshletCountsPerDraw.assign(SlotCapacity, 0u);
-        MergeBlockCountsPerDraw.assign(SlotCapacity, 0u);
-        MergeDrawInstanceOffsets.assign(SlotCapacity, 0u);
-
-        for (uint32 t = 0; t < NumThreads; ++t)
-        {
-            FThreadLocalDrawData& Local = ThreadLocal[t];
-            if (!Local.bTouched)
-            {
-                continue;
-            }
-
-            for (uint32 Slot : Local.TouchedSlots)
-            {
-                // Running total so far == this thread's offset within the slot's instance block.
-                Local.DrawWriteBase[Slot]        = MergeDrawInstanceCounts[Slot];
-                MergeDrawInstanceCounts[Slot]   += Local.DrawInstanceCounts[Slot];
-                MergeMeshletCountsPerDraw[Slot] += Local.DrawMeshletCounts[Slot];
-                MergeBlockCountsPerDraw[Slot]   += Local.DrawBlockCounts[Slot];
-            }
-        }
-
         FSceneBatchRegistry& Registry = ScenePrimitives.GetBatches();
         const uint32 NumBatches = Registry.Num();
 
         DrawCommands.clear();
 
-        uint32 InstanceRunning = 0u;
-
         for (uint32 b = 0; b < NumBatches; ++b)
         {
-            if (b < SlotCapacity)
-            {
-                MergeDrawInstanceOffsets[b] = InstanceRunning;
-                InstanceRunning += MergeDrawInstanceCounts[b];
-
-            }
-
             const FSceneBatchRegistry::FBatch& Batch = Registry.Get(b);
 
             uint8 SkinFlags = 0u;
@@ -5486,7 +5424,7 @@ namespace Lumina
         const uint8  Slot     = CurrentFrameSlot;
         const uint32 NumPairs = NumSkinned * 2u;
 
-        ResizeBufferIfNeeded(SkinWorkBaseRing[Slot], (uint64)NumPairs * sizeof(uint32), 1.5f,
+        ResizeBufferIfNeeded(CL, SkinWorkBaseRing[Slot], (uint64)NumPairs * sizeof(uint32), 1.5f,
                              SkinWorkBaseLowUsage[Slot]);
         if (!SkinWorkBaseRing[Slot] || !GetSkinDispatchArgs()
             || !SkinnedSlotListBuffer || !SkinnedFrameDataBuffer || !RetainedStaticBuffer)
@@ -6318,7 +6256,7 @@ namespace Lumina
         uint32                          _Pad1;
     };
 
-    bool FForwardRenderScene::BuildDeferredMaterialBinning()
+    bool FForwardRenderScene::BuildDeferredMaterialBinning(RHI::FCmdListH CL)
     {
         const FFrameData& Frame = *RenderFrame;
 
@@ -6404,9 +6342,9 @@ namespace Lumina
 
         const uint64 PixelListSize = (uint64)Extent.x * (uint64)Extent.y * sizeof(uint32);
 
-        ResizeBufferIfNeeded(MaterialClassifyRing[CurrentFrameSlot], sizeof(FMaterialClassifyBlock), 1.0f,
+        ResizeBufferIfNeeded(CL, MaterialClassifyRing[CurrentFrameSlot], sizeof(FMaterialClassifyBlock), 1.0f,
                              MaterialClassifyRingLowUsage[CurrentFrameSlot], /*bAllowShrink*/ false);
-        ResizeBufferIfNeeded(MaterialPixelListRing[CurrentFrameSlot], PixelListSize, 1.2f,
+        ResizeBufferIfNeeded(CL, MaterialPixelListRing[CurrentFrameSlot], PixelListSize, 1.2f,
                              MaterialPixelListRingLowUsage[CurrentFrameSlot]);
 
         if (!GetMaterialClassify() || !GetMaterialPixelList())
@@ -6445,7 +6383,7 @@ namespace Lumina
             return;
         }
 
-        if (!BuildDeferredMaterialBinning())
+        if (!BuildDeferredMaterialBinning(CL))
         {
             return;
         }
@@ -10603,9 +10541,9 @@ namespace Lumina
             const SIZE_T TransformBytes = Math::Max<SIZE_T>(sizeof(FTransform3x4),      (SIZE_T)RetainedSlots * sizeof(FTransform3x4));
             const SIZE_T StaticBytes    = Math::Max<SIZE_T>(sizeof(FInstanceStatic),    (SIZE_T)RetainedSlots * sizeof(FInstanceStatic));
 
-            ResizeBufferIfNeeded(RetainedCullEntryBuffer, CullBytes,      1.5f, RetainedCullEntryLowUsage, Upload.bFull);
-            ResizeBufferIfNeeded(RetainedTransformBuffer, TransformBytes, 1.5f, RetainedTransformLowUsage, Upload.bFull);
-            ResizeBufferIfNeeded(RetainedStaticBuffer,    StaticBytes,    1.5f, RetainedStaticLowUsage,    Upload.bFull);
+            ResizeBufferIfNeeded(CL, RetainedCullEntryBuffer, CullBytes,      1.5f, RetainedCullEntryLowUsage, Upload.bFull);
+            ResizeBufferIfNeeded(CL, RetainedTransformBuffer, TransformBytes, 1.5f, RetainedTransformLowUsage, Upload.bFull);
+            ResizeBufferIfNeeded(CL, RetainedStaticBuffer,    StaticBytes,    1.5f, RetainedStaticLowUsage,    Upload.bFull);
 
             // Two-phase occlusion state, keyed by retained slot and therefore sized with these. A grow
             // reallocates, so the contents are undefined until the pre-late clear runs -- harmless, since
@@ -10613,7 +10551,7 @@ namespace Lumina
             // resize frame is not a different frame.
             const SIZE_T VisBytes = Math::Max<SIZE_T>(sizeof(uint32), (SIZE_T)RetainedSlots * sizeof(uint32));
             const SIZE_T VisBefore = InstanceVisibilityBuffer ? InstanceVisibilityBuffer.GetSize() : 0;
-            ResizeBufferIfNeeded(InstanceVisibilityBuffer, VisBytes, 1.5f, InstanceVisibilityLowUsage);
+            ResizeBufferIfNeeded(CL, InstanceVisibilityBuffer, VisBytes, 1.5f, InstanceVisibilityLowUsage);
 
             InstanceVisibilityCapacity = InstanceVisibilityBuffer
                                        ? (uint32)Math::Min<uint64>(InstanceVisibilityBuffer.GetSize() / sizeof(uint32), 0xFFFFFFFFull)
@@ -10682,7 +10620,7 @@ namespace Lumina
             const SIZE_T DescBytes = Math::Max<SIZE_T>(sizeof(FSurfaceDescGPU), (SIZE_T)NumDescs * sizeof(FSurfaceDescGPU));
             const RHI::GPUPtr PrevDescs = SurfaceDescBuffer.Ptr;
             // Same reasoning as above: a reclaim would drop descriptors this frame may not be re-sending.
-            ResizeBufferIfNeeded(SurfaceDescBuffer, DescBytes, 1.5f, SurfaceDescLowUsage, Upload.bSurfaceDescsChanged);
+            ResizeBufferIfNeeded(CL, SurfaceDescBuffer, DescBytes, 1.5f, SurfaceDescLowUsage, Upload.bSurfaceDescsChanged);
 
             if (SurfaceDescBuffer.Ptr != PrevDescs)
             {
@@ -10709,11 +10647,12 @@ namespace Lumina
         const uint32 VisibleCapacity = FrameVisibleInstanceCapacity;
         const uint32 SeedViews       = Math::Max(NumCullViews, 1u);
         const SIZE_T ViewDrawEntries = (SIZE_T)SeedViews * (SIZE_T)NumBatches;
-        ResizeBufferIfNeeded(RenderBucketRing[Slot],
+        // MeshDrawArgsRing is deliberately NOT resized here. It is sized in CompileDrawCommands_Render to
+        // NumArgSlots * kMeshletSliceCount * MeshSubDrawsPerSlice, which is what BuildMeshletCullArgs' post
+        // pass writes; a second request for ViewDrawEntries alone is 3 * MeshSubDrawsPerSlice too SMALL and
+        // fed that ratio straight into the shared low-usage counter.
+        ResizeBufferIfNeeded(CL, RenderBucketRing[Slot],
                              ViewDrawEntries * sizeof(FRenderBucketGPU), 1.5f, RenderBucketRingLowUsage[Slot]);
-        ResizeBufferIfNeeded(MeshDrawArgsRing[Slot],
-                             ViewDrawEntries * sizeof(RHI::FDrawMeshTasksIndirectArguments), 1.5f,
-                             MeshDrawArgsRingLowUsage[Slot]);
 
         {
             // Starts at ZERO: there is no CPU-fed head to append past any more, so CullInstances claims
@@ -11782,21 +11721,41 @@ namespace Lumina
         RHI::CmdMemcpy(CL, Dst, Staging.Gpu, Size);
     }
 
-    void FForwardRenderScene::ResizeBufferIfNeeded(FSceneBuffer& Buffer, uint64 NeededSize, float SlackFactor, uint32& LowUsageCounter,
-                                                   bool bAllowShrink)
+    void FForwardRenderScene::ResizeBufferIfNeeded(RHI::FCmdListH CL, FSceneBuffer& Buffer, uint64 NeededSize,
+                                                   float SlackFactor, uint32& LowUsageCounter,
+                                                   bool bAllowShrink, EBufferInit Init)
     {
         NeededSize = Math::Max<uint64>(NeededSize, 16ull);
         
         auto AlignUp16 = [](uint64 Size) { return (Size + 15ull) & ~15ull; };
 
-        if (NeededSize > Buffer.Size)
+        // RHI::Malloc hands back device memory out of a recycling pool, so a fresh allocation holds the
+        // PREVIOUS tenant's bytes -- not zeros, and not anything reproducible. Every buffer here is either
+        // fully rewritten before it is read or bounded by a cursor written this frame, but the ones that are
+        // only PARTIALLY rewritten used to depend on that being true and were silently scene-dependent when
+        // it was not. Clearing at the allocation makes the first frame after a grow deterministic.
+        //
+        // NOT a substitute for the frame tags and cursors: those cover the steady state, where a buffer
+        // persists and only part of it is rewritten. This covers exactly the realloc.
+        const auto Reallocate = [&]()
         {
-            if (Buffer)
-            {
-                DeferFree(Buffer.Ptr);
-            }
+            DeferFree(Buffer.Ptr);
             Buffer = CreateSceneBuffer(AlignUp16((uint64)((double)NeededSize * SlackFactor)));
             LowUsageCounter = 0;
+
+            if (Buffer && Init == EBufferInit::Zeroed)
+            {
+                RHI::CmdMemset(CL, Buffer.Ptr, Buffer.GetSize(), 0u);
+                // The caller's very next act is usually a copy into this same allocation, and a
+                // write-after-write between two transfer writes is ordered by nothing else. Only on a
+                // realloc, so the broad destination mask costs nothing measurable.
+                Barriers::TransferToAll(CL);
+            }
+        };
+
+        if (NeededSize > Buffer.Size)
+        {
+            Reallocate();
 
             if (!Buffer)
             {
@@ -11811,9 +11770,7 @@ namespace Lumina
         {
             if (++LowUsageCounter >= 120u)
             {
-                DeferFree(Buffer.Ptr);
-                Buffer = CreateSceneBuffer(AlignUp16((uint64)((double)NeededSize * SlackFactor)));
-                LowUsageCounter = 0;
+                Reallocate();
             }
         }
         else

@@ -15,7 +15,7 @@ namespace Lumina::RHI
     constexpr auto kImageBindingSlot            = 1;
     constexpr auto kRWImageBindingSlot          = 2;
 
-    constexpr auto kFramesInFlight              = 2;
+    constexpr auto kFramesInFlight              = 3;
     constexpr auto kMaxTextureHeapSize          = INT16_MAX;
     constexpr auto kMaxNumSamplers              = 4000;
     constexpr auto kMaxNumTextureHeaps          = 1024;
@@ -477,11 +477,7 @@ namespace Lumina::RHI
     RUNTIME_API FGPUDeviceInfo GetDeviceInfo();
 
     RUNTIME_API uint64         ClampCPUWriteSlice(const char* RingName, uint64 DesiredSliceSize, uint32 SliceCount);
-
-    // maxTaskWorkGroupCount[0]. A meshlet draw's grid is one task workgroup per cull block, and a region
-    // large enough to exceed this would otherwise be dispatched as-is.
-    // maxMeshWorkGroupCount[0]. One mesh workgroup per surviving meshlet, so a slice larger than this
-    // is split across consecutive sub-draws.
+    
     RUNTIME_API uint32         GetMaxMeshWorkGroupCount();
 
     RUNTIME_API bool           SupportsAsyncCompute();
@@ -551,10 +547,6 @@ namespace Lumina::RHI
     RUNTIME_API uint32      HeapWriteRWTexture(FTextureHeapH Heap, FTextureH Texture, uint32 Mip = 0);
     RUNTIME_API uint32      HeapWriteSampler(FTextureHeapH Heap, const FSamplerDesc& Desc);
     RUNTIME_API void        HeapSetFallbackTexture(FTextureHeapH Heap, FTextureH Texture);
-    /** Points the slot at the fallback view without releasing the index, so nothing recorded from here on
-        references the texture behind it while the index stays reserved. The unbind half of HeapFreeTexture:
-        a retiring texture must stop being referenced IMMEDIATELY, but its slot can only be handed out again
-        once the frames that already bound it are done. */
     RUNTIME_API void        HeapUnbindTexture(FTextureHeapH Heap, uint32 Slot);
     RUNTIME_API void        HeapFreeTexture(FTextureHeapH Heap, uint32 Slot);
     RUNTIME_API void        HeapFreeRWTexture(FTextureHeapH Heap, uint32 Slot);

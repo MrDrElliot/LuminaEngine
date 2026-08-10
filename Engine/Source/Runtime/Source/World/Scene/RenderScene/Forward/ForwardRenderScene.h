@@ -91,10 +91,6 @@ namespace Lumina
             TFrameVector<FEntityRecord>         EntityRecords;
 
             TVector<uint32>                     DrawInstanceCounts;
-            TVector<uint32>                     DrawMeshletCounts;
-            TVector<uint32>                     DrawBlockCounts;
-            // Filled by the merge: where this thread's instances for each slot start.
-            TVector<uint32>                     DrawWriteBase;
             TVector<uint8>                      BatchSkinFlags;
             TVector<uint32>                     TouchedSlots;
 
@@ -124,17 +120,12 @@ namespace Lumina
                 for (uint32 Slot : TouchedSlots)
                 {
                     DrawInstanceCounts[Slot] = 0u;
-                    DrawMeshletCounts[Slot]  = 0u;
-                    DrawBlockCounts[Slot]    = 0u;
                 }
                 TouchedSlots.clear();
 
                 if ((uint32)DrawInstanceCounts.size() < NumBatches)
                 {
                     DrawInstanceCounts.resize(NumBatches, 0u);
-                    DrawMeshletCounts.resize(NumBatches, 0u);
-                    DrawBlockCounts.resize(NumBatches, 0u);
-                    DrawWriteBase.resize(NumBatches, 0u);
                 }
                 if ((uint32)BatchSkinFlags.size() < NumBatches)
                 {
@@ -851,8 +842,18 @@ namespace Lumina
 
         static void WriteBuffer(RHI::FCmdListH CL, RHI::GPUPtr Dst, const void* Data, uint64 Size);
 
-        void ResizeBufferIfNeeded(FSceneBuffer& Buffer, uint64 NeededSize, float SlackFactor, uint32& LowUsageCounter,
-                                  bool bAllowShrink = true);
+        /** What a freshly (re)allocated scene buffer holds. Undefined is the honest description of what
+         *  RHI::Malloc returns -- a recycling pool hands back the previous tenant's bytes. Only pick it for
+         *  a buffer that is provably rewritten in full before anything reads it. */
+        enum class EBufferInit : uint8
+        {
+            Undefined,
+            Zeroed,
+        };
+
+        void ResizeBufferIfNeeded(RHI::FCmdListH CL, FSceneBuffer& Buffer, uint64 NeededSize, float SlackFactor,
+                                  uint32& LowUsageCounter, bool bAllowShrink = true,
+                                  EBufferInit Init = EBufferInit::Zeroed);
 
         // Freed when this slot's previous GPU work has completed.
         void DeferFree(RHI::GPUPtr Ptr);
@@ -877,7 +878,6 @@ namespace Lumina
         FSceneBuffer                                        PreSkinnedVerticesBuffer;
         uint32                                              PreSkinnedVerticesLowUsage = 0;
 
-        TArray<FSceneBuffer, RHI::kFramesInFlight>          InstanceBufferRing = {};
         TArray<uint32,       RHI::kFramesInFlight>          InstanceBufferLowUsage = {};
         TArray<uint64,       RHI::kFramesInFlight>          InstanceBufferSerial = {};
         TArray<uint32, RHI::kFramesInFlight>                RenderBucketRingLowUsage = {};
@@ -1113,10 +1113,6 @@ namespace Lumina
         TVector<entt::entity>                   MovedTransformScratch;
 
         // Merge scratch, sized by draw slots (not by entities). Members so capacity survives frames.
-        TVector<uint32>                         MergeDrawInstanceCounts;
-        TVector<uint32>                         MergeMeshletCountsPerDraw;
-        TVector<uint32>                         MergeBlockCountsPerDraw;
-        TVector<uint32>                         MergeDrawInstanceOffsets;
 
         TVector<FShaderH>            BinnedDeferredSlotShaders;
         TVector<uint32>                         BinnedDeferredSlotByMaterial;
@@ -1133,7 +1129,7 @@ namespace Lumina
         // later passes dispatching against a stale slot table.
         FMaterialClassifyLayout                 MaterialClassifyLayout;
 
-        bool BuildDeferredMaterialBinning();
+        bool BuildDeferredMaterialBinning(RHI::FCmdListH CL);
 
         TVector<uint32>                         ShadowSizeScratch;
         TVector<uint32>                         ShadowSortedScratch;

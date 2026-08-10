@@ -2278,7 +2278,6 @@ namespace Lumina::RHI
 
         if (GDevice->NumSharedQueueFamilies > 1)
         {
-            // Buffers only: CONCURRENT costs compression metadata on images, which stay EXCLUSIVE.
             SampleInfo.sharingMode           = VK_SHARING_MODE_CONCURRENT;
             SampleInfo.queueFamilyIndexCount = GDevice->NumSharedQueueFamilies;
             SampleInfo.pQueueFamilyIndices   = GDevice->SharedQueueFamilies.data();
@@ -2298,7 +2297,7 @@ namespace Lumina::RHI
         {
             PanicOutOfGPUMemory(std::format("a {} KiB {} buffer", Size / 1024, MemoryTypeToString(Type)).c_str(), AllocResult);
         }
-
+        
         // GPU-read memory that fell out of the BAR means every shader/transfer read crosses PCIe.
         if (Type == EMemoryType::CPUWrite)
         {
@@ -2336,7 +2335,7 @@ namespace Lumina::RHI
         FScopeLock Lock(GDevice->MemoryMutex);
         auto It = std::ranges::lower_bound(GDevice->MemoryBlocks, Gpu, {}, &FMemoryBlock::Device);
         GDevice->MemoryBlocks.insert(It, Block);
-
+        
         return Block.Device;
     }
 

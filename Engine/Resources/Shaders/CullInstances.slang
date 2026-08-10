@@ -54,9 +54,20 @@ FCullInstancesArgs* Pass() { return GetPassArgs<FCullInstancesArgs>(); }
 // last meshlet's end), read through the header -- exactly what the CPU's BlockExtent used to walk the
 // meshlet array for. Returns kNoPreSkinBase when the block has nothing to skin or the budget is spent, and
 // the draw path then blends that block's bones inline instead.
-uint ClaimPreSkinSlice(FMeshletHeader* Header, uint MeshletOffset, uint MeshletCount)
+// The claim and Skinning.slang's per-workgroup skip must reject the SAME blocks. A block that is claimed
+// but not written leaves the draw path reading pre-skin memory nobody filled -- the reverse of an overflow,
+// and silent. Header.Vertices is genuinely reachable as null: ReleaseGeometryBuffers retires the geometry
+// and deliberately keeps the header allocation alive.
+uint ClaimPreSkinSlice(FMeshletHeader* Header, uint MeshletOffset, uint MeshletCount, uint MeshletTotal)
 {
-    if (MeshletCount == 0u || Header.Meshlets == nullptr)
+    if (MeshletCount == 0u || Header.Meshlets == nullptr || Header.Vertices == nullptr)
+    {
+        return kNoPreSkinBase;
+    }
+
+    // Whole-block reject rather than a per-meshlet clamp: the skinning pass drops individual meshlets past
+    // the total, and a partially written slice is worse than one that falls back to inline skinning.
+    if (MeshletOffset + MeshletCount > MeshletTotal)
     {
         return kNoPreSkinBase;
     }
@@ -313,13 +324,13 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
 
     if (bSkinned && Static.MeshletHeader != nullptr)
     {
-        SurfaceSkinBase = ClaimPreSkinSlice(Static.MeshletHeader, SurfaceMeshletOffset, SurfaceMeshletCount);
+        SurfaceSkinBase = ClaimPreSkinSlice(Static.MeshletHeader, SurfaceMeshletOffset, SurfaceMeshletCount, MeshletTotal);
 
         // A shadow block that resolved to the surface block shares its slice; claiming twice would both
         // waste the budget and skin the same vertices into two places.
         ShadowSkinBase = (ShadowMeshletOffset == SurfaceMeshletOffset)
                        ? SurfaceSkinBase
-                       : ClaimPreSkinSlice(Static.MeshletHeader, ShadowMeshletOffset, ShadowMeshletCount);
+                       : ClaimPreSkinSlice(Static.MeshletHeader, ShadowMeshletOffset, ShadowMeshletCount, MeshletTotal);
 
         // Written back so the skinning passes, which are keyed by RETAINED slot, see the same bases the
         // draw path will read off the compacted instance below.
