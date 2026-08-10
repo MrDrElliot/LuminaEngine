@@ -14,13 +14,8 @@
 #include <type_traits>
 #include <utility>
 
-// Fiber-aware futures and promises. A TPromise<T> produces a single value; a TFuture<T> consumes it.
-// Waiting (Get / Wait) is fiber-aware, a worker fiber parks until the value is ready and the worker
-// runs other jobs meanwhile; an external thread assist-waits. Continuations (.Then) are scheduled as
-// jobs when the value lands, so chains run on the worker pool rather than recursing on the setter.
-//
-// The shared state is reference counted (TSharedPtr), so the promise and any number of futures /
-// continuations can outlive each other in any order.
+// Waiting is fiber-aware: a worker fiber parks while the worker runs other jobs, an external thread
+// assist-waits. Continuations are scheduled as jobs rather than recursing on the setter.
 namespace Lumina
 {
     namespace FutureDetail
@@ -45,9 +40,8 @@ namespace Lumina
             bool IsReady() const { return bReady.load(std::memory_order_acquire); }
             void Wait() const    { Jobs::WaitForCounter(Counter, 0); }
 
-            // Publish readiness, wake waiters, and fire continuations. Called once, after the value is
-            // stored. The value store happens-before the release here; a waiter that observes readiness
-            // (via the counter / bReady acquire) sees the stored value.
+            // Called once, after the value is stored. That store happens-before the release here, so a waiter
+            // that observes readiness sees the value.
             void Signal()
             {
                 bReady.store(true, std::memory_order_release);
@@ -104,9 +98,6 @@ namespace Lumina
     template<typename T>
     class TFuture;
 
-    // ----------------------------------------------------------------------------------------------
-    // TPromise<T>
-    // ----------------------------------------------------------------------------------------------
     template<typename T>
     class TPromise
     {
@@ -165,9 +156,6 @@ namespace Lumina
         friend class TFuture<void>;
     };
 
-    // ----------------------------------------------------------------------------------------------
-    // TFuture<T>
-    // ----------------------------------------------------------------------------------------------
     template<typename T>
     class TFuture
     {
@@ -305,10 +293,6 @@ namespace Lumina
         (void)Priority;
         return Result;
     }
-
-    // ----------------------------------------------------------------------------------------------
-    // Free helpers
-    // ----------------------------------------------------------------------------------------------
 
     template<typename T>
     TFuture<std::decay_t<T>> MakeReadyFuture(T&& Value)

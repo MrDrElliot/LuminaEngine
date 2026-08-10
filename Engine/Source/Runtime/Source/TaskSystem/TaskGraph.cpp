@@ -58,19 +58,8 @@ namespace Lumina
                 return FNodeCoro{ std::coroutine_handle<promise_type>::from_promise(*this) };
             }
 
-            /**
-             * Signals the graph counter, and does it HERE rather than from the coroutine body.
-             *
-             * That decrement is what releases Wait(), and the very next thing a caller typically does
-             * is Reset() -- which resets the arena this coroutine frame is allocated in. Signalling one
-             * statement earlier, from the body before co_return, leaves the compiler still to write the
-             * frame's final suspend state afterwards, into storage the next iteration has already begun
-             * handing out. Intermittent, timing-dependent, and it presents as a segfault somewhere else
-             * entirely. await_suspend is the last point the coroutine touches its own frame, so the
-             * signal belongs at the end of it, with everything it needs read out first.
-             *
-             * Same idiom as CoroDetail::FPromiseBase::FFinalAwaiter in Task.h, for the same reason.
-             */
+            /** Signals the graph counter HERE, not from the coroutine body: that decrement releases Wait(), whose
+             *  caller typically Reset()s the arena this frame lives in before the compiler has finished with it. */
             struct FFinalAwaiter
             {
                 bool await_ready() const noexcept { return false; }
@@ -122,9 +111,8 @@ namespace Lumina
         CoroDetail::ScheduleResume(Node->CoroHandle, Node->Priority);
     }
 
-    // Schedules whatever this node unblocked. It does NOT signal the graph counter -- that happens in
-    // FNodeCoro's final awaiter, once the coroutine is finished with its own frame. Scheduling
-    // dependents here is safe because the graph cannot be reset while any node is still outstanding.
+    // Schedules whatever this node unblocked; it does NOT signal the graph counter -- FNodeCoro's final
+    // awaiter does, once the coroutine is done with its own frame.
     void FTaskGraph::CompleteNode(FNode* Node)
     {
         FTaskGraph* Graph = Node->Graph;

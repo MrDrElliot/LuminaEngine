@@ -41,9 +41,8 @@ namespace Lumina
             return;
         }
 
-        // A dynamic expression IS a material parameter, so its name is the useful label -- a graph full
-        // of nodes titled "Float" says nothing about which one drives EmissivePower. Unnamed parameters
-        // fall back to the type name, which is all there is to show.
+        // A dynamic expression IS a material parameter, so its name is the useful label -- a graph of nodes
+        // all titled Float says nothing about which drives EmissivePower. Unnamed ones fall back to the type.
         const bool bNamed = ParameterName != nullptr && !ParameterName->IsNone();
         const FString Label = bNamed ? ParameterName->ToString() : FString(GetNodeDisplayName());
         ImGui::Text(LE_ICON_MATERIAL_DESIGN " %s", Label.c_str());

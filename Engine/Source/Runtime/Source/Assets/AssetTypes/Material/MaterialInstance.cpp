@@ -72,12 +72,8 @@ namespace Lumina
                 return !Material->GetParameterValue(O.Type, O.ParameterName, Probe);
             }), Overrides.end());
 
-        // Texture slots are demanded from the parent one at a time rather than inherited with the block
-        // above, which is where the memory saving actually happens: a parameter this instance overrides
-        // never asks the parent to resolve its default, so a master reached only through instances that
-        // override everything loads none of its textures at all.
-        //
-        // Runs BEFORE the override loop so ApplyOverride still has the last word on every slot.
+        // Slots are demanded from the parent one at a time, so a parameter this instance overrides never
+        // asks the parent to resolve its default. Runs BEFORE the override loop, which has the last word.
         for (const FMaterialParameter& Param : Parameters)
         {
             if (Param.Type != EMaterialParameterType::Texture || Param.Index >= MAX_TEXTURES)
@@ -351,9 +347,8 @@ namespace Lumina
             Override.Vector = (Param.Index < MAX_VECTORS) ? Material->MaterialUniforms.Vectors[Param.Index] : FVector4(0.0f);
             break;
         case EMaterialParameterType::Texture:
-            // Seeding an override from the parent's default is a deliberate demand for that slot -- the
-            // user is about to edit the value, so it has to be a real texture rather than a soft path.
-            // Editor action, so the synchronous resolve is fine here.
+            // Seeding an override from the parent's default is a deliberate demand for that slot: the user is
+            // about to edit it, so it must be a real texture. Editor action, so a synchronous resolve is fine.
             if (Param.Index < (uint32)Material->Textures.size())
             {
                 Material->ResolveTextureSlot(Param.Index);
@@ -407,8 +402,7 @@ namespace Lumina
         }
 
         // An instance inherits every texture it does not override, so a change to one the PARENT binds
-        // reaches it too. RebuildUniformsFromOverrides copies the parent's block wholesale, which is why
-        // the driver has to refresh masters before instances.
+        // reaches it too -- which is why the driver refreshes masters before instances.
         if (!bReferences && Material != nullptr && Material->ReferencesTexture(ChangedTexture))
         {
             bReferences = true;
@@ -431,18 +425,15 @@ namespace Lumina
             return true;
         }
 
-        // The parent owns every slot this instance does not override, and its own request handles the
-        // async kick + one-request-per-material throttle. Asking it first is also what makes the rebuild
-        // below non-blocking: by the time it reports true, ResolveTextureSlot is a pointer read.
+        // The parent owns every slot this instance does not override and handles the async kick. Asking it
+        // first is what makes the rebuild below non-blocking.
         if (!Material->RequestTexturesResolved())
         {
             return false;
         }
 
-        // An override's texture is a hard ref, so it is loaded -- but "loaded" is not "GPU-resident".
-        // RHI::Textures::Create assigns the heap slot in the texture's own PostLoad, and material texture
-        // refs sit outside the load graph's Hard/Owned BFS, so nothing orders that ahead of this
-        // instance's PostLoad. Losing that race is what bakes the placeholder in.
+        // An override's texture is a hard ref, so it is loaded -- but loaded is not GPU-resident, and the
+        // heap slot is assigned in the texture's own PostLoad. Losing that race bakes the placeholder in.
         for (const FMaterialParameterOverride& Override : Overrides)
         {
             if (Override.Type != EMaterialParameterType::Texture || !Override.bEnabled)
@@ -455,15 +446,8 @@ namespace Lumina
             }
         }
 
-        // Everything resolvable now. If the block was baked while something was still missing it is
-        // holding the placeholder, and this is the only thing that rewrites it -- previously the resolve
-        // gate skipped instances outright on the premise that their block was "already whole", which is
-        // true only when the load race was won.
-        //
-        // Driven off the parent's SLOT COUNT rather than off Parameters. A plain Texture Sample node
-        // binds a slot in CMaterial::Textures with no FMaterialParameter behind it, so a Parameters-driven
-        // scan is blind to exactly the slots an instance can only inherit -- which is what left instances
-        // magenta until their master was recompiled.
+        // The only thing that rewrites a block baked while something was still missing. Driven off the
+        // parent's SLOT COUNT, not Parameters: a plain Texture Sample node binds a slot with no parameter.
         bool bNeedsRebuild = false;
 
         const uint32 NumSlots = (uint32)Math::Min<size_t>(Material->Textures.size(), MAX_TEXTURES);
@@ -503,14 +487,14 @@ namespace Lumina
         return true;
     }
 
-    const FShaderEntry* CMaterialInstance::GetVertexShader() const
+    FShaderH CMaterialInstance::GetVertexShader() const
     {
-        return Material ? Material->GetVertexShader() : nullptr;
+        return Material ? Material->GetVertexShader() : FShaderH{};
     }
 
-    const FShaderEntry* CMaterialInstance::GetPixelShader() const
+    FShaderH CMaterialInstance::GetPixelShader() const
     {
-        return Material ? Material->GetPixelShader() : nullptr;
+        return Material ? Material->GetPixelShader() : FShaderH{};
     }
 
     EMaterialType CMaterialInstance::GetMaterialType() const

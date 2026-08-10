@@ -155,7 +155,6 @@ namespace Lumina::Vulkan
 
 namespace Lumina::RHI
 {
-    // Vulkan RHI requirements.
     static_assert(sizeof(GPUPtr) == sizeof(VkDeviceSize), "GPUPtr must be the same size as a vulkan device address");
         
     constexpr VkBufferUsageFlags kDefaultBufferUsages =
@@ -187,7 +186,6 @@ namespace Lumina::RHI
                                                                            | VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT : 0;
 
         Out |= EnumHasAnyFlags(Flags, EStageFlags::MeshShader)      ? VK_PIPELINE_STAGE_2_MESH_SHADER_BIT_EXT : 0;
-        Out |= EnumHasAnyFlags(Flags, EStageFlags::TaskShader)      ? VK_PIPELINE_STAGE_2_TASK_SHADER_BIT_EXT : 0;
 
         Out |= EnumHasAnyFlags(Flags, EStageFlags::Host)            ? VK_PIPELINE_STAGE_2_HOST_BIT : 0;
         Out |= EnumHasAnyFlags(Flags, EStageFlags::AllCommands)     ? VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT : 0;
@@ -434,7 +432,7 @@ namespace Lumina::RHI
         TVector<VkSampler>   Samplers;
         TVector<VkImageView> ImageViews;
         TVector<VkImageView> RWImageViews;
-        // Which texture occupies each sampled slot; debug introspection only.
+        // Debug introspection only.
         TVector<FTextureH>   SampledOwners;
         // Written into every freed sampled slot so the descriptor never names a destroyed view.
         VkImageView          FallbackView = VK_NULL_HANDLE;
@@ -516,9 +514,7 @@ namespace Lumina::RHI
         bool                            bUnifiedImageLayouts = false;
         bool                            bMemoryPriority = false;
         bool                            bMeshShaderSupported = false;
-        bool                            bTaskShaderSupported = false;
-        uint32                          MaxTaskWorkGroupTotalCount = 0;
-        uint32                          MaxTaskWorkGroupCountX = 0;
+        uint32                          MaxMeshWorkGroupCountX = 0;
         bool                            bPipelineStats = false;
         TUniquePtr<FVulkanCrashTracker> CrashTracker;
         FGpuBreadcrumbs                 Breadcrumbs;
@@ -648,6 +644,15 @@ namespace Lumina::RHI
         return &*It;
     }
 
+    static TAtomic<FValidationHandlerFn> GValidationHandler{nullptr};
+    static TAtomic<void*>                GValidationHandlerUserData{nullptr};
+
+    void SetValidationHandler(FValidationHandlerFn Handler, void* UserData)
+    {
+        GValidationHandlerUserData.store(UserData, std::memory_order_relaxed);
+        GValidationHandler.store(Handler, std::memory_order_release);
+    }
+
     static VkBool32 VKAPI_PTR VkDebugCallback(
         VkDebugUtilsMessageSeverityFlagBitsEXT MessageSeverity,
         VkDebugUtilsMessageTypeFlagsEXT MessageTypes,
@@ -676,20 +681,30 @@ namespace Lumina::RHI
         const FFixedString TypeString = GetMessageTypeString(MessageTypes);
         const FStringView StringView(TypeString.c_str(), TypeString.size());
 
+        EValidationSeverity Severity;
         switch (MessageSeverity)
         {
         case VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT:
             LOG_TRACE("Vulkan {}{}", StringView, CallbackData->pMessage);
+            Severity = EValidationSeverity::Verbose;
             break;
         case VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT:
             LOG_DEBUG("Vulkan {}{}", StringView, CallbackData->pMessage);
+            Severity = EValidationSeverity::Info;
             break;
         case VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT:
             LOG_WARN("Vulkan {}{}", StringView, CallbackData->pMessage);
+            Severity = EValidationSeverity::Warning;
             break;
         default:
             LOG_ERROR("Vulkan {}{}", StringView, CallbackData->pMessage);
+            Severity = EValidationSeverity::Error;
             break;
+        }
+
+        if (const FValidationHandlerFn Handler = GValidationHandler.load(std::memory_order_acquire))
+        {
+            Handler(Severity, CallbackData->pMessage, GValidationHandlerUserData.load(std::memory_order_relaxed));
         }
 
         return VK_FALSE;
@@ -784,7 +799,7 @@ namespace Lumina::RHI
                 Heap.HeapIndex, Kind, Heap.UsageBytes >> 20, Heap.BudgetBytes >> 20, Heap.AllocationCount, Heap.BlockCount);
         }
 
-        LUMINA_PANIC("GPU out of memory allocating {}.", What);
+        PANIC("GPU out of memory allocating {}.", What);
         std::unreachable();
     }
 
@@ -949,8 +964,9 @@ namespace Lumina::RHI
         GDevice = new FDeviceImpl{};
         GDevice->CrashTracker = MakeUnique<FVulkanCrashTracker>();
 
-        // ---- Loader ----
-        if (!glfwVulkanSupported())
+        // GLFW is only consulted for the window-system bits. A headless caller has no GLFW instance at
+        // all, so asking it anything here would report failure on a perfectly good driver.
+        if (!DeviceDesc.bHeadless && !glfwVulkanSupported())
         {
             ShowVulkanInitFailure("Vulkan Not Supported",
                 "GLFW reports that this system does not support Vulkan. The Vulkan runtime (vulkan-1.dll) was not found, "
@@ -965,7 +981,6 @@ namespace Lumina::RHI
             std::abort();
         }
 
-        // ---- Instance ----
         uint32 ValidationLayerVersion = 0;
         {
             const char* EnabledLayers[1] = {};
@@ -999,11 +1014,15 @@ namespace Lumina::RHI
                 }
             }
 
-            // Surface extensions for the swapchain plus debug utils.
-            uint32 GlfwExtCount = 0;
-            const char** GlfwExts = glfwGetRequiredInstanceExtensions(&GlfwExtCount);
-
-            TVector<const char*> InstanceExtensions(GlfwExts, GlfwExts + GlfwExtCount);
+            // Surface extensions for the swapchain plus debug utils. Headless takes neither: with no
+            // GLFW instance the query returns null, and there is nothing to present to anyway.
+            TVector<const char*> InstanceExtensions;
+            if (!DeviceDesc.bHeadless)
+            {
+                uint32 GlfwExtCount = 0;
+                const char** GlfwExts = glfwGetRequiredInstanceExtensions(&GlfwExtCount);
+                InstanceExtensions.assign(GlfwExts, GlfwExts + GlfwExtCount);
+            }
             if (DeviceDesc.bValidation || DeviceDesc.bDebugUtils)
             {
                 InstanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
@@ -1113,20 +1132,6 @@ namespace Lumina::RHI
                 };
             };
 
-            auto AddIntSetting = [&](const char* Name, const int32& Value)
-            {
-                LUMINA_ASSERT(LayerSettingCount < std::size(LayerSettings));
-
-                LayerSettings[LayerSettingCount++] = VkLayerSettingEXT
-                {
-                    .pLayerName   = kValidationLayer,
-                    .pSettingName = Name,
-                    .type         = VK_LAYER_SETTING_TYPE_INT32_EXT,
-                    .valueCount   = 1,
-                    .pValues      = &Value,
-                };
-            };
-
             auto IsListed = [](const char* Argument, const char* Check)
             {
                 if (GCommandLine == nullptr)
@@ -1193,14 +1198,23 @@ namespace Lumina::RHI
                     AddSetting(Check.Setting, ResolveCheck(Check.Token, Check.bDefault) ? kEnable : kDisable);
                 }
 
-                static constexpr int32 kMaxTrackedAddresses = 65536;
-                AddIntSetting("gpuav_max_buffer_device_addresses", kMaxTrackedAddresses);
+                // UINT32, not INT32: the layer type-checks this and warns that the value "may be parsed
+                // incorrectly" if it arrives as a signed setting.
+                static constexpr uint32 kMaxTrackedAddresses = 65536;
+                AddUIntSetting("gpuav_max_buffer_device_addresses", kMaxTrackedAddresses);
 
-                AddSetting("gpuav_debug_validate_instrumented_shaders",
-                    ResolveCheck("validateinstrumented", false) ? kEnable : kDisable);
-
-                AddSetting("gpuav_debug_print_instrumentation_info",
-                    ResolveCheck("printinstrumentation", false) ? kEnable : kDisable);
+                // Only emitted when explicitly asked for. Both are debug-the-instrumentation switches that
+                // some validation-layer builds do not carry, and sending an unknown setting name costs a
+                // VALIDATION-SETTINGS warning on every single launch. Opting in still warns -- which is the
+                // correct signal that the installed layer has no such setting.
+                if (ResolveCheck("validateinstrumented", false))
+                {
+                    AddSetting("gpuav_debug_validate_instrumented_shaders", kEnable);
+                }
+                if (ResolveCheck("printinstrumentation", false))
+                {
+                    AddSetting("gpuav_debug_print_instrumentation_info", kEnable);
+                }
 
                 static uint32 MaxInstrumentations = 0;
                 if (GCommandLine != nullptr)
@@ -1341,12 +1355,15 @@ namespace Lumina::RHI
                 return false;
             };
 
-            if (!HasExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME))
+            if (!DeviceDesc.bHeadless)
             {
-                ShowVulkanInitFailure("Vulkan Device Unsuitable", "Selected GPU has no VK_KHR_swapchain support.");
-                std::abort();
+                if (!HasExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME))
+                {
+                    ShowVulkanInitFailure("Vulkan Device Unsuitable", "Selected GPU has no VK_KHR_swapchain support.");
+                    std::abort();
+                }
+                GDevice->EnabledDeviceExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
             }
-            GDevice->EnabledDeviceExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
 
             auto EnableIfPresent = [&](const char* Name)
             {
@@ -1461,54 +1478,14 @@ namespace Lumina::RHI
 
         GDevice->bMeshShaderSupported = true;
 
-        bool bTaskLimitsOK = true;
-        {
-            const struct { const char* Name; uint32 Required; uint32 Actual; } Limits[] =
-            {
-                { "maxTaskWorkGroupSize[0]",           kTaskWorkGroupSize,   MeshProps.maxTaskWorkGroupSize[0]     },
-                { "maxTaskWorkGroupInvocations",       kTaskWorkGroupSize,   MeshProps.maxTaskWorkGroupInvocations },
-                { "maxTaskPayloadSize",                kMaxTaskPayloadBytes, MeshProps.maxTaskPayloadSize          },
-                { "maxTaskPayloadAndSharedMemorySize", kMaxTaskPayloadBytes, MeshProps.maxTaskPayloadAndSharedMemorySize },
-            };
+        // Bounds one meshlet draw: the cull writes one mesh workgroup per survivor, so a slice larger
+        // than this splits across sub-draws instead of being truncated.
+        GDevice->MaxMeshWorkGroupCountX = MeshProps.maxMeshWorkGroupCount[0];
 
-            for (const auto& Limit : Limits)
-            {
-                if (Limit.Actual < Limit.Required)
-                {
-                    LOG_ERROR("Task shaders disabled: device reports {} = {}, the cull path needs at least {}.",
-                              Limit.Name, Limit.Actual, Limit.Required);
-                    bTaskLimitsOK = false;
-                }
-            }
-
-            if (MeshProps.maxPreferredTaskWorkGroupInvocations != kTaskWorkGroupSize)
-            {
-                LOG_WARN("Device prefers task workgroups of {} invocations; the block layout is fixed at {}.",
-                         MeshProps.maxPreferredTaskWorkGroupInvocations, kTaskWorkGroupSize);
-            }
-
-            GDevice->MaxTaskWorkGroupTotalCount = MeshProps.maxTaskWorkGroupTotalCount;
-            GDevice->MaxTaskWorkGroupCountX     = MeshProps.maxTaskWorkGroupCount[0];
-
-            LOG_DISPLAY("Task shader limits: workgroup {} (max invocations {}), total groups {}, "
-                        "payload {} B, payload+shared {} B.",
-                        MeshProps.maxTaskWorkGroupSize[0], MeshProps.maxTaskWorkGroupInvocations,
-                        MeshProps.maxTaskWorkGroupTotalCount,
-                        MeshProps.maxTaskPayloadSize, MeshProps.maxTaskPayloadAndSharedMemorySize);
-        }
-
-        if (!SupportedMesh.taskShader || !bTaskLimitsOK)
-        {
-            ShowVulkanInitFailure("Vulkan Device Unsuitable",
-                FString("This GPU supports mesh shaders but not the task (amplification) stage, which the "
-                        "renderer also requires.\n\n")
-                + "taskShader feature: " + (SupportedMesh.taskShader ? "yes" : "no") + "\n"
-                + "Limits sufficient: " + (bTaskLimitsOK ? "yes" : "no"));
-            std::abort();
-        }
-
-        GDevice->bTaskShaderSupported = true;
-        LOG_DISPLAY("Mesh + task shaders: required and present.");
+        // No task (amplification) stage anywhere: meshlet culling is a compute pass writing the draw
+        // list the mesh stage reads. Requiring the taskShader feature would reject a capable device
+        // for a stage nothing uses.
+        LOG_DISPLAY("Mesh shaders: required and present. Meshlet culling runs as compute.");
         
         VkPhysicalDeviceFeatures Features10             = {};
         Features10.fragmentStoresAndAtomics             = VK_TRUE;
@@ -1533,10 +1510,8 @@ namespace Lumina::RHI
         VkPhysicalDeviceVulkan11Features Features11{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
         Features11.shaderDrawParameters   = VK_TRUE;
         Features11.multiview              = VK_TRUE;
-        // Lets a storage-buffer struct declare 16-bit members directly, so Common.slang's FMeshletVertex
-        // can mirror Lumina::FMeshletVertex field for field. Gated because today's Slang output does not require
-        // it -- it loads the whole struct and extracts -- so this only matters if a shader ever takes a
-        // pointer to one 16-bit member, and a device without it should still boot.
+        // Lets a storage-buffer struct declare 16-bit members, so Common.slang's FMeshletVertex mirrors the
+        // C++ struct field for field. Gated: Slang loads whole structs today, so a device without it boots.
         Features11.storageBuffer16BitAccess = Supported11.storageBuffer16BitAccess;
 
         VkPhysicalDeviceVulkan12Features Features12{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
@@ -1613,7 +1588,7 @@ namespace Lumina::RHI
         if (GDevice->bMeshShaderSupported)
         {
             MeshShaderFeatures.meshShader = VK_TRUE;
-            MeshShaderFeatures.taskShader = SupportedMesh.taskShader;
+            MeshShaderFeatures.taskShader = VK_FALSE;   // no amplification stage; see MeshletCull.slang
             Chain(MeshShaderFeatures);
         }
 
@@ -2410,15 +2385,6 @@ namespace Lumina::RHI
         auto It = std::ranges::lower_bound(GDevice->MemoryBlocks, Gpu, {}, &FMemoryBlock::Device);
         GDevice->MemoryBlocks.insert(It, Block);
 
-        static uint64 HighWaterThousands = 0;
-        const uint64 Thousands = GDevice->MemoryBlocks.size() / 1000;
-        if (Thousands > HighWaterThousands)
-        {
-            HighWaterThousands = Thousands;
-            LOG_WARN("RHI: {} live buffer allocations (device addresses). GPU-AV tracks these in a fixed "
-                     "table and validates nothing beyond its limit.", GDevice->MemoryBlocks.size());
-        }
-
         return Block.Device;
     }
 
@@ -2930,9 +2896,9 @@ namespace Lumina::RHI
         return GDevice->Pipelines.Emplace(Pipeline, VK_PIPELINE_BIND_POINT_COMPUTE);
     }
 
-    uint32 GetMaxTaskWorkGroupCount()
+    uint32 GetMaxMeshWorkGroupCount()
     {
-        return GDevice != nullptr ? GDevice->MaxTaskWorkGroupCountX : 1u;
+        return GDevice != nullptr ? GDevice->MaxMeshWorkGroupCountX : 1u;
     }
 
     bool SupportsAsyncTransfer()
@@ -3637,20 +3603,12 @@ namespace Lumina::RHI
         FlushRun();
     }
 
-    void HeapFreeTexture(FTextureHeapH Heap, uint32 Slot)
+    // Caller holds HeapMutex.
+    static void PointSampledSlotAtFallback(FTextureHeap& HeapData, uint32 Slot)
     {
-        FTextureHeap& HeapData = GDevice->TextureHeaps[Heap];
-
-        FScopeLock Lock(GDevice->HeapMutex);
-        if (Slot >= HeapData.ImageViews.size())
-        {
-            return;
-        }
-
-        HeapData.SampledImageSlots.Free(Slot);
         HeapData.ImageViews[Slot] = VK_NULL_HANDLE;
         HeapData.SampledOwners[Slot] = {};
-        
+
         if (HeapData.FallbackView != VK_NULL_HANDLE)
         {
             const VkDescriptorImageInfo ImageInfo
@@ -3662,6 +3620,33 @@ namespace Lumina::RHI
 
             WriteHeapDescriptor(HeapData, kImageBindingSlot, Slot, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, ImageInfo);
         }
+    }
+
+    void HeapUnbindTexture(FTextureHeapH Heap, uint32 Slot)
+    {
+        FTextureHeap& HeapData = GDevice->TextureHeaps[Heap];
+
+        FScopeLock Lock(GDevice->HeapMutex);
+        if (Slot >= HeapData.ImageViews.size())
+        {
+            return;
+        }
+
+        PointSampledSlotAtFallback(HeapData, Slot);
+    }
+
+    void HeapFreeTexture(FTextureHeapH Heap, uint32 Slot)
+    {
+        FTextureHeap& HeapData = GDevice->TextureHeaps[Heap];
+
+        FScopeLock Lock(GDevice->HeapMutex);
+        if (Slot >= HeapData.ImageViews.size())
+        {
+            return;
+        }
+
+        HeapData.SampledImageSlots.Free(Slot);
+        PointSampledSlotAtFallback(HeapData, Slot);
     }
 
     void GetTextureHeapTextures(FTextureHeapH Heap, TVector<FHeapTextureInfo>& OutTextures)
@@ -4552,10 +4537,8 @@ namespace Lumina::RHI
         const uint8 BlockW = RHI::Format::Info(DestTexture.Format).BlockSize;
         const uint32 RowLengthBlocks = (BlockW > 1) ? Math::AlignUp(RowLength, (uint32)BlockW) : RowLength;
 
-        // A copy region may never exceed the subresource it targets (VUID-vkCmdCopyBufferToImage-
-        // imageSubresource-07971/07972). Clamped rather than trusted, because the caller's idea of a mip's
-        // size comes from cooked data while the image's comes from its own implicit chain -- a package
-        // cooked before those agreed would otherwise hand the driver an out-of-bounds region.
+        // A copy region may never exceed the subresource it targets. Clamped rather than trusted: the
+        // caller's mip size comes from cooked data while the image's comes from its own implicit chain.
         VkExtent3D Extent = SliceExtent(DestTexture, Slice);
         {
             const FTextureDesc& Desc = DestTexture.Desc;
@@ -4566,11 +4549,8 @@ namespace Lumina::RHI
             Extent.depth  = Math::Min(Extent.depth,  Math::Max(DepthDim >> Slice.Mip, 1u));
         }
 
-        // bufferRowLength must be 0 or >= imageExtent.width (VUID-VkBufferImageCopy-bufferRowLength-09101).
-        // A shorter row is not a smaller copy: the region is out of spec and the copy engine walks past the
-        // end of the source, which surfaces only as a device-lost with a write fault at address 0. The
-        // usual cause is a caller deriving the mip extent by shifting the base dimension while the data
-        // was cooked at the mip's own width -- they disagree for non-power-of-two textures.
+        // bufferRowLength must be 0 or >= imageExtent.width. A shorter row is out of spec and the copy
+        // engine walks past the source, surfacing only as a device-lost with a write fault at address 0.
         if (RowLengthBlocks != 0 && RowLengthBlocks < Extent.width)
         {
             LOG_ERROR("RHI: dropped a texture copy with an out-of-spec region (rowLength {} < extent width {}, mip {}). "
@@ -4737,7 +4717,7 @@ namespace Lumina::RHI
             Access |= VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
         }
         if (EnumHasAnyFlags(Stages, EStageFlags::Compute | EStageFlags::PixelShader | EStageFlags::VertexShader |
-                                    EStageFlags::MeshShader | EStageFlags::TaskShader))
+                                    EStageFlags::MeshShader))
         {
             Access |= VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT;
         }
@@ -4766,7 +4746,7 @@ namespace Lumina::RHI
 
         constexpr EStageFlags GraphicsOnly =
             EStageFlags::RasterColorOut | EStageFlags::PixelShader | EStageFlags::FragmentTests |
-            EStageFlags::VertexShader   | EStageFlags::MeshShader  | EStageFlags::TaskShader;
+            EStageFlags::VertexShader   | EStageFlags::MeshShader;
 
         EStageFlags Clamped = Stages & ~GraphicsOnly;
         if (Queue == EQueueType::Transfer)

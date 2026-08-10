@@ -62,11 +62,8 @@ namespace Lumina::RHI
 
         RUNTIME_API void Recreate(FManagedTexture& Tex, const FTexture2DDesc& Desc);
 
-        // Upload tight pixel data for one mip of one array layer. Layer is 0 for non-array textures.
-        // Width/Height are the MIP's own dimensions. They must be passed for any mip past 0: the copy
-        // otherwise derives the extent as (BaseDimension >> Mip), which disagrees with a cooked mip chain
-        // whenever the base is not a clean power of two, and an extent wider than the row length the data
-        // actually has is an out-of-spec copy region that faults the copy engine.
+        // Width/Height are the MIP's own dimensions and must be passed past mip 0: the copy otherwise derives
+        // (Base >> Mip), which disagrees with a cooked chain and faults the copy engine on non-power-of-two.
         RUNTIME_API void UploadLayer(const FManagedTexture& Tex, uint32 Layer, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels = 0, uint32 Width = 0, uint32 Height = 0);
 
         RUNTIME_API void Upload(const FManagedTexture& Tex, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels = 0, uint32 Width = 0, uint32 Height = 0);

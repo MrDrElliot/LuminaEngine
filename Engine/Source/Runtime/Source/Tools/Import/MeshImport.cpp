@@ -213,9 +213,8 @@ namespace Lumina::Import::Mesh
         }, 4096);
     }
 
-    // MUST run before meshlet/LOD generation, regardless of the "optimize" option: meshopt_simplify allocates
-    // O(vertex_count) internal buffers, so an un-deduplicated array (FBX commonly emits 3 unique verts per
-    // triangle) can request multi-GB allocations and OOM-crash. Dedup is a correctness prerequisite, not an optimization.
+    // MUST run before meshlet/LOD generation regardless of the optimize option: meshopt_simplify
+    // allocates O(vertex_count), so un-deduplicated FBX input can request multi-GB and OOM.
     void DeduplicateMeshVertices(FMeshResource& MeshResource, FScopedSlowTask* Progress)
     {
         LUMINA_PROFILE_SCOPE();
@@ -562,10 +561,8 @@ namespace Lumina::Import::Mesh
         Task::ParallelFor(LODCount * NumSurfaces, [&](uint32 Cell)
         {
             LUMINA_PROFILE_SECTION("Process Surfaces and LODs");
-            // Scoped again INSIDE the worker: the scope stack is thread-local, so the one on
-            // GenerateMeshlets covers only the calling thread. Nearly all of a mesh's memory is built
-            // right here -- meshlet streams, per-LOD simplified index buffers -- so without this the
-            // bulk of "Meshes" lands in no category at all.
+            // Scoped again INSIDE the worker: the scope stack is thread-local, so the one on GenerateMeshlets
+            // covers only the calling thread and the bulk of a mesh's memory lands in no category.
             LUMINA_MEMORY_SCOPE("Meshes");
 
             const uint32 lod        = Cell / NumSurfaces;
@@ -602,8 +599,7 @@ namespace Lumina::Import::Mesh
             }
 
             // Scratch is per cell now that cells run concurrently. Sized to the FULL source range and
-            // value-initialized by resize, i.e. 4 bytes memset per source index per LOD cell, on top of
-            // the meshlet scratch inside BuildLODMeshletsForRange.
+            // value-initialized, i.e. 4 bytes per source index per LOD cell on top of the meshlet scratch.
             TVector<uint32> Simplified;
             {
                 LUMINA_PROFILE_SECTION("Simplify Scratch Alloc");
@@ -762,10 +758,8 @@ namespace Lumina::Import::Mesh
             }
         }
 
-        // Slot, NOT source level: accepted levels compact down so LODMeshletOffset[0..NumLODs) is dense,
-        // which is what both selectors require (they walk slots 0..NumLODs-1 and index the arrays with the
-        // result). Each slot keeps its SOURCE level's screen threshold, so a compacted level still
-        // activates at the distance it was authored for, and the sequence stays ascending.
+        // Slot, NOT source level: accepted levels compact down so LODMeshletOffset is dense, which both
+        // selectors require. Each slot keeps its SOURCE level's threshold, so the sequence stays ascending.
         for (uint32 Slot = 0; Slot < LODCount; ++Slot)
         {
             LUMINA_PROFILE_SECTION("Serial Pack LODs");
@@ -801,9 +795,8 @@ namespace Lumina::Import::Mesh
 
                     Out.LODIndex = Slot;
 
-                    // Quantization frame first -- the encodes below need it. It is derived from the
-                    // source positions this meshlet references, which Out.VertexOffset still indexes;
-                    // that field is rewritten to PackedVertexStart at the bottom of this loop.
+                    // Quantization frame first -- the encodes below need it. Derived from the source positions this
+                    // meshlet references, which Out.VertexOffset still indexes until it is rewritten below.
                     QuantScratch.clear();
                     for (uint32 i = 0; i < Out.VertexCount; ++i)
                     {
@@ -884,10 +877,8 @@ namespace Lumina::Import::Mesh
             MeshResource.MeshletData.MeshletTriangles.push_back(0u);
         }
 
-        // Per-surface LOD outcome. LOD selection clamps to each surface's OWN NumLODs, so a surface that
-        // built one level silently ignores every LOD pick -- indistinguishable in the viewport from a
-        // broken selector, which is exactly how the foliage-vs-trunk case presented. Logged per surface so
-        // "this material slot has no LODs" is readable instead of inferred.
+        // LOD selection clamps to each surface's OWN NumLODs, so a surface that built one level silently
+        // ignores every pick -- indistinguishable in the viewport from a broken selector.
         for (uint32 SurfaceIdx = 0; SurfaceIdx < NumSurfaces; ++SurfaceIdx)
         {
             const FGeometrySurface& Section = MeshResource.GeometrySurfaces[SurfaceIdx];
@@ -1177,8 +1168,10 @@ namespace Lumina::Import::Mesh
                 }
             }
 
-            THashMap<int16, int16> StaticMatRemap;
-            THashMap<int16, int16> SkinnedMatRemap;
+            // ONE remap across both targets. The static and skinned halves become two assets but share a
+            // single slot numbering, which is what lets the one MergedMaterialSlotToSource table below
+            // describe both; two independent remaps would give slot 0 a different meaning in each.
+            THashMap<int16, int16> MatRemap;
 
             for (TUniquePtr<FMeshResource>& Res : Data.Resources)
             {
@@ -1188,11 +1181,23 @@ namespace Lumina::Import::Mesh
                 }
                 if (Res->bSkinnedMesh)
                 {
-                    MergeResourceInto(*Res, *MergedSkinned, SkinnedMatRemap);
+                    MergeResourceInto(*Res, *MergedSkinned, MatRemap);
                 }
                 else
                 {
-                    MergeResourceInto(*Res, *MergedStatic, StaticMatRemap);
+                    MergeResourceInto(*Res, *MergedStatic, MatRemap);
+                }
+            }
+
+            // Publish the inverse. Without it the importer has no way back from a merged slot to the source
+            // material it came from, falls back to treating the slot AS the source index, and hands every
+            // surface whichever material happens to sit at that position -- or none at all.
+            Data.MergedMaterialSlotToSource.assign(MatRemap.size(), 0);
+            for (const auto& Pair : MatRemap)
+            {
+                if (Pair.second >= 0 && (size_t)Pair.second < Data.MergedMaterialSlotToSource.size())
+                {
+                    Data.MergedMaterialSlotToSource[Pair.second] = Pair.first;
                 }
             }
 
@@ -1271,10 +1276,8 @@ namespace Lumina::Import::Mesh
             AnalyzeMeshStatistics(*MeshPtr, Data.MeshStatistics);
         }
 
-        // Distance fields last, and serially over resources: the builder parallelises over its own Z
-        // slices, so putting it inside the per-resource ParallelFor above would nest one ParallelFor
-        // inside another. It also has to run AFTER GenerateMeshlets, because it voxelises the baked
-        // meshlets rather than the import scratch (that is what lets a rebuild work on a loaded asset).
+        // Serially over resources: the builder parallelises over its own Z slices, so nesting it in the
+        // per-resource ParallelFor would nest two. Must follow GenerateMeshlets -- it voxelises the bake.
         if (Options.DistanceField.bEnabled)
         {
             if (Progress)

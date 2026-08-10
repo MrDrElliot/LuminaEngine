@@ -29,9 +29,8 @@ namespace Lumina
 
         /** Tone mapper applied after grading. */
         PROPERTY(Editable, Category = "Post Process")
-        EToneMapper ToneMapper = EToneMapper::AGX;
-
-
+        EToneMapper ToneMapper = EToneMapper::ACES;
+        
         /** Exposure compensation in stops (EV); +1 doubles, -1 halves. With auto-exposure on, this biases the adapted result. */
         PROPERTY(Editable, Category = "Post Process|Exposure", ClampMin = -8.0f, ClampMax = 8.0f)
         float ExposureCompensation = 0.0f;

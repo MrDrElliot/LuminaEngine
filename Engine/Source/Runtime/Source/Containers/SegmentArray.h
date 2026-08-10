@@ -8,6 +8,19 @@ namespace Lumina
     struct THandle
     {
         uint64 Handle = 0;
+
+        // Value semantics: handles are used as hash-map keys and as fields of comparable POD keys
+        // (FDrawBatchKey), so equality is (index, generation) equality -- two handles naming the same slot
+        // across a free/realloc are correctly UNEQUAL, because the generation differs.
+        bool operator == (const THandle& Other) const { return Handle == Other.Handle; }
+        bool operator != (const THandle& Other) const { return Handle != Other.Handle; }
+
+        // PRESENCE, not liveness: true means "something was assigned here", not "the thing it names still
+        // exists". Only a checked lookup (TSegmentMap::TryGet, or FShaderLibrary::Resolve for shaders) can
+        // answer the second question, which is why dereferencing goes through those and never through this.
+        explicit operator bool () const { return Handle != 0; }
+        bool operator == (decltype(nullptr)) const { return Handle == 0; }
+        bool operator != (decltype(nullptr)) const { return Handle != 0; }
     };
     
     template<typename T>
@@ -108,6 +121,28 @@ namespace Lumina
             Head = kEndOfList;
         }
         
+        // Checked lookup: null when the handle is empty, out of range, points at a freed slot, or names a
+        // generation the slot has moved past. That last case is the whole point -- it turns "this pointer
+        // outlived what it pointed at" from a use-after-free into a value a caller can branch on, which is
+        // what lets an owner free an entry while observers still hold handles to it.
+        //
+        // Lock-free like operator[], and safe on the same terms ONLY IF frees are deferred to a point where
+        // no reader is mid-lookup (a frame boundary). Erase mutates Next/Gen under Mutex; a reader racing a
+        // live Erase can still observe the slot mid-transition. Defer the free, or take the lock.
+        T* TryGet(HandleT Handle)
+        {
+            const FEntry* Entry = FindLive(Handle);
+            return Entry != nullptr ? const_cast<T*>(&Entry->Data) : nullptr;
+        }
+
+        const T* TryGet(HandleT Handle) const
+        {
+            const FEntry* Entry = FindLive(Handle);
+            return Entry != nullptr ? &Entry->Data : nullptr;
+        }
+
+        bool IsLive(HandleT Handle) const { return FindLive(Handle) != nullptr; }
+
         T& operator[](HandleT Handle)
         {
             auto&& [I, G] = FromHandle(Handle);
@@ -175,6 +210,35 @@ namespace Lumina
             }
         }
         
+        // The one place the three failure modes are checked, so TryGet/IsLive cannot drift apart.
+        const FEntry* FindLive(HandleT Handle) const
+        {
+            if (Handle.Handle == 0)
+            {
+                return nullptr;
+            }
+
+            auto&& [I, G] = FromHandle(Handle);
+
+            // Get() derives the segment from the index arithmetically, so an out-of-range index does not
+            // fail loudly -- it indexes Segments[] past UsedSegments and dereferences a null segment.
+            if (I >= CapacityForSegmentCount(UsedSegments))
+            {
+                return nullptr;
+            }
+
+            const FEntry* Entry = Get(I);
+
+            // Free slot, or the slot was recycled since this handle was minted. Erase bumps Gen on release
+            // as well as Emplace on acquire, so a freed-and-not-yet-reused slot fails this too.
+            if (Entry->Next != kNotInFreeList || Entry->Gen != G)
+            {
+                return nullptr;
+            }
+
+            return Entry;
+        }
+
         FEntry* Get(uint32 Index)
         {
             uint64 Segment = 63 - std::countl_zero(static_cast<uint64>((Index >> kSmallSegmentsToSkip) + 1));

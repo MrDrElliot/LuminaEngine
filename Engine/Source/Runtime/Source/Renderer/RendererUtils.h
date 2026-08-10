@@ -10,7 +10,7 @@
 namespace Lumina::RenderUtils
 {
     // Decodes raw image bytes straight into the global texture heap; ImTextureID = ResourceID().
-    RUNTIME_API RHI::FManagedTexture CreateImageFromPixels(TSpan<const uint8> PixelData, bool bFlipVertically = true, FUIntVector2 Size = {});
+    RUNTIME_API RHI::FManagedTexture CreateImageFromPixels(TSpan<const uint8> PixelData, bool bFlipVertically = true, FUIntVector2 Size = {}, const char* DebugName = nullptr);
 
     inline uint32 CalculateMipCount(uint32 Width, uint32 Height)
     {

@@ -6,11 +6,8 @@
 
 #include <intrin.h>
 
-// All four primitives share one shape: a tiny spinlock guards a FIFO queue of waiter nodes; the slow
-// path either parks the current worker fiber (publishing its node inside the ParkFiber callback, after
-// its context is saved) or, on an external thread, enqueues a node and assist-waits on a per-node
-// signal flag. Wakeups are direct hand-offs: the releaser updates the shared state on the woken waiter's
-// behalf and resumes it, so a woken waiter owns what it asked for without re-contending.
+// All four share one shape: a spinlock guards a FIFO of waiter nodes, and wakeups are direct
+// hand-offs -- the releaser updates the shared state for the woken waiter so it never re-contends.
 namespace Lumina
 {
     namespace FiberSyncDetail
@@ -57,13 +54,8 @@ namespace Lumina
             }
         }
 
-        // External-thread block: spin, then yield, until the node is signaled. Deliberately does NOT
-        // run queued jobs while waiting (unlike the counter assist-wait). A lock holder always makes
-        // progress on its own worker/thread, so assisting isn't needed for correctness, and running
-        // arbitrary jobs here is unsafe: a job that contends the same lock would enqueue a second
-        // waiter on this very call stack, and FIFO hand-off could pass ownership to an outer (now
-        // suspended) frame while an inner frame waits behind it, deadlocking. Plain waiting can't
-        // re-enter, so it can't form that cycle.
+        // Deliberately does NOT run queued jobs (unlike the counter assist-wait): a job contending the same
+        // lock would enqueue a second waiter on this call stack, and FIFO hand-off would then deadlock.
         FORCEINLINE void WaitExternal(FWaiterNode* Node)
         {
             uint32 IdleSpins = 0;
@@ -83,10 +75,6 @@ namespace Lumina
     }
 
     using namespace FiberSyncDetail;
-
-    // ------------------------------------------------------------------------------------------------
-    // FFiberMutex
-    // ------------------------------------------------------------------------------------------------
 
     namespace
     {
@@ -190,10 +178,6 @@ namespace Lumina
         }
     }
 
-    // ------------------------------------------------------------------------------------------------
-    // FFiberSemaphore
-    // ------------------------------------------------------------------------------------------------
-
     namespace
     {
         struct FSemPark
@@ -283,10 +267,6 @@ namespace Lumina
             --N;
         }
     }
-
-    // ------------------------------------------------------------------------------------------------
-    // FFiberSharedMutex
-    // ------------------------------------------------------------------------------------------------
 
     namespace
     {
@@ -468,10 +448,6 @@ namespace Lumina
         }
         SpinUnlock(Spin);
     }
-
-    // ------------------------------------------------------------------------------------------------
-    // FFiberConditionVariable
-    // ------------------------------------------------------------------------------------------------
 
     namespace
     {

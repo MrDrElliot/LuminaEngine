@@ -438,12 +438,8 @@ namespace Lumina
                 TargetOptions[1].value.intValue0 = GetShaderOptimizationLevel();
                 uint32 TargetOptionCount = 2;
 
-                // The meshlet mesh shaders read a vertex's clip position straight out of its owning lane's
-                // registers (ShuffleMeshletClip), which needs subgroup shuffle. That is not part of the base
-                // spirv_1_5 profile, so Slang widens the profile itself and warns 41012 on every mesh entry
-                // point it compiles. Declaring it here is a DIAGNOSTIC change only -- the emitted SPIR-V is
-                // byte-identical either way (verified) -- but it states the target the engine actually
-                // requires instead of leaving a warning that trains people to ignore warnings.
+                // ShuffleMeshletClip needs subgroup shuffle, outside the base spirv_1_5 profile, so Slang widens it
+                // and warns 41012 per mesh entry point. Diagnostic only -- the emitted SPIR-V is byte-identical.
                 const SlangCapabilityID ShuffleCapability = GlobalSession->findCapability("spvGroupNonUniformShuffle");
                 if (ShuffleCapability != SLANG_CAPABILITY_UNKNOWN)
                 {

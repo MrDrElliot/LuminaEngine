@@ -30,9 +30,8 @@ namespace Lumina
             return;
         }
 
-        // Slice 0 as the thumbnail. Must go through the array display state: the heap slot holds a
-        // 2D_ARRAY view, and ImGui's default path reads gTextures2D[], which would resolve to the
-        // null slot rather than the image.
+        // Slice 0 as the thumbnail, through the array display state: the heap slot holds a 2D_ARRAY view
+        // and ImGui's default path reads gTextures2D[], which would resolve to the null slot.
         ImDrawList* DrawList = ImGui::GetWindowDrawList();
         ImGuiX::BeginArrayPreview(DrawList, 0);
         ImGui::Image(ImGuiX::ToImTextureRef((uint32)TextureArray->GetResourceID()), ImVec2(126.0f, 126.0f));

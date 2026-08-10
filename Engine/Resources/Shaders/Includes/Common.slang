@@ -18,27 +18,17 @@ static const float INV_PI = 0.31830988618;
 // Bits inside FCullView.Flags, gating which culling stages run for the view.
 #define CULL_VIEW_FLAG_FRUSTUM          BIT(0)
 #define CULL_VIEW_FLAG_CONE             BIT(1)
-// INSTANCE-level Hi-Z, plus the meshlet-level SUB-PIXEL reject. Despite the name it gates no
-// meshlet occlusion test -- that is CULL_VIEW_FLAG_MESHLET_HIZ below. The two are separate because
-// they have different latency: the sub-pixel test is a projected-size measurement of this frame's
-// transforms and is exact, while any pyramid read is a frame behind and needs the two-phase
-// treatment. Folding them into one bit would drag the exact test into the deferral machinery.
+// The meshlet SUB-PIXEL reject only. It gates no pyramid read at all -- that is
+// CULL_VIEW_FLAG_MESHLET_HIZ -- because a projected-size test is exact and a pyramid read is not.
 #define CULL_VIEW_FLAG_OCCLUSION        BIT(2)
 #define CULL_VIEW_FLAG_DISTANCE         BIT(3)
 #define CULL_VIEW_FLAG_CAST_SHADOW_ONLY BIT(4)
 #define CULL_VIEW_FLAG_SUN_ALIGNED      BIT(5)
-// Per-MESHLET Hi-Z, resolved across the two VisBuffer phases. Only ever set on a view that actually
-// runs both phases; a single-phase view (shadows, captures, probes) must leave it clear or the
-// meshlets its early phase defers are never re-tested and simply never draw.
+// Marks a view as TWO-PHASE, and is the only thing that does. A single-phase view (shadow, capture,
+// probe) must leave it clear: the meshlet cull emits such a view entirely from its early dispatch and
+// skips it in the late one, and setting this would make both dispatches emit it.
 #define CULL_VIEW_FLAG_MESHLET_HIZ      BIT(6)
 #define CULL_VIEW_FLAG_CASCADE          BIT(7)
-
-// Which side of the mid-frame pyramid rebuild a meshlet cull dispatch is on. Push-constant, not a
-// spec constant or a second FCullView: both phases rasterize the same view with the same material
-// PSOs, and the only thing that differs is which contents the pyramid holds when they read it.
-// Mirrors ECullPhase in SceneRenderTypes.h.
-#define CULL_PHASE_EARLY                0u
-#define CULL_PHASE_LATE                 1u
 
 
 #define BIT(X) (1u << (X))
@@ -73,9 +63,8 @@ enum EInstanceFlags
     HasGeometry     = BIT(9),   // the mesh's meshlet header is resident
 }
 
-// Mirror of Lumina::FMeshletVertex. Position: three 16-bit offsets from the owning meshlet's anchor,
-// packed into dwords -- decode with DecodeMeshletPosition below, never by hand.
-// Tangent: 15-15 octahedral + 1-bit handedness (see UnpackTangent).
+// Mirror of Lumina::FMeshletVertex. Position is three 16-bit offsets from the meshlet anchor -- decode
+// with DecodeMeshletPosition, never by hand. Tangent is 15-15 octahedral + 1-bit handedness.
 struct FMeshletVertex
 {
     uint16_t PositionX;
@@ -121,9 +110,8 @@ int16_t FloatToSNorm16(float V)
     return (int16_t)(clamp(V, -1.0, 1.0) * 32767.0 + (V >= 0.0 ? 0.5 : -0.5));
 }
 
-// Mirror of Lumina::FPreSkinnedVertex (SceneRenderTypes.h). Written by Skinning.slang, read by every
-// draw VS as the only vertex source. Position is full-precision (skinning breaks meshlet quantization);
-// all-scalar for a tight 36 B stride.
+// Mirror of Lumina::FPreSkinnedVertex. Written by Skinning.slang, read by every draw VS. Position is
+// full-precision (skinning breaks meshlet quantization); all-scalar for a tight 36 B stride.
 struct FPreSkinnedVertex
 {
     float    Px;
@@ -187,9 +175,8 @@ struct FMaterialPixelInputs
     float  AmbientOcclusion;
     float3 Normal;
     float  Opacity;
-    // Height-field self-occlusion against the SUN specifically (ParallaxOcclusion.slang), so it modulates
-    // only the sun's contribution -- not ambient (that is AmbientOcclusion's job) and not the punctual
-    // lights, which were never traced. 1 = unshadowed.
+    // Height-field self-occlusion against the SUN specifically, so it modulates only the sun -- not
+    // ambient (AmbientOcclusion's job) and not the punctual lights, which were never traced. 1 = unshadowed.
     float  SelfShadow;
 
     // Clearcoat shading model only: a clear dielectric layer over the base. Strength 0 disables it.
@@ -198,11 +185,8 @@ struct FMaterialPixelInputs
     float  ClearcoatRoughness;
 };
 
-// Neutral surface. EVERY producer of FMaterialPixelInputs must start from this and then override, because
-// the struct has several independent authors -- the material graph's output node, and the hand-written
-// default/terrain materials built as strings in Material.cpp. Assigning fields one by one at each site
-// means adding a field here silently leaves it uninitialized at the sites that were not updated, which
-// reads as garbage lighting rather than as a compile error. Defaults live here so there is one place.
+// EVERY producer of FMaterialPixelInputs must start from this and then override: the struct has
+// several independent authors, so a new field would otherwise read as garbage, not a compile error.
 FMaterialPixelInputs DefaultMaterialInputs()
 {
     FMaterialPixelInputs M;
@@ -286,12 +270,8 @@ struct FCustomPrimitiveData
     property float4 AsColor     { get { return float4(unpack_u8u32(Packed)) / 255.0; } }
 }
 
-// Mirror of Lumina::FSurfaceDescGPU (80 B). Per-surface LOD table, interned per distinct resolved
-// surface, so a cull view can pick the LOD the CPU gather used to pick -- per view, from its own origin.
-//
-// FGPUInstance::SurfaceDescIndex carries this sentinel when the instance's LOD is fixed and must not be
-// re-selected: skinned instances (CPU-fed, and their pre-skin blocks are built for one specific LOD),
-// an authored ForcedLODIndex, or LODs disabled scene-wide.
+// Mirror of Lumina::FSurfaceDescGPU (80 B), interned per distinct resolved surface so a cull view can
+// pick its own LOD. The sentinel means the LOD is fixed (skinned, forced, or LODs off scene-wide).
 static const uint kNoSurfaceDesc = NO_SURFACE_DESC_INDEX;
 
 struct FSurfaceDesc
@@ -344,21 +324,8 @@ struct FMeshlet
     uint PackedAnchorZ;
 };
 
-// ----------------------------------------------------------------------------------------------------
-// Meshlet position decode (DXR2 COMPRESSED1). Twin of the block in MeshData.h -- these two are the ONLY
-// places that know the encoding.
-//
-// Every geometry path funnels here through LoadStaticVertex / LoadStaticPosition / SkinVertex, and that
-// is not a stylistic preference. The VisBuffer stores a triangle ID, so DeferredMaterial reconstructs
-// the same three vertices independently and derives barycentrics from them; the depth prepass and the
-// geometry pass rely on identical positions for early-Z. A decode that differs by one ULP between any
-// two of those paths shows up as UV and normal error growing toward triangle edges, plus depth
-// rejection failures -- not as a visible offset anyone would spot immediately.
-//
-// Exactness: anchor + offset tops out at 8388607 + 65535, below 2^24, so the int-to-float conversion is
-// exact; the scale is an exact power of two assembled from the exponent field, so the multiply only
-// decrements the exponent. Same argument as MaterialSlotToDepth in MaterialTiles.slang.
-// ----------------------------------------------------------------------------------------------------
+// Meshlet position decode (DXR2 COMPRESSED1). Twin of the block in MeshData.h -- these two are the
+// ONLY places that know the encoding, and a one-ULP disagreement breaks early-Z and barycentrics.
 
 int UnpackMeshletAnchor(uint Packed)
 {
@@ -409,12 +376,8 @@ struct FMeshletCone
     float3 Axis;
 };
 
-// Mirror of Lumina::FMeshletHeaderGPU. Positions are quantized per meshlet, so no mesh-wide position
-// frame lives here -- the anchor and exponent are on FMeshlet, which every vertex load already holds.
-//
-// The distance-field block is loose floats, not a float3, because scalar layout aligns a float3 to 4
-// bytes while the C++ side is free to over-align FVector3 to 16. Keep this member-for-member identical
-// to FMeshletHeaderGPU (MeshData.h), which static_asserts the 80-byte total.
+// Mirror of Lumina::FMeshletHeaderGPU. The distance-field block is loose floats, not a float3: scalar
+// layout aligns float3 to 4 bytes while the C++ side may over-align FVector3 to 16.
 struct FMeshletHeader
 {
     FMeshlet*       Meshlets;
@@ -436,10 +399,8 @@ struct FMeshletHeader
     property float3 DistanceFieldSize { get { return float3(DistanceFieldSizeX, DistanceFieldSizeY, DistanceFieldSizeZ); } }
 };
 
-// Mirror of Lumina::FInstanceCullEntry (32 B). The retained scene's CULL-HOT half: everything
-// CullInstances reads about a slot it is about to REJECT, and nothing else, so two slots share a cache
-// line. What a SURVIVOR needs lives in the parallel transform array and FInstanceStatic, neither of
-// which is loaded until this entry says the instance is visible.
+// Mirror of Lumina::FInstanceCullEntry (32 B): the CULL-HOT half only, so two slots share a cache
+// line. What a SURVIVOR needs lives elsewhere and is not loaded until this says the instance is visible.
 struct FInstanceCullEntry
 {
     float4 SphereBounds;      // world space; xyz = center, w = radius
@@ -472,9 +433,8 @@ struct FInstanceStatic
     uint            ShadowSkinnedVertexBase;
 }
 
-// FGPUInstance::SkinnedVertexBase sentinel: this entity was not pre-skinned this frame (it fell
-// outside r.Skinning.MaxVertices), so the draw path blends bones inline instead. The CPU reserves
-// the value, so a legitimately wrapped base can never collide with it.
+// Sentinel: this entity was not pre-skinned this frame (it fell outside r.Skinning.MaxVertices), so
+// the draw path blends bones inline. The CPU reserves the value, so a wrapped base cannot collide.
 static const uint kNoPreSkinBase = 0xFFFFFFFFu;
 
 // Mirror of Lumina::FSkinDescriptor. One per rendered-LOD meshlet; drives the skinning dispatch.
@@ -487,13 +447,8 @@ struct FSkinDescriptor
     uint            Pad;
 };
 
-// Mirror of Lumina::FTransform3x4: an affine matrix with the always-(0,0,0,1) last row dropped.
-// Blends linearly like the matrix; transform a point by explicit row dot products.
-//
-// The rows are the MATHEMATICAL rows, so ToMatrix below rebuilds the exact float4x4 the CPU held.
-// Verified, not assumed: Slang stores float4x4 ColMajor (element (r,c) at float index 4*c+r, identical
-// to Lumina::TMat), and float4x4(v0,v1,v2,v3) fills ROWS -- a probe of the ctor plus mul(M, e0)
-// constant-folded to column 0 of a row-filled matrix.
+// Mirror of Lumina::FTransform3x4: affine with the always-(0,0,0,1) last row dropped. The rows are
+// MATHEMATICAL rows -- Slang stores float4x4 ColMajor but float4x4(v0..v3) fills ROWS (verified).
 struct FTransform3x4
 {
     float4 Row0;
@@ -510,23 +465,9 @@ struct FTransform3x4
 // Historical name, kept for the skinning path that is written in terms of bones.
 typealias FBoneTransform = FTransform3x4;
 
-// One entry per surviving meshlet emitted by MeshletCull.slang.
-// Draw-list entry, stamped with the frame that wrote it.
-//
-// The bounds every consumer used to check were allocation CAPACITIES, which makes them fault-safe but not
-// correctness-safe: a slot inside the allocation that this frame never wrote reads as a perfectly plausible
-// instance from an earlier frame, and the resolve happily rasterizes it. That is exactly how a draw-count
-// bug surfaced as wrong geometry rather than as nothing. The tag makes "not written this frame" detectable,
-// so a stale entry is a clean reject instead of silent garbage.
-//
-// The index is MESH-GLOBAL: it addresses MeshletHeader.Meshlets/Bounds directly, across every LOD, rather
-// than being relative to one LOD's range. That is what lets each view pick its OWN LOD -- the entry no
-// longer means anything different depending on which range the reader resolves it against, so a capture
-// camera's draw and the primary's can sit side by side in the same list.
-//
-// 20 bits of index (a mesh's meshlet array, all LODs together, never has a million entries -- interning
-// clamps it) leaves 12 for the tag. The CPU never issues tag 0, and a freshly allocated draw list is
-// zeroed, so untouched memory always fails the check.
+// One entry per surviving meshlet, stamped with the frame that wrote it: capacity bounds are
+// fault-safe but not correctness-safe, so the tag turns a stale slot into a reject, not geometry.
+
 #define MESHLET_DRAW_INDEX_MASK  ((1u << MESHLET_DRAW_INDEX_BITS) - 1u)
 #define MESHLET_DRAW_TAG_INVALID 0u
 
@@ -547,15 +488,8 @@ struct FMeshletDraw
     }
 };
 
-// One unit of meshlet cull work: up to MESHLET_TASK_GROUP_SIZE consecutive meshlets of ONE instance,
-// with that instance's range for ONE view already resolved. Declared here rather than in either shader
-// because both index the same allocation and a layout they disagreed on would resolve the wrong
-// instance -- the same reason FMeshletDraw and the task payload live in shared headers.
-//
-// The length IS carried, and it is load-bearing: the range is now per-view and resolved at build time,
-// so a partial last block's spare lanes would otherwise address meshlets belonging to the NEXT LOD --
-// legal indices, wrong detail, no bound anywhere to catch it. (Before the range was per-view, the
-// instance-wide walk bound covered this, which is why the field was not needed then.)
+// Up to MESHLET_CULL_GROUP_SIZE consecutive meshlets of ONE instance with its range for ONE view
+// resolved. The length is load-bearing: a partial block's spare lanes would address the NEXT LOD.
 struct FMeshletBlock
 {
     uint InstanceID;          // slot in the visible-instance buffer
@@ -572,10 +506,8 @@ struct FMeshletBlock
     property uint Count       { get { return (PackedBaseAndCount >> MESHLET_DRAW_INDEX_BITS) & 63u; } }
 };
 
-// One (view, draw) pair's slice of the two cull arenas. Base, capacity and cursor travel together, so an
-// appender cannot pair one region's base with another's bound. These were parallel arrays indexed by the
-// same ArgIdx, and pairing a clamped base with an unclamped length is what let the block builder write
-// past its allocation.
+// One (view, draw) pair's slice of the cull arenas. Base, capacity and cursor travel together --
+// as parallel arrays, pairing a clamped base with an unclamped length overran the allocation.
 struct FRenderBucket
 {
     uint DrawBase;
@@ -584,9 +516,17 @@ struct FRenderBucket
     uint BlockBase;
     uint BlockCapacity;
     uint BlockCursor;
-    // Sub-draws this bucket needs, written by BuildDrawPrefix and read as the DRAW COUNT by
-    // vkCmdDrawMeshTasksIndirectCountEXT. Last field on purpose: the count offset is its byte offset.
-    uint SubDrawCount;
+    // Dense offset of this bucket's blocks in the flat meshlet-cull dispatch. Blocks are dense within a
+    // bucket but sparse across the arena, so a workgroup cannot read its bucket from the block itself.
+    uint CullWorkBase;
+    // What each cull phase appended, RELATIVE to DrawBase (DrawCursor is a count, not an index).
+    // Indexed by MESHLET_SLICE_*: both VisBuffer phases share cull view 0, so one pair would be
+    // clobbered by the late phase before the single-phase passes draw.
+    uint SliceBase[MESHLET_SLICE_COUNT];
+    uint SliceCount[MESHLET_SLICE_COUNT];
+    // Sub-draws each slice needs, read as the DRAW COUNT by vkCmdDrawMeshTasksIndirectCountEXT at
+    // offsetof(SubDrawCount) + slice * 4. Last field on purpose: the count offset is its byte offset.
+    uint SubDrawCount[MESHLET_SLICE_COUNT];
 };
 
 // Mirror of Lumina::FGPUInstance.
@@ -598,20 +538,15 @@ struct FGPUInstance
     float4                  SphereBounds;
     FMeshletHeader*         MeshletHeader;
 
-    // Explicitly zeroed: Slang's synthesized default initializer skips private members, so
-    // (FGPUInstance)0 left the packed draw id and flags holding whatever was on the stack -- and the
-    // accessors below read both out of this one word. That is the kind of value a guard path hands
-    // back after refusing to resolve something, which is exactly when it must not be garbage.
+    // Explicitly zeroed: Slang's synthesized default initializer skips private members, so (FGPUInstance)0
+    // left the packed draw id and flags holding whatever was on the stack.
     private uint            DrawIDAndFlags = 0u;
-    // Meshlet range of the DEFAULT surface LOD -- the one picked from the primary camera. Used verbatim by
-    // any view that cannot re-select (SurfaceDescIndex == kNoSurfaceDesc: skinned, forced-LOD, LODs off),
-    // and as the reference the per-view pick starts from. Not what the raster resolves against any more:
-    // the draw entry carries a mesh-global meshlet index precisely because the LOD is per view.
+    // Meshlet range of the DEFAULT surface LOD, used verbatim by any view that cannot re-select and as
+    // the reference the per-view pick starts from. The raster resolves a mesh-global index instead.
     uint                    SurfaceMeshletOffset;
     uint                    SurfaceMeshletCount;
-    // Shadow LOD's meshlet range. Shadow views keep using this pick rather than re-selecting per view:
-    // the cascades are fit to the PRIMARY camera, so the LOD that matches their texel pitch is a function
-    // of the primary camera's distance, not of the light's position.
+    // Shadow views keep this pick rather than re-selecting: the cascades are fit to the PRIMARY camera,
+    // so the LOD matching their texel pitch is a function of that camera's distance, not the light's.
     uint                    ShadowMeshletOffset;
     uint                    ShadowMeshletCount;
     FCustomPrimitiveData    CustomData;
@@ -621,10 +556,8 @@ struct FGPUInstance
     uint                    BoneOffset;
     uint                    MaterialIndex;
     uint                    EntityID;
-    // Bases into PreSkinnedVertices() for this instance's surface-LOD and shadow-LOD meshlet blocks
-    // (skinning compute writes, draw VS reads). Equal when both resolved to the same block. 0 for
-    // static instances, kNoPreSkinBase when the entity lost the pre-skin budget and the draw path
-    // must blend bones itself.
+    // Bases into PreSkinnedVertices() for the surface-LOD and shadow-LOD blocks. Equal when both resolved
+    // to the same block, 0 for static, kNoPreSkinBase when the entity lost the pre-skin budget.
     uint                    SkinnedVertexBase;
     uint                    ShadowSkinnedVertexBase;
     // Into SurfaceDescs, so a cull view can re-select this instance's LOD from its OWN origin.
@@ -633,6 +566,9 @@ struct FGPUInstance
     // Entries in this mesh's meshlet array (end of the last LOD). The bound on a mesh-global meshlet index,
     // and the only bound the raster resolve needs now that the index is not LOD-relative.
     uint                    MeshletTotalCount;
+    // Index into InstanceVisibility, the two-phase occlusion flag. The compacted slot is re-derived every
+    // frame, so the retained slot is the only key that means the same instance next frame.
+    uint                    RetainedSlot;
 
     // Expands the packed 3x4. Named for what it returns so every consumer predates the packing and did
     // not have to change; the struct is loaded once and this is a few moves off registers.
@@ -701,10 +637,8 @@ struct FWidgetInstance
     property float4 Tint { get { return UnpackColor(ColorPack); }}
 };
 
-// One local reflection probe. 160 B, must match FGPUReflectionProbe in SceneRenderTypes.h.
-// Extraction bakes the half-extents into WorldToProbe, so the influence volume is the unit box
-// [-1,1]^3 (Box) or the unit sphere (Sphere) in probe space. Sampling helpers live in
-// Includes/ReflectionProbe.slang; this declaration sits here only because FSceneRoot points at it.
+// One local reflection probe. 160 B, must match FGPUReflectionProbe. Extraction bakes the half-extents
+// into WorldToProbe, so the influence volume is the unit box or unit sphere in probe space.
 struct FGPUReflectionProbe
 {
     float4x4    WorldToProbe;
@@ -716,9 +650,8 @@ struct FGPUReflectionProbe
     property bool   IsSphere     { get { return Params.y > 0.5; }}
     property uint   Slice        { get { return (uint)Params.z; }}
     property float  BlendFraction{ get { return Params.w; }}
-    // A probe waiting in the bake queue owns a slice but has nothing in it. It must be skipped
-    // rather than sampled-as-black: consuming influence and returning black would darken the
-    // reflection instead of leaving the sky to cover that pixel.
+    // A probe waiting in the bake queue owns a slice but has nothing in it. Skip rather than sample: it
+    // would consume influence and return black, darkening instead of letting the sky cover the pixel.
     property bool   IsBaked      { get { return CapturePosition.w > 0.5; }}
 };
 
@@ -791,9 +724,8 @@ struct FFrustum
     float4 Planes[6];
 };
 
-// Per-view cull descriptor. One per render view (main camera, each cascade,
-// each point face, each spot). Each view owns a slice of MeshletDrawList /
-// IndirectArgs via IndirectArgsOffset; draw-list regions are packed per (view, draw) on the GPU.
+// Per-view cull descriptor, one per render view. Each owns a slice of MeshletDrawList / IndirectArgs
+// via IndirectArgsOffset; draw-list regions are packed per (view, draw) on the GPU.
 struct FCullView
 {
     float4 FrustumPlanes[6];   // 96B
@@ -813,10 +745,8 @@ struct FCullView
 
 struct FCullData
 {
-// The camera the CULL evaluates against. Normally a straight copy of the render camera; they are
-// separate fields so freezing the cull cannot move the picture with it. Cull code must read these and
-// never CameraView, or a frozen cull would still track the live camera for distance, LOD and the
-// micro-poly projection.
+// The camera the CULL evaluates against; separate from the render camera so freezing the cull cannot
+// move the picture. Cull code must read these and never CameraView.
     float4   CullCameraPosition;
     float4x4 CullCameraView;
     float4x4 CullCameraProjection;
@@ -856,9 +786,8 @@ struct FCullData
     float    CascadePyramidHeight;
     uint     CascadePyramidMipCount;
     uint     BoneNum;                   // entries in Bones(); an index bound, not a frame total
-    // Shadow LOD inputs. They live here rather than in one pass's push constants because BOTH the
-    // instance cull (which reserves draw-list room) and the meshlet cull (which walks it) now make the
-    // per-cascade pick, and a pick that disagrees between them drops meshlets. Took _CullPad1.
+    // Shadow LOD inputs live here rather than in one pass's push constants because BOTH the instance cull
+    // and the meshlet cull make the per-cascade pick, and a disagreement drops meshlets.
     int      ShadowLODBias;
     float    ShadowCoarseLODDistSq;     // past this, shadow LOD caps at MESHLET_MAX_COARSE_SHADOW_LOD; 0 = never
     uint     _CullPad2;
@@ -885,18 +814,14 @@ struct FCullData
 #define DEBUG_MODE_GTAO                 15u
 #define DEBUG_MODE_MATERIAL_ID          16u
 #define DEBUG_MODE_TRIANGLE_ID          17u
-// OIT target inspectors, consumed by OITResolve.slang (not the per-surface switch in SurfaceShading).
-// LAYER_COUNT additionally changes what the translucent BasePixelPass writes: exactly 1.0 per fragment
-// into accum.a, turning the coverage-sum channel into a raw per-pixel fragment count (fp16-exact to 2048) --
-// separates "the fragment SET strobes" from "the fragment VALUES strobe".
+// OIT target inspectors for OITResolve.slang. LAYER_COUNT also makes the translucent BasePixelPass
+// write 1.0 per fragment into accum.a, turning that channel into a raw fragment count.
 #define DEBUG_MODE_OIT_ACCUM_COLOR      18u
 #define DEBUG_MODE_OIT_MOMENTS          19u
 #define DEBUG_MODE_OIT_TRANSMITTANCE    20u
 #define DEBUG_MODE_OIT_LAYER_COUNT      21u
-// Reflection-probe inspectors. INFLUENCE answers "does a probe reach this pixel, and which one";
-// RADIANCE answers "what did that probe actually capture". The two failure modes are distinct and
-// look identical in a lit view: a probe that isn't reaching the pixel and a probe that captured the
-// wrong thing both just look like the sky.
+// INFLUENCE answers whether a probe reaches this pixel and which one; RADIANCE answers what it
+// captured. Both failure modes look identical in a lit view -- the surface just reflects sky.
 #define DEBUG_MODE_PROBE_INFLUENCE      22u
 #define DEBUG_MODE_PROBE_RADIANCE       23u
 
@@ -923,9 +848,8 @@ struct FSceneGlobalData
     FCullData         CullData;
     FParallaxSettings ParallaxSettings;
 
-    // Bindless SRV of this view's screen-space sun-shadow mask (ShadowMaskPixel.slang). ~0u = the pass
-    // did not run for this view (capture views, or no shadow-casting sun) -> the opaque pipelines for
-    // that view are specialized back to the inline cascade PCSS. See SampleShadowMask.
+    // Bindless SRV of this view's screen-space sun-shadow mask. ~0u means the pass did not run for this
+    // view, so its opaque pipelines are specialized back to the inline cascade PCSS.
     uint              ShadowMaskIndex;
 
     // MBOIT moment targets for this view (MomentOIT.slang), read by the translucent shading pass.
@@ -935,10 +859,8 @@ struct FSceneGlobalData
     uint              _ShadowPad2;
 };
 
-// Octahedral 16-16 unit-normal decode (Slang lacks unpackSnorm2x16). Branchless wrap follows
-// Octahedral 15-15 tangent direction + 1-bit handedness sign. Matches
-// Lumina::PackTangent. Returns (tangent.xyz, sign) where sign is +1 or -1
-// and the bitangent is reconstructed as cross(N, tangent) * sign.
+// Octahedral 15-15 tangent direction + 1-bit handedness sign, matching Lumina::PackTangent. Returns
+// (tangent.xyz, sign); the bitangent is reconstructed as cross(N, tangent) * sign.
 float4 UnpackTangent(uint Packed)
 {
     int sx = bitfieldExtract(int(Packed),  0, 15);
@@ -972,9 +894,8 @@ uint PackTangent(float4 t)
     return Packed;
 }
 
-// Octahedral unit-normal <-> [0,1]^2 (for storage in unorm render targets, e.g. the DBuffer normal slot).
-// Distinct from PackNormal/UnpackNormal (which pack into a single uint); these keep the two oct coords
-// as floats so they survive alpha blending. Approximate under blending but adequate for decal normals.
+// Octahedral unit-normal <-> [0,1]^2 for unorm targets. Distinct from PackNormal/UnpackNormal: these
+// keep the two oct coords as floats so they survive alpha blending.
 float2 OctEncode01(float3 N)
 {
     N = normalize(N);
@@ -1003,19 +924,8 @@ float2 UnpackUV(uint Packed)
     return float2(f16tof32(Lo), f16tof32(Hi));
 }
 
-/**
- * Inverse-transpose of the model matrix's upper-left 3x3, for transforming normals under non-uniform
- * scale. Cofactor form -- no general inverse, and it stays finite for a singular scale.
- *
- * The indexing is ROW-wise and that is load-bearing, not incidental: `M[i]` on a Slang matrix is row i
- * (verified by constant-folding `float4x4(r0,r1,r2,r3)[0]`, which yields r0), and `float3x3(a,b,c)` fills
- * ROWS likewise. So this reads the rows of A, and returns a matrix whose ROWS are the cross products
- * below. For a matrix B with columns b0,b1,b2, inverse(B) is exactly that arrangement -- and here
- * b_i = row_i(A), i.e. B = A^T. The result is therefore inverse(A^T) = (A^-1)^T, the normal matrix.
- *
- * Reading these as COLUMNS instead would make the result inverse(A), which is wrong and differs only
- * under non-uniform scale -- so do not "fix" the naming into columns.
- */
+/** Inverse-transpose of the model 3x3 for normals under non-uniform scale, in cofactor form.
+ *  The indexing is ROW-wise and load-bearing: reading these as columns yields inverse(A), which is wrong. */
 float3x3 CalculateNormalMatrix(float4x4 ModelMatrix)
 {
     // Rows of A, despite what a column-major habit suggests.
@@ -1042,9 +952,8 @@ float2 VogelDiskSample(int SampleIndex, int SamplesCount, float Angle)
     return float2(r * c, r * s);
 }
 
-// Triangular-PDF dither (Gjol/Playdead "Banding in Games"). Two decorrelated
-// uniform hashes per channel subtract to a triangular distribution: flat noise
-// floor, +/-1 LSB amplitude at 8-bit -- enough to fully break banding.
+// Triangular-PDF dither (Gjol/Playdead). Two decorrelated uniform hashes per channel subtract to a
+// triangular distribution: flat noise floor, +/-1 LSB at 8-bit.
 float3 ScreenSpaceDither(float2 ScreenPos, float Time)
 {
     float3 S0 = float3(dot(float2(171.0, 231.0), ScreenPos.xy + Time));

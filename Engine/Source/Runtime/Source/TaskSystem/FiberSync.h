@@ -3,15 +3,8 @@
 #include "Core/Threading/Atomic.h"
 #include "Platform/GenericPlatform.h"
 
-// Fiber-aware synchronization primitives, layered on the job scheduler's generic fiber park/unpark
-// (Jobs::ParkFiber / ResumeFiber). When a worker fiber blocks on one of these, the fiber parks and the
-// worker is freed to run other jobs instead of spinning an OS thread, so holding one of these across
-// awaited work does not stall a core. External (non-worker) threads have no fiber to suspend; they
-// assist-wait, running queued jobs while they block, which keeps the system deadlock-free.
-//
-// Prefer these over the std FMutex / FSharedMutex from Core/Threading/Thread.h for any lock that may be
-// held while a job runs or that a job may contend. For a lock held only briefly on a single thread the
-// std mutex is still fine.
+// Layered on Jobs::ParkFiber/ResumeFiber: a blocked worker fiber parks and the worker runs other jobs.
+// Prefer these over std FMutex for any lock held while a job runs, or that a job may contend.
 namespace Lumina
 {
     namespace FiberSyncDetail { struct FWaiterNode; }
@@ -36,9 +29,8 @@ namespace Lumina
         FiberSyncDetail::FWaiterNode* Tail    = nullptr;
     };
 
-    // Fiber-aware shared (reader/writer) mutex. FIFO-fair: a waiting writer blocks newly arriving readers
-    // (no writer starvation) and readers queued behind a writer are granted as a batch (no reader
-    // starvation). NOT recursive or upgradable.
+    // FIFO-fair: a waiting writer blocks newly arriving readers, and readers queued behind a writer are
+    // granted as a batch. NOT recursive or upgradable.
     class FFiberSharedMutex
     {
     public:
@@ -83,9 +75,8 @@ namespace Lumina
         FiberSyncDetail::FWaiterNode* Tail  = nullptr;
     };
 
-    // Fiber-aware condition variable, paired with an FFiberMutex. Wait atomically releases the mutex and
-    // suspends, re-acquiring it before returning. Spurious wakeups are possible, always re-check the
-    // predicate in a loop (or use the predicate overload).
+    // Wait atomically releases the mutex and suspends, re-acquiring before it returns. Spurious wakeups
+    // are possible -- always re-check the predicate in a loop, or use the predicate overload.
     class FFiberConditionVariable
     {
     public:

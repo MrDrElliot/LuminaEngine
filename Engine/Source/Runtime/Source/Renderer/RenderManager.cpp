@@ -93,7 +93,7 @@ namespace Lumina
         #if defined(LUMINA_WITH_VALIDATION)
         bool bValidation = true;
         #else
-        bool bValidation = false;
+        bool bValidation = true;
         #endif
 
         #if defined(LE_SHIPPING)
@@ -110,9 +110,6 @@ namespace Lumina
 
         if (GCommandLine != nullptr)
         {
-            // Layer only. GPU-assisted validation instruments every shader, which is too slow to leave on
-            // while reproducing something that needs a large amount of work to trigger -- but the layer
-            // alone still catches a dead handle or a bad barrier at the offending call.
             if (GCommandLine->Has("validation"))
             {
                 bValidation = true;
@@ -130,7 +127,8 @@ namespace Lumina
                 bGpuValidation = false;
             }
         }
-
+        
+        bGpuValidation = false;
         bValidation = bValidation || bGpuValidation;
 
         RHI::CreateDevice(RHI::FDeviceDesc{ bValidation, bDebugUtils, bGpuValidation });

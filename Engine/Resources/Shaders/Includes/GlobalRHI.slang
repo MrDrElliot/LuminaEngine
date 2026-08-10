@@ -9,31 +9,21 @@ struct FRHIRoot
 };
 [[vk::push_constant]] FRHIRoot gRHI;
 
-// Per-pass args block reached through the single 8-byte push constant. Returns the
-// pointer; field access auto-derefs, so pointer-bearing blocks are safe (no by-value
-// load of PhysicalStorageBuffer pointers, which trips spirv-val).
+// Returns the pointer; field access auto-derefs, so pointer-bearing blocks are safe (no by-value load
+// of PhysicalStorageBuffer pointers, which trips spirv-val).
 Ptr<T> GetArgs<T>()
 {
     return (T*)gRHI.Args;
 }
 
-// Reads a block whose address is stored INSIDE another args block, given that address as a
-// plain integer.
-//
-// Store nested addresses as uint64_t and go through this, never as a typed field. A typed
-// pointer field has to be loaded by value before it can be followed, and GPU-AV instruments
-// that load with a bounds check whose failure path needs a null of the loaded type -- for a
-// PhysicalStorageBuffer pointer that is OpConstantNull of a pointer type, which the SPIR-V
-// spec forbids. The layer emits it anyway, fails its own spirv-val, and disables itself
-// mid-run. Loading an integer and casting afterwards leaves nothing for it to null.
+// Store nested addresses as uint64_t and go through this, never as a typed pointer field: GPU-AV
+// instruments a typed load with a null of pointer type, which SPIR-V forbids, and disables itself.
 T LoadBlock<T>(uint64_t Address)
 {
     return ((T*)Address)[0];
 }
 
-// ---------------------------------------------------------------------------
-//  Global texture heap.
-// ---------------------------------------------------------------------------
+// Global texture heap.
 
 [[vk::binding(0, 0)]] SamplerState                              gSamplers[];
 // Comparison alias of the same sampler array (VkSampler carries compareEnable;
@@ -49,10 +39,8 @@ T LoadBlock<T>(uint64_t Address)
 // Integer alias of the same heap, for R32_UINT targets (e.g. the VisBuffer triangle-ID buffer).
 [[vk::binding(1, 0)]] Texture2D<uint>                           gTextures2DUInt[];
 
-// The storage-image half of the heap (binding 2) lives in GlobalRHIStorage.slang, which
-// a shader includes only if it writes to the heap. See that file for why: the aliases
-// there disagree about view type, so declaring them costs a validation error in any
-// module that does not use them.
+// The storage-image half (binding 2) lives in GlobalRHIStorage.slang, included only by shaders that
+// write to the heap: its aliases disagree about view type and cost a validation error otherwise.
 
 // Stock sampler heap slots. Keep in lockstep with the registration order in
 // RHICore.cpp (RHI::Core::Initialize).
@@ -67,9 +55,7 @@ static const uint SAMPLER_SHADOW        = 7;
 static const uint SAMPLER_MIN_REDUCTION = 8;
 static const uint SAMPLER_MAX_REDUCTION = 9;
 
-// ---------------------------------------------------------------------------
-//  Heap access helpers.
-// ---------------------------------------------------------------------------
+// Heap access helpers.
 
 SamplerState GetSampler(uint SamplerIndex) { return gSamplers[SamplerIndex]; }
 
@@ -78,23 +64,15 @@ float4 SampleTexture2D(uint TextureIndex, uint SamplerIndex, float2 UV)
     return gTextures2D[TextureIndex].Sample(gSamplers[SamplerIndex], UV);
 }
 
-// Explicit-gradient sample. The deferred VisBuffer material lane has no rasterizer 2x2 quad (its quad
-// straddles unrelated triangles), so implicit ddx/ddy are garbage -> wrong mips on every silhouette/seam.
-// DeferredMaterial.slang feeds the analytic perspective-correct UV gradients here instead.
+// Explicit-gradient sample. The deferred VisBuffer lane has no rasterizer quad, so implicit ddx/ddy
+// are garbage -- DeferredMaterial.slang feeds analytic perspective-correct gradients here instead.
 float4 SampleTexture2DGrad(uint TextureIndex, uint SamplerIndex, float2 UV, float2 Ddx, float2 Ddy)
 {
     return gTextures2D[TextureIndex].SampleGrad(gSamplers[SamplerIndex], UV, Ddx, Ddy);
 }
 
-// Material-codegen texture sample. The compiler propagates analytic UV derivatives through the graph and
-// passes them here; which of the two sampling modes is right depends on the LANE, not the material:
-//
-//   * Forward lanes (base pass, masked VisBuffer, terrain): the rasterizer's 2x2 quad covers ONE triangle,
-//     so implicit derivatives are exact and cheaper. The gradient arguments go unused and dead-strip.
-//   * Deferred VisBuffer pass: a quad there straddles unrelated triangles, so implicit derivatives are
-//     garbage. DeferredMaterial.slang #defines this name to the SampleTexture2DGrad form above.
-//
-// Keeping one call shape in the codegen is what lets the same emitted pixel chunk serve every template.
+// Which sampling mode is right depends on the LANE, not the material: forward quads cover one
+// triangle, the deferred lane's do not. One call shape lets the same emitted chunk serve every template.
 float4 SampleTexture2DAuto(uint TextureIndex, uint SamplerIndex, float2 UV, float2 Ddx, float2 Ddy)
 {
     return SampleTexture2D(TextureIndex, SamplerIndex, UV);
@@ -105,11 +83,8 @@ float4 SampleTexture2DLevel(uint TextureIndex, uint SamplerIndex, float2 UV, flo
     return gTextures2D[TextureIndex].SampleLevel(gSamplers[SamplerIndex], UV, Lod);
 }
 
-// Array-texture sampling. Slice selects the layer and is NOT filtered between layers -- the hardware
-// treats the array index as discrete, which is the whole point (layers are independent images, so
-// blending across them would bleed unrelated content). Round/clamp before calling if the caller
-// computes it. The heap arrays are aliased views of one descriptor array, so TextureIndex is the same
-// ResourceID a Texture2D would use; it just has to name a texture actually created as Tex2DArray.
+// Slice is NOT filtered between layers -- the hardware treats the array index as discrete, which is
+// the point. TextureIndex is the same ResourceID a Texture2D uses, but must name a Tex2DArray.
 float4 SampleTexture2DArray(uint TextureIndex, uint SamplerIndex, float2 UV, uint Slice)
 {
     return gTextures2DArray[TextureIndex].Sample(gSamplers[SamplerIndex], float3(UV, (float)Slice));
@@ -127,10 +102,8 @@ float4 SampleTexture2DArrayGrad(uint TextureIndex, uint SamplerIndex, float2 UV,
     return gTextures2DArray[TextureIndex].SampleGrad(gSamplers[SamplerIndex], float3(UV, (float)Slice), Ddx, Ddy);
 }
 
-// Array counterpart of SampleTexture2DAuto, and it exists for the same reason: the material codegen emits
-// one call shape and the DEFERRED template redirects it to the gradient form. Without it an array sample
-// reached the deferred lane as an implicit-derivative Sample(), which is not merely wrong there -- it does
-// not compile, because a compute entry point has no derivative quad.
+// Array counterpart of SampleTexture2DAuto, for the same reason. Without it an array sample reaches
+// the deferred lane as implicit-derivative Sample(), which does not compile in a compute entry point.
 float4 SampleTexture2DArrayAuto(uint TextureIndex, uint SamplerIndex, float2 UV, uint Slice, float2 Ddx, float2 Ddy)
 {
     return SampleTexture2DArray(TextureIndex, SamplerIndex, UV, Slice);
@@ -171,9 +144,8 @@ uint LoadTexture2DUInt(uint TextureIndex, int2 Texel, int Mip = 0)
     return gTextures2DUInt[TextureIndex].Load(int3(Texel, Mip));
 }
 
-// Fullscreen-triangle vertex helper: call from a VS with SV_VertexID, no
-// vertex buffers. UV is top-left origin; depth lands on the far plane to
-// match the engine's FullscreenQuad convention.
+// Fullscreen-triangle vertex helper: call from a VS with SV_VertexID, no vertex buffers. UV is
+// top-left origin; depth lands on the far plane to match the FullscreenQuad convention.
 float4 FullscreenTriangle(uint VertexID, out float2 UV)
 {
     UV = float2((VertexID << 1) & 2, VertexID & 2);

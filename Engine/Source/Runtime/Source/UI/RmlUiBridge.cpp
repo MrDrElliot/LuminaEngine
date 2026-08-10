@@ -591,12 +591,16 @@ namespace Lumina::RmlUi
             }
             ApplyDefaultFontFamily(E.Context);
 
+            char TargetName[96];
+            std::snprintf(TargetName, sizeof(TargetName), "RmlUi.WidgetRT.%s", NameBuf);
+
             E.Target = RHI::Textures::Create(RHI::FTexture2DDesc
             {
                 .Width  = Width,
                 .Height = Height,
                 .Format = EFormat::RGBA8_UNORM,
                 .bRenderTarget = true,
+                .DebugName = TargetName,
             });
             E.ResourceID = E.Target.IsValid() ? (int32)E.Target.SampledSlot : -1;
             E.BuiltSize  = FUIntVector2(Width, Height);

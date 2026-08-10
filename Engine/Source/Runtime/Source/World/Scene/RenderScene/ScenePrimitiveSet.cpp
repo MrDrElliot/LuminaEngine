@@ -1701,9 +1701,8 @@ namespace Lumina
         LUMINA_PROFILE_VALUE("Sync/Primitives",       (int64)Primitives.size());
     }
 
-    // Every active slot contributes its surface's LARGEST LOD, because a view is free to pick any of them
-    // and BuildMeshletBlocks appends ceil(count / group) blocks for whichever it picked. Summing that is
-    // therefore a true bound on one view's appends, whatever the camera does.
+    // Every active slot contributes its surface's LARGEST LOD, because a view may pick any of them.
+    // Summing that is a true bound on one view's appends, whatever the camera does.
     void FScenePrimitiveSet::Reset(FEntityRegistry* Registry)
     {
         Primitives.clear();

@@ -1,4 +1,6 @@
 #pragma once
+
+#include "Renderer/ShaderHandle.h"
 #include "Containers/Array.h"
 #include "Core/LuminaMacros.h"
 #include "Core/Math/Math.h"
@@ -98,21 +100,21 @@ namespace Lumina
         struct FDeferredMaterialSlot
         {
             uint16              MaterialIndex;
-            const FShaderEntry* DeferredShader;
+            FShaderH DeferredShader;
         };
 
         struct FBatch
         {
             FDrawBatchKey                   Key = {};
             // Copied out of the resolve at bind time so the frame path never re-reads the shared entry.
-            const FShaderEntry*             PixelShader = nullptr;
-            const FShaderEntry*             VertexShader = nullptr;
-            const FShaderEntry*             MeshShaderShadow = nullptr;
-            const FShaderEntry*             MeshShaderBase = nullptr;
-            const FShaderEntry*             VisBufferMeshShader = nullptr;
-            const FShaderEntry*             VisBufferMeshShaderMasked = nullptr;
-            const FShaderEntry*             MaskedVisBufferPixelShader = nullptr;
-            const FShaderEntry*             MomentPixelShader = nullptr;
+            FShaderH             PixelShader = {};
+            FShaderH             VertexShader = {};
+            FShaderH             MeshShaderShadow = {};
+            FShaderH             MeshShaderBase = {};
+            FShaderH             VisBufferMeshShader = {};
+            FShaderH             VisBufferMeshShaderMasked = {};
+            FShaderH             MaskedVisBufferPixelShader = {};
+            FShaderH             MomentPixelShader = {};
             // No material identity here on purpose: a batch is a PIPELINE, and one pipeline serves every
             // material that compiles to it. The material is carried per instance
             // (FGPUInstance::MaterialIndex) and per deferred slot (DeferredMaterials below).

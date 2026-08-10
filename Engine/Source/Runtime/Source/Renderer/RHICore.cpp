@@ -24,23 +24,30 @@ namespace Lumina::RHI::Core
         TAtomic<uint64> Cursor{0};
     };
 
+    static constexpr uint32 kNumQueues = 3;   // EQueueType::Graphics / Transfer / Compute
+
     // One retirement queue per frame slot. Kinds rather than a queue each, so there is exactly one place
     // in the engine that destroys a GPU resource and one invariant to check.
     struct FRetireItem
     {
-        enum class EKind : uint8 { Buffer, Texture, SampledSlot, StorageSlot };
+        enum class EKind : uint8 { Buffer, Texture, SampledSlot, StorageSlot, Pipeline };
 
-        EKind     Kind        = EKind::Buffer;
-        uint32    ExtraCycles = 0;
-        GPUPtr    Memory      = 0;
-        FTextureH Texture     = {};
-        uint32    Slot        = kInvalidHeapSlot;
+        EKind      Kind        = EKind::Buffer;
+        uint32     ExtraCycles = 0;
+        GPUPtr     Memory      = 0;
+        FTextureH  Texture     = {};
+        uint32     Slot        = kInvalidHeapSlot;
+        FPipelineH Pipeline    = {};
+
+        /** Per-queue timeline value this resource must outlive: the value the NEXT submission on that queue
+         *  will signal, captured at retire time. Timelines are monotonic, so waiting it covers everything
+         *  already submitted AND the one command list that may have been mid-record when the retire landed.
+         *  The frame slot alone cannot express this -- its wait value is the frame from two frames back. */
+        uint64     Fence[kNumQueues] = {};
     };
 
     struct FCoreState
     {
-        static constexpr uint32 kNumQueues = 3;   // EQueueType::Graphics / Transfer / Compute
-
         FTextureHeapH       GlobalHeap;
 
         FSemaphoreH         QueueTimeline[kNumQueues];
@@ -203,10 +210,16 @@ namespace Lumina::RHI::Core
         case FRetireItem::EKind::StorageSlot:
             if (GCore.bInitialized) { RHI::HeapFreeRWTexture(GCore.GlobalHeap, Item.Slot); }
             break;
+        case FRetireItem::EKind::Pipeline:
+            // RHI::FreeH calls vkDestroyPipeline SYNCHRONOUSLY, so this is the only safe way to drop a
+            // pipeline while frames are in flight -- a command buffer recorded two frames ago may still
+            // reference it. Freeing one directly is only correct after a device wait-idle.
+            RHI::FreeH(Item.Pipeline);
+            break;
         }
     }
 
-    static void PushRetire(const FRetireItem& Item)
+    static void PushRetire(FRetireItem Item)
     {
         // Asset destructors can outlive Core::Shutdown. With no frames in flight there is nothing to wait
         // for, so destroy immediately rather than queueing into a drain that will never run again.
@@ -216,15 +229,57 @@ namespace Lumina::RHI::Core
             return;
         }
 
+        {
+            FScopeLock Lock(GCore.SubmitMutex);
+            for (uint32 QueueIndex = 0; QueueIndex < kNumQueues; ++QueueIndex)
+            {
+                Item.Fence[QueueIndex] = GCore.QueueCounter[QueueIndex] + 1;
+            }
+        }
+
         const uint32 Slot = GCore.CurrentSlot.load(std::memory_order_acquire);
 
         FScopeLock Lock(GCore.RetireMutex);
         GCore.RetireQueues[Slot].push_back(Item);
     }
 
-    // Called from BeginFrame once this slot's queue timelines have been waited.
+    // Called from BeginFrame once this slot's queue timelines have been waited. The slot decides WHEN an
+    // item is looked at; whether it may be destroyed is the per-item fence, because the slot wait only
+    // covers the frame from two frames back -- the one in the other slot is still executing.
     static void DrainRetireQueue(uint32 Slot)
     {
+        uint64 Submitted[kNumQueues];
+        {
+            FScopeLock Lock(GCore.SubmitMutex);
+            for (uint32 QueueIndex = 0; QueueIndex < kNumQueues; ++QueueIndex)
+            {
+                Submitted[QueueIndex] = GCore.QueueCounter[QueueIndex];
+            }
+        }
+
+        uint64 Signalled[kNumQueues];
+        for (uint32 QueueIndex = 0; QueueIndex < kNumQueues; ++QueueIndex)
+        {
+            Signalled[QueueIndex] = GetSemaphoreValue(GCore.QueueTimeline[QueueIndex]);
+        }
+
+        // Clamped to what has actually been submitted: a queue that saw no submission since the retire has
+        // no post-retire work to wait on, only the in-flight work at Fence-1. Without the clamp an idle
+        // queue -- async compute during a quiet stretch, transfer with no uploads -- would pin the item
+        // against a value nothing is ever going to signal.
+        auto HasRetired = [&](const FRetireItem& Item)
+        {
+            for (uint32 QueueIndex = 0; QueueIndex < kNumQueues; ++QueueIndex)
+            {
+                const uint64 Needed = Math::Min(Item.Fence[QueueIndex], Submitted[QueueIndex]);
+                if (Signalled[QueueIndex] < Needed)
+                {
+                    return false;
+                }
+            }
+            return true;
+        };
+
         TVector<FRetireItem> Ready;
         {
             FScopeLock Lock(GCore.RetireMutex);
@@ -234,6 +289,12 @@ namespace Lumina::RHI::Core
                 if (Queue[i].ExtraCycles > 0)
                 {
                     --Queue[i].ExtraCycles;
+                    ++i;
+                    continue;
+                }
+                // Not yet retired on some queue: leave it for the next drain of this slot.
+                if (!HasRetired(Queue[i]))
+                {
                     ++i;
                     continue;
                 }
@@ -264,6 +325,19 @@ namespace Lumina::RHI::Core
         PushRetire(Item);
     }
 
+    void Retire(FPipelineH Pipeline)
+    {
+        if (!IsValid(Pipeline))
+        {
+            return;
+        }
+
+        FRetireItem Item;
+        Item.Kind     = FRetireItem::EKind::Pipeline;
+        Item.Pipeline = Pipeline;
+        PushRetire(Item);
+    }
+
     void Retire(FTextureH Texture)
     {
         if (!IsValid(Texture))
@@ -282,6 +356,16 @@ namespace Lumina::RHI::Core
         if (HeapSlot == kInvalidHeapSlot)
         {
             return;
+        }
+
+        // Unbind NOW, free the index at the drain. Deferring both would leave the descriptor pointing at the
+        // texture for the whole retire->drain window, so every frame recorded in it binds a texture the
+        // caller has already given up -- and the drain only waits ITS slot's timeline, which leaves the
+        // other slot's frame in flight when the image is destroyed. Repointing mid-flight is what the
+        // heap's UPDATE_AFTER_BIND flags are for, and is what HeapRepointTexture already does.
+        if (GCore.bInitialized)
+        {
+            RHI::HeapUnbindTexture(GCore.GlobalHeap, HeapSlot);
         }
 
         FRetireItem Item;
@@ -313,7 +397,7 @@ namespace Lumina::RHI::Core
         const uint32 Slot = SlotIndex % kFramesInFlight;
 
         // Every queue that submitted into this slot, not just the last one to do so.
-        for (uint32 QueueIndex = 0; QueueIndex < FCoreState::kNumQueues; ++QueueIndex)
+        for (uint32 QueueIndex = 0; QueueIndex < kNumQueues; ++QueueIndex)
         {
             const uint64 WaitValue = GCore.SlotWaitValue[Slot][QueueIndex];
             if (WaitValue != 0)
@@ -327,6 +411,12 @@ namespace Lumina::RHI::Core
         // retired on the GPU. Destroy this slot's retired resources here, and nowhere else.
         DrainRetireQueue(Slot);
         RHI::RetireSlot(Slot);
+
+        // Shader-library entries whose last owning material dropped them. Freed HERE and only here: handles
+        // are dereferenced lock-free off the render thread, so recycling a slot is only safe at a point
+        // where no lookup can be in flight. The generation bump is what makes every weak FShaderH still
+        // pointing at the entry start resolving to null, so its holder re-resolves instead of faulting.
+        FShaderLibrary::FlushPendingReleases();
 
         Upload::DrainSliceWriters(Slot);
 
@@ -427,12 +517,8 @@ namespace Lumina::RHI::Core
 
         GCore.CurrentSlot.store(Slot, std::memory_order_release);
 
-        // Only now, with CurrentSlot == Slot, does Retire queue onto the slot whose SlotWaitValue the
-        // upload above just set. Retiring before this point put the staging on the PREVIOUS slot's queue,
-        // which is drained after waiting a timeline value OLDER than that submit -- a monotonic timeline
-        // never waits forward, so the block could be freed while its copy was still in flight. The async
-        // transfer queue made that window wide enough to fault the copy engine on a recycled address.
-        // DrainRetireQueue(Slot) already ran above, so these survive until the next visit to this slot.
+        // Only with CurrentSlot == Slot does Retire queue onto the slot whose SlotWaitValue the upload just
+        // set. Retiring earlier queues on the previous slot, which waits a value older than that submit.
         for (GPUPtr Staging : UploadStaging)
         {
             Retire(Staging);
@@ -557,10 +643,10 @@ namespace Lumina::RHI::Core
 
     FPipelineH CreateGraphicsPipeline(const FName& VertexShader, const FName& PixelShader, const FRasterDesc& Desc)
     {
-        const FShaderEntry* Vertex = FShaderLibrary::Get(VertexShader);
-        const FShaderEntry* Pixel  = FShaderLibrary::Get(PixelShader);
+        const FShaderEntry* Vertex = FShaderLibrary::Resolve(FShaderLibrary::Get(VertexShader));
+        const FShaderEntry* Pixel   = FShaderLibrary::Resolve(FShaderLibrary::Get(PixelShader));
 
-        if (!Vertex->IsValid() || !Pixel->IsValid())
+        if (Vertex == nullptr || !Vertex->IsValid() || Pixel == nullptr || !Pixel->IsValid())
         {
             LOG_ERROR("RHICore: missing shaders for pipeline ({} / {})", VertexShader.c_str(), PixelShader.c_str());
             return {};
@@ -571,9 +657,9 @@ namespace Lumina::RHI::Core
 
     FPipelineH CreateComputePipeline(const FName& ComputeShader)
     {
-        const FShaderEntry* Compute = FShaderLibrary::Get(ComputeShader);
+        const FShaderEntry* Compute = FShaderLibrary::Resolve(FShaderLibrary::Get(ComputeShader));
 
-        if (!Compute->IsValid())
+        if (Compute == nullptr || !Compute->IsValid())
         {
             LOG_ERROR("RHICore: missing compute shader {}", ComputeShader.c_str());
             return {};

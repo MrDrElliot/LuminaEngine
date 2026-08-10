@@ -44,24 +44,8 @@ namespace Lumina
     {
         Super::OnDestroy();
 
-        // MANDATORY, and the reason is GPU-side. MeshletHeaderAddress is a raw buffer device address that
-        // ~FMeshBuffers retires the moment this object dies, but that address has already been copied into
-        // the resolve entry, every SMeshComponent::CachedMeshletHeaderAddress resolved against this mesh,
-        // the retained primitive, and the uploaded instance buffer -- where the cull and mesh shaders
-        // dereference it as a pointer. Without this, nothing ever tells any of them to drop it: the
-        // reference-replacer sweep nulls the component's TObjectPtr with a RAW write, so there is no
-        // setter, no registry.patch, no on_update, and therefore no MarkPendingWork -- and the resolve
-        // pass early-returns unless the pending generation moved. The stale address then outlives the
-        // retire queue and the next cull dispatch page-faults the device.
-        //
-        // InvalidateDependency marks every entry that resolved against this mesh stale AND opens that
-        // gate. The rebuild is safe against this pointer already being freed: RebuildEntry only ever runs
-        // through Resolve(), which the gather calls with the component's LIVE mesh field (now null), so
-        // the stale entry is never rebuilt from its own dangling MeshKey -- the component resolves to
-        // INVALID_MESH_RESOLVE_HANDLE, zeroes its cached address, and Sync re-uploads the instance slot
-        // with 0, which every shader path already gates on.
-        //
-        // Same contract CMaterial::OnDestroy has honoured since resolves became pointer-keyed.
+        // The meshlet header address dies with this mesh, but copies of it live on in resolve entries,
+        // components and the instance buffer. Without this the next cull dispatch faults the device.
         FMeshResolveCache::InvalidateDependency(this);
     }
 
@@ -155,12 +139,8 @@ namespace Lumina
         {
             const FMeshletData& MD = MeshResources->MeshletData;
 
-            // Vertex positions first. A cooked mesh has no Positions array, so this is the path that
-            // actually runs for anything imported, and it is exact to the quantization step.
-            //
-            // Driven by the meshlet list rather than by a flat sweep of the vertex array: a position is
-            // only meaningful against its owning meshlet's anchor. Every entry in the vertex stream
-            // belongs to exactly one meshlet's slice, so this still visits all of them.
+            // Cooked meshes have no Positions array, so this is the path that actually runs. Driven by
+            // the meshlet list because a position is only meaningful against its owning meshlet's anchor.
             for (const FMeshlet& M : MD.Meshlets)
             {
                 for (uint32 v = 0; v < M.VertexCount; ++v)
@@ -185,10 +165,8 @@ namespace Lumina
 
             if (MD.MeshletVertices.empty() && MD.MeshletSkinnedVertices.empty() && !MD.MeshletSpheres.empty())
             {
-                // Last resort only. Each meshlet contributes a cube of side 2*Radius around its
-                // centre, which is its bounding SPHERE squared off: conservative, never wrong for
-                // culling, and wildly loose for anything that is not itself roughly spherical. A tall
-                // thin mesh came out looking like a cube several times its real size.
+                // Last resort: each meshlet's bounding sphere squared off. Conservative for culling,
+                // wildly loose for anything that is not itself roughly spherical.
                 for (const FMeshletSphere& S : MD.MeshletSpheres)
                 {
                     BoundingBox.Min = Math::Min(BoundingBox.Min, S.Center - FVector3(S.Radius));
@@ -200,9 +178,8 @@ namespace Lumina
 
     namespace
     {
-        // Uploads Resource.DistanceField into a bindless Tex3D, replacing any texture already there.
-        // Called from CreateForResource, so a mesh whose buffers are rebuilt (reimport, editor rebuild,
-        // a dynamic mesh committing) refreshes the volume with everything else.
+        // Replaces any texture already there. Called from CreateForResource, so a mesh whose buffers
+        // are rebuilt refreshes the volume with everything else.
         void CreateDistanceFieldTexture(FMeshResource& Resource)
         {
             LUMINA_MEMORY_SCOPE("Meshes");
@@ -280,13 +257,8 @@ namespace Lumina
 
         CreateDistanceFieldTexture(Resource);
 
-        // Rewritten in place rather than reallocated, so the header ADDRESS is unchanged and every
-        // component that cached it (SMeshComponent::CachedMeshletHeaderAddress) stays correct -- no
-        // resolve-cache invalidation, no re-upload of the retained instance buffer.
-        //
-        // Safe against frames already in flight: the four meshlet addresses are untouched, and a frame
-        // that reads the new field index resolves it to the new volume, which is live. The volume it
-        // replaced is frame-deferred, so a frame that reads the OLD index is equally fine.
+        // Rewritten in place so the header ADDRESS is unchanged and every cached copy stays correct.
+        // Frames in flight are safe: the replaced volume is frame-deferred, so the old index still resolves.
         const FMeshletHeaderGPU Header = MakeMeshletHeader(Resource);
         RHI::UploadBuffer(Resource.MeshBuffers.MeshletHeaderBuffer, &Header, sizeof(FMeshletHeaderGPU));
     }
@@ -323,16 +295,14 @@ namespace Lumina
             return Memory;
         };
 
-        // Built into locals and swapped in only once the whole set exists. Retiring first and allocating
-        // second would leave a rebuild that runs out of memory with no geometry at all; this way it keeps
-        // rendering what it had.
+        // Built into locals and swapped in only once the whole set exists, so a rebuild that runs out of
+        // memory keeps rendering what it had instead of losing its geometry.
         const RHI::GPUPtr NewMeshlets = CreateAndUpload(MData.Meshlets.data(), sizeof(FMeshlet) * MData.Meshlets.size(), "Mesh.Meshlets");
         const RHI::GPUPtr NewSpheres  = CreateAndUpload(MData.MeshletSpheres.data(), sizeof(FMeshletSphere) * MData.MeshletSpheres.size(), "Mesh.MeshletSpheres");
         const RHI::GPUPtr NewCones    = CreateAndUpload(MData.MeshletCones.data(), sizeof(FMeshletCone) * MData.MeshletCones.size(), "Mesh.MeshletCones");
 
-        // Highest joint index the packed vertices actually reference. Checked at resolve against the
-        // skeleton's bone count -- the GPU bone fetch is unbounded, so a mesh that outruns its skeleton
-        // reads garbage matrices for its leaf bones.
+        // Checked at resolve against the skeleton's bone count: the GPU bone fetch is unbounded, so a
+        // mesh that outruns its skeleton reads garbage matrices for its leaf bones.
         if (bSkinned)
         {
             uint32 MaxJoint = 0;
@@ -383,15 +353,8 @@ namespace Lumina
         // failed to allocate leaves the sentinel in place, which is what every SDF shader path gates on.
         CreateDistanceFieldTexture(Resource);
 
-        // The header is allocated ONCE and rewritten in place forever after. Its address is the identity
-        // every cached copy holds (SMeshComponent::CachedMeshletHeaderAddress, FResolvedMesh, the uploaded
-        // instance buffer), so moving it would mean invalidating the resolve cache and re-uploading the
-        // whole retained instance buffer just to publish new contents -- and, until those propagated,
-        // handing the GPU an address that no longer exists.
-        //
-        // A frame still in flight reads the rewritten header and picks the new geometry up early. That is
-        // safe: the new buffers are live, and the old ones are slot-retired so they outlast any command
-        // list already referencing them. Same trade RefreshDistanceField already makes.
+        // Allocated ONCE and rewritten in place forever after: its address is the identity every cached
+        // copy holds, so moving it means invalidating the resolve cache and re-uploading every instance.
         const FMeshletHeaderGPU Header = MakeMeshletHeader(Resource);
         if (MB.MeshletHeaderBuffer == 0)
         {
@@ -415,9 +378,8 @@ namespace Lumina
             return;
         }
 
-        // Build into a scratch volume first. Build() clears its output on every failure path, and
-        // assigning that straight onto the resource would silently destroy a good field whenever a
-        // rebuild could not run (no geometry at the chosen LOD, degenerate bounds).
+        // Build into a scratch volume first. Build() clears its output on every failure path, which
+        // would silently destroy a good field whenever a rebuild could not run.
         FDistanceFieldVolume NewVolume;
         const bool bBuilt = DistanceField::Build(*MeshResources, DistanceFieldSettings, NewVolume);
 
@@ -430,10 +392,8 @@ namespace Lumina
 
         MeshResources->DistanceField = Move(NewVolume);
 
-        // Republishes the volume through the existing meshlet header. Deliberately NOT GenerateGPUBuffers:
-        // that rebuilds the whole meshlet set to publish a volume the existing header can carry on its own.
-        // (CreateForResource also keeps the header address stable now, so this is a cost argument rather
-        // than a correctness one.)
+        // Deliberately NOT GenerateGPUBuffers: that rebuilds the whole meshlet set to publish a volume
+        // the existing header can carry on its own.
         MeshBuffers::RefreshDistanceField(*MeshResources);
     }
 
@@ -441,9 +401,8 @@ namespace Lumina
     {
         MeshBuffers::CreateForResource(*MeshResources);
 
-        // The meshlet header address just became valid, so every entry holding this mesh has to re-read
-        // it -- and nothing else does. Bumping the global epoch here is what made loading ONE mesh
-        // re-resolve every component in the world and re-upload the entire retained instance buffer.
+        // Only entries holding THIS mesh need to re-read the header. Bumping the global epoch here made
+        // loading one mesh re-resolve every component in the world.
         FMeshResolveCache::InvalidateDependency(this);
 
         // Drop import-time scratch.

@@ -29,9 +29,8 @@ namespace Lumina
         Graph->CompileGraph(Compiler);
         Material->SetReadyForRender(false);
 
-        // Carried out on BOTH paths. A warning is about a material that compiled, so the success path is
-        // the one that matters; the failure path keeps them so a graph with an error and a warning does not
-        // silently drop the warning once the error is fixed.
+        // Carried on BOTH paths: the failure path keeps warnings so a graph with an error and a warning does
+        // not silently drop the warning once the error is fixed.
         Result.Warnings = Compiler.GetWarnings();
 
         if (Compiler.HasErrors())
@@ -61,13 +60,8 @@ namespace Lumina
         {
             Options.MacroDefinitions.emplace_back("MASKED");
         }
-        // NO shading-model defines. Every model -- Unlit included -- reaches the shader through the
-        // material's runtime flags (EMaterialGPUFlags bits 3-5) and is branched on there.
-        //
-        // Unlit used to be a define that stripped the lighting path outright. That made an unlit master's
-        // shaders hard-wired, so no material instance could override its way back to Lit, and every new
-        // model would have wanted a define of its own. The trade is that an unlit material's shader now
-        // contains the lighting code it branches over.
+        // NO shading-model defines. Every model, Unlit included, reaches the shader through the material's
+        // runtime flags and is branched on there, so an instance can still override its way back to Lit.
 
         FShaderCompileOptions VSOptions;
         VSOptions.DebugName = MatName + " [VS]";
@@ -89,13 +83,8 @@ namespace Lumina
             ShaderCompiler->CompilerShaderRaw(Result.VertexSource, Move(VSOptions), CommitStage(EMaterialShaderStage::Vertex));
         }
 
-        // PBR geometry is task + mesh, end to end: four mesh binaries from two templates, no vertex stage.
-        // Each is per-material because the vertex graph's World Position Offset is compiled into it, and
-        // each is a separate compile rather than a spec-constant variant because they declare different
-        // OUTPUT types -- which a spec constant cannot change.
-        //
-        // The masked pair is compiled only for masked materials and cleared otherwise, so a masked ->
-        // opaque recompile drops the stale stages instead of leaving them bound.
+        // PBR geometry is task + mesh end to end: four mesh binaries from two templates, no vertex stage.
+        // Separate compiles rather than spec-constant variants because they declare different OUTPUT types.
         if (Material->GetMaterialType() == EMaterialType::PBR)
         {
             const FString MeshShaderDir = Paths::GetEngineResourceDirectory() + "/Shaders/MaterialShader/";
@@ -141,28 +130,15 @@ namespace Lumina
             const FString DeferredSource = Compiler.BuildDeferredShaderFromTemplate(MeshShaderDir + "DeferredMaterial.slang", EMaterialType::PBR);
             FShaderCompileOptions DeferredOptions; DeferredOptions.DebugName = MatName + " [DM]";
 
-            // No defines on this lane at all now. Unlit used to need one here, because opaque PBR shades
-            // through the deferred VisBuffer pass rather than the forward stage, and the two lanes
-            // disagreeing showed up as "correct in the editor, lit in the world". The runtime model check
-            // is in ShadeGBuffer itself, so both lanes read the same flag and cannot drift.
-            //
-            // TRANSLUCENT still does not belong here: translucent/additive never resolve a deferred shader
-            // (MeshResolve::ResolveSurfaceMaterial returns before requiring one) and this template's PSOutput
-            // reads only Shaded.Color/.Alpha, never the translucent Reflection pair. MASKED does not belong
-            // either: it gates [earlydepthstencil], which this template has no attribute for, and the alpha-test
-            // discard inside ShadeSurface is driven by the runtime MatFlag_Masked flag rather than the define.
+            // No defines on this lane. The runtime model check lives in ShadeGBuffer, so the forward and
+            // deferred lanes read the same flag and cannot drift into "correct in the editor, lit in the world".
             ShaderCompiler->CompilerShaderRaw(DeferredSource, Move(DeferredOptions), CommitStage(EMaterialShaderStage::Deferred));
         }
 
         ShaderCompiler->CompilerShaderRaw(Result.PixelSource, Move(Options), CommitStage(EMaterialShaderStage::Pixel));
 
-        // MBOIT pass 1 (Includes/MomentOIT.slang): a second compile of the SAME pixel source that runs the
-        // opacity graph and stops there, accumulating absorbance moments instead of shading. Only PBR
-        // translucency is drawn by the moment pass -- additive materials composite order-independently on
-        // their own, and the non-meshlet domains never reach it -- so nothing else compiles the stage.
-        //
-        // Cleared first, so a translucent -> opaque recompile drops the stale binaries rather than leaving
-        // the moment pass drawing geometry that the shading pass no longer visits.
+        // MBOIT pass 1: a second compile of the SAME pixel source that runs the opacity graph and stops,
+        // accumulating moments. Cleared first, so a translucent -> opaque recompile drops stale binaries.
         Material->ClearShaderStage(EMaterialShaderStage::MomentPixel);
         const bool bNeedsMomentStage = Material->GetMaterialType() == EMaterialType::PBR
                                     && Material->GetBlendMode()   == EBlendMode::Translucent;
@@ -179,12 +155,8 @@ namespace Lumina
 
         ShaderCompiler->Flush();
 
-        // CompilerShaderRaw signals a failed stage only by leaving its output empty. A graph that passes the
-        // node-level checks above can still fail to compile in a specific template (notably the deferred stage),
-        // which would otherwise save a master that writes VisBuffer depth but is SKIPPED by the deferred shading
-        // pass (MaterialGBufferPass requires a non-null DeferredShader) -> the mesh renders as a depth-only
-        // "ghost" in the world while still looking fine when reopened in the editor (which recompiles). Treat any
-        // required stage with empty binaries as a compile failure so a broken master is never committed/saved.
+        // CompilerShaderRaw signals a failed stage only by leaving its output empty. Committing one anyway
+        // yields a master that writes VisBuffer depth but is skipped by shading -- a depth-only ghost.
         auto StageEmpty = [&](const TVector<uint32>& Binaries, const char* StageName) -> bool
         {
             if (!Binaries.empty())
@@ -202,17 +174,14 @@ namespace Lumina
         bStageFailed |= StageEmpty(Material->PixelShaderBinaries, "Pixel");
         if (bNeedsMomentStage)
         {
-            // Required, not optional: without it the moment pass skips this material, so the shading pass
-            // reconstructs its transmittance from moments that never saw it and the surface renders at full
-            // brightness through everything in front of it.
+            // Required, not optional: without it the moment pass skips this material and the shading pass
+            // reconstructs transmittance from moments that never saw it.
             bStageFailed |= StageEmpty(Material->MomentPixelShaderBinaries, "Moment Pixel");
         }
         if (Material->GetMaterialType() == EMaterialType::PBR)
         {
-            // Every geometry stage is REQUIRED now: there is no fallback to fall back to, so a material
-            // missing one renders nothing in whichever pass wanted it rather than quietly taking the
-            // other path. Shadow and base are separate entries because a material can legitimately be
-            // opaque-only or translucent-only in a scene, but both are cheap and always compiled.
+            // Every geometry stage is REQUIRED: there is no fallback, so a material missing one renders nothing
+            // in whichever pass wanted it rather than quietly taking the other path.
             bStageFailed |= StageEmpty(Material->DeferredShaderBinaries, "Deferred");
             bStageFailed |= StageEmpty(Material->VisBufferMeshShaderBinaries, "VisBuffer Geometry");
             bStageFailed |= StageEmpty(Material->MeshShaderShadowBinaries, "Shadow Geometry");
@@ -234,10 +203,8 @@ namespace Lumina
             return Result;   // leave the material not-ready; the caller skips it rather than saving a ghost.
         }
 
-        // The compiler works in live CTexture*; the material stores SOFT refs, so the graph's texture
-        // pins are demoted to (path, GUID) here. The GUID is filled in from the live object rather than
-        // left for TryResolve, so a later resolve never has to hit the registry by path -- and so a
-        // texture that gets renamed still resolves.
+        // The compiler works in live CTexture*; the material stores SOFT refs. The GUID is filled from the
+        // live object so a later resolve never hits the registry by path, and a rename still resolves.
         {
             TVector<TObjectPtr<CTexture>> BoundTextures;
             Compiler.GetBoundTextures(BoundTextures);
@@ -258,11 +225,8 @@ namespace Lumina
 
                 const FGuid Guid = Texture->GetGUID();
 
-                // Registry first, package path as the fallback. The registry can legitimately miss a
-                // texture that was imported moments ago and has not been indexed yet, and an empty path
-                // is not a recoverable state: the soft ref would look valid (its GUID is set) while
-                // every resolve of it calls LoadPackage("") and silently yields the magenta placeholder,
-                // for the life of the asset.
+                // Registry first, package path as fallback. An empty path is not recoverable: the soft ref looks
+                // valid while every resolve calls LoadPackage("") and yields the magenta placeholder forever.
                 FStringView Path;
                 if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByGUID(Guid))
                 {
@@ -285,10 +249,8 @@ namespace Lumina
 
                 Material->Textures.emplace_back(FSoftObjectPath(Path, Guid));
 
-                // Seed the resolved cache with the pointer the graph already holds. Compiling is not a
-                // reason to go back through the asset manager for something that is loaded and resident
-                // right now -- and doing so is what made a freshly imported material render magenta,
-                // because the round trip could fail while the live pointer was sitting right here.
+                // Seed the cache with the pointer the graph already holds. Round-tripping through the asset manager
+                // for something already resident is what made a freshly imported material render magenta.
                 Material->ResolvedTextures.emplace_back(Texture);
             }
         }
@@ -309,9 +271,8 @@ namespace Lumina
 
     void ProcessStaleMaterialRecompiles()
     {
-        // One material per call: each recompile runs the full multi-stage pipeline (ending in a compiler
-        // Flush), so spreading the work across frames avoids one long hitch when a template edit makes
-        // many materials stale at once.
+        // One material per call: each recompile runs the full multi-stage pipeline, so spreading the work
+        // avoids one long hitch when a template edit makes many materials stale at once.
         TObjectPtr<CMaterial> Material = CMaterial::PopStaleTemplateMaterial();
         if (!Material.IsValid())
         {

@@ -61,6 +61,11 @@ namespace Lumina
     // FGPUInstance::SurfaceDescIndex when the instance's LOD is fixed and no view may re-select it.
     constexpr uint32 kNoSurfaceDescIndex = NO_SURFACE_DESC_INDEX;
 
+    // FGPUInstance::RetainedSlot for an instance the CPU feeds directly (skinned), which has no retained
+    // slot to key a persistent two-phase visibility flag off. Always out of range, so it reads as
+    // "not visible last frame" and the late phase draws it.
+    constexpr uint32 kNoRetainedSlot = 0xFFFFFFFFu;
+
     // Mutually-exclusive debug viz; values must match DEBUG_MODE_* in Common.slang.
     enum class ERenderSceneDebugFlags : uint8
     {
@@ -360,6 +365,7 @@ namespace Lumina
             Desc.Usage     = RHI::EImageUsageFlags::DepthAttachment | RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::TransferDst;
 
             ShadowAtlas = CreateSceneImage(Desc);
+            RHI::SetDebugName(ShadowAtlas.Texture, "Scene.ShadowAtlas");
         }
 
         // Quantizes up to next pow2 and clamps to [Min,Max]. Returns INDEX_NONE if full.
@@ -715,6 +721,16 @@ namespace Lumina
 
     // Mirror of FRenderBucket in Common.slang: one (view, draw) pair's slice of the three cull arenas.
     // The CPU writes only the capacity seeds; BuildDrawPrefix owns every other field.
+    // Which part of a bucket's draw region a pass rasterizes. Mirrors MESHLET_SLICE_* in
+    // Shared/SharedConstants.h; the meshlet cull writes all three and every draw picks one.
+    enum class EMeshletSlice : uint32
+    {
+        Early = MESHLET_SLICE_EARLY,   // what the early cull phase appended
+        Late  = MESHLET_SLICE_LATE,    // what the late phase added on top
+        All   = MESHLET_SLICE_ALL,     // the whole region; final once both phases have run
+    };
+    constexpr uint32 kMeshletSliceCount = MESHLET_SLICE_COUNT;
+
     struct FRenderBucketGPU
     {
         uint32 DrawBase;
@@ -723,9 +739,16 @@ namespace Lumina
         uint32 BlockBase;
         uint32 BlockCapacity;
         uint32 BlockCursor;
-        uint32 SubDrawCount;   // read directly as the indirect draw count; keep last
+        // Dense offset of this bucket's blocks in the flat meshlet-cull dispatch. Blocks are dense within
+        // a bucket but sparse across the arena, so the cull cannot derive its bucket from the block.
+        uint32 CullWorkBase;
+        // Per-slice (EMeshletSlice) view of the draw region, relative to DrawBase.
+        uint32 SliceBase[kMeshletSliceCount];
+        uint32 SliceCount[kMeshletSliceCount];
+        // Read as the indirect draw count at offsetof(SubDrawCount) + slice * 4; keep last.
+        uint32 SubDrawCount[kMeshletSliceCount];
     };
-    static_assert(sizeof(FRenderBucketGPU) == 28, "FRenderBucketGPU layout must match FRenderBucket in Common.slang");
+    static_assert(sizeof(FRenderBucketGPU) == 64, "FRenderBucketGPU layout must match FRenderBucket in Common.slang");
     static_assert(offsetof(FRenderBucketGPU, SubDrawCount) % 4 == 0,
                   "SubDrawCount is used as a countBufferOffset, which must be 4-byte aligned");
 
@@ -797,6 +820,7 @@ namespace Lumina
         uint32          ShadowSkinnedVertexBase;//        112
         uint32          SurfaceDescIndex;       //        116
         uint32          MeshletTotalCount;      //        120
+        uint32          RetainedSlot;           //        124 (was tail padding)
     };
 
     static_assert(sizeof(FGPUInstance) == 128, "FGPUInstance layout must match shader");
@@ -935,8 +959,8 @@ namespace Lumina
         };
     }
 
-    // Which side of the mid-frame pyramid rebuild a meshlet cull dispatch is on.
-    // Must match CULL_PHASE_* in Common.slang.
+    // Which side of the mid-frame pyramid rebuild a pass is on. CPU-side only: the shaders read the
+    // EMeshletSlice this maps to, which is what actually reaches them.
     namespace ECullPhase
     {
         enum Type : uint32

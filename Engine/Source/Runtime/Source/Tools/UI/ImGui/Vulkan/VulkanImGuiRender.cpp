@@ -124,6 +124,7 @@ namespace Lumina
                         .Width  = (uint32)Tex->Width,
                         .Height = (uint32)Tex->Height,
                         .Format = EFormat::RGBA8_UNORM,
+                        .DebugName = "ImGui.FontAtlas",
                     });
                     It = NewFontTextures.insert_or_assign(Tex->UniqueID, Created).first;
                     Tex->SetTexID((ImTextureID)(uint32)Created.ResourceID());
@@ -441,11 +442,14 @@ namespace Lumina
             return (ImTextureID)(uint32)RHI::Textures::DefaultResourceID();
         }
 
+        const FString DebugName = FString("ImGui.") + FString(Path.data(), Path.size());
+
         RHI::FManagedTexture Texture = RHI::Textures::Create(RHI::FTexture2DDesc
         {
             .Width  = Result->Dimensions.x,
             .Height = Result->Dimensions.y,
             .Format = Result->Format,
+            .DebugName = DebugName.c_str(),
         });
         RHI::Textures::Upload(Texture, 0, Result->Pixels.data(), Result->Pixels.size(), Result->Dimensions.x);
 

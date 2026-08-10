@@ -40,9 +40,8 @@ static const float  kMieH          = 1.2e3;
 static const float  kOzoneCenter   = 25e3;
 static const float  kOzoneWidth    = 15e3;
 
-// Angular width (in sin-elevation) over which the horizon colour fades into the ground swatch below
-// it. Wide enough that the sky cube's finite resolution cannot land the whole transition inside one
-// texel, which is what turned it into a visible edge; narrow enough to still read as a horizon.
+// Wide enough that the sky cube's finite resolution cannot land the whole transition inside one texel,
+// which is what turned it into a visible edge; narrow enough to still read as a horizon.
 static const float  kHorizonGroundFade = 0.35;
 
 float Sky_RayleighPhase(float CosTheta)
@@ -416,18 +415,8 @@ float3 Sky_Dynamic(FEnvironmentParams Env, float3 SunDir, float3 RayDir, float T
     // so the camera never falls inside the planet sphere.
     float3 AtmoCamera = float3(0.0, kPlanetR + 50.0, 0.0);
 
-    // Sample the atmosphere along a HORIZON-CLAMPED ray.
-    //
-    // From 50m up, a ray a hair below the horizon hits the planet within metres, so Sky_Atmosphere
-    // truncates its integral to nothing and returns black -- while the ray a hair above it still
-    // crosses the whole atmosphere and returns full brightness. That is a step with no angular width.
-    // Blending a ground tint underneath it could not hide it, because the blend started from black on
-    // the far side of the step. Rasterised into the sky cube, that step lands on a texel boundary and
-    // reads as a hard, faintly staircased line -- worst near the cube's face corners, where a texel
-    // covers the most solid angle.
-    //
-    // Clamping the sampled direction to the horizon makes every below-horizon ray start from the
-    // horizon's own colour, so the ground blend below has something continuous to fade from.
+    // HORIZON-CLAMPED: a ray a hair below the horizon truncates to black while one a hair above returns
+    // full brightness -- a step with no angular width. Clamping gives the ground blend something continuous.
     float3 SkyDir = float3(RayDir.x, max(RayDir.y, 0.0), RayDir.z);
     float  SkyLen = length(SkyDir);
     // Straight down: xz is zero and the clamp leaves nothing to normalize. Any finite direction does,
@@ -439,9 +428,8 @@ float3 Sky_Dynamic(FEnvironmentParams Env, float3 SunDir, float3 RayDir, float T
     // Night blend: 1 (deep night) at SunHeight ~ -0.15 to 0 (full day) at ~ 0, via sun elevation.
     float NightFactor = smoothstep(0.05, -0.15, SunHeight);
 
-    // Fade the horizon colour into the ground swatch below it. Unbranched and smoothstep-driven, so
-    // the value AND its first derivative are continuous across y = 0 -- a branch at exactly the
-    // horizon would put a crease on the one line of the image the eye is already drawn to.
+    // Unbranched and smoothstep-driven so the value AND its first derivative are continuous across y = 0.
+    // A branch exactly at the horizon puts a crease on the one line the eye is already drawn to.
     float Below = smoothstep(0.0, -kHorizonGroundFade, RayDir.y);
     float3 GroundTint = Env.GroundColor.rgb * 0.5;
     Atmo = lerp(Atmo, GroundTint, Below);
@@ -480,16 +468,8 @@ float3 EvaluateSky(FEnvironmentParams Env, float3 SunDir, float3 RayDir, float T
     return Sky_Dynamic(Env, SunDir, RayDir, Time);
 }
 
-// World ray -> equirect UV for an HDRI panorama, with the environment's yaw applied.
-//
-// Addressing (Y up, left-handed +Z fwd): u = 0.5 + atan2(-z, x)/2PI; v = 0.5 - asin(y)/PI. The -z keeps
-// u increasing with camera right-rotation (else the sky mirrors); asin keeps the poles non-singular
-// under bilinear. CosYaw/SinYaw are cos/sin of the PANORAMA's yaw, so the sample ray is rotated by the
-// inverse -- positive yaw turns the HDRI, not the camera.
-//
-// This lives here rather than in either caller because the visible sky (Environment.slang) and the IBL
-// bake (EquirectToCubemap.slang) must address the panorama identically. Two copies that drift apart by
-// even a degree read as reflections sliding against the background.
+// The -z keeps u increasing with camera right-rotation; asin keeps the poles non-singular. Lives here
+// because the visible sky and the IBL bake must address the panorama identically or reflections slide.
 float2 Sky_EquirectUV(float3 RayDir, float CosYaw, float SinYaw)
 {
     float3 R = float3(RayDir.x * CosYaw - RayDir.z * SinYaw,

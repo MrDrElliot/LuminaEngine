@@ -812,7 +812,7 @@ namespace Lumina
         // The DEFERRED (VisBuffer) permutation first: it is the one that shades opaque geometry, so it is
         // the one whose register count matters. The forward pixel shader is listed too because translucent
         // and capture views still use it, and the two can differ (different spec constants survive).
-        const struct { const char* Label; const FShaderEntry* Entry; } Lanes[] =
+        const struct { const char* Label; FShaderH Entry; } Lanes[] =
         {
             { "Deferred (VisBuffer)", Material->GetDeferredShader() },
             { "Forward Pixel",        Material->GetPixelShader()    },
@@ -843,7 +843,8 @@ namespace Lumina
 
         for (const auto& Lane : Lanes)
         {
-            if (Lane.Entry == nullptr || !Lane.Entry->IsValid())
+            const FShaderEntry* LaneEntry = FShaderLibrary::Resolve(Lane.Entry);
+            if (LaneEntry == nullptr || !LaneEntry->IsValid())
             {
                 continue;
             }

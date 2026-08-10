@@ -108,16 +108,8 @@ namespace Lumina
             return bAnyExplicit ? SlotCount : Resource.GeometrySurfaces.size();
         }
 
-        /**
-         * Rewrites one resource's surface material indices into a dense, per-mesh slot range and returns
-         * the resulting slot -> source-material mapping.
-         *
-         * A parser indexes a surface by its material's position in the WHOLE file, so a mesh that uses only
-         * the fiftieth material would otherwise be given fifty slots with a single one filled -- the rest
-         * dangling empty in the asset. Merge mode already densifies globally via
-         * FMeshImportData::MergedMaterialSlotToSource; this is the same idea applied per mesh, which is what
-         * the non-merged path (one asset per source mesh) needs.
-         */
+        /** Rewrites a resource's surface material indices into a dense per-mesh slot range and returns the
+         *  slot -> source mapping. A parser indexes by position in the WHOLE file, leaving dangling slots. */
         TVector<int16> DensifyMaterialSlots(FMeshResource& Resource)
         {
             TVector<int16> SlotToSource;
@@ -221,9 +213,7 @@ namespace Lumina
         }
 
         // Flattens every scene-graph placement into one static/skinned pair, baking each instance's world
-        // transform into its copy of the shared geometry. This is the only stage that expands instances:
-        // everything before it works on the deduplicated resources, so the cost is paid once and only when
-        // the user asks for a single merged asset.
+        // transform in. The only stage that expands instances, so the cost is paid once and only on merge.
         bool MergeInstancesIntoSingleMesh(FMeshImportData& Data, FString& OutError)
         {
             size_t TotalStaticVerts = 0, TotalStaticIndices = 0;
@@ -420,10 +410,8 @@ namespace Lumina
         /** Steradians in a sphere; a point light's candela is its lumens spread over all of them. */
         constexpr float GSphereSteradians = 4.0f * Math::Pi<float>();
 
-        /**
-         * Authors the environment an imported scene has no way to carry itself. Kept file-local so the
-         * importer header does not have to pull in entt or the component headers.
-         */
+        /** Authors the environment an imported scene cannot carry itself. File-local so the importer header
+         *  does not have to pull in entt or the component headers. */
         void AddSceneEnvironment(entt::registry& Registry, entt::entity Root, const FVector3& WorldColor)
         {
             // A flat fill rather than the Dynamic default: the source authored a constant world color, and
@@ -447,9 +435,8 @@ namespace Lumina
             SPostProcessComponent& PostProcess = Registry.emplace<SPostProcessComponent>(Root);
             PostProcess.bEnabled        = true;
             PostProcess.bInfiniteExtent = true;
-            // A default Lumina world ships its own global volume at priority 0, and ties there resolve by
-            // iteration order. Outranking it is the difference between reproducing the source's look and
-            // inheriting the editor's.
+            // A default world ships its own global volume at priority 0 and ties resolve by iteration order.
+            // Outranking it is the difference between the source's look and the editor's.
             PostProcess.Priority        = 100;
 
             SPostProcessSettings& Settings = PostProcess.Settings;
@@ -594,10 +581,8 @@ namespace Lumina
 
             if (Node.Kind == ESourceNodeKind::Camera && bImportCameras)
             {
-                // A glTF camera looks down its local -Z; the engine's camera forward is the entity's +Z
-                // (SCameraSystem::SetResolvedView). Yawing the entity 180 degrees makes the imported
-                // orientation frame the same view instead of the exact opposite one. Children of a camera
-                // node inherit the yaw, which the format makes vanishingly rare.
+                // A glTF camera looks down local -Z; the engine's camera forward is the entity's +Z. Yawing 180
+                // makes the imported orientation frame the same view instead of the exact opposite one.
                 Transform.SetRotation(Node.Rotation * FQuat(FVector3(0.0f, Math::Pi<float>(), 0.0f)));
             }
             else
@@ -793,7 +778,7 @@ namespace Lumina
             }
             if (Image.IsEmbedded())
             {
-                Image.Thumbnail = RenderUtils::CreateImageFromPixels(Image.Bytes, true, FUIntVector2(128, 128));
+                Image.Thumbnail = RenderUtils::CreateImageFromPixels(Image.Bytes, true, FUIntVector2(128, 128), "MeshImport.EmbeddedThumbnail");
             }
             else if (!Image.ResolvedPath.empty())
             {
@@ -816,9 +801,8 @@ namespace Lumina
         constexpr float kTextureBudget  = 0.13f;
         constexpr float kSaveBudget     = 0.10f;
 
-        // A source that carries a scene graph merges through the instance table, so each placement's world
-        // transform is baked and the merged asset keeps the scene's layout. Sources without one (FBX, OBJ)
-        // fall through to the finalize's plain concatenation.
+        // A source with a scene graph merges through the instance table, so each placement's world transform
+        // is baked and the layout survives. FBX and OBJ fall through to plain concatenation.
         if (bMergeMeshes && !SourceData.MeshInstances.empty())
         {
             if (Progress)
@@ -904,8 +888,7 @@ namespace Lumina
         }
 
         // Slot -> source-material mapping per resource. Merge mode densified globally at parse time and
-        // carries its own table; everything else is packed here, before the resources are moved into their
-        // assets. Indexed by Resources index, alongside ResourceToMesh.
+        // carries its own table; everything else is packed here, indexed alongside ResourceToMesh.
         TVector<TVector<int16>> ResourceSlotToSource(SourceData.Resources.size());
         if (!bMergeMeshes)
         {
@@ -1015,11 +998,8 @@ namespace Lumina
 
                 const bool bAlreadyExists = (FindObject<CPackage>(PackagePath) != nullptr);
 
-                // TextureAssetName drops the directory and the extension, so two different source images
-                // can sanitize to one name. SourceData.Images is already deduplicated by source key, so a
-                // collision inside this batch is always two genuinely different textures -- aliasing them
-                // is how a mesh ends up wearing another material's map. Give the loser its own path
-                // instead, the way every other asset type here does through BuildPath.
+                // TextureAssetName drops directory and extension, so two source images can sanitize to one name.
+                // Images are already deduplicated by key, so a collision here is always two different textures.
                 if (!bAlreadyExists && !SeenPaths.insert(PackagePath).second)
                 {
                     PackagePath = Paths.Claim(PackagePath);
@@ -1052,9 +1032,8 @@ namespace Lumina
                 // One encode thread each: this loop already saturates the cores, so a full basisu pool per
                 // texture would only oversubscribe them.
                 CookRequest.EncodeThreadBudget = 1;
-                // CPU mips only. Nothing renders these during the import, the package stores the mip
-                // chain, and CTexture::PostLoad creates the image on first real use -- whereas creating
-                // one here queues a copy against an image this import destroys before the frame drains it.
+                // CPU mips only. Nothing renders these during import and PostLoad creates the image on first use,
+                // whereas creating one here queues a copy against an image this import destroys first.
                 CookRequest.bCreateGPUResource  = false;
 
                 Cooked[i] = Import::Textures::ImportTextureAsset(W.PackagePath, CookRequest);
@@ -1082,6 +1061,10 @@ namespace Lumina
             Progress->EnterProgressFrame(kTextureBudget);
         }
 
+        // How many null slots the assignment below knows about. The sweep after it compares against this,
+        // so it only speaks up when the assets disagree with what assignment thought it did.
+        uint32 ExpectedNullSlots = 0;
+
         if (bImportMaterials && !SourceData.Materials.empty())
         {
             if (Progress)
@@ -1094,10 +1077,18 @@ namespace Lumina
                 const TVector<CMaterialInstance*> Instances = Import::Materials::GenerateMaterials(
                     TSpan<const FMeshImportMaterial>(SourceData.Materials.data(), SourceData.Materials.size()),
                     TSpan<CTexture* const>(ImageAssets.data(), ImageAssets.size()),
-                    MaterialsDir, BaseName, CreatedObjects);
+                    MaterialsDir, BaseName, CreatedObjects, SourceData.bHasVertexColors);
 
                 // Every mesh's slots are dense now, so each needs its OWN slot -> source table: merge mode's
                 // global one, or the per-resource one built before the assets were created.
+                //
+                // Each of the four ways a surface can come out of here with no material is counted rather
+                // than passed over, because they have different causes and the symptom is identical: an
+                // untextured import. NoSource/OutOfRange mean the slot tables and the surfaces disagree;
+                // NoInstance means the material itself never got generated (see the [MaterialImport] errors
+                // above it); Unassigned means the source primitive genuinely had no material.
+                uint32 SurfacesTotal = 0, NoAssignment = 0, OutOfRange = 0, NoSource = 0, NoInstance = 0;
+
                 for (size_t ResIdx = 0; ResIdx < ResourceToMesh.size(); ++ResIdx)
                 {
                     CMesh* Mesh = ResourceToMesh[ResIdx];
@@ -1112,9 +1103,17 @@ namespace Lumina
 
                     Mesh->ForEachSurface([&](const FGeometrySurface& Surface, uint32)
                     {
+                        ++SurfacesTotal;
+
                         const int32 Slot = Surface.MaterialIndex;
-                        if (Slot < 0 || (size_t)Slot >= Mesh->GetNumMaterials())
+                        if (Slot < 0)
                         {
+                            ++NoAssignment;
+                            return;
+                        }
+                        if ((size_t)Slot >= Mesh->GetNumMaterials())
+                        {
+                            ++OutOfRange;
                             return;
                         }
 
@@ -1125,18 +1124,99 @@ namespace Lumina
                             SourceIndex = (Slot < (int32)SlotToSource.size()) ? SlotToSource[Slot] : INDEX_NONE;
                         }
 
-                        if (SourceIndex >= 0 && (size_t)SourceIndex < Instances.size() && Instances[SourceIndex] != nullptr)
+                        if (SourceIndex < 0 || (size_t)SourceIndex >= Instances.size())
                         {
-                            Mesh->SetMaterialAtSlot((size_t)Slot, Instances[SourceIndex]);
+                            ++NoSource;
+                            return;
                         }
+                        if (Instances[SourceIndex] == nullptr)
+                        {
+                            ++NoInstance;
+                            return;
+                        }
+
+                        Mesh->SetMaterialAtSlot((size_t)Slot, Instances[SourceIndex]);
                     });
+                }
+
+                // A primitive the source left unmaterialed is not a fault, and a warning that fires on
+                // every healthy import is one nobody reads. Only the three that mean something broke --
+                // the slot tables disagreeing with the surfaces, or a material that failed to generate --
+                // raise the severity.
+                const uint32 Faults = OutOfRange + NoSource + NoInstance;
+                const uint32 Unresolved = NoAssignment + Faults;
+                ExpectedNullSlots = Unresolved;
+
+                if (Faults > 0)
+                {
+                    LOG_WARN("[Import] {}/{} surfaces imported with no material "
+                             "(no source material: {}, slot out of range: {}, no slot mapping: {}, "
+                             "material not generated: {}). Merge meshes: {}, source materials: {}, "
+                             "generated instances: {}.",
+                             Unresolved, SurfacesTotal, NoAssignment, OutOfRange, NoSource, NoInstance,
+                             bMergeMeshes, (uint32)SourceData.Materials.size(), (uint32)Instances.size());
+                }
+                else if (Unresolved > 0)
+                {
+                    LOG_INFO("[Import] {}/{} surfaces have no material because the source assigned none.",
+                             Unresolved, SurfacesTotal);
                 }
             });
         }
+        else if (bImportMeshes)
+        {
+            // The generation block is the ONLY thing that fills a mesh's slots, so being skipped here means
+            // every imported mesh lands with an all-null Materials array. Silent until now, and identical
+            // in the browser to a generation that ran and failed -- which is why it says which gate closed.
+            LOG_WARN("[Import] no materials were generated: Import Materials is {}, and the source parsed "
+                     "{} material(s). Every imported mesh will have empty material slots.",
+                     bImportMaterials ? "ON" : "OFF", (uint32)SourceData.Materials.size());
+            ExpectedNullSlots = UINT32_MAX;
+        }
 
-        // Built last: it references the mesh assets above and their assigned materials, so everything it
-        // points at already exists. Merging already flattened the scene into one asset, which is the
-        // opposite of what a prefab preserves.
+        // Final state of the assets as saved, counted from the meshes themselves rather than from the
+        // assignment loop's bookkeeping. Reported only when the two disagree, which is the one thing the
+        // assignment loop cannot see for itself: a slot that was filled and then cleared again.
+        if (bImportMeshes)
+        {
+            uint32 SlotsTotal = 0, SlotsNull = 0, MeshesFullyNull = 0, MeshCount = 0;
+            for (CMesh* Mesh : ResourceToMesh)
+            {
+                if (Mesh == nullptr)
+                {
+                    continue;
+                }
+                ++MeshCount;
+
+                const uint32 NumSlots = Mesh->GetNumMaterials();
+                uint32 NullHere = 0;
+                for (uint32 Slot = 0; Slot < NumSlots; ++Slot)
+                {
+                    if (Mesh->GetMaterialAtSlot(Slot) == nullptr)
+                    {
+                        ++NullHere;
+                    }
+                }
+
+                SlotsTotal += NumSlots;
+                SlotsNull  += NullHere;
+                if (NumSlots > 0 && NullHere == NumSlots)
+                {
+                    ++MeshesFullyNull;
+                }
+            }
+
+            if (SlotsNull > ExpectedNullSlots)
+            {
+                LOG_WARN("[Import] post-assignment: {}/{} material slots are null across {} mesh(es) "
+                         "({} mesh(es) have NO material at all), but assignment only accounted for {}. "
+                         "Something cleared slots after they were filled.",
+                         SlotsNull, SlotsTotal, MeshCount, MeshesFullyNull, ExpectedNullSlots);
+            }
+        }
+
+        // Built last: it references the mesh assets above and their materials, so everything it points at
+        // exists. Merging already flattened the scene, which is the opposite of what a prefab preserves.
         if (bImportAsPrefab && !bMergeMeshes && !SourceData.SceneNodes.empty())
         {
             if (Progress)

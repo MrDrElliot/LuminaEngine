@@ -32,10 +32,12 @@ namespace Lumina::RHI
 
     namespace Core
     {
-        void Initialize();
-        void Shutdown();
+        // Exported so a host without the engine's frame loop -- RHITests, a dedicated server -- can bring
+        // the RHI up and drive the frame ring itself.
+        RUNTIME_API void Initialize();
+        RUNTIME_API void Shutdown();
 
-        void BeginFrame(uint32 SlotIndex);
+        RUNTIME_API void BeginFrame(uint32 SlotIndex);
 
         void Submit(FCmdListH CommandList);
 
@@ -48,8 +50,8 @@ namespace Lumina::RHI
         bool Present(FSwapchainH Swapchain, FCmdListH FinalCommandList);
 
         RUNTIME_API FTextureHeapH GetGlobalHeap();
-
-        FTransientAlloc AllocTransient(uint64 Size, uint64 Alignment = kDefaultAlign);
+        
+        RUNTIME_API FTransientAlloc AllocTransient(uint64 Size, uint64 Alignment = kDefaultAlign);
 
         template<typename T>
         GPUPtr CopyTransient(const T& Value)
@@ -66,19 +68,10 @@ namespace Lumina::RHI
             Memory::Memcpy(Alloc.Cpu, Data, sizeof(T) * Count);
             return Alloc.Gpu;
         }
-
-        // Resource retirement. A retired resource is destroyed at the top of the next BeginFrame for the
-        // slot it was retired in, immediately after that slot's queue timelines have been waited -- which
-        // is the exact point the GPU is known to be finished with it. Nothing here counts frames.
-        //
-        // Callable from any thread: items land in the slot currently being recorded, and BeginFrame
-        // publishes CurrentSlot only AFTER draining, so nothing can be dropped into a list mid-drain.
-        //
-        // ExtraCycles holds the allocation for additional full slot rotations beyond GPU retirement. Only
-        // the mesh-buffer path needs it, to outlive CPU-side memos of the meshlet header address; that is
-        // a heuristic standing in for an ownership relationship, not a GPU lifetime.
+        
         RUNTIME_API void Retire(GPUPtr Memory, uint32 ExtraCycles = 0);
         RUNTIME_API void Retire(FTextureH Texture);
+        RUNTIME_API void Retire(FPipelineH Pipeline);
         RUNTIME_API void RetireSampledSlot(uint32 HeapSlot);
         RUNTIME_API void RetireStorageSlot(uint32 HeapSlot);
 

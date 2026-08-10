@@ -8,10 +8,8 @@
 
 namespace Lumina
 {
-    // EMaterialSampler is emitted as a SAMPLER_* literal and indexes the same stock table the RHI creates,
-    // so all three orderings have to agree. GlobalRHI.slang's constants are the third copy; it has no
-    // compile-time link to these, which is why MaterialSamplerToSlang spells the names out rather than
-    // deriving them.
+    // Emitted as a SAMPLER_* literal indexing the same stock table the RHI creates, so all three
+    // orderings must agree. GlobalRHI.slang is the third copy and has no compile-time link to these.
     static_assert((uint32)EMaterialSampler::LinearWrap   == (uint32)RHI::EStockSampler::LinearWrap);
     static_assert((uint32)EMaterialSampler::LinearClamp  == (uint32)RHI::EStockSampler::LinearClamp);
     static_assert((uint32)EMaterialSampler::LinearMirror == (uint32)RHI::EStockSampler::LinearMirror);
@@ -75,15 +73,12 @@ namespace Lumina
 
     void CMaterialExpression_TextureSample::GenerateDefinition(FMaterialCompiler& Compiler)
     {
-        // CTextureArray derives from CTexture, so the asset picker on this node accepts one. Sampling it
-        // would emit SampleTexture2D against a heap slot holding a VIEW_TYPE_2D_ARRAY view -- a descriptor
-        // type mismatch that resolves to the null slot, giving a purple material with no other diagnostic.
-        // Caught here so it reads as a graph error naming the fix instead.
+        // CTextureArray derives from CTexture, so the picker accepts one. Sampling it emits SampleTexture2D
+        // against a 2D_ARRAY view -- a descriptor mismatch that resolves to the null slot, purple and mute.
         if (Texture.IsValid() && Texture->IsA<CTextureArray>())
         {
-            // Declared even though an error aborts the compile before any shader is built: downstream
-            // nodes bind to this node's variable by name, so leaving it undeclared would turn one clear
-            // graph error into a cascade of undefined identifiers if that ordering ever changes.
+            // Declared even though the error aborts the compile: downstream nodes bind to this variable by
+            // name, so leaving it undeclared turns one clear error into a cascade of undefined identifiers.
             Compiler.AddRaw("float4 " + FullName + " = float4(0.0, 0.0, 0.0, 1.0);\n");
 
             EdNodeGraph::FError Error;
@@ -112,9 +107,8 @@ namespace Lumina
 
     void CMaterialExpression_TextureSample::DrawNodeBody()
     {
-        // An array assigned here is a user error the compiler rejects (see GenerateDefinition), and
-        // drawing it through the plain Texture2D path would sample the null slot anyway. Leave the body
-        // empty so the node reads as "nothing valid assigned" rather than showing a purple square.
+        // An array assigned here is a user error the compiler rejects, and the plain Texture2D path would
+        // sample the null slot anyway. An empty body reads as nothing-valid-assigned, not a purple square.
         if (Texture.IsValid() && Texture->GetResourceID() >= 0 && !Texture->IsA<CTextureArray>())
         {
             ImGui::Image(ImGuiX::ToImTextureRef((uint32)Texture->GetResourceID()), ImVec2(126.0f, 126.f));

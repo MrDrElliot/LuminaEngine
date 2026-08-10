@@ -42,7 +42,9 @@ namespace Lumina
         
     };
     
-    class FSpirVShaderCompiler : public IShaderCompiler
+    // Exported so a host outside Runtime -- RHITests, a cooker -- can stand one up. Note that
+    // Initialize() precompiles the whole VFS-mounted shader tree; CompilerShaderRaw does not need it.
+    class RUNTIME_API FSpirVShaderCompiler : public IShaderCompiler
     {
     public:
         

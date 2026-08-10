@@ -23,12 +23,8 @@
 #include <bit>
 #include <cstdio>
 
-// Fiber scheduler with assist-wait fallback for external threads. One worker thread per core drains
-// lock-free MPMC job queues; each job runs on a pooled user-mode fiber. A worker WaitForCounter parks
-// the running fiber and switches the worker to other runnable work, resuming the fiber later (possibly
-// on a different worker). External threads (main/render/physics) are not on fibers, they assist-wait,
-// running queued jobs inline until the counter is satisfied. Nested parallelism is deadlock-free: the
-// awaited work runs on other fibers/workers while the waiter is parked.
+// Jobs run on pooled user-mode fibers: a worker's WaitForCounter parks the fiber and switches to other
+// work. External threads have no fiber and assist-wait instead, running queued jobs inline.
 namespace Lumina::Jobs
 {
     namespace
@@ -39,12 +35,8 @@ namespace Lumina::Jobs
         constexpr uint32 kDefaultWorkFibers = 256;
         constexpr uint32 kDefaultFiberStack = 512 * 1024;
 
-        // Ceiling for on-demand pool growth (see FConfig::MaxWorkFibers). Sized so that "the workload
-        // legitimately has thousands of jobs blocked at once" still runs, while a genuine leak -- a job
-        // parked on something that will never be signalled -- still terminates in a diagnosable error
-        // instead of consuming the address space. Only the fibers actually created cost anything: a
-        // fiber is 32KB of committed stack out of a 512KB reservation, so the ceiling is ~128MB
-        // committed / 2GB reserved, and reaching it at all is already a bug worth reporting.
+        // Ceiling for on-demand growth. Only created fibers cost anything (32KB committed of a 512KB
+        // reservation), so this bounds a genuine leak into a diagnosable error instead of address space.
         constexpr uint32 kDefaultMaxWorkFibers = 4096;
 
         struct FQueuedJob
@@ -63,9 +55,8 @@ namespace Lumina::Jobs
         {
             Fibers::FFiber Handle = nullptr;
             FQueuedJob     Job{};   // bound by the scheduler immediately before switching in
-            // No-park guard name, saved here while this fiber is parked. The guard is conceptually
-            // per-fiber, but has to live in a thread_local to be readable at the park site; without
-            // this save/restore it would leak onto whatever fiber ran next on the same worker.
+            // Saved here while parked. The guard is conceptually per-fiber but must live in a thread_local to be
+            // readable at the park site; without the save/restore it leaks onto the next fiber on this worker.
             const char*    NoParkGuard = nullptr;
 #if USING(WITH_EDITOR)
             // Editor-only live state for the Task System profiler (the fiber grid / by-fiber timeline).
@@ -118,9 +109,8 @@ namespace Lumina::Jobs
     struct alignas(64) FCounter
     {
         TAtomic<int32>  Value{0};
-        // Decrements currently inside ReleaseCounter. Claimed before the value moves and dropped once
-        // the counter is no longer touched, so FreeCounter can wait out a release that is still walking
-        // this counter. Shares the line Value is already being written on, so it is close to free.
+        // Decrements currently inside ReleaseCounter, claimed before the value moves, so FreeCounter can wait
+        // out a release still walking this counter. Shares the line Value is already written on.
         TAtomic<int32>  Releasers{0};
         FCompletionFn   Completion    = nullptr; // fired once when Value reaches 0
         void*           CompletionCtx = nullptr;
@@ -137,10 +127,8 @@ namespace Lumina::Jobs
     {
         using FJobQueue   = moodycamel::ConcurrentQueue<FQueuedJob, Memory::FTrackedConcurrentQueueTraits>;
 
-        // Both of these hand out slots from a pool of known size, so they can never hold more than that
-        // pool -- a bounded ring is the exact shape, and unlike the unbounded queue it allocates once at
-        // startup instead of minting a per-thread producer (and its blocks) on every thread that ever
-        // touches it. The job queues stay unbounded: a submit burst has no such ceiling.
+        // These hand out slots from a pool of known size, so a bounded ring is the exact shape and it
+        // allocates once at startup. The job queues stay unbounded: a submit burst has no such ceiling.
         using FIndexQueue = TBoundedMPMCQueue<uint16>;
         using FFiberQueue = TBoundedMPMCQueue<FWorkFiber*>;
 
@@ -167,30 +155,18 @@ namespace Lumina::Jobs
             uint32         StealCursor    = 0;       // rotating victim offset for work-stealing
             bool           bOwnsExternalSlot = false; // this thread holds an external slot to give back
 
-            // Hands the slot back if the thread never did. Unregistering explicitly is the contract, but
-            // a slot is claimed lazily by GetWorkerIndex() too -- any thread that so much as completes a
-            // job inline gets one without ever knowing it -- and short-lived tool, script and helper
-            // threads simply exit. Relying on the contract alone leaks a slot per such thread, and the
-            // supply is small enough that a handful of them is all it takes before live threads start
-            // aliasing each other's per-thread storage.
+            // Hands the slot back if the thread never did. GetWorkerIndex() claims one LAZILY for any thread that
+            // completes a job inline, and short-lived threads just exit -- the contract alone leaks one each.
             ~FThreadState();
         };
         thread_local FThreadState TLS;
 
-        // Set while this thread runs a serial pump that must never yield to the scheduler. Fiber parks
-        // check it: parking under the guard strands the pump until the wait resolves, and the fiber can
-        // resume on a DIFFERENT thread, breaking any thread_local state the pump relies on.
-        // See Jobs::SetThreadNoParkGuard.
+        // Set while this thread runs a serial pump that must never yield. Parking under it strands the pump,
+        // and the fiber can resume on a DIFFERENT thread, breaking thread_local state the pump relies on.
         thread_local const char* GNoParkGuardName = nullptr;
 
-        // Per-worker job queues (one per priority) + a private wake futex. A worker drains its OWN queues
-        // first, then steals from others. A burst submit is spread across these at enqueue time
-        // (DistributeJobs), so every worker has local work to start on immediately instead of funneling all
-        // consumers through one shared queue. The home consumer token is the owner's fast path; thieves
-        // dequeue tokenless. WakeSignal is the worker's private parking spot: an idle worker futex-waits on
-        // it (std::atomic::wait) and a submitter bumps+notifies it, so a fan-out wakes every idle worker in
-        // PARALLEL rather than filing them one-at-a-time through a single condition-variable mutex, that
-        // serial CV ramp is the cold first-wave wake that left only ~22-30 of 30 workers engaged per frame.
+        // Per-worker queues plus a private wake futex. A burst submit is spread across these at enqueue time,
+        // so a fan-out wakes every idle worker in PARALLEL instead of filing them through one CV mutex.
         struct alignas(64) FWorkerLocal
         {
             FJobQueue                  Queues[kNumJobPriorities];
@@ -228,20 +204,13 @@ namespace Lumina::Jobs
             alignas(64) TAtomic<uint32> NextSubmitWorker{0}; // rotating distribution start, anti-bias
             alignas(64) TAtomic<int64> AvailJobs{0};   // queued, not yet popped (idle-wake hint)
 
-            // Same hint, counting only bands an assist-wait is allowed to take (see TryStealAny).
-            // Tracked separately because the two diverge exactly when it matters: a terrain stream keeps
-            // hundreds of Background jobs queued, and an assisting thread checking AvailJobs would pass
-            // the fast-fail and then scan every worker's queues to completion on every spin, finding
-            // nothing it may run. That turns the cheap idle path into the expensive one precisely while
-            // background work is in flight.
+            // Counts only bands an assist-wait may take. Separate from AvailJobs because they diverge exactly
+            // when it matters: queued Background work would pass the fast-fail and force a full scan every spin.
             alignas(64) TAtomic<int64> AvailAssistJobs{0};
             alignas(64) TAtomic<int64> InFlight{0};    // submitted, not yet completed (WaitForAll)
 
-            // Pool storage for MaxWorkFibers entries, all constructed up front (they are small and hold
-            // no OS resources until a stack is attached). Only the first FibersCreated have an actual
-            // fiber; the rest are handed a stack lazily by GrowFiberPool. Flat and preallocated so a
-            // pointer into it is stable forever -- parked fibers are referenced by address from wait
-            // queues that outlive any growth step.
+            // Constructed up front for MaxWorkFibers; only the first FibersCreated hold an actual stack. Flat and
+            // never reallocated -- wait queues reference parked fibers by ADDRESS across any growth step.
             FWorkFiber*    WorkFibers = nullptr;
             alignas(64) TAtomic<uint32> FibersCreated{0};
             FFiberQueue    FreeFibers;           // idle, ready to be bound to a job
@@ -251,27 +220,21 @@ namespace Lumina::Jobs
             FCounter*       CounterPool = nullptr;
             FIndexQueue     FreeCounters;
 
-            // One bit per external thread slot, set while that slot is claimed. A slot must return to the
-            // pool on unregister: handing them out with a monotonic counter leaks one per
-            // register/unregister cycle (PIE start/stop, plugin loads, script threads), and once the
-            // supply is gone every later thread silently shares one slot with a live thread -- which
-            // corrupts every per-thread array sized by GetNumThreadSlots().
+            // One bit per external slot. A slot MUST return to the pool on unregister: a monotonic counter leaks
+            // one per cycle, and once the supply is gone threads alias each other's per-thread arrays.
             TAtomic<uint64> ExternalSlotsFree{0};
             TAtomic<bool>   bShutdown{false};
 
             // Wall-clock gate for the pool-wedged report, shared so only one worker ever prints it.
             alignas(64) TAtomic<int64> NextWedgeReportMs{0};
 
-            // Bit per worker set while that worker is futex-parked. Load-bearing: WakeWorkers scans it to
-            // wake only idle workers (and only as many as there are jobs). One uint64 word per 64 workers.
-            // Also read by the editor advisor (resume-affinity hint). Own cache line.
+            // Bit per futex-parked worker. Load-bearing: WakeWorkers scans it to wake only idle workers, and only
+            // as many as there are jobs. Own cache line.
             alignas(64) std::atomic<uint64>* IdleMask = nullptr; // [IdleMaskWords]
             uint32 IdleMaskWords = 0;
 
-            // Live count of threads inside a job dequeue (own-queue or steal). Sampled by the editor
-            // advisor (only while profiling) to gauge how much stealing/contention is in play now that
-            // work is sharded per-worker. Own cache line: it must not false-share the hot counters above,
-            // especially since the diagnostic itself reads/writes it from many workers.
+            // Threads currently inside a job dequeue, sampled by the editor advisor while profiling. Own cache
+            // line: the diagnostic writes it from many workers and must not false-share the hot counters.
             alignas(64) TAtomic<int32> PoppersInFlight{0};
 
 #if USING(WITH_EDITOR)
@@ -321,11 +284,8 @@ namespace Lumina::Jobs
             G->IdleMask[W >> 6].fetch_and(~(1ull << (W & 63)), std::memory_order_relaxed);
         }
 
-        // Wake up to Count idle workers by bumping + notifying their private futexes. The seq_cst fence
-        // pairs with the one a parking worker runs between publishing its idle bit and re-checking HasWork:
-        // that Dekker ordering guarantees we either observe its idle bit here (and wake it) or it observes
-        // the work we just published (and never parks). Spurious bumps of an already-awake worker are
-        // harmless, its next wait returns immediately, re-checks, and re-waits.
+        // The seq_cst fence pairs with the one a parking worker runs between publishing its idle bit and
+        // re-checking HasWork, so a submit racing a park is never lost. Spurious bumps are harmless.
         void WakeWorkers(uint32 Count)
         {
             if (Count == 0)
@@ -425,10 +385,8 @@ namespace Lumina::Jobs
                     return true;
                 }
             }
-            // Own queue dry: only pay the cross-worker scan if the hint says work exists somewhere.
-            // AvailJobs is bumped before jobs are enqueued (see RunJobs), so <= 0 means genuinely nothing
-            // to steal, skip the O(workers*prio) probe. Avoids burning the tail of a fan-out (and every
-            // assist-wait spin) scanning empty queues.
+            // Only pay the cross-worker scan if the hint says work exists. AvailJobs is bumped BEFORE enqueue, so
+            // <= 0 means genuinely nothing to steal and the O(workers*prio) probe can be skipped.
             if (G->AvailJobs.load(std::memory_order_relaxed) <= 0)
             {
                 return false;
@@ -451,28 +409,12 @@ namespace Lumina::Jobs
             return false;
         }
 
-        /**
-         * External / assist path: no home queues, so steal-scan every worker's queues from a rotating
-         * cursor. Decrements AvailJobs on success.
-         *
-         * Stops at kMaxAssistPriority, i.e. it will NOT take Background work. This is the whole reason
-         * that band exists. An assisting thread is, by definition, in the middle of waiting for
-         * something else, and this steal has no idea whether the job it grabs has anything to do with
-         * that wait -- it takes the first thing in any queue. Before the exclusion, a main thread
-         * waiting on the draw graph would routinely dequeue an unrelated multi-hundred-millisecond
-         * chunk build and run it to completion inside the wait, which Tracy then (correctly, and very
-         * confusingly) rendered as the build nesting under FTaskGraph::Wait.
-         *
-         * Non-Background bands are still fair game: assist exists so a thread that fanned out its OWN
-         * work helps finish it instead of idling, and to keep an awaited signal that depends on queued
-         * jobs from starving. Both still hold -- only the "quietly adopt a background build" case is gone.
-         */
+        // Stops at kMaxAssistPriority: this steal is untargeted, so an assisting thread would otherwise adopt
+        // an unrelated multi-hundred-ms build into the middle of a frame wait. That is why Background exists.
         bool TryStealAny(FQueuedJob& Out)
         {
-            // Fast-fail an empty steal (the common case while assist-waiting on in-flight work): no scan,
-            // no diagnostic churn. The ASSIST count, not AvailJobs: queued Background work is not
-            // stealable here, so counting it would defeat the fast-fail exactly when it matters most.
-            // Safe because the count is bumped before any job is enqueued.
+            // The ASSIST count, not AvailJobs: queued Background work is not stealable here, so counting it would
+            // defeat the fast-fail exactly when it matters most. Safe -- the count is bumped before any enqueue.
             if (G->AvailAssistJobs.load(std::memory_order_relaxed) <= 0)
             {
                 return false;
@@ -530,17 +472,8 @@ namespace Lumina::Jobs
             C->WaitLock.store(0u, std::memory_order_release);
         }
 
-        /**
-         * Release any waiters satisfied by a decrement and fire the one-shot completion at zero.
-         *
-         * MUST be entered holding a release guard (Counter->Releasers), claimed before the decrement
-         * that produced NewValue -- see DecrementAndRelease. Ownership of the counter passes to whoever
-         * observes it satisfied, and that observer can be a POLLER: an external assist-wait never joins
-         * the waiter list, it spins on Value. So the instant Value drops, the waiter may return from
-         * WaitForCounter and recycle the counter, while this function is still reading HasWaiters or
-         * walking Waiters -- on an object the pool has already handed to somebody else. This function
-         * drops the guard once it is done touching the counter, and not before.
-         */
+        // MUST be entered holding a release guard claimed BEFORE the decrement. An external assist-wait never
+        // joins the waiter list, so the poller can recycle this counter while we are still walking it.
         void ReleaseCounter(FCounter* Counter, int32 NewValue, uint32 WorkerIndex)
         {
             // Fast path: nothing reached zero and no fiber is parked.
@@ -591,9 +524,8 @@ namespace Lumina::Jobs
                 N = Next;
             }
 
-            // Last touch of the counter, so the guard comes off here -- deliberately before the
-            // completion callback, which owns the counter's lifetime and is allowed to free it. Holding
-            // the guard across it would deadlock against our own FreeCounter.
+            // Last touch of the counter, so the guard drops here -- before the completion callback, which owns the
+            // counter lifetime and may free it. Holding it across would deadlock against our own FreeCounter.
             Counter->Releasers.fetch_sub(1, std::memory_order_release);
 
             if (Completion != nullptr)
@@ -696,9 +628,8 @@ namespace Lumina::Jobs
         }
 #endif
 
-        // Runs on the scheduler fiber after a work fiber switched back to it. Publishes the just-switched
-        // fiber as parked (linked into its counter) or free. This is the ONLY place a work fiber becomes
-        // resumable, guaranteeing its register/stack state is fully saved before anyone can switch it in.
+        // Runs on the scheduler fiber after a work fiber switched back. The ONLY place a work fiber becomes
+        // resumable, which is what guarantees its register/stack state is fully saved first.
         void ProcessPending()
         {
             FPendingSwitch P = TLS.Pending;
@@ -724,20 +655,13 @@ namespace Lumina::Jobs
 #endif
                     FCounter* C = P.Counter;
                     LockCounter(C);
-                    // Announce the waiter BEFORE re-reading the value. This is the Dekker pairing for
-                    // ReleaseCounter's lock-free fast path, which reads the value then HasWaiters: with
-                    // the store first, a decrement that misses the flag is guaranteed to have already
-                    // published a value this load will see, so it parks only if it is genuinely not
-                    // satisfied. Storing it after the load (the obvious order) leaves a window where the
-                    // decrement sees no waiter and the waiter sees the pre-decrement value -- a wakeup
-                    // lost forever. Only reachable for a non-zero Target, since a decrement to zero
-                    // always takes the lock, but WaitForCounter takes a Target from the caller.
+                    // Announce the waiter BEFORE re-reading the value: this is the Dekker pairing for ReleaseCounter's
+                    // lock-free fast path. The other order loses a wakeup forever when Target is non-zero.
                     C->HasWaiters.store(true, std::memory_order_seq_cst);
                     if (C->Value.load(std::memory_order_seq_cst) <= P.Node->Target)
                     {
-                        // Satisfied between the fiber's fast-path check and now, resume immediately.
-                        // Leave HasWaiters alone if others are queued; a spurious true just costs the
-                        // next decrement a trip through the locked path.
+                        // Satisfied between the fiber's fast-path check and now. Leave HasWaiters set if others are queued;
+                        // a spurious true only costs the next decrement a trip through the locked path.
                         C->HasWaiters.store(C->Waiters != nullptr, std::memory_order_seq_cst);
                         UnlockCounter(C);
                         PushReady(P.Fiber);
@@ -760,9 +684,8 @@ namespace Lumina::Jobs
 #if USING(WITH_EDITOR)
                     ProfEnd(TLS.WorkerIndex, true);
 #endif
-                    // The callback links the fiber into its wait queue under that queue's own lock and
-                    // returns whether it actually parked. If it declined (condition already satisfied),
-                    // the fiber is immediately runnable again.
+                    // The callback links the fiber into its own wait queue under that queue's lock and returns whether it
+                    // parked. If it declined, the condition was already satisfied and the fiber is runnable again.
                     const bool Parked = P.ParkFn(P.ParkCtx, FFiberHandle{ P.Fiber });
                     if (!Parked)
                     {
@@ -783,20 +706,8 @@ namespace Lumina::Jobs
         // Forward declaration: the pool grows at runtime, so the growth path needs the fiber entry point.
         void FiberMain(void* Arg);
 
-        /**
-         * Attach a stack to the next unused pool entry and hand it back, or null at the ceiling.
-         *
-         * Only ever called from the starvation path, and that path is not an optimization problem -- it
-         * is the one state a stackful scheduler cannot work its way out of. Every fiber is blocked, the
-         * work that would unblock them is sitting in the queues, and the resource that work needs to run
-         * is the resource the blocked jobs are holding. No amount of stealing, waking or reprioritising
-         * moves that; either somebody outside resumes a parked fiber, or one more stack has to exist.
-         *
-         * The claim is a CAS on the cursor, so concurrent starving workers each get a distinct entry.
-         * Publishing the index before the handle is written is safe: the readers of FibersCreated are
-         * the live-stat snapshots, which touch no handle, and Shutdown, which runs after every worker
-         * has joined and therefore after every claim has finished being filled in.
-         */
+        // Called only from the starvation path, the one state a stackful scheduler cannot resolve: the work
+        // that would unblock the fibers needs the resource those fibers hold. CAS'd, so claims stay unique.
         FWorkFiber* GrowFiberPool()
         {
             uint32 Index = G->FibersCreated.load(std::memory_order_acquire);
@@ -836,24 +747,16 @@ namespace Lumina::Jobs
         constexpr int kHotPauseSpins = 1024; // tight _mm_pause: catch the next wave without a syscall
         constexpr int kHotYieldSpins = 128;  // OS-friendly tail; near-free when idle, holds hot when busy
 
-        // Pauses a starving worker burns before it concludes the pool really is the constraint. Covers
-        // the ordinary transient -- another worker holding the last free fiber across a queue scan -- so
-        // a busy fan-out never grows the pool for a blink of contention.
+        // Pauses a starving worker burns before concluding the pool is the constraint. Covers the ordinary
+        // transient -- another worker holding the last free fiber across a queue scan.
         constexpr uint32 kStarveSpinBudget = 4096;
         // Yields a wedged worker takes before dropping to a sleep. A pool at its ceiling is not a
         // latency-sensitive state; what matters is getting off the core.
         constexpr uint32 kWedgeYieldSpins  = 64;
         constexpr int64  kWedgeReportMs    = 2000;
 
-        /**
-         * True at most once per kWedgeReportMs across the whole pool.
-         *
-         * Rate limited by wall clock and shared by every worker, deliberately. The first version counted
-         * spins per worker, which meant thirty workers each logging every few milliseconds the moment the
-         * pool wedged -- thousands of formatted, locked, I/O-bound lines a second, all of it contending
-         * with the very threads that had to make progress for the stall to clear. A diagnostic for a
-         * stall must not be the reason the stall persists.
-         */
+        // Rate limited by wall clock and shared by every worker. Counting spins per worker instead had thirty
+        // workers logging every few ms, contending with the very threads that had to clear the stall.
         bool ShouldReportWedge()
         {
             const int64 NowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -946,11 +849,8 @@ namespace Lumina::Jobs
                 }
                 else if (G->AvailJobs.load(std::memory_order_relaxed) > 0)
                 {
-                    // Jobs queued, nothing ready to resume, and no fiber to run them on. Every fiber is
-                    // blocked on work that cannot start until a fiber frees up, which is a cycle no
-                    // amount of scheduling breaks. Nearly always this is a blink -- another worker took
-                    // the last free fiber a moment ago and is about to hand it straight back -- so spin
-                    // a bounded budget before treating the pool size as the actual constraint.
+                    // Every fiber is blocked on work that cannot start until a fiber frees up -- a cycle no scheduling
+                    // breaks. Nearly always a blink, so spin a bounded budget before blaming the pool size.
                     if (++StarveSpins < kStarveSpinBudget)
                     {
                         CpuPause();
@@ -972,9 +872,8 @@ namespace Lumina::Jobs
                                       "or stop blocking inside jobs that are themselves spawned in bulk.",
                                       G->MaxWorkFibers);
                         }
-                        // Get off the core. Whatever is still running needs it far more than this loop
-                        // does, and every idle worker spinning flat out is how a stall that would have
-                        // cleared becomes the permanent one this branch exists to report.
+                        // Get off the core. Whatever is still running needs it far more, and every idle worker spinning flat
+                        // out is how a stall that would have cleared becomes the permanent one this branch reports.
                         if (StarveSpins < kStarveSpinBudget + kWedgeYieldSpins)
                         {
                             Threading::ThreadYield();
@@ -1053,9 +952,8 @@ namespace Lumina::Jobs
 
     namespace
     {
-        // Hang-watchdog reporter: thread stacks can't show parked fibers (their stacks live off-thread),
-        // so a stall dump needs this to see in-flight work that stopped moving -- which fiber is parked
-        // on which counter, and what job it was running.
+        // Thread stacks cannot show parked fibers -- their stacks live off-thread -- so a stall dump needs
+        // this to see which fiber is parked on which counter and what job it was running.
         void JobsHangReporter()
         {
             FJobLiveStats Stats;
@@ -1119,9 +1017,8 @@ namespace Lumina::Jobs
         G->ExternalSlotsFree.store(G->NumExternal == 64 ? ~0ull : ((1ull << G->NumExternal) - 1ull),
             std::memory_order_relaxed);
 
-        // Per-worker queues (the job storage). Built BEFORE workers start so the home consumer tokens
-        // exist when they spin up. Placement-new like the other pools so each FWorkerLocal constructs its
-        // moodycamel queues + home tokens in place.
+        // Built BEFORE workers start so the home consumer tokens exist when they spin up. Placement-new so
+        // each FWorkerLocal constructs its queues and tokens in place.
         G->Workers = static_cast<FWorkerLocal*>(Memory::Malloc(sizeof(FWorkerLocal) * G->NumWorkers, alignof(FWorkerLocal)));
         for (uint32 i = 0; i < G->NumWorkers; ++i)
         {
@@ -1136,14 +1033,8 @@ namespace Lumina::Jobs
             new (&G->IdleMask[i]) std::atomic<uint64>(0);
         }
 
-        // A counter index or fiber only goes back in if it came out, so these can never truly be full --
-        // and they use the spinning Enqueue, which never drops. The headroom is a throughput fix, not a
-        // correctness one: sized to exactly the pool, the ring sits at the wrap boundary permanently, so
-        // every put-back lands on the cell a consumer is mid-claim on and has to spin through it. That is
-        // the whole idle path (dequeue a fiber, find no job, put it back) on every worker at once. With
-        // 2x, a producer's cell was released a full pool ago and the retry loop is never entered.
-        // Sized for the ceiling, not the starting size: the pool grows on demand and these rings have to
-        // be able to hold every fiber that can ever exist. Cheap -- one pointer per slot.
+        // Sized for the CEILING and 2x the pool: an item only goes back in because it came out, but a ring
+        // sized exactly to its pool rides the wrap boundary and every put-back spins through a mid-claim cell.
         G->FreeCounters.Initialize(kCounterPoolSize * 2);
         G->FreeFibers.Initialize(G->MaxWorkFibers * 2);
         G->ReadyFibers.Initialize(G->MaxWorkFibers * 2);
@@ -1157,10 +1048,8 @@ namespace Lumina::Jobs
             G->FreeCounters.Enqueue(static_cast<uint16>(i));
         }
 
-        // Build the work-fiber pool BEFORE starting workers so FreeFibers is populated when they spin up.
-        // Storage covers the growth ceiling and is never reallocated -- wait queues hold raw FWorkFiber*
-        // for the whole time a fiber is parked, so an entry's address has to outlive any growth step.
-        // Only the first NumWorkFibers get a stack here; GrowFiberPool fills the rest in on demand.
+        // Built BEFORE workers start. Storage covers the growth ceiling and is never reallocated -- wait
+        // queues hold raw FWorkFiber* while a fiber is parked. GrowFiberPool adds stacks on demand.
         G->WorkFibers = static_cast<FWorkFiber*>(Memory::Malloc(sizeof(FWorkFiber) * G->MaxWorkFibers, alignof(FWorkFiber)));
         for (uint32 i = 0; i < G->MaxWorkFibers; ++i)
         {
@@ -1290,12 +1179,8 @@ namespace Lumina::Jobs
 
     namespace
     {
-        // Claim the lowest free external slot, or fall back to the last one when the supply is gone.
-        //
-        // The fallback is a real hazard, not a formality: GetWorkerIndex() is what sizes and indexes
-        // every per-thread array in the engine (Range.Thread and friends are allocated to
-        // GetNumThreadSlots()), so two live threads sharing a slot is silent memory corruption in
-        // whatever they happen to be doing. It is loud for that reason.
+        // Claims the lowest free slot, or falls back to the last one when the supply is gone. That fallback
+        // is silent corruption -- the index sizes every per-thread array in the engine -- hence the error.
         uint32 ClaimExternalSlot()
         {
             uint64 Free = G->ExternalSlotsFree.load(std::memory_order_relaxed);
@@ -1344,9 +1229,8 @@ namespace Lumina::Jobs
 
     void UnregisterExternalThread()
     {
-        // Return the slot to the pool. Without this a register/unregister cycle -- PIE start/stop, a
-        // plugin load, a script thread coming and going -- burns one slot permanently, and once the
-        // supply runs out every later thread aliases a live one.
+        // Return the slot. Without this a register/unregister cycle (PIE start/stop, plugin load, script
+        // thread) burns one permanently, and once the supply runs out every later thread aliases a live one.
         if (TLS.bOwnsExternalSlot)
         {
             ReleaseExternalSlot(TLS.WorkerIndex);
@@ -1385,10 +1269,8 @@ namespace Lumina::Jobs
         {
             return;
         }
-        // Wait out any decrement still inside its release before recycling. Getting here at all usually
-        // means a wait just returned, and the decrement that ended that wait may still be walking this
-        // counter's wait list -- handing it to the next owner mid-walk is how a graph ends up with
-        // another graph's waiters spliced into it.
+        // Wait out any decrement still inside its release. The decrement that ended the caller's wait may
+        // still be walking this counter list; recycling mid-walk splices one graph's waiters into another.
         while (Counter->Releasers.load(std::memory_order_acquire) != 0)
         {
             CpuPause();
@@ -1509,9 +1391,8 @@ namespace Lumina::Jobs
 
         if (TLS.bIsWorker && !bMustNotYield)
         {
-            // Park and yield to the scheduler, which links us into the counter (see
-            // ProcessPending). The releasing decrement touches nothing of a waited (no-completion)
-            // counter once we are spliced out, so the caller may reclaim it the instant this returns.
+            // Park and yield to the scheduler, which links us into the counter. The releasing decrement touches
+            // nothing of a waited no-completion counter once we are spliced out, so the caller may reclaim it.
             FWaitNode Node;
             Node.Fiber  = TLS.CurrentFiber;
             Node.Target = Value;
@@ -1569,10 +1450,8 @@ namespace Lumina::Jobs
         LUMINA_PROFILE_SCOPE();
         ASSERT(!TLS.bIsWorker);
 
-        // Assist rather than idle. Faster, but mainly it is what makes this survivable when the fiber
-        // pool is saturated: the queued work this drains inline is exactly what the parked fibers are
-        // waiting on, so a pure spin waits on a cycle it could have broken itself. Shutdown calls this,
-        // and a shutdown that hangs produces no diagnostics at all.
+        // Assist rather than idle: the queued work drained here is exactly what the parked fibers wait on, so
+        // a pure spin waits on a cycle it could break itself. Shutdown calls this, and a hung one says nothing.
         const auto Start = std::chrono::steady_clock::now();
         auto NextReport  = Start + std::chrono::seconds(5);
 

@@ -13,9 +13,8 @@ namespace Lumina
 {
     namespace
     {
-        // Shader expression an unconnected input resolves to. Every alias here is declared for the
-        // pixel stage natively and re-declared by the vertex-stage preamble, so all of them compile
-        // in either stage.
+        // Every alias here is declared natively for the pixel stage and re-declared by the vertex preamble,
+        // so an unconnected input resolves in either stage.
         FString DefaultExpressionFor(ECustomSlangInputDefault Default)
         {
             switch (Default)
@@ -74,9 +73,8 @@ namespace Lumina
             return false;
         }
 
-        // Brace/paren balance over the body, skipping comments and string/char literals. This is the
-        // load-bearing guard: an unbalanced '}' would close our generated scope early and cascade
-        // errors through the rest of the shader, far away from the node that caused them.
+        // Brace/paren balance over the body, skipping comments and literals. Load-bearing: an unbalanced
+        // closing brace ends our generated scope early and cascades errors far from the node that caused it.
         struct FBalanceResult
         {
             bool  bBalanced = true;
@@ -202,10 +200,8 @@ namespace Lumina
 
     void CMaterialExpression_CustomSlang::BuildNode()
     {
-        // Starter signature so a freshly placed node compiles and shows something immediately: a UV
-        // input that needs no wiring, and one colour output the default body already assigns.
-        // Guarded by a serialized flag, so this runs once at creation and never resurrects pins the
-        // user deleted (BuildNode also runs on load).
+        // Starter signature so a freshly placed node compiles and shows something. Guarded by a serialized
+        // flag so it runs once at creation and never resurrects pins the user deleted.
         if (!bDefaultsSeeded)
         {
             bDefaultsSeeded = true;
@@ -309,9 +305,8 @@ namespace Lumina
             CustomOutputPins.push_back(Pin);
         }
 
-        // Restore surviving wires by (direction, name). Names are not necessarily unique (a duplicate is
-        // reported by Validate, not prevented), so a pin only takes one snapshot: without that, two pins
-        // sharing a name would pile both wire sets onto the first of them.
+        // Restore surviving wires by (direction, name). Names are not guaranteed unique, so a pin takes one
+        // snapshot only -- otherwise two pins sharing a name pile both wire sets onto the first.
         THashSet<CEdNodeGraphPin*> Restored;
         for (const FConnSnapshot& Snap : Snapshots)
         {
@@ -491,9 +486,8 @@ namespace Lumina
         Compiler.AddRaw(FString("// ---- custom slang: ") + Title.c_str() + " ----\n");
         Compiler.AddRaw("{\n");
 
-        // Inputs as const locals under the author's own names. The cast coerces whatever width was
-        // wired in to the declared width (HLSL/Slang splat or truncate), so the body always sees
-        // exactly the type it declared.
+        // Inputs as const locals under the author's own names. The cast coerces whatever width was wired in
+        // to the declared width, so the body always sees exactly the type it declared.
         for (size_t i = 0; i < CustomInputPins.size() && i < Inputs.size(); ++i)
         {
             const EMaterialInputType T = ToMaterialInputType(Inputs[i].Type);

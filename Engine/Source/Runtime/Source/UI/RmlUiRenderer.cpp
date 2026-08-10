@@ -69,7 +69,8 @@ namespace Lumina
         DepthState = RHI::CreateDepthStencil(RHI::FDepthStencilDesc{});
 
         // 1x1 white fallback for untextured geometry.
-        DefaultWhite = RHI::Textures::Create(RHI::FTexture2DDesc{ .Width = 1, .Height = 1, .Format = EFormat::RGBA8_UNORM });
+        DefaultWhite = RHI::Textures::Create(RHI::FTexture2DDesc{ .Width = 1, .Height = 1, .Format = EFormat::RGBA8_UNORM,
+                                                                  .DebugName = "RmlUi.DefaultWhite" });
         constexpr uint8 WhitePixel[4] = {255, 255, 255, 255};
         RHI::Textures::Upload(DefaultWhite, 0, WhitePixel, sizeof(WhitePixel), 1);
 
@@ -171,11 +172,12 @@ namespace Lumina
         return Pipeline;
     }
 
-    RHI::FPipelineH FRmlUiRenderer::GetBrushPipeline(const FShaderEntry* VS, const FShaderEntry* PS)
+    RHI::FPipelineH FRmlUiRenderer::GetBrushPipeline(FShaderH VS, FShaderH PS)
     {
+        // The handle is the identity, so a recompiled brush shader keys a new pipeline for free.
         uint64 Key = 0;
-        Hash::HashCombine(Key, VS->PipelineHash());
-        Hash::HashCombine(Key, PS->PipelineHash());
+        Hash::HashCombine(Key, VS.Handle);
+        Hash::HashCombine(Key, PS.Handle);
 
         auto It = BrushPipelines.find(Key);
         if (It != BrushPipelines.end())
@@ -188,7 +190,14 @@ namespace Lumina
         RasterDesc.Topology     = RHI::ETopology::TriangleList;
         RasterDesc.ColorTargets = TSpan<const RHI::FColorTarget>(&ColorTarget, 1);
 
-        RHI::FPipelineH Pipeline = RHI::CreateGraphicsPipeline(VS->Source(), PS->Source(), RasterDesc);
+        const FShaderEntry* VSEntry = FShaderLibrary::Resolve(VS);
+        const FShaderEntry* PSEntry = FShaderLibrary::Resolve(PS);
+        if (VSEntry == nullptr || PSEntry == nullptr)
+        {
+            return {};
+        }
+
+        RHI::FPipelineH Pipeline = RHI::CreateGraphicsPipeline(VSEntry->Source(), PSEntry->Source(), RasterDesc);
         if (RHI::IsValid(Pipeline))
         {
             BrushPipelines.emplace(Key, Pipeline);
@@ -677,6 +686,8 @@ namespace Lumina
             return 0;
         }
 
+        const FString BrushName = FString("RmlUi.Brush.") + Material->GetName().ToString();
+
         // Persistent RGBA8 brush RT, rendered each frame in RenderMaterialBrushes and sampled by the UI.
         RHI::FManagedTexture Image = RHI::Textures::Create(RHI::FTexture2DDesc
         {
@@ -684,6 +695,7 @@ namespace Lumina
             .Height = Height,
             .Format = EFormat::RGBA8_UNORM,
             .bRenderTarget = true,
+            .DebugName = BrushName.c_str(),
         });
         if (!Image.IsValid() || Image.SampledSlot == RHI::kInvalidHeapSlot)
         {
@@ -726,6 +738,7 @@ namespace Lumina
             .Width  = (uint32)Width,
             .Height = (uint32)Height,
             .Format = EFormat::RGBA8_UNORM,
+            .DebugName = "RmlUi.GeneratedTexture",
         });
         if (!Image.IsValid() || Image.SampledSlot == RHI::kInvalidHeapSlot)
         {
@@ -905,8 +918,8 @@ namespace Lumina
             {
                 continue;
             }
-            const FShaderEntry* VS = Material->GetVertexShader();
-            const FShaderEntry*  PS = Material->GetPixelShader();
+            const FShaderH VS = Material->GetVertexShader();
+            const FShaderH PS = Material->GetPixelShader();
             if (VS == nullptr || PS == nullptr)
             {
                 continue;

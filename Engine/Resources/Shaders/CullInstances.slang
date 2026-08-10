@@ -25,6 +25,9 @@ struct FCullInstancesArgs
 
     FGPUInstance*      OutInstances;
     uint*              OutInstanceCount;
+    // (base, count) per (visible instance, view), indexed OutSlot * NumViews + v -- exactly the flat
+    // domain BuildMeshletBlocks dispatches over. The single source of the per-view meshlet range.
+    uint2*             OutInstanceViewRanges;
     // NumViews * NumBatches entries. This pass only accumulates the two capacities, which are the exact
     // upper bound on what each pair can emit and the same work counted in cull blocks; BuildDrawPrefix
     // turns them into the layout and owns every other field.
@@ -136,66 +139,14 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
                             ? Desc.LODMeshletOffset[NumLODs - 1u] + Desc.LODMeshletCount[NumLODs - 1u]
                             : 0u;
 
+    // Does ANY view see it? Breaks on the first hit, so a visible instance pays one or two iterations.
+    // Needed before the compacted slot is claimed, because that slot is what indexes the range slab.
     for (uint v = 0; v < Pass().NumViews; ++v)
     {
-        FCullView View = CullViews()[v];
-
-        if (!IsInstanceVisibleToView(View, Center, Radius, bNoCull, bCaster))
+        if (IsInstanceVisibleToView(CullViews()[v], Center, Radius, bNoCull, bCaster))
         {
-            continue;
-        }
-        bAnyView = true;
-
-        const bool bShadowView = View.HasFlag(CULL_VIEW_FLAG_CAST_SHADOW_ONLY);
-
-        // Branch order, operands and clamp all mirror BuildMeshletBlocks. Reserving against a different
-        // count than the builder appends hands one bucket room nobody uses and starves the next.
-        uint2 Range;
-        if (bShadowView && bSelectPerView && View.HasFlag(CULL_VIEW_FLAG_CASCADE))
-        {
-            Range = bHasGeometry
-                  ? SelectCascadeShadowMeshletRange(Desc, CamPos, Cull.SphereBounds, View.CascadeIndex,
-                                                    Scene().CullData.ShadowLODBias,
-                                                    Scene().CullData.ShadowCoarseLODDistSq)
-                  : uint2(0u, 0u);
-        }
-        else if (bShadowView)
-        {
-            Range = uint2(ShadowMeshletOffset, ShadowMeshletCount);
-        }
-        else if (bSelectPerView)
-        {
-            Range = bHasGeometry ? SelectViewMeshletRange(Desc, View.ViewOrigin, Cull.SphereBounds)
-                                 : uint2(0u, 0u);
-        }
-        else
-        {
-            Range = uint2(SurfaceMeshletOffset, SurfaceMeshletCount);
-        }
-
-        const uint Emitted = (Range.y == 0u || Range.x >= MeshletTotal)
-                           ? 0u
-                           : min(Range.y, MeshletTotal - Range.x);
-
-
-        if (Emitted > 0u && bInRange)
-        {
-            FRenderBucket* Bucket = Pass().OutBuckets + (v * Pass().NumBatches + DrawID);
-
-            // MBOIT rasterizes translucency twice per frame (moments, then shading), and the task shader
-            // appends a draw slot per KEPT meshlet on each pass. One reservation only survives while
-            // meshlet-level culling happens to reject enough of what instance-level culling emitted --
-            // past that AppendReserve refuses, and the meshlets it drops are picked by atomic arrival
-            // order, so translucency flickers by camera angle. Blocks are NOT doubled: both passes
-            // dispatch the same task grid. Additive shares the flag and over-reserves slightly; the draw
-            // list grows on demand, so that costs headroom, not geometry.
-            const bool bDoubleReserved = !bShadowView && Cull.HasFlag(EInstanceFlags::Translucent);
-            InterlockedAdd(Bucket.DrawCapacity, bDoubleReserved ? (Emitted * 2u) : Emitted);
-
-            // Rounded up PER INSTANCE: blocks never span instances, so a ceil of the sum would
-            // under-reserve one block for every instance with a partial tail.
-            InterlockedAdd(Bucket.BlockCapacity,
-                           (Emitted + (MESHLET_TASK_GROUP_SIZE - 1u)) / MESHLET_TASK_GROUP_SIZE);
+            bAnyView = true;
+            break;
         }
     }
 
@@ -213,6 +164,69 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
         // a write past the allocation.
         Pass().OutOverflowFlag[0] = 1u;
         return;
+    }
+
+    // THE per-(instance, view) decision, made once. BuildMeshletBlocks reads what this writes instead of
+    // re-deriving it, so the reservation and the append cannot disagree -- a mismatch used to hand one
+    // bucket room nobody uses, starve the next, and drop the newest mesh with no error anywhere.
+    for (uint v = 0; v < Pass().NumViews; ++v)
+    {
+        FCullView View = CullViews()[v];
+
+        uint2 Range   = uint2(0u, 0u);
+        uint  Emitted = 0u;
+
+        if (IsInstanceVisibleToView(View, Center, Radius, bNoCull, bCaster))
+        {
+            const bool bShadowView = View.HasFlag(CULL_VIEW_FLAG_CAST_SHADOW_ONLY);
+
+            if (bShadowView && bSelectPerView && View.HasFlag(CULL_VIEW_FLAG_CASCADE))
+            {
+                Range = bHasGeometry
+                      ? SelectCascadeShadowMeshletRange(Desc, CamPos, Cull.SphereBounds, View.CascadeIndex,
+                                                        Scene().CullData.ShadowLODBias,
+                                                        Scene().CullData.ShadowCoarseLODDistSq)
+                      : uint2(0u, 0u);
+            }
+            else if (bShadowView)
+            {
+                Range = uint2(ShadowMeshletOffset, ShadowMeshletCount);
+            }
+            else if (bSelectPerView)
+            {
+                Range = bHasGeometry ? SelectViewMeshletRange(Desc, View.ViewOrigin, Cull.SphereBounds)
+                                     : uint2(0u, 0u);
+            }
+            else
+            {
+                Range = uint2(SurfaceMeshletOffset, SurfaceMeshletCount);
+            }
+
+            // Clamped here, so the builder inherits a range that is already in bounds.
+            Emitted = (Range.y == 0u || Range.x >= MeshletTotal || !bInRange)
+                    ? 0u
+                    : min(Range.y, MeshletTotal - Range.x);
+        }
+
+        if (Emitted > 0u)
+        {
+            FRenderBucket* Bucket = Pass().OutBuckets + (v * Pass().NumBatches + DrawID);
+
+            // One reservation per emitted meshlet, however many passes rasterize the batch. MeshletCull
+            // appends each bucket's region exactly once per phase and every pass draws that same list,
+            // so a second rasterization consumes no further slots -- which is what the old x2 translucent
+            // reservation existed to cover.
+            InterlockedAdd(Bucket.DrawCapacity, Emitted);
+
+            // Rounded up PER INSTANCE: blocks never span instances, so a ceil of the sum would
+            // under-reserve one block for every instance with a partial tail.
+            InterlockedAdd(Bucket.BlockCapacity,
+                           (Emitted + (MESHLET_CULL_GROUP_SIZE - 1u)) / MESHLET_CULL_GROUP_SIZE);
+        }
+
+        // Written for EVERY view, zero included. The builder indexes this slab directly from its flat
+        // thread id, so a pair left unwritten would hand it last frame's range.
+        Pass().OutInstanceViewRanges[OutSlot * Pass().NumViews + v] = uint2(Range.x, Emitted);
     }
 
     // Only survivors get here: 112 bytes a rejected slot never touches.
@@ -239,4 +253,6 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     Inst.ShadowMeshletCount      = ShadowMeshletCount;
     Inst.SurfaceDescIndex        = bSelectPerView ? Cull.SurfaceDescIndex : kNoSurfaceDesc;
     Inst.MeshletTotalCount       = MeshletTotal;
+    // Survives compaction, which OutSlot does not: it is the key into the two-phase visibility flags.
+    Inst.RetainedSlot            = SlotIdx;
 }

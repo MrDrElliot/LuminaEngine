@@ -2,45 +2,16 @@
 #include "Common.slang"
 #include "GlobalRHI.slang"
 
-// The deferred GBuffer contract. The material pass writes it, the lighting pass and the debug-view pass
-// read it, and nothing else may define its layout -- a drifted channel assignment reinterprets every
-// surface silently rather than failing to compile.
-//
-//   GBufferA  RGBA8_UNORM      BaseColor.rgb                     | AmbientOcclusion
-//   GBufferB  RGBA16_FLOAT     ShadingNormal.xyz (world)         | SelfShadow *
-//   GBufferC  RGBA8_UNORM      Roughness | Metallic | Specular * | Flags
-//   GBufferD  R11G11B10_FLOAT  Emissive.rgb
-//
-// (*) Reinterpreted per shading model. The buffer is otherwise FULL -- 20 B/pixel with no spare channel
-// (D is R11G11B10, so it has no alpha) -- so a model needing extra parameters either adds a fifth target,
-// paying bandwidth on every pixel whether it uses it or not, or borrows a channel that is meaningless for
-// that model. Clearcoat does the latter:
-//
-//   Clearcoat:  B.a = ClearcoatFactor      (SelfShadow is parallax-only; forced to 1 for this model)
-//               C.b = ClearcoatRoughness   (base Specular is pinned to the 0.5 dielectric default)
-//
-// Both borrows are safe because a coated surface is not also a parallax-occlusion surface, and coated
-// dielectrics sit at the default F0. If either assumption ever stops holding, the fix is the fifth target.
-//
-// World position is NOT stored: it is reconstructed from the depth buffer the VisBuffer geometry pass
-// already wrote, which is the same surface by construction.
-//
-// Every format here is either a mandatory Vulkan storage-image format or one the renderer already writes
-// as a UAV elsewhere (R11G11B10 via the bloom chain), so the material pass can write all four from
-// compute without a format-support query.
+// The deferred GBuffer contract -- nothing else may define this layout; a drifted channel silently
+// reinterprets every surface. FULL at 20 B/pixel, so clearcoat BORROWS SelfShadow and Specular.
 
 // Flags byte (GBufferC.a): bit 0 = receive shadow, bits 1-3 = shading model, bits 4-7 free.
 #define GBUFFER_FLAG_RECEIVE_SHADOW 1u
 #define GBUFFER_SHADING_MODEL_SHIFT 1u
 #define GBUFFER_SHADING_MODEL_MASK  7u
 
-// Which lighting path a pixel takes. Three bits, so seven more models fit before the flags byte runs out.
-// Unlit is a model rather than the separate flag it used to be: two mechanisms for "how is this shaded"
-// is exactly the kind of split that drifts.
-//
-// Mirrored by EMaterialShadingModel (MaterialInterface.h) -- keep the values in lockstep.
-// Plain constants rather than a Slang enum: Slang scopes enum members, and these read better unqualified
-// at every use site. Matches the MatFlag_* / SAMPLER_* style the other shared headers use.
+// Three bits, so seven more models fit. Mirrored by EMaterialShadingModel (MaterialInterface.h) --
+// keep the values in lockstep.
 static const uint ShadingModel_Default   = 0u;
 static const uint ShadingModel_Unlit     = 1u;
 static const uint ShadingModel_Clearcoat = 2u;

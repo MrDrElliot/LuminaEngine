@@ -2,13 +2,8 @@
 #include "SceneGlobals.slang"
 #include "MeshletGeometry.slang"
 
-// Everything the deferred lane needs to turn a visibility-buffer texel back into a surface: the fault-safe
-// VisID -> meshlet/triangle resolve, the material-slot lookup the classify passes bin by, and the
-// perspective-correct barycentric reconstruction with analytic screen derivatives.
-//
-// Five shaders decode the same VisID (classify count, classify scatter, the per-material GBuffer pass, the
-// picker resolve and the debug-view pass). They MUST agree bit-for-bit or a pixel gets counted into one
-// material's run and shaded by another's, so the decode lives here and is called, never re-derived.
+// Five shaders decode the same VisID and MUST agree bit-for-bit, or a pixel is counted into one
+// material's run and shaded by another's -- so the decode lives here and is called, never re-derived.
 
 // VisID packing, as written by MeshletVisBuffer / MeshletVisBufferVS: ((MeshletSlot << 7) | TriIndex) + 1.
 // The +1 is what makes a cleared 0 mean "no geometry" rather than slot 0 triangle 0.
@@ -70,9 +65,8 @@ uint ResolveVisMaterialSlot(uint VisRaw, uint DrawListCount, uint* SlotByMateria
     return (Slot < MATERIAL_MAX_SLOTS) ? Slot : ~0u;
 }
 
-// Full resolve down to the triangle's three local vertex indices. Every index is clamped rather than
-// trusted: these feed buffer-device-address loads, and a speculated load off a stale draw-list gap faults
-// the device instead of producing a wrong pixel.
+// Every index is clamped rather than trusted: these feed buffer-device-address loads, and a
+// speculated load off a stale draw-list gap faults the device instead of producing a wrong pixel.
 FVisTriangle ResolveVisTriangle(uint VisRaw, uint DrawListCount)
 {
     FVisTriangle Out;
@@ -105,11 +99,8 @@ FVisTriangle ResolveVisTriangle(uint VisRaw, uint DrawListCount)
     return Out;
 }
 
-// Perspective-correct barycentrics plus their screen-space derivatives, from the triangle's three
-// clip-space positions and the pixel's NDC location (Schied/Stachowiak, "Visibility Buffer Rendering with
-// Material Graphs"). DDX/DDY are d(lambda)/d(screen pixel), which is what lets any interpolated attribute
-// be differentiated analytically -- no rasterizer ddx/ddy, so mips stay correct across triangle boundaries
-// and the whole reconstruction is legal in a compute shader.
+// Perspective-correct barycentrics plus screen derivatives (Schied/Stachowiak). DDX/DDY are
+// d(lambda)/d(pixel), which is what makes analytic differentiation legal in a compute shader.
 struct FBaryDeriv
 {
     float3 Lambda;
@@ -158,10 +149,8 @@ FBaryDeriv CalcFullBary(float4 Pt0, float4 Pt1, float4 Pt2, float2 PixelNdc, flo
     return Ret;
 }
 
-// Interpolate three per-vertex values with an arbitrary weight vector. Passing Lambda gives the attribute;
-// passing DDX/DDY gives its exact screen-space derivative, because d(sum Lambda_i * V_i)/dx is just the
-// same sum taken with dLambda_i/dx. That is what lets a material graph build a UV out of world position and
-// still pick the right mip.
+// Passing Lambda gives the attribute; passing DDX/DDY gives its exact screen derivative, because
+// d(sum Lambda_i * V_i)/dx is the same sum taken with dLambda_i/dx.
 float3 InterpWeights(float3 Weights, float3 V0, float3 V1, float3 V2)
 {
     return V0 * Weights.x + V1 * Weights.y + V2 * Weights.z;
@@ -182,9 +171,8 @@ float4 InterpBary4(FBaryDeriv D, float4 V0, float4 V1, float4 V2)
     return InterpWeights4(D.Lambda, V0, V1, V2);
 }
 
-// The reconstructed surface at one pixel. FinalWorldPos is post-WorldPositionOffset, so the caller has to
-// have run the material's vertex graph on all three corners first -- that is what makes the reconstructed
-// triangle the one the geometry pass actually rasterized.
+// FinalWorldPos is post-WorldPositionOffset, so the caller must have run the material's vertex graph
+// on all three corners first -- that is what makes this the triangle the geometry pass rasterized.
 struct FVisSurface
 {
     FBaryDeriv Bary;
@@ -238,11 +226,8 @@ float2 VisPixelNdc(uint2 Texel, float2 ScreenSize)
     return ((float2(Texel) + 0.5) / ScreenSize) * 2.0 - 1.0;
 }
 
-// Reconstruction WITHOUT the material's vertex graph, for consumers that have no material shader to run:
-// the debug-view pass, which needs the raw UV and the pre-normal-map geometric normal that the GBuffer does
-// not carry. A material driving WorldPositionOffset displaces the triangle this does not displace, so its
-// barycentrics differ slightly there -- acceptable in a diagnostic, and the reason the production material
-// pass reconstructs with the token instead of calling this.
+// Reconstruction WITHOUT the material's vertex graph, for consumers with no material shader to run.
+// A material driving WPO displaces a triangle this does not, so barycentrics differ slightly.
 FVisSurface ReconstructVisSurfaceNoWPO(FVisTriangle T, uint2 Texel, float2 ScreenSize)
 {
     const float4x4 ModelMatrix    = T.Ref.Inst.ModelMatrix;
@@ -260,9 +245,8 @@ FVisSurface ReconstructVisSurfaceNoWPO(FVisTriangle T, uint2 Texel, float2 Scree
     return InterpolateVisSurface(W, WorldPos, VisPixelNdc(Texel, ScreenSize), ScreenSize);
 }
 
-// Two-sided materials rasterize back faces into the VisBuffer too (the geometry pass disables back-face
-// culling for them). There is no SV_IsFrontFace outside the rasterizer, so flip the shading normal toward
-// the camera; the tangent basis is re-orthogonalized against it downstream.
+// Two-sided materials rasterize back faces too, and there is no SV_IsFrontFace outside the
+// rasterizer, so flip the shading normal toward the camera. The tangent basis re-orthogonalizes.
 float3 OrientVisNormal(FMeshletRef Ref, float3 NormalWS, float3 WorldPosition)
 {
     if (!Ref.Inst.HasFlag(EInstanceFlags::TwoSided))

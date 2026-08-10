@@ -93,6 +93,12 @@ namespace Lumina
         // 0 is the never-resolved sentinel.
         uint32  CachedMaterialHash = 0;
 
+        // FMeshResolveCache::GetEpoch() at the last resolve. The epoch is the editor's "nuke every resolve"
+        // signal (AssetEditorTool bumps it on any mesh/material edit). Components that own a cache entry get
+        // it for free -- ApplyPendingInvalidations marks every entry stale -- but a component resolving
+        // OUTSIDE the cache has no entry to mark, so it compares this itself. 0 never matches a live epoch.
+        uint32  CachedResolveEpoch = 0;
+
         FUNCTION(Script)
         void SetMaterialAtSlot(CMaterialInterface* Material, uint32 Slot)
         {

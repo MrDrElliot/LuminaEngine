@@ -76,9 +76,8 @@ namespace Lumina
             {
                 Q1 = -Q1;
             }
-            // nlerp, NOT slerp: adjacent keyframes are dense (small arc), so a normalized lerp is visually
-            // identical to slerp while avoiding the acos + 3x sin per channel -- the dominant per-mesh cost
-            // at thousands of skinned meshes. Q0/Q1 are hemisphere-aligned above.
+            // nlerp, NOT slerp: adjacent keyframes are dense, so a normalized lerp is visually identical while
+            // avoiding acos + 3x sin per channel. Q0/Q1 are hemisphere-aligned above.
             return Math::Normalize(Q0 * (1.0f - t) + Q1 * t);
         }
 
@@ -120,8 +119,7 @@ namespace Lumina
         }
 
         // Unmatched channels silently freeze their bones at bind pose -- the telltale of an animation
-        // sampled against the wrong skeleton (or a bone-name mismatch at import). Once per (clip,
-        // skeleton) pairing, since sets are cached.
+        // sampled against the wrong skeleton. Once per (clip, skeleton) pairing, since sets are cached.
         if (NumUnmatched > 0)
         {
             LOG_WARN("Animation '{}': {}/{} channels target bones missing from the skeleton (name mismatch or wrong skeleton)",
@@ -268,9 +266,8 @@ namespace Lumina
 
         const int32 ActiveBones = (MaxBones >= 0 && MaxBones < NumBones) ? MaxBones : NumBones;
 
-        // Start from the bind pose, then overwrite whatever the channels animate. With the skeleton's
-        // SoA bind cache this is three bulk copies instead of a per-bone decompose. Bones past the
-        // LOD cut simply keep their bind-pose locals.
+        // Start from the bind pose, then overwrite whatever the channels animate: three bulk copies instead
+        // of a per-bone decompose. Bones past the LOD cut keep their bind-pose locals.
         OutPose.ResetToBindPose(InSkeleton);
 
         const FAnimationResource::FResolvedChannelSet* Resolved = AnimationResource->GetResolvedChannelSet(InSkeleton);

@@ -27,9 +27,8 @@ namespace Lumina::RHI
     constexpr auto kMeshMaxOutputVertices       = 64u;   // out vertices Verts[MESHLET_MAX_VERTICES]
     constexpr auto kMeshMaxOutputPrimitives     = 64u;   // out indices Tris[MESHLET_MAX_TRIANGLES]
 
-    constexpr auto kTaskWorkGroupSize           = 32u;   // MeshletCullTask.slang [numthreads(32, 1, 1)]
+    constexpr auto kMeshletCullGroupSize        = 32u;   // MeshletCull.slang [numthreads(32, 1, 1)]
 
-    constexpr auto kMaxTaskPayloadBytes         = 4096u;
     
     struct FTexture;
     struct FTextureHeap;
@@ -97,7 +96,6 @@ namespace Lumina::RHI
         Host              = BIT(8),
         AllCommands       = BIT(9),
         MeshShader        = BIT(10),
-        TaskShader        = BIT(11),
     };
     
     ENUM_CLASS_FLAGS(EStageFlags);
@@ -433,7 +431,18 @@ namespace Lumina::RHI
         bool bValidation    = false;
         bool bDebugUtils    = true;
         bool bGpuValidation = false;
+
+        /** No window system: skips the GLFW surface extensions and VK_KHR_swapchain. A headless device
+         *  cannot present, so CreateSurface / CreateSwapchain / Present are off the table -- everything
+         *  else works. For test harnesses and dedicated servers, which have no GLFW instance at all. */
+        bool bHeadless      = false;
     };
+
+    /** Observer for the debug-utils messenger, in addition to the log. Set BEFORE CreateDevice. Fires on
+     *  whichever thread the driver reports on, so the handler must be thread-safe. */
+    enum class EValidationSeverity : uint8 { Verbose, Info, Warning, Error };
+    using FValidationHandlerFn = void (*)(EValidationSeverity Severity, const char* Message, void* UserData);
+    RUNTIME_API void SetValidationHandler(FValidationHandlerFn Handler, void* UserData);
 
     // API-neutral GPU device summary, surfaced to tools.
     struct FGPUDeviceInfo
@@ -469,7 +478,6 @@ namespace Lumina::RHI
         TFixedVector<FGPUMemoryHeapStats, 16> Heaps;   // VK_MAX_MEMORY_HEAPS == 16.
     };
 
-    // Full per-heap GPU memory breakdown.
     RUNTIME_API void           GetGPUMemoryStats(FGPUMemoryStats& Out);
     RUNTIME_API FGPUDeviceInfo GetDeviceInfo();
 
@@ -477,7 +485,9 @@ namespace Lumina::RHI
 
     // maxTaskWorkGroupCount[0]. A meshlet draw's grid is one task workgroup per cull block, and a region
     // large enough to exceed this would otherwise be dispatched as-is.
-    RUNTIME_API uint32         GetMaxTaskWorkGroupCount();
+    // maxMeshWorkGroupCount[0]. One mesh workgroup per surviving meshlet, so a slice larger than this
+    // is split across consecutive sub-draws.
+    RUNTIME_API uint32         GetMaxMeshWorkGroupCount();
 
     RUNTIME_API bool           SupportsAsyncCompute();
     RUNTIME_API bool           SupportsAsyncTransfer();
@@ -546,6 +556,11 @@ namespace Lumina::RHI
     RUNTIME_API uint32      HeapWriteRWTexture(FTextureHeapH Heap, FTextureH Texture, uint32 Mip = 0);
     RUNTIME_API uint32      HeapWriteSampler(FTextureHeapH Heap, const FSamplerDesc& Desc);
     RUNTIME_API void        HeapSetFallbackTexture(FTextureHeapH Heap, FTextureH Texture);
+    /** Points the slot at the fallback view without releasing the index, so nothing recorded from here on
+        references the texture behind it while the index stays reserved. The unbind half of HeapFreeTexture:
+        a retiring texture must stop being referenced IMMEDIATELY, but its slot can only be handed out again
+        once the frames that already bound it are done. */
+    RUNTIME_API void        HeapUnbindTexture(FTextureHeapH Heap, uint32 Slot);
     RUNTIME_API void        HeapFreeTexture(FTextureHeapH Heap, uint32 Slot);
     RUNTIME_API void        HeapFreeRWTexture(FTextureHeapH Heap, uint32 Slot);
     RUNTIME_API void        HeapFreeSampler(FTextureHeapH Heap, uint32 Slot);
@@ -585,7 +600,6 @@ namespace Lumina::RHI
     RUNTIME_API void        CmdReleaseImageToQueue(FCmdListH CL, FTextureH Texture, EQueueType Dest, EStageFlags Before);
     RUNTIME_API void        CmdAcquireImageFromQueue(FCmdListH CL, FTextureH Texture, EQueueType Source, EStageFlags After);
 
-    // Canonical pipeline-stage barriers.
     namespace Barriers
     {
         inline void ComputeToAll(FCmdListH CL)
@@ -593,18 +607,18 @@ namespace Lumina::RHI
             CmdBarrier(CL,
                 EStageFlags::Compute,
                 EStageFlags::Compute | EStageFlags::VertexShader | EStageFlags::PixelShader |
-                EStageFlags::MeshShader | EStageFlags::TaskShader |
+                EStageFlags::MeshShader |
                 EStageFlags::IndirectArguments | EStageFlags::FragmentTests | EStageFlags::Transfer);
         }
 
-        // MeshShader/TaskShader belong in the SOURCE mask: a task shader that culls also writes.
+        // MeshShader belongs in the SOURCE mask: a mesh shader that reads the draw list also writes.
         inline void RasterToRead(FCmdListH CL)
         {
             CmdBarrier(CL,
                 EStageFlags::RasterColorOut | EStageFlags::FragmentTests |
-                EStageFlags::MeshShader | EStageFlags::TaskShader,
+                EStageFlags::MeshShader,
                 EStageFlags::PixelShader | EStageFlags::VertexShader | EStageFlags::Compute |
-                EStageFlags::MeshShader | EStageFlags::TaskShader |
+                EStageFlags::MeshShader |
                 EStageFlags::IndirectArguments |
                 EStageFlags::RasterColorOut | EStageFlags::FragmentTests);
         }
@@ -636,14 +650,14 @@ namespace Lumina::RHI
         inline void TransferToCompute(FCmdListH CL)
         {
             CmdBarrier(CL, EStageFlags::Transfer,
-                EStageFlags::Compute | EStageFlags::TaskShader | EStageFlags::MeshShader);
+                EStageFlags::Compute | EStageFlags::MeshShader);
         }
 
         /** A cull dispatch whose output feeds later dispatches, the task/mesh stages, and indirect fetch. */
         inline void ComputeToGeometry(FCmdListH CL)
         {
             CmdBarrier(CL, EStageFlags::Compute,
-                EStageFlags::Compute | EStageFlags::TaskShader | EStageFlags::MeshShader |
+                EStageFlags::Compute | EStageFlags::MeshShader |
                 EStageFlags::IndirectArguments);
         }
 

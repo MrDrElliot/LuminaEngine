@@ -1,5 +1,7 @@
 ﻿#pragma once
 
+#include "Renderer/ShaderHandle.h"
+
 #include "MaterialInterface.h"
 #include "Containers/Array.h"
 #include "Core/Threading/Thread.h"
@@ -67,8 +69,8 @@ namespace Lumina
         FMaterialUniforms* GetMaterialUniforms() override { return &MaterialUniforms; }
         
         CMaterial* GetMaterial() const override;
-        const FShaderEntry* GetPixelShader() const override;
-        const FShaderEntry* GetVertexShader() const override;
+        FShaderH GetPixelShader() const override;
+        FShaderH GetVertexShader() const override;
 
         // Geometry stages. Every one is a MESH shader fed by the shared amplification stage -- there is no
         // vertex path for meshlet geometry. All are per-material because the vertex graph's World Position
@@ -77,26 +79,33 @@ namespace Lumina
         // Shadow emits position only; base emits the full interpolant set for forward-shaded translucency.
         // Carrying interpolants through the shadow pass reserved 124B per vertex of mesh output storage for
         // a consumer that reads SV_Position, which is what held cascade occupancy at 2.0 warps/cycle.
-        const FShaderEntry* GetMeshShaderShadow() const { return MeshShaderShadow; }
-        const FShaderEntry* GetMeshShaderBase() const { return MeshShaderBase; }
+        FShaderH GetMeshShaderShadow() const { return MeshShaderShadow; }
+        FShaderH GetMeshShaderBase() const { return MeshShaderBase; }
 
-        const FShaderEntry* GetVisBufferMeshShader() const { return VisBufferMeshShader; }
+        FShaderH GetVisBufferMeshShader() const { return VisBufferMeshShader; }
         // Masked-only VisBuffer geometry: emits the interpolants the masked PS needs. Null for opaque
         // materials, which use the position-only GetVisBufferMeshShader above.
-        const FShaderEntry* GetVisBufferMeshShaderMasked() const { return VisBufferMeshShaderMasked; }
+        FShaderH GetVisBufferMeshShaderMasked() const { return VisBufferMeshShaderMasked; }
 
         // Masked-only VisBuffer PIXEL shader: runs the opacity graph and alpha-clips cut-out texels BEFORE
         // they write VisID/depth, so they cannot stamp occluding depth. Null for non-masked materials.
-        const FShaderEntry* GetMaskedVisBufferPixelShader() const { return MaskedVisBufferPixelShader; }
+        FShaderH GetMaskedVisBufferPixelShader() const { return MaskedVisBufferPixelShader; }
 
         // Deferred material pixel shader (DeferredMaterial.slang): reconstructs surface from the VisBuffer
         // triangle ID and shades. The deferred pass binds it per opaque material.
-        const FShaderEntry* GetDeferredShader() const { return DeferredShader; }
+        FShaderH GetDeferredShader() const { return DeferredShader; }
 
         // MBOIT moment-generation pixel shader (BasePixelPass.slang + MOMENT_GENERATION): runs the opacity
         // graph and accumulates absorbance moments, with no lighting at all. Null for anything that is not
         // a PBR translucent material, since nothing else is drawn by the moment pass.
-        const FShaderEntry* GetMomentPixelShader() const { return MomentPixelShader; }
+        FShaderH GetMomentPixelShader() const { return MomentPixelShader; }
+
+        /** Bumped whenever a recompile actually swaps a shader-library entry, and only then -- the library
+            is content-keyed, so a recompile producing identical SPIR-V returns the same entry and does not
+            move this. Anything caching a resolved FShaderEntry* can compare it to know its copy went stale.
+            Consumers that own an FMeshResolveCache entry do not need it (dependency invalidation covers
+            them); SDynamicMeshComponent has no cache entry and does. */
+        uint32 GetShaderRevision() const { return ShaderRevision; }
 
         static CMaterial* GetDefaultMaterial();
         static CMaterial* GetDefaultTerrainMaterial();
@@ -247,15 +256,18 @@ namespace Lumina
         FMaterialUniforms                       MaterialUniforms;
 
         // Library entries keyed by asset GUID; recompiles refresh them in place.
-        const FShaderEntry*                     PixelShader = nullptr;
-        const FShaderEntry*                     VertexShader = nullptr;
-        const FShaderEntry*                     MeshShaderShadow = nullptr;
-        const FShaderEntry*                     MeshShaderBase = nullptr;
-        const FShaderEntry*                     VisBufferMeshShader = nullptr;
-        const FShaderEntry*                     VisBufferMeshShaderMasked = nullptr;
-        const FShaderEntry*                     MaskedVisBufferPixelShader = nullptr;
-        const FShaderEntry*                     DeferredShader = nullptr;
-        const FShaderEntry*                     MomentPixelShader = nullptr;
+        FShaderH                     PixelShader = {};
+        FShaderH                     VertexShader = {};
+        FShaderH                     MeshShaderShadow = {};
+        FShaderH                     MeshShaderBase = {};
+        FShaderH                     VisBufferMeshShader = {};
+        FShaderH                     VisBufferMeshShaderMasked = {};
+        FShaderH                     MaskedVisBufferPixelShader = {};
+        FShaderH                     DeferredShader = {};
+        FShaderH                     MomentPixelShader = {};
+
+        // See GetShaderRevision. Starts at 1 so a zeroed cached copy always reads as "never seen".
+        uint32                                  ShaderRevision = 1;
 
         bool RefreshTextureBindings(const CTexture* ChangedTexture) override;
 

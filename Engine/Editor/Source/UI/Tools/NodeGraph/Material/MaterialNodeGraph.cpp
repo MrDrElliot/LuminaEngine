@@ -296,18 +296,8 @@ namespace Lumina
         }
     }
 
-    // Emission order for one stage, depth-first POST-ORDER from that stage's root pins.
-    //
-    // A plain topological sort is not unique, and the Kahn-style one above puts every zero-dependency node
-    // first -- so all the parameter fetches land at the top of the shader and stay live across everything
-    // between them and their consumer. Post-order instead emits a node immediately before the first
-    // consumer that needs it, which is the latest point it can legally go, so live ranges are as short as
-    // the graph allows. Registers are the binding resource in the deferred pass (PS register count is the
-    // top stall), and the downstream compiler will not sink loads this aggressively on its own.
-    //
-    // Post-order guarantees dependencies precede dependents, so the result is still a valid topological
-    // order. Cycles were already rejected before this runs; the depth cap and the in-progress set are
-    // backstops so a malformed graph cannot recurse without bound.
+    // Emission order for one stage: depth-first POST-ORDER from that stage's root pins, so a node is
+    // emitted just before its first consumer and live ranges stay as short as the graph allows.
     static void CollectEmitOrderDepthFirst(CEdGraphNode* Node,
                                            const THashSet<CEdGraphNode*>& StageSet,
                                            THashSet<CEdGraphNode*>& Emitted,
@@ -369,7 +359,43 @@ namespace Lumina
 
 
     // Infers the promoted output type after binary-op promotion without running full emit.
-    static EMaterialInputType InferOutputType(CEdNodeGraphPin* InputPin)
+    static EMaterialInputType InferOutputType(CEdNodeGraphPin* InputPin, int32 Depth = 0);
+
+    /**
+     * A math node's output pin still carries its BuildNode default (Float) at validation time -- the
+     * promoted width is only stamped during emit, which runs AFTER this check. Reading the pin directly
+     * therefore reports every math chain as a float, no matter how wide it actually is, and rejects it on
+     * any pin that does not allow broadcast.
+     *
+     * So recompute the promotion here, by the same rule FMaterialCompiler::DetermineResultType uses for
+     * component-wise ops: a one-component operand takes the other side's width, otherwise the wider wins.
+     * An unconnected input is the node's scalar ConstA/ConstB, which is a float.
+     */
+    static EMaterialInputType InferMathOutputType(CMaterialExpression_Math* Node, int32 Depth)
+    {
+        const EMaterialInputType AType = InferOutputType(Node->A, Depth + 1);
+        if (Node->B == nullptr || !Node->B->HasConnection())
+        {
+            // Unary, or binary against a scalar constant: the width passes straight through.
+            return AType;
+        }
+
+        const EMaterialInputType BType = InferOutputType(Node->B, Depth + 1);
+
+        const int32 CountA = FMaterialCompiler::GetComponentCount(AType);
+        const int32 CountB = FMaterialCompiler::GetComponentCount(BType);
+        if (CountA == 1)
+        {
+            return BType;
+        }
+        if (CountB == 1)
+        {
+            return AType;
+        }
+        return CountA >= CountB ? AType : BType;
+    }
+
+    static EMaterialInputType InferOutputType(CEdNodeGraphPin* InputPin, int32 Depth)
     {
         if (InputPin == nullptr || !InputPin->HasConnection())
         {
@@ -381,6 +407,16 @@ namespace Lumina
         if (SourcePin == nullptr)
         {
             return EMaterialInputType::Float;
+        }
+
+        // Bounded like ResolveThroughReroutes: a cyclic graph must not recurse forever.
+        constexpr int32 MaxDepth = 64;
+        if (Depth < MaxDepth)
+        {
+            if (CMaterialExpression_Math* Math = Cast<CMaterialExpression_Math>(SourcePin->GetOwningNode()))
+            {
+                return InferMathOutputType(Math, Depth);
+            }
         }
 
         return SourcePin->InputType;
@@ -533,17 +569,16 @@ namespace Lumina
 
         THashSet<CEdGraphNode*> VertexSet;
         THashSet<CEdGraphNode*> PixelSet;
+        // Both the closure and the emit roots below come from this one list, and it comes from the output
+        // node itself: a pin the node assigns from but that is missing here emits an assignment referencing
+        // a variable nothing ever declared, which fails the whole material's compile.
+        TVector<CEdNodeGraphPin*> PixelPins;
         if (OutputNode)
         {
             // Vertex stage: only WPO contributes for now.
             CollectInputClosure(OutputNode->WorldPositionOffsetPin, VertexSet);
 
-            // Pixel stage: every other output pin contributes.
-            CEdNodeGraphPin* PixelPins[] = {
-                OutputNode->BaseColorPin, OutputNode->MetallicPin,  OutputNode->RoughnessPin,
-                OutputNode->SpecularPin,  OutputNode->EmissivePin,  OutputNode->AOPin,
-                OutputNode->NormalPin,    OutputNode->OpacityPin
-            };
+            OutputNode->GetPixelStagePins(PixelPins);
             for (CEdNodeGraphPin* P : PixelPins)
             {
                 CollectInputClosure(P, PixelSet);
@@ -553,10 +588,8 @@ namespace Lumina
         Compiler.NewLine();
         Compiler.NewLine();
 
-        // Builds the late-emission order for a stage, falling back to the global topological order if the
-        // depth-first walk did not reach the whole set (a depth-capped or malformed graph). The fallback is
-        // the previous behavior, so a graph this cannot schedule still compiles correctly -- just with the
-        // longer live ranges it had before.
+        // Falls back to the global topological order if the depth-first walk did not reach the whole set.
+        // The fallback is the previous behaviour: still correct, just with the longer live ranges.
         auto BuildEmitOrder = [&SortedNodes](const THashSet<CEdGraphNode*>& StageSet,
                                              const TVector<CEdNodeGraphPin*>& RootPins) -> TVector<CEdGraphNode*>
         {
@@ -591,19 +624,9 @@ namespace Lumina
             return Order;
         };
 
-        TVector<CEdNodeGraphPin*> PixelRoots;
-        if (OutputNode)
-        {
-            CEdNodeGraphPin* Pins[] = {
-                OutputNode->BaseColorPin, OutputNode->MetallicPin,  OutputNode->RoughnessPin,
-                OutputNode->SpecularPin,  OutputNode->EmissivePin,  OutputNode->AOPin,
-                OutputNode->NormalPin,    OutputNode->OpacityPin
-            };
-            for (CEdNodeGraphPin* P : Pins)
-            {
-                PixelRoots.push_back(P);
-            }
-        }
+        // Same list the closure was built from, so a node that was collected always has a root to be
+        // ordered from and can never end up emitted after the assignment that reads it.
+        const TVector<CEdNodeGraphPin*>& PixelRoots = PixelPins;
 
         Compiler.SetStage(EMaterialCompileStage::Pixel);
         const TVector<CEdGraphNode*> PixelOrder = BuildEmitOrder(PixelSet, PixelRoots);
@@ -692,11 +715,8 @@ namespace Lumina
 
         if (ImGui::BeginDragDropTargetCustom(Window->Rect(), Window->ID))
         {
-            // Each accept is class-checked and only fires on release, so a non-matching drag simply
-            // falls through to the next candidate.
-            // Arrays are checked BEFORE plain textures: CTextureArray derives from CTexture, so the
-            // CTexture accept below would happily claim one and spawn a node that samples slice 0 of it
-            // as if it were a 2D texture.
+            // Arrays are checked BEFORE plain textures: CTextureArray derives from CTexture, so the accept
+            // below would claim one and spawn a node sampling slice 0 as if it were a 2D texture.
             if (CTextureArray* DroppedArray = DragDrop::AcceptAsset<CTextureArray>())
             {
                 SpawnAssetNode(CMaterialExpression_TextureSampleArray::StaticClass(), DroppedArray, ImGui::GetMousePos());

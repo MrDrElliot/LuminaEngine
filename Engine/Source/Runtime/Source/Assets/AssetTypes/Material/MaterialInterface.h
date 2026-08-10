@@ -1,4 +1,6 @@
 ﻿#pragma once
+
+#include "Renderer/ShaderHandle.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Object/Object.h"
 #include "Renderer/RHIFwd.h"
@@ -69,8 +71,8 @@ namespace Lumina
         int32 GetMaterialIndex() const { return MaterialIndex; }
         void SetMaterialIndex(int32 Index) { MaterialIndex = Index; }
 
-        virtual const FShaderEntry* GetVertexShader() const { return nullptr; }
-        virtual const FShaderEntry* GetPixelShader() const { return nullptr; }
+        virtual FShaderH GetVertexShader() const { return {}; }
+        virtual FShaderH GetPixelShader() const { return {}; }
 
         virtual EMaterialType GetMaterialType() const { return EMaterialType::None; };
 

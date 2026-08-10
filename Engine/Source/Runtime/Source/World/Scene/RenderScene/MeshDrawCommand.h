@@ -1,4 +1,6 @@
 #pragma once
+
+#include "Renderer/ShaderHandle.h"
 #include "Containers/Array.h"
 #include "Platform/GenericPlatform.h"
 #include <Core/Math/Hash/Hash.h>
@@ -10,8 +12,8 @@ namespace Lumina
 	
 	struct FRenderMaterialShaders
 	{
-		const FShaderEntry* VertexShader = nullptr;
-		const FShaderEntry* PixelShader  = nullptr;
+		FShaderH VertexShader = {};
+		FShaderH PixelShader = {};
 	};
 
 	// Keyed by what forces a distinct PIPELINE, not by material identity. Two materials that compile to the
@@ -24,13 +26,13 @@ namespace Lumina
 	// needs a batch to be one material.
 	struct FDrawBatchKey
 	{
-		const FShaderEntry* VisBufferMeshShader        = nullptr;
-		const FShaderEntry* VisBufferMeshShaderMasked  = nullptr;
-		const FShaderEntry* MaskedVisBufferPixelShader = nullptr;
-		const FShaderEntry* MeshShaderBase             = nullptr;
-		const FShaderEntry* MeshShaderShadow           = nullptr;
-		const FShaderEntry* PixelShader                = nullptr;
-		const FShaderEntry* MomentPixelShader          = nullptr;
+		FShaderH VisBufferMeshShader = {};
+		FShaderH VisBufferMeshShaderMasked = {};
+		FShaderH MaskedVisBufferPixelShader = {};
+		FShaderH MeshShaderBase = {};
+		FShaderH MeshShaderShadow = {};
+		FShaderH PixelShader = {};
+		FShaderH MomentPixelShader = {};
 
 		uint32 bTranslucent : 1;
 		uint32 bMasked : 1;
@@ -56,11 +58,11 @@ namespace Lumina
 	static uint64 GetTypeHash(const FDrawBatchKey& K)
 	{
 		size_t Seed = 0;
-		for (const FShaderEntry* Entry : { K.VisBufferMeshShader, K.VisBufferMeshShaderMasked,
+		for (FShaderH Entry : { K.VisBufferMeshShader, K.VisBufferMeshShaderMasked,
 										   K.MaskedVisBufferPixelShader, K.MeshShaderBase,
 										   K.MeshShaderShadow, K.PixelShader, K.MomentPixelShader })
 		{
-			Hash::HashCombine(Seed, (uint64)(uintptr_t)Entry);
+			Hash::HashCombine(Seed, Entry.Handle);
 		}
 		Hash::HashCombine(Seed, K.bTranslucent);
 		Hash::HashCombine(Seed, K.bMasked);
@@ -71,14 +73,14 @@ namespace Lumina
 
 	struct FMeshDrawCommand
 	{
-		const FShaderEntry*					PixelShader  = nullptr;
-		const FShaderEntry*					VertexShader = nullptr;
-		const FShaderEntry*					MeshShaderShadow = nullptr;          // shadow depth (position-only out)
-		const FShaderEntry*					MeshShaderBase = nullptr;            // translucent / additive (full interpolants)
-		const FShaderEntry*					VisBufferMeshShader = nullptr;       // VisBuffer geometry, opaque (position-only out)
-		const FShaderEntry*					VisBufferMeshShaderMasked = nullptr; // VisBuffer geometry, masked (full interpolants)
-		const FShaderEntry*					MaskedVisBufferPixelShader = nullptr;// masked-only PS: opacity clip before VisID/depth
-		const FShaderEntry*					MomentPixelShader = nullptr;         // MBOIT pass 1: opacity-only moment accumulation
+		FShaderH					PixelShader = {};
+		FShaderH					VertexShader = {};
+		FShaderH					MeshShaderShadow = {};          // shadow depth (position-only out)
+		FShaderH					MeshShaderBase = {};            // translucent / additive (full interpolants)
+		FShaderH					VisBufferMeshShader = {};       // VisBuffer geometry, opaque (position-only out)
+		FShaderH					VisBufferMeshShaderMasked = {}; // VisBuffer geometry, masked (full interpolants)
+		FShaderH					MaskedVisBufferPixelShader = {};// masked-only PS: opacity clip before VisID/depth
+		FShaderH					MomentPixelShader = {};         // MBOIT pass 1: opacity-only moment accumulation
 		uint32                      		IndirectDrawOffset = 0;
 		uint32                      		DrawCount = 0;
 		uint32                      		bTranslucent : 1;

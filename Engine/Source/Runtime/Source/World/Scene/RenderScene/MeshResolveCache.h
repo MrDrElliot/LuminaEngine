@@ -1,4 +1,6 @@
 #pragma once
+
+#include "Renderer/ShaderHandle.h"
 #include <atomic>
 #include <mutex>
 #include "Containers/Array.h"
@@ -18,15 +20,15 @@ namespace Lumina
     // Shader entries are FShaderLibrary-owned and process-immortal, so holding them is safe.
     struct FResolvedSurface
     {
-        const FShaderEntry* PixelShader                = nullptr;
-        const FShaderEntry* VertexShader               = nullptr;
-        const FShaderEntry* MeshShaderShadow           = nullptr;
-        const FShaderEntry* MeshShaderBase             = nullptr;
-        const FShaderEntry* VisBufferMeshShader        = nullptr;
-        const FShaderEntry* VisBufferMeshShaderMasked  = nullptr;
-        const FShaderEntry* MaskedVisBufferPixelShader = nullptr;
-        const FShaderEntry* DeferredShader             = nullptr;
-        const FShaderEntry* MomentPixelShader          = nullptr;
+        FShaderH PixelShader = {};
+        FShaderH VertexShader = {};
+        FShaderH MeshShaderShadow = {};
+        FShaderH MeshShaderBase = {};
+        FShaderH VisBufferMeshShader = {};
+        FShaderH VisBufferMeshShaderMasked = {};
+        FShaderH MaskedVisBufferPixelShader = {};
+        FShaderH DeferredShader = {};
+        FShaderH MomentPixelShader = {};
 
         FDrawBatchKey   BatchKey    = {};
 
@@ -39,10 +41,31 @@ namespace Lumina
         uint32  LODMeshletOffset[MAX_MESH_LODS]     = {};
         uint32  LODMeshletCount[MAX_MESH_LODS]      = {};
         float   LODScreenThresholdSq[MAX_MESH_LODS] = {};
+
+        // What this resolve was taken FROM, so it can report its own staleness. The seven FShaderEntry*
+        // above are pointers into a content-keyed library: a recompile that changes bytecode mints a NEW
+        // entry, leaving these silently pointing at superseded code. They stay pointers because
+        // FDrawBatchKey is keyed on them -- that is what lets material instances compiling to identical
+        // SPIR-V share one batch and one draw -- so freshness is carried alongside instead.
+        CMaterialInterface* SourceMaterial        = nullptr;
+        uint32              SourceShaderRevision  = 0;
+        // Stamped alongside the pointer because a destroyed CObject's ADDRESS can be handed to a new one,
+        // and IsValid() cannot tell the difference. Without this, a recycled slot would be read for a
+        // revision belonging to an unrelated material -- a silent wrong answer either way it lands.
+        FGuid               SourceMaterialGuid    = {};
     };
 
     namespace MeshResolve
     {
+        /** Records what Surface was resolved FROM, so it can later report its own staleness. Paired with
+         *  IsSurfaceStale -- the two must agree on the key, so neither open-codes it. */
+        RUNTIME_API void StampSurfaceSource(FResolvedSurface& Surface, CMaterialInterface* RawMaterial);
+
+        /** True when Surface's cached shader entries can no longer be trusted because its source material
+         *  has recompiled, or been destroyed and its address reused. Cheap: one pointer chase, a GUID
+         *  compare and a uint compare -- no resolve. */
+        RUNTIME_API bool IsSurfaceStale(const FResolvedSurface& Surface);
+
         RUNTIME_API bool ResolveSurfaceMaterial(FResolvedSurface& Out, CMaterialInterface* RawMaterial);
     }
 

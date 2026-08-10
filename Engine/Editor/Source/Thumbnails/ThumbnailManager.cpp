@@ -336,11 +336,14 @@ namespace Lumina
             return;
         }
 
+        const FString DebugName = FString("Thumbnail.") + Package.ToString();
+
         RHI::FManagedTexture Image = RHI::Textures::Create(RHI::FTexture2DDesc
         {
             .Width  = Width,
             .Height = Height,
             .Format = EFormat::RGBA8_UNORM,
+            .DebugName = DebugName.c_str(),
         });
 
         // Stored bottom-up; flip back to top-down for display (matches ThumbnailUtils::StoreDownsampledRGBA).

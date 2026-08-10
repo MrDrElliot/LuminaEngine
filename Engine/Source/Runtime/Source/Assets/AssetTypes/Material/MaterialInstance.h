@@ -1,4 +1,6 @@
 ﻿#pragma once
+
+#include "Renderer/ShaderHandle.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "MaterialInterface.h"
@@ -58,8 +60,8 @@ namespace Lumina
         FMaterialUniforms* GetMaterialUniforms() override { return &MaterialUniforms; }
         const TVector<FMaterialParameter>& GetMaterialParams() const { return Parameters; }
 
-        const FShaderEntry* GetVertexShader() const override;
-        const FShaderEntry* GetPixelShader() const override;
+        FShaderH GetVertexShader() const override;
+        FShaderH GetPixelShader() const override;
 
         EMaterialType GetMaterialType() const override;
         bool DoesCastShadows() const override;

@@ -2486,6 +2486,7 @@ namespace Lumina
             .Height = Height,
             .Format = EFormat::RGBA8_UNORM,
             .bRenderTarget = true,
+            .DebugName = "RmlUiEditor.PreviewTarget",
         });
         PreviewWidth = Width;
         PreviewHeight = Height;

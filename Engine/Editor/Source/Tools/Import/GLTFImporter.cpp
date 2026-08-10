@@ -93,12 +93,8 @@ namespace Lumina
             return Seed;
         }
 
-        /**
-         * Content-addressed dedup over small integer keys. Buckets by hash and compares the full key on a
-         * hit, so a collision merges nothing it should not; the point is that equivalence is decided from
-         * source-level identifiers (accessor and image indices, quantized factors) without ever touching
-         * the vertex or pixel data those identifiers refer to.
-         */
+        /** Content-addressed dedup over small integer keys: buckets by hash, compares the full key on a hit.
+         *  Equivalence is decided from source identifiers without touching the vertex or pixel data. */
         class FKeyDedup
         {
         public:
@@ -387,12 +383,8 @@ namespace Lumina
             return false;
         }
 
-        // Catches the structural problems cgltf's parser tolerates (accessor bounds, mismatched counts).
-        // Runs after decompression so the sizes it checks are the decoded ones.
-        //
-        // Only data_too_short is fatal: that one means an accessor reaches past its buffer, and the unpack
-        // helpers would over-read. Every other complaint is a spec violation that exporters do emit and
-        // that reads back fine, so it warns rather than blocking an import that used to work.
+        // Catches structural problems cgltf tolerates, after decompression so the sizes are decoded ones.
+        // Only data_too_short is fatal (the unpack helpers would over-read); the rest warn.
         Result = cgltf_validate(ParsedData);
         if (Result == cgltf_result_data_too_short)
         {
@@ -595,15 +587,18 @@ namespace Lumina
                         ResolveSampler(PBR.metallic_roughness_texture);
                 }
 
-                // Dielectric reflectance. The engine has no IOR term; it has Specular, where
-                // F0 = 0.08 * Specular (BasePixelPass.slang). Converting through the Fresnel formula
-                // F0 = ((ior-1)/(ior+1))^2 lands glTF's default 1.5 on the engine's default 0.5, so a
-                // material that never touched IOR imports unchanged.
+                // The engine has no IOR term, it has Specular where F0 = 0.08 * Specular. Converting through
+                // F0 = ((ior-1)/(ior+1))^2 lands glTF's default 1.5 on the engine's 0.5, so untouched IOR is a no-op.
                 Material.IOR            = Source.has_ior ? Source.ior.ior : 1.5f;
                 Material.SpecularFactor = Source.has_specular ? Source.specular.specular_factor : 1.0f;
 
-                Material.NormalScale       = Source.normal_texture.scale;
-                Material.OcclusionStrength = Source.occlusion_texture.scale;
+                // Only meaningful when the map exists. cgltf zero-fills a texture_view it never parsed, so
+                // reading these unconditionally hands back 0 -- not the spec default of 1 -- for every
+                // material with no normal or occlusion map, which is most of them. That reads downstream as
+                // "this material scales its normals to nothing", building a whole master variant for a map
+                // that isn't there.
+                Material.NormalScale       = (Source.normal_texture.texture    != nullptr) ? Source.normal_texture.scale    : 1.0f;
+                Material.OcclusionStrength = (Source.occlusion_texture.texture != nullptr) ? Source.occlusion_texture.scale : 1.0f;
 
                 if (Source.has_clearcoat)
                 {
@@ -641,9 +636,8 @@ namespace Lumina
                 Material.Samplers[(size_t)EMaterialTextureSlot::Occlusion] = ResolveSampler(Source.occlusion_texture);
                 Material.Samplers[(size_t)EMaterialTextureSlot::Emissive]  = ResolveSampler(Source.emissive_texture);
 
-                // Everything the engine's Lit/Unlit shading models cannot express. Reported per material
-                // rather than dropped silently: a glass material importing as opaque plastic is otherwise
-                // indistinguishable from a broken import.
+                // Everything Lit/Unlit cannot express. Reported per material rather than dropped: glass importing
+                // as opaque plastic is otherwise indistinguishable from a broken import.
                 {
                     FFixedString Unsupported;
                     auto Note = [&Unsupported](bool bPresent, const char* Name)
@@ -1013,12 +1007,19 @@ namespace Lumina
 
                 (bSkinned ? Counts.SkinnedVerts   : Counts.StaticVerts)   += VertexCount;
                 (bSkinned ? Counts.SkinnedIndices : Counts.StaticIndices) += IndexCount;
+
+                // Detected here rather than where the attribute is unpacked: that runs one task per mesh,
+                // and latching a shared flag from all of them is a race for no gain -- this walk already
+                // visits every primitive, serially.
+                if (cgltf_find_accessor(&Primitive, cgltf_attribute_type_color, 0) != nullptr)
+                {
+                    OutData.bHasVertexColors = true;
+                }
             }
         }
 
-        // Appends one mesh's primitives into the target resources. WorldMatrix is identity for the
-        // deduplicated per-mesh path, where geometry stays in object space and the renderer carries the
-        // per-instance transform itself.
+        // WorldMatrix is identity on the deduplicated per-mesh path, where geometry stays in object space
+        // and the renderer carries the per-instance transform.
         auto AppendMesh = [&](const cgltf_mesh& Mesh,
                               FStringView MeshName,
                               FMeshResource* StaticTarget,
@@ -1181,9 +1182,8 @@ namespace Lumina
                             (uint8)Math::Clamp((int32)J[2], 0, 255), (uint8)Math::Clamp((int32)J[3], 0, 255));
                     }
 
-                    // glTF only guarantees WEIGHTS_0 is normalized ACROSS ALL weight sets, so a mesh using
-                    // WEIGHTS_1 leaves the four retained weights summing well under 1. An unnormalized set
-                    // scales the blended affine matrix and pulls those vertices toward the origin.
+                    // glTF only guarantees WEIGHTS_0 is normalized ACROSS ALL sets, so a mesh using WEIGHTS_1 leaves the
+                    // four retained weights summing under 1, which pulls those vertices toward the origin.
                     float* RawWeights = Scratch.Reserve(VertexCount * 4);
                     cgltf_accessor_unpack_floats(Weights, RawWeights, VertexCount * 4);
                     for (size_t i = 0; i < VertexCount; ++i)
@@ -1237,10 +1237,8 @@ namespace Lumina
         }
 
         {
-            // One asset per UNIQUE mesh, in object space. The scene graph decides WHICH meshes are reached;
-            // a node's world transform is deliberately not baked in, because doing so forces a private copy
-            // of the geometry per node. blender-3.3-splash.glb carries 187,851 mesh nodes over 89 unique
-            // meshes: baking would turn 3.07M real vertices into 644M.
+            // One asset per UNIQUE mesh, in object space; a node's world transform is deliberately not baked in.
+            // blender-3.3-splash.glb would turn 3.07M vertices into 644M across its 187,851 nodes.
             struct FMeshSlot
             {
                 TUniquePtr<FMeshResource> Static;

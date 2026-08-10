@@ -14,11 +14,8 @@ namespace Lumina
         Translucent = 1 << 1,
         Additive    = 1 << 2,
 
-        // Bits 3-5 are a 3-bit SHADING MODEL field holding EMaterialShadingModel, not one flag per model:
-        // models are mutually exclusive, and giving each a bit would burn the byte for no reason.
-        //
-        // Unlit keeps its historical value for free -- EMaterialShadingModel::Unlit is 1 and the field
-        // starts at bit 3, so (1 << 3) is exactly the number it always was.
+        // Bits 3-5 are a 3-bit SHADING MODEL field holding EMaterialShadingModel, not one flag per model.
+        // Unlit keeps its historical value for free: the enum value is 1 and the field starts at bit 3.
         Unlit       = 1 << 3,
     };
 

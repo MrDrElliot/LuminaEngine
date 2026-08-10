@@ -2,9 +2,8 @@
 
 #include "Core/LuminaMacros.h"
 
-// Editor-only collector for the Task System profiler tool. Records per-worker job/idle spans and
-// fiber-pool counters while actively profiling (CVar task.Profiler.Enabled). Compiled out entirely in
-// non-editor builds. Hooks live in JobScheduler.cpp; the editor tool reads GetLatest()/history.
+// Editor-only collector for the Task System profiler tool, active while task.Profiler.Enabled.
+// Hooks live in JobScheduler.cpp; the editor tool reads GetLatest()/history.
 #if USING(WITH_EDITOR)
 
 #include "Containers/Array.h"

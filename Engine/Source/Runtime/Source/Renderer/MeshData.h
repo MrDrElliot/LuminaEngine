@@ -18,8 +18,8 @@ namespace Lumina
                   "MESHLET_MAX_VERTICES and RHI::kMeshMaxOutputVertices must agree.");
     static_assert(uint32(MESHLET_MAX_TRIANGLES) == RHI::kMeshMaxOutputPrimitives,
                   "MESHLET_MAX_TRIANGLES and RHI::kMeshMaxOutputPrimitives must agree.");
-    static_assert(uint32(MESHLET_TASK_GROUP_SIZE) == RHI::kTaskWorkGroupSize,
-                  "MESHLET_TASK_GROUP_SIZE and RHI::kTaskWorkGroupSize must agree.");
+    static_assert(uint32(MESHLET_CULL_GROUP_SIZE) == RHI::kMeshletCullGroupSize,
+                  "MESHLET_CULL_GROUP_SIZE and RHI::kMeshletCullGroupSize must agree.");
 
     constexpr uint32 MAX_MESH_LODS         = MESHLET_MAX_LODS;
     constexpr uint32 MAX_SHADOW_LOD        = MESHLET_MAX_SHADOW_LOD;
@@ -53,8 +53,7 @@ namespace Lumina
     static_assert(sizeof(FMeshlet) == 32, "FMeshlet must stay 32B to match the GPU mirror (Common.slang)");
 
     // The cull's per-meshlet read, and the only one it always makes. Kept apart from the cone because
-    // every meshlet of every view pays this, while the cone test needs a non-skinned, non-two-sided,
-    // cone-bearing meshlet in a cone-enabled view.
+    // every meshlet of every view pays this while the cone test needs a much narrower set.
     struct FMeshletSphere
     {
         FVector3 Center;
@@ -217,13 +216,8 @@ namespace Lumina
                 RHI::Textures::Release(DistanceFieldTexture);
             }
 
-            /** Retire the five geometry buffers, leaving the header ALLOCATION in place.
-             *
-             *  The header address is long-lived identity, not just a pointer: SMeshComponent's cached
-             *  copy, FResolvedMesh and the already-uploaded retained instance buffer all hold it, and
-             *  none of them is told synchronously when a mesh rebuilds. Keeping the allocation and
-             *  rewriting its contents means a rebuild invalidates none of them. Moving it is what
-             *  RefreshDistanceField exists to avoid. */
+            /** Retire the five geometry buffers, leaving the header ALLOCATION in place: its address is identity
+             *  that components and the uploaded instance buffer hold, and none is told synchronously of a rebuild. */
             void ReleaseGeometryBuffers()
             {
                 RHI::Core::Retire(MeshletBuffer);

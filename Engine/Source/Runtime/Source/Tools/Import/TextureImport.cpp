@@ -352,11 +352,14 @@ namespace Lumina::Import::Textures
 
         const FTextureImportResult& Result = MaybeResult.value();
 
+        const FString DebugName = FString("Import.") + FString(RawFilePath.data(), RawFilePath.size());
+
         RHI::FManagedTexture Texture = RHI::Textures::Create(RHI::FTexture2DDesc
         {
             .Width  = Result.Dimensions.x,
             .Height = Result.Dimensions.y,
             .Format = Result.Format,
+            .DebugName = DebugName.c_str(),
         });
         RHI::Textures::Upload(Texture, 0, Result.Pixels.data(), Result.Pixels.size(), Result.Dimensions.x);
 

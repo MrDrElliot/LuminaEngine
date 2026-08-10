@@ -101,13 +101,8 @@ namespace Lumina
         return FVector4(Math::Normalize(t), Sign);
     }
 
-    /**
-     * CPU-side interleaved vertex. Import staging, procedural primitive generation and geometry
-     * collections build these, then scatter them into FMeshResource's SoA streams via AppendVertex.
-     *
-     * NOT a GPU format and has no Slang counterpart -- the shaders read FMeshletVertex below. Nothing
-     * here is size-constrained by a shader mirror.
-     */
+    /** CPU-side interleaved staging for import, procedural primitives and geometry collections.
+     *  NOT a GPU format and has no Slang counterpart, so nothing here is size-constrained. */
     struct FSourceVertex
     {
         FVector3       Position;
@@ -197,12 +192,8 @@ namespace Lumina
         }
     };
 
-    /**
-     * The GPU static-vertex format. Common.slang declares an FMeshletVertex that must match this field
-     * for field -- same name on both sides deliberately, so a change here is obviously a change there.
-     *
-     * Position is a 16-bit offset per axis from the owning meshlet's anchor; decode via MeshQuantization.h.
-     */
+    /** The GPU static-vertex format. Common.slang declares an FMeshletVertex that must match field for
+     *  field. Position is a 16-bit per-axis offset from the meshlet anchor; decode via MeshQuantization.h. */
     struct FMeshletVertex
     {
         uint16 PositionX;
@@ -242,13 +233,8 @@ namespace Lumina
         float       Size;
     };
 
-    // FMeshletVertex/FMeshletSkinnedVertex are the GPU formats; Common.slang declares structs of the SAME
-    // NAME that must stay identical field for field. Re-verify the Slang ArrayStride and member offsets
-    // against these whenever a field moves -- a silent stride desync corrupts every vertex past the first.
-    //
-    // FSourceVertex/FSourceSkinnedVertex are CPU-ONLY: interleaved staging for import, procedural primitive
-    // generation and geometry collections. They are never uploaded and have no Slang counterpart, so their
-    // size is free to differ.
+    // FMeshlet* are the GPU formats and Common.slang declares structs of the SAME NAME that must stay
+    // identical -- re-verify the Slang ArrayStride when a field moves. FSource* are CPU-only and free.
     static_assert(sizeof(FSourceVertex) == 32);
     static_assert(sizeof(FSourceSkinnedVertex) == 40);
     static_assert(sizeof(FMeshletVertex) == 28);

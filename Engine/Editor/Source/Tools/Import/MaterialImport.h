@@ -51,11 +51,17 @@ namespace Lumina
         // image indices the materials carry. MaterialsDir is the package directory every generated asset is
         // created under. Every created CObject is appended to OutCreated for the caller to save, register,
         // and tear down alongside the rest of the import.
+        //
+        // bSourceHasVertexColors (FMeshImportData::bHasVertexColors) adds the COLOR_0 multiply to every
+        // master's base-colour chain. It is per IMPORT rather than per material because a material is shared
+        // across meshes and cannot know which of them are coloured; the importers fill opaque white where a
+        // mesh has no attribute, so the multiply is a no-op there.
         EDITOR_API TVector<CMaterialInstance*> GenerateMaterials(
             TSpan<const Import::Mesh::FMeshImportMaterial>  SourceMaterials,
             TSpan<CTexture* const>                          ImageAssets,
             const FFixedString&                             MaterialsDir,
             const FFixedString&                             BaseName,
-            TVector<CObject*>&                              OutCreated);
+            TVector<CObject*>&                              OutCreated,
+            bool                                            bSourceHasVertexColors);
     }
 }

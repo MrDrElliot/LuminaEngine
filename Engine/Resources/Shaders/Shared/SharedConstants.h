@@ -1,16 +1,7 @@
 #pragma once
 
-// The single definition of every constant C++ and Slang both depend on. Anything here sizes a GPU
-// buffer, bounds an array both sides index, or is packed into a field both sides decode -- so drift
-// corrupts memory instead of misbehaving visibly, and a `// must match` comment is not enough.
-//
-// Parsed by MSVC and by Slang, so preprocessor directives and `//` comments ONLY: no types, no
-// constexpr, no expressions either language would reject. Both sides include it by the same path.
-// C++ reaches it through the Shaders module's include path (Runtime.Build.cs); Slang resolves it
-// against the /Engine/Resources/Shaders search root.
-//
-// Literal spellings are load-bearing on the Slang side -- several of these appear in mesh-shader
-// output declarations and groupshared array bounds. Don't add or drop a `u` suffix casually.
+// Parsed by BOTH MSVC and Slang: preprocessor directives and // comments ONLY. Everything here sizes a
+// buffer or is packed into a field both sides decode, so drift corrupts memory instead of misbehaving.
 
 // 64 verts / 124 tris = AMD/NV mesh-shader sweet spot, and satisfies meshopt's limits.
 #define MESHLET_MAX_VERTICES            64
@@ -26,35 +17,29 @@
 // tag. Past the bound the index wraps and silently resolves the wrong meshlet.
 #define MESHLET_DRAW_INDEX_BITS         20u
 
-// The remaining 12 bits of the packed word are spare.
-// and, for a cascade entry, which cascade deferred it. A draw is a PSO bucket -- tens in practice -- so
-// 1024 is generous; the cull drops a defer past it rather than wrapping into the cascade field.
+// The remaining 12 bits of the packed word are spare, and for a cascade entry record which cascade
+// deferred it. The cull drops a defer past 1024 rather than wrapping into the cascade field.
 #define MESHLET_DEFER_DRAWID_BITS       10u
 #define MESHLET_DEFER_MAX_DRAWID        1024u
 
-// One task (amplification) workgroup covers this many meshlets. Not a device preference the engine can
-// follow: the block list is laid out CPU-side in units of this, and the payload array is declared from
-// it. RHI::kTaskWorkGroupSize mirrors it and MeshData.h static_asserts the pair.
-#define MESHLET_TASK_GROUP_SIZE         32
+// Not a device preference: the block list is laid out CPU-side in units of this and the cull workgroup
+// is declared from it. RHI::kMeshletCullGroupSize mirrors it and MeshData.h static_asserts the pair.
+#define MESHLET_CULL_GROUP_SIZE         32
 
-// Per-axis compute workgroup cap a grid folds across. Vulkan only guarantees 65535 for
-// maxComputeWorkGroupCount, so any dispatch whose domain can exceed that folds into Y -- and the shader
-// must undo the fold with GroupID.y * this * its group size. Shared because the two halves of that fold
-// are written in different languages and a mismatch silently duplicates or drops whole rows of work.
+// Which part of a bucket's draw region a geometry pass rasterizes. The two VisBuffer phases share one
+// cull view, so each phase's appends are tracked separately; every single-phase pass takes ALL, which
+// by then is final. Sized per slice: bases, counts, sub-draw counts and indirect args.
+#define MESHLET_SLICE_EARLY             0u
+#define MESHLET_SLICE_LATE              1u
+#define MESHLET_SLICE_ALL               2u
+#define MESHLET_SLICE_COUNT             3u
+
+// Vulkan only guarantees 65535 for maxComputeWorkGroupCount, so a larger domain folds into Y and the
+// shader undoes the fold. Shared because the two halves are in different languages.
 #define MAX_DISPATCH_AXIS               65535
 
-// Meshlet vertex position quantization. A position is three 16-bit unsigned offsets from a signed
-// 24-bit per-meshlet anchor, all scaled by one shared power-of-two exponent -- the DXR2 COMPRESSED1
-// encoding, so the vertex stream feeds a ray-tracing BLAS build without conversion.
-//
-// Error is relative to the MESHLET's extent, not the model origin, so for a ~124-triangle patch this
-// is finer than float32's absolute mantissa spacing once the mesh sits any distance from its origin.
-//
-// Decode is (Anchor + Offset) converted to float and multiplied by an exact power of two. Anchor +
-// Offset never exceeds 8388607 + 65535 < 2^24, so the int->float conversion is exact and the multiply
-// only touches the exponent: every pass decodes bit-identical positions. That is load-bearing -- the
-// VisBuffer geometry pass and DeferredMaterial reconstruct the same triangle independently, and the
-// depth prepass shares positions with the geometry pass for early-Z.
+// DXR2 COMPRESSED1: three 16-bit offsets from a signed 24-bit anchor on a shared power-of-two exponent.
+// Anchor + Offset < 2^24, so the decode is bit-identical everywhere -- load-bearing for early-Z.
 #define MESHLET_POSITION_MAX            65535
 #define MESHLET_ANCHOR_MAX              8388607
 #define MESHLET_ANCHOR_MASK             0x00FFFFFFu
@@ -64,16 +49,8 @@
 // FGPUInstance::SurfaceDescIndex when the instance's LOD is fixed and no view may re-select it.
 #define NO_SURFACE_DESC_INDEX           0xFFFFFFFFu
 
-// Deferred material classification. The count and scatter passes walk the screen in square tiles of
-// MATERIAL_CLASSIFY_TILE and aggregate through groupshared memory before touching the global counters:
-// one atomic per (tile, material) instead of one per pixel, which is the difference between ~50K and
-// ~2M atomics onto the same 64 addresses at 1080p.
-//
-// MATERIAL_PIXEL_GROUP_SIZE is the width of every dispatch that walks the compacted pixel list (the
-// per-material GBuffer pass and the lighting pass). The GPU builds those grids, so both sides must
-// derive the group count from this same number.
-//
-// MATERIAL_MAX_SLOTS bounds the per-material counter/start/cursor arrays and the indirect-args table.
+// Classification aggregates through groupshared before the global counters: one atomic per (tile,
+// material) rather than per pixel, ~50K instead of ~2M onto the same 64 addresses at 1080p.
 #define MATERIAL_CLASSIFY_TILE          8
 #define MATERIAL_PIXEL_GROUP_SIZE       64
 #define MATERIAL_MAX_SLOTS              64u

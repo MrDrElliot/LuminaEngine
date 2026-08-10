@@ -36,7 +36,7 @@ namespace Lumina
     void CParticleEmitter::OnDestroy()
     {
         CObject::OnDestroy();
-        ComputeShader = nullptr;
+        ComputeShader = {};
     }
 
     void CParticleSystem::Serialize(FArchive& Ar)

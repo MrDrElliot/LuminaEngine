@@ -7,56 +7,20 @@
 #include "Includes/ParallaxOcclusion.slang"
 #include "Includes/DistanceField.slang"
 
-// Surface shading in two halves, so the deferred renderer can run them in different passes and the
-// forward lanes can still run them back to back:
-//
-//   BuildGBufferData  MATERIAL half -- normal mapping and DBuffer decals applied to the material graph's
-//                     output, producing the FGBufferData the deferred material pass stores.
-//   ShadeGBuffer      LIGHTING half -- sun, clustered lights, shadows, screen-space AO and IBL over an
-//                     FGBufferData, wherever it came from.
-//   ShadeSurface      the forward wrapper: alpha clip, both halves, debug views. Terrain and translucency
-//                     rasterize through this; opaque meshes go through the deferred pair instead.
-//
-// One lighting implementation serves both, so the deferred and forward lanes cannot drift.
-//
-// SHADING_COMPUTE marks a compute lane. It has no rasterizer, so nothing reachable from it may use
-// ddx/ddy or an implicit-derivative sample: the directional-shadow branch takes the screen-space mask
-// (ShadowMaskPixel.slang already resolved the identical cascade PCSS over opaque depth) and the debug-view
-// switch, which needs receiver-plane derivatives, is not compiled at all.
-//
-// DBuffer decals are an opaque-only input; the translucent variant never binds them.
+// Two halves so the deferred lanes can run them in separate passes: BuildGBufferData (material) and
+// ShadeGBuffer (lighting). SHADING_COMPUTE has no rasterizer -- nothing it reaches may use ddx/ddy.
 #ifndef TRANSLUCENT
 #include "Includes/DBuffer.slang"
 #endif
 
-// Compile-time-uniform feature gates, specialized per-pipeline at creation (FForwardRenderScene::
-// GetOrCreatePipeline feeds these as constant ids 1-3; the cache keys on them). They default to ENABLED so
-// offline slangc validation and any unspecialized pipeline keep full-feature behavior bit-for-bit. When a
-// gate is specialized to 0 the SPIR-V optimizer dead-strips the guarded block (and its resource access)
-// entirely -- this is how one shared shading path serves passes that bind different resources:
-//   DECALS off  -> the terrain pass (which binds FTerrainPushConstants, NOT the DBuffer overlay) never reads
-//                  the decal push, so its pointer-bearing push range is not misread as bindless indices;
-//   GTAO   off  -> terrain skips the screen-space AO fetch it has no input for (ambient stays unoccluded);
-//   DEBUG  off  -> game/shipping pipelines strip the editor view-mode switch (no runtime branch, smaller PS).
+// Specialized per-pipeline (constant ids 1-3). Default ENABLED so unspecialized pipelines and offline
+// slangc stay bit-for-bit; specializing to 0 dead-strips the guarded block AND its resource access.
 [vk::constant_id(1)] const uint SPEC_ENABLE_DEBUG_VIEWS = 1;
 [vk::constant_id(2)] const uint SPEC_ENABLE_DECALS      = 1;
 [vk::constant_id(3)] const uint SPEC_ENABLE_GTAO        = 1;
 
-// Deferred sun shadows: when 1, the directional branch of ComputeShadowFactor returns a screen-space
-// mask ShadowMaskPixel.slang already resolved, and the whole cascade PCSS (two inlined
-// SampleDirectionalCascade bodies, each holding a 4x4 cascade VP, the receiver-plane Jacobian, an atlas
-// tile and a rolling tap loop) is dead-stripped from this shader.
-//
-// This gate exists for REGISTER PRESSURE, not for cost: whole-shader VGPR allocation takes the peak
-// across every path, so a pixel that never touches the sun still paid the cascade PCSS's live range.
-// The mask pass runs the identical code over depth alone, where it is a small shader that reaches high
-// occupancy and can actually hide its own texture latency.
-//
-// Defaults to 0 so unspecialized pipelines, offline slangc validation and any view that does not run
-// the pass keep the inline path bit-for-bit. Opt in per-pass via SF_ShadowMask; the pass and the
-// pipeline key are driven by the same per-view flag, so a specialized pipeline always has a live mask.
-// TRANSLUCENT never opts in -- the mask is resolved from OPAQUE depth, so at a glass pixel it holds the
-// shadowing of whatever is BEHIND the glass.
+// Exists for REGISTER PRESSURE: whole-shader VGPR allocation takes the peak, so a pixel that never
+// touches the sun still paid the cascade PCSS live range. TRANSLUCENT never opts in (mask is opaque depth).
 [vk::constant_id(6)] const uint SPEC_SHADOW_MASK        = 0;
 
 // Hash-to-color for the meshlet debug view; stable per-meshlet hues across frames.
@@ -98,10 +62,8 @@ half3 FresnelSchlickHalf(half CosTheta, half3 F0)
     return F0 + (half3(1.0) - F0) * (x2 * x2 * x);
 }
 
-// Vertex-tangent TBN: MikkTSpace import tangent, Gram-Schmidt'd against the interpolated normal here;
-// TangentWS.w preserves the bitangent across UV mirrors. (A ddx/ddy TBN faceted normal maps per triangle.)
-// The frame itself lives in ParallaxOcclusion.slang so the POM marcher offsets UVs along the exact basis
-// the normal map is decoded through -- two copies would silently shear parallax against lighting.
+// MikkTSpace tangent, Gram-Schmidt'd against the interpolated normal; TangentWS.w preserves the
+// bitangent across UV mirrors. The frame lives in ParallaxOcclusion.slang so POM and decode share it.
 float3 GetWorldNormal(float3 FragNormal, float4 FragTangent, float3 TangentSpaceNormal)
 {
     bool bDegenerate;
@@ -155,15 +117,8 @@ float ComputeShadowFactor(FLight Light, float3 FragmentPos, float3 Normal, float
 
     if (IsDirectionalLight)
     {
-        // ShadowMaskPixel.slang already ran this exact cascade PCSS over the opaque depth buffer, so read
-        // its result and let the optimizer strip the whole inline path from this shader. Mandatory in a
-        // compute lane -- the inline path's receiver-plane bias needs ddx/ddy, which only a pixel shader
-        // has. SampleShadowMask returns 1.0 when no mask was resolved, so an unshadowed sun stays unshadowed.
-        //
-        // A second SHADOWED directional light in the cluster list also lands here and gets the sun's
-        // mask. That is not a regression: FLightData carries ONE cascade set (CascadeSplits/Radii/
-        // Resolutions are singular), so a second directional light already shared the sun's cascades
-        // and computed a near-identical factor on the inline path.
+        // Mandatory in a compute lane: the inline path's receiver-plane bias needs ddx/ddy. SampleShadowMask
+        // returns 1.0 when no mask was resolved, so an unshadowed sun stays unshadowed.
 #ifdef SHADING_COMPUTE
         return SampleShadowMask(ScreenPos);
 #else
@@ -226,20 +181,16 @@ float ComputeShadowFactor(FLight Light, float3 FragmentPos, float3 Normal, float
 
     float RefDepth = ProjCoords.z - Bias;
 
-    // Build each tap's UV directly in atlas space: SampleUV = BaseUV + Offset. The old form divided the
-    // offset by AtlasUVScale to bounds-check in tile-local [0,1], then multiplied straight back -- that
-    // round-trip cancels, so the per-tap divide vanishes and only the tile-rect test remains.
+    // Build each tap's UV directly in atlas space: the old divide-by-AtlasUVScale round-trip cancels, so
+    // the per-tap divide vanishes and only the tile-rect test remains.
     float2 BaseUV  = ShadowTile.AtlasUVOffset + SafeUV * ShadowTile.AtlasUVScale;
     float2 TileMin = ShadowTile.AtlasUVOffset;
     float2 TileMax = ShadowTile.AtlasUVOffset + ShadowTile.AtlasUVScale;
 
     float Shadow = 0.0;
     float Weight = 0.0;
-    // [loop] (not unrolled): SHADOW_SAMPLE_COUNT is a compile-time constant, so an unrolled body holds all
-    // 8 tap temporary-sets live at once and inflates the PS register allocation for the WHOLE shader (the
-    // allocator reserves the peak across every path, so even sun-only pixels pay it) -> warp-launch stall.
-    // A rolling loop keeps one tap's temps; extra resident warps re-hide the SampleCmp latency. Matches the
-    // directional PCSS loops above.
+    // [loop], not unrolled: an unrolled body holds all 8 tap temp-sets live and inflates the PS register
+    // allocation for the WHOLE shader, since the allocator reserves the peak across every path.
     [loop]
     for (int i = 0; i < SHADOW_SAMPLE_COUNT; i++)
     {
@@ -262,10 +213,8 @@ float ComputeShadowFactor(FLight Light, float3 FragmentPos, float3 Normal, float
     return Shadow / Weight;
 }
 
-// Debug visualizers, and the two helpers only they use. Not compiled into a compute lane: the penumbra
-// readout differentiates the shadow-space depth with ddx/ddy, which does not exist outside a pixel quad.
-// The deferred renderer resolves its debug views in SceneDebugViewPixel.slang, which is a pixel shader
-// for exactly this reason.
+// Not compiled into a compute lane: the penumbra readout differentiates shadow-space depth with
+// ddx/ddy. The deferred renderer resolves debug views in SceneDebugViewPixel.slang for that reason.
 #ifndef SHADING_COMPUTE
 
 // Walk the light table once to find the sun's shadow-data slot. Used by the
@@ -335,12 +284,8 @@ float3 CascadeDebugColor(float3 FragmentPos, float3 ViewPosition, float3 ShadedB
     return Color;
 }
 
-// Penumbra diagnostic for the "Shadow Penumbra" view. Re-runs the cascade pick + PCSS blocker search
-// (matching SampleDirectionalCascade) and paints the filter behavior directly:
-//   R = FilterRadius / uncapped MaxRadius   (1.0 -> penumbra is pinned at the per-cascade cap)
-//   G = FilterRadius in shadow texels / 32  (absolute world-texel width -> what makes it blocky)
-//   B = NumBlockers / blocker taps          (blocker-search coverage / stability)
-// Black = fully lit (no blockers found); dark gray = no sun or outside every cascade.
+// R = FilterRadius / uncapped max (1.0 = pinned at the cascade cap), G = radius in texels / 32,
+// B = blocker coverage. Black = fully lit; dark gray = no sun or outside every cascade.
 float3 ShadowPenumbraDebug(float3 FragmentPos, float3 ViewPosition, float2 ScreenPos)
 {
     int SunShadowIdx = FindSunShadowDataIndex();
@@ -417,10 +362,8 @@ float3 ShadowPenumbraDebug(float3 FragmentPos, float3 ViewPosition, float2 Scree
 
 #endif // !SHADING_COMPUTE
 
-// Per-pixel surface terms that don't change across the light loop. Precomputed once so the per-light
-// BRDF only re-derives the L-dependent half (NdotL, the light geometry term, H, Fresnel). The [0,1]-range
-// BRDF weights are stored half: they tolerate fp16 and halve register pressure in the loop. NdotV (a
-// specular denominator) and A2 (= roughness^4, underflows fp16 at the floor) stay float.
+// Terms that do not change across the light loop. BRDF weights are half (they tolerate fp16 and halve
+// loop register pressure); NdotV and A2 stay float -- A2 underflows fp16 at the roughness floor.
 struct FShadingContext
 {
     float3 N;
@@ -434,11 +377,8 @@ struct FShadingContext
     half3  EnergyComp;   // multi-scatter compensation (Turquin 2019)
 };
 
-// Incident radiance from one light at one point: color x intensity, with distance attenuation and the
-// spot cone for punctual types. Directional lights are unattenuated by construction.
-//
-// Shared by the base BRDF and the clearcoat lobe so the two layers cannot disagree about how bright a
-// light is -- both inline, so factoring it out costs nothing.
+// Incident radiance from one light: color x intensity, with distance attenuation and the spot cone.
+// Shared by the base BRDF and the clearcoat lobe so the two layers cannot disagree.
 float3 ComputeLightRadiance(FLight Light, float3 L, float Distance)
 {
     float Attenuation = 1.0;
@@ -461,14 +401,8 @@ float3 ComputeLightRadiance(FLight Light, float3 L, float Distance)
     return GetLightColor(Light).rgb * Light.Intensity * Attenuation * Falloff;
 }
 
-// A clearcoat lobe: one extra GGX specular layer over the base, with a fixed dielectric F0 of 0.04
-// (polyurethane, IOR ~1.5 -- the coat is always a clear dielectric, so this is not worth a channel).
-//
-// Deliberately NOT folded into FShadingContext: that struct is register-budgeted down to halves and is
-// live for every pixel in the dispatch, while this is live only inside the clearcoat branch.
-//
-// Returns the specular term; the caller multiplies by NdotL and the light's radiance, and attenuates the
-// base layer by the returned Fresnel so the two layers conserve energy.
+// One extra GGX layer over the base at a fixed dielectric F0 of 0.04. Deliberately NOT in
+// FShadingContext: that is live for every pixel, this only inside the clearcoat branch.
 float EvaluateClearcoatLobe(float3 N, float3 V, float3 L, float ClearcoatRoughness, out float OutFresnel)
 {
     const float3 H     = normalize(V + L);
@@ -493,10 +427,8 @@ float EvaluateClearcoatLobe(float3 N, float3 V, float3 L, float ClearcoatRoughne
     return D * Vis * OutFresnel * NdotL;
 }
 
-// L: unit surface->light direction (caller supplies it for every light type, including the sun, so the
-// directional Light.Direction normalize happens once at the call site). Distance is unused for directional.
-// Diffuse and specular come back separately so the translucent path can keep reflections
-// un-premultiplied; opaque callers use the combined wrapper below (identical codegen once inlined).
+// L is supplied by the caller for every light type, so the directional normalize happens once at the
+// call site. Diffuse and specular return separately so translucency keeps reflections un-premultiplied.
 void EvaluateLightContributionSplit(FLight Light, FShadingContext S, float3 L, float Distance,
                                     out float3 OutDiffuse, out float3 OutSpecular)
 {
@@ -549,17 +481,13 @@ struct FShadedSurface
     float3 Color;       // opaque: full lit color. Translucent: transmission-modulated terms only (diffuse + ambient diffuse + emissive)
     float3 Reflection;  // translucent only: specular from lights + IBL, kept out of Color so it isn't attenuated by alpha. Zero for opaque.
     float  Alpha;
-    // Translucent only: directional-hemisphere specular reflectance (split-sum single-scatter albedo),
-    // i.e. the fraction of incident light this surface reflects instead of transmitting. The WBOIT
-    // packing adds it to coverage: reflected energy never reaches what's behind, so stacked glass
-    // darkens the background like real glass instead of summing reflections toward white. Zero for opaque.
+    // Translucent only: the fraction this surface reflects instead of transmitting. Added to coverage so
+    // stacked glass darkens the background instead of summing reflections toward white.
     float  ReflectionCoverage;
 };
 
-// Fraction of background light this surface blocks, without shading it. For the MBOIT moment-generation
-// pass, which would otherwise pay for every light, shadow and IBL probe twice to throw the result away.
-// Must stay in lockstep with the Coverage line in BasePixelPass.slang; if they drift, the moments
-// describe a different surface than the one weighted by them.
+// For the MBOIT moment pass, which would otherwise pay for every light and probe twice. Must stay in
+// lockstep with the Coverage line in BasePixelPass.slang or the moments describe a different surface.
 float ComputeSurfaceCoverage(FBaseVertexOutput Input, FMaterialPixelInputs Material)
 {
     float Alpha = Material.Opacity;
@@ -588,9 +516,8 @@ float ComputeSurfaceCoverage(FBaseVertexOutput Input, FMaterialPixelInputs Mater
     return saturate(Alpha + (1.0 - Alpha) * saturate(Luminance(FssEss)));
 }
 
-// The material graph's output resolved into GBuffer terms: the tangent-space normal rotated into world
-// space, then DBuffer decals composited on top so they receive lights/shadows/IBL exactly like the surface
-// under them. The deferred material pass stores the result; the forward wrapper below hands it straight on.
+// The material graph's output as GBuffer terms: tangent normal rotated to world, then DBuffer decals
+// composited so they receive lights and shadows exactly like the surface under them.
 FGBufferData BuildGBufferData(FBaseVertexOutput Input, FMaterialPixelInputs Material)
 {
     FGBufferData G;
@@ -607,15 +534,12 @@ FGBufferData BuildGBufferData(FBaseVertexOutput Input, FMaterialPixelInputs Mate
     G.Clearcoat          = Material.Clearcoat;
     G.ClearcoatRoughness = Material.ClearcoatRoughness;
 
-    // Read at RUNTIME from the material's flags, not specialized with a #define. The models that only
-    // reinterpret GBuffer channels do not justify a shader variant each -- one GBuffer-write shader per
-    // material already exists, and one lighting dispatch already branches, so a define here would buy
-    // nothing and cost a specialization axis.
+    // Read at RUNTIME from the material flags, not a #define: models that only reinterpret GBuffer
+    // channels do not justify a shader variant each.
     G.ShadingModel = GetMaterialShadingModel(Materials()[Input.MaterialIndex].Flags);
 
-    // Opaque lit surfaces only, and only on pipelines that actually bind the decal push
-    // (SPEC_ENABLE_DECALS) -- terrain specializes this off. No-op on pixels no decal touched.
-    // Unlit is a runtime test now, so an instance that overrode its model is honoured here too.
+    // Opaque lit surfaces only, and only where the pipeline binds the decal push (terrain specializes it
+    // off). Unlit is a runtime test, so an instance that overrode its model is honoured here too.
 #ifndef TRANSLUCENT
     if (SPEC_ENABLE_DECALS != 0 && !IsUnlit(G))
     {
@@ -627,9 +551,8 @@ FGBufferData BuildGBufferData(FBaseVertexOutput Input, FMaterialPixelInputs Mate
     return G;
 }
 
-// The complete lighting sequence over an already-resolved surface, wherever it came from: the deferred
-// lighting pass unpacks it out of the GBuffer, the forward lanes pass it straight from BuildGBufferData.
-// Alpha is left to the caller -- it is a material property, not a GBuffer one.
+// The lighting sequence over an already-resolved surface, wherever it came from. Alpha is left to the
+// caller -- it is a material property, not a GBuffer one.
 FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPosition, float2 ScreenPos)
 {
     FShadedSurface Out;
@@ -638,10 +561,8 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
     Out.ReflectionCoverage = 0.0;
     Out.Alpha              = 1.0;
 
-    // Every lane checks the model at runtime -- forward and deferred alike. Unlit used to be a #define
-    // that stripped this whole function's body for unlit materials, which meant an unlit master's shader
-    // was hard-wired and no material instance could override its way back to Lit. The cost of dropping it
-    // is that an unlit material's shader now CONTAINS the lighting path it branches over.
+    // Every lane checks the model at runtime, so an instance can override its way back to Lit. The cost
+    // is that an unlit material's shader still contains the lighting path it branches over.
     if (IsUnlit(G))
     {
         Out.Color = G.BaseColor + G.Emissive;
@@ -696,9 +617,8 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
     float3 EnergyComp = 1.0 + F0 * (1.0 / max(DFG_EC.x + DFG_EC.y, 1e-4) - 1.0);
     Ctx.EnergyComp  = (half3)EnergyComp;
 
-    // Shared froxel-index math (SceneGlobals). It clamps to ZNear: edge fragments below it make log()
-    // negative, wrapping ZTile to a huge value that overflows Clusters() -> garbage light list and an
-    // MMU fault.
+    // Clamps to ZNear: fragments below it make log() negative, wrapping ZTile to a huge value that
+    // overflows Clusters() -> garbage light list and an MMU fault.
     uint TileIndex  = ComputeClusterIndex(ViewPosition.z, ScreenPos);
     uint LightCount = Clusters()[TileIndex].Count;
 
@@ -739,9 +659,8 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
 
             if (Coat > 0.0)
             {
-                // The coat reflects some of the incoming light before it ever reaches the base layer, so
-                // the base is attenuated by exactly what the coat took. Without this the surface gains
-                // energy and reads as washed out rather than lacquered.
+                // The coat reflects some light before it reaches the base, so the base is attenuated by exactly what
+                // the coat took. Without this the surface gains energy and reads washed out rather than lacquered.
                 float CoatF;
                 const float CoatSpec = EvaluateClearcoatLobe(N, V, SunL, G.ClearcoatRoughness, CoatF);
                 SunBase *= (1.0 - Coat * CoatF);
@@ -818,12 +737,8 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
 #endif
     }
 
-    // Screen-space AO attenuates the ambient/IBL term only (direct light already has its own occlusion).
-    // AOTextureIndex is ~0u for views that didn't run the GTAO pass (e.g. captures) -> treat as unoccluded.
-    // Pipelines with no GTAO input (terrain) specialize SPEC_ENABLE_GTAO off so the fetch is dead-stripped.
-    // TRANSLUCENT surfaces skip it entirely: the GTAO texture is computed from OPAQUE depth, so at a glass
-    // pixel it holds the AO of whatever is BEHIND the glass -- modulating the glass's own ambient and
-    // reflections by the backdrop's occlusion is wrong and smears backdrop detail onto the surface.
+    // Attenuates ambient/IBL only; direct light has its own occlusion. TRANSLUCENT skips it entirely --
+    // GTAO comes from OPAQUE depth, so at a glass pixel it holds the occlusion of what is behind it.
     float GTAO = 1.0;
 #ifndef TRANSLUCENT
     if (SPEC_ENABLE_GTAO != 0 && Scene().GTAOSettings.AOTextureIndex != 0xFFFFFFFFu)
@@ -838,10 +753,8 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
     float3 Ambient;
     if (HasIBL())
     {
-        // IBL ambient: split-sum convolutions of the sky cube (irradiance by N, GGX-prefiltered specular
-        // by R + BRDF LUT). GetAmbientLightIntensity() scales it so the SkyLight Intensity slider applies.
-        // Recompute NdotV/DFG locally (N/V/Roughness are already live) so the top-of-shader DFG_EC/NdotV_EC
-        // need not stay register-resident across PCSS + the whole clustered-light loop just to feed this branch.
+        // Split-sum convolutions of the sky cube. NdotV/DFG are recomputed locally so the top-of-shader
+        // copies need not stay register-resident across PCSS and the whole clustered-light loop.
         float  NdotV_IBL  = saturate(dot(N, V));
         float2 DFG_IBL    = SampleBRDFLUT(NdotV_IBL, Roughness);
 #ifdef TRANSLUCENT
@@ -861,10 +774,8 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
         float3 DiffuseColor = Albedo * (1.0 - Metallic);
         Ambient = GetAmbientLightColor() * GetAmbientLightIntensity() * DiffuseColor * AO * GTAO;
     }
-    // The coat reflects the environment too, and on a car-paint surface that mirror sheen is most of the
-    // read. Sampled off the same prefiltered cube as the base specular, at the coat's own roughness, with
-    // the coat's fixed 0.04 F0 -- and it attenuates the ambient underneath for the same energy reason the
-    // per-light path does.
+    // The coat reflects the environment too -- most of the read on car paint. Same prefiltered cube at
+    // the coat's roughness and fixed 0.04 F0, attenuating the ambient underneath for energy.
     if (Coat > 0.0 && HasIBL())
     {
         const float  CoatNdotV = saturate(dot(N, V));
@@ -891,9 +802,8 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
 
 #ifndef SHADING_COMPUTE
 
-// The surface identity a debug view needs but lighting does not, so it never reaches the GBuffer. The
-// forward lanes fill it from their interpolants; the deferred debug pass re-reconstructs it from the
-// VisBuffer.
+// Surface identity a debug view needs but lighting does not, so it never reaches the GBuffer. The
+// deferred debug pass re-reconstructs it from the VisBuffer.
 struct FDebugSurfaceInfo
 {
     float2 UV;
@@ -979,18 +889,8 @@ float3 ApplyDebugView(uint DebugMode, float3 Color, FGBufferData G, FDebugSurfac
         break;
     case DEBUG_MODE_PROBE_INFLUENCE:
     {
-        // Covered: hue = which probe won, brightness = influence consumed (a gradient toward
-        // dark is the BlendDistance cross-fade band).
-        // Not covered: a flat diagnostic color naming the reason, because all of these look
-        // identical in a lit view (the surface just reflects sky) but have different fixes.
-        // Status colors are FULLY SATURATED; covered pixels are always PASTEL (see
-        // ProbeDebugColor). Saturation, not hue, is what tells the two apart -- with enough
-        // probes some slice will always land near a given hue.
-        //   SATURATED RED     - no probes in the scene root at all (extraction or upload)
-        //   SATURATED BLUE    - probe cube array unallocated / mip count zero (target creation)
-        //   SATURATED YELLOW  - probes exist but none has finished a capture (bake never ran)
-        //   SATURATED MAGENTA - baked probes exist, pixel is outside all of them (placement)
-        //   ANY PASTEL COLOR  - working; the hue identifies which slice won
+        // Status colors are FULLY SATURATED, covered pixels always PASTEL -- saturation, not hue, tells them
+        // apart. Red = no probes, blue = array unallocated, yellow = none baked, magenta = outside all.
         FProbeDebugInfo Dbg = DebugReflectionProbes(WorldPosition);
         switch (Dbg.Status)
         {
@@ -999,10 +899,8 @@ float3 ApplyDebugView(uint DebugMode, float3 Color, FGBufferData G, FDebugSurfac
             case kProbeStatusNoneBaked:  Color = float3(1.0, 0.85, 0.0); break;
             case kProbeStatusOutsideAll: Color = float3(1.0, 0.0, 1.0); break;
             default:
-                // ProbeDebugColor, not MeshletDebugColor: the latter's hash maps index 0 to
-                // pure black, which made a single probe on slice 0 look like no coverage at all.
-                // Brightness is floored so a probe that barely reaches this pixel still reads as
-                // its own hue rather than fading toward the no-coverage cases.
+                // ProbeDebugColor, not MeshletDebugColor: the latter hashes index 0 to pure black, so one probe on
+                // slice 0 looked like no coverage. Brightness is floored so a barely-reaching probe keeps its hue.
                 Color = ProbeDebugColor((uint)Dbg.DominantSlice) * (0.25 + 0.75 * Dbg.TotalWeight);
                 break;
         }
@@ -1010,11 +908,8 @@ float3 ApplyDebugView(uint DebugMode, float3 Color, FGBufferData G, FDebugSurfac
     }
     case DEBUG_MODE_PROBE_RADIANCE:
     {
-        // What the winning probe actually CAPTURED, at mirror roughness and divided back out by
-        // coverage so a half-covered pixel still shows the capture at full brightness rather
-        // than a dimmed version of it. Sky here means the capture itself contains sky -- the
-        // classic cause being a room whose walls are single-sided, which cone/backface culling
-        // then lets the capture see straight through.
+        // Divided back out by coverage so a half-covered pixel shows the capture at full brightness. Sky here
+        // means the capture itself saw sky -- classically a room whose single-sided walls let it see through.
         FProbeSample DbgSample = SampleReflectionProbes(WorldPosition, reflect(-V, N), 0.0);
         Color = (DbgSample.Weight > 1e-3)
                     ? DbgSample.Radiance / DbgSample.Weight
@@ -1026,9 +921,8 @@ float3 ApplyDebugView(uint DebugMode, float3 Color, FGBufferData G, FDebugSurfac
     return Color;
 }
 
-// Forward wrapper: alpha clip, both halves back to back, then the debug overrides. Terrain and
-// translucency rasterize through this. Opaque meshes do not -- they run BuildGBufferData in the deferred
-// material pass and ShadeGBuffer in the deferred lighting pass, which is why those two are the split.
+// Forward wrapper: alpha clip, both halves, then debug overrides. Terrain and translucency raster
+// through this; opaque meshes run the two halves in separate deferred passes instead.
 FShadedSurface ShadeSurface(FBaseVertexOutput Input, FMaterialPixelInputs Material)
 {
     uint MatFlags = Materials()[Input.MaterialIndex].Flags;

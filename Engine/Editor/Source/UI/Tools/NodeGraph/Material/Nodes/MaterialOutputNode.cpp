@@ -50,9 +50,8 @@ namespace Lumina
         if (OpacityPin)              OpacityPin->SetDisabled(bPostProcess);
         // Self-shadowing modulates the sun's direct contribution, which only surface materials receive.
         if (SelfShadowPin)           SelfShadowPin->SetDisabled(bFullscreen || bDecal);
-        // Clearcoat is a lighting layer, so the same domains that have no lighting have no coat. It also
-        // needs the material's Shading Model set to Clearcoat -- an enabled pin here is necessary, not
-        // sufficient.
+        // Clearcoat is a lighting layer, so domains with no lighting have no coat. It also needs the
+        // Shading Model set to Clearcoat -- an enabled pin here is necessary, not sufficient.
         if (ClearcoatPin)            ClearcoatPin->SetDisabled(bFullscreen || bDecal);
         if (ClearcoatRoughnessPin)   ClearcoatRoughnessPin->SetDisabled(bFullscreen || bDecal);
         if (WorldPositionOffsetPin)  WorldPositionOffsetPin->SetDisabled(bFullscreen || bDecal);
@@ -170,6 +169,24 @@ namespace Lumina
         return Out;
     }
 
+    void CMaterialOutputNode::GetPixelStagePins(TVector<CEdNodeGraphPin*>& OutPins) const
+    {
+        // Mirrors the EmitMaterialAssignment block in GenerateDefinition below, one entry per line. Adding a
+        // pixel-stage pin means adding it in BOTH places -- see the header for what breaks otherwise.
+        CEdNodeGraphPin* const Pins[] =
+        {
+            BaseColorPin, MetallicPin, RoughnessPin, SpecularPin,
+            EmissivePin,  AOPin,       NormalPin,    OpacityPin,
+            SelfShadowPin, ClearcoatPin, ClearcoatRoughnessPin,
+        };
+
+        OutPins.reserve(OutPins.size() + std::size(Pins));
+        for (CEdNodeGraphPin* Pin : Pins)
+        {
+            OutPins.push_back(Pin);
+        }
+    }
+
     void CMaterialOutputNode::GenerateDefinition(FMaterialCompiler& Compiler)
     {
         FString PixelOut;
@@ -194,10 +211,8 @@ namespace Lumina
         PixelOut += EmitMaterialAssignment("Clearcoat",        ClearcoatPin,  "0.0",                   1);
         PixelOut += EmitMaterialAssignment("ClearcoatRoughness", ClearcoatRoughnessPin, "0.03",        1);
 
-        // Always reconstruct Z from the decoded XY (Z = sqrt(1 - x^2 - y^2) >= 0 for a unit normal):
-        // correct for BC7 and BC5 and avoids format detection, which broke BC5 maps through intermediate nodes.
-        // Must match what EmitMaterialAssignment actually wrote: a reroute chain that dead-ends emits
-        // the default, and decoding that would corrupt it.
+        // Always reconstruct Z from the decoded XY: correct for BC7 and BC5 and avoids format detection.
+        // Must match what EmitMaterialAssignment wrote -- decoding a dead-end reroute default corrupts it.
         if (NormalPin->HasConnection()
             && FMaterialCompiler::ResolveThroughReroutes(NormalPin->GetConnection<CMaterialOutput>(0)) != nullptr)
         {

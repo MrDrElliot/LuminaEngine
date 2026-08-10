@@ -63,13 +63,8 @@ FPreSkinnedVertex*  PreSkinnedVertices()    { return GetSceneRoot().PreSkinnedVe
 FSkinDescriptor*    SkinDescriptors()       { return GetSceneRoot().SkinDescriptorsPtr; }
 FWidgetInstance*    Widgets()               { return GetSceneRoot().WidgetsPtr; }
 
-// HDR environment panoramas carry +Inf / NaN texels (half-float overflow of very bright suns or LED
-// lights). Left unguarded they poison the IBL cubes -- Inf*weight and Inf-Inf produce NaN, which the BRDF
-// renders as black/white texel blocks, and a single NaN reaching bloom spreads white across the screen.
-// Drop non-finite channels to 0 and clamp into the R11G11B10 finite range so the convolution stays stable.
-// Fully branchless, deliberately. isfinite() lowers to a SHORT-CIRCUITING `!isinf(x) && !isnan(x)`, so
-// each call cost two branches; the bloom prefilter calls this fifteen times and paid thirty. Bitwise &
-// evaluates both halves and branches on neither, and the select replaces the early return.
+// HDR panoramas carry +Inf/NaN texels that poison the IBL cubes and spread white through bloom.
+// Branchless deliberately: isfinite() short-circuits to two branches per call, and bloom calls it 15x.
 float SanitizeRadianceChannel(float X)
 {
     const bool bFinite = !isinf(X) & !isnan(X);
@@ -83,11 +78,8 @@ float3 SanitizeRadiance(float3 C)
                   SanitizeRadianceChannel(C.b));
 }
 
-// Karis "tone map then average" firefly suppression for importance-sampled IBL convolution. A lone very
-// bright texel (a city light, the sun) hit by only a few GGX samples otherwise produces high-variance
-// blocky/sparkly reflections. Weighting by 1/(1+luma) in tonemapped space and un-tonemapping the mean
-// preserves energy while killing the variance. Identity for a single sample, so mirror reflections are
-// untouched -- only multi-sample (rough) gathers get smoothed.
+// Karis tone-map-then-average firefly suppression for GGX importance sampling. Identity for a single
+// sample, so mirror reflections are untouched -- only rough multi-sample gathers get smoothed.
 float3 FireflyTonemap(float3 C)   { return C / (1.0 + Luminance(C)); }
 float3 FireflyUntonemap(float3 C) { return C / max(1.0 - Luminance(C), 1e-4); }
 
@@ -144,10 +136,8 @@ FPreSkinnedVertex SkinVertex(FMeshletHeader* Header, FMeshlet M, uint VertexLoca
 {
     FMeshletSkinnedVertex V = reinterpret<FMeshletSkinnedVertex*>(Header.Vertices)[M.VertexOffset + VertexLocalIdx];
 
-    // The SOURCE stream is quantized like the static one -- it is still the rest pose, still inside its
-    // meshlet's anchor box. The blended OUTPUT is not: a skinned vertex leaves that box entirely, which
-    // is why FPreSkinnedVertex keeps full-precision floats and this is the only place a decode is needed
-    // on the skinned path.
+    // The SOURCE stream is still quantized in its meshlet anchor box; the blended OUTPUT is not, which is
+    // why FPreSkinnedVertex keeps full-precision floats.
     float3 LocalPos     = DecodeMeshletPosition(M, V.PositionX, V.PositionY, V.PositionZ);
     float3 LocalNormal  = UnpackNormalSNorm16(V.NormalX, V.NormalY, V.NormalZ);
     float4 LocalTangent = UnpackTangent(V.Tangent);
@@ -155,25 +145,16 @@ FPreSkinnedVertex SkinVertex(FMeshletHeader* Header, FMeshlet M, uint VertexLoca
     uint4  JointIndices = UnpackUIntToUVec4(V.JointIndices);
     float4 Weights      = unpack_u8u32(V.JointWeights) / float4(255.0);
 
-    // RENORMALIZE. The stored four weights rarely sum to exactly 1: importers quantize them to u8 (a
-    // rounding shortfall of up to ~4/255) and keep only four influences per vertex, dropping the rest.
-    // An unnormalized weight set scales the whole blended AFFINE matrix -- including its translation row --
-    // so the vertex is dragged toward the MODEL ORIGIN by a factor of (1 - sum). A 1.6% shortfall is a
-    // visible wobble; a vertex that lost its dominant influence retains almost no weight and collapses onto
-    // the root outright, which rasterizes as a sliver from the mesh to the origin whose normalize(0,0,0)
-    // normal is NaN and shades black. Dense-influence regions -- fingers, crotch, toes -- go first.
+    // RENORMALIZE. Importers quantize weights to u8 and keep only four influences, so an unnormalized set
+    // scales the blended affine matrix and drags the vertex toward the MODEL ORIGIN by (1 - sum).
     const float WeightSum = dot(Weights, float4(1.0, 1.0, 1.0, 1.0));
 
     float4 R0;
     float4 R1;
     float4 R2;
 
-    // A joint index is vertex data, so nothing between the importer and here bounds it. Skin a mesh
-    // against a skeleton it was not authored for -- which the importer warns about rather than
-    // refuses, "channels target bones missing from the skeleton" -- and BoneOffset + JointIndex walks
-    // straight off the end of the bone array. That read is unmapped, and an unmapped read here costs
-    // the device, not the pose. Clamping instead of dropping keeps a wrong-skeleton mesh visible and
-    // obviously wrong, which is the failure the artist can act on.
+    // A joint index is vertex data and nothing bounds it, so a mesh skinned against the wrong skeleton
+    // walks off the bone array -- an unmapped read costs the device. Clamping keeps it visibly wrong.
     const uint BoneCount   = Scene().CullData.BoneNum;
     const bool bBonesValid = (Bones() != nullptr) && (BoneCount != 0u);
 
@@ -197,11 +178,8 @@ FPreSkinnedVertex SkinVertex(FMeshletHeader* Header, FMeshlet M, uint VertexLoca
     }
     else
     {
-        // No usable influence at all (all four weights zero). Identity rows leave the vertex in BIND POSE,
-        // which makes every expression below correct with no special-casing: dot(R0, P) == LocalPos.x, and
-        // the 3x3 part passes Normal/Tangent through unchanged, so nothing can produce a zero vector to
-        // normalize. Previously this path multiplied by an all-zero matrix and emitted a NaN-normal vertex
-        // at the origin.
+        // No usable influence at all. Identity rows leave the vertex in BIND POSE, which makes every
+        // expression below correct with no special-casing and cannot produce a zero vector to normalize.
         R0 = float4(1.0, 0.0, 0.0, 0.0);
         R1 = float4(0.0, 1.0, 0.0, 0.0);
         R2 = float4(0.0, 0.0, 1.0, 0.0);
@@ -255,9 +233,8 @@ float    GetDeltaTime()             { return Scene().DeltaTime;  }
 float    GetNearPlane()             { return Scene().NearPlane;  }
 float    GetFarPlane()              { return Scene().FarPlane;   }
 
-// Raw reverse-Z NDC depth [0,1] -> linear view-space distance, using the scene camera's planes.
-// The single scene-depth linearization -- material-graph codegen (SceneDepth node) emits calls to it,
-// so it must stay visible in every material template.
+// Raw reverse-Z NDC depth -> linear view distance. The single scene-depth linearization: the SceneDepth
+// node emits calls to it, so it must stay visible in every material template.
 float LinearizeSceneDepth(float RawDepth)
 {
     float ZNear = GetNearPlane();

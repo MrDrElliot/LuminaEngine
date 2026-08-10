@@ -29,7 +29,8 @@ namespace Lumina::RHI::Textures
     {
         GState.bInitialized = true;
 
-        GState.Default = Create(FTexture2DDesc{ .Width = 1, .Height = 1, .Format = EFormat::RGBA8_UNORM });
+        GState.Default = Create(FTexture2DDesc{ .Width = 1, .Height = 1, .Format = EFormat::RGBA8_UNORM,
+                                                .DebugName = "RHI.FallbackTexture" });
         const uint8 Magenta[4] = { 255, 0, 255, 255 };
         Upload(GState.Default, 0, Magenta, sizeof(Magenta), 1);
         FlushUploadsAndWait();

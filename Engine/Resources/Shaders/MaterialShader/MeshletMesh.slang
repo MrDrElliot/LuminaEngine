@@ -1,24 +1,8 @@
 #pragma once
 #include "Includes/MeshletGeometry.slang"
 
-// Mesh-shader version of the meshlet geometry path: ONE workgroup per meshlet. Shares all geometry with
-// MeshletGeometry.slang.
-//
-// Compiled TWICE, selected by MESHLET_MESH_BASE, because the two cases need different OUTPUT TYPES and a
-// spec constant cannot change one -- the same constraint that splits MeshletVisBuffer's masked variant:
-//   - undefined (shadow): FDepthOnlyVertexOutput, position only. Carrying the full interpolant struct
-//     reserved 124B per vertex of mesh output storage for a pass whose only consumer reads SV_Position,
-//     and that reservation is what held cascade occupancy at 2.0 warps/cycle.
-//   - defined (base): FBaseVertexOutput, for translucent and additive geometry, whose pixel shader shades
-//     forward and needs the whole interpolant set.
-//
-// The vertex load and world transform run in full either way, because the material vertex graph feeding
-// World Position Offset may read the normal, tangent, UV or color. Only the OUTPUT is narrowed.
-//
-// The meshlet arrives through the task stage's payload; FMeshletPassArgs (MeshletGeometry.slang) is the
-// push block both stages share. ShadowDataIndex / ViewIndex are read on the shadow variant only, and
-// ViewportW/H is the viewport being rastered (for a shadow pass the atlas TILE) for the small-primitive
-// reject.
+// ONE workgroup per meshlet. Compiled TWICE via MESHLET_MESH_BASE: the two cases need different OUTPUT
+// TYPES, which a spec constant cannot change. The load and transform run in full either way, for WPO.
 
 #ifdef MESHLET_MESH_BASE
 typedef FBaseVertexOutput      FMeshVertexOutput;
@@ -33,9 +17,8 @@ struct FMeshPrimitiveOut
     bool CullPrimitive : SV_CullPrimitive;
 };
 
-// The material vertex graph, emitted ONCE. The token substitutes raw statements that reach these by name,
-// so they arrive as parameters: left inside the vertex loop, the whole graph body would be emitted per
-// iteration.
+// The material vertex graph, emitted ONCE outside the loop: the token substitutes raw statements that
+// reach these by name, so left inside, the whole body would be emitted per iteration.
 FMaterialVertexInputs EvalMaterialVertex(FGPUInstance* Inst, float4x4 ModelMatrix, FVertexData VertexData,
                                          float4 WorldPos, float3 NormalWS, float3 TangentWS,
                                          float TangentSignWS)
@@ -51,13 +34,14 @@ FMaterialVertexInputs EvalMaterialVertex(FGPUInstance* Inst, float4x4 ModelMatri
 void MeshMain(
     uint3 GroupID   : SV_GroupID,
     uint  ThreadID  : SV_GroupIndex,
-    in payload   FVisTaskPayload    TaskPayload,
+    uint  DrawIndex : SV_DrawIndex,
     out vertices FMeshVertexOutput  Verts[MESHLET_MAX_VERTICES],
     out indices    uint3             Tris[MESHLET_MAX_TRIANGLES],
     out primitives FMeshPrimitiveOut Prims[MESHLET_MAX_TRIANGLES])
 {
-    // Compacted survivor index, not a draw-list offset -- see MeshletVisBuffer.slang.
-    FMeshletRef Ref = MakeMeshletRefFromTask(TaskPayload, GroupID.x);
+    // One workgroup per survivor MeshletCull.slang compacted into this bucket's slice.
+    uint MeshletSlot;
+    FMeshletRef Ref = ResolveMeshletForWorkgroup(DrawIndex, GroupID.x, MeshletSlot);
 
     const uint VertCount = Ref.M.VertexCount;
     const uint TriCount  = Ref.M.TriangleCount;
@@ -87,9 +71,8 @@ void MeshMain(
         [ForceUnroll]
         for (uint v = 0; v < MESHLET_VERT_ITERS; ++v)
         {
-            // Clamped rather than guarded: surplus lanes redundantly reprocess the last vertex instead
-            // of sitting masked. They were not saving anything behind a per-lane bounds test (the wave
-            // issues the body regardless), and the duplicate store writes an identical value.
+            // Clamped rather than guarded: surplus lanes redundantly reprocess the last vertex. A per-lane bounds
+            // test saved nothing (the wave issues the body regardless) and the duplicate store is identical.
             VertSlot[v] = min(ThreadID + v * MESHLET_MESH_GROUP_SIZE, VertCount - 1u);
 
             FVertexData VertexData = LoadMeshletVertexData(Ref, VertSlot[v]);
@@ -113,9 +96,8 @@ void MeshMain(
         }
     }
 
-    // Triangle cull. The clip positions above are in THIS pass's space (the shadow VP for a shadow view,
-    // the camera VP for depth), so the frustum reject is against the volume actually being rastered and
-    // the winding is the one the hardware will see.
+    // The clip positions above are in THIS pass's space, so the frustum reject is against the volume
+    // actually being rastered and the winding is the one the hardware will see.
     const float2 ViewportSize = float2(MeshletPass().ViewportW, MeshletPass().ViewportH);
 
     // Every triangle is declared and the dead ones carry SV_CullPrimitive, so there is no compaction

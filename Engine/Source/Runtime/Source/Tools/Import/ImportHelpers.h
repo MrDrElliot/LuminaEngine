@@ -406,6 +406,19 @@ namespace Lumina::Import
             /** Source-node count before dedup, for the import report. */
             uint32                                      SourceNodeCount = 0;
 
+            /**
+             * True when at least one primitive in the source carried a vertex-colour attribute.
+             *
+             * Drives whether generated materials sample vertex colour at all. It has to be an ALL-OR-NOTHING
+             * property of the import rather than of a material, because a material is shared across meshes
+             * and cannot know which of them are coloured -- but every importer fills opaque white where the
+             * source has no attribute, so the multiply is a no-op on the meshes that lack one.
+             *
+             * Left false by sources that cannot carry the attribute, which keeps their masters node-for-node
+             * what they were.
+             */
+            bool                                        bHasVertexColors = false;
+
             // Out-of-line (MeshImport.cpp): the dtor releases preview thumbnails, and all of
             // these need member TUniquePtrs' types complete, which they are not here.
             RUNTIME_API FMeshImportData();

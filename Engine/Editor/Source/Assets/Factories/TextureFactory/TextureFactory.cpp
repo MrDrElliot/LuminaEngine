@@ -195,12 +195,14 @@ namespace Lumina
         }
 
         // Recreate: see CookTexturePixels. A re-cook must keep the published ResourceID.
+        const FString DebugName = "Texture." + Texture->GetName().ToString();
         RHI::Textures::Recreate(Texture->TextureResource->NewTexture, RHI::FTexture2DDesc
         {
             .Width  = Width,
             .Height = Height,
             .Mips   = UploadMips,
             .Format = EFormat::RGBA16_FLOAT,
+            .DebugName = DebugName.c_str(),
         });
         for (uint32 i = 0; i < UploadMips; ++i)
         {
@@ -443,12 +445,14 @@ namespace Lumina
         // Recreate, not Create: on a RE-cook (reimport, or a ColorSpace change) this texture already has a
         // GPU image and a published ResourceID. Overwriting the handle would leak the old image and hand
         // out a new index that every material sampling this texture has already baked into its uniforms.
+        const FString DebugName = "Texture." + Texture->GetName().ToString();
         RHI::Textures::Recreate(Texture->TextureResource->NewTexture, RHI::FTexture2DDesc
         {
             .Width  = Extent.x,
             .Height = Extent.y,
             .Mips   = UploadMips,
             .Format = StoredFormat,
+            .DebugName = DebugName.c_str(),
         });
         for (uint32 i = 0; i < UploadMips; ++i)
         {
@@ -605,12 +609,14 @@ namespace Lumina
         }
 
         // Recreate: see CookTexturePixels. A re-cook must keep the published ResourceID.
+        const FString DebugName = "Texture." + Texture->GetName().ToString();
         RHI::Textures::Recreate(Texture->TextureResource->NewTexture, RHI::FTexture2DDesc
         {
             .Width  = Width,
             .Height = Height,
             .Mips   = UploadMips,
             .Format = Format,
+            .DebugName = DebugName.c_str(),
         });
         for (uint32 i = 0; i < UploadMips; ++i)
         {

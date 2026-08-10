@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Renderer/ShaderHandle.h"
+
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Object/ObjectMacros.h"
@@ -264,7 +266,7 @@ namespace Lumina
         void PostLoad() override;
         void OnDestroy() override;
 
-        const FShaderEntry* GetCustomComputeShader() const { return ComputeShader; }
+        FShaderH GetCustomComputeShader() const { return ComputeShader; }
         bool HasCustomComputeShader() const { return ComputeShader != nullptr; }
         bool UsesCustomShader() const { return ShaderMode == EParticleShaderMode::Custom && HasCustomComputeShader(); }
 
@@ -453,7 +455,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "Render")
         bool bWriteDepth = false;
 
-        const FShaderEntry* ComputeShader = nullptr;
+        FShaderH ComputeShader = {};
     };
 
     /** GPU particle system asset: an ordered list of emitters plus the parameters they share.

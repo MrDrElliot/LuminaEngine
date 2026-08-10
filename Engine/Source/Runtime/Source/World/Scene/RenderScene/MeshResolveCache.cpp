@@ -258,6 +258,35 @@ namespace Lumina
         }
     }
 
+    void MeshResolve::StampSurfaceSource(FResolvedSurface& Surface, CMaterialInterface* RawMaterial)
+    {
+        Surface.SourceMaterial       = RawMaterial;
+        Surface.SourceMaterialGuid   = IsValid(RawMaterial) ? RawMaterial->GetGUID() : FGuid();
+        Surface.SourceShaderRevision = (IsValid(RawMaterial) && IsValid(RawMaterial->GetMaterial()))
+                                     ? RawMaterial->GetMaterial()->GetShaderRevision() : 0u;
+    }
+
+    bool MeshResolve::IsSurfaceStale(const FResolvedSurface& Surface)
+    {
+        if (!IsValid(Surface.SourceMaterial))
+        {
+            // Nothing was requested (or it died); the assignment hash covers a pointer change.
+            return false;
+        }
+
+        // The address survived but the object behind it did not: a different asset now occupies the slot,
+        // so the revision there means nothing. Report stale and let the re-resolve re-key the surface.
+        if (Surface.SourceMaterial->GetGUID() != Surface.SourceMaterialGuid)
+        {
+            return true;
+        }
+
+        const CMaterial* Concrete = Surface.SourceMaterial->GetMaterial();
+        const uint32 Live = IsValid(Concrete) ? Concrete->GetShaderRevision() : 0u;
+
+        return Live != Surface.SourceShaderRevision;
+    }
+
     bool MeshResolve::ResolveSurfaceMaterial(FResolvedSurface& R, CMaterialInterface* RawMaterial)
     {
         bool bReady = true;
@@ -296,24 +325,24 @@ namespace Lumina
         const bool       bTranslucent = BlendMode == EBlendMode::Translucent || BlendMode == EBlendMode::Additive;
         const bool       bMasked      = BlendMode == EBlendMode::Masked;
         const bool       bAdditive    = BlendMode == EBlendMode::Additive;
-        // Translucency forces two-sided: a translucent surface with no back faces reads as a hole from
-        // behind, and MBOIT is order-independent precisely so both faces can be accumulated. Dropping the
-        // force was tried as a perf fix (halve the fragments in the two MBOIT geometry passes) and
-        // REVERTED -- an Nsight capture showed those passes are geometry-front-end bound, not fragment
-        // bound, so it cost every existing translucent material a re-author for no measurable gain. The
-        // per-batch cull-mode plumbing in MomentGenerationPass/TransparentPass is kept: it honours this
-        // flag correctly, it just resolves to two-sided for everything translucent.
+        // Translucency forces two-sided: with no back faces a translucent surface reads as a hole from
+        // behind. Dropping the force was tried and reverted -- those passes are geometry-front-end bound.
         const bool       bTwoSided    = bTranslucent || Material->IsTwoSided();
 
         R.PixelShader                = Material->GetPixelShader();
         R.VertexShader               = Material->GetVertexShader();
-        R.MeshShaderShadow           = ConcreteMaterial ? ConcreteMaterial->GetMeshShaderShadow() : nullptr;
-        R.MeshShaderBase             = ConcreteMaterial ? ConcreteMaterial->GetMeshShaderBase() : nullptr;
-        R.VisBufferMeshShader        = ConcreteMaterial ? ConcreteMaterial->GetVisBufferMeshShader() : nullptr;
-        R.VisBufferMeshShaderMasked  = ConcreteMaterial ? ConcreteMaterial->GetVisBufferMeshShaderMasked() : nullptr;
-        R.MaskedVisBufferPixelShader = ConcreteMaterial ? ConcreteMaterial->GetMaskedVisBufferPixelShader() : nullptr;
-        R.DeferredShader             = ConcreteMaterial ? ConcreteMaterial->GetDeferredShader() : nullptr;
-        R.MomentPixelShader          = ConcreteMaterial ? ConcreteMaterial->GetMomentPixelShader() : nullptr;
+        R.MeshShaderShadow           = ConcreteMaterial ? ConcreteMaterial->GetMeshShaderShadow() : FShaderH{};
+        R.MeshShaderBase             = ConcreteMaterial ? ConcreteMaterial->GetMeshShaderBase() : FShaderH{};
+        R.VisBufferMeshShader        = ConcreteMaterial ? ConcreteMaterial->GetVisBufferMeshShader() : FShaderH{};
+        R.VisBufferMeshShaderMasked  = ConcreteMaterial ? ConcreteMaterial->GetVisBufferMeshShaderMasked() : FShaderH{};
+        R.MaskedVisBufferPixelShader = ConcreteMaterial ? ConcreteMaterial->GetMaskedVisBufferPixelShader() : FShaderH{};
+        R.DeferredShader             = ConcreteMaterial ? ConcreteMaterial->GetDeferredShader() : FShaderH{};
+        R.MomentPixelShader          = ConcreteMaterial ? ConcreteMaterial->GetMomentPixelShader() : FShaderH{};
+
+        // Recorded from the RAW request, not the possibly-substituted default: the point is to notice when
+        // what the caller ASKED for changes underneath this resolve, including a not-ready material that
+        // fell back to the default and has since compiled.
+        MeshResolve::StampSurfaceSource(R, RawMaterial);
 
         R.MaterialID            = (uint64)ConcreteMaterial;
         R.MaterialIdx           = (uint16)Material->GetMaterialIndex();
@@ -334,16 +363,15 @@ namespace Lumina
 
         R.BatchKey = FDrawBatchKey
         {
-            // Only the shaders the batch's OWN passes bind. An opaque batch runs the VisBuffer (which binds
-            // the shared VisPixel, not the material's) and the shadow passes (no pixel shader at all), so
-            // keying it on the forward shading pair would split it on something nothing reads.
+            // Only the shaders the batch's OWN passes bind. An opaque batch binds the shared VisPixel and no
+            // shadow pixel shader, so keying on the forward pair would split it on something nothing reads.
             .VisBufferMeshShader        = R.VisBufferMeshShader,
-            .VisBufferMeshShaderMasked  = bMasked        ? R.VisBufferMeshShaderMasked  : nullptr,
-            .MaskedVisBufferPixelShader = bMasked        ? R.MaskedVisBufferPixelShader : nullptr,
-            .MeshShaderBase             = bForwardShaded ? R.MeshShaderBase             : nullptr,
+            .VisBufferMeshShaderMasked  = bMasked        ? R.VisBufferMeshShaderMasked  : FShaderH{},
+            .MaskedVisBufferPixelShader = bMasked        ? R.MaskedVisBufferPixelShader : FShaderH{},
+            .MeshShaderBase             = bForwardShaded ? R.MeshShaderBase             : FShaderH{},
             .MeshShaderShadow           = R.MeshShaderShadow,
-            .PixelShader                = bForwardShaded  ? R.PixelShader                : nullptr,
-            .MomentPixelShader          = bMomentGenerated ? R.MomentPixelShader         : nullptr,
+            .PixelShader                = bForwardShaded  ? R.PixelShader                : FShaderH{},
+            .MomentPixelShader          = bMomentGenerated ? R.MomentPixelShader         : FShaderH{},
             .bTranslucent = (bTranslucent ? 1u : 0u),
             .bMasked      = (bMasked      ? 1u : 0u),
             .bAdditive    = (bAdditive    ? 1u : 0u),

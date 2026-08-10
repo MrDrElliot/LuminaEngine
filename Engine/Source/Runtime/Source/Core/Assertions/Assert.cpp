@@ -44,9 +44,6 @@ namespace Lumina::Assert
             LOG_CRITICAL("Function: {}", Assertion.Location.function_name());
             
             LOG_CRITICAL("==================================================================================");
-
-            // Deterministic: waits for the whole burst above to reach the sinks instead of hoping a
-            // fixed sleep was long enough.
             Logging::Flush();
         }
     }

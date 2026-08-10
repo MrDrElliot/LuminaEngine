@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Renderer/ShaderHandle.h"
+
 // Rml::RenderInterface on the new RHI. Frame: BeginFrame -> Context::Render (defers draws) -> EndFrame (uploads + replay).
 // Draws are deferred so texture uploads can run outside the render pass.
 
@@ -134,7 +136,7 @@ namespace Lumina
         };
 
         RHI::FPipelineH             GetPipelineForFormat(EFormat Format);
-        RHI::FPipelineH             GetBrushPipeline(const struct FShaderEntry* VS, const struct FShaderEntry* PS);
+        RHI::FPipelineH             GetBrushPipeline(FShaderH VS, FShaderH PS);
         uint64                      ComputeDrawCallHash() const;
         void                        EnsureBatchBuffers(FTargetBatch& Batch, uint64 VertexBytes, uint64 IndexBytes);
         void                        ResetFrameState();   // clears the pending draw list + current frame target/cmdlist

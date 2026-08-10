@@ -1,14 +1,8 @@
 #pragma once
 #include "SceneGlobals.slang"
 
-// Local reflection probes: parallax-corrected specular from cubemaps captured in the world, blended
-// front-to-back by influence and falling back to the sky prefilter wherever they don't cover.
-//
-// Every probe's volume is the unit box [-1,1]^3 (or the unit sphere) in ITS probe space, because
-// extraction bakes the world half-extents into WorldToProbe. That one convention is what lets the
-// inside test, the blend weight, and the parallax intersection all run without per-probe extents.
-// A ray-volume intersection is invariant under the linear part of a transform, so the world
-// reflection vector can be carried into probe space unnormalized and the resulting t used as-is.
+// Every probe's volume is the unit box or sphere in ITS probe space -- extraction bakes the world
+// half-extents into WorldToProbe, so the inside test, blend and parallax need no per-probe extents.
 
 // Probes are sorted by descending priority on extraction, so a plain front-to-back walk lets a small
 // high-priority interior probe consume weight before the large one enclosing it ever sees the pixel.
@@ -20,9 +14,8 @@ struct FProbeSample
     float  Weight;    // total influence consumed, in [0,1]; the remainder belongs to the sky
 };
 
-// Distance from the volume boundary, normalized so 0 is exactly on the surface and 1 is the
-// deepest interior. Box uses the Chebyshev distance (its iso-surfaces are nested boxes), sphere
-// the Euclidean one.
+// Normalized so 0 is exactly on the surface and 1 the deepest interior. Box uses Chebyshev distance
+// (its iso-surfaces are nested boxes), sphere the Euclidean one.
 float Probe_BoundaryDistance(FGPUReflectionProbe Probe, float3 LocalPos)
 {
     if (Probe.IsSphere)
@@ -33,9 +26,8 @@ float Probe_BoundaryDistance(FGPUReflectionProbe Probe, float3 LocalPos)
     return 1.0 - max(max(D.x, D.y), D.z);
 }
 
-// Influence ramp: 0 at the boundary rising to 1 once BlendFraction of the way inside. Smoothstep
-// rather than linear so overlapping probes cross-fade without a visible gradient discontinuity
-// where one volume's edge cuts across another's interior.
+// 0 at the boundary rising to 1 once BlendFraction inside. Smoothstep rather than linear so
+// overlapping probes cross-fade without a gradient discontinuity where one edge cuts another.
 float Probe_InfluenceWeight(FGPUReflectionProbe Probe, float3 LocalPos)
 {
     float Depth = Probe_BoundaryDistance(Probe, LocalPos);
@@ -47,9 +39,8 @@ float Probe_InfluenceWeight(FGPUReflectionProbe Probe, float3 LocalPos)
     return smoothstep(0.0, Blend, Depth);
 }
 
-// Reproject the reflection ray onto the probe's proxy volume. Without this every probe behaves like
-// an infinitely distant cubemap: reflections slide across surfaces as the camera moves instead of
-// staying pinned to the geometry that produced them, which is the entire reason local probes exist.
+// Without this every probe behaves like an infinitely distant cubemap: reflections slide across
+// surfaces as the camera moves instead of staying pinned to the geometry that produced them.
 float3 Probe_ParallaxDirection(FGPUReflectionProbe Probe, float3 LocalPos, float3 WorldR)
 {
     float3 LocalDir = mul((float3x3)Probe.WorldToProbe, WorldR);
@@ -66,11 +57,8 @@ float3 Probe_ParallaxDirection(FGPUReflectionProbe Probe, float3 LocalPos, float
     }
     else
     {
-        // Slab test against [-1,1]^3. A component of LocalDir being zero is deliberately NOT guarded:
-        // it yields +-inf for that slab, which max() then min() discards, and that is the standard
-        // robust form. The 0 * inf = NaN case needs LocalPos exactly on the boundary, which cannot
-        // reach here because a caller only parallax-corrects a probe whose influence is already > 0
-        // (strictly inside), leaving both (-1 - LocalPos) and (1 - LocalPos) non-zero.
+        // Slab test against [-1,1]^3. A zero LocalDir component is deliberately NOT guarded: it yields +-inf,
+        // which max/min discard. The 0*inf NaN needs LocalPos exactly on the boundary, unreachable here.
         float3 InvDir = 1.0 / LocalDir;
         float3 T1 = (-1.0 - LocalPos) * InvDir;
         float3 T2 = ( 1.0 - LocalPos) * InvDir;
@@ -146,26 +134,8 @@ FProbeSample SampleReflectionProbes(float3 WorldPos, float3 WorldR, float Roughn
     return Result;
 }
 
-// Debug readout of the same walk SampleReflectionProbes performs. Deliberately mirrors its skip rules
-// and front-to-back consumption exactly, so the debug view can never claim coverage that shading did
-// not actually get.
-// Distinct, always-bright hue per probe slice.
-//
-// Deliberately NOT the integer hash used for meshlet/material debug colors: that hash is purely
-// multiplicative, so index 0 maps to 0 and renders PURE BLACK, and other indices can land arbitrarily
-// dark. For a view whose whole job is distinguishing "a probe covers this" from "nothing covers this",
-// a palette that can emit black is worse than useless -- it reports success as failure.
-//
-// Golden-ratio hue stepping keeps adjacent slices far apart in hue.
-//
-// Two deliberate choices keep probe hues from being mistaken for the status codes below, which are
-// fully-saturated primaries. Getting this wrong is not cosmetic: slice 0 originally landed on hue 0,
-// i.e. PURE RED, which is byte-identical to the "no probes at all" status -- so a perfectly working
-// probe reported itself as total failure.
-//   1. A hue offset, so slice 0 is not a primary.
-//   2. Desaturation toward white, so every probe hue is visibly PASTEL while every status color stays
-//      fully saturated. That makes the distinction structural (saturation) rather than a hue lottery
-//      that a large enough probe count would eventually lose.
+// Mirrors SampleReflectionProbes' skip rules exactly, so the debug view cannot claim coverage shading
+// did not get. Hues are offset and PASTEL so they can never be read as the saturated status codes.
 float3 ProbeDebugColor(uint Slice)
 {
     float  Hue = frac(0.37 + float(Slice) * 0.61803398875);
@@ -177,9 +147,8 @@ float3 ProbeDebugColor(uint Slice)
     return lerp(float3(1.0), RGB, 0.7);
 }
 
-// Why a pixel ended up with no probe influence. Every one of these looks identical in a lit view
-// (the surface just reflects sky), but they have completely different causes, so the debug view
-// reports them as distinct colors rather than a single uninformative black.
+// Why a pixel got no probe influence. All of these look identical in a lit view (the surface just
+// reflects sky) but have different causes, so they get distinct colors rather than one black.
 static const int kProbeStatusCovered    = 0;  // a probe reached this pixel
 static const int kProbeStatusNoProbes   = 1;  // scene root carries no probes at all
 static const int kProbeStatusNoArray    = 2;  // probe cube array unallocated / mip count zero

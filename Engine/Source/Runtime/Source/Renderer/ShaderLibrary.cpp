@@ -29,37 +29,146 @@ namespace Lumina
         return Hash;
     }
 
+    FShaderLibrary::FShaderLibrary()
+    {
+        // TSegmentMap::Erase calls DtorFn unconditionally, so leaving it null is a null call on first free.
+        Entries.SetDtor([](FShaderEntry* Entry) { Entry->~FShaderEntry(); });
+    }
+
     FShaderLibrary::~FShaderLibrary()
     {
-        for (auto& [Hash, Entry] : Entries)
-        {
-            Memory::Delete(Entry);
-        }
+        Entries.Clear();
     }
 
-    FShaderEntry& FShaderLibrary::FindOrCreate(uint64 Hash)
+    FShaderH FShaderLibrary::FindOrCreate(uint64 Hash)
     {
-        auto It = Entries.find(Hash);
-        if (It == Entries.end())
+        auto It = HandlesByHash.find(Hash);
+        if (It != HandlesByHash.end())
         {
-            FShaderEntry* Entry = Memory::New<FShaderEntry>();
-            Entry->ID = NextID++;
-            It = Entries.emplace(Hash, Entry).first;
+            if (Entries.IsLive(It->second))
+            {
+                return It->second;
+            }
+            // The slot was released since this hash was interned. Drop the dead mapping and mint a fresh
+            // entry rather than handing back a handle Resolve would reject.
+            HandlesByHash.erase(It);
         }
-        return *It->second;
+
+        const FShaderH Handle = Entries.Emplace();
+        FShaderEntry& Entry   = Entries[Handle];
+        Entry.ID       = NextID++;
+        Entry.MapHash  = Hash;
+        HandlesByHash.emplace(Hash, Handle);
+        return Handle;
     }
 
-    const FShaderEntry* FShaderLibrary::Get(const FName& Path, TSpan<const FString> Defines)
+    const FShaderEntry* FShaderLibrary::Resolve(FShaderH Handle)
+    {
+        FShaderLibrary* Library = GShaderLibrary;
+        if (Library == nullptr)
+        {
+            return nullptr;
+        }
+        return Library->Entries.TryGet(Handle);
+    }
+
+    void FShaderLibrary::AddRef(FShaderH Handle)
+    {
+        FShaderLibrary* Library = GShaderLibrary;
+        if (Library == nullptr)
+        {
+            return;
+        }
+
+        FScopeLock Lock(Library->Mutex);
+        if (FShaderEntry* Entry = Library->Entries.TryGet(Handle))
+        {
+            ++Entry->RefCount;
+        }
+    }
+
+    void FShaderLibrary::Release(FShaderH Handle)
+    {
+        FShaderLibrary* Library = GShaderLibrary;
+        if (Library == nullptr)
+        {
+            return;
+        }
+
+        FScopeLock Lock(Library->Mutex);
+        FShaderEntry* Entry = Library->Entries.TryGet(Handle);
+        if (Entry == nullptr || Entry->RefCount == 0)
+        {
+            return;
+        }
+
+        if (--Entry->RefCount == 0)
+        {
+            // Queued, never freed here: handles are dereferenced lock-free off the render thread, so the
+            // slot can only be recycled at a point with no lookup in flight.
+            Library->PendingRelease.push_back(Handle);
+        }
+    }
+
+    void FShaderLibrary::FlushPendingReleases()
+    {
+        FShaderLibrary* Library = GShaderLibrary;
+        if (Library == nullptr)
+        {
+            return;
+        }
+
+        TVector<FShaderH> Ready;
+        {
+            FScopeLock Lock(Library->Mutex);
+            Ready.swap(Library->PendingRelease);
+        }
+
+        for (FShaderH Handle : Ready)
+        {
+            uint64 MapHash = 0;
+            {
+                FScopeLock Lock(Library->Mutex);
+                FShaderEntry* Entry = Library->Entries.TryGet(Handle);
+
+                // Re-acquired between Release and here (an identical recompile re-interned it), so it is
+                // live again and must not be freed.
+                if (Entry == nullptr || Entry->RefCount != 0)
+                {
+                    continue;
+                }
+                MapHash = Entry->MapHash;
+            }
+
+            {
+                FScopeLock Lock(Library->Mutex);
+                auto It = Library->HandlesByHash.find(MapHash);
+                if (It != Library->HandlesByHash.end() && It->second.Handle == Handle.Handle)
+                {
+                    Library->HandlesByHash.erase(It);
+                }
+            }
+
+            // Bumps the slot generation, which is what makes every outstanding weak handle resolve to null.
+            Library->Entries.Erase(Handle);
+        }
+    }
+
+    FShaderH FShaderLibrary::Get(const FName& Path, TSpan<const FString> Defines)
     {
         FShaderLibrary* Library = GShaderLibrary;
         const uint64 Hash = EntryHash(Path, Defines);
 
         {
             FScopeLock Lock(Library->Mutex);
-            FShaderEntry& Entry = Library->FindOrCreate(Hash);
+            const FShaderH Handle = Library->FindOrCreate(Hash);
+            FShaderEntry& Entry   = Library->Entries[Handle];
             if (Entry.IsValid())
             {
-                return &Entry;
+                // Engine shaders are process-lifetime: the reference taken here is never released, which is
+                // what keeps them out of the release queue entirely.
+                ++Entry.RefCount;
+                return Handle;
             }
             if (Entry.Path.IsNone())
             {
@@ -78,7 +187,9 @@ namespace Lumina
         GShaderCompiler->Flush();
 
         FScopeLock Lock(Library->Mutex);
-        return &Library->FindOrCreate(Hash);
+        const FShaderH Handle = Library->FindOrCreate(Hash);
+        ++Library->Entries[Handle].RefCount;
+        return Handle;
     }
 
 #if USING(WITH_EDITOR)
@@ -198,81 +309,80 @@ namespace Lumina
         }
     }
 
-    FShaderEntry::FGPUStats FShaderLibrary::GetGPUStats(const FShaderEntry* Entry)
+    FShaderEntry::FGPUStats FShaderLibrary::GetGPUStats(FShaderH Handle)
     {
-        if (Entry == nullptr)
-        {
-            return {};
-        }
         FScopeLock Lock(GShaderLibrary->Mutex);
-        return Entry->GPUStats;
+        const FShaderEntry* Entry = GShaderLibrary->Entries.TryGet(Handle);
+        return Entry != nullptr ? Entry->GPUStats : FShaderEntry::FGPUStats{};
     }
 
-    bool FShaderLibrary::HasPipelineStats(const FShaderEntry* Entry)
+    bool FShaderLibrary::HasPipelineStats(FShaderH Handle)
     {
-        if (Entry == nullptr)
-        {
-            return true;   // nothing to publish against; treat as done so callers skip the query
-        }
         FScopeLock Lock(GShaderLibrary->Mutex);
-        return !Entry->GPUStats.Pipeline.empty();
+        const FShaderEntry* Entry = GShaderLibrary->Entries.TryGet(Handle);
+        // Nothing to publish against; treat as done so callers skip the query.
+        return Entry == nullptr || !Entry->GPUStats.Pipeline.empty();
     }
 
-    void FShaderLibrary::PublishPipelineStats(const FShaderEntry* Entry, TVector<RHI::FPipelineStat>&& Stats)
+    void FShaderLibrary::PublishPipelineStats(FShaderH Handle, TVector<RHI::FPipelineStat>&& Stats)
     {
-        if (Entry == nullptr || Stats.empty())
+        if (Stats.empty())
         {
             return;
         }
         FScopeLock Lock(GShaderLibrary->Mutex);
-        const_cast<FShaderEntry*>(Entry)->GPUStats.Pipeline = Move(Stats);
+        if (FShaderEntry* Entry = GShaderLibrary->Entries.TryGet(Handle))
+        {
+            Entry->GPUStats.Pipeline = Move(Stats);
+        }
     }
 #endif
 
-    const FShaderEntry* FShaderLibrary::Commit(const FName& Key, ERHIShaderType Type, TSpan<const uint32> Spirv)
+    FShaderH FShaderLibrary::Commit(const FName& Key, ERHIShaderType Type, TSpan<const uint32> Spirv)
     {
         FShaderLibrary* Library = GShaderLibrary;
         FScopeLock Lock(Library->Mutex);
 
-        // Keyed by CONTENT, not by the caller's name. Most materials drive no World Position Offset, so
-        // their geometry stages compile to byte-identical SPIR-V; a per-material entry gave each its own
-        // ID, therefore its own PipelineHash, therefore its own PSO for the same shader.
-        //
-        // Content keying is also what makes a shared entry SAFE. If entries stayed name-keyed and this
-        // merely handed out a shared pointer, recompiling one material would rewrite the bytecode under
-        // every other material still pointing at it.
+        // Keyed by CONTENT, not caller name: most materials drive no WPO, so their geometry stages compile
+        // byte-identical. Content keying is also what makes sharing safe across a recompile.
         const uint64 ContentHash = SpirvContentHash(Type, Spirv);
 
         uint64 Slot = ContentHash;
-        if (auto It = Library->Entries.find(ContentHash); It != Library->Entries.end())
+        if (auto It = Library->HandlesByHash.find(ContentHash); It != Library->HandlesByHash.end())
         {
-            const FShaderEntry* Existing = It->second;
-            const bool bIdentical = Existing->Type == Type
-                                 && Existing->Spirv.size() == Spirv.size()
-                                 && std::memcmp(Existing->Spirv.data(), Spirv.data(),
-                                                Spirv.size() * sizeof(uint32)) == 0;
-            if (bIdentical)
+            if (const FShaderEntry* Existing = Library->Entries.TryGet(It->second))
             {
-                // Generation is deliberately NOT bumped: the bytecode is unchanged, so every pipeline
-                // already built from this entry stays valid. A material that recompiles to the same
-                // shader costs nothing.
-                return Existing;
-            }
+                const bool bIdentical = Existing->Type == Type
+                                     && Existing->Spirv.size() == Spirv.size()
+                                     && std::memcmp(Existing->Spirv.data(), Spirv.data(),
+                                                    Spirv.size() * sizeof(uint32)) == 0;
+                if (bIdentical)
+                {
+                    // Generation deliberately NOT bumped: the bytecode is unchanged, so every pipeline already
+                    // built from this entry stays valid -- and the caller gets a reference to the SAME entry,
+                    // which is what collapses identical materials into one batch.
+                    const FShaderH Handle = It->second;
+                    ++Library->Entries[Handle].RefCount;
+                    return Handle;
+                }
 
-            // A 64-bit collision. Fall back to the caller's name so the two can never alias.
-            Slot = EntryHash(Key, {});
+                // A 64-bit collision. Fall back to the caller's name so the two can never alias.
+                Slot = EntryHash(Key, {});
+            }
         }
 
-        FShaderEntry& Entry = Library->FindOrCreate(Slot);
+        const FShaderH Handle = Library->FindOrCreate(Slot);
+        FShaderEntry& Entry   = Library->Entries[Handle];
         Entry.Path = Key;
         Entry.Type = Type;
         Entry.Spirv.assign(Spirv.begin(), Spirv.end());
         Entry.Generation++;
+        ++Entry.RefCount;
 #if USING(WITH_EDITOR)
         Entry.GPUStats.Pipeline.clear();
         ScanSpirvLocalArrays(Spirv, Entry.GPUStats.LocalArrayCount, Entry.GPUStats.LocalArrayScalars);
 #endif
-        return &Entry;
+        return Handle;
     }
 
     void FShaderLibrary::Commit(const FShaderHeader& Header)
@@ -281,7 +391,8 @@ namespace Lumina
         FScopeLock Lock(Library->Mutex);
 
         const FName Path(Header.DebugName.c_str());
-        FShaderEntry& Entry = Library->FindOrCreate(EntryHash(Path, TSpan<const FString>(Header.Defines.data(), Header.Defines.size())));
+        const FShaderH Handle = Library->FindOrCreate(EntryHash(Path, TSpan<const FString>(Header.Defines.data(), Header.Defines.size())));
+        FShaderEntry& Entry   = Library->Entries[Handle];
         Entry.Path    = Path;
         Entry.Defines = Header.Defines;
         Entry.Type    = Header.Reflection.ShaderType;

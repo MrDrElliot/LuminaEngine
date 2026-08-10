@@ -2,23 +2,8 @@
 #include "Includes/Common.slang"
 #include "Includes/GlobalRHI.slang"
 
-// Per-mesh signed distance field sampling.
-//
-// Each mesh carries an optional volume texture holding the signed distance from every voxel centre to
-// the nearest surface, in MESH-LOCAL space, encoded as 8-bit UNORM over [-MaxDistance, +MaxDistance]
-// (or [0, MaxDistance] for two-sided fields, which have no inside). The volume's local AABB and that
-// range live in the mesh's FMeshletHeader, so one instance load reaches everything needed to sample it.
-//
-// Why local space: the field is baked once per MESH, not per instance, so a scaled or rotated instance
-// reuses the same volume. Callers transform the query point into local space, sample, and scale the
-// result back out. That scale-back is exact only for uniform scale -- see FDistanceFieldVolume::
-// LocalDistanceToWorld below, which uses the smallest axis scale so the result stays a conservative
-// underestimate (never claims more empty space than there is, which is what keeps a sphere trace from
-// stepping through a wall).
-//
-// Accuracy: the field is a narrow band. Outside roughly +/-MaxDistance it saturates to a plateau, so
-// its gradient there is zero and its value is a floor, not a distance. Every consumer here treats
-// "saturated" as "no information", which is why traces bail rather than take a huge step.
+// Per-mesh signed distance field, baked once per MESH in LOCAL space so scaled instances reuse it.
+// A narrow band: outside +/-MaxDistance it saturates, and every consumer treats that as no information.
 
 static const uint kInvalidDistanceField = 0xFFFFFFFFu;
 
@@ -85,9 +70,8 @@ float SampleDistanceFieldLocal(FDistanceFieldVolume Volume, float3 LocalPosition
         : (Encoded * 2.0 - 1.0) * Volume.MaxDistance;
 }
 
-// Gradient of the field at a local point, by central difference over one voxel-ish step. Normalized,
-// so it is the outward surface normal of the field. Returns 0 on a saturated plateau, where the
-// difference degenerates and the direction would be arbitrary -- callers must check for that.
+// Central difference over one voxel step, normalized -- the outward surface normal. Returns 0 on a
+// saturated plateau, where the difference degenerates; callers must check for that.
 float3 SampleDistanceFieldGradientLocal(FDistanceFieldVolume Volume, float3 LocalPosition)
 {
     if (!Volume.IsValid())
@@ -120,12 +104,8 @@ float3 GetInstanceScale(float4x4 ModelMatrix)
         length(mul(ModelMatrix, float4(0.0, 0.0, 1.0, 0.0)).xyz));
 }
 
-// Exact inverse of an instance's object->world matrix, which is always affine (rotation, scale and
-// translation only -- FTransform3x4 cannot represent anything else). Built from the 3x3 cofactor
-// inverse plus the back-rotated translation rather than a general 4x4 inverse: far cheaper, and it
-// stays finite for a degenerate scale where a general inverse would produce infinities.
-//
-// M[i] is a mathematical ROW (see FTransform3x4), so the translation is the w component of each row.
+// Exact inverse of an always-affine object->world. Cofactor form rather than a general 4x4 inverse:
+// cheaper, and finite for a degenerate scale. M[i] is a mathematical ROW (see FTransform3x4).
 float4x4 MakeInstanceWorldToLocal(float4x4 ModelMatrix)
 {
     // CalculateNormalMatrix returns (A^-1)^T for the upper-left 3x3 A, so its transpose is A^-1.
@@ -141,9 +121,8 @@ float4x4 MakeInstanceWorldToLocal(float4x4 ModelMatrix)
         float4(0.0, 0.0, 0.0, 1.0));
 }
 
-// Local-unit distance -> world units. The MINIMUM axis scale, not the average: under non-uniform scale
-// the true world distance lies between the min- and max-scaled values, and only the minimum is
-// guaranteed not to overstate free space. Overstating it is what makes a sphere trace tunnel.
+// The MINIMUM axis scale, not the average: only the minimum is guaranteed not to overstate free
+// space under non-uniform scale, and overstating it is what makes a sphere trace tunnel.
 float LocalDistanceToWorld(float LocalDistance, float3 InstanceScale)
 {
     return LocalDistance * min(InstanceScale.x, min(InstanceScale.y, InstanceScale.z));
@@ -156,9 +135,8 @@ struct FDistanceFieldQuery
     bool   bValid;      // a field exists AND the point is inside its volume
 };
 
-// Full world-space query against ONE instance's field. WorldToLocal is the inverse of the instance
-// transform; the caller passes it because a material graph already has the instance loaded and the
-// inverse is worth computing once per pixel rather than once per sample.
+// WorldToLocal is passed in because a material graph already has the instance loaded and the inverse
+// is worth computing once per pixel rather than once per sample.
 FDistanceFieldQuery QueryDistanceField(FDistanceFieldVolume Volume, float4x4 WorldToLocal,
                                        float3 InstanceScale, float3 WorldPosition)
 {
@@ -181,8 +159,7 @@ FDistanceFieldQuery QueryDistanceField(FDistanceFieldVolume Volume, float4x4 Wor
     Q.Distance = LocalDistanceToWorld(SampleDistanceFieldLocal(Volume, LocalPosition), InstanceScale);
 
     // The gradient is a surface normal, so it transforms by the inverse-transpose of object->world --
-    // which, since WorldToLocal already IS the inverse, is just its transpose. Reading the COLUMNS of
-    // WorldToLocal below is that transpose (M[i] is a row).
+    // which, since WorldToLocal already IS the inverse, is just its transpose (M[i] is a row).
     float3 LocalGradient = SampleDistanceFieldGradientLocal(Volume, LocalPosition);
     if (any(LocalGradient != 0.0))
     {
@@ -198,14 +175,8 @@ FDistanceFieldQuery QueryDistanceField(FDistanceFieldVolume Volume, float4x4 Wor
     return Q;
 }
 
-// Cone-traced ambient occlusion against the mesh's OWN field: walk out along Direction and, at each
-// step, compare the free space the field reports against the cone radius at that distance. The
-// smallest ratio over the walk is the visibility, which is the standard SDF cone-trace occlusion
-// (Quilez) and is far cheaper than sampling a hemisphere because one march covers a whole cone.
-//
-// Self-occlusion only. This is what puts contact darkening in a mesh's own creases and under its own
-// overhangs, which is exactly the detail a baked AO map carries -- except it follows deformation and
-// costs no texture memory.
+// SDF cone-trace occlusion (Quilez): one march covers a whole cone, far cheaper than a hemisphere.
+// Self-occlusion only -- contact darkening in a mesh's own creases, and it follows deformation.
 float DistanceFieldConeOcclusion(FDistanceFieldVolume Volume, float3 LocalPosition, float3 LocalDirection,
                                  float MaxLocalDistance, float ConeAngle, int StepCount)
 {
@@ -226,17 +197,15 @@ float DistanceFieldConeOcclusion(FDistanceFieldVolume Volume, float3 LocalPositi
         float3 P = LocalPosition + LocalDirection * T;
         if (!Volume.ContainsLocal(P))
         {
-            // Left the volume: there is no more of this mesh to occlude with, so the rest of the cone
-            // is open. Breaking rather than clamping is what keeps a small prop from shadowing itself
-            // with the plateau outside its own bounds.
+            // Left the volume: no more of this mesh to occlude with, so the rest of the cone is open. Breaking
+            // rather than clamping keeps a small prop from shadowing itself with the plateau outside its bounds.
             break;
         }
 
         float D = SampleDistanceFieldLocal(Volume, P);
 
-        // Inside the surface. Only reachable when the start point sits under geometry (a concave crease
-        // sampled slightly on the wrong side); treat it as fully occluded rather than letting the
-        // negative value invert the ratio below.
+        // Only reachable when the start point sits under geometry. Treat as fully occluded rather than
+        // letting the negative value invert the ratio below.
         if (D < 0.0)
         {
             return 0.0;
@@ -254,11 +223,8 @@ float DistanceFieldConeOcclusion(FDistanceFieldVolume Volume, float3 LocalPositi
     return saturate(Visibility);
 }
 
-// Thickness of the mesh below a surface point, in world units, by marching INTO it along -Normal and
-// measuring how far the walk stays inside (negative distance). Feeds subsurface / translucency: thin
-// geometry like an ear or a leaf transmits, a torso does not.
-//
-// Returns 0 for a two-sided field, which has no inside to measure.
+// Thickness below a surface point, by marching INTO the mesh and measuring how far the walk stays
+// inside. Feeds subsurface: thin geometry transmits. Returns 0 for a two-sided field.
 float DistanceFieldThickness(FDistanceFieldVolume Volume, float3 LocalPosition, float3 LocalNormal,
                              float MaxLocalDistance, float3 InstanceScale, int StepCount)
 {
@@ -270,9 +236,8 @@ float DistanceFieldThickness(FDistanceFieldVolume Volume, float3 LocalPosition, 
     float StepSize  = MaxLocalDistance / (float)max(StepCount, 1);
     float Thickness = 0.0;
 
-    // Fixed-step, not sphere-traced: the walk is INSIDE, where the field is negative, and a sphere
-    // trace on the interior would step by the distance to the nearest wall and skip straight past the
-    // thin section this is trying to measure.
+    // Fixed-step, not sphere-traced: the walk is INSIDE, where a sphere trace would step by the distance
+    // to the nearest wall and skip straight past the thin section being measured.
     for (int i = 1; i <= StepCount; ++i)
     {
         float  T = (float)i * StepSize;

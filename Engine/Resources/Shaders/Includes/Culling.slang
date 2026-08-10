@@ -34,9 +34,8 @@ bool FrustumContainsSphere(float4 Planes[6], float3 Center, float Radius)
     return true;
 }
 
-// 2D polyhedral bounds of a clipped perspective-projected sphere (Mara/McGuire 2013), for
-// left-handed view space (camera down +Z). ClipAABB = (minX, minY, maxX, maxY), each /clip.w.
-// Returns false if the sphere clips the near plane (caller treats the object as visible).
+// 2D polyhedral bounds of a clipped perspective-projected sphere (Mara/McGuire 2013), left-handed
+// view space. Returns false if the sphere clips the near plane -- caller treats it as visible.
 bool ProjectSphereClip(float3 C, float R, float ZNear, float P00, float P11, out float4 ClipAABB)
 {
     ClipAABB = float4(-1.0, -1.0, 1.0, 1.0);
@@ -46,10 +45,8 @@ bool ProjectSphereClip(float3 C, float R, float ZNear, float P00, float P11, out
         return false;
     }
 
-    // Orthographic: view rays are parallel, so the silhouette is a plain scale of the world radius
-    // (same as the cascade path below) and the tangent construction underneath -- which divides by
-    // view Z and so assumes rays converging on the eye -- does not apply. Both callers pass the
-    // camera projection, which is what IsCameraOrthographic describes.
+    // Orthographic: rays are parallel, so the silhouette is a plain scale of the world radius. The
+    // tangent construction below divides by view Z and assumes rays converging on the eye.
     if (IsCameraOrthographic())
     {
         float2 Center = float2(C.x * P00, C.y * P11);
@@ -96,21 +93,8 @@ float SphereFrontDepth(float FrontZ, float ZNear, float ZFar)
     return (ZNear * ZFar / FrontZ - ZNear) / (ZFar - ZNear);
 }
 
-// ---------------------------------------------------------------------------------------------------
-// Per-view LOD selection
-// ---------------------------------------------------------------------------------------------------
-//
-// A view's LOD is a function of that view's own origin, so a preview camera standing next to a mesh sees
-// it at the detail IT needs rather than at whatever the primary camera picked. Which means the pick is
-// made twice per (instance, view): CullInstances makes it to reserve draw-list space, BuildMeshletBlocks makes
-// it again to decide which meshlets that view walks. The two MUST return the same LOD -- reserve for LOD 2
-// and walk LOD 1 and the surplus is wasted; the other way round and meshlets are silently dropped at the
-// region boundary. That is why the arithmetic lives here and is CALLED by both, never re-derived: same
-// expression, same operand order, so the float math is bit-identical on both sides.
-//
-// Shadow views deliberately do NOT go through this. Cascades are fit to the primary camera, so the LOD
-// that matches their texel pitch is a function of the primary camera's distance; the instance carries
-// that pick pre-made in ShadowMeshletOffset/Count.
+// Per-view LOD. The pick is made TWICE per (instance, view) -- CullInstances to reserve draw-list
+// space, BuildMeshletBlocks to walk -- so it lives here and is CALLED by both, never re-derived.
 uint SelectSurfaceLODForView(FSurfaceDesc Desc, float3 ViewOrigin, float4 SphereBounds)
 {
     const float3 ToView  = SphereBounds.xyz - ViewOrigin;
@@ -118,9 +102,8 @@ uint SelectSurfaceLODForView(FSurfaceDesc Desc, float3 ViewOrigin, float4 Sphere
     const uint   NumLODs = min(Desc.NumLODs, (uint)MESHLET_MAX_LODS);
     const uint   Picked  = Desc.SelectLOD(DistSq, SphereBounds.w * SphereBounds.w);
 
-    // NumLODs comes through the desc and indexes MESHLET_MAX_LODS-long arrays, so clamp it here: past the
-    // table the offsets and counts below are whatever follows the allocation, and a garbage meshlet count
-    // is what both the dispatch domain and the draw-list reservation are summed from.
+    // NumLODs indexes MESHLET_MAX_LODS-long arrays, so clamp here: past the table the offsets are
+    // whatever follows the allocation, and both the dispatch domain and the reservation sum from them.
     return min(Picked, NumLODs > 0u ? NumLODs - 1u : 0u);
 }
 
@@ -131,21 +114,8 @@ uint2 SelectViewMeshletRange(FSurfaceDesc Desc, float3 ViewOrigin, float4 Sphere
     return uint2(Desc.LODMeshletOffset[LOD], Desc.LODMeshletCount[LOD]);
 }
 
-// The shadow LOD a CASCADE renders an instance at.
-//
-// Cascade i covers a slice roughly twice as deep as cascade i-1 at the SAME atlas resolution, so its world
-// texel is correspondingly wider and the geometry that fills one texel is correspondingly coarser. One LOD
-// step per cascade index tracks that: cascade 0 renders what the old single shadow pick rendered (step 0,
-// bit-identical), and each further cascade drops one more level. Everything the far cascades save comes out
-// of geometry that was already narrower than their own texel.
-//
-// Same contract as SelectSurfaceLODForView: CullInstances calls this to RESERVE the (view, draw) region and
-// BuildMeshletBlocks calls it to decide which meshlets that cascade walks. Reserve for one LOD and walk another
-// and the surplus is wasted (or, the other way, meshlets vanish at the region boundary) -- so the
-// arithmetic lives here and is CALLED by both, never re-derived.
-//
-// Only for views flagged Cascade AND selectable (SurfaceDescIndex != kNoSurfaceDesc). Point/spot shadow
-// views and fixed-pick instances (skinned, forced LOD, LODs off) keep FGPUInstance's single shadow range.
+// One LOD step per cascade index: each cascade's world texel is correspondingly wider. Same
+// reserve/walk contract as SelectSurfaceLODForView, so it too is CALLED by both, never re-derived.
 uint SelectCascadeShadowLOD(FSurfaceDesc Desc, float3 CamPos, float4 SphereBounds, uint CascadeIndex,
                             int ShadowLODBias, float ShadowCoarseLODDistSq)
 {
@@ -219,21 +189,8 @@ bool IsHiZOccluded(float3 CenterWS, float RadiusWS)
     return DepthSphere < PyramidDepth;
 }
 
-// Rejects a caster whose shadow is already fully written by something nearer the light, tested against the
-// PREVIOUS frame's cascade depth. Differs from the camera HZB in two ways that matter:
-//
-//   * the cascade atlas is STANDARD Z (Less test, cleared to 1.0), so "the farthest occluder in the
-//     footprint" is a MAX, not a min -- hence SAMPLER_MAX_REDUCTION and a max-reduced pyramid.
-//   * the projection is orthographic, so the sphere's NDC footprint is a plain scale of its world radius
-//     (CascadeHZBNdcScale) rather than the perspective sphere-clip the camera path needs.
-//
-// Conservative by construction: a sphere that leaves the cascade's clip box skips the test entirely, and
-// the tap is allowed to bleed into a neighbouring cascade's tile because sampling a SUPERSET of the
-// footprint can only ever raise the max, i.e. cull less.
-// bMid selects WHICH cascade pyramid, and so which transforms: false = the one built at the end of last
-// frame (what phase 0 tests), true = the one rebuilt mid-frame from this frame's own cascade raster (what
-// phase 2 tests). The two carry different matrices whenever the camera moved, so the choice of pyramid and
-// the choice of transform have to be made together, never independently.
+// Tested against the PREVIOUS frame's cascade depth, which is STANDARD Z, so the footprint reduction
+// is a MAX not a min. bMid selects which pyramid -- and so which transforms; never choose separately.
 bool IsCascadeHZBOccluded(uint CascadeIndex, float3 CenterWS, float RadiusWS, bool bMid = false)
 {
     const uint bValid = bMid ? Scene().CullData.bCascadeHZBMidValid : Scene().CullData.bCascadeHZBValid;
@@ -288,15 +245,8 @@ bool IsCascadeHZBOccluded(uint CascadeIndex, float3 CenterWS, float RadiusWS, bo
     return NearZ > PyramidDepth;
 }
 
-// The per-(instance, view) reject, in ONE place. CullInstances sizes each bucket from this and
-// BuildMeshletBlocks appends against that sizing, so the two must agree exactly: a view one accepts and
-// the other rejects spends room another instance was measured into, and whoever appends into the full
-// region is granted nothing and silently never renders.
-//
-// Hi-Z lives here rather than per meshlet. It reads LAST frame's pyramid either way, so testing whole
-// instances keeps the one-frame disocclusion lag from splitting a mesh apart: an object is hidden or it
-// is not, and a partially occluded one still draws in full. Skinned instances are included, because the
-// instance sphere is re-fed each frame and does track the pose (the bind-pose MESHLET bounds do not).
+// The per-(instance, view) reject in ONE place: CullInstances sizes each bucket from this and
+// BuildMeshletBlocks appends against that sizing, so a disagreement silently drops an instance.
 bool IsInstanceVisibleToView(FCullView View, float3 Center, float Radius, bool bNoCull, bool bCaster)
 {
     // Outside the NoCull gate: NoCull suppresses visibility culling, not whether the instance casts.
@@ -330,10 +280,10 @@ bool IsInstanceVisibleToView(FCullView View, float3 Center, float Radius, bool b
         }
     }
 
-    if (View.HasFlag(CULL_VIEW_FLAG_OCCLUSION) && IsHiZOccluded(Center, Radius))
-    {
-        return false;
-    }
-
+    // No camera Hi-Z test here. This pass runs before the frame's own pyramid exists, so it could only
+    // sample LAST frame's -- and a reject leaves the instance with no blocks at all, which neither cull
+    // phase can undo. That is the frame of lag the two-phase occlusion exists to remove. The camera
+    // occlusion test now lives in MeshletCull's late phase, against the pyramid built this frame.
+    // Cascades keep theirs above: shadow views are single-phase and have no second chance to gain from.
     return true;
 }

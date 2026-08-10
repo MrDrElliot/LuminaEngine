@@ -3,19 +3,8 @@
 #include "Platform/GenericPlatform.h"
 #include "Containers/Array.h"
 
-// Lumina job system, a fiber scheduler with counter-based dependencies.
-//
-// One worker thread per core drains lock-free MPMC job queues (one per priority). Each job runs on a
-// pooled user-mode fiber. When a job waits on a counter it does NOT block the worker: the fiber is
-// parked and the worker switches to other runnable work; the fiber is resumed later, possibly on a
-// different worker (fibers migrate freely). That keeps every core productive, makes nested parallelism
-// deadlock-free, and unlike a blocking wait the waiting stack is suspended rather than held.
-//
-// Non-worker ("external") threads, main/render/physics, are not on fibers. A WaitForCounter from an
-// external thread keeps the old assist-wait behavior: it runs queued jobs inline until satisfied.
-//
-// This is the low-level core. The task-facing API (Task::ParallelFor / FTaskGraph / etc.)
-// is layered on top in TaskSystem / TaskGraph.
+// Fiber scheduler with counter-based dependencies. A job that waits does NOT block its worker: the
+// fiber parks and resumes later, possibly on another worker. External threads assist-wait instead.
 namespace Lumina::Jobs
 {
     enum class EJobPriority : uint8
@@ -24,19 +13,8 @@ namespace Lumina::Jobs
         Normal = 1,
         Low    = 2,
 
-        /**
-         * Throughput work that must never be charged to somebody else's latency.
-         *
-         * The three bands above are all urgency hints WITHIN the worker pool -- a worker with nothing
-         * else to do will happily run a Low job, and a thread assist-waiting on an unrelated counter
-         * will happily inline one. Background is the band that changes the second part: an assist-wait
-         * never dequeues from it, so a long build cannot end up executing inside a frame's wait.
-         *
-         * Use it for work whose completion nothing in the current frame depends on and whose duration
-         * dwarfs a frame -- terrain chunk builds, asset cooks, bake passes. Do NOT use it for a fan-out
-         * the submitting thread is about to wait on: that thread would spin instead of helping, since
-         * refusing to inline Background is exactly the point.
-         */
+        /** Throughput work that must never be charged to somebody else's latency: an assist-wait never
+         *  dequeues from this band. Do NOT use it for a fan-out the submitting thread is about to wait on. */
         Background = 3,
     };
 
@@ -64,15 +42,8 @@ namespace Lumina::Jobs
         uint32 NumWorkerThreads   = 0; // 0 => hardware_concurrency() - 1
         uint32 NumExternalThreads = 8; // reserved thread slots for non-worker threads (main/render/physics/...)
         uint32 NumWorkFibers      = 0; // fibers created up front; 0 => default (kDefaultWorkFibers)
-        // Hard ceiling on the fiber pool, which grows on demand past NumWorkFibers (0 => default).
-        //
-        // A fiber is pinned for as long as the job on it is BLOCKED, not just while it runs, so the pool
-        // has to cover peak simultaneous blocked jobs, not peak parallelism. That peak is a property of
-        // the workload (how many in-flight imports/loads/bakes each sit in a nested wait), and a fixed
-        // pool that is one short does not degrade -- it deadlocks, because the work that would release
-        // the parked fibers is queued behind the fiber they are holding. Growing past the initial size
-        // trades address space for that guarantee; the ceiling exists only to turn a runaway into a
-        // diagnosable error instead of an OOM.
+        // Hard ceiling on the pool, which grows on demand. A fiber is pinned while its job is BLOCKED, so a
+        // fixed pool one short does not degrade -- it deadlocks. The ceiling only bounds a runaway.
         uint32 MaxWorkFibers      = 0;
         uint32 FiberStackSize     = 0; // per-fiber reserved stack in bytes; 0 => default (kDefaultFiberStack)
     };
@@ -85,9 +56,8 @@ namespace Lumina::Jobs
     RUNTIME_API uint32 GetNumWorkers();
     // Total addressable thread slots (workers + external). Array-sizing bound for per-thread data.
     RUNTIME_API uint32 GetNumThreadSlots();
-    // Dense slot in [0, GetNumThreadSlots()) for the OS thread currently running the caller. Stable per
-    // OS thread, but a job's slot is only valid until its first WaitForCounter: a parked fiber may resume
-    // on a different worker, so re-read this after any wait instead of caching the value across it.
+    // Dense slot in [0, GetNumThreadSlots()). Stable per OS thread, but a job's slot is only valid until
+    // its first WaitForCounter -- a parked fiber may resume elsewhere, so re-read it after any wait.
     RUNTIME_API uint32 GetWorkerIndex();
     // True when the caller is a scheduler worker thread (so WaitForCounter yields instead of blocking).
     RUNTIME_API bool   IsWorkerThread();
@@ -129,41 +99,27 @@ namespace Lumina::Jobs
         explicit operator bool() const { return Fiber != nullptr; }
     };
 
-    // Called on the scheduler fiber, AFTER the parking fiber's context is fully saved, to publish the
-    // fiber into a wait queue. Link the supplied handle into your queue under your own lock here.
-    // Return true to actually park; return false to abort the park and resume immediately (used to
-    // close the race where the wait condition was satisfied between the caller's check and the park).
+    // Runs on the scheduler fiber AFTER the parking fiber's context is saved. Link the handle into your
+    // queue under your own lock. Return false to abort the park when the condition is already satisfied.
     using FParkFn = bool (*)(void* Ctx, FFiberHandle Handle);
 
-    // Suspend the CURRENT worker fiber. The worker is freed to run other jobs; this call returns only
-    // once ResumeFiber(handle) is invoked for this fiber (possibly on a different worker). OnPark runs
-    // the publish step described above. WORKER FIBERS ONLY, external threads must assist-wait instead
-    // (see AssistOneJob); fiber-aware primitives branch on IsWorkerThread().
+    // Suspend the CURRENT worker fiber; returns only once ResumeFiber is called for it, possibly on a
+    // different worker. WORKER FIBERS ONLY -- external threads must assist-wait (see AssistOneJob).
     RUNTIME_API void ParkFiber(FParkFn OnPark, void* Ctx);
 
     // Make a previously parked fiber runnable again. Callable from any thread.
     RUNTIME_API void ResumeFiber(FFiberHandle Handle);
 
-    // Identity of the fiber currently executing, or a null handle on an external (non-worker) thread.
-    // Use this instead of a thread_local for any "am I still the same logical execution?" flag: a
-    // fiber can park and resume on a different worker, so thread identity does not survive a yield.
+    // Use this rather than a thread_local for any "am I still the same logical execution?" flag: a fiber
+    // can park and resume on a different worker, so thread identity does not survive a yield.
     RUNTIME_API FFiberHandle GetCurrentFiberHandle();
 
-    // Mark the calling THREAD as running a serial pump that must never yield to the scheduler. While
-    // set, WaitForCounter on this thread does NOT park: it assist-waits instead, servicing queued jobs
-    // inline until the counter clears. Parking would strand the pump until the wait resolved, and the
-    // fiber could resume on a different thread, breaking any thread_local state the pump depends on.
-    // (No caller today -- the render drain that motivated it is gone -- kept as the guard for any
-    // future single-threaded pump.)
-    //
-    // So a fan-out inside a guarded region is safe and still parallel -- the guarded thread just helps
-    // rather than yielding. It is reported once per process as a warning, since a blocking fan-out in
-    // a serial pump is a design smell worth seeing, not because it is unsafe. Pass nullptr to clear.
+    // Marks a THREAD as a serial pump that must never yield: WaitForCounter assist-waits instead of
+    // parking, which would strand the pump and could resume it on another thread. Pass nullptr to clear.
     RUNTIME_API void SetThreadNoParkGuard(const char* GuardName);
 
-    // Run one queued job inline if one is available; returns true if it ran one. The assist primitive
-    // for external-thread (non-fiber) wait loops in fiber-aware sync objects, running queued work
-    // while spinning keeps the system deadlock-free when the awaited signal depends on other jobs.
+    // Run one queued job inline. The assist primitive for external wait loops -- running queued work
+    // while spinning is what keeps things deadlock-free when the awaited signal depends on other jobs.
     RUNTIME_API bool AssistOneJob();
 
     // ---- Introspection (for the editor Task System profiler) ----

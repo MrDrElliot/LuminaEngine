@@ -20,11 +20,8 @@ namespace Lumina::RHI
         void Initialize();
         void Shutdown();
 
-        // Both hand back the dedicated staging blocks the flushed ops own instead of releasing them, because
-        // only the CALLER knows when the copies reading them retire. Releasing inside the flush retires
-        // against whatever slot is current at RECORD time, which during BeginFrame is still the PREVIOUS
-        // slot -- so the block was freed after waiting a timeline value older than the submit that reads it.
-        // On the async transfer queue that window is wide enough to hand the copy engine a freed address.
+        // Both hand the staging blocks back rather than releasing them: only the CALLER knows when the copies
+        // retire. Releasing inside the flush retires against the PREVIOUS slot during BeginFrame.
         bool Flush(FCmdListH CL, TVector<GPUPtr>& OutOwnedStaging, uint32* OutSliceMask = nullptr);
 
         uint32 FlushSplit(FCmdListH BufferCL, FCmdListH ImageCL,

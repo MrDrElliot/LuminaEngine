@@ -25,14 +25,12 @@ namespace Lumina
 
     namespace
     {
-        // The one description of every compiled material shader stage: which serialized SPIR-V blob
-        // feeds which library entry, plus the GUID-key suffix and pipeline type. PostLoad and the
-        // editor graph compile both walk this, so adding a stage is a one-line change here (plus the
-        // EMaterialShaderStage entry it's indexed by).
+        // Which serialized SPIR-V blob feeds which library entry, plus the GUID-key suffix and pipeline
+        // type. PostLoad and the editor compile both walk this, so adding a stage is a one-line change.
         struct FMaterialStageDesc
         {
             TVector<uint32> CMaterial::*     Binaries;
-            const FShaderEntry* CMaterial::* Entry;
+            FShaderH CMaterial::*            Entry;
             const char*                      Suffix;
             ERHIShaderType                   Type;
         };
@@ -54,9 +52,8 @@ namespace Lumina
             "GMaterialStages must cover every EMaterialShaderStage");
 
 #if USING(WITH_EDITOR)
-        // Materials whose serialized stages predate the current shader templates. Filled during the
-        // (parallel) PostLoad wave, drained on the editor's game thread -> mutex, TObjectPtr for safety
-        // against a material dying before the drain reaches it.
+        // Filled during the parallel PostLoad wave, drained on the game thread -- hence the mutex, and
+        // TObjectPtr in case a material dies before the drain reaches it.
         FMutex                        StaleTemplateMutex;
         TVector<TObjectPtr<CMaterial>> StaleTemplateMaterials;
 
@@ -81,11 +78,8 @@ namespace Lumina
         CMaterialInterface::Serialize(Ar);
     }
 
-    // Both defaults are GENERATED -- source is read from the VFS, token-substituted and compiled -- so
-    // this hook needs a live shader compiler. The engine guarantees one: GRenderManager->Initialize()
-    // publishes GShaderCompiler before the first ProcessNewlyLoadedCObjects(). Anything that creates
-    // CDOs without bringing up the renderer (tests, tooling) does not, and the creators say so rather
-    // than dereferencing a null global.
+    // Both defaults are generated from shader source, so this needs a live compiler. The engine
+    // publishes GShaderCompiler before the first CDO; tests and tooling do not, and the creators say so.
     void CMaterial::PostCreateCDO()
     {
         if (DefaultMaterial == nullptr)
@@ -212,11 +206,8 @@ namespace Lumina
         CTexture* Texture = ResolvedTextures[Index].Get();
         const int32 ResourceID = (Texture != nullptr) ? Texture->GetResourceID() : -1;
 
-        // Loaded but with no heap slot means its PostLoad has not run -- RHI::Textures::Create is what
-        // assigns the slot. Making these refs SOFT took them out of the load graph's Hard/Owned BFS, so
-        // they are no longer ordered leaf-first ahead of the material that reads them, which is exactly
-        // the guarantee the old hard refs bought. Loud, because it bakes a placeholder into the block
-        // and nothing on a normal load comes back to fix it.
+        // Loaded but with no heap slot means its PostLoad has not run. Soft refs are outside the load
+        // graph's leaf-first ordering, so this is loud: it bakes a placeholder nothing comes back to fix.
         if (Texture != nullptr && ResourceID < 0)
         {
             LOG_WARN("Material '{}': texture slot {} ('{}') loaded but is not GPU-resident (no heap slot); "
@@ -225,11 +216,8 @@ namespace Lumina
 
         const uint32 SlotID = (ResourceID >= 0) ? (uint32)ResourceID : RHI::Textures::DefaultResourceID();
 
-        // Keep this material's OWN block in step with what it just resolved. The usual caller is an
-        // instance demanding a slot it does not override, and it writes the return value into the
-        // instance block only -- so without this the master keeps the placeholder it was baked with
-        // while RequestTexturesResolved's all-resolved fast path reports everything fine, and the
-        // master renders magenta until something recompiles it.
+        // Keep this material's OWN block in step with what it just resolved. The usual caller writes only
+        // the instance block, so without this the master keeps its placeholder and renders magenta.
         if (Index < MAX_TEXTURES && MaterialUniforms.Textures[Index] != SlotID)
         {
             MaterialUniforms.Textures[Index] = SlotID;
@@ -264,11 +252,8 @@ namespace Lumina
 
         if (bAllResolved)
         {
-            // Steady state after the first frame or two -- but "resolved" is not "the block says so".
-            // A slot baked while its texture was loaded but not yet GPU-resident is holding the
-            // placeholder, and the load completion that would have fixed it never fires (nothing was
-            // in flight). Re-push when the block and the textures disagree, and report not-ready until
-            // every slot has a real ID so the surface retries instead of caching the placeholder.
+            // "Resolved" is not "the block says so": a slot baked while its texture was not yet GPU-resident
+            // holds the placeholder and no load completion will fix it. Report not-ready so the surface retries.
             bool bStaleBlock  = false;
             bool bAllResident = true;
             for (uint32 i = 0; i < NumTextures; ++i)
@@ -338,10 +323,8 @@ namespace Lumina
 
     bool CMaterial::ReferencesTexture(const CTexture* ChangedTexture) const
     {
-        // Compares against RESOLVED slots only, and must never resolve to answer. This runs for every
-        // material in the project on a texture reimport; resolving here would load every default in the
-        // project the first time anyone re-cooks a texture -- strictly worse than the hard refs this
-        // replaced. A slot nobody has demanded cannot be displaying the changed texture anyway.
+        // Compares RESOLVED slots only and must never resolve to answer -- this runs for every material on
+        // a texture reimport. A slot nobody demanded cannot be displaying the changed texture anyway.
         for (const TObjectPtr<CTexture>& Texture : ResolvedTextures)
         {
             if (Texture.Get() == ChangedTexture)
@@ -359,10 +342,8 @@ namespace Lumina
             return false;
         }
 
-        // Every RESOLVED slot, not just the changed one: the block is cheap to rewrite, and any OTHER
-        // slot that was baked while its texture was still unresolved is wrong in exactly the same way.
-        // Unresolved slots are left alone -- re-cooking a texture is not a reason to start loading
-        // defaults that nothing has asked for.
+        // Every resolved slot, not just the changed one: any other slot baked while unresolved is wrong the
+        // same way. Unresolved slots are left alone rather than loading defaults nothing asked for.
         const uint32 NumTextures = (uint32)Math::Min<size_t>(ResolvedTextures.size(), MAX_TEXTURES);
         for (uint32 i = 0; i < NumTextures; ++i)
         {
@@ -377,11 +358,8 @@ namespace Lumina
 
         UpdateMaterialUniforms();
 
-        // Instances copied this block wholesale when they were built and nothing else rewrites the
-        // slots they inherit. That matters most for a slot bound WITHOUT a parameter -- a plain Texture
-        // Sample node produces a CMaterial::Textures entry with no FMaterialParameter, so every
-        // parameter-driven path on the instance is blind to it. Those slots stayed on the placeholder
-        // the master was baked with until a recompile of the master pushed a fresh block down.
+        // Instances copied this block wholesale and nothing else rewrites the slots they inherit. Worst for
+        // a slot bound without a parameter, which every parameter-driven path on the instance is blind to.
         TVector<CMaterialInstance*> Snapshot;
         {
             FScopeLock Lock(InstancesMutex);
@@ -411,11 +389,8 @@ namespace Lumina
 
     void CMaterial::PostLoad()
     {
-        // "Has this material ever been compiled" -- asked of the whole stage table rather than of two
-        // named stages. Keying it on the vertex stage was correct only while every material had one:
-        // PBR geometry is task + mesh now and compiles none, so that test would classify every surface
-        // material as never-compiled and skip the commit loop below -- the load path that registers the
-        // mesh binaries the raster binds. The material would load clean and draw nothing.
+        // Asked of the whole stage table, not two named stages: PBR geometry is task + mesh and compiles no
+        // vertex stage, so keying on that would classify every surface material as never-compiled.
         bool bHasCompiledStage = false;
         for (size_t i = 0; i < (size_t)EMaterialShaderStage::Count && !bHasCompiledStage; ++i)
         {
@@ -470,14 +445,8 @@ namespace Lumina
                 }
             }
             
-            // Textures are deliberately NOT resolved here. Loading them at PostLoad is exactly the
-            // behavior this replaced: it made every default resident the moment any material loaded,
-            // including the defaults of every parameter that every instance overrides. Slots start on
-            // the placeholder and are demanded per-slot -- by an instance for the parameters it does
-            // NOT override, or by RequestTexturesResolved when a surface resolves against this material.
-            // RESIZE, never assign. The editor compile path fills ResolvedTextures with the live
-            // textures the graph already holds and then calls PostLoad -- clearing here would throw
-            // those away one line later and leave a freshly compiled material rendering placeholders.
+            // Textures are deliberately NOT resolved here; slots start on the placeholder and are demanded per
+            // slot. RESIZE, never assign -- the editor compile path fills this before calling PostLoad.
             ResolvedTextures.resize(Textures.size());
 
             const uint32 NumTextures = (uint32)Math::Min<size_t>(Textures.size(), MAX_TEXTURES);
@@ -503,9 +472,8 @@ namespace Lumina
             {
                 GPUFlags |= EMaterialGPUFlags::Additive;
             }
-            // Shading model rides the flags as a 3-bit field, so the GBuffer pass can stamp it at RUNTIME
-            // instead of the shader being specialized per model. Lit is 0, so an ordinary material
-            // contributes nothing here.
+            // Shading model rides the flags as a 3-bit field so the GBuffer pass stamps it at RUNTIME instead
+            // of specializing the shader per model. Lit is 0, so an ordinary material contributes nothing.
             const uint32 ShadingModelBits =
                 ((uint32)ShadingModel & kMaterialShadingModelMask) << kMaterialShadingModelShift;
 
@@ -528,9 +496,8 @@ namespace Lumina
             NotifyInstancesParentChanged();
 
 #if !USING(WITH_EDITOR)
-            // SPIR-V blobs are dead in cooked builds; editor keeps them for recompile/save. Driven off
-            // the stage table rather than listed by hand -- the hand-written list silently kept dropping
-            // stages that no longer existed and missing ones that did.
+            // SPIR-V blobs are dead in cooked builds; the editor keeps them for recompile/save. Driven off the
+            // stage table because the hand-written list kept dropping stages and missing new ones.
             for (const FMaterialStageDesc& Desc : GMaterialStages)
             {
                 TVector<uint32>& Blob = this->*Desc.Binaries;
@@ -540,15 +507,23 @@ namespace Lumina
 #endif
         }
 
-        // Recompile chokepoint; the material editor calls PostLoad() after committing new stages. Only
-        // entries that resolved a surface against this master (directly, or through one of its instances)
-        // need rebuilding -- surfaces record both, so this reaches them.
+        // Recompile chokepoint. Only entries that resolved a surface against this master (directly or via
+        // an instance) need rebuilding, and surfaces record both.
         FMeshResolveCache::InvalidateDependency(this);
     }
 
     void CMaterial::OnDestroy()
     {
         CMaterialInterface::OnDestroy();
+
+        // Drops this material's strong reference to each stage. Entries shared with another material
+        // survive; ones only this material held are queued for release, and every weak handle still
+        // pointing at them starts resolving to null so its holder re-resolves.
+        for (const FMaterialStageDesc& Desc : GMaterialStages)
+        {
+            FShaderLibrary::Release(this->*Desc.Entry);
+            this->*Desc.Entry = {};
+        }
 
         // Resolves are keyed partly on this pointer; drop them before it can be recycled.
         FMeshResolveCache::InvalidateDependency(this);
@@ -610,12 +585,12 @@ namespace Lumina
         return const_cast<CMaterial*>(this);
     }
     
-    const FShaderEntry* CMaterial::GetVertexShader() const
+    FShaderH CMaterial::GetVertexShader() const
     {
         return VertexShader;
     }
 
-    const FShaderEntry* CMaterial::GetPixelShader() const
+    FShaderH CMaterial::GetPixelShader() const
     {
         return PixelShader;
     }
@@ -863,15 +838,38 @@ namespace Lumina
             Binaries.assign(Spirv.data(), Spirv.data() + Spirv.size());
         }
 
-        this->*Desc.Entry = FShaderLibrary::Commit(FName((GetGUID().ToString() + Desc.Suffix).c_str()),
+        // A material stage is a STRONG reference: Commit returns +1 and this object owns it until the stage
+        // is re-committed or cleared. Caches hold weak FShaderH and are deliberately uncounted.
+        const FShaderH Previous  = this->*Desc.Entry;
+        const FShaderH Committed = FShaderLibrary::Commit(FName((GetGUID().ToString() + Desc.Suffix).c_str()),
             Desc.Type, Spirv);
+        this->*Desc.Entry = Committed;
+
+        if (Previous != Committed)
+        {
+            // The old entry loses this owner. It only actually frees if no OTHER material shares it --
+            // content keying means identical bytecode is one entry with many owners.
+            FShaderLibrary::Release(Previous);
+
+            // Only on a real swap. Commit is content-keyed, so an unchanged recompile hands back the same
+            // entry -- bumping unconditionally would make every load re-resolve every dynamic mesh for
+            // nothing. NOTE this is still required with handles: a shared entry stays LIVE when one of its
+            // owners re-points, so a weak handle to it keeps resolving and cannot notice the change.
+            ++ShaderRevision;
+        }
+        else
+        {
+            // Same entry, so Commit's +1 is a duplicate of the reference already held.
+            FShaderLibrary::Release(Committed);
+        }
     }
 
     void CMaterial::ClearShaderStage(EMaterialShaderStage Stage)
     {
         const FMaterialStageDesc& Desc = GMaterialStages[(size_t)Stage];
         (this->*Desc.Binaries).clear();
-        this->*Desc.Entry = nullptr;
+        FShaderLibrary::Release(this->*Desc.Entry);
+        this->*Desc.Entry = {};
     }
 
     const TVector<uint32>& CMaterial::GetShaderStageBinaries(EMaterialShaderStage Stage) const

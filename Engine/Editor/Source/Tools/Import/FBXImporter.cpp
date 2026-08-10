@@ -224,10 +224,8 @@ namespace Lumina
                     ofbx::DVec3 AnimRotation = Bone->getLocalRotation();
                     ofbx::DVec3 AnimScale = Bone->getLocalScaling();
 
-                    // getNodeLocalTransform falls back to the curve node's authored per-axis default
-                    // (d|X/Y/Z) when an axis has no curve. Exporters routinely omit unanimated axes;
-                    // evaluating curves directly with a 0 default snapped those axes to zero (bones
-                    // scattered to axis planes, scale-0 collapses).
+                    // getNodeLocalTransform falls back to the curve node's authored per-axis default when an axis has
+                    // no curve. Evaluating curves directly with a 0 default snapped unanimated axes to zero.
                     if (TranslationNode)
                     {
                         AnimTranslation = TranslationNode->getNodeLocalTransform(Time);
@@ -257,9 +255,8 @@ namespace Lumina
                     
                     KeyframeData Keyframe;
                     Keyframe.Time = Time;
-                    // Math::Decompose normalizes the basis before the quat extraction; ToQuat on the raw
-                    // matrix breaks whenever the rig carries non-unit bone scale (baked unit conversion,
-                    // squash-and-stretch).
+                    // Math::Decompose normalizes the basis before extracting the quat; ToQuat on the raw matrix breaks
+                    // whenever the rig carries non-unit bone scale.
                     if (!Math::Decompose(Mat, Keyframe.Scale, Keyframe.Rotation, Keyframe.Translation))
                     {
                         Keyframe.Translation = FVector3(Mat[3][0], Mat[3][1], Mat[3][2]);
@@ -518,9 +515,8 @@ namespace Lumina
                 return Index;
             };
 
-            // FBX has no masked/alpha-test flag and OpenFBX exposes no opacity texture, so alpha-tested foliage
-            // would import Opaque (the cutout lives in the base-color alpha). Heuristically flag foliage-like
-            // materials as Masked by name; the user can override the blend mode per-material in the editor.
+            // FBX has no masked flag and OpenFBX exposes no opacity texture, so alpha-tested foliage would
+            // import Opaque. Flagged heuristically by name; the user can override the blend mode per material.
             auto IsFoliageName = [&](const FString& Name, int32 BaseColorImage) -> bool
             {
                 const FFixedString TexKey = (BaseColorImage >= 0 && (size_t)BaseColorImage < ImportData.Images.size())
@@ -589,10 +585,8 @@ namespace Lumina
                         Out.NormalImage    = ExtractTexture(Material, ofbx::Texture::NORMAL,   ETextureColorSpace::Linear, GlobalIdx, "N");
                         Out.EmissiveImage  = ExtractTexture(Material, ofbx::Texture::EMISSIVE, ETextureColorSpace::SRGB,   GlobalIdx, "E");
 
-                        // OpenFBX returns emissive_color=(1,1,1), factor=1 for materials that DON'T author emissive
-                        // (those are its struct defaults). Combined with the white default emissive texture, that makes
-                        // every non-emissive material glow full white (emissive is additive + unlit). Treat the exact
-                        // unauthored default (with no emissive map) as "not emissive"; any authored value/map is kept.
+                        // OpenFBX returns emissive=(1,1,1) factor=1 for materials that do NOT author emissive, which makes
+                        // every one glow white. Treat that exact unauthored default as not-emissive; keep any real value.
                         const bool bDefaultEmissive = (Emissive.r == 1.0f && Emissive.g == 1.0f && Emissive.b == 1.0f && EmissiveF == 1.0f);
                         Out.EmissiveColor = (Out.EmissiveImage == INDEX_NONE && bDefaultEmissive)
                             ? FVector3(0.0f)
@@ -745,6 +739,8 @@ namespace Lumina
         struct FFBXMeshResult
         {
             bool                        bSkinned = false;
+            /** Whether this mesh carried a colour attribute; folded into the import-wide flag serially. */
+            bool                        bHasColors = false;
             TVector<FSourceVertex>            StaticVerts;
             TVector<FSourceSkinnedVertex>     SkinnedVerts;
             TVector<uint32>             Indices;
@@ -773,6 +769,7 @@ namespace Lumina
             const ofbx::Vec3Attributes   Normals   = Geometry.getNormals();
             const ofbx::Vec2Attributes   UVs       = Geometry.getUVs();
             const ofbx::Vec4Attributes   Colors    = Geometry.getColors();
+            Result.bHasColors = (Colors.values != nullptr);
 
             // Bake FBX transform: WorldVertex = GlobalTransform * GeometricMatrix * LocalVertex.
             // Per-mesh GeometricMatrix is FBX-specific; ignoring it leaves meshes inconsistently oriented.
@@ -786,9 +783,8 @@ namespace Lumina
             const FMatrix4 PosMatrix       = Math::Scale(FMatrix4(1.0f), FVector3(SceneScale)) * MeshToEngine;
             const FMatrix3 NormalMatrix    = Math::Transpose(Math::Inverse(FMatrix3(MeshToEngine)));
 
-            // A negative-determinant (mirrored / negative-scale) node reflects the baked geometry, which flips
-            // triangle winding. The engine is CCW-front + back-face-cull, so the correct side would be culled and
-            // the reversed side shown (mirrored textures, e.g. backwards menu boards). Reverse the winding below.
+            // A negative-determinant node reflects the geometry, flipping triangle winding. The engine is
+            // CCW-front + back-face-cull, so the correct side would be culled. Winding is reversed below.
             const bool     bMirroredXform = Math::Determinant(FMatrix3(MeshToEngine)) < 0.0f;
 
             const int CPCount = Mesh->getGeometry()->getGeometryData().getPositions().count;
@@ -843,14 +839,8 @@ namespace Lumina
                         }
                         else
                         {
-                            // Keep the four strongest influences: find the weakest slot FIRST, then replace
-                            // it at most once. The replacement used to sit inside this search loop, which
-                            // both mutated the array mid-scan and let a single incoming influence overwrite
-                            // two or three slots with itself -- so a >4-influence vertex ended up with the
-                            // same bone duplicated across its slots and its real influences discarded. After
-                            // the normalize below the weights still summed to 1, so it did not blow up; it
-                            // just bound the vertex to the wrong bone and dragged it along, which is what
-                            // stretched geometry out of dense-influence regions (fingers, crotch, toes).
+                            // Find the weakest slot FIRST, then replace it at most once. Replacing inside the search mutated
+                            // the array mid-scan and let one influence overwrite several slots with itself.
                             int Min = 0;
                             for (int M = 1; M < 4; ++M)
                             {
@@ -885,13 +875,8 @@ namespace Lumina
                         Skin.Weights[1] = Skin.Weights[2] = Skin.Weights[3] = 0.0f;
                         Skin.Joints[0] = Skin.Joints[1] = Skin.Joints[2] = Skin.Joints[3] = 0;
 
-                        // Count MUST be updated with the weights. The per-vertex copy below is bounded by
-                        // Count, so leaving it at 0 meant this fallback was written here and then never
-                        // copied to the vertex -- unweighted control points shipped with all-zero weights.
-                        // On the GPU that blends an ALL-ZERO matrix: the vertex lands on the model origin and
-                        // its normal is normalize(0,0,0) = NaN, which rasterizes as a black sliver from the
-                        // mesh down to the root. Auto-rigged extremities (fingertips, toes) are where
-                        // unreferenced control points show up, which is exactly where the slivers came from.
+                        // Count MUST be updated with the weights: the per-vertex copy is bounded by Count, so leaving it 0
+                        // ships all-zero weights, which blend an all-zero matrix into a NaN normal and a black sliver.
                         Skin.Count = 1;
                     }
                     else
@@ -955,10 +940,8 @@ namespace Lumina
                             {
                                 ofbx::Vec2 U = UVs.get(Index);
 
-                                // FBX authoring uses the OpenGL bottom-left UV origin; the engine renders with the
-                                // Vulkan top-left origin, so convert here (otherwise textures import upside-down).
-                                // The bFlipUVs option (applied again in FinalizeMeshImportData) then toggles this
-                                // back off for the rare FBX that was authored top-left. glTF is already top-left.
+                                // FBX authors with the OpenGL bottom-left UV origin; the engine renders Vulkan top-left. bFlipUVs
+                                // toggles this back off for the rare FBX authored top-left. glTF is already top-left.
                                 U.y = 1.0f - U.y;
 
                                 UV = FVector2(U.x, U.y);
@@ -989,10 +972,8 @@ namespace Lumina
                                 {
                                     const FSkin& Skin = Skins[Positions.indices[Index]];
 
-                                    // All four slots, not Skin.Count of them. The arrays are fixed 4-wide and
-                                    // zero-initialized, and the pass above normalized every slot, so copying
-                                    // the full width is always correct -- and it removes the whole class of
-                                    // bug where Count disagrees with the slots it is supposed to describe.
+                                    // All four slots, not Skin.Count of them: the arrays are fixed 4-wide, zero-initialized and fully
+                                    // normalized above, so copying the full width removes the Count-disagrees-with-slots bug class.
                                     for (int j = 0; j < 4; ++j)
                                     {
                                         JointIndices[j] = (uint8)Skin.Joints[j];
@@ -1001,9 +982,8 @@ namespace Lumina
                                 }
 
                                 Vertex.JointIndices = JointIndices;
-                                // Weights are already normalized per control point above; this re-normalizes
-                                // (harmless) and, crucially, quantizes to a quartet summing to exactly 255
-                                // instead of truncating each component down to a 252-255 sum.
+                                // Already normalized per control point above. This quantizes to a quartet summing to exactly 255
+                                // rather than truncating each component to a 252-255 sum.
                                 Vertex.JointWeights = PackSkinWeights(JointWeights);
 
                                 VertexIdx = (uint32)Result.SkinnedVerts.size();
@@ -1063,6 +1043,10 @@ namespace Lumina
             size_t SkinnedVertCount = 0, SkinnedIdxCount = 0, SkinnedSurfCount = 0;
             for (const FFBXMeshResult& R : Results)
             {
+                // One coloured mesh makes the generated materials sample vertex colour; meshes without the
+                // attribute were filled opaque white, so the multiply is a no-op on them.
+                ImportData.bHasVertexColors |= R.bHasColors;
+
                 if (R.bSkinned)
                 {
                     SkinnedVertCount += R.SkinnedVerts.size();

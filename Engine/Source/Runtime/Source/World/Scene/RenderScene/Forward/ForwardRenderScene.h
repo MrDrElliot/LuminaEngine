@@ -1,4 +1,6 @@
 #pragma once
+
+#include "Renderer/ShaderHandle.h"
 #include "Core/Delegates/Delegate.h"
 #include "Memory/Allocators/Allocator.h"
 #include "Memory/SmartPtr.h"
@@ -302,7 +304,7 @@ namespace Lumina
 
                 bool                    bReady              = false;  // asset ready to simulate
                 bool                    bUsesCustomShader   = false;
-                const FShaderEntry*     CustomComputeShader = nullptr;  // set iff bUsesCustomShader
+                FShaderH     CustomComputeShader = {};  // set iff bUsesCustomShader
                 uint32                  TextureIndex        = 0u;     // heap ResourceID, resolved game-side
 
                 TVector<FVector4>       ModuleParamValues;
@@ -332,7 +334,7 @@ namespace Lumina
             struct FDeferredMaterialEntry
             {
                 uint32              MaterialIndex;
-                const FShaderEntry* DeferredShader;
+                FShaderH DeferredShader;
             };
 
             struct FGeometry
@@ -568,11 +570,18 @@ namespace Lumina
 
         FSceneBuffer GetRenderBuckets()    const { return RenderBucketRing[CurrentFrameSlot]; }
         FSceneBuffer GetMeshletDrawList()  const { return MeshletDrawListRing[CurrentFrameSlot]; }
-        FSceneBuffer GetTaskDrawArgs()     const { return TaskDrawArgsRing[CurrentFrameSlot]; }
+        FSceneBuffer GetMeshDrawArgs()     const { return MeshDrawArgsRing[CurrentFrameSlot]; }
         FSceneBuffer GetMeshletBlocks()    const { return MeshletBlockRing[CurrentFrameSlot]; }
-        /** One uint of lane bits per meshlet block: what the early VisBuffer phase deferred on Hi-Z. */
-        FSceneBuffer GetMeshletDeferBits() const { return MeshletDeferBitsRing[CurrentFrameSlot]; }
+        /** One uint per retained slot: was that instance visible to the camera at the end of last frame.
+            Persistent and deliberately NOT ringed -- the early and late draw sets partition the visible
+            set, so any value here yields exactly one draw and a race can only pick the wrong phase. */
+        FSceneBuffer GetInstanceVisibility() const { return InstanceVisibilityBuffer; }
         FSceneBuffer GetBlockDispatchArgs() const { return BlockDispatchArgsRing[CurrentFrameSlot]; }
+        /** One workgroup per written meshlet block, sized by BuildMeshletCullArgs. */
+        FSceneBuffer GetMeshletCullDispatchArgs() const { return MeshletCullDispatchArgsRing[CurrentFrameSlot]; }
+        /** (base, count) per (visible instance, view): the one place the per-view meshlet range is
+            decided. CullInstances writes it when it reserves; BuildMeshletBlocks reads it to append. */
+        FSceneBuffer GetInstanceViewRanges() const { return InstanceViewRangeRing[CurrentFrameSlot]; }
         FSceneBuffer GetSpdCounter()       const { return SpdCounterRing[CurrentFrameSlot]; }
 
         /** Per-material counts, starts, scatter cursors, dispatch args and the frame pixel total. */
@@ -594,6 +603,10 @@ namespace Lumina
         uint32 GetDisplayResourceID() const override;
 
         RUNTIME_API void SettleResolveWork(int32 MaxIterations = 8);
+
+        /** Editor-only tripwire: warns if any dynamic-mesh surface is STILL resolved against superseded
+            shaders after a full resolve pass, i.e. a resolve gate is missing an input. */
+        void ValidateNoStaleResolves(FEntityRegistry& Registry);
         RHI::FTextureH GetDisplayTexture() const override { return SceneViews[0].Output.Texture; }
         const FSceneImage& GetDisplayImage() const { return SceneViews[0].Output; }
         const FSceneImage& GetPrimaryNamedImage(ENamedImage Image) const { return SceneViews[0].Images[(int)Image]; }
@@ -651,9 +664,9 @@ namespace Lumina
         void SpotShadowPass(RHI::FCmdListH CL);
         void CascadedShowPass(RHI::FCmdListH CL, uint32 CascadeViewBase);
         void DecalPass(RHI::FCmdListH CL);
-        /** Early rasterizes everything last frame's pyramid did not hide and records what it deferred;
-            Late re-tests exactly that against the pyramid rebuilt from Early's own depth. A view without
-            ECullViewFlags::MeshletHiZ defers nothing, so its Late phase is a no-op and can be skipped. */
+        /** Classic two-phase: Early replays the set that was visible last frame, with no Hi-Z, to build
+            the pyramid; Late tests every instance against that pyramid and draws the ones Early did not.
+            A view without ECullViewFlags::MeshletHiZ is single-phase and drawn entirely by Early. */
         void VisBufferPass(RHI::FCmdListH CL, uint32 ViewIndex, bool bClear,
                            ECullPhase::Type Phase = ECullPhase::Early);
         /** Count pixels per material, prefix-sum the counts, scatter every pixel's position into its
@@ -670,7 +683,7 @@ namespace Lumina
         void SceneDebugViewPass(RHI::FCmdListH CL);
         #endif
         bool BindShadowBatchPipeline(RHI::FCmdListH CL, const FMeshDrawCommand& Batch,
-                                    const FShaderEntry* PixelShader);
+                                    FShaderH PixelShader);
 
         void DrawShadowBatch(RHI::FCmdListH CL, const FMeshDrawCommand& Batch, bool bUseMesh,
                              uint32 CullViewIndex, int32 ShadowDataIndex, int32 ShadowViewIndex,
@@ -776,21 +789,18 @@ namespace Lumina
 
         struct FGraphicsPipelineKey
         {
-            const FShaderEntry* VS = nullptr;
-            const FShaderEntry* PS = nullptr;    // null = depth-only
-            const FShaderEntry* MS = nullptr;    // mesh shader; when set, a mesh pipeline is built (VS ignored)
-            const FShaderEntry* TS = nullptr;
+            FShaderH VS = {};
+            FShaderH PS = {};    // null = depth-only
+            FShaderH MS = {};    // mesh shader; when set, a mesh pipeline is built (VS ignored)
             RHI::ETopology  Topology = RHI::ETopology::TriangleList;
             bool            bWireframe = false;
             bool            bAlphaToCoverage = false;
             uint8           SampleCount = 1;
             EFormat         DepthFormat = EFormat::UNKNOWN;
-            bool            bTaskShadow = false;
             uint32          ShadingFeatures = SF_All;        // ShadeSurface spec constants (ids 1-3)
             bool            bVisBufferMasked = false;        // VISBUFFER_MASKED spec constant (id 4): VisBuffer geometry emits interpolants
             uint8           SkinnedMode = 2;                 // SPEC_SKINNED spec constant (id 5): 0=static, 1=skinned, 2=dynamic (runtime branch)
             uint8           TriCullMode = 0;
-            uint8           TaskPayload = 0;
             TFixedVector<RHI::FColorTarget, 4> ColorTargets;
         };
 
@@ -804,8 +814,6 @@ namespace Lumina
 
         RHI::FPipelineH      GetOrCreatePipeline(const FGraphicsPipelineKey& Key);
 
-        static const FShaderEntry* MeshletCullTaskShader();
-
         /** Where a meshlet pass draws, as opposed to what. Everything here is per PASS, not per batch. */
         struct FMeshletPassContext
         {
@@ -814,10 +822,14 @@ namespace Lumina
             int32             ShadowViewIndex   = 0;
             float             ViewportW         = 0.0f;
             float             ViewportH         = 0.0f;
-            /** Early unless this pass is the second half of a two-phase occlusion draw. Every
-                single-phase pass leaves this alone -- see ECullViewFlags::MeshletHiZ. */
-            ECullPhase::Type  CullPhase         = ECullPhase::Early;
+            /** Which part of the bucket's draw region to rasterize. The two VisBuffer phases each take
+                their own slice; every single-phase pass takes All, which is final by the time it runs. */
+            EMeshletSlice     Slice             = EMeshletSlice::All;
         };
+
+        /** Culls every view's meshlets into the draw list and publishes the slice each pass draws.
+            The sole authority: nothing rasterizes a meshlet this did not keep. */
+        void MeshletCullPass(RHI::FCmdListH CL, EMeshletSlice Slice);
 
         void DrawMeshletBatch(RHI::FCmdListH CL, const FMeshDrawCommand& Batch, const FMeshletPassContext& Ctx);
 
@@ -832,8 +844,6 @@ namespace Lumina
                 const FMeshDrawCommand& Batch = DrawCommands[Idx];
 
                 FGraphicsPipelineKey Key;
-                // Decided here rather than by the caller, so it cannot disagree with the draw below.
-                Key.TS        = MeshletCullTaskShader();
                 // Homogeneous batch -> dead-strip the unused vertex-load path; mixed -> runtime branch (2).
                 Key.SkinnedMode = (Batch.bAnySkinned && Batch.bAnyStatic) ? 2u : (Batch.bAnySkinned ? 1u : 0u);
 
@@ -857,7 +867,7 @@ namespace Lumina
             ForEachMeshletBatch(CL, DrawList, Ctx, static_cast<TSetup&&>(Setup),
                                 [](const FMeshDrawCommand&) {});
         }
-        RHI::FPipelineH      GetOrCreateComputePipeline(const FShaderEntry* CS);
+        RHI::FPipelineH      GetOrCreateComputePipeline(FShaderH CS);
         RHI::FDepthStencilH  GetOrCreateDepthState(const RHI::FDepthStencilDesc& Desc);
 
         // Engine-wide per-draw args.
@@ -910,10 +920,13 @@ namespace Lumina
         TArray<uint64,       RHI::kFramesInFlight>          InstanceBufferSerial = {};
         TArray<uint32, RHI::kFramesInFlight>                RenderBucketRingLowUsage = {};
         TArray<uint32, RHI::kFramesInFlight>                MeshletDrawListRingLowUsage = {};
-        TArray<uint32, RHI::kFramesInFlight>                TaskDrawArgsRingLowUsage = {};
+        TArray<uint32, RHI::kFramesInFlight>                MeshDrawArgsRingLowUsage = {};
+        TArray<uint32, RHI::kFramesInFlight>                InstanceViewRangeRingLowUsage = {};
         TArray<uint32, RHI::kFramesInFlight>                MeshletBlockRingLowUsage = {};
-        TArray<FSceneBuffer, RHI::kFramesInFlight>          MeshletDeferBitsRing = {};
-        TArray<uint32, RHI::kFramesInFlight>                MeshletDeferBitsRingLowUsage = {};
+        FSceneBuffer                                       InstanceVisibilityBuffer = {};
+        uint32                                             InstanceVisibilityCapacity = 0;
+        uint32                                             InstanceVisibilityLowUsage = 0;
+        uint32                                             LastStaleValidationGeneration = 0;
         TArray<uint32, RHI::kFramesInFlight>                MaterialClassifyRingLowUsage = {};
         TArray<uint32, RHI::kFramesInFlight>                MaterialPixelListRingLowUsage = {};
         TArray<FSceneImage, (int)ENamedImage::Num>          NamedImages = {};
@@ -1005,10 +1018,12 @@ namespace Lumina
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          RenderBucketRing = {};
         
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          MeshletDrawListRing = {};
-        TArray<FSceneBuffer, RHI::kFramesInFlight>                          TaskDrawArgsRing = {};
+        TArray<FSceneBuffer, RHI::kFramesInFlight>                          MeshDrawArgsRing = {};
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          SpdCounterRing = {};
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          MeshletBlockRing = {};
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          BlockDispatchArgsRing = {};
+        TArray<FSceneBuffer, RHI::kFramesInFlight>                          MeshletCullDispatchArgsRing = {};
+        TArray<FSceneBuffer, RHI::kFramesInFlight>                          InstanceViewRangeRing = {};
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          TotalsRing = {};
         TArray<bool, RHI::kFramesInFlight>                                  TotalsZeroed = {};
 
@@ -1068,7 +1083,7 @@ namespace Lumina
         // it has already had to hold.
         uint32                                              BlockListHighWater = 0;
         // Sub-draw slots reserved per (view, draw). 1 unless a bucket can exceed maxTaskWorkGroupCount[0].
-        uint32                                              TaskSubDrawsPerBucket = 1;
+        uint32                                              MeshSubDrawsPerSlice = 1;
         uint32                                              LastBlocksRequested = 0;
         uint32                                              LastBlocksOverflowed = 0;
         uint32                                              MeshletDrawTagCounter = 0;
@@ -1097,7 +1112,7 @@ namespace Lumina
         TVector<FSkinCandidate>                 MergeSkinCandidates;
         uint32                                  LastPreSkinDeferredCount = 0;
 
-        TVector<const FShaderEntry*>            BinnedDeferredSlotShaders;
+        TVector<FShaderH>            BinnedDeferredSlotShaders;
         TVector<uint32>                         BinnedDeferredSlotByMaterial;
 
         struct FMaterialClassifyLayout
