@@ -8,7 +8,7 @@ namespace Lumina
 {
     namespace
     {
-        // Matches ForwardRenderScene OriginXZ so brush hits the same samples the renderer sees.
+        // Matches DefaultSceneRenderer OriginXZ so brush hits the same samples the renderer sees.
         FVector2 TerrainOriginXZ(const STerrainComponent& Terrain, const FVector3& TerrainOrigin)
         {
             const float HalfSize = Terrain.TileWorldSize * 0.5f;

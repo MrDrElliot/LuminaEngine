@@ -1,4 +1,4 @@
-#include "Includes/SceneGlobals.slang"
+﻿#include "Includes/SceneGlobals.slang"
 
 // Lays out the meshlet cull's flat dispatch, then publishes what it appended as the draw slices the
 // mesh stage reads. Same serial one-workgroup scan as BuildDrawPrefix: NumViews * NumDraws is in the

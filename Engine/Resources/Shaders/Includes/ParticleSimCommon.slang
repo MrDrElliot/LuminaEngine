@@ -5,7 +5,7 @@
 // (ParticleSimulate.slang, the data-driven default, and Particles/ParticleSimulateTemplate.slang,
 // the FParticleCompiler module-stack skeleton). Both consume the SAME CPU-side blocks, so the
 // structs here must stay byte-identical to CParticleSystem / FParticleSimArgs in
-// ForwardRenderScene.cpp -- keeping them in one place is what prevents the two sims drifting.
+// DefaultSceneRenderer.cpp -- keeping them in one place is what prevents the two sims drifting.
 
 // Emitter shape enums (must match EParticleEmitterShape)
 static const uint EMITTER_SHAPE_POINT  = 0u;
@@ -23,7 +23,7 @@ static const uint VELOCITY_MODE_RADIAL   = 1u;
 static const uint SIM_FLAG_LOOP          = (1u << 0);
 static const uint SIM_FLAG_BURST_PENDING = (1u << 1);
 
-// 64-byte particle. Do not change stride without updating ForwardRenderScene.
+// 64-byte particle. Do not change stride without updating DefaultSceneRenderer.
 struct FGPUParticle
 {
     float3  Position;
@@ -71,7 +71,7 @@ struct FParticleSimParams
     float4  Timing;              // x=DeltaTime, y=TotalTime, z=SystemAge, w=unused
 };
 
-// Everything by device address; matches FParticleSimArgs in ForwardRenderScene.cpp.
+// Everything by device address; matches FParticleSimArgs in DefaultSceneRenderer.cpp.
 struct FParticleSimArgs
 {
     FParticleSimParams* Params;

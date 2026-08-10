@@ -440,7 +440,7 @@ namespace Lumina
 
         // Reuse ONE preview world across captures. This used to construct and tear down a whole
         // FThumbnailScene per thumbnail, which meant every single capture paid a CWorld construction, an
-        // FForwardRenderScene::Init (a full RHI::WaitDeviceIdle, a sky/IBL bake, a shadow-atlas allocation
+        // FDefaultSceneRenderer::Init (a full RHI::WaitDeviceIdle, a sky/IBL bake, a shadow-atlas allocation
         // and ~40 render targets) and the matching teardown -- on the game thread, once per frame for as
         // long as the queue was non-empty. That is what made browsing a folder feel like the editor had
         // locked up.

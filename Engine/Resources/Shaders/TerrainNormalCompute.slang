@@ -15,7 +15,7 @@ struct FTerrainNormalParams
     int     _Pad;
 };
 
-// Matches FTerrainNormalArgs in ForwardRenderScene.cpp (TerrainUpdatePass): scalar
+// Matches FTerrainNormalArgs in DefaultSceneRenderer.cpp (TerrainUpdatePass): scalar
 // params plus heightmap SRV / normal UAV heap indices.
 struct FTerrainNormalArgs
 {

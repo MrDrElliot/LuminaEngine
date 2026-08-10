@@ -16,7 +16,7 @@ namespace Lumina::Screenshot
         // Stored as 8-bit RGBA -- exported as PNG.
         FinalLDR,
 
-        // Pre-tonemap linear HDR scene color (ENamedImage::HDR on FForwardRenderScene).
+        // Pre-tonemap linear HDR scene color (ENamedImage::HDR on FDefaultSceneRenderer).
         // RGBA16_FLOAT -- exported as Radiance .hdr.
         SceneHDR,
     };

@@ -5,7 +5,7 @@
 // Bakes the split-sum BRDF integration LUT once at init, indexed by (NdotV, Roughness) -> (scale, bias);
 // runtime IBL specular collapses to one multiply-add against the pre-filtered cubemap.
 
-// Matches FBRDFArgs in ForwardRenderScene.cpp (BakeBRDFLUT).
+// Matches FBRDFArgs in DefaultSceneRenderer.cpp (BakeBRDFLUT).
 //
 // The size is passed rather than queried. It is a compile-time constant on the CPU side, and querying it
 // made this the only shader in the engine to call GetDimensions on a DYNAMICALLY INDEXED bindless RW

@@ -147,7 +147,7 @@ namespace Lumina
 
         /**
          * Game-thread-owned CPU mirror + dirty tracking; transient. The matching GPU
-         * resources are render-owned in FForwardRenderScene::TerrainGPUStates, keyed by entity.
+         * resources are render-owned in FDefaultSceneRenderer::TerrainGPUStates, keyed by entity.
          */
         FTerrainCPUState CPUState;
 

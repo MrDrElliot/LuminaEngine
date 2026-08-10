@@ -14,7 +14,7 @@
 #include "World/Entity/Systems/SystemSingletons.h"
 #include "World/Scene/RenderScene/RenderScene.h"
 #include "World/Scene/RenderScene/SceneRenderTypes.h"
-#include "World/Scene/RenderScene/Forward/ForwardRenderScene.h"
+#include "World/Scene/RenderScene/Default/DefaultSceneRenderer.h"
 
 namespace Lumina
 {
@@ -163,7 +163,7 @@ namespace Lumina
         // anything it cannot finish to the next frame, which the normal loop absorbs invisibly -- but
         // this capture renders exactly one frame and reads it straight back, so a deferred mesh is not
         // "late", it is missing from the image. That is the empty-world thumbnail.
-        static_cast<FForwardRenderScene*>(World->GetRenderer())->SettleResolveWork();
+        static_cast<FDefaultSceneRenderer*>(World->GetRenderer())->SettleResolveWork();
 
         const uint8 FrameIndex = (uint8)GRenderManager->GetCurrentFrameIndex();
         World->Extract();
@@ -181,8 +181,8 @@ namespace Lumina
             Scene->PrepareRender(FrameIndex);
             Scene->RenderView(FrameIndex);
 
-            auto* Forward = static_cast<FForwardRenderScene*>(Scene);
-            const FSceneImage& Output = Forward->GetDisplayImage();
+            auto* Renderer = static_cast<FDefaultSceneRenderer*>(Scene);
+            const FSceneImage& Output = Renderer->GetDisplayImage();
             if (!Output.IsValid())
             {
                 return false;

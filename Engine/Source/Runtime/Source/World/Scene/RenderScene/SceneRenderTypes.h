@@ -1199,7 +1199,7 @@ namespace Lumina
         uint8 bUseLODs:1                = true;
         uint8 bShadowMaskValid:1        = false;
         // Debug: keep culling against the inputs captured when this went on, so the selected set holds
-        // still while the camera flies free. See FForwardRenderScene::ApplyCullFreeze.
+        // still while the camera flies free. See FDefaultSceneRenderer::ApplyCullFreeze.
         uint8 bFreezeCulling:1          = false;
         int8  ShadowLODBias             = 1;
         float ShadowCoarseLODDistance   = 150.0f;

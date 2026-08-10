@@ -13,7 +13,7 @@
 #include "World/World.h"
 #include "World/WorldManager.h"
 #include "World/Scene/RenderScene/RenderScene.h"
-#include "World/Scene/RenderScene/Forward/ForwardRenderScene.h"
+#include "World/Scene/RenderScene/Default/DefaultSceneRenderer.h"
 #include "Log/Log.h"
 
 
@@ -92,15 +92,15 @@ namespace Lumina::Screenshot
             }
 
             // Forward is currently the only IRenderScene implementation.
-            auto* Forward = static_cast<FForwardRenderScene*>(Scene);
+            auto* Renderer = static_cast<FDefaultSceneRenderer*>(Scene);
 
             if (Source == ECaptureSource::SceneHDR)
             {
-                return Forward->GetPrimaryNamedImage(FForwardRenderScene::ENamedImage::HDR);
+                return Renderer->GetPrimaryNamedImage(FDefaultSceneRenderer::ENamedImage::HDR);
             }
 
             // Final display-referred output (what the editor viewport shows).
-            return Forward->GetDisplayImage();
+            return Renderer->GetDisplayImage();
         }
 
         bool WritePNG(const FString& OutPath, uint32 Width, uint32 Height, EFormat Format,

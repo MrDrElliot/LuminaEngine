@@ -1058,8 +1058,177 @@ namespace Lumina
             }
         }
 
+        // Selected-camera PiP (shared with the world editor); before the gizmo's early returns.
+        DrawCameraPreviewOverlay(ViewportOrigin, ViewportSize);
+
+        // The gizmo runs BEFORE viewport picking (mirroring the world editor). ImGuizmo only raises
+        // IsUsing() from inside Manipulate, so picking that ran first saw last frame's state: on the
+        // very frame the user presses a handle it read false and stole the click. Harmless on a leaf
+        // entity (the pixel under the handle is that same entity, so the re-select is invisible), but
+        // on a parent the handle sits over a CHILD's pixels and the selection jumped to the child --
+        // the "can't drag anything that has children" report. Wrapped in a lambda so the gizmo's
+        // early-outs don't skip the picking block below.
+        [&]
+        {
+            const entt::entity PivotEntity = GetLastSelectedEntity();
+            const bool bGizmoTargetValid = PivotEntity != entt::null && World->IsValidEntity(PivotEntity);
+
+            // Mid-drag selection vanish: end the transaction so future clicks aren't blocked by IsOver().
+            if (!bGizmoTargetValid && bImGuizmoUsedOnce)
+            {
+                EndTransaction("Transform");
+                bImGuizmoUsedOnce = false;
+            }
+
+            if (!bGizmoTargetValid)
+            {
+                return;
+            }
+
+            STransformComponent* PivotTransform = World->TryGetComponent<STransformComponent>(PivotEntity);
+            if (PivotTransform == nullptr)
+            {
+                return;
+            }
+
+            FMatrix4 EntityMatrix = PivotTransform->GetWorldMatrix();
+            FMatrix4 PreManipulate = EntityMatrix;
+
+            float* SnapValues = nullptr;
+            float SnapArray[3] = {};
+            if (bGuizmoSnapEnabled)
+            {
+                switch (GuizmoOp)
+                {
+                case ImGuizmo::TRANSLATE:
+                    SnapArray[0] = SnapArray[1] = SnapArray[2] = GuizmoSnapTranslate;
+                    SnapValues = SnapArray;
+                    break;
+                case ImGuizmo::ROTATE:
+                    SnapArray[0] = SnapArray[1] = SnapArray[2] = GuizmoSnapRotate;
+                    SnapValues = SnapArray;
+                    break;
+                case ImGuizmo::SCALE:
+                    SnapArray[0] = SnapArray[1] = SnapArray[2] = GuizmoSnapScale;
+                    SnapValues = SnapArray;
+                    break;
+                }
+            }
+
+            // A camera gesture (or Alt merely held) must never grab the gizmo. Enable(false) leaves it
+            // drawn but inert; never applied mid-drag, since it clears ImGuizmo's using state without a
+            // release and would strand the open transaction.
+            const bool bGizmoInert = ShouldSuppressViewportClickInput() && !bImGuizmoUsedOnce;
+            if (bGizmoInert)
+            {
+                ImGuizmo::Enable(false);
+            }
+
+            ImGuizmo::Manipulate(Math::ValuePtr(ViewMatrix), Math::ValuePtr(ProjectionMatrix),
+                GuizmoOp, GuizmoMode, Math::ValuePtr(EntityMatrix), nullptr, SnapValues);
+
+            if (bGizmoInert)
+            {
+                ImGuizmo::Enable(true);
+            }
+
+            if (ImGuizmo::IsUsing())
+            {
+                if (!bImGuizmoUsedOnce)
+                {
+                    // Transform-only; see WorldEditorTool for why this is not the whole-registry snapshot.
+                    // The pivot is driven directly and the rest co-move, so the record is both.
+                    TVector<entt::entity> Dragged;
+                    Dragged.reserve(SelectedEntities.size() + 1);
+                    Dragged.push_back(PivotEntity);
+                    for (entt::entity Selected : SelectedEntities)
+                    {
+                        if (Selected != PivotEntity)
+                        {
+                            Dragged.push_back(Selected);
+                        }
+                    }
+                    BeginTransformTransaction(Dragged);
+
+                    bImGuizmoUsedOnce = true;
+                }
+
+                entt::registry& Registry = ECS::GetWorldRegistry(*World);
+
+                // Apply the same world translation/rotation to every selected entity (rigid group);
+                // scale stays per-entity to avoid skew under mixed parent transforms.
+                FMatrix4 DeltaWorld = EntityMatrix * Math::Inverse(PreManipulate);
+                FVector3 DeltaTranslation, DeltaScale, DeltaSkew;
+                FQuat DeltaRotation;
+                FVector4 DeltaPersp;
+                Math::Decompose(DeltaWorld, DeltaScale, DeltaRotation, DeltaTranslation, DeltaSkew, DeltaPersp);
+
+                // Pivot itself: drive it directly with the manipulator's full output.
+                EditorEntityUtils::ApplyWorldMatrixToTransform(Registry, PivotEntity, EntityMatrix);
+
+                // Co-move every other selected entity by the pivot's delta. Skip locked-prefab-style
+                // children, prefab editor has no locked instances, so the only filter is "valid + not pivot".
+                const FVector3 PivotPreLocation = FVector3(PreManipulate[3]);
+                for (entt::entity Other : SelectedEntities)
+                {
+                    if (Other == PivotEntity || !Registry.valid(Other))
+                    {
+                        continue;
+                    }
+                    STransformComponent* OtherTransform = Registry.try_get<STransformComponent>(Other);
+                    if (OtherTransform == nullptr)
+                    {
+                        continue;
+                    }
+
+                    const FMatrix4 OtherWorld = OtherTransform->GetWorldMatrix();
+                    FMatrix4 NewWorld = OtherWorld;
+
+                    switch (GuizmoOp)
+                    {
+                    case ImGuizmo::TRANSLATE:
+                        NewWorld[3] = FVector4(FVector3(OtherWorld[3]) + DeltaTranslation, 1.0f);
+                        break;
+                    case ImGuizmo::ROTATE:
+                    {
+                        const FVector3 OffsetFromPivot = FVector3(OtherWorld[3]) - PivotPreLocation;
+                        const FVector3 RotatedOffset   = DeltaRotation * OffsetFromPivot;
+                        NewWorld = Math::Translate(FMatrix4(1.f), PivotPreLocation + RotatedOffset)
+                                 * Math::ToMatrix4(DeltaRotation)
+                                 * FMatrix4(FMatrix3(OtherWorld));
+                        break;
+                    }
+                    case ImGuizmo::SCALE:
+                    {
+                        const FVector3 OffsetFromPivot = FVector3(OtherWorld[3]) - PivotPreLocation;
+                        const FVector3 ScaledOffset    = OffsetFromPivot * DeltaScale;
+                        FQuat OtherRot;
+                        FVector3 OtherTr, OtherSc, OtherSk;
+                        FVector4 OtherPe;
+                        Math::Decompose(OtherWorld, OtherSc, OtherRot, OtherTr, OtherSk, OtherPe);
+                        NewWorld = Math::Translate(FMatrix4(1.f), PivotPreLocation + ScaledOffset)
+                                 * Math::ToMatrix4(OtherRot)
+                                 * Math::Scale(FMatrix4(1.f), OtherSc * DeltaScale);
+                        break;
+                    }
+                    default: break;
+                    }
+
+                    EditorEntityUtils::ApplyWorldMatrixToTransform(Registry, Other, NewWorld);
+                }
+
+                Asset->GetPackage()->MarkDirty();
+            }
+            else if (bImGuizmoUsedOnce)
+            {
+                EndTransaction("Transform");
+                bImGuizmoUsedOnce = false;
+            }
+        }();
+
         // Viewport entity picking: left-click a prefab entity to select it (Ctrl-click toggles).
         // Selects the actual clicked entity (children included), no instance-root resolution here.
+        // Runs AFTER the gizmo so IsUsing()/IsOver() reflect this frame -- see the note above.
         if (bViewportHovered)
         {
             IRenderScene* Renderer = World->GetRenderer();
@@ -1078,8 +1247,9 @@ namespace Lumina
                 // Publish the cursor so the renderer reads back the pixel under it.
                 Renderer->SetPickerCursor(TexX, TexY, true);
 
-                // Skip picking while the mouse is on the camera-preview resize grip (flag set by
-                // DrawCameraPreviewOverlay below, one frame behind).
+                // IsOver() is only trusted mid-drag: with nothing selected the gizmo isn't drawn this
+                // frame and ImGuizmo would hand back a stale hover that blocks clicks forever.
+                // IsUsing() needs no such guard now that Manipulate has already run.
                 const bool bOverGizmo = (bImGuizmoUsedOnce && ImGuizmo::IsOver()) || ImGuizmo::IsUsing();
                 if (!bOverGizmo && !bCameraPreviewMouseOver && !ShouldSuppressViewportClickInput()
                     && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
@@ -1099,164 +1269,6 @@ namespace Lumina
                     }
                 }
             }
-        }
-
-        // Selected-camera PiP (shared with the world editor); before the gizmo's early returns.
-        DrawCameraPreviewOverlay(ViewportOrigin, ViewportSize);
-
-        const entt::entity PivotEntity = GetLastSelectedEntity();
-        const bool bGizmoTargetValid = PivotEntity != entt::null && World->IsValidEntity(PivotEntity);
-
-        // Mid-drag selection vanish: end the transaction so future clicks aren't blocked by IsOver().
-        if (!bGizmoTargetValid && bImGuizmoUsedOnce)
-        {
-            EndTransaction("Transform");
-            bImGuizmoUsedOnce = false;
-        }
-
-        if (!bGizmoTargetValid)
-        {
-            return;
-        }
-
-        STransformComponent* PivotTransform = World->TryGetComponent<STransformComponent>(PivotEntity);
-        if (PivotTransform == nullptr)
-        {
-            return;
-        }
-
-        FMatrix4 EntityMatrix = PivotTransform->GetWorldMatrix();
-        FMatrix4 PreManipulate = EntityMatrix;
-
-        float* SnapValues = nullptr;
-        float SnapArray[3] = {};
-        if (bGuizmoSnapEnabled)
-        {
-            switch (GuizmoOp)
-            {
-            case ImGuizmo::TRANSLATE:
-                SnapArray[0] = SnapArray[1] = SnapArray[2] = GuizmoSnapTranslate;
-                SnapValues = SnapArray;
-                break;
-            case ImGuizmo::ROTATE:
-                SnapArray[0] = SnapArray[1] = SnapArray[2] = GuizmoSnapRotate;
-                SnapValues = SnapArray;
-                break;
-            case ImGuizmo::SCALE:
-                SnapArray[0] = SnapArray[1] = SnapArray[2] = GuizmoSnapScale;
-                SnapValues = SnapArray;
-                break;
-            }
-        }
-
-        // A camera gesture (or Alt merely held) must never grab the gizmo. Enable(false) leaves it
-        // drawn but inert; never applied mid-drag, since it clears ImGuizmo's using state without a
-        // release and would strand the open transaction.
-        const bool bGizmoInert = ShouldSuppressViewportClickInput() && !bImGuizmoUsedOnce;
-        if (bGizmoInert)
-        {
-            ImGuizmo::Enable(false);
-        }
-
-        ImGuizmo::Manipulate(Math::ValuePtr(ViewMatrix), Math::ValuePtr(ProjectionMatrix),
-            GuizmoOp, GuizmoMode, Math::ValuePtr(EntityMatrix), nullptr, SnapValues);
-
-        if (bGizmoInert)
-        {
-            ImGuizmo::Enable(true);
-        }
-
-        if (ImGuizmo::IsUsing())
-        {
-            if (!bImGuizmoUsedOnce)
-            {
-                // Transform-only; see WorldEditorTool for why this is not the whole-registry snapshot.
-                // The pivot is driven directly and the rest co-move, so the record is both.
-                TVector<entt::entity> Dragged;
-                Dragged.reserve(SelectedEntities.size() + 1);
-                Dragged.push_back(PivotEntity);
-                for (entt::entity Selected : SelectedEntities)
-                {
-                    if (Selected != PivotEntity)
-                    {
-                        Dragged.push_back(Selected);
-                    }
-                }
-                BeginTransformTransaction(Dragged);
-
-                bImGuizmoUsedOnce = true;
-            }
-
-            entt::registry& Registry = ECS::GetWorldRegistry(*World);
-
-            // Apply the same world translation/rotation to every selected entity (rigid group);
-            // scale stays per-entity to avoid skew under mixed parent transforms.
-            FMatrix4 DeltaWorld = EntityMatrix * Math::Inverse(PreManipulate);
-            FVector3 DeltaTranslation, DeltaScale, DeltaSkew;
-            FQuat DeltaRotation;
-            FVector4 DeltaPersp;
-            Math::Decompose(DeltaWorld, DeltaScale, DeltaRotation, DeltaTranslation, DeltaSkew, DeltaPersp);
-
-            // Pivot itself: drive it directly with the manipulator's full output.
-            EditorEntityUtils::ApplyWorldMatrixToTransform(Registry, PivotEntity, EntityMatrix);
-
-            // Co-move every other selected entity by the pivot's delta. Skip locked-prefab-style
-            // children, prefab editor has no locked instances, so the only filter is "valid + not pivot".
-            const FVector3 PivotPreLocation = FVector3(PreManipulate[3]);
-            for (entt::entity Other : SelectedEntities)
-            {
-                if (Other == PivotEntity || !Registry.valid(Other))
-                {
-                    continue;
-                }
-                STransformComponent* OtherTransform = Registry.try_get<STransformComponent>(Other);
-                if (OtherTransform == nullptr)
-                {
-                    continue;
-                }
-
-                const FMatrix4 OtherWorld = OtherTransform->GetWorldMatrix();
-                FMatrix4 NewWorld = OtherWorld;
-
-                switch (GuizmoOp)
-                {
-                case ImGuizmo::TRANSLATE:
-                    NewWorld[3] = FVector4(FVector3(OtherWorld[3]) + DeltaTranslation, 1.0f);
-                    break;
-                case ImGuizmo::ROTATE:
-                {
-                    const FVector3 OffsetFromPivot = FVector3(OtherWorld[3]) - PivotPreLocation;
-                    const FVector3 RotatedOffset   = DeltaRotation * OffsetFromPivot;
-                    NewWorld = Math::Translate(FMatrix4(1.f), PivotPreLocation + RotatedOffset)
-                             * Math::ToMatrix4(DeltaRotation)
-                             * FMatrix4(FMatrix3(OtherWorld));
-                    break;
-                }
-                case ImGuizmo::SCALE:
-                {
-                    const FVector3 OffsetFromPivot = FVector3(OtherWorld[3]) - PivotPreLocation;
-                    const FVector3 ScaledOffset    = OffsetFromPivot * DeltaScale;
-                    FQuat OtherRot;
-                    FVector3 OtherTr, OtherSc, OtherSk;
-                    FVector4 OtherPe;
-                    Math::Decompose(OtherWorld, OtherSc, OtherRot, OtherTr, OtherSk, OtherPe);
-                    NewWorld = Math::Translate(FMatrix4(1.f), PivotPreLocation + ScaledOffset)
-                             * Math::ToMatrix4(OtherRot)
-                             * Math::Scale(FMatrix4(1.f), OtherSc * DeltaScale);
-                    break;
-                }
-                default: break;
-                }
-
-                EditorEntityUtils::ApplyWorldMatrixToTransform(Registry, Other, NewWorld);
-            }
-
-            Asset->GetPackage()->MarkDirty();
-        }
-        else if (bImGuizmoUsedOnce)
-        {
-            EndTransaction("Transform");
-            bImGuizmoUsedOnce = false;
         }
     }
 

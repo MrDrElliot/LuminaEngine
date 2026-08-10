@@ -45,14 +45,16 @@ namespace Lumina
     class CMaterialInterface;
     class CMaterial;
 
-    /** Scene rendering via Clustered Forward Rendering. */
-    class FForwardRenderScene : public IRenderScene
+    /** The engine's default scene renderer: GPU-driven meshlet culling into a visibility buffer, then
+     *  per-material GBuffer resolve and a clustered lighting pass. RenderSceneFactory falls back to this
+     *  whenever no override is installed. */
+    class FDefaultSceneRenderer : public IRenderScene
     {
     public:
 
-        FForwardRenderScene(CWorld* InWorld);
-        ~FForwardRenderScene() override;
-        LE_NO_COPYMOVE(FForwardRenderScene);
+        FDefaultSceneRenderer(CWorld* InWorld);
+        ~FDefaultSceneRenderer() override;
+        LE_NO_COPYMOVE(FDefaultSceneRenderer);
 
         struct FEntityRecord
         {
@@ -61,9 +63,6 @@ namespace Lumina
             uint64                  MeshletHeaderAddress;
             uint32                  CustomData;
             uint32                  EntityID;
-            // Slice this entity's pose occupies in the bone arena, straight from its primitive. STABLE
-            // across frames, so nothing has to resolve it during the merge and workers write their poses
-            // into disjoint ranges with no cross-thread base to agree on. ~0u when there is no skeleton.
             uint32                  BoneArenaBase;
             uint32                  BoneArenaCount;
         };
@@ -72,8 +71,6 @@ namespace Lumina
         {
             uint32              EntityRecordIndex;
             uint32              BatchIndex;
-            // Retained slot this surface owns. The per-frame skinned side data is keyed by it, because the
-            // instance cull reaches that data before compaction has assigned a visible index.
             uint32              InstanceSlot;
             uint32              SurfaceMeshletOffset;
             uint32              SurfaceMeshletCount;
@@ -85,7 +82,7 @@ namespace Lumina
             uint16              _Pad;
         };
 
-        struct alignas(64) FThreadLocalDrawData
+        struct CACHE_ALIGN FThreadLocalDrawData
         {
             TFrameVector<FProcessedDrawItem>    Items;
             TFrameVector<FEntityRecord>         EntityRecords;
@@ -103,7 +100,7 @@ namespace Lumina
                 : Items(A), EntityRecords(A), Arena(A) {}
 
             FThreadLocalDrawData(FThreadLocalDrawData&&) = default;
-            FThreadLocalDrawData& operator=(FThreadLocalDrawData&&) = default;
+            FThreadLocalDrawData& operator=(FThreadLocalDrawData&&) noexcept = default;
 
             void ResetForFrame(FFrameArenaAllocator A)
             {
@@ -247,7 +244,7 @@ namespace Lumina
                 FSceneGlobalData    SceneGlobalData = {};
                 FViewVolume         ViewVolume      = {};
                 uint32              CameraViewIndex = ~0u;   // its cull-view index (frustum-only)
-                int32               SceneViewIndex  = -1;    // index into FForwardRenderScene::SceneViews
+                int32               SceneViewIndex  = -1;    // index into FDefaultSceneRenderer::SceneViews
             };
 
             FViewVolume                      ViewVolume = {};

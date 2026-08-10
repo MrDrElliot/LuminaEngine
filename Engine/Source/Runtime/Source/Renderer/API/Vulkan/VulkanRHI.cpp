@@ -6,6 +6,7 @@
 #include <volk/volk.h>
 
 #include "Core/CommandLine/CommandLine.h"
+#include "Core/Console/ConsoleVariable.h"
 #include "Core/Threading/Atomic.h"
 #include "Core/Windows/GLFWInclude.h"
 #include "Memory/SmartPtr.h"
@@ -1104,7 +1105,7 @@ namespace Lumina::RHI
 
             auto AddSetting = [&](const char* Name, const VkBool32& Value)
             {
-                LUMINA_ASSERT(LayerSettingCount < std::size(LayerSettings));
+                ASSERT(LayerSettingCount < std::size(LayerSettings));
 
                 LayerSettings[LayerSettingCount++] = VkLayerSettingEXT
                 {
@@ -1118,7 +1119,7 @@ namespace Lumina::RHI
 
             auto AddUIntSetting = [&](const char* Name, const uint32& Value)
             {
-                LUMINA_ASSERT(LayerSettingCount < std::size(LayerSettings));
+                ASSERT(LayerSettingCount < std::size(LayerSettings));
 
                 LayerSettings[LayerSettingCount++] = VkLayerSettingEXT
                 {
@@ -1346,7 +1347,6 @@ namespace Lumina::RHI
             bBufferMarker   = EnableIfPresent(VK_AMD_BUFFER_MARKER_EXTENSION_NAME);
             const bool bLayerKnowsUnifiedLayouts = ValidationLayerVersion == 0 || ValidationLayerVersion >= VK_MAKE_API_VERSION(0, 1, 4, 311);
             GDevice->bUnifiedImageLayouts = bLayerKnowsUnifiedLayouts && EnableIfPresent(VK_KHR_UNIFIED_IMAGE_LAYOUTS_EXTENSION_NAME);
-            // VMA memory priority + pageable device-local memory.
             bMemoryPriority = EnableIfPresent(VK_EXT_MEMORY_PRIORITY_EXTENSION_NAME);
             if (bMemoryPriority)
             {
@@ -2849,7 +2849,7 @@ namespace Lumina::RHI
 
     uint32 GetMaxMeshWorkGroupCount()
     {
-        return GDevice != nullptr ? GDevice->MaxMeshWorkGroupCountX : 1u;
+        return GDevice->MaxMeshWorkGroupCountX;
     }
 
     bool SupportsAsyncTransfer()

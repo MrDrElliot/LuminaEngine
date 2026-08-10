@@ -284,6 +284,13 @@ namespace Lumina
         /** Opt a tool out of the view gizmo. Worlds in play and tools without an editor camera
          *  are already excluded. */
         NODISCARD virtual bool ShouldDrawViewGizmo() const { return true; }
+
+        /** True when this tool -- not the running game -- drives the viewport camera, which is what
+         *  gates the flycam's companions: the view gizmo, the world grid, F-to-focus, the ortho
+         *  projection override, and the click-to-give-input-back-to-the-game handler. A game world
+         *  normally means the game owns all of that; FWorldEditorTool overrides this so an EJECTED
+         *  PIE session hands it back to the editor without also un-gating a normal play session. */
+        NODISCARD virtual bool HasEditorCameraControl() const { return HasWorld() && !World->IsGameWorld(); }
         
         /** Draw the optional viewport for this tool window, returns true if focused. */
         virtual bool DrawViewport(const FUpdateContext& UpdateContext, ImTextureRef ViewportTexture);

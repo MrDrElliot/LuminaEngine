@@ -612,7 +612,7 @@ namespace Lumina
 
     void FEditorTool::DrawViewGizmo(const ImVec2& ViewportOrigin, const ImVec2& ViewportSize)
     {
-        const bool bHasEditorCamera = ShouldDrawViewGizmo() && HasWorld() && !World->IsGameWorld()
+        const bool bHasEditorCamera = ShouldDrawViewGizmo() && HasEditorCameraControl()
             && EditorEntity != entt::null && World->IsValidEntity(EditorEntity)
             && World->HasComponent<STransformComponent>(EditorEntity);
 
@@ -786,7 +786,7 @@ namespace Lumina
             CameraComponent->SetAspectRatio(AspectRatio);
             CameraComponent->SetFOV(NewFOV);
 
-            if (CameraState.bOrthographic && !World->IsGameWorld())
+            if (CameraState.bOrthographic && HasEditorCameraControl())
             {
                 // Match the world-space span perspective covered at the pivot, so toggling holds framing.
                 const float Span = 2.0f * GetEditorViewDistance() * std::tan(Math::Radians(NewFOV) * 0.5f);
@@ -920,7 +920,9 @@ namespace Lumina
         ImGui::SetCursorPos(Origin + ImStyle.ItemSpacing);
         DrawViewportToolbar(UpdateContext);
         
-        if (World != nullptr && World->IsGameWorld() && bViewportHovered
+        // Not while ejected: the editor owns the camera then, so a viewport click is a selection,
+        // not a request to hand the mouse back to the game.
+        if (World != nullptr && World->IsGameWorld() && !HasEditorCameraControl() && bViewportHovered
             && ImGui::IsMouseClicked(ImGuiMouseButton_Left)
             && !ImGui::IsAnyItemHovered())
         {
@@ -1321,7 +1323,7 @@ namespace Lumina
 
     void FEditorTool::FocusViewportToEntity(entt::entity Entity)
     {
-        if (!HasWorld() || World->IsGameWorld())
+        if (!HasEditorCameraControl())
         {
             return;
         }
@@ -1405,7 +1407,7 @@ namespace Lumina
 
         // UpdateViewportInput rebuilds the projection every frame, but a tool whose viewport is not
         // drawing this frame would otherwise keep the stale one.
-        if (!bOrthographic && HasWorld() && !World->IsGameWorld())
+        if (!bOrthographic && HasEditorCameraControl())
         {
             if (SCameraComponent* Camera = World->GetActiveCamera())
             {
@@ -1917,7 +1919,7 @@ namespace Lumina
 
     void FEditorTool::DrawWorldGrid()
     {
-        if (World == nullptr || World->IsGameWorld() || !bWorldGridEnabled)
+        if (!HasEditorCameraControl() || !bWorldGridEnabled)
         {
             return;
         }

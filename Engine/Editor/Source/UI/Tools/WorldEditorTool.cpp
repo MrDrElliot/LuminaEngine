@@ -536,18 +536,15 @@ namespace Lumina
             if (const SPrefabInstanceComponent* Instance = Registry.try_get<SPrefabInstanceComponent>(Data.Entity);
                 Instance != nullptr && Instance->bIsRoot)
             {
+                if (ImGui::MenuItem(LE_ICON_SYNC " Resync from Prefab", nullptr, false, Instance->SourcePrefab != nullptr))
+                {
+                    ResyncPrefabInstance(Data.Entity);
+                }
+                ImGuiX::TextTooltip("{}", "Re-apply the source prefab to this instance now. Per-instance overrides and the placed transform are kept.");
+
                 if (ImGui::MenuItem(LE_ICON_LINK_VARIANT_OFF " Detach from Prefab"))
                 {
-                    BeginTransaction();
-                    if (CPrefab::DetachInstance(World, Data.Entity))
-                    {
-                        EndTransaction("Detach from Prefab");
-                        OutlinerListView.MarkTreeDirty();
-                    }
-                    else
-                    {
-                        AbortTransaction();
-                    }
+                    DetachPrefabInstance(Data.Entity);
                 }
                 ImGuiX::TextTooltip("{}", "Unlink this instance from its source prefab; the entities become plain and stop syncing.");
             }
@@ -773,6 +770,10 @@ namespace Lumina
         }
 
         FEditorTool::Update(UpdateContext);
+
+        // The flycam can outlive its world (Travel, a stop driven from elsewhere); reconcile before
+        // anything below reads EditorEntity.
+        TickEjectState();
 
         // Esc requested an end to the play session (queued from OnEvent).
         if (bStopPlayRequested)
@@ -2336,18 +2337,16 @@ namespace Lumina
                 if (const SPrefabInstanceComponent* Instance = Registry.try_get<SPrefabInstanceComponent>(LastSelectedEntity);
                     Instance != nullptr && Instance->bIsRoot)
                 {
+                    if (ImGui::MenuItem(LE_ICON_SYNC " Resync from Prefab", nullptr, false, Instance->SourcePrefab != nullptr))
+                    {
+                        ResyncPrefabInstance(LastSelectedEntity);
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGuiX::TextTooltip("{}", "Re-apply the source prefab to this instance now. Per-instance overrides and the placed transform are kept.");
+
                     if (ImGui::MenuItem(LE_ICON_LINK_VARIANT_OFF " Detach from Prefab"))
                     {
-                        BeginTransaction();
-                        if (CPrefab::DetachInstance(World, LastSelectedEntity))
-                        {
-                            EndTransaction("Detach from Prefab");
-                            OutlinerListView.MarkTreeDirty();
-                        }
-                        else
-                        {
-                            AbortTransaction();
-                        }
+                        DetachPrefabInstance(LastSelectedEntity);
                         ImGui::CloseCurrentPopup();
                     }
                     ImGuiX::TextTooltip("{}", "Unlink this instance from its source prefab; the entities become plain and stop syncing.");
@@ -3235,6 +3234,59 @@ namespace Lumina
         SelectedEntities = SavedSelection;
     }
 
+    void FWorldEditorTool::ResyncPrefabInstance(entt::entity InstanceRoot)
+    {
+        if (World == nullptr || World->IsSimulating())
+        {
+            ImGuiX::Notifications::NotifyWarning("Cannot resync a prefab while simulating.");
+            return;
+        }
+
+        entt::registry& Registry = ECS::GetWorldRegistry(*World);
+        const SPrefabInstanceComponent* Instance = Registry.try_get<SPrefabInstanceComponent>(InstanceRoot);
+        if (Instance == nullptr || !Instance->bIsRoot)
+        {
+            return;
+        }
+
+        // Both reads happen BEFORE the refresh: RefreshInstance rewrites this entity's components,
+        // so the pointer above is dangling the moment it runs.
+        CPrefab* Source = Instance->SourcePrefab.Get();
+        if (Source == nullptr)
+        {
+            ImGuiX::Notifications::NotifyWarning("This instance has no source prefab to resync from.");
+            return;
+        }
+        const FName PrefabName = Source->GetName();
+
+        // Structural: the refresh adds, destroys and reparents entities, so this needs the general
+        // whole-registry snapshot, not BeginTransformTransaction.
+        BeginTransaction();
+        Source->RefreshInstance(World, InstanceRoot);
+        EndTransaction("Resync Prefab");
+
+        // A pruned node may have been selected, and every details-panel component pointer is stale.
+        ResyncSelectionFromRegistry();
+        bDetailsDirty = true;
+        OutlinerListView.MarkTreeDirty();
+
+        ImGuiX::Notifications::NotifySuccess("Resynced to prefab: \"{0}\"", PrefabName.c_str());
+    }
+
+    void FWorldEditorTool::DetachPrefabInstance(entt::entity InstanceRoot)
+    {
+        BeginTransaction();
+        if (CPrefab::DetachInstance(World, InstanceRoot))
+        {
+            EndTransaction("Detach from Prefab");
+            OutlinerListView.MarkTreeDirty();
+        }
+        else
+        {
+            AbortTransaction();
+        }
+    }
+
     bool FWorldEditorTool::IsAssetEditorTool() const
     {
         return true;
@@ -3386,7 +3438,9 @@ namespace Lumina
                 {
                     SetWorldNewSimulate(false);
                 }
-                
+
+                DrawPauseResumeButton(BtnSize);
+
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.9f, 0.5f, 0.1f, 0.9f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 0.6f, 0.2f, 1.0f));
                 if (ImGuiX::IconButton(LE_ICON_COG_BOX, "##SimulateActiveBtn", 0xFFFFFFFF, BtnSize))
@@ -3403,9 +3457,12 @@ namespace Lumina
         }
         else
         {
+            DrawPauseResumeButton(BtnSize);
+            DrawEjectButton(BtnSize);
+
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 0.5f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.3f, 0.3f, 0.75f));
-            
+
             if (ImGuiX::IconButton(LE_ICON_STOP, "##StopBtn", 0xFFFFFFFF, BtnSize, true))
             {
                 SetWorldPlayInEditor(false);
@@ -3422,6 +3479,189 @@ namespace Lumina
             {
                 SetWorldPlayInEditor(false);
             }
+        }
+    }
+
+    void FWorldEditorTool::DrawPauseResumeButton(const ImVec2& ButtonSize)
+    {
+        const bool bPaused = IsPlaySessionPaused();
+
+        // Green (Play) when paused, amber (Pause) when running -- the button always advertises what
+        // the NEXT click does, matching the Play/Stop buttons either side of it.
+        ImGui::PushStyleColor(ImGuiCol_Button,        bPaused ? ImVec4(0.2f, 0.7f, 0.3f, 0.8f) : ImVec4(0.85f, 0.65f, 0.15f, 0.8f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, bPaused ? ImVec4(0.3f, 0.8f, 0.4f, 1.0f) : ImVec4(0.95f, 0.75f, 0.25f, 1.0f));
+        if (ImGuiX::IconButton(bPaused ? LE_ICON_PLAY : LE_ICON_PAUSE, "##PauseResumeBtn", 0xFFFFFFFF, ButtonSize))
+        {
+            SetPlaySessionPaused(!bPaused);
+        }
+        ImGui::PopStyleColor(2);
+
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+        {
+            ImGui::SetTooltip(bPaused
+                ? "Resume"
+                : "Pause (freezes systems and physics; the viewport keeps rendering and you can still select/inspect)");
+        }
+
+        ImGui::SameLine();
+    }
+
+    bool FWorldEditorTool::IsPlaySessionPaused() const
+    {
+        // The tool rebinds to the PIE/Simulation world for the duration of the session, so this is the
+        // session's own pause state. Editor worlds are permanently paused, hence the play-state gate.
+        return (bGamePreviewRunning || bSimulatingWorld) && World != nullptr && World->IsPaused();
+    }
+
+    void FWorldEditorTool::SetPlaySessionPaused(bool bPause)
+    {
+        if (GWorldManager == nullptr)
+        {
+            return;
+        }
+
+        // Every live play world, not just the one the viewport is bound to: multiplayer PIE spawns a
+        // world per player plus a hidden dedicated server, and pausing only ours would leave the rest
+        // simulating against a frozen client. Editor worlds are skipped -- they are always paused, and
+        // un-pausing one would start ticking gameplay systems in the level being edited.
+        for (const TUniquePtr<FWorldContext>& Context : GWorldManager->GetContexts())
+        {
+            CWorld* Candidate = Context ? Context->World.Get() : nullptr;
+            if (Candidate == nullptr)
+            {
+                continue;
+            }
+
+            const EWorldType Type = Candidate->GetWorldType();
+            if (Type == EWorldType::Game || Type == EWorldType::Simulation)
+            {
+                Candidate->SetPaused(bPause);
+            }
+        }
+    }
+
+    void FWorldEditorTool::DrawEjectButton(const ImVec2& ButtonSize)
+    {
+        const bool bEjected = IsEjectedFromPlay();
+
+        ImGui::PushStyleColor(ImGuiCol_Button,        bEjected ? ImVec4(0.25f, 0.45f, 0.85f, 0.85f) : ImVec4(0.32f, 0.36f, 0.44f, 0.85f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, bEjected ? ImVec4(0.35f, 0.55f, 0.95f, 1.0f)  : ImVec4(0.42f, 0.47f, 0.57f, 1.0f));
+        if (ImGuiX::IconButton(bEjected ? LE_ICON_CONTROLLER : LE_ICON_EJECT, "##EjectBtn", 0xFFFFFFFF, ButtonSize))
+        {
+            SetEjectedFromPlay(!bEjected);
+        }
+        ImGui::PopStyleColor(2);
+
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+        {
+            ImGui::SetTooltip(bEjected
+                ? "Possess (hand the view and input back to the game camera)"
+                : "Eject (detach to a free-fly editor camera; the game keeps running)");
+        }
+
+        ImGui::SameLine();
+    }
+
+    void FWorldEditorTool::SetEjectedFromPlay(bool bEject)
+    {
+        if (World == nullptr || !bGamePreviewRunning || bEject == bEjectedFromPlay)
+        {
+            return;
+        }
+
+        if (bEject)
+        {
+            if (EditorEntity != entt::null)
+            {
+                // A play session has no editor entity (SetWorldPlayInEditor nulls it); one here means
+                // some other path already built a camera in this world, and a second would leak it.
+                LOG_WARN("Eject: the PIE world already has an editor camera; ignoring.");
+                return;
+            }
+
+            // Captured BEFORE SetupWorldForTool, whose last step makes the editor entity active.
+            PossessedCameraEntity = World->GetActiveCameraEntity();
+
+            FTransform CameraPose;
+            bool bHasPose = false;
+            if (PossessedCameraEntity != entt::null && World->IsValidEntity(PossessedCameraEntity)
+                && World->HasComponent<STransformComponent>(PossessedCameraEntity))
+            {
+                CameraPose = World->GetComponent<STransformComponent>(PossessedCameraEntity).GetWorldTransform();
+                bHasPose = true;
+            }
+
+            // Builds the same flycam entity the editor and Simulate already fly, but in the PIE world.
+            // TickEditorCamera has no game-world gate, so it drives it with no further plumbing.
+            SetupWorldForTool();
+
+            // Start from the game camera's pose; the default pose would drop you at the world origin.
+            if (bHasPose && EditorEntity != entt::null && World->IsValidEntity(EditorEntity))
+            {
+                World->GetComponent<STransformComponent>(EditorEntity).SetLocalTransform(CameraPose);
+                World->EmplaceComponent<FNeedsTransformUpdate>(EditorEntity);
+            }
+
+            // Selecting and gizmoing a live entity is the point of ejecting, and game view hides the
+            // overlays that make that usable. Only reversed on possess if we were the one to turn it off.
+            bRestoreGameViewOnPossess = bGameViewMode;
+            if (bGameViewMode)
+            {
+                ToggleGameViewMode();
+            }
+
+            // Set last: HasEditorCameraControl() flips with it, and the click-to-refocus-the-game
+            // handler in FEditorTool reads that on the very next viewport draw.
+            bEjectedFromPlay = true;
+            SetInputFocus(EInputFocus::Editor);
+        }
+        else
+        {
+            // Re-activate the game camera BEFORE destroying the flycam, so the world is never left with
+            // a resolved view pointing at a dead entity for a frame.
+            if (PossessedCameraEntity != entt::null && World->IsValidEntity(PossessedCameraEntity))
+            {
+                World->SetActiveCamera(PossessedCameraEntity);
+            }
+            else
+            {
+                ImGuiX::Notifications::NotifyWarning("The camera that was possessed is gone; the game will pick its own.");
+            }
+            PossessedCameraEntity = entt::null;
+
+            if (EditorEntity != entt::null && World->IsValidEntity(EditorEntity))
+            {
+                World->DestroyEntity(EditorEntity);
+            }
+            EditorEntity = entt::null;
+
+            if (bRestoreGameViewOnPossess && !bGameViewMode)
+            {
+                ToggleGameViewMode();
+            }
+            bRestoreGameViewOnPossess = false;
+
+            bEjectedFromPlay = false;
+            SetInputFocus(EInputFocus::Game);
+        }
+    }
+
+    void FWorldEditorTool::TickEjectState()
+    {
+        if (!bEjectedFromPlay)
+        {
+            return;
+        }
+
+        // Travel swaps the PIE world mid-session and takes the flycam with it; a stop we didn't drive
+        // does the same. Fall back to a clean un-ejected state rather than flying a dangling handle.
+        // Deliberately NOT SetEjectedFromPlay(false): its possess path would touch the dead world.
+        if (!bGamePreviewRunning || World == nullptr
+            || EditorEntity == entt::null || !World->IsValidEntity(EditorEntity))
+        {
+            bEjectedFromPlay = false;
+            PossessedCameraEntity = entt::null;
+            bRestoreGameViewOnPossess = false;
         }
     }
 
@@ -3847,6 +4087,13 @@ namespace Lumina
                 GWorldManager->StopPIE(PIEDedicatedServerWorld);
                 PIEDedicatedServerWorld = nullptr;
             }
+
+            // Drop eject state while the PIE world is still alive. Not via SetEjectedFromPlay: the
+            // possess path would rebuild a camera in a world about to be torn down, and the code below
+            // already restores editor focus and clears game view.
+            bEjectedFromPlay = false;
+            PossessedCameraEntity = entt::null;
+            bRestoreGameViewOnPossess = false;
 
             PropertyTables.clear();
             SelectedEntities.clear();

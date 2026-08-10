@@ -1,4 +1,4 @@
-#include "Includes/SceneGlobals.slang"
+﻿#include "Includes/SceneGlobals.slang"
 
 // Turns CullInstances' counters into the view-major per-(view, draw) layout every later stage indexes.
 // One workgroup, one serial scan: NumViews * NumDraws is in the hundreds, so a hierarchical scan would

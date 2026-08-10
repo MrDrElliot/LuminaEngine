@@ -1,7 +1,7 @@
 ﻿#include "RuntimePCH.h"
 #include "RenderSceneFactory.h"
 
-#include "Forward/ForwardRenderScene.h"
+#include "Default/DefaultSceneRenderer.h"
 #include "Log/Log.h"
 
 namespace Lumina::RenderSceneFactory
@@ -43,6 +43,6 @@ namespace Lumina::RenderSceneFactory
             }
         }
 
-        return MakeUnique<FForwardRenderScene>(World);
+        return MakeUnique<FDefaultSceneRenderer>(World);
     }
 }

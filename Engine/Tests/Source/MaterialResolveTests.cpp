@@ -87,7 +87,7 @@ namespace Lumina
     }
 
     // Changed bytecode must change PipelineHash, because that hash IS the pipeline cache key
-    // (FForwardRenderScene::GetOrCreatePipeline hashes every shader slot through it). If it did not move,
+    // (FDefaultSceneRenderer::GetOrCreatePipeline hashes every shader slot through it). If it did not move,
     // a recompiled shader would keep running its old PSO with nothing to detect it.
     TEST(ShaderLibrary, ChangedBytecodeChangesPipelineHash)
     {

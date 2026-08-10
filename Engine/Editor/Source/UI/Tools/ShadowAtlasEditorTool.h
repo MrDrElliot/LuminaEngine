@@ -4,7 +4,7 @@
 namespace Lumina
 {
     // Runtime debug view for FShadowAtlas: quad-tree allocator state (utilization,
-    // per-size histogram, 2D tile visualization) for the forward render scene.
+    // per-size histogram, 2D tile visualization) for the default scene renderer.
     class FShadowAtlasEditorTool : public FEditorTool
     {
     public:

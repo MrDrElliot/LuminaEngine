@@ -510,7 +510,7 @@ namespace Lumina
 
     };
 
-    /** Render-thread-only GPU + sim state per emitter; lives in FForwardRenderScene::ParticleGPUStates,
+    /** Render-thread-only GPU + sim state per emitter; lives in FDefaultSceneRenderer::ParticleGPUStates,
      *  NOT on the component, so the render thread never touches a component the game thread may have destroyed. */
     struct FParticleGPUState
     {

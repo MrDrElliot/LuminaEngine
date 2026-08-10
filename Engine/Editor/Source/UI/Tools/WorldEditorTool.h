@@ -72,6 +72,10 @@ namespace Lumina
         void PushCreatePrefabFromSelectionModal();
         void PushCreatePrefabModalForEntity(entt::entity Entity);
 
+        // Prefab instance context-menu actions, shared between the outliner and viewport menus.
+        void ResyncPrefabInstance(entt::entity InstanceRoot);
+        void DetachPrefabInstance(entt::entity InstanceRoot);
+
         // Script context-menu helpers, shared between the outliner and viewport menus. The inline
         // assign/change dropdown is always offered; "Remove Script" only when one is present.
         void DrawScriptAttachMenuItems(entt::entity Entity);
@@ -106,6 +110,23 @@ namespace Lumina
         void OnEntityDestroyed(entt::registry& Registry, entt::entity Entity);
         
         void DrawSimulationControls(float ButtonSize);
+
+        // Pause/Resume for an in-progress Play or Simulate session; sits in the Play button's slot.
+        void DrawPauseResumeButton(const ImVec2& ButtonSize);
+        bool IsPlaySessionPaused() const;
+        void SetPlaySessionPaused(bool bPause);
+
+        // Eject/Possess, PIE only.
+        void DrawEjectButton(const ImVec2& ButtonSize);
+        NODISCARD bool IsEjectedFromPlay() const { return bEjectedFromPlay; }
+        void SetEjectedFromPlay(bool bEject);
+        void TickEjectState();
+
+        // The ejected flycam is the editor's camera, so it gets the grid, view gizmo and F-to-focus back.
+        NODISCARD bool HasEditorCameraControl() const override
+        {
+            return FEditorTool::HasEditorCameraControl() || (bEjectedFromPlay && HasWorld());
+        }
 
         // QoL viewport actions, all bound from the Update() key handler. Each begins/ends
         // a transaction internally where appropriate so they compose with undo/redo.
@@ -235,6 +256,12 @@ namespace Lumina
         // Editor entity in ProxyWorld, tracked separately from EditorEntity (active World) so
         // PIE/Simulate can restore the editor world even if Travel swaps it mid-session.
         entt::entity                            ProxyEditorEntity = entt::null;
+
+        // Eject: a free-fly editor camera spawned INTO the running PIE world. The game keeps ticking;
+        // only the view and the input focus change. Possess reverses it.
+        bool                                    bEjectedFromPlay = false;
+        entt::entity                            PossessedCameraEntity = entt::null;   // game camera to hand back to
+        bool                                    bRestoreGameViewOnPossess = false;
 
         // Play-in-editor session config, edited via the play-controls dropdown.
         struct FPlayInEditorSettings

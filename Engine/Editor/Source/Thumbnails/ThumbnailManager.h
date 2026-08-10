@@ -136,7 +136,7 @@ namespace Lumina
         THashMap<CClass*, FThumbnailRendererFn> ThumbnailRenderers;
         THashMap<CClass*, FThumbnailPainterFn>  ThumbnailPainters;
 
-        // Reused across captures. Building one of these is NOT cheap: CWorld + FForwardRenderScene::Init,
+        // Reused across captures. Building one of these is NOT cheap: CWorld + FDefaultSceneRenderer::Init,
         // whose first statement is RHI::WaitDeviceIdle(), then the sky cube, the IBL convolution targets,
         // the shadow atlas and the whole named-image set (~40 render targets). That was being paid, and
         // torn down again, once per thumbnail on the game thread. ResetContents() between captures gives
