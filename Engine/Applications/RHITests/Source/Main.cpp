@@ -1,6 +1,7 @@
 #include "RHITestHarness.h"
 
 #include "Core/Application/ApplicationGlobalState.h"
+#include "Core/CommandLine/CommandLine.h"
 #include "Log/Log.h"
 #include "Memory/Memory.h"
 #include "Renderer/RHI.h"
@@ -27,6 +28,9 @@ namespace
             "                     device down -- it is the smallest workload the harness can submit.\n"
             "  --novalidation     Bring the device up without the validation layer.\n"
             "  --gpuvalidation    Add GPU-assisted validation (instruments shaders; much slower).\n"
+            "\n"
+            "The RHI's own GPU-AV knobs work here too, e.g. --novalidate=instrument to skip the SPIR-V\n"
+            "rewrite, --validate=descriptor, or --maxinstrumented=N to bisect which shader breaks.\n"
             "\n"
             "Every test records its own command list and submits it on its own, so a validation error\n"
             "or a device loss is attributable to a single RHI call.\n");
@@ -90,9 +94,15 @@ int main(int ArgC, char** ArgV)
     }
 
     Memory::Initialize();
-    
+
     FApplicationGlobalState GlobalState("RHITests Main");
     Task::Initialize();
+
+    // Without this the RHI's own GPU-AV knobs are silently inert: every --validate= / --novalidate= /
+    // --maxinstrumented lookup runs through GCommandLine, and CreateDevice's IsListed() returns false
+    // when it is null. The flags parse, print nothing, and change nothing.
+    FCommandLine ParsedCommandLine{ ArgC, ArgV };
+    GCommandLine = &ParsedCommandLine;
     
     bValidation = bValidation || bGpuValidation;
     
@@ -129,6 +139,7 @@ int main(int ArgC, char** ArgV)
     RHI::FreeDevice();
 
     Task::Shutdown();
+    GCommandLine = nullptr;
 
     return FailedCount == 0 ? 0 : 1;
 }

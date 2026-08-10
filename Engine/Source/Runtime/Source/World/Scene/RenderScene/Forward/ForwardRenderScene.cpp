@@ -11506,11 +11506,22 @@ namespace Lumina
         return Pipeline;
     }
 
-    RHI::FPipelineH FForwardRenderScene::GetOrCreateComputePipeline(FShaderH CS)
+    RHI::FPipelineH FForwardRenderScene::GetOrCreateComputePipeline(FShaderH CS,
+        TSpan<const RHI::FSpecializationConstant> Constants)
     {
         size_t Seed = 0;
         Hash::HashCombine(Seed, CS.Handle);
         Hash::HashCombine(Seed, 0xC0C0C0C0ull);   // disambiguate from graphics keys
+
+        // The VALUES are part of the identity, not just the count: two dispatches of the same shader
+        // specialized differently are two pipelines, and hashing only the handle would hand the second
+        // one the first one's binary. The graphics key folds its constants in for the same reason.
+        for (const RHI::FSpecializationConstant& Constant : Constants)
+        {
+            Hash::HashCombine(Seed, Constant.ConstantID);
+            Hash::HashCombine(Seed, Constant.AsInt);
+            Hash::HashCombine(Seed, (uint32)Constant.Type);
+        }
 
         {
             FReadScopeLock Lock(PipelineCacheMutex);
@@ -11535,7 +11546,7 @@ namespace Lumina
             return {};
         }
 
-        RHI::FPipelineH Pipeline = RHI::CreateComputePipeline(CSEntry->Source());
+        RHI::FPipelineH Pipeline = RHI::CreateComputePipeline(CSEntry->Source(), Constants);
         PipelineCache.emplace(Seed, Pipeline);
 
 #if USING(WITH_EDITOR)

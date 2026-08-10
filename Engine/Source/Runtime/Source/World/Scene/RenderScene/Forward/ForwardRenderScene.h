@@ -867,7 +867,12 @@ namespace Lumina
             ForEachMeshletBatch(CL, DrawList, Ctx, static_cast<TSetup&&>(Setup),
                                 [](const FMeshDrawCommand&) {});
         }
-        RHI::FPipelineH      GetOrCreateComputePipeline(FShaderH CS);
+        /** Constants are part of the cache key, so the same shader specialized two ways yields two
+         *  pipelines. Until RHITests' GPU-AV crash on specialized compute is understood, prefer keeping
+         *  compute shaders free of specialization constants entirely (see SPEC_ENABLE_GTAO in
+         *  SurfaceShading.slang, which is #ifdef'd out of the SHADING_COMPUTE lane for that reason). */
+        RHI::FPipelineH      GetOrCreateComputePipeline(FShaderH CS,
+                                 TSpan<const RHI::FSpecializationConstant> Constants = {});
         RHI::FDepthStencilH  GetOrCreateDepthState(const RHI::FDepthStencilDesc& Desc);
 
         // Engine-wide per-draw args.

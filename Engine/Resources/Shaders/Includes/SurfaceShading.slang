@@ -741,7 +741,17 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
     // GTAO comes from OPAQUE depth, so at a glass pixel it holds the occlusion of what is behind it.
     float GTAO = 1.0;
 #ifndef TRANSLUCENT
+    // The compute lane drops the spec constant, same reasoning as SPEC_SHADOW_MASK above:
+    // GetOrCreateComputePipeline supplies no specialization info, so SPEC_ENABLE_GTAO would sit pinned at
+    // its default of 1 and the dead-strip this constant exists for could never happen. Keeping it there
+    // bought nothing and made DeferredLighting the one compute module in the engine carrying an
+    // OpSpecConstant -- which is exactly the shape RHITests found GPU-AV instrumentation dying on.
+    // Behaviour is unchanged: pinned-at-1 already reduced to this runtime test.
+#ifdef SHADING_COMPUTE
+    if (Scene().GTAOSettings.AOTextureIndex != 0xFFFFFFFFu)
+#else
     if (SPEC_ENABLE_GTAO != 0 && Scene().GTAOSettings.AOTextureIndex != 0xFFFFFFFFu)
+#endif
     {
         // Explicit LOD: this is a full-resolution screen-space texture read 1:1, and the deferred lighting
         // lane is compute, where an implicit derivative does not exist.
