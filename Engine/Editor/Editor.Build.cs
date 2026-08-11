@@ -31,7 +31,7 @@ public class Editor : LuminaModuleRules
             // Model format parsers: MeshOptimizer for the glTF importer, BasicUniversal for the
             // texture cooker.
             "TinyOBJLoader",
-            "OpenFBX",
+            "UFBX",
             "CGLTF",
             "MeshOptimizer",
             "BasicUniversal",

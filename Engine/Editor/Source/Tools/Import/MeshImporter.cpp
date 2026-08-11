@@ -34,6 +34,7 @@
 #include "TaskSystem/ThreadedCallback.h"
 #include "Tools/Import/MaterialImport.h"
 #include "Tools/Import/TextureImporter.h"
+#include "Tools/UI/ImGui/EditorColors.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "Log/Log.h"
 

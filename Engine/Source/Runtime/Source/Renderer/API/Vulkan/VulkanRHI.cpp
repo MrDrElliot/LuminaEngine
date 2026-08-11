@@ -411,28 +411,20 @@ namespace Lumina::RHI
         void*           Host;       // persistent mapping; null for GPU-only memory
         GPUPtr          Device;
         uint64          Size;
-#if USING(WITH_EDITOR)
-        // Kept HERE rather than only on the VkBuffer: the Vulkan object name dies with the object, which
-        // is exactly the moment the name becomes interesting.
+        #if USING(WITH_EDITOR)
         char            Name[kMaxBlockNameLength];
-#endif
+        #endif
     };
 
 #if USING(WITH_EDITOR)
-    // One entry per allocation that has been destroyed, oldest overwritten. A use-after-free address is by
-    // definition absent from the live table, so without this the report can only ever say "unknown".
     struct FFreedBlock
     {
         GPUPtr          Device;
         uint64          Size;
-        // Graphics-queue submissions at the time of the free. The retire window is measured in submits, so
-        // the delta says outright whether the free beat the fence or the pointer was stale for much longer.
         uint64          SubmitOrdinal;
         char            Name[kMaxBlockNameLength];
     };
-
-    // A fault is post-mortem: this only has to outlive the allocation long enough for the crash to land.
-    // 4096 entries is ~600 KiB and covers several seconds of editor churn.
+    
     static constexpr uint32 kFreedBlockHistory = 4096;
 #endif
     
@@ -1563,11 +1555,6 @@ namespace Lumina::RHI
         GDevice->MaxMeshWorkGroupCountX = (MeshProps.maxMeshWorkGroupCount[0] < kMaxMeshGroupsPerDraw)
                                         ? MeshProps.maxMeshWorkGroupCount[0]
                                         : kMaxMeshGroupsPerDraw;
-
-        // No task (amplification) stage anywhere: meshlet culling is a compute pass writing the draw
-        // list the mesh stage reads. Requiring the taskShader feature would reject a capable device
-        // for a stage nothing uses.
-        LOG_DISPLAY("Mesh shaders: required and present. Meshlet culling runs as compute.");
         
         VkPhysicalDeviceFeatures Features10             = {};
         Features10.fragmentStoresAndAtomics             = VK_TRUE;
@@ -1592,14 +1579,10 @@ namespace Lumina::RHI
         VkPhysicalDeviceVulkan11Features Features11{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
         Features11.shaderDrawParameters   = VK_TRUE;
         Features11.multiview              = VK_TRUE;
-        // Lets a storage-buffer struct declare 16-bit members, so Common.slang's FMeshletVertex mirrors the
-        // C++ struct field for field. Gated: Slang loads whole structs today, so a device without it boots.
         Features11.storageBuffer16BitAccess = Supported11.storageBuffer16BitAccess;
 
         VkPhysicalDeviceVulkan12Features Features12{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
         Features12.timelineSemaphore                            = VK_TRUE;
-        // vkCmdDrawMeshTasksIndirectCountEXT: the meshlet draw's sub-draw count is written by the cull,
-        // so the CPU never learns how many sub-draws a bucket needs.
         Features12.drawIndirectCount                            = VK_TRUE;
         Features12.bufferDeviceAddress                          = VK_TRUE;
 
@@ -1623,8 +1606,6 @@ namespace Lumina::RHI
         VkPhysicalDeviceVulkan13Features Features13{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
         Features13.dynamicRendering = VK_TRUE;
         Features13.synchronization2 = VK_TRUE;
-        // Enabled only where the mesh workgroup would otherwise be free to straddle two subgroups; the
-        // decision and the reason are above, alongside the mesh limits.
         Features13.subgroupSizeControl = GDevice->MeshRequiredSubgroupSize != 0;
 
         VkPhysicalDeviceVulkan14Features Features14{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES };
@@ -2454,8 +2435,6 @@ namespace Lumina::RHI
         };
 
 #if USING(WITH_EDITOR)
-        // Named later, if at all, by SetDebugName. An empty name still leaves a useful ledger entry --
-        // the address range and the free time are what discriminate the failure modes.
         Block.Name[0] = '\0';
 #endif
 

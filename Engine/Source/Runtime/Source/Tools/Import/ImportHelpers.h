@@ -235,6 +235,11 @@ namespace Lumina::Import
             Emissive,
             Occlusion,
 
+            /** FBX sources author metalness and roughness as two separate single-channel maps rather than
+             *  glTF's packed ORM, so both have their own slot. Used only when MetallicRoughness is unset. */
+            Metallic,
+            Roughness,
+
             Count,
         };
 
@@ -257,6 +262,11 @@ namespace Lumina::Import
             int32               NormalImage            = INDEX_NONE;
             int32               EmissiveImage          = INDEX_NONE;
             int32               OcclusionImage         = INDEX_NONE;
+
+            /** Separate single-channel maps, read from the R channel. Set only by sources that author
+             *  metalness and roughness as two textures (FBX); ignored when MetallicRoughnessImage is set. */
+            int32               MetallicImage          = INDEX_NONE;
+            int32               RoughnessImage         = INDEX_NONE;
 
             /**
              * Refractive index (KHR_materials_ior). Drives the dielectric F0, which the engine expresses as
@@ -446,7 +456,7 @@ namespace Lumina::Import
         RUNTIME_API void FinalizeMeshImportData(FMeshImportData& Data, const FMeshImportOptions& Options, FScopedSlowTask* Progress = nullptr, float ProgressBudget = 1.0f);
 
         // Model-format parsers live in the editor's CImporter hierarchy; they pull
-        // tinyobjloader/OpenFBX/cgltf, which don't ship in the Game runtime.
+        // tinyobjloader/ufbx/cgltf, which don't ship in the Game runtime.
     }
 
 }

@@ -203,7 +203,7 @@ namespace Lumina::Memory
     }
 }
 
-// C-ABI shim routing third-party libs (miniz, OpenFBX, MikkTSpace, RmlUi) through Memory::Malloc. Declared
+// C-ABI shim routing third-party libs (miniz, MikkTSpace, RmlUi) through Memory::Malloc. Declared
 // plain (no RUNTIME_API) to avoid a vendored-TU linkage clash; exported via /EXPORT pragmas in Memory.cpp.
 extern "C"
 {

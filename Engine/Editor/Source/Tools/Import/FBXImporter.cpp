@@ -1,1143 +1,1414 @@
-﻿#include "EditorPCH.h"
-#include <chrono>
-#include "Core/Math/Math.h"
+#include "EditorPCH.h"
 #include "FBXImporter.h"
-#include "Paths/Paths.h"
+
+#include <ufbx/ufbx.h>
+
+#include "ImportDedup.h"
 #include "Assets/AssetTypes/Mesh/Animation/Animation.h"
+#include "Core/Math/Math.h"
 #include "Core/Progress/SlowTask.h"
 #include "Core/Threading/Atomic.h"
-#include "Core/Utils/Defer.h"
 #include "FileSystem/FileSystem.h"
-#include "OpenFBX/ofbx.h"
-#include "OpenFBX/libdeflate.h"
+#include "Memory/Memory.h"
+#include "Memory/MemoryTracking.h"
+#include "Paths/Paths.h"
 #include "Platform/Filesystem/FileHelper.h"
 #include "Renderer/MeshData.h"
+#include "Renderer/SkeletonResource.h"
+#include "Renderer/Vertex.h"
 #include "TaskSystem/TaskSystem.h"
 #include "Log/Log.h"
-#include "Renderer/SkeletonResource.h"
-
-// Route libdeflate (OpenFBX's bundled inflate) through Lumina's tracked allocator.
-extern "C" void* LmThirdPartyMalloc(size_t Size, const char* Category);
-extern "C" void  LmThirdPartyFree(void* Ptr);
-
-namespace
-{
-    void* LibdeflateTrackedMalloc(size_t Size) { return LmThirdPartyMalloc(Size, "libdeflate"); }
-    void  LibdeflateTrackedFree(void* Ptr)     { LmThirdPartyFree(Ptr); }
-}
 
 namespace Lumina
 {
     using namespace Import::Mesh;
+    using namespace Import;
 
-    static FMatrix4 ConvertMatrix(const ofbx::DMatrix& m)
+    namespace
     {
-        return FMatrix4(
-            m.m[0], m.m[1], m.m[2], m.m[3],
-            m.m[4], m.m[5], m.m[6], m.m[7],
-            m.m[8], m.m[9], m.m[10], m.m[11],
-            m.m[12], m.m[13], m.m[14], m.m[15]
-        );
+        //~ ufbx plumbing -------------------------------------------------------------------------------
+
+        void* UfbxAlloc(void*, size_t Size)
+        {
+            LUMINA_MEMORY_SCOPE("Import");
+            return Memory::Malloc(Size);
+        }
+
+        void UfbxFree(void*, void* Ptr, size_t)
+        {
+            if (Ptr != nullptr)
+            {
+                Memory::Free(Ptr);
+            }
+        }
+
+        ufbx_allocator MakeTrackedAllocator()
+        {
+            ufbx_allocator Allocator = {};
+            Allocator.alloc_fn = &UfbxAlloc;
+            Allocator.free_fn  = &UfbxFree;
+            return Allocator;
+        }
+
+        FORCEINLINE FStringView ToView(const ufbx_string& S)
+        {
+            return (S.data != nullptr) ? FStringView(S.data, S.length) : FStringView();
+        }
+
+        FORCEINLINE FFixedString ToFixed(const ufbx_string& S)
+        {
+            return (S.data != nullptr && S.length > 0) ? FFixedString(S.data, S.length) : FFixedString();
+        }
+
+        FORCEINLINE FVector2 ToVector2(const ufbx_vec2& V) { return FVector2((float)V.x, (float)V.y); }
+        FORCEINLINE FVector3 ToVector3(const ufbx_vec3& V) { return FVector3((float)V.x, (float)V.y, (float)V.z); }
+        FORCEINLINE FVector4 ToVector4(const ufbx_vec4& V) { return FVector4((float)V.x, (float)V.y, (float)V.z, (float)V.w); }
+        FORCEINLINE FQuat    ToQuat(const ufbx_quat& Q)    { return FQuat((float)Q.w, (float)Q.x, (float)Q.y, (float)Q.z); }
+
+        /** ufbx_matrix is a column-major 4x3 affine; the missing row is (0,0,0,1). */
+        FMatrix4 ToMatrix4(const ufbx_matrix& M)
+        {
+            return FMatrix4(
+                (float)M.m00, (float)M.m10, (float)M.m20, 0.0f,
+                (float)M.m01, (float)M.m11, (float)M.m21, 0.0f,
+                (float)M.m02, (float)M.m12, (float)M.m22, 0.0f,
+                (float)M.m03, (float)M.m13, (float)M.m23, 1.0f);
+        }
+
+        FFixedString FormatUfbxError(const ufbx_error& Error)
+        {
+            char Buffer[512];
+            ufbx_format_error(Buffer, sizeof(Buffer), &Error);
+            return FFixedString(Buffer);
+        }
+
+        //~ Material helpers ----------------------------------------------------------------------------
+
+        FORCEINLINE float MapReal(const ufbx_material_map& Map, float Default)
+        {
+            return Map.has_value ? (float)Map.value_real : Default;
+        }
+
+        FORCEINLINE FVector3 MapVec3(const ufbx_material_map& Map, const FVector3& Default)
+        {
+            return Map.has_value ? ToVector3(Map.value_vec3) : Default;
+        }
+
+        /**
+         * The image file behind a material map.
+         *
+         * A material property does not always point straight at a file texture: 3ds Max wraps normal maps
+         * in a bump shader node, and layered stacks sit in front of the real image. `file_textures` is
+         * ufbx's flattened view of the actual files behind any of those, and contains the texture itself
+         * for the plain case.
+         */
+        const ufbx_texture* FindFileTexture(const ufbx_texture* Texture)
+        {
+            if (Texture == nullptr)
+            {
+                return nullptr;
+            }
+            if (Texture->has_file)
+            {
+                return Texture;
+            }
+            for (const ufbx_texture* Sub : Texture->file_textures)
+            {
+                if (Sub != nullptr && Sub->has_file)
+                {
+                    return Sub;
+                }
+            }
+            return nullptr;
+        }
+
+        /** Lowercased leaf of a path, used to key an image and to match a texture against a file on disk. */
+        FFixedString PathLeaf(FStringView Path)
+        {
+            FFixedString Normalized(Path.data(), Path.size());
+            for (FFixedString::value_type& C : Normalized)
+            {
+                if (C == '\\') { C = '/'; }
+            }
+            const FStringView Leaf = VFS::FileName(FStringView(Normalized.c_str(), Normalized.size()), false);
+            return FFixedString(Leaf.data(), Leaf.size());
+        }
     }
 
-    // Conjugate by the X reflection (M' = R * M * R, R = diag(-1,1,1)).
-    static void ConjugateHandedness(FMatrix4& M)
+    void CFBXImporter::ReleaseSourceData()
     {
-        M[0][1] = -M[0][1];
-        M[0][2] = -M[0][2];
-        M[0][3] = -M[0][3];
-        M[1][0] = -M[1][0];
-        M[2][0] = -M[2][0];
-        M[3][0] = -M[3][0];
+        // Source data first: its image spans point into the scene ufbx owns.
+        CMeshImporter::ReleaseSourceData();
+
+        if (Scene != nullptr)
+        {
+            ufbx_free_scene(Scene);
+            Scene = nullptr;
+        }
+
+        SourceBlob.clear();
+        SourceBlob.shrink_to_fit();
     }
-    
-    
+
     bool CFBXImporter::ParseMeshSource(const FImportRequest& Request,
-                                       const FMeshImportOptions& ImportOptions,
+                                       const FMeshImportOptions& Options,
                                        FMeshImportData& OutData,
                                        FString& OutError,
                                        FScopedSlowTask* Progress)
     {
-        const FStringView FilePath(Request.SourcePath.c_str(), Request.SourcePath.size());
-        FMeshImportData& ImportData = OutData;
-
-        // Install our tracked allocator for libdeflate once, before the first ofbx::load.
-        static const bool bLibdeflateAllocInstalled = []
+        if (Scene != nullptr)
         {
-            libdeflate_set_memory_allocator(&LibdeflateTrackedMalloc, &LibdeflateTrackedFree);
-            return true;
-        }();
-        (void)bLibdeflateAllocInstalled;
+            ufbx_free_scene(Scene);
+            Scene = nullptr;
+        }
 
-        // [DIAG] Time the file read vs. the ofbx parse so we can see where "Parsing source file" goes.
+        const FFixedString SourcePath = Request.SourcePath;
+        const FStringView  SourceDir  = VFS::Parent(SourcePath);
+        const FStringView  SourceName = VFS::FileName(SourcePath, true);
+
+        const bool bWantTextures = Options.bImportTextures || Options.bImportMaterials;
+
+        //~ Stage 1: source parsing.
+
         if (Progress)
         {
             Progress->UpdateMessage("Loading source file...");
         }
-        const auto TLoadStart = std::chrono::steady_clock::now();
 
-        TVector<uint8> FileBlob;
-        if (!FileHelper::LoadFileToArray(FileBlob, FilePath))
+        if (!FileHelper::LoadFileToArray(SourceBlob, FStringView(SourcePath.c_str(), SourcePath.size())))
         {
-            OutError = "Failed to load file path";
+            OutError = FString(std::format("Failed to read '{0}'.", SourcePath.c_str()).c_str());
             return false;
         }
 
-        const auto TParseStart = std::chrono::steady_clock::now();
-        LOG_INFO("[FBX] File load: {} ms ({} MB)",
-            std::chrono::duration_cast<std::chrono::milliseconds>(TParseStart - TLoadStart).count(),
-            FileBlob.size() / (1024ull * 1024ull));
-
         if (Progress)
         {
-            Progress->UpdateMessage("Parsing FBX data...");
-        }
-        
-        ofbx::LoadFlags LoadFlags = ofbx::LoadFlags::IGNORE_CAMERAS
-            | ofbx::LoadFlags::IGNORE_LIGHTS
-            | ofbx::LoadFlags::IGNORE_BLEND_SHAPES
-            | ofbx::LoadFlags::IGNORE_POSES;
-        
-        if (!ImportOptions.bImportTextures && !ImportOptions.bImportMaterials)
-        {
-            LoadFlags = LoadFlags | ofbx::LoadFlags::IGNORE_VIDEOS;
+            Progress->UpdateMessage("Parsing FBX...");
         }
 
-        ofbx::IScene* FBXScene = ofbx::load(FileBlob.data(), FileBlob.size(), (uint16)LoadFlags);
-        if (!FBXScene)
+        ufbx_load_opts LoadOptions = {};
+        LoadOptions.temp_allocator.allocator   = MakeTrackedAllocator();
+        LoadOptions.result_allocator.allocator = MakeTrackedAllocator();
+
+        // Lets ufbx resolve texture paths and any external file the scene references relative to the FBX.
+        LoadOptions.filename.data   = SourcePath.c_str();
+        LoadOptions.filename.length = SourcePath.size();
+
+        // The engine is left-handed Y-up with +Z forward, which is -Z in ufbx's "front points at the
+        // viewer" convention. Mirroring on X rather than Z keeps this matching what FBX imports have
+        // always produced here, so existing FBX-sourced assets stay consistent with new ones.
+        // ufbx applies the conversion to geometry, node transforms, skin binds and animation together,
+        // and reverses winding on the mirrored meshes, which is the whole reason to hand it the job.
+        LoadOptions.target_axes                = ufbx_axes_left_handed_y_up;
+        LoadOptions.handedness_conversion_axis = UFBX_MIRROR_AXIS_X;
+        LoadOptions.space_conversion           = UFBX_SPACE_CONVERSION_ADJUST_TRANSFORMS;
+
+        // Engine world units are metres. The user's Scale is deliberately NOT applied here: the shared
+        // FinalizeMeshImportData pass applies it to vertices, skeletons and animation translations, and
+        // applying it twice is exactly the bug the old importer had.
+        LoadOptions.target_unit_meters = 1.0f;
+
+        // FBX geometry transforms affect the mesh but not the node's children, which an entity hierarchy
+        // cannot express. Helper nodes keep instancing intact, unlike baking them into the geometry.
+        LoadOptions.geometry_transform_handling = UFBX_GEOMETRY_TRANSFORM_HANDLING_HELPER_NODES;
+        LoadOptions.inherit_mode_handling       = UFBX_INHERIT_MODE_HANDLING_HELPER_NODES;
+
+        LoadOptions.generate_missing_normals = true;
+        LoadOptions.normalize_normals        = true;
+        LoadOptions.clean_skin_weights       = true;
+
+        // Blender writes PBR materials as legacy Phong in a documented, reversible way. Without this every
+        // Blender FBX loses its roughness and metallic maps.
+        LoadOptions.use_blender_pbr_material = true;
+
+        LoadOptions.load_external_files            = bWantTextures;
+        LoadOptions.ignore_missing_external_files  = true;
+        LoadOptions.ignore_embedded                = !bWantTextures;
+
+        // A broken index becomes UFBX_NO_INDEX, which the ufbx_get_vertex_* accessors read as zero.
+        // Aborting instead would reject files that load fine everywhere else.
+        LoadOptions.index_error_handling = UFBX_INDEX_ERROR_HANDLING_NO_INDEX;
+        LoadOptions.connect_broken_elements = true;
+
+        ufbx_error LoadError;
+        Scene = ufbx_load_memory(SourceBlob.data(), SourceBlob.size(), &LoadOptions, &LoadError);
+        if (Scene == nullptr)
         {
-            OutError = "Failed to load FBX Scene";
+            OutError = FString(std::format("Failed to parse '{0}': {1}",
+                SourcePath.c_str(), FormatUfbxError(LoadError).c_str()).c_str());
+            SourceBlob.clear();
+            SourceBlob.shrink_to_fit();
             return false;
         }
 
-        const auto TSceneStart = std::chrono::steady_clock::now();
-        LOG_INFO("[FBX] Parse (ofbx::load): {} ms",
-            std::chrono::duration_cast<std::chrono::milliseconds>(TSceneStart - TParseStart).count());
-
-        // The engine is left-handed.
-        const ofbx::GlobalSettings* GlobalSettings = FBXScene->getGlobalSettings();
-        const bool bConvertHandedness = (GlobalSettings == nullptr) || (GlobalSettings->CoordAxis == ofbx::CoordSystem_RightHanded);
-
-        if (Progress)
+        for (const ufbx_warning& Warning : Scene->metadata.warnings)
         {
-            Progress->EnterProgressFrame(0.40f, "Reading animations...");
+            LOG_WARN("[FBX] '{}': {} (x{})", SourceName.data(), ToView(Warning.description).data(), (uint32)Warning.count);
         }
 
-        float SceneScale = FBXScene->getGlobalSettings()->UnitScaleFactor * 0.01f;
-        SceneScale *= ImportOptions.Scale;
-        
-        DEFER
+        //~ Stage 2: images. ufbx already collapses the scene's textures onto a unique file list, so this is
+        //~ one FSourceImage per distinct image. Embedded payloads stay VIEWS into the scene ufbx owns --
+        //~ ReleaseSourceData is what frees them.
+
+        TVector<int32> FileToImage(Scene->texture_files.count, INDEX_NONE);
+
+        if (bWantTextures && Scene->texture_files.count > 0)
         {
-            FBXScene->destroy();
-        };
-        
-        FStringView FileName = VFS::FileName(FilePath, true);
-        
-        
-        int AnimStackCount = ImportOptions.bImportAnimations ? FBXScene->getAnimationStackCount() : 0;
-        for (int i = 0; i < AnimStackCount; ++i)
-        {
-            const ofbx::AnimationStack* AnimationStack = FBXScene->getAnimationStack(i);
-            auto AnimClip = MakeUnique<FAnimationResource>();
-            AnimClip->Name = FString(AnimationStack->name) + "_Animation";
-            
-            const ofbx::AnimationLayer* Layer = AnimationStack->getLayer(0);
-            if (Layer == nullptr)
+            // Every place a texture's path might actually live, in decreasing order of authority. ufbx's
+            // `filename` is the authored path already resolved against the FBX, which is right whenever the
+            // asset travelled with its textures; the rest recover the common cases where it did not -- an
+            // absolute path from the authoring machine, a flattened texture folder, or the "<name>.fbm"
+            // sidecar the FBX SDK unpacks embedded media into.
+            auto ResolveOnDisk = [&](const ufbx_texture_file& File, FFixedString& OutTried) -> FFixedString
             {
-                continue;
-            }
-        
-            if (const ofbx::TakeInfo* TakeInfo = FBXScene->getTakeInfo(AnimationStack->name))
-            {
-                AnimClip->Duration = static_cast<float>(TakeInfo->local_time_to - TakeInfo->local_time_from);
-            }
-            
-            int ObjectCount = FBXScene->getAllObjectCount();
-            for (int ObjIdx = 0; ObjIdx < ObjectCount; ++ObjIdx)
-            {
-                const ofbx::Object* Bone = FBXScene->getAllObjects()[ObjIdx];
-                
-                if (!Bone->isNode())
+                const FStringView Relative = ToView(File.relative_filename);
+                const FStringView Absolute = ToView(File.absolute_filename);
+                const FStringView Resolved = ToView(File.filename);
+
+                const FFixedString Leaf = PathLeaf(!Relative.empty() ? Relative
+                                                 : (!Resolved.empty() ? Resolved : Absolute));
+
+                FFixedString Fbm(SourceName.data(), SourceName.size());
+                Fbm.append(".fbm");
+
+                FFixedString Candidates[6];
+                uint32 Count = 0;
+                if (!Resolved.empty()) { Candidates[Count++] = FFixedString(Resolved.data(), Resolved.size()); }
+                if (!Relative.empty()) { Candidates[Count++] = Paths::Combine(SourceDir, Relative); }
+                if (!Absolute.empty()) { Candidates[Count++] = FFixedString(Absolute.data(), Absolute.size()); }
+                if (!Leaf.empty())
                 {
-                    continue;
+                    Candidates[Count++] = Paths::Combine(SourceDir, Leaf);
+                    Candidates[Count++] = Paths::Combine(SourceDir, Fbm, Leaf);
+                    Candidates[Count++] = Paths::Combine(SourceDir, "textures", Leaf);
                 }
-                
-                const ofbx::AnimationCurveNode* TranslationNode = Layer->getCurveNode(*Bone, "Lcl Translation");
-                const ofbx::AnimationCurveNode* RotationNode    = Layer->getCurveNode(*Bone, "Lcl Rotation");
-                const ofbx::AnimationCurveNode* ScaleNode       = Layer->getCurveNode(*Bone, "Lcl Scale");
-                
-                if (!TranslationNode && !RotationNode && !ScaleNode)
+
+                for (uint32 i = 0; i < Count; ++i)
                 {
-                    continue;
-                }
-        
-                TSet<int64> AllTimestamps;
-                
-                auto CollectTimestamps = [&](const ofbx::AnimationCurveNode* Node)
-                {
-                    if (!Node)
+                    if (Paths::Exists(FStringView(Candidates[i].c_str(), Candidates[i].size())))
                     {
-                        return;
+                        return Candidates[i];
                     }
-                    for (int j = 0; j < 3; ++j)
-                    {
-                        if (const ofbx::AnimationCurve* Curve = Node->getCurve(j))
-                        {
-                            int KeyCount = Curve->getKeyCount();
-                            const int64* KeyTimes = Curve->getKeyTime();
-                            for (int k = 0; k < KeyCount; ++k)
-                            {
-                                AllTimestamps.insert(KeyTimes[k]);
-                            }
-                        }
-                    }
-                };
-                
-                CollectTimestamps(TranslationNode);
-                CollectTimestamps(RotationNode);
-                CollectTimestamps(ScaleNode);
-                
-                if (AllTimestamps.empty())
-                {
-                    continue;
-                }
-                
-                TVector<int64> SortedTimestamps(AllTimestamps.begin(), AllTimestamps.end());
-                eastl::sort(SortedTimestamps.begin(), SortedTimestamps.end());
-                
-                struct KeyframeData
-                {
-                    float Time;
-                    FVector3 Translation;
-                    FQuat Rotation;
-                    FVector3 Scale;
-                };
-                
-                TVector<KeyframeData> Keyframes;
-                Keyframes.reserve(SortedTimestamps.size());
-                
-                for (int64 FBXTime : SortedTimestamps)
-                {
-                    float Time = static_cast<float>(ofbx::fbxTimeToSeconds(FBXTime));
-
-                    ofbx::DVec3 AnimTranslation = Bone->getLocalTranslation();
-                    ofbx::DVec3 AnimRotation = Bone->getLocalRotation();
-                    ofbx::DVec3 AnimScale = Bone->getLocalScaling();
-
-                    // getNodeLocalTransform falls back to the curve node's authored per-axis default when an axis has
-                    // no curve. Evaluating curves directly with a 0 default snapped unanimated axes to zero.
-                    if (TranslationNode)
-                    {
-                        AnimTranslation = TranslationNode->getNodeLocalTransform(Time);
-                    }
-
-                    if (RotationNode)
-                    {
-                        AnimRotation = RotationNode->getNodeLocalTransform(Time);
-                    }
-
-                    if (ScaleNode)
-                    {
-                        AnimScale = ScaleNode->getNodeLocalTransform(Time);
-                    }
-                    
-                    ofbx::DMatrix LocalMatrix = Bone->evalLocal(AnimTranslation, AnimRotation, AnimScale);
-                    FMatrix4 Mat = ConvertMatrix(LocalMatrix);
-
-                    if (bConvertHandedness)
-                    {
-                        ConjugateHandedness(Mat);
-                    }
-
-                    Mat[3][0] *= SceneScale;
-                    Mat[3][1] *= SceneScale;
-                    Mat[3][2] *= SceneScale;
-                    
-                    KeyframeData Keyframe;
-                    Keyframe.Time = Time;
-                    // Math::Decompose normalizes the basis before extracting the quat; ToQuat on the raw matrix breaks
-                    // whenever the rig carries non-unit bone scale.
-                    if (!Math::Decompose(Mat, Keyframe.Scale, Keyframe.Rotation, Keyframe.Translation))
-                    {
-                        Keyframe.Translation = FVector3(Mat[3][0], Mat[3][1], Mat[3][2]);
-                        Keyframe.Rotation    = FQuat(1.0f, 0.0f, 0.0f, 0.0f);
-                        Keyframe.Scale       = FVector3(1.0f);
-                    }
-                    
-                    Keyframes.push_back(Keyframe);
-                }
-                
-                if (TranslationNode)
-                {
-                    FAnimationChannel TranslationChannel;
-                    TranslationChannel.TargetBone = Bone->name;
-                    TranslationChannel.TargetPath = FAnimationChannel::ETargetPath::Translation;
-                    
-                    for (const KeyframeData& KF : Keyframes)
-                    {
-                        TranslationChannel.Timestamps.push_back(KF.Time);
-                        TranslationChannel.Translations.push_back(KF.Translation);
-                    }
-                    
-                    AnimClip->Channels.push_back(TranslationChannel);
-                }
-                
-                if (RotationNode)
-                {
-                    FAnimationChannel RotationChannel;
-                    RotationChannel.TargetBone = Bone->name;
-                    RotationChannel.TargetPath = FAnimationChannel::ETargetPath::Rotation;
-                    
-                    for (const KeyframeData& KF : Keyframes)
-                    {
-                        RotationChannel.Timestamps.push_back(KF.Time);
-                        RotationChannel.Rotations.push_back(KF.Rotation);
-                    }
-                    
-                    AnimClip->Channels.push_back(RotationChannel);
-                }
-                
-                if (ScaleNode)
-                {
-                    FAnimationChannel ScaleChannel;
-                    ScaleChannel.TargetBone = Bone->name;
-                    ScaleChannel.TargetPath = FAnimationChannel::ETargetPath::Scale;
-                    
-                    for (const KeyframeData& KF : Keyframes)
-                    {
-                        ScaleChannel.Timestamps.push_back(KF.Time);
-                        ScaleChannel.Scales.push_back(KF.Scale);
-                    }
-                    
-                    AnimClip->Channels.push_back(ScaleChannel);
-                }
-            }
-            
-            if (!AnimClip->Channels.empty())
-            {
-                ImportData.Animations.push_back(Move(AnimClip));
-            }
-        }
-
-        if (Progress)
-        {
-            Progress->UpdateMessage("Reading skeleton & materials...");
-        }
-
-        // FBX stores embedded textures as scene-level Video objects.
-        auto DecodeBase64 = [](const char* Data, size_t Len) -> TVector<uint8>
-        {
-            auto V = [](char C) -> int
-            {
-                if (C >= 'A' && C <= 'Z') { return C - 'A'; }
-                if (C >= 'a' && C <= 'z') { return C - 'a' + 26; }
-                if (C >= '0' && C <= '9') { return C - '0' + 52; }
-                if (C == '+') { return 62; }
-                if (C == '/') { return 63; }
-                return -1;
-            };
-            TVector<uint8> Out;
-            Out.reserve(Len * 3 / 4 + 3);
-            int Buf = 0, Bits = 0;
-            for (size_t i = 0; i < Len; ++i)
-            {
-                const int D = V(Data[i]);
-                if (D < 0) { continue; }
-                Buf = (Buf << 6) | D;
-                Bits += 6;
-                if (Bits >= 8)
-                {
-                    Bits -= 8;
-                    Out.push_back((uint8)((Buf >> Bits) & 0xFF));
-                }
-            }
-            return Out;
-        };
-
-        auto EmbeddedLeafKey = [](ofbx::DataView View) -> FString
-        {
-            FString S;
-            if (View.begin != nullptr && View.end > View.begin)
-            {
-                S.assign(reinterpret_cast<const char*>(View.begin), reinterpret_cast<const char*>(View.end));
-            }
-            for (FString::value_type& C : S) { if (C == '\\') { C = '/'; } }
-            FStringView Leaf = VFS::FileName(S, true);
-            FString Key(Leaf.data(), Leaf.length());
-            for (FString::value_type& C : Key) { if (C >= 'A' && C <= 'Z') { C = C - 'A' + 'a'; } }
-            return Key;
-        };
-
-        THashMap<FString, TVector<uint8>> EmbeddedByName;
-        if (ImportOptions.bImportTextures || ImportOptions.bImportMaterials)
-        {
-            const int DataCount = FBXScene->getEmbeddedDataCount();
-            for (int DataIdx = 0; DataIdx < DataCount; ++DataIdx)
-            {
-                FString Key = EmbeddedLeafKey(FBXScene->getEmbeddedFilename(DataIdx));
-                if (Key.empty())
-                {
-                    continue;
+                    if (!OutTried.empty()) { OutTried.append(", "); }
+                    OutTried.append(Candidates[i]);
                 }
 
-                TVector<uint8> Bytes;
-                const ofbx::DataView Content = FBXScene->getEmbeddedData(DataIdx);
-                if (Content.begin != nullptr && Content.end > Content.begin)
-                {
-                    Bytes.assign(reinterpret_cast<const uint8*>(Content.begin), reinterpret_cast<const uint8*>(Content.end));
-                }
-                else if (FBXScene->isEmbeddedBase64(DataIdx))
-                {
-                    if (const ofbx::IElementProperty* B64 = FBXScene->getEmbeddedBase64Data(DataIdx))
-                    {
-                        const ofbx::DataView Enc = B64->getValue();
-                        if (Enc.begin != nullptr && Enc.end > Enc.begin)
-                        {
-                            Bytes = DecodeBase64(reinterpret_cast<const char*>(Enc.begin), (size_t)(Enc.end - Enc.begin));
-                        }
-                    }
-                }
-
-                if (!Bytes.empty())
-                {
-                    EmbeddedByName.emplace(Move(Key), Move(Bytes));
-                }
-            }
-
-            LOG_INFO("[FBX] Embedded textures: {} video(s) in scene, {} with usable bytes.", DataCount, EmbeddedByName.size());
-        }
-        
-        
-        
-        THashMap<FName, int32> BoneNameToIndex;
-        TVector<const ofbx::Object*> BoneObjects;
-
-        int MeshCount = FBXScene->getMeshCount();
-
-        THashMap<const ofbx::Material*, int16> MaterialToGlobal;
-        TVector<TVector<int16>> MeshPartitionToGlobal(MeshCount);
-
-        if (ImportOptions.bImportMaterials)
-        {
-            auto ViewToString = [](const ofbx::DataView& V) -> FString
-            {
-                if (V.begin == nullptr || V.end <= V.begin)
-                {
-                    return FString();
-                }
-                FString S(reinterpret_cast<const char*>(V.begin), reinterpret_cast<const char*>(V.end));
-                for (FString::value_type& C : S)
-                {
-                    if (C == '\\') { C = '/'; }
-                }
-                return S;
+                return FFixedString();
             };
 
-            const FStringView SourceDir = VFS::Parent(FilePath);
-            THashMap<FFixedString, int32> ImageKeyToIndex;
+            OutData.Images.reserve(Scene->texture_files.count);
 
-            // Resolves an ofbx texture into a deduplicated FSourceImage (embedded bytes or an on-disk path)
-            // and returns its index into ImportData.Images.
-            auto ExtractTexture = [&](const ofbx::Material* Material, ofbx::Texture::TextureType Type,
-                                      ETextureColorSpace Role, int16 GlobalIdx, const char* Suffix) -> int32
+            for (size_t i = 0; i < Scene->texture_files.count; ++i)
             {
-                const ofbx::Texture* Tex = Material->getTexture(Type);
-                if (Tex == nullptr)
-                {
-                    return INDEX_NONE;
-                }
-
-                const FString Rel = ViewToString(Tex->getRelativeFileName());
-                const ofbx::DataView Embedded = Tex->getEmbeddedData();
+                const ufbx_texture_file& File = Scene->texture_files.data[i];
 
                 FSourceImage Image;
-                Image.IntendedColorSpace = Role;
 
-                // Filename leaf, computed once: the embedded key and the Video-table lookup both use it.
-                FFixedString Leaf;
-                if (!Rel.empty())
+                // The key names the image for the asset it becomes and drives the cook's filename-based
+                // colour-space heuristic, so it wants to look like a filename even for embedded content.
+                Image.Key = PathLeaf(!ToView(File.relative_filename).empty() ? ToView(File.relative_filename)
+                                                                            : ToView(File.filename));
+                if (Image.Key.empty())
                 {
-                    FStringView L = VFS::FileName(Rel, true);
-                    Leaf.append_convert(L.data(), L.length());
+                    Image.Key = FFixedString(FFixedString::CtorSprintf(), "%.*s_Image_%u",
+                                             (int)SourceName.length(), SourceName.data(), (uint32)i);
                 }
 
-                if (Embedded.begin != nullptr && Embedded.end > Embedded.begin)
+                if (File.content.size > 0 && File.content.data != nullptr)
                 {
-                    const uint8* Start = reinterpret_cast<const uint8*>(Embedded.begin);
-                    Image.OwnedBytes.assign(Start, reinterpret_cast<const uint8*>(Embedded.end));
-                    Image.Key = !Leaf.empty()
-                        ? Leaf
-                        : FFixedString(FFixedString::CtorSprintf(), "FBXMat%d_%s", (int)GlobalIdx, Suffix);
-                }
-                else if (!Leaf.empty())
-                {
-                    // getEmbeddedData() missed it (no Media link); recover from the scene Video table by leaf
-                    // before giving up to an external path that, for an embedded texture, won't exist on disk.
-                    FString LeafLower(Leaf.c_str());
-                    for (FString::value_type& C : LeafLower) { if (C >= 'A' && C <= 'Z') { C = C - 'A' + 'a'; } }
-
-                    auto It = EmbeddedByName.find(LeafLower);
-                    if (It != EmbeddedByName.end() && !It->second.empty())
-                    {
-                        Image.OwnedBytes.assign(It->second.begin(), It->second.end());
-                        Image.Key = Leaf;
-                    }
-                    else
-                    {
-                        Image.Key          = Rel.c_str();   // external file (Rel is non-empty here)
-                        Image.ResolvedPath = Paths::Combine(SourceDir, Image.Key);
-                    }
+                    Image.Bytes = TSpan<const uint8>((const uint8*)File.content.data, File.content.size);
                 }
                 else
                 {
-                    // No embedded bytes and no path at all.
-                    return INDEX_NONE;
-                }
-
-                if (!ImportOptions.bImportTextures)
-                {
-                    return INDEX_NONE;
-                }
-
-                auto Existing = ImageKeyToIndex.find(Image.Key);
-                if (Existing != ImageKeyToIndex.end())
-                {
-                    return Existing->second;
-                }
-
-                // ofbx owns its scene only until the DEFER below destroys it, so embedded payloads are the
-                // one case that has to be copied rather than viewed.
-                Image.AdoptOwnedBytes();
-
-                const int32 Index = (int32)ImportData.Images.size();
-                ImageKeyToIndex.emplace(Image.Key, Index);
-                ImportData.Images.push_back(Move(Image));
-                return Index;
-            };
-
-            // FBX has no masked flag and OpenFBX exposes no opacity texture, so alpha-tested foliage would
-            // import Opaque. Flagged heuristically by name; the user can override the blend mode per material.
-            auto IsFoliageName = [&](const FString& Name, int32 BaseColorImage) -> bool
-            {
-                const FFixedString TexKey = (BaseColorImage >= 0 && (size_t)BaseColorImage < ImportData.Images.size())
-                    ? ImportData.Images[BaseColorImage].Key : FFixedString();
-
-                static const char* const kKeywords[] = {
-                    "leaf", "leaves", "foliage", "tree", "plant", "ivy", "bush",
-                    "grass", "branch", "fern", "hedge", "vine", "shrub", "flower" };
-
-                auto Lower = [](const char* S) -> FString
-                {
-                    FString L(S);
-                    for (FString::value_type& C : L) { if (C >= 'A' && C <= 'Z') { C = C - 'A' + 'a'; } }
-                    return L;
-                };
-                const FString N = Lower(Name.c_str());
-                const FString T = Lower(TexKey.c_str());
-                for (const char* K : kKeywords)
-                {
-                    if (N.find(K) != FString::npos || T.find(K) != FString::npos)
+                    FFixedString Tried;
+                    Image.ResolvedPath = ResolveOnDisk(File, Tried);
+                    if (Image.ResolvedPath.empty())
                     {
-                        return true;
+                        // The single most common reason an FBX imports untextured. Named loudly, with the
+                        // paths that were tried, because the silent fallback to a default material is
+                        // otherwise indistinguishable from the file having no textures at all.
+                        LOG_WARN("[FBX] Texture '{}' is neither embedded nor on disk; the materials using it "
+                                 "will import with the neutral default. Looked in: {}",
+                                 Image.Key, Tried.empty() ? FFixedString("(no path in the file)") : Tried);
+                        continue;
                     }
                 }
-                return false;
+
+                FileToImage[i] = (int32)OutData.Images.size();
+                OutData.Images.push_back(Move(Image));
+            }
+
+            uint32 EmbeddedCount = 0;
+            for (const FSourceImage& Image : OutData.Images)
+            {
+                EmbeddedCount += Image.IsEmbedded() ? 1u : 0u;
+            }
+
+            LOG_INFO("[FBX] '{}': {} texture file(s) -> {} image(s) ({} embedded).",
+                     SourceName.data(), (uint32)Scene->texture_files.count, (uint32)OutData.Images.size(),
+                     (uint32)EmbeddedCount);
+        }
+
+        //~ Stage 3: materials.
+
+        // A texture names its UV set by string. The engine carries two sets, so the name resolves to a set
+        // index through the meshes that declare it; anything past set 1 clamps down onto it.
+        THashMap<FFixedString, uint32> UVSetIndexByName;
+        for (const ufbx_mesh* Mesh : Scene->meshes)
+        {
+            for (const ufbx_uv_set& Set : Mesh->uv_sets)
+            {
+                FFixedString Name = ToFixed(Set.name);
+                if (!Name.empty() && UVSetIndexByName.find(Name) == UVSetIndexByName.end())
+                {
+                    UVSetIndexByName.emplace(Move(Name), Math::Min<uint32>(Set.index, 1u));
+                }
+            }
+        }
+
+        auto ResolveTexCoordSet = [&](const ufbx_texture* Texture) -> uint32
+        {
+            if (Texture == nullptr)
+            {
+                return 0;
+            }
+            const FFixedString Name = ToFixed(Texture->uv_set);
+            if (Name.empty())
+            {
+                return 0;
+            }
+            auto It = UVSetIndexByName.find(Name);
+            return (It != UVSetIndexByName.end()) ? It->second : 0u;
+        };
+
+        auto ResolveImage = [&](const ufbx_material_map& Map) -> int32
+        {
+            // texture_enabled is deliberately not consulted: exporters set it inconsistently, and a false
+            // there is the difference between a textured import and a flat grey one.
+            const ufbx_texture* File = FindFileTexture(Map.texture);
+            if (File == nullptr || !File->has_file || File->file_index == UFBX_NO_INDEX)
+            {
+                return INDEX_NONE;
+            }
+            return (File->file_index < FileToImage.size()) ? FileToImage[File->file_index] : INDEX_NONE;
+        };
+
+        auto ResolveUVTransform = [&](const ufbx_material_map& Map) -> FTextureUVTransform
+        {
+            FTextureUVTransform Out;
+
+            const ufbx_texture* Texture = FindFileTexture(Map.texture);
+            if (Texture == nullptr)
+            {
+                return Out;
+            }
+
+            Out.TexCoordSet = ResolveTexCoordSet(Texture);
+
+            if (!Texture->has_uv_transform)
+            {
+                return Out;
+            }
+
+            // uv_to_texture maps a UV coordinate to the sampled texture coordinate, which is the same
+            // direction the engine's scale/rotate/offset chain runs in.
+            const ufbx_matrix& M = Texture->uv_to_texture;
+            const FVector2 BasisU((float)M.m00, (float)M.m10);
+            const FVector2 BasisV((float)M.m01, (float)M.m11);
+
+            Out.Scale    = FVector2(Math::Length(BasisU), Math::Length(BasisV));
+            Out.Rotation = Math::Atan2((float)M.m10, (float)M.m00);
+            Out.Offset   = FVector2((float)M.m03, (float)M.m13);
+            return Out;
+        };
+
+        auto ResolveSampler = [&](const ufbx_material_map& Map) -> EImportSampler
+        {
+            const ufbx_texture* Texture = FindFileTexture(Map.texture);
+            if (Texture == nullptr)
+            {
+                return EImportSampler::LinearWrap;
+            }
+            // FBX wraps per axis and carries no filter mode; U wins for the same reason it does in glTF.
+            return (Texture->wrap_u == UFBX_WRAP_CLAMP) ? EImportSampler::LinearClamp : EImportSampler::LinearWrap;
+        };
+
+        auto MarkRole = [&](int32 ImageIndex, ETextureColorSpace Role)
+        {
+            if (ImageIndex >= 0 && (size_t)ImageIndex < OutData.Images.size())
+            {
+                OutData.Images[ImageIndex].IntendedColorSpace = Role;
+            }
+        };
+
+        // FBX has no masked flag and no way to point the engine's clip at anything but base-colour alpha,
+        // so alpha-tested foliage would otherwise import Opaque. Flagged heuristically by name; the user
+        // can override the blend mode per material afterwards.
+        auto IsFoliageName = [&](const FString& MaterialName, int32 BaseColorImage) -> bool
+        {
+            static const char* const kKeywords[] = {
+                "leaf", "leaves", "foliage", "tree", "plant", "ivy", "bush",
+                "grass", "branch", "fern", "hedge", "vine", "shrub", "flower" };
+
+            auto Lower = [](FStringView In) -> FString
+            {
+                FString L(In.data(), In.size());
+                for (FString::value_type& C : L) { if (C >= 'A' && C <= 'Z') { C = C - 'A' + 'a'; } }
+                return L;
             };
 
-            for (int MeshIdx = 0; MeshIdx < MeshCount; ++MeshIdx)
+            const FString Name = Lower(FStringView(MaterialName.c_str(), MaterialName.size()));
+            const FFixedString TexKey = (BaseColorImage >= 0 && (size_t)BaseColorImage < OutData.Images.size())
+                ? OutData.Images[BaseColorImage].Key : FFixedString();
+            const FString Texture = Lower(FStringView(TexKey.c_str(), TexKey.size()));
+
+            for (const char* Keyword : kKeywords)
             {
-                const ofbx::Mesh* Mesh = FBXScene->getMesh(MeshIdx);
-                const int MaterialCount = Mesh->getMaterialCount();
-                MeshPartitionToGlobal[MeshIdx].resize(MaterialCount, 0);
-
-                for (int MatIdx = 0; MatIdx < MaterialCount; ++MatIdx)
+                if (Name.find(Keyword) != FString::npos || Texture.find(Keyword) != FString::npos)
                 {
-                    const ofbx::Material* Material = Mesh->getMaterial(MatIdx);
+                    return true;
+                }
+            }
+            return false;
+        };
 
-                    int16 GlobalIdx;
-                    auto It = MaterialToGlobal.find(Material);
-                    if (It != MaterialToGlobal.end())
+        TVector<int32> MaterialToUnique(Scene->materials.count, INDEX_NONE);
+
+        if (Options.bImportMaterials)
+        {
+            FKeyDedup MaterialDedup(Scene->materials.count);
+            OutData.Materials.reserve(Scene->materials.count);
+
+            for (size_t i = 0; i < Scene->materials.count; ++i)
+            {
+                const ufbx_material& Source        = *Scene->materials.data[i];
+                const ufbx_material_pbr_maps& PBR  = Source.pbr;
+                const ufbx_material_features& Feat = Source.features;
+
+                FMeshImportMaterial Material;
+                Material.Name = !ToView(Source.name).empty()
+                    ? FString(Source.name.data, Source.name.length)
+                    : FString(FFixedString(FFixedString::CtorSprintf(), "%.*s_Mat%u",
+                              (int)SourceName.length(), SourceName.data(), (uint32)i).c_str());
+
+                // ufbx normalises every shading model it knows -- Phong, Arnold, 3ds Max Physical,
+                // Substance, Blender's Phong-encoded PBR -- onto this one set of maps.
+                Material.BaseColorImage = ResolveImage(PBR.base_color);
+                Material.NormalImage    = ResolveImage(PBR.normal_map);
+                Material.EmissiveImage  = ResolveImage(PBR.emission_color);
+                Material.OcclusionImage = ResolveImage(PBR.ambient_occlusion);
+
+                // FBX authors metalness and roughness as two single-channel maps far more often than as one
+                // packed image. The packed form is only assumed when both channels genuinely name the same
+                // file, otherwise each keeps its own slot and the generated master samples them separately.
+                const int32 MetallicImage  = ResolveImage(PBR.metalness);
+                const int32 RoughnessImage = ResolveImage(PBR.roughness);
+                if (MetallicImage != INDEX_NONE && MetallicImage == RoughnessImage)
+                {
+                    Material.MetallicRoughnessImage = MetallicImage;
+                }
+                else
+                {
+                    Material.MetallicImage  = MetallicImage;
+                    Material.RoughnessImage = RoughnessImage;
+                }
+
+                // THE factor rule for FBX, and what decides whether a textured import looks right at all:
+                // a texture connected to an FBX property REPLACES that property's constant, it does not tint
+                // it the way a glTF factor does. Standard Surface leaves base_color sitting at 0.5 and
+                // roughness at 0 next to a live map, so carrying those through as multipliers would halve
+                // every albedo and drive every roughness map to a mirror.
+                auto ScalarFactor = [](const ufbx_material_map& Map, int32 Image, float Default) -> float
+                {
+                    return (Image != INDEX_NONE) ? 1.0f : MapReal(Map, Default);
+                };
+
+                const int32 OpacityImage = ResolveImage(PBR.opacity);
+                const float Opacity = (OpacityImage != INDEX_NONE) ? 1.0f : MapReal(PBR.opacity, 1.0f);
+
+                if (Material.BaseColorImage != INDEX_NONE)
+                {
+                    Material.BaseColorFactor = FVector4(1.0f, 1.0f, 1.0f, Opacity);
+                }
+                else
+                {
+                    const FVector3 BaseColor  = MapVec3(PBR.base_color, FVector3(1.0f));
+                    const float    BaseFactor = MapReal(PBR.base_factor, 1.0f);
+                    Material.BaseColorFactor = FVector4(BaseColor.x * BaseFactor, BaseColor.y * BaseFactor,
+                                                        BaseColor.z * BaseFactor, Opacity);
+                }
+
+                // A material with neither a metalness value nor a map is a dielectric; leaving the factor at
+                // the glTF default of 1 would import every Phong surface as raw metal.
+                Material.MetallicFactor = (PBR.metalness.has_value || MetallicImage != INDEX_NONE)
+                    ? ScalarFactor(PBR.metalness, MetallicImage, 0.0f) : 0.0f;
+
+                Material.RoughnessFactor = ScalarFactor(PBR.roughness, RoughnessImage, 0.5f);
+                if (Feat.roughness_as_glossiness.enabled)
+                {
+                    if (RoughnessImage == INDEX_NONE)
                     {
-                        GlobalIdx = It->second;
+                        Material.RoughnessFactor = 1.0f - Material.RoughnessFactor;
                     }
                     else
                     {
-                        GlobalIdx = (int16)ImportData.Materials.size();
-                        MaterialToGlobal.emplace(Material, GlobalIdx);
-
-                        FMeshImportMaterial Out;
-                        Out.Name = (Material->name[0] != '\0')
-                            ? FString(Material->name)
-                            : FString(FFixedString(FFixedString::CtorSprintf(), "%.*s_Mat%d", (int)FileName.length(), FileName.data(), (int)GlobalIdx).c_str());
-
-                        const ofbx::Color Diffuse  = Material->getDiffuseColor();
-                        const ofbx::Color Emissive = Material->getEmissiveColor();
-                        const float       Opacity  = (float)Material->getOpacity();
-                        const float       EmissiveF = (float)Material->getEmissiveFactor();
-
-                        Out.BaseColorFactor = FVector4(Diffuse.r, Diffuse.g, Diffuse.b, Opacity);
-                        Out.MetallicFactor  = 0.0f;
-                        Out.RoughnessFactor = Math::Sqrt(2.0f / (Math::Max((float)Material->getShininessExponent(), 0.0f) + 2.0f));
-                        Out.AlphaMode       = (Opacity < 0.999f) ? EImportAlphaMode::Blend : EImportAlphaMode::Opaque;
-
-                        Out.BaseColorImage = ExtractTexture(Material, ofbx::Texture::DIFFUSE,  ETextureColorSpace::SRGB,   GlobalIdx, "D");
-                        // Linear (BC7 RGB), not NormalMap: the BC5-packed normal path is currently broken.
-                        Out.NormalImage    = ExtractTexture(Material, ofbx::Texture::NORMAL,   ETextureColorSpace::Linear, GlobalIdx, "N");
-                        Out.EmissiveImage  = ExtractTexture(Material, ofbx::Texture::EMISSIVE, ETextureColorSpace::SRGB,   GlobalIdx, "E");
-
-                        // OpenFBX returns emissive=(1,1,1) factor=1 for materials that do NOT author emissive, which makes
-                        // every one glow white. Treat that exact unauthored default as not-emissive; keep any real value.
-                        const bool bDefaultEmissive = (Emissive.r == 1.0f && Emissive.g == 1.0f && Emissive.b == 1.0f && EmissiveF == 1.0f);
-                        Out.EmissiveColor = (Out.EmissiveImage == INDEX_NONE && bDefaultEmissive)
-                            ? FVector3(0.0f)
-                            : FVector3(Emissive.r * EmissiveF, Emissive.g * EmissiveF, Emissive.b * EmissiveF);
-
-                        // Foliage heuristic: promote opaque materials with a foliage-like name to alpha-test
-                        // (base-color alpha drives the clip). Already-translucent materials keep their blend.
-                        if (Out.AlphaMode == EImportAlphaMode::Opaque && IsFoliageName(Out.Name, Out.BaseColorImage))
-                        {
-                            Out.AlphaMode   = EImportAlphaMode::Mask;
-                            Out.AlphaCutoff = 0.5f;
-                        }
-
-                        ImportData.Materials.push_back(Move(Out));
+                        LOG_WARN("[FBX] Material '{}' stores glossiness in its roughness map; the generated "
+                                 "graph has no invert node, so the map imports uninverted.", Material.Name);
                     }
-
-                    MeshPartitionToGlobal[MeshIdx][MatIdx] = GlobalIdx;
                 }
-            }
-        }
-        
-        for (int MeshIdx = 0; MeshIdx < MeshCount; ++MeshIdx)
-        {
-            const ofbx::Mesh* Mesh = FBXScene->getMesh(MeshIdx);
-            const ofbx::Skin* Skin = Mesh->getSkin();
 
-            if (!Skin)
-            {
-                continue;
-            }
-
-            int ClusterCount = Skin->getClusterCount();
-            for (int ClusterIdx = 0; ClusterIdx < ClusterCount; ++ClusterIdx)
-            {
-                const ofbx::Cluster* Cluster = Skin->getCluster(ClusterIdx);
-                const ofbx::Object* JointNode = Cluster->getLink();
-                
-                if (BoneNameToIndex.find(JointNode->name) == BoneNameToIndex.end())
+                const float EmissionFactor = MapReal(PBR.emission_factor, 1.0f);
+                if (Material.EmissiveImage != INDEX_NONE)
                 {
-                    int32 BoneIndex = static_cast<int32>(BoneObjects.size());
-                    BoneObjects.push_back(JointNode);
-                    BoneNameToIndex[JointNode->name] = BoneIndex;
+                    // The map supplies the colour; only the weight stays a constant.
+                    Material.EmissiveColor = FVector3(EmissionFactor);
+                }
+                else
+                {
+                    const FVector3 Emission = MapVec3(PBR.emission_color, FVector3(0.0f));
+                    Material.EmissiveColor = Feat.emission.enabled ? Emission * EmissionFactor : FVector3(0.0f);
+                }
+
+                Material.IOR            = MapReal(PBR.specular_ior, 1.5f);
+                Material.SpecularFactor = MapReal(PBR.specular_factor, 1.0f);
+
+                if (Feat.coat.enabled)
+                {
+                    Material.ClearcoatFactor    = MapReal(PBR.coat_factor, 0.0f);
+                    Material.ClearcoatRoughness = MapReal(PBR.coat_roughness, 0.0f);
+                }
+
+                Material.bTwoSided = Feat.double_sided.enabled;
+                Material.bUnlit    = Feat.unlit.enabled;
+
+                // Alpha. The engine clips and blends on base-colour alpha only, so an opacity map that is
+                // NOT the base-colour image cannot be honoured -- say so rather than importing it opaque.
+                if (OpacityImage != INDEX_NONE)
+                {
+                    Material.AlphaMode   = EImportAlphaMode::Mask;
+                    Material.AlphaCutoff = 0.5f;
+
+                    if (OpacityImage != Material.BaseColorImage)
+                    {
+                        LOG_WARN("[FBX] Material '{}' uses a separate opacity map, which the engine samples "
+                                 "from base-colour alpha instead. Imported as alpha-tested against the base "
+                                 "colour; if that alpha is opaque the mask has no effect.", Material.Name);
+                    }
+                }
+                else if (Opacity < 0.999f)
+                {
+                    Material.AlphaMode = EImportAlphaMode::Blend;
+                }
+                else if (IsFoliageName(Material.Name, Material.BaseColorImage))
+                {
+                    Material.AlphaMode   = EImportAlphaMode::Mask;
+                    Material.AlphaCutoff = 0.5f;
+                }
+
+                Material.UVTransforms[(size_t)EMaterialTextureSlot::BaseColor]         = ResolveUVTransform(PBR.base_color);
+                Material.UVTransforms[(size_t)EMaterialTextureSlot::Normal]            = ResolveUVTransform(PBR.normal_map);
+                Material.UVTransforms[(size_t)EMaterialTextureSlot::Emissive]          = ResolveUVTransform(PBR.emission_color);
+                Material.UVTransforms[(size_t)EMaterialTextureSlot::Occlusion]         = ResolveUVTransform(PBR.ambient_occlusion);
+                Material.UVTransforms[(size_t)EMaterialTextureSlot::Metallic]          = ResolveUVTransform(PBR.metalness);
+                Material.UVTransforms[(size_t)EMaterialTextureSlot::Roughness]         = ResolveUVTransform(PBR.roughness);
+                Material.UVTransforms[(size_t)EMaterialTextureSlot::MetallicRoughness] =
+                    (Material.MetallicRoughnessImage != INDEX_NONE) ? ResolveUVTransform(PBR.roughness) : FTextureUVTransform();
+
+                Material.Samplers[(size_t)EMaterialTextureSlot::BaseColor]         = ResolveSampler(PBR.base_color);
+                Material.Samplers[(size_t)EMaterialTextureSlot::Normal]            = ResolveSampler(PBR.normal_map);
+                Material.Samplers[(size_t)EMaterialTextureSlot::Emissive]          = ResolveSampler(PBR.emission_color);
+                Material.Samplers[(size_t)EMaterialTextureSlot::Occlusion]         = ResolveSampler(PBR.ambient_occlusion);
+                Material.Samplers[(size_t)EMaterialTextureSlot::Metallic]          = ResolveSampler(PBR.metalness);
+                Material.Samplers[(size_t)EMaterialTextureSlot::Roughness]         = ResolveSampler(PBR.roughness);
+                Material.Samplers[(size_t)EMaterialTextureSlot::MetallicRoughness] = ResolveSampler(PBR.roughness);
+
+                MarkRole(Material.BaseColorImage,         ETextureColorSpace::SRGB);
+                MarkRole(Material.EmissiveImage,          ETextureColorSpace::SRGB);
+                MarkRole(Material.MetallicRoughnessImage, ETextureColorSpace::PackedData);
+                MarkRole(Material.MetallicImage,          ETextureColorSpace::Linear);
+                MarkRole(Material.RoughnessImage,         ETextureColorSpace::Linear);
+                MarkRole(Material.OcclusionImage,         ETextureColorSpace::Linear);
+                // Normal maps cook as Linear (BC7 RGB), not NormalMap: the BC5-packed path is broken and
+                // the material output node reconstructs Z from XY either way.
+                MarkRole(Material.NormalImage,            ETextureColorSpace::Linear);
+
+                if (!bDeduplicateMaterials)
+                {
+                    MaterialToUnique[i] = (int32)OutData.Materials.size();
+                    OutData.Materials.push_back(Move(Material));
+                    continue;
+                }
+
+                TVector<uint32> Key;
+                Key.reserve(32);
+                Key.push_back(QuantizeFloat(Material.BaseColorFactor.x));
+                Key.push_back(QuantizeFloat(Material.BaseColorFactor.y));
+                Key.push_back(QuantizeFloat(Material.BaseColorFactor.z));
+                Key.push_back(QuantizeFloat(Material.BaseColorFactor.w));
+                Key.push_back(QuantizeFloat(Material.MetallicFactor));
+                Key.push_back(QuantizeFloat(Material.RoughnessFactor));
+                Key.push_back(QuantizeFloat(Material.EmissiveColor.x));
+                Key.push_back(QuantizeFloat(Material.EmissiveColor.y));
+                Key.push_back(QuantizeFloat(Material.EmissiveColor.z));
+                Key.push_back(QuantizeFloat(Material.AlphaCutoff));
+                Key.push_back((uint32)Material.AlphaMode | (Material.bTwoSided ? 0x100u : 0u) | (Material.bUnlit ? 0x200u : 0u));
+                Key.push_back((uint32)Material.BaseColorImage);
+                Key.push_back((uint32)Material.MetallicRoughnessImage);
+                Key.push_back((uint32)Material.MetallicImage);
+                Key.push_back((uint32)Material.RoughnessImage);
+                Key.push_back((uint32)Material.NormalImage);
+                Key.push_back((uint32)Material.EmissiveImage);
+                Key.push_back((uint32)Material.OcclusionImage);
+
+                // Two materials pointing at the same images but mapping or filtering them differently are
+                // NOT the same material; without this they collapse and one renders with the other's setup.
+                for (const FTextureUVTransform& UVT : Material.UVTransforms)
+                {
+                    Key.push_back(UVT.TexCoordSet);
+                    Key.push_back(QuantizeFloat(UVT.Offset.x));
+                    Key.push_back(QuantizeFloat(UVT.Offset.y));
+                    Key.push_back(QuantizeFloat(UVT.Scale.x));
+                    Key.push_back(QuantizeFloat(UVT.Scale.y));
+                    Key.push_back(QuantizeFloat(UVT.Rotation));
+                }
+                for (EImportSampler Sampler : Material.Samplers)
+                {
+                    Key.push_back((uint32)Sampler);
+                }
+                Key.push_back(QuantizeFloat(Material.IOR));
+                Key.push_back(QuantizeFloat(Material.SpecularFactor));
+                Key.push_back(QuantizeFloat(Material.ClearcoatFactor));
+                Key.push_back(QuantizeFloat(Material.ClearcoatRoughness));
+
+                bool bIsNew = false;
+                const uint32 Slot = MaterialDedup.Insert(Move(Key), bIsNew);
+                MaterialToUnique[i] = (int32)Slot;
+                if (bIsNew)
+                {
+                    OutData.Materials.push_back(Move(Material));
                 }
             }
         }
-        
-        if (!BoneObjects.empty() && ImportOptions.bImportSkeleton)
+
+        //~ Stage 4: scene graph. One DFS from the root so nodes land parents-before-children, which is what
+        //~ the prefab builder and the bone table below both need.
+
+        if (Progress)
         {
-            auto Skeleton = MakeUnique<FSkeletonResource>();
-            Skeleton->Bones.resize(BoneObjects.size());
-            Skeleton->Name = FString(FileName) + "_Skeleton";
-            
-            for (int MeshIdx = 0; MeshIdx < MeshCount; ++MeshIdx)
+            Progress->EnterProgressFrame(0.15f, "Discovering scene...");
+        }
+
+        // ufbx_node::typed_id indexes Scene->nodes, which makes it a dense key for every node-side table.
+        // The visit order is parents-before-children, which the bone table below reuses.
+        TVector<uint32> NodeVisitOrder;
+        NodeVisitOrder.reserve(Scene->nodes.count);
+
+        struct FStackEntry
+        {
+            const ufbx_node* Node;
+            int32            ParentSceneNode;
+        };
+
+        TVector<FStackEntry> Stack;
+        Stack.reserve(Math::Max<size_t>(64, Scene->nodes.count));
+
+        OutData.SceneNodes.reserve(Scene->nodes.count);
+        OutData.MeshInstances.reserve(Scene->nodes.count);
+
+        TVector<uint8> MeshReferenced(Scene->meshes.count, 0);
+
+        // The root itself is the scene's implicit container, so its children start at the top level.
+        for (const ufbx_node* Child : Scene->root_node->children)
+        {
+            Stack.push_back(FStackEntry{ Child, INDEX_NONE });
+        }
+
+        uint32 VisitedNodes = 0;
+        while (!Stack.empty())
+        {
+            const FStackEntry Entry = Stack.back();
+            Stack.pop_back();
+            ++VisitedNodes;
+
+            const ufbx_node& Node = *Entry.Node;
+
+            const int32 SceneNodeIndex = (int32)OutData.SceneNodes.size();
+            NodeVisitOrder.push_back(Node.typed_id);
+
+            FSourceSceneNode& SceneNode = OutData.SceneNodes.push_back();
+            SceneNode.ParentIndex = Entry.ParentSceneNode;
+            SceneNode.Name = !ToView(Node.name).empty()
+                ? FName(ToFixed(Node.name).c_str())
+                : FName("Node", (uint32)Node.typed_id);
+
+            SceneNode.Translation = ToVector3(Node.local_transform.translation);
+            SceneNode.Rotation    = ToQuat(Node.local_transform.rotation);
+            SceneNode.Scale       = ToVector3(Node.local_transform.scale);
+
+            if (Node.mesh != nullptr)
             {
-                const ofbx::Mesh* Mesh = FBXScene->getMesh(MeshIdx);
-                const ofbx::Skin* Skin = Mesh->getSkin();
-    
-                if (!Skin)
+                // MeshSlot and SlotIndex hold the raw mesh index until the dedup table rewrites them.
+                const uint32 MeshIndex = Node.mesh->typed_id;
+                MeshReferenced[MeshIndex] = 1;
+                SceneNode.Kind     = ESourceNodeKind::Mesh;
+                SceneNode.MeshSlot = (int32)MeshIndex;
+
+                // geometry_to_world, not node_to_world: geometry helper nodes carry the mesh's own offset,
+                // and the merge path bakes exactly this matrix into the vertices.
+                OutData.MeshInstances.push_back(FSourceMeshInstance{
+                    MeshIndex, (uint32)Node.typed_id, ToMatrix4(Node.geometry_to_world) });
+            }
+            else if (Node.light != nullptr)
+            {
+                const ufbx_light& Light = *Node.light;
+                switch (Light.type)
+                {
+                case UFBX_LIGHT_DIRECTIONAL: SceneNode.Kind = ESourceNodeKind::DirectionalLight; break;
+                case UFBX_LIGHT_POINT:       SceneNode.Kind = ESourceNodeKind::PointLight;       break;
+                case UFBX_LIGHT_SPOT:        SceneNode.Kind = ESourceNodeKind::SpotLight;        break;
+                default: break;
+                }
+
+                SceneNode.Light.Color     = ToVector3(Light.color);
+                SceneNode.Light.Intensity = (float)Light.intensity;
+                SceneNode.Light.InnerConeAngle = Math::Radians((float)Light.inner_angle);
+                SceneNode.Light.OuterConeAngle = Math::Radians((float)Light.outer_angle);
+            }
+            else if (Node.camera != nullptr)
+            {
+                const ufbx_camera& Camera = *Node.camera;
+                SceneNode.Kind = ESourceNodeKind::Camera;
+
+                if (Camera.projection_mode == UFBX_PROJECTION_MODE_ORTHOGRAPHIC)
+                {
+                    SceneNode.Camera.bOrthographic = true;
+                    SceneNode.Camera.OrthoWidth    = (float)Camera.orthographic_size.x;
+                }
+                else
+                {
+                    SceneNode.Camera.bOrthographic = false;
+                    SceneNode.Camera.YFov          = Math::Radians((float)Camera.field_of_view_deg.y);
+                }
+                SceneNode.Camera.ZNear = (float)Camera.near_plane;
+                SceneNode.Camera.ZFar  = (float)Camera.far_plane;
+            }
+
+            for (const ufbx_node* Child : Node.children)
+            {
+                Stack.push_back(FStackEntry{ Child, SceneNodeIndex });
+            }
+        }
+
+        OutData.SourceNodeCount = VisitedNodes;
+
+        // A file whose meshes hang off nothing still has geometry worth importing.
+        bool bAnyReferenced = false;
+        for (uint8 Referenced : MeshReferenced)
+        {
+            bAnyReferenced |= (Referenced != 0);
+        }
+        if (!bAnyReferenced)
+        {
+            for (size_t i = 0; i < Scene->meshes.count; ++i)
+            {
+                MeshReferenced[i] = 1;
+                OutData.MeshInstances.push_back(FSourceMeshInstance{ (uint32)i, 0u, FMatrix4(1.0f) });
+            }
+        }
+
+        //~ Stage 5: mesh deduplication. ufbx already shares one mesh across every node that instances it,
+        //~ so this only catches exporters that emitted the same geometry more than once.
+
+        TVector<uint32> UniqueMeshes;
+        TVector<int32>  MeshToUnique(Scene->meshes.count, INDEX_NONE);
+        {
+            FKeyDedup MeshDedup(Scene->meshes.count);
+            UniqueMeshes.reserve(Scene->meshes.count);
+
+            TVector<uint32> Key;
+            for (size_t MeshIndex = 0; MeshIndex < Scene->meshes.count; ++MeshIndex)
+            {
+                if (MeshReferenced[MeshIndex] == 0)
                 {
                     continue;
                 }
-    
-                int ClusterCount = Skin->getClusterCount();
-                for (int ClusterIdx = 0; ClusterIdx < ClusterCount; ++ClusterIdx)
+
+                const ufbx_mesh& Mesh = *Scene->meshes.data[MeshIndex];
+
+                if (!bDeduplicateMeshes)
                 {
-                    const ofbx::Cluster* Cluster = Skin->getCluster(ClusterIdx);
-                    const ofbx::Object* JointNode = Cluster->getLink();
-        
-                    if (!JointNode)
-                    {
-                        continue;
-                    }
-        
-                    auto It = BoneNameToIndex.find(JointNode->name);
-                    if (It == BoneNameToIndex.end())
-                    {
-                        continue;
-                    }
-        
-                    int32 BoneIndex = It->second;
-                    
-                    ofbx::DMatrix TransformLinkMatrix = Cluster->getTransformLinkMatrix();
-                    FMatrix4 JointWorldTransform = ConvertMatrix(TransformLinkMatrix);
+                    MeshToUnique[MeshIndex] = (int32)UniqueMeshes.size();
+                    UniqueMeshes.push_back((uint32)MeshIndex);
+                    continue;
+                }
 
-                    if (bConvertHandedness)
-                    {
-                        ConjugateHandedness(JointWorldTransform);
-                    }
+                // Counts and material assignment, plus a hash of the position values. Cheap next to the
+                // geometry pass, and specific enough that two different meshes never collapse.
+                Key.clear();
+                Key.push_back((uint32)Mesh.num_vertices);
+                Key.push_back((uint32)Mesh.num_indices);
+                Key.push_back((uint32)Mesh.num_faces);
+                Key.push_back((uint32)Mesh.skin_deformers.count);
+                for (const ufbx_material* Material : Mesh.materials)
+                {
+                    Key.push_back(Material != nullptr ? Material->typed_id : 0xFFFFFFFFu);
+                }
 
-                    JointWorldTransform[3][0] *= SceneScale;
-                    JointWorldTransform[3][1] *= SceneScale;
-                    JointWorldTransform[3][2] *= SceneScale;
-                    
-                    Skeleton->Bones[BoneIndex].InvBindMatrix = Math::Inverse(JointWorldTransform);
+                uint64 PositionHash = 0xCBF29CE484222325ull;
+                for (const ufbx_vec3& Position : Mesh.vertices)
+                {
+                    const float Components[3] = { (float)Position.x, (float)Position.y, (float)Position.z };
+                    for (float Component : Components)
+                    {
+                        uint32 Bits;
+                        memcpy(&Bits, &Component, sizeof(Bits));
+                        PositionHash = (PositionHash ^ Bits) * 0x100000001B3ull;
+                    }
+                }
+                Key.push_back((uint32)(PositionHash & 0xFFFFFFFFu));
+                Key.push_back((uint32)(PositionHash >> 32));
+
+                bool bIsNew = false;
+                TVector<uint32> OwnedKey = Key;
+                const uint32 Slot = MeshDedup.Insert(Move(OwnedKey), bIsNew);
+                MeshToUnique[MeshIndex] = (int32)Slot;
+                if (bIsNew)
+                {
+                    UniqueMeshes.push_back((uint32)MeshIndex);
                 }
             }
-        
-            
-            for (int32 BoneIndex = 0; BoneIndex < static_cast<int32>(BoneObjects.size()); ++BoneIndex)
+
+            for (FSourceMeshInstance& Instance : OutData.MeshInstances)
             {
-                const ofbx::Object* BoneObj = BoneObjects[BoneIndex];
-    
-                FSkeletonResource::FBoneInfo& BoneInfo = Skeleton->Bones[BoneIndex];
-                BoneInfo.Name = BoneObj->name;
-    
-                const ofbx::Object* ParentObj = BoneObj->getParent();
-                BoneInfo.ParentIndex = INDEX_NONE;
-    
-                if (ParentObj)
+                const int32 Slot = MeshToUnique[Instance.SlotIndex];
+                Instance.SlotIndex = (Slot >= 0) ? (uint32)Slot : 0u;
+            }
+
+            for (FSourceSceneNode& SceneNode : OutData.SceneNodes)
+            {
+                if (SceneNode.Kind == ESourceNodeKind::Mesh && SceneNode.MeshSlot >= 0)
                 {
-                    auto It = BoneNameToIndex.find(ParentObj->name);
-                    if (It != BoneNameToIndex.end())
+                    SceneNode.MeshSlot = MeshToUnique[SceneNode.MeshSlot];
+                }
+            }
+        }
+
+        //~ Stage 6: the skeleton. Built before geometry, because the vertex joint indices reference it.
+        //~ Every bone a cluster binds AND every ancestor up to the scene root goes in: an FK chain that
+        //~ skips an intermediate node poses every bone below it in the wrong place.
+
+        THashMap<uint32, int32> NodeToBone;   // ufbx_node::typed_id -> bone index
+        TVector<const ufbx_node*> BoneNodes;
+
+        {
+            TVector<uint8> IsBone(Scene->nodes.count, 0);
+            for (const ufbx_skin_deformer* Skin : Scene->skin_deformers)
+            {
+                for (const ufbx_skin_cluster* Cluster : Skin->clusters)
+                {
+                    for (const ufbx_node* Node = Cluster->bone_node; Node != nullptr; Node = Node->parent)
                     {
-                        BoneInfo.ParentIndex = It->second;
+                        if (Node->is_root || IsBone[Node->typed_id] != 0)
+                        {
+                            break;
+                        }
+                        IsBone[Node->typed_id] = 1;
                     }
                 }
-    
-                ofbx::DMatrix LocalMatrix = BoneObj->getLocalTransform();
-                FMatrix4 LocalTransform = ConvertMatrix(LocalMatrix);
+            }
 
-                if (bConvertHandedness)
+            // Emitted in the scene walk's order, which is parents-before-children -- what BuildBindPoseCache
+            // and every FK pass assume of the bone list.
+            for (uint32 TypedId : NodeVisitOrder)
+            {
+                if (IsBone[TypedId] == 0)
                 {
-                    ConjugateHandedness(LocalTransform);
+                    continue;
+                }
+                NodeToBone.emplace(TypedId, (int32)BoneNodes.size());
+                BoneNodes.push_back(Scene->nodes.data[TypedId]);
+            }
+        }
+
+        if (!BoneNodes.empty() && Options.bImportSkeleton)
+        {
+            TUniquePtr<FSkeletonResource> Skeleton = MakeUnique<FSkeletonResource>();
+            Skeleton->Name = FName((FString(SourceName.data(), SourceName.size()) + "_Skeleton").c_str());
+            Skeleton->Bones.resize(BoneNodes.size());
+
+            for (size_t BoneIndex = 0; BoneIndex < BoneNodes.size(); ++BoneIndex)
+            {
+                const ufbx_node& Node = *BoneNodes[BoneIndex];
+
+                FSkeletonResource::FBoneInfo& Bone = Skeleton->Bones[BoneIndex];
+                Bone.Name           = !ToView(Node.name).empty() ? FName(ToFixed(Node.name).c_str())
+                                                                 : FName("Bone", (uint32)Node.typed_id);
+                Bone.LocalTransform = ToMatrix4(Node.node_to_parent);
+                // Overwritten below for bones a cluster actually binds; a pure ancestor keeps the inverse of
+                // its rest world transform, which is what makes FK*InvBind identity at bind pose for it too.
+                Bone.InvBindMatrix  = ToMatrix4(Node.node_to_world);
+                Bone.InvBindMatrix  = Math::Inverse(Bone.InvBindMatrix);
+
+                Bone.ParentIndex = INDEX_NONE;
+                if (Node.parent != nullptr)
+                {
+                    auto It = NodeToBone.find(Node.parent->typed_id);
+                    if (It != NodeToBone.end())
+                    {
+                        Bone.ParentIndex = It->second;
+                    }
                 }
 
-                LocalTransform[3][0] *= SceneScale;
-                LocalTransform[3][1] *= SceneScale;
-                LocalTransform[3][2] *= SceneScale;
-                
-                BoneInfo.LocalTransform = LocalTransform;
+                Skeleton->BoneNameToIndex[Bone.Name] = (int32)BoneIndex;
             }
-            
-            Skeleton->BoneNameToIndex = BoneNameToIndex;
-            Skeleton->BuildBindPoseCache();
-            ImportData.Skeletons.push_back(Move(Skeleton));
-        }
-        
-        
-        ImportData.Resources.reserve(MeshCount);
 
-        LOG_INFO("[FBX] Scene data (anims/skeleton/materials): {} ms",
-            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - TSceneStart).count());
+            // geometry_to_bone maps the mesh's geometry space into bone space at bind time, which is
+            // exactly the inverse bind the skinning pass wants -- and it already carries whatever geometry
+            // transform the mesh node had, so nothing has to be composed back in here.
+            for (const ufbx_skin_deformer* Skin : Scene->skin_deformers)
+            {
+                for (const ufbx_skin_cluster* Cluster : Skin->clusters)
+                {
+                    if (Cluster->bone_node == nullptr)
+                    {
+                        continue;
+                    }
+                    auto It = NodeToBone.find(Cluster->bone_node->typed_id);
+                    if (It == NodeToBone.end())
+                    {
+                        continue;
+                    }
+                    Skeleton->Bones[It->second].InvBindMatrix = ToMatrix4(Cluster->geometry_to_bone);
+                }
+            }
+
+            Skeleton->BuildBindPoseCache();
+            OutData.Skeletons.push_back(Move(Skeleton));
+        }
+
+        //~ Stage 7: geometry. One asset per unique mesh, in object space; the node's world transform stays
+        //~ on the instance so an instanced scene costs one mesh rather than one per placement.
 
         if (Progress)
         {
             Progress->EnterProgressFrame(0.10f, "Reading geometry...");
         }
 
-        // Per-mesh extraction in parallel into FFBXMeshResult; serial merge concatenates with rebased offsets.
-        struct FFBXMeshResult
+        struct FMeshSlotResult
         {
-            bool                        bSkinned = false;
-            /** Whether this mesh carried a colour attribute; folded into the import-wide flag serially. */
-            bool                        bHasColors = false;
-            TVector<FSourceVertex>            StaticVerts;
-            TVector<FSourceSkinnedVertex>     SkinnedVerts;
-            TVector<uint32>             Indices;
-            TVector<FGeometrySurface>   Surfaces;
+            TUniquePtr<FMeshResource> Static;
+            TUniquePtr<FMeshResource> Skinned;
+            bool                      bHasColors = false;
         };
 
-        TVector<FFBXMeshResult> Results(MeshCount);
+        TVector<FMeshSlotResult> Slots(UniqueMeshes.size());
 
-        // The geometry phase owns the final 0.5 of the parse budget, spread per mesh.
-        const float GeometryStep = 0.5f / (float)eastl::max<size_t>((size_t)1, (size_t)MeshCount);
-        TAtomic<uint32> CompletedMeshes{0};
-
-        Task::ParallelFor((uint32)MeshCount, [&](uint32 MeshIdx)
+        // Names are assigned serially so a collision suffix is deterministic, then the parallel pass only
+        // touches its own slot.
+        TVector<FFixedString> MeshNames(UniqueMeshes.size());
         {
-            const ofbx::Mesh* Mesh = FBXScene->getMesh((int)MeshIdx);
-            const ofbx::Skin* OFBXSkin = Mesh->getSkin();
-            const bool bSkinned = OFBXSkin != nullptr;
-
-            FFBXMeshResult& Result = Results[MeshIdx];
-            Result.bSkinned = bSkinned;
-
-            THashMap<int, uint32> VertexIndexMap;
-
-            const ofbx::GeometryData&    Geometry  = Mesh->getGeometryData();
-            const ofbx::Vec3Attributes   Positions = Geometry.getPositions();
-            const ofbx::Vec3Attributes   Normals   = Geometry.getNormals();
-            const ofbx::Vec2Attributes   UVs       = Geometry.getUVs();
-            const ofbx::Vec4Attributes   Colors    = Geometry.getColors();
-            Result.bHasColors = (Colors.values != nullptr);
-
-            // Bake FBX transform: WorldVertex = GlobalTransform * GeometricMatrix * LocalVertex.
-            // Per-mesh GeometricMatrix is FBX-specific; ignoring it leaves meshes inconsistently oriented.
-            const FMatrix4 GlobalMatrix    = ConvertMatrix(Mesh->getGlobalTransform());
-            const FMatrix4 GeometricMatrix = ConvertMatrix(Mesh->getGeometricMatrix());
-            const FMatrix4 MeshToWorld     = GlobalMatrix * GeometricMatrix;
-            // RH(FBX) -> LH(engine): reflect X. Applied in world space so it converts the whole baked scene; the
-            // reflection inverts winding (compensated below) and the normal basis (NormalMatrix uses it too).
-            const FMatrix4 HandednessFix   = bConvertHandedness ? Math::Scale(FMatrix4(1.0f), FVector3(-1.0f, 1.0f, 1.0f)) : FMatrix4(1.0f);
-            const FMatrix4 MeshToEngine    = HandednessFix * MeshToWorld;
-            const FMatrix4 PosMatrix       = Math::Scale(FMatrix4(1.0f), FVector3(SceneScale)) * MeshToEngine;
-            const FMatrix3 NormalMatrix    = Math::Transpose(Math::Inverse(FMatrix3(MeshToEngine)));
-
-            // A negative-determinant node reflects the geometry, flipping triangle winding. The engine is
-            // CCW-front + back-face-cull, so the correct side would be culled. Winding is reversed below.
-            const bool     bMirroredXform = Math::Determinant(FMatrix3(MeshToEngine)) < 0.0f;
-
-            const int CPCount = Mesh->getGeometry()->getGeometryData().getPositions().count;
-
-            struct FSkin
+            THashMap<FFixedString, uint32> NameCounts;
+            for (size_t Slot = 0; Slot < UniqueMeshes.size(); ++Slot)
             {
-                int32 Count = 0;
-                TArray<int32, 4> Joints {};
-                TArray<float, 4> Weights {};
-            };
+                const ufbx_mesh& Mesh = *Scene->meshes.data[UniqueMeshes[Slot]];
 
-            TVector<FSkin> Skins(CPCount);
+                FFixedString Name = SanitizedSourceName(Mesh.name.data, Mesh.name.length);
+                if (Name.empty())
+                {
+                    Name = FFixedString(FFixedString::CtorSprintf(), "%.*s_%u",
+                                        (int)SourceName.length(), SourceName.data(), (uint32)UniqueMeshes[Slot]);
+                }
+
+                uint32& Count = NameCounts[Name];
+                if (Count > 0)
+                {
+                    Name.append("_").append_convert(eastl::to_string(Count));
+                }
+                ++Count;
+
+                MeshNames[Slot] = Move(Name);
+            }
+        }
+
+        const bool  bSkipFinalize = Options.bSkipFinalization;
+        const float GeometryStep  = 0.6f / (float)Math::Max<size_t>(1, UniqueMeshes.size());
+        TAtomic<uint32> Completed{0};
+
+        Task::ParallelFor((uint32)UniqueMeshes.size(), [&](uint32 SlotIndex)
+        {
+            const ufbx_mesh& Mesh = *Scene->meshes.data[UniqueMeshes[SlotIndex]];
+            const FFixedString& MeshName = MeshNames[SlotIndex];
+
+            FMeshSlotResult& Slot = Slots[SlotIndex];
+
+            const ufbx_skin_deformer* Skin = (Mesh.skin_deformers.count > 0) ? Mesh.skin_deformers.data[0] : nullptr;
+            const bool bSkinned = (Skin != nullptr) && !NodeToBone.empty();
+
+            TUniquePtr<FMeshResource> Resource = MakeUnique<FMeshResource>();
+            Resource->bSkinnedMesh = bSkinned;
+            Resource->Name = FName((FString(MeshName.c_str(), MeshName.size())
+                                    + (bSkinned ? "_SkeletalMesh" : "_Mesh")).c_str());
+
+            const ufbx_vertex_vec2* UV1Source = (Mesh.uv_sets.count > 1) ? &Mesh.uv_sets.data[1].vertex_uv : nullptr;
+            Slot.bHasColors = (Mesh.vertex_color.exists);
+
+            // One vertex per triangle corner up front, welded by ufbx_generate_indices afterwards. Working
+            // corner-by-corner is what makes the per-face attribute indices (split normals, hard edges) come
+            // out right; welding them back down is a bitwise compare over the packed vertex.
+            const size_t CornerCount = Mesh.num_triangles * 3;
+            if (CornerCount == 0)
+            {
+                Slot.Static = Move(Resource);
+                return;
+            }
+
+            TVector<FSourceSkinnedVertex> Corners(CornerCount);
+            TVector<uint32>               Indices(CornerCount);
+            TVector<uint32>               TriangleIndices(Mesh.max_face_triangles * 3);
+
+            // Bone remap for this mesh's clusters, resolved once rather than per influence.
+            TVector<int32> ClusterToBone;
             if (bSkinned)
             {
-                const int ClusterCount = OFBXSkin->getClusterCount();
-
-                for (int ClusterIdx = 0; ClusterIdx < ClusterCount; ++ClusterIdx)
+                ClusterToBone.resize(Skin->clusters.count, INDEX_NONE);
+                for (size_t c = 0; c < Skin->clusters.count; ++c)
                 {
-                    const ofbx::Cluster* Cluster = OFBXSkin->getCluster(ClusterIdx);
-
-                    if (Cluster->getIndicesCount() == 0)
+                    const ufbx_node* BoneNode = Skin->clusters.data[c]->bone_node;
+                    if (BoneNode == nullptr)
                     {
                         continue;
                     }
-
-                    if (Cluster->getLink() == nullptr)
+                    auto It = NodeToBone.find(BoneNode->typed_id);
+                    if (It != NodeToBone.end())
                     {
-                        continue;
-                    }
-
-                    auto BoneIt = BoneNameToIndex.find(Cluster->getLink()->name);
-                    if (BoneIt == BoneNameToIndex.end())
-                    {
-                        continue;
-                    }
-                    int32 BoneIndex = BoneIt->second;
-
-                    const int*    Indices = Cluster->getIndices();
-                    const double* Weights = Cluster->getWeights();
-                    int           Count   = Cluster->getIndicesCount();
-
-                    for (int i = 0; i < Count; ++i)
-                    {
-                        int CPIndex = Indices[i];
-                        float Weight = static_cast<float>(Weights[i]);
-                        FSkin& Skin = Skins[CPIndex];
-                        if (Skin.Count < 4)
-                        {
-                            Skin.Weights[Skin.Count] = Weight;
-                            Skin.Joints[Skin.Count] = BoneIndex;
-                            ++Skin.Count;
-                        }
-                        else
-                        {
-                            // Find the weakest slot FIRST, then replace it at most once. Replacing inside the search mutated
-                            // the array mid-scan and let one influence overwrite several slots with itself.
-                            int Min = 0;
-                            for (int M = 1; M < 4; ++M)
-                            {
-                                if (Skin.Weights[M] < Skin.Weights[Min])
-                                {
-                                    Min = M;
-                                }
-                            }
-
-                            if (Skin.Weights[Min] < Weight)
-                            {
-                                Skin.Weights[Min] = Weight;
-                                Skin.Joints[Min]  = BoneIndex;
-                            }
-                        }
-                    }
-                }
-
-                for (FSkin& Skin : Skins)
-                {
-                    float Sum = 0;
-                    for (float Weight : Skin.Weights)
-                    {
-                        Sum += Weight;
-                    }
-
-                    if (Sum == 0.0f)
-                    {
-                        // No cluster ever referenced this control point. Bind it rigidly to joint 0 so it at
-                        // least follows the root instead of having no transform at all.
-                        Skin.Weights[0] = 1.0f;
-                        Skin.Weights[1] = Skin.Weights[2] = Skin.Weights[3] = 0.0f;
-                        Skin.Joints[0] = Skin.Joints[1] = Skin.Joints[2] = Skin.Joints[3] = 0;
-
-                        // Count MUST be updated with the weights: the per-vertex copy is bounded by Count, so leaving it 0
-                        // ships all-zero weights, which blend an all-zero matrix into a NaN normal and a black sliver.
-                        Skin.Count = 1;
-                    }
-                    else
-                    {
-                        for (float& Weight : Skin.Weights)
-                        {
-                            Weight /= Sum;
-                        }
+                        ClusterToBone[c] = It->second;
                     }
                 }
             }
 
-            for (int PartitionIdx = 0; PartitionIdx < Geometry.getPartitionCount(); ++PartitionIdx)
+            size_t CornerCursor = 0;
+
+            struct FPendingSurface { uint32 Start; uint32 Count; int16 Material; };
+            TVector<FPendingSurface> PendingSurfaces;
+            PendingSurfaces.reserve(Mesh.material_parts.count);
+
+            for (const ufbx_mesh_part& Part : Mesh.material_parts)
             {
-                uint32 StartIndex = (uint32)Result.Indices.size();
-
-                const ofbx::GeometryPartition& Partition = Geometry.getPartition(PartitionIdx);
-
-                for (int PolygonIdx = 0; PolygonIdx < Partition.polygon_count; ++PolygonIdx)
+                if (Part.num_triangles == 0)
                 {
-                    const ofbx::GeometryPartition::Polygon& Polygon = Partition.polygons[PolygonIdx];
+                    continue;
+                }
 
-                    int TriangleIndices[128];
-                    uint32 TriIndexCount = ofbx::triangulate(Geometry, Polygon, TriangleIndices);
+                const uint32 SurfaceStart = (uint32)CornerCursor;
 
-                    if (bMirroredXform)
+                for (uint32 FaceIndex : Part.face_indices)
+                {
+                    const ufbx_face Face = Mesh.faces.data[FaceIndex];
+                    const uint32 TriangleCount = ufbx_triangulate_face(
+                        TriangleIndices.data(), TriangleIndices.size(), &Mesh, Face);
+
+                    for (uint32 i = 0; i < TriangleCount * 3; ++i)
                     {
-                        for (uint32 t = 0; t + 2 < TriIndexCount; t += 3)
+                        const uint32 Corner = TriangleIndices[i];
+
+                        FSourceSkinnedVertex& Vertex = Corners[CornerCursor];
+                        Vertex = FSourceSkinnedVertex{};
+
+                        Vertex.Position = ToVector3(ufbx_get_vertex_vec3(&Mesh.vertex_position, Corner));
+                        Vertex.Normal   = PackNormal(Math::Normalize(
+                            ToVector3(ufbx_get_vertex_vec3(&Mesh.vertex_normal, Corner))));
+
+                        // FBX authors UVs with the OpenGL bottom-left origin; the engine samples Vulkan
+                        // top-left. glTF is already top-left, which is why only this importer flips.
+                        FVector2 UV(0.0f, 0.0f);
+                        if (Mesh.vertex_uv.exists)
                         {
-                            const int Tmp          = TriangleIndices[t + 1];
-                            TriangleIndices[t + 1] = TriangleIndices[t + 2];
-                            TriangleIndices[t + 2] = Tmp;
+                            UV = ToVector2(ufbx_get_vertex_vec2(&Mesh.vertex_uv, Corner));
+                            UV.y = 1.0f - UV.y;
                         }
-                    }
+                        Vertex.UV = Math::PackHalf2x16(UV);
 
-                    for (uint32 i = 0; i < TriIndexCount; ++i)
-                    {
-                        int Index = TriangleIndices[i];
-
-                        uint32 VertexIdx;
-                        auto it = VertexIndexMap.find(Index);
-                        if (it != VertexIndexMap.end())
+                        // Mirror set 0 rather than leaving zeros: a material that asks for set 1 on a
+                        // single-set mesh then renders like set 0 instead of collapsing to one texel.
+                        FVector2 UV1 = UV;
+                        if (UV1Source != nullptr && UV1Source->exists)
                         {
-                            VertexIdx = it->second;
+                            UV1 = ToVector2(ufbx_get_vertex_vec2(UV1Source, Corner));
+                            UV1.y = 1.0f - UV1.y;
                         }
-                        else
+                        Vertex.UV1 = Math::PackHalf2x16(UV1);
+
+                        Vertex.Color = Mesh.vertex_color.exists
+                            ? PackColor(ToVector4(ufbx_get_vertex_vec4(&Mesh.vertex_color, Corner)))
+                            : 0xFFFFFFFFu;
+
+                        if (bSkinned)
                         {
-                            ofbx::Vec3 Position = Positions.get(Index);
-                            FVector3 PosLocal(Position.x, Position.y, Position.z);
-                            FVector3 Pos = FVector3(PosMatrix * FVector4(PosLocal, 1.0f));
+                            const uint32 VertexIndex = Mesh.vertex_indices.data[Corner];
 
-                            FVector3 Normal = Math::Normalize(NormalMatrix * FVector3(0.0f, 1.0f, 0.0f));
-                            if (Normals.values)
+                            FU8Vector4 JointIndices{};
+                            FVector4   JointWeights(0.0f);
+
+                            if (VertexIndex < Skin->vertices.count)
                             {
-                                ofbx::Vec3 N = Normals.get(Index);
-                                Normal = Math::Normalize(NormalMatrix * FVector3(N.x, N.y, N.z));
-                            }
-
-                            FVector2 UV(0, 0);
-                            if (UVs.values)
-                            {
-                                ofbx::Vec2 U = UVs.get(Index);
-
-                                // FBX authors with the OpenGL bottom-left UV origin; the engine renders Vulkan top-left. bFlipUVs
-                                // toggles this back off for the rare FBX authored top-left. glTF is already top-left.
-                                U.y = 1.0f - U.y;
-
-                                UV = FVector2(U.x, U.y);
-                            }
-
-                            FVector4 Col(1.0f);
-                            if (Colors.values)
-                            {
-                                ofbx::Vec4 Color = Colors.get(Index);
-                                Col = FVector4(Color.x, Color.y, Color.z, Color.w);
-                            }
-
-                            if (bSkinned)
-                            {
-                                FSourceSkinnedVertex Vertex;
-                                Vertex.Position = Pos;
-                                Vertex.Normal   = PackNormal(Normal);
-                                Vertex.Tangent  = 0;
-                                Vertex.UV       = Math::PackHalf2x16(UV);
-                                // FBX import reads one UV set; mirror it so set 1 is never garbage.
-                                Vertex.UV1      = Vertex.UV;
-                                Vertex.Color    = PackColor(Col);
-
-                                FU8Vector4 JointIndices{};
-                                FVector4   JointWeights{};
-
-                                if (Positions.indices)
+                                const ufbx_skin_vertex& SkinVertex = Skin->vertices.data[VertexIndex];
+                                // ufbx sorts influences by decreasing weight, so the first four are the
+                                // four that matter -- no keep-the-largest search to get wrong.
+                                const uint32 Count = Math::Min<uint32>((uint32)SkinVertex.num_weights, 4u);
+                                for (uint32 w = 0; w < Count; ++w)
                                 {
-                                    const FSkin& Skin = Skins[Positions.indices[Index]];
-
-                                    // All four slots, not Skin.Count of them: the arrays are fixed 4-wide, zero-initialized and fully
-                                    // normalized above, so copying the full width removes the Count-disagrees-with-slots bug class.
-                                    for (int j = 0; j < 4; ++j)
+                                    const ufbx_skin_weight& Weight = Skin->weights.data[SkinVertex.weight_begin + w];
+                                    const int32 Bone = (Weight.cluster_index < ClusterToBone.size())
+                                        ? ClusterToBone[Weight.cluster_index] : INDEX_NONE;
+                                    if (Bone < 0)
                                     {
-                                        JointIndices[j] = (uint8)Skin.Joints[j];
-                                        JointWeights[j] = Skin.Weights[j];
+                                        continue;
                                     }
+                                    JointIndices[w] = (uint8)Math::Clamp(Bone, 0, 255);
+                                    JointWeights[w] = (float)Weight.weight;
                                 }
-
-                                Vertex.JointIndices = JointIndices;
-                                // Already normalized per control point above. This quantizes to a quartet summing to exactly 255
-                                // rather than truncating each component to a 252-255 sum.
-                                Vertex.JointWeights = PackSkinWeights(JointWeights);
-
-                                VertexIdx = (uint32)Result.SkinnedVerts.size();
-                                Result.SkinnedVerts.push_back(Vertex);
-                            }
-                            else
-                            {
-                                FSourceVertex Vertex;
-                                Vertex.Position = Pos;
-                                Vertex.Normal   = PackNormal(Normal);
-                                Vertex.Tangent  = 0;
-                                Vertex.UV       = Math::PackHalf2x16(UV);
-                                // FBX import reads one UV set; mirror it so set 1 is never garbage.
-                                Vertex.UV1      = Vertex.UV;
-                                Vertex.Color    = PackColor(Col);
-
-                                VertexIdx = (uint32)Result.StaticVerts.size();
-                                Result.StaticVerts.push_back(Vertex);
                             }
 
-                            VertexIndexMap[Index] = VertexIdx;
+                            Vertex.JointIndices = JointIndices;
+                            // Normalizes and quantizes to a quartet summing to exactly 255; a zero-sum set
+                            // becomes rigid-to-joint-0 rather than an all-zero matrix.
+                            Vertex.JointWeights = PackSkinWeights(JointWeights);
                         }
 
-                        Result.Indices.push_back(VertexIdx);
+                        ++CornerCursor;
                     }
                 }
+
+                FPendingSurface Surface;
+                Surface.Start = SurfaceStart;
+                Surface.Count = (uint32)CornerCursor - SurfaceStart;
+                Surface.Material = -1;
+
+                if (Part.index < Mesh.materials.count)
+                {
+                    const ufbx_material* Material = Mesh.materials.data[Part.index];
+                    if (Material != nullptr && Material->typed_id < MaterialToUnique.size()
+                        && MaterialToUnique[Material->typed_id] >= 0)
+                    {
+                        Surface.Material = (int16)MaterialToUnique[Material->typed_id];
+                    }
+                }
+
+                PendingSurfaces.push_back(Surface);
+            }
+
+            // Weld. The stream is the packed vertex the engine stores, so two corners collapse only when
+            // every attribute the renderer reads is bit-identical. The skinned members are zeroed on an
+            // unskinned mesh, so one stride covers both cases.
+            ufbx_vertex_stream Stream = {};
+            Stream.data         = Corners.data();
+            Stream.vertex_count = CornerCursor;
+            Stream.vertex_size  = sizeof(FSourceSkinnedVertex);
+
+            ufbx_allocator_opts IndexAllocator = {};
+            IndexAllocator.allocator = MakeTrackedAllocator();
+
+            ufbx_error IndexError;
+            size_t UniqueVertices = ufbx_generate_indices(&Stream, 1, Indices.data(), CornerCursor,
+                                                          &IndexAllocator, &IndexError);
+            if (UniqueVertices == 0 && CornerCursor > 0)
+            {
+                // Welding is an optimisation; a failure must not lose the mesh.
+                LOG_WARN("[FBX] Mesh '{}': index generation failed ({}), keeping unwelded vertices.",
+                         MeshName, FormatUfbxError(IndexError));
+                UniqueVertices = CornerCursor;
+                for (size_t i = 0; i < CornerCursor; ++i)
+                {
+                    Indices[i] = (uint32)i;
+                }
+            }
+
+            Resource->ResizeVertices(UniqueVertices);
+            for (size_t i = 0; i < UniqueVertices; ++i)
+            {
+                const FSourceSkinnedVertex& V = Corners[i];
+                Resource->Positions[i] = V.Position;
+                Resource->Normals[i]   = V.Normal;
+                Resource->Tangents[i]  = V.Tangent;
+                Resource->UVs[i]       = V.UV;
+                Resource->UVs1[i]      = V.UV1;
+                Resource->Colors[i]    = V.Color;
+                if (bSkinned)
+                {
+                    Resource->JointIndices[i] = V.JointIndices;
+                    Resource->JointWeights[i] = V.JointWeights;
+                }
+            }
+
+            Resource->Indices.assign(Indices.begin(), Indices.begin() + CornerCursor);
+
+            Resource->GeometrySurfaces.reserve(PendingSurfaces.size());
+            for (size_t i = 0; i < PendingSurfaces.size(); ++i)
+            {
+                const FPendingSurface& Pending = PendingSurfaces[i];
 
                 FGeometrySurface Surface;
-                Surface.ID = Mesh->name;
-                Surface.StartIndex = StartIndex;
-                Surface.IndexCount = (uint32)Result.Indices.size() - StartIndex;
-                // Remap the per-mesh partition index to its global material slot (identity fallback when
-                // materials weren't extracted, preserving the original partition-index behavior).
-                const TVector<int16>& P2G = MeshPartitionToGlobal[MeshIdx];
-                Surface.MaterialIndex = (PartitionIdx < (int)P2G.size()) ? P2G[PartitionIdx] : (int16)PartitionIdx;
-                Result.Surfaces.push_back(Surface);
+                FFixedString SurfaceName = MeshName;
+                if (PendingSurfaces.size() > 1)
+                {
+                    SurfaceName.append("_").append_convert(eastl::to_string(i));
+                }
+                Surface.ID            = SurfaceName;
+                Surface.StartIndex    = Pending.Start;
+                Surface.IndexCount    = Pending.Count;
+                Surface.MaterialIndex = Pending.Material;
+                Resource->GeometrySurfaces.push_back(Surface);
             }
+
+            if (!bSkipFinalize)
+            {
+                if (Options.bOptimize)
+                {
+                    OptimizeNewlyImportedMesh(*Resource);
+                }
+                GenerateMeshlets(*Resource);
+            }
+
+            (bSkinned ? Slot.Skinned : Slot.Static) = Move(Resource);
 
             if (Progress)
             {
-                const uint32 Done = CompletedMeshes.fetch_add(1) + 1;
-                FFixedString Msg(FFixedString::CtorSprintf(), "Reading geometry (%u/%u meshes)...", Done, (uint32)MeshCount);
-                Progress->EnterProgressFrame(GeometryStep, Msg);
+                const uint32 Done = Completed.fetch_add(1) + 1;
+                FFixedString Message(FFixedString::CtorSprintf(), "Processing geometry (%u/%u meshes)...",
+                                     Done, (uint32)UniqueMeshes.size());
+                Progress->EnterProgressFrame(GeometryStep, Message);
             }
         });
 
-        // Serial merge: indices and surface StartIndex rebased by running bases, source-order traversal stays deterministic.
-        TUniquePtr<FMeshResource> StaticMesh = MakeUnique<FMeshResource>();
-        StaticMesh->Name = FString(FileName) + "_Mesh";
+        OutData.Resources.reserve(UniqueMeshes.size());
+        OutData.MeshSlots.resize(Slots.size());
 
-        TUniquePtr<FMeshResource> SkinnedMesh = MakeUnique<FMeshResource>();
-        SkinnedMesh->bSkinnedMesh = true;
-        SkinnedMesh->Name = FString(FileName) + "_SkeletalMesh";
-
+        for (size_t SlotIndex = 0; SlotIndex < Slots.size(); ++SlotIndex)
         {
-            size_t StaticVertCount = 0, StaticIdxCount = 0, StaticSurfCount = 0;
-            size_t SkinnedVertCount = 0, SkinnedIdxCount = 0, SkinnedSurfCount = 0;
-            for (const FFBXMeshResult& R : Results)
-            {
-                // One coloured mesh makes the generated materials sample vertex colour; meshes without the
-                // attribute were filled opaque white, so the multiply is a no-op on them.
-                ImportData.bHasVertexColors |= R.bHasColors;
+            FMeshSlotResult& Slot = Slots[SlotIndex];
+            OutData.bHasVertexColors |= Slot.bHasColors;
 
-                if (R.bSkinned)
-                {
-                    SkinnedVertCount += R.SkinnedVerts.size();
-                    SkinnedIdxCount  += R.Indices.size();
-                    SkinnedSurfCount += R.Surfaces.size();
-                }
-                else
-                {
-                    StaticVertCount += R.StaticVerts.size();
-                    StaticIdxCount  += R.Indices.size();
-                    StaticSurfCount += R.Surfaces.size();
-                }
+            if (Slot.Static && Slot.Static->GetNumVertices() > 0)
+            {
+                OutData.MeshSlots[SlotIndex].StaticResource = (int32)OutData.Resources.size();
+                OutData.Resources.push_back(Move(Slot.Static));
             }
-
-            StaticMesh->ReserveVertices(StaticVertCount);
-            StaticMesh->Indices.reserve(StaticIdxCount);
-            StaticMesh->GeometrySurfaces.reserve(StaticSurfCount);
-
-            SkinnedMesh->ReserveVertices(SkinnedVertCount);
-            SkinnedMesh->Indices.reserve(SkinnedIdxCount);
-            SkinnedMesh->GeometrySurfaces.reserve(SkinnedSurfCount);
-        }
-
-        for (FFBXMeshResult& R : Results)
-        {
-            FMeshResource& Target = R.bSkinned ? *SkinnedMesh : *StaticMesh;
-
-            const uint32 BaseVert = (uint32)Target.GetNumVertices();
-            const uint32 BaseIdx  = (uint32)Target.Indices.size();
-
-            if (R.bSkinned)
+            if (Slot.Skinned && Slot.Skinned->GetNumVertices() > 0)
             {
-                for (const FSourceSkinnedVertex& V : R.SkinnedVerts)
-                {
-                    Target.AppendVertex(V);
-                }
-            }
-            else
-            {
-                for (const FSourceVertex& V : R.StaticVerts)
-                {
-                    Target.AppendVertex(V);
-                }
-            }
-
-            for (uint32 LocalIdx : R.Indices)
-            {
-                Target.Indices.push_back(LocalIdx + BaseVert);
-            }
-
-            for (FGeometrySurface S : R.Surfaces)
-            {
-                S.StartIndex += BaseIdx;
-                Target.GeometrySurfaces.push_back(S);
+                OutData.MeshSlots[SlotIndex].SkinnedResource = (int32)OutData.Resources.size();
+                OutData.Resources.push_back(Move(Slot.Skinned));
             }
         }
 
-        TVector<FMeshResource*> ToFinalize;
-        if (StaticMesh->GetNumVertices() > 0)
-        {
-            ToFinalize.push_back(StaticMesh.get());
-        }
-        if (SkinnedMesh->GetNumVertices() > 0)
-        {
-            ToFinalize.push_back(SkinnedMesh.get());
-        }
+        //~ Stage 8: animation. Baked rather than read curve-by-curve: FBX composes a transform from pivots,
+        //~ pre/post-rotations and Euler curves whose per-axis defaults matter, and ufbx_bake_anim collapses
+        //~ all of that into the TRS keys the engine's channels actually hold.
 
-        // When bSkipFinalization is set, the dialog runs heavy passes at commit; stats still built for preview.
-        if (!ImportOptions.bSkipFinalization)
+        if (Options.bImportAnimations && Scene->anim_stacks.count > 0)
         {
-            Task::ParallelFor((uint32)ToFinalize.size(), [&](uint32 i)
+            if (Progress)
             {
-                FMeshResource* Res = ToFinalize[i];
-                if (ImportOptions.bOptimize)
+                Progress->UpdateMessage("Reading animations...");
+            }
+
+            OutData.Animations.reserve(Scene->anim_stacks.count);
+
+            for (const ufbx_anim_stack* Stack : Scene->anim_stacks)
+            {
+                ufbx_bake_opts BakeOptions = {};
+                BakeOptions.temp_allocator.allocator   = MakeTrackedAllocator();
+                BakeOptions.result_allocator.allocator = MakeTrackedAllocator();
+                // Clips play from zero in the engine, and a take authored on frames [30,60] would otherwise
+                // spend its first second frozen at the bind pose.
+                BakeOptions.trim_start_time = true;
+
+                ufbx_error BakeError;
+                ufbx_baked_anim* Baked = ufbx_bake_anim(Scene, Stack->anim, &BakeOptions, &BakeError);
+                if (Baked == nullptr)
                 {
-                    OptimizeNewlyImportedMesh(*Res);
+                    LOG_WARN("[FBX] Animation '{}' failed to bake: {}",
+                             ToView(Stack->name).data(), FormatUfbxError(BakeError));
+                    continue;
                 }
-                GenerateMeshlets(*Res);
-            });
+
+                TUniquePtr<FAnimationResource> Clip = MakeUnique<FAnimationResource>();
+                Clip->Name = !ToView(Stack->name).empty() ? FName(ToFixed(Stack->name).c_str())
+                                                          : FName("Animation");
+                Clip->Duration = (float)Baked->playback_duration;
+                Clip->Channels.reserve(Baked->nodes.count * 3);
+
+                for (const ufbx_baked_node& BakedNode : Baked->nodes)
+                {
+                    if (BakedNode.typed_id >= Scene->nodes.count)
+                    {
+                        continue;
+                    }
+
+                    const ufbx_node& Node = *Scene->nodes.data[BakedNode.typed_id];
+                    const FName TargetBone = !ToView(Node.name).empty()
+                        ? FName(ToFixed(Node.name).c_str()) : FName("Bone", (uint32)Node.typed_id);
+
+                    if (BakedNode.translation_keys.count > 0)
+                    {
+                        FAnimationChannel Channel;
+                        Channel.TargetBone = TargetBone;
+                        Channel.TargetPath = FAnimationChannel::ETargetPath::Translation;
+                        Channel.Timestamps.reserve(BakedNode.translation_keys.count);
+                        Channel.Translations.reserve(BakedNode.translation_keys.count);
+                        for (const ufbx_baked_vec3& Key : BakedNode.translation_keys)
+                        {
+                            Channel.Timestamps.push_back((float)Key.time);
+                            Channel.Translations.push_back(ToVector3(Key.value));
+                        }
+                        Clip->Channels.push_back(Move(Channel));
+                    }
+
+                    if (BakedNode.rotation_keys.count > 0)
+                    {
+                        FAnimationChannel Channel;
+                        Channel.TargetBone = TargetBone;
+                        Channel.TargetPath = FAnimationChannel::ETargetPath::Rotation;
+                        Channel.Timestamps.reserve(BakedNode.rotation_keys.count);
+                        Channel.Rotations.reserve(BakedNode.rotation_keys.count);
+                        for (const ufbx_baked_quat& Key : BakedNode.rotation_keys)
+                        {
+                            Channel.Timestamps.push_back((float)Key.time);
+                            Channel.Rotations.push_back(ToQuat(Key.value));
+                        }
+                        Clip->Channels.push_back(Move(Channel));
+                    }
+
+                    if (BakedNode.scale_keys.count > 0)
+                    {
+                        FAnimationChannel Channel;
+                        Channel.TargetBone = TargetBone;
+                        Channel.TargetPath = FAnimationChannel::ETargetPath::Scale;
+                        Channel.Timestamps.reserve(BakedNode.scale_keys.count);
+                        Channel.Scales.reserve(BakedNode.scale_keys.count);
+                        for (const ufbx_baked_vec3& Key : BakedNode.scale_keys)
+                        {
+                            Channel.Timestamps.push_back((float)Key.time);
+                            Channel.Scales.push_back(ToVector3(Key.value));
+                        }
+                        Clip->Channels.push_back(Move(Channel));
+                    }
+                }
+
+                ufbx_free_baked_anim(Baked);
+
+                if (!Clip->Channels.empty())
+                {
+                    OutData.Animations.push_back(Move(Clip));
+                }
+            }
         }
 
-        if (StaticMesh->GetNumVertices() > 0)
-        {
-            ImportData.Resources.push_back(std::move(StaticMesh));
-        }
-        if (SkinnedMesh->GetNumVertices() > 0)
-        {
-            ImportData.Resources.push_back(std::move(SkinnedMesh));
-        }
+        LOG_INFO("[FBX] '{}': {} nodes, {} mesh instances -> {} unique meshes, {} materials, {} images, "
+                 "{} bones, {} animations.",
+                 SourceName.data(), OutData.SourceNodeCount, (uint32)OutData.MeshInstances.size(),
+                 (uint32)OutData.Resources.size(), (uint32)OutData.Materials.size(),
+                 (uint32)OutData.Images.size(), (uint32)BoneNodes.size(), (uint32)OutData.Animations.size());
 
-        ImportData.SourceNodeCount = (uint32)MeshCount;
         return true;
     }
 }

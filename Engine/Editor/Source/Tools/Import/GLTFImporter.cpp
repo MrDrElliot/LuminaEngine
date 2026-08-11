@@ -4,6 +4,8 @@
 #include <cgltf.h>
 #include <meshoptimizer.h>
 
+#include "ImportDedup.h"
+
 #include "Assets/AssetTypes/Mesh/Animation/Animation.h"
 #include "Core/Math/Math.h"
 #include "Core/Progress/SlowTask.h"
@@ -22,6 +24,7 @@
 namespace Lumina
 {
     using namespace Import::Mesh;
+    using namespace Import;
 
     namespace
     {
@@ -76,78 +79,6 @@ namespace Lumina
                 Result = Math::Scale(Result, FVector3(Node.scale[0], Node.scale[1], Node.scale[2]));
             }
             return Result;
-        }
-
-        FORCEINLINE void HashCombine64(uint64& Seed, uint64 Value)
-        {
-            Seed ^= Value + 0x9E3779B97F4A7C15ull + (Seed << 6) + (Seed >> 2);
-        }
-
-        uint64 HashKey(const TVector<uint32>& Key)
-        {
-            uint64 Seed = 0xCBF29CE484222325ull;
-            for (uint32 Word : Key)
-            {
-                HashCombine64(Seed, Word);
-            }
-            return Seed;
-        }
-
-        /** Content-addressed dedup over small integer keys: buckets by hash, compares the full key on a hit.
-         *  Equivalence is decided from source identifiers without touching the vertex or pixel data. */
-        class FKeyDedup
-        {
-        public:
-
-            explicit FKeyDedup(size_t Reserve) { Keys.reserve(Reserve); }
-
-            // Returns the slot this key maps to, and whether the slot is newly created.
-            uint32 Insert(TVector<uint32>&& Key, bool& bOutIsNew)
-            {
-                const uint64 Hash = HashKey(Key);
-                TVector<uint32>& Bucket = Buckets[Hash];
-
-                for (uint32 Slot : Bucket)
-                {
-                    if (Keys[Slot] == Key)
-                    {
-                        bOutIsNew = false;
-                        return Slot;
-                    }
-                }
-
-                const uint32 Slot = (uint32)Keys.size();
-                Keys.push_back(Move(Key));
-                Bucket.push_back(Slot);
-                bOutIsNew = true;
-                return Slot;
-            }
-
-        private:
-
-            THashMap<uint64, TVector<uint32>> Buckets;
-            TVector<TVector<uint32>>          Keys;
-        };
-
-        FORCEINLINE uint32 QuantizeFloat(float Value)
-        {
-            // 1e-4 buckets: enough that authored duplicates collapse, tight enough that a deliberate
-            // difference never does.
-            return (uint32)(int32)Math::Round(Value * 10000.0f);
-        }
-
-        FFixedString SanitizedSourceName(const char* Raw)
-        {
-            FFixedString Name;
-            if (Raw == nullptr)
-            {
-                return Name;
-            }
-            for (const char* C = Raw; *C != '\0'; ++C)
-            {
-                Name.push_back((*C == '.' || *C == '/' || *C == '\\') ? '_' : *C);
-            }
-            return Name;
         }
 
         struct FGeometryScratch

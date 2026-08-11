@@ -96,7 +96,7 @@ namespace Lumina
         /** Parameter-name stems for the five texture slots, in EMaterialTextureSlot order. */
         constexpr const char* GSlotNames[(size_t)EMaterialTextureSlot::Count] =
         {
-            "BaseColor", "MetallicRoughness", "Normal", "Emissive", "Occlusion",
+            "BaseColor", "MetallicRoughness", "Normal", "Emissive", "Occlusion", "Metallic", "Roughness",
         };
 
         /** Two bits per slot: which TEXCOORD set it samples, and whether it needs a scale/offset chain.
@@ -152,11 +152,22 @@ namespace Lumina
             MFB_Clearcoat        = BIT(3),
             /** Set for every material of an import whose geometry carries a colour attribute. */
             MFB_VertexColor      = BIT(4),
+            /** Metalness and roughness arrive as two single-channel maps rather than one packed ORM. */
+            MFB_SplitMetalRough  = BIT(5),
         };
+
+        /** True when the material's metal/rough comes from two separate maps instead of a packed one.
+         *  A packed map always wins, so a source that supplies both never builds the split chain. */
+        bool UsesSplitMetalRough(const FMeshImportMaterial& Src)
+        {
+            return Src.MetallicRoughnessImage == INDEX_NONE
+                && (Src.MetallicImage != INDEX_NONE || Src.RoughnessImage != INDEX_NONE);
+        }
 
         uint32 BuildFeatureSignature(const FMeshImportMaterial& Src, bool bHasVertexColors)
         {
             uint32 Signature = bHasVertexColors ? MFB_VertexColor : 0u;
+            if (UsesSplitMetalRough(Src))      { Signature |= MFB_SplitMetalRough; }
             if (Src.NormalScale != 1.0f)       { Signature |= MFB_NormalScale; }
             if (Src.OcclusionStrength != 1.0f) { Signature |= MFB_OcclusionStrength; }
             // 0.5 is the shading default, so an unauthored IOR needs no node at all.
@@ -273,12 +284,11 @@ namespace Lumina
                 Connect(MulVertex->Output, Output->BaseColorPin);
             }
 
-            // Metallic-roughness (glTF packing: G = roughness, B = metallic), each scaled by its factor.
-            auto* TexMR = AddNode<CMaterialExpression_TextureSample>(Graph, ColTex, 380.0f * VS);
-            TexMR->bDynamic = true;
-            TexMR->ParameterName = "MetallicRoughnessTexture";
-            TexMR->Texture = White;
-            ApplySlotUV(TexMR, EMaterialTextureSlot::MetallicRoughness, 380.0f * VS);
+            // Metallic and roughness, each scaled by its factor. Two shapes, because the two source
+            // conventions genuinely differ: glTF packs both into one image (G = roughness, B = metallic),
+            // while FBX exporters author a separate single-channel map per channel. Sampling a standalone
+            // roughness map through the packed chain would read metalness out of its blue channel.
+            const bool bSplitMetalRough = (FeatureSignature & MFB_SplitMetalRough) != 0;
 
             auto* FacMetal = AddNode<CMaterialExpression_ConstantFloat>(Graph, ColTex, 570.0f * VS);
             FacMetal->bDynamic = true;
@@ -290,13 +300,45 @@ namespace Lumina
             FacRough->ParameterName = "RoughnessFactor";
             FacRough->Value = FVector4(1.0f, 0.0f, 0.0f, 0.0f);
 
+            CEdNodeGraphPin* MetalSource = nullptr;
+            CEdNodeGraphPin* RoughSource = nullptr;
+
+            if (!bSplitMetalRough)
+            {
+                auto* TexMR = AddNode<CMaterialExpression_TextureSample>(Graph, ColTex, 380.0f * VS);
+                TexMR->bDynamic = true;
+                TexMR->ParameterName = "MetallicRoughnessTexture";
+                TexMR->Texture = White;
+                ApplySlotUV(TexMR, EMaterialTextureSlot::MetallicRoughness, 380.0f * VS);
+
+                MetalSource = TexMR->GetOutputPins()[3].Get();   // B channel
+                RoughSource = TexMR->GetOutputPins()[2].Get();   // G channel
+            }
+            else
+            {
+                auto* TexMetal = AddNode<CMaterialExpression_TextureSample>(Graph, ColTex, 380.0f * VS);
+                TexMetal->bDynamic = true;
+                TexMetal->ParameterName = "MetallicTexture";
+                TexMetal->Texture = White;
+                ApplySlotUV(TexMetal, EMaterialTextureSlot::Metallic, 380.0f * VS);
+
+                auto* TexRough = AddNode<CMaterialExpression_TextureSample>(Graph, ColTex, 490.0f * VS);
+                TexRough->bDynamic = true;
+                TexRough->ParameterName = "RoughnessTexture";
+                TexRough->Texture = White;
+                ApplySlotUV(TexRough, EMaterialTextureSlot::Roughness, 490.0f * VS);
+
+                MetalSource = TexMetal->GetOutputPins()[1].Get();   // R channel
+                RoughSource = TexRough->GetOutputPins()[1].Get();   // R channel
+            }
+
             auto* MulMetal = AddNode<CMaterialExpression_Multiplication>(Graph, ColMul, 380.0f * VS);
-            Connect(TexMR->GetOutputPins()[3].Get(), MulMetal->A);    // B channel
+            Connect(MetalSource, MulMetal->A);
             Connect(FacMetal->GetOutputPins()[0].Get(), MulMetal->B);
             Connect(MulMetal->Output, Output->MetallicPin);
 
             auto* MulRough = AddNode<CMaterialExpression_Multiplication>(Graph, ColMul, 490.0f * VS);
-            Connect(TexMR->GetOutputPins()[2].Get(), MulRough->A);    // G channel
+            Connect(RoughSource, MulRough->A);
             Connect(FacRough->GetOutputPins()[0].Get(), MulRough->B);
             Connect(MulRough->Output, Output->RoughnessPin);
 
@@ -689,7 +731,15 @@ namespace Lumina
                 };
 
                 BindTexture("BaseColorTexture", Src.BaseColorImage);
-                BindTexture("MetallicRoughnessTexture", Src.MetallicRoughnessImage);
+                if (UsesSplitMetalRough(Src))
+                {
+                    BindTexture("MetallicTexture", Src.MetallicImage);
+                    BindTexture("RoughnessTexture", Src.RoughnessImage);
+                }
+                else
+                {
+                    BindTexture("MetallicRoughnessTexture", Src.MetallicRoughnessImage);
+                }
                 BindTexture("NormalTexture", Src.NormalImage);
                 BindTexture("EmissiveTexture", Src.EmissiveImage);
                 BindTexture("OcclusionTexture", Src.OcclusionImage);
