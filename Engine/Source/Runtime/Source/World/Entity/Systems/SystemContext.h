@@ -191,9 +191,10 @@ namespace Lumina
         //~ End Debug Drawing
         
         RUNTIME_API entt::runtime_view CreateRuntimeView(const THashSet<entt::id_type>& Components) const;
-
-        RUNTIME_API entt::entity Create(FVector3 Location) const;
-        RUNTIME_API entt::entity Create() const;
+        
+        RUNTIME_API entt::entity Create(const FTransform& Transform, FName EntityName = "Entity") const;
+        RUNTIME_API entt::entity Create(FVector3 Location, FName EntityName = "Entity") const;
+        RUNTIME_API entt::entity Create(FName EntityName = "Entity") const;
         void Destroy(entt::entity Entity) const
         {
             ValidateSystemAccess(static_cast<uint32>(entt::type_hash<SystemResource::EntityStructure>::value()), true, "Write<SystemResource::EntityStructure>");
