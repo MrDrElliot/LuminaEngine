@@ -64,4 +64,24 @@ namespace Lumina
         const float Clear[4] = { ClearColor.r, ClearColor.g, ClearColor.b, ClearColor.a };
         RHI::Textures::Clear(TextureResource->NewTexture, Clear);
     }
+
+    void CTextureRenderTarget::Update(const void* Pixels, uint64 SizeBytes, uint32 InWidth, uint32 InHeight)
+    {
+        if (Pixels == nullptr || SizeBytes == 0 || InWidth == 0 || InHeight == 0)
+        {
+            return;
+        }
+
+        // Resize before uploading, also handles the image not existing yet.
+        if (Width != InWidth || Height != InHeight
+            || TextureResource == nullptr || !TextureResource->NewTexture.IsValid())
+        {
+            Width  = InWidth;
+            Height = InHeight;
+            BuildResource();
+        }
+
+        // RowPitchTexels is the mip's own width.
+        RHI::Textures::Upload(TextureResource->NewTexture, 0, Pixels, SizeBytes, InWidth, InWidth, InHeight);
+    }
 }

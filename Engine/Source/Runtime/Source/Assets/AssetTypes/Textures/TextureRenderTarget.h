@@ -30,6 +30,13 @@ namespace Lumina
         /** (Re)allocates the GPU image from the current Width/Height/Format and clears it to ClearColor. */
         void BuildResource();
 
+        /**
+         * Writes pixels into the target, resizes to InWidth x InHeight first if it is not already that shape.
+         *
+         * Pixels must match the target's Format: 4 bytes per texel for RGBA8, 8 for RGBA16F.
+         */
+        void Update(const void* Pixels, uint64 SizeBytes, uint32 InWidth, uint32 InHeight);
+
         /** Resolved RHI format for the friendly Format property. */
         EFormat GetRHIFormat() const;
 
