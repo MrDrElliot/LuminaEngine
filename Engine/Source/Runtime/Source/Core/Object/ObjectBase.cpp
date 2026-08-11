@@ -127,6 +127,31 @@ namespace Lumina
         GCObjectAllocator.FreeCObject(this);
     }
 
+    void CObjectBase::BeginDestroyForShutdown()
+    {
+        if (HasAnyFlag(OF_MarkedDestroy))
+        {
+            return;
+        }
+
+        SetFlag(OF_MarkedDestroy);
+
+        OnDestroy();
+    }
+
+    void CObjectBase::FinishDestroyForShutdown()
+    {
+        // An object created during the OnDestroy pass was never visited by it. Give it the same
+        // teardown rather than freeing it half-destroyed.
+        if (!HasAnyFlag(OF_MarkedDestroy))
+        {
+            SetFlag(OF_MarkedDestroy);
+            OnDestroy();
+        }
+
+        GCObjectAllocator.FreeCObject(this);
+    }
+
     void CObjectBase::ForceDestroyNow()
     {
         if (HasAnyFlag(OF_MarkedDestroy))

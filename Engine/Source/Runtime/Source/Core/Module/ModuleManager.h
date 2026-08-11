@@ -54,7 +54,6 @@
 #else
 
 #define IMPLEMENT_MODULE(ModuleClass, ModuleName)                                           \
-    DECLARE_MODULE_ALLOCATOR_OVERRIDES()                                                    \
     extern "C" __declspec(dllexport) const char* LuminaModuleABISignature()                 \
     {                                                                                       \
         return LUMINA_MODULE_ABI_SIGNATURE;                                                 \

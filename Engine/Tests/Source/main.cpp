@@ -48,6 +48,6 @@ int main(int Argc, char** Argv)
     return RUN_ALL_TESTS();
 }
 
-// The eastl::allocator binding is provided by the canonical Memory/EASTLImpl.cpp, which Module.lua
-// auto-adds to this image. (Previously duplicated here, before EASTLImpl was centralized.)
-DECLARE_MODULE_ALLOCATOR_OVERRIDES();
+// The eastl::allocator binding is provided by the canonical Memory/EASTLImpl.cpp, and the global
+// new/delete overrides by Memory/GlobalAllocatorOverrides.cpp. The build tool auto-adds both to
+// every image, this one included. (Both were duplicated here before they were centralized.)

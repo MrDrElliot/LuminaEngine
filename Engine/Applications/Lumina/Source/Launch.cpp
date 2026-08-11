@@ -18,7 +18,8 @@
 using namespace Lumina;
 
 
-DECLARE_MODULE_ALLOCATOR_OVERRIDES();
+// The allocator overrides used to be declared here by hand. GlobalAllocatorOverrides.cpp carries
+// them now and the build tool adds it to every image, this one included.
 
 
 int LuminaMain(int ArgC, char** ArgV)  // NOLINT(misc-use-internal-linkage)

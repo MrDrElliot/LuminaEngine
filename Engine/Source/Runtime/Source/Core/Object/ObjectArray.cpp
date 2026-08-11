@@ -119,12 +119,17 @@ namespace Lumina
         FRecursiveScopeLock Lock(Mutex);
 
         bShuttingDown = true;
+        
+        ForEachObject([](CObjectBase* Object, int32)
+        {
+            Object->BeginDestroyForShutdown();
+        });
 
         ForEachObject([](CObjectBase* Object, int32)
         {
-            Object->ForceDestroyNow();
+            Object->FinishDestroyForShutdown();
         });
-            
+
         ChunkedArray.Shutdown();
         FreeIndices.clear();
         bInitialized = false;

@@ -20,6 +20,7 @@
 #include "Memory/Allocators/Allocator.h"
 #if USING(WITH_EDITOR)
 #include "TaskSystem/Scheduler/JobProfiler.h"
+#include "TaskSystem/Scheduler/JobScheduler.h"
 #endif
 #include "Core/Windows/Window.h"
 #include "encoder/basisu_enc.h"
@@ -331,6 +332,8 @@ namespace Lumina
 
         FCoreDelegates::OnPreEngineShutdown.BroadcastAndClear();
         
+        Jobs::WaitForAll();
+
         if (!GIsHeadless)
         {
             RHI::WaitDeviceIdle();
@@ -346,6 +349,8 @@ namespace Lumina
 
         Memory::Delete(GWorldManager);
 		GWorldManager = nullptr;
+        
+        Jobs::WaitForAll();
 
         ShutdownCObjectSystem();
 

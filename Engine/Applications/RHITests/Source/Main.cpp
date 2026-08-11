@@ -13,7 +13,7 @@
 
 using namespace Lumina;
 
-DECLARE_MODULE_ALLOCATOR_OVERRIDES();
+// Allocator overrides come from GlobalAllocatorOverrides.cpp, which the build tool adds to every image.
 
 namespace
 {

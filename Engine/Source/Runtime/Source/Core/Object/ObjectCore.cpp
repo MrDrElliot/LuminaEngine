@@ -544,7 +544,7 @@ namespace Lumina
         FinalClass->StructOps.reset(Params.StructOpsFn());
         if (FinalClass->StructOps == nullptr)
         {
-            FinalClass->StructOps = MakeUnique<FStructOps>();
+            FinalClass->StructOps.reset(Memory::New<FStructOps>());
         }
         
         

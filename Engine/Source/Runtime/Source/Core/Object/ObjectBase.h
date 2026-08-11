@@ -69,11 +69,11 @@ namespace Lumina
     private:
 
         RUNTIME_API void AddObject();
-
-        // Mark + OnDestroy + free. The single teardown path; callers must have decided it's safe to
-        // destroy (FCObjectArray::ConditionalDestroy under the lock, or ForceDestroyNow). Not public,
-        // go through ConditionalBeginDestroy / ForceDestroyNow.
+        
         RUNTIME_API void DestroyInternal();
+        
+        RUNTIME_API void BeginDestroyForShutdown();
+        RUNTIME_API void FinishDestroyForShutdown();
 
     public:
 

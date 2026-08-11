@@ -122,6 +122,13 @@ public abstract class LuminaModuleRules : ModuleRules
         // these modules into the executable, and then only the executable still needs it.
         PerImageSourceFiles.Add(
             Path.Combine(Target.EngineSourceDirectory, "Runtime", "Source", "Memory", "EASTLImpl.cpp"));
+
+        // Same reasoning, and for the same per-image reason: replacing global new/delete is a
+        // link-time decision made once per binary, and an image without its own definition binds to
+        // the CRT instead. Pointers cross images all the time, so one image out of step is enough to
+        // have rpmalloc handed a block the CRT allocated.
+        PerImageSourceFiles.Add(
+            Path.Combine(Target.EngineSourceDirectory, "Runtime", "Source", "Memory", "GlobalAllocatorOverrides.cpp"));
     }
 }
 
