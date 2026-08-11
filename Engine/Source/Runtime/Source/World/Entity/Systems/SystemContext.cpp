@@ -198,27 +198,39 @@ namespace Lumina
     {
         World->DrawSolidTriangles(std::move(Vertices), Mode, Duration);
     }
+
+    entt::entity FSystemContext::Create(const FTransform& Transform, FName EntityName) const
+    {
+        LUMINA_PROFILE_SCOPE();
+        CheckStructure();
+
+        entt::entity EntityID = Registry.create();
+        Registry.emplace<STransformComponent>(EntityID).SetWorldTransform(Transform);
+        Registry.emplace<SNameComponent>(EntityID, EntityName);
+        Registry.emplace_or_replace<FNeedsTransformUpdate>(EntityID);
+        return EntityID;
+    }
     
-    entt::entity FSystemContext::Create(FVector3 Location) const
+    entt::entity FSystemContext::Create(FVector3 Location, FName EntityName) const
     {
         LUMINA_PROFILE_SCOPE();
         CheckStructure();
 
         entt::entity EntityID = Registry.create();
         Registry.emplace<STransformComponent>(EntityID).SetLocation(Location);
-        Registry.emplace<SNameComponent>(EntityID).Name = "Entity";
+        Registry.emplace<SNameComponent>(EntityID, EntityName);
         Registry.emplace_or_replace<FNeedsTransformUpdate>(EntityID);
         return EntityID;
     }
     
-    entt::entity FSystemContext::Create() const
+    entt::entity FSystemContext::Create(FName EntityName) const
     {
         LUMINA_PROFILE_SCOPE();
         CheckStructure();
 
         entt::entity EntityID = Registry.create();
         Registry.emplace<STransformComponent>(EntityID);
-        Registry.emplace<SNameComponent>(EntityID).Name = "Entity";
+        Registry.emplace<SNameComponent>(EntityID, EntityName);
         Registry.emplace_or_replace<FNeedsTransformUpdate>(EntityID);
         return EntityID;
     }
