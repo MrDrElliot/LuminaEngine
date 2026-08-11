@@ -27,7 +27,12 @@ namespace Lumina::RHI
         RUNTIME_API void RemoveMaterial(CMaterialInterface* Material);
 
         RUNTIME_API void UpdateMaterialUniforms(const FMaterialUniforms* InUniforms, uint32 Index);
-        
+
+        /** Writes ByteSize bytes at ByteOffset inside slot Index and uploads only that sub-range.
+            For a single changed parameter, which is a 4 or 16 byte write into a 592 byte block --
+            pushing the whole block would stage 37x the bytes to land one float. */
+        RUNTIME_API void UpdateMaterialUniformRange(uint32 Index, uint32 ByteOffset, const void* Data, uint32 ByteSize);
+
         RUNTIME_API GPUPtr GetMaterialBuffer() const;
 
         /** Slots the table can currently hold; grows by doubling. */

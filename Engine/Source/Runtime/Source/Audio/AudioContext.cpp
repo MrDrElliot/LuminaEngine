@@ -26,18 +26,21 @@ namespace Lumina
 
 	void Audio::Initialize()
 	{
-		GAudioContext = new FMiniaudioContext{};
+		Audio::Internal::SetContext(new FMiniaudioContext{});
 	}
 
 	void Audio::Shutdown()
 	{
-		delete GAudioContext;
-		GAudioContext = nullptr;
+		// Unpublish before destroying: anything still calling audio during teardown lands on the
+		// no-op context rather than a dangling device.
+		delete Audio::Internal::SetContext(nullptr);
 	}
 
 	void Audio::Update()
 	{
-		if (GAudioContext == nullptr)
+		// A real HasDevice case: with no device there is no suspend state to track and no pump to run,
+		// so this is skipped work rather than a guard against Context().
+		if (!HasDevice())
 		{
 			return;
 		}
@@ -59,15 +62,15 @@ namespace Lumina
 			}
 			#endif
 
-			GAudioContext->SetSuspended(bShouldSuspend);
+			Audio::Context().SetSuspended(bShouldSuspend);
 		}
 
-		GAudioContext->Update();
+		Audio::Context().Update();
 	}
 
 	void Audio::ApplySettings()
 	{
-		if (GAudioContext == nullptr)
+		if (!Audio::HasDevice())
 		{
 			return;
 		}
@@ -81,21 +84,21 @@ namespace Lumina
 		for (uint32 i = 0; i < NumAudioBuses; ++i)
 		{
 			const EAudioBus Bus = (EAudioBus)i;
-			GAudioContext->SetBusVolume(Bus, Settings->GetBusVolume(Bus));
-			GAudioContext->SetBusReverbSend(Bus, Settings->GetBusReverbSend(Bus));
+			Audio::Context().SetBusVolume(Bus, Settings->GetBusVolume(Bus));
+			Audio::Context().SetBusReverbSend(Bus, Settings->GetBusReverbSend(Bus));
 		}
 
-		GAudioContext->SetDopplerScale(Settings->DopplerScale);
-		GAudioContext->SetMaxVoiceCount(Settings->MaxVoices);
-		GAudioContext->SetVolumeSmoothing(Settings->VolumeSmoothingMs);
+		Audio::Context().SetDopplerScale(Settings->DopplerScale);
+		Audio::Context().SetMaxVoiceCount(Settings->MaxVoices);
+		Audio::Context().SetVolumeSmoothing(Settings->VolumeSmoothingMs);
 
 		FAudioReverbParams Reverb;
 		Reverb.RoomSize = Settings->ReverbRoomSize;
 		Reverb.Damping  = Settings->ReverbDamping;
 		Reverb.Width    = Settings->ReverbWidth;
 		Reverb.WetLevel = Settings->ReverbWetLevel;
-		GAudioContext->SetReverbParams(Reverb);
+		Audio::Context().SetReverbParams(Reverb);
 
-		GAudioContext->ApplyDeviceConfig(Settings->SampleRate, Settings->Channels, Settings->PeriodFrames);
+		Audio::Context().ApplyDeviceConfig(Settings->SampleRate, Settings->Channels, Settings->PeriodFrames);
 	}
 }

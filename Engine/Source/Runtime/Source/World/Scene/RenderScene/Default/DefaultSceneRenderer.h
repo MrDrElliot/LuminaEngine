@@ -789,7 +789,6 @@ namespace Lumina
                 const FMeshDrawCommand& Batch = DrawCommands[Idx];
 
                 FGraphicsPipelineKey Key;
-                // Homogeneous batch -> dead-strip the unused vertex-load path; mixed -> runtime branch (2).
                 Key.SkinnedMode = (Batch.bAnySkinned && Batch.bAnyStatic) ? 2u : (Batch.bAnySkinned ? 1u : 0u);
 
                 if (!Setup(Key, Batch))
@@ -812,10 +811,7 @@ namespace Lumina
             ForEachMeshletBatch(CL, DrawList, Ctx, static_cast<TSetup&&>(Setup),
                                 [](const FMeshDrawCommand&) {});
         }
-        /** Constants are part of the cache key, so the same shader specialized two ways yields two
-         *  pipelines. Until RHITests' GPU-AV crash on specialized compute is understood, prefer keeping
-         *  compute shaders free of specialization constants entirely (see SPEC_ENABLE_GTAO in
-         *  SurfaceShading.slang, which is #ifdef'd out of the SHADING_COMPUTE lane for that reason). */
+
         RHI::FPipelineH      GetOrCreateComputePipeline(FShaderH CS,
                                  TSpan<const RHI::FSpecializationConstant> Constants = {});
         RHI::FDepthStencilH  GetOrCreateDepthState(const RHI::FDepthStencilDesc& Desc);
@@ -980,18 +976,13 @@ namespace Lumina
         uint64                                                          CurrentSceneRootAddr = 0;
         // Builds the per-view FSceneRoot transient (shared addrs + view camera/clusters/IBL) -> address.
         uint64 BuildViewSceneRoot(FSceneView& View, uint64 SceneDataAddr);
-
-        // One FRenderBucketGPU per (view, draw). Replaced eight parallel uint arrays indexed by the same
-        // ArgIdx; base, capacity and cursor now travel together so they cannot be paired wrongly.
-        TArray<FSceneBuffer, RHI::kFramesInFlight>                          RenderBucketRing = {};
         
+        TArray<FSceneBuffer, RHI::kFramesInFlight>                          RenderBucketRing = {};
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          MeshletDrawListRing = {};
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          MeshDrawArgsRing = {};
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          SpdCounterRing = {};
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          MeshletBlockRing = {};
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          BlockDispatchArgsRing = {};
-        // Pre-skinning work layout: one running base per (skinned instance, block) pair, plus the indirect
-        // grid derived from it. Both GPU-written and GPU-read within a frame; ringed like the block args.
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          SkinWorkBaseRing = {};
         TArray<uint32,       RHI::kFramesInFlight>                          SkinWorkBaseLowUsage = {};
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          SkinDispatchArgsRing = {};
@@ -1006,21 +997,14 @@ namespace Lumina
         FSceneBuffer                                        RetainedTransformBuffer;
         FSceneBuffer                                        RetainedStaticBuffer;
         FSceneBuffer                                        SurfaceDescBuffer;
-        // Slot-addressed pose storage, one persistent allocation like RetainedTransformBuffer: the base is
-        // stable, so only the slices gathered this frame are written rather than the whole thing repacked.
         FSceneBuffer                                        BoneArenaBuffer;
         uint32                                              BoneArenaLowUsage = 0;
-        // Per-frame skinned data, indexed by retained slot like the payloads beside it. CullInstances reads
-        // it for slots flagged Skinned; the skinning passes read it for the gathered slot list.
         FSceneBuffer                                        SkinnedFrameDataBuffer;
         uint32                                              SkinnedFrameDataLowUsage = 0;
         FSceneBuffer                                        SkinnedSlotListBuffer;
         uint32                                              SkinnedSlotListLowUsage = 0;
         TVector<FUIntVector2>                               SkinnedUploadScratch;
-        // Monotonic per rendered frame. Stamped into every gathered slot's side data and compared by
-        // CullInstances, so a slot the gather skipped cannot be emitted with a previous frame's ranges.
         uint32                                              CurrentSkinnedFrameTag = 0;
-        // Ranges merged out of FGeometry::BoneUploadRanges; a member so the sort/merge keeps its capacity.
         TVector<FUIntVector2>                               BoneUploadScratch;
         uint32                                              RetainedCullEntryLowUsage = 0;
         uint32                                              RetainedTransformLowUsage = 0;
@@ -1070,23 +1054,14 @@ namespace Lumina
 
         TArray<RHI::GPUPtr, RHI::kFramesInFlight>           MeshletBoundReadback = {};
         uint32                                              LastDrawListRequired = 0;
-        // Totals[3]: the GPU saw the requirement exceed the allocation and dropped meshlets.
         uint32                                              LastDrawListOverflowed = 0;
         uint32                                              LastVisibleInstances = 0;
         uint32                                              LastVisibleOverflowed = 0;
         uint32                                              DrawListCapacity = 0;
-        // Totals[6]: deferred meshlets demanded. No overflow companion -- the region layout bounds it.
-        // Entries the block list holds, taken from the allocation rather than the size asked for.
         uint32                                              BlockListCapacity = 0;
-
-        // High-water mark of the GPU's block counter; grows only, so the list never shrinks under a scene
-        // it has already had to hold.
         uint32                                              BlockListHighWater = 0;
-        // Elements the pre-skinned vertex buffer must hold. GPU-claimed, so it is only knowable from the
-        // lagged readback; only grows, exactly like BlockListHighWater.
         uint32                                              PreSkinHighWater = 0;
         uint32                                              PreSkinnedVertexCapacity = 0;
-        // Sub-draw slots reserved per (view, draw). 1 unless a bucket can exceed maxTaskWorkGroupCount[0].
         uint32                                              MeshSubDrawsPerSlice = 1;
         uint32                                              LastBlocksRequested = 0;
         uint32                                              LastPreSkinRequested = 0;

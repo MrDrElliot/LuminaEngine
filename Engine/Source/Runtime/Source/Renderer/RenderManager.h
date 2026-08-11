@@ -93,6 +93,13 @@ namespace Lumina
 
         uint8                               CurrentFrameIndex = 0;
     };
+    
+    NODISCARD RUNTIME_API FRenderManager& Render();
+    NODISCARD RUNTIME_API FRenderManager* TryRender();
 
-    RUNTIME_API extern FRenderManager* GRenderManager;
+    namespace Internal
+    {
+        /** Publishes the process-wide renderer. FEngine owns the lifetime; nothing else should call this. */
+        RUNTIME_API void SetRenderManager(FRenderManager* Manager);
+    }
 }

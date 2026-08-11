@@ -238,7 +238,7 @@ namespace Lumina
             Header.DistanceFieldSizeY       = Volume.VolumeSize.y;
             Header.DistanceFieldSizeZ       = Volume.VolumeSize.z;
             Header.DistanceFieldMaxDistance = Volume.MaxDistance;
-            Header.ConesAddress = MB.MeshletConeBuffer;
+            Header.ConesAddress             = MB.MeshletConeBuffer;
             Header._Pad0 = 0;
             return Header;
         }

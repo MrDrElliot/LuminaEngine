@@ -8,14 +8,14 @@ namespace Lumina
 {
 	void SAudioSourceComponent::Play()
 	{
-		if (GAudioContext == nullptr)
+		if (!Audio::HasDevice())
 		{
 			return;
 		}
 
 		if (bPlaying && ActiveHandle.IsValid())
 		{
-			GAudioContext->StopSound(ActiveHandle);
+			Audio::Context().StopSound(ActiveHandle);
 		}
 
 		if (Sound == nullptr || !Sound->IsValid())
@@ -35,7 +35,7 @@ namespace Lumina
 		Params.FadeInSeconds     = FadeInTime;
 		Params.bUseOcclusion     = Occlusion.bEnabled;
 
-		ActiveHandle = GAudioContext->PlayAudio(Sound->GetAudioData(), Params);
+		ActiveHandle = Audio::Context().PlayAudio(Sound->GetAudioData(), Params);
 
 		bPlaying = ActiveHandle.IsValid();
 		bPaused  = false;
@@ -57,9 +57,9 @@ namespace Lumina
 
 	void SAudioSourceComponent::StopWithMode(EAudioStopMode Mode)
 	{
-		if (GAudioContext != nullptr && bPlaying && ActiveHandle.IsValid())
+		if (Audio::HasDevice() && bPlaying && ActiveHandle.IsValid())
 		{
-			GAudioContext->StopSound(ActiveHandle, Mode, FadeOutTime);
+			Audio::Context().StopSound(ActiveHandle, Mode, FadeOutTime);
 		}
 
 		ActiveHandle = FAudioHandle::Invalid();
@@ -69,23 +69,24 @@ namespace Lumina
 
 	void SAudioSourceComponent::SetPaused(bool bInPaused)
 	{
-		if (GAudioContext == nullptr || !bPlaying || !ActiveHandle.IsValid())
+		if (!Audio::HasDevice() || !bPlaying || !ActiveHandle.IsValid())
 		{
 			return;
 		}
 
-		GAudioContext->SetPaused(ActiveHandle, bInPaused);
+		Audio::Context().SetPaused(ActiveHandle, bInPaused);
 		bPaused = bInPaused;
 	}
 
 	bool SAudioSourceComponent::IsPlaying() const
 	{
-		return GAudioContext != nullptr && GAudioContext->GetVoiceState(ActiveHandle) != EAudioVoiceState::Free;
+		// The no-op context reports every handle as Free, so this answers false with no device.
+		return Audio::Context().GetVoiceState(ActiveHandle) != EAudioVoiceState::Free;
 	}
 
 	float SAudioSourceComponent::GetPlaybackTime() const
 	{
-		if (GAudioContext == nullptr || Sound == nullptr || !Sound->IsValid())
+		if (!Audio::HasDevice() || Sound == nullptr || !Sound->IsValid())
 		{
 			return 0.0f;
 		}
@@ -96,16 +97,16 @@ namespace Lumina
 			return 0.0f;
 		}
 
-		return (float)((double)GAudioContext->GetPlaybackFrame(ActiveHandle) / (double)SampleRate);
+		return (float)((double)Audio::Context().GetPlaybackFrame(ActiveHandle) / (double)SampleRate);
 	}
 
 	void SAudioSourceComponent::SeekToTime(float Seconds)
 	{
-		if (GAudioContext == nullptr || Sound == nullptr || !Sound->IsValid())
+		if (!Audio::HasDevice() || Sound == nullptr || !Sound->IsValid())
 		{
 			return;
 		}
 
-		GAudioContext->SeekToFrame(ActiveHandle, (uint64)(Math::Max(Seconds, 0.0f) * Sound->SampleRate));
+		Audio::Context().SeekToFrame(ActiveHandle, (uint64)(Math::Max(Seconds, 0.0f) * Sound->SampleRate));
 	}
 }

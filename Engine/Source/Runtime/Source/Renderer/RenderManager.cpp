@@ -22,15 +22,34 @@
 namespace Lumina
 {
     TMulticastDelegate<void, FVector2> FRenderManager::OnSwapchainResized;
-    RUNTIME_API FRenderManager* GRenderManager = nullptr;
+
+    // Not exported: every module reaches the renderer through Render()/TryRender(), so there is
+    // exactly one place that can be wrong about whether one exists.
+    static FRenderManager* GRenderManager = nullptr;
+
+    void Internal::SetRenderManager(FRenderManager* Manager)
+    {
+        GRenderManager = Manager;
+    }
+
+    FRenderManager& Render()
+    {
+        ASSERT(GRenderManager != nullptr, "Render() with no renderer; this path is running headless, use TryRender()");
+        return *GRenderManager;
+    }
+
+    FRenderManager* TryRender()
+    {
+        return GRenderManager;
+    }
 
     static TConsoleVar CVarVSync("Core.VSync", true, "Toggles v-sync", [](const CVarValueType& Value)
     {
         const bool bEnabled = eastl::get<bool>(Value);
         RHI::SetVSync(bEnabled);
-        if (GRenderManager != nullptr)
+        if (FRenderManager* Manager = TryRender())
         {
-            GRenderManager->RecreatePrimarySwapchain();
+            Manager->RecreatePrimarySwapchain();
         }
     });
 

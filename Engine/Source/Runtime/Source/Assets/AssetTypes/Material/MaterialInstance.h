@@ -58,7 +58,11 @@ namespace Lumina
         bool SetTextureValue(const FName& Name, CTexture* TextureValue);
         bool GetParameterValue(EMaterialParameterType Type, const FName& Name, FMaterialParameter& Param) override;
         FMaterialUniforms* GetMaterialUniforms() override { return &MaterialUniforms; }
-        const TVector<FMaterialParameter>& GetMaterialParams() const { return Parameters; }
+
+        /** The parent's parameter list, which an instance never diverges from -- it only overrides VALUES.
+            Read straight from the parent rather than mirrored here: a private copy had to be re-synced on
+            every rebuild, and every rebuild ran off the back of a single SetScalarValue. */
+        const TVector<FMaterialParameter>& GetMaterialParams() const;
 
         FShaderH GetVertexShader() const override;
         FShaderH GetPixelShader() const override;
@@ -100,12 +104,15 @@ namespace Lumina
             exposing a parameter for it (a plain Texture Sample node), which an instance can only inherit. */
         bool IsTextureSlotOverridden(uint32 Index) const;
 
+        /** Bit i set = an enabled texture override supplies slot i. Hoist this out of any loop over slots:
+            it is one pass over the (short) override list, where the per-slot query is a search for the
+            parameter naming that slot. MAX_TEXTURES is 24, so a uint32 covers every slot. */
+        NODISCARD uint32 GetOverriddenTextureMask() const;
+
         /** True only when an override exists for the parameter AND is enabled (the checkbox state). */
         bool IsOverrideEnabled(const FName& Name) const;
-        /** Enable/disable a parameter's override. Disabling RETAINS the stored value; enabling with no existing
-            entry seeds one from the parent's current value. */
+        
         void SetOverrideEnabled(const FName& Name, bool bEnabled);
-        /** The stored override for a parameter (retained even while disabled), or null. */
         const FMaterialParameterOverride* FindOverride(const FName& Name) const;
 
         bool RefreshTextureBindings(const CTexture* ChangedTexture) override;
@@ -116,22 +123,7 @@ namespace Lumina
 
         PROPERTY(ReadOnly, Category = "Material")
         TObjectPtr<CMaterial> Material;
-
-        /**
-         * Override the parent's shading model without recompiling anything. The model travels in the
-         * material's runtime flags (EMaterialGPUFlags bits 3-5), so an instance can simply stamp a
-         * different one -- no new shader, no new PSO.
-         *
-         * Two limits worth knowing, both from the parent's compiled shader rather than this flag:
-         *
-         *  - A parent whose own model is Unlit compiled its shaders with the UNLIT define, which strips
-         *    the lighting path outright. An instance of it cannot become Lit again. Going the other way
-         *    (Lit parent -> Unlit instance) works, because the lit shader tests the model at runtime.
-         *
-         *  - Clearcoat only shows if the parent's graph actually drives the Clearcoat pins. On a graph
-         *    that leaves them unconnected the coat strength is 0, so the override is a no-op rather than
-         *    an error.
-         */
+        
         PROPERTY(Editable, Category = "Material|Shading")
         bool bOverrideShadingModel = false;
 
@@ -142,12 +134,16 @@ namespace Lumina
         TVector<FMaterialParameterOverride>     Overrides;
         
     protected:
-        
+
         void UpdateMaterialUniforms() override;
-        
+
     private:
-        
-        TVector<FMaterialParameter>             Parameters;
+
+        /** Push one already-written field of MaterialUniforms to this instance's GPU slot. The setters use
+            this instead of UpdateMaterialUniforms: changing one parameter dirties 4 or 16 bytes of the
+            block, and the manager drops the write entirely if the bytes already match. */
+        void UploadUniformField(uint32 ByteOffset, const void* Data, uint32 ByteSize);
+
         FMaterialUniforms                       MaterialUniforms;
     };
 }

@@ -243,9 +243,6 @@ namespace Lumina::RHI::Core
         GCore.RetireQueues[Slot].push_back(Item);
     }
 
-    // Called from BeginFrame once this slot's queue timelines have been waited. The slot decides WHEN an
-    // item is looked at; whether it may be destroyed is the per-item fence, because the slot wait only
-    // covers the frame from two frames back -- the one in the other slot is still executing.
     static void DrainRetireQueue(uint32 Slot)
     {
         uint64 Submitted[kNumQueues];
@@ -263,10 +260,6 @@ namespace Lumina::RHI::Core
             Signalled[QueueIndex] = GetSemaphoreValue(GCore.QueueTimeline[QueueIndex]);
         }
 
-        // Clamped to what has actually been submitted: a queue that saw no submission since the retire has
-        // no post-retire work to wait on, only the in-flight work at Fence-1. Without the clamp an idle
-        // queue -- async compute during a quiet stretch, transfer with no uploads -- would pin the item
-        // against a value nothing is ever going to signal.
         auto HasRetired = [&](const FRetireItem& Item)
         {
             for (uint32 QueueIndex = 0; QueueIndex < kNumQueues; ++QueueIndex)
@@ -357,12 +350,7 @@ namespace Lumina::RHI::Core
         {
             return;
         }
-
-        // Unbind NOW, free the index at the drain. Deferring both would leave the descriptor pointing at the
-        // texture for the whole retire->drain window, so every frame recorded in it binds a texture the
-        // caller has already given up -- and the drain only waits ITS slot's timeline, which leaves the
-        // other slot's frame in flight when the image is destroyed. Repointing mid-flight is what the
-        // heap's UPDATE_AFTER_BIND flags are for, and is what HeapRepointTexture already does.
+        
         if (GCore.bInitialized)
         {
             RHI::HeapUnbindTexture(GCore.GlobalHeap, HeapSlot);
@@ -406,16 +394,10 @@ namespace Lumina::RHI::Core
                 GCore.SlotWaitValue[Slot][QueueIndex] = 0;
             }
         }
-
-        // The waits above are the entire lifetime contract: everything recorded into this slot has now
-        // retired on the GPU. Destroy this slot's retired resources here, and nowhere else.
+        
         DrainRetireQueue(Slot);
         RHI::RetireSlot(Slot);
-
-        // Shader-library entries whose last owning material dropped them. Freed HERE and only here: handles
-        // are dereferenced lock-free off the render thread, so recycling a slot is only safe at a point
-        // where no lookup can be in flight. The generation bump is what makes every weak FShaderH still
-        // pointing at the entry start resolving to null, so its holder re-resolves instead of faulting.
+        
         FShaderLibrary::FlushPendingReleases();
 
         Upload::DrainSliceWriters(Slot);
@@ -540,7 +522,7 @@ namespace Lumina::RHI::Core
         if (Queue != EQueueType::Transfer
             && GCore.PendingTransferWait != 0
             && !GCore.bQueueTookTransferWait[QueueIndex]
-            && Waits.size() < (SIZE_T)(sizeof(WaitStorage) / sizeof(WaitStorage[0])))
+            && Waits.size() < std::size(WaitStorage))
         {
             SIZE_T Count = 0;
             for (const FSemaphoreInfo& Wait : Waits)
@@ -664,14 +646,13 @@ namespace Lumina::RHI::Core
             LOG_ERROR("RHICore: missing compute shader {}", ComputeShader.c_str());
             return {};
         }
-
+        
         return RHI::CreateComputePipeline(Compute->Source());
     }
 }
 
 namespace Lumina::RHI
 {
-    // Public entry point (declared RUNTIME_API in RHI.h); the timeline-fenced impl lives in Core.
     void SubmitAndWait(FCmdListH CommandList)
     {
         Core::SubmitAndWait(CommandList);

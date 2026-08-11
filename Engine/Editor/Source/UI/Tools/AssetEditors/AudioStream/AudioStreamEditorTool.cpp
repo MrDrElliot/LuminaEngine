@@ -88,7 +88,7 @@ namespace Lumina
     void FAudioStreamEditorTool::StartPreview()
     {
         CAudioStream* Stream = GetAsset<CAudioStream>();
-        if (GAudioContext == nullptr || Stream == nullptr || !Stream->IsValid())
+        if (!Audio::HasDevice() || Stream == nullptr || !Stream->IsValid())
         {
             return;
         }
@@ -102,16 +102,16 @@ namespace Lumina
         }
 
         const uint64 StartFrame = (uint64)((double)ScrubTime * Info.SampleRate);
-        PreviewHandle = GAudioContext->PlayAudio2D(Stream->GetAudioData(), PreviewVolume, 1.0f, bPreviewLoop, StartFrame);
+        PreviewHandle = Audio::Context().PlayAudio2D(Stream->GetAudioData(), PreviewVolume, 1.0f, bPreviewLoop, StartFrame);
         bPreviewPlaying  = PreviewHandle.IsValid();
         PreviewStartTime = ImGui::GetTime() - (double)ScrubTime;
     }
 
     void FAudioStreamEditorTool::StopPreview()
     {
-        if (GAudioContext != nullptr && PreviewHandle.IsValid())
+        if (Audio::HasDevice() && PreviewHandle.IsValid())
         {
-            GAudioContext->StopSound(PreviewHandle);
+            Audio::Context().StopSound(PreviewHandle);
         }
         PreviewHandle   = FAudioHandle::Invalid();
         bPreviewPlaying = false;
@@ -122,9 +122,9 @@ namespace Lumina
         const float Duration = (float)Info.GetDuration();
         ScrubTime = Math::Clamp(Time, 0.0f, Duration);
 
-        if (bPreviewPlaying && GAudioContext != nullptr && PreviewHandle.IsValid())
+        if (bPreviewPlaying && Audio::HasDevice() && PreviewHandle.IsValid())
         {
-            GAudioContext->SeekToFrame(PreviewHandle, (uint64)((double)ScrubTime * Info.SampleRate));
+            Audio::Context().SeekToFrame(PreviewHandle, (uint64)((double)ScrubTime * Info.SampleRate));
             PreviewStartTime = ImGui::GetTime() - (double)ScrubTime;
         }
     }
@@ -142,10 +142,10 @@ namespace Lumina
             return 0.0f;
         }
 
-        if (GAudioContext != nullptr && GAudioContext->GetVoiceState(PreviewHandle) != EAudioVoiceState::Free)
+        if (Audio::Context().GetVoiceState(PreviewHandle) != EAudioVoiceState::Free)
         {
             // Real cursor from the mixer, so the playhead can't drift from what's audible.
-            const float Elapsed = (float)((double)GAudioContext->GetPlaybackFrame(PreviewHandle) / (double)Info.SampleRate);
+            const float Elapsed = (float)((double)Audio::Context().GetPlaybackFrame(PreviewHandle) / (double)Info.SampleRate);
             return bPreviewLoop ? fmodf(Elapsed, Duration) : Math::Min(Elapsed, Duration);
         }
 
@@ -196,14 +196,14 @@ namespace Lumina
             ImGui::SameLine(0, 12);
             if (ImGui::Checkbox("Loop", &bPreviewLoop) && bPreviewPlaying)
             {
-                GAudioContext->SetLooping(PreviewHandle, bPreviewLoop);
+                Audio::Context().SetLooping(PreviewHandle, bPreviewLoop);
             }
 
             ImGui::SameLine(0, 12);
             ImGui::SetNextItemWidth(140);
             if (ImGui::SliderFloat("Volume", &PreviewVolume, 0.0f, 1.0f, "%.2f") && bPreviewPlaying)
             {
-                GAudioContext->SetVolume(PreviewHandle, PreviewVolume);
+                Audio::Context().SetVolume(PreviewHandle, PreviewVolume);
             }
 
             ImGui::SameLine(0, 20);

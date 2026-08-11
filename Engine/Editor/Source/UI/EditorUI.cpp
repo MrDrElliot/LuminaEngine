@@ -433,8 +433,8 @@ namespace Lumina
 
     void FEditorUI::Initialize(const FUpdateContext& UpdateContext)
     {
-        ImGuiContext* Context = GRenderManager->GetImGuiRenderer()->GetImGuiContext();
-        ImPlotContext* PlotContext = GRenderManager->GetImGuiRenderer()->GetImPlotContext();
+        ImGuiContext* Context = Render().GetImGuiRenderer()->GetImGuiContext();
+        ImPlotContext* PlotContext = Render().GetImGuiRenderer()->GetImPlotContext();
         ImGui::SetCurrentContext(Context);
         ImPlot::SetCurrentContext(PlotContext);
 
@@ -3617,7 +3617,7 @@ namespace Lumina
         {
             const bool bNewVSync = !bVSyncEnabled;
             RHI::SetVSync(bNewVSync);
-            GRenderManager->RecreatePrimarySwapchain();
+            Render().RecreatePrimarySwapchain();
         }
         
         if (ImGui::BeginMenu(LE_ICON_PALETTE " Theme"))

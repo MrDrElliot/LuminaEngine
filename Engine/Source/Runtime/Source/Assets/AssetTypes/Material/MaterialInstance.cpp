@@ -20,37 +20,53 @@ namespace Lumina
         return Material.Get();
     }
 
-    static void ApplyOverride(const FMaterialParameterOverride& Override, const TVector<FMaterialParameter>& Params, FMaterialUniforms& Uniforms)
+    /** Byte offsets of a single parameter's field inside the uniform block, for the targeted uploads the
+        setters do. The block is a POD aggregate, so offsetof is exact and the array elements contiguous. */
+    static constexpr uint32 ScalarFieldOffset(uint32 Index)
     {
-        for (const FMaterialParameter& Param : Params)
-        {
-            if (Param.ParameterName != Override.ParameterName || Param.Type != Override.Type)
-            {
-                continue;
-            }
+        return (uint32)(offsetof(FMaterialUniforms, Scalars) + Index * sizeof(float));
+    }
 
-            switch (Override.Type)
-            {
-            case EMaterialParameterType::Scalar:
-                if (Param.Index < MAX_SCALARS)
-                {
-                    Uniforms.Scalars[Param.Index] = Override.Scalar;
-                }
-                break;
-            case EMaterialParameterType::Vector:
-                if (Param.Index < MAX_VECTORS)
-                {
-                    Uniforms.Vectors[Param.Index] = Override.Vector;
-                }
-                break;
-            case EMaterialParameterType::Texture:
-                if (Param.Index < MAX_TEXTURES && Override.Texture && Override.Texture->GetResourceID() >= 0)
-                {
-                    Uniforms.Textures[Param.Index] = (uint32)Override.Texture->GetResourceID();
-                }
-                break;
-            }
+    static constexpr uint32 VectorFieldOffset(uint32 Index)
+    {
+        return (uint32)(offsetof(FMaterialUniforms, Vectors) + Index * sizeof(FVector4));
+    }
+
+    static constexpr uint32 TextureFieldOffset(uint32 Index)
+    {
+        return (uint32)(offsetof(FMaterialUniforms, Textures) + Index * sizeof(uint32));
+    }
+
+    static void ApplyOverride(CMaterial* Material, const FMaterialParameterOverride& Override, FMaterialUniforms& Uniforms)
+    {
+        // Through the parent's name->parameter map rather than a scan of its parameter list: this runs once
+        // per override, and a material carries up to 72 parameters.
+        FMaterialParameter Param;
+        if (!Material->GetParameterValue(Override.Type, Override.ParameterName, Param))
+        {
             return;
+        }
+
+        switch (Override.Type)
+        {
+        case EMaterialParameterType::Scalar:
+            if (Param.Index < MAX_SCALARS)
+            {
+                Uniforms.Scalars[Param.Index] = Override.Scalar;
+            }
+            break;
+        case EMaterialParameterType::Vector:
+            if (Param.Index < MAX_VECTORS)
+            {
+                Uniforms.Vectors[Param.Index] = Override.Vector;
+            }
+            break;
+        case EMaterialParameterType::Texture:
+            if (Param.Index < MAX_TEXTURES && Override.Texture && Override.Texture->GetResourceID() >= 0)
+            {
+                Uniforms.Textures[Param.Index] = (uint32)Override.Texture->GetResourceID();
+            }
+            break;
         }
     }
 
@@ -61,7 +77,6 @@ namespace Lumina
             return;
         }
 
-        Parameters = Material->Parameters;
         MaterialUniforms = Material->MaterialUniforms;
 
         // Drop overrides whose parent parameter is gone/retyped, otherwise dead entries persist forever.
@@ -74,16 +89,15 @@ namespace Lumina
 
         // Slots are demanded from the parent one at a time, so a parameter this instance overrides never
         // asks the parent to resolve its default. Runs BEFORE the override loop, which has the last word.
-        for (const FMaterialParameter& Param : Parameters)
+        const uint32 OverriddenMask = GetOverriddenTextureMask();
+        for (const FMaterialParameter& Param : Material->Parameters)
         {
             if (Param.Type != EMaterialParameterType::Texture || Param.Index >= MAX_TEXTURES)
             {
                 continue;
             }
 
-            const FMaterialParameterOverride* Override = FindOverride(Param.ParameterName);
-            const bool bOverridden = Override != nullptr && Override->bEnabled && Override->Texture != nullptr;
-            if (bOverridden)
+            if ((OverriddenMask & (1u << Param.Index)) != 0)
             {
                 continue;   // ApplyOverride supplies this slot; the parent default is dead weight
             }
@@ -96,7 +110,7 @@ namespace Lumina
             // Disabled overrides keep their stored value but are not applied; the parent value shows through.
             if (Override.bEnabled)
             {
-                ApplyOverride(Override, Parameters, MaterialUniforms);
+                ApplyOverride(Material, Override, MaterialUniforms);
             }
         }
 
@@ -118,29 +132,43 @@ namespace Lumina
     void CMaterialInstance::PostPropertyChange(FProperty* ChangedProperty)
     {
         Super::PostPropertyChange(ChangedProperty);
-
-        // Cheap enough to run for any edit on this object, and doing so means a future runtime-flag
-        // property does not have to remember to add itself here.
+        
         RebuildUniformsFromOverrides();
         UpdateMaterialUniforms();
     }
 
-    bool CMaterialInstance::IsTextureSlotOverridden(uint32 Index) const
+    uint32 CMaterialInstance::GetOverriddenTextureMask() const
     {
-        for (const FMaterialParameter& Param : Parameters)
+        if (!Material)
         {
-            if (Param.Type != EMaterialParameterType::Texture || Param.Index != Index)
+            return 0;
+        }
+
+        uint32 Mask = 0;
+        
+        for (const FMaterialParameterOverride& Override : Overrides)
+        {
+            if (Override.Type != EMaterialParameterType::Texture || !Override.bEnabled || Override.Texture == nullptr)
             {
                 continue;
             }
 
-            const FMaterialParameterOverride* Override = FindOverride(Param.ParameterName);
-            return Override != nullptr && Override->bEnabled && Override->Texture != nullptr;
+            FMaterialParameter Param;
+            if (Material->GetParameterValue(EMaterialParameterType::Texture, Override.ParameterName, Param)
+                && Param.Index < MAX_TEXTURES)
+            {
+                Mask |= (1u << Param.Index);
+            }
         }
 
-        // No parameter names this slot, so it is a plainly bound texture on the parent and there is
-        // nothing an instance could override it with.
-        return false;
+        return Mask;
+    }
+
+    bool CMaterialInstance::IsTextureSlotOverridden(uint32 Index) const
+    {
+        // A slot no parameter names is a plainly bound texture on the parent, and there is nothing an
+        // instance could override it with -- the mask has no bit for it either way.
+        return Index < MAX_TEXTURES && (GetOverriddenTextureMask() & (1u << Index)) != 0;
     }
 
     void CMaterialInstance::RefreshInheritedTextureSlots()
@@ -150,12 +178,15 @@ namespace Lumina
             return;
         }
 
-        bool bChanged = false;
+        const uint32 OverriddenMask = GetOverriddenTextureMask();
+        
+        uint32 FirstChanged = MAX_TEXTURES;
+        uint32 LastChanged  = 0;
 
         const uint32 NumSlots = (uint32)Math::Min<size_t>(Material->Textures.size(), MAX_TEXTURES);
         for (uint32 i = 0; i < NumSlots; ++i)
         {
-            if (IsTextureSlotOverridden(i))
+            if ((OverriddenMask & (1u << i)) != 0)
             {
                 continue;
             }
@@ -163,13 +194,15 @@ namespace Lumina
             if (MaterialUniforms.Textures[i] != Material->MaterialUniforms.Textures[i])
             {
                 MaterialUniforms.Textures[i] = Material->MaterialUniforms.Textures[i];
-                bChanged = true;
+                FirstChanged = Math::Min(FirstChanged, i);
+                LastChanged  = i;
             }
         }
 
-        if (bChanged)
+        if (FirstChanged <= LastChanged)
         {
-            UpdateMaterialUniforms();
+            UploadUniformField(TextureFieldOffset(FirstChanged), &MaterialUniforms.Textures[FirstChanged],
+                (LastChanged - FirstChanged + 1) * (uint32)sizeof(uint32));
         }
     }
 
@@ -208,8 +241,11 @@ namespace Lumina
         Override.Scalar = Value;
         Override.bEnabled = true;
 
-        RebuildUniformsFromOverrides();
-        UpdateMaterialUniforms();
+        if (Param.Index < MAX_SCALARS)
+        {
+            MaterialUniforms.Scalars[Param.Index] = Value;
+            UploadUniformField(ScalarFieldOffset(Param.Index), &MaterialUniforms.Scalars[Param.Index], sizeof(float));
+        }
 
         return true;
     }
@@ -232,8 +268,12 @@ namespace Lumina
         Override.Vector = Value;
         Override.bEnabled = true;
 
-        RebuildUniformsFromOverrides();
-        UpdateMaterialUniforms();
+        // See SetScalarValue: a targeted 16-byte write, not a rebuild of the whole block.
+        if (Param.Index < MAX_VECTORS)
+        {
+            MaterialUniforms.Vectors[Param.Index] = Value;
+            UploadUniformField(VectorFieldOffset(Param.Index), &MaterialUniforms.Vectors[Param.Index], sizeof(FVector4));
+        }
 
         return true;
     }
@@ -256,27 +296,32 @@ namespace Lumina
         Override.Texture = TextureValue;
         Override.bEnabled = true;
 
-        RebuildUniformsFromOverrides();
-        UpdateMaterialUniforms();
+        if (Param.Index < MAX_TEXTURES)
+        {
+            const int32 ResourceID = (TextureValue != nullptr) ? TextureValue->GetResourceID() : -1;
+            MaterialUniforms.Textures[Param.Index] = (ResourceID >= 0)
+                ? (uint32)ResourceID
+                : Material->MaterialUniforms.Textures[Param.Index];
+
+            UploadUniformField(TextureFieldOffset(Param.Index), &MaterialUniforms.Textures[Param.Index], sizeof(uint32));
+        }
 
         return true;
+    }
+
+    const TVector<FMaterialParameter>& CMaterialInstance::GetMaterialParams() const
+    {
+        static const TVector<FMaterialParameter> Empty;
+        return Material ? Material->Parameters : Empty;
     }
 
     bool CMaterialInstance::GetParameterValue(EMaterialParameterType Type, const FName& Name, FMaterialParameter& Param)
     {
         Param = {};
-        auto* Itr = eastl::find_if(Parameters.begin(), Parameters.end(), [Type, Name](const FMaterialParameter& Param)
-        {
-           return Param.ParameterName == Name && Param.Type == Type;
-        });
 
-        if (Itr != Parameters.end())
-        {
-            Param = *Itr;
-            return true;
-        }
-
-        return false;
+        // The parent owns the parameter list and indexes it by name; an instance only diverges in VALUES,
+        // so there is nothing here a linear scan of a private copy would answer differently.
+        return Material != nullptr && Material->GetParameterValue(Type, Name, Param);
     }
 
     const FMaterialParameterOverride* CMaterialInstance::FindOverride(const FName& Name) const
@@ -310,7 +355,15 @@ namespace Lumina
         {
             if (O.ParameterName == Name)
             {
+                if (O.bEnabled == bEnabled)
+                {
+                    return;
+                }
+
                 O.bEnabled = bEnabled;
+
+                // A full rebuild, unlike the setters: disabling has to restore the parent's value, which
+                // for a texture means resolving the parent default this instance had been skipping.
                 RebuildUniformsFromOverrides();
                 UpdateMaterialUniforms();
                 return;
@@ -347,8 +400,6 @@ namespace Lumina
             Override.Vector = (Param.Index < MAX_VECTORS) ? Material->MaterialUniforms.Vectors[Param.Index] : FVector4(0.0f);
             break;
         case EMaterialParameterType::Texture:
-            // Seeding an override from the parent's default is a deliberate demand for that slot: the user is
-            // about to edit it, so it must be a real texture. Editor action, so a synchronous resolve is fine.
             if (Param.Index < (uint32)Material->Textures.size())
             {
                 Material->ResolveTextureSlot(Param.Index);
@@ -367,21 +418,39 @@ namespace Lumina
 
     void CMaterialInstance::RemoveOverride(const FName& Name)
     {
-        Overrides.erase(eastl::remove_if(Overrides.begin(), Overrides.end(), [Name](const FMaterialParameterOverride& O)
+        auto NewEnd = eastl::remove_if(Overrides.begin(), Overrides.end(), [Name](const FMaterialParameterOverride& O)
         {
             return O.ParameterName == Name;
-        }), Overrides.end());
+        });
 
+        // Nothing matched, so nothing this could have changed.
+        if (NewEnd == Overrides.end())
+        {
+            return;
+        }
+
+        Overrides.erase(NewEnd, Overrides.end());
+
+        // Dropping an override restores the parent's value, which for a texture means resolving the parent
+        // default this instance had been skipping -- a rebuild, not a targeted write.
         RebuildUniformsFromOverrides();
-
         UpdateMaterialUniforms();
     }
 
     void CMaterialInstance::UpdateMaterialUniforms()
     {
+        // A slot is only ever handed out by the material manager, so holding one implies a renderer.
         if (MaterialIndex != -1)
         {
-            GRenderManager->GetMaterialManager().UpdateMaterialUniforms(&MaterialUniforms, (uint32)MaterialIndex);
+            Render().GetMaterialManager().UpdateMaterialUniforms(&MaterialUniforms, (uint32)MaterialIndex);
+        }
+    }
+
+    void CMaterialInstance::UploadUniformField(uint32 ByteOffset, const void* Data, uint32 ByteSize)
+    {
+        if (MaterialIndex != -1)
+        {
+            Render().GetMaterialManager().UpdateMaterialUniformRange((uint32)MaterialIndex, ByteOffset, Data, ByteSize);
         }
     }
 
@@ -445,37 +514,25 @@ namespace Lumina
                 return false;
             }
         }
+        
+        const uint32 OverriddenMask = GetOverriddenTextureMask();
 
-        // The only thing that rewrites a block baked while something was still missing. Driven off the
-        // parent's SLOT COUNT, not Parameters: a plain Texture Sample node binds a slot with no parameter.
         bool bNeedsRebuild = false;
 
         const uint32 NumSlots = (uint32)Math::Min<size_t>(Material->Textures.size(), MAX_TEXTURES);
         for (uint32 i = 0; i < NumSlots && !bNeedsRebuild; ++i)
         {
-            // Inherited slots: the parent's block is the source of truth and it is rewritten
-            // asynchronously as loads land, so any divergence means this copy is stale.
-            if (!IsTextureSlotOverridden(i))
+            if ((OverriddenMask & (1u << i)) == 0)
             {
                 bNeedsRebuild = MaterialUniforms.Textures[i] != Material->MaterialUniforms.Textures[i];
             }
         }
-
-        // Overridden slots have no parent value to compare against; they are wrong exactly when they are
-        // still holding the placeholder the override was baked with before its texture went resident.
+        
         const uint32 Placeholder = RHI::Textures::DefaultResourceID();
-        for (const FMaterialParameter& Param : Parameters)
+        for (uint32 i = 0; i < MAX_TEXTURES && !bNeedsRebuild; ++i)
         {
-            if (bNeedsRebuild)
-            {
-                break;
-            }
-            if (Param.Type != EMaterialParameterType::Texture || Param.Index >= MAX_TEXTURES)
-            {
-                continue;
-            }
-            bNeedsRebuild = MaterialUniforms.Textures[Param.Index] == Placeholder
-                         && IsTextureSlotOverridden(Param.Index);
+            bNeedsRebuild = (OverriddenMask & (1u << i)) != 0
+                         && MaterialUniforms.Textures[i] == Placeholder;
         }
 
         if (bNeedsRebuild)
@@ -582,9 +639,13 @@ namespace Lumina
             RebuildUniformsFromOverrides();
         }
 
+        // Headless has no material table; the slot stays -1, which every consumer already handles.
         if (GetMaterialIndex() == -1)
         {
-            GRenderManager->GetMaterialManager().AddMaterial(this);
+            if (FRenderManager* RenderManager = TryRender())
+            {
+                RenderManager->GetMaterialManager().AddMaterial(this);
+            }
         }
         else
         {
@@ -610,9 +671,13 @@ namespace Lumina
             Material->UnregisterInstance(this);
         }
 
+        // TryRender on a teardown path: an instance outliving the renderer must release quietly, not assert.
         if (GetMaterialIndex() != -1)
         {
-            GRenderManager->GetMaterialManager().RemoveMaterial(this);
+            if (FRenderManager* RenderManager = TryRender())
+            {
+                RenderManager->GetMaterialManager().RemoveMaterial(this);
+            }
         }
     }
 }

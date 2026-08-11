@@ -12,7 +12,7 @@ namespace Lumina
         ENTITY_SYSTEM(RequiresUpdate(EUpdateStage::PostPhysics))
 
         // Writes the audio source/procedural components; reads transforms + listeners. The audio device
-        // (GAudioContext) is a process global, but this is the only system that touches it within a world,
+        // (Audio::Context()) is a process singleton, but this is the only system that touches it within a world,
         // so within-world batching is safe. Defined in the .cpp.
         static FSystemAccess Access;
 

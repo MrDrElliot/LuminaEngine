@@ -754,7 +754,7 @@ namespace Lumina::ImGuiX
     ImTextureRef ToImTextureRef(FStringView Path)
     {
 		#if WITH_EDITOR
-        return GRenderManager->GetImGuiRenderer()->GetOrCreateImTexture(Path);
+        return Render().GetImGuiRenderer()->GetOrCreateImTexture(Path);
 		#else
     	return {};
 		#endif

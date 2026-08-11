@@ -52,6 +52,17 @@ namespace Lumina::Memory
         std::memset(Ptr, Val, Size);
     }
 
+    NODISCARD inline bool MemEqual(const void* A, const void* B, size_t Size)
+    {
+        return std::memcmp(A, B, Size) == 0;
+    }
+
+    template <typename T>
+    NODISCARD bool MemEqual(const T* A, const T* B)
+    {
+        return std::memcmp(A, B, sizeof(T)) == 0;
+    }
+
     // Hint the cache to pull the line containing Ptr into every level. A pure scheduling hint:
     // safe on any address (never faults), never required for correctness.
     FORCEINLINE void Prefetch(const void* Ptr)

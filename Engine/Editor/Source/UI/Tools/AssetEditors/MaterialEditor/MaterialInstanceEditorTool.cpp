@@ -218,9 +218,10 @@ namespace Lumina
                 ImGui::TableSetupColumn("##Name", ImGuiTableColumnFlags_WidthFixed, 175);
                 ImGui::TableSetupColumn("##Editor", ImGuiTableColumnFlags_WidthStretch);
 
-                // Iterate a stable copy: toggling an override mutates the instance's parameter list
-                // (RemoveOverride rebuilds it), which would invalidate a live range-for mid-loop.
-                const TVector<FMaterialParameter> Params = Instance->GetMaterialParams();
+                // The list belongs to the PARENT and an instance only ever diverges in values, so nothing a
+                // row can do reallocates it -- no defensive copy, which here would be a heap allocation per
+                // frame the panel is open.
+                const TVector<FMaterialParameter>& Params = Instance->GetMaterialParams();
                 for (const FMaterialParameter& Param : Params)
                 {
                     ImGui::PushID(Param.ParameterName.c_str());

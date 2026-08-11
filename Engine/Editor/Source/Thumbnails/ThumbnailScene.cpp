@@ -165,7 +165,7 @@ namespace Lumina
         // "late", it is missing from the image. That is the empty-world thumbnail.
         static_cast<FDefaultSceneRenderer*>(World->GetRenderer())->SettleResolveWork();
 
-        const uint8 FrameIndex = (uint8)GRenderManager->GetCurrentFrameIndex();
+        const uint8 FrameIndex = (uint8)Render().GetCurrentFrameIndex();
         World->Extract();
 
         {

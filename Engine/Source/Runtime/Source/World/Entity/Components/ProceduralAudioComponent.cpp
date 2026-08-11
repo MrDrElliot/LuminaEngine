@@ -13,14 +13,14 @@ namespace Lumina
 			return;
 		}
 
-		if (GAudioContext == nullptr)
+		if (!Audio::HasDevice())
 		{
 			return;
 		}
 
 		if (!Stream)
 		{
-			Stream = GAudioContext->CreateProceduralStream(SampleRate, ChannelCount, BufferFrames);
+			Stream = Audio::Context().CreateProceduralStream(SampleRate, ChannelCount, BufferFrames);
 			if (!Stream)
 			{
 				return;
@@ -34,16 +34,16 @@ namespace Lumina
 		Params.Bus          = Bus;
 		Params.Attenuation  = Attenuation;
 
-		ActiveHandle = GAudioContext->PlayProceduralStream(Stream, Params);
+		ActiveHandle = Audio::Context().PlayProceduralStream(Stream, Params);
 
 		bPlaying = ActiveHandle.IsValid();
 	}
 
 	void SProceduralAudioComponent::Stop()
 	{
-		if (GAudioContext != nullptr && bPlaying && ActiveHandle.IsValid())
+		if (Audio::HasDevice() && bPlaying && ActiveHandle.IsValid())
 		{
-			GAudioContext->StopSound(ActiveHandle, EAudioStopMode::Immediate);
+			Audio::Context().StopSound(ActiveHandle, EAudioStopMode::Immediate);
 			ActiveHandle = FAudioHandle::Invalid();
 			bPlaying = false;
 		}

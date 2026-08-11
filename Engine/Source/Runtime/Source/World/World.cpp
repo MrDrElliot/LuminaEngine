@@ -479,10 +479,7 @@ namespace Lumina
         RmlUi::DestroyWorldUI(this);
         UIContext.reset();
 
-        if (GAudioContext != nullptr)
-        {
-            GAudioContext->StopAllSounds();
-        }
+        Audio::Context().StopAllSounds();
 
         EntityRegistry.on_destroy<FRelationshipComponent>().disconnect<&ThisClass::OnRelationshipComponentDestroyed>(this);
 

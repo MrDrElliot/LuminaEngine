@@ -734,7 +734,7 @@ namespace Lumina
                 auto Duration = std::chrono::duration_cast<std::chrono::milliseconds>(End - Start);
                 
                 bSuccess = true;
-                LOG_INFO("Loaded Package: \"{}\" - ( [{}] Exports | [{}] Imports | [{}] Bytes | [{}] ms)", Package->GetName(), Package->ExportTable.size(), Package->ImportTable.size(), Package->Loader->TotalSize(), Duration);
+                LOG_INFO("Loaded Package: \"{}\" - ( [{}] Exports | [{}] Imports | [{}] Bytes | [{}] ms | Thread: [{}])", Package->GetName(), Package->ExportTable.size(), Package->ImportTable.size(), Package->Loader->TotalSize(), Duration, Threading::GetThreadID());
             }
         }
         

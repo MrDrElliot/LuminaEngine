@@ -70,12 +70,6 @@ namespace Lumina
 
     static TConsoleVar CVarMaxFrameRate("Core.MaxFPS", 165, "Changes the maximum frame-rate of your engine");
     
-    /// Reads Editor.StartupProject straight off disk.
-    ///
-    /// GConfig->DiscoverAndLoadSettings() does not run until well after the plugin phases, so
-    /// GetDefault<CEditorSettings>() here would read an empty CDO and every project plugin override
-    /// would be missed on a launch without --Project. Keep the path in step with the ConfigFile
-    /// specifier on CEditorSettings in Config/EngineSettings.h.
     static FString ReadStartupProjectFromDisk()
     {
         const FString PrefsPath = Paths::GetEngineDirectory() + "/Editor/Config/EditorPreferences.json";
@@ -261,8 +255,8 @@ namespace Lumina
 
         if (!GIsHeadless)
         {
-            GRenderManager = Memory::New<FRenderManager>();
-            GRenderManager->Initialize();
+            Internal::SetRenderManager(Memory::New<FRenderManager>());
+            Render().Initialize();
             EngineViewportSize = Windowing::GetPrimaryWindowHandle()->GetExtent();
         }
 
@@ -356,10 +350,10 @@ namespace Lumina
 
         DotNet::Shutdown();
 
-        if (GRenderManager)
+        if (FRenderManager* RenderManager = TryRender())
         {
-            Memory::Delete(GRenderManager);
-            GRenderManager = nullptr;
+            Internal::SetRenderManager(nullptr);
+            Memory::Delete(RenderManager);
         }
 
         Physics::Shutdown();
@@ -427,7 +421,7 @@ namespace Lumina
 
                 if (!GIsHeadless)
                 {
-                    GRenderManager->FrameStart(UpdateContext);
+                    Render().FrameStart(UpdateContext);
                 }
 
                 #if USING(WITH_EDITOR)
@@ -531,7 +525,7 @@ namespace Lumina
                     
                     GWorldManager->BeginImmediateLines();
 
-                    GRenderManager->FrameEnd();
+                    Render().FrameEnd();
                 }
 
                 DotNet::Tick();
@@ -549,12 +543,7 @@ namespace Lumina
         UpdateContext.MarkFrameEnd(Platform::GetTime());
 
         int32 MaxFrameRate = CVarMaxFrameRate.GetValue();
-
-        // A minimized editor skipped the entire frame body above, so without this it would spin the
-        // main loop as fast as the scheduler allows to produce nothing. CEditorSettings::MaxBackgroundFPS
-        // (0 = unset) throttles that case alone -- the foreground rate is untouched. GIsHeadless is
-        // checked first because GetPrimaryWindowHandle() asserts when there is no window, and a headless
-        // server is never "in the background" anyway.
+        
         if (!GIsHeadless && Windowing::GetPrimaryWindowHandle()->IsWindowMinimized())
         {
             const int32 BackgroundFrameRate = GetDefault<CEditorSettings>()->MaxBackgroundFPS;
@@ -681,16 +670,11 @@ namespace Lumina
         FFixedString GameContentDir     = Paths::Combine(GameRootDir, "Content");
         FFixedString GameScriptsDir     = Paths::Combine(GameRootDir, "Scripts");
         FFixedString BinariesDirectory  = Paths::Combine(ProjectPath, "Binaries");
-
-        // Content and Scripts are siblings under the Game project root, both surfaced under the SINGLE /Game
-        // mount: assets at /Game/Content, C# scripts at /Game/Scripts. Ensure both exist so they're always
-        // valid roots even before the first asset/script is authored.
+        
         std::error_code GameDirEc;
         std::filesystem::create_directories(GameContentDir.c_str(), GameDirEc);
         std::filesystem::create_directories(GameScriptsDir.c_str(), GameDirEc);
-
-        // From here the run belongs to the project, so its log and crash dumps do too. Boot lines
-        // written before the project was known move across with the log file.
+        
         const FFixedString LogsDir = Paths::Combine(ProjectPath, "Logs");
         std::filesystem::create_directories(LogsDir.c_str(), GameDirEc);
         Logging::SetLogFileDirectory(LogsDir);
@@ -698,35 +682,22 @@ namespace Lumina
         const FFixedString CrashDumpsDir = Paths::Combine(ProjectPath, "CrashDumps");
         std::filesystem::create_directories(CrashDumpsDir.c_str(), GameDirEc);
         CrashHandler::SetCrashDumpDirectory(CrashDumpsDir);
-
-        // Tag uploaded reports with the project and attach its log. Re-entered when switching
-        // projects, so the previous project's log is dropped rather than sent with the new one's.
+        
         CrashReporting::SetAttribute("Project", ProjectName);
         CrashReporting::ClearAttachments();
         CrashReporting::AddAttachment(Paths::Combine(LogsDir, "Lumina.log"));
-
-        // Reloading a project (or switching to another) re-enters here. The VFS mount list is
-        // append-only and DirectoryIterator visits every mount, so re-mounting /Game onto a stale
-        // mount would surface every folder twice in the content browser (Content, Content, Scripts,
-        // Scripts...). Drop the previous project's mounts for these aliases before re-mounting.
-        // (Plugin content mounts are already guarded by IsContentMounted()/DoesAliasExists().)
+        
         VFS::Unmount("/Game");
         VFS::Unmount("/Config");
         VFS::Mount<VFS::FNativeFileSystem>("/Game", GameRootDir);
         VFS::Mount<VFS::FNativeFileSystem>("/Config", ConfigDir);
 
         GConfig->LoadPath("/Config");
-
-        // /Config is now mounted; (re)load any settings classes that persist under it
-        // (e.g. CProjectSettings). Idempotent for classes already loaded.
+        
         GConfig->DiscoverAndLoadSettings();
-
-        // After /Game mounts (so plugins can refer to project paths) but before the project
-        // DLL loads, so types they introduce are in reflection when its modules construct.
+        
         FPluginManager::Get().DiscoverProjectPlugins(ProjectPath);
-
-        // Per-project plugin overrides from the .lproject "Plugins" array;
-        // each entry { "Name": "...", "Enabled": bool }. Missing = descriptor defaults.
+        
         if (auto It = Data.find("Plugins"); It != Data.end() && It->is_array())
         {
             TVector<FProjectPluginOverride> Overrides;
@@ -751,12 +722,7 @@ namespace Lumina
             }
             FPluginManager::Get().ApplyProjectOverrides(Overrides);
         }
-
-        // Project settings now live on CProjectSettings (see Config/EngineSettings.h), loaded by
-        // GConfig->DiscoverAndLoadSettings() once /Config is mounted, and read via GetDefault<CProjectSettings>().
-
-        // One-shot migration: copy a legacy .lproject CookRoots[] into the project settings
-        // when the latter is empty. Chunk hints are dropped (plugins own chunked routing).
+        
         if (auto It = Data.find("CookRoots"); It != Data.end() && It->is_array())
         {
             CProjectSettings* ProjectSettings = GetMutableDefault<CProjectSettings>();

@@ -142,6 +142,33 @@ namespace Lumina::RHI
         WriteSlotLocked(InUniforms, Index);
     }
 
+    void FMaterialManager::UpdateMaterialUniformRange(uint32 Index, uint32 ByteOffset, const void* Data, uint32 ByteSize)
+    {
+        if (Data == nullptr || ByteSize == 0 || (uint64)ByteOffset + ByteSize > sizeof(FMaterialUniforms))
+        {
+            return;
+        }
+
+        // Read lock for the same reason WriteSlotLocked takes one: distinct slots are independent, and
+        // only a grow moves the mirror's storage or the buffer address.
+        FReadScopeLock Lock(Mutex);
+
+        if (Index >= Capacity)
+        {
+            return;
+        }
+
+        std::byte* Slot = reinterpret_cast<std::byte*>(&Mirror[Index]) + ByteOffset;
+        if (Memory::MemEqual(Slot, Data, ByteSize))
+        {
+            return;
+        }
+
+        Memory::Memcpy(Slot, Data, ByteSize);
+
+        UploadBuffer(MaterialBuffer + Index * sizeof(FMaterialUniforms) + ByteOffset, Data, ByteSize);
+    }
+
     void FMaterialManager::WriteSlotLocked(const FMaterialUniforms* InUniforms, uint32 Index)
     {
         if (Index >= Capacity)
@@ -154,6 +181,11 @@ namespace Lumina::RHI
         if (InUniforms)
         {
             Copy = *InUniforms;
+        }
+        
+        if (Memory::MemEqual(&Mirror[Index], &Copy))
+        {
+            return;
         }
 
         Mirror[Index] = Copy;

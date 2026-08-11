@@ -149,9 +149,10 @@ namespace Lumina
 
     void CMaterial::UpdateMaterialUniforms()
     {
+        // A slot is only ever handed out by the material manager, so holding one implies a renderer.
         if (MaterialIndex != -1)
         {
-            GRenderManager->GetMaterialManager().UpdateMaterialUniforms(&MaterialUniforms, (uint32)MaterialIndex);
+            Render().GetMaterialManager().UpdateMaterialUniforms(&MaterialUniforms, (uint32)MaterialIndex);
         }
     }
 
@@ -482,9 +483,14 @@ namespace Lumina
 
             RebuildParameterLookup();
 
+            // Headless has no material table, so the slot stays -1 and every consumer of it already
+            // treats that as "no GPU parameters" -- a dedicated server loads materials but renders none.
             if (GetMaterialIndex() == -1)
             {
-                GRenderManager->GetMaterialManager().AddMaterial(this);
+                if (FRenderManager* RenderManager = TryRender())
+                {
+                    RenderManager->GetMaterialManager().AddMaterial(this);
+                }
             }
             else
             {
@@ -528,9 +534,13 @@ namespace Lumina
         // Resolves are keyed partly on this pointer; drop them before it can be recycled.
         FMeshResolveCache::InvalidateDependency(this);
 
+        // TryRender on a teardown path: a material outliving the renderer must release quietly, not assert.
         if (GetMaterialIndex() != -1)
         {
-            GRenderManager->GetMaterialManager().RemoveMaterial(this);
+            if (FRenderManager* RenderManager = TryRender())
+            {
+                RenderManager->GetMaterialManager().RemoveMaterial(this);
+            }
         }
     }
 

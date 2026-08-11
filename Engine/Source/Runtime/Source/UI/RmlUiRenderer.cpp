@@ -863,7 +863,8 @@ namespace Lumina
 
     void FRmlUiRenderer::RenderMaterialBrushes()
     {
-        if (!RHI::IsValid(CurrentCmdList) || GRenderManager == nullptr)
+        FRenderManager* RenderManager = TryRender();
+        if (!RHI::IsValid(CurrentCmdList) || RenderManager == nullptr)
         {
             return;
         }
@@ -932,7 +933,7 @@ namespace Lumina
             }
 
             FUIMaterialBrushArgs Args = {};
-            Args.Materials     = GRenderManager->GetMaterialManager().GetMaterialBuffer();
+            Args.Materials     = RenderManager->GetMaterialManager().GetMaterialBuffer();
             Args.ScreenSize[0] = Tex.BrushSize.x;
             Args.ScreenSize[1] = Tex.BrushSize.y;
             Args.Time          = Time;

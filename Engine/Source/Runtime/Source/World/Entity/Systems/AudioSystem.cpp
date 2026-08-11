@@ -46,7 +46,7 @@ namespace Lumina
 	void SAudioSystem::Teardown(const FSystemContext& Context) noexcept
 	{
 		// No audio device in a headless dedicated server (Audio::Initialize is skipped).
-		if (GAudioContext == nullptr)
+		if (!Audio::HasDevice())
 		{
 			return;
 		}
@@ -57,7 +57,7 @@ namespace Lumina
 		{
 			if (Audio.bPlaying && Audio.ActiveHandle.IsValid())
 			{
-				GAudioContext->StopSound(Audio.ActiveHandle);
+				Audio::Context().StopSound(Audio.ActiveHandle);
 				Audio.ActiveHandle = FAudioHandle::Invalid();
 				Audio.bPlaying = false;
 			}
@@ -68,7 +68,7 @@ namespace Lumina
 		{
 			if (Audio.bPlaying && Audio.ActiveHandle.IsValid())
 			{
-				GAudioContext->StopSound(Audio.ActiveHandle);
+				Audio::Context().StopSound(Audio.ActiveHandle);
 				Audio.ActiveHandle = FAudioHandle::Invalid();
 				Audio.bPlaying = false;
 			}
@@ -80,7 +80,7 @@ namespace Lumina
 		LUMINA_PROFILE_SCOPE();
 
 		// No audio device in a headless dedicated server (Audio::Initialize is skipped).
-		if (GAudioContext == nullptr)
+		if (!Audio::HasDevice())
 		{
 			return;
 		}
@@ -104,7 +104,7 @@ namespace Lumina
 
 				const FVector3 Velocity = ComputeVelocity(Position, Listener.LastPosition, Listener.bHasLastPosition, DeltaTime);
 
-				GAudioContext->UpdateListener(Index, Position, Transform.GetWorldRotation(),
+				Audio::Context().UpdateListener(Index, Position, Transform.GetWorldRotation(),
 					Listener.bApplyDoppler ? Velocity : FVector3(0.0f));
 
 				if (!bHasListener || Index == 0)
@@ -121,9 +121,9 @@ namespace Lumina
 		// preview scenes rely on; only take over the slots once a world actually drives one.
 		if (bHasListener)
 		{
-			for (uint32 Index = 0; Index < GAudioContext->GetListenerCount(); ++Index)
+			for (uint32 Index = 0; Index < Audio::Context().GetListenerCount(); ++Index)
 			{
-				GAudioContext->SetListenerEnabled(Index, (DrivenListenerMask & (1u << Index)) != 0);
+				Audio::Context().SetListenerEnabled(Index, (DrivenListenerMask & (1u << Index)) != 0);
 			}
 		}
 
@@ -139,7 +139,7 @@ namespace Lumina
 				const FVector3 Position = Transform.GetWorldLocation();
 
 				// The mixer may have retired the voice (one-shot ended, evicted by a higher priority).
-				if (Audio.bPlaying && GAudioContext->GetVoiceState(Audio.ActiveHandle) == EAudioVoiceState::Free)
+				if (Audio.bPlaying && Audio::Context().GetVoiceState(Audio.ActiveHandle) == EAudioVoiceState::Free)
 				{
 					Audio.bPlaying = false;
 					Audio.bPaused = false;
@@ -187,35 +187,35 @@ namespace Lumina
 
 				if (Audio.bSpatialized)
 				{
-					GAudioContext->SetPosition(Audio.ActiveHandle, Position);
+					Audio::Context().SetPosition(Audio.ActiveHandle, Position);
 
 					if (Audio.Attenuation.DopplerFactor > 0.0f)
 					{
-						GAudioContext->SetVelocity(Audio.ActiveHandle, Velocity);
+						Audio::Context().SetVelocity(Audio.ActiveHandle, Velocity);
 					}
 				}
 
 				if (Audio.bVolumeDirty)
 				{
-					GAudioContext->SetVolume(Audio.ActiveHandle, Audio.Volume);
+					Audio::Context().SetVolume(Audio.ActiveHandle, Audio.Volume);
 					Audio.bVolumeDirty = false;
 				}
 
 				if (Audio.bPitchDirty)
 				{
-					GAudioContext->SetPitch(Audio.ActiveHandle, Audio.Pitch);
+					Audio::Context().SetPitch(Audio.ActiveHandle, Audio.Pitch);
 					Audio.bPitchDirty = false;
 				}
 
 				if (Audio.bLoopingDirty)
 				{
-					GAudioContext->SetLooping(Audio.ActiveHandle, Audio.bLooping);
+					Audio::Context().SetLooping(Audio.ActiveHandle, Audio.bLooping);
 					Audio.bLoopingDirty = false;
 				}
 
 				if (Audio.bAttenuationDirty)
 				{
-					GAudioContext->SetAttenuation(Audio.ActiveHandle, Audio.Attenuation);
+					Audio::Context().SetAttenuation(Audio.ActiveHandle, Audio.Attenuation);
 					Audio.bAttenuationDirty = false;
 				}
 
@@ -250,7 +250,7 @@ namespace Lumina
 
 				if (Math::Abs(Audio.OcclusionCurrent - PreviousOcclusion) > 0.001f)
 				{
-					GAudioContext->SetOcclusion(Audio.ActiveHandle, Audio.OcclusionCurrent,
+					Audio::Context().SetOcclusion(Audio.ActiveHandle, Audio.OcclusionCurrent,
 						Audio.Occlusion.LowPassFrequency, Audio.Occlusion.VolumeAttenuation);
 				}
 			});
@@ -270,7 +270,7 @@ namespace Lumina
 					}
 				}
 
-				if (Audio.bPlaying && GAudioContext->GetVoiceState(Audio.ActiveHandle) == EAudioVoiceState::Free)
+				if (Audio.bPlaying && Audio::Context().GetVoiceState(Audio.ActiveHandle) == EAudioVoiceState::Free)
 				{
 					Audio.bPlaying = false;
 					Audio.ActiveHandle = FAudioHandle::Invalid();
@@ -281,18 +281,18 @@ namespace Lumina
 					if (Audio.bSpatialized)
 					{
 						const STransformComponent& Transform = XFormStorage.get(Entity);
-						GAudioContext->SetPosition(Audio.ActiveHandle, Transform.GetWorldLocation());
+						Audio::Context().SetPosition(Audio.ActiveHandle, Transform.GetWorldLocation());
 					}
 
 					if (Audio.bVolumeDirty)
 					{
-						GAudioContext->SetVolume(Audio.ActiveHandle, Audio.Volume);
+						Audio::Context().SetVolume(Audio.ActiveHandle, Audio.Volume);
 						Audio.bVolumeDirty = false;
 					}
 
 					if (Audio.bPitchDirty)
 					{
-						GAudioContext->SetPitch(Audio.ActiveHandle, Audio.Pitch);
+						Audio::Context().SetPitch(Audio.ActiveHandle, Audio.Pitch);
 						Audio.bPitchDirty = false;
 					}
 				}

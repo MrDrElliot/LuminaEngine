@@ -255,7 +255,7 @@ namespace Lumina
 
     void FDefaultSceneRenderer::InitSharedResources()
     {
-        FSharedRenderResources& Shared = GRenderManager->GetSharedRenderResources();
+        FSharedRenderResources& Shared = Render().GetSharedRenderResources();
 
         if (!Shared.bInitialized)
         {
@@ -308,7 +308,7 @@ namespace Lumina
             return Image;
         };
 
-        FSharedRenderResources& SharedNow = GRenderManager->GetSharedRenderResources();
+        FSharedRenderResources& SharedNow = Render().GetSharedRenderResources();
         NamedImages[(int)ENamedImage::BRDFLut]    = Alias(SharedNow.BRDFLut, EFormat::RG16_FLOAT, FUIntVector2(256, 256));
         NamedImages[(int)ENamedImage::BRDFLut].MipUAVSlots.push_back(SharedNow.BRDFLutUAV);
         NamedImages[(int)ENamedImage::SMAAArea]   = Alias(SharedNow.SMAAArea, EFormat::RG8_UNORM, FUIntVector2(AREATEX_WIDTH, AREATEX_HEIGHT));
@@ -3671,7 +3671,7 @@ namespace Lumina
                                                                 Frame.ReflectionProbes.Probes.size());
             }
 
-            SceneRootShared.Materials          = GRenderManager->GetMaterialManager().GetMaterialBuffer();
+            SceneRootShared.Materials          = Render().GetMaterialManager().GetMaterialBuffer();
             SceneRootShared.MeshletDrawList    = GetMeshletDrawList().GetAddress();
             SceneRootShared.PreSkinnedVertices = GetPreSkinnedVerticesBuffer().GetAddress();
             if (Frame.CachedWorldSettings.bEnableGTAO)
@@ -4811,7 +4811,7 @@ namespace Lumina
 
     void FDefaultSceneRenderer::ProcessDirectionalLight(const SDirectionalLightComponent& DirectionalLight, TAtomic<uint32>& LightCount)
     {
-        FFrameData& Frame = *ExtractFrame;
+        FFrameData& Frame          = *ExtractFrame;
         auto& LightData            = Frame.Lighting.LightData;
         auto& ShadowDataCount      = Frame.Lighting.ShadowDataCount;
         auto& SceneGlobalData      = Frame.SceneGlobalData;
@@ -11170,7 +11170,7 @@ namespace Lumina
     {
         constexpr uint32 BRDFLutSize = 256u;
 
-        FSharedRenderResources& Shared = GRenderManager->GetSharedRenderResources();
+        FSharedRenderResources& Shared = Render().GetSharedRenderResources();
 
         Shared.BRDFLut = RHI::Textures::Create(RHI::FTexture2DDesc
         {
@@ -11515,9 +11515,6 @@ namespace Lumina
 
     RHI::FPipelineH FDefaultSceneRenderer::GetOrCreatePipeline(const FGraphicsPipelineKey& Key)
     {
-        // The handle IS the identity: (slot, generation). A recompile mints a new entry and therefore a new
-        // handle, so it keys a different pipeline -- the same guarantee the old ID+Generation hash gave,
-        // without dereferencing anything.
         size_t Seed = 0;
         Hash::HashCombine(Seed, Key.VS.Handle);
         Hash::HashCombine(Seed, Key.PS.Handle);
@@ -11624,10 +11621,7 @@ namespace Lumina
         size_t Seed = 0;
         Hash::HashCombine(Seed, CS.Handle);
         Hash::HashCombine(Seed, 0xC0C0C0C0ull);   // disambiguate from graphics keys
-
-        // The VALUES are part of the identity, not just the count: two dispatches of the same shader
-        // specialized differently are two pipelines, and hashing only the handle would hand the second
-        // one the first one's binary. The graphics key folds its constants in for the same reason.
+        
         for (const RHI::FSpecializationConstant& Constant : Constants)
         {
             Hash::HashCombine(Seed, Constant.ConstantID);
@@ -11661,8 +11655,7 @@ namespace Lumina
         RHI::FPipelineH Pipeline = RHI::CreateComputePipeline(CSEntry->Source(), Constants);
         PipelineCache.emplace(Seed, Pipeline);
 
-#if USING(WITH_EDITOR)
-        // The deferred material lane is compute now, so this is where its register counts come from.
+        #if USING(WITH_EDITOR)
         if (!FShaderLibrary::HasPipelineStats(CS))
         {
             TVector<RHI::FPipelineStat> Stats;
@@ -11671,7 +11664,7 @@ namespace Lumina
                 FShaderLibrary::PublishPipelineStats(CS, Move(Stats));
             }
         }
-#endif
+        #endif
 
         return Pipeline;
     }
@@ -11740,15 +11733,7 @@ namespace Lumina
         NeededSize = Math::Max<uint64>(NeededSize, 16ull);
         
         auto AlignUp16 = [](uint64 Size) { return (Size + 15ull) & ~15ull; };
-
-        // RHI::Malloc hands back device memory out of a recycling pool, so a fresh allocation holds the
-        // PREVIOUS tenant's bytes -- not zeros, and not anything reproducible. Every buffer here is either
-        // fully rewritten before it is read or bounded by a cursor written this frame, but the ones that are
-        // only PARTIALLY rewritten used to depend on that being true and were silently scene-dependent when
-        // it was not. Clearing at the allocation makes the first frame after a grow deterministic.
-        //
-        // NOT a substitute for the frame tags and cursors: those cover the steady state, where a buffer
-        // persists and only part of it is rewritten. This covers exactly the realloc.
+        
         const auto Reallocate = [&]()
         {
             DeferFree(Buffer.Ptr);
@@ -11757,10 +11742,7 @@ namespace Lumina
 
             if (Buffer && Init == EBufferInit::Zeroed)
             {
-                RHI::CmdMemset(CL, Buffer.Ptr, Buffer.GetSize(), 0u);
-                // The caller's very next act is usually a copy into this same allocation, and a
-                // write-after-write between two transfer writes is ordered by nothing else. Only on a
-                // realloc, so the broad destination mask costs nothing measurable.
+                RHI::CmdMemzero(CL, Buffer.Ptr, Buffer.GetSize());
                 Barriers::TransferToAll(CL);
             }
         };
