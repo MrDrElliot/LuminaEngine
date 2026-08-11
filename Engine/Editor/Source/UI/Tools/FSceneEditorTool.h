@@ -15,8 +15,7 @@ namespace Lumina
     class IRenderScene;
     struct FPropertyChangedEvent;
 
-    // Shared base for ECS scene editors (world + prefab).
-    class FSceneEditorTool : public FAssetEditorTool
+    class EDITOR_API FSceneEditorTool : public FAssetEditorTool
     {
         using Super = FAssetEditorTool;
 
