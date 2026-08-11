@@ -876,6 +876,17 @@ struct FCullData
 // captured. Both failure modes look identical in a lit view -- the surface just reflects sky.
 #define DEBUG_MODE_PROBE_INFLUENCE      22u
 #define DEBUG_MODE_PROBE_RADIANCE       23u
+// The rest of the GBuffer. These four channels are subject to the per-model BORROW in GBuffer.slang,
+// so each view marks the pixels its channel was not stored for rather than showing the fallback --
+// see kDebugNotStored in SurfaceShading.slang.
+#define DEBUG_MODE_SPECULAR             24u
+#define DEBUG_MODE_SHADING_MODEL        25u
+#define DEBUG_MODE_CLEARCOAT            26u
+#define DEBUG_MODE_CLEARCOAT_ROUGHNESS  27u
+#define DEBUG_MODE_SELF_SHADOW          28u
+// The one mode that COMPOSITES instead of replacing: the lit shading stays and the wire is drawn on
+// top of it. Deferred lane only -- the wire needs the VisBuffer's triangle barycentrics.
+#define DEBUG_MODE_WIREFRAME_OVERLAY    29u
 
 // Global scaling applied on top of every material's authored POM settings, so a weaker GPU can dial the
 // whole feature back without recompiling materials. Matches FParallaxSettings in SceneRenderTypes.h.

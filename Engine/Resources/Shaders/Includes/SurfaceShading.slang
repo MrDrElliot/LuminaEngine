@@ -820,7 +820,36 @@ struct FDebugSurfaceInfo
     float3 GeometricNormalWS;   // interpolated vertex normal, before the normal map
     uint   MeshletIndex;
     uint   MaterialIndex;
+
+    // Pixels to the nearest triangle edge, for the wireframe overlay. Only the deferred lane can fill
+    // this (TriangleEdgeDistancePixels, off the VisBuffer barycentrics); everything else passes
+    // kNoEdgeDistance and simply draws no wire.
+    float  EdgeDistancePixels;
 };
+
+static const float kNoEdgeDistance = 1e30;
+
+// GBuffer.slang borrows channels per shading model: a clearcoat surface stores Clearcoat and
+// ClearcoatRoughness in the slots every other model uses for SelfShadow and Specular. UnpackGBuffer
+// hands the missing side back as the value LIGHTING would have used -- 0.5 specular, 1.0 self-shadow,
+// 0.0 coat -- which is right for shading and a lie for a readout: a flat 0.5 over every coated surface
+// reads as "authored 0.5", not "this channel does not exist here".
+//
+// So the four borrowed views paint the pixels their channel was not stored for. Violet = no value in
+// this channel for this surface's model. Dark teal = the surface simply is not clearcoat, which is
+// distinct from a coated surface whose strength is genuinely 0 (that one reads black).
+//
+// Caveat worth knowing: the forward lane (terrain, translucency) does not round-trip through
+// Pack/Unpack, so those surfaces DO carry a real Specular even when coated. The marker keys off the
+// shading model either way, so a coated forward pixel is flagged too -- deliberately, because the
+// value it holds is not what the deferred lane would have shaded it with.
+static const float3 kDebugNotStored = float3(0.35, 0.0, 0.5);
+static const float3 kDebugNoCoat    = float3(0.0, 0.06, 0.08);
+
+// Wireframe overlay. Cyan because it is the hue least likely to sit in a lit scene already -- the wire
+// has to read over whatever it is drawn on, and this mode keeps the shading underneath.
+static const float3 kWireframeColor      = float3(0.15, 1.0, 1.0);
+static const float  kWireframeWidthPixels = 1.25;
 
 // Editor view-mode overrides, applied on top of the shaded color. Callers gate on
 // SPEC_ENABLE_DEBUG_VIEWS so game/shipping pipelines strip the whole switch.
@@ -897,6 +926,53 @@ float3 ApplyDebugView(uint DebugMode, float3 Color, FGBufferData G, FDebugSurfac
         // material binning) and works for any surface (mesh or terrain).
         Color = MeshletDebugColor(Info.MaterialIndex);
         break;
+    case DEBUG_MODE_SPECULAR:
+        // Dielectric F0 control (0.5 = the 4% default). Not stored for clearcoat -- the coat drives
+        // its own fixed F0 and lighting reads 0.5 regardless, so there is nothing to show.
+        Color = (G.ShadingModel == ShadingModel_Clearcoat)
+                    ? kDebugNotStored
+                    : float3(G.Specular, G.Specular, G.Specular);
+        break;
+    case DEBUG_MODE_SHADING_MODEL:
+        // Categorical, not a ramp: this is the view that explains what the borrowed-channel views are
+        // doing, so the three models have to be unmistakable rather than three shades of one hue.
+        switch (G.ShadingModel)
+        {
+            case ShadingModel_Default:   Color = float3(0.25, 0.35, 0.55); break;   // steel blue
+            case ShadingModel_Unlit:     Color = float3(0.95, 0.55, 0.10); break;   // orange
+            case ShadingModel_Clearcoat: Color = float3(0.10, 0.85, 0.85); break;   // cyan
+            default:                     Color = float3(1.0, 0.0, 1.0);    break;   // magenta: model not mapped here
+        }
+        break;
+    case DEBUG_MODE_CLEARCOAT:
+        // Black IS a meaningful reading here (a coated material dialled to zero), which is exactly why
+        // uncoated surfaces get a hue instead of black -- otherwise the two are indistinguishable.
+        Color = (G.ShadingModel == ShadingModel_Clearcoat)
+                    ? float3(G.Clearcoat, G.Clearcoat, G.Clearcoat)
+                    : kDebugNoCoat;
+        break;
+    case DEBUG_MODE_CLEARCOAT_ROUGHNESS:
+        Color = (G.ShadingModel == ShadingModel_Clearcoat)
+                    ? float3(G.ClearcoatRoughness, G.ClearcoatRoughness, G.ClearcoatRoughness)
+                    : kDebugNoCoat;
+        break;
+    case DEBUG_MODE_SELF_SHADOW:
+        // The material's own shadow term (POM / bent-normal occlusion), NOT the shadow map -- use
+        // Shadow Cascades for that. Borrowed away by clearcoat, same as Specular.
+        Color = (G.ShadingModel == ShadingModel_Clearcoat)
+                    ? kDebugNotStored
+                    : float3(G.SelfShadow, G.SelfShadow, G.SelfShadow);
+        break;
+    case DEBUG_MODE_WIREFRAME_OVERLAY:
+    {
+        // The only mode that COMPOSITES: Color arrives as the lit shading and keeps it everywhere the
+        // wire is not, which is the whole point -- wireframe ON the normally-drawn mesh, not instead
+        // of it. Callers that cannot supply an edge distance leave the sentinel and draw nothing.
+        const float Half = 0.5 * kWireframeWidthPixels;
+        const float Wire = 1.0 - smoothstep(Half, Half + 1.0, Info.EdgeDistancePixels);
+        Color = lerp(Color, kWireframeColor, Wire);
+        break;
+    }
     case DEBUG_MODE_PROBE_INFLUENCE:
     {
         // Status colors are FULLY SATURATED, covered pixels always PASTEL -- saturation, not hue, tells them
@@ -967,6 +1043,8 @@ FShadedSurface ShadeSurface(FBaseVertexOutput Input, FMaterialPixelInputs Materi
         Info.GeometricNormalWS = Input.NormalWS.xyz;
         Info.MeshletIndex      = Input.MeshletIndex;
         Info.MaterialIndex     = Input.MaterialIndex;
+        // Forward lane (terrain, translucency): no VisBuffer triangle, so no wire on these surfaces.
+        Info.EdgeDistancePixels = kNoEdgeDistance;
 
         Out.Color = ApplyDebugView(DebugMode, Out.Color, G, Info, WorldPosition, ViewPosition, Input.Position.xy);
     }

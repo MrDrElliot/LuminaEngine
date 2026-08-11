@@ -121,9 +121,7 @@ namespace Lumina
         void RegisterBuiltinEditorTools();
 
         FEditorTool* FindToolByTypeID(uint32 TypeID) const;
-
-        // --- Session tab restore (CEditorSessionSettings) ---
-
+        
         // Adds Tool's tab to the persisted list and writes it out immediately. Key is "asset:<guid>" or
         // "file:<path>". A key already in the list (i.e. this open IS the restore) is not re-appended,
         // which is also what keeps replay from rewriting the file it is reading.
@@ -282,22 +280,11 @@ namespace Lumina
 
         /**
          * The bottom strip a drawer docks into, split off the dockspace on first use.
-         *
-         * Docking straight into MainDockspaceID put the panel in the ROOT node -- which is where the world
-         * editor lives -- so "Dock in Layout" tabbed the Content Browser behind the viewport instead of
-         * landing under it. Cached so the second panel docked joins the first as a tab rather than
-         * splitting the split; revalidated against the dock context, because a layout reset or an
-         * imgui.ini restore can retire the node behind our back.
          */
         ImGuiID                                         BottomDockID = 0;
 
         /**
          * Drawer awaiting a bottom dock, applied at the top of the next frame.
-         *
-         * Deferred rather than done at the click: the button is drawn well after ImGui::DockSpace() has
-         * been submitted for the frame, and splitting a node the dockspace has already consumed is not
-         * something the DockBuilder API promises to survive. The dockspace setup block runs the split
-         * before DockSpace() instead, which is where every other DockBuilder call here already lives.
          */
         FEditorTool*                                    PendingBottomDockTool = nullptr;
         float                                           PendingBottomDockHeightFrac = 0.0f;

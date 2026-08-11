@@ -399,6 +399,11 @@ namespace Lumina::RHI
         };
     }
     
+    // A device fault reports an address and nothing else, so the only way that address ever resolves to
+    // something a human can act on is if the RHI remembers what lived there. Editor only: the name costs
+    // every allocation 64 bytes and the freed ring exists purely to survive its own allocation.
+    static constexpr uint32 kMaxBlockNameLength = 64;
+
     struct FMemoryBlock
     {
         VkBuffer        Buffer;
@@ -406,7 +411,30 @@ namespace Lumina::RHI
         void*           Host;       // persistent mapping; null for GPU-only memory
         GPUPtr          Device;
         uint64          Size;
+#if USING(WITH_EDITOR)
+        // Kept HERE rather than only on the VkBuffer: the Vulkan object name dies with the object, which
+        // is exactly the moment the name becomes interesting.
+        char            Name[kMaxBlockNameLength];
+#endif
     };
+
+#if USING(WITH_EDITOR)
+    // One entry per allocation that has been destroyed, oldest overwritten. A use-after-free address is by
+    // definition absent from the live table, so without this the report can only ever say "unknown".
+    struct FFreedBlock
+    {
+        GPUPtr          Device;
+        uint64          Size;
+        // Graphics-queue submissions at the time of the free. The retire window is measured in submits, so
+        // the delta says outright whether the free beat the fence or the pointer was stale for much longer.
+        uint64          SubmitOrdinal;
+        char            Name[kMaxBlockNameLength];
+    };
+
+    // A fault is post-mortem: this only has to outlive the allocation long enough for the crash to land.
+    // 4096 entries is ~600 KiB and covers several seconds of editor churn.
+    static constexpr uint32 kFreedBlockHistory = 4096;
+#endif
     
     struct FTexture
     {
@@ -561,6 +589,15 @@ namespace Lumina::RHI
         // All live allocations, sorted by device address for interior-pointer resolution.
         TVector<FMemoryBlock>           MemoryBlocks;
 
+#if USING(WITH_EDITOR)
+        // Ring of destroyed allocations, guarded by MemoryMutex alongside MemoryBlocks. Unsorted: it is
+        // read once, by the device-lost report, and a linear scan of 4096 entries is free there.
+        TVector<FFreedBlock>            FreedBlocks;
+        uint32                          FreedBlockCursor = 0;
+        // Bumped per submit, stamped into FreedBlocks. Relaxed: it is a coarse age, not a synchroniser.
+        TAtomic<uint64>                 SubmitOrdinal{0};
+#endif
+
         TSegmentMap<FSemaphore>         Semaphores;
         TSegmentMap<FPipeline>          Pipelines;
         TSegmentMap<FTexture>           Textures;
@@ -647,6 +684,49 @@ namespace Lumina::RHI
         }
         return It;
     }
+
+#if USING(WITH_EDITOR)
+    // Same search, for the one caller that WRITES to the block. Caller holds MemoryMutex.
+    static FMemoryBlock* FindMemoryMutable(GPUPtr Ptr)
+    {
+        return const_cast<FMemoryBlock*>(FindMemory(Ptr));
+    }
+
+    static void CopyBlockName(char (&Dest)[kMaxBlockNameLength], const char* Name)
+    {
+        if (Name == nullptr)
+        {
+            Dest[0] = '\0';
+            return;
+        }
+
+        std::snprintf(Dest, kMaxBlockNameLength, "%s", Name);
+    }
+
+    // Caller holds MemoryMutex. Allocated once and overwritten in place forever after: this runs on the
+    // free path, which a growing scene renderer hits every time a ring resizes.
+    static void RecordFreedBlockLocked(const FMemoryBlock& Block)
+    {
+        TVector<FFreedBlock>& Ring = GDevice->FreedBlocks;
+        if (Ring.size() < kFreedBlockHistory)
+        {
+            Ring.resize(kFreedBlockHistory);
+            for (FFreedBlock& Entry : Ring)
+            {
+                Entry.Device = 0;
+                Entry.Size   = 0;
+            }
+        }
+
+        FFreedBlock& Entry  = Ring[GDevice->FreedBlockCursor];
+        Entry.Device        = Block.Device;
+        Entry.Size          = Block.Size;
+        Entry.SubmitOrdinal = GDevice->SubmitOrdinal.load(std::memory_order_relaxed);
+        CopyBlockName(Entry.Name, Block.Name);
+
+        GDevice->FreedBlockCursor = (GDevice->FreedBlockCursor + 1u) % kFreedBlockHistory;
+    }
+#endif
 
     static TAtomic<FValidationHandlerFn> GValidationHandler{nullptr};
     static TAtomic<void*>                GValidationHandlerUserData{nullptr};
@@ -2332,6 +2412,12 @@ namespace Lumina::RHI
             .Size       = Size
         };
 
+#if USING(WITH_EDITOR)
+        // Named later, if at all, by SetDebugName. An empty name still leaves a useful ledger entry --
+        // the address range and the free time are what discriminate the failure modes.
+        Block.Name[0] = '\0';
+#endif
+
         FScopeLock Lock(GDevice->MemoryMutex);
         auto It = std::ranges::lower_bound(GDevice->MemoryBlocks, Gpu, {}, &FMemoryBlock::Device);
         GDevice->MemoryBlocks.insert(It, Block);
@@ -2386,10 +2472,18 @@ namespace Lumina::RHI
 
         FScopeLock Lock(GDevice->MemoryMutex);
 
+#if USING(WITH_EDITOR)
+        if (FMemoryBlock* Block = FindMemoryMutable(GPU))
+        {
+            NameObject(VK_OBJECT_TYPE_BUFFER, (uint64)Block->Buffer, Name);
+            CopyBlockName(Block->Name, Name);
+        }
+#else
         if (const FMemoryBlock* Block = FindMemory(GPU))
         {
             NameObject(VK_OBJECT_TYPE_BUFFER, (uint64)Block->Buffer, Name);
         }
+#endif
     }
 
     void SetDebugName(FTextureH Texture, const char* Name)
@@ -2416,9 +2510,143 @@ namespace Lumina::RHI
 
         if (It != GDevice->MemoryBlocks.end() && It->Device == GPU)
         {
+#if USING(WITH_EDITOR)
+            RecordFreedBlockLocked(*It);
+#endif
             vmaDestroyBuffer(GDevice->Allocator, It->Buffer, It->Allocation);
             GDevice->MemoryBlocks.erase(It);
         }
+    }
+
+    FString DescribeDeviceAddress(uint64 AddressLow, uint64 AddressHigh)
+    {
+        #if USING(WITH_EDITOR)
+        if (GDevice == nullptr || AddressHigh < AddressLow)
+        {
+            return {};
+        }
+
+        // Past this, the "nearest" allocation is just whichever one happened to be closest in a 40-bit
+        // address space, which reads as evidence and is not.
+        constexpr uint64 kNeighbourWindow = 64ull * 1024 * 1024;
+
+        // try_lock, not a lock: this runs from the device-lost path, and another thread stuck mid-Malloc
+        // would otherwise turn a crash report into a hang. A missed report is the better failure.
+        std::unique_lock<FMutex> Lock(GDevice->MemoryMutex, std::try_to_lock);
+        if (!Lock.owns_lock())
+        {
+            return "allocation ledger was locked by another thread; no attribution";
+        }
+
+        const uint64 CurrentSubmit = GDevice->SubmitOrdinal.load(std::memory_order_relaxed);
+
+        // The fault address carries only page precision, so the question is whether the allocation
+        // INTERSECTS the reported window -- an exact-address probe misses by up to a page.
+        const auto Overlaps = [&](GPUPtr Base, uint64 Size)
+        {
+            return Size != 0ull && Base <= AddressHigh && AddressLow < Base + Size;
+        };
+
+        const auto NameOf = [](const char* Name) { return (Name != nullptr && Name[0] != '\0') ? Name : "<unnamed>"; };
+
+        // Nearest allocation that does NOT contain the address, either side. An overrun lands past the end
+        // of a buffer and inside nobody, which is the case a containment-only lookup reports as "unknown".
+        struct FNeighbour
+        {
+            bool        bValid   = false;
+            bool        bFreed   = false;
+            bool        bPastEnd = false;   // the allocation ends before the fault: an overrun off its end
+            uint64      Distance = 0;
+            GPUPtr      Base     = 0;
+            uint64      Size     = 0;
+            uint64      Submit   = 0;
+            const char* Name     = nullptr;
+        };
+
+        FNeighbour Nearest;
+
+        const auto ConsiderNeighbour = [&](GPUPtr Base, uint64 Size, const char* Name, bool bFreed, uint64 Submit)
+        {
+            if (Size == 0ull)
+            {
+                return;
+            }
+
+            bool   bPastEnd  = false;
+            uint64 Distance  = 0;
+
+            if (Base + Size <= AddressLow)
+            {
+                bPastEnd = true;
+                Distance = AddressLow - (Base + Size);
+            }
+            else if (Base > AddressHigh)
+            {
+                Distance = Base - AddressHigh;
+            }
+            else
+            {
+                return;   // overlapping; containment is reported instead
+            }
+
+            if (Distance > kNeighbourWindow || (Nearest.bValid && Distance >= Nearest.Distance))
+            {
+                return;
+            }
+
+            Nearest = FNeighbour{ true, bFreed, bPastEnd, Distance, Base, Size, Submit, Name };
+        };
+
+        // Linear over both tables. This runs exactly once, on a dying device: clarity beats a clever
+        // bound, and a large allocation whose START sorts far below the fault defeats one anyway.
+        for (const FMemoryBlock& Block : GDevice->MemoryBlocks)
+        {
+            if (Overlaps(Block.Device, Block.Size))
+            {
+                return FString(std::format("LIVE \"{}\" [{:#x} +{:#x}], fault {:#x} into it",
+                                           NameOf(Block.Name), Block.Device, Block.Size,
+                                           AddressLow - Block.Device).c_str());
+            }
+
+            ConsiderNeighbour(Block.Device, Block.Size, Block.Name, /*bFreed*/ false, 0ull);
+        }
+
+        for (const FFreedBlock& Entry : GDevice->FreedBlocks)
+        {
+            if (Overlaps(Entry.Device, Entry.Size))
+            {
+                return FString(std::format("FREED \"{}\" [{:#x} +{:#x}], fault {:#x} into it, freed {} submit(s) before the loss",
+                                           NameOf(Entry.Name), Entry.Device, Entry.Size,
+                                           AddressLow - Entry.Device,
+                                           CurrentSubmit - Entry.SubmitOrdinal).c_str());
+            }
+
+            ConsiderNeighbour(Entry.Device, Entry.Size, Entry.Name, /*bFreed*/ true, Entry.SubmitOrdinal);
+        }
+
+        if (!Nearest.bValid)
+        {
+            return FString(std::format("no live or freed allocation within {} MiB",
+                                       kNeighbourWindow / (1024ull * 1024ull)).c_str());
+        }
+
+        const char* Relation = Nearest.bPastEnd ? "past the end of" : "before the start of";
+
+        if (Nearest.bFreed)
+        {
+            return FString(std::format("{:#x} {} FREED \"{}\" [{:#x} +{:#x}], freed {} submit(s) before the loss",
+                                       Nearest.Distance, Relation, NameOf(Nearest.Name), Nearest.Base, Nearest.Size,
+                                       CurrentSubmit - Nearest.Submit).c_str());
+        }
+
+        return FString(std::format("{:#x} {} LIVE \"{}\" [{:#x} +{:#x}]",
+                                   Nearest.Distance, Relation, NameOf(Nearest.Name),
+                                   Nearest.Base, Nearest.Size).c_str());
+        #else
+        (void)AddressLow;
+        (void)AddressHigh;
+        return {};
+        #endif
     }
 
     // FreeH after FreeDevice is a no-op: everything was already destroyed with the device.
@@ -4326,6 +4554,12 @@ namespace Lumina::RHI
                 }
             }
         }
+#endif
+
+#if USING(WITH_EDITOR)
+        // Stamped into the freed-block ledger. Incremented before the submit so a block freed during
+        // recording reads the ordinal of the submit that may still reference it, never one earlier.
+        GDevice->SubmitOrdinal.fetch_add(1, std::memory_order_relaxed);
 #endif
 
         VK_CHECK(vkQueueSubmit2(VulkanQueue, 1, &SubmitInfo, VK_NULL_HANDLE));

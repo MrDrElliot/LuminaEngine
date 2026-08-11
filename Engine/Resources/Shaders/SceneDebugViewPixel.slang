@@ -65,10 +65,11 @@ float4 FragmentMain(FragmentInput In) : SV_Target0
     }
 
     FDebugSurfaceInfo Info;
-    Info.UV                = float2(0.0, 0.0);
-    Info.GeometricNormalWS = G.WorldNormal;
-    Info.MeshletIndex      = T.Ref.GlobalMeshletIdx;
-    Info.MaterialIndex     = 0u;
+    Info.UV                 = float2(0.0, 0.0);
+    Info.GeometricNormalWS  = G.WorldNormal;
+    Info.MeshletIndex       = T.Ref.GlobalMeshletIdx;
+    Info.MaterialIndex      = 0u;
+    Info.EdgeDistancePixels = kNoEdgeDistance;
 
     if (T.bValid)
     {
@@ -78,6 +79,8 @@ float4 FragmentMain(FragmentInput In) : SV_Target0
         Info.UV                = S.UV;
         Info.GeometricNormalWS = S.NormalWS;
         Info.MaterialIndex     = T.Ref.Inst.MaterialIndex;
+        // Free here: the reconstruction already produced the barycentrics and their derivatives.
+        Info.EdgeDistancePixels = TriangleEdgeDistancePixels(S.Bary);
     }
 
     // The lit color is the BASE the switch starts from, not an optimization for the one view that tints

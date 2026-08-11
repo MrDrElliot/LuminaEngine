@@ -93,7 +93,13 @@ namespace Lumina
         OITLayerCount       = 21,
         ProbeInfluence      = 22,
         ProbeRadiance       = 23,
-        Num                 = 24,
+        Specular            = 24,
+        ShadingModel        = 25,
+        Clearcoat           = 26,
+        ClearcoatRoughness  = 27,
+        SelfShadow          = 28,
+        WireframeOverlay    = 29,
+        Num                 = 30,
     };
 
     constexpr FStringView RenderFlagsAsString(ERenderSceneDebugFlags Flags)
@@ -124,6 +130,12 @@ namespace Lumina
             case ERenderSceneDebugFlags::OITLayerCount:     return "OIT Layer Count";
             case ERenderSceneDebugFlags::ProbeInfluence:    return "Reflection Probe Influence";
             case ERenderSceneDebugFlags::ProbeRadiance:     return "Reflection Probe Radiance";
+            case ERenderSceneDebugFlags::Specular:          return "Specular";
+            case ERenderSceneDebugFlags::ShadingModel:      return "Shading Model";
+            case ERenderSceneDebugFlags::Clearcoat:         return "Clearcoat";
+            case ERenderSceneDebugFlags::ClearcoatRoughness:return "Clearcoat Roughness";
+            case ERenderSceneDebugFlags::SelfShadow:        return "Self Shadow";
+            case ERenderSceneDebugFlags::WireframeOverlay:  return "Wireframe Overlay";
             default:                                        return "Lit";
         }
     }
@@ -310,9 +322,15 @@ namespace Lumina
         explicit operator bool() const { return Ptr != 0; }
     };
 
-    inline FSceneBuffer CreateSceneBuffer(uint64 Size)
+    // DebugName is what a GPU fault address resolves to in the device-lost report -- these are reached
+    // only by device address, so without it a fault in one is an unattributed number.
+    inline FSceneBuffer CreateSceneBuffer(uint64 Size, const char* DebugName = nullptr)
     {
         const RHI::GPUPtr Ptr = RHI::Malloc(Size, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
+        if (Ptr != 0 && DebugName != nullptr)
+        {
+            RHI::SetDebugName(Ptr, DebugName);
+        }
         return FSceneBuffer{ Ptr, Ptr != 0 ? Size : 0 };
     }
 

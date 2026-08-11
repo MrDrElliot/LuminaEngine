@@ -12,6 +12,7 @@
 #endif
 #include "Log/Log.h"
 #include "Paths/Paths.h"
+#include "Renderer/RHI.h"   // DescribeDeviceAddress: turns a fault address into the allocation that owned it
 #include "Platform/CrashHandler.h"
 #include "Platform/CrashReporter.h"
 #include "Platform/Filesystem/FileHelper.h"
@@ -323,6 +324,21 @@ namespace Lumina::RHI
             LOG_ERROR("[DeviceLost]   Address[{}] {} at 0x{:x} (range 0x{:x}-0x{:x}, precision 0x{:x})",
                 i, FaultAddressTypeToString(A.addressType),
                 (uint64)A.reportedAddress, Lower, Upper, (uint64)A.addressPrecision);
+
+            // Only data addresses resolve to an allocation; an instruction pointer is in shader memory the
+            // RHI never allocated, and running it through the ledger would name a buffer at random.
+            const bool bDataAddress = A.addressType == VK_DEVICE_FAULT_ADDRESS_TYPE_READ_INVALID_EXT
+                                   || A.addressType == VK_DEVICE_FAULT_ADDRESS_TYPE_WRITE_INVALID_EXT
+                                   || A.addressType == VK_DEVICE_FAULT_ADDRESS_TYPE_EXECUTE_INVALID_EXT;
+
+            if (bDataAddress)
+            {
+                const FString Attribution = DescribeDeviceAddress(Lower, Upper);
+                if (!Attribution.empty())
+                {
+                    LOG_ERROR("[DeviceLost]     -> {}", Attribution.c_str());
+                }
+            }
         }
 
         for (uint32 i = 0; i < Counts.vendorInfoCount; ++i)

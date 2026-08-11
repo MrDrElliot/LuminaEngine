@@ -35,16 +35,6 @@ namespace Lumina
         TFunction<void(const FAssetActionContext&)> Execute;
     };
 
-    // Extra right-click entries for an asset class, e.g. "Create Material Instance" on a material.
-    //
-    // Deliberately separate from CFactoryRegistry (which answers "what new assets can I create from
-    // nothing?") and from FEditorToolRegistry (which answers "what editor opens this?"). This one
-    // answers "what can I do TO this asset?", and like both of those it is keyed by class and open to
-    // plugins: register in a module's StartupModule and the entry appears with no content-browser edit.
-    //
-    // Unlike the tool registry, matches ACCUMULATE up the hierarchy rather than first-match-wins: an
-    // action registered on CMaterialInterface shows for CMaterial and CMaterialInstance alike, and a
-    // CMaterial-specific action lists alongside it. Most-derived actions come first.
     class EDITOR_API FAssetActionRegistry
     {
     public:
@@ -63,15 +53,8 @@ namespace Lumina
     // built-in tool registrations.
     void RegisterBuiltinAssetActions();
 
-    // "<Dir>/<Base><Suffix>.lasset", deduplicated against what is already on disk. Follows the content
-    // browser's own new-asset recipe (combine -> AddPackageExt -> MakeUniqueFilePath); the extension is
-    // not optional, since a package saved to an extension-less path is not a loadable asset.
-    EDITOR_API FFixedString MakeSiblingAssetPath(FStringView SourceVirtualPath, const char* Suffix);
 
-    // Duplicates an asset AND every sub-object in its package to DestPath, rewriting references between
-    // them so the copy is self-contained. References to other packages stay shared, which is what you
-    // want -- a duplicated material still points at the same textures.
-    //
-    // Returns the copy of PrimaryAsset (the object the content browser lists), or null on failure.
+    EDITOR_API FFixedString MakeSiblingAssetPath(FStringView SourceVirtualPath, const char* Suffix);
+    
     EDITOR_API CObject* DuplicateAssetPackage(CObject* PrimaryAsset, FStringView DestPath);
 }

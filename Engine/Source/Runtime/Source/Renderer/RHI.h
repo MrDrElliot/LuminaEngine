@@ -501,6 +501,8 @@ namespace Lumina::RHI
 
     RUNTIME_API void        SetDebugName(GPUPtr GPU, const char* Name);
     RUNTIME_API void        SetDebugName(FTextureH Texture, const char* Name);
+    
+    RUNTIME_API FString     DescribeDeviceAddress(uint64 AddressLow, uint64 AddressHigh);
     RUNTIME_API void        Free(GPUPtr GPU);
     RUNTIME_API void        FreeH(FSemaphoreH Semaphore);
     RUNTIME_API void        FreeH(FPipelineH Pipeline);

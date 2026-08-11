@@ -1335,6 +1335,15 @@ namespace Lumina
                     SMAANeighborhoodBlendPass(CL);
                 }
 
+                #if USING(WITH_EDITOR)
+                // After SMAA: the outline is a fixed-width UI affordance, and letting the neighbourhood
+                // blend chew on a 2px line softens it into a smear. Before Widgets so UI still draws over it.
+                {
+                    SCENE_GPU_SCOPE(CL, "Selection Outline");
+                    SelectionOutlinePass(CL);
+                }
+                #endif
+
                 {
                     SCENE_GPU_SCOPE(CL, "Widgets");
                     WidgetPass(CL);
@@ -2606,6 +2615,29 @@ namespace Lumina
                 #endif
             }, ETaskPriority::High);
 
+            #if USING(WITH_EDITOR)
+            EmitGraph.Add([&]
+            {
+                LUMINA_PROFILE_SECTION("Extract Selection");
+
+                TVector<uint32>& Bits = Frame.Extracts.SelectionBits;
+                Bits.clear();
+
+                // Sized to the highest selected slot, not the registry: an entity above the top bit is
+                // out of range in the shader and reads as unselected, which is the right answer anyway.
+                Registry.view<FSelectedInEditorComponent>().each([&](entt::entity Entity)
+                {
+                    const uint32 Index = (uint32)entt::to_entity(Entity);
+                    const uint32 Word  = Index >> 5u;
+                    if (Word >= Bits.size())
+                    {
+                        Bits.resize(Word + 1u, 0u);
+                    }
+                    Bits[Word] |= (1u << (Index & 31u));
+                });
+            }, ETaskPriority::High);
+            #endif
+
             auto DLightTask = EmitGraph.AddParallelFor(DirectionalView.handle()->size(), 32, [&](Task::FParallelRange Range)
             {
                 LUMINA_PROFILE_SECTION("Process Directional Light");
@@ -3486,13 +3518,16 @@ namespace Lumina
             NumArgSlots * (SIZE_T)kMeshletSliceCount * (SIZE_T)MeshSubDrawsPerSlice
                 * sizeof(RHI::FDrawMeshTasksIndirectArguments));
 
-        ResizeBufferIfNeeded(CL, PreSkinnedVerticesBuffer, PreSkinnedSize, 1.2f, PreSkinnedVerticesLowUsage);
+        ResizeBufferIfNeeded(CL, PreSkinnedVerticesBuffer, PreSkinnedSize, 1.2f, PreSkinnedVerticesLowUsage,
+                             true, EBufferInit::Zeroed, "Cull.PreSkinnedVertices");
         PreSkinnedVertexCapacity = (uint32)Math::Min<uint64>(
             PreSkinnedVerticesBuffer.GetSize() / sizeof(FPreSkinnedVertex), 0xFFFFFFFFull);
         {
             const uint8 Slot = CurrentFrameSlot;
-            ResizeBufferIfNeeded(CL, MeshDrawArgsRing[Slot], MeshDrawArgsSize, 1.2f, MeshDrawArgsRingLowUsage[Slot]);
-            ResizeBufferIfNeeded(CL, MeshletDrawListRing[Slot], MeshletDrawListSize, 1.2f, MeshletDrawListRingLowUsage[Slot]);
+            ResizeBufferIfNeeded(CL, MeshDrawArgsRing[Slot], MeshDrawArgsSize, 1.2f, MeshDrawArgsRingLowUsage[Slot],
+                                 true, EBufferInit::Zeroed, "Cull.MeshDrawArgs");
+            ResizeBufferIfNeeded(CL, MeshletDrawListRing[Slot], MeshletDrawListSize, 1.2f, MeshletDrawListRingLowUsage[Slot],
+                                 true, EBufferInit::Zeroed, "Cull.MeshletDrawList");
             DrawListCapacity = (uint32)Math::Min<uint64>(MeshletDrawListRing[Slot].GetSize() / (sizeof(uint32) * 2), 0xFFFFFFFFull);
 
             // No skinned head to add on any more: skeletal primitives hold retained slots like everything
@@ -3511,13 +3546,14 @@ namespace Lumina
 
             ResizeBufferIfNeeded(CL, VisibleInstanceRing[Slot],
                                  (SIZE_T)FrameVisibleInstanceCapacity * sizeof(FGPUInstance), 1.25f,
-                                 VisibleInstanceLowUsage[Slot]);
+                                 VisibleInstanceLowUsage[Slot], true, EBufferInit::Zeroed, "Cull.VisibleInstances");
 
             const SIZE_T InstanceViewRangeSize = Math::Max<SIZE_T>(
                 sizeof(uint32) * 2,
                 (SIZE_T)FrameVisibleInstanceCapacity * (SIZE_T)Math::Max(NumCullViews, 1u) * sizeof(uint32) * 2);
             
-            ResizeBufferIfNeeded(CL, InstanceViewRangeRing[Slot], InstanceViewRangeSize, 1.25f, InstanceViewRangeRingLowUsage[Slot]);
+            ResizeBufferIfNeeded(CL, InstanceViewRangeRing[Slot], InstanceViewRangeSize, 1.25f, InstanceViewRangeRingLowUsage[Slot],
+                                 true, EBufferInit::Zeroed, "Cull.InstanceViewRanges");
 
             // Only the GPU knows how many blocks were appended, so its counter (lagged by the frames in flight)
             // sizes this as a high-water mark that only grows.
@@ -3526,7 +3562,8 @@ namespace Lumina
             const SIZE_T MeshletBlockSize = Math::Max<SIZE_T>(
                 sizeof(uint32) * 2,
                 (SIZE_T)Math::Max<uint32>(BlockListHighWater, 1u) * sizeof(uint32) * 2);
-            ResizeBufferIfNeeded(CL, MeshletBlockRing[Slot], MeshletBlockSize, 1.2f, MeshletBlockRingLowUsage[Slot]);
+            ResizeBufferIfNeeded(CL, MeshletBlockRing[Slot], MeshletBlockSize, 1.2f, MeshletBlockRingLowUsage[Slot],
+                                 true, EBufferInit::Zeroed, "Cull.MeshletBlocks");
             BlockListCapacity = (uint32)Math::Min<uint64>(MeshletBlockRing[Slot].GetSize() / (sizeof(uint32) * 2), 0xFFFFFFFFull);
 
             // The requirement is what the frame kFramesInFlight ago needed; the capacity is what this frame
@@ -6790,6 +6827,90 @@ namespace Lumina
         PC.DrawListCount  = DrawListCapacity;
 
         RHI::CmdDraw(CL, MakeArgs(PC), 3, 1, 0, 0);
+        RHI::CmdEndRenderPass(CL);
+        Barriers::RasterToRead(CL);
+    }
+#endif
+
+#if USING(WITH_EDITOR)
+    void FDefaultSceneRenderer::SelectionOutlinePass(RHI::FCmdListH CL)
+    {
+        const TVector<uint32>& SelectionBits = RenderFrame->Extracts.SelectionBits;
+        if (SelectionBits.empty() || !CurrentView->Output.IsValid())
+        {
+            return;
+        }
+        
+        const FSceneImage& PickerImg = GetNamedImage(ENamedImage::Picker);
+        const int32 PickerSlot = PickerImg.IsValid() ? PickerImg.GetResourceID() : -1;
+        if (PickerSlot < 0)
+        {
+            return;
+        }
+
+        static const FShaderH VertexShader = FShaderLibrary::Get("FullscreenQuad.slang");
+        static const FShaderH PixelShader  = FShaderLibrary::Get("SelectionOutline.slang");
+        if (!VertexShader || !PixelShader)
+        {
+            return;
+        }
+
+        LUMINA_PROFILE_SECTION_COLORED("Selection Outline", tracy::Color::Orange);
+        SCENE_GPU_SCOPE(CL, "Selection Outline");
+
+        const FSceneImage& Output = CurrentView->Output;
+
+        RHI::FRenderAttachment Color;
+        Color.Texture = Output.Texture;
+        Color.LoadOp  = RHI::ELoadOp::Load;
+        Color.StoreOp = RHI::EStoreOp::Store;
+
+        RHI::FRenderPassDesc Pass;
+        Pass.ColorAttachments = TSpan<const RHI::FRenderAttachment>(&Color, 1);
+        Pass.RenderArea       = Output.GetExtent();
+
+        RHI::CmdBeginRenderPass(CL, Pass);
+        SetViewportScissor(CL, Output.GetExtent());
+        RHI::CmdSetDepthStencilState(CL, GetOrCreateDepthState(RHI::FDepthStencilDesc{}));
+        RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
+
+        RHI::FBlendDesc AlphaBlend;
+        AlphaBlend.bBlendEnable   = true;
+        AlphaBlend.SrcColorFactor = RHI::EFactor::SrcAlpha;
+        AlphaBlend.DstColorFactor = RHI::EFactor::OneMinusSrcAlpha;
+        AlphaBlend.SrcAlphaFactor = RHI::EFactor::One;
+        AlphaBlend.DstAlphaFactor = RHI::EFactor::OneMinusSrcAlpha;
+
+        FGraphicsPipelineKey Key;
+        Key.VS = VertexShader;
+        Key.PS = PixelShader;
+        Key.ColorTargets.push_back({ Output.Desc.Format, AlphaBlend });
+        RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
+
+        struct FSelectionOutlinePC
+        {
+            RHI::GPUPtr SelectionBits;
+            uint32      PickerIndex;
+            uint32      SelectionBitWords;
+            uint32      EntityIndexMask;
+            float       Thickness;
+            FVector4    OutlineColor;
+        } PC = {};
+
+        PC.SelectionBits     = RHI::Core::CopyTransientArray(SelectionBits.data(), SelectionBits.size());
+        PC.PickerIndex       = (uint32)PickerSlot;
+        PC.SelectionBitWords = (uint32)SelectionBits.size();
+        // From entt rather than a literal, so a change to entity_traits cannot silently start masking
+        // off real index bits and outlining the wrong entity.
+        PC.EntityIndexMask   = (uint32)entt::entt_traits<entt::entity>::entity_mask;
+        PC.Thickness         = 2.0f;
+        PC.OutlineColor      = FVector4(1.0f, 0.42f, 0.05f, 1.0f);
+
+        if (PC.SelectionBits != 0)
+        {
+            RHI::CmdDraw(CL, MakeArgs(PC), 3, 1, 0, 0);
+        }
+
         RHI::CmdEndRenderPass(CL);
         Barriers::RasterToRead(CL);
     }
@@ -10457,30 +10578,30 @@ namespace Lumina
     {
 
         // GPU pre-skinning output: written by Skinning.slang, read by every draw VS via BDA.
-        PreSkinnedVerticesBuffer = CreateSceneBuffer(sizeof(FPreSkinnedVertex) * 64 * 1024);
+        PreSkinnedVerticesBuffer = CreateSceneBuffer(sizeof(FPreSkinnedVertex) * 64 * 1024, "Cull.PreSkinnedVertices");
 
         for (uint32 Slot = 0; Slot < RHI::kFramesInFlight; ++Slot)
         {
-            MeshletDrawListRing[Slot] = CreateSceneBuffer(sizeof(uint32) * 2);
+            MeshletDrawListRing[Slot] = CreateSceneBuffer(sizeof(uint32) * 2, "Cull.MeshletDrawList");
 
             // Per-(view, draw) cull layout. Sized for real in CompileDrawCommands_Render.
-            RenderBucketRing[Slot] = CreateSceneBuffer(sizeof(FRenderBucketGPU));
+            RenderBucketRing[Slot] = CreateSceneBuffer(sizeof(FRenderBucketGPU), "Cull.RenderBuckets");
 
-            SpdCounterRing[Slot] = CreateSceneBuffer(sizeof(uint32));
+            SpdCounterRing[Slot] = CreateSceneBuffer(sizeof(uint32), "Cull.SpdCounter");
 
-            MeshletBlockRing[Slot] = CreateSceneBuffer(sizeof(uint32) * 2);
+            MeshletBlockRing[Slot] = CreateSceneBuffer(sizeof(uint32) * 2, "Cull.MeshletBlocks");
             // Fixed size: one grid, rewritten by BuildDrawPrefix every frame.
-            BlockDispatchArgsRing[Slot] = CreateSceneBuffer(sizeof(RHI::FDispatchIndirectArguments));
-            SkinDispatchArgsRing[Slot]  = CreateSceneBuffer(sizeof(RHI::FDispatchIndirectArguments));
-            SkinWorkBaseRing[Slot]      = CreateSceneBuffer(sizeof(uint32) * 2);
-            MeshletCullDispatchArgsRing[Slot] = CreateSceneBuffer(sizeof(RHI::FDispatchIndirectArguments));
+            BlockDispatchArgsRing[Slot] = CreateSceneBuffer(sizeof(RHI::FDispatchIndirectArguments), "Cull.BlockDispatchArgs");
+            SkinDispatchArgsRing[Slot]  = CreateSceneBuffer(sizeof(RHI::FDispatchIndirectArguments), "Cull.SkinDispatchArgs");
+            SkinWorkBaseRing[Slot]      = CreateSceneBuffer(sizeof(uint32) * 2, "Cull.SkinWorkBase");
+            MeshletCullDispatchArgsRing[Slot] = CreateSceneBuffer(sizeof(RHI::FDispatchIndirectArguments), "Cull.MeshletCullDispatchArgs");
 
-            TotalsRing[Slot] = CreateSceneBuffer(sizeof(uint32) * kTotalsSlots);
+            TotalsRing[Slot] = CreateSceneBuffer(sizeof(uint32) * kTotalsSlots, "Cull.Totals");
             TotalsZeroed[Slot] = false;
 
             // GPU-driven scene per-frame outputs. Sized for real in CompileDrawCommands_Render.
-            VisibleInstanceRing[Slot]       = CreateSceneBuffer(sizeof(FGPUInstance));
-            CullCounterRing[Slot]           = CreateSceneBuffer(sizeof(uint32) * 4);
+            VisibleInstanceRing[Slot]       = CreateSceneBuffer(sizeof(FGPUInstance), "Cull.VisibleInstances");
+            CullCounterRing[Slot]           = CreateSceneBuffer(sizeof(uint32) * 4, "Cull.CullCounters");
 
             if (MeshletBoundReadback[Slot] == 0)
             {
@@ -10553,9 +10674,12 @@ namespace Lumina
             const SIZE_T TransformBytes = Math::Max<SIZE_T>(sizeof(FTransform3x4),      (SIZE_T)RetainedSlots * sizeof(FTransform3x4));
             const SIZE_T StaticBytes    = Math::Max<SIZE_T>(sizeof(FInstanceStatic),    (SIZE_T)RetainedSlots * sizeof(FInstanceStatic));
 
-            ResizeBufferIfNeeded(CL, RetainedCullEntryBuffer, CullBytes,      1.5f, RetainedCullEntryLowUsage, Upload.bFull);
-            ResizeBufferIfNeeded(CL, RetainedTransformBuffer, TransformBytes, 1.5f, RetainedTransformLowUsage, Upload.bFull);
-            ResizeBufferIfNeeded(CL, RetainedStaticBuffer,    StaticBytes,    1.5f, RetainedStaticLowUsage,    Upload.bFull);
+            ResizeBufferIfNeeded(CL, RetainedCullEntryBuffer, CullBytes,      1.5f, RetainedCullEntryLowUsage, Upload.bFull,
+                                 EBufferInit::Zeroed, "Retained.CullEntries");
+            ResizeBufferIfNeeded(CL, RetainedTransformBuffer, TransformBytes, 1.5f, RetainedTransformLowUsage, Upload.bFull,
+                                 EBufferInit::Zeroed, "Retained.Transforms");
+            ResizeBufferIfNeeded(CL, RetainedStaticBuffer,    StaticBytes,    1.5f, RetainedStaticLowUsage,    Upload.bFull,
+                                 EBufferInit::Zeroed, "Retained.Static");
 
             // Two-phase occlusion state, keyed by retained slot and therefore sized with these. A grow
             // reallocates, so the contents are undefined until the pre-late clear runs -- harmless, since
@@ -10563,7 +10687,8 @@ namespace Lumina
             // resize frame is not a different frame.
             const SIZE_T VisBytes = Math::Max<SIZE_T>(sizeof(uint32), (SIZE_T)RetainedSlots * sizeof(uint32));
             const SIZE_T VisBefore = InstanceVisibilityBuffer ? InstanceVisibilityBuffer.GetSize() : 0;
-            ResizeBufferIfNeeded(CL, InstanceVisibilityBuffer, VisBytes, 1.5f, InstanceVisibilityLowUsage);
+            ResizeBufferIfNeeded(CL, InstanceVisibilityBuffer, VisBytes, 1.5f, InstanceVisibilityLowUsage,
+                                 true, EBufferInit::Zeroed, "Retained.InstanceVisibility");
 
             InstanceVisibilityCapacity = InstanceVisibilityBuffer
                                        ? (uint32)Math::Min<uint64>(InstanceVisibilityBuffer.GetSize() / sizeof(uint32), 0xFFFFFFFFull)
@@ -10632,7 +10757,8 @@ namespace Lumina
             const SIZE_T DescBytes = Math::Max<SIZE_T>(sizeof(FSurfaceDescGPU), (SIZE_T)NumDescs * sizeof(FSurfaceDescGPU));
             const RHI::GPUPtr PrevDescs = SurfaceDescBuffer.Ptr;
             // Same reasoning as above: a reclaim would drop descriptors this frame may not be re-sending.
-            ResizeBufferIfNeeded(CL, SurfaceDescBuffer, DescBytes, 1.5f, SurfaceDescLowUsage, Upload.bSurfaceDescsChanged);
+            ResizeBufferIfNeeded(CL, SurfaceDescBuffer, DescBytes, 1.5f, SurfaceDescLowUsage, Upload.bSurfaceDescsChanged,
+                                 EBufferInit::Zeroed, "Retained.SurfaceDescs");
 
             if (SurfaceDescBuffer.Ptr != PrevDescs)
             {
@@ -11728,16 +11854,16 @@ namespace Lumina
 
     void FDefaultSceneRenderer::ResizeBufferIfNeeded(RHI::FCmdListH CL, FSceneBuffer& Buffer, uint64 NeededSize,
                                                    float SlackFactor, uint32& LowUsageCounter,
-                                                   bool bAllowShrink, EBufferInit Init)
+                                                   bool bAllowShrink, EBufferInit Init, const char* DebugName)
     {
         NeededSize = Math::Max<uint64>(NeededSize, 16ull);
-        
+
         auto AlignUp16 = [](uint64 Size) { return (Size + 15ull) & ~15ull; };
-        
+
         const auto Reallocate = [&]()
         {
             DeferFree(Buffer.Ptr);
-            Buffer = CreateSceneBuffer(AlignUp16((uint64)((double)NeededSize * SlackFactor)));
+            Buffer = CreateSceneBuffer(AlignUp16((uint64)((double)NeededSize * SlackFactor)), DebugName);
             LowUsageCounter = 0;
 
             if (Buffer && Init == EBufferInit::Zeroed)

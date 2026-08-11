@@ -395,6 +395,10 @@ namespace Lumina
                 TVector<FParticleExtract>        ParticleExtracts;
                 TVector<entt::entity>            LiveParticleEntities;
                 TVector<FTexturePaintOp>         PaintOps;
+
+                #if USING(WITH_EDITOR)
+                TVector<uint32>                  SelectionBits;
+                #endif
             } Extracts;
 
             struct FWater
@@ -417,7 +421,6 @@ namespace Lumina
             GTAO,
             GTAODenoise,
             GTAOBlur,
-            // Full-res R8 screen-space sun-shadow visibility, resolved by ShadowMaskPass.
             ShadowMask,
             Cascade,
             CascadePyramid,
@@ -425,15 +428,11 @@ namespace Lumina
             DepthPyramid,
             Picker,
             VisBuffer,
-            // Deferred GBuffer, written by the per-material compute passes and read by the lighting pass.
-            // Channel assignments live in Includes/GBuffer.slang and nowhere else.
             GBufferA,
             GBufferB,
             GBufferC,
             GBufferD,
             Accum,
-            // MBOIT absorbance moments (MomentOIT.slang). Zeroth is the total absorbance -b_0; Moments
-            // holds the four power moments b_1..b_4. Both additively blended by the generation pass.
             MomentZeroth,
             Moments,
             WaterRefraction,
@@ -451,7 +450,6 @@ namespace Lumina
             SkyIrradiance,
             SkyPrefilter,
             ProbeCaptureCube,
-            // Cube ARRAY holding every probe's prefiltered radiance, one 6-layer slice per probe.
             ProbePrefiltered,
 
             #if USING(WITH_EDITOR)
@@ -629,6 +627,14 @@ namespace Lumina
         #endif
         #if !defined(LE_SHIPPING)
         void SceneDebugViewPass(RHI::FCmdListH CL);
+
+        #if USING(WITH_EDITOR)
+        /** Silhouette outline around every selected entity, composited into the final LDR target after
+            tone mapping and SMAA so the colour is exact and nothing downstream blurs the line. Edge
+            detection runs over the Picker RT, which already carries a per-pixel entity id -- so this
+            covers billboards, widgets and world text as well as meshes, for free. */
+        void SelectionOutlinePass(RHI::FCmdListH CL);
+        #endif
         #endif
         bool BindShadowBatchPipeline(RHI::FCmdListH CL, const FMeshDrawCommand& Batch,
                                     FShaderH PixelShader);
@@ -844,9 +850,11 @@ namespace Lumina
             Zeroed,
         };
 
+        // DebugName rides every reallocation, so a fault in one of these resolves to a name in the
+        // device-lost report rather than a bare address. Nothing else reads it.
         void ResizeBufferIfNeeded(RHI::FCmdListH CL, FSceneBuffer& Buffer, uint64 NeededSize, float SlackFactor,
                                   uint32& LowUsageCounter, bool bAllowShrink = true,
-                                  EBufferInit Init = EBufferInit::Zeroed);
+                                  EBufferInit Init = EBufferInit::Zeroed, const char* DebugName = nullptr);
 
         // Freed when this slot's previous GPU work has completed.
         void DeferFree(RHI::GPUPtr Ptr);

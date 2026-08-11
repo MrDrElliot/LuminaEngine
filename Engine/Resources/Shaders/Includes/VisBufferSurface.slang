@@ -108,6 +108,23 @@ struct FBaryDeriv
     float3 DDY;
 };
 
+// Screen-space distance in PIXELS from this fragment to the nearest edge of its triangle, for the
+// wireframe overlay. Lambda goes to zero on an edge and DDX/DDY are its exact per-pixel rates of
+// change, so dividing gives a true pixel distance and a wire of constant width at any depth.
+//
+// Analytic rather than fwidth(Lambda): this runs in a FULL-SCREEN pass where neighbouring lanes in a
+// quad can belong to different triangles, so a hardware derivative of a reconstructed barycentric
+// would blow up along every silhouette. These derivatives came from the triangle itself.
+float TriangleEdgeDistancePixels(FBaryDeriv Bary)
+{
+    const float3 Rate = float3(length(float2(Bary.DDX.x, Bary.DDY.x)),
+                               length(float2(Bary.DDX.y, Bary.DDY.y)),
+                               length(float2(Bary.DDX.z, Bary.DDY.z)));
+
+    const float3 Dist = abs(Bary.Lambda) / max(Rate, float3(1e-8, 1e-8, 1e-8));
+    return min(Dist.x, min(Dist.y, Dist.z));
+}
+
 FBaryDeriv CalcFullBary(float4 Pt0, float4 Pt1, float4 Pt2, float2 PixelNdc, float2 WinSize)
 {
     FBaryDeriv Ret;

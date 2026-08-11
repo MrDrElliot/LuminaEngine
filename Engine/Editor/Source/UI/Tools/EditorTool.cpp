@@ -1084,13 +1084,28 @@ namespace Lumina
                     { ERenderSceneDebugFlags::Metallic,          "Metallic"          },
                     { ERenderSceneDebugFlags::AmbientOcclusion,  "Ambient Occlusion" },
                     { ERenderSceneDebugFlags::Emissive,          "Emissive"          },
+                    { ERenderSceneDebugFlags::Specular,          "Specular"          },
+                    { ERenderSceneDebugFlags::SelfShadow,        "Self Shadow"       },
                     { ERenderSceneDebugFlags::UV,                "UV"                },
+                };
+                // Clearcoat's two channels BORROW SelfShadow and Specular in the GBuffer, so each of
+                // those four views marks the pixels it has no stored value for (violet) rather than
+                // showing the unpack fallback. Shading Model is the key to reading them.
+                static const FViewModeEntry ShadingModels[] =
+                {
+                    { ERenderSceneDebugFlags::ShadingModel,       "Shading Model"       },
+                    { ERenderSceneDebugFlags::Clearcoat,          "Clearcoat"           },
+                    { ERenderSceneDebugFlags::ClearcoatRoughness, "Clearcoat Roughness" },
                 };
                 static const FViewModeEntry Geometry[] =
                 {
-                    { ERenderSceneDebugFlags::Meshlets,   "Meshlets"    },
-                    { ERenderSceneDebugFlags::MaterialID, "Material ID" },
-                    { ERenderSceneDebugFlags::TriangleID, "Triangle ID" },
+                    { ERenderSceneDebugFlags::Meshlets,         "Meshlets"          },
+                    { ERenderSceneDebugFlags::MaterialID,       "Material ID"       },
+                    { ERenderSceneDebugFlags::TriangleID,       "Triangle ID"       },
+                    // Unlike the rest, this one keeps the lit shading and draws over it. Deferred
+                    // opaque only -- the wire comes from the VisBuffer triangle, which terrain and
+                    // translucency do not go through.
+                    { ERenderSceneDebugFlags::WireframeOverlay, "Wireframe Overlay" },
                 };
                 static const FViewModeEntry Lighting[] =
                 {
@@ -1134,6 +1149,8 @@ namespace Lumina
                 DrawGroup("Shading", Shading, std::size(Shading));
                 ImGui::Spacing();
                 DrawGroup("Buffers", Buffers, std::size(Buffers));
+                ImGui::Spacing();
+                DrawGroup("Shading Models", ShadingModels, std::size(ShadingModels));
                 ImGui::Spacing();
                 DrawGroup("Geometry", Geometry, std::size(Geometry));
                 ImGui::Spacing();

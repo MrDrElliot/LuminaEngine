@@ -727,17 +727,12 @@ namespace Lumina
         {
             OnGamePreviewStopRequested.Broadcast();
         }
-
-        // Sever registry observers while the worlds are still alive (the editor UI is torn down before
-        // GWorldManager). Leaving these connected lets a later world teardown -- including the editor
-        // world still observed across a PIE session -- fire on_destroy into this freed tool -> crash.
+        
         UnbindRegistryObservers();
     }
 
     void FWorldEditorTool::Update(const FUpdateContext& UpdateContext)
     {
-        // Deferred gameplay quit (Game.Quit from a script): requested mid-world-tick, applied here at
-        // FrameStart -- the same safe point the Play toolbar uses -- so we never tear down a ticking world.
         if (bGameQuitRequested && UpdateContext.GetUpdateStage() == EUpdateStage::FrameStart)
         {
             bGameQuitRequested = false;
@@ -746,11 +741,7 @@ namespace Lumina
                 SetWorldPlayInEditor(false);
             }
         }
-
-        // If the world we were inspecting was torn down (client disconnect, PIE stop, travel), its registry
-        // and our observers went with it. Forget the dead connection WITHOUT disconnecting (the signal storage
-        // is already freed), then fall back to observing our own World. Pointer compares only -- no deref of
-        // a possibly-dangling ObservedWorld.
+        
         if (ObservedWorld != nullptr && (GWorldManager == nullptr || GWorldManager->FindContext(ObservedWorld) == nullptr))
         {
             ObservedRegistry = nullptr; // its registry is gone; make UnbindRegistryObservers a no-op
@@ -769,13 +760,10 @@ namespace Lumina
             ResyncSelectionFromRegistry();
         }
 
-        FEditorTool::Update(UpdateContext);
-
-        // The flycam can outlive its world (Travel, a stop driven from elsewhere); reconcile before
-        // anything below reads EditorEntity.
+        FSceneEditorTool::Update(UpdateContext);
+        
         TickEjectState();
 
-        // Esc requested an end to the play session (queued from OnEvent).
         if (bStopPlayRequested)
         {
             bStopPlayRequested = false;
@@ -822,20 +810,7 @@ namespace Lumina
         }
 
         auto View = ECS::GetWorldRegistry(*World).view<FSelectedInEditorComponent>();
-
-        // Arm the selection's transform resolve ONCE per selection change.
-        //
-        // Both branches below used to do this unconditionally, every frame, for every selected entity --
-        // so a selected entity was never NOT being re-resolved. FNeedsTransformUpdate is not local: the
-        // resolve walks the entity's whole subtree and PublishMoved()s every descendant, SyncScenePrimitives
-        // then calls Tracker.MarkAllSources(Transform) on each, and past the dirty-slot threshold the
-        // retained instance buffer re-uploads WHOLE. Selecting the root of a 180k-entity prefab therefore
-        // re-resolved and re-uploaded 180k primitives per frame, for as long as it stayed selected.
-        //
-        // Once per selection change is what this was actually for: a newly selected entity needs a resolved
-        // world transform for the gizmo and the component visualizers. Anything that MOVES a selection
-        // already arms its own -- the gizmo re-emplaces after writing LocalTransform, and undo/redo does the
-        // same (see FEntityTransformCommand).
+        
         if (bSelectionTransformRefreshPending)
         {
             bSelectionTransformRefreshPending = false;
@@ -930,11 +905,7 @@ namespace Lumina
                 }
             }
         }
-
-        // Each per-entity box is 24 batched lines; drawing one per selected entity floods the line batcher
-        // for large marquee selections. Past a cap, skip the per-entity outlines entirely -- a single
-        // enclosing bound around the whole selection is visually pointless, so we draw nothing extra and
-        // let the component visualizers carry the selection feedback.
+        
         constexpr size_t kMaxIndividualSelectionBoxes = 256;
 
         if (!bGameViewMode && SelectedEntities.size() <= kMaxIndividualSelectionBoxes)
@@ -1076,43 +1047,82 @@ namespace Lumina
         auto EditorWorld  = [this]() { return World && World->GetWorldType() == EWorldType::Editor; };
 
         RegisterAction({"Translate Mode", "Gizmo", "Switch the gizmo to translate (move) mode",
-            FInputChord{ImGuiKey_W}, [this]{ GuizmoOp = ImGuizmo::TRANSLATE; }, Hovered});
+            FInputChord{ImGuiKey_W}, [this]
+            {
+                GuizmoOp = ImGuizmo::TRANSLATE;
+            }, Hovered});
 
         RegisterAction({"Rotate Mode", "Gizmo", "Switch the gizmo to rotate mode",
-            FInputChord{ImGuiKey_E}, [this]{ GuizmoOp = ImGuizmo::ROTATE; }, Hovered});
+            FInputChord{ImGuiKey_E}, [this]
+            {
+                GuizmoOp = ImGuizmo::ROTATE;
+            }, Hovered});
 
         RegisterAction({"Scale Mode", "Gizmo", "Switch the gizmo to scale mode",
-            FInputChord{ImGuiKey_R}, [this]{ GuizmoOp = ImGuizmo::SCALE; }, Hovered});
+            FInputChord{ImGuiKey_R}, [this]
+            {
+                GuizmoOp = ImGuizmo::SCALE;
+            }, Hovered});
 
         RegisterAction({"Toggle Local/World", "Gizmo", "Switch the gizmo between world-space and entity-local space",
-            FInputChord{ImGuiKey_X}, [this]{ ToggleGuizmoMode(); }, Hovered});
+            FInputChord{ImGuiKey_X}, [this]
+            {
+                ToggleGuizmoMode();
+            }, Hovered});
 
         RegisterAction({"Focus Selection", "View", "Frame the camera on the last-selected entity",
-            FInputChord{ImGuiKey_F}, [this]{ FocusViewportToEntity(GetLastSelectedEntity()); }});
+            FInputChord{ImGuiKey_F}, [this]
+            {
+                FocusViewportToEntity(GetLastSelectedEntity());
+            }});
 
         RegisterAction({"Toggle Game View", "View", "Hide editor overlays so the viewport shows what a runtime camera would",
-            FInputChord{ImGuiKey_G}, [this]{ ToggleGameViewMode(); }, Hovered});
+            FInputChord{ImGuiKey_G}, [this]
+            {
+                ToggleGameViewMode();
+            }, Hovered});
 
         RegisterAction({"Frame All", "View", "Frame the camera on every entity in the world",
-            FInputChord{ImGuiKey_Home}, [this]{ FrameAllEntities(); }, Hovered});
+            FInputChord{ImGuiKey_Home}, [this]
+            {
+                FrameAllEntities();
+            }, Hovered});
 
         RegisterAction({"Group Selected", "Selection", "Wrap the selection under a new parent entity",
-            FInputChord{ImGuiKey_G, /*Ctrl*/true}, [this]{ GroupSelectedEntities(); }, Hovered});
+            FInputChord{ImGuiKey_G, /*Ctrl*/true}, [this]
+            {
+                GroupSelectedEntities();
+            }, Hovered});
 
         RegisterAction({"Drop to Floor", "Selection", "Project the selection straight down onto the nearest mesh",
-            FInputChord{ImGuiKey_End}, [this]{ DropSelectionToFloor(); }, Hovered});
+            FInputChord{ImGuiKey_End}, [this]
+            {
+                DropSelectionToFloor(); 
+            }, Hovered});
 
         RegisterAction({"Copy Transform", "Selection", "Copy the last-selected entity's transform to the clipboard",
-            FInputChord{ImGuiKey_C, true, true}, [this]{ CopyTransformFromLastSelected(); }, Hovered});
+            FInputChord{ImGuiKey_C, true, true}, [this]
+            {
+                CopyTransformFromLastSelected();
+            }, Hovered});
 
         RegisterAction({"Paste Transform", "Selection", "Apply the previously-copied transform to every selected entity",
-            FInputChord{ImGuiKey_V, true, true}, [this]{ PasteTransformToSelection(); }, Hovered});
+            FInputChord{ImGuiKey_V, true, true}, [this]
+            {
+                PasteTransformToSelection();
+            }, Hovered});
 
         RegisterAction({"Undo", "History", "Revert the last transacted edit",
-            FInputChord{ImGuiKey_Z, true}, [this]{ Undo(); }, EditorWorld});
+            FInputChord{ImGuiKey_Z, true}, [this]
+            {
+                Undo();
+            }, EditorWorld});
 
         RegisterAction({"Redo", "History", "Re-apply the last undone edit",
-            FInputChord{ImGuiKey_Y, true}, [this]{ Redo(); }, EditorWorld});
+            FInputChord{ImGuiKey_Y, true}, [this]
+            {
+                Redo();
+            }, EditorWorld});
 
         // Advisory only. FEditorUI routes Ctrl+S to the FOCUSED tool's OnSave; a live callback here
         // would both bypass that focus check and save twice when this tool is the focused one.
@@ -1122,14 +1132,19 @@ namespace Lumina
         // Advisory entries: inline-handled shortcuts registered so the shortcuts window surfaces them.
         RegisterAction({"Copy Entities", "Selection", "Copy the selection to the entity clipboard",
             FInputChord{ImGuiKey_C, true}, nullptr});
+        
         RegisterAction({"Duplicate Entities", "Selection", "Duplicate the selection in place",
             FInputChord{ImGuiKey_D, true}, nullptr});
+        
         RegisterAction({"Paste Entities", "Selection", "Paste previously-copied entities",
             FInputChord{ImGuiKey_V, true}, nullptr});
+        
         RegisterAction({"Delete Selection", "Selection", "Delete every selected entity",
             FInputChord{ImGuiKey_Delete}, nullptr});
+        
         RegisterAction({"Recall Camera Bookmark", "Camera", "Press 1-9 to recall a saved camera position",
             FInputChord{}, nullptr});
+        
         RegisterAction({"Save Camera Bookmark", "Camera", "Ctrl+1..9 saves the camera into the matching slot",
             FInputChord{}, nullptr});
     }
