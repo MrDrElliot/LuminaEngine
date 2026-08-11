@@ -1580,6 +1580,9 @@ namespace Lumina::RmlUi
 
         const Rml::String BodyStr(Body.data(), Body.size());
         const Rml::String UrlStr(SourceUrl.data(), SourceUrl.size());
+        
+        Rml::Factory::ClearStyleSheetCache();
+        Rml::Factory::ClearTemplateCache();
 
         // Scoped over Show() as well: property and decorator errors surface when the document is first
         // styled, not while its markup is being read.
@@ -1593,12 +1596,6 @@ namespace Lumina::RmlUi
             }
             Entry->Document->Show();
 
-            // A document's text elements do not acquire their font handles until the context updates, so
-            // one that is rendered before its first update reports "No font face defined" for every line of
-            // text in it, naming a font that is loaded and resolving perfectly well. Replacing the document
-            // leaves the context renderable rather than leaving that to the caller's frame ordering, which
-            // holds for the steady-state loop but not for a load that happens outside it, such as a tool
-            // restoring its tab during startup.
             Entry->Context->Update();
         }
 
