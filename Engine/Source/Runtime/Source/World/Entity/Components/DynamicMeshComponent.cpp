@@ -245,7 +245,7 @@ namespace Lumina
     bool SDynamicMeshComponent::IsBuilt() const
     {
         const TSharedPtr<FDynamicMeshRenderData> Data = LoadRenderData();
-        return Data && Data->MeshletHeaderAddress != 0;
+        return Data && Data->MeshletHeaderSlot != 0;
     }
 
     int32 SDynamicMeshComponent::GetVertexCount() const
@@ -425,7 +425,7 @@ namespace Lumina
         Import::Mesh::GenerateMeshlets(*Resource);
         NewData->Resource = eastl::move(*Resource);
         MeshBuffers::CreateForResource(NewData->Resource);
-        NewData->MeshletHeaderAddress = NewData->Resource.MeshBuffers.MeshletHeaderBuffer;
+        NewData->MeshletHeaderSlot = NewData->Resource.MeshBuffers.MeshletHeaderSlot;
 
         // Geometry half of each surface, straight off the built resource; the material half follows.
         const TVector<FGeometrySurface>& Geometry = NewData->Resource.GeometrySurfaces;
@@ -455,7 +455,7 @@ namespace Lumina
 
         // The meshlet streams are dead too now that they live on the GPU -- and they are the biggest
         // thing here, since the meshlet vertex list is the expanded per-meshlet one. Surfaces were
-        // already copied out above, and MeshletHeaderAddress is what the render path actually draws
+        // already copied out above, and MeshletHeaderSlot is what the render path actually draws
         // from, so nothing below this point needs the CPU copy. Only a collider does.
         if (!bKeepCPUMeshletData)
         {

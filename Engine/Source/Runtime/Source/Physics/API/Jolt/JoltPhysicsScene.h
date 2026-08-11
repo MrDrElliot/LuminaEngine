@@ -405,6 +405,12 @@ namespace Lumina::Physics
     	int32										BodyBatchDepth = 0;
     	TVector<entt::entity>						BatchedBodyCreations;
 
+    	// Characters defer through the same batch. Not for the bulk-insert win (there is no batched
+    	// CharacterVirtual create) but for the POSE: the controller is built from the entity's transform and
+    	// owns it from then on, so anything that emplaces the component before writing the final transform --
+    	// a prefab spawn -- would otherwise bake the pre-spawn pose in and stamp it back over the entity.
+    	TVector<entt::entity>						BatchedCharacterCreations;
+
     	// Reused by CreateRigidBodiesBatched so a repeated bulk spawn doesn't reallocate ~350 bytes/body
     	// every call. Grow-only and game-thread only; entries past the current count are stale.
     	TVector<FRigidBodyBuildResult>				BatchBuildScratch;

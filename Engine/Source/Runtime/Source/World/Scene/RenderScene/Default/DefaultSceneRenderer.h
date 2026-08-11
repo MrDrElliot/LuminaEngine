@@ -60,7 +60,7 @@ namespace Lumina
         {
             FMatrix4               Transform;
             FVector4               SphereBounds;
-            uint64                  MeshletHeaderAddress;
+            uint32                  MeshletHeaderSlot;
             uint32                  CustomData;
             uint32                  EntityID;
             uint32                  BoneArenaBase;

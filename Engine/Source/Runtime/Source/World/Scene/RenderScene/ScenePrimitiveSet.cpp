@@ -5,6 +5,7 @@
 #include "Assets/AssetTypes/Mesh/Skeleton/Skeleton.h"
 #include "Assets/AssetTypes/Mesh/SkeletalMesh/SkeletalMesh.h"
 #include "Assets/AssetTypes/Mesh/StaticMesh/StaticMesh.h"
+#include "Renderer/MeshletHeaderSlab.h"
 #include "Memory/MemoryConcurrentQueue.h"
 #include "TaskSystem/TaskSystem.h"
 #include "World/World.h"
@@ -646,7 +647,7 @@ namespace Lumina
             {
                 Flags |= EInstanceFlags::Active;
             }
-            if (Prim.MeshletHeaderAddress != 0ull)
+            if (Prim.MeshletHeaderSlot != MeshletHeaderSlab::kNullSlot)
             {
                 Flags |= EInstanceFlags::HasGeometry;
             }
@@ -661,7 +662,7 @@ namespace Lumina
             RetainedTransforms[Slot] = PackTransform3x4(Prim.Transform);
 
             FInstanceStatic& OutStatic = RetainedStatic[Slot];
-            OutStatic.MeshletHeaderAddress    = Prim.MeshletHeaderAddress;
+            OutStatic.MeshletHeaderSlot    = Prim.MeshletHeaderSlot;
             OutStatic.CustomData              = Prim.CustomData;
             OutStatic.MaterialIndex           = Binding.MaterialIndex;
             OutStatic.EntityID                = Prim.EntityID;
@@ -998,7 +999,7 @@ namespace Lumina
 
                 Prim.LocalCenter          = Base->CachedLocalCenter;
                 Prim.LocalRadius          = Base->CachedLocalRadius;
-                Prim.MeshletHeaderAddress = Base->CachedMeshletHeaderAddress;
+                Prim.MeshletHeaderSlot = Base->CachedMeshletHeaderSlot;
                 Prim.BaseFlags            = Base->CachedBaseFlags;
                 Prim.ResolveHandle        = Base->ResolveHandle;
 
@@ -1041,7 +1042,7 @@ namespace Lumina
                 Prim.DynamicRenderData = C->LoadRenderData();
 
                 const FDynamicMeshRenderData* Data = Prim.DynamicRenderData.get();
-                if (Data == nullptr || Data->MeshletHeaderAddress == 0 || Data->Surfaces.empty())
+                if (Data == nullptr || Data->MeshletHeaderSlot == 0 || Data->Surfaces.empty())
                 {
                     Prim.DynamicRenderData.reset();
                     break;
@@ -1049,7 +1050,7 @@ namespace Lumina
 
                 Prim.LocalCenter          = Data->LocalCenter;
                 Prim.LocalRadius          = Data->LocalRadius;
-                Prim.MeshletHeaderAddress = Data->MeshletHeaderAddress;
+                Prim.MeshletHeaderSlot = Data->MeshletHeaderSlot;
                 Prim.ResolveHandle        = INVALID_MESH_RESOLVE_HANDLE;
 
                 EInstanceFlags BaseFlags = EInstanceFlags::None;
@@ -1211,7 +1212,7 @@ namespace Lumina
             const SFoliageType&   Type = Foliage->Types[t];
             FFoliageTypeResolve&  Out  = FoliageTypeScratch[t];
 
-            Out.MeshletHeaderAddress = Type.CachedMeshletHeaderAddress;
+            Out.MeshletHeaderSlot = Type.CachedMeshletHeaderSlot;
             Out.BaseFlags            = Type.CachedBaseFlags;
             Out.ResolveHandle        = Type.ResolveHandle;
             Out.bCastShadow          = Type.bCastShadow;
@@ -1254,7 +1255,7 @@ namespace Lumina
             {
                 const FFoliageTypeResolve& Type = FoliageTypeScratch[Instance.TypeIndex];
 
-                Prim.MeshletHeaderAddress = Type.MeshletHeaderAddress;
+                Prim.MeshletHeaderSlot = Type.MeshletHeaderSlot;
                 Prim.BaseFlags            = Type.BaseFlags;
                 Prim.ResolveHandle        = Type.ResolveHandle;
                 Prim.bCastShadow          = Type.bCastShadow;

@@ -393,7 +393,15 @@ struct FMeshletHeader
     float           DistanceFieldSizeX, DistanceFieldSizeY, DistanceFieldSizeZ;
     float           DistanceFieldMaxDistance;
 
-    uint            _DFPad0;
+    // Entries in Meshlets/Spheres/Cones. The AUTHORITATIVE bound for every array above, because it ships
+    // in the same 80 bytes as the pointers. Everything that indexes them bounds against THIS rather than
+    // against a count carried on the instance: the two come from different sources, and a stale instance
+    // paired with a live header is exactly how an in-bounds-looking index walks off a buffer.
+    //
+    // The null header (slab slot 0) has this at 0 and every pointer null, so an instance naming a mesh
+    // that has died rejects here before it dereferences anything. That is why none of these pointers is
+    // null-checked anywhere.
+    uint            MeshletCount;
 
     property float3 DistanceFieldMin  { get { return float3(DistanceFieldMinX,  DistanceFieldMinY,  DistanceFieldMinZ);  } }
     property float3 DistanceFieldSize { get { return float3(DistanceFieldSizeX, DistanceFieldSizeY, DistanceFieldSizeZ); } }
@@ -424,13 +432,15 @@ struct FInstanceCullEntry
 // needs copied into the compacted output, and which changes only on a re-bind -- never on a move.
 struct FInstanceStatic
 {
-    FMeshletHeader*      MeshletHeader;
+    // A SLOT in the header slab, never an address -- see FGPUInstance::MeshletHeader below.
+    uint            MeshletHeaderSlot;
     FCustomPrimitiveData CustomData;   // one packed uint; same as FGPUInstance's
     uint            MaterialIndex;
     uint            EntityID;
     uint            BoneOffset;
     uint            SkinnedVertexBase;
     uint            ShadowSkinnedVertexBase;
+    uint            _Pad0;
 }
 
 // Sentinel: this entity was not pre-skinned this frame (it fell outside r.Skinning.MaxVertices), so
@@ -546,7 +556,12 @@ struct FGPUInstance
     // below, which expands it -- that is why every consumer of this struct was untouched by the change.
     FTransform3x4           Transform;
     float4                  SphereBounds;
-    FMeshletHeader*         MeshletHeader;
+    // A SLOT in the process-wide header slab, never an address. A header address cached in scene state
+    // outlives the mesh that owns it -- the retained instance buffer re-emits it into frames recorded
+    // long after the mesh died -- and a slot cannot dangle: the worst it can do is name the null header.
+    // Reached through the MeshletHeader property (SceneGlobals.slang), which is why nothing below changed.
+    uint                    MeshletHeaderSlot;
+    uint                    _HeaderPad0;
 
     // Explicitly zeroed: Slang's synthesized default initializer skips private members, so (FGPUInstance)0
     // left the packed draw id and flags holding whatever was on the stack.

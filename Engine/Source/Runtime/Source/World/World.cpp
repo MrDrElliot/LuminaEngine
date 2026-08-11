@@ -963,7 +963,14 @@ namespace Lumina
             return entt::null;
         }
 
-        CPrefab* PrefabObject = LoadObject<CPrefab>(AssetData->AssetGUID);
+        // Cold spawn fans the prefab's whole closure out across the task swarm instead of resolving each
+        // import depth-first on this thread. Resident prefabs -- the common case once one has spawned --
+        // take the plain lookup and never pay the graph loader's BFS or its serializing mutex.
+        CPrefab* PrefabObject = FindObject<CPrefab>(AssetData->AssetGUID);
+        if (PrefabObject == nullptr)
+        {
+            PrefabObject = LoadObjectGraph<CPrefab>(AssetData->AssetGUID);
+        }
         if (PrefabObject == nullptr)
         {
             LOG_WARN("SpawnPrefab: asset '{}' is not a CPrefab", Path);

@@ -2187,6 +2187,15 @@ namespace Lumina::Physics
 
         EnsureCharacterAllocators();
 
+        // Inside a game-thread batch (prefab spawn): the CharacterVirtual is built from the transform below
+        // and owns the pose from then on, so it must not be created until the caller has finished writing
+        // that transform. Deferred to EndBodyBatch, which re-enters this at depth zero.
+        if (BodyBatchDepth > 0 && !bStepInProgress.load(std::memory_order_acquire))
+        {
+            BatchedCharacterCreations.push_back(Entity);
+            return;
+        }
+
         SCharacterPhysicsComponent& CharacterComponent = Registry.get<SCharacterPhysicsComponent>(Entity);
         STransformComponent& TransformComponent = Registry.get<STransformComponent>(Entity);
         TransformComponent.SetHasPhysicsBody(true);   // setter MarkDirty now enqueues this entity for body re-sync
@@ -2909,7 +2918,7 @@ namespace Lumina::Physics
                 // A committed mesh with no CPU meshlet data isn't "not ready yet" -- it's ready and the
                 // streams this shape is built from were dropped on upload. Deferring would retry that
                 // forever without ever saying so, so fail loudly and name the exact fix.
-                if (MeshData && MeshData->MeshletHeaderAddress != 0)
+                if (MeshData && MeshData->MeshletHeaderSlot != 0)
                 {
                     LOG_ERROR("Entity {}: SDynamicMeshColliderComponent needs the mesh's CPU meshlet data, but "
                               "SDynamicMeshComponent dropped it after upload. Set bKeepCPUMeshletData on the "
@@ -3132,6 +3141,23 @@ namespace Lumina::Physics
         // Depth is already zero, so anything constructed by the commit itself takes the immediate path.
         CreateRigidBodiesBatched(BatchedBodyCreations);
         BatchedBodyCreations.clear();
+
+        if (!BatchedCharacterCreations.empty())
+        {
+            entt::registry& Registry = ECS::GetWorldRegistry(*World);
+
+            // One at a time (no bulk CharacterVirtual insert), but now against the final transform.
+            // Re-checked rather than assumed: the batch may have destroyed the entity or removed the
+            // component after staging it.
+            for (entt::entity Entity : BatchedCharacterCreations)
+            {
+                if (Registry.valid(Entity) && Registry.all_of<SCharacterPhysicsComponent, STransformComponent>(Entity))
+                {
+                    OnCharacterComponentConstructed(Registry, Entity);
+                }
+            }
+            BatchedCharacterCreations.clear();
+        }
     }
 
     namespace

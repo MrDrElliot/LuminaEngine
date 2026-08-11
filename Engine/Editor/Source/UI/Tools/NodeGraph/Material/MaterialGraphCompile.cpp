@@ -15,15 +15,13 @@
 
 namespace Lumina
 {
-    FMaterialGraphCompileResult CompileMaterialGraph(CMaterial* Material, CMaterialNodeGraph* Graph)
+    bool BeginMaterialGraphCompile(CMaterial* Material, CMaterialNodeGraph* Graph, FMaterialCompiler& Compiler, FMaterialGraphCompileResult& Result)
     {
-        FMaterialGraphCompileResult Result;
         if (Material == nullptr || Graph == nullptr)
         {
-            return Result;
+            return false;
         }
 
-        FMaterialCompiler Compiler;
         Compiler.SetMaterialType(Material->GetMaterialType());
         Compiler.SetMasked(Material->GetBlendMode() == EBlendMode::Masked);
         Graph->CompileGraph(Compiler);
@@ -38,7 +36,7 @@ namespace Lumina
             Result.Errors   = Compiler.GetErrors();
             Result.Stats    = Compiler.GetStats();
             Result.bSuccess = false;
-            return Result;
+            return false;
         }
 
         // BuildShaders yields both the pixel and vertex source with the $MATERIAL_INPUTS tokens substituted.
@@ -153,7 +151,20 @@ namespace Lumina
             ShaderCompiler->CompilerShaderRaw(Result.PixelSource, Move(MomentOptions), CommitStage(EMaterialShaderStage::MomentPixel));
         }
 
-        ShaderCompiler->Flush();
+        return true;
+    }
+
+    void FinishMaterialGraphCompile(CMaterial* Material, FMaterialCompiler& Compiler, FMaterialGraphCompileResult& Result)
+    {
+        if (Material == nullptr)
+        {
+            return;
+        }
+
+        // Recomputed rather than carried across the wait: it is a pure function of the material's own
+        // type and blend mode, and neither can change while its stages are in flight.
+        const bool bNeedsMomentStage = Material->GetMaterialType() == EMaterialType::PBR
+                                    && Material->GetBlendMode()   == EBlendMode::Translucent;
 
         // CompilerShaderRaw signals a failed stage only by leaving its output empty. Committing one anyway
         // yields a master that writes VisBuffer depth but is skipped by shading -- a depth-only ghost.
@@ -200,7 +211,7 @@ namespace Lumina
         {
             Result.Stats    = Compiler.GetStats();
             Result.bSuccess = false;
-            return Result;   // leave the material not-ready; the caller skips it rather than saving a ghost.
+            return;   // leave the material not-ready; the caller skips it rather than saving a ghost.
         }
 
         // The compiler works in live CTexture*; the material stores SOFT refs. The GUID is filled from the
@@ -266,12 +277,79 @@ namespace Lumina
         Material->PostLoad();
 
         Result.bSuccess = true;
+    }
+
+    FMaterialGraphCompileResult CompileMaterialGraph(CMaterial* Material, CMaterialNodeGraph* Graph)
+    {
+        FMaterialGraphCompileResult Result;
+        FMaterialCompiler Compiler;
+
+        if (BeginMaterialGraphCompile(Material, Graph, Compiler, Result))
+        {
+            GShaderCompiler->Flush();
+            FinishMaterialGraphCompile(Material, Compiler, Result);
+        }
+
         return Result;
+    }
+
+    namespace
+    {
+        // The one stale recompile currently in flight, if any. The stage compiles run on the shader task
+        // swarm, so the drain dispatches and then POLLS across frames rather than calling Flush() -- which
+        // would park the game thread inside EditorUI::OnUpdate for the whole compile.
+        struct FPendingStaleRecompile
+        {
+            // Strong ref, and load-bearing: the per-stage commit callbacks capture the material RAW and fire
+            // on a worker, so nothing else may be the last thing keeping it alive across the wait.
+            TObjectPtr<CMaterial>         Material;
+            // Finish reads the bound textures and parameters back off the compiler, so it has to outlive
+            // the dispatch it was built by.
+            TUniquePtr<FMaterialCompiler> Compiler;
+            FMaterialGraphCompileResult   Result;
+        };
+
+        FPendingStaleRecompile GPendingStaleRecompile;
     }
 
     void ProcessStaleMaterialRecompiles()
     {
-        // One material per call: each recompile runs the full multi-stage pipeline, so spreading the work
+        // Finish the in-flight one before taking another; one material at a time keeps the swarm's work
+        // bounded and the poll below unambiguous.
+        if (GPendingStaleRecompile.Compiler != nullptr)
+        {
+            // Global across every compile in the process, so an unrelated burst delays this finish. That is
+            // the same counter Flush() waited on -- a later commit, never a wrong one.
+            if (GShaderCompiler->HasPendingRequests())
+            {
+                return;
+            }
+
+            CMaterial* Material = GPendingStaleRecompile.Material.Get();
+            FinishMaterialGraphCompile(Material, *GPendingStaleRecompile.Compiler, GPendingStaleRecompile.Result);
+
+            // Read before the reset: the material may be the only thing still naming the package.
+            CPackage* Package = (Material != nullptr) ? Material->GetPackage() : nullptr;
+            const FString Name = (Material != nullptr) ? FString(Material->GetName().c_str()) : FString("<destroyed>");
+            const bool bSuccess = GPendingStaleRecompile.Result.bSuccess;
+
+            GPendingStaleRecompile = {};
+
+            if (bSuccess && Package != nullptr)
+            {
+                // Committed in memory; dirty the package so the user can save and stop paying the recompile
+                // on every session. Never auto-save.
+                Package->MarkDirty();
+                ImGuiX::Notifications::NotifyInfo("Material '{0}' recompiled (shader templates changed) - save to keep", Name.c_str());
+            }
+            else
+            {
+                ImGuiX::Notifications::NotifyError("Material '{0}' failed to recompile against the current shader templates", Name.c_str());
+            }
+            return;
+        }
+
+        // One material per drain: each recompile runs the full multi-stage pipeline, so spreading the work
         // avoids one long hitch when a template edit makes many materials stale at once.
         TObjectPtr<CMaterial> Material = CMaterial::PopStaleTemplateMaterial();
         if (!Material.IsValid())
@@ -298,17 +376,19 @@ namespace Lumina
         Graph->SetMaterial(Material.Get());
         Graph->ValidateGraph();
 
-        const FMaterialGraphCompileResult Result = CompileMaterialGraph(Material.Get(), Graph);
-        if (Result.bSuccess)
-        {
-            // Committed in memory; dirty the package so the user can save and stop paying the recompile
-            // on every session. Never auto-save.
-            Package->MarkDirty();
-            ImGuiX::Notifications::NotifyInfo("Material '{0}' recompiled (shader templates changed) - save to keep", Material->GetName().c_str());
-        }
-        else
+        TUniquePtr<FMaterialCompiler> Compiler = MakeUnique<FMaterialCompiler>();
+        FMaterialGraphCompileResult   Result;
+
+        // Only park it if stages actually went out; a graph that failed up front has nothing to wait for
+        // and would otherwise hold the slot until the next unrelated compile drained the counter.
+        if (!BeginMaterialGraphCompile(Material.Get(), Graph, *Compiler, Result))
         {
             ImGuiX::Notifications::NotifyError("Material '{0}' failed to recompile against the current shader templates", Material->GetName().c_str());
+            return;
         }
+
+        GPendingStaleRecompile.Material = Material;
+        GPendingStaleRecompile.Compiler = Move(Compiler);
+        GPendingStaleRecompile.Result   = Move(Result);
     }
 }

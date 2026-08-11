@@ -163,7 +163,7 @@ namespace Lumina
     struct FScenePrimitive
     {
         FMatrix4                            Transform = FMatrix4(1.0f);
-        uint64                              MeshletHeaderAddress = 0;
+        uint32                              MeshletHeaderSlot = 0;
 
         const TVector<FResolvedSurface>*    Surfaces = nullptr;
 
@@ -381,7 +381,7 @@ namespace Lumina
         {
             const TVector<FResolvedSurface>*    Surfaces = nullptr;
             uint32                              Generation = 0;
-            uint64                              MeshletHeaderAddress = 0;
+            uint32                              MeshletHeaderSlot = 0;
             uint32                              ResolveHandle = INVALID_MESH_RESOLVE_HANDLE;
             float                               MaxDrawDistance = 0.0f;
             EInstanceFlags                      BaseFlags = EInstanceFlags::None;

@@ -4,6 +4,7 @@
 #include "Assets/AssetTypes/Material/Material.h"
 #include "Assets/AssetTypes/Material/MaterialInterface.h"
 #include "Assets/AssetTypes/Mesh/Mesh.h"
+#include "Renderer/MeshletHeaderSlab.h"
 
 namespace Lumina
 {
@@ -410,7 +411,7 @@ namespace Lumina
         if (Mesh->HasAnyFlag(OF_NeedsLoad))
         {
             Out.Surfaces.clear();
-            Out.MeshletHeaderAddress = 0;
+            Out.MeshletHeaderSlot = 0;
             Out.bAllMaterialsReady   = false;
             Out.bResolved            = false;
             return;
@@ -425,7 +426,7 @@ namespace Lumina
             ? 0.0f
             : Math::Length(LocalBounds.Max - Out.LocalCenter);
 
-        Out.MeshletHeaderAddress = Mesh->GetMeshBuffers().MeshletHeaderBuffer;
+        Out.MeshletHeaderSlot = Mesh->GetMeshBuffers().MeshletHeaderSlot;
         Out.bAllMaterialsReady   = true;
 
         Out.Surfaces.clear();
@@ -467,7 +468,7 @@ namespace Lumina
             AddDependency(Out, (const void*)(uintptr_t)R.MaterialID);
         }
 
-        // MeshletHeaderAddress is 0 until the GPU buffers exist, which can lag the property data.
-        Out.bResolved = Out.MeshletHeaderAddress != 0ull && Out.bAllMaterialsReady;
+        // MeshletHeaderSlot is 0 until the GPU buffers exist, which can lag the property data.
+        Out.bResolved = Out.MeshletHeaderSlot != MeshletHeaderSlab::kNullSlot && Out.bAllMaterialsReady;
     }
 }

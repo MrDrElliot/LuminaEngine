@@ -52,7 +52,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "Culling")
         bool bIgnoreOcclusionCulling = false;
 
-        uint64          CachedMeshletHeaderAddress = 0;
+        uint32          CachedMeshletHeaderSlot = 0;
         EInstanceFlags  CachedBaseFlags = EInstanceFlags::None;
 
         // LOD override. -1 = automatic (distance/radius); >= 0 pins that LOD. Clamped to the surface's

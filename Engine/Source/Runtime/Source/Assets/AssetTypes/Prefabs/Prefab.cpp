@@ -255,58 +255,79 @@ namespace Lumina
                      GetName().c_str(), (uint32)PrefabRoots.size());
         }
 
-        THashMap<entt::entity, entt::entity> Map;
-        CopyRegistry(Registry, WorldRegistry, Map);
-
-        const entt::entity WorldRoot = Map[PrefabRoot];
-
-        for (auto& [SrcE, DestE] : Map)
+        // Physics creation is deferred across the whole spawn. A body / character controller is built from
+        // the entity's transform at on_construct -- which fires inside the copy below, while the root is
+        // still at its authored pose -- and from then on the controller OWNS that pose and stamps it back
+        // over the entity every step. Batching moves creation past the OffsetTransform write, so the spawn
+        // pose (rotation included) is what the character is created with.
+        struct FBodyBatchScope
         {
-            FName StableID;
-            if (const SPrefabComponent* PrefabComp = WorldRegistry.try_get<SPrefabComponent>(DestE))
+            Physics::IPhysicsScene* Scene;
+            explicit FBodyBatchScope(Physics::IPhysicsScene* InScene) : Scene(InScene)
             {
-                StableID = PrefabComp->StableID;
+                if (Scene) { Scene->BeginBodyBatch(); }
+            }
+            ~FBodyBatchScope() { if (Scene) { Scene->EndBodyBatch(); } }
+        };
+
+        THashMap<entt::entity, entt::entity> Map;
+        entt::entity WorldRoot = entt::null;
+
+        {
+            FBodyBatchScope BodyBatch(TargetWorld->GetPhysicsScene());
+
+            CopyRegistry(Registry, WorldRegistry, Map);
+
+            WorldRoot = Map[PrefabRoot];
+
+            for (auto& [SrcE, DestE] : Map)
+            {
+                FName StableID;
+                if (const SPrefabComponent* PrefabComp = WorldRegistry.try_get<SPrefabComponent>(DestE))
+                {
+                    StableID = PrefabComp->StableID;
+                }
+                else
+                {
+                    StableID = GenerateStableID();
+                }
+
+                WorldRegistry.remove<SPrefabComponent>(DestE);
+
+                SPrefabInstanceComponent& Instance = WorldRegistry.emplace_or_replace<SPrefabInstanceComponent>(DestE);
+                Instance.SourcePrefab = this;
+                Instance.StableID = StableID;
+                Instance.bIsRoot = (DestE == WorldRoot);
+            }
+
+            // Rescue any extra parentless entities so the spawn has a single hierarchical root.
+            for (size_t i = 1; i < PrefabRoots.size(); ++i)
+            {
+                const entt::entity Extra = Map[PrefabRoots[i]];
+                if (Extra != entt::null && WorldRegistry.valid(Extra))
+                {
+                    ECS::Utils::ReparentEntity(WorldRegistry, Extra, WorldRoot);
+                }
+            }
+
+            if (STransformComponent* RootTransform = WorldRegistry.try_get<STransformComponent>(WorldRoot))
+            {
+                RootTransform->SetLocalTransform(OffsetTransform);
             }
             else
             {
-                StableID = GenerateStableID();
+                WorldRegistry.emplace<STransformComponent>(WorldRoot, OffsetTransform);
             }
 
-            WorldRegistry.remove<SPrefabComponent>(DestE);
-
-            SPrefabInstanceComponent& Instance = WorldRegistry.emplace_or_replace<SPrefabInstanceComponent>(DestE);
-            Instance.SourcePrefab = this;
-            Instance.StableID = StableID;
-            Instance.bIsRoot = (DestE == WorldRoot);
-        }
-
-        // Rescue any extra parentless entities so the spawn has a single hierarchical root.
-        for (size_t i = 1; i < PrefabRoots.size(); ++i)
-        {
-            const entt::entity Extra = Map[PrefabRoots[i]];
-            if (Extra != entt::null && WorldRegistry.valid(Extra))
+            if (Parent != entt::null && WorldRegistry.valid(Parent))
             {
-                ECS::Utils::ReparentEntity(WorldRegistry, Extra, WorldRoot);
+                ECS::Utils::ReparentEntity(WorldRegistry, WorldRoot, Parent);
             }
-        }
 
-        if (STransformComponent* RootTransform = WorldRegistry.try_get<STransformComponent>(WorldRoot))
-        {
-            RootTransform->SetLocalTransform(OffsetTransform);
+            // Without this the transform system can render the spawn at a stale world matrix for one
+            // frame (the components were emplaced via meta, which doesn't fire on_update).
+            MarkSubtreeTransformsDirty(WorldRegistry, WorldRoot);
         }
-        else
-        {
-            WorldRegistry.emplace<STransformComponent>(WorldRoot, OffsetTransform);
-        }
-
-        if (Parent != entt::null && WorldRegistry.valid(Parent))
-        {
-            ECS::Utils::ReparentEntity(WorldRegistry, WorldRoot, Parent);
-        }
-
-        // Without this the transform system can render the spawn at a stale world matrix for one
-        // frame (the components were emplaced via meta, which doesn't fire on_update).
-        MarkSubtreeTransformsDirty(WorldRegistry, WorldRoot);
 
         return WorldRoot;
     }

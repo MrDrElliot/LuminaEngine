@@ -23,8 +23,10 @@ struct FMeshletCullContext
     float    MaxShadowDist;
 };
 
-// Every FGPUInstance by POINTER, never by value: it carries a FMeshletHeader*, and a by-value param
-// makes Slang emit a Function OpVariable without the Aliased/Restrict SPIR-V requires. DEVICE_LOST.
+// Every FGPUInstance by POINTER, never by value. It no longer carries a FMeshletHeader* -- a header is a
+// slot now -- but MakeMeshletCullContext is still reached through one, and the rule is worth keeping:
+// a by-value struct holding a PhysicalStorageBuffer pointer makes Slang emit a Function OpVariable
+// without the Aliased/Restrict SPIR-V requires. DEVICE_LOST.
 FMeshletCullContext MakeMeshletCullContext(FGPUInstance* Inst)
 {
     FMeshletCullContext Ctx;
@@ -120,9 +122,11 @@ bool TestMeshletAgainstView(FMeshletCullContext Ctx, FGPUInstance* Inst, FCullVi
 
     if (bKeep)
     {
-        // Unreachable (the block already clamped the range), but an unbounded index walks the header arrays
-        // past the allocation, and scattered BDA reads return garbage rather than faulting: a TDR with no fault.
-        bKeep = MeshletIdx < Inst.MeshletTotalCount;
+        // Bounded by the HEADER's own count, not the instance's: MeshletTotalCount comes from the surface's
+        // LOD table while Spheres/Cones come from the header, and only the header knows how long they are.
+        // A mesh that has died leaves the instance naming the null header, whose count is 0, so this is
+        // also what stops a stale instance from indexing geometry that is no longer there.
+        bKeep = MeshletIdx < Inst.MeshletHeader.MeshletCount;
 
         if (bKeep)
         {

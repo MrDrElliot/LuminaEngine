@@ -1,6 +1,7 @@
 ﻿#include "RuntimePCH.h"
 #include "RHICore.h"
 #include "Log/Log.h"
+#include "Containers/Function.h"
 
 #include "RenderResource.h"
 #include "RHITexture.h"
@@ -30,7 +31,7 @@ namespace Lumina::RHI::Core
     // in the engine that destroys a GPU resource and one invariant to check.
     struct FRetireItem
     {
-        enum class EKind : uint8 { Buffer, Texture, SampledSlot, StorageSlot, Pipeline };
+        enum class EKind : uint8 { Buffer, Texture, SampledSlot, StorageSlot, Pipeline, Callback };
 
         EKind      Kind        = EKind::Buffer;
         uint32     ExtraCycles = 0;
@@ -38,6 +39,10 @@ namespace Lumina::RHI::Core
         FTextureH  Texture     = {};
         uint32     Slot        = kInvalidHeapSlot;
         FPipelineH Pipeline    = {};
+        // Callback kind: runs on the same fence boundary a buffer retired alongside it would be freed on.
+        // For state that must stop describing a resource at the exact moment that resource dies -- not
+        // before, or already-recorded frames lose it, and not after, or future frames read it freed.
+        TFunction<void()> Callback;
 
         /** Per-queue timeline value this resource must outlive: the value the NEXT submission on that queue
          *  will signal, captured at retire time. Timelines are monotonic, so waiting it covers everything
@@ -216,6 +221,9 @@ namespace Lumina::RHI::Core
             // reference it. Freeing one directly is only correct after a device wait-idle.
             RHI::FreeH(Item.Pipeline);
             break;
+        case FRetireItem::EKind::Callback:
+            if (Item.Callback) { Item.Callback(); }
+            break;
         }
     }
 
@@ -329,6 +337,19 @@ namespace Lumina::RHI::Core
         Item.Kind     = FRetireItem::EKind::Pipeline;
         Item.Pipeline = Pipeline;
         PushRetire(Item);
+    }
+
+    void RetireCallback(TFunction<void()> Callback)
+    {
+        if (!Callback)
+        {
+            return;
+        }
+
+        FRetireItem Item;
+        Item.Kind     = FRetireItem::EKind::Callback;
+        Item.Callback = eastl::move(Callback);
+        PushRetire(eastl::move(Item));
     }
 
     void Retire(FTextureH Texture)

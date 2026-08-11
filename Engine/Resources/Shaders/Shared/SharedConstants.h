@@ -3,7 +3,6 @@
 // Parsed by BOTH MSVC and Slang: preprocessor directives and // comments ONLY. Everything here sizes a
 // buffer or is packed into a field both sides decode, so drift corrupts memory instead of misbehaving.
 
-// 64 verts / 124 tris = AMD/NV mesh-shader sweet spot, and satisfies meshopt's limits.
 #define MESHLET_MAX_VERTICES            64
 #define MESHLET_MAX_TRIANGLES           64
 

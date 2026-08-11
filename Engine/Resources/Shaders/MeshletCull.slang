@@ -140,8 +140,12 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
 
     // Guarded rather than folded into an && chain: this is the deepest dependent hop any lane makes
     // before the cull proper, and unconditional it was paid by workgroups with nothing to do.
+    //
+    // The header used to be null-checked here. It cannot be null now -- an instance carries a slot and
+    // slot 0 is the null header -- so what is left is the instance buffer itself, which the CPU can
+    // legitimately fail to allocate. TestMeshletAgainstView bounds every read by the header's own count.
     FGPUInstance* Inst = Instances() + InstanceID;
-    const bool bInstanceOK = bHasWork && (Instances() != nullptr) && (Inst.MeshletHeader != nullptr);
+    const bool bInstanceOK = bHasWork && (Instances() != nullptr);
 
     // Workgroup-uniform once the block is loaded, so both the load and the branches below are uniform.
     uint RetainedSlot = 0u;

@@ -7,6 +7,7 @@
 #include "ShaderLibrary.h"
 #include "RHI.h"
 #include "RHICore.h"
+#include "MeshletHeaderSlab.h"
 #include "Core/Application/Application.h"
 #include "Core/CommandLine/CommandLine.h"
 #include "Core/Console/ConsoleVariable.h"
@@ -101,6 +102,9 @@ namespace Lumina
             Memory::Delete(ShaderLibrary);
             ShaderLibrary = nullptr;
         }
+
+        // Before Shutdown, which drains the retire queues the slab hands its allocation to.
+        MeshletHeaderSlab::Shutdown();
 
         RHI::FreeH(Swapchain);
         RHI::Core::Shutdown();

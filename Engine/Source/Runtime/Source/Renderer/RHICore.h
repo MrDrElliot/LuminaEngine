@@ -3,6 +3,7 @@
 #include "RHI.h"
 #include "RHIUpload.h"
 #include "RenderResource.h"
+#include "Containers/Function.h"
 #include "Containers/Name.h"
 #include "Memory/Memcpy.h"
 
@@ -74,6 +75,14 @@ namespace Lumina::RHI
         RUNTIME_API void Retire(FPipelineH Pipeline);
         RUNTIME_API void RetireSampledSlot(uint32 HeapSlot);
         RUNTIME_API void RetireStorageSlot(uint32 HeapSlot);
+
+        /** Runs Callback on the fence boundary a buffer retired at the same moment would be freed on.
+         *
+         *  For CPU-side state that DESCRIBES a GPU resource and has to stop describing it at exactly the
+         *  instant it dies: any earlier and frames already recorded lose the resource they were built
+         *  against, any later and frames recorded since read it after the free. A frame count cannot
+         *  express that; the fence already does. */
+        RUNTIME_API void RetireCallback(TFunction<void()> Callback);
 
         FPipelineH CreateGraphicsPipeline(const FName& VertexShader, const FName& PixelShader, const FRasterDesc& Desc);
         FPipelineH CreateComputePipeline(const FName& ComputeShader);

@@ -46,17 +46,18 @@ void MeshMain(
     const uint VertCount = Ref.M.VertexCount;
     const uint TriCount  = Ref.M.TriangleCount;
 
-    // Held in registers until the compacted primitive count is known; see MeshletVisBuffer.slang.
-    FMeshVertexOutput VOut[MESHLET_VERT_ITERS];
-    float4            Clip[MESHLET_VERT_ITERS];
-    uint              VertSlot[MESHLET_VERT_ITERS];
+    // FIRST, ahead of the vertex fetch, so the geometry engine's output allocation overlaps the vertex
+    // phase rather than stalling it; see MeshletVisBuffer.slang for why it used to sit at the bottom.
+    SetMeshOutputCounts(VertCount, TriCount);
+
+    // Only the clip position survives the vertex phase, and only because ShuffleMeshletClip reads it out
+    // of the owning LANE's registers; see MeshletVisBuffer.slang.
+    float4 Clip[MESHLET_VERT_ITERS];
 
     [ForceUnroll]
     for (uint v = 0; v < MESHLET_VERT_ITERS; ++v)
     {
-        VOut[v]     = (FMeshVertexOutput)0;
-        Clip[v]     = float4(0.0, 0.0, 0.0, 0.0);
-        VertSlot[v] = 0u;
+        Clip[v] = float4(0.0, 0.0, 0.0, 0.0);
     }
 
     // Workgroup-UNIFORM, so this branch is free and no lane diverges on it. It stays because an
@@ -71,11 +72,12 @@ void MeshMain(
         [ForceUnroll]
         for (uint v = 0; v < MESHLET_VERT_ITERS; ++v)
         {
-            // Clamped rather than guarded: surplus lanes redundantly reprocess the last vertex. A per-lane bounds
-            // test saved nothing (the wave issues the body regardless) and the duplicate store is identical.
-            VertSlot[v] = min(ThreadID + v * MESHLET_MESH_GROUP_SIZE, VertCount - 1u);
+            // Affine EXPORT index, clamped LOAD index -- see MeshletVisBuffer.slang for why the two must
+            // not be the same value.
+            const uint StoreSlot = ThreadID + v * MESHLET_MESH_GROUP_SIZE;
+            const uint LoadSlot  = min(StoreSlot, VertCount - 1u);
 
-            FVertexData VertexData = LoadMeshletVertexData(Ref, VertSlot[v]);
+            FVertexData VertexData = LoadMeshletVertexData(Ref, LoadSlot);
             FMeshletWorldVertex W  = TransformMeshletVertex(VertexData, ModelMatrix, NormalMatrix);
 
             float4 WorldPos = float4(W.WorldPos, 1.0);
@@ -87,12 +89,19 @@ void MeshMain(
             const float3 FinalWorldPos = WorldPos.xyz;
 
 #ifdef MESHLET_MESH_BASE
-            VOut[v] = MakeBaseVertexOutput(Ref, W, FinalWorldPos, GetCameraView(), GetCameraProjection());
-            Clip[v] = VOut[v].Position;   // taken from the output so the two cannot drift
+            FMeshVertexOutput VOut = MakeBaseVertexOutput(Ref, W, FinalWorldPos, GetCameraView(), GetCameraProjection());
+            Clip[v] = VOut.Position;   // taken from the output so the two cannot drift
 #else
+            FMeshVertexOutput VOut = (FMeshVertexOutput)0;
             Clip[v] = mul(GetShadowViewProjection(MeshletPass().ShadowDataIndex, (uint)MeshletPass().ViewIndex),
                           float4(FinalWorldPos, 1.0));
+            VOut.Position = Clip[v];
 #endif
+
+            if (StoreSlot < VertCount)
+            {
+                Verts[StoreSlot] = VOut;
+            }
         }
     }
 
@@ -102,32 +111,28 @@ void MeshMain(
 
     // Every triangle is declared and the dead ones carry SV_CullPrimitive, so there is no compaction
     // pass, no shared bitmask and no second barrier.
-    SetMeshOutputCounts(VertCount, TriCount);
-
-    if (VertCount > 0u)
-    {
-        [ForceUnroll]
-        for (uint v = 0; v < MESHLET_VERT_ITERS; ++v)
-        {
-            VOut[v].Position   = Clip[v];
-            Verts[VertSlot[v]] = VOut[v];
-        }
-    }
-
     // Workgroup-UNIFORM, so no lane diverges on it; TriCount - 1u below needs the non-zero case.
     if (TriCount > 0u)
     {
         [ForceUnroll]
         for (uint i = 0; i < MESHLET_TRI_ITERS; ++i)
         {
-            const uint  t   = min(ThreadID + i * MESHLET_MESH_GROUP_SIZE, TriCount - 1u);
-            const uint3 Idx = UnpackMeshletTriangleSafe(Ref, t);
+            // Clamped index for the test (every lane must stay active for the shuffle), affine index for
+            // the export; where the store survives the two are equal.
+            const uint  StoreT = ThreadID + i * MESHLET_MESH_GROUP_SIZE;
+            const uint  t      = min(StoreT, TriCount - 1u);
+            const uint3 Idx    = UnpackMeshletTriangleSafe(Ref, t);
 
-            Tris[t]                = Idx;
-            Prims[t].CullPrimitive = IsDegenerateTriangleIndices(Idx)
-                                   | IsMeshletTriangleCulled(ShuffleMeshletClip(Clip, Idx.x),
-                                                             ShuffleMeshletClip(Clip, Idx.y),
-                                                             ShuffleMeshletClip(Clip, Idx.z), ViewportSize);
+            const bool bCull = IsDegenerateTriangleIndices(Idx)
+                             | IsMeshletTriangleCulled(ShuffleMeshletClip(Clip, Idx.x),
+                                                       ShuffleMeshletClip(Clip, Idx.y),
+                                                       ShuffleMeshletClip(Clip, Idx.z), ViewportSize);
+
+            if (StoreT < TriCount)
+            {
+                Tris[StoreT]                = Idx;
+                Prims[StoreT].CullPrimitive = bCull;
+            }
         }
     }
 }

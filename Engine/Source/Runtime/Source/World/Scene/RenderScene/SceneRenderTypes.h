@@ -850,13 +850,16 @@ namespace Lumina
 
     struct alignas(16) FInstanceStatic
     {
-        uint64      MeshletHeaderAddress;
+        uint32      MeshletHeaderSlot;      // into the process-wide slab; 0 = the null header
         uint32      CustomData;
         uint32      MaterialIndex;
         uint32      EntityID;
         uint32      BoneOffset;
         uint32      SkinnedVertexBase;
         uint32      ShadowSkinnedVertexBase;
+        // Explicit, not tail padding: alignas(16) would supply it here but Slang's scalar layout would
+        // size the mirror at 28 and stride the array wrong.
+        uint32      _Pad0;
     };
     static_assert(sizeof(FInstanceStatic) == 32, "FInstanceStatic layout must match shader");
     VERIFY_SSBO_ALIGNMENT(FInstanceStatic)
@@ -867,7 +870,8 @@ namespace Lumina
 
         FTransform3x4   Transform;              // offset   0
         FVector4        SphereBounds;           //         48
-        uint64          MeshletHeaderAddress;   //         64
+        uint32          MeshletHeaderSlot;      //         64  into the slab; 0 = the null header
+        uint32          _Pad0;                  //         68  was the upper half of the header pointer
 
         uint32          DrawIDAndFlags;         //         72
         uint32          SurfaceMeshletOffset;   //         76
@@ -887,7 +891,9 @@ namespace Lumina
     };
 
     static_assert(sizeof(FGPUInstance) == 128, "FGPUInstance layout must match shader");
-    static_assert(alignof(FGPUInstance) == 8, "Scalar layout: alignment comes from MeshletHeaderAddress");
+    // No 8-byte member left now that the header is a slot rather than a pointer, so scalar layout puts
+    // this at 4. The 128-byte stride is unchanged, which is what the shader mirror actually depends on.
+    static_assert(alignof(FGPUInstance) == 4, "Scalar layout: FGPUInstance is all 4-byte members");
 
     struct FPreSkinnedVertex
     {
@@ -1125,6 +1131,10 @@ namespace Lumina
         uint64 Splines               = 0;  // FGPUSpline headers, one per component with bSendToGPU
         uint64 SplinePoints          = 0;  // shared FGPUSplinePoint array; headers carry the slice
         uint64 SplineSamples         = 0;  // shared FGPUSplineSample array (arc-length tables)
+        // The process-wide meshlet header slab. Instances carry a SLOT into this, never an address, so
+        // this is the only place a header address exists -- and it is republished every frame, which is
+        // what lets the slab grow without invalidating anything. See MeshletHeaderSlab.h.
+        uint64 MeshletHeaders        = 0;
 
         uint32 BRDFLutIndex          = 0;
         uint32 SkyIrradianceIndex    = 0;
@@ -1135,11 +1145,11 @@ namespace Lumina
         uint32 ProbeCubeArrayIndex   = 0;
         uint32 NumReflectionProbes   = 0;
         uint32 NumSplines            = 0;
-        uint32 _SplinePad            = 0;   // keeps the trailing uint block a whole number of 16-byte rows
+        uint32 _SplinePad[3]         = {};  // keeps the trailing uint block a whole number of 16-byte rows
     };
-    // 15 pointers + 10 indices. Was 136 while SkinDescriptors lived here; the skinning dispatch derives its
+    // 16 pointers + 12 indices. Was 136 while SkinDescriptors lived here; the skinning dispatch derives its
     // work from the instances now, so nothing ships a descriptor array.
-    static_assert(sizeof(FSceneRoot) == 160, "FSceneRoot must match SceneGlobals.slang");
+    static_assert(sizeof(FSceneRoot) == 176, "FSceneRoot must match SceneGlobals.slang");
 
     struct FRootConstants
     {

@@ -25,7 +25,7 @@ namespace Lumina
 
         FVector3                    LocalCenter          = FVector3(0.0f);
         float                       LocalRadius          = 0.0f;
-        uint64                      MeshletHeaderAddress = 0;
+        uint32                      MeshletHeaderSlot = 0;
 
         // Materials can still be compiling when Commit runs; the resolve pass re-runs the material half
         // until they settle, exactly as the asset path does.

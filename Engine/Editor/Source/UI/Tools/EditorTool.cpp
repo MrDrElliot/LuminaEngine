@@ -2470,7 +2470,15 @@ namespace Lumina
             return entt::null;
         }
 
-        CObject* Loaded = LoadObject<CObject>(AssetData->AssetGUID);
+        // Graph load, not the inline one: a dropped prefab pulls in its whole closure (a large one is
+        // dozens of meshes plus their materials and textures), and the inline path resolves every import
+        // depth-first on this thread from inside the parent's Serialize. Already-resident assets skip the
+        // BFS and the graph loader's mutex entirely -- same fast path StaticLoadObject takes.
+        CObject* Loaded = FindObject<CObject>(AssetData->AssetGUID);
+        if (Loaded == nullptr)
+        {
+            Loaded = LoadObjectGraph<CObject>(AssetData->AssetGUID);
+        }
         if (Loaded == nullptr)
         {
             LOG_WARN("Asset drop: failed to load '{}'", FString(VirtualPath.data(), VirtualPath.size()).c_str());

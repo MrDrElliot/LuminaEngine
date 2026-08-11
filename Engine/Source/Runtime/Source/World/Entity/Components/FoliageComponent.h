@@ -97,7 +97,7 @@ namespace Lumina
         bool bReceiveShadow = true;
 
         // Transient resolve cache (not serialized); refreshed by ResolveDirtyMeshComponents.
-        uint64          CachedMeshletHeaderAddress = 0;
+        uint32          CachedMeshletHeaderSlot = 0;
         EInstanceFlags  CachedBaseFlags = EInstanceFlags::None;
         uint32          ResolveHandle = ~0u;
         // Staleness token of the resolve entry this type last copied from. See SMeshComponent for why

@@ -79,8 +79,10 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
     // and it emits with neither. Invalid module, accepted by every driver, device-lost frames later.
     FInstanceStatic* Static = Pass().RetainedStatic + Slot;
 
+    // A header always exists -- an instance carries a slot and slot 0 is the null header -- so the
+    // question is whether it describes geometry. Zero for a mesh that has died or never uploaded.
     FMeshletHeader* Header = Static.MeshletHeader;
-    if (Header == nullptr || Header.Meshlets == nullptr || Header.Vertices == nullptr)
+    if (Header.MeshletCount == 0u)
     {
         return;
     }
@@ -95,9 +97,11 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
     }
 
     const uint MeshletIndex = (bShadow ? Data.ShadowMeshletOffset : Data.SurfaceMeshletOffset) + LocalMeshlet;
-    if (MeshletIndex >= Data.MeshletTotalCount)
+    if (MeshletIndex >= min(Data.MeshletTotalCount, Header.MeshletCount))
     {
-        return;   // malformed LOD table; an unbounded index walks Header.Meshlets past its allocation
+        // Malformed LOD table, or an instance still naming a mesh whose geometry is gone. Either way an
+        // unbounded index walks Header.Meshlets past its allocation, and only the header knows its length.
+        return;
     }
 
     const uint SkinnedVertexBase = bShadow ? Data.ShadowSkinnedVertexBase : Data.SkinnedVertexBase;

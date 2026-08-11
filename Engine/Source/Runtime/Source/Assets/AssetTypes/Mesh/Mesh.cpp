@@ -4,6 +4,7 @@
 #include "assets/assettypes/material/materialinstance.h"
 #include "Core/Object/Cast.h"
 #include "Memory/MemoryTracking.h"
+#include "Renderer/MeshletHeaderSlab.h"
 #include "Renderer/Vertex.h"
 #include "Tools/Import/ImportHelpers.h"
 #include "World/Scene/RenderScene/MeshResolveCache.h"
@@ -99,7 +100,7 @@ namespace Lumina
         }
 
         // Zero when GPU buffer creation failed; the header address is fetched through unguarded.
-        if (MeshResources == nullptr || MeshResources->MeshBuffers.MeshletHeaderBuffer == 0)
+        if (MeshResources == nullptr || MeshResources->MeshBuffers.MeshletHeaderSlot == MeshletHeaderSlab::kNullSlot)
         {
             return false;
         }
@@ -239,7 +240,9 @@ namespace Lumina
             Header.DistanceFieldSizeZ       = Volume.VolumeSize.z;
             Header.DistanceFieldMaxDistance = Volume.MaxDistance;
             Header.ConesAddress             = MB.MeshletConeBuffer;
-            Header._Pad0 = 0;
+            // From the buffer set, not from MeshletData: the asset path drops the CPU scratch after it
+            // uploads, and RefreshDistanceField rebuilds this header long after that.
+            Header.MeshletCount             = MB.MeshletCount;
             return Header;
         }
     }
@@ -250,17 +253,16 @@ namespace Lumina
 
         // Nothing to publish through: the mesh never got its buffers, so the next CreateForResource
         // picks the volume up anyway.
-        if (Resource.MeshBuffers.MeshletHeaderBuffer == 0)
+        if (Resource.MeshBuffers.MeshletHeaderSlot == MeshletHeaderSlab::kNullSlot)
         {
             return;
         }
 
         CreateDistanceFieldTexture(Resource);
 
-        // Rewritten in place so the header ADDRESS is unchanged and every cached copy stays correct.
-        // Frames in flight are safe: the replaced volume is frame-deferred, so the old index still resolves.
-        const FMeshletHeaderGPU Header = MakeMeshletHeader(Resource);
-        RHI::UploadBuffer(Resource.MeshBuffers.MeshletHeaderBuffer, &Header, sizeof(FMeshletHeaderGPU));
+        // Rewritten into the same SLOT, so every cached copy stays correct. Frames in flight are safe:
+        // the replaced volume is frame-deferred, so the old index still resolves.
+        MeshletHeaderSlab::Write(Resource.MeshBuffers.MeshletHeaderSlot, MakeMeshletHeader(Resource));
     }
 
     void MeshBuffers::CreateForResource(FMeshResource& Resource)
@@ -342,28 +344,29 @@ namespace Lumina
             return;
         }
 
+        // Resets the header slot to "no geometry" before the buffers it named are retired, so the window
+        // between the two describes nothing rather than describing retired memory. Keeps the SLOT.
         MB.ReleaseGeometryBuffers();
+
         MB.MeshletBuffer         = NewMeshlets;
         MB.MeshletSphereBuffer   = NewSpheres;
         MB.MeshletConeBuffer     = NewCones;
         MB.MeshletVertexBuffer   = NewVertices;
         MB.MeshletTriangleBuffer = NewTriangles;
+        MB.MeshletCount          = (uint32)MData.Meshlets.size();
 
         // Volume upload before the header, because the header publishes its heap slot. A field that
         // failed to allocate leaves the sentinel in place, which is what every SDF shader path gates on.
         CreateDistanceFieldTexture(Resource);
 
-        // Allocated ONCE and rewritten in place forever after: its address is the identity every cached
-        // copy holds, so moving it means invalidating the resolve cache and re-uploading every instance.
-        const FMeshletHeaderGPU Header = MakeMeshletHeader(Resource);
-        if (MB.MeshletHeaderBuffer == 0)
+        // Acquired ONCE and rewritten in place forever after: the SLOT is the identity every cached copy
+        // holds, so a rebuild republishes into it rather than taking a new one. Publishing the header is
+        // also what makes the geometry above reachable -- until this lands the slot reads as no geometry.
+        if (MB.MeshletHeaderSlot == MeshletHeaderSlab::kNullSlot)
         {
-            MB.MeshletHeaderBuffer = CreateAndUpload(&Header, sizeof(FMeshletHeaderGPU), "Mesh.MeshletHeader");
+            MB.MeshletHeaderSlot = MeshletHeaderSlab::Acquire();
         }
-        else
-        {
-            RHI::UploadBuffer(MB.MeshletHeaderBuffer, &Header, sizeof(FMeshletHeaderGPU));
-        }
+        MeshletHeaderSlab::Write(MB.MeshletHeaderSlot, MakeMeshletHeader(Resource));
     }
 
     bool CMesh::HasDistanceField() const

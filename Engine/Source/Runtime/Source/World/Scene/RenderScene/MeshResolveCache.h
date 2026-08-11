@@ -77,7 +77,7 @@ namespace Lumina
         FVector3                    LocalCenter;
         float                       LocalRadius = 0.0f;
 
-        uint64                      MeshletHeaderAddress = 0;
+        uint32                      MeshletHeaderSlot = 0;
         
         const void*                 MeshKey = nullptr;
         FGuid                       MeshGuid;

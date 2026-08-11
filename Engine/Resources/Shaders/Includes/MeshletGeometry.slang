@@ -42,7 +42,7 @@ FMeshletRef ResolveMeshlet(uint MeshletSlot, bool bShadow)
 
     // A slot this frame never wrote resolves to a plausible instance from an earlier one. Unreachable
     // now, kept so that if that changes the result is missing geometry rather than wrong geometry.
-    if (!Draw.IsFromFrame(Scene().CullData.MeshletDrawTag) || Ref.Inst.MeshletHeader == nullptr)
+    if (!Draw.IsFromFrame(Scene().CullData.MeshletDrawTag))
     {
         Ref.SkinnedVertexBase = kNoPreSkinBase;
         Ref.GlobalMeshletIdx  = 0u;
@@ -56,7 +56,11 @@ FMeshletRef ResolveMeshlet(uint MeshletSlot, bool bShadow)
 
     // The tag says the slot was written this frame, not that the index inside it is in range. Unbounded,
     // these counts reach SetMeshOutputCounts and the output writes -- an out-of-bounds WRITE.
-    if (Draw.MeshletIndex >= Ref.Inst.MeshletTotalCount)
+    //
+    // Against the HEADER's count as well as the instance's: the arrays indexed below belong to the header
+    // and only it knows their length. An instance naming a mesh that has died gets the null header, whose
+    // count is 0, and takes this exit -- which is what replaced the null check above.
+    if (Draw.MeshletIndex >= min(Ref.Inst.MeshletTotalCount, Ref.Inst.MeshletHeader.MeshletCount))
     {
         Ref.SkinnedVertexBase = kNoPreSkinBase;
         Ref.GlobalMeshletIdx  = 0u;
@@ -204,7 +208,11 @@ static const uint TRI_CULL_SMALLPRIM = 2u;
 #define MESHLET_TRI_ITERS  ((MESHLET_MAX_TRIANGLES + MESHLET_MESH_GROUP_SIZE - 1) / MESHLET_MESH_GROUP_SIZE)
 
 // Out of the OWNING LANE'S REGISTERS. Correct only because the workgroup is exactly one subgroup --
-// WaveReadLaneAt cannot cross waves. Every lane must be active, so the triangle loops clamp.
+// WaveReadLaneAt cannot cross waves. Every lane must be active, so both loops in the mesh shaders run
+// their LOAD/TEST on a clamped index. Their EXPORT index is the unclamped ThreadID + iter*GroupSize
+// instead, guarded by a bounds test: an export index the compiler cannot prove equals the lane forces
+// the whole export through LDS. Clip[] is therefore written by every lane, clamped ones included -- it
+// is read by LANE, and for any V < VertexCount the owning lane holds the unclamped value.
 float4 ShuffleMeshletClip(float4 Clip[MESHLET_VERT_ITERS], uint V)
 {
     const uint Lane = V % MESHLET_MESH_GROUP_SIZE;

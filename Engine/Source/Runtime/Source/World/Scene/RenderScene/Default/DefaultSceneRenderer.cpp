@@ -11,6 +11,7 @@
 #include "Core/Windows/Window.h"
 #include "Memory/MemoryTracking.h"
 #include "Paths/Paths.h"
+#include "Renderer/MeshletHeaderSlab.h"
 #include "Renderer/RendererUtils.h"
 #include "Renderer/ShaderCompiler.h"
 #include "Renderer/ShaderLibrary.h"
@@ -1897,7 +1898,7 @@ namespace Lumina
             {
                 Component.CachedLocalCenter          = FVector3(0.0f);
                 Component.CachedLocalRadius          = 0.0f;
-                Component.CachedMeshletHeaderAddress = 0;
+                Component.CachedMeshletHeaderSlot = 0;
                 Component.CachedBaseFlags            = EInstanceFlags::None;
 
                 if (Mesh == nullptr)
@@ -1915,7 +1916,7 @@ namespace Lumina
             const FResolvedMesh& Entry = Cache.GetEntry(Handle);
             Component.CachedLocalCenter          = Entry.LocalCenter;
             Component.CachedLocalRadius          = Entry.LocalRadius;
-            Component.CachedMeshletHeaderAddress = Entry.MeshletHeaderAddress;
+            Component.CachedMeshletHeaderSlot = Entry.MeshletHeaderSlot;
 
             EInstanceFlags BaseFlags = SeedFlags;
             if (Component.bReceiveShadow)          { BaseFlags |= EInstanceFlags::ReceiveShadow; }
@@ -2178,7 +2179,7 @@ namespace Lumina
 
                 if (Handle == INVALID_MESH_RESOLVE_HANDLE)
                 {
-                    Type.CachedMeshletHeaderAddress = 0;
+                    Type.CachedMeshletHeaderSlot = 0;
                     Type.CachedBaseFlags            = EInstanceFlags::None;
 
                     // Same distinction as ResolveMeshComponent: only a null mesh is settled.
@@ -2195,7 +2196,7 @@ namespace Lumina
                 }
 
                 const FResolvedMesh& Entry = Cache.GetEntry(Handle);
-                Type.CachedMeshletHeaderAddress = Entry.MeshletHeaderAddress;
+                Type.CachedMeshletHeaderSlot = Entry.MeshletHeaderSlot;
                 Type.CachedBaseFlags = Type.bReceiveShadow ? EInstanceFlags::ReceiveShadow : EInstanceFlags::None;
 
                 if (Entry.bResolved)
@@ -3802,7 +3803,7 @@ namespace Lumina
                                       float RadiusSq)
     {
         const TVector<FResolvedSurface>& Surfaces = *Prim.Surfaces;
-        const uint64 MeshletHeaderAddress = Prim.MeshletHeaderAddress;
+        const uint32 MeshletHeaderSlot = Prim.MeshletHeaderSlot;
         const uint32 NumSurfaces = Math::Min((uint32)Surfaces.size(), Prim.SurfaceCount);
 
         for (uint32 s = 0; s < NumSurfaces; ++s)
@@ -3822,13 +3823,13 @@ namespace Lumina
                                                            DistSq, Settings.ShadowCoarseLODDistance * Settings.ShadowCoarseLODDistance);
 
             // Zero meshlet count gates the cull shader's MeshletHeader deref.
-            const uint32 SurfaceMeshletCount  = MeshletHeaderAddress ? Surface.LODMeshletCount[LODIndex]       : 0u;
+            const uint32 SurfaceMeshletCount  = MeshletHeaderSlot ? Surface.LODMeshletCount[LODIndex]       : 0u;
             const uint32 SurfaceMeshletOffset = Surface.LODMeshletOffset[LODIndex];
-            const uint32 ShadowMeshletCount   = MeshletHeaderAddress ? Surface.LODMeshletCount[ShadowLODIndex] : 0u;
+            const uint32 ShadowMeshletCount   = MeshletHeaderSlot ? Surface.LODMeshletCount[ShadowLODIndex] : 0u;
             const uint32 ShadowMeshletOffset  = Surface.LODMeshletOffset[ShadowLODIndex];
 
             const uint32 LastLOD = Surface.NumLODs > 0u ? Math::Min(Surface.NumLODs, (uint32)MAX_MESH_LODS) - 1u : 0u;
-            const uint32 MeshletTotalCount = MeshletHeaderAddress
+            const uint32 MeshletTotalCount = MeshletHeaderSlot
                                            ? Surface.LODMeshletOffset[LastLOD] + Surface.LODMeshletCount[LastLOD]
                                            : 0u;
 
@@ -3913,7 +3914,7 @@ namespace Lumina
             FEntityRecord& EntityRecord = Local.EntityRecords.emplace_back();
             EntityRecord.Transform            = Prim.Transform;
             EntityRecord.SphereBounds         = Sphere;
-            EntityRecord.MeshletHeaderAddress = Prim.MeshletHeaderAddress;
+            EntityRecord.MeshletHeaderSlot = Prim.MeshletHeaderSlot;
             EntityRecord.CustomData           = Prim.CustomData;
             EntityRecord.EntityID             = Prim.EntityID;
             EntityRecord.BoneArenaBase        = ~0u;
@@ -11494,6 +11495,10 @@ namespace Lumina
         Root->SplinePoints  = SplinePointBufferAddr;
         Root->SplineSamples = SplineSampleBufferAddr;
         Root->NumSplines    = NumActiveSplines;
+
+        // Re-read every frame rather than cached: the slab moves when it grows, and the scene root is the
+        // one place its address is allowed to live. Instances carry slots, so nothing else has to be told.
+        Root->MeshletHeaders = MeshletHeaderSlab::GetAddress();
 
         const FSceneImage& ProbeArray = NamedImages[(int)ENamedImage::ProbePrefiltered];
         if (!bCapturingProbe && NumActiveProbes > 0 && ProbeArray.IsValid())

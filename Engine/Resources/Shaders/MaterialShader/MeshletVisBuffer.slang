@@ -54,18 +54,22 @@ void MeshMain(
     const uint VertCount = Ref.M.VertexCount;
     const uint TriCount  = Ref.M.TriangleCount;
 
-    // Vertex phase. The output is NOT written yet: SetMeshOutputCounts must publish the compacted
-    // primitive count first, so the result is held in this lane's registers.
-    FVisVertexOutput VOut[MESHLET_VERT_ITERS];
-    float4           Clip[MESHLET_VERT_ITERS];
-    uint             VertSlot[MESHLET_VERT_ITERS];
+    // FIRST, ahead of the vertex fetch. This is what reserves output storage in the geometry engine, so
+    // issuing it here overlaps that allocation with the whole vertex phase instead of stalling behind it.
+    // Both counts come straight off the meshlet header -- nothing below can change them. (It used to sit
+    // after the vertex phase because primitives were COMPACTED and the count was not known until then;
+    // SV_CullPrimitive replaced compaction and that constraint went with it.)
+    SetMeshOutputCounts(VertCount, TriCount);
+
+    // The only thing the vertex phase carries in registers now: ShuffleMeshletClip reads it out of the
+    // OWNING LANE, so it is indexed by lane, not by vertex slot. The vertex output itself is exported
+    // as it is produced.
+    float4 Clip[MESHLET_VERT_ITERS];
 
     [ForceUnroll]
     for (uint v = 0; v < MESHLET_VERT_ITERS; ++v)
     {
-        VOut[v]     = (FVisVertexOutput)0;
-        Clip[v]     = float4(0.0, 0.0, 0.0, 0.0);
-        VertSlot[v] = 0u;
+        Clip[v] = float4(0.0, 0.0, 0.0, 0.0);
     }
 
     // Workgroup-UNIFORM, so this branch is free and no lane diverges on it. It stays because a meshlet
@@ -82,11 +86,17 @@ void MeshMain(
         [ForceUnroll]
         for (uint v = 0; v < MESHLET_VERT_ITERS; ++v)
         {
-            // Clamped rather than guarded: surplus lanes redundantly reprocess the last vertex. A per-lane bounds
-            // test saved nothing (the wave issues the body regardless) and the duplicate store is identical.
-            VertSlot[v] = min(ThreadID + v * MESHLET_MESH_GROUP_SIZE, VertCount - 1u);
+            // TWO indices on purpose. The EXPORT index must stay a static affine function of the lane
+            // (ThreadID + v*GroupSize) or the compiler cannot prove lane i owns vertex i and pushes every
+            // export through LDS -- a clamp against a runtime count is not provable. RDNA2 already pays
+            // that for v>0 (one export per thread, the rest carried by hidden threads), and RDNA3's
+            // wave-offset export needs the same i / i+N shape to kick in. The LOAD still clamps: surplus
+            // lanes redundantly reprocess the last vertex instead of sitting masked, and every lane must
+            // stay active for ShuffleMeshletClip below.
+            const uint StoreSlot = ThreadID + v * MESHLET_MESH_GROUP_SIZE;
+            const uint LoadSlot  = min(StoreSlot, VertCount - 1u);
 
-            FVertexData VertexData = LoadMeshletVertexData(Ref, VertSlot[v]);
+            FVertexData VertexData = LoadMeshletVertexData(Ref, LoadSlot);
             FMeshletWorldVertex W  = TransformMeshletVertex(VertexData, ModelMatrix, NormalMatrix);
 
             float4 WorldPos = float4(W.WorldPos, 1.0);
@@ -96,38 +106,38 @@ void MeshMain(
             WorldPos.xyz += Material.WorldPositionOffset;
 
 #ifdef VISBUFFER_MASKED_GEOM
-            VOut[v] = MakeBaseVertexOutput(Ref, W, WorldPos.xyz, CameraView, CameraProj);
-            Clip[v] = VOut[v].Position;   // the same two muls; taken from the output so they cannot drift
+            FVisVertexOutput VOut = MakeBaseVertexOutput(Ref, W, WorldPos.xyz, CameraView, CameraProj);
+            Clip[v] = VOut.Position;   // the same two muls; taken from the output so they cannot drift
 #else
-            Clip[v]          = CameraClipPosition(CameraViewPosition(WorldPos.xyz, CameraView), CameraProj);
-            VOut[v].Position = Clip[v];
+            FVisVertexOutput VOut = (FVisVertexOutput)0;
+            Clip[v]       = CameraClipPosition(CameraViewPosition(WorldPos.xyz, CameraView), CameraProj);
+            VOut.Position = Clip[v];
 #endif
+
+            // Dropping the clamped lanes' store is what keeps the index provable; they only ever
+            // duplicated the last vertex anyway. Clip[] is still written by EVERY lane -- the shuffle
+            // reads it by lane, and for any V < VertCount the owning lane holds the unclamped value.
+            if (StoreSlot < VertCount)
+            {
+                Verts[StoreSlot] = VOut;
+            }
         }
     }
 
     // Triangle phase. Every triangle is declared and the dead ones carry SV_CullPrimitive, so there is no
     // compaction pass, no shared bitmask and no second barrier.
-    SetMeshOutputCounts(VertCount, TriCount);
-
-    if (VertCount > 0u)
-    {
-        [ForceUnroll]
-        for (uint v = 0; v < MESHLET_VERT_ITERS; ++v)
-        {
-            Verts[VertSlot[v]] = VOut[v];
-        }
-    }
-
     // Workgroup-UNIFORM, so no lane diverges on it; TriCount - 1u below needs the non-zero case.
     if (TriCount > 0u)
     {
         [ForceUnroll]
         for (uint i = 0; i < MESHLET_TRI_ITERS; ++i)
         {
-            // Clamped for the same reason as the vertex phase: surplus lanes redundantly re-test the last
-            // triangle and write it identically, rather than sitting masked behind a bounds branch.
-            const uint  t   = min(ThreadID + i * MESHLET_MESH_GROUP_SIZE, TriCount - 1u);
-            const uint3 Idx = UnpackMeshletTriangleSafe(Ref, t);
+            // Same split as the vertex phase: the cull test runs on the CLAMPED index so every lane stays
+            // active for ShuffleMeshletClip's WaveReadLaneAt, while the export index stays affine. Where
+            // the store survives, StoreT < TriCount, so t == StoreT and Idx is that triangle.
+            const uint  StoreT = ThreadID + i * MESHLET_MESH_GROUP_SIZE;
+            const uint  t      = min(StoreT, TriCount - 1u);
+            const uint3 Idx    = UnpackMeshletTriangleSafe(Ref, t);
 
             const bool bCull = IsDegenerateTriangleIndices(Idx)
                              | IsMeshletTriangleCulled(ShuffleMeshletClip(Clip, Idx.x),
@@ -135,11 +145,14 @@ void MeshMain(
                                                        ShuffleMeshletClip(Clip, Idx.z),
                                                        float2(GetScreenSize()));
 
-            // The slot IS the source triangle index now, so VisID needs no separate mapping: the deferred
-            // pass re-fetches the triangle out of the meshlet's own array.
-            Tris[t]             = Idx;
-            Prims[t].VisID      = ((MeshletSlot << 7u) | (t & 0x7Fu)) + 1u;
-            Prims[t].CullPrimitive = bCull;
+            if (StoreT < TriCount)
+            {
+                // The slot IS the source triangle index now, so VisID needs no separate mapping: the
+                // deferred pass re-fetches the triangle out of the meshlet's own array.
+                Tris[StoreT]                = Idx;
+                Prims[StoreT].VisID         = ((MeshletSlot << 7u) | (StoreT & 0x7Fu)) + 1u;
+                Prims[StoreT].CullPrimitive = bCull;
+            }
         }
     }
 }

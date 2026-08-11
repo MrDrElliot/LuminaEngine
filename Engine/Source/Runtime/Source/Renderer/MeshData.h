@@ -152,9 +152,21 @@ namespace Lumina
         float  DistanceFieldSizeX, DistanceFieldSizeY, DistanceFieldSizeZ;
         float  DistanceFieldMaxDistance;
 
-        uint32 _Pad0;
+        // Entries in Meshlets/Spheres/Cones -- the AUTHORITATIVE bound for every array this header points
+        // at, because it ships in the same 80 bytes as the pointers themselves. Everything that indexes
+        // them bounds against this rather than against a meshlet count carried on the instance: the two
+        // come from different sources and a stale instance paired with a live header is exactly how an
+        // in-bounds-looking index walks off the end of a buffer.
+        uint32 MeshletCount;
     };
     static_assert(sizeof(FMeshletHeaderGPU) == 80, "FMeshletHeaderGPU must match FMeshletHeader in Common.slang");
+
+    namespace MeshletHeaderSlab
+    {
+        // Forward-declared rather than included: MeshletHeaderSlab.h needs FMeshletHeaderGPU from here.
+        RUNTIME_API void Release(uint32 Slot);
+        RUNTIME_API void Reset(uint32 Slot);
+    }
 
     struct FGeometrySurface final
     {
@@ -189,7 +201,8 @@ namespace Lumina
             RHI::GPUPtr MeshletConeBuffer     = 0;
             RHI::GPUPtr MeshletVertexBuffer   = 0;
             RHI::GPUPtr MeshletTriangleBuffer = 0;
-            RHI::GPUPtr MeshletHeaderBuffer   = 0;
+            uint32      MeshletHeaderSlot     = 0;
+            uint32      MeshletCount          = 0;
 
             RHI::FManagedTexture DistanceFieldTexture;
 
@@ -216,10 +229,14 @@ namespace Lumina
                 RHI::Textures::Release(DistanceFieldTexture);
             }
 
-            /** Retire the five geometry buffers, leaving the header ALLOCATION in place: its address is identity
-             *  that components and the uploaded instance buffer hold, and none is told synchronously of a rebuild. */
+            /** Retire the five geometry buffers, keeping the header SLOT: it is the mesh's identity for as
+             *  long as the mesh lives, and a rebuild republishes into the same slot. The slot is reset to
+             *  the null header first, so the window between retiring this geometry and publishing the
+             *  replacement describes no geometry rather than the buffers just retired. */
             void ReleaseGeometryBuffers()
             {
+                MeshletHeaderSlab::Reset(MeshletHeaderSlot);
+
                 RHI::Core::Retire(MeshletBuffer);
                 RHI::Core::Retire(MeshletSphereBuffer);
                 RHI::Core::Retire(MeshletConeBuffer);
@@ -231,14 +248,17 @@ namespace Lumina
                 MeshletConeBuffer     = 0;
                 MeshletVertexBuffer   = 0;
                 MeshletTriangleBuffer = 0;
+                MeshletCount          = 0;
             }
 
-            /** Full teardown, header included. Destruction only -- a REBUILD must never move the header. */
+            /** Full teardown, slot included -- destruction only. A REBUILD must keep the slot: it is the
+             *  identity cached all over the scene, exactly as the header ADDRESS used to be, and dropping
+             *  it would blank every instance of this mesh until each one had re-resolved. */
             void ReleaseAll()
             {
                 ReleaseGeometryBuffers();
-                RHI::Core::Retire(MeshletHeaderBuffer);
-                MeshletHeaderBuffer = 0;
+                MeshletHeaderSlab::Release(MeshletHeaderSlot);
+                MeshletHeaderSlot = 0;
             }
 
         private:
@@ -251,7 +271,8 @@ namespace Lumina
                 MeshletConeBuffer     = Other.MeshletConeBuffer;
                 MeshletVertexBuffer   = Other.MeshletVertexBuffer;
                 MeshletTriangleBuffer = Other.MeshletTriangleBuffer;
-                MeshletHeaderBuffer   = Other.MeshletHeaderBuffer;
+                MeshletHeaderSlot     = Other.MeshletHeaderSlot;
+                MeshletCount          = Other.MeshletCount;
                 DistanceFieldTexture  = Other.DistanceFieldTexture;
 
                 Other.MeshletBuffer         = 0;
@@ -259,7 +280,8 @@ namespace Lumina
                 Other.MeshletConeBuffer     = 0;
                 Other.MeshletVertexBuffer   = 0;
                 Other.MeshletTriangleBuffer = 0;
-                Other.MeshletHeaderBuffer   = 0;
+                Other.MeshletHeaderSlot     = 0;
+                Other.MeshletCount          = 0;
                 Other.DistanceFieldTexture  = RHI::FManagedTexture{};
             }
         };

@@ -544,6 +544,9 @@ namespace Lumina::RHI
         bool                            bMemoryPriority = false;
         bool                            bMeshShaderSupported = false;
         uint32                          MaxMeshWorkGroupCountX = 0;
+        // Non-zero when the mesh stage must be pinned to a fixed subgroup size at pipeline creation;
+        // see the ShuffleMeshletClip note where this is decided.
+        uint32                          MeshRequiredSubgroupSize = 0;
         bool                            bPipelineStats = false;
         TUniquePtr<FVulkanCrashTracker> CrashTracker;
         FGpuBreadcrumbs                 Breadcrumbs;
@@ -1471,11 +1474,15 @@ namespace Lumina::RHI
         // Mesh shader features queried separately so the struct is only chained when the extension is present.
         VkPhysicalDeviceMeshShaderFeaturesEXT SupportedMesh{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT };
         VkPhysicalDeviceMeshShaderPropertiesEXT MeshProps{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_PROPERTIES_EXT };
+        // Core since Vulkan 1.3 and the device is already required to be 1.4, so no extension check.
+        VkPhysicalDeviceSubgroupSizeControlProperties SubgroupProps
+            { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_PROPERTIES };
         if (bMeshShader)
         {
             VkPhysicalDeviceFeatures2 MeshQuery{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &SupportedMesh };
             vkGetPhysicalDeviceFeatures2(GDevice->PhysicsDevice, &MeshQuery);
 
+            MeshProps.pNext = &SubgroupProps;
             VkPhysicalDeviceProperties2 MeshPropQuery{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &MeshProps };
             vkGetPhysicalDeviceProperties2(GDevice->PhysicsDevice, &MeshPropQuery);
         }
@@ -1501,11 +1508,41 @@ namespace Lumina::RHI
                 }
             }
 
+            // ShuffleMeshletClip (MeshletGeometry.slang) passes clip positions between lanes with
+            // WaveReadLaneAt, which cannot cross a subgroup boundary. The whole kMeshWorkGroupSize-thread
+            // mesh workgroup must therefore land in ONE subgroup, or a lane reads a different wave's
+            // register and triangles are culled at random -- silently, with no validation error. AMD (min
+            // 32) and NVIDIA (32) satisfy this outright; Intel can compile a mesh shader at SIMD16, so
+            // there the size has to be pinned at pipeline creation.
+            if (SubgroupProps.minSubgroupSize < kMeshWorkGroupSize)
+            {
+                const bool bMeshStagePinnable =
+                    (SubgroupProps.requiredSubgroupSizeStages & VK_SHADER_STAGE_MESH_BIT_EXT) != 0;
+
+                if (Supported13.subgroupSizeControl && bMeshStagePinnable
+                    && SubgroupProps.maxSubgroupSize >= kMeshWorkGroupSize)
+                {
+                    GDevice->MeshRequiredSubgroupSize = kMeshWorkGroupSize;
+                }
+                else
+                {
+                    LOG_ERROR("Mesh shaders disabled: the device may run a mesh subgroup as narrow as {}, "
+                              "and cannot be pinned to {} (subgroupSizeControl: {}, mesh stage pinnable: {}, "
+                              "maxSubgroupSize: {}).",
+                              SubgroupProps.minSubgroupSize, kMeshWorkGroupSize,
+                              Supported13.subgroupSizeControl ? "yes" : "no",
+                              bMeshStagePinnable ? "yes" : "no", SubgroupProps.maxSubgroupSize);
+                    bMeshLimitsOK = false;
+                }
+            }
+
             LOG_DISPLAY("Mesh shader limits: workgroup {} (max invocations {}), out verts {}, out prims {}, "
-                        "out components {}, out memory {} B.",
+                        "out components {}, out memory {} B. Subgroup {}-{}, mesh workgroup is {} threads{}.",
                         MeshProps.maxMeshWorkGroupSize[0], MeshProps.maxMeshWorkGroupInvocations,
                         MeshProps.maxMeshOutputVertices, MeshProps.maxMeshOutputPrimitives,
-                        MeshProps.maxMeshOutputComponents, MeshProps.maxMeshOutputMemorySize);
+                        MeshProps.maxMeshOutputComponents, MeshProps.maxMeshOutputMemorySize,
+                        SubgroupProps.minSubgroupSize, SubgroupProps.maxSubgroupSize, kMeshWorkGroupSize,
+                        GDevice->MeshRequiredSubgroupSize != 0 ? " (subgroup size pinned)" : "");
         }
 
         if (!bMeshShader || !SupportedMesh.meshShader || !bMeshLimitsOK)
@@ -1585,6 +1622,9 @@ namespace Lumina::RHI
         VkPhysicalDeviceVulkan13Features Features13{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
         Features13.dynamicRendering = VK_TRUE;
         Features13.synchronization2 = VK_TRUE;
+        // Enabled only where the mesh workgroup would otherwise be free to straddle two subgroups; the
+        // decision and the reason are above, alongside the mesh limits.
+        Features13.subgroupSizeControl = GDevice->MeshRequiredSubgroupSize != 0;
 
         VkPhysicalDeviceVulkan14Features Features14{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES };
         Features14.smoothLines = Supported14.smoothLines;
@@ -3136,10 +3176,20 @@ namespace Lumina::RHI
                 .pSpecializationInfo = &SpecializationInfo,
             };
         }
+        // Only chained where the device could otherwise pick a subgroup narrower than the mesh workgroup,
+        // which would split it across two waves and break ShuffleMeshletClip's WaveReadLaneAt. Device init
+        // leaves MeshRequiredSubgroupSize at 0 on hardware that cannot do this (AMD, NVIDIA).
+        const VkPipelineShaderStageRequiredSubgroupSizeCreateInfo MeshSubgroupSize
+        {
+            .sType                = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO,
+            .pNext                = nullptr,
+            .requiredSubgroupSize = GDevice->MeshRequiredSubgroupSize,
+        };
+
         Stages[StageCount++] = VkPipelineShaderStageCreateInfo
         {
             .sType               = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-            .pNext               = nullptr,
+            .pNext               = GDevice->MeshRequiredSubgroupSize != 0 ? &MeshSubgroupSize : nullptr,
             .flags               = 0,
             .stage               = VK_SHADER_STAGE_MESH_BIT_EXT,
             .module              = MeshModule,

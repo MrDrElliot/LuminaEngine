@@ -56,18 +56,22 @@ FCullInstancesArgs* Pass() { return GetPassArgs<FCullInstancesArgs>(); }
 // the draw path then blends that block's bones inline instead.
 // The claim and Skinning.slang's per-workgroup skip must reject the SAME blocks. A block that is claimed
 // but not written leaves the draw path reading pre-skin memory nobody filled -- the reverse of an overflow,
-// and silent. Header.Vertices is genuinely reachable as null: ReleaseGeometryBuffers retires the geometry
-// and deliberately keeps the header allocation alive.
+// and silent.
 uint ClaimPreSkinSlice(FMeshletHeader* Header, uint MeshletOffset, uint MeshletCount, uint MeshletTotal)
 {
-    if (MeshletCount == 0u || Header.Meshlets == nullptr || Header.Vertices == nullptr)
+    if (MeshletCount == 0u)
     {
         return kNoPreSkinBase;
     }
 
     // Whole-block reject rather than a per-meshlet clamp: the skinning pass drops individual meshlets past
     // the total, and a partially written slice is worse than one that falls back to inline skinning.
-    if (MeshletOffset + MeshletCount > MeshletTotal)
+    //
+    // Bounded by the HEADER's own count as well as the instance's: MeshletTotal comes from the surface's
+    // LOD table and the arrays being indexed come from the header, and only the header knows how long
+    // they are. A mesh whose header describes no geometry has MeshletCount 0 and rejects here, which is
+    // what replaced the null checks these two pointers used to need.
+    if (MeshletOffset + MeshletCount > min(MeshletTotal, Header.MeshletCount))
     {
         return kNoPreSkinBase;
     }
@@ -322,7 +326,9 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     uint SurfaceSkinBase = kNoPreSkinBase;
     uint ShadowSkinBase  = kNoPreSkinBase;
 
-    if (bSkinned && Static.MeshletHeader != nullptr)
+    // A header always exists -- slot 0 is the null header -- so this asks whether it describes geometry,
+    // which is the question that was actually being asked before slots replaced addresses.
+    if (bSkinned && Static.MeshletHeader.MeshletCount != 0u)
     {
         SurfaceSkinBase = ClaimPreSkinSlice(Static.MeshletHeader, SurfaceMeshletOffset, SurfaceMeshletCount, MeshletTotal);
 
@@ -344,7 +350,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     FGPUInstance* Inst           = Pass().OutInstances + OutSlot;
     Inst.Transform               = Pass().RetainedTransforms[SlotIdx];   // straight copy, no expansion
     Inst.SphereBounds            = Cull.SphereBounds;
-    Inst.MeshletHeader           = Static.MeshletHeader;
+    Inst.MeshletHeaderSlot       = Static.MeshletHeaderSlot;
     Inst.DrawID                  = DrawID;
     Inst.Flags                   = Cull.Flags;
     Inst.CustomData              = Static.CustomData;

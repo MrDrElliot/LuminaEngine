@@ -88,7 +88,10 @@ FVisTriangle ResolveVisTriangle(uint VisRaw, uint DrawListCount)
     FMeshletRef Ref;
     Ref.InstanceID        = (Draw.InstanceID < InstCount) ? Draw.InstanceID : 0u;
     Ref.SkinnedVertexBase = Ref.Inst.SkinnedVertexBase;   // camera-side only; shadows never reach here
-    const uint MeshletCount = max(Ref.Inst.MeshletTotalCount, 1u);
+    // The header's own count bounds the array being indexed; the instance's bounds the LOD range. Taking
+    // both means a stale instance -- one naming a mesh that has died, and so resolving to the null header
+    // -- clamps to slot 0 of a header that describes no geometry instead of walking a live mesh's array.
+    const uint MeshletCount = max(min(Ref.Inst.MeshletTotalCount, Ref.Inst.MeshletHeader.MeshletCount), 1u);
     Ref.GlobalMeshletIdx  = min(Draw.MeshletIndex, MeshletCount - 1u);
     Ref.M                 = Ref.Inst.MeshletHeader.Meshlets[Ref.GlobalMeshletIdx];
 

@@ -21,6 +21,10 @@ struct FSceneRoot
     FGPUSpline*          SplinesPtr;        // one header per uploaded spline (bSendToGPU)
     FGPUSplinePoint*     SplinePointsPtr;   // shared control-point array; headers carry the slice
     FGPUSplineSample*    SplineSamplesPtr;  // shared arc-length tables
+    // Process-wide meshlet header slab. Instances carry a SLOT into this, never an address, so this is
+    // the only meshlet-header address that exists anywhere -- and it is republished every frame, which
+    // is what lets the slab grow without invalidating a single cached copy. See MeshletHeaderSlab.h.
+    FMeshletHeader*      MeshletHeadersPtr;
     uint  BRDFLutIndex;          // bindless 2D SRV
     uint  SkyIrradianceIndex;    // bindless cube SRV
     // [31:24] = prefilter cube mip count (see SamplePrefilter), [23:0] = bindless cube SRV index.
@@ -33,7 +37,7 @@ struct FSceneRoot
     uint  ProbeCubeArrayIndex;
     uint  NumReflectionProbes;
     uint  NumSplines;
-    uint  _SplinePad;
+    uint  _SplinePad[3];
 };
 
 // gRHI.Args (GlobalRHI's single 8-byte push-constant pointer) points to this transient block.
@@ -62,6 +66,24 @@ FCluster*           Clusters()              { return GetSceneRoot().Clusters; }
 FMaterialUniforms*  Materials()             { return GetSceneRoot().Materials; }
 FBillboardInstance* Billboards()            { return GetSceneRoot().Billboards; }
 FCullView*          CullViews()             { return GetSceneRoot().CullViews; }
+FMeshletHeader*     MeshletHeaders()        { return GetSceneRoot().MeshletHeadersPtr; }
+
+// Both instance structs carry a header SLOT, but every consumer wants the header. Extensions rather than
+// members on the structs themselves: FGPUInstance and FInstanceStatic live in Common.slang, which is
+// included BEFORE the scene root exists and so cannot reach it.
+//
+// Slot 0 is the null header -- no geometry pointers, MeshletCount 0 -- so this always returns something
+// readable, including for an instance the CPU never filled and one still naming a mesh that has died.
+// That is the whole reason no caller null-checks what comes back.
+extension FGPUInstance
+{
+    property FMeshletHeader* MeshletHeader { get { return MeshletHeaders() + MeshletHeaderSlot; } }
+}
+
+extension FInstanceStatic
+{
+    property FMeshletHeader* MeshletHeader { get { return MeshletHeaders() + MeshletHeaderSlot; } }
+}
 FMeshletDraw*       MeshletDrawList()       { return GetSceneRoot().MeshletDrawListPtr; }
 FPreSkinnedVertex*  PreSkinnedVertices()    { return GetSceneRoot().PreSkinnedVerticesPtr; }
 FWidgetInstance*    Widgets()               { return GetSceneRoot().WidgetsPtr; }
