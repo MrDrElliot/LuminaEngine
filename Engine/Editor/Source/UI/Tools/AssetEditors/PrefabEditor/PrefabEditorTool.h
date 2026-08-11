@@ -14,7 +14,7 @@ namespace Lumina
     class CStaticMesh;
     class CStruct;
 
-    class FPrefabEditorTool : public FSceneEditorTool
+    class EDITOR_API FPrefabEditorTool : public FSceneEditorTool
     {
         using Super = FSceneEditorTool;
 
