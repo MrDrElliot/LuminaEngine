@@ -120,18 +120,29 @@ namespace Lumina::RHI
 
     void FMaterialManager::RemoveMaterial(CMaterialInterface* Material)
     {
-        FWriteScopeLock Lock(Mutex);
-
         DEBUG_ASSERT(Material != nullptr);
         DEBUG_ASSERT(Material->GetMaterialIndex() != -1);
 
         const int32 MaterialIndex = Material->GetMaterialIndex();
 
-        WriteSlotLocked(nullptr, (uint32)MaterialIndex);
-
+        // Cleared BEFORE the slot goes back on the free list: once it is free another material can claim
+        // it, and an owner still naming it would then write through someone else's slot.
         Material->SetMaterialIndex(-1);
 
-        FreeList.push_back((uint32)MaterialIndex);
+        RemoveMaterialSlot((uint32)MaterialIndex);
+    }
+
+    void FMaterialManager::RemoveMaterialSlot(uint32 Index)
+    {
+        FWriteScopeLock Lock(Mutex);
+
+        // Zeroing here is what makes an unreleased reference render the magenta placeholder (every
+        // Textures[i] becomes 0, which is the 1x1 fallback's heap slot). That is intended as the terminal
+        // state -- it is only safe because this runs after FRenderReleaseQueue's extract gate, i.e. once
+        // no recorded or recordable frame still names the slot.
+        WriteSlotLocked(nullptr, Index);
+
+        FreeList.push_back(Index);
         --NumMaterials;
     }
 

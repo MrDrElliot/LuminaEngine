@@ -671,13 +671,18 @@ namespace Lumina
             Material->UnregisterInstance(this);
         }
 
+        // Deferred for the same reason as CMaterial::OnDestroy -- see the note there.
         // TryRender on a teardown path: an instance outliving the renderer must release quietly, not assert.
         if (GetMaterialIndex() != -1)
         {
             if (FRenderManager* RenderManager = TryRender())
             {
-                RenderManager->GetMaterialManager().RemoveMaterial(this);
+                RHI::FRenderRelease Release;
+                Release.MaterialSlot = GetMaterialIndex();
+                RenderManager->GetReleaseQueue().Post(Release);
             }
+
+            SetMaterialIndex(-1);
         }
     }
 }

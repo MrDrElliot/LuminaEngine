@@ -109,9 +109,28 @@ namespace Lumina
 
     void CTexture::OnDestroy()
     {
-        if (TextureResource)
+        if (TextureResource == nullptr || !TextureResource->NewTexture.IsValid())
         {
-            RHI::Textures::Release(TextureResource->NewTexture);
+            return;
         }
+
+        // POSTED, not released. Release unbinds the bindless slot immediately -- correct, and load-bearing
+        // for the use-after-free it was added to close -- but a material that named this slot is still
+        // being drawn by the retained scene for another frame or two, and an unbound slot resolves to the
+        // magenta fallback. The queue holds image and slot together until no recordable frame names them,
+        // by which point the material slot it belonged to has been released the same way.
+        if (FRenderManager* RenderManager = TryRender())
+        {
+            RHI::FRenderRelease Release;
+            Release.Texture = TextureResource->NewTexture;
+            RenderManager->GetReleaseQueue().Post(Release);
+
+            // Handed over: this object must not release it a second time.
+            TextureResource->NewTexture = RHI::FManagedTexture{};
+            return;
+        }
+
+        // No renderer to defer through (shutdown, or a headless context that still built textures).
+        RHI::Textures::Release(TextureResource->NewTexture);
     }
 }

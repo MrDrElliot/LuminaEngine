@@ -521,10 +521,7 @@ namespace Lumina
     void CMaterial::OnDestroy()
     {
         CMaterialInterface::OnDestroy();
-
-        // Drops this material's strong reference to each stage. Entries shared with another material
-        // survive; ones only this material held are queued for release, and every weak handle still
-        // pointing at them starts resolving to null so its holder re-resolves.
+        
         for (const FMaterialStageDesc& Desc : GMaterialStages)
         {
             FShaderLibrary::Release(this->*Desc.Entry);
@@ -534,13 +531,16 @@ namespace Lumina
         // Resolves are keyed partly on this pointer; drop them before it can be recycled.
         FMeshResolveCache::InvalidateDependency(this);
 
-        // TryRender on a teardown path: a material outliving the renderer must release quietly, not assert.
         if (GetMaterialIndex() != -1)
         {
             if (FRenderManager* RenderManager = TryRender())
             {
-                RenderManager->GetMaterialManager().RemoveMaterial(this);
+                RHI::FRenderRelease Release;
+                Release.MaterialSlot = GetMaterialIndex();
+                RenderManager->GetReleaseQueue().Post(Release);
             }
+            
+            SetMaterialIndex(-1);
         }
     }
 

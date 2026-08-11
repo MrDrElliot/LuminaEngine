@@ -26,6 +26,13 @@ namespace Lumina::RHI
         RUNTIME_API void AddMaterial(CMaterialInterface* Material);
         RUNTIME_API void RemoveMaterial(CMaterialInterface* Material);
 
+        /** Zeroes and frees a slot by index, with no reference to the material that held it.
+            This is the form the deferred release path uses: by the time it runs the owner is gone, and
+            the renderer must not need it back. RemoveMaterial is now a thin wrapper that additionally
+            clears the owner's cached index -- do NOT call this one while the owner is still alive, or it
+            will keep handing out a slot that has been returned to the free list. */
+        RUNTIME_API void RemoveMaterialSlot(uint32 Index);
+
         RUNTIME_API void UpdateMaterialUniforms(const FMaterialUniforms* InUniforms, uint32 Index);
 
         /** Writes ByteSize bytes at ByteOffset inside slot Index and uploads only that sub-range.

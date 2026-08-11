@@ -188,10 +188,6 @@ namespace Lumina
         EPrimitiveSource                    Source = EPrimitiveSource::StaticMesh;
         bool                                bCastShadow = true;
 
-        // Stable slice in the bone arena, held for as long as this primitive is bound to a skeleton.
-        // STABLE is the whole point: a per-frame packed offset cannot live in FInstanceStatic, which is
-        // uploaded only on a re-bind -- that is what forced skinned instances out of the GPU cull.
-        // kNoBoneRange for anything that is not a skeletal mesh.
         uint32                              BoneArenaBase = kNoBoneRange;
         uint32                              BoneArenaCount = 0;
     };

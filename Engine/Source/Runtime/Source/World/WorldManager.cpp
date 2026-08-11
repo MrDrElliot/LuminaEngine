@@ -6,6 +6,7 @@
 #include "Core/Engine/GameInstance.h"
 #include "Core/Profiler/Profile.h"
 #include "Renderer/ImmediateLineRenderer.h"
+#include "Renderer/RenderManager.h"
 #include "TaskSystem/TaskSystem.h"
 
 
@@ -132,6 +133,14 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
+        // Opens a new extract generation. Anything posted for deferred release from here on is stamped
+        // with it and cannot be freed until a LATER extract has been rendered -- which is what keeps a
+        // material slot and its textures alive for the frames the retained scene is still drawing them.
+        if (FRenderManager* RenderManager = TryRender())
+        {
+            RenderManager->GetReleaseQueue().BeginExtract();
+        }
+
         for (const TUniquePtr<FWorldContext>& Context : Contexts)
         {
             CWorld* World = Context->World.Get();
@@ -202,6 +211,14 @@ namespace Lumina
             {
                 RecordContext(i);
             }
+        }
+
+        // Every world has now recorded this generation's extract, so anything posted BEFORE this
+        // generation opened is provably unnamed by any recorded frame and by anything recordable next.
+        // Must stay after the record loop, including the parallel branch.
+        if (FRenderManager* RenderManager = TryRender())
+        {
+            RenderManager->GetReleaseQueue().EndRender();
         }
     }
 

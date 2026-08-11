@@ -69,6 +69,10 @@ namespace Lumina
         ImGuiRenderer = nullptr;
         #endif
 
+        // Before the material manager goes: there is no next frame to clear the extract gate, so anything
+        // still held would leak. Its slot writes need the manager still alive.
+        ReleaseQueue.FlushAll();
+
         MaterialManager = nullptr;
 
         if (SharedRenderResources.bInitialized)

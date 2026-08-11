@@ -1,5 +1,6 @@
 #pragma once
 #include "MaterialManager.h"
+#include "RenderRelease.h"
 #include "RHI.h"
 #include "RHITexture.h"
 #include "RenderResource.h"
@@ -63,6 +64,10 @@ namespace Lumina
 
         NODISCARD RHI::FMaterialManager& GetMaterialManager() const { return *MaterialManager.get(); }
 
+        /** Deferred release of renderer-side state whose owner has gone away. See RenderRelease.h for
+            why this exists and what it gates on. */
+        NODISCARD RHI::FRenderReleaseQueue& GetReleaseQueue() { return ReleaseQueue; }
+
         // Lazily populated by the first render scene; aliased by all later scenes.
         NODISCARD FSharedRenderResources& GetSharedRenderResources() { return SharedRenderResources; }
 
@@ -77,6 +82,8 @@ namespace Lumina
         #endif
 
         TUniquePtr<RHI::FMaterialManager>   MaterialManager;
+
+        RHI::FRenderReleaseQueue            ReleaseQueue;
 
         // Backing storage for GShaderLibrary / GShaderCompiler.
         FShaderLibrary*                     ShaderLibrary = nullptr;
