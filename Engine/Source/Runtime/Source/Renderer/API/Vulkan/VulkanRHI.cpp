@@ -1507,13 +1507,7 @@ namespace Lumina::RHI
                     bMeshLimitsOK = false;
                 }
             }
-
-            // ShuffleMeshletClip (MeshletGeometry.slang) passes clip positions between lanes with
-            // WaveReadLaneAt, which cannot cross a subgroup boundary. The whole kMeshWorkGroupSize-thread
-            // mesh workgroup must therefore land in ONE subgroup, or a lane reads a different wave's
-            // register and triangles are culled at random -- silently, with no validation error. AMD (min
-            // 32) and NVIDIA (32) satisfy this outright; Intel can compile a mesh shader at SIMD16, so
-            // there the size has to be pinned at pipeline creation.
+            
             if (SubgroupProps.minSubgroupSize < kMeshWorkGroupSize)
             {
                 const bool bMeshStagePinnable =
@@ -1536,11 +1530,16 @@ namespace Lumina::RHI
                 }
             }
 
+            // maxMeshWorkGroupCount[0] is printed RAW, before the clamp below: a device reporting
+            // 4294967295 there is the signature of the overflow that made an entire machine render
+            // nothing, so it is worth being able to read it straight out of a user's log.
             LOG_DISPLAY("Mesh shader limits: workgroup {} (max invocations {}), out verts {}, out prims {}, "
-                        "out components {}, out memory {} B. Subgroup {}-{}, mesh workgroup is {} threads{}.",
+                        "out components {}, out memory {} B, max workgroup count {}. "
+                        "Subgroup {}-{}, mesh workgroup is {} threads{}.",
                         MeshProps.maxMeshWorkGroupSize[0], MeshProps.maxMeshWorkGroupInvocations,
                         MeshProps.maxMeshOutputVertices, MeshProps.maxMeshOutputPrimitives,
                         MeshProps.maxMeshOutputComponents, MeshProps.maxMeshOutputMemorySize,
+                        MeshProps.maxMeshWorkGroupCount[0],
                         SubgroupProps.minSubgroupSize, SubgroupProps.maxSubgroupSize, kMeshWorkGroupSize,
                         GDevice->MeshRequiredSubgroupSize != 0 ? " (subgroup size pinned)" : "");
         }
@@ -1558,10 +1557,12 @@ namespace Lumina::RHI
         }
 
         GDevice->bMeshShaderSupported = true;
-
-        // Bounds one meshlet draw: the cull writes one mesh workgroup per survivor, so a slice larger
-        // than this splits across sub-draws instead of being truncated.
-        GDevice->MaxMeshWorkGroupCountX = MeshProps.maxMeshWorkGroupCount[0];
+        
+        // A driver reporting UINT32_MAX here means "no limit", but every ceil-divide and sub-draw stride derived from it then overflows -- and the one in
+        constexpr uint32 kMaxMeshGroupsPerDraw = 1u << 24;
+        GDevice->MaxMeshWorkGroupCountX = (MeshProps.maxMeshWorkGroupCount[0] < kMaxMeshGroupsPerDraw)
+                                        ? MeshProps.maxMeshWorkGroupCount[0]
+                                        : kMaxMeshGroupsPerDraw;
 
         // No task (amplification) stage anywhere: meshlet culling is a compute pass writing the draw
         // list the mesh stage reads. Requiring the taskShader feature would reject a capable device

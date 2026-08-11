@@ -3492,17 +3492,12 @@ namespace Lumina
             (SIZE_T)PredictedDrawList * sizeof(uint32) * 2);
 
         const SIZE_T NumArgSlots = (SIZE_T)NumCullViews * (SIZE_T)NumDraws;
-
-        // One MESH workgroup per surviving meshlet now, so the split is bounded by the draw list rather
-        // than the block list. Derived from last frame's capacity; an under-split frame drops work,
-        // never faults.
+        
         {
             const uint32 MaxGroups = Math::Max(RHI::GetMaxMeshWorkGroupCount(), 1u);
-            MeshSubDrawsPerSlice   = Math::Clamp((DrawListCapacity + MaxGroups - 1u) / MaxGroups, 1u, 8u);
-
-            // The number that decides whether the sub-draw split is live at all: 1 means every slice fits a
-            // single indirect draw and the whole split path is inert. Logged on change so an emulated limit
-            // (r.MeshShader.MaxWorkGroupCount) can be confirmed to have actually taken effect.
+            const uint32 WantedSubDraws = (DrawListCapacity == 0u) ? 1u : (((DrawListCapacity - 1u) / MaxGroups) + 1u);
+            MeshSubDrawsPerSlice   = Math::Clamp(WantedSubDraws, 1u, 8u);
+            
             static uint32 LastLoggedSubDraws = 0u;
             if (MeshSubDrawsPerSlice != LastLoggedSubDraws)
             {
@@ -3530,9 +3525,7 @@ namespace Lumina
             ResizeBufferIfNeeded(CL, MeshletDrawListRing[Slot], MeshletDrawListSize, 1.2f, MeshletDrawListRingLowUsage[Slot],
                                  true, EBufferInit::Zeroed, "Cull.MeshletDrawList");
             DrawListCapacity = (uint32)Math::Min<uint64>(MeshletDrawListRing[Slot].GetSize() / (sizeof(uint32) * 2), 0xFFFFFFFFull);
-
-            // No skinned head to add on any more: skeletal primitives hold retained slots like everything
-            // else, so SlotCount already counts them and is a true bound on what the cull can emit.
+            
             const uint32 PredictedVisible = LastVisibleInstances + LastVisibleInstances / 2u;
             uint32 VisibleCapacityWanted = Math::Max(PredictedVisible, 4096u);
 
@@ -11625,7 +11618,7 @@ namespace Lumina
         Push.BucketsAddr          = GetRenderBuckets().GetAddress();
         Push.ArgBase              = ArgIndex;
         Push.Slice                = Slice;
-        Push.MaxMeshGroups        = RHI::GetMaxMeshWorkGroupCount();
+        Push.MaxMeshGroups        = Math::Max(RHI::GetMaxMeshWorkGroupCount(), 1u);
         Push.CullViewIndex        = Ctx.CullViewIndex;
         Push.ShadowDataIndex      = Ctx.ShadowDataIndex;
         Push.ViewIndex            = Ctx.ShadowViewIndex;

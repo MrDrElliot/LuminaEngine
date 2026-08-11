@@ -114,7 +114,13 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
 
             // Zero meshlets means zero sub-draws, so an empty slice costs the command processor nothing
             // rather than launching an empty grid.
-            Bucket.SubDrawCount[s] = (Count + Pass().MaxMeshGroups - 1u) / Pass().MaxMeshGroups;
+            //
+            // Spelled to survive MaxMeshGroups near UINT32_MAX. The obvious (Count + Max - 1) / Max WRAPS
+            // there -- with Max == 0xFFFFFFFF the numerator is Count - 2 (mod 2^32), so the quotient is 0
+            // for EVERY non-empty slice and the indirect draw draws nothing at all, silently and with no
+            // validation error. GroupCountX below uses min() and stayed correct, which is what made the
+            // capture read as "args are fine, count is zero". Devices really do report that value.
+            Bucket.SubDrawCount[s] = (Count == 0u) ? 0u : (((Count - 1u) / Pass().MaxMeshGroups) + 1u);
 
             for (uint sd = 0u; sd < Pass().SubDrawsPerSlice; ++sd)
             {
