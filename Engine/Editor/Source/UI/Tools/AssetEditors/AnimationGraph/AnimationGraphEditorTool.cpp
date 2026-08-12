@@ -1312,7 +1312,7 @@ namespace Lumina
         {
             for (const FClipEntry& Entry : ClipEntries)
             {
-                if (!ClipFilter.PassFilter(Entry.DisplayName.c_str()) && !ClipFilter.PassFilter(Entry.Path.c_str()))
+                if (!ImGuiX::PassSearchFilter(ClipFilter, Entry.DisplayName.c_str()) && !ImGuiX::PassSearchFilter(ClipFilter, Entry.Path.c_str()))
                 {
                     continue;
                 }

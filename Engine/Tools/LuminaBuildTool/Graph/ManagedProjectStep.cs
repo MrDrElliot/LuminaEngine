@@ -58,9 +58,7 @@ public static class ManagedProjectStep
                 },
             };
 
-            Action.PrerequisiteItems.Add(FileItem.Get(Project.ProjectFile));
-
-            foreach (FileItem Source in EnumerateProjectSources(Path.GetDirectoryName(Project.ProjectFile)!))
+            foreach (FileItem Source in EnumerateProjectAndReferences(Project.ProjectFile))
             {
                 Action.PrerequisiteItems.Add(Source);
             }
@@ -79,6 +77,91 @@ public static class ManagedProjectStep
             Action.ProducedItems.Add(FileItem.Get(Project.OutputAssembly));
 
             yield return Action;
+        }
+    }
+
+    /// <summary>
+    /// A project's own file and sources, plus those of every project it references, transitively.
+    ///
+    /// The references matter as much as the project's own sources: LuminaSharp.csproj references
+    /// LuminaSharp.Generators.csproj as an Analyzer, so editing ONLY the generator changes what
+    /// LuminaSharp compiles to. Without this the action stayed "up to date", MSBuild was never invoked,
+    /// and the stale generator kept being deployed -- a source edit that silently does nothing, which is
+    /// the worst failure a build system has.
+    /// </summary>
+    private static IEnumerable<FileItem> EnumerateProjectAndReferences(string ProjectFile)
+    {
+        HashSet<string> Visited = new(StringComparer.OrdinalIgnoreCase);
+        Queue<string> Pending = new();
+        Pending.Enqueue(Path.GetFullPath(ProjectFile));
+
+        while (Pending.Count > 0)
+        {
+            string Current = Pending.Dequeue();
+            if (!Visited.Add(Current) || !File.Exists(Current))
+            {
+                continue;
+            }
+
+            yield return FileItem.Get(Current);
+
+            string Directory = Path.GetDirectoryName(Current)!;
+            foreach (FileItem Source in EnumerateProjectSources(Directory))
+            {
+                yield return Source;
+            }
+
+            foreach (string Reference in EnumerateProjectReferences(Current, Directory))
+            {
+                Pending.Enqueue(Reference);
+            }
+        }
+    }
+
+    /// <summary>
+    /// The ProjectReference paths a .csproj declares, resolved against it. Read with a plain text scan
+    /// rather than an XML/MSBuild evaluation: the paths are literal in these project files, and the input
+    /// set only has to be a superset of what actually matters -- an extra prerequisite costs a rebuild,
+    /// a missing one costs a wrong build.
+    /// </summary>
+    private static IEnumerable<string> EnumerateProjectReferences(string ProjectFile, string ProjectDirectory)
+    {
+        string Text;
+        try
+        {
+            Text = File.ReadAllText(ProjectFile);
+        }
+        catch (IOException)
+        {
+            yield break;
+        }
+
+        const string Marker = "<ProjectReference";
+        int Cursor = 0;
+        while ((Cursor = Text.IndexOf(Marker, Cursor, StringComparison.OrdinalIgnoreCase)) >= 0)
+        {
+            Cursor += Marker.Length;
+
+            int Include = Text.IndexOf("Include=\"", Cursor, StringComparison.OrdinalIgnoreCase);
+            int ElementEnd = Text.IndexOf('>', Cursor);
+            if (Include < 0 || (ElementEnd >= 0 && Include > ElementEnd))
+            {
+                continue;
+            }
+
+            Include += "Include=\"".Length;
+            int Close = Text.IndexOf('"', Include);
+            if (Close < 0)
+            {
+                yield break;
+            }
+
+            string Relative = Text.Substring(Include, Close - Include);
+            if (!string.IsNullOrWhiteSpace(Relative))
+            {
+                yield return Path.GetFullPath(Path.Combine(ProjectDirectory, Relative));
+            }
+            Cursor = Close;
         }
     }
 

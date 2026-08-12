@@ -56,7 +56,7 @@
 #include "World/Entity/Components/PhysicsComponent.h"
 #include "World/Entity/Components/RelationshipComponent.h"
 #include "World/Entity/Components/SocketAttachmentComponent.h"
-#include "World/Entity/Components/CSharpScriptComponent.h"
+#include "Scripting/EntityScript.h"
 #include "world/entity/components/skeletalmeshcomponent.h"
 #include "World/Entity/Components/StaticMeshComponent.h"
 #include "World/Entity/Components/TagComponent.h"
@@ -683,7 +683,7 @@ namespace Lumina
             
             const FTreeNodeDisplay& Display = Tree.Get<FTreeNodeDisplay>(Item);
             
-            bool bPasses = EntityFilterState.FilterName.PassFilter(Display.DisplayName.c_str());
+            bool bPasses = ImGuiX::PassSearchFilter(EntityFilterState.FilterName, Display.DisplayName.c_str());
 
             for (const FName& ComponentFilter : EntityFilterState.ComponentFilters)
             {
@@ -2755,7 +2755,7 @@ namespace Lumina
             return;
         }
 
-        const bool bHasScript = Registry.all_of<SScriptComponent>(Entity);
+        const bool bHasScript = Registry.all_of<SEntityScriptComponent>(Entity);
 
         // Inline searchable dropdown of every loaded C# EntityScript class. Always offered -- it assigns
         // a script, or swaps the one already on the entity for a quick change.
@@ -2797,13 +2797,11 @@ namespace Lumina
             return;
         }
 
-        const bool bHad = Registry.all_of<SScriptComponent>(Entity);
+        const bool bHad = Registry.all_of<SEntityScriptComponent>(Entity);
 
         BeginTransaction();
-        // Append a new script slot; SCSharpScriptSystem binds it (OnAttach/OnReady) on the next tick.
-        SScriptComponent& Component = Registry.get_or_emplace<SScriptComponent>(Entity);
-        Component.Scripts.emplace_back();
-        Component.Scripts.back().ScriptClass = ScriptClass;
+        // Attach by class -- the same call for a C++ script and a C# one. OnReady runs on the next tick.
+        EntityScripts::Attach(Registry, Entity, FindObject<CClass>(FName(ScriptClass)));
         EndTransaction(bHad ? "Add Script" : "Attach Script");
 
         if (World->GetPackage() != nullptr)
@@ -2811,20 +2809,20 @@ namespace Lumina
             World->GetPackage()->MarkDirty();
         }
         bDetailsDirty = true;
-        // on_construct<SScriptComponent> refreshes the outliner on a first attach; harmless to mark again.
+        // on_construct<SEntityScriptComponent> refreshes the outliner on a first attach; harmless to mark again.
         OutlinerListView.MarkTreeDirty();
     }
 
     void FWorldEditorTool::RemoveScriptFromEntity(entt::entity Entity)
     {
         FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
-        if (!Registry.valid(Entity) || !Registry.all_of<SScriptComponent>(Entity))
+        if (!Registry.valid(Entity) || !Registry.all_of<SEntityScriptComponent>(Entity))
         {
             return;
         }
 
         BeginTransaction();
-        Registry.remove<SScriptComponent>(Entity); // on_destroy refreshes the outliner
+        Registry.remove<SEntityScriptComponent>(Entity); // on_destroy refreshes the outliner
         EndTransaction("Remove Script");
 
         if (World->GetPackage() != nullptr)
@@ -3854,8 +3852,8 @@ namespace Lumina
         ObservedRegistry->on_destroy<entt::entity>().disconnect<&FWorldEditorTool::OnEntityDestroyed>(this);
         ObservedRegistry->on_construct<SNameComponent>().disconnect<&FSceneEditorTool::OnOutlinerEntityConstructed>(this);
         ObservedRegistry->on_destroy<SNameComponent>().disconnect<&FSceneEditorTool::OnOutlinerEntityDestroyed>(this);
-        ObservedRegistry->on_construct<SScriptComponent>().disconnect<&FWorldEditorTool::OnEntityScriptChanged>(this);
-        ObservedRegistry->on_destroy<SScriptComponent>().disconnect<&FWorldEditorTool::OnEntityScriptChanged>(this);
+        ObservedRegistry->on_construct<SEntityScriptComponent>().disconnect<&FWorldEditorTool::OnEntityScriptChanged>(this);
+        ObservedRegistry->on_destroy<SEntityScriptComponent>().disconnect<&FWorldEditorTool::OnEntityScriptChanged>(this);
         ObservedRegistry = nullptr;
     }
 
@@ -3868,8 +3866,8 @@ namespace Lumina
         Registry.on_destroy<entt::entity>().connect<&FWorldEditorTool::OnEntityDestroyed>(this);
         Registry.on_construct<SNameComponent>().connect<&FSceneEditorTool::OnOutlinerEntityConstructed>(this);
         Registry.on_destroy<SNameComponent>().connect<&FSceneEditorTool::OnOutlinerEntityDestroyed>(this);
-        Registry.on_construct<SScriptComponent>().connect<&FWorldEditorTool::OnEntityScriptChanged>(this);
-        Registry.on_destroy<SScriptComponent>().connect<&FWorldEditorTool::OnEntityScriptChanged>(this);
+        Registry.on_construct<SEntityScriptComponent>().connect<&FWorldEditorTool::OnEntityScriptChanged>(this);
+        Registry.on_destroy<SEntityScriptComponent>().connect<&FWorldEditorTool::OnEntityScriptChanged>(this);
         ObservedRegistry = &Registry;
 
         OutlinerListView.MarkTreeDirty();
@@ -4629,7 +4627,7 @@ namespace Lumina
             bool bAnyNative = false;
             for (const CWorld::FSystemInfo& Info : Systems)
             {
-                if (!SystemsFilter.PassFilter(Info.Name.c_str()))
+                if (!ImGuiX::PassSearchFilter(SystemsFilter, Info.Name.c_str()))
                 {
                     continue;
                 }

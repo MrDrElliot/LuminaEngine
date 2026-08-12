@@ -30,6 +30,35 @@ namespace Lumina::VFS
         return true;
     }
 
+    // FPakArchive already holds the whole .pak in memory, so a ranged read is a slice -- no IO saved over
+    // the default, but it avoids copying the entire entry just to throw most of it away.
+    bool FPakFileSystem::ReadFileRange(TVector<uint8>& Result, FStringView Path, uint64 Offset, uint64 Size)
+    {
+        Result.clear();
+
+        if (!Archive)
+        {
+            return false;
+        }
+
+        TSpan<const uint8> Data = Archive->ReadEntry(Path);
+        if (Data.empty() && !Archive->HasEntry(Path))
+        {
+            return false;
+        }
+
+        if (Offset >= (uint64)Data.size())
+        {
+            return true;
+        }
+
+        const uint64 Remaining = (uint64)Data.size() - Offset;
+        const uint64 ToRead    = Size < Remaining ? Size : Remaining;
+
+        Result.assign(Data.begin() + (size_t)Offset, Data.begin() + (size_t)(Offset + ToRead));
+        return true;
+    }
+
     bool FPakFileSystem::ReadFile(FString& OutString, FStringView Path)
     {
         if (!Archive)

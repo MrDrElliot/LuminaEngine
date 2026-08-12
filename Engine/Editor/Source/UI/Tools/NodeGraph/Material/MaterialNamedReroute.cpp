@@ -2,6 +2,7 @@
 
 #include "MaterialInput.h"
 #include "MaterialOutput.h"
+#include "Core/Object/Cast.h"
 #include "Core/Object/Class.h"
 #include "MaterialNodeGraph.h"
 #include "UI/Tools/NodeGraph/EdNodeGraph.h"

@@ -130,4 +130,14 @@ namespace Lumina
     {
         *static_cast<FInstancedStruct*>(Dst) = *static_cast<const FInstancedStruct*>(Src);
     }
+
+    void FInstancedStructProperty::ConstructValue(void* Value) const
+    {
+        new (Value) FInstancedStruct();
+    }
+
+    void FInstancedStructProperty::DestructValue(void* Value) const
+    {
+        static_cast<FInstancedStruct*>(Value)->~FInstancedStruct();
+    }
 }

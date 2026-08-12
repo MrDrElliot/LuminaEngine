@@ -20,16 +20,27 @@ public sealed class UpdatePhaseAttribute : System.Attribute
     }
 }
 
-/// <summary>Base class for a script attached to a single entity.</summary>
-public abstract class EntityScript
+/// <summary>
+/// Base class for a script attached to a single entity.
+///
+/// This IS a native <c>CEntityScript</c>: a C# script is an ordinary CObject of a runtime-minted CClass
+/// deriving the same base a C++ script derives, so the native driver ticks both through one loop of virtual
+/// calls with no language-specific path. The lifecycle methods (OnAttach / OnReady / OnUpdate / OnFixedUpdate /
+/// OnDetach) are inherited from that base as <c>[ScriptEvent]</c> virtuals -- override them as before.
+///
+/// Consequence worth knowing: an instance is only valid once the native side has created it. Scripts are
+/// created by attaching them to an entity, never by <c>new</c>.
+/// </summary>
+public abstract class EntityScript : Lumina.CEntityScript
 {
     internal TypeDescription Description = null!; // set at Create; cached labels + callback flags, no per-frame reflection
 
-    /// <summary>This script's entity (mirrors C++ entt::entity).</summary>
-    public Entity Entity { get; internal set; }
+    /// <summary>This script's entity (mirrors C++ entt::entity). Read from the native object, which is the
+    /// single owner of the value for both languages.</summary>
+    public Entity Entity => GetOwningEntity();
 
-    /// <summary>The world this script lives in.</summary>
-    public Lumina.CWorld World { get; internal set; } = null!;
+    /// <summary>The world this script lives in. Also read from the native object.</summary>
+    public Lumina.CWorld World => GetWorld();
 
     /// <summary>The world's component store (mirrors C++ FEntityRegistry / entt::registry).</summary>
     public EntityRegistry Registry => World.Registry;
@@ -83,11 +94,6 @@ public abstract class EntityScript
     /// Component. Resolved per access: the component can be added or removed at any time.</summary>
     public Lumina.SBlackboardComponent? Blackboard => Registry.TryGet<Lumina.SBlackboardComponent>(Entity);
 
-    // The owning world handle and this instance's own GCHandle (as IntPtr), set at Create. Used by the
-    // multi-script index and RemoveScript.
-    internal ulong WorldHandle;
-    internal System.IntPtr SelfHandle;
-
     /// <summary>Get the script of type T on another entity (or this one), or null.</summary>
     protected T? GetScript<T>(Entity Target) where T : EntityScript
     {
@@ -118,28 +124,14 @@ public abstract class EntityScript
         return Registry.RemoveScript<T>(Entity);
     }
 
-    /// <summary>Called once when the script instance is attached to its entity.</summary>
-    public virtual void OnAttach()
-    {
-    }
+    // OnAttach / OnReady / OnUpdate / OnFixedUpdate / OnDetach are inherited from Lumina.CEntityScript as
+    // [ScriptEvent] virtuals -- override them exactly as before. Overriding one sets its bit in the minted
+    // class's ScriptOverrides mask, so the native shim only crosses the boundary for callbacks a script
+    // actually implements.
 
-    /// <summary>Called once after OnAttach, before the first OnUpdate (all siblings are attached).</summary>
-    public virtual void OnReady()
-    {
-    }
-
-    /// <summary>Called every frame on the game thread while the owning entity is enabled.</summary>
-    public virtual void OnUpdate(float DeltaTime)
-    {
-    }
-
-    /// <summary>Called at the fixed physics timestep (0..N times/frame, before physics) for framerate-independent
-    /// physics logic. <paramref name="FixedDeltaTime"/> is the fixed step (1 / physics Hz), not the frame delta.</summary>
-    public virtual void OnFixedUpdate(float FixedDeltaTime)
-    {
-    }
-
-    /// <summary>Called per discrete input event while the entity is receiving input (needs <see cref="EnableInput"/>).</summary>
+    /// <summary>Called per discrete input event while the entity is receiving input (needs <see cref="EnableInput"/>).
+    /// NOT YET DISPATCHED on the unified path -- input routing moves onto CEntityScript in a later step, and
+    /// until it does an override here will not fire.</summary>
     public virtual void OnInput(Lumina.InputEvent Event)
     {
     }
@@ -156,8 +148,4 @@ public abstract class EntityScript
         Registry.Remove<Lumina.SInputComponent>(Entity);
     }
 
-    /// <summary>Called once when the script/entity is detached or destroyed.</summary>
-    public virtual void OnDetach()
-    {
-    }
 }

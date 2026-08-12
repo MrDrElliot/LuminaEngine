@@ -124,6 +124,23 @@ namespace Lumina
         SoftReferencedGUIDs.insert(AssetGUID);
     }
 
+    bool FPackageSaver::WriteBulkData(FBulkDataRef& OutRef, const void* Data, int64 Size)
+    {
+        if (Data == nullptr || Size <= 0)
+        {
+            OutRef = FBulkDataRef{};
+            return false;
+        }
+
+        OutRef.Offset = (int64)BulkBytes.size();
+        OutRef.Size   = Size;
+
+        BulkBytes.resize(BulkBytes.size() + (size_t)Size);
+        Memory::Memcpy(BulkBytes.data() + (size_t)OutRef.Offset, Data, (size_t)Size);
+
+        return true;
+    }
+
     void FPackageSaver::PopulateImportTable(TVector<FObjectImport>& Out) const
     {
         Out.clear();

@@ -24,6 +24,11 @@ namespace Lumina
         RUNTIME_API void CopyCompleteValue(void* Dst, const void* Src) const override;
         RUNTIME_API FString ToString(const void* Data) const override;
 
+        // Holds a listener list with a real destructor, so zeroed bytes are not a valid delegate.
+        void ConstructValue(void* Value) const override { new (Value) FScriptDelegate(); }
+        void DestructValue(void* Value) const override  { static_cast<FScriptDelegate*>(Value)->~FScriptDelegate(); }
+        bool OwnsStorage() const override { return true; }
+
         CStruct* GetPayloadStruct() const { return PayloadStruct; }
 
     private:

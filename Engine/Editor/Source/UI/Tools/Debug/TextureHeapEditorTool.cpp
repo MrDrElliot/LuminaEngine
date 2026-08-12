@@ -1,6 +1,7 @@
 #include "TextureHeapEditorTool.h"
 #include "Renderer/RHICore.h"
 #include "Renderer/RenderResource.h"
+#include "Renderer/TextureStreamingManager.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 
 namespace Lumina
@@ -93,6 +94,61 @@ namespace Lumina
             "Matches against format name, type and slot number.");
     }
 
+    void FTextureHeapEditorTool::DrawStreamingStats()
+    {
+        FTextureStreamingManager* Streaming = FTextureStreamingManager::TryGet();
+        if (Streaming == nullptr)
+        {
+            return;
+        }
+
+        const FTextureStreamingManager::FStats Stats = Streaming->GetStats();
+        if (Stats.NumTextures == 0)
+        {
+            ImGui::TextDisabled("No streamable textures registered (assets saved before PACKAGE_BULK_DATA "
+                                "store every mip inline; re-save or re-cook them to enable streaming).");
+            return;
+        }
+
+        const float Fraction = Stats.BudgetBytes > 0
+            ? (float)((double)Stats.ResidentBytes / (double)Stats.BudgetBytes)
+            : 0.0f;
+
+        // Saved, not just resident: the interesting number is what streaming is buying, which is the gap
+        // between what these textures cost now and what they would cost fully resident.
+        const uint64 Saved = Stats.FullyResidentBytes > Stats.ResidentBytes
+            ? Stats.FullyResidentBytes - Stats.ResidentBytes
+            : 0;
+
+        ImGui::Separator();
+        ImGui::Text("Streaming pool");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(220.0f);
+        ImGui::ProgressBar(Fraction, ImVec2(220.0f, 0.0f),
+            FString(FString::CtorSprintf(), "%s / %s",
+                ImGuiX::FormatSize(Stats.ResidentBytes).c_str(),
+                ImGuiX::FormatSize(Stats.BudgetBytes).c_str()).c_str());
+
+        ImGui::SameLine();
+        ImGui::TextDisabled("|");
+        ImGui::SameLine();
+        ImGui::Text("%u streamable", Stats.NumTextures);
+        ImGui::SameLine();
+        ImGui::TextDisabled("|");
+        ImGui::SameLine();
+        ImGui::Text("%u pinned", Stats.NumPinned);
+        ImGui::SameLine();
+        ImGui::TextDisabled("|");
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.5f, 0.9f, 0.6f, 1.0f), "%s saved", ImGuiX::FormatSize(Saved).c_str());
+
+        if (Stats.NumLoadsInFlight > 0 || Stats.NumPromotedLastFrame > 0 || Stats.NumDemotedLastFrame > 0)
+        {
+            ImGui::TextDisabled("%u load(s) in flight, +%u promoted / -%u demoted last frame",
+                Stats.NumLoadsInFlight, Stats.NumPromotedLastFrame, Stats.NumDemotedLastFrame);
+        }
+    }
+
     void FTextureHeapEditorTool::DrawWindow(bool bIsFocused)
     {
         TVector<RHI::FHeapTextureInfo> Textures;
@@ -109,6 +165,8 @@ namespace Lumina
         ImGui::TextDisabled("|");
         ImGui::SameLine();
         ImGui::Text("~%s estimated", ImGuiX::FormatSize(TotalBytes).c_str());
+
+        DrawStreamingStats();
 
         ImGui::SetNextItemWidth(260.0f);
         ImGui::InputTextWithHint("##Filter", LE_ICON_MAGNIFY " Filter (format / type / slot)", Filter, sizeof(Filter));

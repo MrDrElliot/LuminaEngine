@@ -7,7 +7,10 @@
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectCore.h"
 #include "Core/Object/ObjectHandleTyped.h"
+#include "Core/Object/SoftObjectPtr.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
+#include "Core/Reflection/Type/Properties/ArrayProperty.h"
+#include "Memory/Memory.h"
 #include "Memory/SmartPtr.h"
 
 // The scalable property-interop surface that replaces the Reflector's per-property get/set thunks
@@ -83,28 +86,6 @@ LUMINA_DOTNET_EXPORT(int32, PropertyOffsetByName)(const char* Type, int TLen, co
     return LuminaSharp_PropertyOffset(Property);
 }
 
-// FString get: fills a caller buffer (UTF-8 bytes) and returns the full length. Two-pass protocol matching
-// LuminaSharp_GetObjectPath: a first call with a null/0 buffer queries the length, the second copies.
-LUMINA_DOTNET_EXPORT(int32, PropGetString)(void* C, const void* Prop, char* Buf, int Cap)
-{
-    if (C == nullptr || Prop == nullptr)
-    {
-        return 0;
-    }
-    const FProperty* Property = static_cast<const FProperty*>(Prop);
-    const FString& Value = *Property->GetValuePtr<FString>(C);
-    const char* S = Value.c_str();
-    const int L = S ? (int)Value.length() : 0;
-    if (S && Buf && Cap > 0)
-    {
-        const int N = L < Cap ? L : Cap;
-        for (int i = 0; i < N; ++i)
-        {
-            Buf[i] = S[i];
-        }
-    }
-    return L;
-}
 
 LUMINA_DOTNET_EXPORT(void, PropSetString)(void* C, const void* Prop, const char* Utf8, int Len)
 {
@@ -179,6 +160,57 @@ LUMINA_DOTNET_EXPORT(void, PropSetObject)(void* C, const void* Prop, void* Obj)
     }
     const FProperty* Property = static_cast<const FProperty*>(Prop);
     LuminaSharp_SetObjectPtr(Property->GetValuePtr<TObjectPtr<CObject>>(C), Obj);
+}
+
+// Asset reference (FSoftObjectPath) get/set as its virtual path, the same shape C# stores it in. Kept as a
+// property-kind exporter rather than reading the embedded FString at a hardcoded offset, so the storage
+// layout stays FSoftObjectPath's business.
+LUMINA_DOTNET_EXPORT(int32, PropGetAssetPath)(void* C, const void* Prop, char* Buf, int Cap)
+{
+    if (C == nullptr || Prop == nullptr)
+    {
+        return 0;
+    }
+    const FProperty* Property = static_cast<const FProperty*>(Prop);
+    const FStringView Path = Property->GetValuePtr<FSoftObjectPath>(C)->GetPath();
+    const int Length = (int)Path.size();
+    if (Buf != nullptr && Cap > 0 && Length > 0)
+    {
+        const int Count = Length < Cap ? Length : Cap;
+        for (int Index = 0; Index < Count; ++Index)
+        {
+            Buf[Index] = Path[Index];
+        }
+    }
+    return Length;
+}
+
+LUMINA_DOTNET_EXPORT(void, PropSetAssetPath)(void* C, const void* Prop, const char* Utf8, int Len)
+{
+    if (C == nullptr || Prop == nullptr)
+    {
+        return;
+    }
+    const FProperty* Property = static_cast<const FProperty*>(Prop);
+    FSoftObjectPath* Value = Property->GetValuePtr<FSoftObjectPath>(C);
+    *Value = (Len > 0) ? FSoftObjectPath(FString(Utf8, (size_t)Len)) : FSoftObjectPath();
+}
+
+// The element ops table for an array property, so C# can build a NativeList<T> view over ANY reflected
+// array -- including one appended to a minted script class, where there is no generated code to emit a
+// per-property ops export the way the Reflector does for native components.
+LUMINA_DOTNET_EXPORT(const void*, PropVectorOps)(const void* Prop)
+{
+    if (Prop == nullptr)
+    {
+        return nullptr;
+    }
+    const FProperty* Property = static_cast<const FProperty*>(Prop);
+    if (Property->TypeFlags != EPropertyTypeFlags::Vector)
+    {
+        return nullptr;
+    }
+    return static_cast<const FArrayProperty*>(Property)->GetOps();
 }
 
 // Script delegate bind/unbind. Game thread only.

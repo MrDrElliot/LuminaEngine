@@ -37,6 +37,36 @@ namespace Lumina
         TVector<TSoftObjectPtr<CWorld>> CookRoots;
     };
 
+    // Texture streaming budget and policy. Project-scoped rather than per-user: the pool size a project
+    // targets is a shipping decision, and it has to travel with the content it was tuned against.
+    REFLECT(MinimalAPI, ConfigFile = "/Config/GameSettings.json", DisplayName = "Texture Streaming", Category = "Rendering")
+    class CTextureStreamingSettings : public CDeveloperSettings
+    {
+        GENERATED_BODY()
+    public:
+
+        /** GPU budget for streamable texture mips, in MiB. Textures are trimmed toward their inline tail
+         *  once the total exceeds this. Pinned textures (an open texture editor tab) are exempt and can
+         *  push past it. */
+        PROPERTY(Editable, Category = "Budget")
+        int32 PoolSizeMB = 1024;
+
+        /** Off promotes every registered texture to fully resident and stops all trimming -- the
+         *  pre-streaming behaviour. Useful for deciding whether a visual bug is the streamer's fault. */
+        PROPERTY(Editable, Category = "Budget")
+        bool bEnabled = true;
+
+        /** Multiplier on the requested resident resolution. Above 1 keeps sharper mips than screen
+         *  coverage implies; below 1 trades sharpness for memory. */
+        PROPERTY(Editable, Category = "Quality")
+        float ResolutionBias = 1.0f;
+
+        /** Cap on concurrent mip loads. Bounds both IO queue depth and the transient staging memory held
+         *  by in-flight reads. */
+        PROPERTY(Editable, Category = "Performance")
+        int32 MaxLoadsInFlight = 8;
+    };
+
     // Editor-wide preferences + launch state. Lives in the runtime module so the runtime
     // ImGui renderer can read UIScale, while the editor edits it through the Settings panel.
     REFLECT(MinimalAPI, ConfigFile = "/Editor/Config/EditorPreferences.json", DisplayName = "General", Category = "Editor")

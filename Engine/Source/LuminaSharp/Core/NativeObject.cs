@@ -39,11 +39,32 @@ public class NativeObject
         ? RawHandle != IntPtr.Zero
         : Native.ObjectResolve(ObjectIndex, ObjectGeneration) != IntPtr.Zero;
 
+    /// <summary>True once this wrapper has been paired with a native object at all.
+    /// <para>A <c>[Property]</c> accessor is a view over native bytes, so it has nothing to read
+    /// before the pairing happens -- and there IS a moment before it: the schema pass Activator-creates one
+    /// unbound instance per script type purely to describe the type to the engine. The generated accessors
+    /// gate on this so that pass reads defaults instead of dereferencing a null handle.</para></summary>
+    protected internal bool HasNativeStorage => ObjectIndex >= 0 || RawHandle != IntPtr.Zero;
+
+    /// <summary>
+    /// Writes this type's declared <c>[Property]</c> initializers into whatever native object this wrapper is
+    /// bound to. Overridden by generated code (see ScriptPropertyRewriter) and called by the engine exactly
+    /// once, against the class default object; every instance is then copied from that.
+    ///
+    /// It is not a constructor for a reason: the managed wrapper is created lazily, AFTER a loaded object
+    /// already holds its authored values, so assigning there would overwrite them with the declared default.
+    /// </summary>
+    protected internal virtual void __ApplyScriptDefaults()
+    {
+    }
+
     /// <summary>The live native pointer. Throws <see cref="InvalidOperationException"/> if the object has
     /// been destroyed; every generated accessor reads through here, so touching a dead reference fails
     /// loudly rather than corrupting memory. (An object the array doesn't track falls back to the raw
-    /// pointer, preserving the old behavior.)</summary>
-    internal IntPtr Handle
+    /// pointer, preserving the old behavior.)
+    /// <para>protected, not internal: a user script is a subclass in ANOTHER assembly, and the accessors
+    /// ScriptPropertyRewriter emits for it read through here.</para></summary>
+    protected internal IntPtr Handle
     {
         get
         {

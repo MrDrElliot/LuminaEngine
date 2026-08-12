@@ -536,8 +536,7 @@ namespace Lumina
         }
 
         const FStringView Label = GetFilterLabel();
-        const bool bSelfMatches = !Label.empty()
-            && Filter.PassFilter(Label.data(), Label.data() + Label.size());
+        const bool bSelfMatches = !Label.empty() && ImGuiX::PassSearchFilter(Filter, Label);
 
         bPassesFilter = bSelfMatches || bAnyChildPasses;
 

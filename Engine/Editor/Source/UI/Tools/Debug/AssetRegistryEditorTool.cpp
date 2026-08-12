@@ -15,6 +15,7 @@
 #include "Core/Serialization/Archiver.h"
 #include "FileSystem/FileSystem.h"
 #include "UI/Tools/EditorToolContext.h"
+#include "Tools/UI/ImGui/EditorColors.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 
 namespace Lumina
@@ -112,6 +113,19 @@ namespace Lumina
             "Re-reads on-disk sizes and recomputes the referencer list. Everything else is live each frame.");
         DrawHelpTextRow("Open",
             "Double-click any row (or use the row's context menu) to open it in its asset editor.");
+        DrawHelpTextRow("Selection",
+            "Click selects, Ctrl+click toggles, Shift+click selects a range (across category groups), "
+            "Ctrl+A selects everything currently visible, Escape clears. The range and Ctrl+A both "
+            "respect the active filters -- they only ever touch what you can see.");
+        DrawHelpTextRow("Types filter",
+            "Per-class checkboxes. A class you have never touched is visible, so newly imported asset "
+            "types are never silently hidden.");
+        DrawHelpTextRow("Resave",
+            "Rewrites the selected assets' packages -- or, with nothing selected, everything matching the "
+            "current filters. Unlike File > Save All this saves packages whether or not they are dirty, "
+            "and loads anything not in memory, which is what upgrades unchanged assets to a new "
+            "serialization format (e.g. splitting texture mips for streaming). It runs a few packages "
+            "per frame so the editor stays responsive, and can be stopped part-way.");
     }
 
     uint64 FAssetRegistryEditorTool::EstimateCpuBytes(CObject* Asset)
@@ -209,24 +223,177 @@ namespace Lumina
             return false;
         }
 
-        if (!CategoryFilter.empty() && Row.Class.ToString() != CategoryFilter)
+        // Absent == visible: only classes the user has explicitly unticked are stored, so an asset type
+        // that appears after the filter was last touched is not silently hidden.
+        auto TypeIt = TypeVisibility.find(Row.Class);
+        if (TypeIt != TypeVisibility.end() && !TypeIt->second)
         {
             return false;
         }
 
-        if (!SearchFilter.empty())
+        if (!SearchFilter.empty() && !ImGuiX::PassSearchFilter(SearchFilter, Row.Name.ToString()))
         {
-            FString Name = Row.Name.ToString();
-            eastl::transform(Name.begin(), Name.end(), Name.begin(), [](char C){ return (char)tolower(C); });
-            FString Needle = SearchFilter;
-            eastl::transform(Needle.begin(), Needle.end(), Needle.begin(), [](char C){ return (char)tolower(C); });
-            if (Name.find(Needle) == FString::npos)
-            {
-                return false;
-            }
+            return false;
         }
 
         return true;
+    }
+
+    uint32 FAssetRegistryEditorTool::CountHiddenTypes() const
+    {
+        uint32 Hidden = 0;
+        for (const auto& Pair : TypeVisibility)
+        {
+            if (!Pair.second)
+            {
+                ++Hidden;
+            }
+        }
+        return Hidden;
+    }
+
+    void FAssetRegistryEditorTool::BuildVisibleRows(const TVector<FAssetRow>& Rows)
+    {
+        VisibleRows.clear();
+        VisibleGroups.clear();
+
+        auto ByName = [](const FAssetRow* A, const FAssetRow* B)
+        {
+            return A->Name.ToString() < B->Name.ToString();
+        };
+
+        if (bGroupByCategory)
+        {
+            THashMap<FString, TVector<const FAssetRow*>> Buckets;
+            for (const FAssetRow& Row : Rows)
+            {
+                if (PassesFilter(Row))
+                {
+                    Buckets[Row.Class.ToString()].push_back(&Row);
+                }
+            }
+
+            TVector<FString> Order;
+            Order.reserve(Buckets.size());
+            for (auto& Pair : Buckets)
+            {
+                Order.push_back(Pair.first);
+            }
+            eastl::sort(Order.begin(), Order.end());
+
+            // Flattened in the exact order the groups are drawn, so a VisibleRows index means the same
+            // thing to shift-range as it does on screen.
+            for (const FString& Category : Order)
+            {
+                TVector<const FAssetRow*>& Bucket = Buckets[Category];
+                eastl::sort(Bucket.begin(), Bucket.end(), ByName);
+
+                FRowGroup Group;
+                Group.Category = Category;
+                Group.Start    = (uint32)VisibleRows.size();
+                Group.Count    = (uint32)Bucket.size();
+                VisibleGroups.push_back(Move(Group));
+
+                VisibleRows.insert(VisibleRows.end(), Bucket.begin(), Bucket.end());
+            }
+        }
+        else
+        {
+            for (const FAssetRow& Row : Rows)
+            {
+                if (PassesFilter(Row))
+                {
+                    VisibleRows.push_back(&Row);
+                }
+            }
+            eastl::sort(VisibleRows.begin(), VisibleRows.end(), ByName);
+        }
+    }
+
+    void FAssetRegistryEditorTool::HandleSelectionShortcuts()
+    {
+        if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
+        {
+            return;
+        }
+
+        // IsAnyItemActive covers the search box: Ctrl+A there means "select the text", and stealing it
+        // to select every asset in the project would be a nasty surprise.
+        if (ImGui::IsAnyItemActive())
+        {
+            return;
+        }
+
+        const ImGuiIO& IO = ImGui::GetIO();
+
+        if (IO.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_A, false))
+        {
+            SelectedGUIDs.clear();
+            SelectedGUIDs.reserve(VisibleRows.size());
+            for (const FAssetRow* Row : VisibleRows)
+            {
+                SelectedGUIDs.insert(Row->GUID);
+            }
+
+            if (!VisibleRows.empty())
+            {
+                SelectedGUID = VisibleRows.front()->GUID;
+                RangeAnchor  = 0;
+            }
+        }
+        else if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !SelectedGUIDs.empty())
+        {
+            SelectedGUIDs.clear();
+            RangeAnchor = INDEX_NONE;
+        }
+    }
+
+    void FAssetRegistryEditorTool::ApplyRowClick(uint32 VisibleIndex)
+    {
+        if (VisibleIndex >= (uint32)VisibleRows.size())
+        {
+            return;
+        }
+
+        const ImGuiIO& IO  = ImGui::GetIO();
+        const FGuid    GUID = VisibleRows[VisibleIndex]->GUID;
+
+        if (IO.KeyShift && RangeAnchor != INDEX_NONE && (uint32)RangeAnchor < (uint32)VisibleRows.size())
+        {
+            // Range replaces the selection rather than adding to it, matching every file browser; hold
+            // Ctrl+Shift to extend instead.
+            if (!IO.KeyCtrl)
+            {
+                SelectedGUIDs.clear();
+            }
+
+            const uint32 Low  = (uint32)RangeAnchor < VisibleIndex ? (uint32)RangeAnchor : VisibleIndex;
+            const uint32 High = (uint32)RangeAnchor < VisibleIndex ? VisibleIndex : (uint32)RangeAnchor;
+            for (uint32 i = Low; i <= High; ++i)
+            {
+                SelectedGUIDs.insert(VisibleRows[i]->GUID);
+            }
+        }
+        else if (IO.KeyCtrl)
+        {
+            if (SelectedGUIDs.find(GUID) != SelectedGUIDs.end())
+            {
+                SelectedGUIDs.erase(GUID);
+            }
+            else
+            {
+                SelectedGUIDs.insert(GUID);
+            }
+            RangeAnchor = (int32)VisibleIndex;
+        }
+        else
+        {
+            SelectedGUIDs.clear();
+            SelectedGUIDs.insert(GUID);
+            RangeAnchor = (int32)VisibleIndex;
+        }
+
+        SelectedGUID = GUID;
     }
 
     void FAssetRegistryEditorTool::DrawWindow(bool bIsFocused)
@@ -263,6 +430,11 @@ namespace Lumina
             }
         }
 
+        // Before anything draws: the filter bar's Resave button needs the visible count, and Ctrl+A needs
+        // something to select against.
+        BuildVisibleRows(Rows);
+        HandleSelectionShortcuts();
+
         DrawStatsBar(Rows);
         ImGui::Spacing();
         DrawFilterBar();
@@ -273,7 +445,7 @@ namespace Lumina
             const float DetailsWidth = 340.0f;
             ImGui::BeginChild("##TablePane", ImVec2(ImGui::GetContentRegionAvail().x - DetailsWidth, 0), false);
             {
-                DrawAssetTable(Rows);
+                DrawAssetTable();
             }
             ImGui::EndChild();
 
@@ -331,6 +503,57 @@ namespace Lumina
         ImGui::PopStyleColor();
     }
 
+    void FAssetRegistryEditorTool::DrawTypeFilterMenu()
+    {
+        // Distinct classes, from the registry rather than from TypeVisibility, so a type nobody has
+        // touched still appears in the menu.
+        TVector<FName> Types;
+        for (const TUniquePtr<FAssetData>& Data : FAssetRegistry::Get().GetAssets())
+        {
+            if (eastl::find(Types.begin(), Types.end(), Data->AssetClass) == Types.end())
+            {
+                Types.push_back(Data->AssetClass);
+            }
+        }
+        eastl::sort(Types.begin(), Types.end(), [](const FName& A, const FName& B)
+        {
+            return A.ToString() < B.ToString();
+        });
+
+        if (ImGui::MenuItem("Show All"))
+        {
+            TypeVisibility.clear();
+        }
+        if (ImGui::MenuItem("Hide All"))
+        {
+            for (const FName& Type : Types)
+            {
+                TypeVisibility.insert_or_assign(Type, false);
+            }
+        }
+
+        ImGui::Separator();
+
+        for (const FName& Type : Types)
+        {
+            auto It = TypeVisibility.find(Type);
+            bool bVisible = (It == TypeVisibility.end()) || It->second;
+
+            if (ImGui::Checkbox(Type.c_str(), &bVisible))
+            {
+                if (bVisible)
+                {
+                    // Erase rather than store true, so "absent == visible" stays the only rule.
+                    TypeVisibility.erase(Type);
+                }
+                else
+                {
+                    TypeVisibility.insert_or_assign(Type, false);
+                }
+            }
+        }
+    }
+
     void FAssetRegistryEditorTool::DrawFilterBar()
     {
         if (ImGui::Button(LE_ICON_REFRESH " Refresh"))
@@ -347,44 +570,264 @@ namespace Lumina
         }
 
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(180.0f);
-        const char* Preview = CategoryFilter.empty() ? "All Categories" : CategoryFilter.c_str();
-        if (ImGui::BeginCombo("##Category", Preview))
+        const uint32 Hidden = CountHiddenTypes();
+        FFixedString TypeLabel;
+        if (Hidden > 0)
         {
-            if (ImGui::Selectable("All Categories", CategoryFilter.empty()))
-            {
-                CategoryFilter.clear();
-            }
+            TypeLabel.sprintf(LE_ICON_FILTER " Types (%u hidden)", Hidden);
+        }
+        else
+        {
+            TypeLabel = LE_ICON_FILTER " Types";
+        }
 
-            // Gather distinct categories from the registry.
-            TVector<FString> Categories;
-            for (const TUniquePtr<FAssetData>& Data : FAssetRegistry::Get().GetAssets())
-            {
-                FString Class = Data->AssetClass.ToString();
-                if (eastl::find(Categories.begin(), Categories.end(), Class) == Categories.end())
-                {
-                    Categories.push_back(Class);
-                }
-            }
-            eastl::sort(Categories.begin(), Categories.end());
+        // A Button + popup rather than BeginMenu: this is a plain toolbar row, not a menu bar, and
+        // BeginMenu outside one renders as a bare menu item with no button chrome.
+        if (Hidden > 0)
+        {
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::AccentAlt());
+        }
+        if (ImGui::Button(TypeLabel.c_str()))
+        {
+            ImGui::OpenPopup("##TypeFilter");
+        }
+        if (Hidden > 0)
+        {
+            ImGui::PopStyleColor();
+        }
 
-            for (const FString& Class : Categories)
-            {
-                if (ImGui::Selectable(Class.c_str(), CategoryFilter == Class))
-                {
-                    CategoryFilter = Class;
-                }
-            }
-            ImGui::EndCombo();
+        if (ImGui::BeginPopup("##TypeFilter"))
+        {
+            DrawTypeFilterMenu();
+            ImGui::EndPopup();
         }
 
         ImGui::SameLine();
         ImGui::Checkbox("Group by Category", &bGroupByCategory);
         ImGui::SameLine();
         ImGui::Checkbox("Loaded Only", &bShowLoadedOnly);
+
+        // Resave acts on the selection, falling back to everything currently visible. That fallback is
+        // what makes "filter to Texture, resave" a one-click migration without selecting anything.
+        const uint32 SelectedCount = (uint32)SelectedGUIDs.size();
+        const uint32 TargetCount   = SelectedCount > 0 ? SelectedCount : (uint32)VisibleRows.size();
+
+        ImGui::SameLine();
+        ImGui::BeginDisabled(TargetCount == 0);
+
+        FFixedString ResaveLabel;
+        ResaveLabel.sprintf(LE_ICON_CONTENT_SAVE_ALL " Resave (%u)", TargetCount);
+        if (ImGui::Button(ResaveLabel.c_str()))
+        {
+            OpenResaveModal();
+        }
+        ImGui::EndDisabled();
+
+        ImGuiX::TextTooltip("{}", SelectedCount > 0
+            ? "Rewrite every selected asset's package, dirty or not. Loads anything not in memory."
+            : "Nothing selected -- this rewrites every asset matching the current filters. "
+              "Ctrl+A selects the visible list.");
+
+        if (SelectedCount > 0)
+        {
+            ImGui::SameLine();
+            ImGui::TextDisabled("%u selected", SelectedCount);
+        }
     }
 
-    void FAssetRegistryEditorTool::DrawAssetTableRows(const TVector<const FAssetRow*>& Rows)
+    void FAssetRegistryEditorTool::OpenResaveModal()
+    {
+        ResaveQueue.clear();
+        ResavedPackages.clear();
+        ResaveIndex   = 0;
+        ResaveSaved   = 0;
+        ResaveFailed  = 0;
+        ResaveCurrent = FName();
+        ResavePhase   = EResavePhase::Confirm;
+
+        // Snapshot the GUIDs now: VisibleRows points into a per-frame array and the selection can change
+        // while the modal is up.
+        if (!SelectedGUIDs.empty())
+        {
+            ResaveQueue.reserve(SelectedGUIDs.size());
+            for (const FGuid& GUID : SelectedGUIDs)
+            {
+                ResaveQueue.push_back(GUID);
+            }
+        }
+        else
+        {
+            ResaveQueue.reserve(VisibleRows.size());
+            for (const FAssetRow* Row : VisibleRows)
+            {
+                ResaveQueue.push_back(Row->GUID);
+            }
+        }
+
+        if (ToolContext == nullptr || ResaveQueue.empty())
+        {
+            return;
+        }
+
+        ToolContext->PushModal("Resave Assets", ImVec2(520.0f, 260.0f), [this]() -> bool
+        {
+            switch (ResavePhase)
+            {
+            case EResavePhase::Confirm:
+            {
+                ImGui::TextWrapped("Rewrite %u asset(s)?", (uint32)ResaveQueue.size());
+                ImGui::Spacing();
+                ImGui::TextWrapped(
+                    "Every package is saved whether or not it is dirty, and anything not currently in "
+                    "memory is loaded first. This is what upgrades assets to a new serialization format "
+                    "(for example splitting texture mips for streaming).");
+                ImGui::Spacing();
+                ImGui::TextDisabled("A project-wide resave loads the entire project and can take a while.");
+
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                if (ImGui::Button("Cancel", ImVec2(120.0f, 0.0f)))
+                {
+                    return true;
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Resave", ImVec2(120.0f, 0.0f)))
+                {
+                    ResavePhase = EResavePhase::Running;
+                }
+                return false;
+            }
+
+            case EResavePhase::Running:
+            {
+                TickResave();
+
+                const float Progress = ResaveQueue.empty()
+                    ? 1.0f
+                    : (float)((double)ResaveIndex / (double)ResaveQueue.size());
+
+                ImGui::Text("Resaving... %u / %u", ResaveIndex, (uint32)ResaveQueue.size());
+                ImGui::Spacing();
+                ImGui::ProgressBar(Progress, ImVec2(-1.0f, 0.0f));
+                ImGui::Spacing();
+                ImGui::TextDisabled("%s", ResaveCurrent.IsNone() ? "" : ResaveCurrent.c_str());
+
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                // Stops issuing more saves; the ones already committed stay committed.
+                if (ImGui::Button("Stop", ImVec2(120.0f, 0.0f)))
+                {
+                    ResavePhase = EResavePhase::Done;
+                }
+
+                if (ResaveIndex >= ResaveQueue.size())
+                {
+                    ResavePhase = EResavePhase::Done;
+                }
+                return false;
+            }
+
+            case EResavePhase::Done:
+            default:
+            {
+                ImGui::Text("Resaved %u package(s).", ResaveSaved);
+                if (ResaveFailed > 0)
+                {
+                    ImGui::TextColored(ImVec4(0.95f, 0.4f, 0.35f, 1.0f),
+                        "%u asset(s) failed -- see the log.", ResaveFailed);
+                }
+                if (ResaveIndex < ResaveQueue.size())
+                {
+                    ImGui::TextDisabled("Stopped with %u remaining.", (uint32)ResaveQueue.size() - ResaveIndex);
+                }
+
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                if (ImGui::Button("Close", ImVec2(120.0f, 0.0f)))
+                {
+                    if (ResaveFailed > 0)
+                    {
+                        ImGuiX::Notifications::NotifyError("Resave: {0} package(s) saved, {1} asset(s) failed.",
+                            ResaveSaved, ResaveFailed);
+                    }
+                    else
+                    {
+                        ImGuiX::Notifications::NotifySuccess("Resave: {0} package(s) saved.", ResaveSaved);
+                    }
+
+                    // Disk sizes just changed under the cache.
+                    DiskSizeCache.clear();
+                    return true;
+                }
+                return false;
+            }
+            }
+        });
+    }
+
+    void FAssetRegistryEditorTool::TickResave()
+    {
+        // Bounded per frame so the editor keeps drawing and the progress bar actually moves. Small,
+        // because a single package save can be tens of milliseconds once loading is counted.
+        constexpr uint32 kPackagesPerFrame = 4;
+
+        uint32 Processed = 0;
+        while (Processed < kPackagesPerFrame && ResaveIndex < ResaveQueue.size())
+        {
+            const FGuid GUID = ResaveQueue[ResaveIndex];
+            ++ResaveIndex;
+
+            // Counted per queue entry, not per package actually written: the LoadObject below is the
+            // expensive half, and it runs even for an entry whose package a sibling export already saved.
+            ++Processed;
+
+            // Loads the asset if it is not resident: an unloaded package cannot be rewritten, and the
+            // whole point of this is to rewrite assets that have NOT changed.
+            CObject* Asset = LoadObject<CObject>(GUID);
+            if (Asset == nullptr)
+            {
+                LOG_ERROR("Resave: could not load asset {}", GUID.ToString());
+                ++ResaveFailed;
+                continue;
+            }
+
+            ResaveCurrent = Asset->GetName();
+
+            CPackage* Package = Asset->GetPackage();
+            if (Package == nullptr || Package->IsTransientPackage())
+            {
+                ++ResaveFailed;
+                continue;
+            }
+
+            // One save per package however many exports it holds -- saving it again per export would
+            // rewrite the same file N times and count N successes for one file.
+            if (ResavedPackages.find(Package) != ResavedPackages.end())
+            {
+                continue;
+            }
+            ResavedPackages.insert(Package);
+
+            if (CPackage::SavePackage(Package, Package->GetPackagePath()))
+            {
+                FAssetRegistry::Get().AssetSaved(Asset);
+                ++ResaveSaved;
+            }
+            else
+            {
+                LOG_ERROR("Resave: failed to save package {}", Package->GetName());
+                ++ResaveFailed;
+            }
+        }
+    }
+
+    void FAssetRegistryEditorTool::DrawAssetTableRows(const TVector<const FAssetRow*>& Rows, uint32 BaseIndex)
     {
         ImGuiListClipper Clipper;
         Clipper.Begin((int)Rows.size());
@@ -397,10 +840,11 @@ namespace Lumina
                 ImGui::PushID(i);
 
                 ImGui::TableSetColumnIndex(0);
-                const bool bSelected = (SelectedGUID == Row.GUID);
+                const bool bSelected = (SelectedGUIDs.find(Row.GUID) != SelectedGUIDs.end());
                 if (ImGui::Selectable(Row.Name.c_str(), bSelected, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick))
                 {
-                    SelectedGUID = Row.GUID;
+                    ApplyRowClick(BaseIndex + (uint32)i);
+
                     if (ImGui::IsMouseDoubleClicked(0) && ToolContext)
                     {
                         ToolContext->OpenAssetEditor(Row.GUID);
@@ -409,6 +853,16 @@ namespace Lumina
 
                 if (ImGui::BeginPopupContextItem("##RowCtx"))
                 {
+                    // Right-clicking outside the selection retargets it, so the menu never acts on
+                    // something the user cannot see is selected.
+                    if (SelectedGUIDs.find(Row.GUID) == SelectedGUIDs.end())
+                    {
+                        SelectedGUIDs.clear();
+                        SelectedGUIDs.insert(Row.GUID);
+                        SelectedGUID = Row.GUID;
+                        RangeAnchor  = (int32)(BaseIndex + (uint32)i);
+                    }
+
                     if (ImGui::MenuItem(LE_ICON_FILE " Open Asset"))
                     {
                         if (ToolContext)
@@ -416,6 +870,17 @@ namespace Lumina
                             ToolContext->OpenAssetEditor(Row.GUID);
                         }
                     }
+
+                    {
+                        FFixedString ResaveLabel;
+                        ResaveLabel.sprintf(LE_ICON_CONTENT_SAVE_ALL " Resave %u Selected", (uint32)SelectedGUIDs.size());
+                        if (ImGui::MenuItem(ResaveLabel.c_str()))
+                        {
+                            OpenResaveModal();
+                        }
+                    }
+
+                    ImGui::Separator();
                     if (ImGui::MenuItem("Copy Name"))
                     {
                         ImGui::SetClipboardText(Row.Name.c_str());
@@ -472,7 +937,7 @@ namespace Lumina
         }
     }
 
-    void FAssetRegistryEditorTool::DrawAssetTable(const TVector<FAssetRow>& Rows)
+    void FAssetRegistryEditorTool::DrawAssetTable()
     {
         // Base flags for both layouts. ScrollY only on the flat table; grouped tables auto-size
         // and let the outer pane scroll, else the first table fills the region and shoves the rest.
@@ -495,28 +960,15 @@ namespace Lumina
             ImGui::TableHeadersRow();
         };
 
+        // Both layouts draw out of VisibleRows, which BuildVisibleRows already filtered and ordered --
+        // so a row's index there is its index on screen, which is what shift-range and Ctrl+A rely on.
         if (bGroupByCategory)
         {
-            // Bucket filtered rows by category.
-            THashMap<FString, TVector<const FAssetRow*>> Buckets;
-            for (const FAssetRow& Row : Rows)
+            for (const FRowGroup& Group : VisibleGroups)
             {
-                if (PassesFilter(Row))
-                {
-                    Buckets[Row.Class.ToString()].push_back(&Row);
-                }
-            }
-
-            TVector<FString> Order;
-            for (auto& Pair : Buckets)
-            {
-                Order.push_back(Pair.first);
-            }
-            eastl::sort(Order.begin(), Order.end());
-
-            for (const FString& Category : Order)
-            {
-                TVector<const FAssetRow*>& Bucket = Buckets[Category];
+                TVector<const FAssetRow*> Bucket(
+                    VisibleRows.begin() + Group.Start,
+                    VisibleRows.begin() + Group.Start + Group.Count);
 
                 uint32 LoadedInCat = 0;
                 uint64 CpuInCat = 0;
@@ -529,24 +981,19 @@ namespace Lumina
                     }
                 }
 
-                eastl::sort(Bucket.begin(), Bucket.end(), [](const FAssetRow* A, const FAssetRow* B)
-                {
-                    return A->Name.ToString() < B->Name.ToString();
-                });
-
-                ImGui::PushStyleColor(ImGuiCol_Text, CategoryColor(FName(Category)));
-                FString Header = Category + "  (" + eastl::to_string(LoadedInCat) + "/" +
+                ImGui::PushStyleColor(ImGuiCol_Text, CategoryColor(FName(Group.Category)));
+                FString Header = Group.Category + "  (" + eastl::to_string(LoadedInCat) + "/" +
                     eastl::to_string(Bucket.size()) + " loaded, " + FString(ImGuiX::FormatSize(CpuInCat).c_str()) + ")";
                 const bool bOpen = ImGui::CollapsingHeader(Header.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
                 ImGui::PopStyleColor();
 
                 if (bOpen)
                 {
-                    FString TableID = "##Table_" + Category;
+                    FString TableID = "##Table_" + Group.Category;
                     if (ImGui::BeginTable(TableID.c_str(), 6, TableFlags))
                     {
                         SetupColumns(false);
-                        DrawAssetTableRows(Bucket);
+                        DrawAssetTableRows(Bucket, Group.Start);
                         ImGui::EndTable();
                     }
                     ImGui::Spacing();
@@ -555,23 +1002,10 @@ namespace Lumina
         }
         else
         {
-            TVector<const FAssetRow*> Filtered;
-            for (const FAssetRow& Row : Rows)
-            {
-                if (PassesFilter(Row))
-                {
-                    Filtered.push_back(&Row);
-                }
-            }
-            eastl::sort(Filtered.begin(), Filtered.end(), [](const FAssetRow* A, const FAssetRow* B)
-            {
-                return A->Name.ToString() < B->Name.ToString();
-            });
-
             if (ImGui::BeginTable("##AssetTable", 6, TableFlags | ImGuiTableFlags_ScrollY, ImVec2(0, 0)))
             {
                 SetupColumns(true);
-                DrawAssetTableRows(Filtered);
+                DrawAssetTableRows(VisibleRows, 0);
                 ImGui::EndTable();
             }
         }

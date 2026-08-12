@@ -124,6 +124,17 @@ public sealed class ScriptProperty
     public bool SkipHotReload { get; init; }
     public Func<object, object?> Get { get; init; } = Instance => null;
     public Action<object, object?> Set { get; init; } = (Instance, Value) => { };
+
+    /// <summary>
+    /// True when the member is a get-only VIEW over storage native already owns -- a container property on a
+    /// script type, which hands out a <see cref="NativeList{T}"/> rather than a managed copy.
+    ///
+    /// Such a member is still a real reflected property (native holds the container and the inspector edits
+    /// it); what it has no meaning for is the two things that assume a managed-side value: capturing a
+    /// declared default off an unbound instance, and assigning a decoded value back through a setter. Both
+    /// are skipped for it, which is why "no setter" cannot simply mean "not a property".
+    /// </summary>
+    public bool IsNativeOwnedView { get; init; }
 }
 
 /// <summary>One [Button] method surfaced as an inspector button, invoked by name.</summary>

@@ -8,7 +8,6 @@
 #include "Components/NameComponent.h"
 #include "Components/RelationshipComponent.h"
 #include "Networking/INetworkRuntime.h"
-#include "Components/CSharpScriptComponent.h"
 #include "components/tagcomponent.h"
 #include "Components/TransformComponent.h"
 #include "Systems/SystemAccess.h"

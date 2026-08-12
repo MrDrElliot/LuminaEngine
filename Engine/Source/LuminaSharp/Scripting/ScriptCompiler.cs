@@ -73,6 +73,28 @@ internal static class ScriptCompiler
             AllReferences = References.Concat(ExtraReferences).ToArray();
         }
 
+        // Turn each [Property] field into the native-backed property it has to be. This is the one thing a
+        // source generator could not do -- it may only ADD members -- and it is why script authors no longer
+        // write `partial`. Done here rather than anywhere else because this compilation is the only one whose
+        // output is ever loaded: the generated .csproj is IntelliSense-only, and packaging stages what this
+        // emits (ProjectPackager copies FScriptUnit::AssemblyPath).
+        //
+        // The probe compilation exists only to give the rewriter a semantic model, so it can tell a string
+        // from a struct from an enum. Binding is lazy, so this costs the trees it actually inspects.
+        var RewriteErrors = new List<string>();
+        var Probe = CSharpCompilation.Create(AssemblyName, Trees, AllReferences,
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, allowUnsafe: true));
+        Trees = Trees.Select(Tree => ScriptPropertyRewriter.Rewrite(Probe, Tree, RewriteErrors)).ToArray();
+
+        if (RewriteErrors.Count > 0)
+        {
+            foreach (string Error in RewriteErrors)
+            {
+                Native.Log(ELogLevel.Error, "C# script property: " + Error);
+            }
+            return null;
+        }
+
         var Compilation = CSharpCompilation.Create(
             AssemblyName,
             Trees,
@@ -125,7 +147,20 @@ internal static class ScriptCompiler
 
     private static ImmutableArray<ISourceGenerator>? CachedGenerators;
 
-    // Source generators run on every script compile (loaded once). Only the [NativeCall] glue generator; ManagedExport is engine-only.
+    // Source generators run on every script compile (loaded once).
+    //
+    // An explicit allow-list, NOT "every IIncrementalGenerator in the assembly": ManagedExportGenerator is
+    // engine-only and emits its attribute definition into whatever compilation it runs in, so letting it into
+    // a script compile duplicates a type LuminaSharp already exports (CS0101).
+    private static readonly string[] ScriptGeneratorNames =
+    {
+        "NativeCallGenerator",      // [NativeCall] -> the native binding glue
+        // Emits nothing; ScriptPropertyRewriter produces the accessors. It runs here anyway for the one thing
+        // the rewriter cannot report: a [Property] declared as a partial property is invisible to it, and
+        // would surface as a bare CS9248 "must have an implementation part" with nothing naming the cause.
+        "ScriptPropertyGenerator",
+    };
+
     private static ImmutableArray<ISourceGenerator> SourceGenerators => CachedGenerators ??= LoadGenerators();
 
     private static ImmutableArray<ISourceGenerator> LoadGenerators()
@@ -156,14 +191,25 @@ internal static class ScriptCompiler
             }
 
             var Found = new List<ISourceGenerator>();
+            var Missing = new List<string>(ScriptGeneratorNames);
             foreach (Type Type in AllTypes)
             {
-                if (Type.Name == "NativeCallGenerator"
+                if (Array.IndexOf(ScriptGeneratorNames, Type.Name) >= 0
                     && typeof(IIncrementalGenerator).IsAssignableFrom(Type) && !Type.IsAbstract
                     && Activator.CreateInstance(Type) is IIncrementalGenerator Generator)
                 {
                     Found.Add(Generator.AsSourceGenerator());
+                    Missing.Remove(Type.Name);
                 }
+            }
+
+            // A generator that silently fails to load looks like "the language feature does not work": every
+            // [Property] partial in every script becomes CS9248 with nothing pointing at the cause. Say so.
+            if (Missing.Count > 0)
+            {
+                Native.Log(ELogLevel.Error,
+                    $"Script source generator(s) not loaded from '{GeneratorPath}': {string.Join(", ", Missing)}. "
+                    + "Scripts using the features they implement will fail to compile.");
             }
             return Found.ToImmutableArray();
         }

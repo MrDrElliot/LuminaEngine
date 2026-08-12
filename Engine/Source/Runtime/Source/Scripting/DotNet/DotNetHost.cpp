@@ -1,6 +1,5 @@
 ﻿#include "LayoutRegistry.h"
 #include "DotNetHost.h"
-#include "ManagedCall.h"
 #include "ManagedRenderScene.h"
 
 #include <filesystem>
@@ -15,6 +14,7 @@
 #include "Core/Console/ConsoleVariable.h"
 #include "Core/Delegates/ScriptDelegate.h"
 #include "Core/Engine/Engine.h"
+#include "Core/Object/ManagedInstance.h"
 #include "Scripting/ScriptStruct.h"
 #include "Scripting/ScriptableObject.h"
 #include "Scripting/ScriptDataStruct.h"
@@ -131,16 +131,11 @@ namespace Lumina::DotNet
         typedef void  (CORECLR_DELEGATE_CALLTYPE* ShutdownFn)();
         typedef int32 (CORECLR_DELEGATE_CALLTYPE* GetGenerationFn)();
         typedef int32 (CORECLR_DELEGATE_CALLTYPE* GetRuntimeDiagnosticsFn)(void*, int32);
-        typedef void* (CORECLR_DELEGATE_CALLTYPE* CreateEntityScriptFn)(const char*, int32, uint64, uint32);
-        typedef void  (CORECLR_DELEGATE_CALLTYPE* OnReadyScriptFn)(void*);
-        typedef void  (CORECLR_DELEGATE_CALLTYPE* UpdateScriptsFn)(void* const*, int32, float);
-        typedef void  (CORECLR_DELEGATE_CALLTYPE* FixedUpdateScriptsFn)(void* const*, int32, float);
-        typedef void  (CORECLR_DELEGATE_CALLTYPE* DestroyEntityScriptFn)(void*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* EnumerateEntityScriptsFn)(void*, void*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* EnumerateEntitySystemsFn)(void*, void*);
-        typedef void* (CORECLR_DELEGATE_CALLTYPE* CreateScriptableFn)(const char*, int32, uint64, int32*);
-        typedef void  (CORECLR_DELEGATE_CALLTYPE* DestroyScriptableFn)(void*);
+        typedef void* (CORECLR_DELEGATE_CALLTYPE* CreateScriptableFn)(const char*, int32, uint64);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* EnumerateScriptablesFn)(void*, void*);
+        typedef void  (CORECLR_DELEGATE_CALLTYPE* ApplyScriptableDefaultsFn)(const char*, int32, uint64);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* EnumerateScriptStructsFn)(void*, void*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* GetScriptStructSchemaFn)(const char*, int32, void*, void*);
         typedef void* (CORECLR_DELEGATE_CALLTYPE* CreateEntitySystemFn)(const char*, int32, uint64);
@@ -155,62 +150,41 @@ namespace Lumina::DotNet
         typedef uint64 (CORECLR_DELEGATE_CALLTYPE* RenderSceneGetDisplayTextureFn)(void*);
         typedef uint32 (CORECLR_DELEGATE_CALLTYPE* RenderSceneGetDisplayResourceIDFn)(void*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* RenderSceneGetExtentFn)(void*, uint32*, uint32*);
-        typedef void  (CORECLR_DELEGATE_CALLTYPE* DispatchInputFn)(void*, int32, int32, int32, int32, int32, double, double, double, double, double);
-        typedef void  (CORECLR_DELEGATE_CALLTYPE* PollScriptInputFn)(void*, const void*, int32, uint32, float);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* OnNativeDelegateDestroyedFn)(void*);
-        typedef int32 (CORECLR_DELEGATE_CALLTYPE* GetCallbackFlagsFn)(void*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* GetScriptSchemaFn)(const char*, int32, void*, void*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* GetScriptButtonsFn)(const char*, int32, void*, void*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* ResolveEntityScriptNameFn)(const char*, int32, void*, void*);
-        typedef void  (CORECLR_DELEGATE_CALLTYPE* ApplyScriptPropertiesFn)(void*, const uint8*, int32);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* InvokeAssetCallbackFn)(void*, void*);
-        typedef void* (CORECLR_DELEGATE_CALLTYPE* ManagedClassFindFn)(const char*, int32);
-        typedef void* (CORECLR_DELEGATE_CALLTYPE* ManagedObjectNewFn)(void*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* ManagedFreeHandleFn)(void*);
-        typedef int32 (CORECLR_DELEGATE_CALLTYPE* ManagedInvokeFn)(void*, uint8, const char*, int32, const uint8*, int32, void*, void*);
-        typedef int32 (CORECLR_DELEGATE_CALLTYPE* ManagedFieldGetFn)(void*, const char*, int32, void*, void*);
-        typedef int32 (CORECLR_DELEGATE_CALLTYPE* ManagedFieldSetFn)(void*, const char*, int32, const uint8*, int32);
+        typedef int32 (CORECLR_DELEGATE_CALLTYPE* InvokeScriptButtonFn)(void*, const char*, int32);
 
         // A LOCAL typed cache of the engine's managed entries (call sites stay typed). NOT an ABI mirror: native
         // fills each field at bootstrap by resolving it by name via ResolveManagedExport, so field set/order is
         // a local concern only, no C# struct to match, no drift hash. A missing entry fails loudly per-name.
         struct FManagedExports
         {
-            ApplyScriptPropertiesFn     ApplyScriptProperties;
-            ManagedClassFindFn          ClassFind;
-            CreateEntityScriptFn        CreateEntityScript;
             CreateEntitySystemFn        CreateEntitySystem;
-            DestroyEntityScriptFn       DestroyEntityScript;
             DestroyEntitySystemFn       DestroyEntitySystem;
-            DispatchInputFn             DispatchInput;
-            PollScriptInputFn           PollScriptInput;
             OnNativeDelegateDestroyedFn OnNativeDelegateDestroyed;
             EnumerateEntityScriptsFn    EnumerateEntityScripts;
             EnumerateEntitySystemsFn    EnumerateEntitySystems;
             CreateScriptableFn          CreateScriptable;
-            DestroyScriptableFn         DestroyScriptable;
             EnumerateScriptablesFn      EnumerateScriptables;
+            ApplyScriptableDefaultsFn   ApplyScriptableDefaults;
             EnumerateScriptStructsFn    EnumerateScriptStructs;
             GetScriptStructSchemaFn     GetScriptStructSchema;
-            ManagedFieldGetFn           FieldGet;
-            ManagedFieldSetFn           FieldSet;
             ManagedFreeHandleFn         FreeHandle;
+            InvokeScriptButtonFn        InvokeScriptButton;
             GetGenerationFn             GetGeneration;
             GetRuntimeDiagnosticsFn     GetRuntimeDiagnostics;
-            GetCallbackFlagsFn          GetScriptCallbackFlags;
             GetScriptSchemaFn           GetScriptSchema;
             GetScriptButtonsFn          GetScriptButtons;
             ResolveEntityScriptNameFn   ResolveEntityScriptName;
-            ManagedInvokeFn             Invoke;
             InvokeAssetCallbackFn       InvokeAssetCallback;
             LoadScriptsFn               LoadScripts;
-            ManagedObjectNewFn          ObjectNew;
-            OnReadyScriptFn             OnReadyScript;
             ShutdownFn                  Shutdown;
             TickFn                      Tick;
             TickEntitySystemFn          TickEntitySystem;
-            UpdateScriptsFn             UpdateScripts;
-            FixedUpdateScriptsFn        FixedUpdateScripts;
 
             EnumerateRenderScenesFn             EnumerateRenderScenes;
             CreateRenderSceneFn                 CreateRenderScene;
@@ -253,7 +227,7 @@ namespace Lumina::DotNet
         }
 
         // Sink the managed EnumerateScriptables calls once per Scriptable C# type; Ctx is the out desc vector.
-        void LmScriptableSink(void* Ctx, const char* Name, int NameLen, const char* Base, int BaseLen)
+        void LmScriptableSink(void* Ctx, const char* Name, int NameLen, const char* Base, int BaseLen, uint64 OverrideFlags)
         {
             auto* Out = static_cast<TVector<FScriptableTypeDesc>*>(Ctx);
             if (Out == nullptr || Name == nullptr || NameLen <= 0)
@@ -266,6 +240,7 @@ namespace Lumina::DotNet
             {
                 Desc.NativeBaseName = FString(Base, static_cast<size_t>(BaseLen));
             }
+            Desc.OverrideFlags = OverrideFlags;
             Out->emplace_back(eastl::move(Desc));
         }
 
@@ -837,6 +812,17 @@ namespace Lumina::DotNet
             }
             return bAllOk;
         }
+
+        // Frees one cached-wrapper GC handle on Core's behalf. Core owns the per-CObject managed-instance
+        // cache but knows nothing about the managed runtime, so it calls back through here. Null-safe against
+        // a teardown that has already cleared the managed export table.
+        void FreeManagedInstanceHandle(void* Handle)
+        {
+            if (Handle != nullptr && GManaged.FreeHandle != nullptr)
+            {
+                GManaged.FreeHandle(Handle);
+            }
+        }
     }
 
     void Initialize()
@@ -1000,41 +986,28 @@ namespace Lumina::DotNet
         }
 
         #define LM_RESOLVE(Field, Type) GManaged.Field = (Type)GResolveManagedExport(#Field, (int32)std::strlen(#Field))
-        LM_RESOLVE(ApplyScriptProperties,  ApplyScriptPropertiesFn);
-        LM_RESOLVE(ClassFind,              ManagedClassFindFn);
-        LM_RESOLVE(CreateEntityScript,     CreateEntityScriptFn);
         LM_RESOLVE(CreateEntitySystem,     CreateEntitySystemFn);
-        LM_RESOLVE(DestroyEntityScript,    DestroyEntityScriptFn);
         LM_RESOLVE(DestroyEntitySystem,    DestroyEntitySystemFn);
-        LM_RESOLVE(DispatchInput,          DispatchInputFn);
-        LM_RESOLVE(PollScriptInput,        PollScriptInputFn);
         LM_RESOLVE(EnumerateEntityScripts, EnumerateEntityScriptsFn);
         LM_RESOLVE(EnumerateEntitySystems, EnumerateEntitySystemsFn);
         LM_RESOLVE(CreateScriptable,       CreateScriptableFn);      // optional: only when scripts ship Scriptables
-        LM_RESOLVE(DestroyScriptable,      DestroyScriptableFn);
         LM_RESOLVE(EnumerateScriptables,   EnumerateScriptablesFn);
+        LM_RESOLVE(ApplyScriptableDefaults, ApplyScriptableDefaultsFn);   // optional: only when a script declares a [Property] initializer
         LM_RESOLVE(EnumerateScriptStructs, EnumerateScriptStructsFn);   // optional: only when scripts ship data types
         LM_RESOLVE(GetScriptStructSchema,  GetScriptStructSchemaFn);
-        LM_RESOLVE(FieldGet,               ManagedFieldGetFn);
-        LM_RESOLVE(FieldSet,               ManagedFieldSetFn);
         LM_RESOLVE(FreeHandle,             ManagedFreeHandleFn);
+        LM_RESOLVE(InvokeScriptButton,     InvokeScriptButtonFn);   // optional: editor [Button] support
         LM_RESOLVE(GetGeneration,          GetGenerationFn);
         LM_RESOLVE(GetRuntimeDiagnostics,  GetRuntimeDiagnosticsFn);
-        LM_RESOLVE(GetScriptCallbackFlags, GetCallbackFlagsFn);
         LM_RESOLVE(GetScriptSchema,        GetScriptSchemaFn);
         LM_RESOLVE(GetScriptButtons,       GetScriptButtonsFn);
         LM_RESOLVE(ResolveEntityScriptName, ResolveEntityScriptNameFn);
-        LM_RESOLVE(Invoke,                 ManagedInvokeFn);
         LM_RESOLVE(InvokeAssetCallback,    InvokeAssetCallbackFn);
         LM_RESOLVE(LoadScripts,            LoadScriptsFn);
         LM_RESOLVE(OnNativeDelegateDestroyed, OnNativeDelegateDestroyedFn);
-        LM_RESOLVE(ObjectNew,              ManagedObjectNewFn);
-        LM_RESOLVE(OnReadyScript,          OnReadyScriptFn);
         LM_RESOLVE(Shutdown,               ShutdownFn);
         LM_RESOLVE(Tick,                   TickFn);
         LM_RESOLVE(TickEntitySystem,       TickEntitySystemFn);
-        LM_RESOLVE(UpdateScripts,          UpdateScriptsFn);
-        LM_RESOLVE(FixedUpdateScripts,     FixedUpdateScriptsFn);   // optional: null -> fixed update skipped
         LM_RESOLVE(EnumerateRenderScenes,  EnumerateRenderScenesFn);
         LM_RESOLVE(CreateRenderScene,      CreateRenderSceneFn);
         LM_RESOLVE(DestroyRenderScene,     DestroyRenderSceneFn);
@@ -1046,10 +1019,11 @@ namespace Lumina::DotNet
         LM_RESOLVE(RenderSceneGetExtent,   RenderSceneGetExtentFn);
         #undef LM_RESOLVE
 
-        // The core script entries are mandatory.
+        // The core script entries are mandatory. Entity-script creation and ticking are NOT among them any
+        // more: scripts are CEntityScript CObjects driven by the native SEntityScriptSystem, so the managed
+        // side no longer owns their lifecycle.
         if (GManaged.LoadScripts == nullptr || GManaged.Tick == nullptr || GManaged.Shutdown == nullptr ||
-            GManaged.GetGeneration == nullptr || GManaged.CreateEntityScript == nullptr ||
-            GManaged.UpdateScripts == nullptr || GManaged.DestroyEntityScript == nullptr)
+            GManaged.GetGeneration == nullptr)
         {
             LOG_ERROR("C# scripting disabled: managed export resolution missing core script entry points.");
             return;
@@ -1057,6 +1031,11 @@ namespace Lumina::DotNet
 
         bInitialized = true;
         GOnScriptDelegateDestroyed = &NotifyManagedDelegateDestroyed;
+
+        // Core owns the per-CObject managed-instance cache but must not know about GC handles; hand it the
+        // free function now that the managed side can service one.
+        Lumina::ManagedInstances::SetFreeHandleFn(&FreeManagedInstanceHandle);
+
         LOG_DISPLAY(".NET host initialized (bundled runtime: {}).", Bundled.string().c_str());
     }
 
@@ -1067,10 +1046,16 @@ namespace Lumina::DotNet
             return;
         }
 
+        // Before the managed side goes away: drop every cached C# wrapper while the handles can still be
+        // freed. After this the table is empty and SetFreeHandleFn(nullptr) makes any later Set a no-op free.
+        Lumina::ManagedInstances::ReleaseAll();
+
         if (GManaged.Shutdown)
         {
             GManaged.Shutdown();
         }
+
+        Lumina::ManagedInstances::SetFreeHandleFn(nullptr);
 
         bInitialized = false;
         GOnScriptDelegateDestroyed = nullptr;
@@ -1247,6 +1232,13 @@ namespace Lumina::DotNet
         // per-frame tick never crosses the boundary to read it.
         GCachedGeneration = GManaged.GetGeneration ? GManaged.GetGeneration() : GCachedGeneration;
 
+        // Drop every cached C# wrapper for this generation. The handles are WEAK, so they never pinned the
+        // ALC that just unloaded and this is not what makes hot reload work -- it exists so the table does not
+        // carry handles whose target died with the old ALC, and so its slots are recycled instead of growing
+        // once per reload. Objects are untouched; the next access re-creates the wrapper against the new
+        // generation's types.
+        Lumina::ManagedInstances::ReleaseAll();
+
         GScriptStructs.Clear();
 
         // Mint a real CClass for every C# subclass of a REFLECT(Scriptable) native class, so FindObject<CClass>
@@ -1376,47 +1368,6 @@ namespace Lumina::DotNet
         return GManaged.GetRuntimeDiagnostics(&OutDiagnostics, bForceCollect ? 1 : 0) != 0;
     }
 
-    void* CreateEntityScript(FStringView TypeName, uint64 World, uint32 Entity)
-    {
-        if (!bInitialized || GManaged.CreateEntityScript == nullptr)
-        {
-            return nullptr;
-        }
-        return GManaged.CreateEntityScript(TypeName.data(), (int32)TypeName.size(), World, Entity);
-    }
-
-    void OnReadyScript(void* Instance)
-    {
-        if (bInitialized && GManaged.OnReadyScript && Instance)
-        {
-            GManaged.OnReadyScript(Instance);
-        }
-    }
-
-    void UpdateScripts(void* const* Instances, int32 Count, float DeltaSeconds)
-    {
-        if (bInitialized && GManaged.UpdateScripts && Count > 0)
-        {
-            GManaged.UpdateScripts(Instances, Count, DeltaSeconds);
-        }
-    }
-
-    void FixedUpdateScripts(void* const* Instances, int32 Count, float FixedDeltaSeconds)
-    {
-        if (bInitialized && GManaged.FixedUpdateScripts && Count > 0)
-        {
-            GManaged.FixedUpdateScripts(Instances, Count, FixedDeltaSeconds);
-        }
-    }
-
-    void DestroyEntityScript(void* Instance)
-    {
-        if (bInitialized && GManaged.DestroyEntityScript && Instance)
-        {
-            GManaged.DestroyEntityScript(Instance);
-        }
-    }
-
     void GatherEntityScriptTypes(TVector<FString>& OutTypeNames)
     {
         OutTypeNames.clear();
@@ -1435,22 +1386,22 @@ namespace Lumina::DotNet
         }
     }
 
-    void* CreateScriptable(FStringView TypeName, uint64 NativePtr, int32& OutOverrideFlags)
+    void* CreateScriptable(FStringView TypeName, uint64 NativePtr)
     {
-        OutOverrideFlags = 0;
         if (!bInitialized || GManaged.CreateScriptable == nullptr)
         {
             return nullptr;
         }
-        return GManaged.CreateScriptable(TypeName.data(), (int32)TypeName.size(), NativePtr, &OutOverrideFlags);
+        return GManaged.CreateScriptable(TypeName.data(), (int32)TypeName.size(), NativePtr);
     }
 
-    void DestroyScriptable(void* Instance)
+    void ApplyScriptableDefaults(FStringView TypeName, void* DefaultObject)
     {
-        if (bInitialized && GManaged.DestroyScriptable && Instance)
+        if (!bInitialized || GManaged.ApplyScriptableDefaults == nullptr || DefaultObject == nullptr)
         {
-            GManaged.DestroyScriptable(Instance);
+            return;
         }
+        GManaged.ApplyScriptableDefaults(TypeName.data(), (int32)TypeName.size(), (uint64)(uintptr_t)DefaultObject);
     }
 
     void GatherManagedSystemDescs(TVector<FManagedSystemDesc>& Out)
@@ -1561,28 +1512,6 @@ namespace Lumina::DotNet
         {
             GManaged.RenderSceneGetExtent(Handle, OutWidth, OutHeight);
         }
-    }
-
-    void DispatchScriptInput(void* Instance, int32 Type, int32 KeyCode, int32 bMouse, int32 Mods, int32 bRepeat,
-        double MouseX, double MouseY, double DeltaX, double DeltaY, double Scroll)
-    {
-        if (bInitialized && GManaged.DispatchInput && Instance)
-        {
-            GManaged.DispatchInput(Instance, Type, KeyCode, bMouse, Mods, bRepeat, MouseX, MouseY, DeltaX, DeltaY, Scroll);
-        }
-    }
-
-    void PollScriptInput(void* Instance, const FInputActionState* States, int32 Count, uint32 Serial, float DeltaTime)
-    {
-        if (bInitialized && GManaged.PollScriptInput && Instance)
-        {
-            GManaged.PollScriptInput(Instance, States, Count, Serial, DeltaTime);
-        }
-    }
-
-    int32 GetScriptCallbackFlags(void* Instance)
-    {
-        return (bInitialized && GManaged.GetScriptCallbackFlags && Instance) ? GManaged.GetScriptCallbackFlags(Instance) : 0;
     }
 
     namespace
@@ -1897,186 +1826,6 @@ namespace Lumina::DotNet
                 default: break;
             }
         }
-
-        // Captures a sink-delivered blob into a TVector<uint8> (the invoke / field-get return path).
-        void LmInvokeResultSink(void* Ctx, const char* Data, int Len)
-        {
-            auto* Out = static_cast<TVector<uint8>*>(Ctx);
-            if (Out != nullptr && Data != nullptr && Len > 0)
-            {
-                Out->assign(reinterpret_cast<const uint8*>(Data), reinterpret_cast<const uint8*>(Data) + Len);
-            }
-        }
-
-        // One self-describing value (kind byte + payload), wire-compatible with the managed ReadBoxed.
-        void WriteManagedArg(FBlobWriter& W, const FManagedValue& V)
-        {
-            using K = Scripting::EScriptValueKind;
-            switch (V.GetKind())
-            {
-                case EManagedValueKind::Bool:   W.U8((uint8)K::Bool);   W.U8(V.AsBool() ? 1 : 0); break;
-                case EManagedValueKind::Int:    W.U8((uint8)K::Int);    W.I64(V.AsInt64()); break;
-                case EManagedValueKind::Double: W.U8((uint8)K::Double); W.F64(V.AsDouble()); break;
-                case EManagedValueKind::String:
-                {
-                    const FString& S = V.AsString();
-                    W.U8((uint8)K::String);
-                    W.Str(FStringView(S.c_str(), S.size()));
-                    break;
-                }
-                default: W.U8((uint8)K::Nil); break;
-            }
-        }
-
-        // Mirror of WriteManagedArg / the managed WriteBoxed: decode one self-describing value.
-        FManagedValue ReadManagedArg(FBlobReader& R)
-        {
-            using K = Scripting::EScriptValueKind;
-            switch ((K)R.U8())
-            {
-                case K::Bool:   return FManagedValue(R.U8() != 0);
-                case K::Int:    return FManagedValue(R.I64());
-                case K::Double: return FManagedValue(R.F64());
-                case K::String: return FManagedValue(R.Str());
-                default:        return FManagedValue();
-            }
-        }
-
-        // Shared instance/static invoke: packs args, calls the managed entry, decodes the boxed return.
-        FManagedValue InvokeManaged(void* Target, bool bStatic, FStringView Method, std::initializer_list<FManagedValue> Args)
-        {
-            if (!bInitialized || GManaged.Invoke == nullptr || Target == nullptr)
-            {
-                return FManagedValue();
-            }
-
-            TVector<uint8> ArgBlob;
-            FBlobWriter W{ ArgBlob };
-            W.I32((int32)Args.size());
-            for (const FManagedValue& A : Args)
-            {
-                WriteManagedArg(W, A);
-            }
-
-            TVector<uint8> RetBlob;
-            const int32 Rc = GManaged.Invoke(Target, bStatic ? 1 : 0, Method.data(), (int32)Method.size(),
-                ArgBlob.data(), (int32)ArgBlob.size(), reinterpret_cast<void*>(&LmInvokeResultSink), &RetBlob);
-            if (Rc != 0 || RetBlob.empty())
-            {
-                return FManagedValue();
-            }
-
-            FBlobReader R{ RetBlob.data(), RetBlob.data() + RetBlob.size() };
-            return ReadManagedArg(R);
-        }
-    }
-    
-    
-    FManagedClass::FManagedClass(FStringView TypeName)
-    {
-        if (bInitialized && GManaged.ClassFind != nullptr && !TypeName.empty())
-        {
-            TypeHandle = GManaged.ClassFind(TypeName.data(), (int32)TypeName.size());
-        }
-    }
-
-    FManagedClass::~FManagedClass()
-    {
-        if (TypeHandle != nullptr && GManaged.FreeHandle != nullptr)
-        {
-            GManaged.FreeHandle(TypeHandle);
-        }
-        TypeHandle = nullptr;
-    }
-
-    FManagedClass& FManagedClass::operator=(FManagedClass&& Other) noexcept
-    {
-        if (this != &Other)
-        {
-            if (TypeHandle != nullptr && GManaged.FreeHandle != nullptr)
-            {
-                GManaged.FreeHandle(TypeHandle);
-            }
-            TypeHandle = Other.TypeHandle;
-            Other.TypeHandle = nullptr;
-        }
-        return *this;
-    }
-
-    FManagedObject FManagedClass::New()
-    {
-        if (TypeHandle == nullptr || GManaged.ObjectNew == nullptr)
-        {
-            return FManagedObject();
-        }
-        return FManagedObject(GManaged.ObjectNew(TypeHandle));
-    }
-
-    FManagedValue FManagedClass::InvokeStatic(FStringView Method, std::initializer_list<FManagedValue> Args)
-    {
-        return InvokeManaged(TypeHandle, true, Method, Args);
-    }
-
-    FManagedObject::~FManagedObject()
-    {
-        Free();
-    }
-
-    void FManagedObject::Free()
-    {
-        if (Handle != nullptr && GManaged.FreeHandle != nullptr)
-        {
-            GManaged.FreeHandle(Handle);
-        }
-        Handle = nullptr;
-    }
-
-    FManagedObject& FManagedObject::operator=(FManagedObject&& Other) noexcept
-    {
-        if (this != &Other)
-        {
-            Free();
-            Handle = Other.Handle;
-            Other.Handle = nullptr;
-        }
-        return *this;
-    }
-
-    FManagedValue FManagedObject::Invoke(FStringView Method, std::initializer_list<FManagedValue> Args)
-    {
-        return InvokeManaged(Handle, false, Method, Args);
-    }
-
-    FManagedValue FManagedObject::GetField(FStringView Name)
-    {
-        if (!bInitialized || GManaged.FieldGet == nullptr || Handle == nullptr)
-        {
-            return FManagedValue();
-        }
-
-        TVector<uint8> RetBlob;
-        const int32 Rc = GManaged.FieldGet(Handle, Name.data(), (int32)Name.size(),
-            reinterpret_cast<void*>(&LmInvokeResultSink), &RetBlob);
-        if (Rc != 0 || RetBlob.empty())
-        {
-            return FManagedValue();
-        }
-
-        FBlobReader R{ RetBlob.data(), RetBlob.data() + RetBlob.size() };
-        return ReadManagedArg(R);
-    }
-
-    bool FManagedObject::SetField(FStringView Name, const FManagedValue& Value)
-    {
-        if (!bInitialized || GManaged.FieldSet == nullptr || Handle == nullptr)
-        {
-            return false;
-        }
-
-        TVector<uint8> ValBlob;
-        FBlobWriter W{ ValBlob };
-        WriteManagedArg(W, Value);
-        return GManaged.FieldSet(Handle, Name.data(), (int32)Name.size(), ValBlob.data(), (int32)ValBlob.size()) == 0;
     }
 
     namespace
@@ -2185,24 +1934,6 @@ namespace Lumina::DotNet
         return Result;
     }
 
-    void ApplyScriptProperties(void* Instance, const TVector<Scripting::FScriptPropertyEntry>& Values)
-    {
-        if (!bInitialized || GManaged.ApplyScriptProperties == nullptr || Instance == nullptr)
-        {
-            return;
-        }
-
-        // Serialize the values to one value blob; managed deserializes onto the live instance via reflection.
-        TVector<uint8> Blob;
-        FBlobWriter W{ Blob };
-        W.I32((int32)Values.size());
-        for (const Scripting::FScriptPropertyEntry& Entry : Values)
-        {
-            W.Str(FStringView(Entry.Name.c_str()));
-            WriteValue(W, Entry.Value);
-        }
-        GManaged.ApplyScriptProperties(Instance, Blob.data(), (int32)Blob.size());
-    }
 
     void GatherScriptButtons(FStringView ScriptClass, TVector<Scripting::FScriptButton>& OutButtons)
     {
@@ -2235,12 +1966,11 @@ namespace Lumina::DotNet
 
     bool InvokeScriptButton(void* Instance, FStringView Method)
     {
-        if (!bInitialized || Instance == nullptr || Method.empty())
+        if (!bInitialized || Instance == nullptr || Method.empty() || GManaged.InvokeScriptButton == nullptr)
         {
             return false;
         }
-        InvokeManaged(Instance, false, Method, {});
-        return true;
+        return GManaged.InvokeScriptButton(Instance, Method.data(), (int32)Method.size()) == 0;
     }
 
     bool IsInitialized()
@@ -2393,6 +2123,27 @@ LUMINA_DOTNET_EXPORT(int64, ObjectGetHandle)(void* Object)
 LUMINA_DOTNET_EXPORT(void*, ObjectResolve)(int32 Index, int32 Generation)
 {
     return Lumina::FObjectHandle(Index, Generation).Resolve();
+}
+
+// Per-CObject managed-instance cache, backing Wrapper<T>.ForObject. Get returns the WEAK GC handle of the
+// wrapper already created for this object (or null); Set installs one, freeing whatever it replaces. Passing
+// a null handle to Set clears the slot. Weak by design: the cache remembers the wrapper that exists, it never
+// keeps one alive, so it cannot pin the collectible script ALC across a hot reload.
+LUMINA_DOTNET_EXPORT(void*, ObjectGetManagedInstance)(void* Object)
+{
+    return Lumina::ManagedInstances::Find(static_cast<Lumina::CObjectBase*>(static_cast<Lumina::CObject*>(Object)));
+}
+
+LUMINA_DOTNET_EXPORT(void, ObjectSetManagedInstance)(void* Object, void* Handle)
+{
+    Lumina::ManagedInstances::Set(static_cast<Lumina::CObjectBase*>(static_cast<Lumina::CObject*>(Object)), Handle);
+}
+
+// Drains every cached managed instance. Called by the managed teardown contract (ScriptManager.UnloadCurrent)
+// before the collectible ALC unloads: Scriptable subclass instances are held by STRONG handles here.
+LUMINA_DOTNET_EXPORT(void, ReleaseAllManagedInstances)()
+{
+    Lumina::ManagedInstances::ReleaseAll();
 }
 
 // Synchronous (blocking) load by virtual path; returns the CObject* or null. Backs Asset.Load<T>.

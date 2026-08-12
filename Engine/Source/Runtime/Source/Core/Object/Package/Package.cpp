@@ -36,6 +36,62 @@ namespace Lumina
         constexpr uint32 kPackageChunkVersion = 1;
         constexpr uint32 kPackageChunkSize    = 4u * 1024 * 1024; // 4 MiB uncompressed per chunk
 
+        // Bulk region trailer. A package with bulk data is [compressed container][raw bulk][trailer], and
+        // the trailer is the only fixed-position thing in the file, so it is what a reader finds first.
+        // Putting the region's location at the END (rather than in FPackageHeader) is what keeps the header
+        // wire-compatible: the header is inside the compressed container and cannot describe the file's
+        // own layout without a two-pass save.
+        constexpr uint32 kBulkTrailerMagic   = 0x4B4C424C; // 'LBLK'
+        constexpr uint32 kBulkTrailerVersion = 1;
+
+        struct FPackageBulkTrailer
+        {
+            uint32 Magic;
+            uint32 Version;
+            uint64 BulkOffset;   // file offset of the raw bulk region == size of the compressed container
+            uint64 BulkSize;
+        };
+        static_assert(std::is_trivially_copyable_v<FPackageBulkTrailer>);
+
+        // Below this, a package is read whole and its trailer parsed in memory: one IO instead of two.
+        // Above it, the tail is read first so a file whose bulk region dwarfs its container (exactly what a
+        // 4K texture looks like) never pulls the payload it is trying to avoid pulling.
+        constexpr uint64 kWholeFileReadLimit = 1u * 1024 * 1024;
+
+        // Reads the trailer out of an in-memory tail slice. bytes must be the LAST bytes of the file, and
+        // FileSize the file's true length -- the offsets are validated against it.
+        bool ParseBulkTrailer(const uint8* TailBytes, size_t TailSize, uint64 FileSize, CPackage::FBulkRegion& Out)
+        {
+            Out = CPackage::FBulkRegion{};
+
+            if (TailBytes == nullptr || TailSize < sizeof(FPackageBulkTrailer))
+            {
+                return false;
+            }
+
+            FPackageBulkTrailer Trailer;
+            std::memcpy(&Trailer, TailBytes + TailSize - sizeof(FPackageBulkTrailer), sizeof(Trailer));
+
+            if (Trailer.Magic != kBulkTrailerMagic || Trailer.Version != kBulkTrailerVersion)
+            {
+                return false;
+            }
+
+            // A malformed or truncated trailer must not be trusted into a read: the region has to sit
+            // entirely between the container and the trailer itself.
+            const uint64 TrailerStart = FileSize - sizeof(FPackageBulkTrailer);
+            if (Trailer.BulkOffset > TrailerStart || Trailer.BulkSize > TrailerStart - Trailer.BulkOffset)
+            {
+                LOG_ERROR("ParseBulkTrailer: bulk region (offset={}, size={}) does not fit a {}-byte file",
+                    Trailer.BulkOffset, Trailer.BulkSize, FileSize);
+                return false;
+            }
+
+            Out.FileOffset = (int64)Trailer.BulkOffset;
+            Out.Size       = (int64)Trailer.BulkSize;
+            return true;
+        }
+
         bool DeflateChunk(const uint8* Src, size_t Len, TVector<uint8>& Out)
         {
             mz_ulong Bound = mz_compressBound((mz_ulong)Len);
@@ -274,15 +330,99 @@ namespace Lumina
         }
     }
 
-    bool CPackage::ReadPackageFile(FStringView Path, TVector<uint8>& OutBinary)
+    bool CPackage::ReadPackageFile(FStringView Path, TVector<uint8>& OutBinary, FBulkRegion* OutBulkRegion)
     {
+        if (OutBulkRegion)
+        {
+            *OutBulkRegion = FBulkRegion{};
+        }
+
+        const uint64 FileSize = (uint64)VFS::Size(Path);
+
+        // Small packages (the overwhelming majority -- materials, prefabs, settings) keep the single-read
+        // path they have always had; splitting them into a tail read plus a body read would double the IO
+        // count on a world load to save nothing.
+        if (FileSize <= kWholeFileReadLimit)
+        {
+            TVector<uint8> RawBinary;
+            if (!VFS::ReadFile(RawBinary, Path))
+            {
+                return false;
+            }
+
+            FBulkRegion Region;
+            if (ParseBulkTrailer(RawBinary.data(), RawBinary.size(), (uint64)RawBinary.size(), Region))
+            {
+                // Trim to the container: the bulk bytes and trailer are not part of the deflate stream.
+                RawBinary.resize((size_t)Region.FileOffset);
+                if (OutBulkRegion)
+                {
+                    *OutBulkRegion = Region;
+                }
+            }
+
+            return DecompressPackageBinary(RawBinary, OutBinary);
+        }
+
+        // Large file: find out whether there is a bulk region before reading anything big.
+        uint64 ContainerSize = FileSize;
+
+        TVector<uint8> Tail;
+        if (VFS::ReadFileRange(Tail, Path, FileSize - sizeof(FPackageBulkTrailer), sizeof(FPackageBulkTrailer)))
+        {
+            FBulkRegion Region;
+            if (ParseBulkTrailer(Tail.data(), Tail.size(), FileSize, Region))
+            {
+                ContainerSize = (uint64)Region.FileOffset;
+                if (OutBulkRegion)
+                {
+                    *OutBulkRegion = Region;
+                }
+            }
+        }
+
         TVector<uint8> RawBinary;
-        if (!VFS::ReadFile(RawBinary, Path))
+        if (!VFS::ReadFileRange(RawBinary, Path, 0, ContainerSize))
         {
             return false;
         }
 
         return DecompressPackageBinary(RawBinary, OutBinary);
+    }
+
+    bool CPackage::ReadBulkData(const FBulkDataRef& Ref, TVector<uint8>& OutBytes) const
+    {
+        OutBytes.clear();
+
+        if (!Ref.IsValid())
+        {
+            return false;
+        }
+
+        if (!BulkRegion.IsValid() || Ref.Offset < 0 || Ref.Size > BulkRegion.Size - Ref.Offset)
+        {
+            LOG_ERROR("ReadBulkData: ref (offset={}, size={}) is outside package {}'s bulk region (size={})",
+                Ref.Offset, Ref.Size, GetName(), BulkRegion.Size);
+            return false;
+        }
+
+        const FFixedString Path = GetPackagePath();
+        if (!VFS::ReadFileRange(OutBytes, Path, (uint64)(BulkRegion.FileOffset + Ref.Offset), (uint64)Ref.Size))
+        {
+            LOG_ERROR("ReadBulkData: ranged read failed for {}", Path);
+            OutBytes.clear();
+            return false;
+        }
+
+        // A short read means the file changed under us (re-saved, truncated); the payload is unusable.
+        if ((int64)OutBytes.size() != Ref.Size)
+        {
+            LOG_ERROR("ReadBulkData: short read for {} (wanted {}, got {})", Path, Ref.Size, OutBytes.size());
+            OutBytes.clear();
+            return false;
+        }
+
+        return true;
     }
 
     FObjectExport::FObjectExport(CObject* InObject)
@@ -676,7 +816,7 @@ namespace Lumina
         auto Start = std::chrono::high_resolution_clock::now();
 
         TVector<uint8> FileBinary;
-        if (ReadPackageFile(Path, FileBinary))
+        if (ReadPackageFile(Path, FileBinary, &Package->BulkRegion))
         {
             Package->CreateLoader(FileBinary);
         
@@ -752,7 +892,8 @@ namespace Lumina
         // Clears then repopulates Package->Export/ImportTable so back-to-back saves stay consistent.
         bool BuildPackageBytes(CPackage* Package, bool bCooking,
                                TVector<uint8>& OutUncompressed,
-                               TVector<uint8>& OutCompressed)
+                               TVector<uint8>& OutCompressed,
+                               CPackage::FBulkRegion& OutBulkRegion)
         {
             (void)Package->FullyLoad();
 
@@ -798,7 +939,36 @@ namespace Lumina
             Writer.Seek(0);
             Writer << Header;
 
-            return CompressPackageBinary(OutUncompressed, OutCompressed);
+            if (!CompressPackageBinary(OutUncompressed, OutCompressed))
+            {
+                return false;
+            }
+
+            // Bulk region rides after the container, raw. Emitted only when an export actually wrote
+            // something, so a package with no bulk data is byte-identical to what the old saver produced
+            // and stays readable by the whole-file path.
+            const TVector<uint8>& BulkBytes = Writer.GetBulkBytes();
+            OutBulkRegion = CPackage::FBulkRegion{};
+
+            if (!BulkBytes.empty())
+            {
+                FPackageBulkTrailer Trailer;
+                Trailer.Magic      = kBulkTrailerMagic;
+                Trailer.Version    = kBulkTrailerVersion;
+                Trailer.BulkOffset = (uint64)OutCompressed.size();
+                Trailer.BulkSize   = (uint64)BulkBytes.size();
+
+                const size_t ContainerSize = OutCompressed.size();
+                OutCompressed.resize(ContainerSize + BulkBytes.size() + sizeof(FPackageBulkTrailer));
+
+                Memory::Memcpy(OutCompressed.data() + ContainerSize, BulkBytes.data(), BulkBytes.size());
+                std::memcpy(OutCompressed.data() + ContainerSize + BulkBytes.size(), &Trailer, sizeof(Trailer));
+
+                OutBulkRegion.FileOffset = (int64)Trailer.BulkOffset;
+                OutBulkRegion.Size       = (int64)Trailer.BulkSize;
+            }
+
+            return true;
         }
     }
 
@@ -816,7 +986,8 @@ namespace Lumina
 
         TVector<uint8> FileBinary;
         TVector<uint8> DiskBinary;
-        if (!BuildPackageBytes(Package, /*bCooking*/ false, FileBinary, DiskBinary))
+        FBulkRegion    NewBulkRegion;
+        if (!BuildPackageBytes(Package, /*bCooking*/ false, FileBinary, DiskBinary, NewBulkRegion))
         {
             LOG_ERROR("Failed to compress package: {}", Path);
             return false;
@@ -828,6 +999,10 @@ namespace Lumina
             LOG_ERROR("Failed to save package: {}", Path);
             return false;
         }
+
+        // Only after the write commits: every FBulkDataRef an export just serialized is relative to THIS
+        // region, and a reader that used the old one would read the previous save's bytes.
+        Package->BulkRegion = NewBulkRegion;
 
         // Refresh loader only after disk commit so it can't point at uncommitted bytes (a partially-resident
         // package still needs it for lazy loads at the new offsets). Drop it again immediately if the save
@@ -858,8 +1033,11 @@ namespace Lumina
             return false;
         }
 
+        // The cooker writes OutCompressed straight into the pak, and the bulk region + trailer are part of
+        // those bytes, so cooked packages stream exactly like loose ones.
         TVector<uint8> FileBinary;
-        return BuildPackageBytes(Package, /*bCooking*/ true, FileBinary, OutCompressed);
+        FBulkRegion    CookedBulkRegion;
+        return BuildPackageBytes(Package, /*bCooking*/ true, FileBinary, OutCompressed, CookedBulkRegion);
     }
 
     void CPackage::CreateLoader(const TVector<uint8>& FileBinary)
@@ -885,7 +1063,7 @@ namespace Lumina
         }
 
         TVector<uint8> FileBinary;
-        if (!ReadPackageFile(Path, FileBinary))
+        if (!ReadPackageFile(Path, FileBinary, &BulkRegion))
         {
             LOG_ERROR("EnsureLoader: failed to re-read package file {}", Path);
             return false;
@@ -959,9 +1137,13 @@ namespace Lumina
         for (FObjectExport& Export : ExportTable)
         {
             ASSERT(Export.Object.Get() != nullptr);
-            
+
+            // Before Tell(): PreSave can pull bulk payloads off disk, and anything it does must not land in
+            // the export stream between the recorded offset and the object's own data.
+            Export.Object.Get()->PreSave();
+
             Export.Offset = Ar.Tell();
-            
+
             Export.Object.Get()->Serialize(Ar);
             
             Export.Size = Ar.Tell() - Export.Offset;

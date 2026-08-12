@@ -484,6 +484,86 @@ namespace Lumina::Import::Mesh
 
             Result.bHasData = !Result.OutMeshlets.empty();
         }
+
+        /**
+         * Per-surface world-size of one UV tile: sqrt(sum(WorldArea) / sum(UVArea)) over the surface's
+         * triangles. Areas are summed before the ratio rather than averaging per-triangle ratios, so
+         * slivers and degenerate triangles contribute in proportion to how much surface they actually are.
+         *
+         * MUST run before the scratch vertex streams are dropped -- Positions/UVs/Indices are build-time
+         * only and are never serialized, so this is the one and only chance to measure it.
+         */
+        void ComputeSurfaceTexelFactors(FMeshResource& MeshResource)
+        {
+            LUMINA_PROFILE_SCOPE();
+
+            const size_t NumIndices  = MeshResource.Indices.size();
+            const size_t NumVertices = MeshResource.Positions.size();
+
+            // No UV stream means no unwrap to measure. Leaving TexelFactor at 0 is the honest answer;
+            // consumers fall back rather than acting on a fabricated density.
+            if (MeshResource.UVs.size() < NumVertices || NumVertices == 0 || NumIndices < 3)
+            {
+                for (FGeometrySurface& Surface : MeshResource.GeometrySurfaces)
+                {
+                    Surface.TexelFactor = 0.0f;
+                }
+                return;
+            }
+
+            for (FGeometrySurface& Surface : MeshResource.GeometrySurfaces)
+            {
+                Surface.TexelFactor = 0.0f;
+
+                const size_t Start = Surface.StartIndex;
+                const size_t End   = Math::Min<size_t>(Start + Surface.IndexCount, NumIndices);
+                if (End < Start + 3)
+                {
+                    continue;
+                }
+
+                // Doubles: a large mesh in centimetres can sum world areas past float precision long
+                // before it runs out of triangles, and the ratio is what we ultimately want.
+                double WorldArea = 0.0;
+                double UVArea    = 0.0;
+
+                for (size_t i = Start; i + 2 < End; i += 3)
+                {
+                    const uint32 I0 = MeshResource.Indices[i];
+                    const uint32 I1 = MeshResource.Indices[i + 1];
+                    const uint32 I2 = MeshResource.Indices[i + 2];
+
+                    if (I0 >= NumVertices || I1 >= NumVertices || I2 >= NumVertices)
+                    {
+                        continue;
+                    }
+
+                    const FVector3& P0 = MeshResource.Positions[I0];
+                    const FVector3& P1 = MeshResource.Positions[I1];
+                    const FVector3& P2 = MeshResource.Positions[I2];
+
+                    const FVector3 E1 = P1 - P0;
+                    const FVector3 E2 = P2 - P0;
+                    WorldArea += 0.5 * (double)Math::Length(Math::Cross(E1, E2));
+
+                    const FVector2 UV0 = Math::UnpackHalf2x16(MeshResource.UVs[I0]);
+                    const FVector2 UV1 = Math::UnpackHalf2x16(MeshResource.UVs[I1]);
+                    const FVector2 UV2 = Math::UnpackHalf2x16(MeshResource.UVs[I2]);
+
+                    const FVector2 T1 = UV1 - UV0;
+                    const FVector2 T2 = UV2 - UV0;
+                    UVArea += 0.5 * Math::Abs((double)T1.x * (double)T2.y - (double)T2.x * (double)T1.y);
+                }
+
+                // A surface with area but no UV area is unwrapped onto a point or a line (untextured
+                // collision-ish geometry, or a broken unwrap). Dividing would be +inf, which downstream
+                // would read as "needs infinite resolution", so report unknown instead.
+                if (UVArea > 1e-12 && WorldArea > 0.0)
+                {
+                    Surface.TexelFactor = (float)Math::Sqrt(WorldArea / UVArea);
+                }
+            }
+        }
     } // namespace
 
     void GenerateMeshlets(FMeshResource& MeshResource, FScopedSlowTask* Progress, float StepPerSurface)
@@ -535,6 +615,9 @@ namespace Lumina::Import::Mesh
             }
             return;
         }
+
+        // Before any of the meshlet build below, which drops the streams this reads.
+        ComputeSurfaceTexelFactors(MeshResource);
 
         const float* VertexPositions = reinterpret_cast<const float*>(MeshResource.Positions.data());
 

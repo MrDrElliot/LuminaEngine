@@ -128,17 +128,44 @@ public readonly struct EntityRegistry
     private static readonly unsafe IntPtr SignalThunkPtr =
         (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, uint, void>)&SignalThunk;
 
-    /// The first live C# script of type T on the entity, or null. Re-fetch per use; do not cache across frames (a stored ref outlives a destroyed script).
+    // Script lookup goes through the native CEntityScript component: one store, one answer, and the SAME call
+    // finds a C++ script (which no managed-side index could ever have known about). Wrapper<T>.ForObject hands
+    // back the canonical managed instance for the object, so a C# script comes back as itself.
+
+    /// The first live script of type T on the entity, or null. Re-fetch per use; do not cache across frames (a stored ref outlives a destroyed script).
     public T? GetScript<T>(Entity Entity) where T : EntityScript
     {
-        return EntityScriptRuntime.Current?.GetScript<T>(WorldHandle, Entity.Id);
+        IntPtr Script = Native.FindEntityScript(WorldHandle, Entity.Id, typeof(T).FullName!);
+        return Script == IntPtr.Zero ? null : Wrapper<T>.ForObject(Script);
     }
 
-    /// Every live C# script of type T on the entity (empty if none). A fresh list per call.
-    public System.Collections.Generic.List<T> GetScripts<T>(Entity Entity) where T : EntityScript
+    /// Every live script of type T on the entity (empty if none). A fresh list per call.
+    public unsafe System.Collections.Generic.List<T> GetScripts<T>(Entity Entity) where T : EntityScript
     {
-        var Result = new System.Collections.Generic.List<T>();
-        EntityScriptRuntime.Current?.CollectScripts(WorldHandle, Entity.Id, Result);
+        string ClassName = typeof(T).FullName!;
+
+        // Size first, then fill: the count is the return value either way, so an entity with more scripts than
+        // the stack buffer holds is handled rather than silently truncated.
+        int Count = Native.FindEntityScripts(WorldHandle, Entity.Id, ClassName, null, 0);
+        var Result = new System.Collections.Generic.List<T>(Count);
+        if (Count <= 0)
+        {
+            return Result;
+        }
+
+        IntPtr[] Scripts = new IntPtr[Count];
+        fixed (IntPtr* Buffer = Scripts)
+        {
+            Count = Native.FindEntityScripts(WorldHandle, Entity.Id, ClassName, (void**)Buffer, Count);
+        }
+
+        for (int Index = 0; Index < Count && Index < Scripts.Length; ++Index)
+        {
+            if (Wrapper<T>.ForObject(Scripts[Index]) is { } Script)
+            {
+                Result.Add(Script);
+            }
+        }
         return Result;
     }
 
@@ -151,19 +178,19 @@ public readonly struct EntityRegistry
     /// Attach a script of the named class to the entity and return the live instance (null on failure).
     public EntityScript? AddScript(Entity Entity, string ClassName)
     {
-        IntPtr Handle = Native.AddEntityScript(WorldHandle, Entity.Id, ClassName);
-        return Handle != IntPtr.Zero ? GCHandle.FromIntPtr(Handle).Target as EntityScript : null;
+        IntPtr Script = Native.AddEntityScript(WorldHandle, Entity.Id, ClassName);
+        return Script == IntPtr.Zero ? null : Wrapper<EntityScript>.ForObject(Script);
     }
 
     /// Remove the first script of type T from the entity. Returns true if one was removed.
     public bool RemoveScript<T>(Entity Entity) where T : EntityScript
     {
-        T? Script = EntityScriptRuntime.Current?.GetScript<T>(WorldHandle, Entity.Id);
-        if (Script == null)
+        IntPtr Script = Native.FindEntityScript(WorldHandle, Entity.Id, typeof(T).FullName!);
+        if (Script == IntPtr.Zero)
         {
             return false;
         }
-        Native.RemoveEntityScript(WorldHandle, Entity.Id, Script.SelfHandle);
+        Native.RemoveEntityScript(WorldHandle, Entity.Id, Script);
         return true;
     }
 

@@ -1,9 +1,11 @@
-﻿#include "RuntimePCH.h"
+#include "RuntimePCH.h"
 #include "Texture.h"
 #include "Core/Object/Class.h"
+#include "Core/Object/Package/Package.h"
 #include "Memory/MemoryTracking.h"
 #include "Renderer/RenderManager.h"
 #include "Renderer/RHITexture.h"
+#include "Renderer/TextureStreamingManager.h"
 
 namespace Lumina
 {
@@ -18,6 +20,16 @@ namespace Lumina
             TextureResource = MakeUnique<FTextureResource>();
         }
 
+        // Every write needs the pixels in hand: an archive with a bulk region copies them into it, and one
+        // without has no choice but to write them inline. A streamed-out mip has neither. PreSave covers the
+        // package saver, but it is a CObject hook and NOTHING else calls it -- so a texture reached through
+        // any other writing archive (duplication, transient, network) would serialize its streamed mips as
+        // zero-length payloads and come out capped at its inline tail, permanently.
+        if (Ar.IsWriting())
+        {
+            MakeStreamedMipsResident();
+        }
+
         Ar << *TextureResource.get();
     }
 
@@ -29,39 +41,163 @@ namespace Lumina
         }
     }
 
+    void CTexture::PreSave()
+    {
+        // Runs before the export's offset is recorded, so the IO below cannot land between that offset and
+        // the object's own bytes. Serialize repeats the call for archives the package saver never touches;
+        // by then this has already made everything resident, so that one does no IO at all.
+        MakeStreamedMipsResident();
+    }
+
+    void CTexture::MakeStreamedMipsResident()
+    {
+        // A streamed-out mip has no Pixels -- its bytes are still in the package's bulk region on disk. If it
+        // reached Serialize like that it would be written back as a zero-length payload, which is silent
+        // permanent data loss, so pull everything back in first. Only mips actually missing are read; a
+        // freshly imported texture (all Pixels populated, no BulkRefs) does no IO at all.
+        if (TextureResource == nullptr)
+        {
+            return;
+        }
+
+        CPackage* Package = nullptr;
+
+        for (FTextureResource::FMip& Mip : TextureResource->Mips)
+        {
+            if (!Mip.BulkRef.IsValid() || !Mip.Pixels.empty())
+            {
+                continue;
+            }
+
+            // Resolved lazily: a texture with nothing to re-read (the common case by far) must not pay for
+            // the lookup, and one with no package at all is only worth complaining about if it actually
+            // needs bytes it cannot get.
+            if (Package == nullptr)
+            {
+                Package = GetPackage();
+                if (Package == nullptr)
+                {
+                    LOG_ERROR("CTexture: {} has streamed-out mips but no package to re-read them from; "
+                              "writing it now would drop them", GetName());
+                    return;
+                }
+            }
+
+            if (!Package->ReadBulkData(Mip.BulkRef, Mip.Pixels))
+            {
+                LOG_ERROR("CTexture: {} could not re-read a streamed mip; saving would drop it", GetName());
+            }
+        }
+    }
+
     void CTexture::PostLoad()
     {
         LUMINA_MEMORY_SCOPE("Textures");
 
+        // Only the inline tail is resident at load. For a streamable texture that is the mips at or below
+        // kInlineMipMaxDimension -- tiny next to the full chain, which is the entire point: opening fifteen
+        // 4K textures now costs fifteen 256px images until something actually asks for more.
+        TextureResource->ResidentFirstMip = TextureResource->ImageDescription.FirstInlineMip;
+
+        if (ApplyMipResidency(TextureResource->ResidentFirstMip))
+        {
+            if (FTextureStreamingManager* Streaming = FTextureStreamingManager::TryGet())
+            {
+                Streaming->RegisterTexture(this);
+            }
+        }
+
+#if !USING(WITH_EDITOR)
+        // CPU pixels are dead after upload in cooked builds; editor retains them for reimport/thumbnails.
+        //
+        // Except the inline tail of a streamable texture. Demotion re-uploads the tail into a fresh image
+        // (Recreate does not preserve contents), and the tail is the one part of the chain that is NOT in
+        // the bulk region, so there would be nothing to re-read it from -- dropping it here would make the
+        // texture permanently un-demotable and, worse, blank on the first demotion. It is small by
+        // construction: ~87 KiB for a 4K BC7 against the ~21 MiB it lets us stream.
+        const uint32 KeepFrom = TextureResource->IsStreamable()
+            ? (uint32)TextureResource->ImageDescription.FirstInlineMip
+            : TextureResource->GetNumMips();
+
+        const uint32 NumMipsTotal = TextureResource->GetNumMips();
+        for (uint32 Index = 0; Index < (uint32)TextureResource->Mips.size(); ++Index)
+        {
+            if (NumMipsTotal > 0 && (Index % NumMipsTotal) >= KeepFrom)
+            {
+                continue;
+            }
+
+            FTextureResource::FMip& Mip = TextureResource->Mips[Index];
+            Mip.Pixels.clear();
+            Mip.Pixels.shrink_to_fit();
+        }
+#endif
+    }
+
+    bool CTexture::ApplyMipResidency(uint32 InFirstMip)
+    {
+        LUMINA_MEMORY_SCOPE("Textures");
+
+        if (TextureResource == nullptr)
+        {
+            return false;
+        }
+
         const FTextureResource::FDescription& Desc = TextureResource->ImageDescription;
+
+        const uint32 NumMips   = TextureResource->GetNumMips();
+        const uint32 NumLayers = TextureResource->GetNumLayers();
+
+        if (InFirstMip >= NumMips)
+        {
+            InFirstMip = NumMips - 1;
+        }
+
+        // Every mip the new image will hold has to be uploadable, because Recreate hands back a fresh image
+        // with nothing in it. Bail before touching the GPU rather than leave a half-filled texture.
+        for (uint32 Layer = 0; Layer < NumLayers; ++Layer)
+        {
+            for (uint32 Mip = InFirstMip; Mip < NumMips; ++Mip)
+            {
+                const uint32 Index = TextureResource->MipIndex(Layer, Mip);
+                if (Index < TextureResource->Mips.size() && TextureResource->Mips[Index].Pixels.empty())
+                {
+                    LOG_ERROR("CTexture::ApplyMipResidency: {} asked for mip {} but its pixels are not resident",
+                        GetName(), Mip);
+                    return false;
+                }
+            }
+        }
 
         // Named after the asset so a GPU crash report identifies which texture a faulting address
         // belongs to. Read during Create only, so the local outliving the call is enough.
         const FString DebugName = "Texture." + GetName().ToString();
 
-        const uint32 NumMips   = TextureResource->GetNumMips();
-        const uint32 NumLayers = TextureResource->GetNumLayers();
+        const FUIntVector2 Extent      = TextureResource->MipExtent(InFirstMip);
+        const uint32       ResidentNum = NumMips - InFirstMip;
 
         // New RHI: create the sampled texture in the global heap + upload every mip of every layer.
         // Both paths land in the same heap, so the ResourceID is interchangeable -- what decides
         // whether a shader may read it as gTextures2DArray[] is the VIEW type chosen here.
-        // PostLoad is NOT once-per-object: the texture editor re-runs it after an in-place edit (flip
-        // H/V), and the array factory re-runs it after re-cooking layers. Creating over the top left the
-        // previous image and its heap slot orphaned -- one leaked texture per edit -- and moved the
-        // ResourceID, which every material that samples this texture has already baked into its uniform
-        // block. Both branches therefore have to deal with an existing image.
+        // This is NOT once-per-object: the texture editor re-runs it after an in-place edit (flip
+        // H/V), the array factory re-runs it after re-cooking layers, and the streamer re-runs it on every
+        // promotion/demotion. Creating over the top left the previous image and its heap slot orphaned --
+        // one leaked texture per edit -- and moved the ResourceID, which every material that samples this
+        // texture has already baked into its uniform block. Both branches therefore have to deal with an
+        // existing image.
         if (TextureResource->IsArray())
         {
             // No array overload of Recreate: an array's layer count is baked into the image, so there is
             // no same-shape image to repoint the slot at. Release + create, and accept the new slot --
-            // the same trade the array factory already makes explicitly.
+            // the same trade the array factory already makes explicitly. Arrays are excluded from streaming
+            // for exactly this reason (see ComputeFirstInlineMip), so InFirstMip is always 0 here.
             RHI::Textures::Release(TextureResource->NewTexture);
             TextureResource->NewTexture = RHI::Textures::Create(RHI::FTexture2DArrayDesc
             {
-                .Width  = Desc.Extent.x,
-                .Height = Desc.Extent.y,
+                .Width  = Extent.x,
+                .Height = Extent.y,
                 .Layers = NumLayers,
-                .Mips   = NumMips,
+                .Mips   = ResidentNum,
                 .Format = Desc.Format,
                 .DebugName = DebugName.c_str(),
             });
@@ -73,9 +209,9 @@ namespace Lumina
             // which is the normal first-load path.
             RHI::Textures::Recreate(TextureResource->NewTexture, RHI::FTexture2DDesc
             {
-                .Width  = Desc.Extent.x,
-                .Height = Desc.Extent.y,
-                .Mips   = NumMips,
+                .Width  = Extent.x,
+                .Height = Extent.y,
+                .Mips   = ResidentNum,
                 .Format = Desc.Format,
                 .DebugName = DebugName.c_str(),
             });
@@ -83,32 +219,36 @@ namespace Lumina
 
         for (uint32 Layer = 0; Layer < NumLayers; ++Layer)
         {
-            for (uint32 i = 0; i < NumMips; ++i)
+            for (uint32 Mip = InFirstMip; Mip < NumMips; ++Mip)
             {
-                const uint32 Index = TextureResource->MipIndex(Layer, i);
+                const uint32 Index = TextureResource->MipIndex(Layer, Mip);
                 if (Index >= TextureResource->Mips.size())
                 {
                     continue;
                 }
 
-                const FTextureResource::FMip& Mip = TextureResource->Mips[Index];
+                const FTextureResource::FMip& Mip1 = TextureResource->Mips[Index];
+
+                // The image only holds the resident range, so mip M of the chain is mip (M - InFirstMip) of
+                // the image. Getting this wrong writes the wrong-sized data into the wrong level.
+                const uint32 ImageMip = Mip - InFirstMip;
+
                 // RowPitchTexels = mip width: pixel rows are tightly packed at the mip's width.
-                RHI::Textures::UploadLayer(TextureResource->NewTexture, Layer, i, Mip.Pixels.data(), Mip.Pixels.size(), Mip.Width, Mip.Width, Mip.Height);
+                RHI::Textures::UploadLayer(TextureResource->NewTexture, Layer, ImageMip, Mip1.Pixels.data(), Mip1.Pixels.size(), Mip1.Width, Mip1.Width, Mip1.Height);
             }
         }
 
-#if !USING(WITH_EDITOR)
-        // CPU pixels are dead after upload in cooked builds; editor retains them for reimport/thumbnails.
-        for (FTextureResource::FMip& Mip : TextureResource->Mips)
-        {
-            Mip.Pixels.clear();
-            Mip.Pixels.shrink_to_fit();
-        }
-#endif
+        TextureResource->ResidentFirstMip = (uint8)InFirstMip;
+        return true;
     }
 
     void CTexture::OnDestroy()
     {
+        if (FTextureStreamingManager* Streaming = FTextureStreamingManager::TryGet())
+        {
+            Streaming->UnregisterTexture(this);
+        }
+
         if (TextureResource == nullptr || !TextureResource->NewTexture.IsValid())
         {
             return;

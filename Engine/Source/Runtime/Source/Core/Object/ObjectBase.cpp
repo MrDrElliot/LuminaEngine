@@ -3,6 +3,7 @@
 #include "Class.h"
 #include "DeferredRegistry.h"
 #include "Lumina.h"
+#include "ManagedInstance.h"
 #include "ObjectAllocator.h"
 #include "ObjectArray.h"
 #include "ObjectHash.h"
@@ -51,6 +52,23 @@ namespace Lumina
 
     CObjectBase::~CObjectBase()
     {
+        // Mirror of the construct in StaticAllocateObject; must stay in lockstep with it or script strings
+        // leak / double-free. Gated on the flag rather than on a null class so that reaching through
+        // ClassPrivate here is confined to the objects that genuinely have trailing script storage: every
+        // native object's destructor stays independent of whether its class is still alive, and the ones
+        // that do depend on it are covered by the types-last shutdown order in FCObjectArray::Shutdown.
+        if (HasAnyFlag(OF_ScriptProperties) && ClassPrivate != nullptr)
+        {
+            ClassPrivate->DestructScriptProperties(this);
+        }
+
+        // Every destruction path lands here, so this is the one place the cached C# wrapper has to be let go.
+        // Guarded on the slot so an object that was never wrapped (the overwhelming majority) pays a compare.
+        if (ManagedInstanceSlot != INDEX_NONE)
+        {
+            ManagedInstances::Release(this);
+        }
+
         FObjectHashTables::Get().RemoveObject(this);
         if (InternalIndex != INDEX_NONE)
         {

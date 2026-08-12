@@ -54,6 +54,10 @@ namespace Lumina::VFS
 
     RUNTIME_API bool ReadFile(TVector<uint8>& Result, FStringView Path);
     RUNTIME_API bool ReadFile(FString& OutString, FStringView Path);
+
+    /** Read [Offset, Offset + Size) of Path; clamped at EOF, so Result can be shorter than Size.
+     *  False only when no mount could supply the file at all. */
+    RUNTIME_API bool ReadFileRange(TVector<uint8>& Result, FStringView Path, uint64 Offset, uint64 Size);
     RUNTIME_API bool WriteFile(FStringView Path, FStringView Data);
     RUNTIME_API bool WriteFile(FStringView Path, TSpan<const uint8> Data);
     RUNTIME_API bool AtomicWriteFile(FStringView Path, TSpan<const uint8> Data);

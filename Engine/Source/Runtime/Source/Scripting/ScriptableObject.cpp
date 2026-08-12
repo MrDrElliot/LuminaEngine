@@ -8,6 +8,8 @@
 #include "Core/Object/ObjectArray.h"
 #include "Core/Object/ObjectCore.h"
 #include "Core/Object/ObjectBase.h"
+#include "Core/Object/ManagedInstance.h"
+#include "Scripting/ScriptStruct.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Reflection/Type/Properties/ArrayProperty.h"
 #include "Core/Reflection/Type/Properties/StructProperty.h"
@@ -16,61 +18,40 @@
 namespace Lumina
 {
     
-    void FScriptableBridge::Attach(CObject* InSelf)
+    namespace Scriptable
     {
-        Self = InSelf;
-    }
-
-    void FScriptableBridge::Bind(CObject* InSelf)
-    {
-        Self = InSelf;
-        // The class default object never has a managed counterpart. OF_DefaultObject is applied during
-        // construction, so this guard holds on the eager path too, not just the lazy EnsureBound one.
-        if (Self == nullptr || Self->HasAnyFlag(OF_DefaultObject))
+        void* GetOrCreateInstance(CObject* Object)
         {
-            Generation = DotNet::GetScriptGeneration(); // mark attempted so the CDO isn't retried every dispatch
-            return;
+            if (Object == nullptr)
+            {
+                return nullptr;
+            }
+
+            // Already built (this generation): the slot is the single source of truth. A hot reload drains the
+            // table, so an empty slot IS the rebind signal -- no generation stamp to carry per instance.
+            if (void* Existing = ManagedInstances::Find(Object))
+            {
+                return Existing;
+            }
+
+            // The class default object never gets a managed counterpart. It is also never dispatched to, so
+            // this is belt-and-braces rather than a hot path.
+            if (Object->HasAnyFlag(OF_DefaultObject) || Object->GetClass() == nullptr)
+            {
+                return nullptr;
+            }
+
+            void* Handle = DotNet::CreateScriptable(Object->GetClass()->GetName().ToString(), (uint64)(uintptr_t)Object);
+            if (Handle != nullptr)
+            {
+                // The slot owns it from here: ~CObjectBase frees it, and the teardown contract drains the
+                // whole table before the collectible ALC unloads.
+                ManagedInstances::Set(Object, Handle);
+            }
+            return Handle;
         }
-        OverrideFlags = 0;
-        Handle = DotNet::CreateScriptable(Self->GetClass()->GetName().ToString(), (uint64)(uintptr_t)Self, OverrideFlags);
-        Generation = DotNet::GetScriptGeneration();
     }
 
-    void FScriptableBridge::EnsureBound()
-    {
-        if (Self == nullptr)
-        {
-            return;
-        }
-        const int32 Gen = DotNet::GetScriptGeneration();
-
-        if (Generation == Gen)
-        {
-            return;
-        }
-        Handle = nullptr;
-        Bind(Self);
-    }
-
-    bool FScriptableBridge::ShouldDispatch(int32 Bit)
-    {
-        EnsureBound();
-        return Handle != nullptr && (OverrideFlags & (1 << Bit)) != 0;
-    }
-
-    void FScriptableBridge::Destroy()
-    {
-        // Only free a handle owned by the CURRENT generation. A prior-generation handle was already freed by the
-        // managed FreeAll on unload, so passing it back would double-free / free a recycled handle.
-        if (Handle != nullptr && Generation == DotNet::GetScriptGeneration())
-        {
-            DotNet::DestroyScriptable(Handle);
-        }
-        Handle = nullptr;
-        Generation = -1;
-        Self = nullptr;
-    }
-    
     namespace
     {
         THashMap<FString, FScriptableNativeInfo>& GNativeInfos()
@@ -197,6 +178,10 @@ namespace Lumina
             Class->RemoveFromRoot();
             Class->ForceDestroyNow();
 
+            // Safe only here, past the live-instance check above: the layout record owns everything the
+            // class's appended properties point at.
+            Scripting::ForgetScriptClassLayout(Class);
+
             LOG_DISPLAY("Scriptable: retired minted class '{}' (its C# type no longer exists).", NameId.c_str());
             return true;
         }
@@ -208,7 +193,7 @@ namespace Lumina
         GNativeInfos()[FString(NativeClassName)] = Info;
     }
 
-    CClass* FScriptableRegistry::Mint(FStringView TypeName, FStringView NativeBaseName)
+    CClass* FScriptableRegistry::Mint(FStringView TypeName, FStringView NativeBaseName, uint64 OverrideFlags)
     {
         const FString Name(TypeName.data(), TypeName.size());
         const FName NameId(Name.c_str());
@@ -237,10 +222,12 @@ namespace Lumina
             Info.ShimSize, Info.ShimAlign, Info.GetBaseClass, Info.Factory);
         if (Minted != nullptr)
         {
+            Minted->ScriptOverrides = OverrideFlags;
             GMintedClasses()[NameId] = Minted;
         }
         return Minted;
     }
+
 
     void FScriptableRegistry::RefreshMintedClasses()
     {
@@ -271,10 +258,36 @@ namespace Lumina
         }
 
         bool bMintedAny = false;
+        TVector<CClass*> NeedDefaults;
         for (const DotNet::FScriptableTypeDesc& Desc : Descs)
         {
-            if (Mint(Desc.TypeName, Desc.NativeBaseName) != nullptr)
+            if (CClass* Minted = Mint(Desc.TypeName, Desc.NativeBaseName, Desc.OverrideFlags))
             {
+                // Re-stamp on every refresh, not just the first mint: minted classes are REUSED by name
+                // across reloads, so a generation that adds or removes an override on an existing type must
+                // update the mask the shims read.
+                Minted->ScriptOverrides = Desc.OverrideFlags;
+
+                // Append this type's [Property] members as real FPropertys in the trailing block. Only on a
+                // FIRST mint: the class keeps its identity (and its live instances' layout) across reloads,
+                // so re-appending would both duplicate the properties and move every existing object's
+                // fields. A reload that CHANGES the property set is handled by MigrateMintedClassLayout.
+                if (Minted->GetDefaultObjectIfCreated() == nullptr)
+                {
+                    Scripting::FScriptExportSchema Schema;
+                    TVector<Scripting::FScriptPropertyEntry> Defaults;
+                    if (DotNet::GatherScriptSchema(Desc.TypeName, Schema, Defaults) && Schema.IsValid())
+                    {
+                        const uint32 Count = Scripting::AppendScriptPropertiesToClass(Minted, Schema);
+                        if (Count > 0)
+                        {
+                            LOG_DISPLAY("Scriptable '{}': appended {} script propert{} to the minted class.",
+                                Desc.TypeName.c_str(), Count, Count == 1 ? "y" : "ies");
+                            NeedDefaults.push_back(Minted);
+                        }
+                    }
+                }
+
                 bMintedAny = true;
             }
         }
@@ -283,6 +296,16 @@ namespace Lumina
         if (bMintedAny)
         {
             ProcessNewlyLoadedCObjects();
+        }
+
+        // The C# type's declared initializers land on the CDO, which only exists after the pass above; every
+        // instance is then copied from it. This is the script equivalent of a C++ constructor seeding its CDO,
+        // and it runs on the managed side because the initializer is an arbitrary C# expression -- it is
+        // replayed through the real property accessors rather than decoded from a value blob.
+        for (CClass* Minted : NeedDefaults)
+        {
+            CObject* DefaultObject = Minted->GetDefaultObject();
+            DotNet::ApplyScriptableDefaults(Minted->GetName().ToString(), DefaultObject);
         }
     }
 }

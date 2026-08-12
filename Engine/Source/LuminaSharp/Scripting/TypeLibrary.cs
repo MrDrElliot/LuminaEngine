@@ -47,7 +47,14 @@ internal sealed class TypeLibrary
             {
                 RenderScenes[FullName] = Type;
             }
-            else if (IsScriptableSubclass(Type))
+
+            // NOT an "else": the roles above describe what a type is FOR, and being a Scriptable is a
+            // separate fact about how it EXISTS -- as a CObject of a minted CClass deriving the native base.
+            // An EntityScript is both, and has been since it became a Lumina.CEntityScript: it is the mint
+            // that gives it a class to instantiate and the trailing block its [Property] members live in. As
+            // an exclusive chain this silently published no EntityScript to the minter, so no script class
+            // existed and no script property was ever appended.
+            if (IsScriptableSubclass(Type))
             {
                 Scriptables[FullName] = Type;
             }
@@ -125,6 +132,14 @@ internal sealed class TypeLibrary
     public Type? GetScriptable(string FullName) => Scriptables.TryGetValue(FullName, out Type? Type) ? Type : null;
 
     // True if any base type carries [ScriptableType] (Type is a user subclass of a REFLECT(Scriptable) class).
+    /// <summary>A type that IS a view over native storage rather than a managed value, so a get-only member
+    /// of it is still a real property. Kept alongside TryGetElementType, which is what decides the wire
+    /// shape for the same types.</summary>
+    private static bool IsNativeOwnedViewType(Type Type)
+    {
+        return Type.IsGenericType && Type.GetGenericTypeDefinition() == typeof(NativeList<>);
+    }
+
     private static bool IsScriptableSubclass(Type Type)
     {
         for (Type? Base = Type.BaseType; Base != null; Base = Base.BaseType)
@@ -449,7 +464,7 @@ internal sealed class TypeLibrary
 
         foreach (PropertyInfo Property in Type.GetProperties(Flags))
         {
-            if (!Property.CanRead || !Property.CanWrite || Property.GetIndexParameters().Length > 0)
+            if (!Property.CanRead || Property.GetIndexParameters().Length > 0)
             {
                 continue;
             }
@@ -466,6 +481,17 @@ internal sealed class TypeLibrary
                 continue;
             }
 
+            // A get-only property USED to mean "not editable, so not a property". That is still true for a
+            // value, but not for a container: a script's container property is a get-only VIEW over storage
+            // native owns, so assigning it is meaningless while its contents are fully editable. Requiring a
+            // setter dropped every such member from the schema, so no native property was appended and the
+            // view had nothing to point at.
+            bool bNativeOwnedView = !Property.CanWrite;
+            if (bNativeOwnedView && !IsNativeOwnedViewType(Property.PropertyType))
+            {
+                continue;
+            }
+
             Members.Add(new ScriptProperty
             {
                 Name = Meta.Name ?? Property.Name,
@@ -474,7 +500,9 @@ internal sealed class TypeLibrary
                 Aliases = GatherAliases(Property),
                 SkipHotReload = bClassSkip || Property.GetCustomAttribute<SkipHotReloadAttribute>() != null,
                 Get = Property.GetValue,
-                Set = Property.SetValue,
+                // Never Property.SetValue for a view: there is no setter to call, and reaching for one throws.
+                Set = bNativeOwnedView ? (Instance, Value) => { } : Property.SetValue,
+                IsNativeOwnedView = bNativeOwnedView,
             });
         }
 
@@ -548,6 +576,14 @@ internal sealed class TypeLibrary
             return ElementType != null;
         }
         if (Type.IsGenericType && Type.GetGenericTypeDefinition() == typeof(List<>))
+        {
+            ElementType = Type.GetGenericArguments()[0];
+            return true;
+        }
+        // NativeList<T>: a VIEW over a native TVector<T>, which is what a [Property] container on a script
+        // type is declared as (there is one copy of the value and native owns it, so a List<T> would be a
+        // lie). Shaped identically to a List<T> on the wire.
+        if (Type.IsGenericType && Type.GetGenericTypeDefinition() == typeof(NativeList<>))
         {
             ElementType = Type.GetGenericArguments()[0];
             return true;

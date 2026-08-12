@@ -4,8 +4,12 @@ using System.Collections.Generic;
 
 namespace LuminaSharp;
 
-// Mirror of native Lumina::FVectorOps (Containers/ContainerOps.h). Layout must match exactly; C# calls only
-// PushBack/RemoveAt/Clear (reads decode the header directly). [Cdecl] matches the captureless lambdas on x64.
+// Mirror of native Lumina::FVectorOps (Containers/ContainerOps.h). C# calls only PushBack/RemoveAt/Clear
+// (reads decode the header directly), and [Cdecl] matches the captureless lambdas on x64.
+//
+// This is a PREFIX of the native struct, not the whole of it: the fields up to ElementSize must stay at the
+// same offsets, and native appends anything new after them (it carries container construct/destruct entries
+// C# has no use for). So a native change is safe here only while it is append-only.
 #pragma warning disable CS0649 // fields are populated by overlaying native memory, not managed assignment
 internal unsafe struct VectorOps
 {
@@ -32,7 +36,9 @@ public readonly unsafe struct NativeList<T> : IList<T> where T : unmanaged
     private readonly nint Vector;   // TVector<T> instance (mpBegin@0, mpEnd@8)
     private readonly nint Ops;      // FVectorOps for T
 
-    internal NativeList(nint vector, nint ops)
+    /// <summary>Views an existing native TVector&lt;T&gt; through its ops table. Public because the accessors
+    /// ScriptPropertyRewriter emits for a user script are compiled into the user's own assembly.</summary>
+    public NativeList(nint vector, nint ops)
     {
         Vector = vector;
         Ops = ops;

@@ -63,7 +63,7 @@
 #include "World/Entity/Components/PhysicsComponent.h"
 #include "World/Entity/Components/DynamicMeshComponent.h"
 #include "World/Entity/Components/RagdollComponent.h"
-#include "World/Entity/Components/CSharpScriptComponent.h"
+#include "Scripting/EntityScript.h"
 #include "Scripting/DotNet/DotNetHost.h"
 #include "World/Entity/Components/StaticMeshComponent.h"
 #include "World/Entity/Components/TerrainComponent.h"
@@ -442,13 +442,29 @@ namespace Lumina::Physics
                 ? (bIsAdded ? Body->OnOverlapBegin : Body->OnOverlapEnd)
                 : (bIsAdded ? Body->OnContactBegin : Body->OnContactEnd);
 
-            if (!Delegate.IsBound())
+            // Scripts are dispatched independently of the delegate: an entity script overriding
+            // OnContactBegin must receive the event whether or not anything bound the component's delegate.
+            const bool bHasScripts = Registry.all_of<SEntityScriptComponent>(Self);
+            if (!Delegate.IsBound() && !bHasScripts)
             {
                 return;
             }
 
             const SCollisionEvent Event = BuildCollisionEvent(Self, Other, SelfBody, OtherBody, Record, bFlipNormal);
-            Delegate.Broadcast(Event);
+
+            if (Delegate.IsBound())
+            {
+                Delegate.Broadcast(Event);
+            }
+
+            if (bHasScripts)
+            {
+                using ECallback = EntityScripts::ECollisionCallback;
+                const ECallback Callback = bIsOverlap
+                    ? (bIsAdded ? ECallback::OverlapBegin : ECallback::OverlapEnd)
+                    : (bIsAdded ? ECallback::ContactBegin : ECallback::ContactEnd);
+                EntityScripts::DispatchCollision(Registry, Self, Callback, Event);
+            }
         };
 
         for (const FContactRecord& Record : ContactDrainScratch)

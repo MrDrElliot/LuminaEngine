@@ -158,6 +158,14 @@ namespace Lumina
         uint16          MaterialIndex;
         EInstanceFlags  MaterialFlags;
         bool            bMaterialCastsShadows;
+
+        // Mesh-local world size of one UV tile; 0 = unknown. Read by the texture-streaming gather to turn
+        // a distance into a required texture resolution. See FGeometrySurface::TexelFactor.
+        //
+        // Initialised, unlike its neighbours, because this struct is also built field-by-field as a memo
+        // proto -- a field missed there reads as garbage rather than zero, and a junk float here becomes a
+        // junk mip request (or a NaN that poisons the max downstream).
+        float           TexelFactor = 0.0f;
     };
 
     struct FScenePrimitive

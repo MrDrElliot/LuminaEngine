@@ -34,6 +34,17 @@ enum class ELuminaEngineVersion : uint32
 	// ParentPrefab there instead of resolved data; older files are always root prefabs.
 	PREFAB_VARIANTS,
 
+	// Packages can carry a bulk-data region: raw bytes appended after the compressed container and
+	// located by a fixed trailer at EOF, addressed by FBulkDataRef offsets stored inline in exports.
+	// FTextureResource uses it to hold the mips above its inline tail, so a texture no longer has to
+	// be fully resident to be loaded. Older files have no trailer and store every mip inline.
+	PACKAGE_BULK_DATA,
+
+	// FGeometrySurface serializes TexelFactor (world size of one UV tile), which texture streaming uses
+	// to turn a distance into a required resolution. Older meshes store 0 and fall back to a bounding-
+	// sphere estimate; it cannot be recomputed at load because the source UVs are not serialized.
+	MESH_SURFACE_TEXEL_FACTOR,
+
 	AUTOMATIC_VERSION_PLUS_ONE,
 	AUTOMATIC_VERSION = AUTOMATIC_VERSION_PLUS_ONE - 1
 };

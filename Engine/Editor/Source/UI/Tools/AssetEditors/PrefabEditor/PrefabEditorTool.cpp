@@ -84,7 +84,7 @@ namespace Lumina
         OutlinerContext.FilterFunction = [this](FTreeListView& Tree, FTreeNodeID Item)
         {
             const FTreeNodeDisplay& Display = Tree.Get<FTreeNodeDisplay>(Item);
-            return EntityFilterState.FilterName.PassFilter(Display.DisplayName.c_str());
+            return ImGuiX::PassSearchFilter(EntityFilterState.FilterName, Display.DisplayName.c_str());
         };
 
         OutlinerContext.ItemSelectedFunction = [this](FTreeListView& Tree, FTreeNodeID Item, bool bShouldClear)

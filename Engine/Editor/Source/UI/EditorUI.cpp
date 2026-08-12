@@ -78,16 +78,16 @@
 #include "Platform/CrashReporter.h"
 #include "Platform/Process/PlatformProcess.h"
 #include "Properties/Customizations/CoreTypeCustomization.h"
+#include "Properties/Customizations/EntityScriptComponentCustomization.h"
 #include "Properties/Customizations/CurveGradientCustomization.h"
 #include "Properties/Customizations/CustomPrimitiveDataCustomization.h"
 #include "Tools/AssetEditors/ParticleSystemEditor/ParticleParamCustomization.h"
 #include "Tools/AssetEditors/ParticleSystemEditor/ParticleParameterCustomization.h"
-#include "Properties/Customizations/CSharpScriptComponentCustomization.h"
 #include "Properties/Customizations/AssetRefPropertyCustomization.h"
 #include "Properties/Customizations/GameplayTagPropertyCustomization.h"
 #include "Properties/Customizations/DataTableRowHandleCustomization.h"
 #include "GameplayTags/GameplayTag.h"
-#include "World/Entity/Components/CSharpScriptComponent.h"
+#include "Scripting/EntityScript.h"
 #include "Scripting/DotNet/DotNetHost.h"
 #include "Renderer/CustomPrimitiveData.h"
 #include "Renderer/RenderDocImpl.h"
@@ -119,6 +119,7 @@
 #include "Tools/Debug/MemoryProfilerEditorTool.h"
 #include "Tools/Debug/ScriptDiagnosticsEditorTool.h"
 #include "Tools/Debug/TextureHeapEditorTool.h"
+#include "Tools/Debug/TextureStreamingEditorTool.h"
 #include "Tools/Debug/ObjectBrowserEditorTool.h"
 #include "Tools/Debug/ProjectPackagerEditorTool.h"
 #include "Tools/Debug/SettingsEditorTool.h"
@@ -491,13 +492,13 @@ namespace Lumina
         {
             return FVec3PropertyCustomization::MakeInstance();
         });
+        PropertyCustomizationRegistry->RegisterPropertyCustomization(SEntityScriptComponent::StaticStruct()->GetName(), []
+        {
+            return FEntityScriptComponentCustomization::MakeInstance();
+        });
         PropertyCustomizationRegistry->RegisterPropertyCustomization(TBaseStructure<FTransform>::Get()->GetName(), []
         {
             return FTransformPropertyCustomization::MakeInstance();
-        });
-        PropertyCustomizationRegistry->RegisterPropertyCustomization(SScriptComponent::StaticStruct()->GetName(), []
-        {
-           return FCSharpScriptComponentPropertyCustomization::MakeInstance();
         });
 
         PropertyCustomizationRegistry->RegisterPropertyCustomization(FAssetRef::StaticStruct()->GetName(), []
@@ -2715,7 +2716,7 @@ namespace Lumina
             Matches.reserve(Entries.size());
             for (const FEntry& Entry : Entries)
             {
-                if (Filter.PassFilter(Entry.Name.c_str()) || Filter.PassFilter(Entry.Path.c_str()))
+                if (ImGuiX::PassSearchFilter(Filter, Entry.Name.c_str()) || ImGuiX::PassSearchFilter(Filter, Entry.Path.c_str()))
                 {
                     Matches.push_back(&Entry);
                 }
@@ -3546,6 +3547,7 @@ namespace Lumina
         DrawToolMenuItem<FGameplayInsightsEditorTool>(LE_ICON_CHART_TIMELINE_VARIANT " Gameplay Insights", this);
         DrawToolMenuItem<FShadowAtlasEditorTool>(LE_ICON_GRID " Shadow Atlas", this);
         DrawToolMenuItem<FTextureHeapEditorTool>(LE_ICON_IMAGE_ALBUM " Texture Heap", this);
+        DrawToolMenuItem<FTextureStreamingEditorTool>(LE_ICON_SWAP_VERTICAL " Texture Streaming", this);
         DrawToolMenuItem<FMemoryProfilerEditorTool>(LE_ICON_MEMORY " Memory", this);
         DrawToolMenuItem<FScriptDiagnosticsEditorTool>(LE_ICON_LANGUAGE_CSHARP " C# Diagnostics", this);
         DrawToolMenuItem<FObjectBrowserEditorTool>(LE_ICON_LIST_BOX " Object Browser", this);

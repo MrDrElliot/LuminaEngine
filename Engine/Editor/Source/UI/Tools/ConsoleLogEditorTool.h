@@ -36,6 +36,8 @@ namespace Lumina
                 default: break;
             }
 
+			// Phrase match, unlike the rest of the editor's search boxes: OR-on-space would make
+			// "failed to load" match every line holding "to".
 			return TextFilter.PassFilter(Entry.Message.data());
         }
     };

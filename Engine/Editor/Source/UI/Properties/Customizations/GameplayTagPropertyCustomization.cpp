@@ -179,7 +179,7 @@ namespace Lumina
 
         for (const FString& Tag : Tags)
         {
-            if (bFiltering && !TagFilter.PassFilter(Tag.c_str()))
+            if (bFiltering && !ImGuiX::PassSearchFilter(TagFilter, Tag.c_str()))
             {
                 continue;
             }

@@ -2,6 +2,8 @@
 #include "InputSystem.h"
 #include "World/Entity/Components/InputComponent.h"
 #include "Input/InputViewport.h"
+#include "Input/InputContext.h"
+#include "Scripting/EntityScript.h"
 
 namespace Lumina
 {
@@ -20,7 +22,9 @@ namespace Lumina
         // PIE world is driven at a time and Shift+F1 reliably stops all of them.
         const bool bGameFocused = Reg.IsGameInputFocused();
 
-        Context.GetRegistry().view<SInputComponent>().each([&](SInputComponent& Input)
+        FEntityRegistry& Registry = Context.GetRegistry();
+
+        Registry.view<SInputComponent>().each([&](entt::entity Entity, SInputComponent& Input)
         {
             const FInputViewport* V = Reg.FindViewportForWorld(Input.World);
             if (V == nullptr)
@@ -28,7 +32,20 @@ namespace Lumina
                 Input.ResetSnapshot();
                 return;
             }
-            Input.SnapshotFrom(V->GetContext(), bGameFocused && V == Active);
+
+            const bool bReceiving = bGameFocused && V == Active;
+            Input.SnapshotFrom(V->GetContext(), bReceiving);
+
+            // Discrete events go to this entity's scripts, in either language -- the same virtual serves a
+            // C++ and a C# script. Gated on the same focus condition as the snapshot, so a script cannot see
+            // events the polling API says the entity never received.
+            if (bReceiving)
+            {
+                for (const SInputEvent& Event : V->GetContext().GetFrameEvents())
+                {
+                    EntityScripts::DispatchInput(Registry, Entity, Event);
+                }
+            }
         });
     }
 }

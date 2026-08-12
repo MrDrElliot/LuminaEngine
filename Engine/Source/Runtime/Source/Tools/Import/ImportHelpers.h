@@ -99,9 +99,9 @@ namespace Lumina::Import
     {
         struct FTextureImportResult
         {
-            TVector<uint8>  Pixels;
-            FUIntVector2      Dimensions;
-            EFormat         Format;
+            TVector<uint8>      Pixels;
+            FUIntVector2        Dimensions;
+            EFormat             Format;
         };
         
         /** One texture cook. Bytes win when present (mesh-embedded); otherwise the file at SourcePath is read. */

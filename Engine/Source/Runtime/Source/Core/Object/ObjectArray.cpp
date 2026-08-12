@@ -119,7 +119,38 @@ namespace Lumina
         FRecursiveScopeLock Lock(Mutex);
 
         bShuttingDown = true;
-        
+
+        // Types outlive their instances. An instance's teardown is entitled to ask for its class -- a
+        // minted script class's destructor reaches through it to destruct the appended trailing block --
+        // so freeing a class while its instances are still alive is a use-after-free. Index order alone
+        // does not give that ordering: freed indices are recycled, so an object created late can sit at a
+        // lower index than the class it was made from.
+        //
+        // CField covers CClass / CStruct / CEnum, i.e. everything that can be another object's class or
+        // describe its layout. Classifying is safe here because nothing has been freed yet.
+        auto DestroyPass = [this](bool bTypeObjects)
+        {
+            ForEachObject([bTypeObjects](CObjectBase* Object, int32)
+            {
+                if (Object->IsA<CField>() == bTypeObjects)
+                {
+                    Object->BeginDestroyForShutdown();
+                }
+            });
+
+            ForEachObject([bTypeObjects](CObjectBase* Object, int32)
+            {
+                if (Object->IsA<CField>() == bTypeObjects)
+                {
+                    Object->FinishDestroyForShutdown();
+                }
+            });
+        };
+
+        DestroyPass(/*bTypeObjects*/ false);
+        DestroyPass(/*bTypeObjects*/ true);
+
+        // Anything the two passes created on their way out (a type object minted during an OnDestroy, say).
         ForEachObject([](CObjectBase* Object, int32)
         {
             Object->BeginDestroyForShutdown();

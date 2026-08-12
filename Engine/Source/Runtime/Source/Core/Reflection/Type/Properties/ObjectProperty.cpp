@@ -75,4 +75,9 @@ namespace Lumina
     {
         *static_cast<TObjectPtr<CObject>*>(Dst) = *static_cast<const TObjectPtr<CObject>*>(Src);
     }
+
+    void FObjectProperty::DestructValue(void* Value) const
+    {
+        static_cast<TObjectPtr<CObject>*>(Value)->~TObjectPtr();
+    }
 }

@@ -147,13 +147,13 @@ namespace Lumina
             {
                 // Match against the name and every visible cell, so searching for a value finds the
                 // row that holds it rather than only matching names.
-                bool bMatched = Filter.PassFilter(Row.Name.c_str());
+                bool bMatched = ImGuiX::PassSearchFilter(Filter, Row.Name.c_str());
                 if (!bMatched)
                 {
                     const void* RowMemory = Row.Value.GetMemory();
                     for (FProperty* Property : Columns)
                     {
-                        if (RowMemory != nullptr && Filter.PassFilter(Reflection::ToText(Property, RowMemory).c_str()))
+                        if (RowMemory != nullptr && ImGuiX::PassSearchFilter(Filter, Reflection::ToText(Property, RowMemory).c_str()))
                         {
                             bMatched = true;
                             break;

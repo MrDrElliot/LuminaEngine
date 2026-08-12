@@ -279,7 +279,12 @@ internal sealed class ScriptManager
         EntitySystems = null;
         RenderScenes?.FreeAll();  // native destroys these pre-reload; this is the process-shutdown backstop
         RenderScenes = null;
-        Scriptables?.FreeAll();   // C# Scriptable subclass instances (GCHandles) -> teardown contract
+        // C# Scriptable subclass instances live in their native object's managed-instance slot, and those
+        // handles are STRONG -- they would pin this ALC. Draining the whole table here keeps that release at
+        // exactly the point in the teardown contract it has always been at, just on the side that owns it now.
+        // Plain wrapper entries in the same table are weak and would not have pinned anything; they are
+        // dropped too and re-created lazily against the next generation.
+        Native.ReleaseAllManagedInstances();
         Scriptables = null;
 
         // Holds no handles of its own, but it holds the TypeLibrary, which holds user Types. Cleared here

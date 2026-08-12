@@ -51,7 +51,16 @@ namespace Lumina
         CObject* NewObject = Params.Class->EmplaceInstance(ObjectMemory);
 
         NewObject->ConstructInternal(FObjectInitializer(Params.Package, Params));
-        
+
+        // Script-appended properties live past the C++ shim and are not covered by EmplaceInstance's
+        // placement-new, so they are constructed here -- after the class is known, before any user code runs.
+        // No-op (one empty-vector test) for every native class. The flag is what lets ~CObjectBase skip
+        // reaching through its class entirely unless this object really has trailing storage to tear down.
+        if (Params.Class->ConstructScriptProperties(NewObject))
+        {
+            NewObject->SetFlag(OF_ScriptProperties);
+        }
+
         NewObject->PostInitProperties();
         
         return NewObject;

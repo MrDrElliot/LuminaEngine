@@ -434,6 +434,12 @@ namespace Lumina
         {
             FResolvedSurface& R = NewData->Surfaces[i];
             R.NumLODs = Geometry[i].NumLODs;
+
+            // This path builds its own FResolvedSurface list instead of going through FMeshResolveCache,
+            // so anything the cache copies across has to be copied here too. GenerateMeshlets above just
+            // measured it from the staged UVs -- a dynamic mesh needs no resave to get real texel density,
+            // it is computed fresh on every commit.
+            R.TexelFactor = Geometry[i].TexelFactor;
             for (uint32 LOD = 0; LOD < MAX_MESH_LODS; ++LOD)
             {
                 R.LODMeshletOffset[LOD] = Geometry[i].LODMeshletOffset[LOD];

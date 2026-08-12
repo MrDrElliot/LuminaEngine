@@ -61,7 +61,7 @@
 #include "Physics/Physics.h"
 #include "Scene/RenderScene/RenderSceneFactory.h"
 #include "Scripting/DotNet/DotNetHost.h"
-#include "World/Entity/Components/CSharpScriptComponent.h"
+#include "Scripting/EntityScript.h"
 #include "World/Entity/Components/LifetimeComponent.h"
 #include "World/Entity/Components/ProjectileComponent.h"
 #include "World/Net/NetRole.h"
@@ -386,7 +386,7 @@ namespace Lumina
         EntityRegistry.on_destroy   <FRelationshipComponent>()      .connect<&ThisClass::OnRelationshipComponentDestroyed>(this);
         EntityRegistry.on_construct <STransformComponent>()         .connect<&ThisClass::OnTransformComponentConstruct>(this);
         EntityRegistry.on_construct <FRelationshipComponent>()      .connect<&ThisClass::OnRelationshipComponentConstruct>(this);
-        EntityRegistry.on_destroy   <SScriptComponent>()            .connect<&ThisClass::OnCSharpScriptComponentDestroyed>(this);
+        EntityRegistry.on_destroy   <SEntityScriptComponent>()      .connect<&ThisClass::OnCSharpScriptComponentDestroyed>(this);
         EntityRegistry.on_destroy   <SWidgetComponent>()            .connect<&ThisClass::OnWidgetComponentDestroyed>(this);
         EntityRegistry.on_construct <SInputComponent>()             .connect<&ThisClass::OnInputComponentConstruct>(this);
         SystemContext.EventSink     <FSwitchActiveCameraEvent>()    .connect<&ThisClass::OnChangeCameraEvent>(this);
@@ -1546,32 +1546,24 @@ namespace Lumina
     void CWorld::OnCSharpScriptComponentDestroyed(entt::registry& Registry, entt::entity Entity)
     {
         // Runs at on_destroy, while the entity is still queryable, so user OnDetach can still read it. The
-        // slot destructor would free these anyway; doing it here just gives OnDetach a live entity.
-        SScriptComponent& Component = Registry.get<SScriptComponent>(Entity);
-        for (SScriptInstance& Slot : Component.Scripts)
-        {
-            Slot.ReleaseInstance();
-        }
+        // component destructor would free these anyway; doing it here just gives OnDetach a live entity.
+        //
+        // Routed through the driver rather than looped inline: OnDetach is user code and may attach or detach
+        // scripts, which reallocates the very vector an inline loop would be walking. DetachAll dispatches
+        // from a strong-ref snapshot for exactly that reason.
+        EntityScripts::DetachAll(Registry, Entity);
     }
 
-    void* CWorld::AddEntityScript(entt::entity Entity, FStringView ScriptClass)
+    CEntityScript* CWorld::AddEntityScript(entt::entity Entity, FStringView ScriptClass)
     {
         if (!EntityRegistry.valid(Entity) || ScriptClass.empty())
         {
             return nullptr;
         }
 
-        SScriptComponent& Component = EntityRegistry.get_or_emplace<SScriptComponent>(Entity);
-        Component.Scripts.emplace_back();
-        const int32 NewIndex = (int32)Component.Scripts.size() - 1;
-        Component.Scripts[NewIndex].ScriptClass.assign(ScriptClass.data(), ScriptClass.size());
-
-        // Bind now so the caller gets a usable instance; OnReady runs on the next system tick.
-        if (!DotNet::IsInitialized())
-        {
-            return nullptr;
-        }
-        return BindScriptInstance(reinterpret_cast<uint64>(this), (uint32)entt::to_integral(Entity), Component, NewIndex, DotNet::GetScriptGeneration(), false);
+        // Class-keyed, so this attaches a C++ script and a C# one through exactly the same call.
+        CClass* Class = FindObject<CClass>(FName(ScriptClass.data(), ScriptClass.size()));
+        return EntityScripts::Attach(EntityRegistry, Entity, Class);
     }
 
     void CWorld::SetEntityScript(entt::entity Entity, FStringView ScriptClass)

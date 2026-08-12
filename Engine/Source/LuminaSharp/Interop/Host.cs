@@ -214,114 +214,6 @@ public static unsafe partial class Host
         }
     }
 
-    /// Instantiates an EntityScript for an entity; returns a strong GCHandle (as IntPtr) the native component stores, or IntPtr.Zero on failure.
-    [ManagedExport]
-    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
-    public static IntPtr CreateEntityScript(byte* TypeName, int TypeNameLength, ulong World, uint Entity)
-    {
-        try
-        {
-            return Scripts?.EntityScripts?.Create(Interop.GetString(TypeName, TypeNameLength), World, Entity) ?? IntPtr.Zero;
-        }
-        catch (Exception Exception)
-        {
-            Interop.LogException(Exception);
-            return IntPtr.Zero;
-        }
-    }
-
-    /// Runs OnReady on a freshly-attached script (after all of the world's siblings attached).
-    [ManagedExport]
-    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
-    public static void OnReadyScript(IntPtr Handle)
-    {
-        try
-        {
-            Scripts?.EntityScripts?.OnReady(Handle);
-        }
-        catch (Exception Exception)
-        {
-            Interop.LogException(Exception);
-        }
-    }
-
-    /// Ticks a batch of scripts (one call per world per frame). Handles points at Count strong GCHandles.
-    [ManagedExport]
-    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
-    public static void UpdateScripts(IntPtr* Handles, int Count, float DeltaTime)
-    {
-        try
-        {
-            Scripts?.EntityScripts?.Update(Handles, Count, DeltaTime);
-        }
-        catch (Exception Exception)
-        {
-            Interop.LogException(Exception);
-        }
-    }
-
-    /// Dispatches OnFixedUpdate to a batch of scripts at the physics fixed rate, before the physics step.
-    [ManagedExport]
-    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
-    public static void FixedUpdateScripts(IntPtr* Handles, int Count, float FixedDeltaTime)
-    {
-        try
-        {
-            Scripts?.EntityScripts?.FixedUpdate(Handles, Count, FixedDeltaTime);
-        }
-        catch (Exception Exception)
-        {
-            Interop.LogException(Exception);
-        }
-    }
-
-    [ManagedExport]
-    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
-    public static void DestroyEntityScript(IntPtr Handle)
-    {
-        try
-        {
-            Scripts?.EntityScripts?.Destroy(Handle);
-        }
-        catch (Exception Exception)
-        {
-            Interop.LogException(Exception);
-        }
-    }
-
-    /// Routes one discrete input event to a script's OnInput (flat args, no struct marshaling).
-    [ManagedExport]
-    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
-    public static void DispatchInput(IntPtr Handle, int Type, int KeyCode, int IsMouse, int Mods, int Repeat,
-        double MouseX, double MouseY, double DeltaX, double DeltaY, double Scroll)
-    {
-        try
-        {
-            Lumina.InputEvent Event = new((Lumina.EInputEventType)Type, KeyCode, IsMouse != 0, Mods, Repeat != 0,
-                MouseX, MouseY, DeltaX, DeltaY, Scroll);
-            Scripts?.EntityScripts?.DispatchInput(Handle, in Event);
-        }
-        catch (Exception Exception)
-        {
-            Interop.LogException(Exception);
-        }
-    }
-
-    /// Applies this frame's input action states to a script's [Property] input bindings, raising their events.
-    /// States points at the owning context's array; it is only valid for the duration of this call.
-    [ManagedExport]
-    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
-    public static void PollScriptInput(IntPtr Handle, Lumina.FInputActionState* States, int Count, uint Serial, float DeltaTime)
-    {
-        try
-        {
-            Scripts?.EntityScripts?.PollInput(Handle, States, Count, Serial, DeltaTime);
-        }
-        catch (Exception Exception)
-        {
-            Interop.LogException(Exception);
-        }
-    }
 
     /// A native script delegate with live managed bindings was destroyed; free the matching GCHandles.
     [ManagedExport]
@@ -335,22 +227,6 @@ public static unsafe partial class Host
         catch (Exception Exception)
         {
             Interop.LogException(Exception);
-        }
-    }
-
-    /// Bitmask of the frame callbacks the script overrides, so native skips the crossing for the rest.
-    [ManagedExport]
-    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
-    public static int GetScriptCallbackFlags(IntPtr Handle)
-    {
-        try
-        {
-            return Scripts?.EntityScripts?.CallbackFlags(Handle) ?? 0;
-        }
-        catch (Exception Exception)
-        {
-            Interop.LogException(Exception);
-            return 0;
         }
     }
 
@@ -404,20 +280,6 @@ public static unsafe partial class Host
         }
     }
 
-    /// Applies a recursive override-value blob onto a live script instance via reflection.
-    [ManagedExport]
-    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
-    public static void ApplyScriptProperties(IntPtr Handle, byte* Blob, int Length)
-    {
-        try
-        {
-            Scripts?.EntityScripts?.ApplyProperties(Handle, Blob, Length);
-        }
-        catch (Exception Exception)
-        {
-            Interop.LogException(Exception);
-        }
-    }
 
     /// Resumes an Asset.LoadAsync continuation; Callback is the GCHandle to an Action&lt;IntPtr&gt; trampoline, freed here.
     [ManagedExport]
@@ -504,46 +366,28 @@ public static unsafe partial class Host
     }
 
     // Scriptable bridge: a C# subclass of a REFLECT(Scriptable) native CObject. Native creates the CObject
-    // (a minted CClass), then binds the managed instance to it via a GCHandle the native shim stores.
+    // (a minted CClass), then binds the managed instance to it via a GCHandle stored in the object's
+    // managed-instance slot, which owns it from there (no DestroyScriptable: the object's destructor and the
+    // teardown drain both go through that slot).
 
-    /// Instantiates the named Scriptable subclass, pairs it to the native object, writes the override-flag
-    /// bitmask, and returns a strong GCHandle (IntPtr.Zero on failure).
+    /// Instantiates the named Scriptable subclass, pairs it to the native object, and returns a strong
+    /// GCHandle (IntPtr.Zero on failure). The override mask is no longer reported per instance -- it is
+    /// type-uniform and rides on the minted CClass (see ScriptableRuntime.Enumerate).
     [ManagedExport]
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
-    public static IntPtr CreateScriptable(byte* TypeName, int TypeNameLength, ulong NativePtr, int* OutOverrideFlags)
+    public static IntPtr CreateScriptable(byte* TypeName, int TypeNameLength, ulong NativePtr)
     {
         try
         {
             ScriptableRuntime? Runtime = Scripts?.Scriptables;
-            if (Runtime == null)
-            {
-                if (OutOverrideFlags != null) { *OutOverrideFlags = 0; }
-                return IntPtr.Zero;
-            }
-            IntPtr Handle = Runtime.Create(Interop.GetString(TypeName, TypeNameLength), NativePtr, out int Flags);
-            if (OutOverrideFlags != null) { *OutOverrideFlags = Flags; }
-            return Handle;
+            return Runtime == null
+                ? IntPtr.Zero
+                : Runtime.Create(Interop.GetString(TypeName, TypeNameLength), NativePtr);
         }
         catch (Exception Exception)
         {
             Interop.LogException(Exception);
-            if (OutOverrideFlags != null) { *OutOverrideFlags = 0; }
             return IntPtr.Zero;
-        }
-    }
-
-    /// Frees a Scriptable instance's GCHandle (the native shim's destructor calls this).
-    [ManagedExport]
-    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
-    public static void DestroyScriptable(IntPtr Handle)
-    {
-        try
-        {
-            Scripts?.Scriptables?.Destroy(Handle);
-        }
-        catch (Exception Exception)
-        {
-            Interop.LogException(Exception);
         }
     }
 
@@ -556,6 +400,22 @@ public static unsafe partial class Host
         try
         {
             Scripts?.Scriptables?.Enumerate(Sink, Context);
+        }
+        catch (Exception Exception)
+        {
+            Interop.LogException(Exception);
+        }
+    }
+
+    /// Runs a Scriptable type's declared [Property] initializers into its class default object. Called once
+    /// per type at mint, after the CDO exists; instances are copied from it.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static unsafe void ApplyScriptableDefaults(byte* TypeName, int NameLength, ulong DefaultObject)
+    {
+        try
+        {
+            Scripts?.Scriptables?.ApplyDefaults(Interop.GetString(TypeName, NameLength), DefaultObject);
         }
         catch (Exception Exception)
         {

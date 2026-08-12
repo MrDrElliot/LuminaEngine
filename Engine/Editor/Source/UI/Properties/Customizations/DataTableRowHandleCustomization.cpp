@@ -114,7 +114,7 @@ namespace Lumina
             {
                 for (const FAssetData* Asset : GatherDataTables())
                 {
-                    if (!TableFilter.PassFilter(Asset->AssetName.c_str()))
+                    if (!ImGuiX::PassSearchFilter(TableFilter, Asset->AssetName.c_str()))
                     {
                         continue;
                     }

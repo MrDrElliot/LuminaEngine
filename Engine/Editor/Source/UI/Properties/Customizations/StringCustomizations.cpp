@@ -46,7 +46,7 @@ namespace Lumina
             for (int32 i = 0; i < NumBones; ++i)
             {
                 const FSkeletonResource::FBoneInfo& Bone = Skeleton.GetBone(i);
-                if (bFiltering && !Filter.PassFilter(Bone.Name.c_str()))
+                if (bFiltering && !ImGuiX::PassSearchFilter(Filter, Bone.Name.c_str()))
                 {
                     continue;
                 }
@@ -159,7 +159,7 @@ namespace Lumina
                     continue;
                 }
                 const FString ActionName(Action.Name.c_str());
-                if (!Filter.PassFilter(ActionName.c_str()))
+                if (!ImGuiX::PassSearchFilter(Filter, ActionName.c_str()))
                 {
                     continue;
                 }
@@ -460,7 +460,7 @@ namespace Lumina
                     ImGui::SeparatorText("Sockets");
                     for (const FName& Socket : SocketData->Sockets)
                     {
-                        if (Socket.IsNone() || !BoneFilter.PassFilter(Socket.c_str()))
+                        if (Socket.IsNone() || !ImGuiX::PassSearchFilter(BoneFilter, Socket.c_str()))
                         {
                             continue;
                         }
@@ -601,7 +601,7 @@ namespace Lumina
                     TVector<FAssetData*> Assets = FAssetRegistry::Get().FindByPredicate([](const FAssetData&) { return true; });
                     for (const FAssetData* Asset : Assets)
                     {
-                        if (!SearchFilter.PassFilter(Asset->Path.c_str()))
+                        if (!ImGuiX::PassSearchFilter(SearchFilter, Asset->Path.c_str()))
                         {
                             continue;
                         }

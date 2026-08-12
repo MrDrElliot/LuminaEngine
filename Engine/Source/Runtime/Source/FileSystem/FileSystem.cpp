@@ -8,6 +8,27 @@
 
 namespace Lumina::VFS
 {
+    bool IFileSystem::ReadFileRange(TVector<uint8>& Result, FStringView Path, uint64 Offset, uint64 Size)
+    {
+        Result.clear();
+
+        TVector<uint8> Whole;
+        if (!ReadFile(Whole, Path))
+        {
+            return false;
+        }
+
+        if (Offset >= Whole.size())
+        {
+            return true;
+        }
+
+        const uint64 Remaining = (uint64)Whole.size() - Offset;
+        const uint64 Available = Size < Remaining ? Size : Remaining;
+        Result.assign(Whole.begin() + (size_t)Offset, Whole.begin() + (size_t)(Offset + Available));
+        return true;
+    }
+
     namespace Detail
     {
         using FMountList = TVector<TUniquePtr<IFileSystem>>;
@@ -233,6 +254,22 @@ namespace Lumina::VFS
             if (FS.Exists(Path))
             {
                 if (FS.ReadFile(OutString, Path))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        });
+    }
+
+    bool ReadFileRange(TVector<uint8>& Result, FStringView Path, uint64 Offset, uint64 Size)
+    {
+        return Detail::VisitFileSystems(Path, [&](IFileSystem& FS)
+        {
+            if (FS.Exists(Path))
+            {
+                if (FS.ReadFileRange(Result, Path, Offset, Size))
                 {
                     return true;
                 }

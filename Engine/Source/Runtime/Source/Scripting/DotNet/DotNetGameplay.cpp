@@ -9,7 +9,8 @@
 #include "World/Entity/Systems/SystemContext.h"
 #include "World/Entity/Systems/NavMeshSystem.h"
 #include "World/Entity/Systems/CameraSystem.h"
-#include "World/Entity/Components/CSharpScriptComponent.h"
+#include "Scripting/EntityScript.h"
+#include "Scripting/EntityScript.h"
 #include "World/Entity/Components/RelationshipComponent.h"
 #include "AI/Navigation/NavTypes.h"
 #include "GameplayTags/GameplayTagRegistry.h"
@@ -69,32 +70,6 @@ LUMINA_DOTNET_EXPORT(FQuat, World_GetRotation)(uint64 World, uint32 Entity)
     return W ? ECS::Utils::GetEntityRotation(ECS::GetWorldRegistry(*W), AsEntity(Entity)) : FQuat();
 }
 
-// Script-to-script: hands back the managed GCHandle (as void*) of the C# EntityScript bound to an entity,
-// so a script can fetch ANOTHER entity's script as its concrete type and call its public methods directly.
-// C# resolves it with GCHandle.FromIntPtr(...).Target. Null when the entity has no bound script instance.
-LUMINA_DOTNET_EXPORT(void*, GetEntityScriptHandle)(uint64 World, uint32 Entity)
-{
-    CWorld* W = AsWorld(World);
-    if (W == nullptr)
-    {
-        return nullptr;
-    }
-    const SScriptComponent* Component = W->TryGetComponent<SScriptComponent>(AsEntity(Entity));
-    if (Component == nullptr)
-    {
-        return nullptr;
-    }
-    const int32 Generation = DotNet::GetScriptGeneration();
-    for (const SScriptInstance& Slot : Component->Scripts)
-    {
-        if (Slot.Instance != nullptr && Slot.Generation == Generation)
-        {
-            return Slot.Instance;
-        }
-    }
-    return nullptr;
-}
-
 //================================================================================================
 // Game (engine-level session ops)
 //================================================================================================
@@ -118,7 +93,11 @@ LUMINA_DOTNET_EXPORT(void, Game_Quit)()
     }
 }
 
-// Appends a script of the named class to an entity and binds it; returns the managed instance handle.
+//~ Entity-script API over the unified CEntityScript path. Everything is keyed on the script's CClass, so the
+//~ same calls find a C++ script and a C# one -- the C# type's full name IS its minted class's name.
+
+// Attaches a script of the named class to an entity. Returns the CEntityScript* (C# wraps it via
+// Wrapper<T>.ForObject, so the managed instance is the canonical one for that object).
 LUMINA_DOTNET_EXPORT(void*, AddEntityScript)(uint64 World, uint32 Entity, const char* ClassName, int32 ClassLen)
 {
     CWorld* W = AsWorld(World);
@@ -126,7 +105,46 @@ LUMINA_DOTNET_EXPORT(void*, AddEntityScript)(uint64 World, uint32 Entity, const 
     {
         return nullptr;
     }
-    return W->AddEntityScript(AsEntity(Entity), FStringView(ClassName, (size_t)ClassLen));
+    CClass* ScriptClass = FindObject<CClass>(FName(ClassName, (size_t)ClassLen));
+    return EntityScripts::Attach(ECS::GetWorldRegistry(*W), AsEntity(Entity), ScriptClass);
+}
+
+// The first script on the entity whose class IS-A the named class, or null.
+LUMINA_DOTNET_EXPORT(void*, FindEntityScript)(uint64 World, uint32 Entity, const char* ClassName, int32 ClassLen)
+{
+    CWorld* W = AsWorld(World);
+    if (W == nullptr || ClassName == nullptr)
+    {
+        return nullptr;
+    }
+    CClass* ScriptClass = FindObject<CClass>(FName(ClassName, (size_t)ClassLen));
+    return EntityScripts::Find(ECS::GetWorldRegistry(*W), AsEntity(Entity), ScriptClass);
+}
+
+// Every script on the entity whose class IS-A the named class, written into a caller buffer. Returns the total
+// count, so a caller that under-sized its buffer can retry (mirrors the two-pass string protocol).
+LUMINA_DOTNET_EXPORT(int32, FindEntityScripts)(uint64 World, uint32 Entity, const char* ClassName, int32 ClassLen,
+    void** OutScripts, int32 Capacity)
+{
+    CWorld* W = AsWorld(World);
+    if (W == nullptr || ClassName == nullptr)
+    {
+        return 0;
+    }
+    CClass* ScriptClass = FindObject<CClass>(FName(ClassName, (size_t)ClassLen));
+
+    TVector<CEntityScript*> Found;
+    EntityScripts::FindAll(ECS::GetWorldRegistry(*W), AsEntity(Entity), ScriptClass, Found);
+
+    const int32 Count = (int32)Found.size();
+    if (OutScripts != nullptr)
+    {
+        for (int32 Index = 0; Index < Count && Index < Capacity; ++Index)
+        {
+            OutScripts[Index] = Found[Index];
+        }
+    }
+    return Count;
 }
 
 // Removes the slot holding the given instance handle, destroying the managed instance.
@@ -137,22 +155,7 @@ LUMINA_DOTNET_EXPORT(void, RemoveEntityScript)(uint64 World, uint32 Entity, void
     {
         return;
     }
-    SScriptComponent* Component = W->TryGetComponent<SScriptComponent>(AsEntity(Entity));
-    if (Component == nullptr)
-    {
-        return;
-    }
-    for (auto It = Component->Scripts.begin(); It != Component->Scripts.end(); ++It)
-    {
-        if (It->Instance == Instance)
-        {
-            // Must clear the slot, not just free the handle: erase move-assigns the next slot over this
-            // one, and the move-assign releases whatever the destination still points at.
-            It->ReleaseInstance();
-            Component->Scripts.erase(It);
-            return;
-        }
-    }
+    EntityScripts::Remove(ECS::GetWorldRegistry(*W), AsEntity(Entity), static_cast<CEntityScript*>(Instance));
 }
 
 LUMINA_DOTNET_EXPORT(FVector3, World_GetScale)(uint64 World, uint32 Entity)

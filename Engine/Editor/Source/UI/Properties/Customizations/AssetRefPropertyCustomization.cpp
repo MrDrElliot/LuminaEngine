@@ -96,7 +96,7 @@ namespace Lumina
                     for (const FTextAssetData* Data : Registry.GetTextAssetsOfKind(Kind))
                     {
                         const FStringView CandView(Data->Path.c_str(), Data->Path.size());
-                        if (!SearchFilter.PassFilter(Data->Path.c_str()))
+                        if (!ImGuiX::PassSearchFilter(SearchFilter, Data->Path.c_str()))
                         {
                             continue;
                         }

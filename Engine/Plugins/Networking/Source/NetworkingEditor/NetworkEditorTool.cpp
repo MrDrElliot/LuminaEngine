@@ -14,6 +14,7 @@
 #include "Networking/INetworkTransport.h"
 #include "Config/NetworkSettings.h"
 #include "Core/Object/ObjectCore.h"
+#include "Tools/UI/ImGui/ImGuiX.h"
 
 namespace Lumina
 {
@@ -484,7 +485,7 @@ namespace Lumina
 
                     const char* Name = "";
                     if (const SNameComponent* NC = Registry.try_get<SNameComponent>(E)) { Name = NC->Name.c_str(); }
-                    if (!Filter.PassFilter(Name)) { continue; }
+                    if (!ImGuiX::PassSearchFilter(Filter, Name)) { continue; }
                     if (Shown >= MaxRows) { continue; }
                     ++Shown;
 

@@ -8,15 +8,16 @@ namespace LuminaSharp;
 /// <summary>
 /// Hosts live managed instances of C# subclasses of <c>REFLECT(Scriptable)</c> native CObjects. Generic over
 /// any Scriptable type, with no per-type hosting code: native creates the CObject (a minted CClass), this
-/// runtime instantiates the matching C# subclass and pairs it to the native object via a GCHandle. Mirrors
-/// <see cref="EntityScriptRuntime"/> - <see cref="LiveHandles"/> exists only to free every strong handle before
-/// the collectible ALC unloads (a live handle pins the generation). Per-instance dispatch is driven directly
-/// by the Reflector-generated native shim, not from here.
+/// runtime instantiates the matching C# subclass and pairs it to the native object via a GCHandle.
+///
+/// It keeps no handle list of its own. Each handle lives in its native object's managed-instance slot
+/// (Core/Object/ManagedInstance.h), which frees it when the object dies and drains the whole table before the
+/// collectible ALC unloads -- so there is exactly one owner and no second bookkeeping to keep in step.
+/// Per-instance dispatch is driven directly by the Reflector-generated native shim, not from here.
 /// </summary>
 internal sealed class ScriptableRuntime
 {
     private readonly TypeLibrary Library;
-    private readonly HashSet<GCHandle> LiveHandles = new();
 
     // Cached per user-type override bitmask (which ScriptEvents the subclass overrides); keyed by the user type.
     private readonly Dictionary<Type, int> OverrideFlagsByType = new();
@@ -28,9 +29,11 @@ internal sealed class ScriptableRuntime
 
     public IReadOnlyCollection<string> TypeNames => Library.ScriptableTypeNames;
 
-    /// <summary>Reports each discovered Scriptable C# type as (full name, native base class name) to a native
-    /// sink, so the host can mint a CClass deriving from that native base. The native base name is the
-    /// <c>[NativeType]</c> name of the nearest <c>[ScriptableType]</c> wrapper in the base chain.</summary>
+    /// <summary>Reports each discovered Scriptable C# type as (full name, native base class name, override
+    /// mask) to a native sink, so the host can mint a CClass deriving from that native base. The native base
+    /// name is the <c>[NativeType]</c> name of the nearest <c>[ScriptableType]</c> wrapper in the base chain.
+    /// The mask is type-uniform, so it rides here and is stamped on the minted CClass once, rather than being
+    /// recomputed and stored per instance.</summary>
     public unsafe void Enumerate(IntPtr Sink, IntPtr Context)
     {
         if (Sink == IntPtr.Zero)
@@ -38,7 +41,7 @@ internal sealed class ScriptableRuntime
             return;
         }
 
-        var Add = (delegate* unmanaged[Stdcall]<IntPtr, byte*, int, byte*, int, void>)Sink;
+        var Add = (delegate* unmanaged[Stdcall]<IntPtr, byte*, int, byte*, int, ulong, void>)Sink;
         Span<byte> NameScratch = stackalloc byte[256];
         Span<byte> BaseScratch = stackalloc byte[256];
         foreach (Type Type in Library.ScriptableTypes)
@@ -57,7 +60,7 @@ internal sealed class ScriptableRuntime
             Interop.FInteropString Base = new(NativeBase, BaseScratch);
             try
             {
-                Add(Context, Name.Pointer, Name.Length, Base.Pointer, Base.Length);
+                Add(Context, Name.Pointer, Name.Length, Base.Pointer, Base.Length, (ulong)GetOverrideFlags(Type));
             }
             finally
             {
@@ -68,11 +71,15 @@ internal sealed class ScriptableRuntime
     }
 
     /// <summary>Instantiates the named Scriptable subclass, pairs it to the already-created native object, and
-    /// returns a strong GCHandle (IntPtr.Zero on failure). <paramref name="OverrideFlags"/> reports which
-    /// ScriptEvents the subclass overrides so native can skip the boundary for the rest.</summary>
-    public IntPtr Create(string TypeName, ulong NativePtr, out int OverrideFlags)
+    /// returns a STRONG GCHandle (IntPtr.Zero on failure).
+    ///
+    /// The caller stores the handle in the native object's managed-instance slot
+    /// (Core/Object/ManagedInstance.h), which is its only owner: the object's destructor frees it, and the
+    /// script teardown contract drains the whole table before the collectible ALC unloads. Strong rather than
+    /// weak because this instance holds user state for as long as the native object lives -- letting the GC
+    /// take it between dispatches would silently reset the script's fields.</summary>
+    public IntPtr Create(string TypeName, ulong NativePtr)
     {
-        OverrideFlags = 0;
         Type? Type = Library.GetScriptable(TypeName);
         if (Type == null)
         {
@@ -87,37 +94,35 @@ internal sealed class ScriptableRuntime
         }
 
         Instance.BindNativeHandle(new IntPtr(unchecked((long)NativePtr)));
-        OverrideFlags = GetOverrideFlags(Type);
-
-        GCHandle Handle = GCHandle.Alloc(Instance);
-        LiveHandles.Add(Handle);
-        return GCHandle.ToIntPtr(Handle);
+        return GCHandle.ToIntPtr(GCHandle.Alloc(Instance));
     }
 
-    public void Destroy(IntPtr Pointer)
+    /// <summary>
+    /// Runs a type's declared [Property] initializers into its class default object, once, at mint time.
+    ///
+    /// The CDO deliberately never keeps a managed instance -- it is never dispatched to -- so one is created
+    /// here, bound just long enough for the generated <c>__ApplyScriptDefaults</c> to write through its
+    /// accessors into the CDO's native block, and then dropped. Every later instance is copied from that
+    /// block by CClass::ConstructScriptProperties, which is how a script gets defaults at all: a minted class
+    /// has no C++ constructor to carry them.
+    /// </summary>
+    public void ApplyDefaults(string TypeName, ulong NativeDefaultObject)
     {
-        if (Pointer == IntPtr.Zero)
+        Type? Type = Library.GetScriptable(TypeName);
+        if (Type == null || Activator.CreateInstance(Type) is not NativeObject Instance)
         {
             return;
         }
-        GCHandle Handle = GCHandle.FromIntPtr(Pointer);
-        if (LiveHandles.Remove(Handle) && Handle.IsAllocated)
-        {
-            Handle.Free();
-        }
-    }
 
-    /// <summary>Frees every live handle so the collectible ALC can unload. Called on reload/shutdown.</summary>
-    public void FreeAll()
-    {
-        foreach (GCHandle Handle in new List<GCHandle>(LiveHandles))
+        Instance.BindNativeHandle(new IntPtr(unchecked((long)NativeDefaultObject)));
+        try
         {
-            if (Handle.IsAllocated)
-            {
-                Handle.Free();
-            }
+            Instance.__ApplyScriptDefaults();
         }
-        LiveHandles.Clear();
+        catch (Exception Exception)
+        {
+            Native.Log(ELogLevel.Error, $"Script defaults for '{TypeName}' threw: {Exception.Message}");
+        }
     }
 
     // Bit i is set when the user subclass overrides the ScriptEvent the wrapper declared with [ScriptEvent(i)].

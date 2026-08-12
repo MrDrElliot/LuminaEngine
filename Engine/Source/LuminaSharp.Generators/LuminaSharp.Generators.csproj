@@ -29,4 +29,11 @@
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.13.0" PrivateAssets="all" />
   </ItemGroup>
 
+  <!-- The declared diagnostic list (RS2008). Both files must exist even though nothing has "shipped":
+       the point is that adding or renaming a rule cannot happen without editing a tracked file. -->
+  <ItemGroup>
+    <AdditionalFiles Include="AnalyzerReleases.Shipped.md" />
+    <AdditionalFiles Include="AnalyzerReleases.Unshipped.md" />
+  </ItemGroup>
+
 </Project>

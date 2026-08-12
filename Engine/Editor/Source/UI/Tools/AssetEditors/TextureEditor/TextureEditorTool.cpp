@@ -9,6 +9,7 @@
 #include "Core/Object/Package/Package.h"
 #include "Core/Object/Package/Thumbnail/PackageThumbnail.h"
 #include "Renderer/RenderManager.h"
+#include "Renderer/TextureStreamingManager.h"
 #include "Tools/UI/ImGui/ImGuiFonts.h"
 #include "Tools/UI/ImGui/ImGuiRenderer.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
@@ -27,6 +28,12 @@ namespace Lumina
             {
                 return;
             }
+
+            // Reaching here means ImGui actually began this window: not collapsed, its dock tab selected, and
+            // its tool visible. That is the whole condition for holding the streaming pin -- Update reads and
+            // clears this next frame. Set before the early-outs below on purpose: an array still building is
+            // just as much "the user is looking at it" as one that draws.
+            bPreviewDrawnSinceUpdate = true;
 
             // An array with nothing built has no GPU image at all, so there is no slice to show and the
             // usual path would sample the null slot. Say what to do instead of drawing a purple square.
@@ -211,14 +218,10 @@ namespace Lumina
 
             if (ImGui::BeginChild("##Toolbar", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding))
             {
-                // Mip level selector
-                if (ImageDesc.NumMips > 1)
-                {
-                    ImGui::Text("Mip Level:");
-                    ImGui::SameLine();
-                    ImGui::SetNextItemWidth(100);
-                    ImGui::SliderInt("##MipLevel", &CurrentMipLevel, 0, ImageDesc.NumMips - 1);
-                }
+                // No mip selector: the preview samples the texture through ImGui's bindless 2D path, which
+                // takes a heap slot and no explicit LOD, so there is nothing for a slider to change. It
+                // used to be here and silently did nothing. Showing a per-mip preview needs per-mip SRVs
+                // exposed through the heap.
 
                 // HDR preview exposure: only for float-format textures (cooked HDRIs);
                 // hidden for LDR so the toolbar has no unused controls.
@@ -355,10 +358,13 @@ namespace Lumina
                 
                 if (!Texture->TextureResource->Mips.empty())
                 {
-                    baseMipMemory = Texture->TextureResource->Mips[0].Pixels.size();
+                    // SizeBytes(), not Pixels.size(): a streamed mip's bytes live in the package's bulk
+                    // region, so its Pixels are empty whenever it is not resident and reading them would
+                    // report the top of a 4K chain as 0 B.
+                    baseMipMemory = Texture->TextureResource->Mips[0].SizeBytes();
                     for (const auto& Mip : Texture->TextureResource->Mips)
                     {
-                        totalMipMemory += Mip.Pixels.size();
+                        totalMipMemory += Mip.SizeBytes();
                     }
                 }
                 
@@ -408,7 +414,7 @@ namespace Lumina
                         uint64 actualSize = expectedSize;
                         if (i < Texture->TextureResource->Mips.size())
                         {
-                            actualSize = Texture->TextureResource->Mips[i].Pixels.size();
+                            actualSize = Texture->TextureResource->Mips[i].SizeBytes();
                         }
                         
                         float percentOfTotal = totalMipMemory > 0 ? ((float)actualSize / (float)totalMipMemory * 100.0f) : 0.0f;
@@ -777,10 +783,62 @@ namespace Lumina
 
     void FTextureEditorTool::OnDeinitialize(const FUpdateContext& UpdateContext)
     {
+        // Backstop for the reconcile in Update: a tool can be torn down without ever getting another Update,
+        // and a pinned texture is exempt from budget eviction, so a leaked pin is a permanent leak of however
+        // many MiB that texture is.
+        bPreviewDrawnSinceUpdate = false;
+        UpdateStreamingPin();
     }
 
-    void FTextureEditorTool::OnAssetLoadFinished()
+    void FTextureEditorTool::Update(const FUpdateContext& UpdateContext)
     {
+        FAssetEditorTool::Update(UpdateContext);
+
+        UpdateStreamingPin();
+    }
+
+    void FTextureEditorTool::UpdateStreamingPin()
+    {
+        // The preview draws the texture at up to 1:1, so the whole point of streaming (holding only the
+        // inline tail) is exactly wrong while it is on screen: showing a 4K texture as a 256px blur is not a
+        // preview. Pinning is what fixes that, and being over budget is acceptable for as long as the user is
+        // actually looking -- but ONLY that long. Held for the lifetime of the tab instead, ten open 4K tabs
+        // sitting in background docks would pin ~200 MiB of mips nothing draws until the editor closes.
+        //
+        // Reconciled against LAST frame's draw flag: EditorUI calls Update before it draws the tool's
+        // windows. The one-frame lag is harmless both ways -- a tab just brought forward sharpens a frame
+        // later, and one just hidden holds its mips a frame longer.
+        const bool bWantPin = bPreviewDrawnSinceUpdate;
+        bPreviewDrawnSinceUpdate = false;
+
+        FTextureStreamingManager* Streaming = FTextureStreamingManager::TryGet();
+        if (Streaming == nullptr)
+        {
+            // No streamer means no pin counts to balance (it is gone, or never existed). Forget ours rather
+            // than trying to release it against a manager that cannot honour it.
+            PinnedTexture.Reset();
+            return;
+        }
+
+        CTexture* Desired = bWantPin ? Cast<CTexture>(Asset.Get()) : nullptr;
+        CTexture* Current = PinnedTexture.Get();
+        if (Current == Desired)
+        {
+            return;
+        }
+
+        // Unpin first, so a reimport that swapped the asset releases the OLD texture rather than leaking it
+        // and double-pinning the new one.
+        if (Current != nullptr)
+        {
+            Streaming->Unpin(Current);
+        }
+        if (Desired != nullptr)
+        {
+            Streaming->Pin(Desired);
+        }
+
+        PinnedTexture = Desired;
     }
 
     void FTextureEditorTool::DrawToolMenu(const FUpdateContext& UpdateContext)

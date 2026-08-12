@@ -76,12 +76,33 @@ namespace Lumina
         void Serialize(FArchive& Ar) override;
         void PreLoad() override;
         void PostLoad() override;
+        void PreSave() override;
         void OnDestroy() override;
         bool IsAsset() const override { return true; }
 
 
         FTextureResource& GetTextureResource() const { return *TextureResource.get(); }
         uint8 GetNumMips() const { return TextureResource.get() ? TextureResource->Mips.size() : 0u; }
+
+        /** (Re)build the GPU image to hold mips [InFirstMip, NumMips) and upload them. The bindless slot is
+         *  preserved, so materials that already baked this texture's ResourceID keep sampling it -- they
+         *  just see a smaller image, and normalized UVs make that invisible.
+         *
+         *  Every mip from InFirstMip up must have its Pixels resident before calling: Recreate makes a NEW
+         *  image, so even mips that were already on the GPU have to be re-uploaded. Returns false and leaves
+         *  residency untouched if any of them is missing. Game thread only. */
+        bool ApplyMipResidency(uint32 InFirstMip);
+
+        /** Pull every streamed-out mip's bytes back off disk, so the whole chain is in memory. The
+         *  precondition for ANY write: a mip that is only a BulkRef serializes as a zero-length payload.
+         *  No-op (and no IO) when nothing has been streamed out. May block. */
+        void MakeStreamedMipsResident();
+
+        /** First mip currently on the GPU; == GetFirstStreamedMipCount() when fully streamed out, 0 when
+         *  fully resident. */
+        uint32 GetResidentFirstMip() const { return TextureResource ? TextureResource->ResidentFirstMip : 0u; }
+
+        bool IsStreamable() const { return TextureResource && TextureResource->IsStreamable(); }
 
         // New-RHI global-heap ResourceID for sampling (gTextures2D[id]); -1 if not resident.
         int32 GetResourceID() const

@@ -48,7 +48,7 @@ public unsafe partial class SBlackboardComponent
     public T? GetObject<T>(string Key) where T : NativeObject
     {
         NativeObject? Value = GetObjectValue(Key);
-        return Value is null ? null : Wrapper<T>.Create(Value.Handle);
+        return Value is null ? null : Wrapper<T>.ForObject(Value.Handle);
     }
 
     //~ Enum keys. Stored as their integer value; the schema records which reflected enum a key uses.

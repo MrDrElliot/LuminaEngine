@@ -33,6 +33,23 @@ namespace Lumina
 {
     class CObject;
 
+    /**
+     * Locates a payload inside its package's bulk-data region. Written inline in the export, so an object
+     * knows where its heavy data lives without any of it being resident; the bytes are pulled later with
+     * CPackage::ReadBulkData, which turns into one ranged file read.
+     *
+     * Offset is relative to the start of the region, NOT the file -- the region's own file offset moves
+     * whenever the compressed container changes size, so a file-absolute offset would be invalidated by
+     * every save.
+     */
+    struct FBulkDataRef
+    {
+        int64 Offset = 0;
+        int64 Size   = 0;
+
+        bool IsValid() const { return Size > 0; }
+    };
+
     class RUNTIME_API FArchive
     {
     public:
@@ -101,6 +118,15 @@ namespace Lumina
         /** Soft-ref hook: FSoftObjectPath::operator<< calls this on write so the saver records
          *  a Soft ImportTable entry. No-op on archives without an import table. */
         virtual void RegisterSoftAssetReference(const FGuid& AssetGUID) {}
+
+        /** True when WriteBulkData will actually do something. Only the package saver has somewhere to put a
+         *  bulk region; every other archive (duplication, transient, network) must keep payloads inline, so
+         *  a serializer that can split has to branch on this rather than assume. */
+        virtual bool SupportsBulkData() const { return false; }
+
+        /** Append Size bytes to the archive's bulk region and fill OutRef with where they landed. Returns
+         *  false (leaving OutRef untouched) on archives with no region -- write the payload inline instead. */
+        virtual bool WriteBulkData(FBulkDataRef& OutRef, const void* Data, int64 Size) { return false; }
     
         virtual FArchive& operator<<(uint8& Value)
         {
@@ -415,6 +441,13 @@ namespace Lumina
         uint8                       bHasError:1 = false;
 
     };
+
+    inline FArchive& operator<<(FArchive& Ar, FBulkDataRef& Data)
+    {
+        Ar << Data.Offset;
+        Ar << Data.Size;
+        return Ar;
+    }
 
     inline void FArchive::SerializeBool(bool& D)
     {

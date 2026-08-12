@@ -377,6 +377,11 @@ namespace Lumina::Reflection
             eastl::string TargetCpp;  // qualified C++ type for Enum/Object/StructValue ("Lumina::CStaticMesh")
             bool          bIsName = false;   // Str: FName (vs FString)
             bool          bReadOnly = false;
+            // Object: true for a CObject-derived wrapper, false for an opaque STRUCT wrapper (components).
+            // Both marshal as void* and share EBind::Object, but only a CObject has the per-object managed
+            // instance slot -- routing a component pointer through Wrapper<T>.ForObject would reinterpret
+            // component memory as a CObjectBase. Gates the ForObject call in EmitProperties.
+            bool          bCObject = false;
             eastl::unique_ptr<FBinding> Elem; // Array: the element binding (one of the scalar kinds above)
         };
 
@@ -552,6 +557,7 @@ namespace Lumina::Reflection
             if (Kind == "Object")
             {
                 B.Kind = EBind::Object;
+                B.bCObject = true;
                 B.TargetCpp = Prop.TypeName;
                 B.CSharp = IsExposed(Db, Prop.TypeName) ? GlobalCSharp(Prop.TypeName) : "global::LuminaSharp.NativeObject";
                 // Settable now via the type-erased LuminaSharp_SetObjectPtr helper (the element type need
@@ -845,7 +851,16 @@ namespace Lumina::Reflection
                     Writer.Line("get");
                     Writer.BeginBlock();
                     Writer.Linef("System.IntPtr __h = global::LuminaSharp.Native.PropGetObject(Handle, %s);", PropFieldName.c_str());
-                    Writer.Linef("return __h == System.IntPtr.Zero ? null : new %s(__h);", CS);
+                    if (B.bCObject)
+                    {
+                        // Canonical wrapper: reading the same object property twice returns the SAME managed
+                        // instance (identity holds, no per-read allocation). CObject only -- see FBinding::bCObject.
+                        Writer.Linef("return global::LuminaSharp.Wrapper<%s>.ForObject(__h);", CS);
+                    }
+                    else
+                    {
+                        Writer.Linef("return __h == System.IntPtr.Zero ? null : new %s(__h);", CS);
+                    }
                     Writer.EndBlock();
                     if (!bRO)
                     {
@@ -961,6 +976,10 @@ namespace Lumina::Reflection
             eastl::string Cpp;
             eastl::string TargetCpp;
             bool          bEntity = false; // entt::entity: ABI-marshalled as uint32, surfaced as C# Entity.
+            // Object: true for a CObject-derived wrapper, false for an opaque STRUCT wrapper (components).
+            // Same distinction as FBinding::bCObject -- only a CObject has a managed-instance slot, so only a
+            // CObject may be rebuilt through Wrapper<T>.ForObject.
+            bool          bCObject = false;
             bool          bIsName = false; // EBind::Str arg: FName (true) vs FString (false), for the native ctor.
             bool          bAssetRef = false; // EBind::Str arg: FAssetRef built from the marshalled path string.
             // EBind::Span: a (T* ptr, int32 count) C++ pair -> one C# Span<T>/ReadOnlySpan<T>. SpanElemCpp is the
@@ -1021,6 +1040,7 @@ namespace Lumina::Reflection
                     && IsOpaqueWrapperType(Db, F.TypeName))
                 {
                     B.Kind = EBind::Object;
+                    B.bCObject = (F.Flags == EPropertyTypeFlags::Object);
                     B.TargetCpp = F.TypeName;
                     B.CSharp = GlobalCSharp(F.TypeName);
                     return true;
@@ -1031,6 +1051,7 @@ namespace Lumina::Reflection
                 if (F.Flags == EPropertyTypeFlags::Object && IsObjectRootType(F.TypeName))
                 {
                     B.Kind = EBind::Object;
+                    B.bCObject = true;
                     B.TargetCpp = "Lumina::CObject";
                     B.CSharp = "global::LuminaSharp.NativeObject";
                     return true;
@@ -1311,7 +1332,7 @@ namespace Lumina::Reflection
             return false;
         }
 
-        bool IsScriptEvent(const FReflectedFunction& Fn); // defined below; used to skip ScriptEvents here
+        bool IsScriptEvent(const FReflectedFunction& Fn, const FReflectedStruct& Type); // defined below
 
         void EmitFunctions(FCodeWriter& Writer, const FReflectedStruct& Type, const FReflectionDatabase& Db)
         {
@@ -1320,7 +1341,7 @@ namespace Lumina::Reflection
             const bool bStructFastCalls = Type.HasMetadata("ScriptFastCalls");
             for (const auto& Fn : Type.Functions)
             {
-                if (IsScriptEvent(*Fn)) { continue; } // ScriptEvents are emitted specially in EmitForClass
+                if (IsScriptEvent(*Fn, Type)) { continue; } // ScriptEvents are emitted specially in EmitForClass
                 FFnBinding FB;
                 if (ClassifyFunction(*Fn, Type, Db, FB))
                 {
@@ -1338,7 +1359,7 @@ namespace Lumina::Reflection
             const eastl::string Friendly = Names::FriendlyFromQualified(Type.QualifiedName);
             for (const auto& Fn : Type.Functions)
             {
-                if (IsScriptEvent(*Fn)) { continue; } // ScriptEvent base/dispatch thunks come from EmitScriptableNative
+                if (IsScriptEvent(*Fn, Type)) { continue; } // ScriptEvent base/dispatch thunks come from EmitScriptableNative
                 FFnBinding FB;
                 if (ClassifyFunction(*Fn, Type, Db, FB))
                 {
@@ -1355,7 +1376,15 @@ namespace Lumina::Reflection
         // to managed (when overridden) or fall through to the base. Arg/return marshalling mirrors the forward
         // function thunks (ClassifyField) in the opposite direction.
 
-        bool IsScriptEvent(const FReflectedFunction& Fn) { return FunctionHasMetadata(Fn, "ScriptEvent"); }
+        // On a REFLECT(Scriptable) class every reflected VIRTUAL is overridable from C#: the author marks the
+        // CLASS, and does not have to predict which methods someone will want to override. Gated on virtual
+        // because the shim emits `override`, and on Scriptable because only those classes get a shim at all --
+        // without that second gate a virtual on an ordinary class would be skipped here and emitted nowhere.
+        // The legacy FUNCTION(ScriptEvent) marker is now redundant (harmless where it remains).
+        bool IsScriptEvent(const FReflectedFunction& Fn, const FReflectedStruct& Type)
+        {
+            return Fn.bIsVirtual && Type.HasMetadata("Scriptable");
+        }
 
         // Reverse-marshalable kinds. Objects (CObject pointers) marshal as the engine handle (void* native /
         // IntPtr managed), exactly like the forward path. Strings are still deferred (their return needs the
@@ -1390,7 +1419,7 @@ namespace Lumina::Reflection
             int Index = 0;
             for (const auto& Fn : Type.Functions)
             {
-                if (!IsScriptEvent(*Fn)) { continue; }
+                if (!IsScriptEvent(*Fn, Type)) { continue; }
                 FFnBinding FB;
                 if (ClassifyScriptEvent(*Fn, Type, Db, FB)) { Out.push_back({ Fn.get(), eastl::move(FB), Index }); }
                 ++Index;
@@ -1410,7 +1439,12 @@ namespace Lumina::Reflection
             {
             case EBind::Bool:   return "(" + N + " != 0)";
             case EBind::Enum:   return "(" + A.CSharp + ")" + N;
-            case EBind::Object: return "(" + N + " == global::System.IntPtr.Zero ? null : new " + A.CSharp + "(" + N + "))";
+            // A CObject arriving at a C# override goes through the per-object wrapper cache, so the instance
+            // the override receives is the same one the rest of C# already holds for that object. Component
+            // (opaque struct) wrappers must not -- they have no managed-instance slot. See FArg::bCObject.
+            case EBind::Object: return A.bCObject
+                ? "global::LuminaSharp.Wrapper<" + A.CSharp + ">.ForObject(" + N + ")"
+                : "(" + N + " == global::System.IntPtr.Zero ? null : new " + A.CSharp + "(" + N + "))";
             default:            return N;
             }
         }
@@ -1581,10 +1615,10 @@ namespace Lumina::Reflection
             Writer.Line("{");
             Writer.Linef("    class %s final : public %s", Shim.c_str(), Qualified);
             Writer.Line("    {");
+            // No per-instance state: the managed instance lives in the object's managed-instance slot
+            // (created on first dispatch, freed by ~CObjectBase, drained on hot reload), and the override
+            // mask lives on the minted CClass. So the shim is nothing but the overrides.
             Writer.Line("    public:");
-            Writer.Line("        Lumina::FScriptableBridge __Bridge;");
-            Writer.Linef("        virtual void PostInitProperties() override { %s::PostInitProperties(); __Bridge.Attach(this); }", Qualified);
-            Writer.Linef("        virtual ~%s() override { __Bridge.Destroy(); }", Shim.c_str());
             for (const FScriptEvent& E : Events)
             {
                 const FFnBinding& FB = E.FB;
@@ -1602,18 +1636,22 @@ namespace Lumina::Reflection
                 const eastl::string BaseCall = eastl::string(Qualified) + "::" + Name + "(" + BaseArgs + ")";
                 Writer.Linef("        virtual %s %s(%s) override", SeRetCpp(FB).c_str(), Name.c_str(), CppParams.c_str());
                 Writer.Line("        {");
-                Writer.Linef("            if (__Bridge.ShouldDispatch(%d))", E.Index);
+                // Class-level test first: for a type that does not override this event it is one load of a
+                // word that is zero for every native class, and perfectly predicted. Only then do we look up
+                // (and lazily create) the managed instance.
+                Writer.Linef("            if (GetClass()->ScriptOverrides & (1ull << %d))", E.Index);
                 Writer.Line("            {");
+                Writer.Line("                void* __h = Lumina::Scriptable::GetOrCreateInstance(this);");
                 Writer.Linef("                typedef %s (*FThunk)(void*%s);", SeRetAbiCpp(FB).c_str(), AbiTypes.c_str());
                 Writer.Linef("                static FThunk __t = (FThunk)Lumina::DotNet::ResolveManagedExport(\"__ScriptEvent_%s_%s\");", Friendly.c_str(), Name.c_str());
                 if (FB.bVoid)
                 {
-                    Writer.Linef("                if (__t) { __t(__Bridge.Handle%s); return; }", AbiArgs.c_str());
+                    Writer.Linef("                if (__h && __t) { __t(__h%s); return; }", AbiArgs.c_str());
                 }
                 else
                 {
-                    const eastl::string ThunkCall = eastl::string("__t(__Bridge.Handle") + AbiArgs + ")";
-                    Writer.Linef("                if (__t) { return %s; }", SeRetAbiToCpp(FB, ThunkCall).c_str());
+                    const eastl::string ThunkCall = eastl::string("__t(__h") + AbiArgs + ")";
+                    Writer.Linef("                if (__h && __t) { return %s; }", SeRetAbiToCpp(FB, ThunkCall).c_str());
                 }
                 Writer.Line("            }");
                 Writer.Linef("            %s%s;", FB.bVoid ? "" : "return ", BaseCall.c_str());

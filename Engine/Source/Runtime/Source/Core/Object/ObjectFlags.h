@@ -21,6 +21,10 @@ namespace Lumina
         /** Visible outside its package (assets). */
         OF_Public               = BIT(7),
         OF_MarkedDestroy        = BIT(8),
+        /** Carries script-appended properties in its trailing block, so its destructor must reach through
+         *  its class to tear them down. Set by StaticAllocateObject only when the class actually appended
+         *  storage-owning properties, which keeps every native object's destructor off the class entirely. */
+        OF_ScriptProperties     = BIT(9),
     };
 
     ENUM_CLASS_FLAGS(EObjectFlags);
@@ -43,6 +47,7 @@ namespace Lumina
         if (EnumHasAnyFlags(Flags, OF_WasLoaded))       Result += "OF_WasLoaded|";
         if (EnumHasAnyFlags(Flags, OF_Public))          Result += "OF_Public|";
         if (EnumHasAnyFlags(Flags, OF_MarkedDestroy))   Result += "OF_MarkedDestroy|";
+        if (EnumHasAnyFlags(Flags, OF_ScriptProperties))Result += "OF_ScriptProperties|";
 
         if (!Result.empty() && Result.back() == '|') Result.pop_back();
 

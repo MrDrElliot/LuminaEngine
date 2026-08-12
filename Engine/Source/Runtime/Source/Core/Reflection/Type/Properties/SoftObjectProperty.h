@@ -29,6 +29,11 @@ namespace Lumina
         RUNTIME_API bool Identical(const void* ValueA, const void* ValueB) const override;
         RUNTIME_API void CopyCompleteValue(void* Dst, const void* Src) const override;
 
+        // The path holds an FString, so zeroed bytes are not a valid value (see FStringProperty).
+        void ConstructValue(void* Value) const override { new (Value) FSoftObjectPath(); }
+        void DestructValue(void* Value) const override  { static_cast<FSoftObjectPath*>(Value)->~FSoftObjectPath(); }
+        bool OwnsStorage() const override { return true; }
+
         RUNTIME_API CClass* GetPropertyClass() const { return ObjectClass; }
 
     private:

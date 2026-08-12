@@ -29,7 +29,16 @@ namespace Lumina
         RUNTIME_API bool Identical(const void* ValueA, const void* ValueB) const override;
         RUNTIME_API void CopyCompleteValue(void* Dst, const void* Src) const override;
 
+        // The container owns heap memory, so zeroed bytes are not a valid value. Routed through the ops table
+        // rather than a type test, so a TVector<T> and a script runtime array are handled by the same code.
+        void ConstructValue(void* Value) const override { if (Ops && Ops->ConstructContainer) { Ops->ConstructContainer(Value, Ops->ContainerContext); } }
+        void DestructValue(void* Value) const override  { if (Ops && Ops->DestructContainer)  { Ops->DestructContainer(Value, Ops->ContainerContext); } }
+        bool OwnsStorage() const override { return Ops != nullptr && Ops->ConstructContainer != nullptr; }
+
         FProperty* GetInternalProperty() const { return Inner.get(); }
+
+        /** The element ops table. Exposed so C# can build a NativeList<T> view over any array property. */
+        const FVectorOps* GetOps() const { return Ops; }
         
         SIZE_T GetNum(const void* InContainer) const
         {

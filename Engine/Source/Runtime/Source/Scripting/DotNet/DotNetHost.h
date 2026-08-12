@@ -99,7 +99,7 @@ namespace Lumina::DotNet
     RUNTIME_API void UpdateScripts(void* const* Instances, int32 Count, float DeltaSeconds);
 
     // Dispatches OnFixedUpdate to a batch of scripts at the fixed physics step (called 0..N times per frame by
-    // the SCSharpScriptSystem accumulator). No-op if the managed export is absent (old generation).
+    // the SEntityScriptSystem accumulator). No-op if the managed export is absent (old generation).
     RUNTIME_API void FixedUpdateScripts(void* const* Instances, int32 Count, float FixedDeltaSeconds);
 
     RUNTIME_API void DestroyEntityScript(void* Instance);
@@ -115,6 +115,9 @@ namespace Lumina::DotNet
     {
         FString TypeName;
         FString NativeBaseName;
+        // Which ScriptEvents the C# subclass overrides. Type-uniform, so it is carried on the minted CClass
+        // rather than per instance (CClass::ScriptOverrides); bit i == the wrapper's [ScriptEvent(i)].
+        uint64  OverrideFlags = 0;
     };
 
     // Reports every loaded C# Scriptable subclass + its native base. Drives runtime CClass minting + editor picker.
@@ -139,13 +142,15 @@ namespace Lumina::DotNet
     RUNTIME_API bool GatherScriptStructSchema(FStringView ScriptTypeName, Scripting::FScriptExportSchema& OutSchema,
         TVector<Scripting::FScriptPropertyEntry>& OutDefaults);
 
-    // Instantiates the named C# Scriptable subclass and pairs it to an already-created native object (NativePtr).
-    // Writes the override-flag bitmask (which ScriptEvents the subclass overrides). Returns a GCHandle (the native
-    // shim stores it), or nullptr on failure.
-    RUNTIME_API void* CreateScriptable(FStringView TypeName, uint64 NativePtr, int32& OutOverrideFlags);
+    // Instantiates the named C# Scriptable subclass and pairs it to an already-created native object
+    // (NativePtr). Returns a strong GCHandle, or nullptr on failure. The caller stores it in the object.s
+    // managed-instance slot, which owns it from then on -- there is no matching Destroy: ~CObjectBase frees
+    // the slot, and the teardown contract drains the whole table before the ALC unloads.
+    RUNTIME_API void* CreateScriptable(FStringView TypeName, uint64 NativePtr);
 
-    // Frees a Scriptable instance's managed GCHandle (the native shim's destructor calls this).
-    RUNTIME_API void DestroyScriptable(void* Instance);
+    /** Runs a script type's declared [Property] initializers into its class default object. Once per type at
+     *  mint, after the CDO exists; every instance is then copied from it. */
+    RUNTIME_API void ApplyScriptableDefaults(FStringView TypeName, void* DefaultObject);
 
     struct FManagedSystemDesc
     {
@@ -220,5 +225,4 @@ int32 bRepeat, double MouseX, double MouseY, double DeltaX, double DeltaY, doubl
     RUNTIME_API bool InvokeScriptButton(void* Instance, FStringView Method);
 
     // Applies per-instance values onto a live script Instance; schema-drift fields are skipped.
-    RUNTIME_API void ApplyScriptProperties(void* Instance, const TVector<Scripting::FScriptPropertyEntry>& Values);
 }

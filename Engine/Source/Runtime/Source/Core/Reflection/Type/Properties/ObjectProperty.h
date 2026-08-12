@@ -26,6 +26,11 @@ namespace Lumina
         // add/release and corrupt the refcount (crash on a later release).
         RUNTIME_API void CopyCompleteValue(void* Dst, const void* Src) const override;
 
+        // A zeroed TObjectPtr IS a valid null, so construction has nothing to do -- but destruction must
+        // release the strong ref or the referenced object never dies.
+        RUNTIME_API void DestructValue(void* Value) const override;
+        bool OwnsStorage() const override { return true; }
+
         RUNTIME_API CClass* GetPropertyClass() const { return ObjectClass; }
         
     private:

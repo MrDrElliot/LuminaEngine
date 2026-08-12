@@ -35,6 +35,12 @@ namespace Lumina
         RUNTIME_API bool Identical(const void* ValueA, const void* ValueB) const override;
         RUNTIME_API void CopyCompleteValue(void* Dst, const void* Src) const override;
 
+        // See FArrayProperty: the container owns heap memory, and the ops table is what makes this work for a
+        // compile-time THashMap and a script runtime map alike.
+        void ConstructValue(void* Value) const override { if (Ops && Ops->ConstructContainer) { Ops->ConstructContainer(Value, Ops->ContainerContext); } }
+        void DestructValue(void* Value) const override  { if (Ops && Ops->DestructContainer)  { Ops->DestructContainer(Value, Ops->ContainerContext); } }
+        bool OwnsStorage() const override { return Ops != nullptr && Ops->ConstructContainer != nullptr; }
+
         FProperty* GetKeyProperty()   const { return KeyProperty.get(); }
         FProperty* GetValueProperty() const { return ValueProperty.get(); }
 

@@ -531,6 +531,51 @@ namespace Lumina::ImGuiX
         return bChanged;
     }
 
+    bool PassSearchFilter(FStringView Query, FStringView Text)
+    {
+        const char* Word      = Query.data();
+        const char* QueryEnd  = Query.data() + Query.size();
+        const char* TextBegin = Text.data();
+        const char* TextEnd   = Text.data() + Text.size();
+        bool bSawWord = false;
+
+        while (Word < QueryEnd)
+        {
+            while (Word < QueryEnd && *Word == ' ')
+            {
+                ++Word;
+            }
+
+            const char* WordEnd = Word;
+            while (WordEnd < QueryEnd && *WordEnd != ' ')
+            {
+                ++WordEnd;
+            }
+
+            if (WordEnd == Word)
+            {
+                break;
+            }
+
+            bSawWord = true;
+
+            if (TextBegin != TextEnd && ImStristr(TextBegin, TextEnd, Word, WordEnd) != nullptr)
+            {
+                return true;
+            }
+
+            Word = WordEnd;
+        }
+
+        // An empty box, or one holding only spaces, filters nothing out.
+        return !bSawWord;
+    }
+
+    bool PassSearchFilter(const ImGuiTextFilter& Filter, FStringView Text)
+    {
+        return PassSearchFilter(FStringView(Filter.InputBuf), Text);
+    }
+
     int32 SearchableCombo(const char* StrId, const char* Preview, int32 ItemCount, int32 CurrentIndex, const TFunction<FFixedString(int32)>& GetItemLabel, const char* ItemIcon)
     {
         int32 Result = INDEX_NONE;
@@ -609,7 +654,7 @@ namespace Lumina::ImGuiX
                 for (int32 i = 0; i < ItemCount; ++i)
                 {
                     const FFixedString Label = GetItemLabel(i);
-                    if (!Filter.PassFilter(Label.c_str()))
+                    if (!PassSearchFilter(Filter, Label.c_str()))
                     {
                         continue;
                     }

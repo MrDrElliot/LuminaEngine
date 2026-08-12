@@ -56,11 +56,15 @@ public static unsafe partial class Native
     [NativeCall] public static partial void RegistryDisconnect(ulong World, IntPtr Ops, int Kind, IntPtr Handle);
     [NativeCall] public static partial void RegistryPatch(ulong World, uint Entity, IntPtr Ops);
 
-    // Script-to-script: the managed GCHandle (as IntPtr) of the first EntityScript bound to an entity, or 0.
-    [NativeCall] public static partial IntPtr GetEntityScriptHandle(ulong World, uint Entity);
 
     // Appends a script of the named class to an entity and binds it; returns the new instance's handle.
     [NativeCall] public static partial IntPtr AddEntityScript(ulong World, uint Entity, string ClassName);
+
+    // Lookup over the native CEntityScript component. Class-keyed, so these find a C++ script too. The
+    // FindEntityScripts buffer may be null/0 to just ask for the count (the return value is the true total
+    // either way, so an under-sized buffer is retried rather than silently truncating).
+    [NativeCall] public static partial IntPtr FindEntityScript(ulong World, uint Entity, string ClassName);
+    [NativeCall] public static partial int FindEntityScripts(ulong World, uint Entity, string ClassName, void** OutScripts, int Capacity);
 
     // Removes the slot holding the given instance handle, destroying the managed instance.
     [NativeCall] public static partial void RemoveEntityScript(ulong World, uint Entity, IntPtr Instance);
@@ -107,19 +111,39 @@ public static unsafe partial class Native
     [NativeCall(SuppressGCTransition = true)] public static partial long ObjectGetHandle(IntPtr Object);
     [NativeCall(SuppressGCTransition = true)] public static partial IntPtr ObjectResolve(int Index, int Generation);
 
+    // Per-CObject managed-instance cache backing Wrapper<T>.ForObject: Get returns the weak GC handle of the
+    // wrapper this object already has (or zero), Set installs one and frees whatever it replaces (a zero
+    // handle just clears). See Core/Object/ManagedInstance.h for the ownership rules.
+    [NativeCall(SuppressGCTransition = true)] public static partial IntPtr ObjectGetManagedInstance(IntPtr Object);
+    [NativeCall(SuppressGCTransition = true)] public static partial void ObjectSetManagedInstance(IntPtr Object, IntPtr Handle);
+
+    // Frees every cached managed instance. Called from the script teardown contract before the collectible ALC
+    // unloads: Scriptable subclass instances are held by STRONG handles in that table and would pin it.
+    [NativeCall] public static partial void ReleaseAllManagedInstances();
+
     // Generic per-property-type accessors. The Reflector emits these for non-blittable properties
     // (FString/FName/object ref) with the property's FProperty* token (Prop) resolved once and cached;
     // C is the container (the live component/object handle). Blittable properties never reach here -- they
     // read/write native memory directly at the property's offset.
 
-    // String get = generated two-pass buffer ABI; string set / object ref = generated string/pointer args.
+    // FName get = the generated two-pass buffer ABI (an interned id has to be resolved to text natively);
+    // string set / object ref = generated string/pointer args. There is deliberately no PropGetString: an
+    // FString is read in place off the property's offset via NativeMarshal.ReadString, with no crossing.
 
-    [NativeCall] public static partial string PropGetString(IntPtr C, IntPtr Prop);
     [NativeCall] public static partial void PropSetString(IntPtr C, IntPtr Prop, string Value);
     [NativeCall] public static partial string PropGetName(IntPtr C, IntPtr Prop);
     [NativeCall] public static partial void PropSetName(IntPtr C, IntPtr Prop, string Value);
     [NativeCall] public static partial IntPtr PropGetObject(IntPtr C, IntPtr Prop);
     [NativeCall] public static partial void PropSetObject(IntPtr C, IntPtr Prop, IntPtr Object);
+
+    // Asset reference: the virtual path, which is how C# stores one too (Lumina.FSoftObjectPath). Same
+    // two-pass buffer ABI as PropGetName.
+    [NativeCall] public static partial string PropGetAssetPath(IntPtr C, IntPtr Prop);
+    [NativeCall] public static partial void PropSetAssetPath(IntPtr C, IntPtr Prop, string Path);
+
+    // The element ops table for an array property, so a NativeList<T> view can be built over any reflected
+    // array -- including one appended to a minted script class, which has no generated per-property export.
+    [NativeCall] public static partial IntPtr PropVectorOps(IntPtr Prop);
 
     [NativeCall] public static partial ulong DelegateBind(IntPtr Delegate, IntPtr Thunk, IntPtr Context);
     [NativeCall] public static partial void DelegateUnbind(IntPtr Delegate, ulong Handle);

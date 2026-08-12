@@ -18,6 +18,11 @@ namespace Lumina::VFS
         virtual bool ReadFile(TVector<uint8>& Result, FStringView Path) = 0;
         virtual bool ReadFile(FString& OutString, FStringView Path) = 0;
 
+        /** Read [Offset, Offset + Size) of Path. A read that runs past EOF is clamped, so Result may come
+         *  back shorter than Size; only a missing/unreadable file returns false. The default pulls the whole
+         *  file and slices it -- correct, but it defeats the point, so backends that can seek override it. */
+        virtual bool ReadFileRange(TVector<uint8>& Result, FStringView Path, uint64 Offset, uint64 Size);
+
         virtual bool WriteFile(FStringView Path, FStringView Data) = 0;
         virtual bool WriteFile(FStringView Path, TSpan<const uint8> Data) = 0;
 

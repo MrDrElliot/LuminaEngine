@@ -12,6 +12,7 @@ namespace Lumina::VFS
 
         bool ReadFile(TVector<uint8>& Result, FStringView Path) override;
         bool ReadFile(FString& OutString, FStringView Path) override;
+        bool ReadFileRange(TVector<uint8>& Result, FStringView Path, uint64 Offset, uint64 Size) override;
 
         bool WriteFile(FStringView Path, FStringView Data) override;
         bool WriteFile(FStringView Path, TSpan<const uint8> Data) override;

@@ -25,7 +25,7 @@ public static class Asset
         {
             return null;
         }
-        return Wrapper<T>.Create(Pointer);
+        return Wrapper<T>.ForObject(Pointer);
     }
 
     /// <summary>True if an asset exists at <paramref name="Path"/> in the registry (a probe, no load).</summary>
@@ -44,7 +44,7 @@ public static class Asset
         // native side hands back a GCHandle to this Action, which Host.InvokeAssetCallback resolves + frees.
         Action<IntPtr> Trampoline = Pointer =>
         {
-            Callback(Pointer == IntPtr.Zero ? null : Wrapper<T>.Create(Pointer));
+            Callback(Pointer == IntPtr.Zero ? null : Wrapper<T>.ForObject(Pointer));
         };
         GCHandle Handle = GCHandle.Alloc(Trampoline);
         IntPtr Token = GCHandle.ToIntPtr(Handle);

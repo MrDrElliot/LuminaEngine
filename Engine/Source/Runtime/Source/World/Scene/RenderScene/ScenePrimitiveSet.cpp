@@ -764,6 +764,7 @@ namespace Lumina
                 Proto.MaterialIndex         = Surface.MaterialIdx;
                 Proto.MaterialFlags         = Surface.MaterialFlags;
                 Proto.bMaterialCastsShadows = Surface.bMaterialCastsShadows;
+                Proto.TexelFactor           = Surface.TexelFactor;
             }
 
             Entry.Generation = Generation;
@@ -888,6 +889,7 @@ namespace Lumina
                 Binding.MaterialIndex         = Surface.MaterialIdx;
                 Binding.MaterialFlags         = Surface.MaterialFlags;
                 Binding.bMaterialCastsShadows = Surface.bMaterialCastsShadows;
+                Binding.TexelFactor           = Surface.TexelFactor;
             }
         }
 

@@ -31,6 +31,7 @@ namespace Lumina
     struct FWorldContext;
     class CTexture;
     class CTextureRenderTarget;
+    class CEntityScript;
     class CWorld;
     class FImmediateLineRenderer;
     enum class ENetMode : uint8;
@@ -417,9 +418,9 @@ namespace Lumina
         void OnWidgetComponentDestroyed(entt::registry& Registry, entt::entity Entity);
         void OnInputComponentConstruct(entt::registry& Registry, entt::entity Entity);
 
-        // Appends a C# script of the given class to an entity (emplacing SScriptComponent if needed) and
+        // Attaches a script of the given class to an entity (emplacing SEntityScriptComponent if needed) and
         // binds it immediately. Returns the managed instance handle, or null on failure.
-        void* AddEntityScript(entt::entity Entity, FStringView ScriptClass);
+        CEntityScript* AddEntityScript(entt::entity Entity, FStringView ScriptClass);
 
         // Convenience that forwards to AddEntityScript.
         void SetEntityScript(entt::entity Entity, FStringView ScriptClass);

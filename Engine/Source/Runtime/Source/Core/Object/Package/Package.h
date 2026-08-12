@@ -222,8 +222,27 @@ namespace Lumina
          *  strips EditorOnly properties and thumbnails. */
         RUNTIME_API NODISCARD static bool SavePackageForCook(CPackage* Package, TVector<uint8>& OutCompressed);
 
-        /** Reads a package file from disk and decompresses it into the raw uncompressed package binary. */
-        RUNTIME_API static bool ReadPackageFile(FStringView Path, TVector<uint8>& OutBinary);
+        /** Where a package's bulk region lives in its file. Offset is file-absolute; the FBulkDataRef
+         *  offsets stored inside exports are relative to it. */
+        struct FBulkRegion
+        {
+            int64 FileOffset = 0;
+            int64 Size       = 0;
+
+            bool IsValid() const { return Size > 0; }
+        };
+
+        /** Reads a package file from disk and decompresses it into the raw uncompressed package binary.
+         *  Only the compressed container is read -- the bulk region (if any) is deliberately left on disk
+         *  and merely located, which is the whole point of putting texture mips there. */
+        RUNTIME_API static bool ReadPackageFile(FStringView Path, TVector<uint8>& OutBinary, FBulkRegion* OutBulkRegion = nullptr);
+
+        /** Pull a bulk payload off disk. One ranged read; nothing is cached, so the caller owns the bytes
+         *  and decides how long to keep them. Safe to call from a worker thread (VFS reads are stateless
+         *  and the region's location is fixed for the lifetime of the loaded package). */
+        RUNTIME_API NODISCARD bool ReadBulkData(const FBulkDataRef& Ref, TVector<uint8>& OutBytes) const;
+
+        RUNTIME_API NODISCARD const FBulkRegion& GetBulkRegion() const { return BulkRegion; }
 
         void CreateLoader(const TVector<uint8>& FileBinary);
         
@@ -307,6 +326,10 @@ namespace Lumina
         void ConditionalDropLoader();
 
         TAtomic<ELoadState>             LoadState{ELoadState::Unloaded};
+
+        // Located at load from the file's trailer, and refreshed on save. Zero for packages saved before
+        // PACKAGE_BULK_DATA and for any package whose exports wrote nothing bulk.
+        FBulkRegion                     BulkRegion;
 
         // Reentrancy depth of object loads sharing this package's Loader. The cached bytes are dropped only
         // when the outermost load unwinds, so a nested IndexToObject load can't free the buffer mid-read.

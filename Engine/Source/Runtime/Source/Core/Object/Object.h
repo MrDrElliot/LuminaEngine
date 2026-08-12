@@ -58,6 +58,11 @@ namespace Lumina
         RUNTIME_API virtual void PreLoad() {}
         RUNTIME_API virtual void PostLoad() {}
 
+        /** Called immediately before this object is serialized into a package being saved. Last chance to
+         *  make derived or streamed-out state resident: anything still on disk when Serialize runs is
+         *  written back as empty. Runs on the saving thread and may block on IO. */
+        RUNTIME_API virtual void PreSave() {}
+
         /** Property modified externally (e.g. editor). */
         RUNTIME_API virtual void PostPropertyChange(FProperty* ChangedProperty) {}
 

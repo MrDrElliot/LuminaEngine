@@ -21,6 +21,11 @@ namespace Lumina
         RUNTIME_API bool Identical(const void* ValueA, const void* ValueB) const override;
         RUNTIME_API void CopyCompleteValue(void* Dst, const void* Src) const override;
 
+        // Owns a heap instance of whatever type was picked, so zeroed bytes are not a valid FInstancedStruct.
+        RUNTIME_API void ConstructValue(void* Value) const override;
+        RUNTIME_API void DestructValue(void* Value) const override;
+        bool OwnsStorage() const override { return true; }
+
         // The base struct every owned instance must derive from (the T in TInstancedStruct<T>).
         RUNTIME_API CStruct* GetMetaStruct() const { return MetaStruct; }
 

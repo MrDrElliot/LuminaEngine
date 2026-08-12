@@ -33,38 +33,6 @@ namespace Lumina
                 else                                             return ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
             }, Value);
         }
-
-        bool CaseInsensitiveContains(FStringView Haystack, FStringView Needle)
-        {
-            if (Needle.empty())
-            {
-                return true;
-            }
-
-            if (Needle.size() > Haystack.size())
-            {
-                return false;
-            }
-
-            for (size_t i = 0; i + Needle.size() <= Haystack.size(); ++i)
-            {
-                bool bMatch = true;
-                for (size_t j = 0; j < Needle.size(); ++j)
-                {
-                    if (std::tolower(Haystack[i + j]) != std::tolower(Needle[j]))
-                    {
-                        bMatch = false;
-                        break;
-                    }
-                }
-                if (bMatch)
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
     }
 
     void FConsoleVariableEditorTool::OnInitialize()
@@ -100,7 +68,7 @@ namespace Lumina
             return true;
         }
 
-        return CaseInsensitiveContains(Name, SearchFilter) || CaseInsensitiveContains(Hint, SearchFilter);
+        return ImGuiX::PassSearchFilter(SearchFilter, Name) || ImGuiX::PassSearchFilter(SearchFilter, Hint);
     }
 
     void FConsoleVariableEditorTool::DrawWindow(bool bIsFocused)

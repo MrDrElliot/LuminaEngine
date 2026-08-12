@@ -124,7 +124,7 @@ namespace Lumina
         public readonly bool IsValid => Handle != IntPtr.Zero;
 
         /// <summary>The resolved object as T, or null.</summary>
-        public readonly T? Value => Handle == IntPtr.Zero ? null : Wrapper<T>.Create(Handle);
+        public readonly T? Value => Handle == IntPtr.Zero ? null : Wrapper<T>.ForObject(Handle);
 
 
         public readonly T? Get()

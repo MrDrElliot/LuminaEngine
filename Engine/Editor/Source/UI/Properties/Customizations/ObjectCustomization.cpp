@@ -28,45 +28,6 @@ namespace Lumina
 {
     static constexpr ImVec2 GButtonSize(42, 0);
 
-    // ImGuiTextFilter only splits on commas, so "wall brick" is matched as one contiguous run and
-    // finds nothing. Treat spaces as separators as well and pass anything matching any one word.
-    static bool PassSearchFilter(const ImGuiTextFilter& Filter, const char* Text)
-    {
-        const char* Word = Filter.InputBuf;
-        bool bSawWord = false;
-
-        while (*Word != '\0')
-        {
-            while (*Word == ' ')
-            {
-                ++Word;
-            }
-
-            const char* WordEnd = Word;
-            while (*WordEnd != '\0' && *WordEnd != ' ')
-            {
-                ++WordEnd;
-            }
-
-            if (WordEnd == Word)
-            {
-                break;
-            }
-
-            bSawWord = true;
-
-            if (ImStristr(Text, nullptr, Word, WordEnd) != nullptr)
-            {
-                return true;
-            }
-
-            Word = WordEnd;
-        }
-
-        // An empty box, or one holding only spaces, filters nothing out.
-        return !bSawWord;
-    }
-
     EPropertyChangeOp FCObjectPropertyCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property)
     {
         FObjectProperty* ObjectProperty = static_cast<FObjectProperty*>(Property->Property);
@@ -189,7 +150,7 @@ namespace Lumina
                         
                         for (const FAssetData* Asset : Assets)
                         {
-                            if (!PassSearchFilter(SearchFilter, Asset->AssetName.c_str()))
+                            if (!ImGuiX::PassSearchFilter(SearchFilter, Asset->AssetName.c_str()))
                             {
                                 continue;
                             }

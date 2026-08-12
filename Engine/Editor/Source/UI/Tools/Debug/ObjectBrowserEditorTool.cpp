@@ -158,11 +158,11 @@ namespace Lumina
             if (Filter.bRootedOnly          && !EnumHasAnyFlags(Row.Flags, OF_Rooted))       { continue; }
             if (Filter.bAssetsOnly          && !Row.bIsAsset)                                { continue; }
 
-            if (NameFilter.IsActive() && !NameFilter.PassFilter(Row.Name.c_str()))
+            if (NameFilter.IsActive() && !ImGuiX::PassSearchFilter(NameFilter, Row.Name.c_str()))
             {
                 continue;
             }
-            if (ClassFilter.IsActive() && !ClassFilter.PassFilter(Row.ClassName.c_str()))
+            if (ClassFilter.IsActive() && !ImGuiX::PassSearchFilter(ClassFilter, Row.ClassName.c_str()))
             {
                 continue;
             }

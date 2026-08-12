@@ -19,6 +19,7 @@
 #include "Renderer/RHICore.h"
 #include "Renderer/RHITexture.h"
 #include "Renderer/RenderManager.h"
+#include "Renderer/TextureStreamingManager.h"
 #include "TaskSystem/TaskGraph.h"
 #include "TaskSystem/TaskSystem.h"
 #include "Tools/Import/ImportHelpers.h"
@@ -2306,6 +2307,20 @@ namespace Lumina
                 DefaultFont->GetAtlasResourceID();
             }
 
+            // Texture-streaming feedback rows. Sized to the material table so a slot index is a direct
+            // subscript -- no hashing in the inner loop, and merging is a max over flat arrays.
+            const uint32 MaterialCapacity = Render().GetMaterialManager().GetCapacity();
+            if (StreamingCoveragePerThread.size() < NumThreads)
+            {
+                StreamingCoveragePerThread.resize(NumThreads);
+                StreamingDensityKnownPerThread.resize(NumThreads);
+            }
+            for (uint32 t = 0; t < NumThreads; ++t)
+            {
+                StreamingCoveragePerThread[t].assign(MaterialCapacity, 0.0f);
+                StreamingDensityKnownPerThread[t].assign(MaterialCapacity, 0u);
+            }
+
             DrawTaskGraph.Reset();   // reuse the persistent graph (allocator block + capacity)
             FTaskGraph& Graph = DrawTaskGraph;
 
@@ -2314,6 +2329,20 @@ namespace Lumina
                 {
                     MergeMeshDrawData(ThreadLocal);
                 }, ETaskPriority::High);
+
+                // Separate from the cull/emit node on purpose: that one early-outs on everything that is
+                // not a skeletal mesh (static meshes and foliage are culled on the GPU and never visited
+                // on the CPU), and it is only scheduled at all when the scene has skinned primitives. The
+                // streamer needs to hear about EVERY primitive, or the textures on a static mesh would
+                // never be demanded and would sit at their inline tail forever.
+                if (NumPrimitives > 0 && MaterialCapacity > 0)
+                {
+                    Graph.AddParallelFor(NumPrimitives, GPrimitiveGrain, [this](const Task::FParallelRange& Range)
+                    {
+                        LUMINA_PROFILE_SECTION("Gather Streaming Feedback");
+                        GatherStreamingFeedback(Range);
+                    }, ETaskPriority::Medium);   // not on the critical path; nothing waits on it
+                }
 
                 if (ScenePrimitives.GetSkinnedPrimitiveCount() > 0)
                 {
@@ -2334,6 +2363,10 @@ namespace Lumina
             }
 
             Graph.Dispatch();
+
+            // Dispatch blocks until the graph drains, so the per-thread rows are complete and we are back on
+            // the game thread -- which is where the streamer may walk CMaterial::ResolvedTextures.
+            SubmitStreamingFeedback();
 
             EmitTaskGraph.Reset();
             FTaskGraph& EmitGraph = EmitTaskGraph;
@@ -3849,6 +3882,168 @@ namespace Lumina
             Item.MaterialIndex        = Binding.MaterialIndex;
             Item._Pad                 = 0;
 
+        }
+    }
+
+    void FDefaultSceneRenderer::GatherStreamingFeedback(const Task::FParallelRange& Range)
+    {
+        if (Range.Thread >= StreamingCoveragePerThread.size())
+        {
+            return;
+        }
+
+        TVector<float>& Row        = StreamingCoveragePerThread[Range.Thread];
+        TVector<uint8>& DensityRow = StreamingDensityKnownPerThread[Range.Thread];
+        if (Row.empty())
+        {
+            return;
+        }
+
+        const FFrameData&        Frame           = *ExtractFrame;
+        const FSceneCullContext& SceneCull       = Frame.Geometry.SceneCullContext;
+        const FSceneGlobalData&  SceneGlobalData = Frame.SceneGlobalData;
+        const FVector3           CameraPos       = FVector3(SceneGlobalData.CameraData.Location);
+
+        const FScenePrimitive*    Prims    = ScenePrimitives.GetPrimitives();
+        const FVector4*           Spheres  = ScenePrimitives.GetBounds();
+        const FPrimitiveCullData* Culls    = ScenePrimitives.GetCullData();
+        const FSurfaceBinding*    Bindings = ScenePrimitives.GetBindings();
+
+        // |Projection[1][1]| is cot(FOV/2); times the viewport height it converts a world-space
+        // radius/distance ratio straight into pixels. Ortho has no perspective divide, so its scale is
+        // constant and the distance term drops out.
+        //
+        // ABS is load-bearing: BuildVulkanReverseZPerspective does `P[1][1] *= -1` to bake Vulkan's +Y-down
+        // NDC into the matrix, so the raw element is NEGATIVE in every perspective view. Reading it signed
+        // made the guard below reject every frame, which silently disabled streaming feedback entirely --
+        // textures sat at their inline tail forever because nothing ever demanded them. The sign is a
+        // handedness convention; only the magnitude is a projection scale.
+        const float ScreenHeight = (float)SceneGlobalData.ScreenSize.y;
+        const bool  bOrtho       = Frame.ViewVolume.IsOrthographic();
+
+        // Ortho's vertical extent, not its width -- pairing a horizontal world extent with a vertical pixel
+        // count skews the estimate by the aspect ratio.
+        const float OrthoHeight = Frame.ViewVolume.GetOrthoWidth() / Math::Max(Frame.ViewVolume.GetAspectRatio(), 0.001f);
+
+        const float ProjScale = bOrtho
+            ? (OrthoHeight > 0.0f ? ScreenHeight / OrthoHeight : 0.0f)
+            : Math::Abs(SceneGlobalData.CameraData.Projection[1][1]) * ScreenHeight;
+
+        // Still guarded, but now this only catches a genuinely degenerate projection (zero FOV, zero
+        // viewport) rather than the normal case.
+        if (ProjScale <= 0.0f)
+        {
+            return;
+        }
+
+        for (uint32 i = Range.Start; i < Range.End; ++i)
+        {
+            const FScenePrimitive& Prim   = Prims[i];
+            const FVector4&        Sphere = Spheres[i];
+
+            const FVector3 Center = FVector3(Sphere);
+            const float    Radius = Sphere.w;
+
+            // Camera visibility only -- a primitive that is merely casting a shadow into view is not being
+            // sampled at screen resolution, and treating it as if it were would pin its textures at full res.
+            if (!SceneCull.IsCameraVisible(Center, Radius, Culls[i].MaxDrawDistance, CameraPos))
+            {
+                continue;
+            }
+
+            // TexelFactor is a MESH-LOCAL length, so it has to be taken into world space by the same scale
+            // the transform applies. Longest basis vector, matching how the bounding sphere is scaled --
+            // a non-uniform scale gets the conservative (sharpest) axis.
+            const FMatrix4& M = Prim.Transform;
+            const float ScaleSq = Math::Max(
+                Math::Max(M[0][0] * M[0][0] + M[0][1] * M[0][1] + M[0][2] * M[0][2],
+                          M[1][0] * M[1][0] + M[1][1] * M[1][1] + M[1][2] * M[1][2]),
+                          M[2][0] * M[2][0] + M[2][1] * M[2][1] + M[2][2] * M[2][2]);
+            const float WorldScale = Math::Sqrt(ScaleSq);
+
+            // Perspective divide once per primitive; the per-surface loop only scales it.
+            const float InvDistance = bOrtho ? 1.0f : (1.0f / Math::Max(Math::Length(Center - CameraPos), 0.01f));
+
+            // Fallback for meshes built before TexelFactor was recorded: the object's own diameter, i.e.
+            // "assume the texture wraps exactly once across it". That is the old behaviour, so un-resaved
+            // content behaves exactly as it did rather than collapsing to the tail.
+            const float FallbackTileSize = 2.0f * Radius;
+
+            for (uint32 s = 0; s < Prim.SurfaceCount; ++s)
+            {
+                const FSurfaceBinding& Binding = Bindings[Prim.BindingBase + s];
+
+                if (Binding.MaterialIndex >= Row.size())
+                {
+                    continue;
+                }
+
+                // World extent covered by ONE wrap of the texture. This is the whole point of the texel
+                // factor: a texture tiled 20x across a wall has a tile 20x smaller than the wall, and
+                // asking for resolution based on the wall would hold four mips more than are ever sampled.
+                const bool  bDensityKnown = Binding.TexelFactor > 0.0f;
+                const float TileSize      = bDensityKnown
+                    ? Binding.TexelFactor * WorldScale
+                    : FallbackTileSize;
+
+                DensityRow[Binding.MaterialIndex] |= bDensityKnown ? 1u : 0u;
+
+                // Required resolution in pixels for one tile -- the same form as Unreal's
+                // TexelFactor * ScreenScale / Distance.
+                const float Coverage = TileSize * InvDistance * ProjScale;
+
+                if (Coverage > 0.0f)
+                {
+                    Row[Binding.MaterialIndex] = Math::Max(Row[Binding.MaterialIndex], Coverage);
+                }
+            }
+        }
+    }
+
+    void FDefaultSceneRenderer::SubmitStreamingFeedback()
+    {
+        FTextureStreamingManager* Streaming = FTextureStreamingManager::TryGet();
+        if (Streaming == nullptr || StreamingCoveragePerThread.empty())
+        {
+            return;
+        }
+
+        LUMINA_PROFILE_SCOPE();
+
+        const size_t Capacity = StreamingCoveragePerThread[0].size();
+        if (Capacity == 0)
+        {
+            return;
+        }
+
+        StreamingCoverageMerged.assign(Capacity, 0.0f);
+        StreamingDensityKnownMerged.assign(Capacity, 0u);
+
+        for (uint32 t = 0; t < (uint32)StreamingCoveragePerThread.size(); ++t)
+        {
+            const TVector<float>& Row        = StreamingCoveragePerThread[t];
+            const TVector<uint8>& DensityRow = StreamingDensityKnownPerThread[t];
+
+            const size_t Count = Math::Min(Row.size(), Capacity);
+            for (size_t Slot = 0; Slot < Count; ++Slot)
+            {
+                StreamingCoverageMerged[Slot] = Math::Max(StreamingCoverageMerged[Slot], Row[Slot]);
+                if (Slot < DensityRow.size())
+                {
+                    StreamingDensityKnownMerged[Slot] |= DensityRow[Slot];
+                }
+            }
+        }
+
+        // Only slots that were actually drawn: submitting zeros would take the streamer's lock once per
+        // material in the table every frame to say nothing.
+        for (size_t Slot = 0; Slot < Capacity; ++Slot)
+        {
+            if (StreamingCoverageMerged[Slot] > 0.0f)
+            {
+                Streaming->SubmitMaterialCoverage((uint32)Slot, StreamingCoverageMerged[Slot],
+                    StreamingDensityKnownMerged[Slot] != 0u);
+            }
         }
     }
 
@@ -6881,14 +7076,17 @@ namespace Lumina
         Key.ColorTargets.push_back({ Output.Desc.Format, AlphaBlend });
         RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
+        // Mirrors FSelectionOutlineArgs in SelectionOutline.slang -- field for field, IN ORDER. OutlineColor
+        // leads because a vector may not straddle a 16-byte boundary in a PhysicalStorageBuffer Block; see
+        // the comment on the shader-side struct for what the trailing version broke.
         struct FSelectionOutlinePC
         {
+            FVector4    OutlineColor;
             RHI::GPUPtr SelectionBits;
             uint32      PickerIndex;
             uint32      SelectionBitWords;
             uint32      EntityIndexMask;
             float       Thickness;
-            FVector4    OutlineColor;
         } PC = {};
 
         PC.SelectionBits     = RHI::Core::CopyTransientArray(SelectionBits.data(), SelectionBits.size());

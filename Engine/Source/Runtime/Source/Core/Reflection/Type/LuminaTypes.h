@@ -99,6 +99,19 @@ namespace Lumina
         }
 
         virtual void Serialize(FArchive& Ar, void* Value) { }
+
+        /** Bring this property's storage up / tear it down in caller-owned memory. The default is correct for
+         *  every trivially-constructible kind: their zeroed bytes are already a valid value, and they need no
+         *  teardown. A kind that owns memory (a string, a container, a struct with either) overrides both.
+         *
+         *  This is what lets a holder of properties drive lifecycle without knowing the kinds it holds --
+         *  adding a new property type teaches the type itself, not every walker. */
+        virtual void ConstructValue(void* Value) const { }
+        virtual void DestructValue(void* Value) const { }
+
+        /** True when this property's value owns memory, i.e. it overrides the pair above. Lets a holder ask
+         *  the property whether it needs lifecycle instead of testing a list of kinds. */
+        virtual bool OwnsStorage() const { return false; }
         virtual void SerializeItem(IStructuredArchive::FSlot Slot, void* Value, void const* Defaults = nullptr) { }
 
         /** Compact network serialization (no FName tag / size prefix). Defaults to the raw Serialize

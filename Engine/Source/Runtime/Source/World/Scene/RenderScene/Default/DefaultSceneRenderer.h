@@ -1121,6 +1121,26 @@ namespace Lumina
         TVector<FThreadLocalDrawData>           ThreadLocalStorage;
         uint32                                  CurrentReservePerThread = 0;
 
+        /** Texture-streaming feedback: max on-screen pixel size seen this frame per material slot, one row
+         *  per task thread so the gather stays lock-free. Indexed by FMaterialManager slot; merged and
+         *  handed to the streamer on the game thread after the graph dispatches. */
+        TVector<TVector<float>>                 StreamingCoveragePerThread;
+        TVector<float>                          StreamingCoverageMerged;
+
+        // Parallel to the above: did any surface contributing to this material slot carry a real
+        // TexelFactor, or did they all fall back to the bounding sphere? Purely diagnostic -- it is what
+        // makes "did my resave actually take effect" answerable without guessing from the numbers.
+        TVector<TVector<uint8>>                 StreamingDensityKnownPerThread;
+        TVector<uint8>                          StreamingDensityKnownMerged;
+
+        /** Estimate on-screen size per visible primitive and fold it into StreamingCoveragePerThread.
+         *  Runs on task threads over a [Start, End) primitive range. Reads only const primitive/bounds/
+         *  binding data -- deliberately never touches CMaterial or CTexture, which is not legal here. */
+        void GatherStreamingFeedback(const Task::FParallelRange& Range);
+
+        /** Merge the per-thread rows and submit. Game thread. */
+        void SubmitStreamingFeedback();
+
         struct alignas(64) FLineBatchScratch
         {
             static constexpr uint32 kMaxBuckets = 16;

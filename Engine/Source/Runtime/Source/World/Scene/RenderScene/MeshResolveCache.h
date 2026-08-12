@@ -42,6 +42,10 @@ namespace Lumina
         uint32  LODMeshletCount[MAX_MESH_LODS]      = {};
         float   LODScreenThresholdSq[MAX_MESH_LODS] = {};
 
+        // Mesh-local world size of one UV tile; 0 = unknown. Carried through to FSurfaceBinding for the
+        // texture streamer. See FGeometrySurface::TexelFactor.
+        float   TexelFactor                         = 0.0f;
+
         // What this resolve was taken FROM, so it can report its own staleness. The seven FShaderEntry*
         // above are pointers into a content-keyed library: a recompile that changes bytecode mints a NEW
         // entry, leaving these silently pointing at superseded code. They stay pointers because

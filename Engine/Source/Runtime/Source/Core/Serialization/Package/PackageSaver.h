@@ -78,11 +78,23 @@ namespace Lumina
 
         uint32 GetImportCount() const { return CurrentImportIndex; }
 
+        bool SupportsBulkData() const override { return true; }
+
+        /** Appends to BulkBytes and hands back the offset within it. The region is written to disk after the
+         *  compressed container, so nothing here participates in the export stream's offsets. */
+        bool WriteBulkData(FBulkDataRef& OutRef, const void* Data, int64 Size) override;
+
+        /** Raw bulk region accumulated during export serialization; appended verbatim to the file.
+         *  Deliberately NOT compressed: it holds already-compressed payloads (BC-block texture mips), so
+         *  deflate would buy nothing and would force an inflate on every streamed read. */
+        const TVector<uint8>& GetBulkBytes() const { return BulkBytes; }
+
     private:
 
         CPackage*                   Package;
         THashMap<CObject*, uint32>  ObjectToIndexMap;
         THashSet<FGuid>             SoftReferencedGUIDs;
+        TVector<uint8>              BulkBytes;
         uint32                      CurrentImportIndex = 0;
     };
 }

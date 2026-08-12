@@ -26,6 +26,7 @@ namespace Lumina
     private:
 
         void DrawWindow(bool bIsFocused);
+        void DrawStreamingStats();
         void DrawTextureTable(const TVector<RHI::FHeapTextureInfo>& Textures);
         void DrawInspector(const TVector<RHI::FHeapTextureInfo>& Textures);
 

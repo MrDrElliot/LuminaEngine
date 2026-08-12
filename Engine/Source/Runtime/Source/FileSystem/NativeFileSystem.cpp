@@ -84,6 +84,56 @@ namespace Lumina::VFS
     }
 
 
+    // Streaming reads a few hundred KiB out of the middle of a multi-MiB asset, so pulling the whole file
+    // (the IFileSystem default) would spend exactly the IO the streamer exists to avoid.
+    bool FNativeFileSystem::ReadFileRange(TVector<uint8>& Result, FStringView Path, uint64 Offset, uint64 Size)
+    {
+        FFixedString FullPath = ResolveVirtualPath(Path);
+
+        Result.clear();
+
+        if (Size == 0)
+        {
+            return true;
+        }
+
+        std::ifstream File(FullPath.data(), std::ios::binary | std::ios::ate);
+        if (!File)
+        {
+            return false;
+        }
+
+        const std::streamsize FileSize = File.tellg();
+        if (FileSize < 0)
+        {
+            return false;
+        }
+
+        if (Offset >= (uint64)FileSize)
+        {
+            // Past EOF is an empty read, not a failure -- the caller distinguishes the two by Result.size().
+            return true;
+        }
+
+        const uint64 Remaining = (uint64)FileSize - Offset;
+        const uint64 ToRead    = Size < Remaining ? Size : Remaining;
+
+        File.seekg((std::streamoff)Offset, std::ios::beg);
+        if (!File)
+        {
+            return false;
+        }
+
+        Result.resize((size_t)ToRead);
+        if (!File.read(reinterpret_cast<char*>(Result.data()), (std::streamsize)ToRead))
+        {
+            Result.clear();
+            return false;
+        }
+
+        return true;
+    }
+
     bool FNativeFileSystem::ReadFile(FString& OutString, FStringView Path)
     {
         FFixedString FullPath = ResolveVirtualPath(Path);

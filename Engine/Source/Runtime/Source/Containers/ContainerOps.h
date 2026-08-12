@@ -26,6 +26,18 @@ namespace Lumina
         void   (*Reserve)(void* Vector, SIZE_T Size);
         void   (*Swap)(void* Vector, SIZE_T LHS, SIZE_T RHS);
         uint32 ElementSize;
+        // Bring the CONTAINER itself up / tear it down in caller-owned raw memory (as opposed to the element
+        // ops above, which all assume a live container). This is what lets FArrayProperty implement
+        // ConstructValue/DestructValue without knowing whether it is looking at a TVector<T> or a script
+        // runtime array. New fields go HERE, after ElementSize: LuminaSharp.VectorOps reads the earlier
+        // fields at fixed offsets, so appending is safe and inserting is not.
+        //
+        // Context is handed back to both, opaque to everything in between. A compile-time TVector<T> needs
+        // none (the type is baked into the lambda); a runtime script array needs it to reach the element
+        // description it must wire into the freshly-constructed container.
+        void   (*ConstructContainer)(void* Vector, const void* Context);
+        void   (*DestructContainer)(void* Vector, const void* Context);
+        const void* ContainerContext;
     };
 
     template <typename T>
@@ -42,6 +54,9 @@ namespace Lumina
             [](void* V, SIZE_T N) { static_cast<TVector<T>*>(V)->reserve(N); },
             [](void* V, SIZE_T A, SIZE_T B) { TVector<T>* Vec = static_cast<TVector<T>*>(V); T Tmp = (*Vec)[A]; (*Vec)[A] = (*Vec)[B]; (*Vec)[B] = Tmp; },
             static_cast<uint32>(sizeof(T)),
+            [](void* V, const void*) { new (V) TVector<T>(); },
+            [](void* V, const void*) { static_cast<TVector<T>*>(V)->~TVector<T>(); },
+            nullptr,
         };
         return &Ops;
     }
@@ -68,6 +83,12 @@ namespace Lumina
         void   (*At)(void* Map, SIZE_T Index, const void** OutKey, void** OutValue);
         uint32 KeySize;
         uint32 ValueSize;
+        // The map counterpart of FVectorOps::Construct/DestructContainer, Context and all: brings the MAP
+        // itself up / tears it down in caller-owned raw memory, so FMapProperty can implement
+        // ConstructValue/DestructValue without knowing whether it holds a THashMap<K,V> or a script map.
+        void   (*ConstructContainer)(void* Map, const void* Context);
+        void   (*DestructContainer)(void* Map, const void* Context);
+        const void* ContainerContext;
     };
 
     template <typename K, typename V>
@@ -126,6 +147,9 @@ namespace Lumina
             },
             static_cast<uint32>(sizeof(K)),
             static_cast<uint32>(sizeof(V)),
+            [](void* M, const void*) { new (M) MapT(); },
+            [](void* M, const void*) { static_cast<MapT*>(M)->~MapT(); },
+            nullptr,
         };
         return &Ops;
     }

@@ -436,7 +436,8 @@ namespace Lumina
         {
             FResolvedSurface& R = Out.Surfaces.emplace_back();
 
-            R.NumLODs = Surface.NumLODs;
+            R.NumLODs     = Surface.NumLODs;
+            R.TexelFactor = Surface.TexelFactor;
 
             for (uint32 LOD = 0; LOD < MAX_MESH_LODS; ++LOD)
             {

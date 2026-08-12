@@ -112,6 +112,11 @@ namespace Lumina
         /** Lazy default-constructed instance for property-editor diff/reset. Null if not default-constructible. Never destructed. */
         RUNTIME_API virtual void* GetDefaultInstance();
 
+        /** Whether a zeroed buffer is NOT already a valid instance of this struct, i.e. an instance has to be
+         *  constructed and destructed rather than just memzeroed. Asked instead of testing for particular
+         *  struct kinds, so FStructProperty can answer OwnsStorage without knowing what it points at. */
+        RUNTIME_API virtual bool RequiresValueLifecycle() const;
+
         //~ Value lifetime for one instance in caller-owned raw memory. Default uses FStructOps, else
         //~ walks the property list. CScriptStruct overrides these. Used by FInstancedStruct.
         RUNTIME_API virtual void InitializeStruct(void* Dest) const;
@@ -207,7 +212,34 @@ namespace Lumina
         DEFINE_CLASS_FACTORY(CClass)
 
         using FactoryFunctionType = CObject*(*)(void*);
-                
+
+        /** For a runtime-minted C# subclass of a REFLECT(Scriptable) native class: which ScriptEvents the
+         *  subclass actually overrides (bit i == the wrapper's [ScriptEvent(i)]). Zero for every native class,
+         *  which is exactly what makes a non-overridden event cost one predictable class-level test in the
+         *  generated shim instead of a per-instance lookup. Set once at mint (FScriptableRegistry). */
+        uint64 ScriptOverrides = 0;
+
+        /** Every property appended to this class from a script type's schema, in layout order. They live past
+         *  the C++ shim the class was minted from. Empty for every native class. */
+        TVector<FProperty*> ScriptProperties;
+
+        /** The subset of ScriptProperties whose values own storage, so they need construction/destruction over
+         *  the object's trailing block. Holds the properties themselves rather than any description of them:
+         *  each one knows how to build its own value (FProperty::ConstructValue), so adding a new property
+         *  kind teaches that kind and changes nothing here. */
+        TVector<FProperty*> ScriptLifecycleProperties;
+
+        /** Placement-constructs every script-appended property. Called from StaticAllocateObject once the
+         *  object's class is known, before PostInitProperties -- so a script's first callback sees valid
+         *  values rather than a memzeroed FString, which is a plausible-looking empty string that corrupts
+         *  on the first assignment. Returns whether anything was constructed, which is what stamps
+         *  OF_ScriptProperties and therefore what decides if the destructor comes back here at all. */
+        RUNTIME_API bool ConstructScriptProperties(void* Object) const;
+
+        /** Mirror of the above, from ~CObjectBase. Must be kept in lockstep: a construct without its destruct
+         *  leaks, the reverse double-frees. */
+        RUNTIME_API void DestructScriptProperties(void* Object) const;
+
         CClass() = default;
 
         CClass(CPackage* Package, const FName& InName, uint32 InSize, uint32 InAlignment, EObjectFlags InFlags, FactoryFunctionType InFactory)

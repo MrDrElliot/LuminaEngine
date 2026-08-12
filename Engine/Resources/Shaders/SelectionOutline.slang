@@ -11,14 +11,28 @@
 // entt handle (index | version), so the shader masks off the version and tests one bit. O(1) per pixel,
 // and no cap on how much can be selected.
 
+// Field order here is LAYOUT-driven, not readability-driven, and must stay in step with FSelectionOutlinePC
+// in DefaultSceneRenderer.cpp.
+//
+// An args struct reached through a BDA pointer is a Block in the PhysicalStorageBuffer storage class, so it
+// follows relaxed storage-buffer layout -- under which a vector may not straddle a 16-byte boundary. Slang
+// gives a float4 only 4-byte alignment here, so with OutlineColor written last it landed at offset 24 and
+// spanned 24..40, across the boundary at 32. spirv-val rejects that outright
+// (VUID-VkShaderModuleCreateInfo-pCode-08737) and vkCreateShaderModule fails, so the pass gets no pipeline
+// at all -- a layout mistake shows up as a dead feature, not a wrong-looking one.
+//
+// First is the one position that needs no explicit padding and stays aligned no matter what is added around
+// it. It is a real 16-byte alignment rather than a formal one: pass args come from the transient allocator,
+// whose blocks are kDefaultAlign (16) aligned. Any future vector member wants the same treatment -- group
+// them at the top, ahead of the scalars.
 struct FSelectionOutlineArgs
 {
+    float4 OutlineColor;           // rgb, a = opacity
     uint*  SelectionBits;          // one bit per entity slot, indexed by entity INDEX
     uint   PickerIndex;
     uint   SelectionBitWords;      // 0 = nothing selected; the pass is skipped before it gets here
     uint   EntityIndexMask;        // entt entity_mask, supplied by the CPU rather than hardcoded
     float  Thickness;              // outline half-width in pixels
-    float4 OutlineColor;           // rgb, a = opacity
 };
 FSelectionOutlineArgs* Pass() { return GetPassArgs<FSelectionOutlineArgs>(); }
 

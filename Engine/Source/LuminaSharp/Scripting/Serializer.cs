@@ -33,7 +33,12 @@ internal static class Serializer
             WriteMeta(Writer, Property.Meta);
             Writer.Write((byte)(Property.SkipHotReload ? 1 : 0));
             WriteType(Writer, Property.Type);
-            WriteValue(Writer, Property.Type, Defaults != null ? Property.Get(Defaults) : null);
+
+            // A native-owned view has no declared default to capture: the instance this reads from is
+            // unbound (created purely to describe the type), so its view points at no storage at all.
+            // Reading through it would decode a container header at address zero.
+            object? DefaultValue = (Defaults != null && !Property.IsNativeOwnedView) ? Property.Get(Defaults) : null;
+            WriteValue(Writer, Property.Type, DefaultValue);
         }
 
         Writer.Flush();
@@ -379,26 +384,6 @@ internal static class Serializer
 
     // ---- Overrides (native -> managed): apply a self-describing value blob onto a live instance ----
 
-    public static unsafe void ApplyValues(object Instance, IReadOnlyList<ScriptProperty> Properties, byte* Blob, int Length)
-    {
-        var Reader = new FBlobReader(new ReadOnlySpan<byte>(Blob, Length));
-        int Count = Reader.ReadInt32();
-        for (int Index = 0; Index < Count; Index++)
-        {
-            string Name = Reader.ReadString();
-            ScriptProperty? Property = FindProperty(Properties, Name);
-            if (Property == null)
-            {
-                SkipValue(ref Reader);
-                continue;
-            }
-
-            if (ReadValue(ref Reader, Property.Type, out object? Value))
-            {
-                Assign(Property, Instance, Value);
-            }
-        }
-    }
 
     /// <summary>
     /// Applies a decoded value to one member. An input binding is renamed in place rather than replaced:

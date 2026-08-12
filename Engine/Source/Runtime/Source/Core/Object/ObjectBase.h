@@ -21,6 +21,7 @@ namespace Lumina
     public:
         friend class FCObjectArray;
         friend class CPackage;
+        friend class FManagedInstanceTable;
 
         RUNTIME_API CObjectBase();
         RUNTIME_API virtual ~CObjectBase();
@@ -141,6 +142,12 @@ namespace Lumina
         // Initialized here, not left to the allocator zeroing the block: ConstructInternal ADDS the
         // requested flags to whatever this holds, so it has to start from a known value.
         mutable EObjectFlags    ObjectFlags = OF_None;
+        // Slot in the ManagedInstances table holding this object's C# wrapper, or INDEX_NONE. Deliberately
+        // placed here: it occupies the padding between the 4-byte ObjectFlags and the pointer that follows,
+        // so caching a managed instance costs no object growth. Keep it adjacent to ObjectFlags -- the
+        // static_assert on sizeof(CObjectBase) in ManagedInstance.cpp guards a reorder that would grow every
+        // CObject in the engine.
+        int32                   ManagedInstanceSlot = -1;
         CClass*                 ClassPrivate = nullptr;
         CPackage*               PackagePrivate = nullptr;
         FName                   NamePrivate;

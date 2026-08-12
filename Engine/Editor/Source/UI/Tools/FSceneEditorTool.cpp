@@ -38,7 +38,7 @@
 #include "World/Entity/Components/EntityTags.h"
 #include "World/Entity/Components/NameComponent.h"
 #include "World/Entity/Components/RelationshipComponent.h"
-#include "World/Entity/Components/CSharpScriptComponent.h"
+#include "Scripting/EntityScript.h"
 #include "World/Entity/Components/TagComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/Entity/EntityUtils.h"
@@ -328,7 +328,7 @@ namespace Lumina
             {
                 // A component whose NAME matches shows in full -- searching "Static Mesh" means you want
                 // that component, not the subset of its properties that happen to repeat the word.
-                const bool bTitleMatches = DetailsFilter.PassFilter(Entry.Title.c_str());
+                const bool bTitleMatches = ImGuiX::PassSearchFilter(DetailsFilter, Entry.Title.c_str());
 
                 if (Entry.Table)
                 {
@@ -940,7 +940,7 @@ namespace Lumina
         Display.bAllowRenaming = !bIsLockedPrefabChild;
 
         // Per-entity script enable toggle: only shown when the entity carries a script.
-        if (Registry.any_of<SScriptComponent>(Entity))
+        if (Registry.any_of<SEntityScriptComponent>(Entity))
         {
             Display.bShowSecondaryIcon = true;
             Display.SecondaryIconOn    = LE_ICON_SCRIPT_TEXT;
@@ -1543,7 +1543,7 @@ namespace Lumina
             }
 
             FFixedString DisplayName = Struct->MakeDisplayName();
-            if (!Filter.PassFilter(DisplayName.c_str()))
+            if (!ImGuiX::PassSearchFilter(Filter, DisplayName.c_str()))
             {
                 continue;
             }
@@ -2767,7 +2767,7 @@ namespace Lumina
                         FilteredPrefabs.reserve(PrefabAssets.size());
                         for (FAssetData* Data : PrefabAssets)
                         {
-                            if (AddEntityComponentFilter.PassFilter(Data->AssetName.c_str()))
+                            if (ImGuiX::PassSearchFilter(AddEntityComponentFilter, Data->AssetName.c_str()))
                             {
                                 FilteredPrefabs.push_back(Data);
                             }
@@ -2826,7 +2826,7 @@ namespace Lumina
                     FilteredPrimitives.reserve(IM_ARRAYSIZE(PrimitiveEntries));
                     for (const FPrimitiveEntry& Entry : PrimitiveEntries)
                     {
-                        if (AddEntityComponentFilter.PassFilter(Entry.Name))
+                        if (ImGuiX::PassSearchFilter(AddEntityComponentFilter, Entry.Name))
                         {
                             FilteredPrimitives.push_back(&Entry);
                         }

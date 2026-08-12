@@ -69,7 +69,9 @@ internal sealed class EntityScriptRuntime
 
     private void IndexRemove(EntityScript Script)
     {
-        (ulong, uint) Key = (Script.WorldHandle, Script.Entity.Id);
+        // The world comes from the native object now; a script whose native side is gone has no index entry
+        // left to remove, so resolving it defensively is enough.
+        (ulong, uint) Key = ((ulong)(long)Script.World.Handle, Script.Entity.Id);
         if (ByEntity.TryGetValue(Key, out List<EntityScript>? Scripts))
         {
             Scripts.Remove(Script);
@@ -112,28 +114,16 @@ internal sealed class EntityScriptRuntime
             return IntPtr.Zero;
         }
 
-        Script.Entity = new Entity(Entity);
-        Script.World = new Lumina.CWorld(new IntPtr(unchecked((long)World)));
-        Script.WorldHandle = World;
-        Script.Description = Description;
-
-        try
-        {
-            using (Game.Push(Script.World, Script.Entity, Script))
-            {
-                Script.OnAttach();
-            }
-        }
-        catch (Exception Exception)
-        {
-            Native.Log(ELogLevel.Error, $"EntityScript.OnAttach threw: {Exception}");
-        }
-
-        GCHandle Handle = GCHandle.Alloc(Script);
-        Script.SelfHandle = GCHandle.ToIntPtr(Handle);
-        LiveHandles.Add(Handle);
-        IndexAdd(World, Entity, Script);
-        return Script.SelfHandle;
+        // RETIRED. An EntityScript is now a CEntityScript CObject: the native driver creates it
+        // (EntityScripts::Attach -> NewObject on the minted CClass), and the managed instance follows from the
+        // shim's first dispatch via Scriptable::GetOrCreateInstance. An Activator-created script would have an
+        // unbound NativeObject handle, so every accessor on it would throw -- failing loudly here beats
+        // handing back something that looks alive.
+        Native.Log(ELogLevel.Error,
+            $"EntityScriptRuntime.Create is retired ('{TypeName}'): attach scripts through the native " +
+            "CEntityScript path. This call site has not been ported yet.");
+        _ = Description;
+        return IntPtr.Zero;
     }
 
     public void OnReady(IntPtr Handle)
@@ -334,14 +324,6 @@ internal sealed class EntityScriptRuntime
         return Script.Description.CallbackFlags;
     }
 
-    public unsafe void ApplyProperties(IntPtr Handle, byte* Blob, int Length)
-    {
-        if (Resolve(Handle) is not EntityScript Script)
-        {
-            return;
-        }
-        Serializer.ApplyValues(Script, Script.Description.Properties, Blob, Length);
-    }
 
     public byte[]? Schema(string TypeName)
     {

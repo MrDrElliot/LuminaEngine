@@ -195,6 +195,11 @@ namespace Lumina
         {
             ResolvedTextures[Index] = Textures[Index].LoadSynchronous();
 
+            // The set the streamer was told about is now out of date. This path is the one that made the
+            // old publish-on-RefreshTextureBindings-only scheme miss: a slot resolved synchronously here
+            // leaves the uniform block correct, so nothing downstream ever calls RefreshTextureBindings.
+            MarkStreamingTexturesDirty();
+
             if (ResolvedTextures[Index] == nullptr)
             {
                 const FStringView Path = Textures[Index].GetPath();
@@ -277,6 +282,11 @@ namespace Lumina
                 RefreshTextureBindings(nullptr);
             }
 
+            // Every frame, but a no-op after the first: this is the only point that is reliably reached
+            // once a material's texture set has settled, whatever route resolved it. Queued rather than
+            // published -- this gate runs on a worker fiber inside Extract.
+            QueueStreamingPublishIfDirty();
+
             return bAllResident;
         }
 
@@ -310,6 +320,7 @@ namespace Lumina
                 if (i < (uint32)Self->ResolvedTextures.size())
                 {
                     Self->ResolvedTextures[i] = Cast<CTexture>(Loaded);
+                    Self->MarkStreamingTexturesDirty();
                 }
 
                 // Re-push the block with whatever has landed so far, then wake the surfaces that fell
@@ -320,6 +331,20 @@ namespace Lumina
         }
 
         return false;
+    }
+
+    void CMaterial::CollectStreamingTextures(TVector<CTexture*>& Out) const
+    {
+        // Resolved slots only, and never resolves to answer -- same rule as ReferencesTexture. A slot
+        // nobody has demanded is not being sampled, so it has no streaming demand either.
+        Out.reserve(ResolvedTextures.size());
+        for (const TObjectPtr<CTexture>& Texture : ResolvedTextures)
+        {
+            if (CTexture* Resolved = Texture.Get())
+            {
+                Out.push_back(Resolved);
+            }
+        }
     }
 
     bool CMaterial::ReferencesTexture(const CTexture* ChangedTexture) const
@@ -358,6 +383,14 @@ namespace Lumina
         }
 
         UpdateMaterialUniforms();
+
+        // Same trigger as the block re-push: this is exactly the point where the resolved texture set is
+        // known to have changed, so it is where the streamer's mapping is marked stale.
+        //
+        // Marked, not published: this runs from the async load completion (see the LoadAsync callback below)
+        // and from the resolve gate's worker fiber, and publishing walks ResolvedTextures -- which the very
+        // completion that got us here is writing. The streamer drains the queue on the game thread.
+        MarkStreamingTexturesDirty();
 
         // Instances copied this block wholesale and nothing else rewrites the slots they inherit. Worst for
         // a slot bound without a parameter, which every parameter-driven path on the instance is blind to.
@@ -521,7 +554,10 @@ namespace Lumina
     void CMaterial::OnDestroy()
     {
         CMaterialInterface::OnDestroy();
-        
+
+        // Before MaterialIndex can be recycled by the next material.
+        ForgetStreamingTextures();
+
         for (const FMaterialStageDesc& Desc : GMaterialStages)
         {
             FShaderLibrary::Release(this->*Desc.Entry);

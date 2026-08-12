@@ -24,9 +24,7 @@ namespace Lumina
         return NewObject<CTexture>(Package, Name);
     }
 
-    // Enforces the texture group's mip policy on an already-cooked resource. Applied after EVERY cook
-    // path (Basis, DDS, environment) rather than inside one of them: DDS arrives with mips baked into
-    // the source file, so suppressing generation alone would not catch it.
+    // Enforces the texture group's mip policy on an already-cooked resource.
     static void ApplyTextureGroupMipPolicy(CTexture* Texture)
     {
         if (Texture == nullptr || Texture->TextureResource == nullptr)
@@ -77,10 +75,7 @@ namespace Lumina
             }
         }
     }
-
-    // HDR/Environment cook: bypasses Basis (LDR-only) and stores RGBA16F with a full box-filtered mip
-    // chain. The mips let the visible-sky pass sample a screen-derivative LOD so the equirect stops
-    // shimmering; the IBL cube prefilter still owns its own roughness chain.
+    
     static bool CookEnvironmentTexture(CTexture* Texture, const Import::Textures::FTextureImportResult& Source,
                                        bool bCreateGPUResource = true)
     {
@@ -107,13 +102,13 @@ namespace Lumina
         }
 
         const float* SrcFloats = reinterpret_cast<const float*>(Source.Pixels.data());
-
-        // Radiance values above half-float max (65504) pack to +Inf, and Inf/NaN texels poison the IBL
-        // convolution downstream (black/white reflection blocks + bloom flashes). Drop non-finite to 0 and
-        // clamp into a finite, format-safe range so the stored panorama is well-conditioned.
+        
         auto Sanitize = [](float X) -> float
         {
-            if (!std::isfinite(X)) return 0.0f;
+            if (!std::isfinite(X))
+            {
+                return 0.0f;
+            }
             return Math::Clamp(X, 0.0f, 64000.0f);
         };
 
@@ -182,10 +177,7 @@ namespace Lumina
                 MipH = NextH;
             }
         }
-
-        // New RHI: create + upload from the CPU mips (same path as CTexture::PostLoad).
-        // Trim to the group's mip policy BEFORE the GPU texture is created, so the allocation
-        // itself is single-mip rather than a full chain we then ignore.
+        
         ApplyTextureGroupMipPolicy(Texture);
         const uint32 UploadMips = (uint32)Texture->TextureResource->Mips.size();
 
@@ -212,10 +204,7 @@ namespace Lumina
 
         return true;
     }
-
-    // The Basis cook consumes RGBA8 only, but ImportTexture returns stbi's native layout: grayscale (R8),
-    // gray+alpha (RG8), and the 16-bit variants (R16/RG16/RGBA16). Expand those in place; anything already
-    // RGBA8 passes through. False = a layout the cook can't take (floats belong on the Environment path).
+    
     static bool NormalizeToRGBA8(Import::Textures::FTextureImportResult& Result)
     {
         const uint64 PixelCount = (uint64)Result.Dimensions.x * Result.Dimensions.y;
@@ -270,17 +259,9 @@ namespace Lumina
         Result.Format = EFormat::RGBA8_UNORM;
         return true;
     }
-
-    // Encodes RGBA8 via Basis Universal; shared by initial import and Recook.
-    // EncodeThreads = total basisu encode threads (basisu counts the calling thread, so 1 = single-threaded,
-    // 0 new threads). 0 = auto (use the worker count). A batch importer cooking many textures in parallel
-    // passes 1 so each texture doesn't spawn its own full pool and oversubscribe the cores.
-    // bCreateGPUResource = false stops after the CPU mip chain is built, for callers that assemble
-    // several cooks into one GPU resource (see CTextureArrayFactory).
+    
     static bool CookTexturePixels(CTexture* Texture, const TVector<uint8>& Pixels, FUIntVector2 Dimensions, ETextureColorSpace ColorSpace, uint32 EncodeThreads = 0, bool bCreateGPUResource = true)
     {
-        // basisu's image::init memcpys Width*Height*4 with no bounds knowledge; a short buffer
-        // (e.g. an unconverted grayscale source) would read out of bounds and crash the import.
         const uint64 RequiredBytes = (uint64)Dimensions.x * Dimensions.y * 4;
         if (RequiredBytes == 0 || Pixels.size() < RequiredBytes)
         {
@@ -288,9 +269,7 @@ namespace Lumina
                       Texture->GetName().c_str(), Pixels.size(), Dimensions.x, Dimensions.y, RequiredBytes);
             return false;
         }
-
-        // basisu's encoder tables are per-DLL static; FEngine::Init's init runs in Runtime,
-        // so init the Editor's copy here. Idempotent (mutex + g_library_initialized).
+        
         basisu::basisu_encoder_init();
 
         const bool bIsSRGB     = (ColorSpace == ETextureColorSpace::SRGB);
@@ -310,18 +289,14 @@ namespace Lumina
         Params.m_uastc                      = true;
         Params.m_print_stats                = false;
         Params.m_status_output              = false;   // silence per-slice "Slice: N, alpha: ..." spam during cook
-        // Groups drawn at a fixed on-screen size never sample a minified mip, so don't spend encode
-        // time producing a chain that ApplyTextureGroupMipPolicy would discard anyway.
         Params.m_mip_gen                    = TextureGroupGeneratesMips(Texture->Group);
         Params.m_mip_fast                   = true;
         Params.m_multithreading             = (TotalEncodeThreads > 1);
         Params.m_create_ktx2_file           = false;
         Params.m_quality_level              = 128;
         Params.m_pack_uastc_ldr_4x4_flags   = basisu::cPackUASTCLevelFastest;
-
-        // Perceptual mode must match storage format or sRGB albedos look wrong.
-        Params.m_perceptual = bIsSRGB;
-        Params.m_mip_srgb   = bIsSRGB;
+        Params.m_perceptual                 = bIsSRGB;
+        Params.m_mip_srgb                   = bIsSRGB;
 
         basisu::basis_compressor Compressor;
         if (!Compressor.init(Params))
@@ -346,10 +321,7 @@ namespace Lumina
 
         basist::basisu_image_info ImageInfo;
         Transcoder.get_image_info(BasisData.data(), BasisData.size(), ImageInfo, 0);
-        // ORIG, not m_width/m_height: those are padded up to the block size (basisu's own comment says
-        // "always a multiple of the texture's underlying block size"). The Vulkan image's implicit mip
-        // chain is derived from the base extent, so seeding it with a padded size puts every level out of
-        // step with the data, and a copy region wider than its subresource is undefined behaviour.
+        
         const uint32 Width  = ImageInfo.m_orig_width;
         const uint32 Height = ImageInfo.m_orig_height;
 
@@ -417,8 +389,6 @@ namespace Lumina
             }
 
             FTextureResource::FMip& Mip = Texture->TextureResource->Mips[MipIndex];
-            // True texel dimensions of the level; the block padding lives in RowPitch/SlicePitch below,
-            // which is where the copy wants it (bufferRowLength) rather than in the extent.
             Mip.Width      = LevelInfo.m_orig_width;
             Mip.Height     = LevelInfo.m_orig_height;
             Mip.RowPitch   = RowPitch;
@@ -427,24 +397,16 @@ namespace Lumina
             Mip.Pixels     = Move(TranscodedData);
         }
 
-        // New RHI: create + upload the (block-compressed) mips into the global heap.
         const FUIntVector2 Extent = Texture->TextureResource->ImageDescription.Extent;
-        // Trim to the group's mip policy BEFORE the GPU texture is created, so the allocation
-        // itself is single-mip rather than a full chain we then ignore.
+
         ApplyTextureGroupMipPolicy(Texture);
         const uint32 UploadMips = (uint32)Texture->TextureResource->Mips.size();
-
-        // Array layers cook one at a time into this same resource and are harvested by the caller,
-        // which then creates ONE Tex2DArray for the whole set. Making a throwaway 2D image per layer
-        // here would allocate and immediately orphan a full texture for every slice.
+        
         if (!bCreateGPUResource)
         {
             return true;
         }
-
-        // Recreate, not Create: on a RE-cook (reimport, or a ColorSpace change) this texture already has a
-        // GPU image and a published ResourceID. Overwriting the handle would leak the old image and hand
-        // out a new index that every material sampling this texture has already baked into its uniforms.
+        
         const FString DebugName = "Texture." + Texture->GetName().ToString();
         RHI::Textures::Recreate(Texture->TextureResource->NewTexture, RHI::FTexture2DDesc
         {
@@ -849,9 +811,9 @@ namespace Lumina
             Texture->ColorSpace = ETextureColorSpace::Environment;
         }
 
-#if USING(WITH_EDITOR)
+        #if USING(WITH_EDITOR)
         CreatePackageThumbnail(Texture, Result);
-#endif
+        #endif
 
         if (!bEmbedded)
         {
@@ -882,9 +844,7 @@ namespace Lumina
         {
             return false;
         }
-
-        // Resampled at SOURCE pixels, before the Basis cook, not by rescaling cooked BCn blocks --
-        // which would mean decode, resample, re-encode, and two generations of block artifacts.
+        
         const FFixedString Path(SourcePath.data(), SourcePath.size());
         TOptional<Import::Textures::FTextureImportResult> MaybeResult = Import::Textures::ImportTexture(Path, false, TargetSize);
         if (!MaybeResult.has_value())
@@ -894,10 +854,7 @@ namespace Lumina
         }
 
         Import::Textures::FTextureImportResult& Result = MaybeResult.value();
-
-        // Float sources go down the Environment path, which produces an uncompressed float chain rather
-        // than the Basis/BCn one every other layer would get. Mixing the two inside one image is not
-        // expressible, so refuse rather than cook a layer whose format silently disagrees.
+        
         const bool bIsFloatSource =
             Result.Format == EFormat::R32_FLOAT    ||
             Result.Format == EFormat::RG32_FLOAT   ||

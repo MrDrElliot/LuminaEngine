@@ -196,6 +196,7 @@ namespace LuminaSharp
         System.Func<string, string> wrap = call => call;
         bool stringReturn = false;
         bool nativeRefReturn = false;
+        bool nativeRefReturnIsCObject = false;
         string nativeRefRetType = string.Empty;
         if (method.ReturnsVoid)
         {
@@ -207,6 +208,7 @@ namespace LuminaSharp
             nativeRefRetType = method.ReturnType.ToDisplayString(fq);
             retCs = nativeRefRetType + "?";
             nativeRefReturn = true;
+            nativeRefReturnIsCObject = IsCObjectRef(method.ReturnType);
             nativeTypes.Add("global::System.IntPtr");
         }
         else
@@ -272,8 +274,15 @@ namespace LuminaSharp
             }
             if (nativeRefReturn)
             {
+                // A CObject return goes through the per-object wrapper cache, so calling the same getter twice
+                // hands back the SAME managed instance (identity holds, no per-call allocation). Component
+                // (NativeStruct) returns must NOT -- they have no managed-instance slot. See IsCObjectRef.
+                string build = nativeRefReturnIsCObject
+                    ? "global::LuminaSharp.Wrapper<" + nativeRefRetType + ">.ForObject(__p)"
+                    : "__p == global::System.IntPtr.Zero ? null : new " + nativeRefRetType + "(__p)";
+
                 return pad + "global::System.IntPtr __p = " + field + "(" + coreArgs + ");\n"
-                     + pad + "return __p == global::System.IntPtr.Zero ? null : new " + nativeRefRetType + "(__p);\n";
+                     + pad + "return " + build + ";\n";
             }
             if (method.ReturnsVoid)
             {
@@ -423,15 +432,30 @@ namespace LuminaSharp
     // reconstructed from a returned handle. Blittable value-mirror structs are NOT native refs (no base).
     private static bool IsNativeRef(ITypeSymbol type)
     {
+        return NativeRefRoot(type) != null;
+    }
+
+    // True only for a CObject-backed wrapper (NativeObject root). NativeStruct wrappers -- component views --
+    // are NOT CObjects: they have no managed-instance slot, so reconstructing one through
+    // Wrapper<T>.ForObject would reinterpret component memory as a CObjectBase. Gates the ForObject call on
+    // returns exactly the way FBinding::bCObject gates it in the Reflector's property emitter.
+    private static bool IsCObjectRef(ITypeSymbol type)
+    {
+        return NativeRefRoot(type) == "NativeObject";
+    }
+
+    // The LuminaSharp wrapper root this type derives from ("NativeObject" / "NativeStruct"), or null.
+    private static string? NativeRefRoot(ITypeSymbol type)
+    {
         for (INamedTypeSymbol? t = type as INamedTypeSymbol; t != null; t = t.BaseType)
         {
             if ((t.Name == "NativeObject" || t.Name == "NativeStruct")
                 && t.ContainingNamespace?.ToDisplayString() == "LuminaSharp")
             {
-                return true;
+                return t.Name;
             }
         }
-        return false;
+        return null;
     }
 
     // Span<T>/ReadOnlySpan<T> -> (T* pinned, int Length). T must be unmanaged (the generated `fixed` pin

@@ -227,7 +227,7 @@ namespace Lumina
                 for (CClass* Class : ByCategory[Category])
                 {
                     const FString Label = DisplayNameOf(Class);
-                    if (!SettingsFilter.PassFilter(Label.c_str()))
+                    if (!ImGuiX::PassSearchFilter(SettingsFilter, Label.c_str()))
                     {
                         continue;
                     }

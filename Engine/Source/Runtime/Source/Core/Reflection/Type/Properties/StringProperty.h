@@ -18,6 +18,12 @@ namespace Lumina
 
         RUNTIME_API bool Identical(const void* ValueA, const void* ValueB) const override;
         RUNTIME_API void CopyCompleteValue(void* Dst, const void* Src) const override;
+
+        // Owns heap memory, so zeroed bytes are NOT a valid value: a memzeroed FString reads as a plausible
+        // empty string and corrupts on the first assignment.
+        void ConstructValue(void* Value) const override { new (Value) FString(); }
+        bool OwnsStorage() const override { return true; }
+        void DestructValue(void* Value) const override  { static_cast<FString*>(Value)->~FString(); }
     };
 
 

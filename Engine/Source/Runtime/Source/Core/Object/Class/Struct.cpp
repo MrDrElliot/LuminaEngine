@@ -14,6 +14,12 @@ IMPLEMENT_INTRINSIC_CLASS(CStruct, CField, RUNTIME_API)
 
 namespace Lumina
 {
+    bool CStruct::RequiresValueLifecycle() const
+    {
+        FStructOps* Ops = GetStructOps();
+        return Ops != nullptr && (Ops->HasConstruct() || Ops->HasDestruct());
+    }
+
     void CStruct::InitializeStruct(void* Dest) const
     {
         if (FStructOps* Ops = GetStructOps(); Ops && Ops->HasConstruct())

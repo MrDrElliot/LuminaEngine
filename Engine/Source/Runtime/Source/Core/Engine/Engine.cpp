@@ -40,6 +40,7 @@
 #include "Physics/Physics.h"
 #include "Platform/Filesystem/FileHelper.h"
 #include "Renderer/RenderManager.h"
+#include "Renderer/TextureStreamingManager.h"
 #include "Scripting/DotNet/DotNetHost.h"
 #include "TaskSystem/ThreadedCallback.h"
 #include "Tools/PrimitiveManager/PrimitiveManager.h"
@@ -257,6 +258,11 @@ namespace Lumina
         {
             Internal::SetRenderManager(Memory::New<FRenderManager>());
             Render().Initialize();
+
+            // After the renderer: the streamer's residency changes go through the RHI. Before any asset
+            // load, so the first texture to PostLoad can already register.
+            FTextureStreamingManager::Initialize();
+
             EngineViewportSize = Windowing::GetPrimaryWindowHandle()->GetExtent();
         }
 
@@ -346,6 +352,12 @@ namespace Lumina
         
         Jobs::WaitForAll();
 
+        // After Jobs::WaitForAll above -- the manager owns the FPendingLoad records that in-flight streaming
+        // reads are still writing into, so deleting it with a read outstanding is a use-after-free. Before
+        // ShutdownCObjectSystem, so the CTextures torn down there see a null TryGet() and skip unregistering
+        // from a manager that is on its way out.
+        FTextureStreamingManager::Shutdown();
+
         ShutdownCObjectSystem();
 
         DotNet::Shutdown();
@@ -422,6 +434,14 @@ namespace Lumina
                 if (!GIsHeadless)
                 {
                     Render().FrameStart(UpdateContext);
+
+                    // Before the worlds tick and extract: this consumes last frame's coverage reports and
+                    // applies residency changes, so the draw commands built later this frame see the new
+                    // images rather than racing them.
+                    if (FTextureStreamingManager* Streaming = FTextureStreamingManager::TryGet())
+                    {
+                        Streaming->Update();
+                    }
                 }
 
                 #if USING(WITH_EDITOR)

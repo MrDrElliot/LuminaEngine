@@ -22,20 +22,13 @@ namespace Lumina::Scripting
 {
     class FScriptStructRegistry;
 
-    enum class EScriptElementKind : uint8
-    {
-        Trivial,
-        String,
-        AssetRef,
-        NativeStruct,
-        ScriptStruct,
-        Instance,     ///< FInstancedStruct field (polymorphic, picks one of a candidate set).
-    };
-
+    // One element of a script-minted container: how big it is, and -- through Inner -- how to bring one up,
+    // tear it down and copy it. There is deliberately no per-kind switch here: every one of those three
+    // operations is the inner FProperty's own (ConstructValue / DestructValue / CopyCompleteValue), so
+    // supporting a new element type means teaching that property type and changing nothing in this file.
     struct FScriptArrayElementDesc
     {
         uint32                Size = 0;
-        EScriptElementKind    Kind = EScriptElementKind::Trivial;
         CStruct*              NativeStruct = nullptr;
         const CScriptStruct*  ScriptStruct = nullptr;
         const FProperty*      Inner = nullptr;
@@ -104,12 +97,38 @@ namespace Lumina
         RUNTIME_API bool BuildFromSchema(const Scripting::FScriptExportSchema& Schema,
             const TVector<Scripting::FScriptPropertyEntry>* DefaultValues = nullptr);
 
+        /** Result of laying a schema out onto some other struct or class. */
+        struct FEmittedLayout
+        {
+            TVector<FProperty*> Properties;     ///< every property emitted, in layout order
+            uint32              EndOffset = 0;  ///< one past the last byte the block occupies
+            uint32              Alignment = 1;  ///< the block's required alignment
+        };
+
+        /**
+         * Plans this schema and emits it as real FPropertys on Target, starting at BaseOffset. This
+         * CScriptStruct is not the layout -- it is the layout's RECORD: it owns everything the emitted
+         * properties point at (element descriptions, minted sub-structs, minted enums), so it must outlive
+         * every instance of Target. Used to append a C# type's properties to a minted CClass past its C++
+         * shim, where the properties belong to the class but the side data has nowhere else to live.
+         *
+         * Does not touch Target->Size / Alignment / Link(); the caller owns those, because only the caller
+         * knows whether it is finishing a struct or growing a class.
+         */
+        RUNTIME_API FEmittedLayout EmitLayoutInto(CStruct* Target, uint32 BaseOffset,
+            const Scripting::FScriptExportSchema& Schema);
+
         const void* GetDefaults() const { return Defaults; }
 
         RUNTIME_API void ConstructInto(void* Buffer) const;
         RUNTIME_API void DestructIn(void* Buffer) const;
         RUNTIME_API void CopyInto(void* Dst, const void* Src) const;
-        
+
+        // True once any field owns storage, or once there are defaults worth seeding: either way a zeroed
+        // buffer is not a valid instance of this layout.
+        bool RequiresValueLifecycle() const override { return bRequiresLifecycle; }
+
+
         void InitializeStruct(void* Dest) const override
         {
             ConstructInto(Dest);
@@ -131,22 +150,10 @@ namespace Lumina
 
     private:
 
-        struct FFieldInfo
-        {
-            uint32                                  Offset = 0;
-            Scripting::EScriptElementKind           Kind = Scripting::EScriptElementKind::Trivial;
-            CStruct*                                NativeStruct = nullptr;
-            const CScriptStruct*                    ScriptStruct = nullptr;
-            bool                                    bArray = false;
-            const Scripting::FScriptArrayElementDesc* ArrayElement = nullptr;
-            bool                                    bMap = false;
-            const Scripting::FScriptMapElementDesc* MapDesc = nullptr;
-        };
-
         struct FFieldPlan;
 
         bool ResolvePlan(const Scripting::FScriptExportField& Field, FFieldPlan& Out);
-        FProperty* CreateProperty(const FFieldPlan& Plan, uint32 Offset);
+        FProperty* CreateProperty(CStruct* Target, const FFieldPlan& Plan, uint32 Offset);
         bool ResolveElement(const Scripting::FScriptExportType& Type, Scripting::FScriptArrayElementDesc& Out);
         FProperty* CreateElement(void* ArrayOwner, const Scripting::FScriptExportType& Type, Scripting::FScriptArrayElementDesc& Desc);
         CScriptStruct* MintSubStruct(const Scripting::FScriptExportType& Type);
@@ -163,17 +170,40 @@ namespace Lumina
         void FreeRuntimeData();
 
         uint8*                                          Defaults = nullptr;
-        TVector<FFieldInfo>                             FieldInfos;
+        bool                                           bRequiresLifecycle = false;
         TVector<TObjectPtr<CScriptStruct>>             SubStructs;
         TVector<TObjectPtr<CEnum>>                     MintedEnums;
         TVector<Scripting::FScriptArrayElementDesc*>   ElementDescs;
         TVector<Scripting::FScriptMapElementDesc*>     MapDescs;
         bool                                           bRuntimeFreed = false;
     };
+
 }
 
 namespace Lumina::Scripting
 {
+    /**
+     * Appends a C# script type's [Property] members to an already-minted CClass as REAL FPropertys, laid out
+     * in the trailing block past the C++ shim the class was minted from. That is what lets a script's
+     * properties be drawn by the stock FPropertyTable, serialized by SerializeTaggedProperties, and covered by
+     * undo / prefab overrides / replication -- instead of a parallel minted CStruct fed by a value blob.
+     *
+     * Every reflected property kind is supported, because the layout is planned by the same code that plans a
+     * CScriptStruct and each property brings its own value lifecycle (FProperty::ConstructValue /
+     * DestructValue / OwnsStorage). The ones that own storage are recorded on the class so
+     * StaticAllocateObject and ~CObjectBase drive them.
+     *
+     * Grows Target->Size/Alignment, so it MUST run before the CDO exists (CreateDefaultObject allocates from
+     * GetSize() and latches Link()). Declared defaults are NOT applied here: they are replayed against the CDO
+     * by DotNet::ApplyScriptableDefaults once it exists, and every later instance is copied from it.
+     *
+     * Returns the number of properties appended.
+     */
+    RUNTIME_API uint32 AppendScriptPropertiesToClass(CClass* Target, const FScriptExportSchema& Schema);
+
+    /** Drops a retired minted class's layout record. Only safe once the class has no live instances. */
+    RUNTIME_API void ForgetScriptClassLayout(CClass* Target);
+
     // Per-ScriptClass cache of minted script structs, owned by the .NET host and cleared on reload.
     class FScriptStructRegistry
     {

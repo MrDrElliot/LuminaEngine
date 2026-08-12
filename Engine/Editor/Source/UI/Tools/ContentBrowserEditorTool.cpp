@@ -280,35 +280,6 @@ namespace Lumina
             return Out;
         }
 
-        bool ContainsInsensitive(FStringView Haystack, FStringView Needle)
-        {
-            if (Needle.empty())
-            {
-                return true;
-            }
-            if (Needle.size() > Haystack.size())
-            {
-                return false;
-            }
-
-            auto Lower = [](char C) { return (C >= 'A' && C <= 'Z') ? (char)(C + ('a' - 'A')) : C; };
-
-            const size_t Last = Haystack.size() - Needle.size();
-            for (size_t i = 0; i <= Last; ++i)
-            {
-                size_t j = 0;
-                while (j < Needle.size() && Lower(Haystack[i + j]) == Lower(Needle[j]))
-                {
-                    ++j;
-                }
-                if (j == Needle.size())
-                {
-                    return true;
-                }
-            }
-            return false;
-        }
-
         // Per-type accent + glyph for the fallback tile card. Keyed on the uppercased type tag rather than
         // on CClass, so a type with no factory, no painter and no loaded CDO still gets an identity.
         struct FTypeStyle
@@ -1978,7 +1949,7 @@ namespace Lumina
         const FStringView Name = VFS::FileName(FileInfo.PathSource, true);
 
         // Type is searchable too, so "texture" narrows to textures without opening the filter menu.
-        return ContainsInsensitive(Name, Search) || (!bDirectory && ContainsInsensitive(TypeLabel, Search));
+        return ImGuiX::PassSearchFilter(Search, Name) || (!bDirectory && ImGuiX::PassSearchFilter(Search, TypeLabel));
     }
 
     void FContentBrowserEditorTool::DrawToolMenu(const FUpdateContext& UpdateContext)

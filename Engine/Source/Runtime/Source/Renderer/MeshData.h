@@ -182,12 +182,33 @@ namespace Lumina
         // Distance/radius threshold at which LOD i becomes active (monotonic, [0] unused).
         float  LODScreenThreshold[MAX_MESH_LODS] = {};
 
+        /**
+         * Mesh-local world size of ONE full UV tile: sqrt(WorldArea / UVArea) over this surface's
+         * triangles. Multiply by the primitive's world scale and you have the world extent that one wrap
+         * of the texture covers, which is what turns a distance into a required texture resolution.
+         *
+         * Texture streaming needs this because screen coverage alone cannot tell a 4K texture stretched
+         * once over a wall from the same texture tiled twenty times across it -- those want mip levels
+         * four apart at identical on-screen size.
+         *
+         * 0 means UNKNOWN (no UVs, degenerate unwrap, or a mesh built before this was recorded), and
+         * consumers must fall back rather than treat it as "infinitely dense".
+         */
+        float  TexelFactor = 0.0f;
+
         friend FArchive& operator << (FArchive& Ar, FGeometrySurface& Data)
         {
             Ar << Data.ID;
             Ar << Data.IndexCount;
             Ar << Data.StartIndex;
             Ar << Data.MaterialIndex;
+
+            // Cannot be rebuilt at load: GenerateMeshlets drops Positions/UVs/Indices once the meshlets are
+            // baked, and only the baked result is serialized. So it ships, or it is gone.
+            if (Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::MESH_SURFACE_TEXEL_FACTOR)
+            {
+                Ar << Data.TexelFactor;
+            }
             return Ar;
         }
     };
