@@ -187,12 +187,11 @@ namespace Lumina
         // existing image.
         if (TextureResource->IsArray())
         {
-            // No array overload of Recreate: an array's layer count is baked into the image, so there is
-            // no same-shape image to repoint the slot at. Release + create, and accept the new slot --
-            // the same trade the array factory already makes explicitly. Arrays are excluded from streaming
-            // for exactly this reason (see ComputeFirstInlineMip), so InFirstMip is always 0 here.
-            RHI::Textures::Release(TextureResource->NewTexture);
-            TextureResource->NewTexture = RHI::Textures::Create(RHI::FTexture2DArrayDesc
+            // Same contract as the 2D path: the slot is repointed, never dropped. Layer count is fixed
+            // for the life of the asset, so only the mip count moves under the streamer -- which is what
+            // lets arrays stream at all (they used to Release+Create here, take a new ResourceID, and be
+            // excluded from streaming outright to avoid it).
+            RHI::Textures::Recreate(TextureResource->NewTexture, RHI::FTexture2DArrayDesc
             {
                 .Width  = Extent.x,
                 .Height = Extent.y,

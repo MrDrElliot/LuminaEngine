@@ -475,6 +475,9 @@ namespace Lumina
             bool                                            bEnabled = false;
             bool                                            bReservedForProbeBake = false;
             TArray<FSceneImage, (int)ENamedImage::Num>      Images = {};
+            /// Tick each on-demand image was last needed on. Only the optional entries are ever read;
+            /// see EnsureOptionalViewImages.
+            TArray<uint64, (int)ENamedImage::Num>           ImageLastUsedTick = {};
             FSceneImage                                     BloomChainImage;
             FSceneBuffer                                    ClusterBuffer;
             FMatrix4                                        LastClusterInvProjection = FMatrix4(0.0f);
@@ -578,11 +581,28 @@ namespace Lumina
 
         FSceneGlobalData MakeSecondaryViewGlobals(const FSceneGlobalData& ViewGlobals);
 
-        void PointAtView(FSceneView& View)
-        {
-            CurrentView = &View;
-        }
-        
+        /** Makes View current AND brings its on-demand targets in line with what this frame actually
+         *  draws. Out of line for that second half -- it is the one place every rendered view passes
+         *  through, so a view can never reach a pass with an optional target missing. */
+        void PointAtView(FSceneView& View);
+
+        /** Targets for features a scene may contain none of: MBOIT translucency (Accum, MomentZeroth,
+         *  Moments), decals (DBufferA/B/C) and water (WaterRefraction). Sized into every view up front
+         *  they are ~230 MB at 1080p -- per view, resident for the session, in a scene that may have no
+         *  translucency, no decals and no water at all.
+         *
+         *  Created on the first frame the feature actually draws, released once it has been idle for a
+         *  while. "Not allocated" is a legal state rather than a crash because an absent FSceneImage
+         *  reports resource id -1, which reaches the shaders as the 0xFFFFFFFF sentinel they already
+         *  test for (DBuffer.slang, BasePixelPass.slang). */
+        static bool IsOptionalNamedImage(ENamedImage Image);
+        static bool MakeOptionalImageDesc(ENamedImage Image, const FUIntVector2& Extent, RHI::FTextureDesc& OutDesc);
+        void        EnsureOptionalViewImages(FSceneView& View);
+        void        ReleaseIdleOptionalImages(FSceneView& View);
+
+        /// Advances once per RenderView; the clock ImageLastUsedTick is stamped against.
+        uint64      OptionalImageTick = 0;
+
         void InitSharedResources();
 
         void BakeBRDFLUT();

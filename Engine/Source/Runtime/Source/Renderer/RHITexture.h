@@ -60,7 +60,15 @@ namespace Lumina::RHI
         RUNTIME_API FManagedTexture Create(const FTexture2DArrayDesc& Desc);
         RUNTIME_API FManagedTexture Create(const FTexture3DDesc& Desc);
 
+        /** Rebuild the image behind Tex at a new size/mip count, KEEPING its bindless slot: the slot is
+         *  repointed rather than freed, because its ResourceID is baked into every material uniform block
+         *  that samples the texture and is never revisited. This is what makes mip streaming possible --
+         *  see the residency invariants in CTexture::ApplyMipResidency.
+         *
+         *  The array overload changes the mip count only; layer count is fixed at cook time and a caller
+         *  that wants a different one is describing a different texture. */
         RUNTIME_API void Recreate(FManagedTexture& Tex, const FTexture2DDesc& Desc);
+        RUNTIME_API void Recreate(FManagedTexture& Tex, const FTexture2DArrayDesc& Desc);
 
         // Width/Height are the MIP's own dimensions and must be passed past mip 0: the copy otherwise derives
         // (Base >> Mip), which disagrees with a cooked chain and faults the copy engine on non-power-of-two.

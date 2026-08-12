@@ -1008,6 +1008,9 @@ namespace Lumina
 
         CurrentFrameSlot = Slot;
 
+        // Advanced before the first PointAtView so every view this frame stamps the same tick.
+        ++OptionalImageTick;
+
         // IBL cube reconciliation already ran serially in PrepareRender (it issues WaitDeviceIdle).
 
         PointAtView(SceneViews[0]);
@@ -6393,6 +6396,15 @@ namespace Lumina
         const FFrameData& Frame = *RenderFrame;
         const TVector<FGPUDecal>& Decals = Frame.Primitives.DecalExtracts;
 
+        // No decals: the DBuffers do not exist this frame (EnsureOptionalViewImages allocates them on the
+        // same test), and the base pass publishes the 0xFFFFFFFF sentinel instead of their indices, so
+        // nothing samples them. This used to run a clear-only pass to make that sample a no-op -- three
+        // full-res clears per frame whose result the shader was already skipping.
+        if (Decals.empty())
+        {
+            return;
+        }
+
         const FSceneImage& DBufferA = GetNamedImage(ENamedImage::DBufferA);
         const FSceneImage& DBufferB = GetNamedImage(ENamedImage::DBufferB);
         const FSceneImage& DBufferC = GetNamedImage(ENamedImage::DBufferC);
@@ -6412,15 +6424,6 @@ namespace Lumina
         RHI::FRenderPassDesc Pass;
         Pass.ColorAttachments = TSpan<const RHI::FRenderAttachment>(Colors, 3);
         Pass.RenderArea       = DBufferA.GetExtent();
-
-        // No decals: still run the clear-only pass so the base pass DBuffer sample is a guaranteed no-op.
-        if (Decals.empty())
-        {
-            RHI::CmdBeginRenderPass(CL, Pass);
-            RHI::CmdEndRenderPass(CL);
-            Barriers::RasterToRead(CL);
-            return;
-        }
 
         LUMINA_PROFILE_SECTION_COLORED("Decal Pass", tracy::Color::Orange);
 
@@ -11252,6 +11255,7 @@ namespace Lumina
 
         // Shared aliases: just drop the copies, the owners release them.
         View.Images.fill(FSceneImage{});
+        View.ImageLastUsedTick.fill(0);
     }
 
     static const char* ENamedImageToString(FDefaultSceneRenderer::ENamedImage Image)
@@ -11324,6 +11328,154 @@ namespace Lumina
                 RHI::SetDebugName(Images[i].Texture, ENamedImageToString((ENamedImage)i));
             }
         }
+    }
+
+    bool FDefaultSceneRenderer::IsOptionalNamedImage(ENamedImage Image)
+    {
+        switch (Image)
+        {
+        case ENamedImage::Accum:
+        case ENamedImage::MomentZeroth:
+        case ENamedImage::Moments:
+        case ENamedImage::WaterRefraction:
+        case ENamedImage::DBufferA:
+        case ENamedImage::DBufferB:
+        case ENamedImage::DBufferC:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    bool FDefaultSceneRenderer::MakeOptionalImageDesc(ENamedImage Image, const FUIntVector2& Extent, RHI::FTextureDesc& OutDesc)
+    {
+        OutDesc           = RHI::FTextureDesc{};
+        OutDesc.Type      = RHI::ETextureType::Tex2D;
+        OutDesc.Dimension = FUIntVector3(Extent.x, Extent.y, 1);
+        OutDesc.Usage     = RHI::EImageUsageFlags::ColorAttachment | RHI::EImageUsageFlags::Sampled;
+
+        switch (Image)
+        {
+        case ENamedImage::Accum:
+            OutDesc.Format = EFormat::RGBA16_FLOAT;
+            return true;
+
+        // Additively blended and fp32: the reconstruction inverts a Hankel matrix that is ill-conditioned
+        // enough that fp16 needs the paper's quantization matrices to stay stable.
+        case ENamedImage::MomentZeroth:
+            OutDesc.Format = EFormat::R32_FLOAT;
+            return true;
+
+        case ENamedImage::Moments:
+            OutDesc.Format = EFormat::RGBA32_FLOAT;
+            return true;
+
+        // Never rendered into -- WaterPass copies HDR here and samples it, so it is a transfer
+        // destination rather than an attachment.
+        case ENamedImage::WaterRefraction:
+            OutDesc.Format = EFormat::RGBA16_FLOAT;
+            OutDesc.Usage  = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::TransferDst;
+            return true;
+
+        case ENamedImage::DBufferA:
+        case ENamedImage::DBufferB:
+        case ENamedImage::DBufferC:
+            OutDesc.Format = EFormat::RGBA8_UNORM;
+            return true;
+
+        default:
+            return false;
+        }
+    }
+
+    void FDefaultSceneRenderer::EnsureOptionalViewImages(FSceneView& View)
+    {
+        if (RenderFrame == nullptr || View.Size.x == 0 || View.Size.y == 0)
+        {
+            return;
+        }
+
+        const FFrameData& Frame = *RenderFrame;
+
+        // Exactly the conditions the consuming passes early-out on, so a target exists precisely when a
+        // pass is going to touch it. Drifting from those tests is what would produce a null attachment.
+        const bool bTranslucency = !Frame.Geometry.TranslucentDrawList.empty();
+        const bool bDecals       = !Frame.Primitives.DecalExtracts.empty();
+        const bool bWater        = !Frame.Water.Surfaces.empty();
+
+        auto Want = [this, &View](ENamedImage Image, bool bNeeded)
+        {
+            if (!bNeeded)
+            {
+                return;
+            }
+
+            View.ImageLastUsedTick[(int)Image] = OptionalImageTick;
+
+            FSceneImage& Slot = View.Images[(int)Image];
+            if (Slot.IsValid())
+            {
+                return;
+            }
+
+            RHI::FTextureDesc Desc;
+            if (!MakeOptionalImageDesc(Image, View.Size, Desc))
+            {
+                return;
+            }
+
+            Slot = CreateSceneImage(Desc);
+            RHI::SetDebugName(Slot.Texture, ENamedImageToString(Image));
+        };
+
+        Want(ENamedImage::Accum,           bTranslucency);
+        Want(ENamedImage::MomentZeroth,    bTranslucency);
+        Want(ENamedImage::Moments,         bTranslucency);
+        Want(ENamedImage::WaterRefraction, bWater);
+        Want(ENamedImage::DBufferA,        bDecals);
+        Want(ENamedImage::DBufferB,        bDecals);
+        Want(ENamedImage::DBufferC,        bDecals);
+
+        ReleaseIdleOptionalImages(View);
+    }
+
+    void FDefaultSceneRenderer::ReleaseIdleOptionalImages(FSceneView& View)
+    {
+        // Long enough that walking in and out of a room with glass in it does not reallocate every few
+        // seconds, short enough that a level with no translucency stops paying for it.
+        constexpr uint64 kIdleTicksBeforeRelease = 600;   // ~10s at 60fps
+
+        if (OptionalImageTick < kIdleTicksBeforeRelease)
+        {
+            return;
+        }
+
+        for (int32 i = 0; i < (int32)ENamedImage::Num; ++i)
+        {
+            const ENamedImage Image = (ENamedImage)i;
+            if (!IsOptionalNamedImage(Image))
+            {
+                continue;
+            }
+
+            FSceneImage& Slot = View.Images[i];
+            if (!Slot.IsValid())
+            {
+                continue;
+            }
+
+            if (OptionalImageTick - View.ImageLastUsedTick[i] >= kIdleTicksBeforeRelease)
+            {
+                // Frame-deferred: a frame already recorded against this image is still in flight.
+                DeferRelease(Slot);
+            }
+        }
+    }
+
+    void FDefaultSceneRenderer::PointAtView(FSceneView& View)
+    {
+        CurrentView = &View;
+        EnsureOptionalViewImages(View);
     }
 
     void FDefaultSceneRenderer::InitViewImages(FSceneView& View, uint32 ReuseOutputSlot)
@@ -11421,28 +11573,10 @@ namespace Lumina
 
         AllocateMSAAImages(View, Extent);
 
-        Desc.Usage  = RHI::EImageUsageFlags::ColorAttachment | RHI::EImageUsageFlags::Sampled;
-
-        Desc.Format = EFormat::RGBA16_FLOAT;
-        View.Images[(int)ENamedImage::Accum] = CreateSceneImage(Desc);
-
-        // Additively blended and fp32: the reconstruction inverts a Hankel matrix that is ill-conditioned
-        // enough that fp16 needs the paper's quantization matrices to stay stable.
-        Desc.Format = EFormat::R32_FLOAT;
-        View.Images[(int)ENamedImage::MomentZeroth] = CreateSceneImage(Desc);
-
-        Desc.Format = EFormat::RGBA32_FLOAT;
-        View.Images[(int)ENamedImage::Moments] = CreateSceneImage(Desc);
-
-        Desc.Format = EFormat::RGBA16_FLOAT;
-        Desc.Usage  = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::TransferDst;
-        View.Images[(int)ENamedImage::WaterRefraction] = CreateSceneImage(Desc);
-
-        Desc.Format = EFormat::RGBA8_UNORM;
-        Desc.Usage  = RHI::EImageUsageFlags::ColorAttachment | RHI::EImageUsageFlags::Sampled;
-        View.Images[(int)ENamedImage::DBufferA] = CreateSceneImage(Desc);
-        View.Images[(int)ENamedImage::DBufferB] = CreateSceneImage(Desc);
-        View.Images[(int)ENamedImage::DBufferC] = CreateSceneImage(Desc);
+        // The MBOIT, water and decal targets used to be created here. They are ~230 MB at 1080p for
+        // features a scene may contain none of, so they now arrive through EnsureOptionalViewImages on
+        // the first frame that actually draws one. A resize lands here with them absent, which is the
+        // correct state -- the next frame that needs one rebuilds it at the new extent.
 
         {
             float FroxelScale = 1.0f;

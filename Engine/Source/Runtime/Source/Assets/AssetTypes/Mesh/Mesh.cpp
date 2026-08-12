@@ -280,29 +280,6 @@ namespace Lumina
         const bool bSkinned       = Resource.bSkinnedMesh;
         FMeshResource::FMeshBuffers& MB = Resource.MeshBuffers;
 
-        bool bAllocationFailed = false;
-
-        // The name is what a GPU crash report resolves a faulting address to. These five are reached
-        // from the shader through a raw device address, so they are the ones worth naming.
-        auto CreateAndUpload = [&bAllocationFailed](const void* Data, uint64 Size, const char* DebugName) -> RHI::GPUPtr
-        {
-            const RHI::GPUPtr Memory = RHI::Malloc(Size, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
-            if (Memory == 0)
-            {
-                bAllocationFailed = true;
-                return 0;
-            }
-            RHI::SetDebugName(Memory, DebugName);
-            RHI::UploadBuffer(Memory, Data, Size);
-            return Memory;
-        };
-
-        // Built into locals and swapped in only once the whole set exists, so a rebuild that runs out of
-        // memory keeps rendering what it had instead of losing its geometry.
-        const RHI::GPUPtr NewMeshlets = CreateAndUpload(MData.Meshlets.data(), sizeof(FMeshlet) * MData.Meshlets.size(), "Mesh.Meshlets");
-        const RHI::GPUPtr NewSpheres  = CreateAndUpload(MData.MeshletSpheres.data(), sizeof(FMeshletSphere) * MData.MeshletSpheres.size(), "Mesh.MeshletSpheres");
-        const RHI::GPUPtr NewCones    = CreateAndUpload(MData.MeshletCones.data(), sizeof(FMeshletCone) * MData.MeshletCones.size(), "Mesh.MeshletCones");
-
         // Checked at resolve against the skeleton's bone count: the GPU bone fetch is unbounded, so a
         // mesh that outruns its skeleton reads garbage matrices for its leaf bones.
         if (bSkinned)
@@ -327,32 +304,76 @@ namespace Lumina
         const void*  VertSrc    = bSkinned ? (const void*)MData.MeshletSkinnedVertices.data() : (const void*)MData.MeshletVertices.data();
         const uint64 VertStride = bSkinned ? sizeof(FMeshletSkinnedVertex) : sizeof(FMeshletVertex);
         const uint64 VertCount  = bSkinned ? MData.MeshletSkinnedVertices.size() : MData.MeshletVertices.size();
-        const RHI::GPUPtr NewVertices  = CreateAndUpload(VertSrc, VertCount * VertStride, bSkinned ? "Mesh.SkinnedVertices" : "Mesh.Vertices");
-        const RHI::GPUPtr NewTriangles = CreateAndUpload(MData.MeshletTriangles.data(), sizeof(uint32) * MData.MeshletTriangles.size(), "Mesh.MeshletTriangles");
 
-        // Nothing downstream null-checks the addresses the header carries, so a partly allocated set can
-        // never be published -- it would hand the GPU a null base to fetch vertices through.
-        if (bAllocationFailed)
+        const uint64 MeshletBytes  = sizeof(FMeshlet)       * MData.Meshlets.size();
+        const uint64 SphereBytes   = sizeof(FMeshletSphere) * MData.MeshletSpheres.size();
+        const uint64 ConeBytes     = sizeof(FMeshletCone)   * MData.MeshletCones.size();
+        const uint64 VertexBytes   = VertCount * VertStride;
+        const uint64 TriangleBytes = sizeof(uint32)         * MData.MeshletTriangles.size();
+
+        // Every stream is per-meshlet and MeshletData is non-empty here, so none of these can be zero.
+        // Checked anyway because a zero-length section no longer fails loudly: it would take the offset
+        // of the section after it and hand the shader a base pointing at a different stream's bytes.
+        // (Five separate allocations used to turn this into Malloc(0) -> 0 -> rebuild rejected.)
+        if (MeshletBytes == 0 || SphereBytes == 0 || ConeBytes == 0 || VertexBytes == 0 || TriangleBytes == 0)
         {
-            LOG_ERROR("Mesh rebuild failed: GPU buffer allocation for {} meshlets. Previous geometry kept.", MData.Meshlets.size());
-
-            RHI::Core::Retire(NewMeshlets);
-            RHI::Core::Retire(NewSpheres);
-            RHI::Core::Retire(NewCones);
-            RHI::Core::Retire(NewVertices);
-            RHI::Core::Retire(NewTriangles);
+            LOG_ERROR("Mesh rebuild failed: {} meshlets with an empty geometry stream "
+                      "(meshlets {}, spheres {}, cones {}, vertices {}, triangles {} bytes). Previous geometry kept.",
+                      MData.Meshlets.size(), MeshletBytes, SphereBytes, ConeBytes, VertexBytes, TriangleBytes);
             return;
         }
 
-        // Resets the header slot to "no geometry" before the buffers it named are retired, so the window
+        // One allocation, five sections. Each section start is padded to kDefaultAlign so every stream
+        // is at least as aligned as it was when it owned a whole allocation -- the shader reaches all
+        // five by device address, and an under-aligned base is a fault, not a slowdown.
+        uint64 Cursor = 0;
+        auto Reserve = [&Cursor](uint64 Bytes)
+        {
+            const uint64 Offset = Math::AlignUp(Cursor, (uint64)RHI::kDefaultAlign);
+            Cursor = Offset + Bytes;
+            return Offset;
+        };
+
+        const uint64 MeshletOffset  = Reserve(MeshletBytes);
+        const uint64 SphereOffset   = Reserve(SphereBytes);
+        const uint64 ConeOffset     = Reserve(ConeBytes);
+        const uint64 VertexOffset   = Reserve(VertexBytes);
+        const uint64 TriangleOffset = Reserve(TriangleBytes);
+
+        // Built into a local and swapped in only once it exists, so a rebuild that runs out of memory
+        // keeps rendering what it had instead of losing its geometry.
+        const RHI::GPUPtr Block = RHI::Malloc(Cursor, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
+
+        // Nothing downstream null-checks the addresses the header carries, so a failed allocation can
+        // never be published -- it would hand the GPU a null base to fetch vertices through.
+        if (Block == 0)
+        {
+            LOG_ERROR("Mesh rebuild failed: {} KiB GPU allocation for {} meshlets. Previous geometry kept.",
+                      Cursor / 1024, MData.Meshlets.size());
+            return;
+        }
+
+        // One name for the block. A fault inside it lands on "Mesh.Geometry" rather than naming the
+        // individual stream; the meshlet header carries all five addresses, so the offset still
+        // identifies which one.
+        RHI::SetDebugName(Block, bSkinned ? "Mesh.SkinnedGeometry" : "Mesh.Geometry");
+
+        RHI::UploadBuffer(Block + MeshletOffset,  MData.Meshlets.data(),         MeshletBytes);
+        RHI::UploadBuffer(Block + SphereOffset,   MData.MeshletSpheres.data(),   SphereBytes);
+        RHI::UploadBuffer(Block + ConeOffset,     MData.MeshletCones.data(),     ConeBytes);
+        RHI::UploadBuffer(Block + VertexOffset,   VertSrc,                       VertexBytes);
+        RHI::UploadBuffer(Block + TriangleOffset, MData.MeshletTriangles.data(), TriangleBytes);
+
+        // Resets the header slot to "no geometry" before the block it named is retired, so the window
         // between the two describes nothing rather than describing retired memory. Keeps the SLOT.
         MB.ReleaseGeometryBuffers();
 
-        MB.MeshletBuffer         = NewMeshlets;
-        MB.MeshletSphereBuffer   = NewSpheres;
-        MB.MeshletConeBuffer     = NewCones;
-        MB.MeshletVertexBuffer   = NewVertices;
-        MB.MeshletTriangleBuffer = NewTriangles;
+        MB.GeometryBlock         = Block;
+        MB.MeshletBuffer         = Block + MeshletOffset;
+        MB.MeshletSphereBuffer   = Block + SphereOffset;
+        MB.MeshletConeBuffer     = Block + ConeOffset;
+        MB.MeshletVertexBuffer   = Block + VertexOffset;
+        MB.MeshletTriangleBuffer = Block + TriangleOffset;
         MB.MeshletCount          = (uint32)MData.Meshlets.size();
 
         // Volume upload before the header, because the header publishes its heap slot. A field that

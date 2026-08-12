@@ -199,9 +199,16 @@ namespace Lumina
             TWeakObjectPtr<CTexture> Texture;
             uint8                    TargetFirstMip = 0;
 
-            /** Mip bytes for levels [TargetFirstMip, SourceFirstMip), index 0 == TargetFirstMip. */
+            /** Bytes for levels [TargetFirstMip, SourceFirstMip) of EVERY layer, laid out layer-major --
+             *  see SliceIndex. An array texture needs all of its layers before ApplyMipResidency will
+             *  accept the promotion (it rejects on any layer having empty pixels), so loading only
+             *  layer 0 leaves it retrying the same read forever, pinned at its inline tail. */
             TVector<TVector<uint8>>  MipBytes;
             uint8                    SourceFirstMip = 0;
+            uint32                   LayerCount     = 1;
+
+            uint32 MipSpan() const { return (uint32)(SourceFirstMip - TargetFirstMip); }
+            uint32 SliceIndex(uint32 Layer, uint32 Mip) const { return Layer * MipSpan() + (Mip - TargetFirstMip); }
 
             TAtomic<bool>            bComplete{false};
             bool                     bFailed = false;

@@ -217,6 +217,15 @@ namespace Lumina
     {
         struct FMeshBuffers
         {
+            /** The one allocation the five streams below live in, and the only one that is freed.
+             *
+             *  They are built together, retired together, and reached only by device address, so five
+             *  separate allocations bought nothing but five VkBuffers, five inserts into the RHI's
+             *  sorted allocation ledger (an O(n) memmove each, under a global lock) and five lots of
+             *  size rounding -- per mesh. A scene made of dynamic-mesh chunks pays that per chunk,
+             *  every rebuild. The five addresses are now offsets into this block. */
+            RHI::GPUPtr GeometryBlock         = 0;
+
             RHI::GPUPtr MeshletBuffer         = 0;
             RHI::GPUPtr MeshletSphereBuffer   = 0;
             RHI::GPUPtr MeshletConeBuffer     = 0;
@@ -258,12 +267,11 @@ namespace Lumina
             {
                 MeshletHeaderSlab::Reset(MeshletHeaderSlot);
 
-                RHI::Core::Retire(MeshletBuffer);
-                RHI::Core::Retire(MeshletSphereBuffer);
-                RHI::Core::Retire(MeshletConeBuffer);
-                RHI::Core::Retire(MeshletVertexBuffer);
-                RHI::Core::Retire(MeshletTriangleBuffer);
+                // Only the block is owned; the five below are interior addresses into it. Retiring one
+                // of those would miss the allocation ledger's exact-address lookup and leak the block.
+                RHI::Core::Retire(GeometryBlock);
 
+                GeometryBlock         = 0;
                 MeshletBuffer         = 0;
                 MeshletSphereBuffer   = 0;
                 MeshletConeBuffer     = 0;
@@ -287,6 +295,7 @@ namespace Lumina
             /** Takes ownership of Other's addresses and leaves it empty, so exactly one object frees. */
             void Steal(FMeshBuffers& Other)
             {
+                GeometryBlock         = Other.GeometryBlock;
                 MeshletBuffer         = Other.MeshletBuffer;
                 MeshletSphereBuffer   = Other.MeshletSphereBuffer;
                 MeshletConeBuffer     = Other.MeshletConeBuffer;
@@ -296,6 +305,7 @@ namespace Lumina
                 MeshletCount          = Other.MeshletCount;
                 DistanceFieldTexture  = Other.DistanceFieldTexture;
 
+                Other.GeometryBlock         = 0;
                 Other.MeshletBuffer         = 0;
                 Other.MeshletSphereBuffer   = 0;
                 Other.MeshletConeBuffer     = 0;

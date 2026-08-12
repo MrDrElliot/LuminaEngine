@@ -523,13 +523,23 @@ namespace Lumina
             // package's bulk region, which is the whole reason they can be thrown away. Only below the new
             // resident level -- anything at or above it is what the GPU image now holds.
             FTextureResource& Resource = Texture->GetTextureResource();
-            for (uint32 Mip = 0; Mip < Entry.BudgetedFirstMip && Mip < Resource.Mips.size(); ++Mip)
+            const uint32 NumLayers = Math::Max(Resource.GetNumLayers(), 1u);
+            for (uint32 Layer = 0; Layer < NumLayers; ++Layer)
             {
-                FTextureResource::FMip& MipData = Resource.Mips[Mip];
-                if (MipData.BulkRef.IsValid())
+                for (uint32 Mip = 0; Mip < Entry.BudgetedFirstMip; ++Mip)
                 {
-                    MipData.Pixels.clear();
-                    MipData.Pixels.shrink_to_fit();
+                    const uint32 Index = Resource.MipIndex(Layer, Mip);
+                    if (Index >= Resource.Mips.size())
+                    {
+                        continue;
+                    }
+
+                    FTextureResource::FMip& MipData = Resource.Mips[Index];
+                    if (MipData.BulkRef.IsValid())
+                    {
+                        MipData.Pixels.clear();
+                        MipData.Pixels.shrink_to_fit();
+                    }
                 }
             }
         }
@@ -592,7 +602,8 @@ namespace Lumina
             Load->Texture        = Texture;
             Load->TargetFirstMip = Entry.BudgetedFirstMip;
             Load->SourceFirstMip = (uint8)CurrentFirstMip;
-            Load->MipBytes.resize(CurrentFirstMip - Entry.BudgetedFirstMip);
+            Load->LayerCount     = Math::Max(Texture->GetTextureResource().GetNumLayers(), 1u);
+            Load->MipBytes.resize((SIZE_T)Load->LayerCount * Load->MipSpan());
 
             FPendingLoad* Raw = Load.get();
             PendingLoads.push_back(Move(Load));
@@ -619,29 +630,36 @@ namespace Lumina
 
                 const FTextureResource& Resource = Target->GetTextureResource();
 
-                for (uint32 Mip = Raw->TargetFirstMip; Mip < Raw->SourceFirstMip; ++Mip)
+                // Every layer, not just layer 0: Mips is a flat Layer-major array and ApplyMipResidency
+                // refuses the promotion unless all of them are populated.
+                for (uint32 Layer = 0; Layer < Raw->LayerCount && !Raw->bFailed; ++Layer)
                 {
-                    if (Mip >= Resource.Mips.size())
+                    for (uint32 Mip = Raw->TargetFirstMip; Mip < Raw->SourceFirstMip; ++Mip)
                     {
-                        Raw->bFailed = true;
-                        break;
-                    }
+                        const uint32 Index = Resource.MipIndex(Layer, Mip);
+                        if (Index >= Resource.Mips.size())
+                        {
+                            Raw->bFailed = true;
+                            break;
+                        }
 
-                    const FTextureResource::FMip& MipData = Resource.Mips[Mip];
+                        const FTextureResource::FMip& MipData = Resource.Mips[Index];
+                        TVector<uint8>& Dest = Raw->MipBytes[Raw->SliceIndex(Layer, Mip)];
 
-                    // Already in memory (a save just pulled it back, or a demotion has not reclaimed it yet):
-                    // copy rather than re-read. Also the correct fallback when a failed save left BulkRef
-                    // pointing into a region that was never written.
-                    if (!MipData.Pixels.empty())
-                    {
-                        Raw->MipBytes[Mip - Raw->TargetFirstMip] = MipData.Pixels;
-                        continue;
-                    }
+                        // Already in memory (a save just pulled it back, or a demotion has not reclaimed it yet):
+                        // copy rather than re-read. Also the correct fallback when a failed save left BulkRef
+                        // pointing into a region that was never written.
+                        if (!MipData.Pixels.empty())
+                        {
+                            Dest = MipData.Pixels;
+                            continue;
+                        }
 
-                    if (!Package->ReadBulkData(MipData.BulkRef, Raw->MipBytes[Mip - Raw->TargetFirstMip]))
-                    {
-                        Raw->bFailed = true;
-                        break;
+                        if (!Package->ReadBulkData(MipData.BulkRef, Dest))
+                        {
+                            Raw->bFailed = true;
+                            break;
+                        }
                     }
                 }
 
@@ -685,11 +703,15 @@ namespace Lumina
                             BytesRead += Bytes.size();
                         }
 
-                        for (uint32 Mip = Load.TargetFirstMip; Mip < Load.SourceFirstMip; ++Mip)
+                        for (uint32 Layer = 0; Layer < Load.LayerCount; ++Layer)
                         {
-                            if (Mip < Resource.Mips.size())
+                            for (uint32 Mip = Load.TargetFirstMip; Mip < Load.SourceFirstMip; ++Mip)
                             {
-                                Resource.Mips[Mip].Pixels = Move(Load.MipBytes[Mip - Load.TargetFirstMip]);
+                                const uint32 Index = Resource.MipIndex(Layer, Mip);
+                                if (Index < Resource.Mips.size())
+                                {
+                                    Resource.Mips[Index].Pixels = Move(Load.MipBytes[Load.SliceIndex(Layer, Mip)]);
+                                }
                             }
                         }
 

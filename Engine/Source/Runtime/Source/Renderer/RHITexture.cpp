@@ -138,7 +138,10 @@ namespace Lumina::RHI::Textures
         return Out;
     }
 
-    void Recreate(FManagedTexture& Tex, const FTexture2DDesc& Desc)
+    // Both overloads are the same three steps -- build the replacement, move the slot onto it, retire the
+    // old image -- differing only in which description makes the image.
+    template<typename TDesc>
+    static void RecreateInternal(FManagedTexture& Tex, const TDesc& Desc, const FTextureDesc& ImageDesc)
     {
         if (!Tex.IsValid())
         {
@@ -150,7 +153,7 @@ namespace Lumina::RHI::Textures
         const uint32 Slot = Old.SampledSlot;
         Old.SampledSlot = kInvalidHeapSlot;
 
-        const FTextureH NewTexture = CreateTexture(MakeTexture2DDesc(Desc));
+        const FTextureH NewTexture = CreateTexture(ImageDesc);
         SetDebugName(NewTexture, Desc.DebugName);
 
         Tex.Texture = NewTexture;
@@ -166,6 +169,16 @@ namespace Lumina::RHI::Textures
 
         // Deferred by kFramesInFlight, so frames already recorded against the old image still resolve.
         Release(Old);
+    }
+
+    void Recreate(FManagedTexture& Tex, const FTexture2DDesc& Desc)
+    {
+        RecreateInternal(Tex, Desc, MakeTexture2DDesc(Desc));
+    }
+
+    void Recreate(FManagedTexture& Tex, const FTexture2DArrayDesc& Desc)
+    {
+        RecreateInternal(Tex, Desc, MakeTexture2DArrayDesc(Desc));
     }
 
     void Upload(const FManagedTexture& Tex, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels, uint32 Width, uint32 Height)

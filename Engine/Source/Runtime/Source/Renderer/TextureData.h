@@ -174,16 +174,15 @@ namespace Lumina
             return TotalSize;
         }
 
-        /** Cook-time policy: index of the first mip small enough to keep inline. Arrays are excluded --
-         *  their layer count is baked into the image, so there is no Recreate overload that could resize
-         *  one in place, and streaming them would mean dropping and reallocating a published heap slot. */
+        /** Cook-time policy: index of the first mip small enough to keep inline.
+         *
+         *  Arrays used to be excluded here (returning 0 = never streamable) because residency went through
+         *  Release+Create for them, which would have moved the bindless slot every material had already
+         *  baked. They stream now -- Textures::Recreate has an array overload that repoints the slot, and
+         *  every layer's tail is kept inline by the same modulo the 2D path uses. The saving is the whole
+         *  point: a 4K BC7 array of 3 layers is 64 MB fully resident and ~260 KB at its tail. */
         static uint8 ComputeFirstInlineMip(const FDescription& Desc)
         {
-            if (Desc.LayerCount > 1)
-            {
-                return 0;
-            }
-
             const uint32 NumMips = Desc.NumMips > 0 ? (uint32)Desc.NumMips : 1u;
             for (uint32 Mip = 0; Mip < NumMips; ++Mip)
             {

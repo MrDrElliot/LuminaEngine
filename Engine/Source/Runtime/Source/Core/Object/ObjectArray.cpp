@@ -1,6 +1,7 @@
 ﻿#include "RuntimePCH.h"
 #include "ObjectArray.h"
 
+#include "Class.h"          // CField, for the shutdown type-object ordering below
 #include "Memory/Memory.h"
 
 
