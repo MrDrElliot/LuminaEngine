@@ -37,7 +37,7 @@ namespace Lumina
 
         FProperty* GetInternalProperty() const { return Inner.get(); }
 
-        /** The element ops table. Exposed so C# can build a NativeList<T> view over any array property. */
+        /** The element ops table. Exposed so C# can build a Lumina.TVector<T> view over any array property. */
         const FVectorOps* GetOps() const { return Ops; }
         
         SIZE_T GetNum(const void* InContainer) const

@@ -98,6 +98,7 @@ namespace Lumina::RHI
             Slice.OverflowBytes += Size + Alignment;
 
             const GPUPtr Owned = Malloc(Size, Alignment, EMemoryType::CPUWrite);
+            SetDebugName(Owned, "Upload.Overflow");
             return { static_cast<std::byte*>(ToHost(Owned)), Owned, true, kNoSlice };
         }
 
@@ -261,6 +262,7 @@ namespace Lumina::RHI
             for (FStagingSlice& Slice : GUpload.Slices)
             {
                 Slice.Gpu      = Malloc(GStagingSliceSize, kDefaultAlign, EMemoryType::CPUWrite);
+                SetDebugName(Slice.Gpu, "Upload.StagingSlice");
                 Slice.Cpu      = static_cast<std::byte*>(ToHost(Slice.Gpu));
                 Slice.Cursor   = 0;
                 Slice.Capacity = GStagingSliceSize;
@@ -624,6 +626,7 @@ namespace Lumina::RHI
                     const GPUPtr NewGpu = Malloc(NewCapacity, kDefaultAlign, EMemoryType::CPUWrite);
                     if (NewGpu != 0)
                     {
+                        SetDebugName(NewGpu, "Upload.StagingSlice");
                         OldGpu         = Slice.Gpu;
                         Slice.Gpu      = NewGpu;
                         Slice.Cpu      = static_cast<std::byte*>(ToHost(NewGpu));

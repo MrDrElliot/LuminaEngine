@@ -61,7 +61,12 @@ namespace Lumina
         FShaderLibrary();
         ~FShaderLibrary();
 
-        static FShaderH Get(const FName& Path, TSpan<const FString> Defines = {});
+        /** Fetches (compiling on demand) a shader by name -- "TexturePaint.slang" -- or by full virtual
+         *  path -- "/Game/Shaders/GameOfLife.slang". A name is resolved against the ordered shader roots
+         *  (engine, plugins, project, module-registered; see Shaders::GetSearchRoots), so a game or
+         *  plugin shader is fetched exactly like an engine one. Use the full path when two roots ship the
+         *  same file name -- the bare name resolves to whichever root comes first. */
+        static FShaderH Get(const FName& NameOrPath, TSpan<const FString> Defines = {});
 
         /** Interns Spirv by CONTENT and returns a handle with one strong reference taken. The caller owns
          *  that reference and must AddRef/Release it; identical bytecode returns the SAME handle, which is
@@ -99,11 +104,20 @@ namespace Lumina
 
         FShaderH FindOrCreate(uint64 Hash);
 
+        /** Name or path -> the virtual path an entry is keyed on. Consults PathsByName first (the only
+         *  thing a packaged build can use -- it has no shader source to search), then the shader roots. */
+        static FName CanonicalPath(const FName& NameOrPath);
+
+        /** Records Path under its bare file name so a later Get("Foo.slang") finds it. Caller holds Mutex. */
+        void IndexShaderName(const FName& Path);
+
         FMutex                      Mutex;
         // Boxed in a segment map rather than a hash map of raw pointers: the map owns the generation bump
         // on release, which is the entire safety story for weak handles.
         TSegmentMap<FShaderEntry>   Entries;
         THashMap<uint64, FShaderH>  HandlesByHash;
+        // Bare file name -> full virtual path, filled as shaders commit. First root to ship a name wins.
+        THashMap<FName, FName>      PathsByName;
         TVector<FShaderH>           PendingRelease;
         uint32                      NextID = 1;
     };

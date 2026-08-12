@@ -70,6 +70,35 @@ internal sealed class ScriptableRuntime
         }
     }
 
+    /// <summary>Reports each (prior name, current name) pair from the <c>[Alias]</c> attributes on script
+    /// classes, so the host can record where a renamed class went. Separate from <see cref="Enumerate"/>
+    /// rather than folded into it because that sink's arity is part of the native ABI.</summary>
+    public unsafe void EnumerateAliases(IntPtr Sink, IntPtr Context)
+    {
+        if (Sink == IntPtr.Zero)
+        {
+            return;
+        }
+
+        var Add = (delegate* unmanaged[Stdcall]<IntPtr, byte*, int, byte*, int, void>)Sink;
+        Span<byte> OldScratch = stackalloc byte[256];
+        Span<byte> NewScratch = stackalloc byte[256];
+        foreach (KeyValuePair<string, string> Pair in Library.ClassAliases)
+        {
+            Interop.FInteropString Old = new(Pair.Key, OldScratch);
+            Interop.FInteropString New = new(Pair.Value, NewScratch);
+            try
+            {
+                Add(Context, Old.Pointer, Old.Length, New.Pointer, New.Length);
+            }
+            finally
+            {
+                Old.Free();
+                New.Free();
+            }
+        }
+    }
+
     /// <summary>Instantiates the named Scriptable subclass, pairs it to the already-created native object, and
     /// returns a STRONG GCHandle (IntPtr.Zero on failure).
     ///

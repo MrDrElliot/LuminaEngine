@@ -120,8 +120,18 @@ namespace Lumina::DotNet
         uint64  OverrideFlags = 0;
     };
 
+    // One `[Alias]` on a C# script class: the name it used to have, and the name it has now.
+    struct FScriptableAlias
+    {
+        FString OldName;
+        FString NewName;
+    };
+
     // Reports every loaded C# Scriptable subclass + its native base. Drives runtime CClass minting + editor picker.
     RUNTIME_API void GatherScriptableTypes(TVector<FScriptableTypeDesc>& Out);
+
+    // Reports every prior->current script class name pair, so the host can record where a renamed class went.
+    RUNTIME_API void GatherScriptableAliases(TVector<FScriptableAlias>& Out);
 
     //~ Script data structs: a C# type marked [BlackboardData] / [DataTableRow] / any ScriptStructBase marker.
     //  Discovered on its own pass whether or not anything references it, and minted as a CScriptStruct whose

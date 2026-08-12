@@ -7,7 +7,9 @@
 namespace Lumina
 {
     // Unified CPU + GPU memory tool. CPU = always-on category tracker (baseline, watch Delta,
-    // then capture call-stacks). GPU = per-heap allocator stats via RHI::GetGPUMemoryStats.
+    // then capture call-stacks). GPU = per-heap allocator stats via RHI::GetGPUMemoryStats, plus
+    // the editor-only per-purpose breakdown built from RHI::GetGPUAllocations -- the GPU-side
+    // answer to the CPU category table.
     class FMemoryProfilerEditorTool : public FEditorTool
     {
     public:
@@ -41,6 +43,13 @@ namespace Lumina
 
         // GPU sub-panels.
         void DrawGPUHeaps();
+        void DrawGPUPurpose();
+        void DrawGPUAllocations();
+
+        // Pulls the RHI's live-allocation ledger and rolls it up per purpose. Costs the allocator
+        // locks plus a copy of every live allocation, so it runs only while the GPU tab is open
+        // (and once more when a report is copied).
+        void RefreshGPUAllocations();
 
         // CPU sub-panels.
         void DrawCPUComposition();
@@ -54,6 +63,32 @@ namespace Lumina
         RHI::FGPUMemoryStats    GPUStats;
         RHI::FGPUDeviceInfo     DeviceInfo;
         bool                    bDeviceInfoValid = false;
+
+        // One purpose -- the "Scene" in "Scene.HDR" -- with its buffers and textures kept apart, because
+        // "3 GB of textures" and "3 GB of structured buffers" are different problems with different fixes.
+        struct FGPUPurposeRow
+        {
+            FString Name;
+            uint64  TextureBytes = 0;
+            uint64  BufferBytes  = 0;
+            uint32  TextureCount = 0;
+            uint32  BufferCount  = 0;
+
+            uint64 Total() const { return TextureBytes + BufferBytes; }
+            uint32 Count() const { return TextureCount + BufferCount; }
+        };
+
+        TVector<RHI::FGPUAllocation> GPUAllocations;   // one row per live RHI allocation
+        TVector<FGPUPurposeRow>      GPUPurposes;      // rolled up, sorted by total descending
+        uint64                       GPUTextureBytes    = 0;
+        uint64                       GPUBufferBytes     = 0;
+        bool                         bGPUAllocationsValid = false;
+
+        // Substring filter for the allocation list; matches name or purpose.
+        char                         GPUFilter[64] = {};
+        // Textures and buffers can be hidden separately -- the list is otherwise all textures.
+        bool                         bShowTextures = true;
+        bool                         bShowBuffers  = true;
 
         // Rolling timelines in MB, advanced once per refresh tick.
         TVector<float>          HistRSS;

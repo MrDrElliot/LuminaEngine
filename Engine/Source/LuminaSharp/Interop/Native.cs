@@ -141,9 +141,24 @@ public static unsafe partial class Native
     [NativeCall] public static partial string PropGetAssetPath(IntPtr C, IntPtr Prop);
     [NativeCall] public static partial void PropSetAssetPath(IntPtr C, IntPtr Prop, string Path);
 
-    // The element ops table for an array property, so a NativeList<T> view can be built over any reflected
+    // The element ops table for an array property, so a TVector<T> view can be built over any reflected
     // array -- including one appended to a minted script class, which has no generated per-property export.
     [NativeCall] public static partial IntPtr PropVectorOps(IntPtr Prop);
+    [NativeCall] public static partial IntPtr PropMapOps(IntPtr Prop);
+
+    // Assigns an FString at a raw address; the write half of a string container element (reads decode the
+    // eastl string in place with no crossing). See ElementMarshal (EElementKind.String).
+    [NativeCall] public static partial void StringAssign(IntPtr String, string Value);
+
+    // Assigns a TObjectPtr at a raw address, releasing the old reference and adding one to the new. The write
+    // half of an object container element: a raw pointer store would skip the refcount. See ElementMarshal (EElementKind.ObjectRef).
+    [NativeCall] public static partial void SetObjectPtr(IntPtr Slot, IntPtr Object);
+
+    // FName interning. Address-based, not property-based, so the same pair serves a member and an element of
+    // a TVector<FName>. FName itself is POD, so nothing else about it crosses -- reads and writes of the
+    // value are plain in-place memory access, like any other blittable mirror.
+    [NativeCall] public static partial void NameFromString(string Value, IntPtr OutName);
+    [NativeCall] public static partial string NameToString(IntPtr Name);
 
     [NativeCall] public static partial ulong DelegateBind(IntPtr Delegate, IntPtr Thunk, IntPtr Context);
     [NativeCall] public static partial void DelegateUnbind(IntPtr Delegate, ulong Handle);

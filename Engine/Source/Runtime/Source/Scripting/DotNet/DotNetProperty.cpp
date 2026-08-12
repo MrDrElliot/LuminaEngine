@@ -10,6 +10,7 @@
 #include "Core/Object/SoftObjectPtr.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Reflection/Type/Properties/ArrayProperty.h"
+#include "Core/Reflection/Type/Properties/MapProperty.h"
 #include "Memory/Memory.h"
 #include "Memory/SmartPtr.h"
 
@@ -196,7 +197,7 @@ LUMINA_DOTNET_EXPORT(void, PropSetAssetPath)(void* C, const void* Prop, const ch
     *Value = (Len > 0) ? FSoftObjectPath(FString(Utf8, (size_t)Len)) : FSoftObjectPath();
 }
 
-// The element ops table for an array property, so C# can build a NativeList<T> view over ANY reflected
+// The element ops table for an array property, so C# can build a TVector<T> view over ANY reflected
 // array -- including one appended to a minted script class, where there is no generated code to emit a
 // per-property ops export the way the Reflector does for native components.
 LUMINA_DOTNET_EXPORT(const void*, PropVectorOps)(const void* Prop)
@@ -211,6 +212,82 @@ LUMINA_DOTNET_EXPORT(const void*, PropVectorOps)(const void* Prop)
         return nullptr;
     }
     return static_cast<const FArrayProperty*>(Property)->GetOps();
+}
+
+// Assigns an FString that lives at an arbitrary address.
+//
+// PropSetString addresses a string BY property on an object, which cannot reach a string inside a container:
+// a script list of strings holds FStrings packed in the array's own buffer, and the element address comes
+// from the ops table, not from an FProperty. Reading needs no export at all (NativeMarshal.ReadString decodes
+// the eastl string in place), so this is the write half only.
+LUMINA_DOTNET_EXPORT(void, StringAssign)(void* StringPtr, const char* Utf8, int Len)
+{
+    if (StringPtr == nullptr)
+    {
+        return;
+    }
+    FString& Value = *static_cast<FString*>(StringPtr);
+    if (Len > 0)
+    {
+        Value.assign(Utf8, (size_t)Len);
+    }
+    else
+    {
+        Value.clear();
+    }
+}
+
+// FName interning, both directions.
+//
+// FName is POD -- an interned id plus a number, no heap -- so unlike FString the C# side mirrors it BY VALUE
+// and reads and writes the bytes in place at the property's offset, exactly as it does for FVector3. Only
+// these two conversions need the name table, so only they cross. The pair is address-based rather than
+// property-based so it also serves an FName sitting inside a container, where there is no FProperty to
+// address it by.
+LUMINA_DOTNET_EXPORT(void, NameFromString)(const char* Utf8, int Len, void* OutName)
+{
+    if (OutName == nullptr)
+    {
+        return;
+    }
+    *static_cast<FName*>(OutName) = (Utf8 != nullptr && Len > 0) ? FName(FStringView(Utf8, (size_t)Len)) : FName();
+}
+
+LUMINA_DOTNET_EXPORT(int32, NameToString)(const void* NamePtr, char* Buf, int Cap)
+{
+    if (NamePtr == nullptr)
+    {
+        return 0;
+    }
+    // c_str() hands back a pointer into a ring buffer, so the copy has to happen before anything else can
+    // intern a name. It does: this is the whole body.
+    const FName& Value = *static_cast<const FName*>(NamePtr);
+    const char* S = Value.c_str();
+    const int L = S ? (int)Value.length() : 0;
+    if (S && Buf && Cap > 0)
+    {
+        const int N = L < Cap ? L : Cap;
+        for (int i = 0; i < N; ++i)
+        {
+            Buf[i] = S[i];
+        }
+    }
+    return L;
+}
+
+// The key/value ops table for a map property, the associative counterpart of PropVectorOps.
+LUMINA_DOTNET_EXPORT(const void*, PropMapOps)(const void* Prop)
+{
+    if (Prop == nullptr)
+    {
+        return nullptr;
+    }
+    const FProperty* Property = static_cast<const FProperty*>(Prop);
+    if (Property->TypeFlags != EPropertyTypeFlags::Map)
+    {
+        return nullptr;
+    }
+    return static_cast<const FMapProperty*>(Property)->GetOps();
 }
 
 // Script delegate bind/unbind. Game thread only.

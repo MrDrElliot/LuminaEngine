@@ -3,11 +3,15 @@ using System;
 namespace LuminaSharp
 {
     /// <summary>
-    /// Serializer contract: read/write any asset-reference type as a virtual path string. Implemented
-    /// (explicitly) by the Lumina.* asset-reference types so the [Property] serializer round-trips them as
-    /// a path + AssetType picker, exactly like a reflected C++ TObjectPtr/TSoftObjectPtr/FSoftObjectPath.
+    /// Contract for every asset-reference type: read and write it as a virtual path string. Implemented
+    /// (explicitly) by the Lumina.* asset-reference types so a [Property] round-trips as a path + AssetType
+    /// picker, exactly like a reflected C++ TObjectPtr / TSoftObjectPtr / FSoftObjectPath.
+    ///
+    /// Public because it is also how ScriptPropertyRewriter recognises an asset reference: a script property
+    /// of any type implementing this is stored natively as an FSoftObjectPath and marshalled through
+    /// AssetRefMarshal, so adding an asset-reference type needs no change in the rewriter.
     /// </summary>
-    internal interface IAssetRef
+    public interface IAssetRef
     {
         string GetPath();
         void SetFromPath(string Path);
@@ -108,11 +112,14 @@ namespace Lumina
     }
 
     /// <summary>
-    /// C# mirror of <c>Lumina::TObjectPtr&lt;T&gt;</c>: a typed strong reference holding the resolved object.
-    /// As a script [Property] it serializes via the object's asset path and eager-loads on apply; in code
-    /// it carries the loaded object (assign it straight to a component property).
+    /// C# mirror of <c>Lumina::TObjectPtr&lt;T&gt;</c>: a typed HARD reference to a live CObject.
+    ///
+    /// Deliberately not an <see cref="IAssetRef"/>. A hard reference is stored natively as an object
+    /// property, the same as a C++ TObjectPtr, so it keeps the object alive and can point at any CObject
+    /// rather than only at something with an asset path. Use <see cref="TSoftObjectPtr{T}"/> when you want
+    /// a path that resolves on demand.
     /// </summary>
-    public struct TObjectPtr<T> : IAssetRef where T : NativeObject
+    public struct TObjectPtr<T> where T : NativeObject
     {
         private IntPtr Handle; // resolved CObject*, or zero
 
@@ -120,6 +127,16 @@ namespace Lumina
         {
             Handle = Value != null ? Value.Handle : IntPtr.Zero;
         }
+
+        /// <summary>Wraps an already-resolved native CObject pointer. Used by the accessors
+        /// ScriptPropertyRewriter emits for an object [Property].</summary>
+        public TObjectPtr(IntPtr NativeObject)
+        {
+            Handle = NativeObject;
+        }
+
+        /// <summary>The raw native pointer, for handing back to the engine.</summary>
+        public readonly IntPtr NativeHandle => Handle;
 
         public readonly bool IsValid => Handle != IntPtr.Zero;
 
@@ -137,14 +154,5 @@ namespace Lumina
             return Pointer.Value;
         }
 
-        readonly string IAssetRef.GetPath()
-        {
-            return Handle == IntPtr.Zero ? "" : Native.GetObjectPath(Handle);
-        }
-
-        void IAssetRef.SetFromPath(string NewPath)
-        {
-            Handle = string.IsNullOrEmpty(NewPath) ? IntPtr.Zero : Native.LoadObject(NewPath);
-        }
     }
 }

@@ -521,3 +521,254 @@ TEST(ScriptClassProperties, AppendedContainersRoundTripThroughTheStockSerializer
     EXPECT_EQ(*static_cast<int32*>(Ints->GetAt(RestoredArray, 2)), 30);
     EXPECT_STREQ(Text->GetValuePtr<FString>(Restored)->c_str(), "carried alongside");
 }
+
+//~ ---------------------------------------------------------------------------------------------------------
+//~ Hot reload: rebuilding the appended block when a C# reload changes the property set.
+//~
+//~ A minted class is reused by name across reloads and keeps its identity, but StaticAllocateObject bakes
+//~ Class->GetSize() into every object at creation. So a changed property set cannot be patched in place, and
+//~ MigrateMintedClassLayout tears the block down and rebuilds it instead.
+//~ ---------------------------------------------------------------------------------------------------------
+
+TEST(ScriptClassReload, AnUnchangedSchemaNeedsNoRebuild)
+{
+    Scripting::FScriptExportSchema Schema;
+    Schema.Fields.push_back(MakeScalarField("Speed", EPropertyTypeFlags::Float));
+
+    uint32 ShimSize = 0;
+    CClass* Sub = MintWithSchema("ScriptReload_Unchanged", Schema, ShimSize);
+    ASSERT_NE(Sub, nullptr);
+
+    // The common reload edits a method body. An identical schema must compare equal, or every reload would
+    // pay a rebuild and drop every instance for nothing.
+    Scripting::FScriptExportSchema Same;
+    Same.Fields.push_back(MakeScalarField("Speed", EPropertyTypeFlags::Float));
+    EXPECT_TRUE(Scripting::ScriptClassLayoutMatches(Sub, Same));
+
+    // Metadata is not layout: retitling a field must not force a rebuild either.
+    Scripting::FScriptExportSchema Retitled;
+    Retitled.Fields.push_back(MakeScalarField("Speed", EPropertyTypeFlags::Float));
+    Retitled.Fields[0].Meta.Set(FName("Tooltip"), "now with a tooltip");
+    EXPECT_TRUE(Scripting::ScriptClassLayoutMatches(Sub, Retitled));
+
+    // Any real shape change does not.
+    Scripting::FScriptExportSchema Added;
+    Added.Fields.push_back(MakeScalarField("Speed", EPropertyTypeFlags::Float));
+    Added.Fields.push_back(MakeScalarField("Health", EPropertyTypeFlags::Int32));
+    EXPECT_FALSE(Scripting::ScriptClassLayoutMatches(Sub, Added));
+
+    Scripting::FScriptExportSchema Retyped;
+    Retyped.Fields.push_back(MakeScalarField("Speed", EPropertyTypeFlags::Double));
+    EXPECT_FALSE(Scripting::ScriptClassLayoutMatches(Sub, Retyped));
+
+    Scripting::FScriptExportSchema Renamed;
+    Renamed.Fields.push_back(MakeScalarField("Velocity", EPropertyTypeFlags::Float));
+    EXPECT_FALSE(Scripting::ScriptClassLayoutMatches(Sub, Renamed));
+}
+
+TEST(ScriptClassReload, AddingAPropertyRebuildsTheBlock)
+{
+    Scripting::FScriptExportSchema Before;
+    Before.Fields.push_back(MakeScalarField("Speed", EPropertyTypeFlags::Float));
+
+    uint32 ShimSize = 0;
+    CClass* Sub = MintWithSchema("ScriptReload_Added", Before, ShimSize);
+    ASSERT_NE(Sub, nullptr);
+    ASSERT_NE(Sub->GetProperty(FName("Speed")), nullptr);
+    ASSERT_EQ(Sub->GetProperty(FName("Health")), nullptr);
+
+    Scripting::FScriptExportSchema After;
+    After.Fields.push_back(MakeScalarField("Speed", EPropertyTypeFlags::Float));
+    After.Fields.push_back(MakeScalarField("Health", EPropertyTypeFlags::Int32));
+
+    ASSERT_TRUE(Scripting::MigrateMintedClassLayout(Sub, After));
+
+    FProperty* Speed  = Sub->GetProperty(FName("Speed"));
+    FProperty* Health = Sub->GetProperty(FName("Health"));
+    ASSERT_NE(Speed, nullptr);
+    ASSERT_NE(Health, nullptr) << "the added property did not appear after the rebuild";
+    EXPECT_GE(Speed->Offset, ShimSize);
+    EXPECT_GE(Health->Offset, ShimSize);
+    EXPECT_NE(Speed->Offset, Health->Offset);
+
+    // The super's chain was spliced on by the first Link and dropped by Unlink; re-linking has to restore it,
+    // or every native member of the base silently disappears from the class.
+    ASSERT_NE(Sub->GetProperty(FName("NativeValue")), nullptr) << "Unlink lost the base class's properties";
+
+    // A fresh CDO at the new size, and instances built from it carry the new field.
+    CObject* Object = NewObject(Sub, nullptr, NAME_None, FGuid::New(), OF_Transient);
+    ASSERT_NE(Object, nullptr);
+    Health->SetValue<int32>(Object, 77);
+    Speed->SetValue<float>(Object, 4.5f);
+    EXPECT_EQ(*Health->GetValuePtr<int32>(Object), 77);
+    EXPECT_FLOAT_EQ(*Speed->GetValuePtr<float>(Object), 4.5f);
+
+    // The shim half still works, so the rebuild did not disturb the C++ subclass under the block.
+    CScriptableTest* Typed = Cast<CScriptableTest>(Object);
+    ASSERT_NE(Typed, nullptr);
+    EXPECT_FLOAT_EQ(Typed->NativeValue, 1.5f);
+    EXPECT_EQ(Typed->OnTest(5), 10);
+}
+
+TEST(ScriptClassReload, RemovingAndRetypingAPropertyRebuildTheBlock)
+{
+    Scripting::FScriptExportSchema Before;
+    Before.Fields.push_back(MakeScalarField("Speed", EPropertyTypeFlags::Float));
+    Before.Fields.push_back(MakeScalarField("Doomed", EPropertyTypeFlags::Int32));
+
+    uint32 ShimSize = 0;
+    CClass* Sub = MintWithSchema("ScriptReload_Removed", Before, ShimSize);
+    ASSERT_NE(Sub, nullptr);
+    ASSERT_NE(Sub->GetProperty(FName("Doomed")), nullptr);
+
+    // Drop one and widen the other in the same reload.
+    Scripting::FScriptExportSchema After;
+    After.Fields.push_back(MakeScalarField("Speed", EPropertyTypeFlags::Double));
+
+    ASSERT_TRUE(Scripting::MigrateMintedClassLayout(Sub, After));
+
+    EXPECT_EQ(Sub->GetProperty(FName("Doomed")), nullptr) << "the removed property is still on the class";
+
+    FProperty* Speed = Sub->GetProperty(FName("Speed"));
+    ASSERT_NE(Speed, nullptr);
+    EXPECT_EQ(Speed->TypeFlags, EPropertyTypeFlags::Double) << "the retyped property kept its old kind";
+
+    CObject* Object = NewObject(Sub, nullptr, NAME_None, FGuid::New(), OF_Transient);
+    ASSERT_NE(Object, nullptr);
+    Speed->SetValue<double>(Object, -2.25);
+    EXPECT_DOUBLE_EQ(*Speed->GetValuePtr<double>(Object), -2.25);
+}
+
+TEST(ScriptClassReload, ValuesSurviveARebuildThroughTheStockSerializer)
+{
+    // The user-facing promise: a reload that adds a field keeps what you authored in the others. The carrier
+    // is SerializeTaggedProperties, which is name-keyed, so a value whose property still exists replays, a
+    // removed one is dropped, and an added one lands on its default.
+    Scripting::FScriptExportSchema Before;
+    Before.Fields.push_back(MakeScalarField("Speed", EPropertyTypeFlags::Float));
+    Before.Fields.push_back(MakeScalarField("Doomed", EPropertyTypeFlags::Int32));
+    Before.Fields.push_back(MakeField("Label", MakeType(EPropertyTypeFlags::String)));
+
+    uint32 ShimSize = 0;
+    CClass* Sub = MintWithSchema("ScriptReload_Values", Before, ShimSize);
+    ASSERT_NE(Sub, nullptr);
+
+    CObject* Authored = NewObject(Sub, nullptr, NAME_None, FGuid::New(), OF_Transient);
+    ASSERT_NE(Authored, nullptr);
+    Sub->GetProperty(FName("Speed"))->SetValue<float>(Authored, 12.5f);
+    Sub->GetProperty(FName("Doomed"))->SetValue<int32>(Authored, 7);
+    *Sub->GetProperty(FName("Label"))->GetValuePtr<FString>(Authored) = "authored";
+
+    // Evacuate exactly the way a live reload must: tagged properties into a buffer.
+    TVector<uint8> Buffer;
+    {
+        FMemoryWriter Writer(Buffer);
+        FObjectProxyArchiver Ar(Writer, /*bLoadIfFindFails*/ false);
+        Sub->SerializeTaggedProperties(Ar, Authored);
+    }
+
+    // The instance has to be gone before the class can be rebuilt under it.
+    Authored->ForceDestroyNow();
+
+    Scripting::FScriptExportSchema After;
+    After.Fields.push_back(MakeScalarField("Speed", EPropertyTypeFlags::Float));
+    After.Fields.push_back(MakeField("Label", MakeType(EPropertyTypeFlags::String)));
+    After.Fields.push_back(MakeScalarField("Added", EPropertyTypeFlags::Int32));
+
+    ASSERT_TRUE(Scripting::MigrateMintedClassLayout(Sub, After));
+
+    CObject* Restored = NewObject(Sub, nullptr, NAME_None, FGuid::New(), OF_Transient);
+    ASSERT_NE(Restored, nullptr);
+    {
+        FMemoryReader Reader(Buffer);
+        FObjectProxyArchiver Ar(Reader, /*bLoadIfFindFails*/ true);
+        Sub->SerializeTaggedProperties(Ar, Restored);
+    }
+
+    // Survived the rebuild.
+    EXPECT_FLOAT_EQ(*Sub->GetProperty(FName("Speed"))->GetValuePtr<float>(Restored), 12.5f);
+    EXPECT_EQ(*Sub->GetProperty(FName("Label"))->GetValuePtr<FString>(Restored), FString("authored"));
+
+    // Added after the snapshot was taken, so it is simply at its default rather than reading someone
+    // else's bytes -- which is the whole reason the carrier is name-keyed and not a raw blob.
+    ASSERT_NE(Sub->GetProperty(FName("Added")), nullptr);
+    EXPECT_EQ(*Sub->GetProperty(FName("Added"))->GetValuePtr<int32>(Restored), 0);
+
+    // And the removed one is simply not there.
+    EXPECT_EQ(Sub->GetProperty(FName("Doomed")), nullptr);
+}
+
+TEST(ScriptClassReload, ARebuildIsRefusedWhileInstancesAreLive)
+{
+    Scripting::FScriptExportSchema Before;
+    Before.Fields.push_back(MakeScalarField("Speed", EPropertyTypeFlags::Float));
+
+    uint32 ShimSize = 0;
+    CClass* Sub = MintWithSchema("ScriptReload_Refused", Before, ShimSize);
+    ASSERT_NE(Sub, nullptr);
+
+    CObject* Live = NewObject(Sub, nullptr, NAME_None, FGuid::New(), OF_Transient);
+    ASSERT_NE(Live, nullptr);
+
+    Scripting::FScriptExportSchema After;
+    After.Fields.push_back(MakeScalarField("Speed", EPropertyTypeFlags::Float));
+    After.Fields.push_back(MakeScalarField("Health", EPropertyTypeFlags::Int32));
+
+    // An instance is laid out at the old size, so rebuilding under it would move its fields. Refusing is the
+    // contract; the caller evacuates first.
+    EXPECT_FALSE(Scripting::MigrateMintedClassLayout(Sub, After));
+
+    // And the refusal changed nothing, so the live instance is still usable.
+    ASSERT_EQ(Sub->GetProperty(FName("Health")), nullptr);
+    FProperty* Speed = Sub->GetProperty(FName("Speed"));
+    ASSERT_NE(Speed, nullptr);
+    Speed->SetValue<float>(Live, 3.0f);
+    EXPECT_FLOAT_EQ(*Speed->GetValuePtr<float>(Live), 3.0f);
+
+    // Once it is gone the same rebuild goes through.
+    Live->ForceDestroyNow();
+    EXPECT_TRUE(Scripting::MigrateMintedClassLayout(Sub, After));
+    EXPECT_NE(Sub->GetProperty(FName("Health")), nullptr);
+}
+
+TEST(ScriptClassReload, ContainersSurviveARebuild)
+{
+    // Containers are the kinds with side data (element descriptions, ops tables) owned by the layout record,
+    // so they are what a teardown gets wrong first: the record is retired, not freed, and the new block
+    // builds its own.
+    Scripting::FScriptExportSchema Before;
+    TSharedPtr<Scripting::FScriptExportType> List = MakeType(EPropertyTypeFlags::Vector);
+    List->ElementType = MakeType(EPropertyTypeFlags::Int32);
+    Before.Fields.push_back(MakeField("Values", List));
+
+    uint32 ShimSize = 0;
+    CClass* Sub = MintWithSchema("ScriptReload_Containers", Before, ShimSize);
+    ASSERT_NE(Sub, nullptr);
+    ASSERT_NE(Sub->GetProperty(FName("Values")), nullptr);
+
+    // Change the ELEMENT type only. The top-level kind is Vector either way, so this is exactly the case a
+    // shallow comparison would miss and then lay out wrong.
+    Scripting::FScriptExportSchema After;
+    TSharedPtr<Scripting::FScriptExportType> Floats = MakeType(EPropertyTypeFlags::Vector);
+    Floats->ElementType = MakeType(EPropertyTypeFlags::Float);
+    After.Fields.push_back(MakeField("Values", Floats));
+
+    EXPECT_FALSE(Scripting::ScriptClassLayoutMatches(Sub, After)) << "an element-type change was not noticed";
+    ASSERT_TRUE(Scripting::MigrateMintedClassLayout(Sub, After));
+
+    FArrayProperty* Values = static_cast<FArrayProperty*>(Sub->GetProperty(FName("Values")));
+    ASSERT_NE(Values, nullptr);
+    ASSERT_NE(Values->GetOps(), nullptr);
+    EXPECT_EQ(Values->GetOps()->ElementSize, sizeof(float)) << "the rebuilt array kept the old element size";
+
+    // Usable through the stock API, which is what proves the new element description was wired into the
+    // freshly constructed container rather than left null.
+    CObject* Object = NewObject(Sub, nullptr, NAME_None, FGuid::New(), OF_Transient);
+    ASSERT_NE(Object, nullptr);
+    void* Array = Values->GetValuePtr<void>(Object);
+    ASSERT_NE(Array, nullptr);
+    EXPECT_EQ(Values->GetOps()->Size(Array), 0u);
+    const float One = 1.0f;
+    Values->GetOps()->PushBack(Array, &One);
+    EXPECT_EQ(Values->GetOps()->Size(Array), 1u);
+}

@@ -305,3 +305,359 @@ TEST(EntityScriptUnification, FindAndRemoveByClass)
 
     EXPECT_FALSE(EntityScripts::Remove(Registry, Entity, First)) << "removing twice must be refused";
 }
+
+// Hot reload's round trip, end to end: a script attached to an entity survives its class's property block
+// being torn down and rebuilt under it.
+//
+// The rebuild cannot happen with instances alive (an object's size is baked in at allocation), so the reload
+// evacuates first: serialize every affected entity's scripts, drop them, migrate the class, read them back.
+// This pins the whole sequence, because each half is useless alone.
+TEST(EntityScriptUnification, ScriptsSurviveAClassLayoutRebuild)
+{
+    FEntityRegistry Registry{};
+
+    Scripting::FScriptExportSchema Before;
+    {
+        Scripting::FScriptExportField Speed;
+        Speed.Name = FName("Speed");
+        Speed.Type = MakeShared<Scripting::FScriptExportType>();
+        Speed.Type->Kind = EPropertyTypeFlags::Float;
+        Before.Fields.push_back(eastl::move(Speed));
+    }
+
+    CClass* Minted = FScriptableRegistry::Mint("EvacTest_Script", "CEntityScript", 0);
+    ASSERT_NE(Minted, nullptr);
+    Scripting::AppendScriptPropertiesToClass(Minted, Before);
+    ProcessNewlyLoadedCObjects();
+    Minted->GetDefaultObject();
+
+    entt::entity Entity = Registry.create();
+    CEntityScript* Attached = EntityScripts::Attach(Registry, Entity, Minted);
+    ASSERT_NE(Attached, nullptr);
+
+    FProperty* Speed = Minted->GetProperty(FName("Speed"));
+    ASSERT_NE(Speed, nullptr);
+    Speed->SetValue<float>(Attached, 12.5f);
+
+    // A rebuild is refused while the script is attached, which is exactly why evacuation exists.
+    Scripting::FScriptExportSchema After;
+    {
+        Scripting::FScriptExportField Kept;
+        Kept.Name = FName("Speed");
+        Kept.Type = MakeShared<Scripting::FScriptExportType>();
+        Kept.Type->Kind = EPropertyTypeFlags::Float;
+        After.Fields.push_back(eastl::move(Kept));
+
+        Scripting::FScriptExportField Added;
+        Added.Name = FName("Health");
+        Added.Type = MakeShared<Scripting::FScriptExportType>();
+        Added.Type->Kind = EPropertyTypeFlags::Int32;
+        After.Fields.push_back(eastl::move(Added));
+    }
+    EXPECT_FALSE(Scripting::MigrateMintedClassLayout(Minted, After));
+
+    // Evacuate by hand against this registry (the reload path walks every world through
+    // GWorldManager::ForEachWorld, which a unit test has no contexts for).
+    TVector<uint8> Bytes;
+    {
+        SEntityScriptComponent* Component = Registry.try_get<SEntityScriptComponent>(Entity);
+        ASSERT_NE(Component, nullptr);
+        FMemoryWriter Writer(Bytes);
+        FObjectProxyArchiver Ar(Writer, /*bLoadIfFindFails*/ false);
+        Component->Serialize(Ar);
+        Component->Scripts.clear();
+    }
+    ASSERT_FALSE(Bytes.empty());
+
+    // With nothing attached the same rebuild goes through.
+    ASSERT_TRUE(Scripting::MigrateMintedClassLayout(Minted, After));
+
+    {
+        SEntityScriptComponent& Component = Registry.get_or_emplace<SEntityScriptComponent>(Entity);
+        FMemoryReader Reader(Bytes);
+        FObjectProxyArchiver Ar(Reader, /*bLoadIfFindFails*/ true);
+        Component.Serialize(Ar);
+    }
+
+    SEntityScriptComponent* Component = Registry.try_get<SEntityScriptComponent>(Entity);
+    ASSERT_NE(Component, nullptr);
+    ASSERT_EQ(Component->Scripts.size(), 1u) << "the script did not come back";
+
+    CEntityScript* Restored = Component->Scripts[0].Get();
+    ASSERT_NE(Restored, nullptr);
+    EXPECT_EQ(Restored->GetClass(), Minted);
+    EXPECT_NE(Restored, Attached) << "restore must build a NEW object; the old one was the old size";
+
+    // The authored value rode across the rebuild, keyed by name.
+    FProperty* NewSpeed = Minted->GetProperty(FName("Speed"));
+    ASSERT_NE(NewSpeed, nullptr);
+    EXPECT_FLOAT_EQ(*NewSpeed->GetValuePtr<float>(Restored), 12.5f) << "the authored value was lost";
+
+    // And the property added by this reload exists on the restored instance, at its default.
+    FProperty* Health = Minted->GetProperty(FName("Health"));
+    ASSERT_NE(Health, nullptr) << "the added property is missing from the restored instance";
+    EXPECT_EQ(*Health->GetValuePtr<int32>(Restored), 0);
+
+    // Still a working script: the driver adopts it and ticks it like any other.
+    EntityScripts::Tick(Registry, 0.016f);
+
+    EntityScripts::DetachAll(Registry, Entity);
+}
+
+namespace
+{
+    Scripting::FScriptExportField MakeReloadField(const char* Name, EPropertyTypeFlags Kind, const char* Aliases = nullptr)
+    {
+        Scripting::FScriptExportField Field;
+        Field.Name = FName(Name);
+        Field.Type = MakeShared<Scripting::FScriptExportType>();
+        Field.Type->Kind = Kind;
+        if (Aliases != nullptr)
+        {
+            // Exactly what ReadAliasesInto folds a C# [Alias] list into: a ';'-joined metadata value.
+            Field.Meta.Set(FName("Aliases"), Aliases);
+        }
+        return Field;
+    }
+}
+
+// Renaming a [Property] keeps its value, as long as the new name declares the old one with [Alias].
+//
+// The replay is name-keyed, so a rename is indistinguishable from "one property removed, another added"
+// unless something carries the old name across. [Alias] is that something, and SerializeTaggedProperties
+// already matches tags against it -- this pins that the hot-reload round trip inherits the behavior rather
+// than needing its own.
+TEST(EntityScriptUnification, RenamingAPropertyKeepsItsValueViaAlias)
+{
+    FEntityRegistry Registry{};
+
+    Scripting::FScriptExportSchema Before;
+    Before.Fields.push_back(MakeReloadField("Speed", EPropertyTypeFlags::Float));
+
+    CClass* Minted = FScriptableRegistry::Mint("RenameProp_Script", "CEntityScript", 0);
+    ASSERT_NE(Minted, nullptr);
+    Scripting::AppendScriptPropertiesToClass(Minted, Before);
+    ProcessNewlyLoadedCObjects();
+    Minted->GetDefaultObject();
+
+    const entt::entity Entity = Registry.create();
+    CEntityScript* Attached = EntityScripts::Attach(Registry, Entity, Minted);
+    ASSERT_NE(Attached, nullptr);
+    Minted->GetProperty(FName("Speed"))->SetValue<float>(Attached, 9.75f);
+
+    TVector<uint8> Bytes;
+    {
+        SEntityScriptComponent* Component = Registry.try_get<SEntityScriptComponent>(Entity);
+        ASSERT_NE(Component, nullptr);
+        FMemoryWriter Writer(Bytes);
+        FObjectProxyArchiver Ar(Writer, /*bLoadIfFindFails*/ false);
+        Component->Serialize(Ar);
+        Component->Scripts.clear();
+    }
+
+    // Speed -> Velocity, declaring the old name.
+    Scripting::FScriptExportSchema After;
+    After.Fields.push_back(MakeReloadField("Velocity", EPropertyTypeFlags::Float, "Speed"));
+    ASSERT_TRUE(Scripting::MigrateMintedClassLayout(Minted, After));
+    ASSERT_EQ(Minted->GetProperty(FName("Speed")), nullptr);
+
+    {
+        SEntityScriptComponent& Component = Registry.get_or_emplace<SEntityScriptComponent>(Entity);
+        FMemoryReader Reader(Bytes);
+        FObjectProxyArchiver Ar(Reader, /*bLoadIfFindFails*/ true);
+        Component.Serialize(Ar);
+    }
+
+    SEntityScriptComponent* Component = Registry.try_get<SEntityScriptComponent>(Entity);
+    ASSERT_NE(Component, nullptr);
+    ASSERT_EQ(Component->Scripts.size(), 1u);
+    CEntityScript* Restored = Component->Scripts[0].Get();
+    ASSERT_NE(Restored, nullptr);
+
+    FProperty* Velocity = Minted->GetProperty(FName("Velocity"));
+    ASSERT_NE(Velocity, nullptr);
+    ASSERT_TRUE(Velocity->HasMetadata("Aliases")) << "the Aliases metadata never reached the property";
+    EXPECT_EQ(Velocity->GetMetadata("Aliases"), FString("Speed"));
+    EXPECT_FLOAT_EQ(*Velocity->GetValuePtr<float>(Restored), 9.75f)
+        << "the renamed property did not inherit the old name's value";
+
+    EntityScripts::DetachAll(Registry, Entity);
+}
+
+// Without an [Alias] the value is genuinely gone, and the new property is at its default rather than holding
+// whatever the old one happened to leave in those bytes. Worth pinning: silently keeping the value would mean
+// the replay was matching by OFFSET, which is exactly the bug a name-keyed carrier exists to prevent.
+TEST(EntityScriptUnification, RenamingWithoutAnAliasResetsToDefault)
+{
+    FEntityRegistry Registry{};
+
+    Scripting::FScriptExportSchema Before;
+    Before.Fields.push_back(MakeReloadField("Speed", EPropertyTypeFlags::Float));
+
+    CClass* Minted = FScriptableRegistry::Mint("RenameNoAlias_Script", "CEntityScript", 0);
+    ASSERT_NE(Minted, nullptr);
+    Scripting::AppendScriptPropertiesToClass(Minted, Before);
+    ProcessNewlyLoadedCObjects();
+    Minted->GetDefaultObject();
+
+    const entt::entity Entity = Registry.create();
+    CEntityScript* Attached = EntityScripts::Attach(Registry, Entity, Minted);
+    ASSERT_NE(Attached, nullptr);
+    Minted->GetProperty(FName("Speed"))->SetValue<float>(Attached, 9.75f);
+
+    TVector<uint8> Bytes;
+    {
+        SEntityScriptComponent* Component = Registry.try_get<SEntityScriptComponent>(Entity);
+        FMemoryWriter Writer(Bytes);
+        FObjectProxyArchiver Ar(Writer, /*bLoadIfFindFails*/ false);
+        Component->Serialize(Ar);
+        Component->Scripts.clear();
+    }
+
+    Scripting::FScriptExportSchema After;
+    After.Fields.push_back(MakeReloadField("Velocity", EPropertyTypeFlags::Float));   // no alias
+    ASSERT_TRUE(Scripting::MigrateMintedClassLayout(Minted, After));
+
+    {
+        SEntityScriptComponent& Component = Registry.get_or_emplace<SEntityScriptComponent>(Entity);
+        FMemoryReader Reader(Bytes);
+        FObjectProxyArchiver Ar(Reader, /*bLoadIfFindFails*/ true);
+        Component.Serialize(Ar);
+    }
+
+    CEntityScript* Restored = Registry.get<SEntityScriptComponent>(Entity).Scripts[0].Get();
+    ASSERT_NE(Restored, nullptr);
+    EXPECT_FLOAT_EQ(*Minted->GetProperty(FName("Velocity"))->GetValuePtr<float>(Restored), 0.0f);
+
+    EntityScripts::DetachAll(Registry, Entity);
+}
+
+// Renaming the SCRIPT CLASS. The instances are not the wrong size, they are the wrong class, so the fix is a
+// redirect from the old class name to the new one plus the same evacuate/restore round trip. The redirect is
+// consulted by SEntityScriptComponent's load path, which means a scene saved before the rename loads too.
+TEST(EntityScriptUnification, RenamingAScriptClassMovesItsInstances)
+{
+    FEntityRegistry Registry{};
+
+    Scripting::FScriptExportSchema Schema;
+    Schema.Fields.push_back(MakeReloadField("Speed", EPropertyTypeFlags::Float));
+
+    CClass* Old = FScriptableRegistry::Mint("RenameClass_Before", "CEntityScript", 0);
+    ASSERT_NE(Old, nullptr);
+    Scripting::AppendScriptPropertiesToClass(Old, Schema);
+    ProcessNewlyLoadedCObjects();
+    Old->GetDefaultObject();
+
+    const entt::entity Entity = Registry.create();
+    CEntityScript* Attached = EntityScripts::Attach(Registry, Entity, Old);
+    ASSERT_NE(Attached, nullptr);
+    Old->GetProperty(FName("Speed"))->SetValue<float>(Attached, 4.25f);
+
+    // Evacuate: the buffer records the OLD class name.
+    TVector<uint8> Bytes;
+    {
+        SEntityScriptComponent* Component = Registry.try_get<SEntityScriptComponent>(Entity);
+        FMemoryWriter Writer(Bytes);
+        FObjectProxyArchiver Ar(Writer, /*bLoadIfFindFails*/ false);
+        Component->Serialize(Ar);
+        Component->Scripts.clear();
+    }
+
+    // The reload brings up the renamed type and registers where the old name went.
+    CClass* New = FScriptableRegistry::Mint("RenameClass_After", "CEntityScript", 0);
+    ASSERT_NE(New, nullptr);
+    Scripting::AppendScriptPropertiesToClass(New, Schema);
+    ProcessNewlyLoadedCObjects();
+    New->GetDefaultObject();
+    FScriptableRegistry::RegisterClassRedirect(FName("RenameClass_Before"), FName("RenameClass_After"));
+
+    EXPECT_EQ(FScriptableRegistry::ResolveClass(FName("RenameClass_Before")), New);
+    EXPECT_EQ(FScriptableRegistry::ResolveClass(FName("RenameClass_After")), New);
+    EXPECT_EQ(FScriptableRegistry::ResolveClass(FName("NeverExisted_Script")), nullptr);
+
+    // And the class the reload should move across is reported for evacuation.
+    THashSet<CClass*> Renamed;
+    FScriptableRegistry::GatherRenamedClasses(Renamed);
+    EXPECT_NE(Renamed.find(Old), Renamed.end()) << "the renamed class was not offered for evacuation";
+
+    {
+        SEntityScriptComponent& Component = Registry.get_or_emplace<SEntityScriptComponent>(Entity);
+        FMemoryReader Reader(Bytes);
+        FObjectProxyArchiver Ar(Reader, /*bLoadIfFindFails*/ true);
+        Component.Serialize(Ar);
+    }
+
+    SEntityScriptComponent* Component = Registry.try_get<SEntityScriptComponent>(Entity);
+    ASSERT_NE(Component, nullptr);
+    ASSERT_EQ(Component->Scripts.size(), 1u) << "the renamed script did not come back";
+
+    CEntityScript* Restored = Component->Scripts[0].Get();
+    ASSERT_NE(Restored, nullptr);
+    EXPECT_EQ(Restored->GetClass(), New) << "the instance stayed on the old class";
+    EXPECT_FLOAT_EQ(*New->GetProperty(FName("Speed"))->GetValuePtr<float>(Restored), 4.25f)
+        << "the authored value did not survive the class rename";
+
+    // Still a working script on the new class.
+    EntityScripts::Tick(Registry, 0.016f);
+    EntityScripts::DetachAll(Registry, Entity);
+}
+
+// [SkipHotReload] asks for the OPPOSITE of what a reload normally does: the value goes back to the class
+// default instead of being carried across. The attribute crossed to native as metadata for a long time with
+// nothing acting on it, so this pins that the restore path honors it.
+TEST(EntityScriptUnification, SkipHotReloadFieldsResetOnRestore)
+{
+    FEntityRegistry Registry{};
+
+    Scripting::FScriptExportSchema Schema;
+    Schema.Fields.push_back(MakeReloadField("Kept", EPropertyTypeFlags::Float));
+    {
+        Scripting::FScriptExportField Scratch = MakeReloadField("Scratch", EPropertyTypeFlags::Float);
+        Scratch.Meta.Set(FName("SkipHotReload"), FString());
+        Schema.Fields.push_back(eastl::move(Scratch));
+    }
+
+    CClass* Minted = FScriptableRegistry::Mint("SkipHotReload_Script", "CEntityScript", 0);
+    ASSERT_NE(Minted, nullptr);
+    Scripting::AppendScriptPropertiesToClass(Minted, Schema);
+    ProcessNewlyLoadedCObjects();
+    Minted->GetDefaultObject();
+
+    const entt::entity Entity = Registry.create();
+    CEntityScript* Attached = EntityScripts::Attach(Registry, Entity, Minted);
+    ASSERT_NE(Attached, nullptr);
+    Minted->GetProperty(FName("Kept"))->SetValue<float>(Attached, 3.5f);
+    Minted->GetProperty(FName("Scratch"))->SetValue<float>(Attached, 99.0f);
+
+    TVector<uint8> Bytes;
+    {
+        SEntityScriptComponent* Component = Registry.try_get<SEntityScriptComponent>(Entity);
+        FMemoryWriter Writer(Bytes);
+        FObjectProxyArchiver Ar(Writer, /*bLoadIfFindFails*/ false);
+        Component->Serialize(Ar);
+        Component->Scripts.clear();
+    }
+
+    // EntityScripts::Restore does the replay and then this reset. A unit test has no world contexts for it
+    // to walk, so the two steps are driven directly here.
+    {
+        SEntityScriptComponent& Component = Registry.get_or_emplace<SEntityScriptComponent>(Entity);
+        FMemoryReader Reader(Bytes);
+        FObjectProxyArchiver Ar(Reader, /*bLoadIfFindFails*/ true);
+        Component.Serialize(Ar);
+        for (const TObjectPtr<CEntityScript>& Held : Component.Scripts)
+        {
+            Scripting::ResetSkipHotReloadProperties(Held.Get());
+        }
+    }
+
+    CEntityScript* Restored = Registry.get<SEntityScriptComponent>(Entity).Scripts[0].Get();
+    ASSERT_NE(Restored, nullptr);
+
+    EXPECT_FLOAT_EQ(*Minted->GetProperty(FName("Kept"))->GetValuePtr<float>(Restored), 3.5f)
+        << "an ordinary property should still carry across";
+    EXPECT_FLOAT_EQ(*Minted->GetProperty(FName("Scratch"))->GetValuePtr<float>(Restored), 0.0f)
+        << "[SkipHotReload] should have returned this to its class default";
+
+    EntityScripts::DetachAll(Registry, Entity);
+}

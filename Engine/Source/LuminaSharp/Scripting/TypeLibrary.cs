@@ -27,6 +27,10 @@ internal sealed class TypeLibrary
 
     public TypeLibrary(IEnumerable<Type> Types)
     {
+        // Before anything is described: proves the view table below still lines up with the shared classifier
+        // the rewriter emitted accessors from. Cheap, once, and the failures it catches are otherwise silent.
+        ScriptPropertyViews.Validate();
+
         AllTypes = new List<Type>(Types);
         foreach (Type Type in AllTypes)
         {
@@ -91,12 +95,18 @@ internal sealed class TypeLibrary
         }
 
         // Build the alias map after all current names are known, so an alias never shadows a live type.
-        foreach (TypeDescription Description in EntityScripts.Values)
+        //
+        // Over every Scriptable, not just EntityScripts: the map is what tells native where a renamed script
+        // CLASS went, and any Scriptable can be minted and attached. An EntityScript is a Scriptable too, so
+        // this is a superset of what it used to walk.
+        foreach (Type Scriptable in Scriptables.Values)
         {
-            string Current = Description.Type.FullName!;
-            foreach (AliasAttribute Alias in Description.Type.GetCustomAttributes<AliasAttribute>())
+            string Current = Scriptable.FullName!;
+            foreach (AliasAttribute Alias in Scriptable.GetCustomAttributes<AliasAttribute>())
             {
-                if (string.IsNullOrEmpty(Alias.Name) || EntityScripts.ContainsKey(Alias.Name))
+                if (string.IsNullOrEmpty(Alias.Name)
+                    || EntityScripts.ContainsKey(Alias.Name)
+                    || Scriptables.ContainsKey(Alias.Name))
                 {
                     continue;
                 }
@@ -109,6 +119,11 @@ internal sealed class TypeLibrary
             }
         }
     }
+
+    /// <summary>Prior script class name to its current full name, from the <c>[Alias]</c> attributes on
+    /// script classes. Native mirrors this into its class-redirect registry so a renamed class still resolves
+    /// from a saved scene and so a hot reload can move live instances onto the new class.</summary>
+    public IEnumerable<KeyValuePair<string, string>> ClassAliases => ScriptAliases;
 
     /// <summary>Full type names of every EntityScript (for the editor's script-picker dropdown).</summary>
     public IReadOnlyCollection<string> EntityScriptTypeNames => EntityScripts.Keys;
@@ -133,12 +148,9 @@ internal sealed class TypeLibrary
 
     // True if any base type carries [ScriptableType] (Type is a user subclass of a REFLECT(Scriptable) class).
     /// <summary>A type that IS a view over native storage rather than a managed value, so a get-only member
-    /// of it is still a real property. Kept alongside TryGetElementType, which is what decides the wire
-    /// shape for the same types.</summary>
-    private static bool IsNativeOwnedViewType(Type Type)
-    {
-        return Type.IsGenericType && Type.GetGenericTypeDefinition() == typeof(NativeList<>);
-    }
+    /// of it is still a real property. One of three questions asked of ScriptPropertyViews' single table --
+    /// the others being element and key/value -- so a view cannot be known to one and not the others.</summary>
+    private static bool IsNativeOwnedViewType(Type Type) => ScriptPropertyViews.IsView(Type);
 
     private static bool IsScriptableSubclass(Type Type)
     {
@@ -221,7 +233,15 @@ internal sealed class TypeLibrary
         {
             return new ScriptType { Kind = EPropertyType.Bool, Clr = Type };
         }
-        if (Type == typeof(string))
+        // An interned name. POD, so it round-trips as its own reflected kind rather than as text: native
+        // mints an FNameProperty and C# reads the id in place.
+        if (Type == typeof(FName))
+        {
+            return new ScriptType { Kind = EPropertyType.Name, Clr = Type };
+        }
+        // Both string spellings are one native FString. FString is the explicit mirror -- the only one that
+        // can be a container ELEMENT, since a managed reference cannot live in native memory.
+        if (Type == typeof(string) || Type == typeof(FString))
         {
             return new ScriptType { Kind = EPropertyType.String, Clr = Type };
         }
@@ -288,10 +308,25 @@ internal sealed class TypeLibrary
         if (Type.IsGenericType)
         {
             Type Definition = Type.GetGenericTypeDefinition();
-            if (Definition == typeof(TSoftObjectPtr<>) || Definition == typeof(TObjectPtr<>))
+            // A SOFT reference is a path resolved on demand; a HARD one is a live object pointer that keeps
+            // its target alive. They were both reported as SoftObject, which gave TObjectPtr<T> an asset
+            // picker, no strong reference, and no way to point at an object that has no asset path.
+            if (Definition == typeof(TSoftObjectPtr<>))
             {
                 return new ScriptType { Kind = EPropertyType.SoftObject, Clr = Type, TargetClass = Type.GetGenericArguments()[0].Name };
             }
+            if (Definition == typeof(TObjectPtr<>))
+            {
+                return new ScriptType { Kind = EPropertyType.Object, Clr = Type, TargetClass = Type.GetGenericArguments()[0].Name };
+            }
+        }
+
+        // A wrapper around a native CObject (CTexture, CAudioStream, ...): a HARD reference, stored as an
+        // object property. Checked before the generic class branch far below, which would otherwise mint the
+        // wrapper's own members as a sub-struct -- native would hold a struct while C# read an object pointer.
+        if (typeof(NativeObject).IsAssignableFrom(Type))
+        {
+            return new ScriptType { Kind = EPropertyType.Object, Clr = Type, TargetClass = Type.Name };
         }
 
         // A List<T> or T[]. When the field is marked [Instanced], the ELEMENT is the instanced (polymorphic)
@@ -580,12 +615,11 @@ internal sealed class TypeLibrary
             ElementType = Type.GetGenericArguments()[0];
             return true;
         }
-        // NativeList<T>: a VIEW over a native TVector<T>, which is what a [Property] container on a script
-        // type is declared as (there is one copy of the value and native owns it, so a List<T> would be a
-        // lie). Shaped identically to a List<T> on the wire.
-        if (Type.IsGenericType && Type.GetGenericTypeDefinition() == typeof(NativeList<>))
+        // The list VIEWS, which is what a [Property] container on a script type is declared as (there is one
+        // copy of the value and native owns it, so a List<T> would be a lie). Each is shaped identically to
+        // a List<T> on the wire; ScriptPropertyViews knows which they are and what their element is.
+        if (ScriptPropertyViews.TryGetElementType(Type, out ElementType))
         {
-            ElementType = Type.GetGenericArguments()[0];
             return true;
         }
         ElementType = null;
@@ -594,6 +628,7 @@ internal sealed class TypeLibrary
 
     private static bool TryGetMapTypes(Type Type, out Type? KeyType, out Type? ValueType)
     {
+        // A managed Dictionary<K,V> -- a data struct's own member, copied across the wire.
         if (Type.IsGenericType && Type.GetGenericTypeDefinition() == typeof(Dictionary<,>))
         {
             Type[] Args = Type.GetGenericArguments();
@@ -601,9 +636,8 @@ internal sealed class TypeLibrary
             ValueType = Args[1];
             return true;
         }
-        KeyType = null;
-        ValueType = null;
-        return false;
+        // THashMap<K,V>: a VIEW over the native map, shaped identically on the wire.
+        return ScriptPropertyViews.TryGetKeyValue(Type, out KeyType, out ValueType);
     }
 }
 

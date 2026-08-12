@@ -407,6 +407,22 @@ public static unsafe partial class Host
         }
     }
 
+    /// Reports each (prior name, current name) pair from [Alias] on a script class, so the host can record
+    /// where a renamed class went and keep saved references resolving.
+    [ManagedExport]
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    public static void EnumerateScriptableAliases(IntPtr Sink, IntPtr Context)
+    {
+        try
+        {
+            Scripts?.Scriptables?.EnumerateAliases(Sink, Context);
+        }
+        catch (Exception Exception)
+        {
+            Interop.LogException(Exception);
+        }
+    }
+
     /// Runs a Scriptable type's declared [Property] initializers into its class default object. Called once
     /// per type at mint, after the CDO exists; instances are copied from it.
     [ManagedExport]

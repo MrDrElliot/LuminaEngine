@@ -44,6 +44,16 @@
     </Compile>
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The [Property] type classifier, shared BY SOURCE with the analyzer. It cannot be shared by
+         reference: the generator is referenced as an analyzer (ReferenceOutputAssembly="false"), and it
+         targets netstandard2.0 so it could not reference this project either. Both already reference
+         Microsoft.CodeAnalysis, which is all the file needs. See ScriptPropertyModel.cs. -->
+    <Compile Include="$(MSBuildThisFileDirectory)..\LuminaSharp.Generators\Shared\ScriptPropertyModel.cs">
+      <Link>Scripting\Shared\ScriptPropertyModel.cs</Link>
+    </Compile>
+  </ItemGroup>
+
   <!-- The runtime script compiler loads the generator itself, so it has to sit beside this assembly. -->
   <Target Name="CopyGeneratorForRuntime" AfterTargets="Build">
     <Copy SourceFiles="@(Analyzer)"

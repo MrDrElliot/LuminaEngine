@@ -160,6 +160,18 @@ namespace Lumina
         return ClassDefaultObject;
     }
     
+    void CClass::DiscardDefaultObject()
+    {
+        if (ClassDefaultObject == nullptr)
+        {
+            return;
+        }
+        // Rooted by CreateDefaultObject, so it has to come out of the root set before it can die.
+        ClassDefaultObject->RemoveFromRoot();
+        ClassDefaultObject->ForceDestroyNow();
+        ClassDefaultObject = nullptr;
+    }
+
     static CStruct* StaticGetBaseStructureInternal(const FName& Name)
     {
         CStruct* Result = static_cast<CStruct*>(FindObjectImpl(Name, CStruct::StaticClass()));

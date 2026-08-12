@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Containers/Array.h"
+#include "Containers/Name.h"
 #include "Containers/String.h"
 #include "Platform/GenericPlatform.h"
 
@@ -42,5 +44,31 @@ namespace Lumina
 
         static void RefreshMintedClasses();
 
+        /**
+         * Records that a script class used to be called OldName and is now NewName, so a saved reference to
+         * the old name still resolves.
+         *
+         * Name to name, not name to CClass*, on purpose: a redirect is registered before the class it points
+         * at has necessarily been minted (the first reload after a rename gathers the aliases and the types
+         * in the same pass), and resolving lazily removes that ordering dependency entirely.
+         *
+         * Populated from the `[Alias]` attributes on C# script classes.
+         */
+        static void RegisterClassRedirect(const FName& OldName, const FName& NewName);
+
+        /**
+         * The class for a serialized script class name, following any rename redirects.
+         *
+         * This is what makes a class rename non-destructive in BOTH directions that matter: a scene saved
+         * before the rename still loads, and a hot reload can move live instances onto the new class by
+         * round-tripping them through the same serializer.
+         *
+         * Returns null if neither the name nor anything it redirects to exists.
+         */
+        static CClass* ResolveClass(const FName& Name);
+
+        /** Every minted class whose C# type is gone but whose name redirects to a live type, so a reload can
+         *  move its instances across before it is retired. */
+        static void GatherRenamedClasses(THashSet<CClass*>& Out);
     };
 }

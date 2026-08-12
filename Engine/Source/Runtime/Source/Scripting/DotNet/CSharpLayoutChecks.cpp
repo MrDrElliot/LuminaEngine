@@ -46,6 +46,9 @@ namespace Lumina
     LE_REGISTER_LAYOUT("FQuat",        FQuat);
     LE_REGISTER_LAYOUT("FMatrix",      FMatrix4);
     LE_REGISTER_LAYOUT("FTransform",   FTransform);
+    // FName is POD, so C# mirrors it by value; this is what stops a field added on either side
+    // from silently shifting every element of an FName container.
+    LE_REGISTER_LAYOUT("FName",        FName);
     LE_REGISTER_LAYOUT("FInputActionState", FInputActionState);
     LE_REGISTER_LAYOUT("FUIntVector2", FUIntVector2);
     LE_REGISTER_LAYOUT("FUIntVector3", FUIntVector3);
@@ -56,10 +59,10 @@ namespace Lumina
     // layout (SSO flag at byte 23, heap ptr@0 / size@8; vector mpBegin@0 / mpEnd@8). size_type is 64-bit.
     static_assert(sizeof(size_t) == 8, "NativeMarshal assumes a 64-bit eastl size_type.");
 
-    // LuminaSharp.VectorOps (NativeList.cs) overlays FVectorOps and calls these three by offset.
-    static_assert(offsetof(FVectorOps, PushBack) == 16, "VectorOps.PushBack offset drift (update NativeList.cs).");
-    static_assert(offsetof(FVectorOps, RemoveAt) == 24, "VectorOps.RemoveAt offset drift (update NativeList.cs).");
-    static_assert(offsetof(FVectorOps, Clear)    == 32, "VectorOps.Clear offset drift (update NativeList.cs).");
+    // LuminaSharp.VectorOps (TVector.cs) overlays FVectorOps and calls these three by offset.
+    static_assert(offsetof(FVectorOps, PushBack) == 16, "VectorOps.PushBack offset drift (update TVector.cs).");
+    static_assert(offsetof(FVectorOps, RemoveAt) == 24, "VectorOps.RemoveAt offset drift (update TVector.cs).");
+    static_assert(offsetof(FVectorOps, Clear)    == 32, "VectorOps.Clear offset drift (update TVector.cs).");
 
 #if defined(LE_DEBUG) || defined(LE_DEVELOPMENT)
     namespace

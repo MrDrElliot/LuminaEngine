@@ -49,6 +49,7 @@ namespace Lumina
         // bAlwaysReport: report the parse outcome even when it matches the previous reload. Pass it for a
         // deliberate action; leave it off for the debounced auto reload.
         void ReloadDocument(bool bAlwaysReport = false);
+        // Width/Height are the VISIBLE canvas size in screen pixels; the texture is padded up from it.
         void EnsurePreviewTarget(uint32 Width, uint32 Height);
         void TearDownPreview();
         void StartWatching();
@@ -224,8 +225,17 @@ namespace Lumina
 
         Rml::Context*               PreviewContext = nullptr;
         RHI::FManagedTexture        PreviewTarget;
+
+        // The VISIBLE canvas: the Rml context's dimensions and its render viewport, in screen pixels.
+        // One context pixel is one screen pixel, so overlay/drag math converts 1:1 and text rasterizes
+        // at its displayed size instead of being resampled on the way to the pane.
         uint32                      PreviewWidth = 0;
         uint32                      PreviewHeight = 0;
+
+        // The backing texture, padded up to a block so a continuous resize or zoom drag reuses one
+        // allocation. Only the top-left PreviewWidth x PreviewHeight region is ever sampled.
+        uint32                      PreviewRTWidth = 0;
+        uint32                      PreviewRTHeight = 0;
 
         // Canvas resolution selected by the user (decoupled from pane size).
         // 0,0 = "fit to pane".

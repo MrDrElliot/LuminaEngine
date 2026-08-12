@@ -3836,7 +3836,36 @@ namespace Lumina
         {
             FFixedString NewWidgetPath = SelectedPath + "/" + "NewWidget.rml";
             NewWidgetPath = VFS::MakeUniqueFilePath(NewWidgetPath);
-            VFS::WriteFile(NewWidgetPath, "");
+
+            // A skeleton rather than an empty file. An empty .rml opens to a blank preview with no
+            // indication of what is missing, and the one rule nothing else teaches -- RmlUi has no
+            // user-agent stylesheet, so every element is display:inline until a rule says otherwise --
+            // costs a new author an afternoon when their first panel silently collapses.
+            VFS::WriteFile(NewWidgetPath,
+                "<rml>\n"
+                "<head>\n"
+                "    <title>New Widget</title>\n"
+                "    <style>\n"
+                "        /* RmlUi has no HTML-like default stylesheet: EVERY element starts as\n"
+                "           display:inline, so containers must be made block (or flex) or they\n"
+                "           collapse and ignore width/padding/margin. */\n"
+                "        div { display: block; box-sizing: border-box; }\n"
+                "\n"
+                "        /* Fill the view and center the panel. 'dp' scales with the display. */\n"
+                "        body { width: 100%; height: 100%; display: flex;\n"
+                "               align-items: center; justify-content: center;\n"
+                "               color: #cdd6f4; font-size: 16dp; }\n"
+                "\n"
+                "        .panel { padding: 24dp; background-color: #1e1e2e;\n"
+                "                 border-width: 1dp; border-color: #45475a; border-radius: 8dp; }\n"
+                "    </style>\n"
+                "</head>\n"
+                "<body>\n"
+                "    <div class=\"panel\">\n"
+                "        <div>Hello from RmlUi.</div>\n"
+                "    </div>\n"
+                "</body>\n"
+                "</rml>\n");
             RefreshContentBrowser();
         }
 

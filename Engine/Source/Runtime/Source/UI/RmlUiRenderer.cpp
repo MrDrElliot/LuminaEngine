@@ -350,6 +350,7 @@ namespace Lumina
             RHI::Core::Retire(Batch.VertexBuffer);
             Batch.VertexCapacity = Math::Max<uint64>(VertexBytes + VertexBytes / 2, 4096);
             Batch.VertexBuffer   = RHI::Malloc(Batch.VertexCapacity, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
+            RHI::SetDebugName(Batch.VertexBuffer, "RmlUi.BatchVertices");
         }
 
         if (Batch.IndexBuffer == 0 || Batch.IndexCapacity < IndexBytes)
@@ -357,6 +358,7 @@ namespace Lumina
             RHI::Core::Retire(Batch.IndexBuffer);
             Batch.IndexCapacity = Math::Max<uint64>(IndexBytes + IndexBytes / 2, 4096);
             Batch.IndexBuffer   = RHI::Malloc(Batch.IndexCapacity, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
+            RHI::SetDebugName(Batch.IndexBuffer, "RmlUi.BatchIndices");
         }
     }
 

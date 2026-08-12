@@ -492,7 +492,7 @@ namespace Lumina::Reflection
                     return false; // element kind we don't bind -> skip the whole array
                 }
                 B.Kind = EBind::Array;
-                B.CSharp = Elem->CSharp;  // element C# type; the property type is NativeReadOnlyList<this>
+                B.CSharp = Elem->CSharp;  // element C# type; the property type is TSpan<this>
                 B.bReadOnly = true;       // read-only view this pass (no add/remove/set)
                 B.Elem = eastl::move(Elem);
                 return true;
@@ -605,7 +605,7 @@ namespace Lumina::Reflection
 
         // A read-only TVector<T> view. For a blittable element type it is a zero-copy ReadOnlySpan<T> read in
         // place at the property's offset (no boundary crossing, no native thunk). Otherwise (FString/FName or
-        // an opaque struct element) it falls back to NativeReadOnlyList<element> backed by count + per-index
+        // an opaque struct element) it falls back to TSpan<element> backed by count + per-index
         // thunks.
         void EmitCSharpArray(FCodeWriter& Writer, FReflectedProperty& Prop, const FBinding& B,
             const eastl::string& Friendly, const eastl::string& Module, const eastl::string& TypeName)
@@ -627,13 +627,13 @@ namespace Lumina::Reflection
                 }
                 else
                 {
-                    // Writable: a NativeList<T> view = (vector pointer, element-type ops table). Reads decode
+                    // Writable: a TVector<T> view = (vector pointer, element-type ops table). Reads decode
                     // the header in place (zero crossing); Add/Remove/Clear call the ops fn-ptrs.
                     const eastl::string OpsFn = "__vecopsfn_" + Member;
                     const eastl::string OpsField = "__ops_" + Member;
                     const eastl::string OpsThunk = "LuminaSharp_VecOps_" + Friendly + "_" + Member;
-                    Writer.Linef("public global::LuminaSharp.NativeList<%s> %s =>", B.Elem->CSharp.c_str(), PropName.c_str());
-                    Writer.Linef("    new global::LuminaSharp.NativeList<%s>((nint)Handle + %s, %s);", B.Elem->CSharp.c_str(), OffName.c_str(), OpsField.c_str());
+                    Writer.Linef("public global::Lumina.TVector<%s> %s =>", B.Elem->CSharp.c_str(), PropName.c_str());
+                    Writer.Linef("    new global::Lumina.TVector<%s>((nint)Handle + %s, %s);", B.Elem->CSharp.c_str(), OffName.c_str(), OpsField.c_str());
                     Writer.Linef("private static readonly delegate* unmanaged[Cdecl]<nint> %s =", OpsFn.c_str());
                     Writer.Linef("    (delegate* unmanaged[Cdecl]<nint>)global::LuminaSharp.NativeBindings.Resolve(\"%s\", \"%s\");",
                         Module.c_str(), OpsThunk.c_str());
@@ -670,8 +670,8 @@ namespace Lumina::Reflection
                 return;
             }
 
-            Writer.Linef("public global::LuminaSharp.NativeReadOnlyList<%s> %s =>", ECS.c_str(), PropName.c_str());
-            Writer.Linef("    new global::LuminaSharp.NativeReadOnlyList<%s>(%s(Handle), (nint)Handle, &%s);", ECS.c_str(), CountFn.c_str(), ProjFn.c_str());
+            Writer.Linef("public global::Lumina.TSpan<%s> %s =>", ECS.c_str(), PropName.c_str());
+            Writer.Linef("    new global::Lumina.TSpan<%s>(%s(Handle), (nint)Handle, &%s);", ECS.c_str(), CountFn.c_str(), ProjFn.c_str());
             Writer.Linef("private static %s %s(nint __h, int __i)%s", ECS.c_str(), ProjFn.c_str(), ProjBody.c_str());
 
             EmitThunkField(Writer, Module, CountThunk, CountFn, "System.IntPtr", "int");
@@ -698,7 +698,7 @@ namespace Lumina::Reflection
             }
         }
 
-        // A writable blittable-element TVector<T> exposes its element-type ops table to C# (NativeList<T>):
+        // A writable blittable-element TVector<T> exposes its element-type ops table to C# (TVector<T>):
         // one nullary export per writable array property returning the shared GetVectorOps<T>() pointer.
         void EmitVectorOpsExport(FCodeWriter& Writer, FReflectedProperty& Prop, const FBinding& B,
             const eastl::string& Friendly, const char* Api)
@@ -921,7 +921,7 @@ namespace Lumina::Reflection
             }
             else if (!IsReadOnlyProp(Prop))
             {
-                // Writable blittable element: the element-type ops table for NativeList<T>. Read-only
+                // Writable blittable element: the element-type ops table for TVector<T>. Read-only
                 // blittable arrays need no export (C# reads the header directly as a ReadOnlySpan).
                 EmitVectorOpsExport(Writer, Prop, B, Friendly, Api);
             }

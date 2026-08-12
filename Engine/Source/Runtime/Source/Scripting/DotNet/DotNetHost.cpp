@@ -135,6 +135,7 @@ namespace Lumina::DotNet
         typedef void  (CORECLR_DELEGATE_CALLTYPE* EnumerateEntitySystemsFn)(void*, void*);
         typedef void* (CORECLR_DELEGATE_CALLTYPE* CreateScriptableFn)(const char*, int32, uint64);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* EnumerateScriptablesFn)(void*, void*);
+        typedef void  (CORECLR_DELEGATE_CALLTYPE* EnumerateScriptableAliasesFn)(void*, void*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* ApplyScriptableDefaultsFn)(const char*, int32, uint64);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* EnumerateScriptStructsFn)(void*, void*);
         typedef void  (CORECLR_DELEGATE_CALLTYPE* GetScriptStructSchemaFn)(const char*, int32, void*, void*);
@@ -170,6 +171,7 @@ namespace Lumina::DotNet
             EnumerateEntitySystemsFn    EnumerateEntitySystems;
             CreateScriptableFn          CreateScriptable;
             EnumerateScriptablesFn      EnumerateScriptables;
+            EnumerateScriptableAliasesFn EnumerateScriptableAliases;
             ApplyScriptableDefaultsFn   ApplyScriptableDefaults;
             EnumerateScriptStructsFn    EnumerateScriptStructs;
             GetScriptStructSchemaFn     GetScriptStructSchema;
@@ -224,6 +226,20 @@ namespace Lumina::DotNet
             {
                 Out->emplace_back(FString(Name, static_cast<size_t>(Len)));
             }
+        }
+
+        // Sink one (prior name, current name) pair; Ctx is the out pair vector.
+        void LmScriptableAliasSink(void* Ctx, const char* Old, int OldLen, const char* New, int NewLen)
+        {
+            auto* Out = static_cast<TVector<FScriptableAlias>*>(Ctx);
+            if (Out == nullptr || Old == nullptr || OldLen <= 0 || New == nullptr || NewLen <= 0)
+            {
+                return;
+            }
+            FScriptableAlias Alias;
+            Alias.OldName = FString(Old, static_cast<size_t>(OldLen));
+            Alias.NewName = FString(New, static_cast<size_t>(NewLen));
+            Out->emplace_back(eastl::move(Alias));
         }
 
         // Sink the managed EnumerateScriptables calls once per Scriptable C# type; Ctx is the out desc vector.
@@ -992,6 +1008,7 @@ namespace Lumina::DotNet
         LM_RESOLVE(EnumerateEntitySystems, EnumerateEntitySystemsFn);
         LM_RESOLVE(CreateScriptable,       CreateScriptableFn);      // optional: only when scripts ship Scriptables
         LM_RESOLVE(EnumerateScriptables,   EnumerateScriptablesFn);
+        LM_RESOLVE(EnumerateScriptableAliases, EnumerateScriptableAliasesFn);   // optional: only when a script class declares [Alias]
         LM_RESOLVE(ApplyScriptableDefaults, ApplyScriptableDefaultsFn);   // optional: only when a script declares a [Property] initializer
         LM_RESOLVE(EnumerateScriptStructs, EnumerateScriptStructsFn);   // optional: only when scripts ship data types
         LM_RESOLVE(GetScriptStructSchema,  GetScriptStructSchemaFn);
@@ -1383,6 +1400,15 @@ namespace Lumina::DotNet
         if (bInitialized && GManaged.EnumerateScriptables)
         {
             GManaged.EnumerateScriptables(reinterpret_cast<void*>(&LmScriptableSink), &Out);
+        }
+    }
+
+    void GatherScriptableAliases(TVector<FScriptableAlias>& Out)
+    {
+        Out.clear();
+        if (bInitialized && GManaged.EnumerateScriptableAliases)
+        {
+            GManaged.EnumerateScriptableAliases(reinterpret_cast<void*>(&LmScriptableAliasSink), &Out);
         }
     }
 

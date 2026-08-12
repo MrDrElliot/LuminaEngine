@@ -63,6 +63,31 @@ namespace Lumina
 
         const TVector<TUniquePtr<FWorldContext>>& GetContexts() const { return Contexts; }
 
+        /**
+         * Every live world, in context order, skipping a context whose world has already gone away.
+         *
+         * The plain "I need to touch all of them" walk, so callers stop reimplementing the null checks over
+         * GetContexts. A template rather than a TFunction so it costs nothing at the call site; the body is
+         * short enough to be worth inlining.
+         *
+         * Do NOT create or destroy a world inside Fn: that mutates Contexts underneath this loop.
+         */
+        template<typename TFunc>
+        void ForEachWorld(TFunc&& Fn)
+        {
+            for (const TUniquePtr<FWorldContext>& Context : Contexts)
+            {
+                if (Context == nullptr)
+                {
+                    continue;
+                }
+                if (CWorld* World = Context->World.Get())
+                {
+                    Fn(*World);
+                }
+            }
+        }
+
     private:
 
         TVector<TUniquePtr<FWorldContext>> Contexts;

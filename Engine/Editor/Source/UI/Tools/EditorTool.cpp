@@ -93,6 +93,7 @@ namespace Lumina
         const uint32 SourceWidth  = Desc.Dimension.x;
         const uint32 SourceHeight = Desc.Dimension.y;
         const RHI::GPUPtr Readback = RHI::Malloc((uint64)SourceWidth * SourceHeight * 4u, RHI::kDefaultAlign, RHI::EMemoryType::CPURead);
+        RHI::SetDebugName(Readback, "Readback.ToolPreview");
 
         auto RecordCapture = [&]()
         {

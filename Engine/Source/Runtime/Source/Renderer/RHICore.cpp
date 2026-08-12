@@ -94,6 +94,7 @@ namespace Lumina::RHI::Core
         for (FTransientSlice& Slice : GCore.Slices)
         {
             Slice.Gpu = Malloc(GTransientSliceSize, kDefaultAlign, EMemoryType::CPUWrite);
+            SetDebugName(Slice.Gpu, "Transient.RingSlice");
             Slice.Cpu = static_cast<std::byte*>(ToHost(Slice.Gpu));
             Slice.Capacity = GTransientSliceSize;
             Slice.Cursor.store(0, std::memory_order_relaxed);
@@ -513,6 +514,7 @@ namespace Lumina::RHI::Core
             {
                 Retire(Slice.Gpu);
                 Slice.Gpu = Malloc(NewCapacity, kDefaultAlign, EMemoryType::CPUWrite);
+                SetDebugName(Slice.Gpu, "Transient.RingSlice");
                 Slice.Cpu = static_cast<std::byte*>(ToHost(Slice.Gpu));
                 Slice.Capacity = NewCapacity;
             }
@@ -632,6 +634,9 @@ namespace Lumina::RHI::Core
         if (RawOffset + Padded > Slice.Capacity)
         {
             const GPUPtr Mem = Malloc(Size, Alignment, EMemoryType::CPUWrite);
+            // Named even on this hot-ish path: an overflow that shows up in the memory tool is the
+            // signal that the ring slice is undersized, and it costs a fraction of the Malloc above.
+            SetDebugName(Mem, "Transient.Overflow");
             Retire(Mem);
             return FTransientAlloc{ .Cpu = ToHost(Mem), .Gpu = Mem };
         }

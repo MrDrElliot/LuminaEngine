@@ -94,17 +94,54 @@ public class ScriptPropertyTypeTest : EntityScript
     [Property(Category = "Text", Tooltip = "An FString living in native memory.")]
     public string StringValue = "declared default";
 
+    // An interned name. POD on both sides -- an id, not text -- so it is read and written in place exactly
+    // like FVector3 above, and only ToString()/FromString() ever touch the name table.
+    [Property(Category = "Text", Tooltip = "An interned FName.")]
+    public FName NameValue = new FName("DeclaredName");
+
     [Property(Category = "References", Tooltip = "An asset reference, drawn as an asset picker.")]
     public FSoftObjectPath AssetValue = new FSoftObjectPath("/Engine/Resources/Content/DefaultMaterial");
+
+    // A TYPED soft reference. Stored natively as the same single FSoftObjectPath the bare one above is, and
+    // differing only in filtering the picker to CTexture -- which is the whole point of routing asset
+    // references by the IAssetRef interface rather than by type name: this needed no rewriter change.
+    [Property(Category = "References", Tooltip = "A typed soft reference, drawn as a CTexture picker.")]
+    public TSoftObjectPtr<CTexture> TextureRef = new TSoftObjectPtr<CTexture>("/Engine/Resources/Content/DefaultTexture");
+
+    // A HARD reference, and a different kind entirely: a native object property, so it holds a live pointer
+    // that keeps its target alive and can name any CObject rather than only something with an asset path.
+    // No initializer -- null is the only default a hard reference can express.
+    [Property(Category = "References", Tooltip = "A hard object reference, drawn as an object picker.")]
+    public TObjectPtr<CWorld> WorldRef;
 
     //~ Containers hand out a VIEW over the native container rather than a managed copy, because there is only
     //~ ever one copy of the value and native owns it. No initializer: assigning the view is meaningless.
 
     [Property(Category = "Containers")]
-    public NativeList<int> IntList;
+    public TVector<int> IntList;
 
     [Property(Category = "Containers")]
-    public NativeList<FVector3> VectorList;
+    public TVector<FVector3> VectorList;
+
+    [Property(Category = "Containers")]
+    public THashMap<int, float> WeightByIndex;
+
+    // FName needs no marshalling to be an element: it is POD, so the blittable path carries it and the
+    // native stride is sizeof(FName) on both sides.
+    [Property(Category = "Containers")]
+    public TVector<FName> Tags;
+
+    // A list of FStrings. Its own view type rather than TVector<string>, which cannot exist: a managed
+    // reference cannot live in native memory.
+    [Property(Category = "Containers")]
+    public TVector<FString> Names;
+
+    // A list of object references. Its own view type rather than TVector<TObjectPtr<T>>, which the
+    // classifier refuses: a TObjectPtr is a bare pointer, so it passes the unmanaged test and would be copied
+    // as 8 raw bytes -- storing the pointer without taking a reference, and without releasing the one it
+    // replaced. Writes here go through the native assignment, which does both.
+    [Property(Category = "Containers")]
+    public TVector<TObjectPtr<CWorld>> Worlds;
 
     private int Failures;
 
@@ -122,8 +159,11 @@ public class ScriptPropertyTypeTest : EntityScript
         CheckEnum();
         CheckStructs();
         CheckString();
+        CheckName();
         CheckAsset();
+        CheckObjectReference();
         CheckContainers();
+        CheckObjectList();
 
         if (Failures == 0)
         {
@@ -155,8 +195,11 @@ public class ScriptPropertyTypeTest : EntityScript
         Debug.Log($"[ScriptPropertyTypeTest]   Vector4=({Vector4Value.X}, {Vector4Value.Y}, {Vector4Value.Z}, {Vector4Value.W}) (1, 0, 0, 1)");
         Debug.Log($"[ScriptPropertyTypeTest]   Transform.Location=({TransformValue.Location.X}, {TransformValue.Location.Y}, {TransformValue.Location.Z}) (0, 0, 0)");
         Debug.Log($"[ScriptPropertyTypeTest]   String=\"{StringValue}\" (\"declared default\")");
+        Debug.Log($"[ScriptPropertyTypeTest]   Name=\"{NameValue}\" (\"DeclaredName\")");
         Debug.Log($"[ScriptPropertyTypeTest]   Asset=\"{AssetValue.Path}\" (\"/Engine/Resources/Content/DefaultMaterial\")");
-        Debug.Log($"[ScriptPropertyTypeTest]   IntList.Count={IntList.Count}  VectorList.Count={VectorList.Count} (containers have no default)");
+        Debug.Log($"[ScriptPropertyTypeTest]   TextureRef=\"{TextureRef.Path.Path}\" (\"/Engine/Resources/Content/DefaultTexture\")");
+        Debug.Log($"[ScriptPropertyTypeTest]   WorldRef={(WorldRef.IsValid ? "set" : "null")} (null)");
+        Debug.Log($"[ScriptPropertyTypeTest]   IntList.Count={IntList.Count}  VectorList.Count={VectorList.Count}  WeightByIndex.Count={WeightByIndex.Count}  Names.Count={Names.Count}  Tags.Count={Tags.Count}  Worlds.Count={Worlds.Count} (containers have no default)");
     }
 
     private void Check(string What, bool bCondition, string Detail)
@@ -263,6 +306,28 @@ public class ScriptPropertyTypeTest : EntityScript
         StringValue = Saved;
     }
 
+    private void CheckName()
+    {
+        FName Saved = NameValue;
+
+        NameValue = new FName("Renamed");
+        Check("FName", NameValue == new FName("Renamed"), NameValue.ToString());
+
+        // Interning is case-insensitive, so these are the SAME name -- comparing ids rather than text is the
+        // whole reason an FName is not just a string, and this is what proves the id survived the round trip
+        // rather than the characters.
+        Check("FName case-insensitive", NameValue == new FName("RENAMED"), "Renamed == RENAMED");
+
+        // Text out has to come back through the name table; a value that round-tripped as raw bytes but lost
+        // its interning would compare equal above and still fail here.
+        Check("FName resolves to text", NameValue.ToString() == "Renamed", NameValue.ToString());
+
+        NameValue = FName.None;
+        Check("FName none", NameValue.IsNone && NameValue.ToString().Length == 0, "none");
+
+        NameValue = Saved;
+    }
+
     private void CheckAsset()
     {
         FSoftObjectPath Saved = AssetValue;
@@ -274,6 +339,47 @@ public class ScriptPropertyTypeTest : EntityScript
         Check("FSoftObjectPath (cleared)", !AssetValue.IsValid, "invalid");
 
         AssetValue = Saved;
+
+        // The typed soft reference goes through the same single native FSoftObjectPath, so what this proves
+        // beyond the above is that the IAssetRef routing reconstructs the WRAPPER type on read -- a path that
+        // came back as a bare FSoftObjectPath would not compile here, and one that came back default would
+        // read as empty.
+        TSoftObjectPtr<CTexture> SavedTexture = TextureRef;
+
+        TextureRef = new TSoftObjectPtr<CTexture>("/Engine/Resources/Content/SomeTexture");
+        Check("TSoftObjectPtr", TextureRef.Path.Path == "/Engine/Resources/Content/SomeTexture", TextureRef.Path.Path);
+
+        TextureRef = new TSoftObjectPtr<CTexture>("");
+        Check("TSoftObjectPtr (cleared)", !TextureRef.IsValid, "invalid");
+
+        TextureRef = SavedTexture;
+    }
+
+    /// <summary>
+    /// A hard object reference: a native object property holding a live CObject pointer, not a path.
+    ///
+    /// The world is the object used because it is the one CObject a script can always reach -- this file has
+    /// to run in any project, with or without content. As everywhere else here the check restores what it
+    /// found, so a hard reference to the world never survives into a save.
+    /// </summary>
+    private void CheckObjectReference()
+    {
+        TObjectPtr<CWorld> Saved = WorldRef;
+        CWorld Live = World;
+
+        WorldRef = new TObjectPtr<CWorld>(Live);
+        Check("TObjectPtr assign", WorldRef.IsValid, WorldRef.IsValid ? "valid" : "null");
+
+        // Reference equality, not merely a non-null pointer. Reading an object property has to hand back the
+        // ONE canonical wrapper for that native object, or `==` between two reads would silently be false and
+        // every identity comparison a script author writes would be wrong.
+        Check("TObjectPtr identity", ReferenceEquals(WorldRef.Value, Live), "same wrapper instance as World");
+        Check("TObjectPtr identity (re-read)", ReferenceEquals(WorldRef.Value, WorldRef.Value), "stable across reads");
+
+        WorldRef = new TObjectPtr<CWorld>(null);
+        Check("TObjectPtr cleared", !WorldRef.IsValid && WorldRef.Value is null, "null");
+
+        WorldRef = Saved;
     }
 
     private void CheckContainers()
@@ -282,28 +388,144 @@ public class ScriptPropertyTypeTest : EntityScript
         // re-reading the property has to see the same contents. Cleared at the end rather than restored --
         // a container has no authored default to put back, and leaving test data in it would look like state
         // the scene saved.
-        NativeList<int> Ints = IntList;
+        TVector<int> Ints = IntList;
         Ints.Clear();
         Ints.Add(10);
         Ints.Add(20);
         Ints.Add(30);
 
-        Check("NativeList<int> count", IntList.Count == 3, IntList.Count.ToString());
-        Check("NativeList<int> values", IntList.Count == 3 && IntList[0] == 10 && IntList[2] == 30,
+        Check("TVector<int> count", IntList.Count == 3, IntList.Count.ToString());
+        Check("TVector<int> values", IntList.Count == 3 && IntList[0] == 10 && IntList[2] == 30,
             IntList.Count == 3 ? $"[{IntList[0]}, {IntList[1]}, {IntList[2]}]" : "<wrong count>");
 
         IntList.RemoveAt(0);
-        Check("NativeList<int> remove", IntList.Count == 2 && IntList[0] == 20,
+        Check("TVector<int> remove", IntList.Count == 2 && IntList[0] == 20,
             IntList.Count == 2 ? $"[{IntList[0]}, {IntList[1]}]" : "<wrong count>");
 
-        NativeList<FVector3> Vectors = VectorList;
+        TVector<FVector3> Vectors = VectorList;
         Vectors.Clear();
         Vectors.Add(new FVector3(1.0f, 0.0f, 0.0f));
         Vectors.Add(new FVector3(0.0f, 1.0f, 0.0f));
 
-        Check("NativeList<FVector3>", VectorList.Count == 2 && VectorList[1].Y == 1.0f, VectorList.Count.ToString());
+        Check("TVector<FVector3>", VectorList.Count == 2 && VectorList[1].Y == 1.0f, VectorList.Count.ToString());
+
+        // An element by reference, which is what makes `List[i] = x` work through a property at all.
+        IntList[0] = 99;
+        Check("TVector<int> indexer set", IntList[0] == 99, IntList[0].ToString());
+
+        THashMap<int, float> Weights = WeightByIndex;
+        Weights.Clear();
+        Weights.Set(1, 0.5f);
+        Weights.Set(2, 1.5f);
+        Weights.Set(1, 2.5f);   // insert-or-assign, so this overwrites rather than adding
+
+        Check("THashMap count", WeightByIndex.Count == 2, WeightByIndex.Count.ToString());
+        Check("THashMap overwrite", WeightByIndex.TryGetValue(1, out float One) && One == 2.5f, One.ToString());
+        Check("THashMap contains", WeightByIndex.ContainsKey(2) && !WeightByIndex.ContainsKey(7), "1 and 2 present, 7 absent");
+
+        float Sum = 0.0f;
+        foreach (System.Collections.Generic.KeyValuePair<int, float> Pair in WeightByIndex)
+        {
+            Sum += Pair.Value;
+        }
+        Check("THashMap enumerate", Sum == 4.0f, Sum.ToString());
+
+        WeightByIndex.Remove(2);
+        Check("THashMap remove", WeightByIndex.Count == 1 && !WeightByIndex.ContainsKey(2), WeightByIndex.Count.ToString());
+
+        // A list of FStrings. One TVector like every other -- the element is Lumina.FString, the explicit
+        // mirror of the native string, and the view reads and writes each slot through eastl rather than by
+        // bytes. Get/Set rather than the indexer: a ref into the slot would let a plain assignment copy the
+        // string's heap pointer, which is exactly the aliasing the marshal exists to prevent.
+        TVector<FString> Strings = Names;
+        Strings.Clear();
+        Strings.Add("first");
+        // Long enough to need heap storage, which is what proves the element was constructed rather than
+        // memzeroed: a zeroed FString reads as a plausible empty string and corrupts on assignment.
+        Strings.Add("a name long enough to need heap storage rather than the small-string buffer");
+
+        Check("TVector<FString> count", Names.Count == 2, Names.Count.ToString());
+        Check("TVector<FString> read", Names.Get(0) == "first", Names.Get(0));
+        Check("TVector<FString> heap", Names.Get(1).Length == 74, $"{Names.Get(1).Length} chars");
+
+        Names.Set(0, "replaced");
+        Check("TVector<FString> set", Names.Get(0) == "replaced", Names.Get(0));
+
+        Names.Insert(1, "inserted");
+        Check("TVector<FString> insert", Names.Count == 3 && Names.Get(1) == "inserted", Names.Get(1));
+        Check("TVector<FString> indexof", Names.IndexOf("replaced") == 0, Names.IndexOf("replaced").ToString());
+
+        Names.RemoveAt(0);
+        Check("TVector<FString> remove", Names.Count == 2 && Names.Get(0) == "inserted", Names.Get(0));
+
+        // The indexer IS available for a plain element, and refuses a marshalled one rather than handing out
+        // a reference an assignment could corrupt.
+        bool bRefused = false;
+        try { _ = Names[0]; } catch (System.NotSupportedException) { bRefused = true; }
+        Check("TVector<FString> refuses ref", bRefused, "indexer throws, Get/Set is the way in");
+
+        // FName elements ride the blittable path -- no Get/Set needed, the indexer works, because the
+        // element really is its bytes.
+        TVector<FName> TagList = Tags;
+        TagList.Clear();
+        TagList.Add(new FName("Alpha"));
+        TagList.Add(new FName("Beta"));
+
+        Check("TVector<FName> count", Tags.Count == 2, Tags.Count.ToString());
+        Check("TVector<FName> read", Tags[0] == new FName("Alpha"), Tags[0].ToString());
+        Check("TVector<FName> indexof", Tags.IndexOf(new FName("Beta")) == 1, Tags.IndexOf(new FName("Beta")).ToString());
+
+        Tags[0] = new FName("Gamma");
+        Check("TVector<FName> indexer set", Tags[0] == new FName("Gamma"), Tags[0].ToString());
 
         IntList.Clear();
         VectorList.Clear();
+        WeightByIndex.Clear();
+        Names.Clear();
+        Tags.Clear();
+    }
+
+    /// <summary>
+    /// The object-reference list, which is the container whose elements are not plain bytes.
+    /// <para>Every write here goes through the native refcounted assignment rather than a byte copy, so what
+    /// is actually under test is that Add/Set/Insert/RemoveAt each leave the reference counts right. A leak
+    /// does not show up as a wrong value -- it shows up much later as an object that never dies -- so the
+    /// observable half is checked here and the counting half is what the native assignment exists to do.</para>
+    /// </summary>
+    private void CheckObjectList()
+    {
+        CWorld Live = World;
+        TObjectPtr<CWorld> Ref = new TObjectPtr<CWorld>(Live);
+
+        TVector<TObjectPtr<CWorld>> List = Worlds;
+        List.Clear();
+        List.Add(Ref);
+        List.Add(default);
+
+        Check("TVector<TObjectPtr> count", Worlds.Count == 2, Worlds.Count.ToString());
+        Check("TVector<TObjectPtr> read", Worlds.Count == 2 && ReferenceEquals(Worlds.Get(0).Value, Live),
+            "canonical wrapper");
+        Check("TVector<TObjectPtr> null element", Worlds.Count == 2 && !Worlds.Get(1).IsValid, "null");
+
+        // Overwriting a slot has to release what it held and take a reference on the new object; assigning
+        // over the null slot is the direction that would silently under-release if it byte-copied.
+        Worlds.Set(1, Ref);
+        Check("TVector<TObjectPtr> set", ReferenceEquals(Worlds.Get(1).Value, Live), "assigned over null");
+
+        Worlds.Set(0, default);
+        Check("TVector<TObjectPtr> clear slot", !Worlds.Get(0).IsValid, "null");
+
+        Check("TVector<TObjectPtr> indexof", Worlds.IndexOf(Ref) == 1, Worlds.IndexOf(Ref).ToString());
+
+        Worlds.Insert(0, Ref);
+        Check("TVector<TObjectPtr> insert", Worlds.Count == 3 && ReferenceEquals(Worlds.Get(0).Value, Live),
+            Worlds.Count.ToString());
+
+        Worlds.RemoveAt(0);
+        Check("TVector<TObjectPtr> remove", Worlds.Count == 2, Worlds.Count.ToString());
+
+        // Clearing releases every reference the list held, which is the half a leak would live in.
+        Worlds.Clear();
+        Check("TVector<TObjectPtr> cleared", Worlds.Count == 0, Worlds.Count.ToString());
     }
 }

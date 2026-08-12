@@ -2,14 +2,13 @@
 #include "ShaderCompiler.h"
 #include "ShaderCache.h"
 #include "ShaderLibrary.h"
+#include "ShaderPaths.h"
 #include "RenderResource.h"
 #include "RHI.h"
 #include "slang-com-ptr.h"
 #include "slang.h"
 #include "Core/CommandLine/CommandLine.h"
 #include "Core/Console/ConsoleVariable.h"
-#include "Core/Plugin/Plugin.h"
-#include "Core/Plugin/PluginManager.h"
 #include "Core/Serialization/MemoryArchiver.h"
 #include "Core/Utils/Defer.h"
 #include "ErrorHandling/CrashTracker.h"
@@ -314,31 +313,38 @@ namespace Lumina
 
     static FSlangSessionPool GSlangSessionPool;
 
-    /** VFS roots Slang resolves #includes against: the engine shader tree plus every enabled plugin's.
-        Invariant for a whole batch -- this used to be rebuilt, plugin walk and VFS::Exists included,
-        once per shader. */
+    /** VFS roots Slang resolves #includes against: engine, plugins, project, module-registered (see
+        Shaders::GetSearchRoots). Invariant for a whole batch -- this used to be rebuilt, plugin walk and
+        VFS::Exists included, once per shader. */
     static TVector<FString> BuildShaderSearchRoots()
     {
         TVector<FString> Roots;
-        Roots.reserve(8);
-        Roots.emplace_back("/Engine/Resources/Shaders");
+        Shaders::GetSearchRoots(Roots);
+        return Roots;
+    }
 
-        for (const FPlugin* Plugin : FPluginManager::Get().GetAllPlugins())
+    /** Search paths for ONE shader: its own directory first, then the shared roots. Slang resolves
+        loadModule by file name against the search paths in order, so without the leading own-directory
+        entry a game shader named like an engine one would compile the engine's file under the game's
+        identity. */
+    static void BuildModuleSearchPaths(FStringView ShaderPath, const TVector<FString>& SharedRoots, TVector<FString>& OutPaths)
+    {
+        const FStringView OwnDir = VFS::Parent(ShaderPath, true);
+
+        OutPaths.clear();
+        OutPaths.reserve(SharedRoots.size() + 1);
+        if (!OwnDir.empty())
         {
-            if (!Plugin->IsEnabled() || !Plugin->IsContentMounted())
-            {
-                continue;
-            }
-
-            FString Root = Plugin->GetMountAlias();
-            Root += "/Shaders";
-            if (VFS::Exists(Root))
-            {
-                Roots.emplace_back(Move(Root));
-            }
+            OutPaths.emplace_back(OwnDir.data(), OwnDir.size());
         }
 
-        return Roots;
+        for (const FString& Root : SharedRoots)
+        {
+            if (OutPaths.empty() || Root != OutPaths[0])
+            {
+                OutPaths.push_back(Root);
+            }
+        }
     }
 
     /** Backing storage for the pointers a SessionDesc holds; must outlive the createSession call. */
@@ -598,10 +604,14 @@ namespace Lumina
         Options.reserve(NumInputs);
         SourceHashes.reserve(NumInputs);
 
+        // Hoisted: include resolution for the source hash walks these, and rebuilding them per shader
+        // means a plugin walk and a VFS::Exists per root, per shader.
+        const TVector<FString> CacheSearchRoots = BuildShaderSearchRoots();
+
         uint32 NumHits = 0;
         for (uint32 i = 0; i < NumInputs; ++i)
         {
-            const uint64 SrcHash = FShaderCache::ComputeSourceSetHash(ShaderPaths[i], CompileOptions[i].MacroDefinitions);
+            const uint64 SrcHash = FShaderCache::ComputeSourceSetHash(ShaderPaths[i], CompileOptions[i].MacroDefinitions, CacheSearchRoots);
             FShaderHeader Cached;
             if (SrcHash != 0 && FShaderCache::TryLoad(ShaderPaths[i], CompileOptions[i].MacroDefinitions, SrcHash, Cached))
             {
@@ -659,6 +669,7 @@ namespace Lumina
 
             const TVector<FString> SearchRoots = BuildShaderSearchRoots();
             FSessionScratch Scratch;
+            TVector<FString> ModuleSearchPaths;
 
             for (uint32 i = Start; i < End; ++i)
             {
@@ -668,15 +679,17 @@ namespace Lumina
                 // dropped shaders simply did not exist until something demanded one.
                 const auto CompileStart = std::chrono::high_resolution_clock::now();
 
+                const FString&    Path     = Paths[i];
+                const FStringView FileName = VFS::FileName(Path);
+
+                BuildModuleSearchPaths(Path, SearchRoots, ModuleSearchPaths);
+
                 Slang::ComPtr<slang::ISession> Session =
-                    CreateCompileSession(GlobalSession, SearchRoots, Options[i].MacroDefinitions, Scratch);
+                    CreateCompileSession(GlobalSession, ModuleSearchPaths, Options[i].MacroDefinitions, Scratch);
                 if (!Session)
                 {
                     continue;
                 }
-
-                const FString&  Path     = Paths[i];
-                const FStringView FileName = VFS::FileName(Path);
 
                 Slang::ComPtr<slang::IBlob>   Diagnostics;
                 Slang::ComPtr<slang::IModule> SlangModule;
@@ -684,17 +697,19 @@ namespace Lumina
 
                 if (Diagnostics)
                 {
-                    LOG_WARN("Slang diagnostics for '{}': {}", FileName, (const char*)Diagnostics->getBufferPointer());
+                    LOG_WARN("Slang diagnostics for '{}': {}", Path, (const char*)Diagnostics->getBufferPointer());
                 }
 
                 if (!SlangModule)
                 {
-                    LOG_ERROR("Slang: failed to load shader module '{}'", FileName);
+                    LOG_ERROR("Slang: failed to load shader module '{}'", Path);
                     continue;
                 }
 
+                // Identity is the full virtual path, not the file name: two roots may ship the same
+                // name, and the library keys entries on whatever lands in DebugName.
                 FShaderHeader Shader;
-                if (!BuildShaderFromModule(SlangModule, FileName, Options[i], Shader))
+                if (!BuildShaderFromModule(SlangModule, Path, Options[i], Shader))
                 {
                     continue;
                 }
@@ -702,7 +717,7 @@ namespace Lumina
                 const auto CompileEnd = std::chrono::high_resolution_clock::now();
                 const std::chrono::duration<double, std::milli> DurationMs = CompileEnd - CompileStart;
 
-                LOG_TRACE("Compiled {0} in {1:.2f} ms (Thread {2})", FileName, DurationMs.count(), Thread);
+                LOG_TRACE("Compiled {0} in {1:.2f} ms (Thread {2})", Path, DurationMs.count(), Thread);
 
                 RHI::GetCrashTracker().RegisterShader(Shader.Binaries, Shader.DebugName);
 
@@ -722,38 +737,9 @@ namespace Lumina
 
     void FSpirVShaderCompiler::Initialize()
     {
-        TVector<FString> Shaders;
-        auto EnumerateShadersUnder = [&](FStringView Root)
-        {
-            VFS::DirectoryIterator(Root, [&](const VFS::FFileInfo& Info)
-            {
-                if (Info.GetExt() == ".slang")
-                {
-                    Shaders.emplace_back(Info.VirtualPath.c_str());
-                }
-            });
-        };
-
-        EnumerateShadersUnder("/Engine/Resources/Shaders");
-        for (const FPlugin* Plugin : FPluginManager::Get().GetAllPlugins())
-        {
-            if (!Plugin->IsEnabled())
-            {
-                continue;
-            }
-            if (!Plugin->IsContentMounted())
-            {
-                continue;
-            }
-            FString Root = Plugin->GetMountAlias();
-            Root += "/Shaders";
-            if (VFS::Exists(Root))
-            {
-                EnumerateShadersUnder(FStringView(Root.c_str(), Root.size()));
-            }
-        }
-
-        if (Shaders.empty())
+        // Engine tree + engine plugins; the project and its plugins mount later and are picked up by the
+        // second Shaders::PrecompileNewRoots() call at the end of FEngine::LoadProject.
+        if (Shaders::PrecompileNewRoots() == 0)
         {
             uint32 Loaded = 0;
             VFS::DirectoryIterator(FShaderCache::CACHE_DIR, [&](const VFS::FFileInfo& Info)
@@ -773,19 +759,6 @@ namespace Lumina
                 ++Loaded;
             });
             LOG_INFO("Shader cache: loaded {} packaged shaders (no source available).", Loaded);
-        }
-        else
-        {
-            TVector<FShaderCompileOptions> Options(Shaders.size());
-            for (int i = 0; i < Shaders.size(); ++i)
-            {
-                Options[i].bGenerateReflectionData = false;
-            }
-
-            CompileShaderPaths(Shaders, Options, [&] (const FShaderHeader& Header)
-            {
-                FShaderLibrary::Commit(Header);
-            });
         }
 
         #if USING(WITH_EDITOR)

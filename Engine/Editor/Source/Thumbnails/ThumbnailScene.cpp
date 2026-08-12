@@ -195,6 +195,7 @@ namespace Lumina
             {
                 return false;
             }
+            RHI::SetDebugName(Out.Readback, "Readback.Thumbnail");
 
             RHI::FCmdListH CL = RHI::OpenCommandList();
             RHI::CmdBarrier(CL, RHI::EStageFlags::AllCommands, RHI::EStageFlags::Transfer);

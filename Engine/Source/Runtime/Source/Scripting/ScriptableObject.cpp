@@ -1,6 +1,8 @@
 ﻿#include "RuntimePCH.h"
 #include "ScriptableObject.h"
 
+#include "EntityScript.h"
+
 #include "Containers/Array.h"
 #include "DotNet/DotNetHost.h"
 #include "Core/Object/Class.h"
@@ -62,6 +64,14 @@ namespace Lumina
         THashMap<FName, CClass*>& GMintedClasses()
         {
             static THashMap<FName, CClass*> Map;
+            return Map;
+        }
+
+        // Prior script class name -> its current name, from the `[Alias]` attributes on C# script classes.
+        // Names rather than CClass*, so a redirect can be registered before its target has been minted.
+        THashMap<FName, FName>& GClassRedirects()
+        {
+            static THashMap<FName, FName> Map;
             return Map;
         }
 
@@ -229,13 +239,146 @@ namespace Lumina
     }
 
 
+    void FScriptableRegistry::RegisterClassRedirect(const FName& OldName, const FName& NewName)
+    {
+        if (OldName.IsNone() || NewName.IsNone() || OldName == NewName)
+        {
+            return;
+        }
+        // A name that is currently a live class is not a redirect source: some other type claiming it as a
+        // prior name must not shadow the real one.
+        if (FindObject<CClass>(OldName) != nullptr && GMintedClasses().find(OldName) == GMintedClasses().end())
+        {
+            LOG_WARN("Scriptable: '{}' is claimed as a prior name but a native class already owns it; ignored.",
+                OldName.c_str());
+            return;
+        }
+        GClassRedirects()[OldName] = NewName;
+    }
+
+    CClass* FScriptableRegistry::ResolveClass(const FName& Name)
+    {
+        if (Name.IsNone())
+        {
+            return nullptr;
+        }
+        // Redirects are consulted BEFORE the name itself. During the reload that renames a type both
+        // classes exist for a moment, and the whole point of the redirect is to move instances OFF the old
+        // one -- preferring the live old class would silently strand them on it. RegisterClassRedirect
+        // already refuses to shadow a name a non-minted class owns, so this cannot hijack a native class.
+        if (GClassRedirects().find(Name) == GClassRedirects().end())
+        {
+            if (CClass* Direct = FindObject<CClass>(Name))
+            {
+                return Direct;
+            }
+            return nullptr;
+        }
+
+        // Follow the chain, so two renames in a row still resolve. Bounded by the redirect count, with a
+        // visited set because a bad pair of aliases could otherwise cycle forever.
+        THashSet<FName> Seen;
+        FName Current = Name;
+        Seen.insert(Current);
+        while (true)
+        {
+            auto It = GClassRedirects().find(Current);
+            if (It == GClassRedirects().end())
+            {
+                return nullptr;
+            }
+            Current = It->second;
+            if (Seen.find(Current) != Seen.end())
+            {
+                LOG_WARN("Scriptable: class redirects cycle at '{}'; giving up.", Current.c_str());
+                return nullptr;
+            }
+            Seen.insert(Current);
+            if (CClass* Renamed = FindObject<CClass>(Current))
+            {
+                return Renamed;
+            }
+        }
+    }
+
+    void FScriptableRegistry::GatherRenamedClasses(THashSet<CClass*>& Out)
+    {
+        for (const auto& [OldName, NewName] : GClassRedirects())
+        {
+            auto Minted = GMintedClasses().find(OldName);
+            if (Minted == GMintedClasses().end())
+            {
+                continue;   // nothing minted under the old name, so nothing to move
+            }
+            // Only if the rename target actually exists; otherwise the old class is all there is and moving
+            // its instances would destroy them.
+            if (FindObject<CClass>(NewName) != nullptr)
+            {
+                Out.insert(Minted->second);
+            }
+        }
+    }
+
     void FScriptableRegistry::RefreshMintedClasses()
     {
         TVector<DotNet::FScriptableTypeDesc> Descs;
         DotNet::GatherScriptableTypes(Descs);
 
-        // Retire minted classes whose C# type vanished this generation (source deleted or renamed), so a
-        // deleted script's class doesn't linger in FindObject / editor pickers forever.
+        // Where any renamed class went, FIRST: GatherRenamedClasses below reads these to decide what to
+        // evacuate, and the component load path reads them to resolve a saved reference to the old name.
+        TVector<DotNet::FScriptableAlias> Aliases;
+        DotNet::GatherScriptableAliases(Aliases);
+        for (const DotNet::FScriptableAlias& Alias : Aliases)
+        {
+            RegisterClassRedirect(FName(Alias.OldName.c_str()), FName(Alias.NewName.c_str()));
+        }
+
+        // Evacuate before minting anything, because a class whose property set changed cannot be rebuilt
+        // with instances of it alive: an object's size is baked in at allocation. Gathering the schemas twice
+        // (once here, once in the mint loop) is the price of knowing which classes are affected BEFORE the
+        // first one is touched, and a reload that changes no layout evacuates nothing at all.
+        THashSet<CClass*> NeedRebuild;
+        for (const DotNet::FScriptableTypeDesc& Desc : Descs)
+        {
+            const FName NameId(Desc.TypeName.c_str());
+            auto Existing = GMintedClasses().find(NameId);
+            if (Existing == GMintedClasses().end() || Existing->second->GetDefaultObjectIfCreated() == nullptr)
+            {
+                continue;   // a first mint appends rather than rebuilds
+            }
+
+            Scripting::FScriptExportSchema Schema;
+            TVector<Scripting::FScriptPropertyEntry> Defaults;
+            if (DotNet::GatherScriptSchema(Desc.TypeName, Schema, Defaults)
+                && !Scripting::ScriptClassLayoutMatches(Existing->second, Schema))
+            {
+                NeedRebuild.insert(Existing->second);
+            }
+        }
+
+        // A RENAMED class needs the same round trip for a different reason: its instances are not the wrong
+        // size, they are the wrong class. Evacuating them writes the old name, and Restore resolves that
+        // through the redirect onto the new class, which is what actually moves them across. Doing it here
+        // also empties the old class, so the retire pass below stops deferring on it.
+        GatherRenamedClasses(NeedRebuild);
+
+        TVector<EntityScripts::FEvacuatedScripts> Evacuated;
+        if (!NeedRebuild.empty())
+        {
+            const int32 Count = EntityScripts::Evacuate(NeedRebuild, Evacuated);
+            if (Count > 0)
+            {
+                LOG_DISPLAY("Scriptable: {} script class(es) changed shape or name; evacuated {} entit{}.",
+                    NeedRebuild.size(), Count, Count == 1 ? "y" : "ies");
+            }
+        }
+
+        // Retire minted classes whose C# type vanished this generation, so a deleted script's class doesn't
+        // linger in FindObject / editor pickers forever.
+        //
+        // AFTER the evacuation, not before. A renamed class is "vanished" by name, and its instances were
+        // just evacuated, so it retires on this reload instead of deferring to the next one and leaving the
+        // editor showing a class nothing can be attached to.
         THashSet<FName> LiveNames;
         for (const DotNet::FScriptableTypeDesc& Desc : Descs)
         {
@@ -268,15 +411,20 @@ namespace Lumina
                 // update the mask the shims read.
                 Minted->ScriptOverrides = Desc.OverrideFlags;
 
-                // Append this type's [Property] members as real FPropertys in the trailing block. Only on a
-                // FIRST mint: the class keeps its identity (and its live instances' layout) across reloads,
-                // so re-appending would both duplicate the properties and move every existing object's
-                // fields. A reload that CHANGES the property set is handled by MigrateMintedClassLayout.
+                // Append this type's [Property] members as real FPropertys in the trailing block.
+                //
+                // Two paths, because a minted class is reused by name across reloads and keeps its identity.
+                // On a FIRST mint the block is simply appended. On a LATER reload the block already exists,
+                // so re-appending would duplicate the properties and move every existing object's fields;
+                // the block has to be torn down and rebuilt instead, and only when the schema actually
+                // changed (the common reload edits a method body and leaves the layout alone).
+                Scripting::FScriptExportSchema Schema;
+                TVector<Scripting::FScriptPropertyEntry> Defaults;
+                const bool bHaveSchema = DotNet::GatherScriptSchema(Desc.TypeName, Schema, Defaults);
+
                 if (Minted->GetDefaultObjectIfCreated() == nullptr)
                 {
-                    Scripting::FScriptExportSchema Schema;
-                    TVector<Scripting::FScriptPropertyEntry> Defaults;
-                    if (DotNet::GatherScriptSchema(Desc.TypeName, Schema, Defaults) && Schema.IsValid())
+                    if (bHaveSchema && Schema.IsValid())
                     {
                         const uint32 Count = Scripting::AppendScriptPropertiesToClass(Minted, Schema);
                         if (Count > 0)
@@ -285,6 +433,16 @@ namespace Lumina
                                 Desc.TypeName.c_str(), Count, Count == 1 ? "y" : "ies");
                             NeedDefaults.push_back(Minted);
                         }
+                    }
+                }
+                else if (bHaveSchema && !Scripting::ScriptClassLayoutMatches(Minted, Schema))
+                {
+                    // Refuses (and warns) while live instances remain, since they are laid out at the old
+                    // size. Evacuating them is the caller's job and is not wired up yet, so today this
+                    // rebuilds on reload only when nothing is attached.
+                    if (Scripting::MigrateMintedClassLayout(Minted, Schema))
+                    {
+                        NeedDefaults.push_back(Minted);
                     }
                 }
 
@@ -306,6 +464,15 @@ namespace Lumina
         {
             CObject* DefaultObject = Minted->GetDefaultObject();
             DotNet::ApplyScriptableDefaults(Minted->GetName().ToString(), DefaultObject);
+        }
+
+        // Last, so every rebuilt class has its new layout AND its new defaults: a restored script is
+        // constructed from the CDO and then has its saved values replayed over it, so a property added this
+        // reload has to already carry the author's initializer or it would come back zeroed.
+        if (!Evacuated.empty())
+        {
+            const int32 Count = EntityScripts::Restore(Evacuated);
+            LOG_DISPLAY("Scriptable: restored {} entit{} after the rebuild.", Count, Count == 1 ? "y" : "ies");
         }
     }
 }

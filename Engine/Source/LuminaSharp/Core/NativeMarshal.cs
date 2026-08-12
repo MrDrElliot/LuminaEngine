@@ -52,15 +52,36 @@ public static unsafe class NativeMarshal
         return DecodeVector<T>((byte*)Container + Offset);
     }
 
-    // The single source of truth for the EASTL vector layout (mpBegin@0, mpEnd@8); shared by ReadVector and NativeList.
+    // The single source of truth for the EASTL vector layout (mpBegin@0, mpEnd@8); shared by ReadVector and TVector.
     internal static Span<T> DecodeVector<T>(byte* Header) where T : unmanaged
     {
+        DecodeVectorRaw(Header, Unsafe.SizeOf<T>(), out byte* Data, out int Count);
+        return Count == 0 ? Span<T>.Empty : new Span<T>(Data, Count);
+    }
+
+    /// <summary>
+    /// The same decode without a type: the element stride comes from the caller (the ops table reports it),
+    /// so this works for an element whose NATIVE size is not <c>Unsafe.SizeOf&lt;T&gt;()</c> -- an FString
+    /// element is 24 native bytes while its managed handle is not, and an object slot is a bare pointer.
+    ///
+    /// Reading the header in place is what keeps <see cref="TVector{T}.Count"/> free. Asking the ops table
+    /// instead would be a <c>delegate* unmanaged</c> call with a GC transition on every loop iteration.
+    /// </summary>
+    internal static void DecodeVectorRaw(byte* Header, int ElementSize, out byte* Data, out int Count)
+    {
+        Data = null;
+        Count = 0;
+        if (Header == null || ElementSize <= 0)
+        {
+            return;
+        }
         byte* Begin = *(byte**)Header;
         byte* End = *(byte**)(Header + sizeof(void*));
         if (Begin == null || End <= Begin)
         {
-            return Span<T>.Empty;
+            return;
         }
-        return new Span<T>(Begin, (int)((End - Begin) / Unsafe.SizeOf<T>()));
+        Data = Begin;
+        Count = (int)((End - Begin) / ElementSize);
     }
 }

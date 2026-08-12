@@ -63,7 +63,7 @@ namespace Lumina
             .Height   = H,
             .Format   = GetRHIFormat(),
             .bStorage = true,
-            .DebugName = "TextureRenderTarget",
+            .DebugName = "RenderTarget.Texture",
         });
 
         const float Clear[4] = { ClearColor.r, ClearColor.g, ClearColor.b, ClearColor.a };

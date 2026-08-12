@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using LuminaSharp.ScriptProperties;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -70,18 +71,6 @@ internal static class ScriptPropertyRewriter
             });
     }
 
-    // How one member's value is reached; mirrors the native property kinds. See EmitAccessor.
-    private enum EAccess
-    {
-        Unsupported,
-        Blittable,
-        Enum,
-        String,
-        AssetPath,
-        Object,
-        View,
-    }
-
     private sealed class Rewriter : CSharpSyntaxRewriter
     {
         private readonly SemanticModel Model;
@@ -120,19 +109,19 @@ internal static class ScriptPropertyRewriter
                         continue;
                     }
 
-                    EAccess Access = Classify(Symbol.Type, out ITypeSymbol? Element);
-                    if (Access == EAccess.Unsupported)
+                    // Every judgement about the member's type comes from the shared classifier, which the IDE
+                    // analyzer runs too -- so what fails here is what was already underlined as you typed it.
+                    FScriptPropertyClassification Classification = ScriptPropertyClassifier.Classify(Symbol.Type);
+                    if (!Classification.IsSupported)
                     {
                         Errors.Add($"{FilePath}({Line(Declarator)}): [Property] '{Symbol.Name}' has type "
-                                 + $"'{Symbol.Type.ToDisplayString()}', which cannot be viewed over native storage. "
-                                 + "Supported: numbers, bool, enums, blittable struct mirrors, string, "
-                                 + "Lumina.FSoftObjectPath, NativeObject-derived references, and NativeList<T> of an unmanaged T.");
+                                 + $"'{Symbol.Type.ToDisplayString()}': {Classification.Rejection}");
                         continue;
                     }
 
                     // A container is a view over storage native owns, so it has no setter and no default:
                     // assigning it is meaningless while its contents are fully editable.
-                    if (Access == EAccess.View && Declarator.Initializer != null)
+                    if (Classification.IsView && Declarator.Initializer != null)
                     {
                         Errors.Add($"{FilePath}({Line(Declarator)}): [Property] '{Symbol.Name}' is a container. It is a "
                                  + "view over the native storage, so it cannot be initialized; add to it in OnReady instead.");
@@ -149,7 +138,7 @@ internal static class ScriptPropertyRewriter
                         Built = new List<MemberDeclarationSyntax>();
                         Replacements[Field] = Built;
                     }
-                    Built.AddRange(BuildProperty(Field, Declarator, Symbol, TypeName, Access, Element));
+                    Built.AddRange(BuildProperty(Field, Declarator, Symbol, TypeName, Classification));
                 }
             }
 
@@ -187,57 +176,92 @@ internal static class ScriptPropertyRewriter
         /// wrote rather than an offset into generated text.
         /// </summary>
         private IEnumerable<MemberDeclarationSyntax> BuildProperty(FieldDeclarationSyntax Field, VariableDeclaratorSyntax Declarator,
-            IFieldSymbol Symbol, string TypeName, EAccess Access, ITypeSymbol? Element)
+            IFieldSymbol Symbol, string TypeName, FScriptPropertyClassification Classification)
         {
             string Name = Symbol.Name;
             string Type = Symbol.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
             string Offset = $"__lazyoff_{Name}.Get(\"{TypeName}\", \"{Name}\")";
             string Token = $"__lazyprop_{Name}.Get(\"{TypeName}\", \"{Name}\")";
-            bool bWritable = Access != EAccess.View && !Symbol.IsReadOnly;
+            bool bWritable = !Classification.IsView && !Symbol.IsReadOnly;
 
             string Get;
             string? Set = null;
             string Unbound = "default";
 
-            switch (Access)
+            switch (Classification.Access)
             {
-                case EAccess.Blittable:
+                case EScriptAccess.Blittable:
                     Get = $"global::System.Runtime.CompilerServices.Unsafe.ReadUnaligned<{Type}>((void*)((nint)Handle + {Offset}))";
                     Set = $"global::System.Runtime.CompilerServices.Unsafe.WriteUnaligned((void*)((nint)Handle + {Offset}), value)";
                     break;
 
                 // The minted enum property is int64-wide whatever the C# underlying type is, so the whole slot
                 // is read and written as a long -- a 4-byte access would leave the top half stale on writes.
-                case EAccess.Enum:
+                case EScriptAccess.Enum:
                     Get = $"({Type})global::System.Runtime.CompilerServices.Unsafe.ReadUnaligned<long>((void*)((nint)Handle + {Offset}))";
                     Set = $"global::System.Runtime.CompilerServices.Unsafe.WriteUnaligned<long>((void*)((nint)Handle + {Offset}), (long)value)";
                     break;
 
-                case EAccess.String:
+                case EScriptAccess.String:
                     Get = $"global::LuminaSharp.NativeMarshal.ReadString((nint)Handle + {Offset})";
                     Set = $"global::LuminaSharp.Native.PropSetString(Handle, {Token}, value)";
                     Unbound = "\"\"";
                     break;
 
-                case EAccess.AssetPath:
-                    Get = $"new {Type}(global::LuminaSharp.Native.PropGetAssetPath(Handle, {Token}))";
-                    Set = $"global::LuminaSharp.Native.PropSetAssetPath(Handle, {Token}, value.Path)";
+                // Every asset-reference type is stored natively as one FSoftObjectPath, so all of them go
+                // through the path. Routed by the IAssetRef interface rather than by type name: a new
+                // asset-reference type implements it and needs nothing here.
+                case EScriptAccess.AssetPath:
+                    Get = $"global::LuminaSharp.AssetRefMarshal.Read<{Type}>("
+                        + $"global::LuminaSharp.Native.PropGetAssetPath(Handle, {Token}))";
+                    Set = $"global::LuminaSharp.Native.PropSetAssetPath(Handle, {Token}, "
+                        + $"global::LuminaSharp.AssetRefMarshal.Write(value))";
                     break;
 
                 // The canonical wrapper, so reading twice returns the same instance and reference equality
                 // means what a script author expects.
-                case EAccess.Object:
-                    Get = $"global::LuminaSharp.Wrapper<{Type}>.ForObject(global::LuminaSharp.Native.PropGetObject(Handle, {Token}))";
-                    Set = $"global::LuminaSharp.Native.PropSetObject(Handle, {Token}, value is null ? System.IntPtr.Zero : value.Handle)";
+                // Through NativeObjectMarshal, not Wrapper<T> and value.Handle directly: both are internal or
+                // protected, so generated code in the USER's assembly cannot reach them.
+                case EScriptAccess.Object:
+                    Get = $"global::LuminaSharp.NativeObjectMarshal.FromHandle<{Type}>("
+                        + $"global::LuminaSharp.Native.PropGetObject(Handle, {Token}))";
+                    Set = $"global::LuminaSharp.Native.PropSetObject(Handle, {Token}, "
+                        + "global::LuminaSharp.NativeObjectMarshal.ToHandle(value))";
                     break;
 
-                default:
+                // A hard object reference. Stored natively as an object property (the same as a C++
+                // TObjectPtr), so it keeps its target alive; the value is just the pointer.
+                case EScriptAccess.ObjectPtr:
+                    Get = $"new {Type}(global::LuminaSharp.Native.PropGetObject(Handle, {Token}))";
+                    Set = $"global::LuminaSharp.Native.PropSetObject(Handle, {Token}, value.NativeHandle)";
+                    break;
+
+                case EScriptAccess.MapView:
                 {
-                    string View = $"global::LuminaSharp.NativeList<{Element!.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)}>";
+                    string View = $"global::Lumina.THashMap<{Qualified(Classification.Key!)}, "
+                                + $"{Qualified(Classification.Value!)}>";
+                    Type = View;
+                    Get = $"new {View}((nint)Handle + {Offset}, (nint)global::LuminaSharp.Native.PropMapOps({Token}))";
+                    break;
+                }
+
+                // One view for every element flavour -- plain value, FString, TObjectPtr<T>. What differs
+                // per element is how a slot is read and written, and TVector routes that through
+                // ElementMarshal, so nothing here needs to know which it is.
+                case EScriptAccess.ListView:
+                {
+                    string View = $"global::Lumina.TVector<{Qualified(Classification.Element!)}>";
                     Type = View;
                     Get = $"new {View}((nint)Handle + {Offset}, (nint)global::LuminaSharp.Native.PropVectorOps({Token}))";
                     break;
                 }
+
+                // Listed rather than folded into a default, so adding a kind to the shared classifier without
+                // teaching this emitter fails loudly here instead of being silently emitted as a TVector.
+                default:
+                    Errors.Add($"{FilePath}({Line(Declarator)}): [Property] '{Name}' classified as "
+                             + $"{Classification.Access}, which this emitter does not handle. This is an engine bug.");
+                    return System.Array.Empty<MemberDeclarationSyntax>();
             }
 
             var Builder = new StringBuilder();
@@ -332,39 +356,9 @@ internal static class ScriptPropertyRewriter
             return string.Join(" ", Modifiers);
         }
 
-        private static EAccess Classify(ITypeSymbol Type, out ITypeSymbol? Element)
-        {
-            Element = null;
-
-            if (Type.TypeKind == TypeKind.Enum)
-            {
-                return EAccess.Enum;
-            }
-            if (Type.SpecialType == SpecialType.System_String)
-            {
-                return EAccess.String;
-            }
-            if (Type.ToDisplayString() == "Lumina.FSoftObjectPath")
-            {
-                return EAccess.AssetPath;
-            }
-            for (INamedTypeSymbol? Base = Type.BaseType; Base != null; Base = Base.BaseType)
-            {
-                if (Base.ToDisplayString() == "LuminaSharp.NativeObject")
-                {
-                    return EAccess.Object;
-                }
-            }
-            if (Type is INamedTypeSymbol Named && Named.IsGenericType
-                && Named.ConstructedFrom.ToDisplayString() == "LuminaSharp.NativeList<T>")
-            {
-                Element = Named.TypeArguments[0];
-                return Element.IsUnmanagedType ? EAccess.View : EAccess.Unsupported;
-            }
-
-            // Everything blittable (numbers, bool, and the struct mirrors like FVector3/FTransform) is read in
-            // place. Checked last so the special cases above win.
-            return Type.IsUnmanagedType ? EAccess.Blittable : EAccess.Unsupported;
-        }
+        /// <summary>A type argument as the emitted code must spell it: fully qualified, so a view's element
+        /// type resolves the same wherever the user's own usings happen to point.</summary>
+        private static string Qualified(ITypeSymbol Type) =>
+            Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
     }
 }

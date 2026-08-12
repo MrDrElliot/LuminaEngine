@@ -23,6 +23,7 @@
 #include <cctype>
 #include <cfloat>
 #include <climits>
+#include <cmath>
 #include <random>
 
 namespace Lumina
@@ -2097,51 +2098,11 @@ namespace Lumina
             return;
         }
 
-        // Resolve canvas size: 0,0 means "fit to pane".
-        uint32 EffW = CanvasWidth;
-        uint32 EffH = CanvasHeight;
-        if (EffW == 0 || EffH == 0)
-        {
-            EffW = (uint32)std::max(16.0f, Pane.x);
-            EffH = (uint32)std::max(16.0f, Pane.y);
-
-            // Quantize the fit-to-pane size to a block so a continuous resize drag reuses one render
-            // target instead of recreating it every frame.
-            constexpr uint32 Block = 64u;
-            EffW = ((EffW + Block - 1) / Block) * Block;
-            EffH = ((EffH + Block - 1) / Block) * Block;
-        }
-        EnsurePreviewTarget(EffW, EffH);
-
-        // Auto DPI mirrors the runtime dp convention (ratio = height / 1080), so dp-sized UI previews at the
-        // same relative scale it will in-game rather than overflowing a small canvas at a fixed ratio.
-        if (bAutoDpi && PreviewContext != nullptr && PreviewHeight > 0)
-        {
-            const float AutoDpi = std::clamp(float(PreviewHeight) / 1080.0f, 0.25f, 4.0f);
-            if (std::abs(AutoDpi - PreviewDpiScale) > 0.001f)
-            {
-                PreviewDpiScale = AutoDpi;
-                RmlUi::SetEditorContextDpiScale(PreviewContext, PreviewDpiScale);
-            }
-        }
-
-        if (!PreviewTarget.IsValid() || PreviewContext == nullptr)
+        if (PreviewContext == nullptr)
         {
             ImGui::TextDisabled("Preview unavailable.");
             return;
         }
-
-        // Bridge clear color: checker/transparent clears alpha=0 so ImGui composites bg
-        // below the image; solid clears with the chosen color.
-        FVector4 ClearColor;
-        switch (BgMode)
-        {
-        case EBgMode::Solid:       ClearColor = FVector4(BgColor.x, BgColor.y, BgColor.z, 1.0f); break;
-        case EBgMode::Checker:     // fallthrough, we draw the checker in ImGui below
-        case EBgMode::Transparent: ClearColor = FVector4(0.0f, 0.0f, 0.0f, 0.0f); break;
-        }
-        RmlUi::SetEditorContextClearColor(PreviewContext, ClearColor);
-        RmlUi::SetEditorContextTarget(PreviewContext, PreviewTarget.Texture, FUIntVector2(PreviewWidth, PreviewHeight));
 
         // Scrollable / pan child for the canvas.
         ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(18, 18, 22, 255));
@@ -2178,6 +2139,11 @@ namespace Lumina
             }
         }
 
+        // The canvas ASPECT comes from the selected resolution; 0,0 means "fit to pane", which just
+        // adopts the pane's own aspect so the canvas fills it with no letterboxing.
+        const uint32 EffW = (CanvasWidth  != 0 && CanvasHeight != 0) ? CanvasWidth  : (uint32)std::max(16.0f, PaneSize.x);
+        const uint32 EffH = (CanvasWidth  != 0 && CanvasHeight != 0) ? CanvasHeight : (uint32)std::max(16.0f, PaneSize.y);
+
         // Fit the canvas inside the pane at View=1.0, then scale by ViewZoom.
         const float CanvasAspect = float(EffW) / float(EffH);
         const float PaneAspect   = PaneSize.x / std::max(1.0f, PaneSize.y);
@@ -2192,11 +2158,84 @@ namespace Lumina
             FitSize.y = PaneSize.y;
             FitSize.x = PaneSize.y * CanvasAspect;
         }
-        const ImVec2 CanvasSize(FitSize.x * ViewZoom, FitSize.y * ViewZoom);
+
+        // Rasterize at the size we DISPLAY at, so one context pixel is one screen pixel.
+        //
+        // The preview used to render at the canvas resolution and then let ImGui scale the texture into
+        // this rect. ImGui samples every image bilinearly from a single mip, so any scale other than
+        // exactly 1.0 resampled the whole document on the way to the pane -- and fit-to-pane never hit
+        // 1.0, because the target was quantized UP to a 64px block while the rect it was drawn into was
+        // the un-quantized pane. The result was a permanent ~0.75-1.0x resample that ate one-pixel font
+        // stems and 1dp borders: text lost strokes and thin edges broke into dashes.
+        //
+        // Sizing the context to the on-screen rect removes the resample entirely. The DPI ratio then
+        // carries the selected resolution's scale (see below), so layout still matches the target
+        // resolution -- a 1080p preview shown in a 300px pane lays out with the same proportions, just
+        // rasterized at 300px instead of rasterized at 1080 and crushed down to 300.
+        const float WantW = std::max(16.0f, std::floor(FitSize.x * ViewZoom));
+        const float WantH = std::max(16.0f, std::floor(FitSize.y * ViewZoom));
+
+        // Cap the raster so zoom cannot balloon the target: at 8x on a large pane the honest size would
+        // be a nine-figure pixel count. Two device pixels per screen pixel is more than the pane can
+        // resolve anyway, and past the cap the image simply scales up the way it always did, which costs
+        // sharpness rather than hundreds of megabytes. Applied as ONE factor so the aspect is preserved;
+        // clamping the axes independently would stretch the blit.
+        const float MaxRasterW = std::min(4096.0f, std::max(PaneSize.x * 2.0f, 512.0f));
+        const float MaxRasterH = std::min(4096.0f, std::max(PaneSize.y * 2.0f, 512.0f));
+        const float Shrink     = std::min({ 1.0f, MaxRasterW / WantW, MaxRasterH / WantH });
+
+        const int CanvasPxW = (int)std::max(16.0f, std::floor(WantW * Shrink));
+        const int CanvasPxH = (int)std::max(16.0f, std::floor(WantH * Shrink));
+
+        EnsurePreviewTarget((uint32)CanvasPxW, (uint32)CanvasPxH);
+
+        // Auto DPI mirrors the runtime dp convention (ratio = height / 1080). It is keyed off the
+        // DISPLAYED height, which is what makes the compensation work: at the 1920x1080 preset shown in a
+        // 300px-tall rect the ratio is 300/1080, so dp-sized content occupies the same fraction of the
+        // canvas it would on a real 1080p screen.
+        if (bAutoDpi && PreviewHeight > 0)
+        {
+            const float AutoDpi = std::clamp(float(PreviewHeight) / 1080.0f, 0.25f, 4.0f);
+            if (std::abs(AutoDpi - PreviewDpiScale) > 0.001f)
+            {
+                PreviewDpiScale = AutoDpi;
+                RmlUi::SetEditorContextDpiScale(PreviewContext, PreviewDpiScale);
+            }
+        }
+
+        if (!PreviewTarget.IsValid())
+        {
+            ImGui::EndChild();
+            ImGui::PopStyleColor();
+            ImGui::TextDisabled("Preview unavailable.");
+            return;
+        }
+
+        // Bridge clear color: checker/transparent clears alpha=0 so ImGui composites bg
+        // below the image; solid clears with the chosen color.
+        FVector4 ClearColor;
+        switch (BgMode)
+        {
+        case EBgMode::Solid:       ClearColor = FVector4(BgColor.x, BgColor.y, BgColor.z, 1.0f); break;
+        case EBgMode::Checker:     // fallthrough, we draw the checker in ImGui below
+        case EBgMode::Transparent: ClearColor = FVector4(0.0f, 0.0f, 0.0f, 0.0f); break;
+        }
+        RmlUi::SetEditorContextClearColor(PreviewContext, ClearColor);
+        // The visible size, not the padded texture size: this drives both SetDimensions and the render
+        // viewport, so the document lays out into exactly the region we sample back.
+        RmlUi::SetEditorContextTarget(PreviewContext, PreviewTarget.Texture, FUIntVector2(PreviewWidth, PreviewHeight));
+
+        // Unclamped, the display rect IS the raster, so the blit is exactly 1:1. Clamped (deep zoom), it
+        // stays the size the user asked for and the smaller raster scales up into it.
+        const ImVec2 CanvasSize = (Shrink >= 1.0f)
+            ? ImVec2((float)CanvasPxW, (float)CanvasPxH)
+            : ImVec2(WantW, WantH);
         const ImVec2 PaneCenter(PaneMin.x + PaneSize.x * 0.5f, PaneMin.y + PaneSize.y * 0.5f);
+        // Snapped to whole pixels. Texel centers have to land on pixel centers or the 1:1 mapping above
+        // is undone by a half-pixel offset, which blurs text just as effectively as scaling it.
         const ImVec2 CanvasMin(
-            PaneCenter.x - CanvasSize.x * 0.5f + ViewPan.x,
-            PaneCenter.y - CanvasSize.y * 0.5f + ViewPan.y);
+            std::floor(PaneCenter.x - CanvasSize.x * 0.5f + ViewPan.x),
+            std::floor(PaneCenter.y - CanvasSize.y * 0.5f + ViewPan.y));
         const ImVec2 CanvasMax(CanvasMin.x + CanvasSize.x, CanvasMin.y + CanvasSize.y);
 
         if (BgMode == EBgMode::Checker)
@@ -2222,12 +2261,19 @@ namespace Lumina
         }
         // Transparent, draw nothing, the pane background shows through.
 
+        // Sample only the region the context actually rendered into. The texture is padded up to a block
+        // so a resize drag reuses one allocation, and the padding is never part of the document.
         const ImTextureID Tex = (ImTextureID)(uint64)PreviewTarget.SampledSlot;
-        DL->AddImage(Tex, CanvasMin, CanvasMax);
+        const ImVec2 Uv1(
+            float(PreviewWidth)  / float(std::max(1u, PreviewRTWidth)),
+            float(PreviewHeight) / float(std::max(1u, PreviewRTHeight)));
+        DL->AddImage(Tex, CanvasMin, CanvasMax, ImVec2(0.0f, 0.0f), Uv1);
         DL->AddRect(CanvasMin, CanvasMax, IM_COL32(80, 80, 95, 255), 0.0f, 0, 1.0f);
 
-        // Convert canvas-space px to pane-space px:
-        const float ScalePx = CanvasSize.x / float(EffW);
+        // Convert canvas-space px to pane-space px. The context is sized to the displayed rect, so this
+        // is 1.0 by construction; it stays a computed ratio so the overlay math below still holds if the
+        // two ever diverge (a clamped target, a mid-resize frame).
+        const float ScalePx = CanvasSize.x / float(std::max(1u, PreviewWidth));
 
         if (bShowGrid && GridSize > 0.0f)
         {
@@ -2286,8 +2332,11 @@ namespace Lumina
                     IM_COL32(170, 170, 190, 220),
                     [&]
                     {
-                        static char Buf[128];
-                        std::snprintf(Buf, sizeof(Buf), "%ux%u  view %.2fx  dpi %.2fx", EffW, EffH, ViewZoom, PreviewDpiScale);
+                        // Both sizes, because they are now different things: the resolution the document
+                        // is laid out FOR, and the pixels it is actually rasterized INTO.
+                        static char Buf[160];
+                        std::snprintf(Buf, sizeof(Buf), "%ux%u  raster %ux%u  view %.2fx  dpi %.2fx",
+                                      EffW, EffH, PreviewWidth, PreviewHeight, ViewZoom, PreviewDpiScale);
                         return Buf;
                     }());
 
@@ -2469,7 +2518,18 @@ namespace Lumina
         {
             return;
         }
-        if (PreviewTarget.IsValid() && PreviewWidth == Width && PreviewHeight == Height)
+
+        // The visible canvas tracks the on-screen rect EXACTLY -- that is what makes one context pixel
+        // one screen pixel. Only the texture is quantized, so a resize or zoom drag still reuses one
+        // allocation instead of reallocating every frame.
+        PreviewWidth  = Width;
+        PreviewHeight = Height;
+
+        constexpr uint32 Block = 64u;
+        const uint32 RTWidth  = ((Width  + Block - 1) / Block) * Block;
+        const uint32 RTHeight = ((Height + Block - 1) / Block) * Block;
+
+        if (PreviewTarget.IsValid() && PreviewRTWidth == RTWidth && PreviewRTHeight == RTHeight)
         {
             return;
         }
@@ -2482,14 +2542,14 @@ namespace Lumina
 
         PreviewTarget = RHI::Textures::Create(RHI::FTexture2DDesc
         {
-            .Width  = Width,
-            .Height = Height,
+            .Width  = RTWidth,
+            .Height = RTHeight,
             .Format = EFormat::RGBA8_UNORM,
             .bRenderTarget = true,
             .DebugName = "RmlUiEditor.PreviewTarget",
         });
-        PreviewWidth = Width;
-        PreviewHeight = Height;
+        PreviewRTWidth  = RTWidth;
+        PreviewRTHeight = RTHeight;
 
         // No ReloadDocument() here: the document content is unchanged on a resize, and the context
         // reflows to the new size automatically (TickEditorContexts -> SetDimensions(E->Size)). The new
@@ -2515,6 +2575,8 @@ namespace Lumina
         }
         PreviewWidth = 0;
         PreviewHeight = 0;
+        PreviewRTWidth = 0;
+        PreviewRTHeight = 0;
     }
 
     void FRmlUiEditorTool::StartWatching()

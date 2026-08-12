@@ -9,11 +9,11 @@ namespace Lumina
     // table per element type, produced by GetVectorOps<T>(). This is the single source of truth for "how to
     // operate on a reflected vector," shared by:
     //   - FArrayProperty (Core reflection): serialization / net / copy / editor property table.
-    //   - LuminaSharp.NativeList<T> (C#): reads decode the EASTL header in place; mutators call these fn-ptrs.
+    //   - Lumina.TVector<T> (C#): reads decode the EASTL header in place; mutators call these fn-ptrs.
     //
     // It is deliberately decoupled from reflection: any TVector<T> -- a reflected member, a function return, a
     // plain local -- is operated on the same way. The field order/layout MUST match LuminaSharp.VectorOps
-    // (Core/NativeList.cs); the C# side reads PushBack/RemoveAt/Clear at fixed offsets. Captureless lambdas
+    // (Core/ContainerOps.cs); the C# side reads PushBack/RemoveAt/Clear at fixed offsets. Captureless lambdas
     // convert to plain function pointers whose calling convention matches C#'s delegate* unmanaged[Cdecl].
     struct FVectorOps
     {

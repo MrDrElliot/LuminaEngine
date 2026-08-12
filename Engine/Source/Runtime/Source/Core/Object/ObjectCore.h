@@ -229,7 +229,7 @@ namespace Lumina
     typedef void (*GetterFuncPtr)(const void* InContainer, void* OutValue);
 
     // The full operation set for a reflected TVector<T> is now a single shared ops table (Containers/
-    // ContainerOps.h, also used by C# NativeList<T>) rather than per-property hand-rolled fn-ptrs.
+    // ContainerOps.h, also used by C# TVector<T>) rather than per-property hand-rolled fn-ptrs.
     struct FVectorOps;
     struct FMapOps;
 

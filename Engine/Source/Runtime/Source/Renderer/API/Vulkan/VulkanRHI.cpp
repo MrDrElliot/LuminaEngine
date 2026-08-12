@@ -413,6 +413,7 @@ namespace Lumina::RHI
         uint64          Size;
         #if USING(WITH_EDITOR)
         char            Name[kMaxBlockNameLength];
+        EMemoryType     MemType;
         #endif
     };
 
@@ -424,8 +425,18 @@ namespace Lumina::RHI
         uint64          SubmitOrdinal;
         char            Name[kMaxBlockNameLength];
     };
-    
+
     static constexpr uint32 kFreedBlockHistory = 4096;
+
+    // Textures go to VMA directly rather than through Malloc, so they are absent from MemoryBlocks and
+    // would otherwise be the unattributed majority of VRAM. Keyed by handle: streaming churns thousands
+    // of these, and a free has to stay O(1).
+    struct FTextureRecord
+    {
+        uint64          Size;
+        FTextureDesc    Desc;
+        char            Name[kMaxBlockNameLength];
+    };
 #endif
     
     struct FTexture
@@ -591,6 +602,11 @@ namespace Lumina::RHI
         uint32                          FreedBlockCursor = 0;
         // Bumped per submit, stamped into FreedBlocks. Relaxed: it is a coarse age, not a synchroniser.
         TAtomic<uint64>                 SubmitOrdinal{0};
+
+        // Live textures, for the memory tool's per-purpose breakdown. Its own lock rather than
+        // MemoryMutex: texture creation and buffer allocation both run on the streaming jobs.
+        THashMap<uint64, FTextureRecord> TextureLedger;
+        FMutex                           TextureLedgerMutex;
 #endif
 
         TSegmentMap<FSemaphore>         Semaphores;
@@ -927,6 +943,45 @@ namespace Lumina::RHI
             RingName, DesiredSliceSize >> 20, Cap >> 20, SliceCount, Aperture >> 20);
         return Cap;
     }
+
+#if USING(WITH_EDITOR)
+    void GetGPUAllocations(TVector<FGPUAllocation>& Out)
+    {
+        Out.clear();
+        if (GDevice == nullptr)
+        {
+            return;
+        }
+
+        {
+            FScopeLock Lock(GDevice->MemoryMutex);
+            Out.reserve(GDevice->MemoryBlocks.size());
+
+            for (const FMemoryBlock& Block : GDevice->MemoryBlocks)
+            {
+                FGPUAllocation& Alloc = Out.push_back();
+                Alloc.Kind   = EGPUAllocationKind::Buffer;
+                Alloc.Size   = Block.Size;
+                Alloc.Memory = Block.MemType;
+                std::snprintf(Alloc.Name, kMaxGPUAllocationName, "%s", Block.Name);
+            }
+        }
+
+        {
+            FScopeLock Lock(GDevice->TextureLedgerMutex);
+            Out.reserve(Out.size() + GDevice->TextureLedger.size());
+
+            for (const auto& [Handle, Record] : GDevice->TextureLedger)
+            {
+                FGPUAllocation& Alloc = Out.push_back();
+                Alloc.Kind = EGPUAllocationKind::Texture;
+                Alloc.Size = Record.Size;
+                Alloc.Desc = Record.Desc;
+                std::snprintf(Alloc.Name, kMaxGPUAllocationName, "%s", Record.Name);
+            }
+        }
+    }
+#endif
 
     FGPUDeviceInfo GetDeviceInfo()
     {
@@ -2436,6 +2491,7 @@ namespace Lumina::RHI
 
 #if USING(WITH_EDITOR)
         Block.Name[0] = '\0';
+        Block.MemType = Type;
 #endif
 
         FScopeLock Lock(GDevice->MemoryMutex);
@@ -2516,6 +2572,15 @@ namespace Lumina::RHI
         FTexture& TextureData = GDevice->Textures[Texture];
 
         NameObject(VK_OBJECT_TYPE_IMAGE, (uint64)TextureData.Image, Name);
+
+#if USING(WITH_EDITOR)
+        FScopeLock Lock(GDevice->TextureLedgerMutex);
+        auto It = GDevice->TextureLedger.find(Texture.Handle);
+        if (It != GDevice->TextureLedger.end())
+        {
+            CopyBlockName(It->second.Name, Name);
+        }
+#endif
     }
 
     void Free(GPUPtr GPU)
@@ -2727,6 +2792,13 @@ namespace Lumina::RHI
                     }
                 }
             }
+
+#if USING(WITH_EDITOR)
+            {
+                FScopeLock Lock(GDevice->TextureLedgerMutex);
+                GDevice->TextureLedger.erase(Texture.Handle);
+            }
+#endif
 
             GDevice->Textures.Erase(Texture);
         }
@@ -3458,7 +3530,16 @@ namespace Lumina::RHI
         VkImage Image = VK_NULL_HANDLE;
         VmaAllocation Allocation = VK_NULL_HANDLE;
 
-        const VkResult ImageResult = vmaCreateImage(GDevice->Allocator, &Info, &AllocationCreateInfo, &Image, &Allocation, nullptr);
+#if USING(WITH_EDITOR)
+        // Only the memory tool asks how big an image actually landed; the driver's answer is free to
+        // collect but pointless to ask for in a game build.
+        VmaAllocationInfo  AllocationInfo    = {};
+        VmaAllocationInfo* AllocationInfoPtr = &AllocationInfo;
+#else
+        VmaAllocationInfo* AllocationInfoPtr = nullptr;
+#endif
+
+        const VkResult ImageResult = vmaCreateImage(GDevice->Allocator, &Info, &AllocationCreateInfo, &Image, &Allocation, AllocationInfoPtr);
         if (ImageResult != VK_SUCCESS || Image == VK_NULL_HANDLE || Allocation == nullptr)
         {
             PanicOutOfGPUMemory(std::format("a {}x{}x{} texture, {} mips, {} layers, format {}",
@@ -3502,6 +3583,16 @@ namespace Lumina::RHI
             FScopeLock Lock(GDevice->InitMutex);
             GDevice->UninitializedTextures.push_back(Handle);
         }
+
+#if USING(WITH_EDITOR)
+        {
+            FScopeLock Lock(GDevice->TextureLedgerMutex);
+            FTextureRecord& Record = GDevice->TextureLedger[Handle.Handle];
+            Record.Size    = AllocationInfo.size;
+            Record.Desc    = Desc;
+            Record.Name[0] = '\0';   // filled in by SetDebugName, which nearly every site calls
+        }
+#endif
 
         return Handle;
     }

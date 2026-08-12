@@ -1,5 +1,6 @@
 ﻿#include "MemoryProfilerEditorTool.h"
 
+#include <cctype>
 #include <cstring>
 #include <cstdio>
 #include <EASTL/sort.h>
@@ -9,6 +10,7 @@
 #include "Memory/MemoryTracking.h"
 #include "Platform/Process/PlatformProcess.h"
 #include "Renderer/RHI.h"
+#include "Renderer/RenderResource.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "Tools/UI/ImGui/ImGuiFonts.h"
 
@@ -104,6 +106,101 @@ namespace Lumina
         }
 #endif
 
+        // Every GPU allocation the engine makes is named "Subsystem.Thing" -- Scene.HDR, Texture.Rock_D,
+        // Upload.StagingSlice -- so the segment before the first dot already is the purpose, and no
+        // parallel category enum has to be kept in sync with the allocation sites.
+        //
+        // Unnamed allocations fall back to what the allocation structurally is, which is all the RHI
+        // knows about one. A growing "unnamed" bucket means a site that needs a SetDebugName, not a
+        // limitation of the breakdown.
+        FString GPUPurposeOf(const RHI::FGPUAllocation& Alloc)
+        {
+            if (Alloc.Name[0] != '\0')
+            {
+                const char* Dot = std::strchr(Alloc.Name, '.');
+                if (Dot != nullptr && Dot != Alloc.Name)
+                {
+                    return FString(Alloc.Name, (size_t)(Dot - Alloc.Name));
+                }
+                return FString(Alloc.Name);
+            }
+
+            if (Alloc.Kind == RHI::EGPUAllocationKind::Texture)
+            {
+                using EUsage = RHI::EImageUsageFlags;
+                if (EnumHasAnyFlags(Alloc.Desc.Usage, EUsage::DepthAttachment)) { return "<depth targets>"; }
+                if (EnumHasAnyFlags(Alloc.Desc.Usage, EUsage::ColorAttachment)) { return "<color targets>"; }
+                if (EnumHasAnyFlags(Alloc.Desc.Usage, EUsage::Storage))         { return "<storage images>"; }
+                return "<sampled textures>";
+            }
+
+            switch (Alloc.Memory)
+            {
+            case RHI::EMemoryType::CPUWrite: return "<unnamed upload>";
+            case RHI::EMemoryType::CPURead:  return "<unnamed readback>";
+            default:                         return "<unnamed buffers>";
+            }
+        }
+
+        const char* TextureTypeName(RHI::ETextureType Type)
+        {
+            switch (Type)
+            {
+            case RHI::ETextureType::Tex1D:        return "1D";
+            case RHI::ETextureType::Tex2D:        return "2D";
+            case RHI::ETextureType::Tex3D:        return "3D";
+            case RHI::ETextureType::TexCube:      return "Cube";
+            case RHI::ETextureType::Tex2DArray:   return "2DArray";
+            case RHI::ETextureType::TexCubeArray: return "CubeArray";
+            }
+            return "?";
+        }
+
+        const char* MemoryTypeName(RHI::EMemoryType Type)
+        {
+            switch (Type)
+            {
+            case RHI::EMemoryType::CPUWrite: return "CPU-write";
+            case RHI::EMemoryType::CPURead:  return "CPU-read";
+            case RHI::EMemoryType::GPUOnly:  return "GPU-only";
+            }
+            return "?";
+        }
+
+        // "2048x2048 2DArray x6, 11 mips, BC7_UNORM" / "GPU-only" -- what the row is, past its size.
+        FString DescribeAllocation(const RHI::FGPUAllocation& Alloc)
+        {
+            if (Alloc.Kind != RHI::EGPUAllocationKind::Texture)
+            {
+                return MemoryTypeName(Alloc.Memory);
+            }
+
+            const RHI::FTextureDesc& Desc = Alloc.Desc;
+            FString Out;
+            if (Desc.Type == RHI::ETextureType::Tex3D)
+            {
+                Out.sprintf("%ux%ux%u %s", Desc.Dimension.x, Desc.Dimension.y, Desc.Dimension.z, TextureTypeName(Desc.Type));
+            }
+            else
+            {
+                Out.sprintf("%ux%u %s", Desc.Dimension.x, Desc.Dimension.y, TextureTypeName(Desc.Type));
+            }
+            if (Desc.LayerCount > 1)
+            {
+                Out += FString().sprintf(" x%u", Desc.LayerCount);
+            }
+            if (Desc.MipCount > 1)
+            {
+                Out += FString().sprintf(", %u mips", Desc.MipCount);
+            }
+            if (Desc.SampleCount > 1)
+            {
+                Out += FString().sprintf(", %ux MSAA", Desc.SampleCount);
+            }
+            Out += FString().sprintf(", %s", RHI::Format::Info(Desc.Format).Name);
+            return Out;
+        }
+
         // "12.3 MB (12884901 bytes)" -- human-readable plus exact, so an AI gets both the
         // gestalt and a parseable number.
         FString SizeBoth(uint64 Bytes)
@@ -167,7 +264,14 @@ namespace Lumina
             "(device memory per heap). Backend-agnostic -- no API specifics.");
         DrawHelpTextRow("GPU breakdown",
             "Heap totals are device truth from the allocator (VMA budgets), including driver "
-            "overhead and fragmentation.");
+            "overhead and fragmentation. Memory by purpose is the other half: every live buffer "
+            "and texture the RHI owns, grouped by the name its creating site gave it, so VRAM "
+            "growth resolves to a subsystem the same way the CPU category table does. It always "
+            "totals less than the heaps -- the difference is memory the engine never allocated.");
+        DrawHelpTextRow("Unnamed GPU memory",
+            "An allocation with no RHI::SetDebugName lands in an angle-bracketed bucket "
+            "(<sampled textures>, <unnamed upload>) and is invisible in a device-lost report too. "
+            "If one of those buckets is large, name the site rather than working around it here.");
         DrawHelpTextRow("Finding a CPU leak",
             "On the CPU tab: click Set Baseline at a known-good moment, let the suspect run, then watch "
             "the Delta column. The category that keeps climbing is your leak. Tick Capture call stacks "
@@ -181,7 +285,9 @@ namespace Lumina
         DrawHelpTextRow("Cost",
             "CPU category tracking is always on in Debug/Development and compiled out in Shipping. "
             "Call-stack capture is a heavier, separate toggle, switched off when this window closes. "
-            "The address-space scan is on-demand: the heap walk locks every heap process-wide.");
+            "The address-space scan is on-demand: the heap walk locks every heap process-wide. "
+            "The GPU ledger is editor-only (WITH_EDITOR) and is walked only while the GPU tab is "
+            "open -- a game build carries neither the allocation names nor the texture ledger.");
     }
 
     void FMemoryProfilerEditorTool::RefreshSnapshot()
@@ -193,6 +299,10 @@ namespace Lumina
 #endif
 
         RHI::GetGPUMemoryStats(GPUStats);
+
+        // Invalidated here, re-pulled by the GPU tab if it is the one on screen.
+        bGPUAllocationsValid = false;
+
         if (!bDeviceInfoValid)
         {
             DeviceInfo = RHI::GetDeviceInfo();
@@ -419,6 +529,261 @@ namespace Lumina
             GPUStats.TotalAllocations, GPUStats.TotalBlocks);
     }
 
+    void FMemoryProfilerEditorTool::RefreshGPUAllocations()
+    {
+        RHI::GetGPUAllocations(GPUAllocations);
+        bGPUAllocationsValid = true;
+
+        GPUTextureBytes = 0;
+        GPUBufferBytes  = 0;
+
+        // Rebuilt rather than accumulated: the ledger is a snapshot of what is live right now, and a
+        // purpose that dropped to zero has to disappear from the table rather than linger at its last value.
+        GPUPurposes.clear();
+
+        auto FindOrAdd = [this](const FString& Name) -> FGPUPurposeRow&
+        {
+            for (FGPUPurposeRow& Row : GPUPurposes)
+            {
+                if (Row.Name == Name)
+                {
+                    return Row;
+                }
+            }
+            GPUPurposes.push_back(FGPUPurposeRow{ Name });
+            return GPUPurposes.back();
+        };
+
+        for (const RHI::FGPUAllocation& Alloc : GPUAllocations)
+        {
+            FGPUPurposeRow& Row = FindOrAdd(GPUPurposeOf(Alloc));
+            if (Alloc.Kind == RHI::EGPUAllocationKind::Texture)
+            {
+                Row.TextureBytes += Alloc.Size;
+                Row.TextureCount++;
+                GPUTextureBytes  += Alloc.Size;
+            }
+            else
+            {
+                Row.BufferBytes += Alloc.Size;
+                Row.BufferCount++;
+                GPUBufferBytes  += Alloc.Size;
+            }
+        }
+
+        eastl::sort(GPUPurposes.begin(), GPUPurposes.end(),
+            [](const FGPUPurposeRow& A, const FGPUPurposeRow& B) { return A.Total() > B.Total(); });
+
+        eastl::sort(GPUAllocations.begin(), GPUAllocations.end(),
+            [](const RHI::FGPUAllocation& A, const RHI::FGPUAllocation& B) { return A.Size > B.Size; });
+    }
+
+    void FMemoryProfilerEditorTool::DrawGPUPurpose()
+    {
+        const uint64 Attributed = GPUTextureBytes + GPUBufferBytes;
+
+        ImGui::TextColored(ImVec4(0.8f, 0.9f, 1.0f, 1.0f), "Memory by purpose  " LE_ICON_INFORMATION);
+        ImGuiX::TextTooltip("Every live buffer and texture the RHI owns, grouped by the name its creating "
+                            "site gave it (the part before the first dot). The heap totals above are device "
+                            "truth and stay larger: they also carry the driver's own allocations, descriptor "
+                            "pools, swapchain images and allocator fragmentation, none of which the engine owns.\n\n"
+                            "Editor only -- game builds keep neither the names nor the texture ledger.");
+        ImGui::Spacing();
+
+        ImGui::TextColored(ImVec4(0.55f, 0.80f, 0.95f, 1.0f), "%s", ImGuiX::FormatSize(GPUTextureBytes).c_str());
+        ImGui::SameLine();
+        ImGui::TextDisabled("textures");
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.95f, 0.78f, 0.55f, 1.0f), "  %s", ImGuiX::FormatSize(GPUBufferBytes).c_str());
+        ImGui::SameLine();
+        ImGui::TextDisabled("buffers");
+        ImGui::SameLine();
+        ImGui::TextDisabled("  =  %s attributed of %s the allocator holds",
+            ImGuiX::FormatSize(Attributed).c_str(),
+            ImGuiX::FormatSize((size_t)GPUStats.TotalAllocated).c_str());
+
+        ImGui::Spacing();
+
+        const ImGuiTableFlags Flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg
+                                    | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY;
+
+        if (ImGui::BeginTable("##GPUPurpose", 5, Flags, ImVec2(0, 220)))
+        {
+            ImGui::TableSetupScrollFreeze(0, 1);
+            ImGui::TableSetupColumn("Purpose",  ImGuiTableColumnFlags_WidthFixed, 180);
+            ImGui::TableSetupColumn("Share",    ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Total",    ImGuiTableColumnFlags_WidthFixed, 100);
+            ImGui::TableSetupColumn("Textures", ImGuiTableColumnFlags_WidthFixed, 140);
+            ImGui::TableSetupColumn("Buffers",  ImGuiTableColumnFlags_WidthFixed, 140);
+            ImGui::TableHeadersRow();
+
+            const uint64 Largest = GPUPurposes.empty() ? 0 : GPUPurposes.front().Total();
+
+            for (const FGPUPurposeRow& Row : GPUPurposes)
+            {
+                ImGui::TableNextRow();
+
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextUnformatted(Row.Name.c_str());
+
+                // Against the largest purpose, not the total: with one purpose dominating, bars scaled
+                // to the total are all invisible and the column says nothing.
+                ImGui::TableSetColumnIndex(1);
+                const float Frac = Largest > 0 ? (float)((double)Row.Total() / (double)Largest) : 0.0f;
+                const float Share = Attributed > 0 ? (float)((double)Row.Total() / (double)Attributed) : 0.0f;
+                ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.45f, 0.62f, 0.85f, 1.0f));
+                ImGui::ProgressBar(Frac, ImVec2(-1, 0), FString().sprintf("%.1f%%", Share * 100.0f).c_str());
+                ImGui::PopStyleColor();
+
+                ImGui::TableSetColumnIndex(2);
+                ImGui::TextUnformatted(ImGuiX::FormatSize(Row.Total()).c_str());
+
+                ImGui::TableSetColumnIndex(3);
+                if (Row.TextureCount > 0)
+                {
+                    ImGui::TextColored(ImVec4(0.55f, 0.80f, 0.95f, 1.0f), "%s", ImGuiX::FormatSize(Row.TextureBytes).c_str());
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("(%u)", Row.TextureCount);
+                }
+                else
+                {
+                    ImGui::TextDisabled("-");
+                }
+
+                ImGui::TableSetColumnIndex(4);
+                if (Row.BufferCount > 0)
+                {
+                    ImGui::TextColored(ImVec4(0.95f, 0.78f, 0.55f, 1.0f), "%s", ImGuiX::FormatSize(Row.BufferBytes).c_str());
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("(%u)", Row.BufferCount);
+                }
+                else
+                {
+                    ImGui::TextDisabled("-");
+                }
+            }
+
+            ImGui::EndTable();
+        }
+    }
+
+    void FMemoryProfilerEditorTool::DrawGPUAllocations()
+    {
+        if (!ImGui::CollapsingHeader(LE_ICON_LIST_BOX " Allocations", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            return;
+        }
+
+        ImGui::SetNextItemWidth(240);
+        ImGui::InputTextWithHint("##GPUFilter", LE_ICON_MAGNIFY " Filter by name", GPUFilter, sizeof(GPUFilter));
+        ImGui::SameLine();
+        ImGui::Checkbox("Textures", &bShowTextures);
+        ImGui::SameLine();
+        ImGui::Checkbox("Buffers", &bShowBuffers);
+
+        // Filter once into an index list: the table body runs through a clipper, and re-testing the
+        // filter per visible row would make scrolling depend on where you are in the list.
+        TVector<const RHI::FGPUAllocation*> Visible;
+        Visible.reserve(GPUAllocations.size());
+
+        char FilterLower[sizeof(GPUFilter)];
+        for (size_t i = 0; i < sizeof(GPUFilter); ++i)
+        {
+            FilterLower[i] = (char)std::tolower((unsigned char)GPUFilter[i]);
+        }
+
+        for (const RHI::FGPUAllocation& Alloc : GPUAllocations)
+        {
+            const bool bTexture = Alloc.Kind == RHI::EGPUAllocationKind::Texture;
+            if ((bTexture && !bShowTextures) || (!bTexture && !bShowBuffers))
+            {
+                continue;
+            }
+
+            if (FilterLower[0] != '\0')
+            {
+                char NameLower[RHI::kMaxGPUAllocationName];
+                size_t n = 0;
+                for (; n + 1 < sizeof(NameLower) && Alloc.Name[n] != '\0'; ++n)
+                {
+                    NameLower[n] = (char)std::tolower((unsigned char)Alloc.Name[n]);
+                }
+                NameLower[n] = '\0';
+                if (std::strstr(NameLower, FilterLower) == nullptr)
+                {
+                    continue;
+                }
+            }
+
+            Visible.push_back(&Alloc);
+        }
+
+        uint64 VisibleBytes = 0;
+        for (const RHI::FGPUAllocation* Alloc : Visible)
+        {
+            VisibleBytes += Alloc->Size;
+        }
+
+        ImGui::TextDisabled("%zu allocations, %s", Visible.size(), ImGuiX::FormatSize(VisibleBytes).c_str());
+
+        const ImGuiTableFlags Flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg
+                                    | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY;
+
+        if (ImGui::BeginTable("##GPUAllocations", 4, Flags, ImVec2(0, ImGui::GetContentRegionAvail().y)))
+        {
+            ImGui::TableSetupScrollFreeze(0, 1);
+            ImGui::TableSetupColumn("Name",  ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Kind",  ImGuiTableColumnFlags_WidthFixed, 70);
+            ImGui::TableSetupColumn("Size",  ImGuiTableColumnFlags_WidthFixed, 100);
+            ImGui::TableSetupColumn("Detail", ImGuiTableColumnFlags_WidthFixed, 280);
+            ImGui::TableHeadersRow();
+
+            ImGuiListClipper Clipper;
+            Clipper.Begin((int)Visible.size());
+            while (Clipper.Step())
+            {
+                for (int i = Clipper.DisplayStart; i < Clipper.DisplayEnd; ++i)
+                {
+                    const RHI::FGPUAllocation& Alloc = *Visible[(size_t)i];
+                    const bool bTexture = Alloc.Kind == RHI::EGPUAllocationKind::Texture;
+
+                    ImGui::TableNextRow();
+
+                    ImGui::TableSetColumnIndex(0);
+                    if (Alloc.Name[0] != '\0')
+                    {
+                        ImGui::TextUnformatted(Alloc.Name);
+                    }
+                    else
+                    {
+                        ImGui::TextDisabled("<unnamed>");
+                        ImGuiX::TextTooltip("Nothing called RHI::SetDebugName on this allocation, so it "
+                                            "cannot be attributed to a subsystem here or to a faulting "
+                                            "address in a device-lost report.");
+                    }
+
+                    ImGui::TableSetColumnIndex(1);
+                    if (bTexture)
+                    {
+                        ImGui::TextColored(ImVec4(0.55f, 0.80f, 0.95f, 1.0f), "Texture");
+                    }
+                    else
+                    {
+                        ImGui::TextColored(ImVec4(0.95f, 0.78f, 0.55f, 1.0f), "Buffer");
+                    }
+
+                    ImGui::TableSetColumnIndex(2);
+                    ImGui::TextUnformatted(ImGuiX::FormatSize(Alloc.Size).c_str());
+
+                    ImGui::TableSetColumnIndex(3);
+                    ImGui::TextDisabled("%s", DescribeAllocation(Alloc).c_str());
+                }
+            }
+
+            ImGui::EndTable();
+        }
+    }
+
     void FMemoryProfilerEditorTool::DrawGPUTab()
     {
         ImGui::Spacing();
@@ -431,6 +796,22 @@ namespace Lumina
         ImGui::Spacing();
 
         DrawGPUHeaps();
+
+        // Ledger walk is on the tab, not the refresh tick: it takes the allocator locks and copies
+        // every live allocation, which is not something to do behind a tab nobody is looking at.
+        if (!bGPUAllocationsValid)
+        {
+            RefreshGPUAllocations();
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        DrawGPUPurpose();
+
+        ImGui::Spacing();
+        DrawGPUAllocations();
     }
 
     // CPU
@@ -1153,6 +1534,51 @@ namespace Lumina
                 SizeBoth(H.AllocatedBytes).c_str(), H.BlockCount, H.AllocationCount);
         }
         R += "\n";
+
+        // GPU by purpose -- the attribution the heap numbers above cannot give.
+        RefreshGPUAllocations();
+        {
+            const uint64 Attributed = GPUTextureBytes + GPUBufferBytes;
+            const uint64 Unattributed = GPUStats.TotalAllocated > Attributed
+                                      ? GPUStats.TotalAllocated - Attributed : 0;
+
+            R += "## GPU memory by purpose (sorted by total)\n";
+            R += FString().sprintf("- Textures:   %s\n", SizeBoth(GPUTextureBytes).c_str());
+            R += FString().sprintf("- Buffers:    %s\n", SizeBoth(GPUBufferBytes).c_str());
+            R += FString().sprintf("- Attributed: %s of %s the allocator holds\n",
+                SizeBoth(Attributed).c_str(), SizeBoth(GPUStats.TotalAllocated).c_str());
+            R += FString().sprintf("- Remainder:  %s (driver allocations, descriptor pools, swapchain images, allocator fragmentation -- not engine-owned)\n\n",
+                SizeBoth(Unattributed).c_str());
+
+            R += "| Purpose | Total | Textures | Texture count | Buffers | Buffer count |\n";
+            R += "|---------|-------|----------|---------------|---------|--------------|\n";
+            for (const FGPUPurposeRow& Row : GPUPurposes)
+            {
+                R += FString().sprintf("| %s | %s | %s | %u | %s | %u |\n",
+                    Row.Name.c_str(), SizeBoth(Row.Total()).c_str(),
+                    SizeBoth(Row.TextureBytes).c_str(), Row.TextureCount,
+                    SizeBoth(Row.BufferBytes).c_str(), Row.BufferCount);
+            }
+            R += "\n";
+
+            // The tail is a long list of small textures and says nothing the purpose table did not.
+            static constexpr size_t kMaxAllocationRows = 64;
+            const size_t Shown = Math::Min(GPUAllocations.size(), kMaxAllocationRows);
+
+            R += FString().sprintf("## Largest GPU allocations (top %zu of %zu live)\n",
+                Shown, GPUAllocations.size());
+            R += "| Name | Kind | Size | Detail |\n";
+            R += "|------|------|------|--------|\n";
+            for (size_t i = 0; i < Shown; ++i)
+            {
+                const RHI::FGPUAllocation& Alloc = GPUAllocations[i];
+                R += FString().sprintf("| %s | %s | %s | %s |\n",
+                    Alloc.Name[0] ? Alloc.Name : "(unnamed)",
+                    Alloc.Kind == RHI::EGPUAllocationKind::Texture ? "Texture" : "Buffer",
+                    SizeBoth(Alloc.Size).c_str(), DescribeAllocation(Alloc).c_str());
+            }
+            R += "\n";
+        }
 
 #if LUMINA_MEMORY_TRACKING
         // CPU categories

@@ -1,5 +1,7 @@
 using System.Linq;
+using LuminaSharp.ScriptProperties;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace LuminaSharp.Generators;
 
@@ -15,7 +17,8 @@ namespace LuminaSharp.Generators;
 ///
 /// This analyzer still exists because the rewriter runs at RUN TIME: without it an unsupported member would
 /// look fine in the IDE and fail only on reload. Its job is to say the same thing the rewriter would, at the
-/// declaration, while you are typing it.
+/// declaration, while you are typing it -- so it does not decide anything itself. Every judgement here comes
+/// from <see cref="ScriptPropertyClassifier"/>, the single copy the rewriter also runs on.
 /// </summary>
 [Generator]
 public sealed class ScriptPropertyGenerator : IIncrementalGenerator
@@ -25,9 +28,7 @@ public sealed class ScriptPropertyGenerator : IIncrementalGenerator
     private static readonly DiagnosticDescriptor UnsupportedType = new(
         id: "LUM0101",
         title: "Unsupported [Property] type",
-        messageFormat: "[Property] '{0}' has type '{1}', which cannot be viewed over native storage. Supported: numbers, "
-                     + "bool, enums, blittable struct mirrors, string, Lumina.FSoftObjectPath, NativeObject-derived "
-                     + "references, and NativeList<T> of an unmanaged T.",
+        messageFormat: "[Property] '{0}' has type '{1}': {2}",
         category: "LuminaSharp",
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true);
@@ -58,7 +59,7 @@ public sealed class ScriptPropertyGenerator : IIncrementalGenerator
             .ForAttributeWithMetadataName(
                 PropertyAttribute,
                 static (_, _) => true,
-                static (Context, _) => Validate(Context.TargetSymbol, Context.TargetNode.GetLocation()));
+                static (Context, _) => Validate(Context.TargetSymbol, Context.TargetNode));
 
         context.RegisterSourceOutput(Diagnostics, static (Context, Item) =>
         {
@@ -69,8 +70,10 @@ public sealed class ScriptPropertyGenerator : IIncrementalGenerator
         });
     }
 
-    private static Diagnostic? Validate(ISymbol Symbol, Location Location)
+    private static Diagnostic? Validate(ISymbol Symbol, SyntaxNode Node)
     {
+        Location Location = Node.GetLocation();
+
         // A partial property is the pre-rewriter shape. It still compiles in the IDE (nothing implements it
         // there either), so without this it would fail only at script reload, with CS9248 and no explanation.
         if (Symbol is IPropertySymbol Property)
@@ -84,49 +87,35 @@ public sealed class ScriptPropertyGenerator : IIncrementalGenerator
             return null;
         }
 
-        if (IsViewType(Field.Type, out ITypeSymbol? Element))
+        FScriptPropertyClassification Classification = ScriptPropertyClassifier.Classify(Field.Type);
+        if (!Classification.IsSupported)
         {
-            if (Element == null || !Element.IsUnmanagedType)
-            {
-                return Diagnostic.Create(UnsupportedType, Location, Field.Name, Field.Type.ToDisplayString());
-            }
-            // The initializer itself is checked by the rewriter, which can see it; a field symbol cannot.
-            return null;
+            return Diagnostic.Create(UnsupportedType, Location, Field.Name, Field.Type.ToDisplayString(),
+                Classification.Rejection);
         }
 
-        return IsSupported(Field.Type)
-            ? null
-            : Diagnostic.Create(UnsupportedType, Location, Field.Name, Field.Type.ToDisplayString());
+        // A container is a view over storage native owns, so assigning it is meaningless while its contents
+        // are fully editable. The rewriter refuses this too; reported here so it surfaces at the declaration.
+        if (Classification.IsView && Declarator(Field, Node)?.Initializer != null)
+        {
+            return Diagnostic.Create(ContainerInitialized, Location, Field.Name);
+        }
+
+        return null;
     }
 
-    private static bool IsViewType(ITypeSymbol Type, out ITypeSymbol? Element)
+    /// <summary>The declarator for a field, which is where an initializer lives -- an <see cref="IFieldSymbol"/>
+    /// cannot see one. Normally the attribute's own target node; falls back through the symbol for the shapes
+    /// where it is not (several declarators sharing one <c>[Property]</c> field declaration).</summary>
+    private static VariableDeclaratorSyntax? Declarator(IFieldSymbol Field, SyntaxNode Node)
     {
-        Element = null;
-        if (Type is INamedTypeSymbol Named && Named.IsGenericType
-            && Named.ConstructedFrom.ToDisplayString() == "LuminaSharp.NativeList<T>")
+        if (Node is VariableDeclaratorSyntax Direct)
         {
-            Element = Named.TypeArguments[0];
-            return true;
+            return Direct;
         }
-        return false;
-    }
-
-    // Kept in step with ScriptPropertyRewriter.Classify: this reports what that would refuse.
-    private static bool IsSupported(ITypeSymbol Type)
-    {
-        if (Type.TypeKind == TypeKind.Enum
-            || Type.SpecialType == SpecialType.System_String
-            || Type.ToDisplayString() == "Lumina.FSoftObjectPath")
-        {
-            return true;
-        }
-        for (INamedTypeSymbol? Base = Type.BaseType; Base != null; Base = Base.BaseType)
-        {
-            if (Base.ToDisplayString() == "LuminaSharp.NativeObject")
-            {
-                return true;
-            }
-        }
-        return Type.IsUnmanagedType;
+        return Field.DeclaringSyntaxReferences
+            .Select(Reference => Reference.GetSyntax())
+            .OfType<VariableDeclaratorSyntax>()
+            .FirstOrDefault();
     }
 }

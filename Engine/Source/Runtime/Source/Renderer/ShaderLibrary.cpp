@@ -1,8 +1,9 @@
 ﻿#include "RuntimePCH.h"
 #include "ShaderLibrary.h"
 #include "ShaderCompiler.h"
+#include "ShaderPaths.h"
+#include "FileSystem/FileSystem.h"
 #include "Memory/Memory.h"
-#include "Paths/Paths.h"
 
 namespace Lumina
 {
@@ -154,9 +155,66 @@ namespace Lumina
         }
     }
 
-    FShaderH FShaderLibrary::Get(const FName& Path, TSpan<const FString> Defines)
+    FName FShaderLibrary::CanonicalPath(const FName& NameOrPath)
+    {
+        const char* Str = NameOrPath.c_str();
+        if (Str == nullptr || Str[0] == '\0' || Str[0] == '/')
+        {
+            // Already a full virtual path (or nothing to resolve).
+            return NameOrPath;
+        }
+
+        // A committed shader's name index is the only mapping a packaged build has: the source tree it
+        // would otherwise search is stripped, and only the compiled cache ships.
+        if (FShaderLibrary* Library = GShaderLibrary)
+        {
+            FScopeLock Lock(Library->Mutex);
+            auto It = Library->PathsByName.find(NameOrPath);
+            if (It != Library->PathsByName.end())
+            {
+                return It->second;
+            }
+        }
+
+        const FString Resolved = Shaders::Resolve(FStringView(Str));
+
+        // Unresolved names are passed through rather than failed: Slang still resolves a bare module name
+        // against the same roots, so this degrades to a compile attempt instead of a hard miss.
+        return Resolved.empty() ? NameOrPath : FName(Resolved);
+    }
+
+    void FShaderLibrary::IndexShaderName(const FName& Path)
+    {
+        const FStringView FullPath(Path.c_str());
+        const FStringView File = VFS::FileName(FullPath);
+        if (File.empty() || File.size() == FullPath.size())
+        {
+            return;   // not a path -- nothing to index it under
+        }
+
+        const FName Name(File);
+        auto It = PathsByName.find(Name);
+        if (It == PathsByName.end())
+        {
+            PathsByName.emplace(Name, Path);
+            return;
+        }
+
+        if (It->second != Path)
+        {
+            LOG_WARN("Two shader roots ship '{}' ('{}' and '{}'). The first wins by name; request the "
+                     "other by its full virtual path.", Name, It->second, Path);
+        }
+    }
+
+    FShaderH FShaderLibrary::Get(const FName& NameOrPath, TSpan<const FString> Defines)
     {
         FShaderLibrary* Library = GShaderLibrary;
+
+        // Entries are keyed on the shader's virtual path, so the startup batch, a lookup by bare name and
+        // a lookup by full path all land on one entry -- and two roots shipping the same file name stay
+        // distinct instead of overwriting each other.
+        const FName Path  = CanonicalPath(NameOrPath);
         const uint64 Hash = EntryHash(Path, Defines);
 
         {
@@ -180,7 +238,7 @@ namespace Lumina
         FShaderCompileOptions Options;
         Options.bGenerateReflectionData = true;
         Options.MacroDefinitions.assign(Defines.begin(), Defines.end());
-        GShaderCompiler->CompileShaderPath(Paths::GetEngineShadersDirectory() + "/" + Path.c_str(), Options, [](const FShaderHeader& Header)
+        GShaderCompiler->CompileShaderPath(FString(Path.c_str()), Options, [](const FShaderHeader& Header)
         {
             Commit(Header);
         });
@@ -398,6 +456,8 @@ namespace Lumina
         Entry.Type    = Header.Reflection.ShaderType;
         Entry.Spirv   = Header.Binaries;
         Entry.Generation++;
+
+        Library->IndexShaderName(Path);
 #if USING(WITH_EDITOR)
         Entry.GPUStats.Pipeline.clear();
         ScanSpirvLocalArrays(TSpan<const uint32>(Entry.Spirv.data(), Entry.Spirv.size()),

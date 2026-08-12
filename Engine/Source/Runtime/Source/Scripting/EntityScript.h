@@ -154,6 +154,40 @@ namespace Lumina
         /** Runs OnDetach and drops every script on Entity. */
         RUNTIME_API void DetachAll(FEntityRegistry& Registry, entt::entity Entity);
 
+        /**
+         * One entity's scripts, serialized, while its script classes are rebuilt underneath it.
+         *
+         * Hot reload cannot change a minted class's property layout while instances of it are alive: an
+         * object's size is baked in at allocation, so the block has to be torn down with nothing attached.
+         * That makes a reload a round trip -- write every affected entity's scripts out, drop them, rebuild
+         * the classes, read them back.
+         *
+         * The carrier is SEntityScriptComponent::Serialize, unchanged and already load-bearing for scenes:
+         * class name plus tagged properties per script. Being name-keyed is what makes the round trip a
+         * MIGRATION rather than a copy -- a property that still exists replays, a removed one is dropped,
+         * and an added one lands on its default instead of reading someone else's bytes.
+         */
+        struct FEvacuatedScripts
+        {
+            TWeakObjectPtr<CWorld> World;
+            entt::entity           Entity = entt::null;
+            TVector<uint8>         Bytes;
+        };
+
+        /**
+         * Serializes and detaches every script whose class is in Classes, across every live world.
+         *
+         * Returns the number of entities evacuated. OnDetach is deliberately NOT run: the scripts are coming
+         * straight back, and a detach/attach pair would fire lifecycle callbacks for what the author sees as
+         * an edit. They come back un-readied, so OnReady runs again on the next tick, which is the same thing
+         * a scene load does.
+         */
+        RUNTIME_API int32 Evacuate(const THashSet<CClass*>& Classes, TVector<FEvacuatedScripts>& Out);
+
+        /** Rebuilds the scripts Evacuate took out. Entities whose world or entity died in between are
+         *  skipped. Returns the number of entities restored. */
+        RUNTIME_API int32 Restore(const TVector<FEvacuatedScripts>& Saved);
+
         //~ Lookup/mutation by class, backing the script-facing GetScript/AddScript/RemoveScript API. Class
         //~ rather than C# type: a C++ script is found by exactly the same call.
 

@@ -140,6 +140,14 @@ namespace Lumina
         }
     }
 
+    void CStruct::Unlink()
+    {
+        // Only the head. Past Link the tail of this list is the SUPER's chain, spliced on rather than copied,
+        // so the super keeps its own properties and is untouched by dropping our pointer to them.
+        LinkedProperty = nullptr;
+        bLinked = false;
+    }
+
     FFixedString CStruct::MakeDisplayName() const
     {
         FFixedString DisplayName = GetName().c_str();
@@ -312,7 +320,10 @@ namespace Lumina
                             {
                                 End = Aliases.size();
                             }
-                            if (End > Start && FName(Aliases.data() + Start, End - Start) == Tag.Name)
+                            // FStringView, NOT FName(ptr, len): FName's two-arg ctor takes a NUMBER, not a
+                            // length, so that spelling built a name from the whole remaining string and
+                            // tagged it with the length. No alias ever matched.
+                            if (End > Start && FName(FStringView(Aliases.data() + Start, End - Start)) == Tag.Name)
                             {
                                 FoundProperty = Search;
                                 break;

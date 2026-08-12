@@ -41,6 +41,9 @@ namespace Lumina
         void DestructValue(void* Value) const override  { if (Ops && Ops->DestructContainer)  { Ops->DestructContainer(Value, Ops->ContainerContext); } }
         bool OwnsStorage() const override { return Ops != nullptr && Ops->ConstructContainer != nullptr; }
 
+        /** The key/value ops table. Exposed so C# can build a Lumina.THashMap<K,V> view over any map property. */
+        const FMapOps* GetOps() const { return Ops; }
+
         FProperty* GetKeyProperty()   const { return KeyProperty.get(); }
         FProperty* GetValueProperty() const { return ValueProperty.get(); }
 

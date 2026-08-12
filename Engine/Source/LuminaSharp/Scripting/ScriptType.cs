@@ -103,7 +103,7 @@ public sealed class ScriptType
         EPropertyType.UInt8 or EPropertyType.UInt16 or EPropertyType.UInt32 or EPropertyType.UInt64 or
         EPropertyType.Enum => EScriptValueKind.Int,
         EPropertyType.Float or EPropertyType.Double => EScriptValueKind.Double,
-        EPropertyType.String or EPropertyType.SoftObject => EScriptValueKind.String,
+        EPropertyType.String or EPropertyType.Name or EPropertyType.SoftObject => EScriptValueKind.String,
         EPropertyType.Struct => EScriptValueKind.Nested,
         EPropertyType.Vector => EScriptValueKind.Array,
         EPropertyType.Map => EScriptValueKind.Map,
@@ -127,7 +127,7 @@ public sealed class ScriptProperty
 
     /// <summary>
     /// True when the member is a get-only VIEW over storage native already owns -- a container property on a
-    /// script type, which hands out a <see cref="NativeList{T}"/> rather than a managed copy.
+    /// script type, which hands out a <see cref="TVector{T}"/> rather than a managed copy.
     ///
     /// Such a member is still a real reflected property (native holds the container and the inspector edits
     /// it); what it has no meaning for is the two things that assume a managed-side value: capturing a

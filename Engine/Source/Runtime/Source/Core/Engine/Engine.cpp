@@ -40,6 +40,7 @@
 #include "Physics/Physics.h"
 #include "Platform/Filesystem/FileHelper.h"
 #include "Renderer/RenderManager.h"
+#include "Renderer/ShaderPaths.h"
 #include "Renderer/TextureStreamingManager.h"
 #include "Scripting/DotNet/DotNetHost.h"
 #include "TaskSystem/ThreadedCallback.h"
@@ -689,11 +690,14 @@ namespace Lumina
         FFixedString GameRootDir        = Paths::Combine(ProjectPath, "Game");
         FFixedString GameContentDir     = Paths::Combine(GameRootDir, "Content");
         FFixedString GameScriptsDir     = Paths::Combine(GameRootDir, "Scripts");
+        FFixedString GameShadersDir     = Paths::Combine(GameRootDir, "Shaders");
         FFixedString BinariesDirectory  = Paths::Combine(ProjectPath, "Binaries");
-        
+
         std::error_code GameDirEc;
         std::filesystem::create_directories(GameContentDir.c_str(), GameDirEc);
         std::filesystem::create_directories(GameScriptsDir.c_str(), GameDirEc);
+        // Assets in Content/, C# in Scripts/, Slang in Shaders/ -- all three under the one /Game mount.
+        std::filesystem::create_directories(GameShadersDir.c_str(), GameDirEc);
         
         const FFixedString LogsDir = Paths::Combine(ProjectPath, "Logs");
         std::filesystem::create_directories(LogsDir.c_str(), GameDirEc);
@@ -806,6 +810,11 @@ namespace Lumina
         // Project DLL is now in; plugin modules that wire up to project types load here.
         FPluginManager::Get().LoadModulesForPhase(EPluginLoadingPhase::PostProjectLoad);
         ProcessNewlyLoadedCObjects();
+
+        // The shader compiler's own Initialize ran before any project existed, so it only saw the engine
+        // tree and engine plugins. /Game/Shaders and the project's plugins are mounted by now; compile
+        // them here (async) rather than leaving every one of them to a first-use stall. No-op headless.
+        Shaders::PrecompileNewRoots();
 
         FAssetRegistry::Get().RunInitialDiscovery();
 
@@ -1384,5 +1393,15 @@ namespace Lumina
         }
 
         return Paths::Combine(ProjectPath, "Game", "Scripts");
+    }
+
+    FFixedString FEngine::GetProjectShadersDirectory() const
+    {
+        if (!HasLoadedProject())
+        {
+            return {};
+        }
+
+        return Paths::Combine(ProjectPath, "Game", "Shaders");
     }
 }

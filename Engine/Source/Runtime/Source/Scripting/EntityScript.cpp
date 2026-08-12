@@ -4,6 +4,11 @@
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectCore.h"
 #include "World/World.h"
+#include "World/WorldManager.h"
+#include "ScriptableObject.h"
+#include "ScriptStruct.h"
+#include "Core/Serialization/MemoryArchiver.h"
+#include "Core/Serialization/ObjectArchiver.h"
 #include "World/Entity/Components/EntityTags.h"
 #include "Log/Log.h"
 
@@ -51,7 +56,10 @@ namespace Lumina
                 // A class that no longer exists (script deleted, or a C# type removed from this generation)
                 // drops its instance. There is nothing safe to construct, and the tagged-property block is
                 // self-delimiting only within a known layout -- so bail rather than desynchronize the stream.
-                CClass* ScriptClass = FindObject<CClass>(ClassName);
+                // Through the redirect registry, not FindObject: a script class renamed in C# leaves every
+                // saved scene (and every hot-reload evacuation buffer) naming the old one, and an `[Alias]`
+                // on the new type is what carries them across.
+                CClass* ScriptClass = FScriptableRegistry::ResolveClass(ClassName);
                 if (ScriptClass == nullptr || !ScriptClass->IsChildOf(CEntityScript::StaticClass()))
                 {
                     LOG_WARN("SEntityScriptComponent: script class '{}' no longer exists; the rest of this "
@@ -393,6 +401,102 @@ namespace Lumina
                 }
                 bSensed ? Script->OnTargetPerceived(Event) : Script->OnTargetLost(Event);
             }
+        }
+
+
+        int32 Evacuate(const THashSet<CClass*>& Classes, TVector<FEvacuatedScripts>& Out)
+        {
+            if (Classes.empty() || GWorldManager == nullptr)
+            {
+                return 0;
+            }
+
+            int32 Evacuated = 0;
+            GWorldManager->ForEachWorld([&](CWorld& World)
+            {
+                FEntityRegistry& Registry = ECS::GetWorldRegistry(World);
+
+                // Collect first, mutate second. Serialize does not touch the registry, but clearing the
+                // component's Scripts destroys CObjects, and a script's destructor is user-reachable code.
+                TVector<entt::entity> Affected;
+                auto View = Registry.view<SEntityScriptComponent>();
+                for (entt::entity Entity : View)
+                {
+                    const SEntityScriptComponent& Component = View.get<SEntityScriptComponent>(Entity);
+                    for (const TObjectPtr<CEntityScript>& Held : Component.Scripts)
+                    {
+                        CEntityScript* Script = Held.Get();
+                        if (Script != nullptr && Classes.find(Script->GetClass()) != Classes.end())
+                        {
+                            Affected.push_back(Entity);
+                            break;
+                        }
+                    }
+                }
+
+                for (entt::entity Entity : Affected)
+                {
+                    SEntityScriptComponent* Component = Registry.try_get<SEntityScriptComponent>(Entity);
+                    if (Component == nullptr)
+                    {
+                        continue;
+                    }
+
+                    FEvacuatedScripts Saved;
+                    Saved.World  = &World;
+                    Saved.Entity = Entity;
+                    {
+                        FMemoryWriter Writer(Saved.Bytes);
+                        FObjectProxyArchiver Ar(Writer, /*bLoadIfFindFails*/ false);
+                        Component->Serialize(Ar);
+                    }
+
+                    // The whole component goes, not just the scripts of the changed classes: Serialize writes
+                    // and reads the component as a unit, so a partial evacuation could not be replayed.
+                    // Clearing releases the last reference to each script, which is what the load path relies
+                    // on too -- it clears before reconstructing.
+                    Component->Scripts.clear();
+
+                    Out.push_back(eastl::move(Saved));
+                    ++Evacuated;
+                }
+            });
+
+            return Evacuated;
+        }
+
+        int32 Restore(const TVector<FEvacuatedScripts>& Saved)
+        {
+            int32 Restored = 0;
+            for (const FEvacuatedScripts& Entry : Saved)
+            {
+                CWorld* World = Entry.World.Get();
+                if (World == nullptr)
+                {
+                    continue;   // the world went away mid-reload
+                }
+                FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
+                if (!Registry.valid(Entry.Entity))
+                {
+                    continue;   // so did the entity
+                }
+
+                SEntityScriptComponent& Component = Registry.get_or_emplace<SEntityScriptComponent>(Entry.Entity);
+                {
+                    FMemoryReader Reader(const_cast<TVector<uint8>&>(Entry.Bytes));
+                    FObjectProxyArchiver Ar(Reader, /*bLoadIfFindFails*/ true);
+                    Component.Serialize(Ar);
+                }
+
+                // The replay put the authored value back on EVERY property. Fields marked [SkipHotReload]
+                // asked for the opposite, so they are returned to their class default afterwards.
+                for (const TObjectPtr<CEntityScript>& Held : Component.Scripts)
+                {
+                    Scripting::ResetSkipHotReloadProperties(Held.Get());
+                }
+                ++Restored;
+            }
+            return Restored;
         }
 
         void DetachAll(FEntityRegistry& Registry, entt::entity Entity)

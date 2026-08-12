@@ -85,6 +85,7 @@ namespace Lumina
         RUNTIME_API NODISCARD FStringView GetProjectPath() const { return ProjectPath; }
         RUNTIME_API NODISCARD FFixedString GetProjectContentDirectory() const;
         RUNTIME_API NODISCARD FFixedString GetProjectScriptsDirectory() const;
+        RUNTIME_API NODISCARD FFixedString GetProjectShadersDirectory() const;
 
         // Union of project + enabled-plugin cook roots; legacy GameStartupMap auto-converts
         // to a single root when no explicit roots exist. Cooker iterates this for BFS seeds.

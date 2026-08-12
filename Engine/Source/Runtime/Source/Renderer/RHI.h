@@ -5,6 +5,7 @@
 #include "Containers/SegmentArray.h"
 #include "Containers/String.h"
 #include "Containers/Tuple.h"
+#include "Core/LuminaMacros.h"
 #include "Platform/GenericPlatform.h"
 
 namespace Lumina::RHI
@@ -475,6 +476,36 @@ namespace Lumina::RHI
 
     RUNTIME_API void           GetGPUMemoryStats(FGPUMemoryStats& Out);
     RUNTIME_API FGPUDeviceInfo GetDeviceInfo();
+
+#if USING(WITH_EDITOR)
+
+    // Heap totals say how much VRAM is gone, never what took it. The ledger below is the other half:
+    // one row per live allocation, carrying the debug name the creating site gave it, which the Memory
+    // tool groups into categories the same way the CPU side groups by allocation category.
+    //
+    // Editor only. Game builds keep neither the names nor the texture ledger.
+    enum class EGPUAllocationKind : uint8
+    {
+        Buffer,     // RHI::Malloc -- reached from a shader by device address
+        Texture,    // RHI::CreateTexture
+    };
+
+    static constexpr uint32 kMaxGPUAllocationName = 64;
+
+    struct FGPUAllocation
+    {
+        char                Name[kMaxGPUAllocationName] = {};   // empty when the site never named it
+        uint64              Size    = 0;                        // bytes the allocator reserved
+        EGPUAllocationKind  Kind    = EGPUAllocationKind::Buffer;
+        EMemoryType         Memory  = EMemoryType::GPUOnly;     // buffers only
+        FTextureDesc        Desc    = {};                       // textures only
+    };
+
+    /** Snapshot of every live RHI allocation. Takes the allocator locks and copies the whole ledger, so
+     *  this is a tool-rate call -- never per frame. */
+    RUNTIME_API void GetGPUAllocations(TVector<FGPUAllocation>& Out);
+
+#endif
 
     RUNTIME_API uint64         ClampCPUWriteSlice(const char* RingName, uint64 DesiredSliceSize, uint32 SliceCount);
     

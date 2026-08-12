@@ -214,6 +214,7 @@ namespace Lumina::Screenshot
             Out.ErrorMessage = "Failed to allocate readback buffer.";
             return Out;
         }
+        RHI::SetDebugName(Readback, "Readback.Screenshot");
 
         RHI::FCmdListH CL = RHI::OpenCommandList();
         RHI::CmdBarrier(CL, RHI::EStageFlags::AllCommands, RHI::EStageFlags::Transfer);

@@ -274,6 +274,7 @@ namespace Lumina
                 return;
             }
 
+            RHI::SetDebugName(Gpu, "Lines.VertexSlot");
             Channel.SlotGpu[Slot]      = Gpu;
             Channel.SlotHost[Slot]     = static_cast<FSimpleElementVertex*>(RHI::ToHost(Gpu));
             Channel.SlotCapacity[Slot] = NeededVerts;
@@ -292,6 +293,7 @@ namespace Lumina
                 const RHI::GPUPtr Gpu = RHI::Malloc((uint64)Target * sizeof(FSimpleElementVertex), RHI::kDefaultAlign, RHI::EMemoryType::CPUWrite);
                 if (Gpu != 0)
                 {
+                    RHI::SetDebugName(Gpu, "Lines.VertexSlot");
                     Channel.SlotGpu[Slot]      = Gpu;
                     Channel.SlotHost[Slot]     = static_cast<FSimpleElementVertex*>(RHI::ToHost(Gpu));
                     Channel.SlotCapacity[Slot] = Target;

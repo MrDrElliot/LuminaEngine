@@ -206,7 +206,7 @@ namespace Lumina
         View.Size       = Math::Max(Size, FUIntVector2(1));
 
         // Per-view clustered-lighting grid (built from this view's projection).
-        View.ClusterBuffer = CreateSceneBuffer(sizeof(FCluster) * NumClusters);
+        View.ClusterBuffer = CreateSceneBuffer(sizeof(FCluster) * NumClusters, "View.ClusterGrid");
         View.bClusterGridDirty = true;   // fresh buffer has undefined contents.
 
         InitViewImages(View);
@@ -7185,9 +7185,12 @@ namespace Lumina
                 State.ParticleBufferSize = (uint64)MaxParticles * 64ull;
                 State.ParticleBuffer     = RHI::Malloc(State.ParticleBufferSize, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
                 State.SpawnCounterBuffer = RHI::Malloc(sizeof(uint32), RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
+                RHI::SetDebugName(State.ParticleBuffer,     "Particles.Particles");
+                RHI::SetDebugName(State.SpawnCounterBuffer, "Particles.SpawnCounter");
 
                 State.AttributeBufferSize = (uint64)MaxParticles * (uint64)Item.AttributeFloatCount * sizeof(float);
                 State.AttributeBuffer     = RHI::Malloc(State.AttributeBufferSize, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
+                RHI::SetDebugName(State.AttributeBuffer,    "Particles.Attributes");
 
                 // Zero-fill the particle buffer so all entries start dead.
                 RHI::CmdMemset(CL, State.ParticleBuffer, State.ParticleBufferSize, 0u);
@@ -7958,7 +7961,7 @@ namespace Lumina
 
                 if (ChunkCount > 0 && MeshletCount > 0)
                 {
-                    auto AllocSSBO = [&](FSceneBuffer& Buffer, uint64 SizeBytes)
+                    auto AllocSSBO = [&](FSceneBuffer& Buffer, uint64 SizeBytes, const char* DebugName)
                     {
                         if (!Buffer || Buffer.Size < SizeBytes)
                         {
@@ -7966,14 +7969,14 @@ namespace Lumina
                             {
                                 DeferFree(Buffer.Ptr);
                             }
-                            Buffer = CreateSceneBuffer(std::max<uint64>(SizeBytes, 16ull));
+                            Buffer = CreateSceneBuffer(std::max<uint64>(SizeBytes, 16ull), DebugName);
                         }
                     };
 
-                    AllocSSBO(State.ChunkInfoBuffer,      uint64(ChunkCount)   * sizeof(FTerrainChunkInfo));
-                    AllocSSBO(State.MeshletInfoBuffer,    uint64(MeshletCount) * sizeof(FTerrainMeshletInfo));
-                    AllocSSBO(State.VisibleMeshletBuffer, uint64(MeshletCount) * sizeof(FTerrainVisibleMeshlet));
-                    AllocSSBO(State.IndirectDrawBuffer,   sizeof(RHI::FDrawIndirectArguments));
+                    AllocSSBO(State.ChunkInfoBuffer,      uint64(ChunkCount)   * sizeof(FTerrainChunkInfo),      "Terrain.ChunkInfo");
+                    AllocSSBO(State.MeshletInfoBuffer,    uint64(MeshletCount) * sizeof(FTerrainMeshletInfo),   "Terrain.MeshletInfo");
+                    AllocSSBO(State.VisibleMeshletBuffer, uint64(MeshletCount) * sizeof(FTerrainVisibleMeshlet), "Terrain.VisibleMeshlets");
+                    AllocSSBO(State.IndirectDrawBuffer,   sizeof(RHI::FDrawIndirectArguments),                   "Terrain.IndirectDraw");
 
                     WriteBuffer(CL, State.ChunkInfoBuffer.Ptr,   TerrainItem.Chunks.data(),   ChunkCount * sizeof(FTerrainChunkInfo));
                     WriteBuffer(CL, State.MeshletInfoBuffer.Ptr, TerrainItem.Meshlets.data(), MeshletCount * sizeof(FTerrainMeshletInfo));
@@ -10799,6 +10802,7 @@ namespace Lumina
             {
                 MeshletBoundReadback[Slot] = RHI::Malloc(sizeof(uint32) * kTotalsSlots,
                                                          RHI::kDefaultAlign, RHI::EMemoryType::CPURead);
+                RHI::SetDebugName(MeshletBoundReadback[Slot], "Readback.MeshletBounds");
 
                 if (void* Host = RHI::ToHost(MeshletBoundReadback[Slot]))
                 {
@@ -12230,6 +12234,7 @@ namespace Lumina
                 DeferFree(Slot.Readback);
             }
             Slot.Readback = RHI::Malloc((uint64)RegionW * RegionH * sizeof(uint32), RHI::kDefaultAlign, RHI::EMemoryType::CPURead);
+            RHI::SetDebugName(Slot.Readback, "Readback.Picker");
             Slot.Width = RegionW;
             Slot.Height = RegionH;
         }

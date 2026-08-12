@@ -6,6 +6,7 @@
 #include "Containers/String.h"
 #include "Core/LuminaMacros.h"
 #include "Core/Object/Class.h"
+#include "Core/Object/Field.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Platform/GenericPlatform.h"
@@ -151,10 +152,30 @@ namespace Lumina
     private:
 
         struct FFieldPlan;
+        struct FKindLayout;
+
+        /**
+         * The two questions asked of every export kind -- how big is it, and what FProperty represents it --
+         * each answered in ONE place.
+         *
+         * A kind is reachable two ways: as a field of the layout, and as the element of a container field.
+         * Those used to be four hand-kept if-chains (plan/create x field/element), which is two chances per
+         * kind for the size path and the property path to disagree about what a kind means. They are now
+         * these two functions, with the field and element paths differing only in what they do with the
+         * answer: a field also gets an alignment and the author's [Property] metadata, an element is packed
+         * at its size and carries only the kind's own tag.
+         *
+         * Container kinds are deliberately absent. A Vector or a Map is only ever a field -- native has no
+         * nested-container property -- so ResolvePlan handles those before asking, and ResolveKindLayout
+         * refusing them is exactly what enforces the rule for elements.
+         */
+        bool ResolveKindLayout(const Scripting::FScriptExportType& Type, const FName& DiagName, FKindLayout& Out);
+        FProperty* MakeForKind(const FFieldOwner& Owner, const FName& FieldName, uint32 Offset,
+            const Scripting::FScriptExportType& Type, CStruct* Resolved);
 
         bool ResolvePlan(const Scripting::FScriptExportField& Field, FFieldPlan& Out);
         FProperty* CreateProperty(CStruct* Target, const FFieldPlan& Plan, uint32 Offset);
-        bool ResolveElement(const Scripting::FScriptExportType& Type, Scripting::FScriptArrayElementDesc& Out);
+        bool ResolveElement(const Scripting::FScriptExportType& Type, const FName& DiagName, Scripting::FScriptArrayElementDesc& Out);
         FProperty* CreateElement(void* ArrayOwner, const Scripting::FScriptExportType& Type, Scripting::FScriptArrayElementDesc& Desc);
         CScriptStruct* MintSubStruct(const Scripting::FScriptExportType& Type);
 
@@ -203,6 +224,42 @@ namespace Lumina::Scripting
 
     /** Drops a retired minted class's layout record. Only safe once the class has no live instances. */
     RUNTIME_API void ForgetScriptClassLayout(CClass* Target);
+
+    /**
+     * Resets every `[SkipHotReload]` script property on Object to its class default.
+     *
+     * Called after a hot reload has restored an instance's authored values, for the fields whose author
+     * asked NOT to carry them: a value you tune at edit time but want back at its default whenever you
+     * iterate. The class default object is the source, which is where the C# declared initializers live.
+     *
+     * A no-op for a class with no appended properties, or before its CDO exists.
+     */
+    RUNTIME_API void ResetSkipHotReloadProperties(CObject* Object);
+
+    /** A string identifying what a schema lays out. Equal strings mean an identical layout; metadata-only
+     *  edits (a tooltip, a Min/Max) deliberately do not change it. */
+    RUNTIME_API FString DescribeScriptSchemaLayout(const FScriptExportSchema& Schema);
+
+    /** True when Target's appended block already matches Schema, so a hot reload needs no rebuild. */
+    RUNTIME_API bool ScriptClassLayoutMatches(CClass* Target, const FScriptExportSchema& Schema);
+
+    /**
+     * Rebuilds Target's appended property block from Schema, for a hot reload that added, removed, retyped
+     * or renamed a C# `[Property]`.
+     *
+     * A minted class is reused by name across reloads and keeps its identity, but its SIZE is baked into
+     * every object at allocation (StaticAllocateObject reads Class->GetSize() once), so a changed property
+     * set cannot be patched in place. This tears the block down and builds the new one: retire the layout
+     * record, discard the CDO, unlink, restore the shim's size, re-append, and create a fresh CDO.
+     *
+     * Returns false and changes nothing if the class has live instances. They are laid out at the old size,
+     * so the caller must evacuate them first (serializing their owning components, which is already how
+     * SEntityScriptComponent round-trips) and repopulate after. Also returns false if Target never had an
+     * appended block, where the caller wants AppendScriptPropertiesToClass instead.
+     *
+     * Declared defaults are NOT applied; as with a first mint, the caller replays them onto the new CDO.
+     */
+    RUNTIME_API bool MigrateMintedClassLayout(CClass* Target, const FScriptExportSchema& Schema);
 
     // Per-ScriptClass cache of minted script structs, owned by the .NET host and cleared on reload.
     class FScriptStructRegistry

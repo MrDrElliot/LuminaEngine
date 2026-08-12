@@ -67,7 +67,7 @@ namespace Lumina::FShaderCache
             return Joined;
         }
 
-        FString ResolveInclude(FStringView Token, bool bIsImport, FStringView IncludingDir, FStringView ShaderRoot)
+        FString ResolveInclude(FStringView Token, bool bIsImport, FStringView IncludingDir, const TVector<FString>& SearchRoots)
         {
             FString Candidate;
             if (bIsImport)
@@ -88,7 +88,9 @@ namespace Lumina::FShaderCache
                 Candidate.assign(Token.data(), Token.size());
             }
 
-            // Try sibling-of-includer first, then shader root.
+            // Sibling-of-includer first, then every shader root in the same order Slang searches them,
+            // so an include a plugin or game shader pulls in is hashed rather than silently ignored --
+            // an unhashed include is one that can be edited without invalidating the cache.
             if (!IncludingDir.empty())
             {
                 FString Sibling(IncludingDir.data(), IncludingDir.size());
@@ -103,15 +105,18 @@ namespace Lumina::FShaderCache
                 }
             }
 
-            FString Root(ShaderRoot.data(), ShaderRoot.size());
-            if (!Root.empty() && Root.back() != '/')
+            for (const FString& SearchRoot : SearchRoots)
             {
-                Root += '/';
-            }
-            Root += Candidate;
-            if (VFS::Exists(Root))
-            {
-                return Root;
+                FString Root = SearchRoot;
+                if (!Root.empty() && Root.back() != '/')
+                {
+                    Root += '/';
+                }
+                Root += Candidate;
+                if (VFS::Exists(Root))
+                {
+                    return Root;
+                }
             }
             return {};
         }
@@ -126,19 +131,21 @@ namespace Lumina::FShaderCache
             return Path.substr(0, Slash);
         }
 
-        void GatherSourceHash(FStringView VirtualPath, FStringView ShaderRoot, THashSet<FString>& Visited, uint64& Hash)
+        // False when the file itself could not be read; the caller turns that into "do not cache", since
+        // a hash that covers none of the source would never notice an edit.
+        bool GatherSourceHash(FStringView VirtualPath, const TVector<FString>& SearchRoots, THashSet<FString>& Visited, uint64& Hash)
         {
             FString PathStr(VirtualPath.data(), VirtualPath.size());
             if (Visited.find(PathStr) != Visited.end())
             {
-                return;
+                return true;
             }
             Visited.insert(PathStr);
 
             FString Source;
             if (!VFS::ReadFile(Source, VirtualPath))
             {
-                return;
+                return false;
             }
 
             const uint64 FileHash = Hash::GetHash64(Source);
@@ -172,10 +179,10 @@ namespace Lumina::FShaderCache
                     if (j > Start)
                     {
                         FStringView Name = Trim.substr(Start, j - Start);
-                        FString Resolved = ResolveInclude(Name, true, Dir, ShaderRoot);
+                        FString Resolved = ResolveInclude(Name, true, Dir, SearchRoots);
                         if (!Resolved.empty())
                         {
-                            GatherSourceHash(Resolved, ShaderRoot, Visited, Hash);
+                            GatherSourceHash(Resolved, SearchRoots, Visited, Hash);
                         }
                     }
                 }
@@ -188,27 +195,36 @@ namespace Lumina::FShaderCache
                         if (Close != FString::npos)
                         {
                             FStringView Name = Trim.substr(Quote + 1, Close - Quote - 1);
-                            FString Resolved = ResolveInclude(Name, false, Dir, ShaderRoot);
+                            FString Resolved = ResolveInclude(Name, false, Dir, SearchRoots);
                             if (!Resolved.empty())
                             {
-                                GatherSourceHash(Resolved, ShaderRoot, Visited, Hash);
+                                GatherSourceHash(Resolved, SearchRoots, Visited, Hash);
                             }
                         }
                     }
                 }
             }
+
+            // An include that fails to resolve is not fatal: Slang may still find it, and the worst case
+            // is a hash that misses one file. Only the root file being unreadable disables the cache.
+            return true;
         }
     }
 
-    uint64 ComputeSourceSetHash(FStringView ShaderVirtualPath, const TVector<FString>& Defines)
+    uint64 ComputeSourceSetHash(FStringView ShaderVirtualPath, const TVector<FString>& Defines, const TVector<FString>& SearchRoots)
     {
         uint64 Hash = (uint64)SHADER_CACHE_VERSION;
         const FString DefineBlob = JoinSortedDefines(Defines);
         Hash ^= Hash::GetHash64(DefineBlob) + 0x9e3779b97f4a7c15ULL + (Hash << 6) + (Hash >> 2);
 
-        constexpr FStringView ShaderRoot = "/Engine/Resources/Shaders";
         THashSet<FString> Visited;
-        GatherSourceHash(ShaderVirtualPath, ShaderRoot, Visited, Hash);
+        if (!GatherSourceHash(ShaderVirtualPath, SearchRoots, Visited, Hash))
+        {
+            // Unreadable source (a name the roots could not resolve, or a packaged build with the source
+            // stripped). 0 means "do not serve or write a cache entry" -- better than a hash covering
+            // nothing but the defines, which would pin the first compile forever.
+            return 0;
+        }
 
         // 0 is reserved as "skip source-hash check", never return it.
         if (Hash == 0)

@@ -187,6 +187,18 @@ namespace Lumina
         /** Finalizes the property list. Must run after all AddProperty calls and before runtime use. */
         RUNTIME_API virtual void Link();
 
+        /**
+         * Drops this struct's property list and clears the linked latch, so AddProperty + Link can run again.
+         *
+         * Only the HEAD is dropped. Link splices the super's chain onto this struct's tail, so the list this
+         * walks is partly borrowed; the super still owns its own properties and is untouched. Whatever this
+         * struct itself added is the caller's to dispose of, and this does not free it.
+         *
+         * Exists for one caller: rebuilding a runtime-minted class's appended property block when a C# hot
+         * reload changes the script's property set. Do not use it on a compile-time class.
+         */
+        RUNTIME_API void Unlink();
+
         RUNTIME_API FFixedString MakeDisplayName() const override;
 
     private:
@@ -256,6 +268,15 @@ namespace Lumina
 
         /** The CDO if one has been created; never creates it (unlike GetDefaultObject). */
         RUNTIME_API CObject* GetDefaultObjectIfCreated() const { return ClassDefaultObject; }
+
+        /**
+         * Destroys the CDO and forgets it, so the next GetDefaultObject builds a fresh one.
+         *
+         * CreateDefaultObject asserts the slot is empty, and it allocates from GetSize(), so a class whose
+         * layout changed cannot reuse the old CDO: it is the wrong size and holds the old property set.
+         * Paired with Unlink by the minted-class rebuild; nothing else should need it.
+         */
+        RUNTIME_API void DiscardDefaultObject();
 
         /** Routes to the CDO so object and struct details panels share one path. */
         RUNTIME_API void* GetDefaultInstance() override;
