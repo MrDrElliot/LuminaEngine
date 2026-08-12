@@ -29,6 +29,7 @@
 #include "Paths/Paths.h"
 #include "Renderer/RendererUtils.h"
 #include "Renderer/SkeletonResource.h"
+#include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "TaskSystem/Future.h"
 #include "TaskSystem/TaskSystem.h"
 #include "TaskSystem/ThreadedCallback.h"
@@ -867,7 +868,22 @@ namespace Lumina
         TObjectPtr<CSkeleton> PrimarySkeleton;
         const bool bMultipleSkeletons = SourceData.Skeletons.size() > 1;
 
-        for (size_t i = 0; bImportSkeleton && i < SourceData.Skeletons.size(); ++i)
+        // With a target skeleton the file's own is only still needed to bind skinned meshes, whose weights
+        // are bone INDICES into it. Nothing else would reference it, so skip minting a duplicate.
+        bool bFileSkeletonNeeded = TargetSkeleton == nullptr;
+        if (!bFileSkeletonNeeded && bImportMeshes)
+        {
+            for (const TUniquePtr<FMeshResource>& Resource : SourceData.Resources)
+            {
+                if (Resource && Resource->bSkinnedMesh)
+                {
+                    bFileSkeletonNeeded = true;
+                    break;
+                }
+            }
+        }
+
+        for (size_t i = 0; bImportSkeleton && bFileSkeletonNeeded && i < SourceData.Skeletons.size(); ++i)
         {
             TUniquePtr<FSkeletonResource>& SkeletonRes = SourceData.Skeletons[i];
             if (!SkeletonRes || !SkeletonRes->bShouldImport)
@@ -957,7 +973,7 @@ namespace Lumina
             CAnimation* NewAnimation = CFactory::CreateNewOf<CAnimation>(AnimPath);
             NewAnimation->SetFlag(OF_NeedsPostLoad);
             NewAnimation->AnimationResource = Move(Clip);
-            NewAnimation->Skeleton          = PrimarySkeleton;
+            NewAnimation->Skeleton          = TargetSkeleton != nullptr ? TargetSkeleton : PrimarySkeleton;
 
             CreatedObjects.push_back(NewAnimation);
         }
@@ -1525,6 +1541,12 @@ namespace Lumina
                 return;
             }
 
+            const FSkeletonResource* Target = TargetSkeleton != nullptr ? TargetSkeleton->GetSkeletonResource() : nullptr;
+            if (TargetSkeleton != nullptr)
+            {
+                ImGui::TextDisabled("Binding to %s", TargetSkeleton->GetName().c_str());
+            }
+
             for (size_t i = 0; i < SourceData.Animations.size(); ++i)
             {
                 const FAnimationResource& Anim = *SourceData.Animations[i];
@@ -1532,6 +1554,30 @@ namespace Lumina
                 if (ImGui::TreeNodeEx(Anim.Name.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth))
                 {
                     ImGui::TextDisabled("Duration: %.2fs   Channels: %zu", Anim.Duration, Anim.Channels.size());
+
+                    // Channels resolve by bone name at sample time, and an unmatched one silently freezes
+                    // its bone at bind pose. Surface that here, where it can still be acted on.
+                    if (Target != nullptr)
+                    {
+                        int32 Unmatched = 0;
+                        for (const FAnimationChannel& Channel : Anim.Channels)
+                        {
+                            Unmatched += Target->FindBoneIndex(Channel.TargetBone) < 0 ? 1 : 0;
+                        }
+
+                        if (Unmatched == 0)
+                        {
+                            ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.5f, 1.0f),
+                                LE_ICON_CHECK_CIRCLE_OUTLINE " Every channel matches a bone.");
+                        }
+                        else
+                        {
+                            ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.45f, 1.0f),
+                                LE_ICON_ALERT_CIRCLE_OUTLINE " %d of %zu channels have no bone of that name.",
+                                Unmatched, Anim.Channels.size());
+                        }
+                    }
+
                     ImGui::TreePop();
                 }
                 ImGui::PopID();

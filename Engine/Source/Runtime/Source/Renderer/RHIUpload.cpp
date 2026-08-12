@@ -597,41 +597,47 @@ namespace Lumina::RHI
                 Slice.ReadValue[QueueIndex] = 0;
             }
 
-            FScopeLock Lock(GUpload.Mutex);
+            GPUPtr OldGpu = 0;
+            {
+                FScopeLock Lock(GUpload.Mutex);
 
-            const uint64 Demand = Slice.Cursor + Slice.OverflowBytes;
+                const uint64 Demand = Slice.Cursor + Slice.OverflowBytes;
 
-            uint64 NewCapacity = Slice.Capacity;
-            if (Demand > Slice.Capacity)
-            {
-                NewCapacity     = Math::AlignUp(Demand + Demand / 2, 1024ull * 1024);
-                Slice.LowStreak = 0;
-            }
-            else if (Slice.Capacity > GStagingSliceSize && Demand * 2 < Slice.Capacity && ++Slice.LowStreak >= 64)
-            {
-                NewCapacity     = Math::Max(GStagingSliceSize, Math::AlignUp(Demand + Demand / 2, 1024ull * 1024));
-                Slice.LowStreak = 0;
-            }
-            else
-            {
-                Slice.LowStreak = 0;
-            }
-
-            if (NewCapacity != Slice.Capacity)
-            {
-                const GPUPtr NewGpu = Malloc(NewCapacity, kDefaultAlign, EMemoryType::CPUWrite);
-                if (NewGpu != 0)
+                uint64 NewCapacity = Slice.Capacity;
+                if (Demand > Slice.Capacity)
                 {
-                    Core::Retire(Slice.Gpu);
-                    Slice.Gpu      = NewGpu;
-                    Slice.Cpu      = static_cast<std::byte*>(ToHost(NewGpu));
-                    Slice.Capacity = NewCapacity;
+                    NewCapacity     = Math::AlignUp(Demand + Demand / 2, 1024ull * 1024);
+                    Slice.LowStreak = 0;
                 }
+                else if (Slice.Capacity > GStagingSliceSize && Demand * 2 < Slice.Capacity && ++Slice.LowStreak >= 64)
+                {
+                    NewCapacity     = Math::Max(GStagingSliceSize, Math::AlignUp(Demand + Demand / 2, 1024ull * 1024));
+                    Slice.LowStreak = 0;
+                }
+                else
+                {
+                    Slice.LowStreak = 0;
+                }
+
+                if (NewCapacity != Slice.Capacity)
+                {
+                    const GPUPtr NewGpu = Malloc(NewCapacity, kDefaultAlign, EMemoryType::CPUWrite);
+                    if (NewGpu != 0)
+                    {
+                        OldGpu         = Slice.Gpu;
+                        Slice.Gpu      = NewGpu;
+                        Slice.Cpu      = static_cast<std::byte*>(ToHost(NewGpu));
+                        Slice.Capacity = NewCapacity;
+                    }
+                }
+
+                GUpload.CurrentSlot   = Slot;
+                Slice.Cursor          = 0;
+                Slice.OverflowBytes   = 0;
             }
 
-            GUpload.CurrentSlot   = Slot;
-            Slice.Cursor          = 0;
-            Slice.OverflowBytes   = 0;
+            // Outside the lock: Core::Retire() re-enters Upload::CancelBuffer(), which takes GUpload.Mutex.
+            Core::Retire(OldGpu);
         }
     }
 }

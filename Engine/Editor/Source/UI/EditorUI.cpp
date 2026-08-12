@@ -85,6 +85,7 @@
 #include "Properties/Customizations/CSharpScriptComponentCustomization.h"
 #include "Properties/Customizations/AssetRefPropertyCustomization.h"
 #include "Properties/Customizations/GameplayTagPropertyCustomization.h"
+#include "Properties/Customizations/DataTableRowHandleCustomization.h"
 #include "GameplayTags/GameplayTag.h"
 #include "World/Entity/Components/CSharpScriptComponent.h"
 #include "Scripting/DotNet/DotNetHost.h"
@@ -537,6 +538,11 @@ namespace Lumina
         PropertyCustomizationRegistry->RegisterPropertyCustomization(FGameplayTag::StaticStruct()->GetName(), []
         {
            return FGameplayTagPropertyCustomization::MakeInstance();
+        });
+
+        PropertyCustomizationRegistry->RegisterPropertyCustomization(SDataTableRowHandle::StaticStruct()->GetName(), []
+        {
+           return FDataTableRowHandlePropertyCustomization::MakeInstance();
         });
 
         EditorWindowClass.ClassId                       = ImHashStr("EditorWindowClass");

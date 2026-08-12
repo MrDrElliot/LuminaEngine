@@ -6,6 +6,7 @@
 #include "Tools/UI/ImGui/Widgets/TreeListView.h"
 #include "UI/Tools/FSceneEditorTool.h"
 #include "Containers/Array.h"
+#include "Memory/SmartPtr.h"
 
 
 namespace Lumina
@@ -25,7 +26,9 @@ namespace Lumina
         FPrefabEditorTool(IEditorToolContext* Context, CObject* InAsset);
 
         bool IsSingleWindowTool() const override { return false; }
-        const char* GetTitlebarIcon() const override { return LE_ICON_PACKAGE_VARIANT_CLOSED; }
+
+        // A variant gets the branch icon so the tab says what it is without being opened.
+        const char* GetTitlebarIcon() const override;
         void OnInitialize() override;
         void SetupWorldForTool() override;
         void Update(const FUpdateContext& UpdateContext) override;
@@ -70,6 +73,9 @@ namespace Lumina
 
         // Restrict the shared outliner to prefab-owned entities (hides preview lights/floor/camera).
         bool IsOutlinerEntityVisible(entt::entity Entity) const override;
+
+        // Header above the Scene Graph naming the parent, when this prefab is a variant.
+        void DrawVariantBanner();
 
         void HandleOutlinerDragDrop(FTreeListView& Tree, entt::entity DropItem);
         void HandlePrefabContentDrop(FStringView VirtualPath, entt::entity DropTarget, bool bAttachToTarget) override;
@@ -121,6 +127,12 @@ namespace Lumina
         // Track when a prefab-owning entity is destroyed mid-frame so we can mark the package
         // dirty exactly once even when several entities go down in the same batch.
         bool                                bPendingDirtyOnDestroy = false;
+
+        // Resolve count the preview world was built from; a mismatch means a parent edit landed.
+        uint32                              LastVariantResolveCount = 0;
+
+        // Draws the prefab's own ParentPrefab slot above the Scene Graph. Built on first use.
+        TUniquePtr<FPropertyTable>          VariantPropertyTable;
 
         // Match the world editor's window names so both editors read the same.
         static constexpr const char* OutlinerWindowName = "Scene Graph";

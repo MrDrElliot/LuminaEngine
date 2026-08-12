@@ -254,6 +254,9 @@ namespace Lumina
 
         // Duplicate entry. Disabled for packages holding sub-objects a property copy would alias.
         void DrawDuplicateAssetMenuItem(const FContentBrowserTileViewItem* ContentItem, bool bIsProtected);
+
+        // Prefab-only: mints a child prefab that inherits from this one. Nothing for other asset types.
+        void DrawCreateVariantMenuItem(const FContentBrowserTileViewItem* ContentItem);
         
         void DrawContentDirectoryContextMenu();
         
@@ -278,6 +281,18 @@ namespace Lumina
         FTileViewContext            ContentBrowserTileViewContext;
 
         FFixedString                SelectedPath;
+
+        // Browsed-folder history. Every navigation goes through NavigateTo so back/forward stay honest;
+        // assigning SelectedPath directly moves the browser without recording it.
+        void NavigateTo(FStringView Path);
+        void NavigateBack();
+        void NavigateForward();
+
+        NODISCARD bool CanNavigateBack() const { return !NavBackStack.empty(); }
+        NODISCARD bool CanNavigateForward() const { return !NavForwardStack.empty(); }
+
+        TVector<FFixedString>       NavBackStack;
+        TVector<FFixedString>       NavForwardStack;
 
         // One-shot browse-to targets, consumed by the next tile rebuild / directory tree draw.
         FFixedString                PendingBrowseToPath;

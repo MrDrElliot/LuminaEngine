@@ -2,6 +2,7 @@
 
 #include "Tools/Import/Importer.h"
 #include "Tools/Import/ImportHelpers.h"
+#include "Core/Object/ObjectHandleTyped.h"
 #include "Renderer/MeshDistanceField.h"
 #include "MeshImporter.generated.h"
 
@@ -50,6 +51,11 @@ namespace Lumina
         /** Import skeletal animation clips. */
         PROPERTY(Editable, Category = "Import")
         bool bImportAnimations = true;
+
+        // Bind imported clips to an existing skeleton instead of one from this file. Safe whenever the
+        // bone NAMES match, which is what channels resolve against; the dialogue reports the match.
+        PROPERTY(Editable, Category = "Animation")
+        TObjectPtr<CSkeleton> TargetSkeleton;
 
         /** Import material definitions and generate material assets for them. */
         PROPERTY(Editable, Category = "Import")

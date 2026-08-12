@@ -18,6 +18,7 @@ namespace Lumina
             None,
             Single,
             SingleWithCtrl,
+            SingleWithShift,
             Double,
         };
         
@@ -178,6 +179,12 @@ namespace Lumina
 
         void ToggleSelection(FTileViewItem* Item, const FTileViewContext& Context);
 
+        void SetSelectionAnchor(const FTileViewItem* Item);
+
+        // Shift-click: selects everything between the anchor and Item inclusive. ListItems is in draw
+        // order, so an index range is the visual range.
+        void SelectRangeTo(FTileViewItem* Item, const FTileViewContext& Context);
+
         // Rubber-band selection. Begin/end detection runs at the END of Draw, once every tile has been
         // submitted and IsAnyItemHovered() can tell "empty space" from "on a tile"; the RECT is rebuilt at
         // the top of the next Draw so the tiles hit-test against the live mouse position, not a stale one.
@@ -215,6 +222,9 @@ namespace Lumina
 
         /** Index into ListItems to select and scroll to on the next Draw (-1 = none). */
         int32                                   PendingRevealIndex = -1;
+
+        // Origin a shift-click ranges from. An index, so a rebuild has to clear it.
+        int32                                   SelectionAnchorIndex = -1;
 
         char                                    RenameBuffer[128] = {};
 

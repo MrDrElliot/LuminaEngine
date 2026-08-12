@@ -30,6 +30,10 @@ enum class ELuminaEngineVersion : uint32
 	// FAnimationResource serializes authored float curves, and CAnimationGraph its curve tables.
 	ANIM_CURVES,
 
+	// CPrefab writes a variant flag before its registry. A variant serializes its DELTA against
+	// ParentPrefab there instead of resolved data; older files are always root prefabs.
+	PREFAB_VARIANTS,
+
 	AUTOMATIC_VERSION_PLUS_ONE,
 	AUTOMATIC_VERSION = AUTOMATIC_VERSION_PLUS_ONE - 1
 };

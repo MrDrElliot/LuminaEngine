@@ -1,7 +1,9 @@
 #pragma once
 #include "Containers/Name.h"
 #include "Core/Object/Object.h"
+#include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Math/Transform.h"
+#include "Assets/AssetTypes/Prefabs/PrefabComponents.h"
 #include "Prefab.generated.h"
 
 namespace Lumina
@@ -16,9 +18,10 @@ namespace Lumina
     public:
 
         void Serialize(FArchive& Ar) override;
-        
+        void PostLoad() override;
+
         bool IsAsset() const override { return true; }
-        
+
         static uint32 GetDataGeneration();
         static void   BumpDataGeneration();
 
@@ -82,14 +85,71 @@ namespace Lumina
             const TVector<entt::entity>* SourceEntities = nullptr,
             bool(*ExtraSkipStorage)(entt::id_type) = nullptr);
 
+        // A variant owns no authored registry: Registry is RESOLVED from ParentPrefab plus the delta
+        // below, so a parent edit reaches every descendant without anything being copied forward.
+
+        /** Prefab this one is a variant of. Null for a root prefab, whose Registry is authored directly. */
+        PROPERTY(ReadOnly, Category = "Variant")
+        TObjectPtr<CPrefab> ParentPrefab;
+
+        NODISCARD bool IsVariant() const { return ParentPrefab != nullptr; }
+
+        /** True if Candidate is this prefab or anywhere up its parent chain. Guards cycles. */
+        NODISCARD bool IsDescendantOf(const CPrefab* Candidate) const;
+
+        /** Rebuilds Registry from the parent chain, resolving ancestors first. No-op for a root prefab.
+         *  A cycle or a missing parent leaves Registry empty and logs. */
+        void ResolveVariant();
+
+        /** Diffs the current Registry against the resolved parent and stores the result as this variant's
+         *  delta. Called on save; a root prefab keeps its Registry verbatim instead. */
+        void CaptureVariantDelta();
+
+        /** Re-resolves every loaded variant descending from this prefab, deepest last, then refreshes
+         *  their live instances. Call after this prefab's data changes. */
+        void PropagateToVariants();
+
+        /** Loaded prefabs whose ParentPrefab is this one. */
+        NODISCARD TVector<CPrefab*> FindDirectVariants() const;
+
+        // Bumped every time ResolveVariant rebuilds Registry. An open editor watches this to know its
+        // preview world is showing data the parent has since replaced.
+        NODISCARD uint32 GetVariantResolveCount() const { return VariantResolveCount; }
+
         entt::registry Registry;
 
+        /** Entities the variant diverges on. Only these are serialized; everything else comes from the
+         *  parent. Each carries SPrefabComponent so its StableID pairs it with a parent node. */
+        entt::registry VariantDelta;
+
+        // The ledger. Public because the reflector's generated code takes offsetof on every PROPERTY;
+        // nothing outside the variant paths should write these.
+        PROPERTY()
+        TVector<SPrefabPropertyOverride> VariantOverriddenProperties;
+
+        PROPERTY()
+        TVector<SPrefabComponentRef> VariantAddedComponents;
+
+        PROPERTY()
+        TVector<SPrefabComponentRef> VariantRemovedComponents;
+
+        PROPERTY()
+        TVector<SPrefabVariantNode> VariantStructuralNodes;
+
+        PROPERTY()
+        TVector<FName> VariantRemovedEntities;
+
     private:
+
+        void ResolveVariantGuarded(TVector<const CPrefab*>& VisitStack);
+        void ApplyVariantDelta();
+        void ClearVariantDelta();
 
         void RebuildStableIDLookup();
 
         THashMap<FName, entt::entity> StableIDLookup;
         uint32                        StableIDLookupGeneration = 0;
         bool                          bStableIDLookupBuilt     = false;
+        uint32                        VariantResolveCount      = 0;
     };
 }

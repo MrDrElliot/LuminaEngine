@@ -562,6 +562,53 @@ namespace Lumina
                 Memory::Memcpy(EditBuffer, Current.c_str(), Math::Min(Current.size(), sizeof(EditBuffer) - 1));
             }
         }
+
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal) && EditingRow == INDEX_NONE)
+        {
+            ImGui::SetTooltip(bCanReorder
+                ? "Double-click to rename. Drag to reorder."
+                : "Double-click to rename. Clear the search and sort to reorder by dragging.");
+        }
+
+        HandleRowDrag(RowIndex);
+    }
+
+    void FDataTableEditorTool::HandleRowDrag(int32 RowIndex)
+    {
+        if (!bCanReorder || !ImGui::IsItemActive() || !ImGui::IsMouseDragging(ImGuiMouseButton_Left))
+        {
+            return;
+        }
+
+        DraggingRow = RowIndex;
+        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+
+        // Distance, not hover: value cells overlap this one, so IsItemHovered goes false on horizontal
+        // movement alone and would step the row for a drag that never left it.
+        const float RowHeight = ImGui::GetItemRectSize().y + ImGui::GetStyle().CellPadding.y * 2.0f;
+        const float DragY = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left).y;
+
+        if (RowHeight <= 0.0f || Math::Abs(DragY) < RowHeight)
+        {
+            return;
+        }
+
+        CDataTable* Table = GetAsset<CDataTable>();
+        const int32 Target = RowIndex + (DragY < 0.0f ? -1 : 1);
+
+        if (Target >= 0 && Target < Table->GetRowCount())
+        {
+            CancelCellEdit();
+
+            Table->MoveRow(RowIndex, Target);
+            SelectedRow = Target;
+            DraggingRow = Target;
+            BoundRowMemory = nullptr;
+            bDisplayOrderDirty = true;
+            MarkDirty();
+        }
+
+        ImGui::ResetMouseDragDelta(ImGuiMouseButton_Left);
     }
 
     void FDataTableEditorTool::DrawValueCell(int32 RowIndex, int32 ColumnIndex)
@@ -627,6 +674,8 @@ namespace Lumina
                 Memory::Memcpy(EditBuffer, Text.c_str(), Math::Min(Text.size(), sizeof(EditBuffer) - 1));
             }
         }
+
+        HandleRowDrag(RowIndex);
     }
 
     void FDataTableEditorTool::DrawGrid()
@@ -644,6 +693,14 @@ namespace Lumina
             ImGuiTableFlags_ScrollX |
             ImGuiTableFlags_ScrollY |
             ImGuiTableFlags_SizingFixedFit;
+
+        // Reorder writes storage order, so it needs the view to BE storage order.
+        bCanReorder = !bSortActive && !Filter.IsActive();
+
+        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
+        {
+            DraggingRow = INDEX_NONE;
+        }
 
         // One extra for the name column, which is always present.
         const int32 ColumnCount = (int32)Columns.size() + 1;
@@ -689,13 +746,17 @@ namespace Lumina
         ImGuiListClipper Clipper;
         Clipper.Begin((int32)DisplayOrder.size());
 
-        // The row being edited must keep drawing even when scrolled out, or its InputText is destroyed
-        // mid-edit and the keystrokes are lost.
-        if (EditingRow != INDEX_NONE)
+        // Clipping these away destroys the InputText mid-edit, and drops the drag's active id.
+        for (const int32 KeepAlive : {EditingRow, DraggingRow})
         {
+            if (KeepAlive == INDEX_NONE)
+            {
+                continue;
+            }
+
             for (int32 i = 0; i < (int32)DisplayOrder.size(); ++i)
             {
-                if (DisplayOrder[i] == EditingRow)
+                if (DisplayOrder[i] == KeepAlive)
                 {
                     Clipper.IncludeItemByIndex(i);
                     break;
@@ -714,7 +775,10 @@ namespace Lumina
                 }
 
                 ImGui::TableNextRow();
-                ImGui::PushID(RowIndex);
+
+                // Name, not index: a drag moves the row through indices, and an index-derived id would
+                // change under the held widget and drop it after one step.
+                ImGui::PushID(Table->Rows[RowIndex].Name.c_str());
 
                 ImGui::TableSetColumnIndex(0);
                 DrawNameCell(RowIndex);

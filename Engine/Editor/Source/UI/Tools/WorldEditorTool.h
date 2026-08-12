@@ -342,6 +342,10 @@ namespace Lumina
         FVector3                                VertexSnapTargetWorld = FVector3(0.0f);
         FVector3                                VertexSnapAnchorWorld = FVector3(0.0f);
         float                                   VertexSnapPixelRadius = 16.0f;
+
+        // Set when the Ctrl currently held has already been used as a command chord (Ctrl+D and friends).
+        // Latched until Ctrl is released, so that Ctrl cannot also mean vertex-snap.
+        bool                                    bCtrlConsumedByChord = false;
     };
     
 }

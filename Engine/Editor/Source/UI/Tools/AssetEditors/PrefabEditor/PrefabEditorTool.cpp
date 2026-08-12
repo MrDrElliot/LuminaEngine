@@ -9,6 +9,7 @@
 #include "Settings/EditorSettings.h"
 #include "Core/Math/Math.h"
 #include "UI/Tools/ContentBrowserEditorTool.h"
+#include "UI/Tools/EditorToolContext.h"
 #include "UI/Tools/EditorEntityUtils.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/Package/Package.h"
@@ -54,6 +55,7 @@ namespace Lumina
     {
         CreateToolWindow(OutlinerWindowName, [this](bool bFocused)
         {
+            DrawVariantBanner();
             DrawOutliner(bFocused);
         });
 
@@ -329,8 +331,43 @@ namespace Lumina
         World->EmplaceComponent<SSkyLightComponent>(DirectionalLightEntity);
     }
 
+    const char* FPrefabEditorTool::GetTitlebarIcon() const
+    {
+        const CPrefab* Prefab = GetPrefab();
+        return (Prefab != nullptr && Prefab->IsVariant()) ? LE_ICON_SOURCE_BRANCH : LE_ICON_PACKAGE_VARIANT_CLOSED;
+    }
+
+    void FPrefabEditorTool::DrawVariantBanner()
+    {
+        CPrefab* Prefab = GetPrefab();
+        if (Prefab == nullptr || !Prefab->IsVariant())
+        {
+            return;
+        }
+
+        // The prefab's own property table, which is just the ReadOnly ParentPrefab: the ledger members are
+        // bare PROPERTY() and so invisible. Drawn disabled, so it reads as the normal asset slot it is.
+        if (VariantPropertyTable == nullptr)
+        {
+            VariantPropertyTable = MakeUnique<FPropertyTable>();
+            VariantPropertyTable->SetObject(Prefab, CPrefab::StaticClass());
+            VariantPropertyTable->SetShowSearchBar(false);
+        }
+
+        ImGui::BeginDisabled(true);
+        VariantPropertyTable->DrawTree(true);
+        ImGui::EndDisabled();
+
+        ImGui::Separator();
+    }
+
     void FPrefabEditorTool::OnSceneLoaded()
     {
+        if (const CPrefab* Prefab = GetPrefab())
+        {
+            LastVariantResolveCount = Prefab->GetVariantResolveCount();
+        }
+
         LoadPrefabIntoPreviewWorld();
         OutlinerListView.MarkTreeDirty();
 
@@ -485,6 +522,10 @@ namespace Lumina
         THashMap<entt::entity, entt::entity> SrcToDst;
         CPrefab::CopyRegistry(WorldRegistry, Prefab->Registry, SrcToDst, &PrefabEntities,
             +[](entt::id_type ID) { return EditorEntityUtils::IsEditorOnlyComponent(ID); });
+
+        // A variant persists only what it diverges from its parent on, so the edited registry has to be
+        // reduced to a delta before the package is written.
+        Prefab->CaptureVariantDelta();
     }
 
     void FPrefabEditorTool::CommitScene()
@@ -505,12 +546,29 @@ namespace Lumina
         if (CPrefab* Prefab = GetPrefab())
         {
             Prefab->RefreshInstancesInLoadedWorlds();
+
+            // Variants descending from this one re-resolve against the new data, then push to their own
+            // instances. This is the whole point of a variant: the edit reaches them without a copy.
+            Prefab->PropagateToVariants();
         }
     }
 
     void FPrefabEditorTool::Update(const FUpdateContext& UpdateContext)
     {
         FAssetEditorTool::Update(UpdateContext);
+
+        // A parent prefab was saved and re-resolved this variant underneath us. The preview world is a
+        // copy taken at load, so without this the editor keeps showing the pre-edit data.
+        if (CPrefab* Prefab = GetPrefab())
+        {
+            const uint32 ResolveCount = Prefab->GetVariantResolveCount();
+            if (ResolveCount != LastVariantResolveCount)
+            {
+                LastVariantResolveCount = ResolveCount;
+                LoadPrefabIntoPreviewWorld();
+                OutlinerListView.MarkTreeDirty();
+            }
+        }
 
         // The preview world never draws editor billboards (light/camera icons). Re-applied every
         // frame because the render scene (and its settings) can be rebuilt by idle reclaim.
@@ -1256,16 +1314,25 @@ namespace Lumina
                 {
                     entt::entity Hit = Renderer->GetEntityAtPixel(TexX, TexY);
                     entt::registry& Registry = ECS::GetWorldRegistry(*World);
-                    if (Hit != entt::null && Registry.valid(Hit) && Registry.any_of<SPrefabComponent>(Hit))
+
+                    // Anything that is not prefab-owned counts as empty space: the preview floor and
+                    // lights are scenery, so clicking them deselects rather than selecting them.
+                    if (Hit == entt::null || !Registry.valid(Hit) || !Registry.any_of<SPrefabComponent>(Hit))
                     {
-                        if (ImGui::GetIO().KeyCtrl)
+                        Hit = entt::null;
+                    }
+
+                    if (ImGui::GetIO().KeyCtrl)
+                    {
+                        // Ctrl on empty space adds nothing; it must not wipe what is already selected.
+                        if (Hit != entt::null)
                         {
                             ToggleSelectedEntity(Hit);
                         }
-                        else
-                        {
-                            SetSingleSelectedEntity(Hit);
-                        }
+                    }
+                    else
+                    {
+                        SetSingleSelectedEntity(Hit);
                     }
                 }
             }

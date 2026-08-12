@@ -85,6 +85,9 @@ namespace Lumina
 
         RUNTIME_API void RemoveRow(int32 Index);
 
+        // Out-of-range indices are ignored, not clamped.
+        RUNTIME_API void MoveRow(int32 From, int32 To);
+
         /** Drops every row. Called when RowStruct changes, since the old rows describe a different type. */
         RUNTIME_API void ClearRows();
 
@@ -109,5 +112,46 @@ namespace Lumina
             return nullptr;
         }
         return static_cast<const T*>(Table->FindRow(RowName));
+    }
+
+    // A reference to one row. PROPERTY(Editable, RowType = "SMyRow") on the owning field makes the
+    // editor flag a table whose rows are not that type. Read it with FindDataTableRow.
+    REFLECT()
+    struct RUNTIME_API SDataTableRowHandle
+    {
+        GENERATED_BODY()
+
+        PROPERTY(Editable)
+        TObjectPtr<CDataTable> DataTable;
+
+        PROPERTY(Editable)
+        FName RowName;
+
+        // Nothing referenced, as opposed to IsValid, which asks whether it resolves.
+        NODISCARD bool IsNull() const { return DataTable == nullptr || RowName.IsNone(); }
+
+        NODISCARD CStruct* GetRowStruct() const;
+
+        // Null when the handle is empty or the name is not in the table.
+        NODISCARD const void* GetRowMemory() const;
+
+        NODISCARD bool IsValid() const { return GetRowMemory() != nullptr; }
+
+        void Clear()
+        {
+            DataTable = nullptr;
+            RowName = FName();
+        }
+
+        bool operator==(const SDataTableRowHandle& Other) const
+        {
+            return DataTable == Other.DataTable && RowName == Other.RowName;
+        }
+    };
+
+    template <typename T>
+    const T* FindDataTableRow(const SDataTableRowHandle& Handle)
+    {
+        return FindDataTableRow<T>(Handle.DataTable.Get(), Handle.RowName);
     }
 }

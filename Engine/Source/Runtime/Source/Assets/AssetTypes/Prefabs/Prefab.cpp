@@ -4,6 +4,7 @@
 #include "PrefabOverride.h"
 
 #include "Core/Object/Class.h"
+#include "Core/Object/ObjectIterator.h"
 #include "Core/Object/Package/Package.h"
 #include "GUID/GUID.h"
 #include "World/Entity/Components/DirtyComponent.h"
@@ -112,7 +113,32 @@ namespace Lumina
     void CPrefab::Serialize(FArchive& Ar)
     {
         CObject::Serialize(Ar);
-        ECS::Utils::SerializeRegistry(Ar, Registry);
+
+        // A variant stores its DELTA here, never resolved data: resolved data would go stale the moment
+        // the parent changed, which is the one thing a variant must not do.
+        bool bVariantPayload = IsVariant();
+        if (Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::PREFAB_VARIANTS)
+        {
+            Ar << bVariantPayload;
+        }
+        else
+        {
+            bVariantPayload = false;
+        }
+
+        ECS::Utils::SerializeRegistry(Ar, bVariantPayload ? VariantDelta : Registry);
+    }
+
+    void CPrefab::PostLoad()
+    {
+        CObject::PostLoad();
+
+        // Not in Serialize: resolving reads the parent's registry, and a dependency's DATA is not loaded
+        // yet at serialize time (see the phased loader). By PostLoad the whole dependency set is in.
+        if (IsVariant())
+        {
+            ResolveVariant();
+        }
     }
 
     void CPrefab::CopyRegistry(entt::registry& Source, entt::registry& Dest, THashMap<entt::entity, entt::entity>& OutMap,
@@ -472,15 +498,15 @@ namespace Lumina
         THashMap<FName, THashSet<FName>> RemovedComponents;                 // node StableID -> comp names
         if (const SPrefabOverrideComponent* Ledger = WorldRegistry.try_get<SPrefabOverrideComponent>(InstanceRoot))
         {
-            for (const FPrefabPropertyOverride& O : Ledger->PropertyOverrides)
+            for (const SPrefabPropertyOverride& O : Ledger->PropertyOverrides)
             {
                 OverriddenLeaves[O.EntityStableID][O.ComponentType].insert(O.PropertyPath);
             }
-            for (const FPrefabComponentRef& C : Ledger->AddedComponents)
+            for (const SPrefabComponentRef& C : Ledger->AddedComponents)
             {
                 AddedComponents[C.EntityStableID].insert(C.ComponentType);
             }
-            for (const FPrefabComponentRef& C : Ledger->RemovedComponents)
+            for (const SPrefabComponentRef& C : Ledger->RemovedComponents)
             {
                 RemovedComponents[C.EntityStableID].insert(C.ComponentType);
             }
@@ -943,6 +969,512 @@ namespace Lumina
         }
     }
 
+    namespace
+    {
+        THashMap<FName, entt::entity> IndexByStableID(entt::registry& Registry)
+        {
+            THashMap<FName, entt::entity> Out;
+            Registry.view<SPrefabComponent>().each([&](entt::entity E, const SPrefabComponent& Comp)
+            {
+                if (!Comp.StableID.IsNone())
+                {
+                    Out.try_emplace(Comp.StableID, E);
+                }
+            });
+            return Out;
+        }
+
+        FName StableIDOf(entt::registry& Registry, entt::entity E)
+        {
+            const SPrefabComponent* Comp = Registry.valid(E) ? Registry.try_get<SPrefabComponent>(E) : nullptr;
+            return Comp != nullptr ? Comp->StableID : FName();
+        }
+
+        FName ParentStableIDOf(entt::registry& Registry, entt::entity E)
+        {
+            const FRelationshipComponent* Rel = Registry.valid(E) ? Registry.try_get<FRelationshipComponent>(E) : nullptr;
+            if (Rel == nullptr || Rel->Parent == entt::null)
+            {
+                return FName();
+            }
+            return StableIDOf(Registry, Rel->Parent);
+        }
+
+        CStruct* StructOfStorage(const entt::sparse_set& Storage)
+        {
+            using namespace entt::literals;
+            entt::meta_type MetaType = entt::resolve(Storage.info());
+            if (!MetaType)
+            {
+                return nullptr;
+            }
+            if (entt::meta_any S = ECS::Utils::InvokeMetaFunc(MetaType, "static_struct"_hs))
+            {
+                return S.cast<CStruct*>();
+            }
+            return nullptr;
+        }
+
+        // Storages that describe structure or identity rather than authored values; the delta records
+        // those separately (by StableID) so they are never diffed as component data.
+        bool IsStructuralStorage(entt::id_type ID)
+        {
+            return ID == entt::type_hash<SPrefabComponent>::value()
+                || ID == entt::type_hash<FRelationshipComponent>::value();
+        }
+    }
+
+    bool CPrefab::IsDescendantOf(const CPrefab* Candidate) const
+    {
+        for (const CPrefab* Cur = this; Cur != nullptr; Cur = Cur->ParentPrefab.Get())
+        {
+            if (Cur == Candidate)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    TVector<CPrefab*> CPrefab::FindDirectVariants() const
+    {
+        TVector<CPrefab*> Out;
+        for (TObjectIterator<CPrefab> It; It; ++It)
+        {
+            CPrefab* Candidate = *It;
+            if (Candidate != this && Candidate->ParentPrefab.Get() == this)
+            {
+                Out.push_back(Candidate);
+            }
+        }
+        return Out;
+    }
+
+    void CPrefab::ClearVariantDelta()
+    {
+        VariantDelta = entt::registry{};
+        VariantOverriddenProperties.clear();
+        VariantAddedComponents.clear();
+        VariantRemovedComponents.clear();
+        VariantStructuralNodes.clear();
+        VariantRemovedEntities.clear();
+    }
+
+    void CPrefab::ResolveVariant()
+    {
+        TVector<const CPrefab*> VisitStack;
+        ResolveVariantGuarded(VisitStack);
+    }
+
+    void CPrefab::ResolveVariantGuarded(TVector<const CPrefab*>& VisitStack)
+    {
+        if (!IsVariant())
+        {
+            return;
+        }
+
+        if (eastl::find(VisitStack.begin(), VisitStack.end(), this) != VisitStack.end())
+        {
+            LOG_ERROR("Prefab '{}' is in a variant cycle; leaving it unresolved.", GetName().c_str());
+            return;
+        }
+
+        CPrefab* Parent = ParentPrefab.Get();
+        if (Parent == this || Parent->IsDescendantOf(this))
+        {
+            LOG_ERROR("Prefab '{}' would parent onto its own descendant; leaving it unresolved.", GetName().c_str());
+            return;
+        }
+
+        VisitStack.push_back(this);
+        Parent->ResolveVariantGuarded(VisitStack);
+        VisitStack.pop_back();
+
+        BumpDataGeneration();
+        ++VariantResolveCount;
+
+        Registry = entt::registry{};
+        THashMap<entt::entity, entt::entity> Map;
+        CopyRegistry(Parent->Registry, Registry, Map);
+
+        ApplyVariantDelta();
+    }
+
+    void CPrefab::ApplyVariantDelta()
+    {
+        using namespace entt::literals;
+
+        THashMap<FName, entt::entity> Resolved = IndexByStableID(Registry);
+
+        // Entities the variant deletes. Children that survive are rescued to the root first, then the
+        // structural pass below re-nests them, exactly as an instance refresh does.
+        for (const FName& DeadID : VariantRemovedEntities)
+        {
+            auto It = Resolved.find(DeadID);
+            if (It == Resolved.end() || !Registry.valid(It->second))
+            {
+                continue;
+            }
+
+            const entt::entity Dead = It->second;
+            TVector<entt::entity> Survivors;
+            ECS::Utils::ForEachDescendant(Registry, Dead, [&](entt::entity Desc)
+            {
+                const FName DescID = StableIDOf(Registry, Desc);
+                if (DescID.IsNone() || eastl::find(VariantRemovedEntities.begin(), VariantRemovedEntities.end(), DescID) == VariantRemovedEntities.end())
+                {
+                    Survivors.push_back(Desc);
+                }
+            });
+            for (entt::entity S : Survivors)
+            {
+                if (Registry.valid(S) && Registry.all_of<STransformComponent>(S))
+                {
+                    ECS::Utils::ReparentEntity(Registry, S, entt::null);
+                }
+            }
+
+            ECS::Utils::DestroyEntityHierarchy(Registry, Dead);
+            Resolved.erase(It);
+        }
+
+        // Copy the variant's authored entities in. An entity with no counterpart in the resolved parent
+        // data is one the variant adds; the rest carry only the components it diverges on.
+        THashMap<FName, THashSet<FName>> RemovedByNode;
+        for (const SPrefabComponentRef& Ref : VariantRemovedComponents)
+        {
+            RemovedByNode[Ref.EntityStableID].insert(Ref.ComponentType);
+        }
+
+        THashMap<FName, THashMap<FName, THashSet<FName>>> OverridesByNode;
+        for (const SPrefabPropertyOverride& Override : VariantOverriddenProperties)
+        {
+            OverridesByNode[Override.EntityStableID][Override.ComponentType].insert(Override.PropertyPath);
+        }
+
+        // Added entities first, so a later reparent can address them.
+        THashMap<entt::entity, entt::entity> DeltaToResolved;
+        VariantDelta.view<SPrefabComponent>().each([&](entt::entity DeltaE, const SPrefabComponent& Comp)
+        {
+            if (Comp.StableID.IsNone())
+            {
+                return;
+            }
+
+            auto It = Resolved.find(Comp.StableID);
+            if (It != Resolved.end())
+            {
+                DeltaToResolved[DeltaE] = It->second;
+                return;
+            }
+
+            const entt::entity NewE = Registry.create();
+            Registry.emplace<SPrefabComponent>(NewE).StableID = Comp.StableID;
+            Resolved[Comp.StableID] = NewE;
+            DeltaToResolved[DeltaE] = NewE;
+        });
+
+        // Component values. A component absent from the resolved data is emplaced wholesale (the variant
+        // adds it, or the node itself is new); one that exists takes only its overridden leaves.
+        VariantDelta.view<SPrefabComponent>().each([&](entt::entity DeltaE, const SPrefabComponent& Comp)
+        {
+            auto DestIt = DeltaToResolved.find(DeltaE);
+            if (DestIt == DeltaToResolved.end() || !Registry.valid(DestIt->second))
+            {
+                return;
+            }
+
+            const entt::entity DestE = DestIt->second;
+            const THashMap<FName, THashSet<FName>>* NodeOverrides = nullptr;
+            if (auto OIt = OverridesByNode.find(Comp.StableID); OIt != OverridesByNode.end())
+            {
+                NodeOverrides = &OIt->second;
+            }
+
+            for (auto&& [ID, DeltaStorage] : VariantDelta.storage())
+            {
+                if (IsStructuralStorage(ID) || IsNonReplicatedStorage(ID)) continue;
+                if (!DeltaStorage.contains(DeltaE)) continue;
+
+                entt::meta_type MetaType = entt::resolve(DeltaStorage.info());
+                if (!MetaType) continue;
+
+                void* SrcPtr = DeltaStorage.value(DeltaE);
+                CStruct* CompStruct = StructOfStorage(DeltaStorage);
+
+                void* DstPtr = nullptr;
+                if (auto* DestStorage = Registry.storage(ID); DestStorage != nullptr && DestStorage->contains(DestE))
+                {
+                    DstPtr = DestStorage->value(DestE);
+                }
+
+                const THashSet<FName>* Leaves = nullptr;
+                if (NodeOverrides != nullptr && CompStruct != nullptr)
+                {
+                    if (auto LIt = NodeOverrides->find(CompStruct->GetName()); LIt != NodeOverrides->end())
+                    {
+                        Leaves = &LIt->second;
+                    }
+                }
+
+                // Whole-component: the resolved data has no such component, or the delta recorded no leaf
+                // set for it (an added component). Otherwise write just the leaves the variant authors.
+                if (DstPtr == nullptr || Leaves == nullptr || CompStruct == nullptr)
+                {
+                    entt::meta_any SrcAny = MetaType.from_void(SrcPtr);
+                    ECS::Utils::InvokeMetaFunc(MetaType, "emplace"_hs,
+                        entt::forward_as_meta(Registry), DestE, entt::forward_as_meta(SrcAny));
+                }
+                else
+                {
+                    PrefabOverride::ApplyOverriddenLeaves(CompStruct, DstPtr, SrcPtr, *Leaves);
+                }
+            }
+        });
+
+        // Components the variant deletes from an inherited node.
+        for (auto& [NodeID, CompNames] : RemovedByNode)
+        {
+            auto It = Resolved.find(NodeID);
+            if (It == Resolved.end() || !Registry.valid(It->second))
+            {
+                continue;
+            }
+
+            TVector<entt::id_type> ToRemove;
+            for (auto&& [ID, Storage] : Registry.storage())
+            {
+                if (IsStructuralStorage(ID) || !Storage.contains(It->second)) continue;
+
+                CStruct* CompStruct = StructOfStorage(Storage);
+                if (CompStruct != nullptr && CompNames.find(CompStruct->GetName()) != CompNames.end())
+                {
+                    ToRemove.push_back(ID);
+                }
+            }
+
+            for (entt::id_type ID : ToRemove)
+            {
+                if (auto* Storage = Registry.storage(ID))
+                {
+                    Storage->remove(It->second);
+                }
+            }
+        }
+
+        // Parentage last: every node the delta addresses now exists.
+        for (const SPrefabVariantNode& Node : VariantStructuralNodes)
+        {
+            auto ChildIt = Resolved.find(Node.StableID);
+            if (ChildIt == Resolved.end() || !Registry.valid(ChildIt->second))
+            {
+                continue;
+            }
+
+            // ReparentEntity reads the child's transform, and an added node may not have carried one.
+            if (!Registry.all_of<STransformComponent>(ChildIt->second))
+            {
+                Registry.emplace<STransformComponent>(ChildIt->second);
+            }
+
+            if (Node.ParentStableID.IsNone())
+            {
+                ECS::Utils::ReparentEntity(Registry, ChildIt->second, entt::null);
+                continue;
+            }
+
+            auto ParentIt = Resolved.find(Node.ParentStableID);
+            if (ParentIt != Resolved.end() && Registry.valid(ParentIt->second))
+            {
+                ECS::Utils::ReparentEntity(Registry, ChildIt->second, ParentIt->second);
+            }
+        }
+    }
+
+    void CPrefab::CaptureVariantDelta()
+    {
+        if (!IsVariant())
+        {
+            return;
+        }
+
+        CPrefab* Parent = ParentPrefab.Get();
+        Parent->ResolveVariant();
+
+        ClearVariantDelta();
+        BumpDataGeneration();
+
+        THashMap<FName, entt::entity> ParentByID = IndexByStableID(Parent->Registry);
+        THashMap<FName, entt::entity> MineByID   = IndexByStableID(Registry);
+
+        // Entities the parent still has and this variant dropped.
+        for (auto& [StableID, ParentE] : ParentByID)
+        {
+            if (MineByID.find(StableID) == MineByID.end())
+            {
+                VariantRemovedEntities.push_back(StableID);
+            }
+        }
+
+        // Entities whose divergence has to be authored: added outright, reparented, or carrying a changed
+        // component. Collected first so the delta registry is built in one copy.
+        TVector<entt::entity> DivergedEntities;
+        THashMap<FName, THashSet<FName>> KeepComponentsByNode;
+
+        for (auto& [StableID, MineE] : MineByID)
+        {
+            auto ParentIt = ParentByID.find(StableID);
+            const bool bAdded = ParentIt == ParentByID.end();
+
+            if (bAdded)
+            {
+                DivergedEntities.push_back(MineE);
+                VariantStructuralNodes.push_back(SPrefabVariantNode{ StableID, ParentStableIDOf(Registry, MineE), true });
+                continue;
+            }
+
+            const entt::entity ParentE = ParentIt->second;
+
+            if (ParentStableIDOf(Registry, MineE) != ParentStableIDOf(Parent->Registry, ParentE))
+            {
+                VariantStructuralNodes.push_back(SPrefabVariantNode{ StableID, ParentStableIDOf(Registry, MineE), false });
+            }
+
+            bool bNodeDiverged = false;
+
+            // Components this variant carries: added outright, or diverged on some leaf.
+            for (auto&& [ID, MyStorage] : Registry.storage())
+            {
+                if (IsStructuralStorage(ID) || IsNonReplicatedStorage(ID)) continue;
+                if (!MyStorage.contains(MineE)) continue;
+
+                CStruct* CompStruct = StructOfStorage(MyStorage);
+                if (CompStruct == nullptr) continue;
+
+                auto* ParentStorage = Parent->Registry.storage(ID);
+                const bool bParentHas = ParentStorage != nullptr && ParentStorage->contains(ParentE);
+
+                if (!bParentHas)
+                {
+                    VariantAddedComponents.push_back(SPrefabComponentRef{ StableID, CompStruct->GetName() });
+                    KeepComponentsByNode[StableID].insert(CompStruct->GetName());
+                    bNodeDiverged = true;
+                    continue;
+                }
+
+                TVector<FName> Leaves;
+                PrefabOverride::CollectOverriddenLeaves(CompStruct, MyStorage.value(MineE),
+                    ParentStorage->value(ParentE), Leaves);
+
+                for (const FName& Path : Leaves)
+                {
+                    VariantOverriddenProperties.push_back(SPrefabPropertyOverride{ StableID, CompStruct->GetName(), Path });
+                }
+
+                if (!Leaves.empty())
+                {
+                    KeepComponentsByNode[StableID].insert(CompStruct->GetName());
+                    bNodeDiverged = true;
+                }
+            }
+
+            // Components the parent ships and this variant deleted.
+            for (auto&& [ID, ParentStorage] : Parent->Registry.storage())
+            {
+                if (IsStructuralStorage(ID) || IsNonReplicatedStorage(ID)) continue;
+                if (!ParentStorage.contains(ParentE)) continue;
+
+                auto* MyStorage = Registry.storage(ID);
+                if (MyStorage != nullptr && MyStorage->contains(MineE)) continue;
+
+                if (CStruct* CompStruct = StructOfStorage(ParentStorage))
+                {
+                    VariantRemovedComponents.push_back(SPrefabComponentRef{ StableID, CompStruct->GetName() });
+                }
+            }
+
+            if (bNodeDiverged)
+            {
+                DivergedEntities.push_back(MineE);
+            }
+        }
+
+        if (DivergedEntities.empty())
+        {
+            return;
+        }
+
+        THashMap<entt::entity, entt::entity> Map;
+        CopyRegistry(Registry, VariantDelta, Map, &DivergedEntities);
+
+        // Strip components that matched the parent: the delta is storage for authored values only, and
+        // carrying the rest would silently freeze them against future parent edits.
+        VariantDelta.view<SPrefabComponent>().each([&](entt::entity DeltaE, const SPrefabComponent& Comp)
+        {
+            auto KeepIt = KeepComponentsByNode.find(Comp.StableID);
+            const bool bAddedNode = eastl::find_if(VariantStructuralNodes.begin(), VariantStructuralNodes.end(),
+                [&](const SPrefabVariantNode& N) { return N.bAdded && N.StableID == Comp.StableID; }) != VariantStructuralNodes.end();
+
+            if (bAddedNode)
+            {
+                return; // an added node authors everything it carries
+            }
+
+            TVector<entt::id_type> ToStrip;
+            for (auto&& [ID, Storage] : VariantDelta.storage())
+            {
+                if (IsStructuralStorage(ID) || !Storage.contains(DeltaE)) continue;
+
+                CStruct* CompStruct = StructOfStorage(Storage);
+                const bool bKeep = CompStruct != nullptr
+                    && KeepIt != KeepComponentsByNode.end()
+                    && KeepIt->second.find(CompStruct->GetName()) != KeepIt->second.end();
+
+                if (!bKeep)
+                {
+                    ToStrip.push_back(ID);
+                }
+            }
+
+            for (entt::id_type ID : ToStrip)
+            {
+                if (auto* Storage = VariantDelta.storage(ID))
+                {
+                    Storage->remove(DeltaE);
+                }
+            }
+        });
+    }
+
+    void CPrefab::PropagateToVariants()
+    {
+        // Breadth-first over the variant graph so a chain resolves parents before children. Each level is
+        // gathered before it is resolved, since resolving can load nothing new but the list must be stable.
+        TVector<CPrefab*> Frontier = FindDirectVariants();
+        THashSet<CPrefab*> Seen;
+
+        while (!Frontier.empty())
+        {
+            TVector<CPrefab*> Next;
+            for (CPrefab* Variant : Frontier)
+            {
+                if (!Seen.insert(Variant).second)
+                {
+                    continue;
+                }
+
+                Variant->ResolveVariant();
+                Variant->RefreshInstancesInLoadedWorlds();
+
+                for (CPrefab* Child : Variant->FindDirectVariants())
+                {
+                    Next.push_back(Child);
+                }
+            }
+            Frontier = Move(Next);
+        }
+    }
+
     void CPrefab::RebuildStableIDLookup()
     {
         StableIDLookup.clear();
@@ -1069,14 +1601,14 @@ namespace Lumina
 
         // Replace this (node, component) pair's records with the freshly computed set.
         auto& Recs = Ledger.PropertyOverrides;
-        Recs.erase(eastl::remove_if(Recs.begin(), Recs.end(), [&](const FPrefabPropertyOverride& O)
+        Recs.erase(eastl::remove_if(Recs.begin(), Recs.end(), [&](const SPrefabPropertyOverride& O)
         {
             return O.EntityStableID == NodeID && O.ComponentType == CompName;
         }), Recs.end());
 
         for (const FName& Path : NewPaths)
         {
-            FPrefabPropertyOverride Rec;
+            SPrefabPropertyOverride Rec;
             Rec.EntityStableID = NodeID;
             Rec.ComponentType  = CompName;
             Rec.PropertyPath   = Path;
@@ -1109,7 +1641,7 @@ namespace Lumina
 
         SPrefabOverrideComponent& Ledger = Registry.get_or_emplace<SPrefabOverrideComponent>(Root);
 
-        auto MatchesPair = [&](const FPrefabComponentRef& C)
+        auto MatchesPair = [&](const SPrefabComponentRef& C)
         {
             return C.EntityStableID == NodeID && C.ComponentType == CompName;
         };
@@ -1124,7 +1656,7 @@ namespace Lumina
             auto& Added = Ledger.AddedComponents;
             if (eastl::find_if(Added.begin(), Added.end(), MatchesPair) == Added.end())
             {
-                FPrefabComponentRef Rec;
+                SPrefabComponentRef Rec;
                 Rec.EntityStableID = NodeID;
                 Rec.ComponentType  = CompName;
                 Added.push_back(Rec);
@@ -1175,7 +1707,7 @@ namespace Lumina
         // An inherited component the user deleted must be recorded so refresh won't re-add it.
         if (bPrefabHas)
         {
-            FPrefabComponentRef Rec;
+            SPrefabComponentRef Rec;
             Rec.EntityStableID = NodeID;
             Rec.ComponentType  = CompName;
             Removed.push_back(Rec);

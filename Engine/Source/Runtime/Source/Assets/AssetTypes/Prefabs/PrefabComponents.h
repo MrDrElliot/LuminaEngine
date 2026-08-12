@@ -39,7 +39,7 @@ namespace Lumina
     /** One overridden leaf on an instance: a single property addressed by a delimiter-joined path
      *  ("Top" or "Nested.Field"). Top-level properties are a single segment. */
     REFLECT()
-    struct RUNTIME_API FPrefabPropertyOverride
+    struct RUNTIME_API SPrefabPropertyOverride
     {
         GENERATED_BODY()
 
@@ -55,7 +55,7 @@ namespace Lumina
 
     /** Identifies a component on a specific instance node (instance-added or inherited-then-removed). */
     REFLECT()
-    struct RUNTIME_API FPrefabComponentRef
+    struct RUNTIME_API SPrefabComponentRef
     {
         GENERATED_BODY()
 
@@ -64,6 +64,25 @@ namespace Lumina
 
         PROPERTY()
         FName ComponentType;
+    };
+
+    // A node a variant adds outright, or inherits but reparents. Parentage is by StableID because an
+    // added entity usually hangs under an inherited one, which has no id in the variant's own registry.
+    REFLECT()
+    struct RUNTIME_API SPrefabVariantNode
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        FName StableID;
+
+        /** None means the variant's root. */
+        PROPERTY()
+        FName ParentStableID;
+
+        /** The parent prefab has no node with this StableID; the variant introduces it. */
+        PROPERTY()
+        bool bAdded = false;
     };
 
     /** The override ledger. Lives on the instance ROOT only and tracks the whole subtree's divergence
@@ -77,14 +96,14 @@ namespace Lumina
 
         /** Leaves the instance has diverged on; prefab updates skip these. */
         PROPERTY()
-        TVector<FPrefabPropertyOverride> PropertyOverrides;
+        TVector<SPrefabPropertyOverride> PropertyOverrides;
 
         /** Components the instance added; a refresh must never prune them. */
         PROPERTY()
-        TVector<FPrefabComponentRef> AddedComponents;
+        TVector<SPrefabComponentRef> AddedComponents;
 
         /** Inherited components the instance deleted; a refresh must never re-add them. */
         PROPERTY()
-        TVector<FPrefabComponentRef> RemovedComponents;
+        TVector<SPrefabComponentRef> RemovedComponents;
     };
 }

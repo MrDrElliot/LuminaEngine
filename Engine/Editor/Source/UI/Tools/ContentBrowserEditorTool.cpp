@@ -962,6 +962,51 @@ namespace Lumina
         DirectoryListView.MarkTreeDirty();
     }
 
+    void FContentBrowserEditorTool::NavigateTo(FStringView Path)
+    {
+        if (Path.empty() || FStringView(SelectedPath.c_str(), SelectedPath.size()) == Path)
+        {
+            return;
+        }
+
+        NavBackStack.push_back(SelectedPath);
+        NavForwardStack.clear();
+
+        SelectedPath.assign(Path.data(), Path.size());
+        PendingDirectoryReveal = SelectedPath;
+        RefreshContentBrowser();
+    }
+
+    void FContentBrowserEditorTool::NavigateBack()
+    {
+        if (NavBackStack.empty())
+        {
+            return;
+        }
+
+        NavForwardStack.push_back(SelectedPath);
+        SelectedPath = NavBackStack.back();
+        NavBackStack.pop_back();
+
+        PendingDirectoryReveal = SelectedPath;
+        RefreshContentBrowser();
+    }
+
+    void FContentBrowserEditorTool::NavigateForward()
+    {
+        if (NavForwardStack.empty())
+        {
+            return;
+        }
+
+        NavBackStack.push_back(SelectedPath);
+        SelectedPath = NavForwardStack.back();
+        NavForwardStack.pop_back();
+
+        PendingDirectoryReveal = SelectedPath;
+        RefreshContentBrowser();
+    }
+
     void FContentBrowserEditorTool::BrowseToAsset(FStringView VirtualPath)
     {
         if (VirtualPath.empty())
@@ -975,9 +1020,8 @@ namespace Lumina
             return;
         }
 
-        SelectedPath.assign(ParentPath.data(), ParentPath.size());
+        NavigateTo(ParentPath);
         PendingBrowseToPath.assign(VirtualPath.data(), VirtualPath.size());
-        PendingDirectoryReveal = SelectedPath;
 
         // Force a rebuild even when the folder is already the selected one, the tile still has to be found.
         RefreshContentBrowser();
@@ -1221,11 +1265,17 @@ namespace Lumina
             
             if (ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Left))
             {
-                if (ImGui::IsKeyDown(ImGuiKey_LeftCtrl))
+                // Shift beats Ctrl when both are held, matching every file manager.
+                if (ImGui::GetIO().KeyShift)
+                {
+                    return FTileViewItem::EClickState::SingleWithShift;
+                }
+
+                if (ImGui::GetIO().KeyCtrl)
                 {
                     return FTileViewItem::EClickState::SingleWithCtrl;
                 }
-                
+
                 return FTileViewItem::EClickState::Single;
             }
             
@@ -1244,8 +1294,7 @@ namespace Lumina
             
             if (ContentItem->IsDirectory())
             {
-                SelectedPath = Move(Path);
-                RefreshContentBrowser();
+                NavigateTo(FStringView(Path.c_str(), Path.size()));
             }
             else if (ContentItem->IsAsset())
             {
@@ -1593,9 +1642,9 @@ namespace Lumina
 
             FContentBrowserListViewItemData& Data = Tree.Get<FContentBrowserListViewItemData>(Item);
 
-            SelectedPath = Data.Path;
-
-            RefreshContentBrowser();
+            // No-ops when the tree is only catching up to a navigation that already happened, which is
+            // what keeps RevealPendingDirectory from recording history of its own.
+            NavigateTo(FStringView(Data.Path.c_str(), Data.Path.size()));
         };
 
         DirectoryContext.KeyPressedFunction = [this] (FTreeListView& Tree, FTreeNodeID Item, ImGuiKey Key) -> bool
@@ -2061,6 +2110,40 @@ namespace Lumina
 
     void FContentBrowserEditorTool::OpenDeletionWarningPopup(const FContentBrowserTileViewItem* Item, const TFunction<void(EYesNo)>& Callback)
     {
+        // Refused rather than cascaded: a variant is defined BY its parent, so deleting the parent would
+        // silently empty every descendant. Deleting the variants first is the user's call to make.
+        FFixedString DependentVariants;
+        if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(
+                FFixedString(Item->GetVirtualPath().data(), Item->GetVirtualPath().size())))
+        {
+            CClass* AssetClass = FindObject<CClass>(Data->AssetClass);
+            if (AssetClass != nullptr && AssetClass->IsChildOf(CPrefab::StaticClass()))
+            {
+                if (CPrefab* Prefab = LoadObject<CPrefab>(Data->AssetGUID))
+                {
+                    for (CPrefab* Variant : Prefab->FindDirectVariants())
+                    {
+                        if (!DependentVariants.empty())
+                        {
+                            DependentVariants += ", ";
+                        }
+                        DependentVariants += Variant->GetName().c_str();
+                    }
+                }
+            }
+        }
+
+        if (!DependentVariants.empty())
+        {
+            ImGuiX::Notifications::NotifyError("'{0}' is the parent of {1}. Delete or reparent those first.",
+                Item->GetName(), DependentVariants);
+            if (Callback)
+            {
+                Callback(EYesNo::No);
+            }
+            return;
+        }
+
         if (VFS::IsEmpty(Item->GetVirtualPath()))
         {
             if (Callback)
@@ -2230,6 +2313,8 @@ namespace Lumina
         // Land on the project's /Game root so the browser shows content immediately after a
         // load instead of sitting on a stale/empty path.
         SelectedPath = "/Game";
+        NavBackStack.clear();
+        NavForwardStack.clear();
         RefreshContentBrowser();
     }
 
@@ -2707,7 +2792,21 @@ namespace Lumina
         ImGui::SetCursorPos(ImGui::GetCursorPos() + ImVec2(Padding, Padding));
 
         ImGui::BeginChild("Content", AdjustedSize, true, ImGuiWindowFlags_None);
-        
+
+        // Mouse thumb buttons. GLFW reports these as buttons 3 and 4, which ImGui forwards; hover rather
+        // than focus, so they work without clicking into the browser first.
+        if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows))
+        {
+            if (ImGui::IsMouseClicked(3))
+            {
+                NavigateBack();
+            }
+            else if (ImGui::IsMouseClicked(4))
+            {
+                NavigateForward();
+            }
+        }
+
         if (ImGui::IsWindowHovered() && !ImGui::IsAnyItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Right))
         {
             ImGui::OpenPopup("ContentContextMenu");
@@ -2745,6 +2844,26 @@ namespace Lumina
         
         ImGui::BeginHorizontal("Breadcrumbs");
 
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 2));
+        ImGui::BeginDisabled(!CanNavigateBack());
+        if (ImGui::Button(LE_ICON_ARROW_LEFT "##NavBack"))
+        {
+            NavigateBack();
+        }
+        ImGui::EndDisabled();
+        ImGuiX::TextTooltip("Back");
+
+        ImGui::BeginDisabled(!CanNavigateForward());
+        if (ImGui::Button(LE_ICON_ARROW_RIGHT "##NavForward"))
+        {
+            NavigateForward();
+        }
+        ImGui::EndDisabled();
+        ImGuiX::TextTooltip("Forward");
+        ImGui::PopStyleVar();
+
+        ImGui::TextUnformatted("|");
+
         // Walk the virtual path segment-by-segment so every mount root (Content, Scripts, Engine,
         // plugins) renders the same way. The first segment is the mount alias, shown with its tree label.
         auto RootSegmentLabel = [](FStringView) -> const char*
@@ -2781,8 +2900,7 @@ namespace Lumina
 
             if (ImGui::Button(Display.c_str()))
             {
-                SelectedPath.assign(CrumbPath.data(), CrumbPath.size());
-                ContentBrowserTileView.MarkTreeDirty();
+                NavigateTo(CrumbPath);
             }
 
             ImGui::PopStyleVar(2);
@@ -3142,6 +3260,60 @@ namespace Lumina
         }
     }
 
+    void FContentBrowserEditorTool::DrawCreateVariantMenuItem(const FContentBrowserTileViewItem* ContentItem)
+    {
+        const FFixedString SourcePath(ContentItem->GetVirtualPath().data(), ContentItem->GetVirtualPath().size());
+        const FAssetData*  Data = FAssetRegistry::Get().GetAssetByPath(SourcePath);
+        if (Data == nullptr)
+        {
+            return;
+        }
+
+        CClass* AssetClass = FindObject<CClass>(Data->AssetClass);
+        if (AssetClass == nullptr || !AssetClass->IsChildOf(CPrefab::StaticClass()))
+        {
+            return;
+        }
+
+        if (!ImGui::MenuItem(LE_ICON_SOURCE_BRANCH " Create Variant"))
+        {
+            return;
+        }
+
+        CPrefab* Parent = LoadObject<CPrefab>(Data->AssetGUID);
+        if (Parent == nullptr)
+        {
+            ImGuiX::Notifications::NotifyError("Could not load '{0}'.", SourcePath);
+            return;
+        }
+
+        const FFixedString NewPath = MakeSiblingAssetPath(
+            FStringView(SourcePath.c_str(), SourcePath.size()), "_Variant");
+
+        // Not a package duplicate: a variant owns no data of its own, only a parent link. Everything it
+        // shows comes from resolving that link, which is what keeps it following the parent.
+        CPrefab* Variant = CFactory::CreateNewOf<CPrefab>(FStringView(NewPath.c_str(), NewPath.size()));
+        if (Variant == nullptr)
+        {
+            ImGuiX::Notifications::NotifyError("Could not create '{0}'.", NewPath);
+            return;
+        }
+
+        Variant->ParentPrefab = Parent;
+        Variant->ResolveVariant();
+
+        if (!CPackage::SavePackage(Variant->GetPackage(), FStringView(NewPath.c_str(), NewPath.size())))
+        {
+            ImGuiX::Notifications::NotifyError("Failed to save variant '{0}'.", NewPath);
+            return;
+        }
+
+        FAssetRegistry::Get().AssetCreated(Variant);
+        ImGuiX::Notifications::NotifySuccess("Created variant '{0}'.", NewPath);
+
+        QueueRenameAfterCreate(FStringView(NewPath.c_str(), NewPath.size()));
+    }
+
     void FContentBrowserEditorTool::DrawAssetContextMenu(FContentBrowserTileViewItem* ContentItem)
     {
         const bool bIsAsset      = ContentItem->IsAsset();
@@ -3271,6 +3443,7 @@ namespace Lumina
         if (bIsAsset)
         {
             DrawDuplicateAssetMenuItem(ContentItem, bIsProtected);
+            DrawCreateVariantMenuItem(ContentItem);
             DrawReimportAssetMenuItem(ContentItem, bIsProtected);
         }
 

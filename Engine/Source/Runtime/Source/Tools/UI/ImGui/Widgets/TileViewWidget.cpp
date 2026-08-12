@@ -368,6 +368,7 @@ namespace Lumina
 
         // Indices refer to the list being thrown away.
         PendingRevealIndex = -1;
+        SelectionAnchorIndex = -1;
 
         Allocator.Reset();
         ListItems.clear();
@@ -461,11 +462,17 @@ namespace Lumina
             if (ClickState == FTileViewItem::EClickState::SingleWithCtrl)
             {
                 ToggleSelection(ItemToDraw, Context);
+                SetSelectionAnchor(ItemToDraw);
+            }
+            else if (ClickState == FTileViewItem::EClickState::SingleWithShift)
+            {
+                SelectRangeTo(ItemToDraw, Context);
             }
             else if (ClickState == FTileViewItem::EClickState::Single)
             {
                 ClearSelections();
                 ToggleSelection(ItemToDraw, Context);
+                SetSelectionAnchor(ItemToDraw);
             }
             else if (ClickState == FTileViewItem::EClickState::Double)
             {
@@ -660,6 +667,45 @@ namespace Lumina
         }
 
         Item->OnSelectionStateChanged();
+    }
+
+    void FTileViewWidget::SetSelectionAnchor(const FTileViewItem* Item)
+    {
+        const auto Found = eastl::find(ListItems.begin(), ListItems.end(), Item);
+        SelectionAnchorIndex = Found == ListItems.end() ? -1 : (int32)eastl::distance(ListItems.begin(), Found);
+    }
+
+    void FTileViewWidget::SelectRangeTo(FTileViewItem* Item, const FTileViewContext& Context)
+    {
+        const auto Found = eastl::find(ListItems.begin(), ListItems.end(), Item);
+        if (Found == ListItems.end())
+        {
+            return;
+        }
+
+        const int32 To = (int32)eastl::distance(ListItems.begin(), Found);
+
+        // No anchor yet (first click in a fresh folder): shift-click behaves as a plain click and
+        // becomes the anchor, so the next one has a range to span.
+        if (SelectionAnchorIndex < 0 || SelectionAnchorIndex >= (int32)ListItems.size())
+        {
+            ClearSelections();
+            ToggleSelection(Item, Context);
+            SelectionAnchorIndex = To;
+            return;
+        }
+
+        const int32 Low  = Math::Min(SelectionAnchorIndex, To);
+        const int32 High = Math::Max(SelectionAnchorIndex, To);
+
+        ClearSelections();
+        for (int32 Index = Low; Index <= High; ++Index)
+        {
+            ToggleSelection(ListItems[Index], Context);
+        }
+
+        // Anchor deliberately left where it was: shift-clicking again re-spans from the same origin
+        // rather than growing from wherever the last one landed.
     }
 
     void FTileViewWidget::SelectAll(const FTileViewContext& Context)

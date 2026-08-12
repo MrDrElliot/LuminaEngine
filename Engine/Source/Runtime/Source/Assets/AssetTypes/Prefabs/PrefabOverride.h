@@ -21,4 +21,8 @@ namespace Lumina::PrefabOverride
      *  preserving overridden leaves. Recurses structs so non-overridden siblings of an overridden
      *  nested field still propagate. */
     RUNTIME_API void ApplyInheritedLeaves(CStruct* Struct, void* Instance, const void* Prefab, const THashSet<FName>& OverriddenPaths);
+
+    /** The mirror of ApplyInheritedLeaves: copies Authored -> Dest for ONLY the leaves in OverriddenPaths,
+     *  leaving everything else as the caller left it. Resolving a variant onto inherited data. */
+    RUNTIME_API void ApplyOverriddenLeaves(CStruct* Struct, void* Dest, const void* Authored, const THashSet<FName>& OverriddenPaths);
 }

@@ -45,6 +45,10 @@ namespace Lumina
         void DrawToolbar();
         void DrawGrid();
         void DrawNameCell(int32 RowIndex);
+
+        // Must be called while the row's cell selectable is still the current item.
+        void HandleRowDrag(int32 RowIndex);
+
         void DrawValueCell(int32 RowIndex, int32 ColumnIndex);
         void DrawImportReportModal();
         void DrawChangeRowStructModal();
@@ -89,6 +93,11 @@ namespace Lumina
         bool bDisplayOrderDirty = true;
 
         int32 SelectedRow = INDEX_NONE;
+
+        int32 DraggingRow = INDEX_NONE;
+
+        // False under a sort or filter, where the view order is not the storage order a move writes.
+        bool bCanReorder = false;
 
         /** Cell currently being typed into. Column INDEX_NONE with a valid row means the name cell. */
         int32 EditingRow = INDEX_NONE;

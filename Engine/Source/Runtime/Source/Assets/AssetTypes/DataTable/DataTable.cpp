@@ -66,9 +66,32 @@ namespace Lumina
         Rows.erase(Rows.begin() + Index);
     }
 
+    void CDataTable::MoveRow(int32 From, int32 To)
+    {
+        const int32 Count = (int32)Rows.size();
+        if (From == To || From < 0 || From >= Count || To < 0 || To >= Count)
+        {
+            return;
+        }
+
+        SDataTableRow Moved = eastl::move(Rows[From]);
+        Rows.erase(Rows.begin() + From);
+        Rows.insert(Rows.begin() + To, eastl::move(Moved));
+    }
+
     void CDataTable::ClearRows()
     {
         Rows.clear();
+    }
+
+    CStruct* SDataTableRowHandle::GetRowStruct() const
+    {
+        return DataTable != nullptr ? DataTable->GetRowStruct() : nullptr;
+    }
+
+    const void* SDataTableRowHandle::GetRowMemory() const
+    {
+        return IsNull() ? nullptr : DataTable->FindRow(RowName);
     }
 
     FName CDataTable::MakeUniqueRowName(const FName& Base) const

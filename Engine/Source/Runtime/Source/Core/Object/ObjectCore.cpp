@@ -452,6 +452,17 @@ namespace Lumina
             Owner.emplace<FField*>(NewProperty);
             ConstructProperties(Owner, Properties, NumProperties);
         }
+
+        // FEnumProperty is not a TProperty<>, so nothing else sets its ElementSize, and AddProperty is
+        // too early -- the inner only gets its own size after Init() has already run AddProperty.
+        if (Param->TypeFlags == EPropertyTypeFlags::Enum)
+        {
+            FEnumProperty* EnumProperty = static_cast<FEnumProperty*>(NewProperty);
+            if (const FNumericProperty* Inner = EnumProperty->GetInnerProperty())
+            {
+                EnumProperty->SetElementSize(Inner->GetElementSize());
+            }
+        }
     }
 
     void InitializeAndCreateFProperties(CStruct* Outer, const FPropertyParams* const* PropertyArray, uint32 NumProperties)

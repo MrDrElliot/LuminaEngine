@@ -6,7 +6,6 @@
 #include "Core/Object/ObjectCore.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Object/Package/Package.h"
-#include "Memory/Memcpy.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Reflection/Type/Properties/EnumProperty.h"
 #include "Core/Reflection/Type/Properties/ObjectProperty.h"
@@ -139,15 +138,14 @@ namespace Lumina::Reflection
             {
                 FEnumProperty* EnumProp = static_cast<FEnumProperty*>(Prop);
                 CEnum* Enum = EnumProp->GetEnum();
-                if (Enum == nullptr)
+                FNumericProperty* Inner = EnumProp->GetInnerProperty();
+                if (Enum == nullptr || Inner == nullptr)
                 {
                     return FString();
                 }
 
-                // Underlying width varies with the enum's base type, so read it through the inner
-                // numeric property's own size rather than assuming int32.
-                uint64 Raw = 0;
-                Memory::Memcpy(&Raw, Value, Math::Min<size_t>(EnumProp->GetElementSize(), sizeof(Raw)));
+                // Through the inner, which knows the underlying width and signedness.
+                const uint64 Raw = (uint64)Inner->GetSignedIntPropertyValue(Value);
 
                 // Enumerators are stored fully qualified ("EItemRarity::Common"). Emit the bare name:
                 // a spreadsheet column of qualified names is unreadable, and FromText accepts both.
@@ -211,7 +209,8 @@ namespace Lumina::Reflection
             {
                 FEnumProperty* EnumProp = static_cast<FEnumProperty*>(Prop);
                 CEnum* Enum = EnumProp->GetEnum();
-                if (Enum == nullptr)
+                FNumericProperty* Inner = EnumProp->GetInnerProperty();
+                if (Enum == nullptr || Inner == nullptr)
                 {
                     return false;
                 }
@@ -236,7 +235,7 @@ namespace Lumina::Reflection
                         continue;
                     }
 
-                    Memory::Memcpy(Value, &Raw, Math::Min<size_t>(EnumProp->GetElementSize(), sizeof(Raw)));
+                    Inner->SetIntPropertyValue(Value, (int64)Raw);
                     return true;
                 }
 

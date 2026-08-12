@@ -105,4 +105,23 @@ namespace Lumina::PrefabOverride
 
         ForEachLeafPair(Struct, Instance, Prefab, FString(), Visit);
     }
+
+    void ApplyOverriddenLeaves(CStruct* Struct, void* Dest, const void* Authored, const THashSet<FName>& OverriddenPaths)
+    {
+        if (Struct == nullptr || Dest == nullptr || Authored == nullptr)
+        {
+            return;
+        }
+
+        auto Visit = [&](FProperty* Property, void* Dst, const void* Src, const FString& Path)
+        {
+            if (OverriddenPaths.find(FName(Path.c_str())) == OverriddenPaths.end())
+            {
+                return;
+            }
+            Property->CopyCompleteValue_InContainer(Dst, Src);
+        };
+
+        ForEachLeafPair(Struct, Dest, Authored, FString(), Visit);
+    }
 }

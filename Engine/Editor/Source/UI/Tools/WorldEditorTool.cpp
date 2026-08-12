@@ -823,6 +823,34 @@ namespace Lumina
             }
         }
 
+        // Ctrl means both "command modifier" and "vertex snap". Once it has served as a chord it must not
+        // also mean snap, or duplicating next to the gizmo yanks the entity onto a neighbouring vertex.
+        if (!ImGui::GetIO().KeyCtrl)
+        {
+            bCtrlConsumedByChord = false;
+        }
+        else if (!bCtrlConsumedByChord)
+        {
+            for (int32 Key = ImGuiKey_NamedKey_BEGIN; Key < ImGuiKey_NamedKey_END; ++Key)
+            {
+                const ImGuiKey Typed = (ImGuiKey)Key;
+
+                // Mouse buttons are excluded on purpose: Ctrl+click IS the vertex-snap drag. Modifiers
+                // are excluded because holding them is not yet a command.
+                const bool bIgnored = (Typed >= ImGuiKey_Mouse_BEGIN && Typed < ImGuiKey_Mouse_END)
+                                   || Typed == ImGuiKey_LeftCtrl  || Typed == ImGuiKey_RightCtrl
+                                   || Typed == ImGuiKey_LeftShift || Typed == ImGuiKey_RightShift
+                                   || Typed == ImGuiKey_LeftAlt   || Typed == ImGuiKey_RightAlt
+                                   || Typed == ImGuiKey_LeftSuper || Typed == ImGuiKey_RightSuper;
+
+                if (!bIgnored && ImGui::IsKeyPressed(Typed, false))
+                {
+                    bCtrlConsumedByChord = true;
+                    break;
+                }
+            }
+        }
+
         // Selection edit shortcuts (Copy/Duplicate/Delete) work over the viewport OR the
         // Scene Graph outliner. Gated off text input so renaming an entity doesn't delete it.
         const bool bSelectionEditActive = (bViewportHovered || bOutlinerActive) && !ImGui::GetIO().WantTextInput;
@@ -1569,9 +1597,15 @@ namespace Lumina
                     
                     const bool bCtrlHeld = ImGui::GetIO().KeyCtrl;
                     const bool bVertexSnapArmed = bCtrlHeld
+                                               && !bCtrlConsumedByChord
                                                && GuizmoOp == ImGuizmo::TRANSLATE
                                                && GuizmoMode == ImGuizmo::WORLD
                                                && !World->IsGameWorld();
+
+                    if (!bVertexSnapArmed)
+                    {
+                        bVertexSnapAnchorValid = false;
+                    }
                     const FMatrix4 SnapViewProj = ProjectionMatrix * ViewMatrix;
                     FVector3 PreviewAnchorLocal(0.0f);
                     FVector3 PreviewAnchorWorld(0.0f);
