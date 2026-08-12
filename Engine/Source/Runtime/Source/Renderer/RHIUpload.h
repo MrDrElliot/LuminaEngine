@@ -28,6 +28,14 @@ namespace Lumina::RHI
                           uint32* OutBufferSliceMask, uint32* OutImageSliceMask,
                           TVector<GPUPtr>& OutOwnedStaging);
 
+        // Drop every queued op that would write to this resource, and MUST be called before the resource is
+        // released. Core::BeginFrame drains the retire queue BEFORE it flushes, so an op left pointing at a
+        // released resource records against a destroyed VkImage / freed address -- and once the handle or the
+        // address is recycled, against a different LIVE one, which corrupts silently instead of faulting.
+        // Both are cheap no-ops while nothing is queued, which is the common case on the release paths.
+        void CancelTexture(FTextureH Texture);
+        void CancelBuffer(GPUPtr Dest);
+
         void DrainSliceWriters(uint32 Slot);
 
         void NoteFlushSubmitted(uint32 SliceMask, EQueueType Queue, FSemaphoreH Semaphore, uint64 Value);

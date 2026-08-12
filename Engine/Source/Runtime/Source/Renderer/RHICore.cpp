@@ -318,6 +318,8 @@ namespace Lumina::RHI::Core
         {
             return;
         }
+        
+        Upload::CancelBuffer(Memory);
 
         FRetireItem Item;
         Item.Kind        = FRetireItem::EKind::Buffer;

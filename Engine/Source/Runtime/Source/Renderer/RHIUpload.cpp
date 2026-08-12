@@ -67,6 +67,8 @@ namespace Lumina::RHI
 
             FSemaphoreH         FlushSemaphore;
             uint64              FlushCounter = 0;
+            
+            TAtomic<uint32>     QueuedOps{0};
 
             bool                bInitialized = false;
         };
@@ -147,6 +149,7 @@ namespace Lumina::RHI
         {
             FScopeLock Lock(GUpload.Mutex);
             GUpload.Queue.push_back(Op);
+            GUpload.QueuedOps.store((uint32)GUpload.Queue.size(), std::memory_order_relaxed);
         }
 
         EndWrite(S);
@@ -189,6 +192,7 @@ namespace Lumina::RHI
         {
             FScopeLock Lock(GUpload.Mutex);
             GUpload.Queue.push_back(Op);
+            GUpload.QueuedOps.store((uint32)GUpload.Queue.size(), std::memory_order_relaxed);
         }
 
         EndWrite(S);
@@ -211,6 +215,7 @@ namespace Lumina::RHI
 
         FScopeLock Lock(GUpload.Mutex);
         GUpload.Queue.push_back(Op);
+        GUpload.QueuedOps.store((uint32)GUpload.Queue.size(), std::memory_order_relaxed);
     }
 
     void FlushUploadsAndWait()
@@ -240,9 +245,7 @@ namespace Lumina::RHI
 
         WaitSemaphore(GUpload.FlushSemaphore, Value);
         ResetCommandList(CL);
-
-        // The wait above IS the fence for these copies, so the staging can go back immediately -- no retire
-        // queue, and no dependence on which frame slot happens to be current on this thread.
+        
         for (GPUPtr Staging : OwnedStaging)
         {
             Free(Staging);
@@ -363,6 +366,7 @@ namespace Lumina::RHI
                     return 0u;
                 }
                 Ops.swap(GUpload.Queue);
+                GUpload.QueuedOps.store(0u, std::memory_order_relaxed);
             }
 
             const bool bSplit = (BufferCL.Handle != ImageCL.Handle);
@@ -435,9 +439,7 @@ namespace Lumina::RHI
                 Barriers::TransferToAll(Targets[i].CL);
                 Result |= (1u << i);
             }
-
-            // Handed back, NOT retired here. See the declaration: the copies recorded above have not been
-            // submitted yet, so nothing at this point knows which fence covers them.
+            
             for (const FUploadOp& Op : Ops)
             {
                 if (Op.bOwnedStaging)
@@ -468,6 +470,78 @@ namespace Lumina::RHI
                 *OutSliceMask = BufferSlices | ImageSlices;
             }
             return Used != 0u;
+        }
+
+        template<typename TPredicate>
+        static void CancelMatching(TPredicate&& Targets)
+        {
+            TVector<GPUPtr> Orphaned;
+            {
+                FScopeLock Lock(GUpload.Mutex);
+
+                size_t Write = 0;
+                for (size_t Read = 0; Read < GUpload.Queue.size(); ++Read)
+                {
+                    FUploadOp& Op = GUpload.Queue[Read];
+                    if (Targets(Op))
+                    {
+                        if (Op.bOwnedStaging)
+                        {
+                            Orphaned.push_back(Op.Staging);
+                        }
+                        continue;
+                    }
+
+                    if (Write != Read)
+                    {
+                        GUpload.Queue[Write] = GUpload.Queue[Read];   // trivially copyable; no owned members
+                    }
+                    ++Write;
+                }
+
+                GUpload.Queue.resize(Write);
+                GUpload.QueuedOps.store((uint32)Write, std::memory_order_relaxed);
+            }
+            
+            for (GPUPtr Staging : Orphaned)
+            {
+                Core::Retire(Staging);
+            }
+        }
+
+        void CancelTexture(FTextureH Texture)
+        {
+            if (!GUpload.bInitialized || !IsValid(Texture) || GUpload.QueuedOps.load(std::memory_order_relaxed) == 0u)
+            {
+                return;
+            }
+
+            CancelMatching([Texture](const FUploadOp& Op)
+            {
+                return Op.Type != EUploadOp::Buffer && Op.TextureDest.Handle == Texture.Handle;
+            });
+        }
+
+        void CancelBuffer(GPUPtr Dest)
+        {
+            if (!GUpload.bInitialized || Dest == 0 || GUpload.QueuedOps.load(std::memory_order_relaxed) == 0u)
+            {
+                return;
+            }
+            
+            GPUPtr Base = 0;
+            uint64 Size = 0;
+            if (!GetAllocationRange(Dest, Base, Size))
+            {
+                return;
+            }
+
+            const GPUPtr End = Base + Size;
+            
+            CancelMatching([Base, End](const FUploadOp& Op)
+            {
+                return Op.Type == EUploadOp::Buffer && Op.BufferDest < End && Base < Op.BufferDest + Op.Size;
+            });
         }
 
         void DrainSliceWriters(uint32 Slot)

@@ -42,6 +42,13 @@ namespace Lumina
 
         const uint32 W = Width  > 0 ? Width  : 1u;
         const uint32 H = Height > 0 ? Height : 1u;
+        
+        if (TextureResource->NewTexture.IsValid()
+         && TextureResource->ImageDescription.Extent == FUIntVector2(W, H)
+         && TextureResource->ImageDescription.Format == GetRHIFormat())
+        {
+            return;
+        }
 
         FTextureResource::FDescription& Desc = TextureResource->ImageDescription;
         Desc = FTextureResource::FDescription{};
@@ -49,7 +56,6 @@ namespace Lumina
         Desc.Format  = GetRHIFormat();
         Desc.NumMips = 1;
 
-        // New RHI: sampled (materials) + storage (paint compute UAV via Textures::StorageSlot).
         RHI::Textures::Release(TextureResource->NewTexture);
         TextureResource->NewTexture = RHI::Textures::Create(RHI::FTexture2DDesc
         {
@@ -60,7 +66,6 @@ namespace Lumina
             .DebugName = "TextureRenderTarget",
         });
 
-        // Clear so a sampler never reads uninitialized memory before the first paint/render.
         const float Clear[4] = { ClearColor.r, ClearColor.g, ClearColor.b, ClearColor.a };
         RHI::Textures::Clear(TextureResource->NewTexture, Clear);
     }
@@ -73,8 +78,7 @@ namespace Lumina
         }
 
         // Resize before uploading, also handles the image not existing yet.
-        if (Width != InWidth || Height != InHeight
-            || TextureResource == nullptr || !TextureResource->NewTexture.IsValid())
+        if (Width != InWidth || Height != InHeight || TextureResource == nullptr || !TextureResource->NewTexture.IsValid())
         {
             Width  = InWidth;
             Height = InHeight;

@@ -2669,6 +2669,26 @@ namespace Lumina::RHI
         #endif
     }
 
+    bool GetAllocationRange(GPUPtr Ptr, GPUPtr& OutBase, uint64& OutSize)
+    {
+        if (GDevice == nullptr || Ptr == 0)
+        {
+            return false;
+        }
+
+        FScopeLock Lock(GDevice->MemoryMutex);
+
+        const FMemoryBlock* Block = FindMemory(Ptr);
+        if (Block == nullptr)
+        {
+            return false;
+        }
+
+        OutBase = Block->Device;
+        OutSize = Block->Size;
+        return true;
+    }
+
     // FreeH after FreeDevice is a no-op: everything was already destroyed with the device.
 
     void FreeH(FSemaphoreH Semaphore)

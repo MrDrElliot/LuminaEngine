@@ -237,6 +237,8 @@ namespace Lumina::RHI::Textures
             Core::RetireStorageSlot(Slot);
         }
         Core::RetireSampledSlot(Tex.SampledSlot);
+        
+        Upload::CancelTexture(Tex.Texture);
         Core::Retire(Tex.Texture);
 
         Tex = FManagedTexture{};

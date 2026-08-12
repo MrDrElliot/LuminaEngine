@@ -501,8 +501,12 @@ namespace Lumina::RHI
 
     RUNTIME_API void        SetDebugName(GPUPtr GPU, const char* Name);
     RUNTIME_API void        SetDebugName(FTextureH Texture, const char* Name);
-    
+
     RUNTIME_API FString     DescribeDeviceAddress(uint64 AddressLow, uint64 AddressHigh);
+
+    /** Resolve a (possibly interior) device address to the bounds of the allocation that owns it. False when
+     *  the address belongs to no live allocation. */
+    RUNTIME_API bool        GetAllocationRange(GPUPtr Ptr, GPUPtr& OutBase, uint64& OutSize);
     RUNTIME_API void        Free(GPUPtr GPU);
     RUNTIME_API void        FreeH(FSemaphoreH Semaphore);
     RUNTIME_API void        FreeH(FPipelineH Pipeline);
