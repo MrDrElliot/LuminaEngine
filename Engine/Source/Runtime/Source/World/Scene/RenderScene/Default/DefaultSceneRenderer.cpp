@@ -3351,7 +3351,8 @@ namespace Lumina
 
         // Grown, never shrunk while primitives are live: a base handed out earlier has to stay addressable,
         // and the arena size only rises within a level. bAllowShrink off for exactly that reason.
-        ResizeBufferIfNeeded(CL, BoneArenaBuffer, ArenaBytes, 1.25f, BoneArenaLowUsage, /*bAllowShrink*/ false);
+        ResizeBufferIfNeeded(CL, BoneArenaBuffer, ArenaBytes, 1.25f, BoneArenaLowUsage, /*bAllowShrink*/ false,
+                             EBufferInit::Zeroed, "Skinning.BoneArena");
         if (!BoneArenaBuffer)
         {
             return;
@@ -3424,9 +3425,9 @@ namespace Lumina
         LUMINA_PROFILE_SECTION("Upload Skinned Frame Data");
 
         ResizeBufferIfNeeded(CL, SkinnedFrameDataBuffer, Data.size() * sizeof(FSkinnedFrameData), 1.25f,
-                             SkinnedFrameDataLowUsage);
+                             SkinnedFrameDataLowUsage, true, EBufferInit::Zeroed, "Skinning.FrameData");
         ResizeBufferIfNeeded(CL, SkinnedSlotListBuffer, Slots.size() * sizeof(uint32), 1.5f,
-                             SkinnedSlotListLowUsage);
+                             SkinnedSlotListLowUsage, true, EBufferInit::Zeroed, "Skinning.SlotList");
         if (!SkinnedFrameDataBuffer || !SkinnedSlotListBuffer)
         {
             return;
@@ -5663,7 +5664,7 @@ namespace Lumina
         const uint32 NumPairs = NumSkinned * 2u;
 
         ResizeBufferIfNeeded(CL, SkinWorkBaseRing[Slot], (uint64)NumPairs * sizeof(uint32), 1.5f,
-                             SkinWorkBaseLowUsage[Slot]);
+                             SkinWorkBaseLowUsage[Slot], true, EBufferInit::Zeroed, "Skinning.WorkBase");
         if (!SkinWorkBaseRing[Slot] || !GetSkinDispatchArgs()
             || !SkinnedSlotListBuffer || !SkinnedFrameDataBuffer || !RetainedStaticBuffer)
         {
@@ -6581,9 +6582,11 @@ namespace Lumina
         const uint64 PixelListSize = (uint64)Extent.x * (uint64)Extent.y * sizeof(uint32);
 
         ResizeBufferIfNeeded(CL, MaterialClassifyRing[CurrentFrameSlot], sizeof(FMaterialClassifyBlock), 1.0f,
-                             MaterialClassifyRingLowUsage[CurrentFrameSlot], /*bAllowShrink*/ false);
+                             MaterialClassifyRingLowUsage[CurrentFrameSlot], /*bAllowShrink*/ false,
+                             EBufferInit::Zeroed, "Material.ClassifyBlock");
         ResizeBufferIfNeeded(CL, MaterialPixelListRing[CurrentFrameSlot], PixelListSize, 1.2f,
-                             MaterialPixelListRingLowUsage[CurrentFrameSlot]);
+                             MaterialPixelListRingLowUsage[CurrentFrameSlot], true, EBufferInit::Zeroed,
+                             "Material.PixelList");
 
         if (!GetMaterialClassify() || !GetMaterialPixelList())
         {
@@ -10986,7 +10989,8 @@ namespace Lumina
         // pass writes; a second request for ViewDrawEntries alone is 3 * MeshSubDrawsPerSlice too SMALL and
         // fed that ratio straight into the shared low-usage counter.
         ResizeBufferIfNeeded(CL, RenderBucketRing[Slot],
-                             ViewDrawEntries * sizeof(FRenderBucketGPU), 1.5f, RenderBucketRingLowUsage[Slot]);
+                             ViewDrawEntries * sizeof(FRenderBucketGPU), 1.5f, RenderBucketRingLowUsage[Slot],
+                             true, EBufferInit::Zeroed, "Cull.RenderBuckets");
 
         {
             // Starts at ZERO: there is no CPU-fed head to append past any more, so CullInstances claims

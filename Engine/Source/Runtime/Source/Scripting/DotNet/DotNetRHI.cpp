@@ -116,7 +116,9 @@ LUMINA_DOTNET_EXPORT(void, RHI_WaitSemaphore)(RHI::FSemaphoreH Semaphore, uint64
 
 LUMINA_DOTNET_EXPORT(RHI::GPUPtr, RHI_Malloc)(uint64 Size, uint64 Alignment, int32 Type)
 {
-    return RHI::Malloc(Size, Alignment, (RHI::EMemoryType)Type);
+    const RHI::GPUPtr Gpu = RHI::Malloc(Size, Alignment, (RHI::EMemoryType)Type);
+    RHI::SetDebugName(Gpu, "Script.Buffer");
+    return Gpu;
 }
 
 LUMINA_DOTNET_EXPORT(void*, RHI_ToHost)(RHI::GPUPtr Gpu)   { return RHI::ToHost(Gpu); }

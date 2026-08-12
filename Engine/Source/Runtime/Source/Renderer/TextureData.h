@@ -246,9 +246,6 @@ namespace Lumina
 
                 if (MipLevel >= FirstInlineMip)
                 {
-                    // CTexture::Serialize pulls every streamed-out mip back in before writing, so an empty
-                    // payload here means that re-read failed (or the texture has no package to read from).
-                    // Writing it anyway would cap the saved texture at its tail for good.
                     if (Ar.IsWriting() && Mip.Pixels.empty() && Mip.BulkRef.IsValid())
                     {
                         LOG_ERROR("FTextureResource: mip {} is streamed out and could not be made resident; "
@@ -258,15 +255,11 @@ namespace Lumina
                     Ar << Mip.Pixels;
                     continue;
                 }
-
-                // Streamed mip: only the bulk reference is in the export stream. On read, Pixels stays
-                // empty -- the bytes come off disk later via CPackage::ReadBulkData.
+                
                 if (Ar.IsWriting())
                 {
                     if (!Ar.WriteBulkData(Mip.BulkRef, Mip.Pixels.data(), (int64)Mip.Pixels.size()))
                     {
-                        // Should be unreachable (FirstInlineMip is only non-zero when the archive supports
-                        // bulk), but a silently-dropped mip would be a black texture, so be loud.
                         LOG_ERROR("FTextureResource: failed to write bulk mip {} ({} bytes); texture will be incomplete",
                             MipLevel, Mip.Pixels.size());
                         Mip.BulkRef = FBulkDataRef{};

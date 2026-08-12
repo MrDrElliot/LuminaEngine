@@ -611,10 +611,13 @@ namespace Lumina::RHI
                     NewCapacity     = Math::AlignUp(Demand + Demand / 2, 1024ull * 1024);
                     Slice.LowStreak = 0;
                 }
-                else if (Slice.Capacity > GStagingSliceSize && Demand * 2 < Slice.Capacity && ++Slice.LowStreak >= 64)
+                else if (Slice.Capacity > GStagingSliceSize && Demand * 2 < Slice.Capacity)
                 {
-                    NewCapacity     = Math::Max(GStagingSliceSize, Math::AlignUp(Demand + Demand / 2, 1024ull * 1024));
-                    Slice.LowStreak = 0;
+                    if (++Slice.LowStreak >= 64)
+                    {
+                        NewCapacity     = Math::Max(GStagingSliceSize, Math::AlignUp(Demand + Demand / 2, 1024ull * 1024));
+                        Slice.LowStreak = 0;
+                    }
                 }
                 else
                 {
