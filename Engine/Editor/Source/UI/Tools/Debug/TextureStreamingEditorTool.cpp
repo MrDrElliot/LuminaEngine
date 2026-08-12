@@ -1,4 +1,5 @@
 #include "TextureStreamingEditorTool.h"
+#include <bit>
 
 #include "Core/Console/ConsoleVariable.h"
 #include "Renderer/RenderResource.h"
@@ -383,29 +384,34 @@ namespace Lumina
             }
 
             ImGui::TableSetColumnIndex(8);
-            if (Row->LastCoverage > 0.0f)
+            // GPU feedback wins over the CPU estimate wherever it exists, so show what actually decided.
+            // "want finer" = a shaded pixel asked for a mip finer than the finest one resident; "+N" = N
+            // levels coarser would have done; "idle" = nothing sampled it this readback.
+            if (Row->bFeedbackValid)
             {
-                // Amber means every mesh drawing this texture fell back to a bounding-sphere estimate,
-                // which over-requests on tiled surfaces and under-requests on atlased ones. Rebuild those
-                // meshes (Asset Registry -> Resave) to get a measured texel density.
-                if (Row->bDensityMeasured)
+                if (Row->FeedbackMask == 0u)
                 {
-                    ImGui::Text("%.0f px", Row->LastCoverage);
+                    ImGui::TextDisabled("idle");
                 }
                 else
                 {
-                    ImGui::TextColored(ImVec4(0.9f, 0.7f, 0.4f, 1.0f), "%.0f px ~", Row->LastCoverage);
+                    const uint32 Finest = (uint32)Math::CountTrailingZeros64(Row->FeedbackMask);
+                    if (Finest == 0u)      { ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.5f, 1.0f), "want finer"); }
+                    else if (Finest == 1u) { ImGui::Text("exact"); }
+                    else                   { ImGui::TextColored(ImVec4(0.9f, 0.7f, 0.4f, 1.0f), "+%u coarse", Finest - 1u); }
                 }
             }
             else
             {
+                // No bindless slot, so no shader can name it and no feedback can exist for it.
                 ImGui::TextDisabled("-");
             }
             if (ImGui::IsItemHovered())
             {
-                ImGui::SetTooltip("%llu frame(s) since anything demanded this texture\ndensity: %s",
-                    (unsigned long long)Row->FramesSinceDemand,
-                    Row->bDensityMeasured ? "measured from mesh UVs" : "estimated (~) -- mesh predates texel density, resave it");
+                ImGui::SetTooltip("The mip the shaders that sampled this texture asked for, relative to what "
+                                  "is resident:\n'want finer' promotes one, '+N coarse' gives one back, "
+                                  "'idle' means nothing sampled it.\n\n%llu frame(s) since anything demanded it",
+                    (unsigned long long)Row->FramesSinceDemand);
             }
 
             ImGui::TableSetColumnIndex(9);

@@ -65,6 +65,13 @@ namespace Lumina
          *  by in-flight reads. */
         PROPERTY(Editable, Category = "Performance")
         int32 MaxLoadsInFlight = 8;
+
+        /** Cap on how many MiB of mips may be handed to the GPU in a single frame. Applying a promotion
+         *  memcpys every resident mip into the upload ring on the game thread, so an unbounded frame can
+         *  move tens of MiB at once -- a visible hitch when a few large textures finish reading together.
+         *  Loads that do not fit wait for the next frame; they are already in memory, so nothing re-reads. */
+        PROPERTY(Editable, Category = "Performance")
+        int32 MaxUploadMBPerFrame = 16;
     };
 
     // Editor-wide preferences + launch state. Lives in the runtime module so the runtime

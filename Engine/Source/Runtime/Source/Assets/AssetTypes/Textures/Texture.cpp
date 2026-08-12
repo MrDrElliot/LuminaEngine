@@ -134,11 +134,24 @@ namespace Lumina
 #endif
     }
 
+    bool CTexture::HasPendingGPUResidency() const
+    {
+        return TextureResource != nullptr && RHI::Textures::HasPendingSwap(TextureResource->NewTexture);
+    }
+
     bool CTexture::ApplyMipResidency(uint32 InFirstMip)
     {
         LUMINA_MEMORY_SCOPE("Textures");
 
         if (TextureResource == nullptr)
+        {
+            return false;
+        }
+
+        // A previous residency change for this texture has been staged but is not visible yet, because its
+        // upload has not executed on the GPU. Stacking a second one would abandon that image mid-flight
+        // and start the clock again; the caller retries, which is free -- the pixels are already in memory.
+        if (RHI::Textures::HasPendingSwap(TextureResource->NewTexture))
         {
             return false;
         }
@@ -236,6 +249,12 @@ namespace Lumina
                 RHI::Textures::UploadLayer(TextureResource->NewTexture, Layer, ImageMip, Mip1.Pixels.data(), Mip1.Pixels.size(), Mip1.Width, Mip1.Width, Mip1.Height);
             }
         }
+
+        // Arms the swap against the uploads just queued. Until they have executed, the bindless slot keeps
+        // naming the PREVIOUS image -- so a shader sampling this texture during the changeover reads the
+        // old resolution rather than an image that has never been written. Recreate, uploads and this call
+        // are one sequence: splitting them across a frame boundary is what reintroduces the hazard.
+        RHI::Textures::CommitRecreate(TextureResource->NewTexture);
 
         TextureResource->ResidentFirstMip = (uint8)InFirstMip;
         return true;

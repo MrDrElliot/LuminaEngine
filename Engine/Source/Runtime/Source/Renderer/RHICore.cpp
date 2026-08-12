@@ -242,7 +242,14 @@ namespace Lumina::RHI::Core
             FScopeLock Lock(GCore.SubmitMutex);
             for (uint32 QueueIndex = 0; QueueIndex < kNumQueues; ++QueueIndex)
             {
-                Item.Fence[QueueIndex] = GCore.QueueCounter[QueueIndex] + 1;
+                // Everything already SUBMITTED is covered by the counter. What the counter cannot see is a
+                // command list that is open right now: it may already have recorded a reference to this
+                // resource and it will be submitted with one of the next N values. So reach that far.
+                // Zero open lists means zero unaccounted references, which is what stops an idle queue
+                // (async compute in a quiet stretch, transfer with no uploads) from pinning the item
+                // against a value nothing is ever going to signal.
+                Item.Fence[QueueIndex] = GCore.QueueCounter[QueueIndex]
+                                       + GetOpenCommandListCount((EQueueType)QueueIndex);
             }
         }
 
@@ -254,12 +261,16 @@ namespace Lumina::RHI::Core
 
     static void DrainRetireQueue(uint32 Slot)
     {
+        // Sampled together under the submit lock, which is held across RHI::Submit -- so the pair is never
+        // observed mid-submission, where the list has stopped being open but the counter has not moved yet.
         uint64 Submitted[kNumQueues];
+        uint32 OpenNow[kNumQueues];
         {
             FScopeLock Lock(GCore.SubmitMutex);
             for (uint32 QueueIndex = 0; QueueIndex < kNumQueues; ++QueueIndex)
             {
                 Submitted[QueueIndex] = GCore.QueueCounter[QueueIndex];
+                OpenNow[QueueIndex]   = GetOpenCommandListCount((EQueueType)QueueIndex);
             }
         }
 
@@ -273,11 +284,25 @@ namespace Lumina::RHI::Core
         {
             for (uint32 QueueIndex = 0; QueueIndex < kNumQueues; ++QueueIndex)
             {
-                const uint64 Needed = Math::Min(Item.Fence[QueueIndex], Submitted[QueueIndex]);
-                if (Signalled[QueueIndex] < Needed)
+                if (Signalled[QueueIndex] >= Item.Fence[QueueIndex])
                 {
-                    return false;
+                    continue;
                 }
+
+                // The fence has not been reached, but the queue is provably quiet: nothing is recording
+                // and everything ever submitted to it has completed. The recordings the fence was reaching
+                // for were therefore reset rather than submitted, so no reference to this item survives.
+                //
+                // This replaces a min(Fence, Submitted) clamp that looked equivalent and was not: with the
+                // next submission not yet made, it silently degraded the wait to the PREVIOUS value, which
+                // is exactly the recorded-but-unsubmitted case the +1 existed to cover. That freed
+                // resources out from under command lists that had already named them.
+                if (OpenNow[QueueIndex] == 0 && Signalled[QueueIndex] >= Submitted[QueueIndex])
+                {
+                    continue;
+                }
+
+                return false;
             }
             return true;
         };
@@ -450,7 +475,8 @@ namespace Lumina::RHI::Core
 
             uint32 BufferSlices = 0;
             uint32 ImageSlices  = 0;
-            const uint32 Used = Upload::FlushSplit(BufferCL, ImageCL, &BufferSlices, &ImageSlices, UploadStaging);
+            uint64 Batch        = 0;
+            const uint32 Used = Upload::FlushSplit(BufferCL, ImageCL, &BufferSlices, &ImageSlices, UploadStaging, &Batch);
 
             auto SubmitUpload = [&](EQueueType Queue, FCmdListH CL, uint32 SliceMask) -> uint64
             {
@@ -463,7 +489,7 @@ namespace Lumina::RHI::Core
                 GCore.SlotWaitValue[Slot][QueueIndex] = Value;
                 GCore.SlotCommandLists[Slot].push_back(CL);
 
-                Upload::NoteFlushSubmitted(SliceMask, Queue, GCore.QueueTimeline[QueueIndex], Value);
+                Upload::NoteFlushSubmitted(Batch, SliceMask, Queue, GCore.QueueTimeline[QueueIndex], Value);
                 return Value;
             };
 
@@ -532,6 +558,11 @@ namespace Lumina::RHI::Core
         }
 
         Upload::BeginSlot(Slot);
+
+        // After the publish for the same reason as the staging retires above: this retires the images the
+        // swaps move off, and a Retire landing on the previous slot would be gated by a timeline value
+        // older than the work this frame is about to submit.
+        Textures::TickPendingSwaps();
     }
 
     uint64 SubmitOn(EQueueType Queue, TSpan<const FCmdListH> CommandLists, TSpan<const FSemaphoreInfo> Waits)

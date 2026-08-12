@@ -274,7 +274,6 @@ namespace Lumina
         /** Whether this material binds ChangedTexture in any of its texture slots. */
         NODISCARD bool ReferencesTexture(const CTexture* ChangedTexture) const;
 
-        void CollectStreamingTextures(TVector<CTexture*>& Out) const override;
 
     protected:
 

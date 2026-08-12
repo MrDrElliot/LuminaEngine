@@ -299,7 +299,7 @@ namespace Lumina::Jobs
                 uint64 Bits = G->IdleMask[Wd].load(std::memory_order_relaxed);
                 while (Bits != 0 && Woken < Count)
                 {
-                    const uint32 B = (uint32)std::countr_zero(Bits);
+                    const uint32 B = (uint32)Math::CountTrailingZeros64(Bits);
                     Bits &= (Bits - 1);
                     const uint32 W = (Wd << 6) + B;
                     G->Workers[W].WakeSignal.fetch_add(1, std::memory_order_release);
@@ -1186,7 +1186,7 @@ namespace Lumina::Jobs
             uint64 Free = G->ExternalSlotsFree.load(std::memory_order_relaxed);
             while (Free != 0)
             {
-                const uint32 Bit = static_cast<uint32>(std::countr_zero(Free));
+                const uint32 Bit = static_cast<uint32>(Math::CountTrailingZeros64(Free));
                 if (G->ExternalSlotsFree.compare_exchange_weak(Free, Free & ~(1ull << Bit),
                         std::memory_order_acq_rel, std::memory_order_relaxed))
                 {

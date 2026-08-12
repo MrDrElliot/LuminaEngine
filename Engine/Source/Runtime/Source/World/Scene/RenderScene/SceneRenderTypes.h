@@ -1136,6 +1136,14 @@ namespace Lumina
         // what lets the slab grow without invalidating anything. See MeshletHeaderSlab.h.
         uint64 MeshletHeaders        = 0;
 
+        /** Texture-streaming feedback: one uint per bindless texture slot, bit N set = "some pixel this
+         *  frame sampled mip N of this texture". Written by the material lanes through
+         *  RequestTextureResolution, read back a few frames later to drive residency.
+         *
+         *  This replaces guessing the requirement on the CPU from bounds, distance and texel density --
+         *  the GPU already computes the exact LOD it samples, so ask it. 0 disables the write. */
+        uint64 StreamingFeedback     = 0;
+
         uint32 BRDFLutIndex          = 0;
         uint32 SkyIrradianceIndex    = 0;
         uint32 SkyPrefilterIndex     = 0;
@@ -1145,10 +1153,13 @@ namespace Lumina
         uint32 ProbeCubeArrayIndex   = 0;
         uint32 NumReflectionProbes   = 0;
         uint32 NumSplines            = 0;
-        uint32 _SplinePad[3]         = {};  // keeps the trailing uint block a whole number of 16-byte rows
+        /** Entries in StreamingFeedback. Shaders bounds-check against this before indexing it or the
+         *  bindless heap -- an unvalidated ResourceID is a device loss, not an artifact. */
+        uint32 StreamingFeedbackCount = 0;
     };
-    // 16 pointers + 12 indices. Was 136 while SkinDescriptors lived here; the skinning dispatch derives its
-    // work from the instances now, so nothing ships a descriptor array.
+    // 17 pointers + 10 indices. Was 136 while SkinDescriptors lived here; the skinning dispatch derives its
+    // work from the instances now, so nothing ships a descriptor array. The streaming-feedback pointer took
+    // 8 bytes out of the trailing pad rather than growing the block.
     static_assert(sizeof(FSceneRoot) == 176, "FSceneRoot must match SceneGlobals.slang");
 
     struct FRootConstants

@@ -12,7 +12,6 @@
 namespace Lumina
 {
     class CTexture;
-    class CMaterialInterface;
 
     /**
      * Decides how much of each texture's mip chain is resident on the GPU.
@@ -58,30 +57,13 @@ namespace Lumina
          *  Game thread only -- it calls CTexture::ApplyMipResidency, which touches the RHI. */
         void Update();
 
-        /** Renderer feedback. Coverage is the required texture resolution in pixels (texel factor scaled by
-         *  distance, NOT the object's screen size); the largest value reported for a material in a frame
-         *  wins. Game thread -- called after the parallel gather has merged, because it walks
-         *  CMaterial::ResolvedTextures.
+        /** GPU feedback for the whole bindless heap: Masks[Slot] is the OR of every mip a material lane
+         *  sampled from that slot, relative to the texture's current residency (see
+         *  RequestTextureResolution in SceneGlobals.slang). Indexed by heap slot, so no material -> texture
+         *  map is involved -- a texture reports for itself, from the pixels that actually sampled it.
          *
-         *  bDensityMeasured says the coverage came from a mesh's baked TexelFactor rather than the
-         *  bounding-sphere fallback. Diagnostic only -- it does not change the decision, it just makes
-         *  "has this mesh been resaved with texel density yet" visible in the streaming tool. */
-        RUNTIME_API void SubmitMaterialCoverage(uint32 MaterialIndex, float ScreenCoveragePixels, bool bDensityMeasured);
-
-        /** Publishes which textures a material slot samples, so coverage reported against that slot can be
-         *  turned into per-texture demand without the renderer knowing about textures at all. Called when a
-         *  material resolves or rebinds its textures. */
-        RUNTIME_API void UpdateMaterialTextures(uint32 MaterialIndex, const TVector<CTexture*>& Textures);
-        RUNTIME_API void ForgetMaterial(uint32 MaterialIndex);
-
-        /** Queue a material to publish its texture list on the next Update.
-         *
-         *  Publishing used to be driven off the per-frame resolve gate, which only runs for primitives that
-         *  go through FMeshResolveCache. Dynamic meshes resolve their materials ONCE at commit, so a
-         *  dynamic-mesh-only material never published and every coverage report against its slot was
-         *  silently dropped. Queueing on the dirty-mark instead makes publication independent of which
-         *  render path a material happens to be used by. Safe from any thread. */
-        RUNTIME_API void QueueMaterialPublish(CMaterialInterface* Material);
+         *  Called once per frame on the game thread with a readback that is kFramesInFlight old. */
+        RUNTIME_API void SubmitFeedbackMasks(const uint32* Masks, uint32 Count);
 
         struct FStats
         {
@@ -129,10 +111,13 @@ namespace Lumina
             uint64   CpuBytes      = 0;   // mip pixels still held in RAM
 
             uint32   PinCount = 0;
-            float    LastCoverage = 0.0f;
+
+            /** GPU feedback, relative to current residency: bit N = "mip N of what is resident was
+             *  sampled". 0 with bFeedbackValid means nothing sampled it this readback. */
+            uint32   FeedbackMask  = 0;
+            bool     bFeedbackValid = false;
             uint64   FramesSinceDemand = 0;
             bool     bLoadInFlight = false;
-            bool     bDensityMeasured = false;
         };
 
         struct FPendingSnapshot
@@ -178,16 +163,14 @@ namespace Lumina
              *  demote and re-promote every few frames, and each swap is a full image realloc + re-upload. */
             uint16 FramesWantingCoarser = 0;
 
-            /** Largest coverage reported this frame, reset every Update. */
-            float  FrameCoverage = 0.0f;
+            /** GPU feedback: the mip mask the shaders OR'd for this texture's heap slot, RELATIVE to what
+             *  is resident (bit 0 = "the finest mip I have is still not fine enough"). ~0u == the readback
+             *  reported nothing, which is different from "reported 0": not sampled at all. */
+            uint32 FeedbackMask = 0u;
+            bool   bFeedbackValid = false;
 
-            /** Last non-zero coverage, kept across the per-frame reset purely so the debug tool can show
-             *  why a texture is at the mip it is at. */
-            float  LastCoverage = 0.0f;
-
-            /** Whether the last coverage report came from a mesh's baked texel density rather than the
-             *  bounding-sphere fallback. Diagnostic only; does not affect the decision. */
-            bool   bDensityMeasured = false;
+            /** Frame the last non-empty feedback arrived, for the not-sampled-in-a-while decay. */
+            uint64 LastFeedbackFrame = 0;
 
             bool   bLoadInFlight = false;
         };
@@ -216,9 +199,6 @@ namespace Lumina
 
         FStreamingTexture* Find(CTexture* Texture);
 
-        /** Publish any material queued since the last frame. Runs BEFORE the lock is taken, because
-         *  publishing re-enters the manager. */
-        void DrainPendingPublishes();
 
         /** Turn this frame's coverage reports into WantedFirstMip. Pure quality, no budget. */
         void ComputeWantedMips();
@@ -247,13 +227,11 @@ namespace Lumina
         THashMap<CTexture*, uint32>             TextureToIndex;
 
         /** MaterialIndex -> the textures that slot samples. Rebuilt whenever a material rebinds. */
-        THashMap<uint32, TVector<CTexture*>>    MaterialTextures;
 
         TVector<TUniquePtr<FPendingLoad>>       PendingLoads;
 
         /** Materials whose texture set changed and that owe a publish. Weak, because a material can be
          *  destroyed between marking and the next Update. */
-        TVector<TWeakObjectPtr<CMaterialInterface>> PendingPublishes;
 
         /** Guards Textures/TextureToIndex against registration from the async-load path and from
          *  CTexture::OnDestroy, both of which can run while Update is walking the list. */

@@ -1004,6 +1004,20 @@ namespace Lumina
         uint64                                                          CurrentSceneRootAddr = 0;
         // Builds the per-view FSceneRoot transient (shared addrs + view camera/clusters/IBL) -> address.
         uint64 BuildViewSceneRoot(FSceneView& View, uint64 SceneDataAddr);
+
+        /** Texture-streaming feedback (see RequestTextureResolution in SceneGlobals.slang). One uint per
+         *  bindless slot, OR-accumulated by the material lanes, copied to a readback slot and zeroed each
+         *  frame. Read kFramesInFlight later, which is when the copy is guaranteed complete. */
+        void EnsureStreamingFeedbackBuffer();
+        void CollectStreamingFeedback(RHI::FCmdListH CL);
+        void PublishStreamingFeedback();
+
+        FSceneBuffer                                        StreamingFeedbackBuffer;
+        TArray<FSceneBuffer, RHI::kFramesInFlight>          StreamingFeedbackReadback = {};
+        /// Frame the slot was written on, so a slot is only read once its copy has certainly landed.
+        TArray<uint64, RHI::kFramesInFlight>                StreamingFeedbackStamp = {};
+        uint32                                              StreamingFeedbackSlots = 0;
+        uint64                                              StreamingFeedbackFrame = 0;
         
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          RenderBucketRing = {};
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          MeshletDrawListRing = {};
@@ -1140,26 +1154,6 @@ namespace Lumina
         
         TVector<FThreadLocalDrawData>           ThreadLocalStorage;
         uint32                                  CurrentReservePerThread = 0;
-
-        /** Texture-streaming feedback: max on-screen pixel size seen this frame per material slot, one row
-         *  per task thread so the gather stays lock-free. Indexed by FMaterialManager slot; merged and
-         *  handed to the streamer on the game thread after the graph dispatches. */
-        TVector<TVector<float>>                 StreamingCoveragePerThread;
-        TVector<float>                          StreamingCoverageMerged;
-
-        // Parallel to the above: did any surface contributing to this material slot carry a real
-        // TexelFactor, or did they all fall back to the bounding sphere? Purely diagnostic -- it is what
-        // makes "did my resave actually take effect" answerable without guessing from the numbers.
-        TVector<TVector<uint8>>                 StreamingDensityKnownPerThread;
-        TVector<uint8>                          StreamingDensityKnownMerged;
-
-        /** Estimate on-screen size per visible primitive and fold it into StreamingCoveragePerThread.
-         *  Runs on task threads over a [Start, End) primitive range. Reads only const primitive/bounds/
-         *  binding data -- deliberately never touches CMaterial or CTexture, which is not legal here. */
-        void GatherStreamingFeedback(const Task::FParallelRange& Range);
-
-        /** Merge the per-thread rows and submit. Game thread. */
-        void SubmitStreamingFeedback();
 
         struct alignas(64) FLineBatchScratch
         {

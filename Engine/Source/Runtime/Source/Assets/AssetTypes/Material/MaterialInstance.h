@@ -100,7 +100,6 @@ namespace Lumina
             not on the game thread. */
         void RefreshInheritedTextureSlots();
 
-        void CollectStreamingTextures(TVector<CTexture*>& Out) const override;
 
         /** Whether an enabled texture override supplies slot Index. False for a slot the parent binds without
             exposing a parameter for it (a plain Texture Sample node), which an instance can only inherit. */

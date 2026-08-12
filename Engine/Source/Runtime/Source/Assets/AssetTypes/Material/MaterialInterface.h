@@ -70,19 +70,7 @@ namespace Lumina
 
         int32 GetMaterialIndex() const { return MaterialIndex; }
 
-        void SetMaterialIndex(int32 Index)
-        {
-            // The streamer's mapping is keyed by slot, and slots are pooled. Dropping the old key here is
-            // what stops a released slot handing this material's textures to whoever gets it next; marking
-            // dirty is what republishes under the new one.
-            if (MaterialIndex != Index)
-            {
-                ForgetStreamingTextures();
-                MarkStreamingTexturesDirty();
-            }
-
-            MaterialIndex = Index;
-        }
+        void SetMaterialIndex(int32 Index) { MaterialIndex = Index; }
 
         virtual FShaderH GetVertexShader() const { return {}; }
         virtual FShaderH GetPixelShader() const { return {}; }
@@ -130,47 +118,12 @@ namespace Lumina
          *
          *  GAME THREAD ONLY -- it walks ResolvedTextures, which the async load completion writes. Every
          *  other thread marks/queues instead and lets the streamer's drain call this. */
-        void PublishStreamingTextures();
-
-        /** Publishes only if the resolved set changed since the last successful publish. Game thread only,
-         *  for the same reason; this is what FTextureStreamingManager::DrainPendingPublishes calls. */
-        void PublishStreamingTexturesIfDirty();
-
-        /** Call whenever the resolved texture set changes, or the material's GPU slot is (re)assigned.
-         *  Also queues the publish, so it lands even for materials that are never driven by the per-frame
-         *  resolve gate (dynamic meshes resolve once at commit and never ask again).
-         *
-         *  Safe from any thread: it touches a flag and the streamer's queue, never ResolvedTextures. */
-        void MarkStreamingTexturesDirty();
-
-        /** Re-queue a publish this material is still owed, without re-marking it. The backstop for a
-         *  material whose MarkStreamingTexturesDirty landed before the streamer existed (queueing is a no-op
-         *  then, but the flag survives), which would otherwise never publish at all -- its textures would
-         *  stay at their inline tail no matter how much of the screen they cover.
-         *
-         *  Any thread, like MarkStreamingTexturesDirty. This is what the per-frame resolve gate calls: that
-         *  runs on a worker fiber inside Extract and must not walk ResolvedTextures itself. */
-        void QueueStreamingPublishIfDirty();
-
-        /** Drop this material's slot from the streamer's mapping. Load-bearing on destruction: MaterialIndex
-         *  is pooled and handed to the next material, which would otherwise inherit this one's textures and
-         *  keep them resident forever. */
-        void ForgetStreamingTextures();
-
     protected:
 
         virtual void UpdateMaterialUniforms() { }
 
-        /** Resolved textures this material actually samples. Empty by default; overridden per material
-         *  flavour because an instance's set is its master's with overrides applied. */
-        virtual void CollectStreamingTextures(TVector<CTexture*>& Out) const {}
 
         std::atomic_bool        bReadyForRender;
-
-        // Starts set so the first successful resolve publishes. Cleared only by an actual publish, so a
-        // material that resolved before it had a GPU slot retries on a later frame instead of being
-        // silently skipped forever.
-        uint8                   bStreamingTexturesDirty : 1 = true;
 
         int32                   MaterialIndex = -1;
     };

@@ -80,7 +80,6 @@ namespace Lumina
         // The choke point for every override change (RefreshFromParent, PostPropertyChange, enabling or
         // disabling a parameter), and an override flipping on or off changes which texture a slot samples
         // -- so it changes what this instance owes the streamer.
-        MarkStreamingTexturesDirty();
 
         MaterialUniforms = Material->MaterialUniforms;
 
@@ -216,42 +215,6 @@ namespace Lumina
         // Marked, not published: the parent calls this from its async texture-load completion (hence "not on
         // the game thread" in the header), and publishing walks the parent's ResolvedTextures -- the array
         // that completion is writing. The streamer drains the queue on the game thread instead.
-        MarkStreamingTexturesDirty();
-    }
-
-    void CMaterialInstance::CollectStreamingTextures(TVector<CTexture*>& Out) const
-    {
-        // Per slot, not a union of both sets: an overridden slot does not sample the parent's texture, and
-        // reporting it anyway would hold a texture resident that nothing draws.
-        const uint32 OverriddenMask = GetOverriddenTextureMask();
-
-        if (const CMaterial* Parent = Material.Get())
-        {
-            const uint32 NumSlots = (uint32)Math::Min<size_t>(Parent->ResolvedTextures.size(), MAX_TEXTURES);
-            for (uint32 i = 0; i < NumSlots; ++i)
-            {
-                if ((OverriddenMask & (1u << i)) != 0)
-                {
-                    continue;
-                }
-
-                if (CTexture* Inherited = Parent->ResolvedTextures[i].Get())
-                {
-                    Out.push_back(Inherited);
-                }
-            }
-        }
-
-        for (const FMaterialParameterOverride& Override : Overrides)
-        {
-            if (Override.Type == EMaterialParameterType::Texture && Override.bEnabled)
-            {
-                if (CTexture* Overridden = Override.Texture.Get())
-                {
-                    Out.push_back(Overridden);
-                }
-            }
-        }
     }
 
     static FMaterialParameterOverride& FindOrAddOverride(TVector<FMaterialParameterOverride>& Overrides, const FName& Name, EMaterialParameterType Type)
@@ -346,7 +309,6 @@ namespace Lumina
 
         // Writes the uniform slot directly rather than going through RebuildUniformsFromOverrides, so it
         // has to mark dirty itself.
-        MarkStreamingTexturesDirty();
 
         if (Param.Index < MAX_TEXTURES)
         {
@@ -596,7 +558,6 @@ namespace Lumina
         // Only reachable once the parent has fully resolved (the early-out above), so the parent slots this
         // instance inherits are settled and the collected set will not be stale a frame later. Queued rather
         // than published -- this gate runs on a worker fiber inside Extract.
-        QueueStreamingPublishIfDirty();
 
         return true;
     }
@@ -721,7 +682,6 @@ namespace Lumina
         CMaterialInterface::OnDestroy();
 
         // Before MaterialIndex can be recycled by the next material.
-        ForgetStreamingTextures();
 
         // Resolves are keyed partly on this pointer; drop them before it can be recycled.
         FMeshResolveCache::InvalidateDependency(this);

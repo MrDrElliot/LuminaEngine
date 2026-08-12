@@ -65,10 +65,32 @@ namespace Lumina::RHI
          *  that samples the texture and is never revisited. This is what makes mip streaming possible --
          *  see the residency invariants in CTexture::ApplyMipResidency.
          *
+         *  STAGED. The new image is created and Tex.Texture starts naming it, but the bindless slot keeps
+         *  pointing at the OLD image, which stays alive and keeps being sampled. Nothing is visible to a
+         *  shader until CommitRecreate arms the swap and the uploads it covers have actually executed on
+         *  the GPU. Repointing at create time -- what this used to do -- published an image whose texels
+         *  had never been written, because uploads do not flush until the next Core::BeginFrame: a full
+         *  frame of undefined contents per promotion, and a lifetime hazard on the old image behind it.
+         *
+         *  So the sequence is fixed, and all three steps belong on one thread with no frame boundary
+         *  between them:  Recreate -> upload every mip -> CommitRecreate.
+         *
          *  The array overload changes the mip count only; layer count is fixed at cook time and a caller
          *  that wants a different one is describing a different texture. */
         RUNTIME_API void Recreate(FManagedTexture& Tex, const FTexture2DDesc& Desc);
         RUNTIME_API void Recreate(FManagedTexture& Tex, const FTexture2DArrayDesc& Desc);
+
+        /** Arm the swap staged by Recreate against the upload batch the caller just queued. The descriptor
+         *  is repointed, and the old image retired, once that batch has completed on the GPU -- polled by
+         *  TickPendingSwaps. No-op when nothing is staged (first-load Recreate falls through to Create). */
+        RUNTIME_API void CommitRecreate(FManagedTexture& Tex);
+
+        /** True while a staged replacement for this texture has not become visible yet. A caller that
+         *  drives residency should hold off rather than stack a second swap on the same slot. */
+        RUNTIME_API bool HasPendingSwap(const FManagedTexture& Tex);
+
+        /** Publishes every staged swap whose upload has landed. Driven from Core::BeginFrame. */
+        void TickPendingSwaps();
 
         // Width/Height are the MIP's own dimensions and must be passed past mip 0: the copy otherwise derives
         // (Base >> Mip), which disagrees with a cooked chain and faults the copy engine on non-power-of-two.

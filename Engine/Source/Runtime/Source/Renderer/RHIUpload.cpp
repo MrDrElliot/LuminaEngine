@@ -58,6 +58,15 @@ namespace Lumina::RHI
             uint32      LowStreak     = 0;   // consecutive cycles demand stayed below half capacity
         };
 
+        // A flush's completion gate. One entry per flush that has been swept out of the queue, retired once
+        // every queue it was submitted on has signalled past it.
+        struct FBatchGate
+        {
+            uint64      Batch = 0;
+            FSemaphoreH Semaphore[kNumUploadQueues] = {};
+            uint64      Value[kNumUploadQueues]     = {};
+        };
+
         struct FUploadState
         {
             FStagingSlice       Slices[kFramesInFlight];
@@ -65,9 +74,13 @@ namespace Lumina::RHI
             TVector<FUploadOp>  Queue;
             FMutex              Mutex;
 
-            FSemaphoreH         FlushSemaphore;
-            uint64              FlushCounter = 0;
-            
+            // Guards the batch ledger only, and is never held while taking Mutex or any RHI lock -- the
+            // flush submit path already holds the core submit lock when it records a gate.
+            FMutex              BatchMutex;
+            uint64              BatchCounter   = 1;   // the flush queued ops will leave in
+            uint64              CompletedBatch = 0;   // every batch at or below this has executed
+            TVector<FBatchGate> InFlightBatches;
+
             TAtomic<uint32>     QueuedOps{0};
 
             bool                bInitialized = false;
@@ -228,25 +241,25 @@ namespace Lumina::RHI
 
         TVector<GPUPtr> OwnedStaging;
 
+        uint64 Batch = 0;
         const FCmdListH CL = OpenCommandList(EQueueType::Graphics);
-        if (!Upload::Flush(CL, OwnedStaging))
+        if (!Upload::Flush(CL, OwnedStaging, nullptr, &Batch))
         {
             ResetCommandList(CL);
             return;
         }
 
-        uint64 Value;
-        {
-            FScopeLock Lock(GUpload.Mutex);
-            Value = ++GUpload.FlushCounter;
+        // Through Core, not straight to the backend: a submission that does not advance the queue counter
+        // is invisible to the retire fence, which would then free resources this command list still reads.
+        //
+        // SubmitOn also hands CL to the frame slot, which resets it when that slot comes round. Resetting
+        // it here as well would recycle one command buffer twice -- two callers then record into the same
+        // VkCommandBuffer while it is pending, which is a device loss, not a warning.
+        const uint64 Value = Core::SubmitOn(EQueueType::Graphics, TSpan{&CL, 1});
+        Upload::NoteFlushSubmitted(Batch, 0, EQueueType::Graphics, Core::GetQueueTimeline(EQueueType::Graphics), Value);
 
-            const FSemaphoreInfo Signal { GUpload.FlushSemaphore, Value, EStageFlags::AllCommands };
-            Submit(EQueueType::Graphics, TSpan{&CL, 1}, {}, TSpan{&Signal, 1});
-        }
+        WaitSemaphore(Core::GetQueueTimeline(EQueueType::Graphics), Value);
 
-        WaitSemaphore(GUpload.FlushSemaphore, Value);
-        ResetCommandList(CL);
-        
         for (GPUPtr Staging : OwnedStaging)
         {
             Free(Staging);
@@ -272,9 +285,8 @@ namespace Lumina::RHI
                     Value = 0;
                 }
             }
-            GUpload.FlushSemaphore = CreateTimelineSemaphore(0);
-            GUpload.CurrentSlot    = 0;
-            GUpload.bInitialized   = true;
+            GUpload.CurrentSlot  = 0;
+            GUpload.bInitialized = true;
         }
 
         void Shutdown()
@@ -317,7 +329,13 @@ namespace Lumina::RHI
                 }
             }
 
-            FreeH(GUpload.FlushSemaphore);
+            // Device idle above, so every recorded gate has executed by definition.
+            {
+                FScopeLock Lock(GUpload.BatchMutex);
+                GUpload.CompletedBatch = GUpload.BatchCounter;
+                GUpload.InFlightBatches.clear();
+            }
+
             GUpload.bInitialized = false;
         }
 
@@ -358,9 +376,10 @@ namespace Lumina::RHI
 
         uint32 FlushSplit(FCmdListH BufferCL, FCmdListH ImageCL,
                           uint32* OutBufferSliceMask, uint32* OutImageSliceMask,
-                          TVector<GPUPtr>& OutOwnedStaging)
+                          TVector<GPUPtr>& OutOwnedStaging, uint64* OutBatch)
         {
             TVector<FUploadOp> Ops;
+            uint64 Batch = 0;
             {
                 FScopeLock Lock(GUpload.Mutex);
                 if (GUpload.Queue.empty())
@@ -369,6 +388,17 @@ namespace Lumina::RHI
                 }
                 Ops.swap(GUpload.Queue);
                 GUpload.QueuedOps.store(0u, std::memory_order_relaxed);
+
+                // Closes the batch these ops belonged to and opens the next one. Under the queue lock, so
+                // BatchForQueuedOps can never hand out a batch whose ops have already gone out.
+                FScopeLock BatchLock(GUpload.BatchMutex);
+                Batch = GUpload.BatchCounter++;
+                GUpload.InFlightBatches.push_back(FBatchGate{ Batch });
+            }
+
+            if (OutBatch != nullptr)
+            {
+                *OutBatch = Batch;
             }
 
             const bool bSplit = (BufferCL.Handle != ImageCL.Handle);
@@ -461,11 +491,11 @@ namespace Lumina::RHI
             return Result;
         }
 
-        bool Flush(FCmdListH CL, TVector<GPUPtr>& OutOwnedStaging, uint32* OutSliceMask)
+        bool Flush(FCmdListH CL, TVector<GPUPtr>& OutOwnedStaging, uint32* OutSliceMask, uint64* OutBatch)
         {
             uint32 BufferSlices = 0;
             uint32 ImageSlices  = 0;
-            const uint32 Used = FlushSplit(CL, CL, &BufferSlices, &ImageSlices, OutOwnedStaging);
+            const uint32 Used = FlushSplit(CL, CL, &BufferSlices, &ImageSlices, OutOwnedStaging, OutBatch);
 
             if (OutSliceMask != nullptr)
             {
@@ -567,7 +597,7 @@ namespace Lumina::RHI
             }
         }
 
-        void NoteFlushSubmitted(uint32 SliceMask, EQueueType Queue, FSemaphoreH Semaphore, uint64 Value)
+        void NoteFlushSubmitted(uint64 Batch, uint32 SliceMask, EQueueType Queue, FSemaphoreH Semaphore, uint64 Value)
         {
             const uint32 QueueIndex = (uint32)Queue;
             for (uint32 Slot = 0; Slot < kFramesInFlight; ++Slot)
@@ -578,8 +608,86 @@ namespace Lumina::RHI
                     GUpload.Slices[Slot].ReadValue[QueueIndex]     = Value;
                 }
             }
+
+            // A flush can straddle two queues (buffers on transfer, images on graphics); the gate closes
+            // only when BOTH have signalled, which is why this accumulates rather than overwrites.
+            FScopeLock Lock(GUpload.BatchMutex);
+            for (FBatchGate& Gate : GUpload.InFlightBatches)
+            {
+                if (Gate.Batch == Batch)
+                {
+                    Gate.Semaphore[QueueIndex] = Semaphore;
+                    Gate.Value[QueueIndex]     = Value;
+                    return;
+                }
+            }
         }
- 
+
+        uint64 BatchForQueuedOps()
+        {
+            FScopeLock Lock(GUpload.Mutex);
+            FScopeLock BatchLock(GUpload.BatchMutex);
+
+            // Nothing queued means everything queued has already been swept out, and the newest sweep is
+            // the one that took it. Returning the open batch there would wait on a flush that may never
+            // happen -- no ops, no flush.
+            if (GUpload.Queue.empty())
+            {
+                return GUpload.BatchCounter - 1;
+            }
+            return GUpload.BatchCounter;
+        }
+
+        bool IsBatchComplete(uint64 Batch)
+        {
+            if (Batch == 0 || !GUpload.bInitialized)
+            {
+                return true;
+            }
+
+            FScopeLock Lock(GUpload.BatchMutex);
+            if (Batch <= GUpload.CompletedBatch)
+            {
+                return true;
+            }
+
+            // Batches are submitted in order on each queue, so the first one still running blocks the rest
+            // and there is no reason to look past it.
+            while (!GUpload.InFlightBatches.empty())
+            {
+                const FBatchGate& Gate = GUpload.InFlightBatches.front();
+
+                bool bSubmitted = false;
+                bool bExecuted  = true;
+                for (uint32 QueueIndex = 0; QueueIndex < kNumUploadQueues; ++QueueIndex)
+                {
+                    if (Gate.Value[QueueIndex] == 0)
+                    {
+                        continue;
+                    }
+
+                    bSubmitted = true;
+                    if (GetSemaphoreValue(Gate.Semaphore[QueueIndex]) < Gate.Value[QueueIndex])
+                    {
+                        bExecuted = false;
+                        break;
+                    }
+                }
+
+                // No queue recorded means the flush has not been submitted yet -- the copies have not been
+                // issued, let alone run.
+                if (!bSubmitted || !bExecuted)
+                {
+                    break;
+                }
+
+                GUpload.CompletedBatch = Gate.Batch;
+                GUpload.InFlightBatches.erase(GUpload.InFlightBatches.begin());
+            }
+
+            return Batch <= GUpload.CompletedBatch;
+        }
+
         void BeginSlot(uint32 Slot)
         {
             FStagingSlice& Slice = GUpload.Slices[Slot];

@@ -579,6 +579,11 @@ namespace Lumina::RHI
 
     RUNTIME_API FTextureDesc    GetTextureDesc(FTextureH Texture);
 
+    /** Command lists that have been opened and neither submitted nor reset. A resource retired while this
+     *  is non-zero may already be named by a recording no queue counter accounts for yet, so the retire
+     *  fence has to reach past the queue's current value. See PushRetire in RHICore.cpp. */
+    RUNTIME_API uint32          GetOpenCommandListCount(EQueueType Queue);
+
     RUNTIME_API uint32      HeapWriteTexture(FTextureHeapH Heap, FTextureH Texture);
     RUNTIME_API void        HeapRepointTexture(FTextureHeapH Heap, uint32 Slot, FTextureH Texture);
     RUNTIME_API uint32      HeapWriteRWTexture(FTextureHeapH Heap, FTextureH Texture, uint32 Mip = 0);

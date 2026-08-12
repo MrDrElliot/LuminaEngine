@@ -22,11 +22,26 @@ namespace Lumina::RHI
 
         // Both hand the staging blocks back rather than releasing them: only the CALLER knows when the copies
         // retire. Releasing inside the flush retires against the PREVIOUS slot during BeginFrame.
-        bool Flush(FCmdListH CL, TVector<GPUPtr>& OutOwnedStaging, uint32* OutSliceMask = nullptr);
+        //
+        // OutBatch names the flush the swept-out ops went into, for NoteFlushSubmitted and IsBatchComplete.
+        bool Flush(FCmdListH CL, TVector<GPUPtr>& OutOwnedStaging, uint32* OutSliceMask = nullptr, uint64* OutBatch = nullptr);
 
         uint32 FlushSplit(FCmdListH BufferCL, FCmdListH ImageCL,
                           uint32* OutBufferSliceMask, uint32* OutImageSliceMask,
-                          TVector<GPUPtr>& OutOwnedStaging);
+                          TVector<GPUPtr>& OutOwnedStaging, uint64* OutBatch = nullptr);
+
+        /** The flush that ops queued right now will leave in. Read it AFTER queueing the ops you care
+         *  about: the answer is then either the batch they are in, or -- if a flush raced in between -- a
+         *  later one, and waiting for a later batch is conservative rather than wrong.
+         *
+         *  This is the only honest answer to "are my bytes on the GPU yet". A frame count is not: uploads
+         *  flush at the top of BeginFrame, so what a queue-time frame number means depends on where in the
+         *  frame the caller stood. */
+        uint64 BatchForQueuedOps();
+
+        /** True once that batch has been submitted AND its submission has completed on every queue it
+         *  touched -- i.e. the copies have actually run and the destination holds the data. */
+        bool IsBatchComplete(uint64 Batch);
 
         // Drop every queued op that would write to this resource, and MUST be called before the resource is
         // released. Core::BeginFrame drains the retire queue BEFORE it flushes, so an op left pointing at a
@@ -38,7 +53,9 @@ namespace Lumina::RHI
 
         void DrainSliceWriters(uint32 Slot);
 
-        void NoteFlushSubmitted(uint32 SliceMask, EQueueType Queue, FSemaphoreH Semaphore, uint64 Value);
+        // Records the fence the flush signals: per staging slice (so BeginSlot knows when the slice is
+        // reusable) and per batch (so IsBatchComplete knows when the copies have actually run).
+        void NoteFlushSubmitted(uint64 Batch, uint32 SliceMask, EQueueType Queue, FSemaphoreH Semaphore, uint64 Value);
 
         void BeginSlot(uint32 Slot);
     }

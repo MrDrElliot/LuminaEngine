@@ -93,6 +93,11 @@ namespace Lumina
          *  residency untouched if any of them is missing. Game thread only. */
         bool ApplyMipResidency(uint32 InFirstMip);
 
+        /** True while the last ApplyMipResidency has been staged but not published: its image exists and is
+         *  being filled, and the bindless slot still names the previous one. ApplyMipResidency refuses to
+         *  run again until this clears, so a caller holding data to apply should wait rather than spend it. */
+        bool HasPendingGPUResidency() const;
+
         /** Pull every streamed-out mip's bytes back off disk, so the whole chain is in memory. The
          *  precondition for ANY write: a mip that is only a BulkRef serializes as a zero-length payload.
          *  No-op (and no IO) when nothing has been streamed out. May block. */

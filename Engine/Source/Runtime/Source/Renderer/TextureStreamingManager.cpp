@@ -1,7 +1,8 @@
 #include "RuntimePCH.h"
 #include "TextureStreamingManager.h"
 
-#include "Assets/AssetTypes/Material/MaterialInterface.h"
+#include <bit>   // countr_zero, for the finest mip in a feedback mask
+
 #include "Assets/AssetTypes/Textures/Texture.h"
 #include "Config/EngineSettings.h"
 #include "Core/Math/Math.h"
@@ -37,27 +38,6 @@ namespace Lumina
         // a mip boundary does not realloc the image every few frames.
         constexpr uint16 kDemoteDeadBandFrames = 30;
 
-        // Headroom a texture must lose before dropping a mip is believed, as a multiplier on coverage.
-        // 1.25 == "a quarter more on screen would still not need this mip".
-        constexpr float kHysteresisMargin = 1.25f;
-
-        /** Desired first mip so the resident image's long edge is at least DesiredPixels. */
-        uint8 MipForScreenSize(uint32 LongEdge, float DesiredPixels, uint8 TailFirstMip)
-        {
-            if (DesiredPixels <= 0.0f || LongEdge == 0)
-            {
-                return TailFirstMip;
-            }
-
-            uint8  Mip     = 0;
-            uint32 Current = LongEdge;
-            while (Mip < TailFirstMip && (float)(Current >> 1) >= DesiredPixels && (Current >> 1) > 0)
-            {
-                Current >>= 1;
-                ++Mip;
-            }
-            return Mip;
-        }
     }
 
     void FTextureStreamingManager::Initialize()
@@ -206,48 +186,39 @@ namespace Lumina
         }
     }
 
-    void FTextureStreamingManager::UpdateMaterialTextures(uint32 MaterialIndex, const TVector<CTexture*>& InTextures)
+    void FTextureStreamingManager::SubmitFeedbackMasks(const uint32* Masks, uint32 Count)
     {
-        FScopeLock Lock(Mutex);
-
-        if (InTextures.empty())
-        {
-            MaterialTextures.erase(MaterialIndex);
-            return;
-        }
-
-        MaterialTextures.insert_or_assign(MaterialIndex, InTextures);
-    }
-
-    void FTextureStreamingManager::ForgetMaterial(uint32 MaterialIndex)
-    {
-        FScopeLock Lock(Mutex);
-        MaterialTextures.erase(MaterialIndex);
-    }
-
-    void FTextureStreamingManager::SubmitMaterialCoverage(uint32 MaterialIndex, float ScreenCoveragePixels, bool bDensityMeasured)
-    {
-        if (ScreenCoveragePixels <= 0.0f)
+        if (Masks == nullptr || Count == 0)
         {
             return;
         }
 
         FScopeLock Lock(Mutex);
 
-        auto It = MaterialTextures.find(MaterialIndex);
-        if (It == MaterialTextures.end())
+        for (FStreamingTexture& Entry : Textures)
         {
-            return;
-        }
-
-        for (CTexture* Texture : It->second)
-        {
-            if (FStreamingTexture* Entry = Find(Texture))
+            CTexture* Texture = Entry.Texture.Get();
+            if (Texture == nullptr)
             {
-                Entry->FrameCoverage     = Math::Max(Entry->FrameCoverage, ScreenCoveragePixels);
-                Entry->LastCoverage      = Entry->FrameCoverage;
-                Entry->LastDemandFrame   = FrameCounter;
-                Entry->bDensityMeasured  = bDensityMeasured;
+                continue;
+            }
+
+            // The heap slot the shaders index by IS the texture's identity here -- no material lookup to
+            // fall through, which is what made the old path fail silently for anything whose material was
+            // not in the map.
+            const uint32 Slot = Texture->GetTextureResource().NewTexture.SampledSlot;
+            if (Slot == RHI::kInvalidHeapSlot || Slot >= Count)
+            {
+                Entry.bFeedbackValid = false;
+                continue;
+            }
+
+            Entry.FeedbackMask   = Masks[Slot];
+            Entry.bFeedbackValid = true;
+
+            if (Entry.FeedbackMask != 0u)
+            {
+                Entry.LastFeedbackFrame = FrameCounter;
             }
         }
     }
@@ -258,47 +229,9 @@ namespace Lumina
         return (uint64)PoolMB * 1024ull * 1024ull;
     }
 
-    void FTextureStreamingManager::QueueMaterialPublish(CMaterialInterface* Material)
-    {
-        if (Material == nullptr)
-        {
-            return;
-        }
-
-        FScopeLock Lock(Mutex);
-        PendingPublishes.push_back(TWeakObjectPtr<CMaterialInterface>(Material));
-    }
-
-    void FTextureStreamingManager::DrainPendingPublishes()
-    {
-        // Swapped out under the lock and published outside it: PublishStreamingTextures calls back into
-        // UpdateMaterialTextures, which takes the same (non-recursive) mutex.
-        TVector<TWeakObjectPtr<CMaterialInterface>> Pending;
-        {
-            FScopeLock Lock(Mutex);
-            if (PendingPublishes.empty())
-            {
-                return;
-            }
-            Pending.swap(PendingPublishes);
-        }
-
-        for (const TWeakObjectPtr<CMaterialInterface>& Weak : Pending)
-        {
-            if (CMaterialInterface* Material = Weak.Get())
-            {
-                // Still conditional on the dirty flag: a material queued several times in one frame, or one
-                // that has since published by another route, does no work here.
-                Material->PublishStreamingTexturesIfDirty();
-            }
-        }
-    }
-
     void FTextureStreamingManager::Update()
     {
         LUMINA_PROFILE_SCOPE();
-
-        DrainPendingPublishes();
 
         FScopeLock Lock(Mutex);
 
@@ -311,19 +244,11 @@ namespace Lumina
         ComputeBudgetedMips();
         ApplyDemotions();
         IssuePromotions();
-
-        // Coverage is a per-frame report; clearing here (rather than on submit) means a texture that stopped
-        // being drawn decays to its tail via the hysteresis window instead of sticking at last frame's value.
-        for (FStreamingTexture& Entry : Textures)
-        {
-            Entry.FrameCoverage = 0.0f;
-        }
     }
 
     void FTextureStreamingManager::ComputeWantedMips()
     {
-        const bool  bEnabled = Settings().bEnabled;
-        const float Bias     = Math::Max(Settings().ResolutionBias, 0.01f);
+        const bool bEnabled = Settings().bEnabled;
 
         for (FStreamingTexture& Entry : Textures)
         {
@@ -341,30 +266,41 @@ namespace Lumina
 
             const FTextureResource& Resource = Texture->GetTextureResource();
             const uint32 LongEdge = Math::Max(Resource.ImageDescription.Extent.x, Resource.ImageDescription.Extent.y);
+            const uint8  Current  = (uint8)Texture->GetResidentFirstMip();
 
-            if (Entry.FrameCoverage > 0.0f)
+            // GPU feedback wins wherever it exists. It is a measurement of the mip the shaders actually
+            // sampled, so it needs no bounds, no distance and no texel density -- the three things the CPU
+            // estimate below got wrong. The mask is RELATIVE to current residency, which is what makes this
+            // a one-step-per-frame control loop rather than a jump to an absolute target.
+            if (Entry.bFeedbackValid)
             {
-                uint8 NewWanted = MipForScreenSize(LongEdge, Entry.FrameCoverage * Bias, Entry.TailFirstMip);
-
-                // Coverage jitters by a few percent every frame as the camera moves. Sitting exactly on a
-                // mip boundary, that made Wanted alternate between K and K+1, so the state flickered
-                // trimming/settled and the demote dead-band counter reset every other frame -- it could
-                // never accumulate, so the dead band did nothing at all.
-                //
-                // Going COARSER therefore has to clear the boundary by a margin: ask whether a coverage
-                // kHysteresisMargin larger would STILL want coarser. Going finer is unguarded, because
-                // being late to sharpen is the visible failure.
-                const uint8 Current = (uint8)Texture->GetResidentFirstMip();
-                if (NewWanted > Current)
+                if (Entry.FeedbackMask == 0u)
                 {
-                    const uint8 Confirm = MipForScreenSize(LongEdge, Entry.FrameCoverage * Bias * kHysteresisMargin, Entry.TailFirstMip);
-                    if (Confirm <= Current)
-                    {
-                        NewWanted = Current;
-                    }
+                    // Nothing sampled it. Hold, then decay to the tail.
+                    const bool bRecentlyUsed = (FrameCounter - Entry.LastFeedbackFrame) < kDemoteHysteresisFrames;
+                    Entry.WantedFirstMip = bRecentlyUsed ? Current : Entry.TailFirstMip;
+                    continue;
                 }
 
-                Entry.WantedFirstMip = NewWanted;
+                // HIGHEST set bit: the request is an absolute resolution ("at least 2^N texels across"),
+                // so the largest anything asked for is the one to satisfy. Independent of what is currently
+                // resident, which is what stopped this from being a convergence loop.
+                const uint32 RequiredLongEdge = 1u << (31u - (uint32)std::countl_zero(Entry.FeedbackMask));
+
+                // First mip whose long edge still meets the request. Walks down from the full chain, so it
+                // lands on an absolute target in one step rather than creeping toward it.
+                uint32 Target = 0;
+                while (Target < Entry.TailFirstMip && (LongEdge >> (Target + 1u)) >= RequiredLongEdge)
+                {
+                    ++Target;
+                }
+
+                // Movement is still capped at one mip per frame. The target is exact now, but each step is
+                // a full image realloc and re-upload, so arriving over a few frames keeps the cost bounded
+                // and stops a camera cut from moving every texture at once.
+                if ((uint8)Target < Current)      { Entry.WantedFirstMip = (uint8)(Current - 1u); }
+                else if ((uint8)Target > Current) { Entry.WantedFirstMip = (uint8)(Current + 1u); }
+                else                              { Entry.WantedFirstMip = Current; }
                 continue;
             }
 
@@ -384,11 +320,11 @@ namespace Lumina
             return FLT_MAX;
         }
 
-        // Coverage over staleness: a texture filling the screen outranks one glimpsed a second ago, and
-        // both outrank something nothing has drawn in a while. The +1s keep a never-drawn texture (0
-        // coverage, huge age) at a small positive priority rather than a divide-by-zero.
-        const uint64 Age = FrameCounter - Entry.LastDemandFrame;
-        return (Entry.LastCoverage + 1.0f) / (1.0f + (float)Age);
+        // Recency alone now that coverage is gone: the GPU mask says whether a texture was sampled, not
+        // how big it was, so "sampled most recently" is the honest ranking. The +1 keeps a never-drawn
+        // texture at a small positive priority rather than a divide-by-zero.
+        const uint64 Age = FrameCounter - Entry.LastFeedbackFrame;
+        return 1.0f / (1.0f + (float)Age);
     }
 
     void FTextureStreamingManager::ComputeBudgetedMips()
@@ -581,7 +517,7 @@ namespace Lumina
                 const uint32 Deficit = T ? (T->GetResidentFirstMip() - E.BudgetedFirstMip) : 0u;
 
                 // Pinned first regardless: a pin is an explicit request (an open editor tab), not a hint.
-                return (E.PinCount > 0 ? 1.0e9f : 0.0f) + (float)Deficit * (E.LastCoverage + 1.0f);
+                return (E.PinCount > 0 ? 1.0e9f : 0.0f) + (float)Deficit;
             };
             return Score(A) > Score(B);
         });
@@ -670,6 +606,14 @@ namespace Lumina
 
     void FTextureStreamingManager::ProcessCompletedLoads()
     {
+        // Applying a promotion is a full re-upload of the texture's resident chain (Recreate hands back an
+        // empty image), which is a game-thread memcpy into the staging ring. Several large textures
+        // finishing their reads on the same frame is what produces the stream-in hitch, so only so many
+        // bytes are allowed to land per frame. A load that does not fit stays complete and pending -- its
+        // bytes are already in memory, so waiting a frame costs nothing but the wait.
+        const uint64 FrameUploadBudget = (uint64)Math::Max(Settings().MaxUploadMBPerFrame, 1) * 1024ull * 1024ull;
+        uint64 BytesAppliedThisFrame = 0;
+
         for (size_t i = 0; i < PendingLoads.size(); )
         {
             FPendingLoad& Load = *PendingLoads[i];
@@ -680,7 +624,25 @@ namespace Lumina
                 continue;
             }
 
+            // Budget is checked per load, not per byte: a single texture larger than the whole budget must
+            // still make progress, so the first load of a frame is always allowed through.
+            if (BytesAppliedThisFrame > 0 && BytesAppliedThisFrame >= FrameUploadBudget)
+            {
+                ++i;
+                continue;
+            }
+
             CTexture* Texture = Load.Texture.Get();
+
+            // The last residency change for this texture is staged and not visible yet. Applying another
+            // one now would abandon it, so hold the load instead of spending it -- ApplyMipResidency would
+            // refuse anyway, and the bytes it moved into the resource would be dropped on the floor.
+            if (Texture != nullptr && Texture->HasPendingGPUResidency())
+            {
+                ++i;
+                continue;
+            }
+
             if (Texture != nullptr)
             {
                 if (FStreamingTexture* Entry = Find(Texture))
@@ -723,6 +685,10 @@ namespace Lumina
                             ++PromotedLastFrame;
                             ++TotalPromotions;
                             TotalBytesRead += BytesRead;
+
+                            // The whole resident chain was re-uploaded, not just the mips that were read,
+                            // so that -- not BytesRead -- is what this frame actually cost.
+                            BytesAppliedThisFrame += Entry->ResidentBytes;
                         }
                     }
                     else if (Load.bFailed)
@@ -810,9 +776,9 @@ namespace Lumina
             }
 
             Row.PinCount         = Entry.PinCount;
-            Row.LastCoverage     = Entry.LastCoverage;
+            Row.FeedbackMask     = Entry.FeedbackMask;
+            Row.bFeedbackValid   = Entry.bFeedbackValid;
             Row.bLoadInFlight    = Entry.bLoadInFlight;
-            Row.bDensityMeasured = Entry.bDensityMeasured;
             Row.FramesSinceDemand = FrameCounter - Entry.LastDemandFrame;
 
             if (const CPackage* Package = Texture->GetPackage())

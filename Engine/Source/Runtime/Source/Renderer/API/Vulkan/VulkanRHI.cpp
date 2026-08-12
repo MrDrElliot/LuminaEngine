@@ -449,6 +449,13 @@ namespace Lumina::RHI
         FTextureDesc Desc;
         bool bSwapchainImage = false;
 
+        // The bindless sampled slot whose descriptor currently names this image, or kInvalidHeapSlot.
+        // Maintained by PointSampledSlotAt/AtFallback so FreeH can answer "is anything still pointing at
+        // the image I am about to destroy?" in O(1) -- see the tripwire there. A slot index is a bare
+        // uint32 with no back-reference, so without this the answer is a full heap scan or a page fault.
+        uint32        BoundSampledSlot = kInvalidHeapSlot;
+        FTextureHeapH BoundHeap        = {};
+
         operator VkImage() const { return Image; }
         operator VkImageView() const { return DefaultImageView; }
     };
@@ -512,6 +519,10 @@ namespace Lumina::RHI
 
         uint32 BreadcrumbStack[FGpuBreadcrumbs::MaxDepth] = {};
         uint32 BreadcrumbDepth = 0;
+
+        /// Begun and not yet submitted or reset. Tracked per list rather than by counting Open/Reset pairs
+        /// because a SUBMITTED list is not reset until its frame slot comes back around.
+        bool bOpen = false;
     };
 
     struct FSurface
@@ -619,6 +630,12 @@ namespace Lumina::RHI
         TSegmentMap<FSurface>           Surfaces;
 
         TArray<TVector<FCmdListH>, 3>   FreeCommandLists;
+
+        /// Command lists that are OPEN -- begun and not yet submitted or reset. The retire fence reads it
+        /// to answer "could a recording that already exists still name the resource I am freeing?", which
+        /// is the one thing a queue counter cannot tell you. See PushRetire in RHICore.cpp.
+        TAtomic<uint32>                 OpenCommandLists[3] = {};
+
         TVector<FTextureH>              UninitializedTextures;
 
         VkMemoryRequirements            MemoryRequirements;
@@ -2772,10 +2789,41 @@ namespace Lumina::RHI
         }
     }
 
+    static void PointSampledSlotAtFallback(FTextureHeap& HeapData, uint32 Slot);
+
     void FreeH(FTextureH Texture)
     {
         if (GDevice != nullptr)
         {
+            // Tripwire, and the last line of defence for the whole bindless design. A ResourceID is a bare
+            // uint32: nothing in the descriptor heap keeps a texture alive, and PARTIALLY_BOUND +
+            // UPDATE_AFTER_BIND suppress every layer check, so a slot left naming a destroyed image is
+            // silent until the GPU page-faults inside a SampleGrad with "failed to translate". Every
+            // release path is supposed to unbind first (Textures::Release -> RetireSampledSlot, and
+            // Release/RetireSceneImage). If one does not, sample magenta and say so loudly rather than
+            // hand the GPU a freed address.
+            {
+                FScopeLock Lock(GDevice->HeapMutex);
+                FTexture& TextureData = GDevice->Textures[Texture];
+                FTextureHeap* HeapData = TextureData.BoundSampledSlot != kInvalidHeapSlot
+                    ? GDevice->TextureHeaps.TryGet(TextureData.BoundHeap) : nullptr;
+
+                // The slot is a hint and can be stale (the heap may have moved on to another image, or the
+                // heap itself may be gone at teardown). The heap's own record is the authority.
+                if (HeapData != nullptr
+                    && TextureData.BoundSampledSlot < HeapData->SampledOwners.size()
+                    && HeapData->SampledOwners[TextureData.BoundSampledSlot].Handle == Texture.Handle)
+                {
+                    LOG_ERROR("RHI: destroying a {}x{} {}-mip texture (format {}) while bindless slot {} still "
+                              "names it. The slot is being repointed at the fallback; whichever release path "
+                              "skipped the unbind is a use-after-free waiting to happen.",
+                        TextureData.Desc.Dimension.x, TextureData.Desc.Dimension.y, TextureData.Desc.MipCount,
+                        (uint32)TextureData.Desc.Format, TextureData.BoundSampledSlot);
+
+                    PointSampledSlotAtFallback(*HeapData, TextureData.BoundSampledSlot);
+                }
+            }
+
             {
                 FScopeLock Lock(GDevice->InitMutex);
                 TVector<FTextureH>& Pending = GDevice->UninitializedTextures;
@@ -2808,6 +2856,24 @@ namespace Lumina::RHI
     {
         if (GDevice != nullptr)
         {
+            // Textures outlive the heap at shutdown (Core::Shutdown frees the heap, then asset destructors
+            // keep running). Drop the back-references first or FreeH's tripwire would index a dead heap.
+            {
+                FScopeLock Lock(GDevice->HeapMutex);
+                FTextureHeap& HeapData = GDevice->TextureHeaps[Heap];
+                for (FTextureH& Owner : HeapData.SampledOwners)
+                {
+                    if (IsValid(Owner))
+                    {
+                        if (FTexture* OwnerData = GDevice->Textures.TryGet(Owner))
+                        {
+                            OwnerData->BoundSampledSlot = kInvalidHeapSlot;
+                        }
+                        Owner = {};
+                    }
+                }
+            }
+
             GDevice->TextureHeaps.Erase(Heap);
         }
     }
@@ -3651,12 +3717,31 @@ namespace Lumina::RHI
     }
 
     // Caller holds HeapMutex. Slot must already be marked occupied.
-    static void PointSampledSlotAt(FTextureHeap& HeapData, uint32 Slot, FTextureH Texture)
+    static void PointSampledSlotAt(FTextureHeapH Heap, FTextureHeap& HeapData, uint32 Slot, FTextureH Texture)
     {
-        const FTexture& TextureData = GDevice->Textures[Texture];
+        FTexture& TextureData = GDevice->Textures[Texture];
+
+        // Whatever this slot used to name is no longer bound anywhere, so its tripwire has to be cleared
+        // or destroying it later would report a slot that has since moved on to a different image.
+        // Whatever this slot used to name is no longer bound anywhere. TryGet, not operator[]: the previous
+        // owner may already be destroyed, and the generation check is what makes reading a handle that
+        // outlived its resource a branch instead of a read of a recycled entry.
+        const FTextureH Previous = HeapData.SampledOwners[Slot];
+        if (IsValid(Previous) && Previous.Handle != Texture.Handle)
+        {
+            if (FTexture* PreviousData = GDevice->Textures.TryGet(Previous))
+            {
+                if (PreviousData->BoundSampledSlot == Slot)
+                {
+                    PreviousData->BoundSampledSlot = kInvalidHeapSlot;
+                }
+            }
+        }
 
         HeapData.ImageViews[Slot] = TextureData.DefaultImageView;
         HeapData.SampledOwners[Slot] = Texture;
+        TextureData.BoundSampledSlot = Slot;
+        TextureData.BoundHeap        = Heap;
 
         const VkDescriptorImageInfo ImageInfo
         {
@@ -3685,7 +3770,7 @@ namespace Lumina::RHI
             return FHandleAllocator::kInvalidHandle;
         }
 
-        PointSampledSlotAt(HeapData, Slot, Texture);
+        PointSampledSlotAt(Heap, HeapData, Slot, Texture);
 
         return Slot;
     }
@@ -3706,7 +3791,7 @@ namespace Lumina::RHI
         }
 
         HeapData.SampledImageSlots.MarkAllocated(Slot);
-        PointSampledSlotAt(HeapData, Slot, Texture);
+        PointSampledSlotAt(Heap, HeapData, Slot, Texture);
     }
 
     uint32 HeapWriteRWTexture(FTextureHeapH Heap, FTextureH Texture, uint32 Mip)
@@ -3926,6 +4011,18 @@ namespace Lumina::RHI
     // Caller holds HeapMutex.
     static void PointSampledSlotAtFallback(FTextureHeap& HeapData, uint32 Slot)
     {
+        const FTextureH Previous = HeapData.SampledOwners[Slot];
+        if (IsValid(Previous))
+        {
+            if (FTexture* PreviousData = GDevice->Textures.TryGet(Previous))
+            {
+                if (PreviousData->BoundSampledSlot == Slot)
+                {
+                    PreviousData->BoundSampledSlot = kInvalidHeapSlot;
+                }
+            }
+        }
+
         HeapData.ImageViews[Slot] = VK_NULL_HANDLE;
         HeapData.SampledOwners[Slot] = {};
 
@@ -4376,6 +4473,14 @@ namespace Lumina::RHI
         }
 #endif
 
+        // Present submits without going through RHI::Submit, so it has to close the recording itself or the
+        // open-list count never comes back down and every retire is pinned against a value that keeps moving.
+        if (CL.bOpen)
+        {
+            CL.bOpen = false;
+            GDevice->OpenCommandLists[(uint32)CL.Queue].fetch_sub(1, std::memory_order_release);
+        }
+
         vkEndCommandBuffer(CL.CommandBuffer);
 
         VkSemaphore PresentSem = SC.PresentSemaphores[SC.CurrentImageIndex];
@@ -4456,6 +4561,8 @@ namespace Lumina::RHI
                 CommandList.GPUZoneDepth = 0;
                 #endif
                 CommandList.BreadcrumbDepth = 0;
+                CommandList.bOpen = true;
+                GDevice->OpenCommandLists[(uint32)Type].fetch_add(1, std::memory_order_release);
 
                 // Already in the initial state: ResetCommandList reset the pool when it recycled the list.
                 vkBeginCommandBuffer(CommandList.CommandBuffer, &BeginInfo);
@@ -4486,13 +4593,16 @@ namespace Lumina::RHI
 
         vkBeginCommandBuffer(Buffer, &BeginInfo);
 
+        GDevice->OpenCommandLists[(uint32)Type].fetch_add(1, std::memory_order_release);
+
         return GDevice->CommandLists.Emplace(FCommandList
         {
             .CommandBuffer      = Buffer,
             .Pool               = Pool,
             .CurrentIndexBuffer = 0,
             .CurrentIndexType   = VK_INDEX_TYPE_UINT32,
-            .Queue              = Type
+            .Queue              = Type,
+            .bOpen              = true
         });
     }
 
@@ -4501,10 +4611,26 @@ namespace Lumina::RHI
         FCommandList& List = GDevice->CommandLists[CommandList];
 
         FScopeLock Lock(GDevice->CommandPoolMutex);
-        
+
+        // Reset without a submit: the recording is discarded, so it can never name anything.
+        if (List.bOpen)
+        {
+            List.bOpen = false;
+            GDevice->OpenCommandLists[(uint32)List.Queue].fetch_sub(1, std::memory_order_release);
+        }
+
         VK_CHECK(vkResetCommandPool(*GDevice, List.Pool, 0));
 
         GDevice->FreeCommandLists[(uint32)List.Queue].push_back(CommandList);
+    }
+
+    uint32 GetOpenCommandListCount(EQueueType Queue)
+    {
+        if (GDevice == nullptr)
+        {
+            return 0;
+        }
+        return GDevice->OpenCommandLists[(uint32)Queue].load(std::memory_order_acquire);
     }
 
     void Submit(EQueueType Queue, TSpan<const FCmdListH> CommandLists, TSpan<const FSemaphoreInfo> Waits, TSpan<const FSemaphoreInfo> Signals)
@@ -4639,7 +4765,16 @@ namespace Lumina::RHI
 
         for (size_t i = 0; i < CommandLists.size(); ++i)
         {
-            const FCommandList& CommandList = GDevice->CommandLists[CommandLists[i]];
+            FCommandList& CommandList = GDevice->CommandLists[CommandLists[i]];
+
+            // From here the recording is the queue's problem, not a pending reference no fence covers.
+            // Cleared before vkQueueSubmit2 but after the caller took its submit lock, which is what lets
+            // the retire drain sample "counter + open lists" as one consistent pair.
+            if (CommandList.bOpen)
+            {
+                CommandList.bOpen = false;
+                GDevice->OpenCommandLists[(uint32)Queue].fetch_sub(1, std::memory_order_release);
+            }
 
             #if defined(TRACY_ENABLE)
             if (Queue != EQueueType::Graphics
