@@ -1,6 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "Color.h"
-#include <random>
+#include "Core/Math/Random.h"
 
 namespace Lumina
 {
@@ -11,43 +11,38 @@ namespace Lumina
     constexpr FColor FColor::White      = FColor(1.0f, 1.0f, 1.0f);
     constexpr FColor FColor::Black      = FColor(0.0f, 0.0f, 0.0f);
 
+    // These previously held a plain `static std::mt19937` - shared, unsynchronized state that any two
+    // threads asking for a random color would corrupt. Math::ThreadRandomStream is per-thread.
+
     FColor FColor::MakeRandom(float alpha)
     {
-        static std::random_device rd;
-        static std::mt19937 gen(rd());
-        static std::uniform_real_distribution<float> dis(0.0f, 1.0f);
-    
-        return FColor(dis(gen), dis(gen), dis(gen), alpha);
+        FRandomStream& Random = Math::ThreadRandomStream();
+        return FColor(Random.NextFloat(), Random.NextFloat(), Random.NextFloat(), alpha);
     }
 
     FColor FColor::MakeRandomWithAlpha()
     {
-        static std::random_device rd;
-        static std::mt19937 gen(rd());
-        static std::uniform_real_distribution<float> dis(0.0f, 1.0f);
-    
-        return FColor(dis(gen), dis(gen), dis(gen), dis(gen));
+        FRandomStream& Random = Math::ThreadRandomStream();
+        return FColor(Random.NextFloat(), Random.NextFloat(), Random.NextFloat(), Random.NextFloat());
     }
 
     FColor FColor::MakeRandomVibrant(float alpha)
     {
-        static std::random_device rd;
-        static std::mt19937 gen(rd());
-        static std::uniform_real_distribution<float> hue_dis(0.0f, 1.0f);
-        static std::uniform_real_distribution<float> sat_dis(0.7f, 1.0f);
-        static std::uniform_real_distribution<float> light_dis(0.4f, 0.6f);
-    
-        return HSLtoRGB(hue_dis(gen), sat_dis(gen), light_dis(gen), alpha);
+        FRandomStream& Random = Math::ThreadRandomStream();
+        const float Hue        = Random.NextFloat();
+        const float Saturation = Random.RandRange(0.7f, 1.0f);
+        const float Lightness  = Random.RandRange(0.4f, 0.6f);
+
+        return HSLtoRGB(Hue, Saturation, Lightness, alpha);
     }
 
     FColor FColor::MakeRandomPastel(float alpha)
     {
-        static std::random_device rd;
-        static std::mt19937 gen(rd());
-        static std::uniform_real_distribution<float> hue_dis(0.0f, 1.0f);
-        static std::uniform_real_distribution<float> sat_dis(0.2f, 0.5f);
-        static std::uniform_real_distribution<float> light_dis(0.7f, 0.9f);
-    
-        return HSLtoRGB(hue_dis(gen), sat_dis(gen), light_dis(gen), alpha);
+        FRandomStream& Random = Math::ThreadRandomStream();
+        const float Hue        = Random.NextFloat();
+        const float Saturation = Random.RandRange(0.2f, 0.5f);
+        const float Lightness  = Random.RandRange(0.7f, 0.9f);
+
+        return HSLtoRGB(Hue, Saturation, Lightness, alpha);
     }
 }

@@ -6,7 +6,7 @@
     "Author": "Lumina Team",
     "Description": "Optional gameplay-flavored components that aren't core engine functionality. Lives outside Runtime so it's opt-in: off by default; a project enables it in its .lproject.",
     "Category": "Gameplay",
-    "EnabledByDefault": false,
+    "EnabledByDefault": true,
     "EditorOnly": false,
     "ContainsContent": false,
     "SupportedPlatforms": [],

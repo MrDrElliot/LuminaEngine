@@ -334,6 +334,12 @@ namespace Lumina
         {
             bWorldDirty      = false;
             bBodyDirtyQueued = false;
+
+            // Same hazard, one step removed: a copied epoch is a claim about the SOURCE registry's drain
+            // count, and if it happens to match the destination's current epoch the flat path suppresses
+            // the copy's first move notification. Zero can still collide, once every 2^32 drains, at the
+            // documented cost of one skipped notification - the same odds the wrap already carries.
+            LastPublishEpoch = 0;
         }
 
     private:

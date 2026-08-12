@@ -17,6 +17,7 @@
 #include "Core/Math/Matrix/MatrixMath.h"
 #include "Core/Math/Packing.h"
 #include "Core/Math/MathString.h"
+#include "Core/Math/Random.h"
 
 namespace Lumina::Math
 {
@@ -79,26 +80,6 @@ namespace Lumina::Math
         return ((Val) & 1) == 0;
     }
 
-    template<std::integral T>
-    requires(eastl::is_unsigned_v<T> && (sizeof(T) <= 4))
-    [[nodiscard]] T RandRange(T First, T Second)
-    {
-        if (First > Second)
-        {
-            eastl::swap(First, Second);
-        }
-
-        thread_local std::mt19937 Random([]()
-        {
-            std::random_device RD;
-            std::seed_seq Seed{ RD(), RD(), RD(), RD(), RD(), RD(), RD(), RD() };
-            return std::mt19937(Seed);
-        }());
-
-        std::uniform_int_distribution<uint32> Distribution(First, Second);
-
-        return Distribution(Random);
-    }
 
     [[nodiscard]] inline FQuat FindLookAtRotation(const FVector3& Target, const FVector3& From)
     {

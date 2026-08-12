@@ -18,25 +18,25 @@ namespace Lumina
         SIMD::VFloat4 Rotation;   // x, y, z, w
         SIMD::VFloat4 Scale;      // x, y, z, 1  (pad lane 1 so Inverse's 1/Scale never divides by 0)
 
-        VTransform()
+        RUNTIME_API VTransform()
             : Location(0.0f, 0.0f, 0.0f, 0.0f)
             , Rotation(0.0f, 0.0f, 0.0f, 1.0f)
             , Scale(1.0f, 1.0f, 1.0f, 1.0f)
         {}
 
-        explicit VTransform(const FVector3& InLocation)
+        RUNTIME_API explicit VTransform(const FVector3& InLocation)
             : Location(InLocation.x, InLocation.y, InLocation.z, 0.0f)
             , Rotation(0.0f, 0.0f, 0.0f, 1.0f)
             , Scale(1.0f, 1.0f, 1.0f, 1.0f)
         {}
 
-        VTransform(const FVector3& InLocation, const FVector3& EulerAngles, const FVector3& InScale)
+        RUNTIME_API VTransform(const FVector3& InLocation, const FVector3& EulerAngles, const FVector3& InScale)
             : Location(InLocation.x, InLocation.y, InLocation.z, 0.0f)
             , Rotation(SIMD::LoadQuat(FQuat(Math::Radians(EulerAngles))))
             , Scale(InScale.x, InScale.y, InScale.z, 1.0f)
         {}
 
-        explicit VTransform(const FMatrix4& InMatrix)
+        RUNTIME_API explicit VTransform(const FMatrix4& InMatrix)
         {
             FVector3 S, L, Skew;
             FQuat R;
@@ -47,15 +47,15 @@ namespace Lumina
             Scale    = SIMD::VFloat4(S.x, S.y, S.z, 1.0f);
         }
         
-        FVector3 GetLocation() const { return ToVec3(Location); }
-        FQuat    GetRotation() const { FQuat Q; SIMD::StoreQuat(Q, Rotation); return Q; }
-        FVector3 GetScale()    const { return ToVec3(Scale); }
+        RUNTIME_API FVector3 GetLocation() const { return ToVec3(Location); }
+        RUNTIME_API FQuat    GetRotation() const { FQuat Q; SIMD::StoreQuat(Q, Rotation); return Q; }
+        RUNTIME_API FVector3 GetScale()    const { return ToVec3(Scale); }
 
-        void SetLocation(const FVector3& V) { Location = SIMD::VFloat4(V.x, V.y, V.z, 0.0f); }
-        void SetRotation(const FQuat& Q)    { Rotation = SIMD::LoadQuat(Q); }
-        void SetScale(const FVector3& V)    { Scale = SIMD::VFloat4(V.x, V.y, V.z, 1.0f); }
+        RUNTIME_API void SetLocation(const FVector3& V) { Location = SIMD::VFloat4(V.x, V.y, V.z, 0.0f); }
+        RUNTIME_API void SetRotation(const FQuat& Q)    { Rotation = SIMD::LoadQuat(Q); }
+        RUNTIME_API void SetScale(const FVector3& V)    { Scale = SIMD::VFloat4(V.x, V.y, V.z, 1.0f); }
 
-        FMatrix4 GetMatrix() const
+        RUNTIME_API FMatrix4 GetMatrix() const
         {
             using namespace SIMD;
             VFloat4 C0, C1, C2;
@@ -71,29 +71,29 @@ namespace Lumina
             return M;
         }
 
-        FORCEINLINE FVector3 GetForward() const { return ToVec3(SIMD::QuatRotate(Rotation, SIMD::VFloat4(0.0f, 0.0f, 1.0f, 0.0f))); }
-        FORCEINLINE FVector3 GetRight()   const { return ToVec3(SIMD::QuatRotate(Rotation, SIMD::VFloat4(1.0f, 0.0f, 0.0f, 0.0f))); }
-        FORCEINLINE FVector3 GetUp()      const { return ToVec3(SIMD::QuatRotate(Rotation, SIMD::VFloat4(0.0f, 1.0f, 0.0f, 0.0f))); }
+        RUNTIME_API FORCEINLINE FVector3 GetForward() const { return ToVec3(SIMD::QuatRotate(Rotation, SIMD::VFloat4(0.0f, 0.0f, 1.0f, 0.0f))); }
+        RUNTIME_API FORCEINLINE FVector3 GetRight()   const { return ToVec3(SIMD::QuatRotate(Rotation, SIMD::VFloat4(1.0f, 0.0f, 0.0f, 0.0f))); }
+        RUNTIME_API FORCEINLINE FVector3 GetUp()      const { return ToVec3(SIMD::QuatRotate(Rotation, SIMD::VFloat4(0.0f, 1.0f, 0.0f, 0.0f))); }
 
-        FORCEINLINE void SetRotationFromEuler(const FVector3& EulerAngles)
+        RUNTIME_API FORCEINLINE void SetRotationFromEuler(const FVector3& EulerAngles)
         {
             Rotation = SIMD::LoadQuat(FQuat(Math::Radians(EulerAngles)));
         }
 
-        FORCEINLINE void Translate(const FVector3& T)
+        RUNTIME_API FORCEINLINE void Translate(const FVector3& T)
         {
             Location += SIMD::VFloat4(T.x, T.y, T.z, 0.0f);
         }
 
-        FORCEINLINE void Rotate(const FVector3& EulerAngles)
+        RUNTIME_API FORCEINLINE void Rotate(const FVector3& EulerAngles)
         {
             // Additional * Rotation (apply the new rotation on the outside), matching the scalar transform.
             Rotation = SIMD::QuatMul(SIMD::LoadQuat(FQuat(Math::Radians(EulerAngles))), Rotation);
         }
         
-        FORCEINLINE void AddYawRadians(float Radians)   { ApplyAxisAngle(SIMD::VFloat4(0.0f, 1.0f, 0.0f, 0.0f), Radians); }
-        FORCEINLINE void AddPitchRadians(float Radians) { ApplyAxisAngle(SIMD::QuatRotate(Rotation, SIMD::VFloat4(1.0f, 0.0f, 0.0f, 0.0f)), Radians); }
-        FORCEINLINE void AddRollRadians(float Radians)  { ApplyAxisAngle(SIMD::QuatRotate(Rotation, SIMD::VFloat4(0.0f, 0.0f, 1.0f, 0.0f)), Radians); }
+        RUNTIME_API FORCEINLINE void AddYawRadians(float Radians)   { ApplyAxisAngle(SIMD::VFloat4(0.0f, 1.0f, 0.0f, 0.0f), Radians); }
+        RUNTIME_API FORCEINLINE void AddPitchRadians(float Radians) { ApplyAxisAngle(SIMD::QuatRotate(Rotation, SIMD::VFloat4(1.0f, 0.0f, 0.0f, 0.0f)), Radians); }
+        RUNTIME_API FORCEINLINE void AddRollRadians(float Radians)  { ApplyAxisAngle(SIMD::QuatRotate(Rotation, SIMD::VFloat4(0.0f, 0.0f, 1.0f, 0.0f)), Radians); }
 
         bool operator==(const VTransform& Other) const
         {
@@ -124,7 +124,7 @@ namespace Lumina
             return *this;
         }
 
-        VTransform Inverse() const
+        RUNTIME_API VTransform Inverse() const
         {
             using namespace SIMD;
             VTransform Inv;

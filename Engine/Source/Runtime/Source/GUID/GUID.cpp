@@ -4,9 +4,9 @@
 #include <algorithm>
 #include <iomanip>
 #include <sstream>
-#include <random>
 
 #include "Core/Math/Hash/Hash.h"
+#include "Core/Math/Random.h"
 
 #if defined(_WIN32)
 #include <objbase.h>
@@ -88,15 +88,14 @@ namespace Lumina
         return FGuid(std::move(bytes));
         
     #else
-        // Fallback to random generation (not cryptographically secure)
-        static std::random_device rd;
-        static std::mt19937_64 gen(rd());
-        static std::uniform_int_distribution<uint64_t> dis;
-        
+        // Fallback to random generation (not cryptographically secure). Per-thread, because a shared
+        // unsynchronized generator here would race and could hand two threads the same GUID.
+        FRandomStream& Random = Math::ThreadRandomStream();
+
         ByteArray bytes;
         uint64_t* ptr = reinterpret_cast<uint64_t*>(bytes.data());
-        ptr[0] = dis(gen);
-        ptr[1] = dis(gen);
+        ptr[0] = Random.NextUInt64();
+        ptr[1] = Random.NextUInt64();
         
         // Set version (4) and variant bits
         bytes[6] = (bytes[6] & 0x0F) | 0x40;

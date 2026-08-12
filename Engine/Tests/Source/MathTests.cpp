@@ -102,3 +102,105 @@ TEST(MathTests, RandRange_SwapsBounds)
         EXPECT_LE(v, 20u);
     }
 }
+
+TEST(MathTests, RandRange_FloatIsInBounds)
+{
+    for (int i = 0; i < 1000; ++i)
+    {
+        const float v = RandRange(-2.5f, 7.5f);
+        EXPECT_GE(v, -2.5f);
+        EXPECT_LE(v, 7.5f);
+    }
+}
+
+TEST(MathTests, RandomStream_SameSeedSameSequence)
+{
+    Lumina::FRandomStream A(12345u);
+    Lumina::FRandomStream B(12345u);
+
+    for (int i = 0; i < 256; ++i)
+    {
+        EXPECT_EQ(A.NextUInt32(), B.NextUInt32());
+    }
+}
+
+TEST(MathTests, RandomStream_DifferentSequencesDiverge)
+{
+    Lumina::FRandomStream A(12345u, 1u);
+    Lumina::FRandomStream B(12345u, 2u);
+
+    int Differences = 0;
+    for (int i = 0; i < 256; ++i)
+    {
+        Differences += (A.NextUInt32() != B.NextUInt32()) ? 1 : 0;
+    }
+
+    // Same seed, different stream selector: the two must not walk the same sequence.
+    EXPECT_GT(Differences, 250);
+}
+
+TEST(MathTests, RandomStream_NextFloatIsUnitInterval)
+{
+    Lumina::FRandomStream Stream(9876u);
+    for (int i = 0; i < 4096; ++i)
+    {
+        const float v = Stream.NextFloat();
+        EXPECT_GE(v, 0.0f);
+        EXPECT_LT(v, 1.0f);
+    }
+}
+
+TEST(MathTests, RandomStream_SignedRangeSpanningZero)
+{
+    Lumina::FRandomStream Stream(555u);
+
+    bool bSawNegative = false;
+    bool bSawPositive = false;
+    for (int i = 0; i < 2000; ++i)
+    {
+        const int32 v = Stream.RandRange<int32>(-10, 10);
+        ASSERT_GE(v, -10);
+        ASSERT_LE(v, 10);
+        bSawNegative |= (v < 0);
+        bSawPositive |= (v > 0);
+    }
+
+    // The unsigned span arithmetic has to survive a range straddling zero.
+    EXPECT_TRUE(bSawNegative);
+    EXPECT_TRUE(bSawPositive);
+}
+
+TEST(MathTests, RandomStream_FullWidthRangeDoesNotDegenerate)
+{
+    Lumina::FRandomStream Stream(31337u);
+
+    // Span+1 overflows 32 bits here, which is the branch that has to fall back to the 64-bit path.
+    bool bSawDistinct = false;
+    const uint64 First = Stream.RandRange<uint64>(0u, UINT64_MAX);
+    for (int i = 0; i < 64 && !bSawDistinct; ++i)
+    {
+        bSawDistinct = (Stream.RandRange<uint64>(0u, UINT64_MAX) != First);
+    }
+
+    EXPECT_TRUE(bSawDistinct);
+}
+
+TEST(MathTests, RandomStream_BoundedDrawCoversWholeRange)
+{
+    Lumina::FRandomStream Stream(4242u);
+
+    // Every value in a small inclusive range must be reachable - an off-by-one in the Lemire bound
+    // would silently drop the top or bottom value while every other assertion still passed.
+    bool bSeen[5] = {};
+    for (int i = 0; i < 4000; ++i)
+    {
+        const uint32 v = Stream.RandRange<uint32>(0u, 4u);
+        ASSERT_LE(v, 4u);
+        bSeen[v] = true;
+    }
+
+    for (const bool bValue : bSeen)
+    {
+        EXPECT_TRUE(bValue);
+    }
+}

@@ -16,18 +16,9 @@ namespace Lumina
     public:
 
         void Serialize(FArchive& Ar) override;
-
-        // A prefab is a browsable asset. Without this it inherits CObject's false, and anything that gates
-        // registration on it (the importers' save pass) writes the package but never indexes it -- the
-        // browser then shows "not yet indexed" and cannot open it. The world editor's Create Prefab path
-        // hid this by calling AssetCreated unconditionally.
+        
         bool IsAsset() const override { return true; }
-
-        /** Bumped whenever prefab data or a live instance's component set is rewritten. Editor details
-         *  panels cache raw pointers into entt component storage (and into this registry, for the
-         *  reset-to-prefab baseline); a refresh removes/re-emplaces components, which relocates neighbours
-         *  under entt's swap-and-pop, and a re-capture replaces the registry outright. Nothing broadcasts
-         *  either, so consumers compare this the way they compare DotNet::GetScriptGeneration(). */
+        
         static uint32 GetDataGeneration();
         static void   BumpDataGeneration();
 

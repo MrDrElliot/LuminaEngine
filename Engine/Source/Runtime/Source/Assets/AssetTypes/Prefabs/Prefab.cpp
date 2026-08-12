@@ -61,10 +61,7 @@ namespace Lumina
             return ID == entt::type_hash<SPrefabInstanceComponent>::value()
                 || ID == entt::type_hash<SPrefabOverrideComponent>::value();
         }
-
-        // Reflected component value pointer for (Entity, Struct), or null. Storage is keyed by the type's
-        // info hash (entt::type_hash<T>) -- NOT GetTypeID, which is hashed_string(name) and only resolves the
-        // meta_type. Mirrors NetReplication::FindComponentPtr / WorldLuaBindings.
+        
         void* FindReflectedComponentPtr(entt::registry& Registry, entt::entity Entity, CStruct* Struct)
         {
             if (Struct == nullptr || !Registry.valid(Entity))
@@ -217,6 +214,15 @@ namespace Lumina
         {
             ECS::Utils::RemapEntityReferences(Dest, DestE, OutMap, /*bClearUnmapped*/ true);
         }
+        
+        for (auto& [SrcE, DestE] : OutMap)
+        {
+            if (STransformComponent* DestTransform = Dest.try_get<STransformComponent>(DestE))
+            {
+                DestTransform->Bind(Dest, DestE);
+                DestTransform->ResetDirtyState();
+            }
+        }
     }
 
     entt::entity CPrefab::Instantiate(CWorld* TargetWorld, const FTransform& OffsetTransform, entt::entity Parent)
@@ -225,11 +231,11 @@ namespace Lumina
         {
             return entt::null;
         }
+        
+        LUMINA_PROFILE_SCOPE();
 
         entt::registry& WorldRegistry = ECS::GetWorldRegistry(*TargetWorld);
-
-        // Collect parentless entities to pick a canonical root; multi-root is a data error but
-        // handled (extras reparented) rather than silently orphaned.
+        
         TVector<entt::entity> PrefabRoots;
         PrefabRoots.reserve(2);
         Registry.view<entt::entity>().each([&](entt::entity E)
@@ -254,12 +260,7 @@ namespace Lumina
             LOG_WARN("Prefab '{}' has {} parentless entities; reparenting extras under the first.",
                      GetName().c_str(), (uint32)PrefabRoots.size());
         }
-
-        // Physics creation is deferred across the whole spawn. A body / character controller is built from
-        // the entity's transform at on_construct -- which fires inside the copy below, while the root is
-        // still at its authored pose -- and from then on the controller OWNS that pose and stamps it back
-        // over the entity every step. Batching moves creation past the OffsetTransform write, so the spawn
-        // pose (rotation included) is what the character is created with.
+        
         struct FBodyBatchScope
         {
             Physics::IPhysicsScene* Scene;
@@ -323,9 +324,7 @@ namespace Lumina
             {
                 ECS::Utils::ReparentEntity(WorldRegistry, WorldRoot, Parent);
             }
-
-            // Without this the transform system can render the spawn at a stale world matrix for one
-            // frame (the components were emplaced via meta, which doesn't fire on_update).
+            
             MarkSubtreeTransformsDirty(WorldRegistry, WorldRoot);
         }
 
