@@ -72,11 +72,26 @@ float4 SampleTexture2DGrad(uint TextureIndex, uint SamplerIndex, float2 UV, floa
 }
 
 // Which sampling mode is right depends on the LANE, not the material: forward quads cover one
-// triangle, the deferred lane's do not. One call shape lets the same emitted chunk serve every template.
+// triangle, the deferred lane has no quad at all. One call shape lets the same emitted chunk serve
+// every template, and the LANE resolves it HERE.
+//
+// It used to be resolved by a #define in each material template, which is how the deferred lane lost
+// its gradients the moment those macro blocks were edited for an unrelated reason: an implicit Sample()
+// in a compute entry point is Slang error 31210 ("compute derivative group quad requires thread
+// dispatch count of X and Y to each be a multiple of 2"), pointing at this file rather than at the
+// template that actually made the choice. Keyed off SHADING_COMPUTE, the same switch SurfaceShading
+// and ShadowSampling use, a new template cannot forget it.
+#ifdef SHADING_COMPUTE
+float4 SampleTexture2DAuto(uint TextureIndex, uint SamplerIndex, float2 UV, float2 Ddx, float2 Ddy)
+{
+    return SampleTexture2DGrad(TextureIndex, SamplerIndex, UV, Ddx, Ddy);
+}
+#else
 float4 SampleTexture2DAuto(uint TextureIndex, uint SamplerIndex, float2 UV, float2 Ddx, float2 Ddy)
 {
     return SampleTexture2D(TextureIndex, SamplerIndex, UV);
 }
+#endif
 
 float4 SampleTexture2DLevel(uint TextureIndex, uint SamplerIndex, float2 UV, float Lod)
 {
@@ -102,12 +117,20 @@ float4 SampleTexture2DArrayGrad(uint TextureIndex, uint SamplerIndex, float2 UV,
     return gTextures2DArray[TextureIndex].SampleGrad(gSamplers[SamplerIndex], float3(UV, (float)Slice), Ddx, Ddy);
 }
 
-// Array counterpart of SampleTexture2DAuto, for the same reason. Without it an array sample reaches
-// the deferred lane as implicit-derivative Sample(), which does not compile in a compute entry point.
+// Array counterpart of SampleTexture2DAuto, split on the same switch and for the same reason. Without
+// it an array sample reaches the deferred lane as implicit-derivative Sample(), which does not compile
+// in a compute entry point.
+#ifdef SHADING_COMPUTE
+float4 SampleTexture2DArrayAuto(uint TextureIndex, uint SamplerIndex, float2 UV, uint Slice, float2 Ddx, float2 Ddy)
+{
+    return SampleTexture2DArrayGrad(TextureIndex, SamplerIndex, UV, Slice, Ddx, Ddy);
+}
+#else
 float4 SampleTexture2DArrayAuto(uint TextureIndex, uint SamplerIndex, float2 UV, uint Slice, float2 Ddx, float2 Ddy)
 {
     return SampleTexture2DArray(TextureIndex, SamplerIndex, UV, Slice);
 }
+#endif
 
 float4 LoadTexture2DArray(uint TextureIndex, int2 Texel, uint Slice, int Mip = 0)
 {
