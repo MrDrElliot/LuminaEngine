@@ -47,6 +47,49 @@ namespace Lumina::RHI
         return NumMaterials;
     }
 
+    uint32 FMaterialManager::CopySlotTextureIDs(uint32 Index, uint32* OutIDs, uint32 MaxIDs) const
+    {
+        if (OutIDs == nullptr || MaxIDs == 0)
+        {
+            return 0;
+        }
+
+        FReadScopeLock Lock(Mutex);
+        if (Index >= (uint32)Mirror.size())
+        {
+            return 0;
+        }
+
+        // The mirror IS what the shader reads, so these are exactly the slots that material samples --
+        // no separate mapping to fall out of sync, which is what made the previous material-keyed
+        // attempt fail silently for anything missing from its map. A freed slot reads as zeroed, and
+        // slot 0 is the magenta fallback, so a zero entry is correctly "no texture".
+        const FMaterialUniforms& Uniforms = Mirror[Index];
+
+        uint32 Count = 0;
+        for (uint32 i = 0; i < MAX_TEXTURES && Count < MaxIDs; ++i)
+        {
+            const uint32 ID = Uniforms.Textures[i];
+            if (ID == 0 || ID == ~0u)
+            {
+                continue;
+            }
+
+            // Materials repeat the same texture across channels constantly (one packed ORM feeding three
+            // slots); de-duplicating here keeps the caller's inner loop honest.
+            bool bSeen = false;
+            for (uint32 j = 0; j < Count; ++j)
+            {
+                bSeen = bSeen || (OutIDs[j] == ID);
+            }
+            if (!bSeen)
+            {
+                OutIDs[Count++] = ID;
+            }
+        }
+        return Count;
+    }
+
     bool FMaterialManager::GrowLocked(uint32 MinSlots)
     {
         if (MinSlots <= Capacity)

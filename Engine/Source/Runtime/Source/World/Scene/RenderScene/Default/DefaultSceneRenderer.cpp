@@ -11625,14 +11625,19 @@ namespace Lumina
 
     void FDefaultSceneRenderer::EnsureStreamingFeedbackBuffer()
     {
-        // One uint per sampled-image heap slot. The heap is fixed size, so this is allocated once and
-        // never resized -- a slot index straight out of a material is always in range.
+        // One uint per MATERIAL slot, not per texture: the lanes report once per pixel against the
+        // material they are shading, and the streamer expands that to textures through the material
+        // manager's uniform mirror. That makes this ~8x smaller than the per-heap-slot buffer it replaced,
+        // and its per-frame copy and clear correspondingly cheaper.
         if (StreamingFeedbackBuffer)
         {
             return;
         }
 
-        StreamingFeedbackSlots = RHI::kMaxTextureHeapSize;
+        // Fixed rather than tracking the material table's capacity, so the address never moves under an
+        // in-flight readback. The shader's range check drops anything past it, and a scene with more live
+        // materials than this has bigger problems than one texture staying at its inline tail.
+        StreamingFeedbackSlots = 4096;
         const uint64 Bytes     = (uint64)StreamingFeedbackSlots * sizeof(uint32);
 
         StreamingFeedbackBuffer = CreateSceneBuffer(Bytes, "Streaming.Feedback");
@@ -11694,7 +11699,7 @@ namespace Lumina
             return;
         }
 
-        Streaming->SubmitFeedbackMasks(Masks, StreamingFeedbackSlots);
+        Streaming->SubmitMaterialFeedback(Masks, StreamingFeedbackSlots);
     }
 
     uint64 FDefaultSceneRenderer::BuildViewSceneRoot(FSceneView& View, uint64 SceneDataAddr)

@@ -25,7 +25,7 @@ struct FSceneRoot
     // the only meshlet-header address that exists anywhere -- and it is republished every frame, which
     // is what lets the slab grow without invalidating a single cached copy. See MeshletHeaderSlab.h.
     FMeshletHeader*      MeshletHeadersPtr;
-    // Texture-streaming feedback, one uint per bindless texture slot. See RequestTextureResolution.
+    // Texture-streaming feedback, one uint per MATERIAL slot. See RequestMaterialResolution.
     uint*                StreamingFeedbackPtr;
     uint  BRDFLutIndex;          // bindless 2D SRV
     uint  SkyIrradianceIndex;    // bindless cube SRV
@@ -101,139 +101,67 @@ uint                NumSplines()            { return GetSceneRoot().NumSplines; 
 // distance and texel density, and every one of those is a place to be wrong. So the material lanes
 // report what they actually sampled and residency follows THAT.
 //
-// One uint per bindless slot, bit N = "some pixel needs this texture to be at least 2^N texels across".
-// ABSOLUTE, not relative to what is resident: the UV derivative alone gives the required texel count
-// (one texel per pixel means the texture must be 1/rho texels across its UV range), so the shader never
-// has to know the texture's own size and never touches its descriptor to report. OR is the right
-// operator -- atomic-friendly, order-independent, and the largest request is just the highest set bit.
-// Cleared each frame after readback.
+// Keyed by MATERIAL SLOT, one uint per slot, bit N = "some pixel needs this material's textures at
+// >= 2^N texels across". ABSOLUTE, not relative to what is resident: the UV derivative alone gives the
+// required texel count (one texel per pixel means the texture must be 1/rho texels across its UV range),
+// so the shader never needs a texture's size and never touches its descriptor to report.
+//
+// Per material rather than per texture, which is what makes it ONE atomic per pixel instead of one per
+// texture sample. It costs nothing in accuracy: the request is a required RESOLUTION, and the CPU turns
+// that into a mip per texture using each texture's own dimensions -- so a 4K albedo and a 512 normal on
+// one material correctly land on different mips from the same report.
+//
+// OR is the right operator -- atomic-friendly, order-independent, and the largest request is just the
+// highest set bit. Cleared each frame after readback.
 // ---------------------------------------------------------------------------------------------------
-// The atomic half, shared by every request path. Bucket N means "at least 2^N texels across".
-bool CanRequestTexture(uint ResourceID)
+
+// One-hot required resolution for one UV set, or 0 when that set carries no gradient at all.
+//
+// Zero gradients mean a CONSTANT uv attribute -- a mesh with no second uv set, whose UV1 locals are all
+// zero -- not an infinitely magnified surface. Reporting the clamped maximum for those would pin every
+// such material's textures at mip 0 forever, so they report nothing instead.
+uint StreamingResolutionBit(float2 Ddx, float2 Ddy)
 {
-    // Range, not just the ~0u sentinel. An unbound material parameter is ~0u, but a stale or corrupt slot
-    // is simply out of range -- and both index the same two arrays, so both have to be rejected BEFORE
-    // any heap or buffer access. Getting this wrong is an MMU fault, which is how it was found.
-    return GetSceneRoot().StreamingFeedbackPtr != nullptr
-        && ResourceID < GetSceneRoot().StreamingFeedbackCount;
+    // Kept SQUARED and read straight out of the float exponent: a handful of integer ops rather than two
+    // sqrts and a log2. This runs in the deferred material shader, which is register- and SFU-bound.
+    const float RhoSq = max(dot(Ddx, Ddx), dot(Ddy, Ddy));
+    if (RhoSq <= 0.0f)
+    {
+        return 0u;
+    }
+
+    // For a normal positive float the biased exponent is floor(log2(x)) exactly. We want
+    // ceil(log2(1/Rho)) = ceil(-0.5 * log2(RhoSq)); with log2(RhoSq) in [E, E+1) that is exactly
+    // -floor(E/2), and >> on a signed int floors. Not an approximation -- it agrees with the ceil(log2())
+    // form on every input, including the powers of two where the buckets change.
+    const int Exponent = (int)((asuint(RhoSq) >> 23) & 0xFFu) - 127;
+    return 1u << (uint)clamp(-(Exponent >> 1), 0, 31);
 }
 
-void RequestTextureBucket(uint ResourceID, uint Bucket)
+// Called ONCE per pixel by each material lane, not once per sample.
+void RequestMaterialResolution(uint MaterialSlot, float2 UV0Ddx, float2 UV0Ddy, float2 UV1Ddx, float2 UV1Ddy)
 {
-    if (!CanRequestTexture(ResourceID))
+    uint* Feedback = GetSceneRoot().StreamingFeedbackPtr;
+
+    // Range, not just the ~0u sentinel: a stale or corrupt slot is simply out of range, and both index the
+    // same buffer, so both have to be rejected before the write. Getting this wrong is an MMU fault, which
+    // is how it was found. Uniform across the wave, so this branch costs no divergence.
+    if (Feedback == nullptr || MaterialSlot >= GetSceneRoot().StreamingFeedbackCount)
     {
         return;
     }
-    uint* Feedback = GetSceneRoot().StreamingFeedbackPtr;
 
-    const uint Bit = 1u << min(Bucket, 31u);
+    const uint Mask = StreamingResolutionBit(UV0Ddx, UV0Ddy) | StreamingResolutionBit(UV1Ddx, UV1Ddy);
 
-    // A wave shading one surface hits the same texture in every lane, which is the case worth
-    // collapsing: one atomic instead of 32-64. Guarded, because a wave straddling two materials would
-    // otherwise OR one texture's request into the other's slot.
-    if (WaveActiveAllEqual(ResourceID))
+    // Unconditional wave collapse: MaterialSlot is wave-uniform in every lane that calls this. The
+    // deferred pass is dispatched PER MATERIAL over that material's own pixel list, and a pixel-shader
+    // wave is filled from one draw -- and the material is what selects the pipeline, so one draw is one
+    // material. One atomic per wave, not per lane.
+    const uint WaveMask = WaveActiveBitOr(Mask);
+    if (WaveIsFirstLane())
     {
-        const uint WaveMask = WaveActiveBitOr(Bit);
-        if (WaveIsFirstLane())
-        {
-            InterlockedOr(Feedback[ResourceID], WaveMask);
-        }
+        InterlockedOr(Feedback[MaterialSlot], WaveMask);
     }
-    else
-    {
-        InterlockedOr(Feedback[ResourceID], Bit);
-    }
-}
-
-// No guard here on purpose: RequestTextureBucket has to re-check anyway before it touches memory, and the
-// arithmetic below is now cheap enough that running it for a rejected ID costs less than a second branch
-// and a second pair of scene-root loads kept live across it.
-void RequestTextureResolution(uint ResourceID, float2 Ddx, float2 Ddy)
-{
-    // Texels-per-pixel along the longer screen axis, in UV space. No texture dimensions involved: the
-    // reciprocal IS the resolution the surface needs, which is what makes this dimension-independent and
-    // lets the report cost a single atomic with no descriptor read.
-    //
-    // Kept SQUARED, and the bucket read straight out of the float exponent, so this costs a handful of
-    // integer ops instead of two sqrts and a log2. It runs once per texture sample inside the deferred
-    // material shader, which is register- and SFU-bound, and transcendentals there are not cheap.
-    const float RhoSq = max(max(dot(Ddx, Ddx), dot(Ddy, Ddy)), 1e-16f);
-
-    // For a normal positive float, the biased exponent gives floor(log2(x)) exactly. We want
-    // ceil(log2(1/Rho)) = ceil(-0.5 * log2(RhoSq)); with log2(RhoSq) in [E, E+1) that is exactly
-    // -floor(E/2), and >> on a signed int floors. Not an approximation -- it agrees with the
-    // ceil(log2()) form on every input, including the powers of two where the buckets change.
-    const int Exponent = (int)((asuint(RhoSq) >> 23) & 0xFFu) - 127;
-
-    // Under-requesting is the visible failure; over-requesting costs one mip of memory.
-    RequestTextureBucket(ResourceID, (uint)clamp(-(Exponent >> 1), 0, 31));
-}
-
-// Deferred VisBuffer lane: a compute entry point, so there is no 2x2 quad and no implicit derivative to
-// read. The gradients are the analytic barycentric ones DeferredMaterial.slang builds, and they are the
-// same ones the sample itself uses -- so the mip requested and the mip fetched cannot disagree.
-//
-// This is the PRIMARY reporting path, not a corner case: DeferredMaterial.slang points its
-// SampleTexture2DAuto at it, so with these missing every deferred material that samples any texture fails
-// to compile, and the main opaque view contributes no residency demand at all.
-float4 SampleTexture2DStreamed(uint TextureIndex, uint SamplerIndex, float2 UV, float2 Ddx, float2 Ddy)
-{
-    RequestTextureResolution(TextureIndex, Ddx, Ddy);
-    return SampleTexture2DGrad(TextureIndex, SamplerIndex, UV, Ddx, Ddy);
-}
-
-float4 SampleTexture2DArrayStreamed(uint TextureIndex, uint SamplerIndex, float2 UV, uint Slice, float2 Ddx, float2 Ddy)
-{
-    RequestTextureResolution(TextureIndex, Ddx, Ddy);
-    return SampleTexture2DArrayGrad(TextureIndex, SamplerIndex, UV, Slice, Ddx, Ddy);
-}
-
-// Explicit-LOD sampling is the one path that DOES need the texture's size: a mip index only becomes an
-// absolute resolution once you know what mip 0 is. Guarded, and rare -- only a custom node that picks its
-// own LOD reaches it.
-// Explicit-LOD sampling needs no gradient and no dimensions -- the caller already named the mip, and it
-// names it in the resident chain's terms, which is exactly what the mask wants. floor() to match the
-// hardware, which samples between Lod and Lod+1 and therefore needs the finer of the two present.
-void RequestLevelResolution(uint ResourceID, uint LongEdge, float Lod)
-{
-    const uint Res = max(LongEdge >> (uint)max(floor(Lod), 0.0f), 1u);
-    RequestTextureBucket(ResourceID, (uint)clamp(ceil(log2((float)Res)), 0.0f, 31.0f));
-}
-
-float4 SampleTexture2DLevelStreamed(uint TextureIndex, uint SamplerIndex, float2 UV, float Lod)
-{
-    if (CanRequestTexture(TextureIndex))
-    {
-        uint W, H, Levels;
-        gTextures2D[TextureIndex].GetDimensions(0, W, H, Levels);
-        RequestLevelResolution(TextureIndex, max(W, H), Lod);
-    }
-    return SampleTexture2DLevel(TextureIndex, SamplerIndex, UV, Lod);
-}
-
-float4 SampleTexture2DArrayLevelStreamed(uint TextureIndex, uint SamplerIndex, float2 UV, uint Slice, float Lod)
-{
-    if (CanRequestTexture(TextureIndex))
-    {
-        uint W, H, Elements, Levels;
-        gTextures2DArray[TextureIndex].GetDimensions(0, W, H, Elements, Levels);
-        RequestLevelResolution(TextureIndex, max(W, H), Lod);
-    }
-    return SampleTexture2DArrayLevel(TextureIndex, SamplerIndex, UV, Slice, Lod);
-}
-
-// Forward lane: a real pixel shader, so the quad's implicit derivatives are the right ones. Same report,
-// different source of gradients.
-float4 SampleTexture2DStreamedAuto(uint TextureIndex, uint SamplerIndex, float2 UV)
-{
-    RequestTextureResolution(TextureIndex, ddx(UV), ddy(UV));
-    return SampleTexture2D(TextureIndex, SamplerIndex, UV);
-}
-
-float4 SampleTexture2DArrayStreamedAuto(uint TextureIndex, uint SamplerIndex, float2 UV, uint Slice)
-{
-    RequestTextureResolution(TextureIndex, ddx(UV), ddy(UV));
-    return SampleTexture2DArray(TextureIndex, SamplerIndex, UV, Slice);
 }
 
 // HDR panoramas carry +Inf/NaN texels that poison the IBL cubes and spread white through bloom.

@@ -57,13 +57,15 @@ namespace Lumina
          *  Game thread only -- it calls CTexture::ApplyMipResidency, which touches the RHI. */
         void Update();
 
-        /** GPU feedback for the whole bindless heap: Masks[Slot] is the OR of every mip a material lane
-         *  sampled from that slot, relative to the texture's current residency (see
-         *  RequestTextureResolution in SceneGlobals.slang). Indexed by heap slot, so no material -> texture
-         *  map is involved -- a texture reports for itself, from the pixels that actually sampled it.
+        /** GPU feedback, indexed by MATERIAL slot: Masks[Slot] is the OR of the absolute resolutions every
+         *  pixel shading that material needed (see RequestMaterialResolution in SceneGlobals.slang). One
+         *  atomic per pixel rather than one per texture sample, which is the whole reason it is keyed this
+         *  way; the per-texture demand is recovered here by expanding each material slot through the
+         *  uniform mirror's texture IDs, and a required RESOLUTION lands on the right mip for each texture
+         *  regardless of their differing sizes.
          *
          *  Called once per frame on the game thread with a readback that is kFramesInFlight old. */
-        RUNTIME_API void SubmitFeedbackMasks(const uint32* Masks, uint32 Count);
+        RUNTIME_API void SubmitMaterialFeedback(const uint32* Masks, uint32 Count);
 
         struct FStats
         {
@@ -226,12 +228,13 @@ namespace Lumina
         TVector<FStreamingTexture>              Textures;
         THashMap<CTexture*, uint32>             TextureToIndex;
 
-        /** MaterialIndex -> the textures that slot samples. Rebuilt whenever a material rebinds. */
+        /** Bindless sampled slot -> index into Textures. Rebuilt inside SubmitMaterialFeedback rather than
+         *  maintained, because a slot moves whenever a texture is recreated and a mapping that has to be
+         *  kept in sync is exactly what made the previous material-keyed attempt fail silently. Held as a
+         *  member only to keep its storage across frames. */
+        THashMap<uint32, uint32>                SlotToEntry;
 
         TVector<TUniquePtr<FPendingLoad>>       PendingLoads;
-
-        /** Materials whose texture set changed and that owe a publish. Weak, because a material can be
-         *  destroyed between marking and the next Update. */
 
         /** Guards Textures/TextureToIndex against registration from the async-load path and from
          *  CTexture::OnDestroy, both of which can run while Update is walking the list. */

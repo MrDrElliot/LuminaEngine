@@ -83,26 +83,10 @@ PSOutput FragmentMain(PSInput Input)
     float4 VertexColor_DDX   = ddx(VertexColor);
     float4 VertexColor_DDY   = ddy(VertexColor);
 
-    // Same as the other raster material lanes: implicit sampling kept, plus a streaming request. A decal's
-    // textures are only ever sampled here, so without this they would be the one material kind with no
-    // demand at all and would sit at their inline tail.
-#define SampleTexture2DAuto(TexIndex, SamplerIndex, UV, DDX, DDY) SampleTexture2DStreamedAuto((TexIndex), (SamplerIndex), (UV))
-#define SampleTexture2DArrayAuto(TexIndex, SamplerIndex, UV, Slice, DDX, DDY) SampleTexture2DArrayStreamedAuto((TexIndex), (SamplerIndex), (UV), (Slice))
-// A custom Slang node can call the explicit-gradient entry points by name instead of going through the
-// Auto macro above. Redirect those too, or such a material samples correctly but reports nothing and its
-// textures never leave their inline tail. Safe from recursion: SceneGlobals.slang is included above this
-// point, so the ...Streamed bodies were already text-substituted before these defines exist.
-#define SampleTexture2DGrad(TexIndex, SamplerIndex, UV, DDX, DDY) SampleTexture2DStreamed((TexIndex), (SamplerIndex), (UV), (DDX), (DDY))
-#define SampleTexture2DArrayGrad(TexIndex, SamplerIndex, UV, Slice, DDX, DDY) SampleTexture2DArrayStreamed((TexIndex), (SamplerIndex), (UV), (Slice), (DDX), (DDY))
-#define SampleTexture2DLevel(TexIndex, SamplerIndex, UV, Lod) SampleTexture2DLevelStreamed((TexIndex), (SamplerIndex), (UV), (Lod))
-#define SampleTexture2DArrayLevel(TexIndex, SamplerIndex, UV, Slice, Lod) SampleTexture2DArrayLevelStreamed((TexIndex), (SamplerIndex), (UV), (Slice), (Lod))
+    // One report per pixel, keyed by material slot -- see RequestMaterialResolution. A real pixel shader,
+    // so these are the quad's implicit derivatives rather than analytic ones.
+    RequestMaterialResolution(MaterialIndex, UV0_DDX, UV0_DDY, UV1_DDX, UV1_DDY);
     $MATERIAL_INPUTS
-#undef SampleTexture2DArrayLevel
-#undef SampleTexture2DLevel
-#undef SampleTexture2DArrayGrad
-#undef SampleTexture2DGrad
-#undef SampleTexture2DArrayAuto
-#undef SampleTexture2DAuto
 
     // Coverage drives every DBuffer target's alpha (blend writes transmittance into a).
     float Coverage = saturate(Decal.Opacity * AngleFade * Material.Opacity);

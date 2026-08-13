@@ -10,6 +10,8 @@
 #include "Core/Profiler/Profile.h"
 #include "Core/Threading/Thread.h"
 #include "Log/Log.h"
+#include "MaterialManager.h"
+#include "RenderManager.h"
 #include "TaskSystem/TaskSystem.h"
 
 #include "EASTL/sort.h"
@@ -186,38 +188,69 @@ namespace Lumina
         }
     }
 
-    void FTextureStreamingManager::SubmitFeedbackMasks(const uint32* Masks, uint32 Count)
+    void FTextureStreamingManager::SubmitMaterialFeedback(const uint32* Masks, uint32 Count)
     {
         if (Masks == nullptr || Count == 0)
         {
             return;
         }
 
+        RHI::FMaterialManager& Materials = Render().GetMaterialManager();
+
         FScopeLock Lock(Mutex);
 
-        for (FStreamingTexture& Entry : Textures)
+        // The feedback is complete by construction -- every lane that shades a material reports -- so a
+        // texture nobody reported for genuinely was not sampled. Start from zero and let the expansion
+        // below fill in; "valid but empty" is what drives the decay-to-tail branch in ComputeWantedMips.
+        SlotToEntry.clear();
+        for (uint32 i = 0; i < (uint32)Textures.size(); ++i)
         {
-            CTexture* Texture = Entry.Texture.Get();
-            if (Texture == nullptr)
-            {
-                continue;
-            }
+            FStreamingTexture& Entry = Textures[i];
+            Entry.FeedbackMask   = 0u;
+            Entry.bFeedbackValid = true;
 
-            // The heap slot the shaders index by IS the texture's identity here -- no material lookup to
-            // fall through, which is what made the old path fail silently for anything whose material was
-            // not in the map.
-            const uint32 Slot = Texture->GetTextureResource().NewTexture.SampledSlot;
-            if (Slot == RHI::kInvalidHeapSlot || Slot >= Count)
+            const CTexture* Texture = Entry.Texture.Get();
+            if (Texture == nullptr)
             {
                 Entry.bFeedbackValid = false;
                 continue;
             }
 
-            Entry.FeedbackMask   = Masks[Slot];
-            Entry.bFeedbackValid = true;
-
-            if (Entry.FeedbackMask != 0u)
+            const uint32 Slot = Texture->GetTextureResource().NewTexture.SampledSlot;
+            if (Slot == RHI::kInvalidHeapSlot)
             {
+                Entry.bFeedbackValid = false;
+                continue;
+            }
+            SlotToEntry.insert_or_assign(Slot, i);
+        }
+
+        // Walk only the material slots that actually reported. Cost is (materials that drew) x (their
+        // distinct textures), which is a few thousand hash lookups in a heavy scene.
+        const uint32 NumMaterialSlots = Math::Min(Count, Materials.GetCapacity());
+        uint32 TextureIDs[MAX_TEXTURES];
+
+        for (uint32 MaterialSlot = 0; MaterialSlot < NumMaterialSlots; ++MaterialSlot)
+        {
+            const uint32 Mask = Masks[MaterialSlot];
+            if (Mask == 0u)
+            {
+                continue;
+            }
+
+            const uint32 NumIDs = Materials.CopySlotTextureIDs(MaterialSlot, TextureIDs, MAX_TEXTURES);
+            for (uint32 i = 0; i < NumIDs; ++i)
+            {
+                auto It = SlotToEntry.find(TextureIDs[i]);
+                if (It == SlotToEntry.end())
+                {
+                    continue;
+                }
+
+                // OR, not assign: two materials sharing a texture at different scales must both be
+                // satisfied, and the highest set bit is the one that wins downstream.
+                FStreamingTexture& Entry = Textures[It->second];
+                Entry.FeedbackMask     |= Mask;
                 Entry.LastFeedbackFrame = FrameCounter;
             }
         }

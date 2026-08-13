@@ -130,28 +130,11 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
         float4 VertexColor_DDX   = InterpWeights4(S.Bary.DDX, W[0].Color, W[1].Color, W[2].Color);
         float4 VertexColor_DDY   = InterpWeights4(S.Bary.DDY, W[0].Color, W[1].Color, W[2].Color);
 
-        // EXPLICIT gradients: there is no 2x2 quad here at all. Per-UV-chain, not UV0's -- reusing UV0's for
-        // a 32x tiled UV picks a mip 5 levels too fine. Undecidable chains fall back, marked in the source.
-// ...Streamed rather than plain Grad: the same sample, plus a texture-streaming request built from the
-// gradient it was given. This lane is where residency demand comes from, because it is where the camera's
-// view of a material is actually shaded.
-#define SampleTexture2DAuto(TexIndex, SamplerIndex, UV, DDX, DDY) SampleTexture2DStreamed((TexIndex), (SamplerIndex), (UV), (DDX), (DDY))
-#define SampleTexture2DArrayAuto(TexIndex, SamplerIndex, UV, Slice, DDX, DDY) SampleTexture2DArrayStreamed((TexIndex), (SamplerIndex), (UV), (Slice), (DDX), (DDY))
-// A custom Slang node can call the explicit-gradient entry points by name instead of going through the
-// Auto macro above. Redirect those too, or such a material samples correctly but reports nothing and its
-// textures never leave their inline tail. Safe from recursion: SceneGlobals.slang is included above this
-// point, so the ...Streamed bodies were already text-substituted before these defines exist.
-#define SampleTexture2DGrad(TexIndex, SamplerIndex, UV, DDX, DDY) SampleTexture2DStreamed((TexIndex), (SamplerIndex), (UV), (DDX), (DDY))
-#define SampleTexture2DArrayGrad(TexIndex, SamplerIndex, UV, Slice, DDX, DDY) SampleTexture2DArrayStreamed((TexIndex), (SamplerIndex), (UV), (Slice), (DDX), (DDY))
-#define SampleTexture2DLevel(TexIndex, SamplerIndex, UV, Lod) SampleTexture2DLevelStreamed((TexIndex), (SamplerIndex), (UV), (Lod))
-#define SampleTexture2DArrayLevel(TexIndex, SamplerIndex, UV, Slice, Lod) SampleTexture2DArrayLevelStreamed((TexIndex), (SamplerIndex), (UV), (Slice), (Lod))
+        // One report per pixel, keyed by material slot -- see RequestMaterialResolution. This lane is where
+        // residency demand comes from, because it is where the camera's view of a material is shaded, and
+        // its gradients are the analytic barycentric ones (there is no quad here to take ddx/ddy from).
+        RequestMaterialResolution(MaterialIndex, UV0_DDX, UV0_DDY, UV1_DDX, UV1_DDY);
         $MATERIAL_INPUTS
-#undef SampleTexture2DArrayLevel
-#undef SampleTexture2DLevel
-#undef SampleTexture2DArrayGrad
-#undef SampleTexture2DGrad
-#undef SampleTexture2DArrayAuto
-#undef SampleTexture2DAuto
 
         G = BuildGBufferData(Input, Material);
     }

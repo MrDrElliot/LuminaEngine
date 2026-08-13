@@ -48,6 +48,12 @@ namespace Lumina::RHI
         /** Slots currently assigned to a material. */
         RUNTIME_API uint32 GetNumMaterials() const;
 
+        /** The distinct bindless texture IDs slot Index samples, written into OutIDs; returns how many.
+         *  Read straight out of the uniform mirror -- the same bytes the shader reads -- so it cannot
+         *  disagree with what the material actually samples. This is what turns the GPU's per-material
+         *  streaming feedback into per-texture residency demand. */
+        RUNTIME_API uint32 CopySlotTextureIDs(uint32 Index, uint32* OutIDs, uint32 MaxIDs) const;
+
     private:
 
         /** Copies the mirror into a buffer of at least MinSlots, retires the old one and publishes the
