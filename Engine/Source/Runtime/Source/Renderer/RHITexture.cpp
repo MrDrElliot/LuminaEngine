@@ -400,9 +400,9 @@ namespace Lumina::RHI::Textures
         UploadTexture(Tex.Texture, 0, Mip, Data, Size, RowPitchTexels, Width, Height);
     }
 
-    void UploadLayer(const FManagedTexture& Tex, uint32 Layer, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels, uint32 Width, uint32 Height)
+    void UploadLayer(const FManagedTexture& Tex, uint32 Layer, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels, uint32 Width, uint32 Height, uint32 OffsetY)
     {
-        UploadTexture(Tex.Texture, Layer, Mip, Data, Size, RowPitchTexels, Width, Height);
+        UploadTexture(Tex.Texture, Layer, Mip, Data, Size, RowPitchTexels, Width, Height, OffsetY);
     }
 
     void Clear(const FManagedTexture& Tex, const float Value[4])

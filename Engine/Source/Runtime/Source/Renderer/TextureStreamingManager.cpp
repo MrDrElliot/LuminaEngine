@@ -279,6 +279,11 @@ namespace Lumina
         // and land twice the spike the setting names.
         FrameUploadBudget = (uint64)Math::Max(Settings().MaxUploadMBPerFrame, 1) * 1024ull * 1024ull;
 
+        // And ONE image-churn budget, spent by promotions and demotions alike. The upload budget above
+        // cannot stand in for it: a demotion re-creates the image and retires the old one while copying
+        // zero host bytes, so it is free by that measure and very much not free in practice.
+        FrameResidencyChanges = (uint32)Math::Max(Settings().MaxResidencyChangesPerFrame, 1);
+
         // Before anything new is started: an image that is already staged and half-filled is holding a
         // whole second allocation and is closer to paying off than anything not begun.
         TickResidencyFills();
@@ -294,6 +299,7 @@ namespace Lumina
         LUMINA_PROFILE_VALUE("Streaming/UploadBudgetLeftKiB", (int64)(FrameUploadBudget / 1024));
         LUMINA_PROFILE_VALUE("Streaming/ResidentMiB", (int64)(ResidentBytesTotal / (1024 * 1024)));
         LUMINA_PROFILE_VALUE("Streaming/LoadsInFlight", (int64)PendingLoads.size());
+        LUMINA_PROFILE_VALUE("Streaming/ResidencyChanges", (int64)(PromotedLastFrame + DemotedLastFrame));
     }
 
     void FTextureStreamingManager::TickResidencyFills()
@@ -492,6 +498,15 @@ namespace Lumina
 
         for (FStreamingTexture& Entry : Textures)
         {
+            // Out of image churn for this frame. Everything still wanting coarser keeps its
+            // FramesWantingCoarser count and is demoted over the following frames instead -- which is the
+            // whole point: a budget sweep that sheds one mip from every texture in the scene used to apply
+            // ALL of them here, and each one is an image create plus a retire. That was the 100ms+ stall.
+            if (FrameResidencyChanges == 0)
+            {
+                break;
+            }
+
             CTexture* Texture = Entry.Texture.Get();
             if (Texture == nullptr || Entry.bLoadInFlight)
             {
@@ -531,6 +546,7 @@ namespace Lumina
             ResidentBytesTotal += Entry.ResidentBytes;
 
             Entry.FramesWantingCoarser = 0;
+            --FrameResidencyChanges;
             ++DemotedLastFrame;
             ++TotalDemotions;
 
@@ -695,6 +711,14 @@ namespace Lumina
         // bytes are allowed to land per frame. A load that does not fit stays complete and pending -- its
         // bytes are already in memory, so waiting a frame costs nothing but the wait.
 
+        // Promotions run before demotions this frame, so without a reserve they would take every residency
+        // change going and the pool would never actually shrink while it was over budget. Demotions are the
+        // half that frees memory, so under pressure they keep half the frame's changes.
+        const uint32 PromotionLimit = (ResidentBytesTotal > GetBudgetBytes())
+            ? FrameResidencyChanges / 2u
+            : FrameResidencyChanges;
+        uint32 PromotionsApplied = 0;
+
         for (size_t i = 0; i < PendingLoads.size(); )
         {
             FPendingLoad& Load = *PendingLoads[i];
@@ -707,7 +731,7 @@ namespace Lumina
 
             // Budget is checked per load, not per byte: a single texture larger than the whole budget must
             // still make progress, so the first load of a frame is always allowed through.
-            if (FrameUploadBudget == 0)
+            if (FrameUploadBudget == 0 || PromotionsApplied >= PromotionLimit)
             {
                 ++i;
                 continue;
@@ -763,6 +787,8 @@ namespace Lumina
                             ResidentBytesTotal -= Entry->ResidentBytes;
                             Entry->ResidentBytes = Resource.CalcResidentSizeBytes();
                             ResidentBytesTotal += Entry->ResidentBytes;
+                            --FrameResidencyChanges;
+                            ++PromotionsApplied;
                             ++PromotedLastFrame;
                             ++TotalPromotions;
                             TotalBytesRead += BytesRead;

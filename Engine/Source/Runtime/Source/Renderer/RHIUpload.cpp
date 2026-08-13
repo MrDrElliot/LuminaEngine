@@ -40,6 +40,7 @@ namespace Lumina::RHI
             uint32      SourceLayer    = 0;         // TextureCopy
             uint32      Width          = 0;         // Texture: mip extent, 0 = derive from the description
             uint32      Height         = 0;
+            uint32      OffsetY        = 0;         // Texture: first texel row this band writes
             float       ClearValue[4]  = {};        // Clear
         };
 
@@ -60,6 +61,9 @@ namespace Lumina::RHI
 
             uint64      OverflowBytes = 0;
             uint32      LowStreak     = 0;   // consecutive cycles demand stayed below half capacity
+
+            // Latched so a slice that cannot grow says so once instead of once per frame forever.
+            bool        bWarnedGrowFailed = false;
         };
 
         // A flush's completion gate. One entry per flush that has been swept out of the queue, retired once
@@ -176,18 +180,31 @@ namespace Lumina::RHI
         EndWrite(S);
     }
 
-    void UploadTexture(FTextureH Dest, uint32 Layer, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels, uint32 Width, uint32 Height)
+    void UploadTexture(FTextureH Dest, uint32 Layer, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels, uint32 Width, uint32 Height, uint32 OffsetY)
     {
         if (!IsValid(Dest) || Data == nullptr || Size == 0)
         {
             return;
         }
-        
+
+        // A band with no explicit extent would be recorded against the whole mip and read Size bytes past
+        // the end of Data. Refuse rather than hand the copy engine an over-long region.
+        if (OffsetY != 0 && (Width == 0 || Height == 0))
+        {
+            LOG_ERROR("RHI: dropped a banded texture upload at row {} with no extent; Width/Height are "
+                      "required whenever OffsetY is non-zero.", OffsetY);
+            return;
+        }
+
         LUMINA_PROFILE_SECTION("Upload::StageTextureMip");
         LUMINA_PROFILE_VALUE("Upload/StagedMipKiB", (int64)(Size / 1024));
 
+        // Split from the copy below because they fail differently and cost differently: this arm is a lock
+        // plus a cursor bump in the common case and a fresh host-visible VRAM allocation in the overflow
+        // case, which is the one that turns a staging call into a multi-millisecond stall.
         FStaging S;
         {
+            LUMINA_PROFILE_SECTION("Upload::ReserveStaging");
             FScopeLock Lock(GUpload.Mutex);
             S = ReserveLocked(Size, kDefaultAlign);
         }
@@ -198,7 +215,12 @@ namespace Lumina::RHI
             return;
         }
 
-        Memory::MemcpyToWriteCombined(S.Cpu, Data, Size);
+        {
+            // The host bandwidth itself, isolated so "staging is slow" can be told apart from "allocating
+            // staging is slow" without guessing. This is the cost MaxUploadMBPerFrame is meant to bound.
+            LUMINA_PROFILE_SECTION("Upload::CopyToStaging");
+            Memory::MemcpyToWriteCombined(S.Cpu, Data, Size);
+        }
 
         FUploadOp Op;
         Op.Type           = EUploadOp::Texture;
@@ -212,6 +234,7 @@ namespace Lumina::RHI
         Op.Layer          = Layer;
         Op.Width          = Width;
         Op.Height         = Height;
+        Op.OffsetY        = OffsetY;
 
         {
             FScopeLock Lock(GUpload.Mutex);
@@ -483,6 +506,7 @@ namespace Lumina::RHI
                         Slice.Mip        = Op.Mip;
                         Slice.Layer      = Op.Layer;
                         Slice.LayerCount = 1;
+                        Slice.Offset     = FUIntVector3(0u, Op.OffsetY, 0u);
                         if (Op.Width != 0)
                         {
                             Slice.Extent = FUIntVector3(Op.Width, Math::Max(Op.Height, 1u), 1u);
@@ -807,8 +831,27 @@ namespace Lumina::RHI
                         Slice.Gpu      = NewGpu;
                         Slice.Cpu      = static_cast<std::byte*>(ToHost(NewGpu));
                         Slice.Capacity = NewCapacity;
+                        Slice.bWarnedGrowFailed = false;
+                    }
+                    else if (NewCapacity > Slice.Capacity && !Slice.bWarnedGrowFailed)
+                    {
+                        // Silent before this: the ring simply kept its old capacity and every oversized
+                        // upload took the dedicated-allocation arm of ReserveLocked -- a fresh
+                        // vkAllocateMemory + map on the calling thread, EVERY frame, for as long as demand
+                        // stayed high. That reads as "staging a mip is slow" and is really "the ring is
+                        // too small and cannot get bigger".
+                        Slice.bWarnedGrowFailed = true;
+                        LOG_WARN("RHI: upload staging slice could not grow {} -> {} MiB (CPU-visible VRAM "
+                                 "exhausted). Uploads larger than the slice will allocate dedicated staging "
+                                 "on the calling thread until demand drops.",
+                            Slice.Capacity >> 20, NewCapacity >> 20);
                     }
                 }
+
+                // The number that explains a slow StageTextureMip: non-zero means uploads are falling out
+                // of the ring and paying for their own allocation.
+                LUMINA_PROFILE_VALUE("Upload/StagingOverflowKiB", (int64)(Slice.OverflowBytes / 1024));
+                LUMINA_PROFILE_VALUE("Upload/StagingUsedKiB",     (int64)(Slice.Cursor / 1024));
 
                 GUpload.CurrentSlot   = Slot;
                 Slice.Cursor          = 0;

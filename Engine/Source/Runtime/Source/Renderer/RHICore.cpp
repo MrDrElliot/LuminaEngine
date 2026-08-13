@@ -202,6 +202,8 @@ namespace Lumina::RHI::Core
     // The single point in the engine that destroys a GPU resource.
     static void DestroyRetired(const FRetireItem& Item)
     {
+        LUMINA_PROFILE_SCOPE();
+        
         switch (Item.Kind)
         {
         case FRetireItem::EKind::Buffer:
@@ -218,9 +220,6 @@ namespace Lumina::RHI::Core
             if (GCore.bInitialized) { RHI::HeapFreeRWTexture(GCore.GlobalHeap, Item.Slot); }
             break;
         case FRetireItem::EKind::Pipeline:
-            // RHI::FreeH calls vkDestroyPipeline SYNCHRONOUSLY, so this is the only safe way to drop a
-            // pipeline while frames are in flight -- a command buffer recorded two frames ago may still
-            // reference it. Freeing one directly is only correct after a device wait-idle.
             RHI::FreeH(Item.Pipeline);
             break;
         case FRetireItem::EKind::Callback:
@@ -260,6 +259,17 @@ namespace Lumina::RHI::Core
         GCore.RetireQueues[Slot].push_back(Item);
     }
 
+    // Destroying a GPU resource is a driver round trip that can reach vkFreeMemory, and an image can also
+    // take a vkDestroyImageView with it. Individually they are cheap; several hundred landing on one frame
+    // is not, and that is exactly what a texture-streaming burst produces -- every residency change retires
+    // the image it replaced. The drain is therefore metered, so a burst is paid down over frames instead of
+    // in the one frame that happened to be holding the queue.
+    static constexpr uint32 kMaxDestroysPerDrain = 64;
+
+    // Past this the backlog is itself the problem: it is VRAM the frame is trying to allocate, held by
+    // resources nothing can reach. Smoothness stops being worth it, and the cap is dropped.
+    static constexpr size_t kRetireBacklogHighWater = 512;
+
     static void DrainRetireQueue(uint32 Slot)
     {
         LUMINA_PROFILE_SECTION("RHI::DrainRetireQueue");
@@ -291,15 +301,7 @@ namespace Lumina::RHI::Core
                 {
                     continue;
                 }
-
-                // The fence has not been reached, but the queue is provably quiet: nothing is recording
-                // and everything ever submitted to it has completed. The recordings the fence was reaching
-                // for were therefore reset rather than submitted, so no reference to this item survives.
-                //
-                // This replaces a min(Fence, Submitted) clamp that looked equivalent and was not: with the
-                // next submission not yet made, it silently degraded the wait to the PREVIOUS value, which
-                // is exactly the recorded-but-unsubmitted case the +1 existed to cover. That freed
-                // resources out from under command lists that had already named them.
+                
                 if (OpenNow[QueueIndex] == 0 && Signalled[QueueIndex] >= Submitted[QueueIndex])
                 {
                     continue;
@@ -311,11 +313,23 @@ namespace Lumina::RHI::Core
         };
 
         TVector<FRetireItem> Ready;
+        size_t Backlog = 0;
         {
             FScopeLock Lock(GCore.RetireMutex);
             TVector<FRetireItem>& Queue = GCore.RetireQueues[Slot];
+
+            // Every kind counts against the cap, including the cheap slot frees and the callbacks. A
+            // callback is deliberately paired with the resource retired alongside it, and metering only
+            // some kinds would fire it a drain before that resource actually died.
+            const bool bUncapped = Queue.size() > kRetireBacklogHighWater;
+
             for (size_t i = 0; i < Queue.size(); )
             {
+                if (!bUncapped && Ready.size() >= kMaxDestroysPerDrain)
+                {
+                    break;
+                }
+
                 if (Queue[i].ExtraCycles > 0)
                 {
                     --Queue[i].ExtraCycles;
@@ -332,7 +346,15 @@ namespace Lumina::RHI::Core
                 Queue[i] = Queue.back();
                 Queue.pop_back();
             }
+
+            Backlog = Queue.size();
         }
+
+        // A backlog that does not fall between frames means resources are being retired faster than they
+        // can be destroyed, which is worth seeing next to the streaming plots rather than inferring from
+        // VRAM going the wrong way.
+        LUMINA_PROFILE_VALUE("RHI/RetireBacklog", (int64)Backlog);
+        LUMINA_PROFILE_VALUE("RHI/RetireDestroyed", (int64)Ready.size());
 
         // Outside the lock: the destroy paths take their own backend locks.
         for (const FRetireItem& Item : Ready)

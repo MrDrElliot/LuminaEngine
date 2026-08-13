@@ -244,6 +244,12 @@ namespace Lumina
          *  would land twice the spike MaxUploadMBPerFrame names. */
         uint64                                  FrameUploadBudget = 0;
 
+        /** Residency changes left this frame, shared by promotions and demotions. Separate from
+         *  FrameUploadBudget because it meters a different resource: each change is a GPU image create plus
+         *  a retire of the one it replaces, and a demotion pays that in full while spending no host bytes
+         *  at all -- so the upload budget cannot see it. See MaxResidencyChangesPerFrame. */
+        uint32                                  FrameResidencyChanges = 0;
+
         /** Guards Textures/TextureToIndex against registration from the async-load path and from
          *  CTexture::OnDestroy, both of which can run while Update is walking the list. */
         mutable FMutex                          Mutex;

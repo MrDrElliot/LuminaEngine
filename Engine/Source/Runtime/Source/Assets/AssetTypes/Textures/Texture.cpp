@@ -265,6 +265,8 @@ namespace Lumina
         // memcpy, which is exactly the spike that has to stop landing in a single frame.
         PendingFill.FirstMip  = InFirstMip;
         PendingFill.NextMip   = InFirstMip;
+        PendingFill.NextLayer = 0;
+        PendingFill.NextRow   = 0;
         PendingFill.CpuEndMip = RetainedFrom;
         PendingFill.bActive   = true;
 
@@ -291,50 +293,95 @@ namespace Lumina
 
         const uint32 NumLayers = TextureResource->GetNumLayers();
 
+        // Rows of a block-compressed mip come in groups of BlockH texels, and both the source offset and
+        // the destination band have to land on one. 1 for uncompressed formats, so the same code covers both.
+        const uint32 BlockH = Math::Max<uint32>(
+            RHI::Format::Info(TextureResource->ImageDescription.Format).BlockSize, 1u);
+
+        // Step the cursor past whatever it is pointing at: layers of a mip in order, then the next mip.
+        auto AdvanceSlice = [&]()
+        {
+            PendingFill.NextRow = 0;
+            if (++PendingFill.NextLayer >= NumLayers)
+            {
+                PendingFill.NextLayer = 0;
+                ++PendingFill.NextMip;
+            }
+        };
+
         while (PendingFill.NextMip < PendingFill.CpuEndMip)
         {
-            // Priced BEFORE the copy, not after. Charging afterwards let a mip start whenever any budget
-            // was left and then overshoot by its whole size -- with a 16 MiB budget and a 1+4+16 MiB
-            // chain that is 21 MiB in one frame, which is exactly the spike the budget exists to stop.
-            uint64 MipBytes = 0;
-            for (uint32 Layer = 0; Layer < NumLayers; ++Layer)
+            const uint32 Index = TextureResource->MipIndex(PendingFill.NextLayer, PendingFill.NextMip);
+            if (Index >= TextureResource->Mips.size())
             {
-                const uint32 Index = TextureResource->MipIndex(Layer, PendingFill.NextMip);
-                if (Index < TextureResource->Mips.size())
+                AdvanceSlice();
+                continue;
+            }
+
+            const FTextureResource::FMip& Mip = TextureResource->Mips[Index];
+            const uint64 SliceBytes = Mip.Pixels.size();
+            if (SliceBytes == 0)
+            {
+                AdvanceSlice();
+                continue;
+            }
+
+            // RowPitch counts BLOCK rows. A pitch that does not divide the payload describes something
+            // other than a tightly packed mip, so that one moves whole rather than being cut up wrongly.
+            const bool   bBanded  = Mip.RowPitch != 0 && (SliceBytes % Mip.RowPitch) == 0;
+            const uint64 RowBytes = bBanded ? Mip.RowPitch : SliceBytes;
+            const uint32 NumRows  = bBanded ? (uint32)(SliceBytes / RowBytes) : 1u;
+
+            // Priced BEFORE the copy, not after. Charging afterwards let a slice start whenever any budget
+            // was left and then overshoot by its whole size -- with a 16 MiB budget and a 1+4+16 MiB chain
+            // that is 21 MiB in one frame, which is exactly the spike the budget exists to stop.
+            //
+            // The exception is per FRAME rather than per texture: a row larger than the whole budget has to
+            // go through eventually or it never converges. Granting it per texture -- which is what a local
+            // "have I spent anything" flag did -- handed every converging texture one free step per frame,
+            // so N textures blew the budget N times over.
+            uint64 AffordableRows = RemainingBytes / RowBytes;
+            if (AffordableRows == 0)
+            {
+                if (!bMayExceedBudget)
                 {
-                    MipBytes += TextureResource->Mips[Index].Pixels.size();
+                    return true;
                 }
+                AffordableRows = 1;
             }
 
-            // The exception, and it must be per FRAME rather than per texture: a mip larger than the whole
-            // budget has to go through eventually or it never converges. Granting it per texture -- which
-            // is what a local "have I spent anything" flag did -- handed every converging texture one free
-            // mip per frame, so N textures blew the budget N times over.
-            if (MipBytes > RemainingBytes && !bMayExceedBudget)
+            const uint32 FirstRow  = PendingFill.NextRow;
+            const uint32 Rows      = (uint32)Math::Min<uint64>(AffordableRows, NumRows - FirstRow);
+            const uint64 BandBytes = (uint64)Rows * RowBytes;
+
+            // Offsets are in TEXELS even though the cursor counts block rows, and the last band of a mip
+            // whose height is not a multiple of the block height must stop at the image edge.
+            const uint32 OffsetY = bBanded ? FirstRow * BlockH : 0u;
+            if (OffsetY >= Mip.Height)
             {
-                return true;
+                // Padding rows past the bottom of the image: nothing to copy them into.
+                AdvanceSlice();
+                continue;
             }
 
-            for (uint32 Layer = 0; Layer < NumLayers; ++Layer)
+            const uint32 BandHeight = bBanded ? Math::Min(Rows * BlockH, Mip.Height - OffsetY) : Mip.Height;
+
+            // The image only holds the resident range, so chain mip M is mip (M - FirstMip) of the image.
+            // Getting this wrong writes the wrong-sized data into the wrong level.
+            // RowPitchTexels = mip width: pixel rows are tightly packed at the mip's width.
+            RHI::Textures::UploadLayer(TextureResource->NewTexture, PendingFill.NextLayer,
+                PendingFill.NextMip - PendingFill.FirstMip,
+                Mip.Pixels.data() + (uint64)FirstRow * RowBytes, BandBytes,
+                Mip.Width, Mip.Width, BandHeight, OffsetY);
+
+            RemainingBytes   = BandBytes >= RemainingBytes ? 0ull : RemainingBytes - BandBytes;
+            bMayExceedBudget = false;
+
+            PendingFill.NextRow = FirstRow + Rows;
+            if (PendingFill.NextRow >= NumRows)
             {
-                const uint32 Index = TextureResource->MipIndex(Layer, PendingFill.NextMip);
-                if (Index >= TextureResource->Mips.size())
-                {
-                    continue;
-                }
-
-                const FTextureResource::FMip& Mip = TextureResource->Mips[Index];
-
-                // The image only holds the resident range, so chain mip M is mip (M - FirstMip) of the
-                // image. Getting this wrong writes the wrong-sized data into the wrong level.
-                // RowPitchTexels = mip width: pixel rows are tightly packed at the mip's width.
-                RHI::Textures::UploadLayer(TextureResource->NewTexture, Layer, PendingFill.NextMip - PendingFill.FirstMip,
-                    Mip.Pixels.data(), Mip.Pixels.size(), Mip.Width, Mip.Width, Mip.Height);
+                AdvanceSlice();
             }
-
-            RemainingBytes    = MipBytes >= RemainingBytes ? 0ull : RemainingBytes - MipBytes;
-            bMayExceedBudget  = false;
-            ++PendingFill.NextMip;
         }
 
         // Arms the swap against everything queued for it. Until that has executed on the GPU the bindless

@@ -141,13 +141,20 @@ namespace Lumina
         TUniquePtr<FTextureResource> TextureResource;
 
         /** The host-uploaded half of a staged residency change, drained over frames by TickResidencyFill.
-         *  Mips at or above CpuEndMip came from the previous image by GPU copy and are already there. */
+         *  Mips at or above CpuEndMip came from the previous image by GPU copy and are already there.
+         *
+         *  The cursor is (mip, layer, block row) rather than just a mip: one 4K mip is 16 MiB of copy into
+         *  write-combined memory, so a whole-mip step made MaxUploadMBPerFrame unenforceable -- the budget
+         *  could only ever be checked BETWEEN mips, and the smallest possible step was already bigger than
+         *  any sane budget. Bands make the budget mean what it says. */
         struct FResidencyFill
         {
-            uint32 FirstMip  = 0;   // chain mip the staged image starts at
-            uint32 NextMip   = 0;   // next chain mip owing a host upload
-            uint32 CpuEndMip = 0;   // one past the last chain mip owing one
-            bool   bActive   = false;
+            uint32 FirstMip   = 0;   // chain mip the staged image starts at
+            uint32 NextMip    = 0;   // next chain mip owing a host upload
+            uint32 NextLayer  = 0;   // next array layer of NextMip owing one
+            uint32 NextRow    = 0;   // next BLOCK row of that (mip, layer) owing one
+            uint32 CpuEndMip  = 0;   // one past the last chain mip owing one
+            bool   bActive    = false;
         };
         FResidencyFill PendingFill;
     };

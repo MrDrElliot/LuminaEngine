@@ -100,7 +100,9 @@ namespace Lumina::RHI
 
         // Width/Height are the MIP's own dimensions and must be passed past mip 0: the copy otherwise derives
         // (Base >> Mip), which disagrees with a cooked chain and faults the copy engine on non-power-of-two.
-        RUNTIME_API void UploadLayer(const FManagedTexture& Tex, uint32 Layer, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels = 0, uint32 Width = 0, uint32 Height = 0);
+        // OffsetY stages a horizontal BAND of the mip rather than all of it -- see RHIUpload.h. Height is
+        // then the band's height and Data/Size cover only the band.
+        RUNTIME_API void UploadLayer(const FManagedTexture& Tex, uint32 Layer, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels = 0, uint32 Width = 0, uint32 Height = 0, uint32 OffsetY = 0);
 
         RUNTIME_API void Upload(const FManagedTexture& Tex, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels = 0, uint32 Width = 0, uint32 Height = 0);
 
