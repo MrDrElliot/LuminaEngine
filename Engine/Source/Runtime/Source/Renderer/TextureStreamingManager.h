@@ -220,6 +220,9 @@ namespace Lumina
         /** Apply completed loads and drop finished records. */
         void ProcessCompletedLoads();
 
+        /** Push the staged images' remaining host uploads, within this frame's shared budget. */
+        void TickResidencyFills();
+
         /** Higher = keep. Pinned is unbeatable; otherwise recent, high-coverage textures hold their mips. */
         static float RetentionPriority(const FStreamingTexture& Entry, uint64 FrameCounter);
 
@@ -235,6 +238,11 @@ namespace Lumina
         THashMap<uint32, uint32>                SlotToEntry;
 
         TVector<TUniquePtr<FPendingLoad>>       PendingLoads;
+
+        /** Host-upload bytes left this frame, reset at the top of Update and drawn down by BOTH the staged
+         *  fills and the newly applied loads. Shared deliberately: two stages each spending "the budget"
+         *  would land twice the spike MaxUploadMBPerFrame names. */
+        uint64                                  FrameUploadBudget = 0;
 
         /** Guards Textures/TextureToIndex against registration from the async-load path and from
          *  CTexture::OnDestroy, both of which can run while Update is walking the list. */

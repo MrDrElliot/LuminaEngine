@@ -5,6 +5,7 @@
 #include "Core/Math/Math.h"
 #include "Core/Threading/Thread.h"
 #include "Log/Log.h"
+#include "Core/Profiler/Profile.h"
 
 namespace Lumina::RHI::Textures
 {
@@ -212,6 +213,8 @@ namespace Lumina::RHI::Textures
     template<typename TDesc>
     static void RecreateInternal(FManagedTexture& Tex, const TDesc& Desc, const FTextureDesc& ImageDesc)
     {
+        LUMINA_PROFILE_SECTION("Textures::Recreate");
+
         if (!Tex.IsValid() || Tex.SampledSlot == kInvalidHeapSlot)
         {
             // Nothing published to keep valid, so there is nothing to stage against: this is a first load
@@ -290,6 +293,35 @@ namespace Lumina::RHI::Textures
                 return;
             }
         }
+    }
+
+    bool CopyMipFromCurrent(const FManagedTexture& Tex, uint32 Layer, uint32 SrcMip, uint32 DstMip, uint32 Width, uint32 Height)
+    {
+        if (Tex.SampledSlot == kInvalidHeapSlot)
+        {
+            return false;
+        }
+
+        FTextureH Source;
+        {
+            FScopeLock Lock(GState.SwapMutex);
+            for (const FPendingSwap& Pending : GState.PendingSwaps)
+            {
+                if (Pending.Slot == Tex.SampledSlot)
+                {
+                    Source = Pending.OldTexture;
+                    break;
+                }
+            }
+        }
+
+        if (!IsValid(Source))
+        {
+            return false;
+        }
+
+        UploadTextureCopy(Tex.Texture, Layer, DstMip, Source, Layer, SrcMip, Width, Height);
+        return true;
     }
 
     bool HasPendingSwap(const FManagedTexture& Tex)

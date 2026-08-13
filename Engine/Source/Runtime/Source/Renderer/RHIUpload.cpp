@@ -7,6 +7,7 @@
 #include "Core/Threading/Thread.h"
 #include "Log/Log.h"
 #include "Memory/Memcpy.h"
+#include "Core/Profiler/Profile.h"
 
 namespace Lumina::RHI
 {
@@ -20,20 +21,23 @@ namespace Lumina::RHI
         // Staging that came from a dedicated allocation rather than one of the slices.
         constexpr uint8 kNoSlice = 0xFF;
 
-        enum class EUploadOp : uint8 { Buffer, Texture, Clear };
+        enum class EUploadOp : uint8 { Buffer, Texture, Clear, TextureCopy };
 
         struct FUploadOp
         {
             EUploadOp   Type;
-            GPUPtr      Staging        = 0;         // source for Buffer/Texture, 0 for Clear
+            GPUPtr      Staging        = 0;         // source for Buffer/Texture, 0 for Clear/TextureCopy
             bool        bOwnedStaging  = false;     // true -> DeferredFree after the copy retires
             uint8       Slice          = kNoSlice;  // slice the staging was reserved from
             GPUPtr      BufferDest     = 0;         // Buffer
-            FTextureH   TextureDest    = {};        // Texture/Clear
+            FTextureH   TextureDest    = {};        // Texture/Clear/TextureCopy
+            FTextureH   TextureSource  = {};        // TextureCopy
             uint64      Size           = 0;
             uint32      RowPitchTexels = 0;         // Texture
-            uint32      Mip            = 0;         // Texture
-            uint32      Layer          = 0;         // Texture (array slice; 0 for non-array)
+            uint32      Mip            = 0;         // Texture/TextureCopy: DESTINATION mip
+            uint32      Layer          = 0;         // Texture/TextureCopy (array slice; 0 for non-array)
+            uint32      SourceMip      = 0;         // TextureCopy
+            uint32      SourceLayer    = 0;         // TextureCopy
             uint32      Width          = 0;         // Texture: mip extent, 0 = derive from the description
             uint32      Height         = 0;
             float       ClearValue[4]  = {};        // Clear
@@ -110,6 +114,9 @@ namespace Lumina::RHI
 
             Slice.OverflowBytes += Size + Alignment;
 
+            // Separate zone: this arm is a fresh host-visible VRAM allocation on the CALLING thread,
+            // which is a completely different cost from writing into the ring.
+            LUMINA_PROFILE_SECTION("Upload::StagingOverflowAlloc");
             const GPUPtr Owned = Malloc(Size, Alignment, EMemoryType::CPUWrite);
             SetDebugName(Owned, "Upload.Overflow");
             return { static_cast<std::byte*>(ToHost(Owned)), Owned, true, kNoSlice };
@@ -150,7 +157,7 @@ namespace Lumina::RHI
             return;
         }
 
-        Memory::Memcpy(S.Cpu, Data, Size);
+        Memory::MemcpyToWriteCombined(S.Cpu, Data, Size);
 
         FUploadOp Op;
         Op.Type          = EUploadOp::Buffer;
@@ -175,6 +182,9 @@ namespace Lumina::RHI
         {
             return;
         }
+        
+        LUMINA_PROFILE_SECTION("Upload::StageTextureMip");
+        LUMINA_PROFILE_VALUE("Upload/StagedMipKiB", (int64)(Size / 1024));
 
         FStaging S;
         {
@@ -188,7 +198,7 @@ namespace Lumina::RHI
             return;
         }
 
-        Memory::Memcpy(S.Cpu, Data, Size);
+        Memory::MemcpyToWriteCombined(S.Cpu, Data, Size);
 
         FUploadOp Op;
         Op.Type           = EUploadOp::Texture;
@@ -210,6 +220,33 @@ namespace Lumina::RHI
         }
 
         EndWrite(S);
+    }
+
+    void UploadTextureCopy(FTextureH Dest, uint32 DestLayer, uint32 DestMip,
+                           FTextureH Source, uint32 SourceLayer, uint32 SourceMip,
+                           uint32 Width, uint32 Height)
+    {
+        if (!IsValid(Dest) || !IsValid(Source) || Width == 0 || Height == 0)
+        {
+            return;
+        }
+
+        // No staging and no host bandwidth at all: this is the path a mip takes when it already exists on
+        // the GPU and is only moving between two images, which is most of what a residency change does.
+        FUploadOp Op;
+        Op.Type          = EUploadOp::TextureCopy;
+        Op.TextureDest   = Dest;
+        Op.TextureSource = Source;
+        Op.Mip           = DestMip;
+        Op.Layer         = DestLayer;
+        Op.SourceMip     = SourceMip;
+        Op.SourceLayer   = SourceLayer;
+        Op.Width         = Width;
+        Op.Height        = Height;
+
+        FScopeLock Lock(GUpload.Mutex);
+        GUpload.Queue.push_back(Op);
+        GUpload.QueuedOps.store((uint32)GUpload.Queue.size(), std::memory_order_relaxed);
     }
 
     void UploadClearTexture(FTextureH Dest, const float Value[4])
@@ -378,6 +415,8 @@ namespace Lumina::RHI
                           uint32* OutBufferSliceMask, uint32* OutImageSliceMask,
                           TVector<GPUPtr>& OutOwnedStaging, uint64* OutBatch)
         {
+            LUMINA_PROFILE_SECTION("Upload::FlushSplit");
+
             TVector<FUploadOp> Ops;
             uint64 Batch = 0;
             {
@@ -409,7 +448,7 @@ namespace Lumina::RHI
 
             for (const FUploadOp& Op : Ops)
             {
-                const bool bWritesTexture = (Op.Type == EUploadOp::Texture || Op.Type == EUploadOp::Clear);
+                const bool bWritesTexture = (Op.Type != EUploadOp::Buffer);
                 const bool bWritesBuffer  = (Op.Type == EUploadOp::Buffer);
 
                 FFlushTarget& T = (bSplit && bWritesBuffer) ? Targets[0] : Targets[1];
@@ -420,7 +459,12 @@ namespace Lumina::RHI
                     T.SliceMask |= (1u << Op.Slice);
                 }
 
-                if ((bWritesTexture && T.AlreadyWritten(Op.TextureDest))
+                // A copy READS a texture as well as writing one, so an earlier write to its source in this
+                // same flush has to be ordered against too -- otherwise it copies pre-upload contents.
+                const bool bReadsWritten = Op.Type == EUploadOp::TextureCopy && T.AlreadyWritten(Op.TextureSource);
+
+                if (bReadsWritten
+                 || (bWritesTexture && T.AlreadyWritten(Op.TextureDest))
                  || (bWritesBuffer && T.OverlapsWritten(Op.BufferDest, Op.Size)))
                 {
                     Barriers::TransferToTransfer(T.CL);
@@ -448,6 +492,21 @@ namespace Lumina::RHI
                     break;
                 case EUploadOp::Clear:
                     CmdClearTexture(T.CL, Op.TextureDest, Op.ClearValue);
+                    break;
+                case EUploadOp::TextureCopy:
+                    {
+                        FTextureSlice Src;
+                        Src.Mip        = Op.SourceMip;
+                        Src.Layer      = Op.SourceLayer;
+                        Src.LayerCount = 1;
+                        Src.Extent     = FUIntVector3(Op.Width, Op.Height, 1u);
+
+                        FTextureSlice Dst = Src;
+                        Dst.Mip   = Op.Mip;
+                        Dst.Layer = Op.Layer;
+
+                        CmdCopyTexture(T.CL, Op.TextureSource, Src, Op.TextureDest, Dst);
+                    }
                     break;
                 }
 
@@ -548,9 +607,12 @@ namespace Lumina::RHI
                 return;
             }
 
+            // Source as well as destination: a queued copy READING an image that is about to be destroyed
+            // would record against a dead VkImage exactly as a write would.
             CancelMatching([Texture](const FUploadOp& Op)
             {
-                return Op.Type != EUploadOp::Buffer && Op.TextureDest.Handle == Texture.Handle;
+                return Op.Type != EUploadOp::Buffer
+                    && (Op.TextureDest.Handle == Texture.Handle || Op.TextureSource.Handle == Texture.Handle);
             });
         }
 
@@ -702,6 +764,9 @@ namespace Lumina::RHI
 
                 if (GetSemaphoreValue(Slice.ReadSemaphore[QueueIndex]) < Gate)
                 {
+                    // A BLOCKING wait on the frame thread for last frame's copies out of this slice. If a
+                    // hitch lands here the upload itself was fine and the frame simply caught up with it.
+                    LUMINA_PROFILE_SECTION("Upload::BeginSlot Wait");
                     WaitSemaphore(Slice.ReadSemaphore[QueueIndex], Gate);
                 }
                 Slice.ReadValue[QueueIndex] = 0;

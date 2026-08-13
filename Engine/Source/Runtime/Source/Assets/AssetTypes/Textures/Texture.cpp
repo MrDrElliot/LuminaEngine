@@ -6,6 +6,7 @@
 #include "Renderer/RenderManager.h"
 #include "Renderer/RHITexture.h"
 #include "Renderer/TextureStreamingManager.h"
+#include "Core/Profiler/Profile.h"
 
 namespace Lumina
 {
@@ -141,6 +142,7 @@ namespace Lumina
 
     bool CTexture::ApplyMipResidency(uint32 InFirstMip)
     {
+        LUMINA_PROFILE_SECTION("Texture::ApplyMipResidency");
         LUMINA_MEMORY_SCOPE("Textures");
 
         if (TextureResource == nullptr)
@@ -189,6 +191,12 @@ namespace Lumina
         const FUIntVector2 Extent      = TextureResource->MipExtent(InFirstMip);
         const uint32       ResidentNum = NumMips - InFirstMip;
 
+        // Captured BEFORE Recreate stages a replacement: which mips the outgoing image holds is what
+        // decides how much of the new one can be filled on the GPU instead of from the CPU.
+        const uint32 OldFirstMip = TextureResource->ResidentFirstMip;
+        const bool   bHadImage   = TextureResource->NewTexture.IsValid()
+                                && TextureResource->NewTexture.SampledSlot != RHI::kInvalidHeapSlot;
+
         // New RHI: create the sampled texture in the global heap + upload every mip of every layer.
         // Both paths land in the same heap, so the ResourceID is interchangeable -- what decides
         // whether a shader may read it as gTextures2DArray[] is the VIEW type chosen here.
@@ -229,35 +237,112 @@ namespace Lumina
             });
         }
 
+        // Everything the PREVIOUS image already holds moves across on the GPU instead of being staged again
+        // from the CPU. Recreate hands back an empty image, so without this every residency change
+        // re-uploaded the whole resident chain -- ~21 MiB of game-thread memcpy to promote one 4K texture,
+        // paid again at every mip step. A demotion becomes pure GPU copy and costs no host bandwidth at all.
+        const uint32 RetainedFrom = bHadImage ? Math::Max(OldFirstMip, InFirstMip) : NumMips;
+
         for (uint32 Layer = 0; Layer < NumLayers; ++Layer)
         {
-            for (uint32 Mip = InFirstMip; Mip < NumMips; ++Mip)
+            for (uint32 Mip = RetainedFrom; Mip < NumMips; ++Mip)
             {
-                const uint32 Index = TextureResource->MipIndex(Layer, Mip);
+                const FUIntVector2 MipExtent = TextureResource->MipExtent(Mip);
+
+                // Chain mip M sits at (M - FirstMip) in each image, and the two images have different
+                // FirstMips -- which is the entire reason this is a copy and not a blit.
+                if (!RHI::Textures::CopyMipFromCurrent(TextureResource->NewTexture, Layer,
+                        Mip - OldFirstMip, Mip - InFirstMip, MipExtent.x, MipExtent.y))
+                {
+                    // No staged source (first load): fall back to the host upload range below.
+                    break;
+                }
+            }
+        }
+
+        // The rest is host data, drained over frames by TickResidencyFill. The staged image is invisible
+        // until it is complete, so there is no artifact in spreading it -- and one 4K mip is 16 MiB of
+        // memcpy, which is exactly the spike that has to stop landing in a single frame.
+        PendingFill.FirstMip  = InFirstMip;
+        PendingFill.NextMip   = InFirstMip;
+        PendingFill.CpuEndMip = RetainedFrom;
+        PendingFill.bActive   = true;
+
+        TextureResource->ResidentFirstMip = (uint8)InFirstMip;
+
+        // A pure demotion has nothing to stage -- every mip came across on the GPU -- so there is nothing
+        // to meter and it can publish now rather than waiting a frame for a tick with no work to do.
+        if (PendingFill.NextMip >= PendingFill.CpuEndMip)
+        {
+            RHI::Textures::CommitRecreate(TextureResource->NewTexture);
+            PendingFill.bActive = false;
+        }
+        return true;
+    }
+
+    bool CTexture::TickResidencyFill(uint64& RemainingBytes, bool bMayExceedBudget)
+    {
+        if (!PendingFill.bActive || TextureResource == nullptr)
+        {
+            return false;
+        }
+
+        LUMINA_PROFILE_SECTION("Texture::ResidencyFill");
+
+        const uint32 NumLayers = TextureResource->GetNumLayers();
+
+        while (PendingFill.NextMip < PendingFill.CpuEndMip)
+        {
+            // Priced BEFORE the copy, not after. Charging afterwards let a mip start whenever any budget
+            // was left and then overshoot by its whole size -- with a 16 MiB budget and a 1+4+16 MiB
+            // chain that is 21 MiB in one frame, which is exactly the spike the budget exists to stop.
+            uint64 MipBytes = 0;
+            for (uint32 Layer = 0; Layer < NumLayers; ++Layer)
+            {
+                const uint32 Index = TextureResource->MipIndex(Layer, PendingFill.NextMip);
+                if (Index < TextureResource->Mips.size())
+                {
+                    MipBytes += TextureResource->Mips[Index].Pixels.size();
+                }
+            }
+
+            // The exception, and it must be per FRAME rather than per texture: a mip larger than the whole
+            // budget has to go through eventually or it never converges. Granting it per texture -- which
+            // is what a local "have I spent anything" flag did -- handed every converging texture one free
+            // mip per frame, so N textures blew the budget N times over.
+            if (MipBytes > RemainingBytes && !bMayExceedBudget)
+            {
+                return true;
+            }
+
+            for (uint32 Layer = 0; Layer < NumLayers; ++Layer)
+            {
+                const uint32 Index = TextureResource->MipIndex(Layer, PendingFill.NextMip);
                 if (Index >= TextureResource->Mips.size())
                 {
                     continue;
                 }
 
-                const FTextureResource::FMip& Mip1 = TextureResource->Mips[Index];
+                const FTextureResource::FMip& Mip = TextureResource->Mips[Index];
 
-                // The image only holds the resident range, so mip M of the chain is mip (M - InFirstMip) of
-                // the image. Getting this wrong writes the wrong-sized data into the wrong level.
-                const uint32 ImageMip = Mip - InFirstMip;
-
+                // The image only holds the resident range, so chain mip M is mip (M - FirstMip) of the
+                // image. Getting this wrong writes the wrong-sized data into the wrong level.
                 // RowPitchTexels = mip width: pixel rows are tightly packed at the mip's width.
-                RHI::Textures::UploadLayer(TextureResource->NewTexture, Layer, ImageMip, Mip1.Pixels.data(), Mip1.Pixels.size(), Mip1.Width, Mip1.Width, Mip1.Height);
+                RHI::Textures::UploadLayer(TextureResource->NewTexture, Layer, PendingFill.NextMip - PendingFill.FirstMip,
+                    Mip.Pixels.data(), Mip.Pixels.size(), Mip.Width, Mip.Width, Mip.Height);
             }
+
+            RemainingBytes    = MipBytes >= RemainingBytes ? 0ull : RemainingBytes - MipBytes;
+            bMayExceedBudget  = false;
+            ++PendingFill.NextMip;
         }
 
-        // Arms the swap against the uploads just queued. Until they have executed, the bindless slot keeps
-        // naming the PREVIOUS image -- so a shader sampling this texture during the changeover reads the
-        // old resolution rather than an image that has never been written. Recreate, uploads and this call
-        // are one sequence: splitting them across a frame boundary is what reintroduces the hazard.
+        // Arms the swap against everything queued for it. Until that has executed on the GPU the bindless
+        // slot keeps naming the PREVIOUS image -- so a shader sampling this texture during the changeover
+        // reads the old resolution rather than an image that has never been written.
         RHI::Textures::CommitRecreate(TextureResource->NewTexture);
-
-        TextureResource->ResidentFirstMip = (uint8)InFirstMip;
-        return true;
+        PendingFill.bActive = false;
+        return false;
     }
 
     void CTexture::OnDestroy()

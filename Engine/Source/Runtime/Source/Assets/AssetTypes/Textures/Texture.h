@@ -98,6 +98,17 @@ namespace Lumina
          *  run again until this clears, so a caller holding data to apply should wait rather than spend it. */
         bool HasPendingGPUResidency() const;
 
+        /** Push more of the staged image's host-uploaded mips, spending at most RemainingBytes. Each mip is
+         *  priced before it is copied, so the budget is never overshot -- except when bMayExceedBudget lets
+         *  one oversized mip through, which the caller must grant at most once per FRAME or a mip larger
+         *  than the whole budget would never converge. Publishes the swap once the last one is queued.
+         *  Returns true while there is still work left.
+         *
+         *  The staged image is invisible until it is complete, so spreading the fill over frames is free:
+         *  nothing samples a half-filled image, and the old one keeps being sampled meanwhile. Game thread
+         *  only, same as ApplyMipResidency. */
+        bool TickResidencyFill(uint64& RemainingBytes, bool bMayExceedBudget = true);
+
         /** Pull every streamed-out mip's bytes back off disk, so the whole chain is in memory. The
          *  precondition for ANY write: a mip that is only a BulkRef serializes as a zero-length payload.
          *  No-op (and no IO) when nothing has been streamed out. May block. */
@@ -128,5 +139,16 @@ namespace Lumina
         FString SourcePath;
 
         TUniquePtr<FTextureResource> TextureResource;
+
+        /** The host-uploaded half of a staged residency change, drained over frames by TickResidencyFill.
+         *  Mips at or above CpuEndMip came from the previous image by GPU copy and are already there. */
+        struct FResidencyFill
+        {
+            uint32 FirstMip  = 0;   // chain mip the staged image starts at
+            uint32 NextMip   = 0;   // next chain mip owing a host upload
+            uint32 CpuEndMip = 0;   // one past the last chain mip owing one
+            bool   bActive   = false;
+        };
+        FResidencyFill PendingFill;
     };
 }

@@ -27,6 +27,7 @@
 
 #include "tracy/TracyVulkan.hpp"
 #include "Log/Log.h"
+#include "Core/Profiler/Profile.h"
 
 namespace Lumina
 {
@@ -2793,6 +2794,8 @@ namespace Lumina::RHI
 
     void FreeH(FTextureH Texture)
     {
+        LUMINA_PROFILE_SECTION("RHI::FreeTexture");
+
         if (GDevice != nullptr)
         {
             // Tripwire, and the last line of defence for the whole bindless design. A ResourceID is a bare
@@ -3605,7 +3608,13 @@ namespace Lumina::RHI
         VmaAllocationInfo* AllocationInfoPtr = nullptr;
 #endif
 
-        const VkResult ImageResult = vmaCreateImage(GDevice->Allocator, &Info, &AllocationCreateInfo, &Image, &Allocation, AllocationInfoPtr);
+        // Its own zone: a 16-21 MiB device-local image allocation can hit a fresh VMA block and a
+        // vkAllocateMemory, which is a very different spike from anything else in a residency change.
+        VkResult ImageResult;
+        {
+            LUMINA_PROFILE_SECTION("RHI::vmaCreateImage");
+            ImageResult = vmaCreateImage(GDevice->Allocator, &Info, &AllocationCreateInfo, &Image, &Allocation, AllocationInfoPtr);
+        }
         if (ImageResult != VK_SUCCESS || Image == VK_NULL_HANDLE || Allocation == nullptr)
         {
             PanicOutOfGPUMemory(std::format("a {}x{}x{} texture, {} mips, {} layers, format {}",

@@ -195,6 +195,8 @@ namespace Lumina
             return;
         }
 
+        LUMINA_PROFILE_SECTION("Streaming::SubmitMaterialFeedback");
+
         RHI::FMaterialManager& Materials = Render().GetMaterialManager();
 
         FScopeLock Lock(Mutex);
@@ -272,15 +274,55 @@ namespace Lumina
         PromotedLastFrame = 0;
         DemotedLastFrame  = 0;
 
+        // ONE host-upload budget for the whole frame, spent by the staged fills first and by newly applied
+        // loads with whatever is left. Splitting it per stage would let two stages each spend the "budget"
+        // and land twice the spike the setting names.
+        FrameUploadBudget = (uint64)Math::Max(Settings().MaxUploadMBPerFrame, 1) * 1024ull * 1024ull;
+
+        // Before anything new is started: an image that is already staged and half-filled is holding a
+        // whole second allocation and is closer to paying off than anything not begun.
+        TickResidencyFills();
+
         ProcessCompletedLoads();
         ComputeWantedMips();
         ComputeBudgetedMips();
         ApplyDemotions();
         IssuePromotions();
+
+        // Plotted rather than logged: a hitch is a shape over time, and these are the two numbers that say
+        // whether the frame's cost was host uploads or something else entirely.
+        LUMINA_PROFILE_VALUE("Streaming/UploadBudgetLeftKiB", (int64)(FrameUploadBudget / 1024));
+        LUMINA_PROFILE_VALUE("Streaming/ResidentMiB", (int64)(ResidentBytesTotal / (1024 * 1024)));
+        LUMINA_PROFILE_VALUE("Streaming/LoadsInFlight", (int64)PendingLoads.size());
+    }
+
+    void FTextureStreamingManager::TickResidencyFills()
+    {
+        LUMINA_PROFILE_SECTION("Streaming::TickResidencyFills");
+
+        bool bMayExceedBudgetThisFrame = true;
+
+        for (FStreamingTexture& Entry : Textures)
+        {
+            CTexture* Texture = Entry.Texture.Get();
+            if (Texture == nullptr)
+            {
+                continue;
+            }
+
+            // The over-budget allowance is granted at most ONCE per frame, to whichever texture asks
+            // first, so a mip bigger than the whole budget still converges without every texture in the
+            // scene claiming the same exemption in the same frame.
+            const uint64 Before = FrameUploadBudget;
+            Texture->TickResidencyFill(FrameUploadBudget, bMayExceedBudgetThisFrame);
+            bMayExceedBudgetThisFrame = bMayExceedBudgetThisFrame && (FrameUploadBudget == Before);
+        }
     }
 
     void FTextureStreamingManager::ComputeWantedMips()
     {
+        LUMINA_PROFILE_SECTION("Streaming::ComputeWantedMips");
+
         const bool bEnabled = Settings().bEnabled;
 
         for (FStreamingTexture& Entry : Textures)
@@ -303,8 +345,8 @@ namespace Lumina
 
             // GPU feedback wins wherever it exists. It is a measurement of the mip the shaders actually
             // sampled, so it needs no bounds, no distance and no texel density -- the three things the CPU
-            // estimate below got wrong. The mask is RELATIVE to current residency, which is what makes this
-            // a one-step-per-frame control loop rather than a jump to an absolute target.
+            // estimate below got wrong. The mask is an ABSOLUTE required resolution, independent of what
+            // is currently resident, so it names a target directly rather than nudging toward one.
             if (Entry.bFeedbackValid)
             {
                 if (Entry.FeedbackMask == 0u)
@@ -328,12 +370,12 @@ namespace Lumina
                     ++Target;
                 }
 
-                // Movement is still capped at one mip per frame. The target is exact now, but each step is
-                // a full image realloc and re-upload, so arriving over a few frames keeps the cost bounded
-                // and stops a camera cut from moving every texture at once.
-                if ((uint8)Target < Current)      { Entry.WantedFirstMip = (uint8)(Current - 1u); }
-                else if ((uint8)Target > Current) { Entry.WantedFirstMip = (uint8)(Current + 1u); }
-                else                              { Entry.WantedFirstMip = Current; }
+                // Straight to the target, no per-frame stepping. That cap existed to bound the cost of a
+                // step back when every step was a full image realloc plus a re-upload of the entire
+                // resident chain -- converging 4 -> 0 meant four of them, re-staging ~28 MiB to deliver 21.
+                // Retained mips now move GPU-side and the host half is metered by TickResidencyFill, which
+                // bounds the cost where it actually is; stepping would only multiply the reallocations.
+                Entry.WantedFirstMip = (uint8)Target;
                 continue;
             }
 
@@ -362,6 +404,8 @@ namespace Lumina
 
     void FTextureStreamingManager::ComputeBudgetedMips()
     {
+        LUMINA_PROFILE_SECTION("Streaming::ComputeBudgetedMips");
+
         // Start from pure quality. Under budget this is the answer, and it is also what makes an
         // over-resident texture fall back to what it actually needs -- holding mips nothing samples is not
         // free, it is pool that another texture could have used.
@@ -441,6 +485,8 @@ namespace Lumina
 
     void FTextureStreamingManager::ApplyDemotions()
     {
+        LUMINA_PROFILE_SECTION("Streaming::ApplyDemotions");
+
         const uint64 Budget      = GetBudgetBytes();
         const bool   bUnderPress = ResidentBytesTotal > Budget;
 
@@ -516,6 +562,8 @@ namespace Lumina
 
     void FTextureStreamingManager::IssuePromotions()
     {
+        LUMINA_PROFILE_SECTION("Streaming::IssuePromotions");
+
         const int32 MaxInFlight = Math::Max(Settings().MaxLoadsInFlight, 1);
 
         // Ordered by how starved each texture is, NOT by registry order. With only a handful of IO slots,
@@ -639,13 +687,13 @@ namespace Lumina
 
     void FTextureStreamingManager::ProcessCompletedLoads()
     {
+        LUMINA_PROFILE_SECTION("Streaming::ProcessCompletedLoads");
+
         // Applying a promotion is a full re-upload of the texture's resident chain (Recreate hands back an
         // empty image), which is a game-thread memcpy into the staging ring. Several large textures
         // finishing their reads on the same frame is what produces the stream-in hitch, so only so many
         // bytes are allowed to land per frame. A load that does not fit stays complete and pending -- its
         // bytes are already in memory, so waiting a frame costs nothing but the wait.
-        const uint64 FrameUploadBudget = (uint64)Math::Max(Settings().MaxUploadMBPerFrame, 1) * 1024ull * 1024ull;
-        uint64 BytesAppliedThisFrame = 0;
 
         for (size_t i = 0; i < PendingLoads.size(); )
         {
@@ -659,7 +707,7 @@ namespace Lumina
 
             // Budget is checked per load, not per byte: a single texture larger than the whole budget must
             // still make progress, so the first load of a frame is always allowed through.
-            if (BytesAppliedThisFrame > 0 && BytesAppliedThisFrame >= FrameUploadBudget)
+            if (FrameUploadBudget == 0)
             {
                 ++i;
                 continue;
@@ -719,9 +767,9 @@ namespace Lumina
                             ++TotalPromotions;
                             TotalBytesRead += BytesRead;
 
-                            // The whole resident chain was re-uploaded, not just the mips that were read,
-                            // so that -- not BytesRead -- is what this frame actually cost.
-                            BytesAppliedThisFrame += Entry->ResidentBytes;
+                            // NOT charged here. Applying a promotion only STAGES an image; the host
+                            // uploads that actually cost bandwidth are metered by TickResidencyFill as
+                            // they happen. Charging here as well would bill the same bytes twice.
                         }
                     }
                     else if (Load.bFailed)

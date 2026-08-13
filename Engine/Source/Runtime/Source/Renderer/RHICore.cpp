@@ -9,6 +9,7 @@
 #include "Core/Math/Math.h"
 #include "Core/Threading/Atomic.h"
 #include "Core/Threading/Thread.h"
+#include "Core/Profiler/Profile.h"
 
 namespace Lumina::RHI::Core
 {
@@ -261,6 +262,8 @@ namespace Lumina::RHI::Core
 
     static void DrainRetireQueue(uint32 Slot)
     {
+        LUMINA_PROFILE_SECTION("RHI::DrainRetireQueue");
+
         // Sampled together under the submit lock, which is held across RHI::Submit -- so the pair is never
         // observed mid-submission, where the list has stopped being open but the counter has not moved yet.
         uint64 Submitted[kNumQueues];
@@ -446,6 +449,7 @@ namespace Lumina::RHI::Core
         
         DrainRetireQueue(Slot);
         RHI::RetireSlot(Slot);
+
         
         FShaderLibrary::FlushPendingReleases();
 
@@ -562,6 +566,7 @@ namespace Lumina::RHI::Core
         // After the publish for the same reason as the staging retires above: this retires the images the
         // swaps move off, and a Retire landing on the previous slot would be gated by a timeline value
         // older than the work this frame is about to submit.
+        LUMINA_PROFILE_SECTION("Textures::TickPendingSwaps");
         Textures::TickPendingSwaps();
     }
 

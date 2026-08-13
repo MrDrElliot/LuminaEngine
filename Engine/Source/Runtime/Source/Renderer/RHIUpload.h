@@ -10,6 +10,13 @@ namespace Lumina::RHI
     // only correct for mip 0. See RHITexture.h.
     RUNTIME_API void UploadTexture(FTextureH Dest, uint32 Layer, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels = 0, uint32 Width = 0, uint32 Height = 0);
 
+    /** Enqueue a GPU-side mip copy between two images, in the same flush (and the same barriers) as the
+     *  host uploads around it. No staging, no host bandwidth: this is what a mip that ALREADY exists on
+     *  the GPU should cost when it moves between images, which is most of a texture residency change. */
+    RUNTIME_API void UploadTextureCopy(FTextureH Dest, uint32 DestLayer, uint32 DestMip,
+                                       FTextureH Source, uint32 SourceLayer, uint32 SourceMip,
+                                       uint32 Width, uint32 Height);
+
     // Enqueue a full-texture clear to an RGBA float value (no staging). Thread-safe.
     RUNTIME_API void UploadClearTexture(FTextureH Dest, const float Value[4]);
 

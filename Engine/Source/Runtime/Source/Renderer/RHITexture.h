@@ -85,6 +85,12 @@ namespace Lumina::RHI
          *  TickPendingSwaps. No-op when nothing is staged (first-load Recreate falls through to Create). */
         RUNTIME_API void CommitRecreate(FManagedTexture& Tex);
 
+        /** Queue a GPU-side copy of one mip from the image the bindless slot STILL names into the staged
+         *  replacement. Both are alive across a staged swap, which is what makes this possible at all --
+         *  a mip that is already on the GPU should never be re-staged from the CPU just because the image
+         *  around it changed size. Returns false when nothing is staged. */
+        RUNTIME_API bool CopyMipFromCurrent(const FManagedTexture& Tex, uint32 Layer, uint32 SrcMip, uint32 DstMip, uint32 Width, uint32 Height);
+
         /** True while a staged replacement for this texture has not become visible yet. A caller that
          *  drives residency should hold off rather than stack a second swap on the same slot. */
         RUNTIME_API bool HasPendingSwap(const FManagedTexture& Tex);
