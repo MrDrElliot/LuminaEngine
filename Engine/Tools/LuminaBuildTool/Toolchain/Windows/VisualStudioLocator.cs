@@ -3,10 +3,7 @@ using LuminaBuildTool.Core;
 
 namespace LuminaBuildTool.Toolchain.Windows;
 
-/// <summary>
-/// A located MSVC toolset: the compiler, linker and archiver plus the include and library
-/// directories they need.
-/// </summary>
+/// <summary>A located MSVC toolset: compiler, linker, archiver, and their include and library paths.</summary>
 public sealed class MsvcInstallation
 {
     public required string InstallationPath { get; init; }
@@ -34,10 +31,7 @@ public sealed class MsvcInstallation
     public override string ToString() => $"{DisplayName} (MSVC {ToolsVersion})";
 }
 
-/// <summary>
-/// Finds an installed Visual Studio C++ toolset. Prefers vswhere, falling back to a scan of the
-/// standard installation roots so the tool still works on machines without the VS Installer.
-/// </summary>
+/// <summary>Finds an installed Visual Studio C++ toolset.</summary>
 public static class VisualStudioLocator
 {
     private static MsvcInstallation? Cached;
@@ -219,9 +213,7 @@ public static class VisualStudioLocator
         };
     }
 
-    /// <summary>
-    /// Honors the installation's pinned default toolset so builds match what the IDE uses.
-    /// </summary>
+    /// <summary>Honors the installation's pinned default toolset so builds match what the IDE uses.</summary>
     private static string? ReadDefaultToolsVersion(string InstallationPath, string MsvcRoot)
     {
         string VersionFile = Path.Combine(

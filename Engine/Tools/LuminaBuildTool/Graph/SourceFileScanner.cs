@@ -3,9 +3,7 @@ using LuminaBuildTool.Core;
 
 namespace LuminaBuildTool.Graph;
 
-/// <summary>
-/// Source and header files discovered for one module.
-/// </summary>
+/// <summary>Source and header files discovered for one module.</summary>
 public sealed class ModuleSourceSet
 {
     public List<FileItem> CppFiles { get; } = new();
@@ -22,10 +20,7 @@ public sealed class ModuleSourceSet
     public IEnumerable<FileItem> AllFiles => CppFiles.Concat(CFiles).Concat(HeaderFiles).Concat(ResourceFiles);
 }
 
-/// <summary>
-/// Walks a module's source directories. A subdirectory that declares its own Build.cs belongs to
-/// another module and is skipped, so nesting modules never double-compiles their sources.
-/// </summary>
+/// <summary>Walks a module's source directories.</summary>
 public static class SourceFileScanner
 {
     private static readonly HashSet<string> HeaderExtensions = new(StringComparer.OrdinalIgnoreCase)
@@ -43,18 +38,14 @@ public static class SourceFileScanner
         "Intermediates", "Binaries", "Saved", "obj", "bin", ".git", ".vs",
     };
 
-    /// <param name="bFormsOwnImage">
-    /// True when this module links into its own shared library or executable. Decides whether its
-    /// per-image sources are compiled here or left to whichever image absorbs the module.
-    /// </param>
+    /// <param name="bFormsOwnImage">True when the module links into its own image, which decides
+    /// whether its per-image sources compile here or in whichever image absorbs it.</param>
     public static ModuleSourceSet Scan(ModuleRules Rules, bool bFormsOwnImage)
     {
         ModuleSourceSet Result = new();
         HashSet<string> Seen = new(StringComparer.OrdinalIgnoreCase);
 
-        // A per-image source may physically live inside the module's own tree. Reserving its path
-        // up front keeps the per-image list the single way it can enter the compile set, so the
-        // directory walk cannot smuggle in a second copy when the module is not an image.
+        // Reserved up front so the directory walk cannot smuggle in a second copy.
         List<string> PerImageSources = Rules.PerImageSourceFiles.Select(Rules.ModulePath).ToList();
 
         foreach (string PerImageSource in PerImageSources)
@@ -87,12 +78,8 @@ public static class SourceFileScanner
             AddExplicitSource(Rules.ModulePath(Extra), Rules, Result, Seen);
         }
 
-        // A module that must compile something but contributed nothing of its own has a source root
-        // pointing somewhere it does not live. That used to produce an image built from its
-        // per-image sources alone, which links and installs and then fails at run time with no
-        // module registration in it. Checked before per-image sources are added so those cannot
-        // mask an empty module. Header-only modules are exempt: they exist to carry include paths
-        // and prebuilt libraries, and their headers may not live in the module tree at all.
+        // An empty module builds an image from per-image sources alone that links and then has no module
+        // registration at run time. Checked before per-image sources so they cannot mask it.
         if (Rules.BinaryType != ModuleBinaryType.HeaderOnly && !Result.AllFiles.Any())
         {
             throw new BuildException(
@@ -117,16 +104,7 @@ public static class SourceFileScanner
         return Result;
     }
 
-    /// <summary>
-    /// Fails a build whose rules name a source file the module does not have.
-    /// </summary>
-    /// <remarks>
-    /// Both settings are keyed by bare file name, so renaming or moving a file silently drops what
-    /// was attached to it. The module still compiles, which is exactly the problem: what it loses
-    /// is a flag it asked for. JobScheduler.cpp quietly losing /GT is a fiber-scheduler crash, not
-    /// a diagnostic, and StbImageImpl.cpp quietly rejoining a unity file is a duplicate-symbol link
-    /// error a long way from its cause. Neither should be discoverable only at run time.
-    /// </remarks>
+    /// <summary>Fails a build whose rules name a source file the module does not have.</summary>
     private static void ValidateFileScopedRules(
         ModuleRules Rules, ModuleSourceSet Result, IReadOnlyList<string> PerImageSources)
     {
@@ -173,10 +151,7 @@ public static class SourceFileScanner
         }
     }
 
-    /// <summary>
-    /// Walks a module tree recording only headers and resources, for modules whose compile set is
-    /// an explicit list.
-    /// </summary>
+    /// <summary>Walks a module tree recording only headers and resources, for explicit compile lists.</summary>
     private static void CollectHeadersOnly(string Directory, ModuleRules Rules, ModuleSourceSet Result, HashSet<string> Seen)
     {
         if (!System.IO.Directory.Exists(Directory))

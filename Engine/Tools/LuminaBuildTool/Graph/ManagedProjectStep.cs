@@ -3,10 +3,7 @@ using LuminaBuildTool.Core;
 
 namespace LuminaBuildTool.Graph;
 
-/// <summary>
-/// Builds the target's .NET projects through the dotnet SDK. They are not linked into anything;
-/// the engine loads them at run time, so they only need to exist and be current.
-/// </summary>
+/// <summary>Builds the target's .NET projects through the dotnet SDK; the engine loads them at run time.</summary>
 public static class ManagedProjectStep
 {
     private static readonly string[] IgnoredDirectories = { "obj", "bin", ".vs", ".idea" };
@@ -35,9 +32,7 @@ public static class ManagedProjectStep
                     "--verbosity",
                     "quiet",
 
-                    // The build owns the output location. The project file carries the same path
-                    // as a default so it still opens and builds standalone in an IDE, but this is
-                    // what makes the declared output and the real one impossible to disagree.
+                    // The build owns the output location; the project file repeats it only so it opens standalone.
                     PathUtils.Quote($"-p:OutputPath={Path.GetDirectoryName(Project.OutputAssembly)}{Path.DirectorySeparatorChar}"),
                 }),
 
@@ -45,12 +40,8 @@ public static class ManagedProjectStep
                 // restores of the same project deadlock more often than they help.
                 bCanExecuteInParallel = false,
 
-                // The C# compiler has no use for the native toolchain's search paths, but it does read
-                // LIB and warn about every entry that is not a real directory (CS1668). Whoever started
-                // the build decides what those hold: a Developer Command Prompt puts ATL/MFC paths in
-                // LIB whether or not that optional component was ever installed, and the managed build
-                // then reports it once per project. Dropped here so this build does not inherit an
-                // opinion about C++ from the shell that launched it.
+                // The C# compiler reads LIB and warns per bogus entry (CS1668), and a Developer Command Prompt seeds
+                // it with ATL/MFC paths that may not exist. Dropped so this build inherits no opinion from the shell.
                 EnvironmentOverrides = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                 {
                     ["LIB"] = string.Empty,
@@ -80,15 +71,7 @@ public static class ManagedProjectStep
         }
     }
 
-    /// <summary>
-    /// A project's own file and sources, plus those of every project it references, transitively.
-    ///
-    /// The references matter as much as the project's own sources: LuminaSharp.csproj references
-    /// LuminaSharp.Generators.csproj as an Analyzer, so editing ONLY the generator changes what
-    /// LuminaSharp compiles to. Without this the action stayed "up to date", MSBuild was never invoked,
-    /// and the stale generator kept being deployed -- a source edit that silently does nothing, which is
-    /// the worst failure a build system has.
-    /// </summary>
+    /// <summary>A project's own file and sources, plus those of every project it references, transitively.</summary>
     private static IEnumerable<FileItem> EnumerateProjectAndReferences(string ProjectFile)
     {
         HashSet<string> Visited = new(StringComparer.OrdinalIgnoreCase);
@@ -118,12 +101,7 @@ public static class ManagedProjectStep
         }
     }
 
-    /// <summary>
-    /// The ProjectReference paths a .csproj declares, resolved against it. Read with a plain text scan
-    /// rather than an XML/MSBuild evaluation: the paths are literal in these project files, and the input
-    /// set only has to be a superset of what actually matters -- an extra prerequisite costs a rebuild,
-    /// a missing one costs a wrong build.
-    /// </summary>
+    /// <summary>The ProjectReference paths a .csproj declares, resolved against it.</summary>
     private static IEnumerable<string> EnumerateProjectReferences(string ProjectFile, string ProjectDirectory)
     {
         string Text;
@@ -188,11 +166,7 @@ public static class ManagedProjectStep
         }
     }
 
-    /// <summary>
-    /// The generated bindings this assembly compiles. Rooted where the project file lives, because
-    /// a .csproj globs a path relative to itself: the engine's assembly reads the engine's bindings
-    /// whether or not a project is what was asked for.
-    /// </summary>
+    /// <summary>The generated bindings this assembly compiles.</summary>
     private static IEnumerable<FileItem> EnumerateGeneratedBindings(BuildTarget Target, ManagedProject Project)
     {
         string BindingsDirectory = Path.Combine(

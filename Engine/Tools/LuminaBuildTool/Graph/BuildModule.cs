@@ -3,10 +3,7 @@ using LuminaBuildTool.Core;
 
 namespace LuminaBuildTool.Graph;
 
-/// <summary>
-/// A module resolved against a specific target: its rules, its sources, its place in the
-/// dependency graph, and the compile and link environments derived from both.
-/// </summary>
+/// <summary>A module resolved against one target: rules, sources, graph position, compile and link setup.</summary>
 public sealed class BuildModule
 {
     public BuildModule(ModuleRules Rules, ModuleSourceSet Sources)
@@ -21,20 +18,13 @@ public sealed class BuildModule
 
     public string Name => Rules.Name;
 
-    /// <summary>
-    /// What this module actually produces in this target. A monolithic target turns every shared
-    /// library into a static one so the executable can absorb them all.
-    /// </summary>
+    /// <summary>What this module actually produces in this target.</summary>
     public ModuleBinaryType BinaryType { get; set; }
 
     /// <summary>What the module declared, before any monolithic rewrite.</summary>
     public ModuleBinaryType DeclaredBinaryType => Rules.BinaryType;
 
-    /// <summary>
-    /// The linker must pull in every object of this archive rather than only the ones resolving
-    /// an undefined symbol. Module registration runs from static constructors nothing references,
-    /// so without this the module would silently vanish from a monolithic build.
-    /// </summary>
+    /// <summary>Pull in every object of this archive, not only those resolving an undefined symbol.</summary>
     public bool bRequiresWholeArchive { get; set; }
 
     public bool bIsPlugin => Rules.PluginName.Length > 0;
@@ -89,27 +79,13 @@ public sealed class BuildModule
     /// <summary>Generated sources compiled into this module alongside its own.</summary>
     public List<FileItem> GeneratedSourceFiles { get; } = new();
 
-    /// <summary>
-    /// The C++ translation units the toolchain compiles. Filled with the module's own and
-    /// generated sources when the graph is assembled, then rewritten by UnityBuildStep on the
-    /// build path when the module compiles as unity blobs.
-    /// </summary>
-    /// <remarks>
-    /// Kept separate from Sources so what gets compiled and what the module is made of can differ.
-    /// Generated projects list Sources, so an IDE keeps showing real files no matter how they are
-    /// batched into the compiler.
-    /// </remarks>
+    /// <summary>The C++ translation units the toolchain compiles.</summary>
     public List<FileItem> CppCompileInputs { get; } = new();
 
-    /// <summary>
-    /// Files a compile input stands in for, keyed by that input's path. A unity blob lists its
-    /// members so the compile action can depend on them before any header scan has run.
-    /// </summary>
+    /// <summary>Files a compile input stands in for, keyed by that input's path.</summary>
     public Dictionary<string, List<FileItem>> SubsumedSourceFiles { get; } = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>
-    /// Enumerates this module and everything it depends on, in dependency-first order.
-    /// </summary>
+    /// <summary>Enumerates this module and everything it depends on, in dependency-first order.</summary>
     public IEnumerable<BuildModule> EnumerateDependencyClosure()
     {
         HashSet<BuildModule> Visited = new();

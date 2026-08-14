@@ -4,10 +4,7 @@ using LuminaBuildTool.Core;
 
 namespace LuminaBuildTool.Rules;
 
-/// <summary>
-/// The compiled rules assembly plus the name lookups that map a target or module name back to
-/// the type declared in its rules file.
-/// </summary>
+/// <summary>The compiled rules assembly plus the lookups mapping a target or module name to its type.</summary>
 public sealed class RulesAssembly
 {
     private readonly Dictionary<string, Type> TargetTypes = new(StringComparer.OrdinalIgnoreCase);
@@ -55,16 +52,10 @@ public sealed class RulesAssembly
 
     public IReadOnlyList<PluginDescriptor> Plugins { get; }
 
-    /// <summary>
-    /// Every rules file that went into the assembly, shared helpers included. Project generation
-    /// needs the full set so an IDE can offer completion and error checking on all of them.
-    /// </summary>
+    /// <summary>Every rules file that went into the assembly, shared helpers included.</summary>
     public IReadOnlyList<RulesFile> RulesFiles { get; }
 
-    /// <summary>
-    /// Fingerprint of the rules files this assembly was compiled from. Anything derived from what
-    /// the rules said, generated project files included, is stale when this changes.
-    /// </summary>
+    /// <summary>Fingerprint of the rules files this assembly was compiled from.</summary>
     public string SourceHash => SourceHashValue ??= RulesCompiler.ComputeSourceHash(RulesFiles.Select(F => F.Location));
 
     private string? SourceHashValue;

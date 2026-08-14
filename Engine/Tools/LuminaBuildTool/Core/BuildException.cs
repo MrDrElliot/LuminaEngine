@@ -1,8 +1,6 @@
 namespace LuminaBuildTool.Core;
 
-/// <summary>
-/// Expected, user-facing build failure. Reported as a clean message with no stack trace.
-/// </summary>
+/// <summary>Expected, user-facing build failure. Reported as a clean message with no stack trace.</summary>
 public sealed class BuildException : Exception
 {
     public BuildException(string Message)

@@ -18,22 +18,13 @@ public sealed class PrecompiledHeaderRules
 
 /// <summary>A prebuilt file that must sit beside the target's binaries at run time.</summary>
 /// <param name="SourcePath">Absolute path of the file to copy.</param>
-/// <param name="bOptional">
-/// Do not fail the build when the file is missing or locked, for vendored DLLs a running editor
-/// may hold open during a second build.
-/// </param>
+/// <param name="bOptional">Tolerate a missing or locked file, for DLLs a running editor holds open.</param>
 public sealed record RuntimeDependency(string SourcePath, bool bOptional);
 
 /// <summary>Base class for a Build.cs file. One module is one compilation and link unit.</summary>
-/// <remarks>
-/// Public settings propagate transitively to dependents, private settings stop here.
-/// </remarks>
 public abstract class ModuleRules
 {
-    /// <summary>
-    /// Identity published just before construction, so a Build.cs can call ModulePath and read its
-    /// own name from inside its constructor.
-    /// </summary>
+    /// <summary>Identity published pre-construction, so a Build.cs can call ModulePath and read its own name.</summary>
     internal sealed class ConstructionContext
     {
         public required string Name { get; init; }
@@ -99,20 +90,13 @@ public abstract class ModuleRules
 
     // Module dependencies.
 
-    /// <summary>
-    /// Dependencies exposed by this module's public headers, so they propagate on to dependents.
-    /// </summary>
+    /// <summary>Dependencies exposed by this module's public headers, so they propagate on to dependents.</summary>
     public List<string> PublicDependencyModuleNames { get; } = new();
 
-    /// <summary>
-    /// Dependencies used only by this module's implementation. Their public settings stop here.
-    /// </summary>
+    /// <summary>Dependencies used only by this module's implementation. Their public settings stop here.</summary>
     public List<string> PrivateDependencyModuleNames { get; } = new();
 
-    /// <summary>
-    /// Modules built before this one but not linked, for code generators and runtime-loaded
-    /// assemblies.
-    /// </summary>
+    /// <summary>Modules built before this one but not linked: code generators, runtime-loaded assemblies.</summary>
     public List<string> BuildOrderDependencyModuleNames { get; } = new();
 
     // Libraries.
@@ -128,25 +112,13 @@ public abstract class ModuleRules
 
     // Sources.
 
-    /// <summary>
-    /// Directories searched recursively for source files, relative to the module directory.
-    /// Defaults to "Source" when left empty, or the module directory itself when bRootSourceFiles is set.
-    /// </summary>
+    /// <summary>Directories searched recursively for source files, relative to the module directory.</summary>
     public List<string> SourceDirectories { get; } = new();
 
-    /// <summary>
-    /// Force the module directory itself to be the source root, skipping the Source subdirectory
-    /// check. For vendored third-party libraries and generated content.
-    /// </summary>
+    /// <summary>Treat the module directory as the source root, skipping the Source subdirectory check.</summary>
     public bool bRootSourceFiles { get; set; }
 
     /// <summary>Directory this module's sources and own-module includes are rooted at.</summary>
-    /// <remarks>
-    /// Two layouts are in use: an engine module keeps sources in a Source subdirectory beside the
-    /// Build.cs, while a plugin module's Build.cs already sits beside its sources. Deciding from
-    /// what is on disk means neither layout has to declare itself, and source scanning, include
-    /// paths and project generation cannot disagree about the answer.
-    /// </remarks>
     public string ResolveSourceRoot()
     {
         if (bRootSourceFiles)
@@ -162,40 +134,19 @@ public abstract class ModuleRules
     /// <summary>Additional individual source files by absolute or module-relative path.</summary>
     public List<string> ExtraSourceFiles { get; } = new();
 
-    /// <summary>
-    /// Merge this module's translation units into unity blobs. Null defers to the target.
-    /// </summary>
+    /// <summary>Merge this module's translation units into unity blobs. Null defers to the target.</summary>
     public bool? bUseUnityBuild { get; set; }
 
-    /// <summary>
-    /// Sources that keep their own translation unit, by file name. PCH sources, files carrying
-    /// per-file compiler options and per-image sources are already held back automatically; this is
-    /// for what only the code knows, such as a file defining a single-header library's
-    /// implementation macro.
-    /// </summary>
+    /// <summary>Sources that keep their own translation unit, by file name.</summary>
     public List<string> ExcludeFromUnity { get; } = new();
 
-    /// <summary>
-    /// Sources that belong to a loadable image rather than to a module, compiled only when this
-    /// module forms its own shared library or executable.
-    /// </summary>
-    /// <remarks>
-    /// For definitions that must appear exactly once per loaded image and in every loaded image,
-    /// such as an allocator binding resolved per module boundary. A monolithic link folds modules
-    /// into one image, so only the executable still needs it.
-    /// </remarks>
+    /// <summary>Sources belonging to the image, not the module: compiled only when this module is its own binary.</summary>
     public List<string> PerImageSourceFiles { get; } = new();
 
-    /// <summary>
-    /// Compile only what ExtraSourceFiles lists, skipping the directory walk. Used by vendored
-    /// libraries that ship many optional back ends.
-    /// </summary>
+    /// <summary>Compile only what ExtraSourceFiles lists, skipping the directory walk.</summary>
     public bool bUseExplicitSourceList { get; set; }
 
-    /// <summary>
-    /// Path fragments that exclude a discovered source file when contained in its path.
-    /// Matched case insensitively against the module-relative path.
-    /// </summary>
+    /// <summary>Path fragments that exclude a discovered source file when contained in its path.</summary>
     public List<string> ExcludedSourcePathFragments { get; } = new();
 
     // Compilation.
@@ -217,26 +168,13 @@ public abstract class ModuleRules
     /// <summary>Warning numbers suppressed for this module.</summary>
     public List<string> DisabledWarnings { get; } = new();
 
-    /// <summary>
-    /// Extra compiler options keyed by source file name, for translation units that need a flag
-    /// the rest of the module must not get.
-    /// </summary>
-    /// <remarks>
-    /// A file listed here is never folded into a unity blob; a blob compiles under one command line
-    /// and the file would silently lose its flag.
-    /// </remarks>
+    /// <summary>Per-file compiler options, for units needing a flag the rest of the module must not get.</summary>
     public Dictionary<string, List<string>> PerFileCompilerOptions { get; } = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>
-    /// Run the reflection code generator over this module's headers and compile the generated
-    /// sources into it.
-    /// </summary>
+    /// <summary>Run the reflection generator over this module's headers and compile the output into it.</summary>
     public bool bEnableReflection { get; set; }
 
-    /// <summary>
-    /// Where the generator writes this module's C# bindings. Empty compiles them into LuminaSharp;
-    /// a plugin or game module points at its own Scripts/Generated instead.
-    /// </summary>
+    /// <summary>Where the generator writes this module's C# bindings.</summary>
     public string CSharpBindingsDirectory { get; set; } = string.Empty;
 
     /// <summary>Compile this module's sources as C rather than C++.</summary>
@@ -248,16 +186,10 @@ public abstract class ModuleRules
     /// <summary>Overrides the target's exception setting. Null inherits.</summary>
     public bool? bEnableExceptions { get; set; }
 
-    /// <summary>
-    /// Overrides the target's C++ standard. Null inherits. Set by vendored libraries that do not
-    /// compile under the engine's standard.
-    /// </summary>
+    /// <summary>Overrides the target's C++ standard.</summary>
     public string? CppStandardOverride { get; set; }
 
-    /// <summary>
-    /// Prebuilt files copied next to the target's binaries. Propagates to dependents so whatever
-    /// links the module also ships it.
-    /// </summary>
+    /// <summary>Prebuilt files copied next to the target's binaries.</summary>
     public List<RuntimeDependency> RuntimeDependencies { get; } = new();
 
     /// <summary>Declares a file that must sit beside the target's binaries at run time.</summary>
@@ -266,9 +198,7 @@ public abstract class ModuleRules
         RuntimeDependencies.Add(new RuntimeDependency(ModulePath(SourcePath), bOptional));
     }
 
-    /// <summary>
-    /// Third-party code. Suppresses warnings-as-errors and skips the engine-wide force includes.
-    /// </summary>
+    /// <summary>Third-party code. Suppresses warnings-as-errors and skips the engine-wide force includes.</summary>
     public bool bIsThirdParty { get; set; }
 
     /// <summary>Target types this module is excluded from beyond what HostType already implies.</summary>

@@ -5,10 +5,7 @@ using LuminaBuildTool.Rules;
 
 namespace LuminaBuildTool.Graph;
 
-/// <summary>
-/// Resolves a target name into a complete build graph: instantiates rules, discovers sources,
-/// walks module dependencies, propagates public settings and assigns output paths.
-/// </summary>
+/// <summary>Resolves a target name into a build graph: rules, sources, dependencies, settings, outputs.</summary>
 public sealed class TargetAssembler
 {
     private readonly RulesAssembly Assembly;
@@ -282,10 +279,7 @@ public sealed class TargetAssembler
 
     // Output layout.
 
-    /// <summary>
-    /// A monolithic target turns every shared library into an archive the executable absorbs, so
-    /// there is one image instead of many.
-    /// </summary>
+    /// <summary>A monolithic target turns every shared library into an archive the executable absorbs.</summary>
     private ModuleBinaryType ResolveEffectiveBinaryType(ModuleBinaryType Declared)
     {
         return TargetRules.bMonolithic && Declared == ModuleBinaryType.SharedLibrary
@@ -294,11 +288,6 @@ public sealed class TargetAssembler
     }
 
     /// <summary>Directory segment separating one target's intermediates from another's.</summary>
-    /// <remarks>
-    /// Project modules key on target name. Engine modules key on the build environment instead, so
-    /// targets that compile the engine identically share one set of objects rather than each
-    /// recompiling it; a target that changes that environment hashes differently and gets its own.
-    /// </remarks>
     private string ResolveIntermediateKey(BuildModule Module)
     {
         return Directories.IsEngineOwned(Module.Rules.ModuleDirectory)
@@ -308,15 +297,7 @@ public sealed class TargetAssembler
 
     private Lazy<string> SharedEngineEnvironmentKey = null!;
 
-    /// <summary>
-    /// Hash of everything a target contributes to how an engine module compiles.
-    /// </summary>
-    /// <remarks>
-    /// Deliberately over-inclusive. Listing too much only costs a target its own copy of the
-    /// engine, while listing too little would let two targets share objects built from different
-    /// settings. Platform, type and configuration are already directory segments and are not
-    /// repeated here.
-    /// </remarks>
+    /// <summary>Hash of everything a target contributes to how an engine module compiles.</summary>
     private string ComputeSharedEngineEnvironmentKey()
     {
         List<string> Inputs = new()
@@ -410,12 +391,8 @@ public sealed class TargetAssembler
                 break;
 
             case ModuleBinaryType.StaticLibrary:
-                // Static libraries stay in the intermediate tree; only loadable output ships. Keyed
-                // the same way this module's objects are, which for an engine module means the
-                // environment rather than the target: archiving to a per-target directory left every
-                // target linking the engine's DLLs against its own copy of the same third-party libs,
-                // so the link command differed between them and alternating an engine build with a
-                // project build relinked all of them every time, in both directions.
+                // Static libraries stay in the intermediate tree, keyed like this module's objects: a per-target
+                // directory made every target relink the engine's DLLs against its own third-party copies.
                 Module.OutputDirectory = Path.Combine(
                     OutputRoot,
                     "Intermediates",
@@ -454,10 +431,7 @@ public sealed class TargetAssembler
         }
     }
 
-    /// <summary>
-    /// Plugin binaries live under the plugin's own Binaries directory so the runtime plugin
-    /// loader finds them where it expects.
-    /// </summary>
+    /// <summary>Plugin binaries live under the plugin's own Binaries directory, where the loader looks.</summary>
     private string ResolveBinariesDirectory(BuildTarget Target, BuildModule Module)
     {
         if (!Module.bIsPlugin)
@@ -480,10 +454,7 @@ public sealed class TargetAssembler
 
     // Environment propagation.
 
-    /// <summary>
-    /// Settings a module hands to anything that depends on it, including everything re-exported
-    /// through its own public dependencies.
-    /// </summary>
+    /// <summary>Settings a module hands its dependents, including what its public dependencies re-export.</summary>
     private sealed class PublicExports
     {
         public List<string> IncludePaths { get; } = new();
@@ -497,10 +468,7 @@ public sealed class TargetAssembler
         public List<string> LibraryPaths { get; } = new();
     }
 
-    /// <summary>
-    /// Directory a module's own headers are rooted at: the module directory for a flat module,
-    /// its Source subdirectory otherwise.
-    /// </summary>
+    /// <summary>Root of a module's headers: the module directory if flat, its Source subdirectory otherwise.</summary>
     private static string GetSourceRoot(ModuleRules Rules)
     {
         return Rules.ResolveSourceRoot();
@@ -526,21 +494,14 @@ public sealed class TargetAssembler
             Exports.IncludePaths.Add(Rules.ModulePath(IncludePath));
         }
 
-        // An engine module's source root is part of its public surface: dependents include its
-        // headers by the path they sit at, with no separate Public directory. Third-party modules
-        // declare their include roots explicitly instead.
+        // An engine module's source root is public surface; third-party modules declare roots explicitly.
         if (!Rules.bIsThirdParty)
         {
             Exports.IncludePaths.Add(GetSourceRoot(Rules));
         }
 
-        // A plugin module also exports the directory holding it, which is the plugin's Source, so
-        // a dependent can write "PointGenerator/Components.h" and name the module it is reaching
-        // into. The bare form keeps working; this only adds the qualified one, which is what
-        // stops two plugins that both ship a Types.h from resolving to whichever came first.
-        //
-        // Plugins only. A game module's directory is the project root, and exporting that would
-        // put Binaries, Config and Content on every dependent's include path.
+        // Plugins also export their containing Source dir, so a dependent can qualify "Plugin/Types.h" when
+        // two plugins ship the same header name. Plugins only: a game module's directory is the project root.
         if (Module.bIsPlugin && !Rules.bIsThirdParty)
         {
             string? ContainingDirectory = Path.GetDirectoryName(Rules.ModuleDirectory);
@@ -625,18 +586,7 @@ public sealed class TargetAssembler
         }
     }
 
-    /// <summary>
-    /// Defines the &lt;NAME&gt;_API export macro for this module and for every shared library it can
-    /// see, so a class marked with one resolves to dllexport while compiling its own module and to
-    /// dllimport everywhere else.
-    /// </summary>
-    /// <remarks>
-    /// Derived from the graph rather than written down. A hand-maintained header can only name the
-    /// modules that shipped with the engine, which leaves a game or plugin module with an
-    /// undefined macro and no way to fix it short of editing an engine header it does not own.
-    /// The names expand lazily, so DLL_EXPORT and DLL_IMPORT need only be defined by the time some
-    /// declaration actually uses the macro.
-    /// </remarks>
+    /// <summary>Defines &lt;NAME&gt;_API so a marked class is dllexport in its own module and dllimport elsewhere.</summary>
     private void AddModuleApiDefinitions(BuildModule Module, List<string> Definitions)
     {
         foreach (BuildModule Visible in Module.EnumerateDependencyClosure())
@@ -648,9 +598,7 @@ public sealed class TargetAssembler
                 continue;
             }
 
-            // <NAME>_API is an engine convention, and a vendored library is entitled to that name
-            // for its own purposes: Tracy declares TRACY_API in TracyApi.h and manages its own
-            // TRACY_EXPORTS. Defining one here would redefine theirs.
+            // A vendored library owns its own <NAME>_API; Tracy declares TRACY_API and this would redefine it.
             if (Visible.Rules.bIsThirdParty)
             {
                 continue;
@@ -664,10 +612,7 @@ public sealed class TargetAssembler
         }
     }
 
-    /// <summary>
-    /// Only modules that actually link resolve symbols. A static library is archived from its
-    /// own objects and leaves dependency resolution to whatever consumes it.
-    /// </summary>
+    /// <summary>Only modules that actually link resolve symbols.</summary>
     private void BuildLinkEnvironment(BuildTarget Target, BuildModule Module)
     {
         if (Module.BinaryType is ModuleBinaryType.HeaderOnly or ModuleBinaryType.StaticLibrary)
@@ -703,14 +648,7 @@ public sealed class TargetAssembler
         AddUnique(Module.LinkLibraryPaths, LibraryPaths);
     }
 
-    /// <summary>
-    /// The file a dependent actually puts on its link line: the import library for a shared
-    /// library, the archive itself for a static library, nothing for anything else.
-    /// </summary>
-    /// <remarks>
-    /// ELF platforms have no import library, so a shared library is linked against directly. The
-    /// SONAME recorded at link time is what the loader resolves later, not this build path.
-    /// </remarks>
+    /// <summary>What a dependent puts on its link line: import library, archive, or nothing.</summary>
     private static string? GetLinkInput(BuildModule Module)
     {
         return Module.BinaryType switch
@@ -723,10 +661,7 @@ public sealed class TargetAssembler
         };
     }
 
-    /// <summary>
-    /// Unions every module's runtime dependencies onto the target. They land beside the target's
-    /// binaries, which is where the executable's loader looks.
-    /// </summary>
+    /// <summary>Unions every module's runtime dependencies onto the target.</summary>
     private static void CollectRuntimeDependencies(BuildTarget Target)
     {
         HashSet<string> Seen = new(StringComparer.OrdinalIgnoreCase);

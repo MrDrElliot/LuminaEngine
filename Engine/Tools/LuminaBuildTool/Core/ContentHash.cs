@@ -3,10 +3,7 @@ using System.Text;
 
 namespace LuminaBuildTool.Core;
 
-/// <summary>
-/// Stable content hashing for cache keys. Uses SHA256 rather than string.GetHashCode so keys
-/// survive across processes and runtime versions.
-/// </summary>
+/// <summary>Stable content hashing for cache keys.</summary>
 public static class ContentHash
 {
     public static string OfString(string Value)
@@ -15,9 +12,7 @@ public static class ContentHash
         return Convert.ToHexString(Digest, 0, 12).ToLowerInvariant();
     }
 
-    /// <summary>
-    /// Length-prefixes each element so no combination of values can collide by concatenation.
-    /// </summary>
+    /// <summary>Length-prefixes each element so no combination of values can collide by concatenation.</summary>
     public static string OfStrings(IEnumerable<string> Values)
     {
         StringBuilder Builder = new();

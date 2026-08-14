@@ -15,9 +15,7 @@ public sealed class ProcessResult
 
 public static class ProcessRunner
 {
-    /// <summary>
-    /// Runs a tool to completion, merging its standard output and error in arrival order.
-    /// </summary>
+    /// <summary>Runs a tool to completion, merging its standard output and error in arrival order.</summary>
     public static async Task<ProcessResult> RunAsync(
         string ToolPath,
         string Arguments,
@@ -41,9 +39,7 @@ public static class ProcessRunner
         {
             foreach ((string Key, string Value) in EnvironmentOverrides)
             {
-                // An empty value removes the variable rather than setting it to nothing. A tool that
-                // parses a list variable reads "" as one empty entry and complains about it, so
-                // clearing has to mean absent, not present and empty.
+                // An empty value removes the variable: a list-parsing tool reads "" as one empty entry.
                 if (Value.Length == 0)
                 {
                     StartInfo.Environment.Remove(Key);

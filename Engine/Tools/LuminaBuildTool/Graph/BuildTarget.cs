@@ -2,9 +2,7 @@ using LuminaBuildTool.Configuration;
 
 namespace LuminaBuildTool.Graph;
 
-/// <summary>
-/// A fully resolved target: every module it needs, in build order, with output paths assigned.
-/// </summary>
+/// <summary>A fully resolved target: every module it needs, in build order, with output paths assigned.</summary>
 public sealed class BuildTarget
 {
     public BuildTarget(TargetRules Rules, TargetInfo Info, BuildDirectories Directories)
@@ -34,10 +32,7 @@ public sealed class BuildTarget
     /// <summary>Every rules file the target was assembled from. Changing any invalidates the build.</summary>
     public List<string> RulesFiles { get; } = new();
 
-    /// <summary>
-    /// Prebuilt files that must sit beside the target's binaries at run time, unioned across every
-    /// module in the target.
-    /// </summary>
+    /// <summary>Prebuilt files that must sit beside the binaries at run time, unioned across modules.</summary>
     public List<RuntimeDependency> RuntimeDependencies { get; } = new();
 
     public string BinariesDirectory => Rules.OutputDirectoryOverride.Length > 0

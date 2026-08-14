@@ -4,23 +4,7 @@ using LuminaBuildTool.Core;
 
 namespace LuminaBuildTool.Graph;
 
-/// <summary>
-/// Folds a module's translation units into a few generated blobs, each of which includes the
-/// sources it stands for, so shared headers are parsed once per blob instead of once per file.
-/// </summary>
-/// <remarks>
-/// What a unity build costs is isolation. Merged sources stop being independent translation units,
-/// so a file-scope static, an anonymous namespace, a using-directive or a macro left defined now
-/// reaches its neighbours, and a name that was private to one file can collide with another's.
-/// That is a real change in what the language guarantees, which is why this is opt in per target
-/// and per module rather than a global default.
-///
-/// Anything that cannot be merged is kept out automatically rather than by remembering to list it:
-/// a file with its own compiler options would silently lose them, a precompiled header source has
-/// to stay its own translation unit, and the reflection shards are already blobs. Getting those
-/// wrong is not a compile error, it is a miscompile, so the decision does not belong to whoever
-/// edits a Build.cs next.
-/// </remarks>
+/// <summary>Folds a module's sources into a few blobs so shared headers are parsed once per blob.</summary>
 public static class UnityBuildStep
 {
     /// <summary>Subdirectory of a module's intermediates holding its generated blobs.</summary>
@@ -28,10 +12,7 @@ public static class UnityBuildStep
 
     private const string BlobExtension = ".unity.cpp";
 
-    /// <summary>
-    /// Resolves every module's compile inputs, generating unity blobs where enabled. Runs on the
-    /// build path only: project generation lists real source files, never blobs.
-    /// </summary>
+    /// <summary>Resolves every module's compile inputs, generating unity blobs where enabled.</summary>
     public static void Prepare(BuildTarget Target)
     {
         foreach (BuildModule Module in Target.Modules)
@@ -76,9 +57,7 @@ public static class UnityBuildStep
             return;
         }
 
-        // Sorted so the grouping depends only on which files exist, not on the order the
-        // directory walk returned them. Two machines building the same tree produce the same
-        // blobs, and an unchanged module keeps the object files it already has.
+        // Sorted so blobs depend only on which files exist, not on directory-walk order.
         Mergeable.Sort((Left, Right) => string.Compare(Left.Location, Right.Location, StringComparison.OrdinalIgnoreCase));
 
         List<List<FileItem>> Groups = GroupByByteBudget(Mergeable, Math.Max(1024, Target.Rules.UnityBuildBytesPerFile));
@@ -100,9 +79,8 @@ public static class UnityBuildStep
 
             FileItem Blob = FileItem.Get(BlobPath);
 
-            // Declared rather than left to the header scan: on a first compile no dependency file
-            // exists yet, and the blob's own timestamp only moves when the membership changes, so
-            // without this an edit to a member would not rebuild the blob that contains it.
+            // Declared, not left to the header scan: no dependency file exists on a first compile, and the blob's
+            // timestamp only moves when its membership changes.
             Module.SubsumedSourceFiles[Blob.Location] = Groups[Index];
             Blobs.Add(Blob);
         }
@@ -133,15 +111,10 @@ public static class UnityBuildStep
         return Module.Rules.bUseUnityBuild ?? Target.Rules.bUseUnityBuild;
     }
 
-    /// <summary>
-    /// Whether a source has to keep its own translation unit, and why. The reason is returned so
-    /// a verbose build can show it: "my file was not in a blob" is otherwise invisible.
-    /// </summary>
+    /// <summary>Whether a source has to keep its own translation unit, and why.</summary>
     private static bool MustCompileAlone(BuildModule Module, FileItem Source, out string Reason)
     {
-        // Merging would drop the flags, and the failure would be a miscompile rather than an
-        // error: the engine's fiber scheduler needs /GT on exactly one file to read thread-local
-        // state correctly.
+        // Merging would drop the flags and miscompile: the fiber scheduler needs /GT on exactly one file.
         if (Module.Rules.PerFileCompilerOptions.ContainsKey(Source.Name))
         {
             Reason = "has per-file compiler options";
@@ -173,11 +146,7 @@ public static class UnityBuildStep
         return false;
     }
 
-    /// <summary>
-    /// Packs sources into groups of roughly equal source size. Size rather than file count because
-    /// a module's files vary by orders of magnitude, and it is bytes of preprocessed input that
-    /// decide how long a blob takes and how much memory it needs.
-    /// </summary>
+    /// <summary>Packs sources into groups of roughly equal source size.</summary>
     private static List<List<FileItem>> GroupByByteBudget(IReadOnlyList<FileItem> Sources, int BytesPerBlob)
     {
         List<List<FileItem>> Groups = new();
@@ -230,11 +199,7 @@ public static class UnityBuildStep
         return Text.ToString();
     }
 
-    /// <summary>
-    /// Deletes blobs a previous grouping left behind. Nothing links them, because the link step
-    /// takes its objects from the compile actions, but leaving them makes the intermediate
-    /// directory misreport what the module is built from.
-    /// </summary>
+    /// <summary>Deletes blobs a previous grouping left behind.</summary>
     private static void RemoveStaleBlobs(string BlobDirectory, IReadOnlyList<FileItem> Current)
     {
         HashSet<string> Live = new(Current.Select(F => F.Location), StringComparer.OrdinalIgnoreCase);

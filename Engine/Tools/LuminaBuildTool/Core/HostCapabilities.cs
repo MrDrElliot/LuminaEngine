@@ -3,32 +3,20 @@ using System.Runtime.InteropServices;
 
 namespace LuminaBuildTool.Core;
 
-/// <summary>
-/// Facts about the machine running the build that rules may branch on. Probes run once and are
-/// cached, because a rules file queries them once per module.
-/// </summary>
+/// <summary>Facts about the machine running the build that rules may branch on.</summary>
 public static class HostCapabilities
 {
     private static string? CachedAdapterNames;
 
-    /// <summary>
-    /// True when an NVIDIA display adapter is present. Used to decide whether vendor-specific
-    /// tooling is worth building in.
-    /// </summary>
+    /// <summary>True when an NVIDIA display adapter is present.</summary>
     public static bool bHasNvidiaGpu => AdapterNames.Contains("nvidia", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>
-    /// True when an AMD display adapter is present. Adapter strings read "AMD Radeon ..." for
-    /// discrete parts and "AMD Radeon(TM) Graphics" for integrated ones, so either token matches.
-    /// </summary>
+    /// <summary>True when an AMD display adapter is present.</summary>
     public static bool bHasAmdGpu =>
         AdapterNames.Contains("amd", StringComparison.OrdinalIgnoreCase)
         || AdapterNames.Contains("radeon", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>
-    /// Comma-joined display adapter names, or empty when the probe could not run. A machine with
-    /// both vendors present reports both, and both vendor features turn on.
-    /// </summary>
+    /// <summary>Comma-joined display adapter names, or empty when the probe could not run.</summary>
     private static string AdapterNames
     {
         get

@@ -6,17 +6,7 @@ using LuminaBuildTool.Rules;
 
 namespace LuminaBuildTool.ProjectFiles;
 
-/// <summary>
-/// Writes a C# project containing every Build.cs, Target.cs and BuildRules.cs file.
-/// </summary>
-/// <remarks>
-/// Rules files are ordinary C# compiled against this tool, but an IDE only knows that if some
-/// project says so. Without one they open as plain text: no highlighting, no completion on
-/// ModuleRules, and no warning about a misspelled property until a build fails. This project is
-/// never built by the build system, which compiles the same files in memory. It exists so the
-/// editor resolves them, and its settings deliberately mirror RulesCompiler so that what the IDE
-/// reports and what a build reports are the same thing.
-/// </remarks>
+/// <summary>Writes a C# project containing every Build.cs, Target.cs and BuildRules.cs file.</summary>
 public static class RulesProjectGenerator
 {
     public const string ProjectName = "LuminaRules";
@@ -51,9 +41,7 @@ public static class RulesProjectGenerator
         Xml.AppendLine("    <AssemblyName>LuminaRules</AssemblyName>");
         Xml.AppendLine("    <RootNamespace></RootNamespace>");
 
-        // Output paths are left at their defaults. The project already sits under Intermediates,
-        // so bin and obj land somewhere disposable, and redirecting BaseIntermediateOutputPath
-        // from here is too late for the SDK to honour it anyway.
+        // Left at defaults: the project sits under Intermediates, and redirecting here is too late anyway.
         Xml.AppendLine("  </PropertyGroup>");
         Xml.AppendLine();
 
@@ -83,10 +71,7 @@ public static class RulesProjectGenerator
         return PathUtils.WriteFileIfChanged(ProjectPath, Xml.ToString());
     }
 
-    /// <summary>
-    /// Groups a rules file under its kind and owner, so the IDE tree reads as Modules/Runtime
-    /// rather than as forty files all called Build.cs.
-    /// </summary>
+    /// <summary>Groups a rules file by kind and owner, so the IDE shows Modules/Runtime, not forty Build.cs.</summary>
     private static string MakeLinkPath(RulesFile File)
     {
         string Category = File.Kind switch

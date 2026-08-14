@@ -10,9 +10,7 @@ using LuminaBuildTool.Toolchain;
 
 namespace LuminaBuildTool.Modes;
 
-/// <summary>
-/// Compiles and links a target, after building whatever targets it declares as prerequisites.
-/// </summary>
+/// <summary>Compiles and links a target, after building whatever targets it declares as prerequisites.</summary>
 public static class BuildMode
 {
     public static async Task<int> RunAsync(CommandLine Arguments, BuildDirectories Directories, CancellationToken Cancellation)
@@ -54,27 +52,7 @@ public static class BuildMode
         return Result;
     }
 
-    /// <summary>
-    /// How many actions to run at once when -MaxParallel is not given: core count, less one, and
-    /// then capped at what the machine's memory can actually hold.
-    /// </summary>
-    /// <remarks>
-    /// Core count alone is the wrong answer on any machine with more threads than spare gigabytes.
-    /// A template-heavy translation unit compiled with -g routinely peaks north of a gigabyte, so a
-    /// 16-thread laptop with 14 GiB of RAM would start fifteen of them and ask for roughly twice the
-    /// memory it has. What follows is not a clean out-of-memory failure: the machine swaps, memory
-    /// pressure climbs, and on a systemd-oomd system the kill lands on whichever cgroup in the user
-    /// slice looks worst, which in practice is the desktop shell rather than the build. The build
-    /// carries on and the session dies, so the symptom never points at the cause.
-    ///
-    /// The budget below reserves headroom for everything that is not this build - desktop, editor,
-    /// browser - and then divides what is left by a per-action estimate. Both numbers are
-    /// deliberately pessimistic, because overshooting costs a session and undershooting costs a
-    /// little wall-clock time on a build that was going to be I/O bound at the tail anyway.
-    ///
-    /// This only ever lowers the count. A workstation with memory to spare divides out well past
-    /// its core count and lands on the core count regardless, so nothing changes there.
-    /// </remarks>
+    /// <summary>Default parallelism: core count less one, capped to what the machine's memory holds.</summary>
     private static int DefaultParallelism()
     {
         int FromCores = Math.Max(1, Environment.ProcessorCount - 1);
@@ -110,22 +88,7 @@ public static class BuildMode
         return FromMemory;
     }
 
-    /// <summary>
-    /// Brings the IDE workspace back in line with the rules after a successful build, when a
-    /// rules file has changed since it was written.
-    /// </summary>
-    /// <remarks>
-    /// Editing a Build.cs used to mean the build saw the change and the IDE did not, until someone
-    /// remembered to regenerate; the symptom was an include that compiles and still shows as
-    /// unresolved. The gap closes itself now.
-    ///
-    /// Cheap because it is gated on the rules fingerprint, so an ordinary rebuild does no extra
-    /// work at all, and because generation rewrites only the files whose content actually changes.
-    /// The IDE therefore sees a modified project exactly when one is, and not on every build.
-    ///
-    /// Runs after the build rather than before it: MSBuild has finished evaluating the project by
-    /// then, so rewriting it cannot affect the build that is invoking us.
-    /// </remarks>
+    /// <summary>Refreshes the IDE workspace after a successful build when a rules file has changed.</summary>
     private static void RefreshProjectFilesIfStale(
         CommandLine Arguments,
         BuildDirectories Directories,
@@ -149,19 +112,14 @@ public static class BuildMode
         }
         catch (Exception Ex)
         {
-            // Never fail a build that already produced its binaries. The workspace being out of
-            // date costs completion and error checking, not the build, and the manual command
-            // still exists.
+            // Never fail a build that already produced binaries; the manual command still exists.
             Log.Warning(
                 "Could not update project files: {0}. Run GenerateProjectFiles to refresh the IDE workspace.",
                 Ex.Message);
         }
     }
 
-    /// <summary>
-    /// Shared state for one invocation, so a prerequisite target reuses the rules assembly and is
-    /// never built twice.
-    /// </summary>
+    /// <summary>Shared state for one invocation, so a prerequisite target is never built twice.</summary>
     private sealed class BuildSession
     {
         private readonly CommandLine Arguments;
@@ -243,16 +201,8 @@ public static class BuildMode
                     }
                 }
 
-                // Built at this target's own type, not as tools. Their output is not consumed by
-                // this target's graph, so ordering against them is not what matters; what matters is
-                // that asking for one of these builds the other too.
-                //
-                // Built as the engine's own build rather than as part of this project's, because it
-                // is one: an engine target assembled with a project attached puts the engine's
-                // intermediates, its reflection input and its generated C# bindings under that
-                // project, and LuminaSharp compiles those bindings from a fixed path in the engine
-                // tree. It also means one engine build serves every project instead of each getting
-                // a private copy of the same thing.
+                // Built at this target's own type, and as the engine's own build: an engine target with a project
+                // attached would put engine intermediates and generated bindings under that project.
                 if (Target.Rules.RequiredTargetNames.Count > 0)
                 {
                     BuildDirectories EngineOnly = Directories.ProjectRoot is null
@@ -294,16 +244,8 @@ public static class BuildMode
         {
             Stopwatch Timer = Stopwatch.StartNew();
 
-            // Held for the whole build. An IDE drives several projects at once, and two builds
-            // sharing an output set would otherwise write the same object files concurrently.
-            // Keyed on what is actually shared: platform, target type and configuration. Two
-            // configurations build at once because they write different files; two targets in one
-            // configuration cannot, because they share the engine's binaries and its objects.
-            //
-            // Rooted at the engine rather than at whatever was being built, because what they
-            // share lives in the engine tree. Two different game projects building the same
-            // configuration are as much a collision as two engine targets are, and keying this on
-            // the invocation's own output root would have let them past each other.
+            // Held for the whole build, keyed on platform/type/configuration and rooted at the engine, because
+            // that is where the shared binaries and objects live.
             string OutputKey =
                 $"output|{Target.Directories.EngineRoot}|{Target.Info.PlatformName}|{Target.Info.Type}|{Target.Info.Configuration}";
 
@@ -344,9 +286,7 @@ public static class BuildMode
 
             if (Outdated.Count == 0)
             {
-                // Nothing to build still leaves something to write: loading the cache prunes
-                // closures for outputs that no longer exist, and without this the pruning would be
-                // redone on every up-to-date build and never kept.
+                // Loading the cache prunes dead closures; without this the pruning is redone and never kept.
                 HeaderDependencies.Save();
 
                 Log.Info("{0} is up to date ({1:F2}s).", Target.Name, Timer.Elapsed.TotalSeconds);

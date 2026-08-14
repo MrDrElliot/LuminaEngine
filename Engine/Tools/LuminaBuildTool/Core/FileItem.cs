@@ -2,17 +2,12 @@ using System.Collections.Concurrent;
 
 namespace LuminaBuildTool.Core;
 
-/// <summary>
-/// Interned file handle with a cached existence flag and timestamp. Every path the build graph
-/// touches goes through here so a single build never stats the same file twice.
-/// </summary>
+/// <summary>Interned file handle with a cached existence flag and timestamp.</summary>
 public sealed class FileItem
 {
     private static readonly ConcurrentDictionary<string, FileItem> Interned = new(StringComparer.OrdinalIgnoreCase);
 
-    // Written last and read first, so the stat fields below are published before any thread can
-    // observe them as valid. Workers recheck freshness without holding a build slot, so a generator
-    // dropping the cache runs concurrently with readers.
+    // Written last and read first, so the stat fields below are published before any thread sees them.
     private volatile bool bStatted;
 
     private bool bExists;
@@ -49,10 +44,7 @@ public sealed class FileItem
         }
     }
 
-    /// <summary>
-    /// Last write time, or DateTime.MinValue when the file is missing so a missing input always
-    /// reads as older than any real output and never wrongly suppresses a rebuild.
-    /// </summary>
+    /// <summary>Last write time, or DateTime.MinValue when missing so it never suppresses a rebuild.</summary>
     public DateTime Timestamp
     {
         get
@@ -71,9 +63,7 @@ public sealed class FileItem
         }
     }
 
-    /// <summary>
-    /// Drops the cached stat after an action writes the file.
-    /// </summary>
+    /// <summary>Drops the cached stat after an action writes the file.</summary>
     public void Invalidate() => bStatted = false;
 
     public static void InvalidateAll()

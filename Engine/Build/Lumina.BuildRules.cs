@@ -2,10 +2,7 @@ using System.IO;
 using LuminaBuildTool.Configuration;
 using LuminaBuildTool.Platform;
 
-/// <summary>
-/// Engine-wide target defaults. ABI-affecting definitions belong here and nowhere else, so every
-/// module in a target agrees on struct layout.
-/// </summary>
+/// <summary>Engine-wide target defaults.</summary>
 public abstract class LuminaTargetRules : TargetRules
 {
     protected LuminaTargetRules(TargetInfo Target)
@@ -102,10 +99,7 @@ public abstract class LuminaTargetRules : TargetRules
     }
 }
 
-/// <summary>
-/// Defaults shared by every engine module. Force-includes ModuleAPI.h so the export macros are
-/// visible in every translation unit without each source having to include it.
-/// </summary>
+/// <summary>Defaults shared by every engine module.</summary>
 public abstract class LuminaModuleRules : ModuleRules
 {
     protected LuminaModuleRules(TargetInfo Target)
@@ -124,24 +118,18 @@ public abstract class LuminaModuleRules : ModuleRules
             PrivateLinkerOptions.Add("/NODEFAULTLIB:LIBCMT");
         }
 
-        // EASTL resolves its allocator per image, so every loaded image needs exactly one compiled
-        // copy of the binding. Declared per image rather than per module: a monolithic link folds
-        // these modules into the executable, and then only the executable still needs it.
+        // EASTL resolves its allocator per image, so each image needs exactly one compiled copy.
         PerImageSourceFiles.Add(
             Path.Combine(Target.EngineSourceDirectory, "Runtime", "Source", "Memory", "EASTLImpl.cpp"));
 
-        // Same reasoning, and for the same per-image reason: replacing global new/delete is a
-        // link-time decision made once per binary, and an image without its own definition binds to
-        // the CRT instead. Pointers cross images all the time, so one image out of step is enough to
-        // have rpmalloc handed a block the CRT allocated.
+        // Replacing global new/delete is a per-binary link decision; an image without its own definition
+        // binds to the CRT, and one image out of step hands rpmalloc a CRT block.
         PerImageSourceFiles.Add(
             Path.Combine(Target.EngineSourceDirectory, "Runtime", "Source", "Memory", "GlobalAllocatorOverrides.cpp"));
     }
 }
 
-/// <summary>
-/// Defaults for third-party code the engine vendors but does not own.
-/// </summary>
+/// <summary>Defaults for third-party code the engine vendors but does not own.</summary>
 public abstract class LuminaThirdPartyModuleRules : ModuleRules
 {
     protected LuminaThirdPartyModuleRules(TargetInfo Target)

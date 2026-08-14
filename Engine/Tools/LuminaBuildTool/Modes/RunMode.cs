@@ -7,17 +7,7 @@ using LuminaBuildTool.Rules;
 
 namespace LuminaBuildTool.Modes;
 
-/// <summary>
-/// Launches a target's executable, resolved through the same rules the build used to produce it.
-/// </summary>
-/// <remarks>
-/// Exists so nobody has to reconstruct the output path by hand. That path carries a configuration
-/// suffix, a platform directory and, for a game project, an output root that is not the engine's,
-/// and every one of those is decided by rules this tool already evaluates. Typing it out instead
-/// means a stale binary from a previous configuration runs and looks like the build that just
-/// finished -- which on Linux, where there is no IDE F5 to fall back on, was the whole story of
-/// how you started the editor.
-/// </remarks>
+/// <summary>Launches a target's executable, resolved through the same rules the build used to produce it.</summary>
 public static class RunMode
 {
     public static int Run(CommandLine Arguments, BuildDirectories Directories)
@@ -49,10 +39,8 @@ public static class RunMode
         TargetInfo Info = new(TargetName, TypeValue, PlatformValue, ConfigurationValue, Directories, Options);
         BuildTarget Target = new TargetAssembler(Assembly, Directories, PlatformSupport).Assemble(TargetName, Info);
 
-        // The same two fields the IDE's Run button reads on Windows, so both routes launch the
-        // same thing. It matters for a game target, whose launch module is the shared library the
-        // editor loads: there the rules point Run at the editor with --Project= already set, and
-        // taking the launch module's output instead would try to exec a .so.
+        // The same fields the IDE's Run button reads. A game target's launch module is the .so the editor
+        // loads, so its rules point Run at the editor with --Project set.
         string Executable = Target.Rules.DebuggerCommand.Length > 0
             ? Target.Rules.DebuggerCommand
             : Target.LaunchModule?.OutputFile ?? string.Empty;
@@ -90,15 +78,7 @@ public static class RunMode
         return OperatingSystem.IsWindows() ? $"{BaseName}.bat" : $"./{BaseName}.sh";
     }
 
-    /// <summary>
-    /// Splits a rules-authored argument string into arguments, honouring double quotes.
-    /// </summary>
-    /// <remarks>
-    /// DebuggerArguments is one string because that is the shape Visual Studio's project format
-    /// wants, and it contains quoted paths -- `--Project="/home/me/My Project/My.lproject"`. Passed
-    /// through whole it would arrive as a single argument with the quotes still in it, so the
-    /// project path would include them and resolve to nothing.
-    /// </remarks>
+    /// <summary>Splits a rules-authored argument string into arguments, honouring double quotes.</summary>
     internal static List<string> SplitArguments(string Arguments)
     {
         List<string> Result = new();
@@ -153,10 +133,8 @@ public static class RunMode
             UseShellExecute = false,
         };
 
-        // Only when the rules asked for one. The engine locates its own root from the executable
-        // and writes its logs beside it, so with nothing specified the working directory is free to
-        // stay where the user typed the command -- which is what makes a relative path in the
-        // forwarded arguments mean what it looks like it means.
+        // Only when the rules asked for one; the engine finds its root from the executable, so otherwise the
+        // caller's directory stands and relative forwarded paths mean what they look like.
         if (WorkingDirectory.Length > 0 && Directory.Exists(WorkingDirectory))
         {
             StartInfo.WorkingDirectory = WorkingDirectory;

@@ -4,9 +4,7 @@ using LuminaBuildTool.Core;
 
 namespace LuminaBuildTool.Configuration;
 
-/// <summary>
-/// One module entry inside a .lplugin descriptor.
-/// </summary>
+/// <summary>One module entry inside a .lplugin descriptor.</summary>
 public sealed class PluginModuleEntry
 {
     public string Name { get; set; } = string.Empty;
@@ -28,10 +26,7 @@ public sealed class PluginModuleEntry
     }
 }
 
-/// <summary>
-/// A .lplugin file. This is the single source of truth for a plugin's identity and module list;
-/// each listed module must have a matching Build.cs under the plugin's Source directory.
-/// </summary>
+/// <summary>A .lplugin file.</summary>
 public sealed class PluginDescriptor
 {
     public int FormatVersion { get; set; } = 1;
@@ -74,10 +69,7 @@ public sealed class PluginDescriptor
     [JsonIgnore]
     public string BinariesDirectory => Path.Combine(RootDirectory, "Binaries");
 
-    /// <summary>
-    /// SupportedPlatforms entries are system names without architecture, matching how the runtime
-    /// compares them against LUMINA_SYSTEM_NAME.
-    /// </summary>
+    /// <summary>SupportedPlatforms holds system names without architecture, matching LUMINA_SYSTEM_NAME.</summary>
     public bool SupportsPlatform(BuildPlatform Platform)
     {
         return SupportedPlatforms.Count == 0

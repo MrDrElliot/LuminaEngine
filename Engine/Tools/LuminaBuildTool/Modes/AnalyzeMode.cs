@@ -8,16 +8,7 @@ using LuminaBuildTool.Rules;
 
 namespace LuminaBuildTool.Modes;
 
-/// <summary>
-/// Reports on the include graph the last build recorded.
-/// </summary>
-/// <remarks>
-/// The compiler already tells us the exact header closure of every translation unit, and
-/// <see cref="DependencyCache"/> already keeps it so that editing a header rebuilds precisely the
-/// objects that read it. That same data answers questions nobody was asking it: which header costs
-/// the most to touch, and whether a module's declared dependencies match the ones it actually
-/// reaches into. Both are measurements rather than opinions, and both were previously guesses.
-/// </remarks>
+/// <summary>Reports on the include graph the last build recorded.</summary>
 public static class AnalyzeMode
 {
     /// <summary>A module's compiled outputs and the include closures recorded against them.</summary>
@@ -129,11 +120,7 @@ public static class AnalyzeMode
         return 0;
     }
 
-    /// <summary>
-    /// Rolls the ranking up to the module that owns each header, because a library is what you
-    /// decide about. Twenty equally-included headers from one vendored library are one fact, and
-    /// listing them individually buries the rest of the report under it.
-    /// </summary>
+    /// <summary>Rolls the ranking up to the owning module, because a library is what you decide about.</summary>
     private static void AppendModuleRollup(
         StringBuilder Report,
         AnalysisContext Context,
@@ -297,16 +284,7 @@ public static class AnalyzeMode
         return 0;
     }
 
-    /// <summary>
-    /// Resolves the target, loads the recorded include graph and attributes both objects and
-    /// headers back to the modules they belong to.
-    /// </summary>
-    /// <remarks>
-    /// Attribution is by longest matching directory rather than by asking the toolchain to name
-    /// object files again. The cache is keyed on output paths, and an output path already says
-    /// which module produced it; recomputing the names would be a second implementation of a
-    /// mapping that has to agree with the first.
-    /// </remarks>
+    /// <summary>Resolves the target, loads the include graph and attributes it back to modules.</summary>
     private static AnalysisContext? Prepare(CommandLine Arguments, BuildDirectories Directories)
     {
         string? TargetName = Arguments.GetPositional(1);

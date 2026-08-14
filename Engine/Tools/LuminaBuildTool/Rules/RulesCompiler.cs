@@ -8,9 +8,7 @@ using Microsoft.CodeAnalysis.Emit;
 
 namespace LuminaBuildTool.Rules;
 
-/// <summary>
-/// Manifest describing the inputs a cached rules assembly was built from.
-/// </summary>
+/// <summary>Manifest describing the inputs a cached rules assembly was built from.</summary>
 public sealed class RulesCacheManifest
 {
     public string ToolVersion { get; set; } = string.Empty;
@@ -20,10 +18,7 @@ public sealed class RulesCacheManifest
     public List<string> SourceFiles { get; set; } = new();
 }
 
-/// <summary>
-/// Compiles the discovered Target.cs and Build.cs files into a single assembly, caching the
-/// result and reusing it while none of the rules sources have changed.
-/// </summary>
+/// <summary>Compiles the discovered Target.cs and Build.cs into one cached assembly.</summary>
 public static class RulesCompiler
 {
     public static Assembly CompileOrLoad(BuildDirectories Directories, IReadOnlyList<RulesFile> RulesFiles, bool bForceRecompile)
@@ -81,15 +76,7 @@ public static class RulesCompiler
         return Cached is not null && Cached.SourceHash == ExpectedHash && Cached.ToolVersion == ToolVersion;
     }
 
-    /// <summary>
-    /// Hash covers the file set plus every file's timestamp and size, so adding, removing or
-    /// editing any rules file invalidates the cache.
-    /// </summary>
-    /// <remarks>
-    /// Public because it is not only this cache's key: generated project files bake in what the
-    /// rules said, so they go stale on exactly the same inputs and are checked against the same
-    /// answer. Only stats the files, so it is cheap enough to ask twice in one invocation.
-    /// </remarks>
+    /// <summary>Hash covers the file set plus each timestamp and size, so any rules edit invalidates it.</summary>
     public static string ComputeSourceHash(IEnumerable<string> SourcePaths)
     {
         return ContentHash.OfFiles(SourcePaths.OrderBy(P => P, StringComparer.OrdinalIgnoreCase));
@@ -160,10 +147,7 @@ public static class RulesCompiler
         return $"  {Location}: {Diagnostic.Id}: {Diagnostic.GetMessage()}";
     }
 
-    /// <summary>
-    /// References the loaded runtime assemblies plus this tool, which is what exposes TargetRules
-    /// and ModuleRules to the rules files.
-    /// </summary>
+    /// <summary>References the runtime assemblies plus this tool, exposing TargetRules and ModuleRules.</summary>
     private static List<MetadataReference> BuildReferences()
     {
         HashSet<string> Locations = new(StringComparer.OrdinalIgnoreCase);

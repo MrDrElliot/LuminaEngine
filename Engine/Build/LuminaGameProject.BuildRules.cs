@@ -1,10 +1,7 @@
 using System.IO;
 using LuminaBuildTool.Configuration;
 
-/// <summary>
-/// Base class for a game project's C++ module. The engine is built from source alongside it and
-/// keeps its output in the engine tree, so one engine build serves every project.
-/// </summary>
+/// <summary>Base class for a game project's C++ module.</summary>
 public abstract class LuminaGameModuleRules : LuminaModuleRules
 {
     protected LuminaGameModuleRules(TargetInfo Target)
@@ -22,9 +19,7 @@ public abstract class LuminaGameModuleRules : LuminaModuleRules
             PublicDependencyModuleNames.Add("Editor");
         }
 
-        // The minimum third-party set a game translation unit needs to satisfy the engine's
-        // template instantiations. The engine's public headers expose more, but those are either
-        // header only or already absorbed into the engine binaries.
+        // The minimum set a game translation unit needs for the engine's template instantiations.
         PrivateDependencyModuleNames.AddRange(new[]
         {
             "ImGui",
@@ -36,10 +31,7 @@ public abstract class LuminaGameModuleRules : LuminaModuleRules
     }
 }
 
-/// <summary>
-/// Base class for a game project's target. Adds the engine's reflection generator as a
-/// prerequisite and routes generated C# bindings into the project's own script assembly.
-/// </summary>
+/// <summary>Base class for a game project's target.</summary>
 public abstract class LuminaGameTargetRules : LuminaTargetRules
 {
     protected LuminaGameTargetRules(TargetInfo Target)
@@ -48,10 +40,8 @@ public abstract class LuminaGameTargetRules : LuminaTargetRules
         Type = Target.Type;
         PreBuildTargetNames.Add("Reflector");
 
-        // This target builds a library, and the thing that loads it is the engine's application,
-        // which lives in a target of its own. Building a project has to build that too or there is
-        // nothing to run afterwards; it also carries the managed engine assembly the editor loads
-        // at startup, so without it C# scripting comes up silently dead.
+        // A project builds a library; without the engine's application there is nothing to run it, and no
+        // managed engine assembly, so C# scripting comes up silently dead.
         RequiredTargetNames.Add("Lumina");
 
         // A project reads the engine's reflection manifest; publishing one would replace the
@@ -66,9 +56,7 @@ public abstract class LuminaGameTargetRules : LuminaTargetRules
         // with this project opened rather than launching the library.
         string EngineBinaries = Path.Combine(Target.EngineDirectory, "Binaries", Target.PlatformName);
 
-        // Extension from the target platform rather than a literal ".exe": ELF executables carry
-        // none, so hardcoding it named a file that does not exist and left every game project on
-        // Linux with a Run command that could not start.
+        // From the target platform, not a literal .exe: ELF executables carry none.
         DebuggerCommand = Path.Combine(
             EngineBinaries,
             $"Lumina-{Target.Configuration}{Target.Platform.GetExecutableExtension()}");
@@ -76,9 +64,7 @@ public abstract class LuminaGameTargetRules : LuminaTargetRules
         DebuggerWorkingDirectory = EngineBinaries;
     }
 
-    /// <summary>
-    /// Points the IDE's run command at the editor with this project's .lproject opened.
-    /// </summary>
+    /// <summary>Points the IDE's run command at the editor with this project's .lproject opened.</summary>
     protected void SetProjectFileToOpen(string ProjectFilePath)
     {
         DebuggerArguments = $"--Project=\"{TargetPath(ProjectFilePath)}\"";

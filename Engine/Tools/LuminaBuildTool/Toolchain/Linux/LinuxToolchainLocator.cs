@@ -25,20 +25,7 @@ public sealed class UnixToolchainInstallation
 
     public required string? LinkerName { get; init; }
 
-    /// <summary>
-    /// Library carrying the backtrace implementation behind std::stacktrace, without the "lib"
-    /// prefix, or null when this toolchain ships no such archive.
-    /// </summary>
-    /// <remarks>
-    /// libstdc++ declares std::stacktrace in the header but leaves the implementation in a separate
-    /// archive, and which archive that is has moved: GCC 13 shipped libstdc++_libbacktrace.a, and
-    /// from GCC 14 the implementation lives in libstdc++exp.a with the old archive gone entirely.
-    /// Hardcoding either name breaks every toolchain that uses the other, which is what a link
-    /// against a GCC 16 installation used to fail on.
-    ///
-    /// Null is a normal answer, not a failure: a libc++ toolchain leaves __cpp_lib_stacktrace
-    /// undefined, so Assert.h compiles its non-stacktrace path and there is nothing to link.
-    /// </remarks>
+    /// <summary>Archive behind std::stacktrace, without the lib prefix, or null when the toolchain has none.</summary>
     public required string? StacktraceLibrary { get; init; }
 
     /// <summary>Version string as the compiler reports it, for example "18.1.3".</summary>
@@ -167,23 +154,7 @@ public static class LinuxToolchainLocator
         };
     }
 
-    /// <summary>
-    /// Asks the compiler which of the known std::stacktrace support archives it actually ships.
-    /// </summary>
-    /// <remarks>
-    /// Asked of the driver rather than worked out from the version number, because the archive that
-    /// exists is a property of the installation and not of the release it claims to be: a distro
-    /// snapshot can ship either one, and the driver is the only thing that knows where its own
-    /// library directory is anyway.
-    ///
-    /// libstdc++exp.a comes first because it is the superset. GCC 13 ships both, and its exp
-    /// archive already contains the same backtrace objects as libstdc++_libbacktrace.a, so
-    /// preferring it is correct on the versions that offer a choice and is the only answer from
-    /// GCC 14 on.
-    ///
-    /// -print-file-name echoes the name back unchanged when it resolves nothing, so the result only
-    /// counts as a hit if it came back as a path that exists.
-    /// </remarks>
+    /// <summary>Asks the compiler which of the known std::stacktrace support archives it actually ships.</summary>
     private static string? LocateStacktraceLibrary(string CompilerPath)
     {
         foreach (string Candidate in new[] { "stdc++exp", "stdc++_libbacktrace" })

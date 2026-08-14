@@ -593,16 +593,7 @@ public sealed class ClangToolchain : IToolchain
         Arguments.Add("-Wl,--no-whole-archive");
     }
 
-    /// <summary>
-    /// Names a module may use to ask for the backtrace implementation behind std::stacktrace. Any
-    /// of them resolves to whichever archive the located toolchain actually ships.
-    /// </summary>
-    /// <remarks>
-    /// A module cannot know the right name: it moved from libstdc++_libbacktrace.a to
-    /// libstdc++exp.a in GCC 14, so whichever a rules file hardcodes is wrong on half the
-    /// toolchains in use. Treating both as a request for the same thing lets a rules file keep
-    /// saying what it needs and leaves the choice of archive with the layer that probed for it.
-    /// </remarks>
+    /// <summary>Names a module may use to ask for the backtrace implementation behind std::stacktrace.</summary>
     private static readonly string[] StacktraceLibraryAliases =
     {
         "stdc++exp",
@@ -619,9 +610,7 @@ public sealed class ClangToolchain : IToolchain
                 ? Installation.StacktraceLibrary
                 : Library;
 
-            // Null means the toolchain ships no such archive, which is the libc++ case. Dropping
-            // the request is right: the header saw no __cpp_lib_stacktrace and compiled the path
-            // that does not need it, so linking it would fail over a symbol nobody referenced.
+            // Null is the libc++ case: the header saw no __cpp_lib_stacktrace, so there is nothing to link.
             if (Substituted is null || Resolved.Contains(Substituted))
             {
                 continue;

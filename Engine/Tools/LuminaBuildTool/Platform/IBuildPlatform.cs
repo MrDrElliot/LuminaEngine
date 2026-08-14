@@ -3,10 +3,7 @@ using LuminaBuildTool.Toolchain;
 
 namespace LuminaBuildTool.Platform;
 
-/// <summary>
-/// Everything the core build system needs to know about a platform without knowing anything
-/// about its toolchain. Naming conventions live here; command lines live in the toolchain.
-/// </summary>
+/// <summary>What the core build system needs about a platform, without knowing its toolchain.</summary>
 public interface IBuildPlatform
 {
     BuildPlatform Platform { get; }
@@ -23,10 +20,7 @@ public interface IBuildPlatform
 
     string ObjectFileExtension { get; }
 
-    /// <summary>
-    /// Import library produced next to a shared library, or null when the platform links shared
-    /// libraries directly.
-    /// </summary>
+    /// <summary>Import library beside a shared library, or null when the platform links them directly.</summary>
     string? ImportLibraryExtension { get; }
 
     /// <summary>Definitions every module on this platform receives.</summary>

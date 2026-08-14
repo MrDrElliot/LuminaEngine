@@ -5,10 +5,7 @@ using LuminaBuildTool.Graph;
 
 namespace LuminaBuildTool.Toolchain.Windows;
 
-/// <summary>
-/// Drives cl.exe, link.exe and lib.exe. Every MSVC-specific command-line decision lives here;
-/// the rest of the build system never sees a compiler flag.
-/// </summary>
+/// <summary>Drives cl.exe, link.exe and lib.exe.</summary>
 public sealed class MsvcToolchain : IToolchain
 {
     private readonly MsvcInstallation Compiler;
@@ -31,11 +28,7 @@ public sealed class MsvcToolchain : IToolchain
 
     public string VersionKey => $"MSVC-{Compiler.ToolsVersion}-SDK-{Sdk.Version}";
 
-    /// <summary>
-    /// Derived from the compiler's major and minor version. Visual Studio keeps shipping older
-    /// toolsets, so an unrecognized future version falls back to the newest one this tool knows
-    /// rather than failing: the value only has to be a toolset the IDE can load.
-    /// </summary>
+    /// <summary>Derived from the compiler's major and minor version.</summary>
     public string ProjectToolsetName
     {
         get
@@ -126,9 +119,7 @@ public sealed class MsvcToolchain : IToolchain
             BuildAction Action = CreateCompileAction(
                 Target, Module, Source, bIsC: false, PchFile, PchFile is null ? PchMode.None : PchMode.Use);
 
-            // A blob's members are inputs to it. The dependency JSON reports them too once the blob
-            // has compiled at least once, but declaring them keeps the very first build, and any
-            // build after the cache is cleared, from missing an edit to a member.
+            // Declared so the first build, and any after a cache clear, still sees an edit to a member.
             if (Module.SubsumedSourceFiles.TryGetValue(Source.Location, out List<FileItem>? Members))
             {
                 Action.PrerequisiteItems.AddRange(Members);
@@ -182,10 +173,8 @@ public sealed class MsvcToolchain : IToolchain
             "/Zc:inline",
             "/Zc:__cplusplus",
 
-            // Conformance switches /permissive- does not imply. They exist so MSVC rejects what GCC
-            // rejects, rather than leaving the divergence to be found by the Linux build.
-            // /Zc:enumTypes is deliberately absent: it changes enum underlying types, which is an ABI
-            // break, not a diagnostic.
+            // Conformance switches /permissive- does not imply, so MSVC rejects what GCC rejects.
+            // /Zc:enumTypes is deliberately absent: it changes enum underlying types, an ABI break.
             "/Zc:templateScope",
             "/Zc:externConstexpr",
             "/Zc:throwingNew",
@@ -351,11 +340,7 @@ public sealed class MsvcToolchain : IToolchain
         }
     }
 
-    /// <summary>
-    /// The set MSBuild's C++ rules put on every link line by default. Engine code reaches for
-    /// COM, the shell and the common dialogs without declaring them, so the toolchain supplies
-    /// them rather than making every module restate the platform baseline.
-    /// </summary>
+    /// <summary>The set MSBuild's C++ rules put on every link line by default.</summary>
     private static readonly string[] DefaultSystemLibraries =
     {
         "kernel32.lib",
@@ -372,19 +357,13 @@ public sealed class MsvcToolchain : IToolchain
         "odbccp32.lib",
     };
 
-    /// <summary>
-    /// link.exe treats an extensionless name as an object file, so a bare library name such as
-    /// "clangBasic" has to become "clangBasic.lib" before it reaches the command line.
-    /// </summary>
+    /// <summary>link.exe reads an extensionless name as an object file, so bare library names gain .lib.</summary>
     private static string NormalizeLibraryName(string Library)
     {
         return Path.HasExtension(Library) ? Library : Library + ".lib";
     }
 
-    /// <summary>
-    /// Mirrors the module's directory layout under the intermediate directory so two source
-    /// files sharing a name never collide on one object file.
-    /// </summary>
+    /// <summary>Mirrors the module's layout under Intermediates so same-named sources cannot collide.</summary>
     private static string GetObjectFilePath(BuildModule Module, FileItem Source)
     {
         // Generated sources live outside the module tree; give them their own stable subdirectory

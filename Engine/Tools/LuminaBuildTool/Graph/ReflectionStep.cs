@@ -5,10 +5,7 @@ using LuminaBuildTool.Core;
 
 namespace LuminaBuildTool.Graph;
 
-/// <summary>
-/// One entry in the Reflector's input document. Property names are the wire format the Reflector
-/// parses and cannot be renamed independently of it.
-/// </summary>
+/// <summary>One entry in the Reflector's input document.</summary>
 public sealed class ReflectionProjectEntry
 {
     public string Name { get; set; } = string.Empty;
@@ -25,17 +22,10 @@ public sealed class ReflectionProjectEntry
     /// <summary>Where the generator writes this module's generated C++.</summary>
     public string GeneratedDir { get; set; } = string.Empty;
 
-    /// <summary>
-    /// Precompiled header the generated sources open with, or empty when the module has none.
-    /// A PCH is named after the module that owns it, so the generator is told rather than
-    /// guessing a name that only resolves while some other module is on the include path.
-    /// </summary>
+    /// <summary>Precompiled header the generated sources open with, or empty when the module has none.</summary>
     public string PrecompiledHeader { get; set; } = string.Empty;
 
-    /// <summary>
-    /// Parsed for type discovery but never generated for. Set on the engine's modules when a game
-    /// or plugin workspace pulls them in, so an engine base class is known without being emitted.
-    /// </summary>
+    /// <summary>Parsed for type discovery but never generated for.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool ReferenceOnly { get; set; }
 }
@@ -50,26 +40,16 @@ public sealed class ReflectionInputDocument
     public List<ReflectionProjectEntry> Projects { get; set; } = new();
 }
 
-/// <summary>
-/// Manifest of the engine's reflected modules, written when the engine builds and read by game
-/// and plugin workspaces. Without it a downstream module cannot tell that an engine base class is
-/// reflected, and silently emits a broken type with a null super struct.
-/// </summary>
+/// <summary>Manifest of the engine's reflected modules, written on engine builds, read by projects.</summary>
 public sealed class EngineReflectionManifest
 {
     public List<ReflectionProjectEntry> Projects { get; set; } = new();
 }
 
-/// <summary>
-/// Wires the reflection code generator into the action graph. Produces one Generate action per
-/// target whose outputs are the generated unity shards the reflected modules compile.
-/// </summary>
+/// <summary>Wires the reflection code generator into the action graph.</summary>
 public static class ReflectionStep
 {
-    /// <summary>
-    /// Must match kUnityShardCount in Reflector/CodeGeneration/CodeGenerator.cpp. The Reflector
-    /// emits exactly this many shards per reflected module, stubbing the empty ones.
-    /// </summary>
+    /// <summary>Must match kUnityShardCount in Reflector/CodeGeneration/CodeGenerator.cpp.</summary>
     public const int UnityShardCount = 8;
 
     public static string GetUnityShardPath(string GeneratedCodeDirectory, int Shard)
@@ -85,10 +65,7 @@ public static class ReflectionStep
         }
     }
 
-    /// <summary>
-    /// Result of planning the reflection step: the generator plus the actions that materialize
-    /// the files it reads and the manifest downstream projects read.
-    /// </summary>
+    /// <summary>Planned reflection step: the generator, its input actions, and the downstream manifest.</summary>
     public sealed class ReflectionActions
     {
         public required BuildAction Generate { get; init; }
@@ -96,15 +73,7 @@ public static class ReflectionStep
         public required List<BuildAction> Inputs { get; init; }
     }
 
-    /// <summary>
-    /// Plans the reflection step, or returns null when the target has no reflected modules.
-    /// </summary>
-    /// <remarks>
-    /// The generator's input document and the engine manifest are produced by actions rather than
-    /// written while the graph is being built. Planning a build must not touch the filesystem, or
-    /// a dry run would mutate the tree it is only meant to describe, and the input document's
-    /// timestamp would be decided by the very pass that reasons about it.
-    /// </remarks>
+    /// <summary>Plans the reflection step, or returns null when the target has no reflected modules.</summary>
     public static ReflectionActions? CreateActions(BuildTarget Target)
     {
         List<BuildModule> Reflected = Target.Modules.Where(M => M.Rules.bEnableReflection).ToList();
@@ -138,11 +107,8 @@ public static class ReflectionStep
 
         List<BuildAction> InputActions = new();
 
-        // Whether this is the engine's own build, decided by where the Target.cs lives rather than
-        // by whether a -Project was passed. A game solution builds the engine target with -Project
-        // set so that Run launches the editor on that project, which used to make the engine's own
-        // build look like a project's: it published no manifest, and claimed none of the generated
-        // code it was producing.
+        // Decided by where the Target.cs lives, not by -Project: a game solution builds the engine target
+        // with -Project set, which used to make the engine's own build publish no manifest.
         bool bIsEngineTarget = Target.Directories.IsEngineOwned(Target.Rules.RulesDirectory);
 
         if (bIsEngineTarget)
@@ -181,9 +147,7 @@ public static class ReflectionStep
             // internally parallel and a second instance would fight it for cores.
             bCanExecuteInParallel = false,
 
-            // Only the unity shards below are declared. The per-type generated headers and sources
-            // they include, and the C# bindings, are written too and are compile inputs to actions
-            // that have already been planned against the previous contents.
+            // The per-type headers, sources and C# bindings are written too but not declared.
             bWritesUndeclaredOutputs = true,
         };
 
@@ -197,11 +161,7 @@ public static class ReflectionStep
                 Action.PrerequisiteItems.Add(Header);
             }
 
-            // A project's build does not own the engine's generated code. Engine modules write
-            // into the shared engine tree, so if both an engine target and a project target
-            // claimed those files, each would record its own command against them and every build
-            // would find the other's record and regenerate. Only the owner declares them, which
-            // leaves the shared copy stable for everyone reading it.
+            // Only the owner declares the shared engine files; two claimants would each regenerate the other's.
             bool bOwnsOutput = Target.Directories.IsEngineOwned(Module.Rules.ModuleDirectory) == bIsEngineTarget;
 
             foreach (string Shard in EnumerateUnityShardPaths(Module.GeneratedCodeDirectory))
@@ -250,11 +210,7 @@ public static class ReflectionStep
         return ReflectorPath;
     }
 
-    /// <summary>
-    /// Publishes the engine's reflected module set for downstream projects. Its identity is its
-    /// content, so a build that changes nothing leaves the file untouched and does not make every
-    /// game project look stale.
-    /// </summary>
+    /// <summary>Publishes the engine's reflected module set for downstream projects.</summary>
     private static BuildAction CreateEngineManifestAction(BuildTarget Target, IEnumerable<ReflectionProjectEntry> Projects)
     {
         EngineReflectionManifest Manifest = new()
@@ -285,15 +241,7 @@ public static class ReflectionStep
         return Action;
     }
 
-    /// <summary>
-    /// Where the engine publishes its reflected module set, always under the engine tree.
-    /// </summary>
-    /// <remarks>
-    /// Keyed the same way the intermediates it describes are. A single shared file meant whichever
-    /// engine target built last decided what every project saw: a Game build publishes no editor
-    /// modules, so after one the manifest claimed the engine had none, and a project's Editor build
-    /// read that and silently treated every editor base class as unreflected.
-    /// </remarks>
+    /// <summary>Where the engine publishes its reflected module set, always under the engine tree.</summary>
     private static string EngineManifestPath(BuildTarget Target)
     {
         return Path.Combine(
@@ -305,18 +253,7 @@ public static class ReflectionStep
             "EngineModules.json");
     }
 
-    /// <summary>
-    /// Adds the engine's reflected modules that this target does not build for itself, so a project
-    /// type can derive from an engine one.
-    /// </summary>
-    /// <remarks>
-    /// A project builds the engine from source alongside itself, so every engine module it depends
-    /// on is already in the document above as something to generate for. The manifest only has
-    /// anything to contribute for a module the target does not compile, and on a source build there
-    /// are none, which is why a missing one is not an error: requiring it made the first build of a
-    /// new project fail outright on a tree where no engine target had been built yet, even though
-    /// that build compiles the engine and needs nothing the manifest holds.
-    /// </remarks>
+    /// <summary>Adds engine reflected modules this target does not build, so project types can derive from them.</summary>
     private static void AppendEngineReferenceProjects(BuildTarget Target, ReflectionInputDocument Document)
     {
         string ManifestPath = EngineManifestPath(Target);
@@ -335,9 +272,7 @@ public static class ReflectionStep
 
         foreach (ReflectionProjectEntry Project in Manifest.Projects)
         {
-            // Already in the document as a module this target generates for. Passing the generator
-            // the same module twice, once with its real output directory and once reference-only
-            // with none, leaves which one wins up to parse order.
+            // Passing the generator one module twice leaves which entry wins up to parse order.
             if (!Present.Add(Project.Name))
             {
                 continue;

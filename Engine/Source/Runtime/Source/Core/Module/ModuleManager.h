@@ -8,15 +8,8 @@
 #include "Memory/SmartPtr.h"
 
 
-// Module ABI guard
-//
-// BUMP THIS whenever the engine's binary interface to modules changes: the layout or size of a type that
-// crosses the boundary, an enum's values, exported signatures, or the VTABLE SHAPE of a class modules
-// derive from. Adding a virtual to FEditorTool shifts every later slot, so a plugin built against the old
-// header dispatches through the wrong one -- which surfaces as a crash somewhere unrelated (a garbage
-// const char* reaching std::format, say) rather than as a load failure.
-//
-// 2 -- FEditorTool gained the GetDefaultCameraPose virtual + bIsActiveTool member.
+// BUMP whenever the binary interface to modules changes: type layout, enum values, exported
+// signatures, or vtable shape. A stale plugin then crashes somewhere unrelated instead of failing to load.
 #define LUMINA_MODULE_ABI_VERSION 2
 
 #if defined(WITH_EDITOR) && WITH_EDITOR
@@ -142,15 +135,11 @@ namespace Lumina
         // True if a module with this bare name is statically linked (monolithic builds).
         bool HasStaticFactory(const FName& Name) const { return FindStaticFactory(Name) != nullptr; }
 
-        // Human-readable reason the most recent LoadModule call failed (e.g. an ABI mismatch), or empty
-        // if it succeeded / failed without a recorded reason. Lets callers (the editor project loader)
-        // surface a warning. Reset at the start of each LoadModule.
+        // Why the most recent LoadModule failed, or empty on success. Reset at the start of each call.
         RUNTIME_API const FString& GetLastLoadError() const { return LastLoadError; }
 
-        // ImGui is a StaticLib, so each module DLL has its own ImGui/ImPlot context + allocator globals.
-        // The editor calls this once its ImGui context exists (contexts passed as void* to keep this
-        // header ImGui-free); it stores them and syncs every already-loaded module that opted in via
-        // LUMINA_MODULE_IMGUI() (see ImGuiModule.h). Modules loaded later are synced at load time.
+        // ImGui is a StaticLib, so each module DLL has its own context and allocator globals.
+        // Contexts are void* to keep this header ImGui-free; modules opt in via LUMINA_MODULE_IMGUI().
         RUNTIME_API void NotifyImGuiReady(void* InImGuiContext, void* InImPlotContext);
 
 
@@ -158,9 +147,7 @@ namespace Lumina
 
         FModuleInfo* GetOrCreateModuleInfo(const FName& ModuleName);
 
-        // Call a loaded module's optional LuminaModuleSetupImGui export with the stored contexts.
-        // No-op for statically-linked modules (null handle), modules without the hook, or before
-        // NotifyImGuiReady has run.
+        // No-op for static modules, modules without the hook, or before NotifyImGuiReady has run.
         void SyncModuleImGui(const FModuleInfo& ModuleInfo);
 
         // Static-registry lookup by bare name (no config suffix); nullptr if not registered.

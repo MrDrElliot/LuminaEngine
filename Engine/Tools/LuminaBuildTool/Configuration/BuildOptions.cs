@@ -3,9 +3,7 @@ using LuminaBuildTool.Core;
 
 namespace LuminaBuildTool.Configuration;
 
-/// <summary>
-/// How an optional feature resolves. Auto lets the rules decide per configuration.
-/// </summary>
+/// <summary>How an optional feature resolves. Auto lets the rules decide per configuration.</summary>
 public enum FeatureMode
 {
     Auto,
@@ -13,24 +11,14 @@ public enum FeatureMode
     Off,
 }
 
-/// <summary>
-/// Optional-feature switches, resolved from Engine/Build/BuildConfiguration.json and then from
-/// the command line, which wins.
-/// </summary>
-/// <remarks>
-/// Only the mode lives here. What "auto" means for a given feature is engine policy and belongs
-/// in the shared rules file, so the tool stays free of engine-specific knowledge.
-/// </remarks>
+/// <summary>Feature switches from BuildConfiguration.json, then the command line, which wins.</summary>
 public sealed class BuildOptions
 {
     private readonly Dictionary<string, FeatureMode> Modes = new(StringComparer.OrdinalIgnoreCase);
 
     public static BuildOptions Empty { get; } = new();
 
-    /// <summary>
-    /// Compile every source as its own translation unit regardless of what the rules say. Set by
-    /// -NoUnity, so ruling unity out as the cause of a failure never means editing a Build.cs.
-    /// </summary>
+    /// <summary>Compile every source as its own translation unit regardless of what the rules say.</summary>
     public bool bDisableUnityBuild { get; set; }
 
     public FeatureMode GetMode(string Feature)
@@ -40,10 +28,7 @@ public sealed class BuildOptions
 
     public IReadOnlyDictionary<string, FeatureMode> All => Modes;
 
-    /// <summary>
-    /// Loads the config file, then applies matching command line switches such as -Tracy=off.
-    /// An unreadable or missing file leaves every feature on Auto.
-    /// </summary>
+    /// <summary>Loads the config file, then applies matching command line switches such as -Tracy=off.</summary>
     public static BuildOptions Load(BuildDirectories Directories, CommandLine? Arguments)
     {
         BuildOptions Options = new();

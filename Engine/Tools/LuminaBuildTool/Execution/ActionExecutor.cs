@@ -10,10 +10,7 @@ public sealed class ExecutionResult
 {
     public int ActionsExecuted { get; set; }
 
-    /// <summary>
-    /// Actions the plan expected to run that turned out to be current once their dependencies
-    /// finished without changing anything.
-    /// </summary>
+    /// <summary>Actions the plan expected to run that proved current once their dependencies settled.</summary>
     public int ActionsSkipped { get; set; }
 
     public int ActionsFailed { get; set; }
@@ -23,9 +20,7 @@ public sealed class ExecutionResult
     public bool bSucceeded => ActionsFailed == 0;
 }
 
-/// <summary>
-/// Runs outdated actions in dependency order, as many at a time as the machine allows.
-/// </summary>
+/// <summary>Runs outdated actions in dependency order, as many at a time as the machine allows.</summary>
 public sealed class ActionExecutor
 {
     private readonly ActionGraph Graph;
@@ -173,9 +168,7 @@ public sealed class ActionExecutor
                         Index = ++Started;
                     }
 
-                    // Every dependency has finished, so the inputs are final. Rechecking here
-                    // catches the case where a dependency ran but rewrote nothing, which is the
-                    // normal outcome for a code generator whose inputs changed cosmetically.
+                    // Inputs are final now; catches a dependency that ran but rewrote nothing.
                     if (!ActionGraph.IsOutdated(Action, History, Dependencies, out string Reason))
                     {
                         Log.Verbose("Skipping {0}: still up to date", DescribeAction(Action));
@@ -233,15 +226,7 @@ public sealed class ActionExecutor
         return Result;
     }
 
-    /// <summary>
-    /// Applies the action's concurrency requirement. An action that cannot run in parallel gets
-    /// the machine to itself: a code generator or an MSBuild invocation already parallelizes
-    /// internally, and a second one would contend for the same cores and the same locks.
-    /// </summary>
-    /// <remarks>
-    /// The exclusive gate is what makes draining the slots safe. Without it two exclusive actions
-    /// could each hold part of the pool and wait forever for the rest.
-    /// </remarks>
+    /// <summary>Applies the action's concurrency requirement.</summary>
     private async Task<bool> RunWithConcurrencyLimitAsync(BuildAction Action, CancellationToken Cancellation)
     {
         if (Action.bCanExecuteInParallel)
@@ -286,10 +271,7 @@ public sealed class ActionExecutor
         }
     }
 
-    /// <summary>
-    /// Times the action for the timeline. Wraps only the run itself, so waiting for a parallelism
-    /// slot is never charged to the action that was waiting.
-    /// </summary>
+    /// <summary>Times the action for the timeline.</summary>
     private async Task<bool> ExecuteAndRecordAsync(BuildAction Action, CancellationToken Cancellation)
     {
         if (Timeline is null)
@@ -358,9 +340,7 @@ public sealed class ActionExecutor
         }
     }
 
-    /// <summary>
-    /// Runs an action that does its work in process.
-    /// </summary>
+    /// <summary>Runs an action that does its work in process.</summary>
     private bool ExecuteOperation(BuildAction Action, BuildOperation Operation)
     {
         try
@@ -371,10 +351,8 @@ public sealed class ActionExecutor
         }
         catch (Exception Ex) when (Ex is IOException or UnauthorizedAccessException or FileNotFoundException)
         {
-            // A tolerated failure only counts as success when the output is already what the
-            // operation would have written. Recording success on an unverified output would
-            // freeze a stale file in place: the input stamp would advance and the build would
-            // never try again.
+            // Recording success on an unverified output would freeze a stale file: the stamp advances and the
+            // build never retries.
             if (Action.bIgnoreExitCode && Operation is CopyFileOperation Copy && Copy.IsAlreadyStaged())
             {
                 Log.Verbose(
@@ -401,9 +379,7 @@ public sealed class ActionExecutor
 
     private void RecordSuccess(BuildAction Action)
     {
-        // Drop the cached stats so the recheck of any dependent sees the new timestamps. An action
-        // that writes files it never declared invalidates everything instead, because the files it
-        // touched cannot be enumerated from the graph.
+        // An action writing undeclared files invalidates everything, since they cannot be enumerated.
         if (Action.bWritesUndeclaredOutputs)
         {
             FileItem.InvalidateAll();
@@ -433,10 +409,7 @@ public sealed class ActionExecutor
         }
     }
 
-    /// <summary>
-    /// Drops the cached state for a failed action's outputs so a partial write is never trusted
-    /// as up to date on the next build.
-    /// </summary>
+    /// <summary>Drops cached state for a failed action's outputs so a partial write is never trusted.</summary>
     private void InvalidateOutputs(BuildAction Action)
     {
         foreach (FileItem Produced in Action.AllProducedItems)
@@ -477,10 +450,7 @@ public sealed class ActionExecutor
         File.WriteAllText(Action.ResponseFilePath, Action.ResponseFileContents, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
     }
 
-    /// <summary>
-    /// Strips the source file name cl.exe echoes before its diagnostics, which would otherwise
-    /// double every compile line in the log.
-    /// </summary>
+    /// <summary>Strips the filename cl.exe echoes, which would otherwise double every compile line.</summary>
     private static string FilterToolOutput(BuildAction Action, string Output)
     {
         if (Action.Type != ActionType.Compile || Output.Length == 0 || Action.EchoedInputName.Length == 0)

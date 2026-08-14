@@ -5,10 +5,7 @@ using LuminaBuildTool.Graph;
 
 namespace LuminaBuildTool.Execution;
 
-/// <summary>
-/// Serialized form of the header dependency cache. Paths go through a shared pool because the
-/// same engine headers appear in nearly every translation unit's include closure.
-/// </summary>
+/// <summary>Serialized form of the header dependency cache.</summary>
 public sealed class DependencyCacheData
 {
     public List<string> Paths { get; set; } = new();
@@ -17,10 +14,7 @@ public sealed class DependencyCacheData
     public Dictionary<string, List<int>> Dependencies { get; set; } = new();
 }
 
-/// <summary>
-/// Remembers which headers each compiled output actually depended on, so editing a header
-/// rebuilds exactly the translation units that included it.
-/// </summary>
+/// <summary>Records which headers each output depended on, so editing one rebuilds exactly its includers.</summary>
 public sealed class DependencyCache
 {
     private readonly string CacheFile;
@@ -49,12 +43,8 @@ public sealed class DependencyCache
 
         foreach ((string Output, List<int> Indices) in Data.Dependencies)
         {
-            // An output that is no longer on disk has nothing left to keep a closure for. It is
-            // rebuilt regardless, so this never affected a freshness decision, but the entries
-            // accumulate: changing what a module produces, by merging its sources into unity blobs
-            // for instance, orphans every object the old arrangement made. Left in place they
-            // outnumbered the live ones and made anything reading this cache as a measurement of
-            // the codebase count objects that do not exist.
+            // An output no longer on disk is rebuilt anyway, so this never affected freshness -- but orphaned
+            // entries accumulate until they outnumber the live ones.
             if (!File.Exists(Output))
             {
                 Dropped++;
@@ -134,10 +124,7 @@ public sealed class DependencyCache
         return DependenciesByOutput.TryGetValue(OutputFile, out string[]? Paths) ? Paths : null;
     }
 
-    /// <summary>
-    /// Every recorded output and the header closure the compiler reported for it. Exposed so the
-    /// graph the build keeps for freshness can also be read as a measurement of the codebase.
-    /// </summary>
+    /// <summary>Every recorded output and the header closure the compiler reported for it.</summary>
     public IEnumerable<KeyValuePair<string, string[]>> EnumerateRecorded()
     {
         return DependenciesByOutput;
@@ -169,10 +156,7 @@ public sealed class DependencyCache
         bDirty = true;
     }
 
-    /// <summary>
-    /// Parses the MSVC /sourceDependencies document. Returns null when the file is absent or
-    /// malformed, which downgrades to a timestamp-only decision rather than a wrong skip.
-    /// </summary>
+    /// <summary>Parses the MSVC /sourceDependencies document.</summary>
     private static string[]? ParseSourceDependencies(string DependencyListFile)
     {
         try

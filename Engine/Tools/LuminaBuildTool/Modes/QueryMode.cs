@@ -7,9 +7,7 @@ using LuminaBuildTool.Rules;
 
 namespace LuminaBuildTool.Modes;
 
-/// <summary>
-/// Prints what the tool discovered, for inspecting the graph without building it.
-/// </summary>
+/// <summary>Prints what the tool discovered, for inspecting the graph without building it.</summary>
 public static class QueryMode
 {
     public static int Run(CommandLine Arguments, BuildDirectories Directories)

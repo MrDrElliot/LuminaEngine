@@ -13,20 +13,7 @@ public readonly record struct TimelineSpan(
     TimeSpan Duration,
     bool bSucceeded);
 
-/// <summary>
-/// Records when each action ran and for how long, and writes it as a trace a profiler can draw.
-/// </summary>
-/// <remarks>
-/// Totals already tell you a build took thirty seconds. They cannot tell you that twenty of those
-/// had one core busy because everything was waiting behind the reflection generator, or that one
-/// unity blob runs three times as long as its siblings and sets the floor for the whole module.
-/// Those are shapes, and a shape wants a picture: the output opens in Perfetto or chrome://tracing
-/// as it stands.
-///
-/// Spans measure execution only, not the wait for a parallelism slot. A span that looks idle in
-/// the viewer really was idle, rather than queued behind the concurrency limit, which is what
-/// makes gaps in the picture worth investigating.
-/// </remarks>
+/// <summary>Records when each action ran and for how long, and writes it as a trace a profiler can draw.</summary>
 public sealed class BuildTimeline
 {
     private readonly Stopwatch Clock = Stopwatch.StartNew();
@@ -41,14 +28,7 @@ public sealed class BuildTimeline
         Spans.Add(new TimelineSpan(Name, Category, Start, Duration, bSucceeded));
     }
 
-    /// <summary>
-    /// Writes the Chrome Trace Event format, which Perfetto and chrome://tracing both read.
-    /// </summary>
-    /// <remarks>
-    /// Actions are assigned to lanes so that overlapping ones stack instead of drawing over each
-    /// other. The lane count that falls out is the parallelism the build actually achieved, which
-    /// is the number worth comparing against the one it was allowed.
-    /// </remarks>
+    /// <summary>Writes the Chrome Trace Event format, which Perfetto and chrome://tracing both read.</summary>
     public void Write(string FilePath)
     {
         List<TimelineSpan> Ordered = Spans.OrderBy(S => S.Start).ToList();
@@ -96,10 +76,7 @@ public sealed class BuildTimeline
             Math.Max(LaneEnds.Count, 1));
     }
 
-    /// <summary>
-    /// Logs the longest actions, which is the part of the picture worth having without opening a
-    /// viewer: the tail of a parallel build is what sets its wall time.
-    /// </summary>
+    /// <summary>Logs the longest actions: the tail of a parallel build is what sets its wall time.</summary>
     public void LogSlowest(int Count)
     {
         List<TimelineSpan> Slowest = Spans

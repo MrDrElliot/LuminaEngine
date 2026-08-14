@@ -4,19 +4,7 @@ using LuminaBuildTool.Core;
 
 namespace LuminaBuildTool.Graph;
 
-/// <summary>
-/// Refuses to build a module graph whose edges contradict the layering the rules declare.
-/// </summary>
-/// <remarks>
-/// Most of this is checked against declarations that already exist rather than a new set to
-/// maintain. A module states which target types it belongs in; a third-party module states that it
-/// is vendored. Both are statements about layering that nothing was reading as one, which meant an
-/// editor-only module could be pulled into the runtime and the build would say so only much later,
-/// in whichever configuration first went looking for it.
-///
-/// Every violation is reported, not just the first. An architectural drift is usually several edges
-/// that arrived together, and fixing them one build at a time is the slowest way to find that out.
-/// </remarks>
+/// <summary>Refuses to build a module graph whose edges contradict the layering the rules declare.</summary>
 public static class ModuleLayerCheck
 {
     public static void Verify(BuildTarget Target)
@@ -31,9 +19,7 @@ public static class ModuleLayerCheck
 
         foreach (BuildModule Module in Target.Modules)
         {
-            // Build-order edges are excluded throughout: naming one says this has to be built
-            // first, not that anything links or includes it. A module is entitled to wait for a
-            // Program it could never depend on, which is exactly how a code generator is used.
+            // Build-order edges say build this first, not link it; a module may wait on a Program.
             foreach (BuildModule Dependency in Module.AllDependencies.Distinct())
             {
                 CheckVendoredIndependence(Module, Dependency, Violations);
@@ -62,21 +48,10 @@ public static class ModuleLayerCheck
         throw new BuildException(Message.ToString());
     }
 
-    // Host type is deliberately not checked here. It reads like the obvious rule, that a dependency
-    // must exist everywhere its dependent does, and it is unsound: a Build.cs is evaluated per
-    // target type, so a module can name an editor dependency inside a Target.bWithEditor check and
-    // the edge simply does not exist in a Game resolution. Lumina does exactly that. What remains
-    // once the conditional edges are excluded is the case where a dependency is missing from the
-    // target being resolved right now, and ResolveModule already rejects that with a better message.
+    // Host type is deliberately unchecked: a Build.cs is evaluated per target type, so an editor-only
+    // dependency simply does not exist in a Game resolution. ResolveModule rejects the real case.
 
-    /// <summary>
-    /// Vendored code must not depend on ours.
-    /// </summary>
-    /// <remarks>
-    /// A third-party module is a copy of someone else's source that we expect to replace wholesale
-    /// on the next update. An edge back into an engine module makes that update a merge, and the
-    /// engine's own layering then runs through code we do not own.
-    /// </remarks>
+    /// <summary>Vendored code must not depend on ours.</summary>
     private static void CheckVendoredIndependence(BuildModule Module, BuildModule Dependency, List<string> Violations)
     {
         if (!Module.Rules.bIsThirdParty || Dependency.Rules.bIsThirdParty)
@@ -89,10 +64,7 @@ public static class ModuleLayerCheck
             + "Vendored code has to stand alone so it can be replaced by the next version of itself.");
     }
 
-    /// <summary>
-    /// Applies the target's own declared rules across the whole closure, so an edge routed through
-    /// an intermediate module is still the edge the rule forbids.
-    /// </summary>
+    /// <summary>Applies declared rules across the closure, so routing an edge through a module cannot evade it.</summary>
     private static void CheckForbiddenDependencies(BuildTarget Target, List<string> Violations)
     {
         foreach (ForbiddenDependency Rule in Target.Rules.ForbiddenDependencies)
@@ -119,13 +91,7 @@ public static class ModuleLayerCheck
         }
     }
 
-    /// <summary>
-    /// Shortest dependency path from a module to a named one, or null when it cannot reach it.
-    /// </summary>
-    /// <remarks>
-    /// Breadth first, so the reported path is the shortest one. A violation is acted on by deleting
-    /// an edge, and the shortest path is the one with the fewest candidates to consider.
-    /// </remarks>
+    /// <summary>Shortest dependency path from a module to a named one, or null when it cannot reach it.</summary>
     private static List<BuildModule>? FindPath(BuildModule From, string ToName)
     {
         Dictionary<BuildModule, BuildModule?> CameFrom = new() { [From] = null };

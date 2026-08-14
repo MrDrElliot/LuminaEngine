@@ -2,9 +2,7 @@ using LuminaBuildTool.Core;
 
 namespace LuminaBuildTool.Toolchain.Windows;
 
-/// <summary>
-/// A located Windows 10/11 SDK.
-/// </summary>
+/// <summary>A located Windows 10/11 SDK.</summary>
 public sealed class WindowsSdkInstallation
 {
     public required string RootDirectory { get; init; }
@@ -53,10 +51,7 @@ public sealed class WindowsSdkInstallation
     public override string ToString() => $"Windows SDK {Version}";
 }
 
-/// <summary>
-/// Finds an installed Windows SDK by probing the standard kit roots. Avoids the registry so the
-/// tool stays on the portable .NET surface.
-/// </summary>
+/// <summary>Finds an installed Windows SDK by probing the standard kit roots.</summary>
 public static class WindowsSdkLocator
 {
     private static WindowsSdkInstallation? Cached;

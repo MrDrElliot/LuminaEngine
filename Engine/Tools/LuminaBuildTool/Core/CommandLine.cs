@@ -1,8 +1,6 @@
 namespace LuminaBuildTool.Core;
 
-/// <summary>
-/// Parses "Mode Positional... -Flag -Key=Value" argument lists. Keys are case insensitive.
-/// </summary>
+/// <summary>Parses "Mode Positional... -Flag -Key=Value" argument lists. Keys are case insensitive.</summary>
 public sealed class CommandLine
 {
     private readonly Dictionary<string, string> Options = new(StringComparer.OrdinalIgnoreCase);
@@ -22,9 +20,7 @@ public sealed class CommandLine
                 continue;
             }
 
-            // Everything past a bare "--" belongs to whatever this invocation launches, not to us.
-            // Run mode needs it: the editor takes flags whose names collide with ours, and without a
-            // terminator "-Verbose" meant for the editor would be swallowed here and never reach it.
+            // Everything past a bare "--" goes to the launched process; the editor has flags that collide.
             if (bForwarding)
             {
                 Forwarded.Add(Arg);

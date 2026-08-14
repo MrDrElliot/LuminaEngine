@@ -3,10 +3,7 @@ using System.Text.Json.Serialization;
 
 namespace LuminaBuildTool.Core;
 
-/// <summary>
-/// Small JSON persistence helper for build caches. Never throws on a corrupt or missing cache;
-/// a bad cache degrades to a full rebuild rather than failing the build.
-/// </summary>
+/// <summary>Small JSON persistence helper for build caches.</summary>
 public static class JsonStore
 {
     private static readonly JsonSerializerOptions Options = new()

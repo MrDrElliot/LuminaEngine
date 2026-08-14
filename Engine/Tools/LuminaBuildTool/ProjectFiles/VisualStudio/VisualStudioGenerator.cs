@@ -7,16 +7,10 @@ using LuminaBuildTool.Toolchain;
 
 namespace LuminaBuildTool.ProjectFiles.VisualStudio;
 
-/// <summary>
-/// Generates NMake-style vcxproj files plus a solution. Building from the IDE calls back into
-/// LuminaBuildTool, so the tool stays the single authority on how anything is compiled.
-/// </summary>
+/// <summary>Generates NMake-style vcxproj files plus a solution.</summary>
 public sealed class VisualStudioGenerator : IProjectFileGenerator
 {
-    /// <summary>
-    /// MSBuild's own platform axis. Configurations carry the engine's target type instead, so
-    /// this stays fixed while `-Platform` selects the real build platform.
-    /// </summary>
+    /// <summary>MSBuild's own platform axis.</summary>
     private const string PlatformName = "x64";
 
     private readonly IToolchain Toolchain;
@@ -40,9 +34,7 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
         int Changed = 0;
         List<GeneratedProject> Projects = new();
 
-        // One buildable project per target. Building anything in the IDE runs this tool once for
-        // that target, which is the only shape that does not have several MSBuild projects
-        // driving the same output set at the same time.
+        // One buildable project per target, so a solution build never drives one output set from several.
         foreach (ProjectTargetInfo Target in Targets)
         {
             Projects.Add(new GeneratedProject
@@ -60,10 +52,7 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
             });
         }
 
-        // A module project exists to browse and edit that module with its own include paths and
-        // definitions. It deliberately builds nothing: a module is not independently buildable,
-        // and giving it the target's build command is what made a solution build launch one tool
-        // instance per module.
+        // Module projects browse only; giving them the build command ran one tool instance per module.
         Dictionary<string, GeneratedProject> ProjectsByModule = new(StringComparer.OrdinalIgnoreCase);
 
         // A target is named after its launch module, so that module is already represented by the
@@ -141,10 +130,7 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
 
         public required string OwningTargetName { get; init; }
 
-        /// <summary>
-        /// Module whose sources and IntelliSense settings this project shows. Null for a target
-        /// whose launch module could not be resolved.
-        /// </summary>
+        /// <summary>Module whose sources and IntelliSense settings this project shows.</summary>
         public required BuildModule? Module { get; init; }
 
         /// <summary>Whether building this project actually runs the build tool.</summary>
@@ -165,10 +151,7 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
         public required string SolutionFolder { get; init; }
     }
 
-    /// <summary>
-    /// Groups projects the way the source tree does: engine modules, plugins, third-party and tools,
-    /// with everything belonging to the game project gathered under Games/&lt;Project&gt;.
-    /// </summary>
+    /// <summary>Groups projects as the source tree does, with the game project's own under Games/&lt;Project&gt;.</summary>
     private static string ResolveSolutionFolder(BuildDirectories Directories, BuildModule Module)
     {
         string? GameFolder = ResolveGameFolder(Directories, Module.Rules.ModuleDirectory);
@@ -199,16 +182,7 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
         return "Engine";
     }
 
-    /// <summary>
-    /// Whether this is the target the IDE should start with.
-    /// </summary>
-    /// <remarks>
-    /// A solution has no startup-project field, so the answer is really "which project is listed
-    /// first". In a game solution that has to be the game's own target: the engine's application is
-    /// there as a dependency, and it is the game target that carries the debugger settings passing
-    /// --Project. Left to the engine's own answer, opening a project and hitting Run launched a
-    /// bare editor with no project loaded.
-    /// </remarks>
+    /// <summary>Whether this is the target the IDE should start with.</summary>
     private static bool IsStartupTarget(BuildDirectories Directories, ProjectTargetInfo Target)
     {
         if (Directories.ProjectRoot is null)
@@ -219,10 +193,7 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
         return PathUtils.IsUnder(Target.PrimaryVariant.Rules.RulesDirectory, Directories.ProjectRoot);
     }
 
-    /// <summary>
-    /// Solution folder for a target's own project. A game target sits with the rest of that
-    /// project's code rather than in the engine's flat list of targets.
-    /// </summary>
+    /// <summary>Solution folder for a target's own project.</summary>
     private static string ResolveTargetSolutionFolder(BuildDirectories Directories, ProjectTargetInfo Target)
     {
         string? GameFolder = ResolveGameFolder(Directories, Target.PrimaryVariant.Rules.RulesDirectory);
@@ -230,13 +201,7 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
         return GameFolder is not null ? GameFolder + "/Source" : "Targets";
     }
 
-    /// <summary>
-    /// "Games/&lt;ProjectName&gt;" when a path belongs to the game project being built, else null.
-    /// </summary>
-    /// <remarks>
-    /// Named from the project directory rather than a target, because a project may declare more
-    /// than one target and they all belong to the same game.
-    /// </remarks>
+    /// <summary>"Games/&lt;ProjectName&gt;" when a path belongs to the game project being built, else null.</summary>
     private static string? ResolveGameFolder(BuildDirectories Directories, string Location)
     {
         if (Directories.ProjectRoot is null || !PathUtils.IsUnder(Location, Directories.ProjectRoot))
@@ -305,10 +270,7 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
 
             Xml.AppendLine($"""  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='{Configuration.DisplayName}|{PlatformName}'">""");
 
-            // An NMake project never writes to OutDir, but MSBuild still creates both directories
-            // and drops its own bookkeeping into IntDir. Left at their defaults they resolve
-            // against the solution, which litters the repository root with an empty
-            // "x64\<Configuration>". Point them somewhere disposable instead.
+            // MSBuild creates both anyway and would otherwise litter the repo root with an empty x64/<Config>.
             string MsBuildScratch = Path.Combine(
                 Directories.ProjectFilesDirectory, "MSBuild", Project.ProjectName, Configuration.DisplayName);
 
@@ -342,10 +304,7 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
 
             if (VariantModule is not null)
             {
-                // Rider turns every project with an NMakeOutput into a run configuration, which is
-                // how a browse-only module project ends up in the run dropdown offering to launch a
-                // .lib. Only a target has something to run, so only a target names an output; the
-                // IntelliSense properties below are the point of a module project and stay.
+                // Rider makes any project with an NMakeOutput a run configuration, so only targets name one.
                 if (Project.bBuildable)
                 {
                     Xml.AppendLine($"    <NMakeOutput>{Escape(VariantModule.OutputFile)}</NMakeOutput>");
@@ -356,9 +315,7 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
                 Xml.AppendLine($"    <NMakeForcedIncludes>{Escape(string.Join(';', VariantModule.ForceIncludeFiles))}</NMakeForcedIncludes>");
             }
 
-            // Carries /Zc:preprocessor because the compile does. The engine's USING(flag) macro pastes the
-            // flag onto a token and expands differently under the legacy preprocessor, so leaving it out
-            // let the IDE evaluate a guard the opposite way from the build and grey out live code.
+            // Matches the compile: USING(flag) expands differently under the legacy preprocessor.
             Xml.AppendLine($"    <AdditionalOptions>/std:{Variant.Rules.CppStandard} /Zc:__cplusplus /Zc:preprocessor</AdditionalOptions>");
 
             if (Project.bBuildable)
@@ -377,15 +334,7 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
         return Xml.ToString();
     }
 
-    /// <summary>
-    /// What the IDE runs for this target.
-    /// </summary>
-    /// <remarks>
-    /// The target's rules decide, because what a target builds and what running it means are not
-    /// the same question. A game module is a library the editor loads, so running it launches the
-    /// editor with that project opened; only a target that builds its own executable defaults to
-    /// launching that.
-    /// </remarks>
+    /// <summary>What the IDE runs for this target.</summary>
     private static void AppendDebuggerSettings(
         StringBuilder Xml,
         BuildDirectories Directories,
@@ -427,10 +376,7 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
             : string.Empty;
     }
 
-    /// <summary>
-    /// Debugger settings also go in a .user file, which is where Visual Studio and Rider read
-    /// them from and where they write back if the user edits them.
-    /// </summary>
+    /// <summary>Debugger settings live in a .user file, which is what Visual Studio and Rider read and write.</summary>
     private static string BuildUserXml(
         BuildDirectories Directories,
         GeneratedProject Project,
@@ -606,10 +552,7 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
 
         string SolutionDirectory = Path.GetDirectoryName(SolutionPath)!;
 
-        // A solution file has no startup-project field: the IDE picks the first one listed until
-        // the user chooses otherwise. So the startup target goes first, then the rest of the
-        // buildable targets, then the module projects. Without this the default startup project
-        // is whichever module sorts first alphabetically, which builds nothing and runs nothing.
+        // A .sln has no startup-project field; the IDE picks the first listed, so the startup target goes first.
         List<GeneratedProject> Ordered = Projects
             .OrderByDescending(P => P.bIsStartup)
             .ThenByDescending(P => P.bBuildable)
@@ -679,9 +622,7 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
                 string Key = $"{Configuration.DisplayName}|{PlatformName}";
                 Solution.AppendLine($"\t\t{ProjectGuid}.{Key}.ActiveCfg = {Key}");
 
-                // Only projects that build something, and that opted into the default build, get
-                // a Build entry. Everything else stays selectable and individually buildable but
-                // is left out of Build Solution.
+                // Only buildable, build-by-default projects get a Build entry; the rest stay individually buildable.
                 if (Project.bBuildable && Project.bBuildByDefault)
                 {
                     Solution.AppendLine($"\t\t{ProjectGuid}.{Key}.Build.0 = {Key}");
@@ -691,9 +632,7 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
 
         if (RulesProjectPath.Length > 0)
         {
-            // Mapped to a configuration it understands, and left out of the build: the build
-            // system compiles these files itself, so building them again would be duplicate work
-            // that could also fail for reasons the real build does not care about.
+            // Left out of the build: the build system compiles these rules files itself.
             string RulesProjectGuid = "{" + RulesGuid.ToString().ToUpperInvariant() + "}";
 
             foreach (ProjectConfiguration Configuration in Configurations)
@@ -733,15 +672,7 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
         return Solution.ToString();
     }
 
-    /// <summary>
-    /// Command that reinvokes this tool. Uses the host dotnet when running from a framework
-    /// dependent build so the generated projects work without a published executable.
-    /// </summary>
-    /// <remarks>
-    /// Carries -Project when generating for a game project. Without it the rebuilt-from-the-IDE
-    /// invocation only ever scans the engine tree, so the project's own target is not among the
-    /// ones it knows and building it from its own solution fails with "no target named".
-    /// </remarks>
+    /// <summary>Command that reinvokes this tool.</summary>
     private static string BuildToolInvocation(BuildDirectories Directories)
     {
         string ToolPath = Environment.ProcessPath ?? string.Empty;
@@ -760,9 +691,7 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
         return $"{PathUtils.Quote(ToolPath)} {Roots}";
     }
 
-    /// <summary>
-    /// The file whose absence stops a generated project from building anything.
-    /// </summary>
+    /// <summary>The file whose absence stops a generated project from building anything.</summary>
     private static string BuildToolAssemblyPath()
     {
         string ToolPath = Environment.ProcessPath ?? string.Empty;
@@ -772,23 +701,7 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
             : ToolPath;
     }
 
-    /// <summary>
-    /// Batch prefix that fails a build from the IDE with something actionable when the tool the
-    /// generated projects invoke is not there.
-    /// </summary>
-    /// <remarks>
-    /// Those projects run the tool by absolute path, so anything that removes it -- a cleaned
-    /// Binaries directory, a moved or renamed engine, a solution opened on a machine that has never
-    /// run Setup -- turns every build in the IDE into MSB3073 with an exit code and no subject.
-    /// Rebuilding the tool here instead would be worse: that needs the .NET SDK, and a failure to
-    /// find it would bury the actual problem under a second one.
-    /// </remarks>
-    /// <remarks>
-    /// Written as two unconditional lines rather than one parenthesized block, and quoting the path
-    /// itself rather than leaving that to PathUtils.Quote, because this is read by cmd and not by a
-    /// process launcher: an engine under "Program Files (x86)" closes a block early, and Quote
-    /// leaves a path without spaces bare, which "if not exist" needs quoted anyway.
-    /// </remarks>
+    /// <summary>Batch prefix that fails an IDE build with something actionable when the build tool is missing.</summary>
     private static string BuildToolGuard(BuildDirectories Directories)
     {
         string ToolPath = BuildToolAssemblyPath();
@@ -798,12 +711,7 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
 
         string Test = $"if not exist \"{ToolPath}\" ";
 
-        // Rebuild the tool before using it, the same thing LuminaBuild.bat does and for the same reason:
-        // MSBuild no-ops in well under a second, and a stale tool is not a slow build but a broken one.
-        // A pull that changes both the tool and the .BuildRules.cs files that use it leaves the compiled
-        // tool behind, and the rules then fail against an API that does not exist yet -- reported as a
-        // C# error inside a rules file, which reads like the rules are wrong rather than the tool is old.
-        // That failure also blocks Clean, so the state cannot be cleared without fixing it by hand first.
+        // Rebuild first: a stale tool fails the rules against an API that does not exist yet, and blocks Clean.
         return $"dotnet build \"{ToolProject}\" -v quiet --nologo"
             + Environment.NewLine
             + "if errorlevel 1 echo error: LuminaBuildTool failed to build; the engine tree and the build"
@@ -819,9 +727,7 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
             + "exit /b 1";
     }
 
-    /// <summary>
-    /// Stable GUID from a name, so regenerating projects never churns the solution.
-    /// </summary>
+    /// <summary>Stable GUID from a name, so regenerating projects never churns the solution.</summary>
     private static Guid MakeDeterministicGuid(string Name)
     {
         byte[] Digest = MD5.HashData(Encoding.UTF8.GetBytes("LuminaBuildTool:" + Name));

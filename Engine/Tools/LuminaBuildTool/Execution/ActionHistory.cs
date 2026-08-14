@@ -8,17 +8,11 @@ public sealed class ActionHistoryData
     /// <summary>Output file to the command key that produced it.</summary>
     public Dictionary<string, string> CommandKeys { get; set; } = new();
 
-    /// <summary>
-    /// Output file to a fingerprint of every input seen when it was last produced successfully.
-    /// </summary>
+    /// <summary>Output file to a fingerprint of every input seen when it was last produced successfully.</summary>
     public Dictionary<string, string> InputFingerprints { get; set; } = new();
 }
 
-/// <summary>
-/// Remembers the exact command that produced each output. This is what makes a Build.cs or
-/// Target.cs edit invalidate work: any rules change that matters shows up as a different
-/// compiler or linker command line, and any that does not is correctly skipped.
-/// </summary>
+/// <summary>Remembers the exact command that produced each output.</summary>
 public sealed class ActionHistory
 {
     private readonly string HistoryFile;
@@ -90,16 +84,7 @@ public sealed class ActionHistory
         bDirty = true;
     }
 
-    /// <summary>
-    /// Records the exact set of inputs this output was last produced from.
-    /// </summary>
-    /// <remarks>
-    /// Comparing inputs against the output's own timestamp misses any edit that does not move the
-    /// clock forward: a branch switch restores older mtimes, and a source edited while the compiler
-    /// was reading it ends up older than the object it did not make it into. Both read as up to
-    /// date forever. An exact fingerprint catches a timestamp that merely differs, in either
-    /// direction, and needs no file touching to converge.
-    /// </remarks>
+    /// <summary>Records the exact set of inputs this output was last produced from.</summary>
     public void RecordInputFingerprint(string OutputFile, string Fingerprint)
     {
         InputFingerprints[OutputFile] = Fingerprint;

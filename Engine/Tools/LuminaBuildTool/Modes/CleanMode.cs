@@ -6,9 +6,7 @@ using LuminaBuildTool.Rules;
 
 namespace LuminaBuildTool.Modes;
 
-/// <summary>
-/// Removes a target's intermediate and output files.
-/// </summary>
+/// <summary>Removes a target's intermediate and output files.</summary>
 public static class CleanMode
 {
     public static int Run(CommandLine Arguments, BuildDirectories Directories)
@@ -17,9 +15,7 @@ public static class CleanMode
 
         if (string.IsNullOrEmpty(TargetName))
         {
-            // No target named: wipe everything the tool owns. Generated code goes with the objects,
-            // because a .generated.h for a type that no longer exists stays includable and turns a
-            // clean build into a confusing one.
+            // Generated code goes with the objects: a .generated.h for a deleted type stays includable.
             DeleteDirectory(Directories.BuildToolIntermediatesDirectory);
             DeleteDirectory(Path.Combine(Directories.IntermediatesDirectory, "Obj"));
             DeleteDirectory(Directories.ReflectionDirectory);
@@ -50,10 +46,8 @@ public static class CleanMode
 
         foreach (BuildModule Module in Target.Modules)
         {
-            // Asked of each module rather than assumed from the target, because a module does not
-            // necessarily keep its intermediates under the target's own directory: engine modules
-            // share one set across every target that compiles them the same way. Deleting only the
-            // target's directory would leave those behind and make a clean build a partial one.
+            // Asked per module: engine modules share one intermediate set across targets, so deleting only the
+            // target's own directory would leave them behind.
             DeleteDirectory(Module.IntermediateDirectory);
             DeleteDirectory(Module.GeneratedCodeDirectory);
 

@@ -9,9 +9,7 @@ public enum LogLevel
     Error,
 }
 
-/// <summary>
-/// Console logging. Writes to stderr for warnings and errors so tool output can be piped cleanly.
-/// </summary>
+/// <summary>Console logging. Writes to stderr for warnings and errors so tool output can be piped cleanly.</summary>
 public static class Log
 {
     private static readonly object Gate = new();
@@ -32,9 +30,7 @@ public static class Log
 
     public static void Error(string Format, params object[] Args) => Write(LogLevel.Error, Format, Args);
 
-    /// <summary>
-    /// Emits raw compiler or linker output verbatim so IDE error parsers still recognize it.
-    /// </summary>
+    /// <summary>Emits raw compiler or linker output verbatim so IDE error parsers still recognize it.</summary>
     public static void Raw(string Text)
     {
         if (string.IsNullOrWhiteSpace(Text))

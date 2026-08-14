@@ -9,10 +9,7 @@ using LuminaBuildTool.Toolchain;
 
 namespace LuminaBuildTool.Modes;
 
-/// <summary>
-/// Resolves every target for every configuration the IDE should expose, then hands the graphs
-/// to a project file generator.
-/// </summary>
+/// <summary>Resolves every target in every configuration, then hands the graphs to a generator.</summary>
 public static class ProjectFilesMode
 {
     public static int Run(CommandLine Arguments, BuildDirectories Directories)
@@ -24,15 +21,7 @@ public static class ProjectFilesMode
         return 0;
     }
 
-    /// <summary>
-    /// Writes the IDE workspace for every resolvable target. Returns the number of files that
-    /// changed on disk, which is zero when the rules produce what is already there.
-    /// </summary>
-    /// <remarks>
-    /// Takes the rules assembly rather than creating one so a build can generate with the assembly
-    /// it already loaded: compiling the rules twice in one process would put two copies of every
-    /// rules type in play.
-    /// </remarks>
+    /// <summary>Writes the IDE workspace for every resolvable target.</summary>
     public static int Generate(CommandLine Arguments, BuildDirectories Directories, RulesAssembly Assembly)
     {
         BuildPlatform PlatformValue = Arguments.GetEnum("Platform", BuildPlatformRegistry.HostPlatform);
@@ -58,9 +47,7 @@ public static class ProjectFilesMode
             Dictionary<ProjectConfiguration, BuildTarget> Variants = new();
             BuildTarget? Primary = null;
 
-            // First failure only: when a target resolves in NO configuration the reason is usually one
-            // rules file throwing the same diagnostic for all of them, so repeating it per configuration
-            // buries it. The rest stay at Verbose for the genuinely per-configuration cases.
+            // First failure only: total resolution failure usually throws the same diagnostic per configuration.
             string? FirstFailure = null;
             string? FirstFailureConfiguration = null;
 
@@ -70,9 +57,7 @@ public static class ProjectFilesMode
 
                 try
                 {
-                    // A target that declares its own type resolves the same graph for every
-                    // requested type, which is what makes a Program appear under every
-                    // configuration without needing its own solution configuration.
+                    // A target declaring its own type resolves one graph for every requested type.
                     BuildTarget Resolved = new TargetAssembler(Assembly, Directories, PlatformSupport).Assemble(TargetName, Info);
 
                     Variants[Configuration] = Resolved;
@@ -89,10 +74,7 @@ public static class ProjectFilesMode
 
             if (Primary is null)
             {
-                // The reason used to be Verbose-only, so the default output named the skipped target and
-                // said nothing about why -- and the thing that threw is usually a rules file reporting a
-                // setup problem it already knows how to fix (an unbuilt vendored library, an uninitialised
-                // submodule). That message was being written and then swallowed.
+                // Warning, not Verbose: the throwing rules file usually reports a fixable setup problem.
                 Log.Warning("Target '{0}' could not be resolved in any configuration; skipping. {1} failed: {2}",
                     TargetName, FirstFailureConfiguration ?? "No configuration", FirstFailure ?? "no reason reported.");
 
@@ -123,13 +105,7 @@ public static class ProjectFilesMode
         int Changed = (bRulesProjectChanged ? 1 : 0)
             + (CompileDatabaseStep.Write(Directories, Targets, Configurations, Toolchain) ? 1 : 0);
 
-        // A .sln full of .vcxproj is worth nothing off Windows: no editor there builds one, MSBuild
-        // cannot evaluate the platform toolset it names, and leaving it generated only invites
-        // someone to open it and conclude the workspace is broken. compile_commands.json above is
-        // the file that does this job on Linux, and it is written for every host.
-        //
-        // Keyed on the host rather than on -Platform: what decides whether a solution is useful is
-        // the machine that would open it, not the machine being compiled for.
+        // No .sln off Windows; nothing there builds a .vcxproj. Keyed on the host, not -Platform.
         if (BuildPlatformRegistry.HostPlatform == BuildPlatform.Windows64)
         {
             IProjectFileGenerator Generator = new VisualStudioGenerator(Toolchain);
@@ -137,15 +113,8 @@ public static class ProjectFilesMode
             Changed += Generator.Generate(Directories, Targets, Configurations, RulesProjectPath);
         }
 
-        // A workspace missing targets is a failure, not a partial success. The Targets.Count == 0 guard
-        // above does not catch it: Reflector resolves out of the engine tree whatever state a project is
-        // in, so a freshly cloned project whose every real target failed still reached here with a count
-        // of one, generated a solution containing nothing buildable, and reported success. That is what
-        // made a broken clone look like a working one.
-        //
-        // Thrown AFTER the files are written but BEFORE the stamp: the partial workspace is worth having,
-        // and leaving the stamp on the previous rules is what makes the next build try again rather than
-        // treat the incomplete generation as up to date.
+        // Missing targets is a failure, not partial success. Thrown after the write but before the stamp,
+        // so the next build retries instead of trusting an incomplete generation.
         if (SkippedTargets.Count > 0)
         {
             throw new BuildException(
@@ -160,9 +129,7 @@ public static class ProjectFilesMode
 
         Log.Info("{0} project files changed.", Changed);
 
-        // Windows generates a solution and the next step is obvious. Off Windows the only artefact
-        // that matters is a file the user never asked for by name, so say where it is and what
-        // reads it -- otherwise "2 project files changed" is the whole of the feedback.
+        // Off Windows the only artefact is a file the user never named, so say where it is.
         if (BuildPlatformRegistry.HostPlatform != BuildPlatform.Windows64)
         {
             Log.Info(

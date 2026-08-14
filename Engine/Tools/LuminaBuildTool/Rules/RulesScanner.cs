@@ -3,9 +3,7 @@ using LuminaBuildTool.Core;
 
 namespace LuminaBuildTool.Rules;
 
-/// <summary>
-/// One discovered rules file on disk.
-/// </summary>
+/// <summary>One discovered rules file on disk.</summary>
 public sealed class RulesFile
 {
     public RulesFile(string Location, RulesFileKind Kind, string? PluginName)
@@ -47,9 +45,7 @@ public enum RulesFileKind
     Shared,
 }
 
-/// <summary>
-/// Walks the engine, project and plugin trees collecting rules files.
-/// </summary>
+/// <summary>Walks the engine, project and plugin trees collecting rules files.</summary>
 public sealed class RulesScanner
 {
     private static readonly string[] IgnoredDirectoryNames =
@@ -195,18 +191,7 @@ public sealed class RulesScanner
         return null;
     }
 
-    /// <summary>
-    /// Whether a discovered file sits under an ignored directory, judged RELATIVE to the tree being
-    /// scanned. The list prunes directories inside that tree; it must never get a say about the path
-    /// leading up to it, which only describes where the checkout happens to live.
-    /// </summary>
-    /// <remarks>
-    /// This split the absolute path, so any ignored name among the ancestors disqualified the whole
-    /// tree. A git worktree under '.claude/worktrees/' (where Claude Code puts them) therefore had
-    /// '.claude' in the absolute path of every rules file, all of them were ignored, and the build
-    /// died claiming no Target.cs or Build.cs existed anywhere -- in a tree visibly full of them.
-    /// Same relative-first shape ManagedProjectStep.EnumerateProjectSources uses.
-    /// </remarks>
+    /// <summary>Whether a file sits under an ignored directory, judged relative to the scanned tree.</summary>
     private static bool IsIgnoredPath(string FilePath, string Root)
     {
         foreach (string Segment in PathUtils.MakeRelativeTo(FilePath, Root)

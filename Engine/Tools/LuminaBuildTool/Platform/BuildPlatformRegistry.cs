@@ -6,10 +6,7 @@ using LuminaBuildTool.Platform.Windows;
 
 namespace LuminaBuildTool.Platform;
 
-/// <summary>
-/// Maps a BuildPlatform onto its implementation. Adding a platform means registering it here and
-/// nowhere else in the core.
-/// </summary>
+/// <summary>Maps a BuildPlatform onto its implementation.</summary>
 public static class BuildPlatformRegistry
 {
     private static readonly Dictionary<BuildPlatform, IBuildPlatform> Registered = new();

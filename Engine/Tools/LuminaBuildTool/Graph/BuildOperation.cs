@@ -3,32 +3,17 @@ using LuminaBuildTool.Core;
 
 namespace LuminaBuildTool.Graph;
 
-/// <summary>
-/// Work an action performs in process instead of by launching a tool.
-/// </summary>
-/// <remarks>
-/// Staging a file and materializing a generated input are still build actions: they have inputs,
-/// outputs and an identity, and they must participate in the same up-to-date reasoning as a
-/// compile. Modelling them as operations keeps them inside the action graph instead of running as
-/// side effects while the graph is being planned, which is what makes a dry run side-effect free.
-/// </remarks>
+/// <summary>Work an action performs in process instead of by launching a tool.</summary>
 public abstract class BuildOperation
 {
-    /// <summary>
-    /// Stable identity of the work, folded into the action's command key so a change to what the
-    /// operation would do forces it to rerun.
-    /// </summary>
+    /// <summary>Stable identity of the work, folded into the command key so a change forces a rerun.</summary>
     public abstract string GetIdentity();
 
-    /// <summary>
-    /// Performs the work. Throws on failure; the executor decides how to report it.
-    /// </summary>
+    /// <summary>Performs the work. Throws on failure; the executor decides how to report it.</summary>
     public abstract void Execute();
 }
 
-/// <summary>
-/// Stages a prebuilt file next to the build's output.
-/// </summary>
+/// <summary>Stages a prebuilt file next to the build's output.</summary>
 public sealed class CopyFileOperation : BuildOperation
 {
     public CopyFileOperation(string Source, string Destination)
@@ -54,10 +39,7 @@ public sealed class CopyFileOperation : BuildOperation
         ClearReadOnly(Destination);
     }
 
-    /// <summary>
-    /// True when the destination already matches the source byte for byte. Used to decide whether
-    /// a failed copy of an optional dependency left correct content behind.
-    /// </summary>
+    /// <summary>True when the destination already matches the source byte for byte.</summary>
     public bool IsAlreadyStaged()
     {
         FileItem SourceItem = FileItem.Get(Source);
@@ -94,10 +76,7 @@ public sealed class CopyFileOperation : BuildOperation
     }
 }
 
-/// <summary>
-/// Materializes a generated text file that later actions consume, such as a code generator's
-/// input document.
-/// </summary>
+/// <summary>Materializes a generated text file later actions consume, such as a generator's input.</summary>
 public sealed class WriteFileOperation : BuildOperation
 {
     public WriteFileOperation(string Destination, string Contents)

@@ -47,6 +47,17 @@ namespace Lumina
         {
             BareName.erase(BareName.size() - CfgSuffix.size());
         }
+
+        // Mirrors Paths::MakeModuleFileName, which writes prefix + name + -config + ext. Leaving the prefix
+        // keys the module "libFoo" while PluginManager unloads "Foo", firing the DEBUG_ASSERT at shutdown.
+        const FStringView LibPrefix = LUMINA_SHAREDLIB_PREFIX_NAME;
+        if (!LibPrefix.empty()
+            && BareName.size() > LibPrefix.size()
+            && BareName.substr(0, LibPrefix.size()) == FString(LibPrefix.data(), LibPrefix.size()))
+        {
+            BareName.erase(0, LibPrefix.size());
+        }
+
         const FName BareFName(BareName);
 
         // Monolithic / pre-registered path: no LoadLibrary, no filesystem.
@@ -70,9 +81,7 @@ namespace Lumina
             return ModuleInterface;
         }
 
-        // Loading the DLL runs its static initializers, which queue its reflected classes/enums/structs as
-        // function pointers into the module. Anything that refuses the module past this point has to discard
-        // those before freeing the handle, or the next ProcessNewlyLoadedCObjects() calls into unmapped code.
+        // Static initializers queue reflected types here; a later refusal must discard them before freeing.
         const FDeferredRegistrationSnapshot RegistrationSnapshot = SnapshotDeferredRegistrations();
 
         const FString ModulePathStr(ModulePath.data(), ModulePath.size());
@@ -80,10 +89,7 @@ namespace Lumina
 
         if (!ModuleHandle)
         {
-            // Has to be recorded, not just logged: LoadProject reads LastLoadError to decide
-            // between "this project has no C++ module" and "its module refused to load", and an
-            // empty string reads as the former. A module that fails here is almost always missing
-            // a dependency DLL rather than missing itself; the platform layer logs the OS code.
+            // Recorded, not just logged: LoadProject reads this to tell "no C++ module" from "module refused".
             LastLoadError = FString("the module or one of its dependencies could not be loaded "
                                     "(see the LoadLibrary error above; a linked plugin or module "
                                     "may be missing or built for another configuration)");
@@ -130,19 +136,17 @@ namespace Lumina
             return nullptr;
         }
 
-        FStringView ModuleName = VFS::FileName(ModulePath, true);
-
-        // Key the map by the bare name (no "-<Config>" suffix), matching the static path above and the
-        // name UnloadModule/PluginManager use (the descriptor's module name). Keying by the suffixed
-        // DLL filename instead made a dynamically-loaded module impossible to find on unload -> the
-        // DEBUG_ASSERT(it != end()) in UnloadModule fired at shutdown.
+        // Key by the bare name, matching what UnloadModule and PluginManager pass (the descriptor name).
+        // A decorated key is unfindable on unload and fires the DEBUG_ASSERT below at shutdown.
         FModuleInfo* ModuleInfo = GetOrCreateModuleInfo(BareFName);
         ModuleInfo->ModuleHandle = ModuleHandle;
         ModuleInfo->ModuleInterface.reset(ModuleInterface);
 
         ModuleInterface->StartupModule();
 
-        LOG_INFO("[Module Manager] - Successfully loaded module {}", ModuleName);
+        // The registry key rather than the filename it came from. They differ on any platform with a
+        // library prefix, and logging the filename is what made a key mismatch here invisible.
+        LOG_INFO("[Module Manager] - Successfully loaded module {}", BareName);
 
         // If ImGui is already up (module loaded after the editor UI), sync this module's ImGui copy
         // now. Otherwise NotifyImGuiReady will catch it once the context exists. No-op without the hook.

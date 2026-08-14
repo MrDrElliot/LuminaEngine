@@ -1,20 +1,12 @@
 namespace LuminaBuildTool.Configuration;
 
-/// <summary>
-/// A dependency edge the rules declare must not exist.
-/// </summary>
+/// <summary>A dependency edge the rules declare must not exist.</summary>
 /// <param name="ModuleName">The module that must stay clear of the dependency.</param>
 /// <param name="DependencyName">What it must not reach, directly or through anything else.</param>
-/// <param name="Reason">
-/// Why, quoted back in the error. A layering rule without one becomes folklore the moment the
-/// person who added it stops answering questions about it.
-/// </param>
+/// <param name="Reason">Why, quoted back in the error. A rule without one becomes folklore.</param>
 public sealed record ForbiddenDependency(string ModuleName, string DependencyName, string Reason);
 
-/// <summary>
-/// Immutable description of what is being built, handed to every TargetRules and ModuleRules
-/// constructor.
-/// </summary>
+/// <summary>What is being built. Handed to every TargetRules and ModuleRules constructor.</summary>
 public sealed class TargetInfo
 {
     public TargetInfo(
@@ -35,10 +27,7 @@ public sealed class TargetInfo
         this.bMonolithic = bMonolithic;
     }
 
-    /// <summary>
-    /// Every module links into one executable rather than producing a shared library each.
-    /// Resolved from the target's rules on a first construction pass, then handed back here.
-    /// </summary>
+    /// <summary>Every module links into one executable rather than producing a shared library each.</summary>
     public bool bMonolithic { get; }
 
     /// <summary>Optional-feature switches for this build.</summary>
@@ -76,10 +65,7 @@ public sealed class TargetInfo
 
     public bool bDebug => Configuration == BuildConfiguration.Debug;
 
-    /// <summary>
-    /// Directory name under Binaries, for example "Windows64". Must match the engine's baked
-    /// LUMINA_PLATFORM_NAME or the runtime cannot resolve plugin and game module binaries.
-    /// </summary>
+    /// <summary>Directory name under Binaries, for example "Windows64".</summary>
     public string PlatformName => Platform.GetOutputDirectoryName();
 
     /// <summary>Operating system without architecture, for example "Windows".</summary>
@@ -92,22 +78,13 @@ public sealed class TargetInfo
 
 /// <summary>A .NET project the build drives through the dotnet SDK.</summary>
 /// <param name="ProjectFile">Absolute path of the .csproj.</param>
-/// <param name="OutputAssembly">
-/// Absolute path of the assembly it produces. Declared rather than parsed out of the project so the
-/// build can check whether it is current without invoking MSBuild.
-/// </param>
+/// <param name="OutputAssembly">Assembly it produces. Declared so freshness needs no MSBuild call.</param>
 public sealed record ManagedProject(string ProjectFile, string OutputAssembly);
 
-/// <summary>
-/// Base class for a Target.cs file. A target names one launch module and pulls in whatever that
-/// module transitively depends on, plus any extra modules listed here.
-/// </summary>
+/// <summary>Base class for a Target.cs file.</summary>
 public abstract class TargetRules
 {
-    /// <summary>
-    /// Identity published just before construction, so a Target.cs can resolve paths relative to
-    /// itself from inside its constructor.
-    /// </summary>
+    /// <summary>Identity published pre-construction, so a Target.cs can resolve paths relative to itself.</summary>
     internal sealed class ConstructionContext
     {
         public required string RulesFile { get; init; }
@@ -150,41 +127,19 @@ public abstract class TargetRules
 
     public TargetType Type { get; set; }
 
-    /// <summary>
-    /// Module that produces this target's executable. Its binary type decides console versus
-    /// windowed. Defaults to a module sharing the target's name.
-    /// </summary>
+    /// <summary>Module that produces this target's executable.</summary>
     public string LaunchModuleName { get; set; }
 
-    /// <summary>
-    /// Modules to build even though nothing links them, for plugins and for tools that must exist
-    /// before the launch module runs.
-    /// </summary>
+    /// <summary>Modules built though nothing links them: plugins, and tools the launch module needs.</summary>
     public List<string> ExtraModuleNames { get; } = new();
 
-    /// <summary>
-    /// Builds this target in a different configuration than the one requested. Null builds the
-    /// requested one. A tool linking prebuilt release libraries pins itself here so a Debug
-    /// solution configuration does not mix debug and release C runtimes.
-    /// </summary>
+    /// <summary>Builds this target in a different configuration than the one requested.</summary>
     public BuildConfiguration? ConfigurationOverride { get; set; }
 
-    /// <summary>
-    /// Check the module graph against the layering the rules declare, and refuse to build it when
-    /// they disagree.
-    /// </summary>
-    /// <remarks>
-    /// Opting out belongs here rather than on a command line. A guard that any build can wave away
-    /// stops being one the first time waving it away is quicker than fixing the dependency, and a
-    /// target that genuinely has to is a decision worth reading in the rules.
-    /// </remarks>
+    /// <summary>Refuse to build when the module graph violates the layering the rules declare.</summary>
     public bool bEnforceModuleLayering { get; set; } = true;
 
-    /// <summary>
-    /// Dependency edges that must not exist, for layering the module graph cannot state on its own.
-    /// Checked through the whole closure, so routing one through an intermediate module does not
-    /// evade it.
-    /// </summary>
+    /// <summary>Dependency edges that must not exist, for layering the graph cannot state itself.</summary>
     public List<ForbiddenDependency> ForbiddenDependencies { get; } = new();
 
     /// <summary>Declares that one module must never end up depending on another.</summary>
@@ -193,10 +148,7 @@ public abstract class TargetRules
         ForbiddenDependencies.Add(new ForbiddenDependency(ModuleName, DependencyName, Reason));
     }
 
-    /// <summary>
-    /// Definitions applied to every module in the target, including third-party modules.
-    /// ABI-affecting definitions belong here and nowhere else.
-    /// </summary>
+    /// <summary>Definitions applied to every module in the target, including third-party modules.</summary>
     public List<string> GlobalDefinitions { get; } = new();
 
     /// <summary>Compiler options applied to every module in the target.</summary>
@@ -208,30 +160,13 @@ public abstract class TargetRules
     /// <summary>Warning numbers suppressed target wide.</summary>
     public List<string> GlobalDisabledWarnings { get; } = new();
 
-    /// <summary>
-    /// Targets built to completion before this one starts, for tools this target's build needs
-    /// such as the reflection code generator. Always built as Program targets.
-    /// </summary>
+    /// <summary>Tools built to completion before this target starts, such as the reflection generator.</summary>
     public List<string> PreBuildTargetNames { get; } = new();
 
-    /// <summary>
-    /// Targets this one's output is not usable without, built at this target's own type and
-    /// configuration rather than as a tool.
-    /// </summary>
-    /// <remarks>
-    /// A game module is a library the editor loads, so a game target produces no executable and
-    /// nothing in its module graph reaches the one that does. Building a project therefore left the
-    /// application meant to run it missing, and Run failed on an exe path that had never been built.
-    /// Separate from PreBuildTargetNames because these are products rather than tools: a tool is a
-    /// Program whatever is being built, while these have to match, or an Editor build of a project
-    /// would go looking for an editor that was compiled as a game.
-    /// </remarks>
+    /// <summary>Targets this output is unusable without, built at this target's own type and configuration.</summary>
     public List<string> RequiredTargetNames { get; } = new();
 
-    /// <summary>
-    /// .NET projects built as part of this target. Not linked into anything; the engine loads them
-    /// at run time.
-    /// </summary>
+    /// <summary>.NET projects built as part of this target.</summary>
     public List<ManagedProject> ManagedProjects { get; } = new();
 
     /// <summary>Adds a .NET project, resolving both paths relative to the Target.cs file.</summary>
@@ -240,19 +175,13 @@ public abstract class TargetRules
         ManagedProjects.Add(new ManagedProject(TargetPath(ProjectFile), TargetPath(OutputAssembly)));
     }
 
-    /// <summary>
-    /// Include this target in a whole-solution build. Off for targets that stay individually
-    /// buildable in the IDE but should not be part of the default build, such as a test suite.
-    /// </summary>
+    /// <summary>Include this target in a whole-solution build.</summary>
     public bool bBuildByDefault { get; set; } = true;
 
     /// <summary>Make this the solution's startup target.</summary>
     public bool bIsStartupTarget { get; set; }
 
-    /// <summary>
-    /// Executable the IDE launches. Empty launches whatever the launch module produces, which is
-    /// wrong for a target producing a library some other program loads.
-    /// </summary>
+    /// <summary>Executable the IDE launches.</summary>
     public string DebuggerCommand { get; set; } = string.Empty;
 
     /// <summary>Arguments passed to the launched executable.</summary>
@@ -261,13 +190,7 @@ public abstract class TargetRules
     /// <summary>Working directory for the launched executable. Empty uses the engine root.</summary>
     public string DebuggerWorkingDirectory { get; set; } = string.Empty;
 
-    /// <summary>
-    /// Publish this target's reflected modules as the engine manifest that project builds read.
-    /// </summary>
-    /// <remarks>
-    /// Only engine targets. A project target consumes the manifest; if it also published one it
-    /// would overwrite the engine's with a list containing its own modules.
-    /// </remarks>
+    /// <summary>Publish this target's reflected modules as the engine manifest that project builds read.</summary>
     public bool bPublishesEngineReflectionManifest { get; set; } = true;
 
     /// <summary>Plugins to enable by name on top of the ones marked enabled by default.</summary>
@@ -276,33 +199,16 @@ public abstract class TargetRules
     /// <summary>Plugins to force off even when they are enabled by default.</summary>
     public List<string> DisabledPlugins { get; } = new();
 
-    /// <summary>
-    /// Link every module statically into a single executable instead of producing one shared
-    /// library per module.
-    /// </summary>
+    /// <summary>Link every module statically into one executable instead of a shared library each.</summary>
     public bool bMonolithic { get; set; }
 
-    /// <summary>
-    /// Default for whether this target's modules compile as unity files. A module overrides it with
-    /// its own bUseUnityBuild.
-    /// </summary>
-    /// <remarks>
-    /// Merging translation units makes file-scope names, macros and using-directives visible across
-    /// files, so vendored third-party code is excluded wholesale. Build with -NoUnity to rule unity
-    /// out as the cause of a failure without editing any rules.
-    /// </remarks>
+    /// <summary>Default for whether this target's modules compile as unity files.</summary>
     public bool bUseUnityBuild { get; set; } = true;
 
-    /// <summary>
-    /// Approximate source bytes packed into one unity file. Bytes rather than a file count because
-    /// source sizes within a module vary by orders of magnitude.
-    /// </summary>
+    /// <summary>Approximate source bytes packed into one unity file.</summary>
     public int UnityBuildBytesPerFile { get; set; } = 384 * 1024;
 
-    /// <summary>
-    /// Modules with fewer mergeable sources than this compile file by file, where there is no
-    /// repeated header parsing left to save.
-    /// </summary>
+    /// <summary>Below this many mergeable sources, compile file by file: no repeated header parsing to save.</summary>
     public int MinFilesForUnityBuild { get; set; } = 3;
 
     /// <summary>Emit debug symbols.</summary>
@@ -326,10 +232,7 @@ public abstract class TargetRules
     /// <summary>Use the dynamically linked C runtime.</summary>
     public bool bUseDynamicCrt { get; set; } = true;
 
-    /// <summary>
-    /// Link the debug C runtime. On in Debug, but a target linking release third-party libraries
-    /// must turn it off or the two runtimes collide.
-    /// </summary>
+    /// <summary>Link the debug C runtime.</summary>
     public bool bUseDebugCrt { get; set; }
 
     /// <summary>Treat the compiler's own warnings as errors across the target.</summary>
@@ -341,9 +244,7 @@ public abstract class TargetRules
     /// <summary>Suffix appended to output binaries, for example "-Debug".</summary>
     public string OutputSuffix { get; set; } = string.Empty;
 
-    /// <summary>
-    /// Overrides the directory binaries are written to. Empty uses Binaries/&lt;Platform&gt;.
-    /// </summary>
+    /// <summary>Overrides the directory binaries are written to. Empty uses Binaries/&lt;Platform&gt;.</summary>
     public string OutputDirectoryOverride { get; set; } = string.Empty;
 
     /// <summary>Absolute path of the Target.cs file.</summary>

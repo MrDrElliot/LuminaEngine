@@ -1,8 +1,6 @@
 namespace LuminaBuildTool.Configuration;
 
-/// <summary>
-/// Optimization and debug level. Mirrors the engine's historical Premake configurations.
-/// </summary>
+/// <summary>Optimization and debug level. Mirrors the engine's historical Premake configurations.</summary>
 public enum BuildConfiguration
 {
     Debug,
@@ -10,10 +8,7 @@ public enum BuildConfiguration
     Shipping,
 }
 
-/// <summary>
-/// Target platform. Values here are the platform identity used for output directories and
-/// toolchain selection; adding a platform means adding an IBuildPlatform implementation.
-/// </summary>
+/// <summary>Target platform.</summary>
 public enum BuildPlatform
 {
     Windows64,
@@ -21,10 +16,7 @@ public enum BuildPlatform
     Mac64,
 }
 
-/// <summary>
-/// What a target produces. Editor and Game differ by WITH_EDITOR and by which modules link;
-/// Program covers standalone tools such as the Reflector.
-/// </summary>
+/// <summary>What a target produces.</summary>
 public enum TargetType
 {
     Editor,
@@ -32,9 +24,7 @@ public enum TargetType
     Program,
 }
 
-/// <summary>
-/// Link-time role of a module's own output.
-/// </summary>
+/// <summary>Link-time role of a module's own output.</summary>
 public enum ModuleBinaryType
 {
     /// <summary>Headers, defines and prebuilt libraries only. Compiles nothing.</summary>
@@ -49,9 +39,7 @@ public enum ModuleBinaryType
     WindowedApplication,
 }
 
-/// <summary>
-/// Which target types a module is allowed to appear in.
-/// </summary>
+/// <summary>Which target types a module is allowed to appear in.</summary>
 public enum ModuleHostType
 {
     /// <summary>Available to every target type.</summary>
@@ -67,9 +55,7 @@ public enum ModuleHostType
     Program,
 }
 
-/// <summary>
-/// How a module participates in precompiled headers.
-/// </summary>
+/// <summary>How a module participates in precompiled headers.</summary>
 public enum PrecompiledHeaderMode
 {
     None,
@@ -80,10 +66,7 @@ public enum PrecompiledHeaderMode
 
 public static class BuildEnumExtensions
 {
-    /// <summary>
-    /// Operating system identity, without architecture. Baked into the engine as
-    /// LUMINA_SYSTEM_NAME and matched against a .lplugin's SupportedPlatforms.
-    /// </summary>
+    /// <summary>Operating system identity, without architecture.</summary>
     public static string GetSystemName(this BuildPlatform Platform)
     {
         return Platform switch
@@ -105,11 +88,7 @@ public static class BuildEnumExtensions
         };
     }
 
-    /// <summary>
-    /// Directory name under Binaries, for example "Windows64". Baked into the engine as
-    /// LUMINA_PLATFORM_NAME, which is what resolves plugin and game module DLL paths at runtime,
-    /// so this string cannot change without breaking module loading.
-    /// </summary>
+    /// <summary>Directory name under Binaries, for example "Windows64".</summary>
     public static string GetOutputDirectoryName(this BuildPlatform Platform)
     {
         return Platform.GetSystemName() + Platform.GetArchitectureName();
@@ -130,19 +109,13 @@ public static class BuildEnumExtensions
         return Type != ModuleBinaryType.HeaderOnly;
     }
 
-    /// <summary>
-    /// True when the module is linked into dependents rather than loaded, which is what decides
-    /// whether dependents see it on their link line.
-    /// </summary>
+    /// <summary>True when the module links into dependents rather than being loaded at run time.</summary>
     public static bool IsLinkable(this ModuleBinaryType Type)
     {
         return Type is ModuleBinaryType.StaticLibrary or ModuleBinaryType.SharedLibrary;
     }
 
-    /// <summary>
-    /// True when the output is a loadable image in its own right rather than something absorbed
-    /// into one. Decides where definitions that must exist once per image belong.
-    /// </summary>
+    /// <summary>True when the output is a loadable image rather than something absorbed into one.</summary>
     public static bool IsLoadableImage(this ModuleBinaryType Type)
     {
         return Type is ModuleBinaryType.SharedLibrary

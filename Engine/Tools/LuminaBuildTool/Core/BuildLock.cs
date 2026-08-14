@@ -1,23 +1,9 @@
 namespace LuminaBuildTool.Core;
 
-/// <summary>
-/// Serializes builds that would write the same output, across processes.
-/// </summary>
-/// <remarks>
-/// An IDE builds projects in parallel, and every generated project ultimately drives this tool.
-/// Two builds that share an output set will interleave writes to the same object files and the
-/// same binaries directory, which surfaces as "permission denied" on a .obj or LNK1104 on an
-/// object that plainly exists. Nothing in a timestamp-based build can recover from that, so the
-/// second build waits rather than racing.
-/// </remarks>
+/// <summary>Serializes builds that would write the same output, across processes.</summary>
 public sealed class BuildLock : IDisposable
 {
-    /// <summary>
-    /// An exclusively opened file rather than a named mutex. A mutex belongs to the thread that
-    /// took it, and this lock is held across awaits that can resume anywhere on the thread pool.
-    /// A file handle belongs to the process, and the operating system drops it if a build dies,
-    /// so a crashed build cannot leave the lock held forever.
-    /// </summary>
+    /// <summary>An exclusively opened file rather than a named mutex.</summary>
     private readonly FileStream Handle;
 
     private BuildLock(FileStream Handle)
@@ -25,9 +11,7 @@ public sealed class BuildLock : IDisposable
         this.Handle = Handle;
     }
 
-    /// <summary>
-    /// Acquires the lock guarding one shared resource, waiting for whoever already holds it.
-    /// </summary>
+    /// <summary>Acquires the lock guarding one shared resource, waiting for whoever already holds it.</summary>
     /// <param name="OutputRoot">Root the lock file is stored under.</param>
     /// <param name="Key">Identifies the shared resource. Two builds with the same key serialize.</param>
     /// <param name="Description">What the caller is waiting for, shown once if it has to wait.</param>

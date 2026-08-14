@@ -34,9 +34,7 @@ public sealed class WindowsPlatform : IBuildPlatform
         yield return "DLL_EXPORT=__declspec(dllexport)";
         yield return "DLL_IMPORT=__declspec(dllimport)";
 
-        // The engine's TCHAR is wchar_t, which only agrees with winnt.h's TCHAR and makes TEXT()
-        // produce wide literals when the Windows headers are in UNICODE mode. Without these the
-        // two definitions collide and every TEXT() literal is the wrong character type.
+        // The engine's TCHAR is wchar_t, which only agrees with winnt.h in UNICODE mode.
         yield return "UNICODE";
         yield return "_UNICODE";
     }

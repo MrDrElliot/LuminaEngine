@@ -8,10 +8,7 @@ using LuminaBuildTool.Platform;
 
 namespace LuminaBuildTool.Modes;
 
-/// <summary>
-/// First-time setup: fetch and verify the prebuilt dependency bundle, persist LUMINA_DIR and
-/// point git at the repository's hooks.
-/// </summary>
+/// <summary>First-time setup: fetch the dependency bundle, persist LUMINA_DIR, configure git hooks.</summary>
 public static class SetupMode
 {
     private const string ReleaseUrl =
@@ -331,10 +328,7 @@ public static class SetupMode
         return false;
     }
 
-    /// <summary>
-    /// Persists LUMINA_DIR for future shells and verifies it took: setx can fail quietly on a
-    /// locked or roaming profile, and a missing value breaks every game project built later.
-    /// </summary>
+    /// <summary>Persists LUMINA_DIR and verifies it took; setx fails quietly on a locked or roaming profile.</summary>
     private static void PersistEngineDirectory(string EngineRoot)
     {
         Environment.SetEnvironmentVariable("LUMINA_DIR", EngineRoot);

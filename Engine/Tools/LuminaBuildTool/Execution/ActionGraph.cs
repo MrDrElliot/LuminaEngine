@@ -5,10 +5,7 @@ using LuminaBuildTool.Toolchain;
 
 namespace LuminaBuildTool.Execution;
 
-/// <summary>
-/// The complete set of actions for a target, wired into a dependency graph through the files
-/// they consume and produce.
-/// </summary>
+/// <summary>Every action for a target, wired into a graph by the files they consume and produce.</summary>
 public sealed class ActionGraph
 {
     private readonly Dictionary<FileItem, BuildAction> ProducerByFile = new();
@@ -68,10 +65,8 @@ public sealed class ActionGraph
             CompileActionsByModule[Module.Name] = CompileActions;
             Actions.AddRange(CompileActions);
 
-            // Generated headers are an undeclared output of the generator, so a translation unit
-            // has to wait for it whenever one is reachable. That is not only the reflected
-            // modules: a module that reflects nothing still sees its dependencies' generated
-            // headers through their public include paths, and the launcher is exactly that case.
+            // Generated headers are undeclared generator outputs, so any TU that can reach one waits for it.
+            // Not only reflected modules: dependencies' generated headers arrive via their public include paths.
             if (GenerateReflection is not null
                 && Module.EnumerateDependencyClosure().Any(M => M.Rules.bEnableReflection))
             {
@@ -90,10 +85,7 @@ public sealed class ActionGraph
             }
         }
 
-        // Cross-module ordering, at link granularity only. A translation unit needs its
-        // dependencies' headers, which already exist on disk, so making compiles wait for a
-        // dependency to finish linking would serialize the build for no reason. Compiles that
-        // consume generated headers pick those up as file-level prerequisites instead.
+        // Link granularity only; a TU needs its dependencies' headers, which already exist on disk.
         foreach (BuildModule Module in Target.Modules)
         {
             if (!LinkActionsByModule.TryGetValue(Module.Name, out BuildAction? OwnLink))
@@ -119,10 +111,7 @@ public sealed class ActionGraph
         return Graph;
     }
 
-    /// <summary>
-    /// Stages prebuilt files beside the target's binaries. A missing optional dependency is a
-    /// warning, because a stable vendored DLL may be held open by a running editor.
-    /// </summary>
+    /// <summary>Stages prebuilt files beside the target's binaries.</summary>
     private static IEnumerable<BuildAction> CreateRuntimeDependencyCopies(BuildTarget Target)
     {
         foreach (RuntimeDependency Dependency in Target.RuntimeDependencies)
@@ -136,15 +125,8 @@ public sealed class ActionGraph
                     throw new BuildException($"Runtime dependency '{Dependency.SourcePath}' does not exist.");
                 }
 
-                // Warning, not Verbose. bOptional exists so a DLL a running editor holds open does not
-                // fail the build -- that is a "cannot overwrite the destination" problem. A source file
-                // that is not there at all is a different thing: the binary ships incomplete, and the
-                // symptom shows up far away and much later.
-                //
-                // slang-glslang.dll is the case in point. Missing, it fails no build and breaks no load;
-                // it surfaces only as "failed to load downstream compiler 'spirv-opt'" during shader
-                // compilation, so a warm shader cache hides it entirely and every shader built on a cold
-                // cache silently skips SPIR-V optimisation.
+                // Warning, not Verbose: bOptional covers a DLL held open, not a source that is absent entirely.
+                // A missing slang-glslang.dll fails no build and surfaces only as skipped SPIR-V optimisation.
                 Log.Warning("Runtime dependency '{0}' does not exist; it will be missing from {1}. " +
                             "Anything that loads it at run time will fail.",
                             Dependency.SourcePath, Target.BinariesDirectory);
@@ -256,11 +238,7 @@ public sealed class ActionGraph
         }
     }
 
-    /// <summary>
-    /// Selects the actions that must run. An action is outdated when an output is missing, when
-    /// the command that produced it changed, when a declared input is newer, or when a header it
-    /// recorded on a previous compile is newer. Outdatedness then propagates to dependents.
-    /// </summary>
+    /// <summary>Selects the actions that must run.</summary>
     public List<BuildAction> DetermineOutdatedActions(ActionHistory History, DependencyCache Dependencies)
     {
         HashSet<BuildAction> Outdated = new();
@@ -291,11 +269,7 @@ public sealed class ActionGraph
         }
     }
 
-    /// <summary>
-    /// Decides whether one action must run. Safe to call again mid-build once an action's
-    /// dependencies have finished, which is what lets a generator that rewrote nothing avoid
-    /// dragging its dependents along.
-    /// </summary>
+    /// <summary>Decides whether one action must run.</summary>
     public static bool IsOutdated(
         BuildAction Action,
         ActionHistory History,
@@ -317,9 +291,7 @@ public sealed class ActionGraph
             }
         }
 
-        // The primary output is the one the tool always rewrites, so it is the only reliable
-        // reference. Using the oldest of all outputs would misread an import library the linker
-        // legitimately left alone as staleness, and rebuild forever.
+        // The tool always rewrites the primary output; an untouched import library would else read as stale.
         FileItem PrimaryOutput = Action.ProducedItems[0];
 
         if (History.HasCommandChanged(PrimaryOutput.Location, Action.GetCommandKey()))
@@ -345,10 +317,7 @@ public sealed class ActionGraph
         return false;
     }
 
-    /// <summary>
-    /// Identity of everything this action reads. Recorded on success and compared on the next
-    /// build, so any input that is added, removed, or stamped differently forces a rerun.
-    /// </summary>
+    /// <summary>Identity of everything this action reads.</summary>
     public static string ComputeInputFingerprint(BuildAction Action, DependencyCache Dependencies)
     {
         return ContentHash.OfFiles(EnumerateInputs(Action, Dependencies).Select(Input => Input.Location));
@@ -377,10 +346,7 @@ public sealed class ActionGraph
         }
     }
 
-    /// <summary>
-    /// Names a likely culprit for the log. The fingerprint only says that something moved, so this
-    /// looks for the ordinary case of an input newer than the output before giving up.
-    /// </summary>
+    /// <summary>Names a likely culprit for the log.</summary>
     private static string DescribeInputChange(BuildAction Action, DependencyCache Dependencies)
     {
         DateTime OutputTime = Action.ProducedItems[0].Timestamp;

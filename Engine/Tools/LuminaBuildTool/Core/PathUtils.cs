@@ -4,10 +4,7 @@ namespace LuminaBuildTool.Core;
 
 public static class PathUtils
 {
-    /// <summary>
-    /// Absolute, full path with native separators. All build-graph paths are normalized through
-    /// here so two spellings of the same file never produce two distinct graph nodes.
-    /// </summary>
+    /// <summary>Absolute, full path with native separators.</summary>
     public static string Normalize(string AnyPath)
     {
         if (string.IsNullOrEmpty(AnyPath))
@@ -71,15 +68,9 @@ public static class PathUtils
             && (Candidate.Length == Root.Length || Candidate[Root.Length] == Path.DirectorySeparatorChar);
     }
 
-    /// <summary>
-    /// Writes only when content differs so generated project files keep stable timestamps and
-    /// do not retrigger downstream work on every generation pass.
-    /// </summary>
-    /// <param name="bByteOrderMark">
-    /// MSBuild's own tooling writes project files with a byte order mark, so they keep one. JSON
-    /// must not have one: the grammar has no place for it and a strict parser stops at the first
-    /// character. Anything consumed by something other than Visual Studio wants it off.
-    /// </param>
+    /// <summary>Writes only when content differs, so generated files keep stable timestamps.</summary>
+    /// <param name="bByteOrderMark">On for project files, which MSBuild writes with one. Off for JSON,
+    /// whose grammar has no place for it and whose strict parsers stop at the first character.</param>
     public static bool WriteFileIfChanged(string FilePath, string Content, bool bByteOrderMark = true)
     {
         string Normalized = Normalize(FilePath);
@@ -96,15 +87,7 @@ public static class PathUtils
         return true;
     }
 
-    /// <summary>
-    /// Whether the file already holds exactly this text in the requested encoding.
-    /// </summary>
-    /// <remarks>
-    /// ReadAllText strips a byte order mark if there is one, so content alone cannot tell us the
-    /// encoding matches. Both have to, or a file whose text never changes would keep whichever
-    /// encoding it was first written with forever. An unreadable file counts as not written, which
-    /// lets the write attempt surface the real error rather than this check swallowing it.
-    /// </remarks>
+    /// <summary>Whether the file already holds exactly this text in the requested encoding.</summary>
     private static bool IsAlreadyWritten(string FilePath, string Content, bool bByteOrderMark)
     {
         try
@@ -132,9 +115,7 @@ public static class PathUtils
         }
     }
 
-    /// <summary>
-    /// Quotes an argument for a Windows command line, escaping embedded quotes and trailing slashes.
-    /// </summary>
+    /// <summary>Quotes an argument for a Windows command line, escaping quotes and trailing slashes.</summary>
     public static string Quote(string Argument)
     {
         if (Argument.Length > 0 && Argument.IndexOfAny(new[] { ' ', '\t', '"' }) < 0)

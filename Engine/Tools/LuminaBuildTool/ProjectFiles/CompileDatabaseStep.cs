@@ -6,18 +6,7 @@ using LuminaBuildTool.Toolchain;
 
 namespace LuminaBuildTool.ProjectFiles;
 
-/// <summary>
-/// Writes a compile_commands.json describing how every source in the workspace is compiled.
-/// </summary>
-/// <remarks>
-/// The format is what clangd, clang-tidy and every editor that is not Visual Studio read to
-/// understand a C++ project. Without one they guess, and a guess here means no include paths, no
-/// definitions and no precompiled header, which reduces a large codebase to a wall of
-/// false errors about headers that are not missing.
-///
-/// The commands come from the same toolchain call the build uses, so what a tool sees is what the
-/// compiler sees, rather than a second description that has to be kept in step.
-/// </remarks>
+/// <summary>Writes a compile_commands.json describing how every source in the workspace is compiled.</summary>
 public static class CompileDatabaseStep
 {
     private sealed class CompileCommand
@@ -31,14 +20,7 @@ public static class CompileDatabaseStep
         public required string Output { get; init; }
     }
 
-    /// <summary>
-    /// Writes the database for the given targets at the workspace root, where clangd looks for it.
-    /// </summary>
-    /// <remarks>
-    /// Targets share modules, so the same source can be compiled several ways in one workspace.
-    /// The first description of a file wins and the rest are dropped: a tool can only hold one
-    /// answer per file, and every consumer of this format resolves the ambiguity that way anyway.
-    /// </remarks>
+    /// <summary>Writes the database for the given targets at the workspace root, where clangd looks for it.</summary>
     public static bool Write(
         BuildDirectories Directories,
         IReadOnlyList<ProjectTargetInfo> Targets,
@@ -93,9 +75,7 @@ public static class CompileDatabaseStep
         IToolchain Toolchain,
         Dictionary<string, CompileCommand> ByFile)
     {
-        // Project generation never runs the unity step, so these are the real per-file commands.
-        // A blob's command line does not mention the sources it absorbed, which is exactly what a
-        // per-file tool needs and cannot get from a unity build.
+        // Project generation skips the unity step, so these are the real per-file commands.
         List<BuildAction> Actions;
 
         try
@@ -141,19 +121,7 @@ public static class CompileDatabaseStep
         }
     }
 
-    /// <summary>
-    /// Adjusts the compiler's own arguments for a tool that is not that compiler.
-    /// </summary>
-    /// <remarks>
-    /// Two rewrites, both about precompiled headers. Clang cannot read an MSVC .pch, so /Yu and
-    /// /Fp pointing at one are useless at best and a hard error at worst. Dropping them alone would
-    /// lose what the PCH was providing, because a source that relies on it never includes those
-    /// headers itself, so /Yu becomes a forced include of the same header: the same declarations
-    /// arrive, by the slower route that does not need a binary the tool cannot parse.
-    ///
-    /// /sourceDependencies goes because it asks for a build artifact, and reading code is not a
-    /// build.
-    /// </remarks>
+    /// <summary>Adjusts the compiler's own arguments for a tool that is not that compiler.</summary>
     private static IEnumerable<string> Translate(IEnumerable<string> Arguments)
     {
         // A module force-includes its own PCH header already, so translating /Yu would name it a

@@ -2,10 +2,7 @@ using LuminaBuildTool.Core;
 
 namespace LuminaBuildTool.Configuration;
 
-/// <summary>
-/// Resolved directory layout for one build. Holds the engine root plus an optional game project
-/// root, so an external project can build against an installed engine.
-/// </summary>
+/// <summary>Resolved directory layout for one build.</summary>
 public sealed class BuildDirectories
 {
     private BuildDirectories(string EngineRoot, string? ProjectRoot)
@@ -53,15 +50,7 @@ public sealed class BuildDirectories
     /// <summary>Directory the reflection generator writes C# bindings to.</summary>
     public string CSharpBindingsDirectory => Path.Combine(IntermediatesDirectory, "CSharpBindings");
 
-    /// <summary>
-    /// Where one target's intermediates live.
-    /// </summary>
-    /// <remarks>
-    /// Keyed by target as well as by platform, type and configuration. Two targets that share a
-    /// module do not necessarily compile it the same way, because a target contributes its own
-    /// global definitions, and they must not share an action history either: whichever ran last
-    /// would decide what the other believes about its own outputs.
-    /// </remarks>
+    /// <summary>Where one target's intermediates live.</summary>
     public string ObjectDirectory(string TargetName, BuildPlatform Platform, BuildConfiguration Configuration, TargetType Type)
     {
         return Path.Combine(
@@ -72,19 +61,7 @@ public sealed class BuildDirectories
             $"{Type}-{Configuration}");
     }
 
-    /// <summary>
-    /// Where the build records live: what each output was last built from, and which headers it
-    /// actually included.
-    /// </summary>
-    /// <remarks>
-    /// Rooted at the engine and keyed by platform, type and configuration but deliberately NOT by
-    /// target, because the outputs they describe are shared on exactly those terms. Keeping a set
-    /// per target is what made a new game project recompile an engine it already had: the objects
-    /// were sitting right there and only the record saying so was missing, so every action looked
-    /// like it had never run. Records are keyed by output path internally, so a target only ever
-    /// reads back entries for files it actually produces, and the build lock covers this same
-    /// scope, so there is never more than one writer.
-    /// </remarks>
+    /// <summary>Where build records live: what each output was built from, and which headers it included.</summary>
     public string BuildRecordDirectory(BuildPlatform Platform, BuildConfiguration Configuration, TargetType Type)
     {
         return Path.Combine(
@@ -96,20 +73,13 @@ public sealed class BuildDirectories
             ".buildtool");
     }
 
-    /// <summary>
-    /// Root that owns the output of whatever lives at the given path. Engine code keeps its
-    /// output in the engine tree so one engine build is shared by every project, while project
-    /// code lands in the project tree.
-    /// </summary>
+    /// <summary>Root that owns the output of whatever lives at the given path.</summary>
     public string GetOutputRootFor(string ModuleDirectory)
     {
         return IsEngineOwned(ModuleDirectory) ? EngineRoot : ProjectRoot ?? EngineRoot;
     }
 
-    /// <summary>
-    /// Whether the code at this path belongs to the engine rather than to the game project being
-    /// built. A project that lives inside the engine tree is still the project's.
-    /// </summary>
+    /// <summary>Whether the code at this path belongs to the engine rather than the game project.</summary>
     public bool IsEngineOwned(string ModuleDirectory)
     {
         if (ProjectRoot is null)
@@ -124,10 +94,7 @@ public sealed class BuildDirectories
 
     public string ThirdPartyPath(string RelativePath) => PathUtils.Combine(ThirdPartyDirectory, RelativePath);
 
-    /// <summary>
-    /// Locates the engine root, preferring an explicit override, then LUMINA_DIR, then a walk up
-    /// from this executable's location.
-    /// </summary>
+    /// <summary>Locates the engine root: explicit override, then LUMINA_DIR, then a walk up from this exe.</summary>
     public static BuildDirectories Discover(string? EngineRootOverride, string? ProjectRootOverride)
     {
         string? Root = EngineRootOverride;

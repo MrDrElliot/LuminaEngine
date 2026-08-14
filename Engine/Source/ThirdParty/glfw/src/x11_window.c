@@ -235,6 +235,74 @@ static void sendEventToWM(_GLFWwindow* window, Atom type,
                &event);
 }
 
+// Hands a drag or edge resize of an undecorated window back to the window manager, which is what
+// keeps snapping and the resize cursors working when the app draws its own title bar.
+//
+static GLFWbool startWMMoveResize(_GLFWwindow* window,
+                                  int xpos, int ypos,
+                                  int xroot, int yroot,
+                                  unsigned int button)
+{
+    enum { _NET_WM_MOVERESIZE_MOVE = 8 };
+
+    // Directions are laid out clockwise from the top-left corner, so the border flags below index
+    // straight into them.
+    static const int Directions[16] = {
+        -1, 7, 1, 0,    // ....  left  top   top|left
+         3, -1, 2, -1,  // right ....  top|right
+         5, 6, -1, -1,  // bottom bottom|left
+        -1, -1, -1, -1
+    };
+
+    int Width, Height, Direction;
+    enum { Left = 1, Right = 2, Top = 4, Bottom = 8 };
+    int Hit = 0;
+
+    if (!_glfw.x11.NET_WM_MOVERESIZE)
+        return GLFW_FALSE;
+
+    _glfwGetWindowSizeX11(window, &Width, &Height);
+
+    // Borders first, and only while restored: a maximized window has no edges to drag.
+    if (!_glfwWindowMaximizedX11(window))
+    {
+        const int Border = 4;
+
+        if (xpos <= Border)              Hit |= Left;
+        if (xpos >= Width - Border)      Hit |= Right;
+        if (ypos <= Border)              Hit |= Top;
+        if (ypos >= Height - Border)     Hit |= Bottom;
+    }
+
+    Direction = Hit ? Directions[Hit & 15] : -1;
+
+    if (Direction < 0)
+    {
+        // Not an edge, so ask the app whether this is its title bar.
+        int TitleBarHit = 0;
+        _glfwInputTitleBarHitTest(window, xpos, ypos, &TitleBarHit);
+
+        if (!TitleBarHit)
+            return GLFW_FALSE;
+
+        Direction = _NET_WM_MOVERESIZE_MOVE;
+    }
+
+    // The WM grabs the pointer for the duration, so release ours or the drag never starts.
+    XUngrabPointer(_glfw.x11.display, CurrentTime);
+    XFlush(_glfw.x11.display);
+
+    // Root-relative, which is what the spec asks for.
+    sendEventToWM(window,
+                  _glfw.x11.NET_WM_MOVERESIZE,
+                  xroot, yroot,
+                  Direction,
+                  button,
+                  1); // Source indication: normal application
+
+    return GLFW_TRUE;
+}
+
 // Updates the normal hints according to the window settings
 //
 static void updateNormalHints(_GLFWwindow* window, int width, int height)
@@ -623,7 +691,9 @@ static GLFWbool createNativeWindow(_GLFWwindow* window,
                  _glfw.x11.context,
                  (XPointer) window);
 
-    if (!wndconfig->decorated)
+    // GLFW_TITLEBAR off means the app draws its own, which on X11 is the undecorated window the
+    // WM already knows how to make. ButtonPress then hands drags and edge resizes back to the WM.
+    if (!wndconfig->decorated || !_glfw.hints.window.titlebar)
         _glfwSetWindowDecoratedX11(window, GLFW_FALSE);
 
     if (_glfw.x11.NET_WM_STATE && !window->monitor)
@@ -1338,6 +1408,18 @@ static void processEvent(XEvent *event)
         case ButtonPress:
         {
             const int mods = translateState(event->xbutton.state);
+
+            // Undecorated because the app draws its own title bar: the WM no longer has a frame to
+            // start a drag or resize from, so offer it one before the click reaches the app.
+            if (!_glfw.hints.window.titlebar &&
+                event->xbutton.button == Button1 &&
+                startWMMoveResize(window,
+                                  event->xbutton.x, event->xbutton.y,
+                                  event->xbutton.x_root, event->xbutton.y_root,
+                                  event->xbutton.button))
+            {
+                return;
+            }
 
             if (event->xbutton.button == Button1)
                 _glfwInputMouseClick(window, GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, mods);
@@ -2608,9 +2690,7 @@ void _glfwSetWindowDecoratedX11(_GLFWwindow* window, GLFWbool enabled)
 
 void _glfwPlatformSetWindowTitlebar(_GLFWwindow* window, GLFWbool enabled)
 {
-    // TODO
-    _glfwInputError(GLFW_PLATFORM_ERROR,
-        "X11: Window attribute setting not implemented yet");
+    _glfwSetWindowDecoratedX11(window, enabled && window->decorated);
 }
 
 void _glfwSetWindowFloatingX11(_GLFWwindow* window, GLFWbool enabled)
