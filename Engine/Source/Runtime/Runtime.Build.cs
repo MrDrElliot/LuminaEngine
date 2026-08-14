@@ -50,7 +50,6 @@ public class Runtime : LuminaModuleRules
             "DotNetHost",
 
             "MeshOptimizer",
-            "MikkTSpace",
             "BasicUniversal",
             "MSDFGen",
 

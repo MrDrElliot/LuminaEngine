@@ -8,7 +8,6 @@
 #include "TaskSystem/TaskSystem.h"
 #include "Memory/Memory.h"
 #include "Memory/MemoryTracking.h"
-#include <mikktspace.h>
 #include <meshoptimizer.h>
 #include "Renderer/MeshQuantization.h"
 #include "Renderer/SkeletonResource.h"
@@ -33,70 +32,82 @@ namespace Lumina::Import::Mesh
 
     namespace
     {
+        // meshopt_Allocator frees strictly LIFO, asserting blocks[count-1] == ptr, so a bump arena is safe.
+        constexpr size_t kMeshoptArenaSize  = 2u * 1024u * 1024u;
+        constexpr size_t kMeshoptAlignment  = 16u;
+        constexpr uint64 kMeshoptHeapMarker = ~0ull;
+
+        struct FMeshoptAllocHeader
+        {
+            uint64 PrevOffset;
+            uint64 Padding;
+        };
+        static_assert(sizeof(FMeshoptAllocHeader) == kMeshoptAlignment, "Header must preserve payload alignment");
+
+        struct FMeshoptArena
+        {
+            uint8* Base   = nullptr;
+            size_t Offset = 0;
+
+            ~FMeshoptArena() { if (Base != nullptr) { Memory::Free(Base); } }
+        };
+
+        FMeshoptArena& GetMeshoptArena()
+        {
+            thread_local FMeshoptArena GArena;
+            return GArena;
+        }
+
+        void* MeshoptAlloc(size_t Size)
+        {
+            LUMINA_MEMORY_SCOPE("MeshOpt");
+
+            FMeshoptArena& Arena = GetMeshoptArena();
+            if (Arena.Base == nullptr)
+            {
+                Arena.Base = static_cast<uint8*>(Memory::Malloc(kMeshoptArenaSize, kMeshoptAlignment));
+            }
+
+            const size_t Aligned = (Arena.Offset + kMeshoptAlignment - 1u) & ~(kMeshoptAlignment - 1u);
+            const size_t Total   = sizeof(FMeshoptAllocHeader) + Size;
+
+            if (Arena.Base != nullptr && Total <= kMeshoptArenaSize - Aligned)
+            {
+                FMeshoptAllocHeader* Header = reinterpret_cast<FMeshoptAllocHeader*>(Arena.Base + Aligned);
+                Header->PrevOffset = Arena.Offset;
+                Arena.Offset       = Aligned + Total;
+                return Header + 1;
+            }
+
+            // Requests scale with mesh size, so one big mesh must not be able to pin the arena.
+            FMeshoptAllocHeader* Header = static_cast<FMeshoptAllocHeader*>(Memory::Malloc(Total, kMeshoptAlignment));
+            Header->PrevOffset = kMeshoptHeapMarker;
+            return Header + 1;
+        }
+
+        void MeshoptFree(void* Ptr)
+        {
+            if (Ptr == nullptr)
+            {
+                return;
+            }
+
+            FMeshoptAllocHeader* Header = static_cast<FMeshoptAllocHeader*>(Ptr) - 1;
+            if (Header->PrevOffset == kMeshoptHeapMarker)
+            {
+                Memory::Free(Header);
+                return;
+            }
+
+            GetMeshoptArena().Offset = (size_t)Header->PrevOffset;
+        }
+
         // meshopt_setAllocator stores function pointers only, so static-init is safe.
-        void* MeshoptAlloc(size_t Size) { LUMINA_MEMORY_SCOPE("MeshOpt"); return Memory::Malloc(Size); }
-        void  MeshoptFree(void* Ptr)    { if (Ptr) { Memory::Free(Ptr); } }
         const bool GMeshoptAllocatorSet = []{ meshopt_setAllocator(MeshoptAlloc, MeshoptFree); return true; }();
     }
 
-    // MikkTSpace tangent gen: matches authored normal-map convention so baked normals round-trip.
     namespace
     {
-        // One MikkTSpace context per surface so the (single-threaded) generator can run
-        // concurrently across a mesh's disjoint index ranges.
-        struct FMikkSurfaceContext
-        {
-            FMeshResource* Mesh;
-            uint32         StartIndex;
-            uint32         IndexCount;
-        };
-
-        FORCEINLINE uint32 MikkVertexIndex(const SMikkTSpaceContext* Ctx, int iFace, int iVert)
-        {
-            const FMikkSurfaceContext* S = static_cast<const FMikkSurfaceContext*>(Ctx->m_pUserData);
-            return S->Mesh->Indices[(size_t)S->StartIndex + (size_t)iFace * 3u + (size_t)iVert];
-        }
-
-        int Mikk_GetNumFaces(const SMikkTSpaceContext* Ctx)
-        {
-            const FMikkSurfaceContext* S = static_cast<const FMikkSurfaceContext*>(Ctx->m_pUserData);
-            return (int)(S->IndexCount / 3u);
-        }
-
-        int Mikk_GetNumVerticesOfFace(const SMikkTSpaceContext*, int)
-        {
-            return 3;
-        }
-
-        void Mikk_GetPosition(const SMikkTSpaceContext* Ctx, float Out[], int iFace, int iVert)
-        {
-            const FMikkSurfaceContext* S = static_cast<const FMikkSurfaceContext*>(Ctx->m_pUserData);
-            const FVector3 P = S->Mesh->Positions[MikkVertexIndex(Ctx, iFace, iVert)];
-            Out[0] = P.x; Out[1] = P.y; Out[2] = P.z;
-        }
-
-        void Mikk_GetNormal(const SMikkTSpaceContext* Ctx, float Out[], int iFace, int iVert)
-        {
-            const FMikkSurfaceContext* S = static_cast<const FMikkSurfaceContext*>(Ctx->m_pUserData);
-            const FVector3 N = UnpackNormal(S->Mesh->Normals[MikkVertexIndex(Ctx, iFace, iVert)]);
-            Out[0] = N.x; Out[1] = N.y; Out[2] = N.z;
-        }
-
-        void Mikk_GetTexCoord(const SMikkTSpaceContext* Ctx, float Out[], int iFace, int iVert)
-        {
-            const FMikkSurfaceContext* S = static_cast<const FMikkSurfaceContext*>(Ctx->m_pUserData);
-            const FVector2 UV = S->Mesh->GetUVAt(MikkVertexIndex(Ctx, iFace, iVert));
-            Out[0] = UV.x; Out[1] = UV.y;
-        }
-
-        void Mikk_SetTSpaceBasic(const SMikkTSpaceContext* Ctx, const float Tangent[], float Sign, int iFace, int iVert)
-        {
-            const FMikkSurfaceContext* S = static_cast<const FMikkSurfaceContext*>(Ctx->m_pUserData);
-            // Disjoint surfaces rarely share a vertex post-dedup; when they do, both write a
-            // valid tangent and the aligned uint32 store is atomic, so it is last-writer-wins.
-            S->Mesh->Tangents[MikkVertexIndex(Ctx, iFace, iVert)] = PackTangent(FVector3(Tangent[0], Tangent[1], Tangent[2]), Sign);
-        }
-
         // Upper bound on what BuildVertexStreams emits: the five always-on streams plus the two skinning
         // ones. Callers size their array from this so adding a stream cannot silently overflow it.
         constexpr uint32 kMaxVertexStreams = 8;
@@ -144,36 +155,69 @@ namespace Lumina::Import::Mesh
         }
     }
 
-    void ComputeMikkTSpaceTangents(FMeshResource& MeshResource, FScopedSlowTask* Progress = nullptr, float StepPerSurface = 0.0f)
+    void ComputeTangents(FMeshResource& MeshResource, FScopedSlowTask* Progress = nullptr, float StepPerSurface = 0.0f)
     {
-        if (MeshResource.Indices.empty() || MeshResource.GetNumVertices() == 0)
+        const size_t NumVertices = MeshResource.GetNumVertices();
+        if (MeshResource.Indices.empty() || NumVertices == 0)
         {
             return;
         }
 
         LUMINA_PROFILE_SCOPE();
-        
-        SMikkTSpaceInterface Interface = {};
-        Interface.m_getNumFaces          = Mikk_GetNumFaces;
-        Interface.m_getNumVerticesOfFace = Mikk_GetNumVerticesOfFace;
-        Interface.m_getPosition          = Mikk_GetPosition;
-        Interface.m_getNormal            = Mikk_GetNormal;
-        Interface.m_getTexCoord          = Mikk_GetTexCoord;
-        Interface.m_setTSpaceBasic       = Mikk_SetTSpaceBasic;
 
-        // MikkTSpace is single-threaded internally; surfaces are disjoint index ranges,
-        // so run one generator context per surface in parallel.
+        // meshopt wants unit float3 normals and float2 UVs; both streams live packed.
+        if (MeshResource.Normals.size() != NumVertices || MeshResource.UVs.size() != NumVertices)
+        {
+            return;
+        }
+
+        MeshResource.Tangents.resize(NumVertices);
+
+        TVector<FVector3> UnpackedNormals(NumVertices);
+        TVector<FVector2> UnpackedUVs(NumVertices);
+        {
+            LUMINA_PROFILE_SECTION("Unpack Tangent Inputs");
+            const uint32* InNormals = MeshResource.Normals.data();
+            const uint32* InUVs     = MeshResource.UVs.data();
+            FVector3*     OutNormals = UnpackedNormals.data();
+            FVector2*     OutUVs     = UnpackedUVs.data();
+
+            Task::ParallelFor((uint32)NumVertices, [=](const Task::FParallelRange& Range)
+            {
+                for (uint32 i = Range.Start; i < Range.End; ++i)
+                {
+                    OutNormals[i] = UnpackNormal(InNormals[i]);
+                    OutUVs[i]     = Math::UnpackHalf2x16(InUVs[i]);
+                }
+            }, 4096);
+        }
+
         const uint32 NumSurfaces = (uint32)MeshResource.GeometrySurfaces.size();
         Task::ParallelFor(NumSurfaces, [&](uint32 SurfaceIdx)
         {
             const FGeometrySurface& Section = MeshResource.GeometrySurfaces[SurfaceIdx];
             if (Section.IndexCount >= 3)
             {
-                FMikkSurfaceContext UserData{ &MeshResource, Section.StartIndex, Section.IndexCount };
-                SMikkTSpaceContext Ctx = {};
-                Ctx.m_pInterface = &Interface;
-                Ctx.m_pUserData  = &UserData;
-                genTangSpaceDefault(&Ctx);
+                const uint32* SurfaceIndices = &MeshResource.Indices[Section.StartIndex];
+
+                TVector<float> CornerTangents((size_t)Section.IndexCount * 4u);
+                {
+                    LUMINA_PROFILE_SECTION("meshopt_generateTangents");
+                    meshopt_generateTangents(
+                        CornerTangents.data(),
+                        SurfaceIndices, Section.IndexCount,
+                        &MeshResource.Positions[0].x, NumVertices, sizeof(FVector3),
+                        &UnpackedNormals[0].x, sizeof(FVector3),
+                        &UnpackedUVs[0].x, sizeof(FVector2),
+                        meshopt_TangentCompatible);
+                }
+
+                // Per-corner collapsed to per-vertex last-writer-wins, as the previous per-corner writer did.
+                for (uint32 i = 0; i < Section.IndexCount; ++i)
+                {
+                    const float* T = &CornerTangents[(size_t)i * 4u];
+                    MeshResource.Tangents[SurfaceIndices[i]] = PackTangent(FVector3(T[0], T[1], T[2]), T[3]);
+                }
             }
 
             if (Progress)
@@ -361,7 +405,7 @@ namespace Lumina::Import::Mesh
         void BuildLODMeshletsForRange(
             const uint32* SrcIndices, size_t SrcIndexCount,
             const float*  VertexPositions, size_t NumVertices, size_t VertexSize,
-            bool bConeCulling, bool bOptimizeMeshlets,
+            bool bConeCulling, bool bOptimizeMeshlets, bool bFastBuild,
             TReadPos&&    ReadPosition,
             FSurfaceMeshletResult& Result)
         {
@@ -388,6 +432,18 @@ namespace Lumina::Import::Mesh
             }
 
             size_t MeshletCount = 0;
+            if (bFastBuild)
+            {
+                LUMINA_PROFILE_SECTION("meshopt_buildMeshletsScan");
+                MeshletCount = meshopt_buildMeshletsScan(
+                    LocalMeshlets.data(),
+                    Result.Vertices.data(),
+                    Result.Triangles.data(),
+                    SrcIndices, SrcIndexCount,
+                    NumVertices,
+                    MaxVertices, MaxTriangles);
+            }
+            else
             {
                 LUMINA_PROFILE_SECTION("meshopt_buildMeshlets");
                 MeshletCount = meshopt_buildMeshlets(
@@ -444,9 +500,11 @@ namespace Lumina::Import::Mesh
                 // Hoisted above the bounds: without cones this pass IS the bounds, so it must run first.
                 FVector3 Lo( FLT_MAX);
                 FVector3 Hi(-FLT_MAX);
+                FVector3 MeshletPositions[MESHLET_MAX_VERTICES];
                 for (uint32 i = 0; i < M.vertex_count; ++i)
                 {
                     const FVector3 P = ReadPosition(Result.Vertices[M.vertex_offset + i]);
+                    MeshletPositions[i] = P;
                     Lo = Math::Min(Lo, P);
                     Hi = Math::Max(Hi, P);
                 }
@@ -469,8 +527,13 @@ namespace Lumina::Import::Mesh
                 }
                 else
                 {
-                    Sphere.Center = (Lo + Hi) * 0.5f;
-                    Sphere.Radius = Math::Length(Hi - Sphere.Center);
+                    // Same solver the cone path gets, so dropping cones no longer also loosens the sphere.
+                    const meshopt_Bounds B = meshopt_computeSphereBounds(
+                        &MeshletPositions[0].x, M.vertex_count, sizeof(FVector3),
+                        nullptr, 0);
+
+                    Sphere.Center = FVector3(B.center[0], B.center[1], B.center[2]);
+                    Sphere.Radius = B.radius;
                     Cone.Axis     = FVector3(0.0f, 0.0f, 1.0f);
                     Cone.Cutoff   = 1.0f;
                 }
@@ -582,7 +645,7 @@ namespace Lumina::Import::Mesh
         }
         if (MeshResource.bGenerateTangents)
         {
-            ComputeMikkTSpaceTangents(MeshResource, Progress, TangentStep);
+            ComputeTangents(MeshResource, Progress, TangentStep);
         }
         else
         {
@@ -632,12 +695,30 @@ namespace Lumina::Import::Mesh
         const uint32 LODCount          = Math::Clamp(MeshResource.MaxLODs, 1u, MAX_MESH_LODS);
         const bool   bConeCulling      = MeshResource.bMeshletConeCulling;
         const bool   bOptimizeMeshlets = MeshResource.bOptimizeMeshlets;
+        const bool   bFastMeshletBuild = MeshResource.bFastMeshletBuild;
 
         if (Progress)
         {
             Progress->UpdateMessage("Building meshlets & LODs...");
         }
-        
+
+        // The scan builder cuts on index order alone, so it needs a locality pass the greedy one does for itself.
+        if (bFastMeshletBuild)
+        {
+            LUMINA_PROFILE_SECTION("Scan Build Index Pre-Pass");
+            Task::ParallelFor(NumSurfaces, [&](uint32 SurfaceIdx)
+            {
+                const FGeometrySurface& Section = MeshResource.GeometrySurfaces[SurfaceIdx];
+                if (Section.IndexCount == 0)
+                {
+                    return;
+                }
+
+                uint32* SurfaceIndices = &MeshResource.Indices[Section.StartIndex];
+                meshopt_optimizeVertexCache(SurfaceIndices, SurfaceIndices, Section.IndexCount, NumVertices);
+            });
+        }
+
         TVector<FSurfaceMeshletResult> Results(LODCount * NumSurfaces);
         TVector<size_t> CellIndexCount(LODCount * NumSurfaces, 0u);
 
@@ -665,7 +746,7 @@ namespace Lumina::Import::Mesh
                 BuildLODMeshletsForRange(
                     SurfaceIndices, Section.IndexCount,
                     VertexPositions, NumVertices, PositionStride,
-                    bConeCulling, bOptimizeMeshlets,
+                    bConeCulling, bOptimizeMeshlets, bFastMeshletBuild,
                     ReadPosition, Out);
                 CellIndexCount[Cell] = Section.IndexCount;
                 return;
@@ -708,7 +789,7 @@ namespace Lumina::Import::Mesh
                         SurfaceIndices, Section.IndexCount,
                         VertexPositions, NumVertices, PositionStride,
                         TargetIndices, Cfg.TargetError,
-                        meshopt_SimplifyLockBorder,
+                        meshopt_SimplifyLockBorder | meshopt_SimplifySparse,
                         &ResultError);
             }
 
@@ -730,7 +811,7 @@ namespace Lumina::Import::Mesh
             BuildLODMeshletsForRange(
                 Simplified.data(), NewCount,
                 VertexPositions, NumVertices, PositionStride,
-                bConeCulling, bOptimizeMeshlets,
+                bConeCulling, bOptimizeMeshlets, bFastMeshletBuild,
                 ReadPosition, Out);
         });
         
@@ -1345,7 +1426,7 @@ namespace Lumina::Import::Mesh
             {
                 OptimizeNewlyImportedMesh(M, Progress);
             }
-            // GenerateMeshlets internally runs ComputeMikkTSpaceTangents before packing,
+            // GenerateMeshlets internally runs ComputeTangents before packing,
             // and advances StepPerSurface of progress for each surface it meshletizes.
             GenerateMeshlets(M, Progress, StepPerSurface);
         });

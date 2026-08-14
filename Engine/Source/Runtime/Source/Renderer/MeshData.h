@@ -352,6 +352,9 @@ namespace Lumina
         // Per-meshlet triangle reorder for the hardware vertex cache.
         bool                      bOptimizeMeshlets = true;
 
+        // Linear-scan meshlet build. Only valid with the index pre-pass GenerateMeshlets runs alongside it.
+        bool                      bFastMeshletBuild = false;
+
         FORCEINLINE size_t GetNumSurfaces() const { return GeometrySurfaces.size(); }
         FORCEINLINE size_t GetNumVertices() const { return Positions.size(); }
         FORCEINLINE size_t GetNumIndices()  const { return Indices.size(); }

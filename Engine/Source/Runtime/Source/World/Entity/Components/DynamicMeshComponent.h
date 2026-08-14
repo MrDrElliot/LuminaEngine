@@ -121,11 +121,11 @@ namespace Lumina
         PROPERTY(Editable, Category = "Rendering")
         bool bOptimizeMeshlets = true;
 
-        /** Generate proper MikkTSpace tangents at Commit. This is the slowest single stage of a commit and
-         *  it does not parallelize across a mesh with one section, so turning it off is the biggest saving
-         *  available for procedural geometry. Off substitutes a cheap arbitrary tangent basis: shading stays
-         *  valid, but any material sampling a normal map will orient it arbitrarily. Leave on if this mesh
-         *  uses normal maps. */
+        // Scans a cache-optimized index buffer into meshlets instead of clustering them; looser bounds cull less.
+        PROPERTY(Editable, Category = "Rendering")
+        bool bFastMeshletBuild = true;
+
+        // Real UV-space tangents at Commit; off substitutes a cheap basis that only normal maps care about.
         PROPERTY(Editable, Category = "Rendering")
         bool bGenerateTangents = true;
 

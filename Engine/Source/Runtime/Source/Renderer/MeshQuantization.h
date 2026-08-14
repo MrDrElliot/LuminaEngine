@@ -4,9 +4,13 @@
 #include "Renderer/MeshData.h"
 #include "Renderer/Vertex.h"
 #include "Shared/SharedConstants.h"
+#include "meshoptimizer.h"
 
 namespace Lumina
 {
+    constexpr int32 MeshletPositionBits = 16;
+    static_assert((1 << MeshletPositionBits) - 1 == MESHLET_POSITION_MAX,
+                  "MeshletPositionBits must describe the width of FMeshletVertex's position fields");
 
     struct FMeshletQuantization
     {
@@ -69,23 +73,8 @@ namespace Lumina
             Max.z = Math::Max(Max.z, Positions[i].z);
         }
 
-        const float Extent = Math::Max(Math::Max(Max.x - Min.x, Max.y - Min.y), Max.z - Min.z);
-
-        float MaxAbs = 0.0f;
-        MaxAbs = Math::Max(MaxAbs, Math::Max(Math::Abs(Min.x), Math::Abs(Max.x)));
-        MaxAbs = Math::Max(MaxAbs, Math::Max(Math::Abs(Min.y), Math::Abs(Max.y)));
-        MaxAbs = Math::Max(MaxAbs, Math::Max(Math::Abs(Min.z), Math::Abs(Max.z)));
-
-        int32 Exponent = -126;
-        if (Extent > 0.0f)
-        {
-            Exponent = (int32)Math::Ceil(Math::Log2(Extent / (float)(MESHLET_POSITION_MAX - 2)));
-        }
-        if (MaxAbs > 0.0f)
-        {
-            Exponent = Math::Max(Exponent, (int32)Math::Ceil(Math::Log2(MaxAbs / (float)(MESHLET_ANCHOR_MAX - 1))));
-        }
-        Exponent = Math::Clamp(Exponent, -126, 127);
+        // Solves both constraints the packing has: the offset fits max_bits, the anchor fits a signed 24-bit grid.
+        const int32 Exponent = meshopt_computePositionExponent(&Min.x, &Max.x, -126, MeshletPositionBits);
 
         const float Scale = MeshletExponentScale(Exponent);
         Q.Exponent = Exponent;

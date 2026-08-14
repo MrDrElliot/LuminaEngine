@@ -48,7 +48,7 @@ namespace Lumina::PrimitiveMeshes
                 FSourceVertex vertex;
                 vertex.Position = positions[idx];
                 vertex.Normal = PackNormal(normals[face]);
-                vertex.Tangent = 0; // MikkTSpace fills this in GenerateMeshlets; zero so dedup byte-compare works.
+                vertex.Tangent = 0; // GenerateMeshlets fills this in; zero so dedup byte-compare works.
                 vertex.UV = Math::PackHalf2x16(uvs[i]);
                 vertex.Color = 0xFFFFFFFF; // White
 
