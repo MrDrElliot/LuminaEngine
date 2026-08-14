@@ -465,6 +465,9 @@ namespace Lumina
             // slot. RESIZE, never assign -- the editor compile path fills this before calling PostLoad.
             ResolvedTextures.resize(Textures.size());
 
+            // A recompile replaces the whole texture table; a latch left set would suppress the async kick.
+            bTextureLoadRequested = false;
+
             const uint32 NumTextures = (uint32)Math::Min<size_t>(Textures.size(), MAX_TEXTURES);
             for (uint32 i = 0; i < NumTextures; ++i)
             {
@@ -574,7 +577,7 @@ namespace Lumina
             return true;
         }
 
-        LOG_ERROR("Failed to find material scalar parameter {}", Name);
+        LOG_WARN("Failed to find material scalar parameter {}", Name);
         return false;
     }
 
@@ -591,7 +594,7 @@ namespace Lumina
             return true;
         }
 
-        LOG_ERROR("Failed to find material vector parameter {}", Name);
+        LOG_WARN("Failed to find material vector parameter {}", Name);
         return false;
     }
 

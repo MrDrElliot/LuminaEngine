@@ -467,6 +467,12 @@ namespace Lumina
 
             AddDependency(Out, (const void*)RawMaterial);
             AddDependency(Out, (const void*)(uintptr_t)R.MaterialID);
+
+            // MaterialID names the SUBSTITUTED material, so a fallback surface is not keyed on its real master.
+            if (IsValid(RawMaterial))
+            {
+                AddDependency(Out, (const void*)RawMaterial->GetMaterial());
+            }
         }
 
         // MeshletHeaderSlot is 0 until the GPU buffers exist, which can lag the property data.

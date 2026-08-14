@@ -70,6 +70,14 @@ namespace Lumina
         }
     }
 
+    void CMaterialInstance::EnsureRegisteredWithParent()
+    {
+        if (Material)
+        {
+            Material->RegisterInstance(this);
+        }
+    }
+
     void CMaterialInstance::RebuildUniformsFromOverrides()
     {
         if (!Material)
@@ -81,15 +89,11 @@ namespace Lumina
         // disabling a parameter), and an override flipping on or off changes which texture a slot samples
         // -- so it changes what this instance owes the streamer.
 
+        EnsureRegisteredWithParent();
+
         MaterialUniforms = Material->MaterialUniforms;
 
-        // Drop overrides whose parent parameter is gone/retyped, otherwise dead entries persist forever.
-        Overrides.erase(eastl::remove_if(Overrides.begin(), Overrides.end(),
-            [this](const FMaterialParameterOverride& O)
-            {
-                FMaterialParameter Probe;
-                return !Material->GetParameterValue(O.Type, O.ParameterName, Probe);
-            }), Overrides.end());
+        // Overrides are never pruned here: a recompile that drops a parameter must not destroy its value.
 
         // Slots are demanded from the parent one at a time, so a parameter this instance overrides never
         // asks the parent to resolve its default. Runs BEFORE the override loop, which has the last word.
@@ -241,6 +245,8 @@ namespace Lumina
             return false;
         }
 
+        EnsureRegisteredWithParent();
+
         FMaterialParameter Param;
         if (!Material->GetParameterValue(EMaterialParameterType::Scalar, Name, Param))
         {
@@ -267,6 +273,8 @@ namespace Lumina
         {
             return false;
         }
+
+        EnsureRegisteredWithParent();
 
         FMaterialParameter Param;
         if (!Material->GetParameterValue(EMaterialParameterType::Vector, Name, Param))
@@ -295,6 +303,8 @@ namespace Lumina
         {
             return false;
         }
+
+        EnsureRegisteredWithParent();
 
         FMaterialParameter Param;
         if (!Material->GetParameterValue(EMaterialParameterType::Texture, Name, Param))
@@ -523,6 +533,14 @@ namespace Lumina
             {
                 continue;
             }
+
+            // A retained override for a parameter the parent dropped binds nothing, so it cannot gate this.
+            FMaterialParameter Param;
+            if (!Material->GetParameterValue(EMaterialParameterType::Texture, Override.ParameterName, Param))
+            {
+                continue;
+            }
+
             if (Override.Texture != nullptr && Override.Texture->GetResourceID() < 0)
             {
                 return false;
