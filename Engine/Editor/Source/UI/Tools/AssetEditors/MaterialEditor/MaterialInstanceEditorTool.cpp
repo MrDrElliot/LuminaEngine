@@ -172,6 +172,90 @@ namespace Lumina
             "name + type match.");
     }
 
+    CMaterialInterface* FMaterialInstanceEditorTool::FindOverridingAncestor(CMaterialInstance* Instance, const FMaterialParameter& Param) const
+    {
+        for (CMaterialInterface* Level = Instance->Material.Get(); Level != nullptr; Level = Level->GetParentMaterial())
+        {
+            CMaterialInstance* AsInstance = Cast<CMaterialInstance>(Level);
+            if (AsInstance == nullptr)
+            {
+                return nullptr;   // reached the root, so the value is its compiled default
+            }
+
+            if (AsInstance->IsOverrideEnabled(Param.ParameterName))
+            {
+                return AsInstance;
+            }
+        }
+
+        return nullptr;
+    }
+
+    void FMaterialInstanceEditorTool::DrawInheritanceSection(CMaterialInstance* Instance)
+    {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Parent");
+        ImGui::SameLine(120.0f);
+
+        CMaterialInterface* Parent = Instance->Material.Get();
+        FGuid ParentGUID = Parent != nullptr ? Parent->GetGUID() : FGuid();
+
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGuiX::AssetReferenceCombo("##ParentMaterial", CMaterialInterface::StaticClass(), ParentGUID, LE_ICON_PALETTE))
+        {
+            CMaterialInterface* NewParent = Cast<CMaterialInterface>(LoadObject<CObject>(ParentGUID));
+
+            // The setter, never the property: it is what rejects a cycle and re-registers with the new parent.
+            if (Instance->SetParentMaterial(NewParent))
+            {
+                Asset->GetPackage()->MarkDirty();
+            }
+            else
+            {
+                ImGuiX::Notifications::NotifyError("'{0}' cannot be the parent of '{1}'.",
+                    NewParent != nullptr ? NewParent->GetName().c_str() : "<none>", Instance->GetName().c_str());
+            }
+        }
+
+        if (Parent == nullptr)
+        {
+            return;
+        }
+
+        TVector<CMaterialInterface*> Chain;
+        for (CMaterialInterface* Level = Instance; Level != nullptr; Level = Level->GetParentMaterial())
+        {
+            Chain.push_back(Level);
+        }
+
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Chain");
+        ImGui::SameLine(120.0f);
+
+        // Root first, the order values resolve in, so the chain reads like the override stack.
+        for (size_t i = Chain.size(); i-- > 0; )
+        {
+            if (Chain[i] == Instance)
+            {
+                ImGui::TextUnformatted(Chain[i]->GetName().c_str());
+            }
+            else
+            {
+                ImGui::TextDisabled("%s", Chain[i]->GetName().c_str());
+            }
+
+            if (i > 0)
+            {
+                ImGui::SameLine(0.0f, 4.0f);
+                ImGui::TextDisabled(LE_ICON_CHEVRON_RIGHT);
+                ImGui::SameLine(0.0f, 4.0f);
+            }
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+    }
+
     void FMaterialInstanceEditorTool::DrawParameterEditor(bool bFocused)
     {
         CMaterialInstance* Instance = Cast<CMaterialInstance>(Asset.Get());
@@ -181,14 +265,16 @@ namespace Lumina
             return;
         }
 
-        // The asset's own properties (parent material, etc.).
+        // The asset's own properties (shading model override, etc.).
         PropertyTable.DrawTree();
         ImGui::Spacing();
         ImGui::Separator();
 
+        DrawInheritanceSection(Instance);
+
         if (!Instance->Material.IsValid())
         {
-            ImGui::TextUnformatted("Assign a parent Material to edit parameters.");
+            ImGui::TextUnformatted("Assign a parent material to edit parameters.");
             return;
         }
 
@@ -245,6 +331,14 @@ namespace Lumina
                     else
                     {
                         ImGui::TextDisabled("%s", Param.ParameterName.c_str());
+                    }
+
+                    // Which level the shown value actually comes from, which is the whole point of a chain.
+                    if (!bEnabled && ImGui::IsItemHovered())
+                    {
+                        const CMaterialInterface* Source = FindOverridingAncestor(Instance, Param);
+                        ImGui::SetTooltip("Inherited from %s",
+                            Source != nullptr ? Source->GetName().c_str() : "the base material's default");
                     }
 
                     ImGui::TableNextColumn();

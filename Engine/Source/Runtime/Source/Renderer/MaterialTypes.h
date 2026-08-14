@@ -35,6 +35,22 @@ namespace Lumina
         uint32      Padding[2];
     };
     
+    /** Byte offset of one parameter's field in the block, for targeted uploads. POD, so offsetof is exact. */
+    constexpr uint32 ScalarFieldOffset(uint32 Index)
+    {
+        return (uint32)(offsetof(FMaterialUniforms, Scalars) + Index * sizeof(float));
+    }
+
+    constexpr uint32 VectorFieldOffset(uint32 Index)
+    {
+        return (uint32)(offsetof(FMaterialUniforms, Vectors) + Index * sizeof(FVector4));
+    }
+
+    constexpr uint32 TextureFieldOffset(uint32 Index)
+    {
+        return (uint32)(offsetof(FMaterialUniforms, Textures) + Index * sizeof(uint32));
+    }
+
     REFLECT()
     enum class EMaterialParameterType : uint8
     {

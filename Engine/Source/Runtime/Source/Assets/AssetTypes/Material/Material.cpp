@@ -517,6 +517,8 @@ namespace Lumina
             if (Param.Index < MAX_SCALARS)
             {
                 MaterialUniforms.Scalars[Param.Index] = Value;
+                UploadUniformField(ScalarFieldOffset(Param.Index), &MaterialUniforms.Scalars[Param.Index], sizeof(float));
+                PropagateParameterToChildren(EMaterialParameterType::Scalar, Name, Param.Index);
             }
             return true;
         }
@@ -534,6 +536,8 @@ namespace Lumina
             if (Param.Index < MAX_VECTORS)
             {
                 MaterialUniforms.Vectors[Param.Index] = Value;
+                UploadUniformField(VectorFieldOffset(Param.Index), &MaterialUniforms.Vectors[Param.Index], sizeof(FVector4));
+                PropagateParameterToChildren(EMaterialParameterType::Vector, Name, Param.Index);
             }
             return true;
         }

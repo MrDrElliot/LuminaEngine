@@ -110,23 +110,6 @@ namespace Lumina
         return Instance;
     }
 
-    /** Byte offsets of a single parameter's field inside the uniform block, for the targeted uploads the
-        setters do. The block is a POD aggregate, so offsetof is exact and the array elements contiguous. */
-    static constexpr uint32 ScalarFieldOffset(uint32 Index)
-    {
-        return (uint32)(offsetof(FMaterialUniforms, Scalars) + Index * sizeof(float));
-    }
-
-    static constexpr uint32 VectorFieldOffset(uint32 Index)
-    {
-        return (uint32)(offsetof(FMaterialUniforms, Vectors) + Index * sizeof(FVector4));
-    }
-
-    static constexpr uint32 TextureFieldOffset(uint32 Index)
-    {
-        return (uint32)(offsetof(FMaterialUniforms, Textures) + Index * sizeof(uint32));
-    }
-
     static void ApplyOverride(CMaterial* Root, const FMaterialParameterOverride& Override, FMaterialUniforms& Uniforms)
     {
         // Through the root's name->parameter map, not a scan: a material carries up to 72 parameters.
@@ -386,7 +369,7 @@ namespace Lumina
             UploadUniformField(ScalarFieldOffset(Param.Index), &MaterialUniforms.Scalars[Param.Index], sizeof(float));
         }
 
-        PropagateToChildren();
+        PropagateParameterToChildren(EMaterialParameterType::Scalar, Name, Param.Index);
         return true;
     }
 
@@ -417,7 +400,7 @@ namespace Lumina
             UploadUniformField(VectorFieldOffset(Param.Index), &MaterialUniforms.Vectors[Param.Index], sizeof(FVector4));
         }
 
-        PropagateToChildren();
+        PropagateParameterToChildren(EMaterialParameterType::Vector, Name, Param.Index);
         return true;
     }
 
@@ -454,7 +437,7 @@ namespace Lumina
             UploadUniformField(TextureFieldOffset(Param.Index), &MaterialUniforms.Textures[Param.Index], sizeof(uint32));
         }
 
-        PropagateToChildren();
+        PropagateParameterToChildren(EMaterialParameterType::Texture, Name, Param.Index);
         return true;
     }
 
@@ -588,12 +571,54 @@ namespace Lumina
         }
     }
 
-    void CMaterialInstance::UploadUniformField(uint32 ByteOffset, const void* Data, uint32 ByteSize)
+    bool CMaterialInstance::InheritParameterValue(EMaterialParameterType Type, const FName& Name, uint16 Index)
     {
-        if (MaterialIndex != -1)
+        if (!Material)
         {
-            Render().GetMaterialManager().UpdateMaterialUniformRange((uint32)MaterialIndex, ByteOffset, Data, ByteSize);
+            return false;
         }
+
+        for (const FMaterialParameterOverride& Override : Overrides)
+        {
+            if (Override.Type == Type && Override.bEnabled && Override.ParameterName == Name)
+            {
+                return false;
+            }
+        }
+
+        const FMaterialUniforms& Inherited = *Material->GetMaterialUniforms();
+
+        switch (Type)
+        {
+        case EMaterialParameterType::Scalar:
+            if (Index >= MAX_SCALARS)
+            {
+                return false;
+            }
+            MaterialUniforms.Scalars[Index] = Inherited.Scalars[Index];
+            UploadUniformField(ScalarFieldOffset(Index), &MaterialUniforms.Scalars[Index], sizeof(float));
+            return true;
+
+        case EMaterialParameterType::Vector:
+            if (Index >= MAX_VECTORS)
+            {
+                return false;
+            }
+            MaterialUniforms.Vectors[Index] = Inherited.Vectors[Index];
+            UploadUniformField(VectorFieldOffset(Index), &MaterialUniforms.Vectors[Index], sizeof(FVector4));
+            return true;
+
+        case EMaterialParameterType::Texture:
+            if (Index >= MAX_TEXTURES)
+            {
+                return false;
+            }
+            MaterialUniforms.Textures[Index] = Inherited.Textures[Index];
+            UploadUniformField(TextureFieldOffset(Index), &MaterialUniforms.Textures[Index], sizeof(uint32));
+            return true;
+        }
+
+        return false;
     }
 
     bool CMaterialInstance::RefreshTextureBindings(const CTexture* ChangedTexture)

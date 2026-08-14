@@ -196,7 +196,8 @@ namespace Lumina
     {
         void CreateMaterialInstanceFrom(const FAssetActionContext& Context)
         {
-            CMaterial* Parent = Cast<CMaterial>(LoadObject<CObject>(Context.Asset->AssetGUID));
+            // Interface, not CMaterial: instancing an instance just parents to it and inherits everything.
+            CMaterialInterface* Parent = Cast<CMaterialInterface>(LoadObject<CObject>(Context.Asset->AssetGUID));
             if (Parent == nullptr)
             {
                 ImGuiX::Notifications::NotifyError("Could not load '{0}' to instance it.", Context.Asset->Path);
@@ -213,7 +214,14 @@ namespace Lumina
                 return;
             }
 
-            Instance->Material = Parent;
+            // Through the setter so instancing at the depth limit is rejected rather than silently allowed.
+            if (!Instance->SetParentMaterial(Parent))
+            {
+                ImGuiX::Notifications::NotifyError("'{0}' cannot be instanced any deeper.", Context.Asset->AssetName);
+                Instance->ConditionalBeginDestroy();
+                return;
+            }
+
             // Mirrors what the factory does after assigning a parent: populates Parameters/MaterialIndex
             // so the instance is editable immediately instead of only after a reload.
             Instance->PostLoad();
@@ -323,9 +331,8 @@ namespace Lumina
     {
         FAssetActionRegistry& Registry = FAssetActionRegistry::Get();
 
-        // On CMaterial rather than CMaterialInterface: instancing an instance is a different operation
-        // (it would want to inherit the override set), so it is deliberately not offered here.
-        Registry.RegisterAction(CMaterial::StaticClass(), FAssetAction
+        // On the interface, so an instance can be instanced too and the child simply inherits its values.
+        Registry.RegisterAction(CMaterialInterface::StaticClass(), FAssetAction
         {
             .Label   = LE_ICON_CONTENT_DUPLICATE " Create Material Instance",
             .Execute = &CreateMaterialInstanceFrom,

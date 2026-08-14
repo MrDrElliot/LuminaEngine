@@ -41,6 +41,13 @@ namespace Lumina
 
         void DrawParameterEditor(bool bFocused);
         void DrawTextureParameterColumn(class CMaterialInstance* Instance, const struct FMaterialParameter& Param, bool bEnabled);
+
+        /** Parent picker plus the root-to-here chain, so it is clear which level a value comes from. */
+        void DrawInheritanceSection(class CMaterialInstance* Instance);
+
+        /** The nearest ancestor supplying Param, or null when the value is the root's own default. */
+        class CMaterialInterface* FindOverridingAncestor(class CMaterialInstance* Instance, const struct FMaterialParameter& Param) const;
+
         void SetDebugMesh(EDebugMesh Mesh);
 
         entt::entity MeshEntity;

@@ -126,6 +126,12 @@ namespace Lumina
         /** Depth-first RefreshInheritedTextureSlots over every descendant. */
         void PropagateInheritedTextureSlots(uint32 Depth = 0);
 
+        /** Pushes ONE parameter's value down the subtree, skipping any branch that overrides it. */
+        void PropagateParameterToChildren(EMaterialParameterType Type, const FName& Name, uint16 Index, uint32 Depth = 0);
+
+        /** Adopts the parent's value for one parameter. False = overridden here, so the branch below is unaffected. */
+        virtual bool InheritParameterValue(EMaterialParameterType Type, const FName& Name, uint16 Index) { return false; }
+
         /** Re-reads this material's texture ResourceIDs into its uniform block and re-uploads it, if it
          *  binds ChangedTexture (null = refresh unconditionally). Returns whether it did.
          *
@@ -155,6 +161,9 @@ namespace Lumina
     protected:
 
         virtual void UpdateMaterialUniforms() { }
+
+        /** Pushes one already-written field of this level's block to its slot; a matching write is dropped. */
+        void UploadUniformField(uint32 ByteOffset, const void* Data, uint32 ByteSize);
 
 
         std::atomic_bool        bReadyForRender;

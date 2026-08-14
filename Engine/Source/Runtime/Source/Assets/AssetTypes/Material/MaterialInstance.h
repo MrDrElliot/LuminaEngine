@@ -116,6 +116,8 @@ namespace Lumina
 
         CTexture* GetTextureParameterTexture(const FName& Name, uint32 Index) override;
 
+        bool InheritParameterValue(EMaterialParameterType Type, const FName& Name, uint16 Index) override;
+
 
         /** Whether an enabled texture override supplies slot Index. False for a slot the parent binds without
             exposing a parameter for it (a plain Texture Sample node), which an instance can only inherit. */
@@ -156,11 +158,6 @@ namespace Lumina
         void UpdateMaterialUniforms() override;
 
     private:
-
-        /** Push one already-written field of MaterialUniforms to this instance's GPU slot. The setters use
-            this instead of UpdateMaterialUniforms: changing one parameter dirties 4 or 16 bytes of the
-            block, and the manager drops the write entirely if the bytes already match. */
-        void UploadUniformField(uint32 ByteOffset, const void* Data, uint32 ByteSize);
 
         FMaterialUniforms                       MaterialUniforms;
     };

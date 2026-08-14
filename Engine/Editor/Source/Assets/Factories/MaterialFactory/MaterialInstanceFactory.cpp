@@ -30,7 +30,7 @@ namespace Lumina
         ImGui::Spacing();
 
         ImGui::SetNextItemWidth(-1.0f);
-        ImGuiX::AssetReferenceCombo("##ParentMaterial", CMaterial::StaticClass(), SelectedMaterialGUID, LE_ICON_PALETTE);
+        ImGuiX::AssetReferenceCombo("##ParentMaterial", CMaterialInterface::StaticClass(), SelectedMaterialGUID, LE_ICON_PALETTE);
 
         ImGui::Spacing();
         ImGui::Separator();
@@ -63,7 +63,7 @@ namespace Lumina
 
         if (SelectedMaterialGUID.IsValid())
         {
-            NewInstance->Material = Cast<CMaterialInterface>(LoadObject<CObject>(SelectedMaterialGUID));
+            NewInstance->SetParentMaterial(Cast<CMaterialInterface>(LoadObject<CObject>(SelectedMaterialGUID)));
             // Mirror reload-time PostLoad so Parameters/MaterialIndex are populated for the editor.
             NewInstance->PostLoad();
         }
