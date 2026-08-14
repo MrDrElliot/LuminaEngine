@@ -392,7 +392,7 @@ namespace Lumina
         }
     }
 
-    bool CTexture::TickResidencyFill(uint64& RemainingBytes, bool bMayExceedBudget)
+    bool CTexture::TickResidencyFill(uint64& RemainingBytes, bool bGuaranteeProgress)
     {
         if (!PendingFill.bActive || TextureResource == nullptr)
         {
@@ -400,6 +400,24 @@ namespace Lumina
         }
 
         LUMINA_PROFILE_SECTION("Texture::ResidencyFill");
+
+        // A staged image is invisible and its bindless slot is frozen until it completes, so a fill that
+        // stops advancing is not slow -- it is stuck, and every way of getting stuck here has historically
+        // been silent. Rather than adding a guard per cause, the fill gives up on itself: the staged image
+        // goes back, the texture keeps the residency it already had, and the streamer is free to try the
+        // change again. Generous, because a fill that is merely slow resets this on every band that lands.
+        constexpr uint32 kMaxStalledTicks = 300;
+
+        if (PendingFill.StalledTicks >= kMaxStalledTicks)
+        {
+            LOG_ERROR("CTexture::TickResidencyFill: {} made no progress for {} ticks at mip {} layer {}; "
+                      "abandoning the staged image rather than leaving its bindless slot frozen. The "
+                      "texture stays at its previous residency and the change can be retried.",
+                GetName(), kMaxStalledTicks, PendingFill.NextMip, PendingFill.NextLayer);
+
+            AbandonResidencyFill();
+            return false;
+        }
 
         const uint32 NumLayers = TextureResource->GetNumLayers();
 

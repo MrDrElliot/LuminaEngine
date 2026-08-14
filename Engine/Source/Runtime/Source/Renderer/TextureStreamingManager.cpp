@@ -305,20 +305,15 @@ namespace Lumina
     {
         LUMINA_PROFILE_SECTION("Streaming::TickResidencyFills");
 
-        bool bMayExceedBudgetThisFrame = true;
-
         const SIZE_T Count = Textures.size();
         if (Count == 0)
         {
             return;
         }
 
-        // ROTATED, not registry order. The frame's budget is spent by whoever comes first, and in a fixed
-        // order that is always the same textures -- so anything further down could afford zero rows frame
-        // after frame, forever. That is not a slow fill, it is a stuck one: the staged image never
-        // completes, CommitRecreate is never reached, and the swap sits unarmed until the "never
-        // committed" error fires. It bites the biggest textures hardest, which is why terrain arrays
-        // (LayerCount x a full chain, the hungriest things in the registry) were the ones that hung.
+        // Rotated rather than registry order, so the frame's SURPLUS is shared out instead of always
+        // landing on whatever registered first. Fairness only -- the invariant that a fill cannot stall is
+        // the guarantee below, not this.
         for (SIZE_T i = 0; i < Count; ++i)
         {
             FStreamingTexture& Entry = Textures[(FillCursor + i) % Count];
@@ -329,16 +324,18 @@ namespace Lumina
                 continue;
             }
 
-            // The over-budget allowance is granted at most ONCE per frame, to whichever texture spends
-            // first, so a mip bigger than the whole budget still converges without every texture in the
-            // scene claiming the same exemption in the same frame. Combined with the rotation above, every
-            // texture gets its turn at the front, which is what makes progress guaranteed rather than
-            // dependent on where registration happened to put it.
-            const uint64 Before      = FrameUploadBudget;
+            // EVERY in-flight fill advances, every frame. The budget decides how MUCH each one moves, never
+            // whether it moves at all -- because a texture mid-swap is not a candidate for deferral. Its
+            // staged image is invisible and its bindless slot is frozen until the fill completes, so a
+            // frame it spends waiting is not bandwidth saved, it is a texture stuck at the wrong residency
+            // and a slot that cannot be reused. Deferring instead is what let a big texture starve behind
+            // the rest of the registry forever, silently, until the RHI's never-committed error fired.
+            //
+            // The floor is one BLOCK ROW per in-flight texture -- kilobytes each. The old once-per-frame
+            // restriction was sized against per-MIP granularity, where a free step meant 16 MiB.
             const uint32 FirstMipWas = Texture->GetResidentFirstMip();
 
-            Texture->TickResidencyFill(FrameUploadBudget, bMayExceedBudgetThisFrame);
-            bMayExceedBudgetThisFrame = bMayExceedBudgetThisFrame && (FrameUploadBudget == Before);
+            Texture->TickResidencyFill(FrameUploadBudget, /*bGuaranteeProgress*/ true);
 
             // A fill that had to abandon its staged image rolls residency back, and the entry's cached
             // size was charged against the pool when the change was APPLIED. Left alone, the pool would

@@ -98,16 +98,19 @@ namespace Lumina
          *  run again until this clears, so a caller holding data to apply should wait rather than spend it. */
         bool HasPendingGPUResidency() const;
 
-        /** Push more of the staged image's host-uploaded mips, spending at most RemainingBytes. Each mip is
-         *  priced before it is copied, so the budget is never overshot -- except when bMayExceedBudget lets
-         *  one oversized mip through, which the caller must grant at most once per FRAME or a mip larger
-         *  than the whole budget would never converge. Publishes the swap once the last one is queued.
-         *  Returns true while there is still work left.
+        /** Push more of the staged image's host-uploaded mips, spending at most RemainingBytes. Each band is
+         *  priced before it is copied, so the budget is never overshot -- except by the single block row
+         *  bGuaranteeProgress forces through when nothing is affordable. Publishes the swap once the last
+         *  band is queued. Returns true while there is still work left.
          *
-         *  The staged image is invisible until it is complete, so spreading the fill over frames is free:
-         *  nothing samples a half-filled image, and the old one keeps being sampled meanwhile. Game thread
-         *  only, same as ApplyMipResidency. */
-        bool TickResidencyFill(uint64& RemainingBytes, bool bMayExceedBudget = true);
+         *  GRANT bGuaranteeProgress unless you have another way to finish the fill. Spreading a fill over
+         *  frames is free only while it is still advancing: the staged image is invisible and its bindless
+         *  slot is frozen until it completes, so a fill that is deferred indefinitely does not degrade
+         *  gracefully -- it hangs the texture at the wrong residency and pins a slot nothing can reuse. A
+         *  fill that stops advancing for long enough gives its staged image back rather than hang.
+         *
+         *  Game thread only, same as ApplyMipResidency. */
+        bool TickResidencyFill(uint64& RemainingBytes, bool bGuaranteeProgress = true);
 
         /** Drive TickResidencyFill to completion right now, with no budget. For textures the streamer does
          *  not drive -- a non-streamable one is never registered, so nothing would ever drain its fill and
