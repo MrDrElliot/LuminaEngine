@@ -52,7 +52,7 @@ public static class SetupMode
 
             AssetName = "External-Win64.zip",
             Format = ArchiveFormat.Zip,
-            Sha256 = "A3405839CC5A355AA6BEBCA74522C19C2306E6268D86C205B67402E721123276",
+            Sha256 = "6CF9D85C9A52F4663929F33C19FD8242268D55E565C19950696A48D0299D00DD",
             SentinelPath = "LLVM/bin/libclang.dll",
         },
         new()
