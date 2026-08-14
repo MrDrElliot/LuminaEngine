@@ -161,6 +161,14 @@ namespace Lumina
         return true;
     }
 
+    void FPackageSaver::FlagUnresolvedBulkData()
+    {
+        if (Package != nullptr)
+        {
+            Package->FlagUnresolvedBulkData();
+        }
+    }
+
     void FPackageSaver::PopulateImportTable(TVector<FObjectImport>& Out) const
     {
         Out.clear();

@@ -251,11 +251,11 @@ namespace Lumina
                 {
                     if (Ar.IsWriting() && Mip.Pixels.empty() && Mip.BulkRef.IsValid())
                     {
-                        // The bytes built here have this mip emptied out. They are not committed: PreSave
-                        // flagged the package and SavePackage refuses to write it, so the file on disk keeps
-                        // the mip. This says which one, so the failed read above can be traced to a mip.
-                        LOG_ERROR("FTextureResource: mip {} is streamed out and could not be made resident; "
-                                  "the save will be refused rather than write it back as empty", MipLevel);
+                        // Flagged, not just reported: a successful splice commits this container verbatim.
+                        LOG_WARN("FTextureResource: mip {} is inline in these bytes but has no resident pixels; "
+                                 "declining to write it back empty", MipLevel);
+
+                        Ar.FlagUnresolvedBulkData();
                     }
 
                     Ar << Mip.Pixels;

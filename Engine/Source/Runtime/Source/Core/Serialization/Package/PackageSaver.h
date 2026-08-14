@@ -84,6 +84,8 @@ namespace Lumina
          *  compressed container, so nothing here participates in the export stream's offsets. */
         bool WriteBulkData(FBulkDataRef& OutRef, const void* Data, int64 Size) override;
 
+        void FlagUnresolvedBulkData() override;
+
         /** Raw bulk region accumulated during export serialization; appended verbatim to the file.
          *  Deliberately NOT compressed: it holds already-compressed payloads (BC-block texture mips), so
          *  deflate would buy nothing and would force an inflate on every streamed read. */

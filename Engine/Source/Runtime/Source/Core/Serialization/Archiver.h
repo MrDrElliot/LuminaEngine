@@ -138,7 +138,10 @@ namespace Lumina
         /** Append Size bytes to the archive's bulk region and fill OutRef with where they landed. Returns
          *  false (leaving OutRef untouched) on archives with no region -- write the payload inline instead. */
         virtual bool WriteBulkData(FBulkDataRef& OutRef, const void* Data, int64 Size) { return false; }
-    
+
+        // A payload the serializer cannot produce, so the bytes being built have it empty and must not commit.
+        virtual void FlagUnresolvedBulkData() {}
+
         virtual FArchive& operator<<(uint8& Value)
         {
             Serialize(&Value, 1);

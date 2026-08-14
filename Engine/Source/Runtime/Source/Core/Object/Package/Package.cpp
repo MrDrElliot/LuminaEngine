@@ -1101,7 +1101,7 @@ namespace Lumina
             // scratch -- and it is the path that needs nothing from the source file.
             LOG_WARN("SavePackage: cannot splice the bulk region into {} ({}); rebuilding it from memory, "
                      "which reads every streamed payload back in first.", Path,
-                     Package->bBulkDataUnresolved ? "an export had no ref into the region"
+                     Package->bBulkDataUnresolved ? "an export could not produce a payload the copy would carry"
                                                   : "the file copy failed");
 
             DiskBinary.clear();
