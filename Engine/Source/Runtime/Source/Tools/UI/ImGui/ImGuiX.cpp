@@ -201,8 +201,6 @@ namespace Lumina::ImGuiX
         }
         else // Icon button
         {
-            ImGuiContext& g = *GImGui;
-
             ImGuiWindow* pWindow = ImGui::GetCurrentWindow();
             if ( pWindow->SkipItems )
             {
@@ -252,8 +250,7 @@ namespace Lumina::ImGuiX
             //ImGui::RenderNavCursor( bb, ID );
             ImGui::RenderFrame( bb.Min, bb.Max, color, true, style.FrameRounding );
 
-            bool const isDisabled = g.CurrentItemFlags & ImGuiItemFlags_Disabled;
-            const ImU32 finalIconColor = isDisabled ? iconColor : iconColor;
+            const ImU32 finalIconColor = iconColor;
 
             // Icon-only buttons always center: left-aligning a lone glyph looks ragged
             // across icons with different advance widths (e.g. the viewport toolbar).
@@ -997,7 +994,7 @@ namespace Lumina::ImGuiX
 
 		// Handle manual resize: Resize Grips, Borders, Gamepad
 		int border_held = -1;
-		ImU32 resize_grip_col[4] = {};
+		[[maybe_unused]] ImU32 resize_grip_col[4] = {};
 		const int resize_grip_count = g.IO.ConfigWindowsResizeFromEdges ? 2 : 1; // Allow resize from lower-left if we have the mouse cursor feedback for it.
 		Window->ResizeBorderHeld = (signed char)border_held;
 
@@ -1081,7 +1078,7 @@ namespace Lumina::ImGuiX
     		return false;
     	}
 
-    	bool ret_auto_fit = false;
+    	[[maybe_unused]] bool ret_auto_fit = false;
 		const int resize_border_count = g.IO.ConfigWindowsResizeFromEdges ? 4 : 0;
 		const float grip_draw_size = Math::Floor(ImMax(g.FontSize * 1.35f, Window->WindowRounding + 1.0f + g.FontSize * 0.2f));
 		const float grip_hover_inner_size = Math::Floor(grip_draw_size * 0.75f);

@@ -6,7 +6,9 @@ namespace Lumina
     class FObjectReferenceReplacerArchive : public FArchive
     {
     public:
-        
+
+        using FArchive::operator<<;
+
         LE_NO_COPY(FObjectReferenceReplacerArchive);
 
         FObjectReferenceReplacerArchive(CObject* InToReplace, CObject* InReplacement)

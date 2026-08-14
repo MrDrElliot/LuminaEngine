@@ -14,7 +14,7 @@ namespace Lumina
     void DrawIcon(ImDrawList* drawList, const ImVec2& a, const ImVec2& b, EIconType type, bool filled, ImU32 color, ImU32 innerColor)
     {
         auto rect           = ImRect(a, b);
-        auto rect_x         = rect.Min.x;
+        [[maybe_unused]] auto rect_x = rect.Min.x;
         auto rect_y         = rect.Min.y;
         auto rect_w         = rect.Max.x - rect.Min.x;
         auto rect_h         = rect.Max.y - rect.Min.y;
@@ -30,7 +30,7 @@ namespace Lumina
 
             const auto offset_x  = 1.0f * origin_scale;
             const auto offset_y  = 0.0f * origin_scale;
-            const auto margin     = (filled ? 2.0f : 2.0f) * origin_scale;
+            const auto margin     = 2.0f * origin_scale;
             const auto rounding   = 0.1f * origin_scale;
             const auto tip_round  = 0.7f; // percentage of triangle edge (for tip)
             //const auto edge_round = 0.7f; // percentage of triangle edge (for corner)

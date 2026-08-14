@@ -75,7 +75,7 @@ namespace Lumina
         virtual FShaderH GetVertexShader() const { return {}; }
         virtual FShaderH GetPixelShader() const { return {}; }
 
-        virtual EMaterialType GetMaterialType() const { return EMaterialType::None; };
+        virtual EMaterialType GetMaterialType() const { return EMaterialType::None; }
 
         virtual bool DoesCastShadows() const { return false; }
         virtual bool IsTwoSided() const { return false; }

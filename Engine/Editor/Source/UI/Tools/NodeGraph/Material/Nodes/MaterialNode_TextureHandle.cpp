@@ -29,13 +29,13 @@ namespace Lumina
         {
             Compiler.AddRaw("uint " + FullName + " = " + ZeroLiteral(EMaterialInputType::TextureHandle) + ";\n");
 
-            EdNodeGraph::FError Error;
-            Error.Node        = this;
-            Error.Name        = "Texture Handle";
-            Error.Description = "TextureHandle has no texture assigned, so there is no slot to resolve. Assign "
+            EdNodeGraph::FError NodeError;
+            NodeError.Node        = this;
+            NodeError.Name        = "Texture Handle";
+            NodeError.Description = "TextureHandle has no texture assigned, so there is no slot to resolve. Assign "
                                 "one in the node's details panel. Unlike a sample, a handle has no neutral "
                                 "fallback -- index 0 is simply whichever texture happens to occupy slot 0.";
-            Compiler.AddError(Error);
+            Compiler.AddError(NodeError);
             return;
         }
 

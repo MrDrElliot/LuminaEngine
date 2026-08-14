@@ -100,13 +100,13 @@ namespace Lumina
 
             for (const FGeometryStage& Geo : GeometryStages)
             {
-                FShaderCompileOptions Options;
-                Options.DebugName = MatName + " [" + Geo.Tag + "]";
+                FShaderCompileOptions CompileOptions;
+                CompileOptions.DebugName = MatName + " [" + Geo.Tag + "]";
                 if (Geo.Define != nullptr)
                 {
-                    Options.MacroDefinitions.emplace_back(Geo.Define);
+                    CompileOptions.MacroDefinitions.emplace_back(Geo.Define);
                 }
-                ShaderCompiler->CompilerShaderRaw(*Geo.Source, Move(Options), CommitStage(Geo.Stage));
+                ShaderCompiler->CompilerShaderRaw(*Geo.Source, Move(CompileOptions), CommitStage(Geo.Stage));
             }
 
             Material->ClearShaderStage(EMaterialShaderStage::MaskedVisBufferPixel);

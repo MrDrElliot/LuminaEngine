@@ -234,11 +234,11 @@ namespace Lumina
     {
         auto EmitError = [&](const FString& Name, const FString& Description)
         {
-            EdNodeGraph::FError Error;
-            Error.Name        = Name;
-            Error.Description  = Description;
-            Error.Node        = this;
-            Compiler.AddError(Error);
+            EdNodeGraph::FError NodeError;
+            NodeError.Name        = Name;
+            NodeError.Description  = Description;
+            NodeError.Node        = this;
+            Compiler.AddError(NodeError);
         };
 
         // On any failure, give each output pin a zero local so the host shader still compiles.

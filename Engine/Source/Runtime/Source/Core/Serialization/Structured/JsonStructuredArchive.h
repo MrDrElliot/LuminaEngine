@@ -13,6 +13,8 @@ namespace Lumina
     {
     public:
 
+        using FArchive::operator<<;
+
         nlohmann::json* PendingNode = nullptr;
         bool            bLoading    = false;
 

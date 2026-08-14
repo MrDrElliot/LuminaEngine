@@ -28,8 +28,8 @@ namespace Lumina
 
         CreateToolWindow(FontPreviewName, [this](bool /*bFocused*/)
         {
-            CFont* Font = Cast<CFont>(Asset.Get());
-            if (!Font)
+            CFont* FontAsset = Cast<CFont>(Asset.Get());
+            if (!FontAsset)
             {
                 return;
             }
@@ -60,14 +60,14 @@ namespace Lumina
 
         CreateToolWindow(FontDetailsName, [this](bool /*bFocused*/)
         {
-            CFont* Font = Cast<CFont>(Asset.Get());
-            if (!Font)
+            CFont* FontAsset = Cast<CFont>(Asset.Get());
+            if (!FontAsset)
             {
                 return;
             }
 
             ImGuiX::Font::PushFont(ImGuiX::Font::EFont::Large);
-            ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s", Font->GetName().c_str());
+            ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s", FontAsset->GetName().c_str());
             ImGuiX::Font::PopFont();
 
             ImGui::Spacing();
@@ -89,21 +89,21 @@ namespace Lumina
                     ImGui::TextUnformatted(Value.c_str());
                 };
 
-                Row("Family", Font->FamilyName.empty() ? "Unknown" : Font->FamilyName);
-                Row("Style", Font->StyleName.empty() ? "Unknown" : Font->StyleName);
-                Row("Glyphs", eastl::to_string(Font->NumGlyphs));
-                Row("Scalable", Font->bIsScalable ? "Yes" : "No");
-                Row("Kerning", Font->bHasKerning ? "Yes" : "No");
+                Row("Family", FontAsset->FamilyName.empty() ? "Unknown" : FontAsset->FamilyName);
+                Row("Style", FontAsset->StyleName.empty() ? "Unknown" : FontAsset->StyleName);
+                Row("Glyphs", eastl::to_string(FontAsset->NumGlyphs));
+                Row("Scalable", FontAsset->bIsScalable ? "Yes" : "No");
+                Row("Kerning", FontAsset->bHasKerning ? "Yes" : "No");
 
-                const size_t Bytes = Font->GetFontData().size();
+                const size_t Bytes = FontAsset->GetFontData().size();
                 FString SizeStr = Bytes >= 1024 * 1024
                     ? eastl::to_string(Bytes / (1024 * 1024)) + " MB"
                     : eastl::to_string(Bytes / 1024) + " KB";
                 Row("File Size", SizeStr);
 
-                if (!Font->SourcePath.empty())
+                if (!FontAsset->SourcePath.empty())
                 {
-                    Row("Source", Font->SourcePath);
+                    Row("Source", FontAsset->SourcePath);
                 }
 
                 ImGui::EndTable();

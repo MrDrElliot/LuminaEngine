@@ -104,16 +104,16 @@ namespace Lumina::Physics
 		{ }
 
 		// Jolt: reject a contact pair before it's added; called with all bodies locked, so no locking.
-		virtual JPH::ValidateResult	OnContactValidate(const JPH::Body& inBody1, const JPH::Body& inBody2, const JPH::CollideShapeResult& inCollisionResult) { return JPH::ValidateResult::AcceptAllContactsForThisBodyPair; }
+		virtual JPH::ValidateResult	OnContactValidate(const JPH::Body& inBody1, const JPH::Body& inBody2, JPH::RVec3Arg inBaseOffset, const JPH::CollideShapeResult& inCollisionResult) override { return JPH::ValidateResult::AcceptAllContactsForThisBodyPair; }
 
 		// Jolt: new contact point; called with all bodies locked, so no locking. Velocities are pre-solve.
-		virtual void OnContactAdded(const JPH::Body& inBody1, const JPH::Body& inBody2, const JPH::ContactManifold& inManifold, JPH::ContactSettings& ioSettings);
+		virtual void OnContactAdded(const JPH::Body& inBody1, const JPH::Body& inBody2, const JPH::ContactManifold& inManifold, JPH::ContactSettings& ioSettings) override;
 
 		// Jolt: contact also present last update; called with all bodies locked, so no locking.
-		virtual void OnContactPersisted(const JPH::Body& inBody1, const JPH::Body& inBody2, const JPH::ContactManifold& inManifold, JPH::ContactSettings& ioSettings);
+		virtual void OnContactPersisted(const JPH::Body& inBody1, const JPH::Body& inBody2, const JPH::ContactManifold& inManifold, JPH::ContactSettings& ioSettings) override;
 
 		// Jolt: contact gone since last update; uses BodyIDs (bodies may be removed). Called locked, so no locking.
-		virtual void OnContactRemoved(const JPH::SubShapeIDPair& inSubShapePair);
+		virtual void OnContactRemoved(const JPH::SubShapeIDPair& inSubShapePair) override;
     	
 	private:
 		void OverrideFrictionAndRestitution(const JPH::Body& inBody1, const JPH::Body& inBody2, const JPH::ContactManifold& inManifold, JPH::ContactSettings& ioSettings);

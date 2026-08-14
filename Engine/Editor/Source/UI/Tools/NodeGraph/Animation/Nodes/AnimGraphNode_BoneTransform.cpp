@@ -25,13 +25,13 @@ namespace Lumina
         const int32 BoneIndex = Compiler.ResolveBoneIndex(BoneName);
         if (BoneIndex == INDEX_NONE)
         {
-            EdNodeGraph::FError Error;
-            Error.Name        = "Unknown Bone";
-            Error.Description = BoneName.IsNone()
+            EdNodeGraph::FError NodeError;
+            NodeError.Name        = "Unknown Bone";
+            NodeError.Description = BoneName.IsNone()
                 ? FString("Bone Transform has no Bone Name set; pose will be passed through unchanged.")
                 : FString("Bone Transform references bone '") + BoneName.ToString() + "' which doesn't exist on the graph's skeleton.";
-            Error.Node        = this;
-            Compiler.AddError(Error);
+            NodeError.Node        = this;
+            Compiler.AddError(NodeError);
 
             const uint16 SrcReg = ResolvePoseInput(PoseInPin, Compiler);
             Compiler.SetPinRegister(PoseOutPin, SrcReg);

@@ -1,3 +1,6 @@
+#if defined(__GNUC__)
+#   pragma GCC diagnostic ignored "-Wshadow"
+#endif
 // Crude implementation of JSON value object and parser.
 //
 // VERSION 0.1

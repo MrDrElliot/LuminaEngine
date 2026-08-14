@@ -126,7 +126,7 @@ namespace Lumina::ImGuiX
         ReadOnly     = 1 << 4,   // render normally but ignore input
     };
 
-    ENUM_CLASS_FLAGS(ESliderFlags)
+    ENUM_CLASS_FLAGS(ESliderFlags);
 
     // Visual overrides; any color left at 0 is derived from the active theme.
     struct FSliderStyle

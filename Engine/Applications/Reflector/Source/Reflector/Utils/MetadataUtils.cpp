@@ -25,7 +25,7 @@ static inline void SanitizeKeyValueString(eastl::string& OutString)
 
     OutString.ltrim();
     OutString.rtrim();
-};
+}
 
 void FMetadataParser::Parse(const eastl::string& Raw)
 {

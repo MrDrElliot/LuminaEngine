@@ -85,7 +85,7 @@ namespace Lumina::Physics
         static constexpr JPH::BroadPhaseLayer STATIC(0);
         static constexpr JPH::BroadPhaseLayer MOVING(1);
         static constexpr uint32 NUM_LAYERS(2);
-    };
+    }
     
     class FLayerInterfaceImpl final : public JPH::BroadPhaseLayerInterface
     {
@@ -3252,9 +3252,9 @@ namespace Lumina::Physics
 
         auto DecomposeWorld = [&](int32 BoneIndex, FVector3& OutPos, FQuat& OutRot)
         {
-            const FMatrix4 World = Desc.EntityToWorld * Globals[BoneIndex];
+            const FMatrix4 WorldMatrix = Desc.EntityToWorld * Globals[BoneIndex];
             FVector3 Scale;
-            AnimPose::DecomposeTRS(World, OutPos, OutRot, Scale);
+            AnimPose::DecomposeTRS(WorldMatrix, OutPos, OutRot, Scale);
         };
 
         if (Desc.Asset && !Desc.Asset->Bodies.empty())

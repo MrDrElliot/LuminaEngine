@@ -29,7 +29,7 @@ namespace Lumina
     // so physics-coupled tasks (ragdoll write/read) can interleave with the simulation later.
     enum class EAnimTaskStage : uint8
     {
-        Any,
+        AnyStage,
         PrePhysics,
         PostPhysics,
     };
@@ -74,7 +74,7 @@ namespace Lumina
         static constexpr int16 NoTask = -1;
 
         EAnimTaskType  Type  = EAnimTaskType::ReferencePose;
-        EAnimTaskStage Stage = EAnimTaskStage::Any;
+        EAnimTaskStage Stage = EAnimTaskStage::AnyStage;
 
         int16 DepA = NoTask;
         int16 DepB = NoTask;
@@ -149,7 +149,7 @@ namespace Lumina
     struct FAnimTaskDebugEntry
     {
         EAnimTaskType  Type  = EAnimTaskType::ReferencePose;
-        EAnimTaskStage Stage = EAnimTaskStage::Any;
+        EAnimTaskStage Stage = EAnimTaskStage::AnyStage;
 
         int16 DepA = FAnimTask::NoTask;
         int16 DepB = FAnimTask::NoTask;

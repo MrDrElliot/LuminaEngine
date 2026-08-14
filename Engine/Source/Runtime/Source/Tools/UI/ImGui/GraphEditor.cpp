@@ -644,7 +644,7 @@ static bool DrawNode(ImDrawList* drawList,
         drawList->AddLine(progressLineA, progressLineB, 0xFF400000, 3.f);
         drawList->AddLine(progressLineA, ImLerp(progressLineA, progressLineB, progress), 0xFFFF0000, 3.f);
     }*/
-    ImVec2 imgPosMax = imgPos + ImVec2(imgSizeComp, imgSizeComp);
+    [[maybe_unused]] ImVec2 imgPosMax = imgPos + ImVec2(imgSizeComp, imgSizeComp);
 
     //ImVec2 imageSize = delegate->GetEvaluationSize(nodeIndex);
     /*float imageRatio = 1.f;

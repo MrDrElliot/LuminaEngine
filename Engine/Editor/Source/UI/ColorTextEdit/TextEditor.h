@@ -121,9 +121,9 @@ public:
 	inline void Paste() { if (!readOnly) paste(); }
 	inline void Undo() { if (!readOnly) undo(); }
 	inline void Redo() { if (!readOnly) redo(); }
-	inline bool CanUndo() const { return !readOnly && transactions.canUndo(); };
-	inline bool CanRedo() const { return !readOnly && transactions.canRedo(); };
-	inline size_t GetUndoIndex() const { return transactions.getUndoIndex(); };
+	inline bool CanUndo() const { return !readOnly && transactions.canUndo(); }
+	inline bool CanRedo() const { return !readOnly && transactions.canRedo(); }
+	inline size_t GetUndoIndex() const { return transactions.getUndoIndex(); }
 
 	// manipulate cursors and selections (line numbers are zero-based)
 	inline void SetCursor(int line, int column) { moveTo(document.normalizeCoordinate(Coordinate(line, column)), false); }
@@ -443,12 +443,12 @@ public:
 		inline Iterator& operator++() { glyph++; return *this; }
 		inline Iterator operator++(int) { Iterator tmp = *this; glyph++; return tmp; }
 		inline size_t operator-(const Iterator& a) { return glyph - a.glyph; }
-		inline friend bool operator==(const Iterator& a, const Iterator& b) { return a.glyph == b.glyph; };
-		inline friend bool operator!=(const Iterator& a, const Iterator& b) { return !(a.glyph == b.glyph); };
-		inline friend bool operator<(const Iterator& a, const Iterator& b) { return a.glyph < b.glyph; };
-		inline friend bool operator<=(const Iterator& a, const Iterator& b) { return a.glyph <= b.glyph; };
-		inline friend bool operator>(const Iterator& a, const Iterator& b) { return a.glyph > b.glyph; };
-		inline friend bool operator>=(const Iterator& a, const Iterator& b) { return a.glyph >= b.glyph; };
+		inline friend bool operator==(const Iterator& a, const Iterator& b) { return a.glyph == b.glyph; }
+		inline friend bool operator!=(const Iterator& a, const Iterator& b) { return !(a.glyph == b.glyph); }
+		inline friend bool operator<(const Iterator& a, const Iterator& b) { return a.glyph < b.glyph; }
+		inline friend bool operator<=(const Iterator& a, const Iterator& b) { return a.glyph <= b.glyph; }
+		inline friend bool operator>(const Iterator& a, const Iterator& b) { return a.glyph > b.glyph; }
+		inline friend bool operator>=(const Iterator& a, const Iterator& b) { return a.glyph >= b.glyph; }
 
 	private:
 		// properties
@@ -533,7 +533,7 @@ public:
 	};
 
 	inline void SetLanguage(const Language* l) { language = l; languageChanged = true; }
-	inline const Language* GetLanguage() const { return language; };
+	inline const Language* GetLanguage() const { return language; }
 	inline bool HasLanguage() const { return language != nullptr; }
 	inline std::string GetLanguageName() const { return language == nullptr ? "None" : language->name; }
 
@@ -1130,8 +1130,8 @@ protected:
 		inline const Cursors& getAfterState() const { return after; }
 
 		// add actions by type
-		void addInsert(Coordinate start, Coordinate end, std::string_view text) { emplace_back(Action::Type::insertText, start, end, text); };
-		void addDelete(Coordinate start, Coordinate end, std::string_view text) { emplace_back(Action::Type::deleteText, start, end, text); };
+		void addInsert(Coordinate start, Coordinate end, std::string_view text) { emplace_back(Action::Type::insertText, start, end, text); }
+		void addDelete(Coordinate start, Coordinate end, std::string_view text) { emplace_back(Action::Type::deleteText, start, end, text); }
 
 		// get number of actions
 		inline int actions() const { return static_cast<int>(size()); }

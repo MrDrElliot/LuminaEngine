@@ -37,7 +37,7 @@ namespace Lumina::RenderUtils
     inline uint32 GetGroupCount(uint32 ThreadCount, uint32 LocalSize)
     {
         return (ThreadCount + LocalSize - 1) / LocalSize;
-    };
+    }
 
     // The shader must undo this with the same MAX_DISPATCH_AXIS, or Y rows repeat and the tail is lost.
     inline FUIntVector2 FoldGroupCount(uint32 GroupCount)

@@ -23,4 +23,5 @@
         ImGui::SetCurrentContext(static_cast<ImGuiContext*>(InImGui));                           \
         ImPlot::SetCurrentContext(static_cast<ImPlotContext*>(InImPlot));                        \
         ::Lumina::ImGuiX::InstallImGuiAllocator();                                               \
-    }
+    }                                                                                            \
+    static_assert(true, "LUMINA_MODULE_IMGUI consumes the semicolon at the call site")

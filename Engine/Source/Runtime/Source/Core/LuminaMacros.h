@@ -65,7 +65,8 @@ inline constexpr Enum  operator| (Enum  Lhs, Enum Rhs) { return (Enum)((__underl
 inline constexpr Enum  operator& (Enum  Lhs, Enum Rhs) { return (Enum)((__underlying_type(Enum))Lhs & (__underlying_type(Enum))Rhs); } \
 inline constexpr Enum  operator^ (Enum  Lhs, Enum Rhs) { return (Enum)((__underlying_type(Enum))Lhs ^ (__underlying_type(Enum))Rhs); } \
 inline constexpr bool  operator! (Enum  E)             { return !(__underlying_type(Enum))E; } \
-inline constexpr Enum  operator~ (Enum  E)             { return (Enum)~(__underlying_type(Enum))E; }
+inline constexpr Enum  operator~ (Enum  E)             { return (Enum)~(__underlying_type(Enum))E; } \
+static_assert(true, "ENUM_CLASS_FLAGS consumes the semicolon at the call site")
 
 template<typename Enum>
 [[nodiscard]] constexpr bool EnumHasAllFlags(Enum Flags, Enum Contains)

@@ -430,11 +430,11 @@ namespace Lumina
 
         auto EmitError = [&](const FString& Description)
         {
-            EdNodeGraph::FError Error;
-            Error.Name        = "Custom Slang";
-            Error.Description = Description;
-            Error.Node        = this;
-            Compiler.AddError(Error);
+            EdNodeGraph::FError NodeError;
+            NodeError.Name        = "Custom Slang";
+            NodeError.Description = Description;
+            NodeError.Node        = this;
+            Compiler.AddError(NodeError);
         };
 
         // Canonical outputs first, always emitted and always initialized: downstream nodes read these,

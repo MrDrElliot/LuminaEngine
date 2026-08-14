@@ -1313,7 +1313,7 @@ namespace Lumina
 
             OutData.Animations.reserve(Scene->anim_stacks.count);
 
-            for (const ufbx_anim_stack* Stack : Scene->anim_stacks)
+            for (const ufbx_anim_stack* AnimStack : Scene->anim_stacks)
             {
                 ufbx_bake_opts BakeOptions = {};
                 BakeOptions.temp_allocator.allocator   = MakeTrackedAllocator();
@@ -1323,16 +1323,16 @@ namespace Lumina
                 BakeOptions.trim_start_time = true;
 
                 ufbx_error BakeError;
-                ufbx_baked_anim* Baked = ufbx_bake_anim(Scene, Stack->anim, &BakeOptions, &BakeError);
+                ufbx_baked_anim* Baked = ufbx_bake_anim(Scene, AnimStack->anim, &BakeOptions, &BakeError);
                 if (Baked == nullptr)
                 {
                     LOG_WARN("[FBX] Animation '{}' failed to bake: {}",
-                             ToView(Stack->name).data(), FormatUfbxError(BakeError));
+                             ToView(AnimStack->name).data(), FormatUfbxError(BakeError));
                     continue;
                 }
 
                 TUniquePtr<FAnimationResource> Clip = MakeUnique<FAnimationResource>();
-                Clip->Name = !ToView(Stack->name).empty() ? FName(ToFixed(Stack->name).c_str())
+                Clip->Name = !ToView(AnimStack->name).empty() ? FName(ToFixed(AnimStack->name).c_str())
                                                           : FName("Animation");
                 Clip->Duration = (float)Baked->playback_duration;
                 Clip->Channels.reserve(Baked->nodes.count * 3);

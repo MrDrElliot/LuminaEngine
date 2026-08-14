@@ -809,8 +809,6 @@ namespace Lumina
             }
         }
 
-        auto View = ECS::GetWorldRegistry(*World).view<FSelectedInEditorComponent>();
-        
         if (bSelectionTransformRefreshPending)
         {
             bSelectionTransformRefreshPending = false;
@@ -2207,12 +2205,12 @@ namespace Lumina
 
         if (ImGui::BeginPopup("EntityContextMenu"))
         {
-            const entt::entity LastSelectedEntity = GetLastSelectedEntity();
+            const entt::entity LastSelected = GetLastSelectedEntity();
 
-            if (ECS::GetWorldRegistry(*World).valid(LastSelectedEntity))
+            if (ECS::GetWorldRegistry(*World).valid(LastSelected))
             {
                 entt::registry& Registry = ECS::GetWorldRegistry(*World);
-                const bool bLastSelectedLocked = IsLockedPrefabChild(Registry, LastSelectedEntity);
+                const bool bLastSelectedLocked = IsLockedPrefabChild(Registry, LastSelected);
                 const size_t NumSelected = SelectedEntities.size();
                 const bool bMultiSelected = NumSelected > 1;
 
@@ -2222,7 +2220,7 @@ namespace Lumina
 
                 // Header: name + ID for the focal entity, with a "+N more" badge when there's a wider selection.
                 {
-                    const SNameComponent* HeaderName = Registry.try_get<SNameComponent>(LastSelectedEntity);
+                    const SNameComponent* HeaderName = Registry.try_get<SNameComponent>(LastSelected);
                     FStringView HeaderText = HeaderName ? FStringView(HeaderName->Name.c_str()) : FStringView("<unnamed>");
 
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
@@ -2231,7 +2229,7 @@ namespace Lumina
 
                     ImGui::SameLine();
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
-                    ImGui::Text("#%u", (uint32)LastSelectedEntity);
+                    ImGui::Text("#%u", (uint32)LastSelected);
                     ImGui::PopStyleColor();
 
                     if (bMultiSelected)
@@ -2254,7 +2252,7 @@ namespace Lumina
                     {
                         BeginTransaction();
                         entt::entity To = entt::null;
-                        CopyEntity(To, LastSelectedEntity);
+                        CopyEntity(To, LastSelected);
                         if (To != entt::null)
                         {
                             EndTransaction("Duplicate");
@@ -2270,13 +2268,13 @@ namespace Lumina
                 if (ImGui::MenuItem(LE_ICON_CONTENT_COPY " Copy", "Ctrl+C"))
                 {
                     ClearCopies();
-                    AddEntityToCopies(LastSelectedEntity);
+                    AddEntityToCopies(LastSelected);
                     ImGui::CloseCurrentPopup();
                 }
 
                 if (ImGui::MenuItem("Copy Entity ID"))
                 {
-                    ImGui::SetClipboardText(std::to_string(entt::to_integral(LastSelectedEntity)).c_str());
+                    ImGui::SetClipboardText(std::to_string(entt::to_integral(LastSelected)).c_str());
                     ImGui::CloseCurrentPopup();
                 }
 
@@ -2287,18 +2285,18 @@ namespace Lumina
                 // Components.
                 if (ImGui::MenuItem("Add Component..."))
                 {
-                    PushAddComponentModal(LastSelectedEntity);
+                    PushAddComponentModal(LastSelected);
                     ImGui::CloseCurrentPopup();
                 }
 
-                DrawScriptAttachMenuItems(LastSelectedEntity);
+                DrawScriptAttachMenuItems(LastSelected);
 
                 if (ImGui::BeginMenu("Remove Component"))
                 {
                     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 6));
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.6f, 0.4f, 1.0f));
 
-                    ECS::Utils::ForEachComponent(Registry, LastSelectedEntity, [&](void*, const entt::basic_sparse_set<>& Set, entt::meta_type Meta)
+                    ECS::Utils::ForEachComponent(Registry, LastSelected, [&](void*, const entt::basic_sparse_set<>& Set, entt::meta_type Meta)
                     {
                         using namespace entt::literals;
 
@@ -2312,7 +2310,7 @@ namespace Lumina
 
                             if (ImGui::MenuItem(ReturnValue.cast<CStruct*>()->MakeDisplayName().c_str()))
                             {
-                                ComponentDestroyRequests.push(FComponentDestroyRequest{StructType, LastSelectedEntity});
+                                ComponentDestroyRequests.push(FComponentDestroyRequest{StructType, LastSelected});
                             }
                         }
                     });
@@ -2336,26 +2334,26 @@ namespace Lumina
                     }
                 }
 
-                if (!bLastSelectedLocked && ECS::Utils::IsChild(Registry, LastSelectedEntity))
+                if (!bLastSelectedLocked && ECS::Utils::IsChild(Registry, LastSelected))
                 {
                     if (ImGui::MenuItem("Unparent"))
                     {
                         BeginTransaction();
-                        ECS::Utils::RemoveFromParent(Registry, LastSelectedEntity);
+                        ECS::Utils::RemoveFromParent(Registry, LastSelected);
                         EndTransaction("Unparent");
-                        ReparentEntityInOutliner(LastSelectedEntity);
+                        ReparentEntityInOutliner(LastSelected);
                         ImGui::CloseCurrentPopup();
                     }
                 }
 
-                if (!bLastSelectedLocked && ECS::Utils::IsParent(Registry, LastSelectedEntity))
+                if (!bLastSelectedLocked && ECS::Utils::IsParent(Registry, LastSelected))
                 {
                     if (ImGui::MenuItem("Detach Children"))
                     {
                         TVector<entt::entity> Children;
-                        ECS::Utils::ForEachChild(Registry, LastSelectedEntity, [&](entt::entity Child) { Children.push_back(Child); });
+                        ECS::Utils::ForEachChild(Registry, LastSelected, [&](entt::entity Child) { Children.push_back(Child); });
                         BeginTransaction();
-                        ECS::Utils::DetachImmediateChildren(Registry, LastSelectedEntity);
+                        ECS::Utils::DetachImmediateChildren(Registry, LastSelected);
                         EndTransaction("Detach Children");
                         for (entt::entity Child : Children)
                         {
@@ -2367,16 +2365,16 @@ namespace Lumina
 
                 if (!bLastSelectedLocked)
                 {
-                    const bool bIsSelectionRoot = Registry.all_of<FSelectionRoot>(LastSelectedEntity);
+                    const bool bIsSelectionRoot = Registry.all_of<FSelectionRoot>(LastSelected);
                     if (ImGui::MenuItem(bIsSelectionRoot ? "Unmark Selection Root" : "Mark as Selection Root"))
                     {
                         if (bIsSelectionRoot)
                         {
-                            Registry.remove<FSelectionRoot>(LastSelectedEntity);
+                            Registry.remove<FSelectionRoot>(LastSelected);
                         }
                         else
                         {
-                            Registry.emplace<FSelectionRoot>(LastSelectedEntity);
+                            Registry.emplace<FSelectionRoot>(LastSelected);
                         }
                         ImGui::CloseCurrentPopup();
                     }
@@ -2395,19 +2393,19 @@ namespace Lumina
                 }
                 ImGuiX::TextTooltip("{}", "Save the selection as a reusable prefab asset. Children of selected entities are included automatically.");
 
-                if (const SPrefabInstanceComponent* Instance = Registry.try_get<SPrefabInstanceComponent>(LastSelectedEntity);
+                if (const SPrefabInstanceComponent* Instance = Registry.try_get<SPrefabInstanceComponent>(LastSelected);
                     Instance != nullptr && Instance->bIsRoot)
                 {
                     if (ImGui::MenuItem(LE_ICON_SYNC " Resync from Prefab", nullptr, false, Instance->SourcePrefab != nullptr))
                     {
-                        ResyncPrefabInstance(LastSelectedEntity);
+                        ResyncPrefabInstance(LastSelected);
                         ImGui::CloseCurrentPopup();
                     }
                     ImGuiX::TextTooltip("{}", "Re-apply the source prefab to this instance now. Per-instance overrides and the placed transform are kept.");
 
                     if (ImGui::MenuItem(LE_ICON_LINK_VARIANT_OFF " Detach from Prefab"))
                     {
-                        DetachPrefabInstance(LastSelectedEntity);
+                        DetachPrefabInstance(LastSelected);
                         ImGui::CloseCurrentPopup();
                     }
                     ImGuiX::TextTooltip("{}", "Unlink this instance from its source prefab; the entities become plain and stop syncing.");
@@ -2423,9 +2421,9 @@ namespace Lumina
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
                     if (ImGui::MenuItem(LE_ICON_TRASH_CAN " Delete Entity", "Del"))
                     {
-                        if (Dialogs::Confirmation("Confirm Deletion", "Are you sure you want to delete entity \"{0}\"?\n\nThis action cannot be undone.", entt::to_integral(LastSelectedEntity)))
+                        if (Dialogs::Confirmation("Confirm Deletion", "Are you sure you want to delete entity \"{0}\"?\n\nThis action cannot be undone.", entt::to_integral(LastSelected)))
                         {
-                            EntityDestroyRequests.push(LastSelectedEntity);
+                            EntityDestroyRequests.push(LastSelected);
                         }
                         ImGui::CloseCurrentPopup();
                     }

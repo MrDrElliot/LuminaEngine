@@ -7,7 +7,7 @@
 
 #ifndef VERIFY_SSBO_ALIGNMENT
 #define VERIFY_SSBO_ALIGNMENT(Type) \
-    static_assert(sizeof(Type) % 16 == 0, #Type " must be 16-byte aligned");
+    static_assert(sizeof(Type) % 16 == 0, #Type " must be 16-byte aligned")
 #endif
 
 namespace Lumina

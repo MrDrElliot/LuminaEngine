@@ -858,7 +858,7 @@ namespace Lumina
         const ImVec2 MousePos = ImGui::GetMousePos();
 
         constexpr float HandleRadius = 6.0f;
-        constexpr float GrabRadius = 10.0f;
+        constexpr float HandleGrabRadius = 10.0f;
 
         int32 HoveredHandle = INDEX_NONE;
 
@@ -873,7 +873,7 @@ namespace Lumina
             const float DX = MousePos.x - Screen.x;
             const float DY = MousePos.y - Screen.y;
             const bool bHot = (ActiveHandle == Handles[i].Type)
-                           || (ActiveHandle == ECollisionHandle::None && (DX * DX + DY * DY) <= GrabRadius * GrabRadius);
+                           || (ActiveHandle == ECollisionHandle::None && (DX * DX + DY * DY) <= HandleGrabRadius * HandleGrabRadius);
 
             if (bHot && ActiveHandle == ECollisionHandle::None)
             {

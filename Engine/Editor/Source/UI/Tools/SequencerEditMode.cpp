@@ -212,15 +212,15 @@ namespace Lumina
             return;
         }
 
-        FSequenceEvalContext Context;
-        Context.World = World;
-        Context.Sequence = Sequence.Get();
-        Context.PreviousTime = PlayTime;
-        Context.Time = NewTime;
-        Context.BoundEntities = &BoundEntities;
-        Context.bJumped = bJumped;
+        FSequenceEvalContext EvalContext;
+        EvalContext.World = World;
+        EvalContext.Sequence = Sequence.Get();
+        EvalContext.PreviousTime = PlayTime;
+        EvalContext.Time = NewTime;
+        EvalContext.BoundEntities = &BoundEntities;
+        EvalContext.bJumped = bJumped;
 
-        Sequence->Evaluate(Context);
+        Sequence->Evaluate(EvalContext);
 
         PlayTime = NewTime;
 

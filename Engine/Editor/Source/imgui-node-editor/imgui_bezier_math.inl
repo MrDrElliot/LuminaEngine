@@ -1,3 +1,8 @@
+#if defined(__GNUC__)
+#   pragma GCC diagnostic push
+#   pragma GCC diagnostic ignored "-Wshadow"
+#   pragma GCC diagnostic ignored "-Wcomment"
+#endif
 //------------------------------------------------------------------------------
 // VERSION 0.1
 //
@@ -595,7 +600,7 @@ inline void ImCubicBezierFixedStep(ImCubicBezierFixedStepCallback callback, void
         float t_end   = t_max;
         float t       = t_0;
 
-        float t_best     = t;
+        [[maybe_unused]] float t_best = t;
         float error_best = total_length;
 
         while (true)
@@ -673,3 +678,6 @@ inline void ImCubicBezierFixedStep(F& callback, const ImCubicBezierPoints& curve
 
 //------------------------------------------------------------------------------
 # endif // __IMGUI_BEZIER_MATH_INL__
+#if defined(__GNUC__)
+#   pragma GCC diagnostic pop
+#endif

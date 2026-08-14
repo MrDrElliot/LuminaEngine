@@ -8,7 +8,9 @@ namespace Lumina
     class FObjectArchive : public FArchive
     {
     public:
-        
+
+        using FArchive::operator<<;
+
         virtual FArchive& operator<<(CObject*& Value) override
         {
             return *this;

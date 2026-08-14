@@ -62,7 +62,8 @@
         }                                                                                   \
         const Lumina::FStaticModuleRegistration                                             \
             Z_LuminaStaticReg(ModuleName, &Z_LuminaStaticInit);                             \
-    }
+    }                                                                                       \
+    static_assert(true, "IMPLEMENT_MODULE consumes the semicolon at the call site")
 
 #else
 
@@ -79,7 +80,8 @@
     extern "C" DLL_EXPORT void ShutdownModule()                                             \
     {                                                                                       \
         Lumina::Memory::ShutdownThreadHeap();                                               \
-    }
+    }                                                                                       \
+    static_assert(true, "IMPLEMENT_MODULE consumes the semicolon at the call site")
 
 #endif
 

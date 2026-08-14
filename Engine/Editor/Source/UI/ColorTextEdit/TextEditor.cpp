@@ -1,3 +1,6 @@
+#if defined(__GNUC__)
+#   pragma GCC diagnostic ignored "-Wshadow"
+#endif
 //	TextEditor - A syntax highlighting text editor for Dear ImGui.
 //	Copyright (c) 2024-2026 Johan A. Goossens. All rights reserved.
 //
@@ -1964,7 +1967,7 @@ void TextEditor::toggleComments() {
 					start++;
 				}
 
-				while (start + i < document[line].size() && i < comment.size() && document[line][start + i].codepoint == comment[i]) {
+				while (start + i < document[line].size() && i < comment.size() && document[line][start + i].codepoint == static_cast<unsigned char>(comment[i])) {
 					i++;
 				}
 

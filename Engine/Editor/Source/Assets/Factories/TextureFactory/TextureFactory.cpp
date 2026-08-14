@@ -279,7 +279,6 @@ namespace Lumina
         basisu::basisu_encoder_init();
 
         const bool bIsSRGB     = (ColorSpace == ETextureColorSpace::SRGB);
-        const bool bIsNormalMap = (ColorSpace == ETextureColorSpace::NormalMap);
 
         const uint32 TotalEncodeThreads = (EncodeThreads == 0)
             ? Math::Max(1u, Threading::GetNumThreads() - 1u)
@@ -339,16 +338,11 @@ namespace Lumina
             StoredFormat    = EFormat::BC7_UNORM_SRGB;
             TranscodeTarget = basist::transcoder_texture_format::cTFBC7_RGBA;
         }
-        else if (bIsNormalMap)
-        {
-            // BC5-packed normals are currently broken, so cook normal maps as full BC7 RGB instead. The
-            // material output node reconstructs Z from XY, so a linear RGB normal renders correctly. This
-            // makes a NormalMap-tagged texture safe even if one is set manually (importers now tag Linear).
-            StoredFormat    = EFormat::BC7_UNORM;
-            TranscodeTarget = basist::transcoder_texture_format::cTFBC7_RGBA;
-        }
         else
         {
+            // Normal maps included: BC5-packed normals are currently broken, so they cook as full BC7 RGB
+            // like everything else. The material output node reconstructs Z from XY, so a linear RGB normal
+            // renders correctly, and a NormalMap-tagged texture stays safe even if one is set manually.
             StoredFormat    = EFormat::BC7_UNORM;
             TranscodeTarget = basist::transcoder_texture_format::cTFBC7_RGBA;
         }

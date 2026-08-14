@@ -194,6 +194,12 @@ namespace Lumina
 
 #endif
 
+    // Slang's interfaces are COM: lifetime runs through release(), never through a base pointer delete.
+    #if defined(__GNUC__)
+        #pragma GCC diagnostic push
+        #pragma GCC diagnostic ignored "-Wnon-virtual-dtor"
+    #endif
+
     class FSlangBlob : public ISlangBlob
     {
     public:
@@ -247,7 +253,11 @@ namespace Lumina
     
         void* castAs(const SlangUUID&) noexcept override { return nullptr; }
     };
-    
+
+    #if defined(__GNUC__)
+        #pragma GCC diagnostic pop
+    #endif
+
     static FShaderFS FileSystem;
 
     class FSlangSessionPool

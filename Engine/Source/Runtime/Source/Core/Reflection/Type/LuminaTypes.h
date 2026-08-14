@@ -327,7 +327,7 @@ namespace Lumina
             :Super(InOwner, Params)
         {}
 
-        virtual FString ToString(const void* Data) const;
+        virtual FString ToString(const void* Data) const override;
         
         virtual void SetIntPropertyValue(void* Data, uint64 Value) const override;
         virtual void SetIntPropertyValue(void* Data, int64 Value) const override;

@@ -67,7 +67,7 @@ namespace Lumina
 
     void FRenderDirtyTracker::MarkAllSources(entt::entity Entity, EPrimitiveDirty Flags)
     {
-        Mark(Entity, EPrimitiveSource::Any, Flags);
+        Mark(Entity, EPrimitiveSource::AnySource, Flags);
     }
 
     bool FRenderDirtyTracker::Drain(TVector<FEntry>& Out)
@@ -1452,7 +1452,7 @@ namespace Lumina
 
             FCoalescedEntity& Record = CoalescedScratch[RecordIndex];
 
-            if (Entry.Source == EPrimitiveSource::Any)
+            if (Entry.Source == EPrimitiveSource::AnySource)
             {
                 Record.Flags[(uint32)EPrimitiveSource::StaticMesh]   |= Entry.Flags;
                 Record.Flags[(uint32)EPrimitiveSource::DynamicMesh]  |= Entry.Flags;

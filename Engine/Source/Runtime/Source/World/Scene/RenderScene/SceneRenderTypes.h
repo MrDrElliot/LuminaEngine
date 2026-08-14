@@ -18,7 +18,7 @@
 #define SCENE_MAX_BOUNDS UINT64_MAX
 
 #define VERIFY_SSBO_ALIGNMENT(Type) \
-static_assert(sizeof(Type) % 16 == 0, #Type " must be 16-byte aligned");
+static_assert(sizeof(Type) % 16 == 0, #Type " must be 16-byte aligned")
 
 constexpr int NumCascades = NUM_CASCADES;
 constexpr int ClusterGridSizeX = 16;
@@ -499,7 +499,7 @@ namespace Lumina
         int32       _Padding;           // std430 16-byte alignment.
     };
 
-    VERIFY_SSBO_ALIGNMENT(FLightShadow)
+    VERIFY_SSBO_ALIGNMENT(FLightShadow);
     
     // Hot per-light data. Keeping it at 64 bytes cuts the L2 footprint of the inner loop ~10x.
     struct FLight
@@ -524,7 +524,7 @@ namespace Lumina
     static_assert(sizeof(FLight) == 64, "FLight hot struct must fit a cache line");
     static_assert(eastl::is_trivially_copyable_v<FLight>);
 
-    VERIFY_SSBO_ALIGNMENT(FLight)
+    VERIFY_SSBO_ALIGNMENT(FLight);
 
     // Cold shadow-caster data; hot lighting loop never touches it.
     struct FLightShadowData
@@ -534,7 +534,7 @@ namespace Lumina
     };
 
     static_assert(sizeof(FLightShadowData) == 576, "FLightShadowData layout must match shader");
-    VERIFY_SSBO_ALIGNMENT(FLightShadowData)
+    VERIFY_SSBO_ALIGNMENT(FLightShadowData);
 
     struct FSkyLight
     {
@@ -650,7 +650,7 @@ namespace Lumina
     };
 
     static_assert(sizeof(FGPUDecal) == 144, "FGPUDecal layout must match DecalCommon.slang");
-    VERIFY_SSBO_ALIGNMENT(FGPUDecal)
+    VERIFY_SSBO_ALIGNMENT(FGPUDecal);
 
     struct alignas(16) FGPUReflectionProbe
     {
@@ -662,7 +662,7 @@ namespace Lumina
     };
 
     static_assert(sizeof(FGPUReflectionProbe) == 160, "FGPUReflectionProbe layout must match ReflectionProbe.slang");
-    VERIFY_SSBO_ALIGNMENT(FGPUReflectionProbe)
+    VERIFY_SSBO_ALIGNMENT(FGPUReflectionProbe);
 
     struct FReflectionProbeCapture
     {
@@ -696,7 +696,7 @@ namespace Lumina
     };
 
     static_assert(sizeof(FGPUWater) == 288, "FGPUWater layout must match Includes/Water.slang");
-    VERIFY_SSBO_ALIGNMENT(FGPUWater)
+    VERIFY_SSBO_ALIGNMENT(FGPUWater);
 
     struct alignas(16) FWaterUnderwaterParams
     {
@@ -718,7 +718,7 @@ namespace Lumina
     };
 
     static_assert(sizeof(FGPUSplinePoint) == 64, "FGPUSplinePoint layout must match Includes/Spline.slang");
-    VERIFY_SSBO_ALIGNMENT(FGPUSplinePoint)
+    VERIFY_SSBO_ALIGNMENT(FGPUSplinePoint);
 
     // One entry of a spline's arc-length table. Entries are uniform in DISTANCE, not in curve key, so a
     // shader converts a distance to an index with a single divide -- see SampleSplineAtDistance.
@@ -731,7 +731,7 @@ namespace Lumina
     };
 
     static_assert(sizeof(FGPUSplineSample) == 64, "FGPUSplineSample layout must match Includes/Spline.slang");
-    VERIFY_SSBO_ALIGNMENT(FGPUSplineSample)
+    VERIFY_SSBO_ALIGNMENT(FGPUSplineSample);
 
     static constexpr uint32 SPLINE_FLAG_CLOSED_LOOP = 1u << 0;
 
@@ -751,7 +751,7 @@ namespace Lumina
     };
 
     static_assert(sizeof(FGPUSpline) == 160, "FGPUSpline layout must match Includes/Spline.slang");
-    VERIFY_SSBO_ALIGNMENT(FGPUSpline)
+    VERIFY_SSBO_ALIGNMENT(FGPUSpline);
 
     struct alignas(16) FCluster
     {
@@ -761,7 +761,7 @@ namespace Lumina
         uint32 Count;
     };
     
-    VERIFY_SSBO_ALIGNMENT(FCluster)
+    VERIFY_SSBO_ALIGNMENT(FCluster);
     
     struct FLightClusterPC
     {
@@ -780,7 +780,7 @@ namespace Lumina
         uint32  _Pad;
     };
     static_assert(sizeof(FSurfaceDescGPU) == 80, "FSurfaceDescGPU layout must match shader");
-    VERIFY_SSBO_ALIGNMENT(FSurfaceDescGPU)
+    VERIFY_SSBO_ALIGNMENT(FSurfaceDescGPU);
 
     // Mirror of FRenderBucket in Common.slang: one (view, draw) pair's slice of the three cull arenas.
     // The CPU writes only the capacity seeds; BuildDrawPrefix owns every other field.
@@ -822,7 +822,7 @@ namespace Lumina
         FVector4   Row2;
     };
     static_assert(sizeof(FTransform3x4) == 48, "FTransform3x4 must match shader");
-    VERIFY_SSBO_ALIGNMENT(FTransform3x4)
+    VERIFY_SSBO_ALIGNMENT(FTransform3x4);
 
     // Historical name, kept for the skinning path that is written in terms of bones.
     using FBoneTransform = FTransform3x4;
@@ -846,7 +846,7 @@ namespace Lumina
         int32       ForcedLODIndex;     // -1 = automatic (distance / radius)
     };
     static_assert(sizeof(FInstanceCullEntry) == 32, "FInstanceCullEntry layout must match shader");
-    VERIFY_SSBO_ALIGNMENT(FInstanceCullEntry)
+    VERIFY_SSBO_ALIGNMENT(FInstanceCullEntry);
 
     struct alignas(16) FInstanceStatic
     {
@@ -862,7 +862,7 @@ namespace Lumina
         uint32      _Pad0;
     };
     static_assert(sizeof(FInstanceStatic) == 32, "FInstanceStatic layout must match shader");
-    VERIFY_SSBO_ALIGNMENT(FInstanceStatic)
+    VERIFY_SSBO_ALIGNMENT(FInstanceStatic);
 
     struct FGPUInstance
     {
@@ -1017,7 +1017,7 @@ namespace Lumina
         uint32 _CullPad4;
     };
 
-    VERIFY_SSBO_ALIGNMENT(FCullData)
+    VERIFY_SSBO_ALIGNMENT(FCullData);
 
     // Bits inside FCullView::Flags. Must match CULL_VIEW_FLAG_* in Common.slang.
     // Must match CULL_VIEW_FLAG_* in Common.slang.
@@ -1070,7 +1070,7 @@ namespace Lumina
     }
 
     static_assert(sizeof(FCullView) == 128, "FCullView layout must match shader");
-    VERIFY_SSBO_ALIGNMENT(FCullView)
+    VERIFY_SSBO_ALIGNMENT(FCullView);
 
     // Sim flag bitmask, must match constants in ParticleSimulate(.Template).slang
     static constexpr uint32 PARTICLE_SIM_FLAG_LOOP          = 1u << 0;

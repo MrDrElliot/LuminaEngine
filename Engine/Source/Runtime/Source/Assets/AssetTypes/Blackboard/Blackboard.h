@@ -36,7 +36,7 @@ namespace Lumina
         // Hidden from key pickers; for internal/scratch keys not meant to be wired by hand.
         Hidden   = 1 << 1,
     };
-    ENUM_CLASS_FLAGS(EBlackboardKeyFlags)
+    ENUM_CLASS_FLAGS(EBlackboardKeyFlags);
 
     /** Marker a struct derives from to offer itself as a blackboard's backing type.
      *

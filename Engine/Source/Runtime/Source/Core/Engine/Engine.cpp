@@ -1301,13 +1301,13 @@ namespace Lumina
         // startup); fall back to full discovery only if the blob is missing.
         bool bLoadedFromBlob = false;
         {
-            TVector<uint8> Blob;
-            if (VFS::ReadFile(Blob, "/Engine/AssetRegistry.bin"))
+            TVector<uint8> RegistryBlob;
+            if (VFS::ReadFile(RegistryBlob, "/Engine/AssetRegistry.bin"))
             {
-                FMemoryReader Reader(Blob);
+                FMemoryReader Reader(RegistryBlob);
                 if (FAssetRegistry::Get().LoadFromArchive(Reader))
                 {
-                    LOG_DISPLAY("FEngine::LoadCookedRuntime: loaded pre-baked registry ({} bytes).", Blob.size());
+                    LOG_DISPLAY("FEngine::LoadCookedRuntime: loaded pre-baked registry ({} bytes).", RegistryBlob.size());
                     bLoadedFromBlob = true;
                 }
                 else

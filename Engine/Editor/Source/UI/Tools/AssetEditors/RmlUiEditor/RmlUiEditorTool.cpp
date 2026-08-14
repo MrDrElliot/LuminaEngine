@@ -3775,7 +3775,7 @@ namespace Lumina
         }
 
         // Find an existing style="" / style='' inside the open tag.
-        size_t AttrStart = std::string::npos, ValStart = std::string::npos, ValEnd = std::string::npos;
+        size_t ValStart = std::string::npos, ValEnd = std::string::npos;
         for (const char* Key : { "style=\"", "style='" })
         {
             const size_t P = Text.find(Key, Loc.TagStart);
@@ -3786,7 +3786,6 @@ namespace Lumina
                 const size_t VE = Text.find(Quote, VS);
                 if (VE != std::string::npos && VE <= Loc.TagEnd)
                 {
-                    AttrStart = P;
                     ValStart = VS;
                     ValEnd = VE;
                     break;

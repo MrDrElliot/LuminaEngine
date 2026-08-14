@@ -556,6 +556,6 @@ virtual uint32 GetUniqueTypeID() const override final { return TypeName::s_toolT
 constexpr static char const* const s_uniqueTypeName = #TypeName;\
 constexpr static uint32 const s_toolTypeID = Lumina::Hash::FNV1a::GetHash32( #TypeName ); \
 constexpr static bool const s_isSingleton = true; \
-virtual char const* GetUniqueTypeName() const { return s_uniqueTypeName; }\
+virtual char const* GetUniqueTypeName() const override { return s_uniqueTypeName; }\
 virtual uint32 GetUniqueTypeID() const override final { return TypeName::s_toolTypeID; }\
 virtual bool IsSingleton() const override final { return true; }

@@ -14,6 +14,7 @@ namespace Lumina
         
     public:
         
+        using Super::Serialize;
         void Serialize(FArchive& Ar) override;
         bool IsAsset() const override { return true; }
         bool IsSkinned() const override { return true; }

@@ -44,11 +44,11 @@ namespace Lumina
         {
             // Never opened -> nothing to evaluate. Emit a bind pose so the
             // graph still resolves; the user gets an error to act on.
-            EdNodeGraph::FError Error;
-            Error.Name        = "Empty State Machine";
-            Error.Description = "State Machine has no states; double-click it to add some.";
-            Error.Node        = this;
-            Compiler.AddError(Error);
+            EdNodeGraph::FError NodeError;
+            NodeError.Name        = "Empty State Machine";
+            NodeError.Description = "State Machine has no states; double-click it to add some.";
+            NodeError.Node        = this;
+            Compiler.AddError(NodeError);
 
             const uint16 BindPose = Compiler.EmitRefPose();
             Compiler.SetPinRegister(ResultPin, BindPose);
@@ -94,11 +94,11 @@ namespace Lumina
 
         if (StateMachine.StatePoseRegisters.empty())
         {
-            EdNodeGraph::FError Error;
-            Error.Name        = "Empty State Machine";
-            Error.Description = "State Machine has no State nodes; it will evaluate to the bind pose.";
-            Error.Node        = this;
-            Compiler.AddError(Error);
+            EdNodeGraph::FError NodeError;
+            NodeError.Name        = "Empty State Machine";
+            NodeError.Description = "State Machine has no State nodes; it will evaluate to the bind pose.";
+            NodeError.Node        = this;
+            Compiler.AddError(NodeError);
         }
 
         // Entry state: follow the Entry node's single outgoing wire.
@@ -126,11 +126,11 @@ namespace Lumina
             }
             else if (!StateMachine.StatePoseRegisters.empty())
             {
-                EdNodeGraph::FError Error;
-                Error.Name        = "No Entry State";
-                Error.Description = "State Machine's Entry node is not wired to a State; defaulting to the first state.";
-                Error.Node        = this;
-                Compiler.AddError(Error);
+                EdNodeGraph::FError NodeError;
+                NodeError.Name        = "No Entry State";
+                NodeError.Description = "State Machine's Entry node is not wired to a State; defaulting to the first state.";
+                NodeError.Node        = this;
+                Compiler.AddError(NodeError);
             }
             break;
         }

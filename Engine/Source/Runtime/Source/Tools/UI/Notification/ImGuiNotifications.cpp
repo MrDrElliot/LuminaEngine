@@ -42,8 +42,8 @@ namespace Lumina::ImGuiX::Notifications
 
     public:
 
-        FNotification(EType InType, FFixedString&& Message)
-            : Message(Move(Message))
+        FNotification(EType InType, FFixedString&& InMessage)
+            : Message(Move(InMessage))
             , Type(InType)
         {
             CreationTime = glfwGetTime();

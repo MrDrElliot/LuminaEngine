@@ -859,8 +859,8 @@ struct NavigateAction final: EditorAction
     ImVec2 GetMoveScreenOffset() const { return m_MoveScreenOffset; }
 
     void SetWindow(ImVec2 position, ImVec2 size);
-    ImVec2 GetWindowScreenPos() const { return m_WindowScreenPos; };
-    ImVec2 GetWindowScreenSize() const { return m_WindowScreenSize; };
+    ImVec2 GetWindowScreenPos() const { return m_WindowScreenPos; }
+    ImVec2 GetWindowScreenSize() const { return m_WindowScreenSize; }
 
     ImGuiEx::CanvasView GetView() const;
     ImVec2 GetViewOrigin() const;

@@ -165,6 +165,7 @@ namespace Lumina
 
         CAnimation();
 
+        using Super::Serialize;
         void Serialize(FArchive& Ar) override;
         
         bool IsAsset() const override { return true; }

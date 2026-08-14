@@ -16,11 +16,11 @@ namespace Lumina
 
         if (CurveSlot == INDEX_NONE)
         {
-            EdNodeGraph::FError Error;
-            Error.Name        = "Missing Curve Name";
-            Error.Description = "Get Curve node has no curve name assigned; it will read 0.";
-            Error.Node        = this;
-            Compiler.AddError(Error);
+            EdNodeGraph::FError NodeError;
+            NodeError.Name        = "Missing Curve Name";
+            NodeError.Description = "Get Curve node has no curve name assigned; it will read 0.";
+            NodeError.Node        = this;
+            Compiler.AddError(NodeError);
 
             Compiler.SetPinRegister(ValuePin, Compiler.EmitLoadConst(0.0f));
             return;
@@ -46,11 +46,11 @@ namespace Lumina
 
         if (CurveSlot == INDEX_NONE)
         {
-            EdNodeGraph::FError Error;
-            Error.Name        = "Missing Curve Name";
-            Error.Description = "Set Curve node has no curve name assigned; the pose passes through unchanged.";
-            Error.Node        = this;
-            Compiler.AddError(Error);
+            EdNodeGraph::FError NodeError;
+            NodeError.Name        = "Missing Curve Name";
+            NodeError.Description = "Set Curve node has no curve name assigned; the pose passes through unchanged.";
+            NodeError.Node        = this;
+            Compiler.AddError(NodeError);
 
             Compiler.SetPinRegister(ResultPin, PoseReg);
             return;

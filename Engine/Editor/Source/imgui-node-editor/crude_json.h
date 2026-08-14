@@ -1,4 +1,8 @@
-﻿// Crude implementation of JSON value object and parser.
+﻿#if defined(__GNUC__)
+#   pragma GCC diagnostic push
+#   pragma GCC diagnostic ignored "-Wshadow"
+#endif
+// Crude implementation of JSON value object and parser.
 //
 // VERSION 0.1
 //
@@ -134,6 +138,10 @@ private:
     struct parser;
 
     // VS2015: std::max() is not constexpr yet.
+#if defined(__GNUC__)
+#   pragma GCC diagnostic push
+#   pragma GCC diagnostic ignored "-Wduplicated-branches"
+#endif
 # define CRUDE_MAX2(a, b)           ((a) < (b) ? (b) : (a))
 # define CRUDE_MAX3(a, b, c)        CRUDE_MAX2(CRUDE_MAX2(a, b), c)
 # define CRUDE_MAX4(a, b, c, d)     CRUDE_MAX2(CRUDE_MAX3(a, b, c), d)
@@ -147,7 +155,13 @@ private:
 # undef CRUDE_MAX4
 # undef CRUDE_MAX3
 # undef CRUDE_MAX2
+#if defined(__GNUC__)
+#   pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
     using storage_t = std::aligned_storage<max_size, max_align>::type;
+#if defined(__GNUC__)
+#   pragma GCC diagnostic pop
+#endif
 
     static       object*   object_ptr(      storage_t& storage) { return reinterpret_cast<       object*>(&storage); }
     static const object*   object_ptr(const storage_t& storage) { return reinterpret_cast<const  object*>(&storage); }
@@ -248,3 +262,6 @@ template <> inline       number*  value::get_ptr<number>()        { if (m_Type =
 } // namespace crude_json
 
 # endif // __CRUDE_JSON_H__
+#if defined(__GNUC__)
+#   pragma GCC diagnostic pop
+#endif

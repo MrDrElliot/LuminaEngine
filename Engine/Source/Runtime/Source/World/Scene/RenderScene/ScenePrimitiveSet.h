@@ -29,7 +29,7 @@ namespace Lumina
         Foliage,
         Num,
 
-        Any = 0xFF,
+        AnySource = 0xFF,
     };
 
     enum class EPrimitiveDirty : uint32
@@ -45,7 +45,7 @@ namespace Lumina
 
         All        = Transform | Data | Visibility | Membership,
     };
-    ENUM_CLASS_FLAGS(EPrimitiveDirty)
+    ENUM_CLASS_FLAGS(EPrimitiveDirty);
 
     class RUNTIME_API FRenderDirtyTracker
     {

@@ -638,7 +638,6 @@ namespace Lumina
         const FVector3 NewDirMid = Math::Normalize(NewE - NewM);
 
         const FVector3 OldDirRoot = Math::Normalize(M - R);
-        const FVector3 OldDirMid  = Math::Normalize(E - M);
 
         FVector3 RootGT, RootGS; FQuat RootGR;
         DecomposeTRS(RootG, RootGT, RootGR, RootGS);

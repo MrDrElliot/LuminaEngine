@@ -231,11 +231,11 @@ namespace Lumina
         { 
             SIZE_T Used = 0;
 
-            Block* Block = FirstBlock;
-            while (Block != CurrentBlock && Block != nullptr)
+            Block* Current = FirstBlock;
+            while (Current != CurrentBlock && Current != nullptr)
             {
                 Used += GetUsableBlockSize();
-                Block = Block->Next;
+                Current = Current->Next;
             }
 
             if (CurrentBlock)

@@ -1376,8 +1376,6 @@ namespace Lumina
 
     void FAnimationGraphEditorTool::DrawTaskGraphWindow()
     {
-        const ImGuiStyle& Style = ImGui::GetStyle();
-
         CWorld* TargetWorld = nullptr;
         entt::entity TargetEntity = entt::null;
         SSkeletalMeshComponent* MeshComp = nullptr;

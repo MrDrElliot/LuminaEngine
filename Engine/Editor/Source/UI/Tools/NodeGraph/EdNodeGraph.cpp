@@ -870,7 +870,6 @@ namespace Lumina
 
         DrawGraphOverlay(Links);
 
-        uint32 Index = 0;
         for (CEdGraphNode* Node : Nodes)
         {
             ImVec2 Position = NodeEditor::GetNodePosition(Node->GetNodeID());
@@ -893,7 +892,6 @@ namespace Lumina
                 {
                     ImGui::PopStyleVar();
                 }
-                ++Index;
                 continue;
             }
 
@@ -903,7 +901,6 @@ namespace Lumina
                 {
                     ImGui::PopStyleVar();
                 }
-                ++Index;
                 continue;
             }
 
@@ -1277,7 +1274,7 @@ namespace Lumina
                         NodeEditor::NodeId Selection = Selections[i];
                         auto NodeItr = eastl::find_if(Nodes.begin(), Nodes.end(), [&] (const TObjectPtr<CEdGraphNode>& A)
                         {
-                            return A->GetNodeID() == Selection.Get() && A->IsDeletable();
+                            return A->GetNodeID() == static_cast<int64>(Selection.Get()) && A->IsDeletable();
                         });
                     
                         if (NodeItr == Nodes.end())

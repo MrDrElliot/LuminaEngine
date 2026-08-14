@@ -80,6 +80,12 @@ public abstract class ModuleRules
     /// <summary>Include paths visible only to this module.</summary>
     public List<string> PrivateIncludePaths { get; } = new();
 
+    /// <summary>
+    /// Headers a module consumes but does not own, reached through -isystem so their diagnostics are
+    /// not reported against us. For vendored SDKs pulled in by a module that is not itself third-party.
+    /// </summary>
+    public List<string> PublicSystemIncludePaths { get; } = new();
+
     // Preprocessor.
 
     /// <summary>Definitions applied to this module and to every dependent.</summary>

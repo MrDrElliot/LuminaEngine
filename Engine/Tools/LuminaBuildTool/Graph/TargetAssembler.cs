@@ -504,6 +504,11 @@ public sealed class TargetAssembler
             OwnIncludePaths.Add(Rules.ModulePath(IncludePath));
         }
 
+        foreach (string IncludePath in Rules.PublicSystemIncludePaths)
+        {
+            Exports.SystemIncludePaths.Add(Rules.ModulePath(IncludePath));
+        }
+
         // An engine module's source root is public surface; third-party modules declare roots explicitly.
         if (!Rules.bIsThirdParty)
         {

@@ -96,6 +96,8 @@ namespace Lumina
     {
     public:
 
+        virtual ~IPropertyTypeCustomization() = default;
+
         virtual EPropertyChangeOp DrawProperty(const TSharedPtr<FPropertyHandle>& Property) = 0;
         
         EPropertyChangeOp UpdateAndDraw(const TSharedPtr<FPropertyHandle>& Property, bool bReadOnly);

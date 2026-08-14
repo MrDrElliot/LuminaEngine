@@ -33,8 +33,8 @@ namespace Lumina
     class FCookGraph
     {
     public:
-        explicit FCookGraph(const FAssetRegistry& Registry)
-            : Registry(&Registry) {}
+        explicit FCookGraph(const FAssetRegistry& InRegistry)
+            : Registry(&InRegistry) {}
 
         // Add a seed; resolved paths get a node with the supplied chunk, otherwise an issue is recorded and the root skipped.
         void AddRoot(const FCookRoot& Root);

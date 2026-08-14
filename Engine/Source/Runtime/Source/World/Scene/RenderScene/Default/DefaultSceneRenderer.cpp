@@ -2390,9 +2390,9 @@ namespace Lumina
                 {
                     FWidgetRuntime& Runtime = WidgetComponent.Runtime;
 
-                    const FMatrix4 World = TransformStorage.get(Entity).GetWorldMatrix();
-                    const FVector3 Center = FVector3(World[3]);
-                    const float ScaleXY = Math::Max(Math::Length(FVector3(World[0])), Math::Length(FVector3(World[1])));
+                    const FMatrix4 WorldMatrix = TransformStorage.get(Entity).GetWorldMatrix();
+                    const FVector3 Center = FVector3(WorldMatrix[3]);
+                    const float ScaleXY = Math::Max(Math::Length(FVector3(WorldMatrix[0])), Math::Length(FVector3(WorldMatrix[1])));
                     const float Radius  = 0.5f * Math::Length(WidgetComponent.WorldSize) * Math::Max(1.0f, ScaleXY);
 
                     Runtime.bVisible = !bCullWidgets || WidgetFrustum.IntersectsSphere(Center, Radius);
@@ -2403,7 +2403,7 @@ namespace Lumina
                     }
 
                     FWidgetInstance& Inst = WidgetInstances.emplace_back();
-                    Inst.Transform    = World;
+                    Inst.Transform    = WorldMatrix;
                     Inst.WorldSize    = WidgetComponent.WorldSize;
                     Inst.TextureIndex = (uint32)Runtime.ResourceID;
                     Inst.Flags        = WidgetComponent.bBillboard ? WIDGET_FLAG_BILLBOARD : 0u;
@@ -2447,8 +2447,8 @@ namespace Lumina
                         return;
                     }
 
-                    const FMatrix4 World  = TransformStorage.get(Entity).GetWorldMatrix();
-                    const FVector3 Origin = FVector3(World[3]);
+                    const FMatrix4 WorldMatrix = TransformStorage.get(Entity).GetWorldMatrix();
+                    const FVector3 Origin = FVector3(WorldMatrix[3]);
 
                     const float HAlign = (TextComponent.HorizontalAlign == ETextHorizontalAlign::Left)   ? 0.0f
                                        : (TextComponent.HorizontalAlign == ETextHorizontalAlign::Center) ? 0.5f : 1.0f;
@@ -2513,8 +2513,8 @@ namespace Lumina
                     }
                     else
                     {
-                        RightDir = Math::Normalize(FVector3(World[0]));
-                        UpDir    = Math::Normalize(FVector3(World[1]));
+                        RightDir = Math::Normalize(FVector3(WorldMatrix[0]));
+                        UpDir    = Math::Normalize(FVector3(WorldMatrix[1]));
                     }
 
                     const FVector3 RightScaled = RightDir * TextComponent.WorldSize;
@@ -4186,7 +4186,6 @@ namespace Lumina
 
         FFrameData& Frame = *ExtractFrame;
         auto& SceneCullContext = Frame.Geometry.SceneCullContext;
-        auto& SceneGlobalData  = Frame.SceneGlobalData;
 
         SceneCullContext.Reset();
         SceneCullContext.bEnabled = RenderSettings.bCPUInstanceCull;

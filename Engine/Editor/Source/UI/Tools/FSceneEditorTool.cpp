@@ -677,10 +677,10 @@ namespace Lumina
                     THashMap<const CStruct*, void*> ReflectedMap;
                     ECS::Utils::ForEachComponent(Registry, Selected, [&](void* Component, entt::basic_sparse_set<>&, const entt::meta_type& Type)
                     {
-                        entt::meta_any Any = ECS::Utils::InvokeMetaFunc(Type, "static_struct"_hs);
-                        if (Any)
+                        entt::meta_any MetaAny = ECS::Utils::InvokeMetaFunc(Type, "static_struct"_hs);
+                        if (MetaAny)
                         {
-                            ReflectedMap[Any.cast<CStruct*>()] = Component;
+                            ReflectedMap[MetaAny.cast<CStruct*>()] = Component;
                         }
                     });
                     OtherReflected.push_back(Move(ReflectedMap));
@@ -691,13 +691,13 @@ namespace Lumina
 
             ECS::Utils::ForEachComponent(Registry, Entity, [&](void* Component, entt::basic_sparse_set<>& Set, const entt::meta_type& Type)
             {
-                entt::meta_any Any = ECS::Utils::InvokeMetaFunc(Type, "static_struct"_hs);
-                if (!Any)
+                entt::meta_any MetaAny = ECS::Utils::InvokeMetaFunc(Type, "static_struct"_hs);
+                if (!MetaAny)
                 {
                     return;
                 }
 
-                CStruct* Struct = Any.cast<CStruct*>();
+                CStruct* Struct = MetaAny.cast<CStruct*>();
 
                 // Components that never show in the details panel (tags, prefab bookkeeping).
                 if (IsComponentHiddenInDetails(Struct))
@@ -1533,8 +1533,8 @@ namespace Lumina
             }
 
             using namespace entt::literals;
-            entt::meta_any Any = ECS::Utils::InvokeMetaFunc(MetaType, "static_struct"_hs);
-            CStruct* Struct = Any.cast<CStruct*>();
+            entt::meta_any MetaAny = ECS::Utils::InvokeMetaFunc(MetaType, "static_struct"_hs);
+            CStruct* Struct = MetaAny.cast<CStruct*>();
             ASSERT(Struct);
 
             if (Struct->HasMeta("HideInComponentList"))
@@ -2173,15 +2173,15 @@ namespace Lumina
 
         // Flatten the selection (view, not SelectedEntities, so entt::exclude<SDisabledTag> applies) into a
         // contiguous list to index from worker threads. Bail before the resolve when nothing is selected.
-        TVector<entt::entity> SelectedEntities;
+        TVector<entt::entity> SelectedList;
         auto SelectedView = Registry.view<FSelectedInEditorComponent>(entt::exclude<SDisabledTag>);
-        SelectedEntities.reserve(SelectedView.size_hint());
+        SelectedList.reserve(SelectedView.size_hint());
         SelectedView.each([&](entt::entity SelectedEntity)
         {
-            SelectedEntities.push_back(SelectedEntity);
+            SelectedList.push_back(SelectedEntity);
         });
 
-        if (SelectedEntities.empty())
+        if (SelectedList.empty())
         {
             return;
         }
@@ -2199,9 +2199,9 @@ namespace Lumina
             }
         };
         
-        Task::ParallelFor((uint32)SelectedEntities.size(), [&](uint32 Index)
+        Task::ParallelFor((uint32)SelectedList.size(), [&](uint32 Index)
         {
-            const entt::entity SelectedEntity = SelectedEntities[Index];
+            const entt::entity SelectedEntity = SelectedList[Index];
             DrawFor(SelectedEntity);
             ECS::Utils::ForEachChild(Registry, SelectedEntity, [&](entt::entity Child)
             {

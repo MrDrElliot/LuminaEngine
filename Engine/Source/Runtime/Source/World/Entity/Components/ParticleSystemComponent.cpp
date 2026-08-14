@@ -5,7 +5,7 @@ namespace Lumina
 {
     static FVector4 PromoteToVec4(const FVector2& V) { return FVector4(V, 0.0f, 0.0f); }
     static FVector4 PromoteToVec4(const FVector3& V) { return FVector4(V, 0.0f); }
-    static FVector4 PromoteToVec4(const FVector4& V) { return V; }
+    [[maybe_unused]] static FVector4 PromoteToVec4(const FVector4& V) { return V; }
 
     const FParticleParameter* SParticleSystemComponent::FindParameter(const FName& Name) const
     {

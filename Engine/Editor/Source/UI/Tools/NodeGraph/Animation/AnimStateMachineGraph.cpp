@@ -348,9 +348,9 @@ namespace Lumina
 
         CAnimGraphNode_State*      State = Cast<CAnimGraphNode_State>(Node);
         CAnimGraphNode_StateEntry* Entry = Cast<CAnimGraphNode_StateEntry>(Node);
-        CAnimGraphNode_StateAny*   Any   = Cast<CAnimGraphNode_StateAny>(Node);
+        CAnimGraphNode_StateAny*   AnyState   = Cast<CAnimGraphNode_StateAny>(Node);
 
-        if (State == nullptr && Entry == nullptr && Any == nullptr)
+        if (State == nullptr && Entry == nullptr && AnyState == nullptr)
         {
             return false;
         }
@@ -456,7 +456,7 @@ namespace Lumina
                 NodeEditor::EndPin();
             }
 
-            CAnimGraphPin* OutPin = State != nullptr ? State->OutPin : (Entry != nullptr ? Entry->OutPin : Any->OutPin);
+            CAnimGraphPin* OutPin = State != nullptr ? State->OutPin : (Entry != nullptr ? Entry->OutPin : AnyState->OutPin);
             if (OutPin != nullptr)
             {
                 NodeEditor::BeginPin(OutPin->GetPinGUID(), NodeEditor::PinKind::Output);

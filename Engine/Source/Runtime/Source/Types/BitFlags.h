@@ -154,8 +154,8 @@ namespace Lumina
             : FBitFlags(Int)
         {}
 
-        constexpr TBitFlags(const TBitFlags<T>& Flags)
-            : FBitFlags(Flags.Flags)
+        constexpr TBitFlags(const TBitFlags<T>& InFlags)
+            : FBitFlags(InFlags.Flags)
         {}
 
         template<typename... Args>

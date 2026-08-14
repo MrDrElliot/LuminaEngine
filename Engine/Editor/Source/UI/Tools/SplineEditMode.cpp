@@ -248,10 +248,10 @@ namespace Lumina
                     for (int32 Step = 0; Step <= TotalSteps; ++Step)
                     {
                         const float Key = static_cast<float>(Step) / static_cast<float>(kStepsPerSegment);
-                        const FVector3 World = FVector3(LocalToWorld * FVector4(Spline->EvaluatePosition(Key), 1.0f));
+                        const FVector3 WorldPos = FVector3(LocalToWorld * FVector4(Spline->EvaluatePosition(Key), 1.0f));
 
                         ImVec2 Screen;
-                        if (!ProjectToScreen(ViewProjection, World, ViewportSize, Screen))
+                        if (!ProjectToScreen(ViewProjection, WorldPos, ViewportSize, Screen))
                         {
                             continue;
                         }

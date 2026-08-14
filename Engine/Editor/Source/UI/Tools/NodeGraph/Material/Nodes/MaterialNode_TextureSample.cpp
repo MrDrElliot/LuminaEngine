@@ -81,12 +81,12 @@ namespace Lumina
             // name, so leaving it undeclared turns one clear error into a cascade of undefined identifiers.
             Compiler.AddRaw("float4 " + FullName + " = float4(0.0, 0.0, 0.0, 1.0);\n");
 
-            EdNodeGraph::FError Error;
-            Error.Node        = this;
-            Error.Name        = "Texture Sample";
-            Error.Description = "TextureSample cannot sample a Texture Array. Use a TextureSampleArray node "
+            EdNodeGraph::FError NodeError;
+            NodeError.Node        = this;
+            NodeError.Name        = "Texture Sample";
+            NodeError.Description = "TextureSample cannot sample a Texture Array. Use a TextureSampleArray node "
                                 "instead, which takes a Slice input to pick the layer.";
-            Compiler.AddError(Error);
+            Compiler.AddError(NodeError);
             return;
         }
 

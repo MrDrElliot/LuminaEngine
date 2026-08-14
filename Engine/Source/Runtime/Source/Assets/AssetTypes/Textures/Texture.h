@@ -73,6 +73,7 @@ namespace Lumina
 
     public:
 
+        using Super::Serialize;
         void Serialize(FArchive& Ar) override;
         void PreLoad() override;
         void PostLoad() override;

@@ -20,11 +20,11 @@ namespace Lumina
     {
         if (!BlendSpace.IsValid())
         {
-            EdNodeGraph::FError Error;
-            Error.Name        = "Missing Blend Space";
-            Error.Description = "Blend Space node has no asset assigned; it will evaluate to the bind pose.";
-            Error.Node        = this;
-            Compiler.AddError(Error);
+            EdNodeGraph::FError NodeError;
+            NodeError.Name        = "Missing Blend Space";
+            NodeError.Description = "Blend Space node has no asset assigned; it will evaluate to the bind pose.";
+            NodeError.Node        = this;
+            Compiler.AddError(NodeError);
         }
         else if (BlendSpace->Samples.empty())
         {

@@ -128,6 +128,20 @@ public abstract class LuminaTargetRules : TargetRules
             CompilerWarning.MaybeUninitialized,
             CompilerWarning.DanglingPointer);
 
+        // Real defects, but the analysis behind them is flow-sensitive, so what they find moves with
+        // the optimiser. Visible rather than fatal: a Shipping or LTO build must not fail on a
+        // diagnostic a Development build never emits.
+        Warnings.Set(WarningSeverity.Warning,
+            CompilerWarning.ArrayBounds,            // an index the optimiser can prove is out of range
+            CompilerWarning.StringopOverflow,       // a mem/str call writing past the destination
+            CompilerWarning.StringopTruncation,     // a copy the destination silently cuts short
+            CompilerWarning.Restrict,               // arguments that alias where the callee says they cannot
+            CompilerWarning.UseAfterFree,           // a pointer read after the block was released
+            CompilerWarning.FreeNonheapObject,      // free or delete applied to something never allocated
+            CompilerWarning.DanglingReference,      // a reference bound to a temporary that has already gone
+            CompilerWarning.Uninitialized,          // eastl's union layouts trip this after inlining
+            CompilerWarning.DeprecatedDeclarations); // a compiler or SDK bump must not break the build
+
         if (Target.Platform == BuildPlatform.Windows64)
         {
             // Noise inherent to exporting C++ types across a DLL boundary.
@@ -141,7 +155,50 @@ public abstract class LuminaTargetRules : TargetRules
         {
             // Verified clean on GCC. Left out on MSVC until the same pass runs there, because these
             // are off by default for cl, so promoting them enables them as well as failing on them.
-            Warnings.Set(WarningSeverity.Fatal, CompilerWarning.Switch);
+            Warnings.Set(WarningSeverity.Fatal,
+                CompilerWarning.Switch,
+
+                CompilerWarning.Shadow,                  // a name that hides a member, a parameter or an outer local
+                CompilerWarning.OverloadedVirtual,       // an overload set a derived class silently narrowed
+                CompilerWarning.NonVirtualDtor,          // a base deleted through a pointer it cannot destroy
+                CompilerWarning.SuggestOverride,         // an override that no longer has to match the base
+                CompilerWarning.SubobjectLinkage,        // a type whose definition differs between units
+
+                CompilerWarning.ReturnLocalAddr,         // a pointer to a frame that has already gone
+                CompilerWarning.MismatchedNewDelete,     // new[] released with delete, or the reverse
+                CompilerWarning.PlacementNew,            // constructing into storage too small to hold it
+
+                CompilerWarning.SizeofPointerMemaccess,  // sizeof of the pointer where the object was meant
+                CompilerWarning.SizeofPointerDiv,        // an element count divided out of a pointer size
+                CompilerWarning.SizeofArrayArgument,     // sizeof of an array parameter, which is a pointer
+                CompilerWarning.MemsetEltSize,           // a byte count that ignores the element size
+                CompilerWarning.MemsetTransposedArgs,    // memset's fill and length passed the wrong way round
+                CompilerWarning.Nonnull,                 // null handed to a parameter declared non-null
+
+                CompilerWarning.Address,                 // an address tested for truth instead of its value
+                CompilerWarning.BoolOperation,           // arithmetic on a bool that cannot mean what it reads as
+                CompilerWarning.LogicalNotParentheses,   // !x == y, which negates before it compares
+                CompilerWarning.MisleadingIndentation,   // a statement whose indentation implies a block
+                CompilerWarning.IntInBoolContext,        // an integer expression used as a condition
+                CompilerWarning.EmptyBody,               // an if or loop whose body is a stray semicolon
+                CompilerWarning.InitSelf,                // a variable initialised from itself
+                CompilerWarning.SelfMove,                // a move onto the object being moved from
+                CompilerWarning.ImplicitFallthrough,     // a case that runs into the next without saying so
+                CompilerWarning.DuplicatedCond,          // an else-if that repeats a condition already taken
+                CompilerWarning.DuplicatedBranches,      // a condition whose two branches are the same code
+                CompilerWarning.LogicalOp,               // && or || where the bitwise operator was meant
+                CompilerWarning.CatchValue,              // a polymorphic exception caught by value and sliced
+
+                CompilerWarning.PessimizingMove,         // a move that blocks the copy elision it displaces
+                CompilerWarning.RedundantMove,           // a move the compiler was already going to make
+                CompilerWarning.PointerArith,            // arithmetic on void* or a function pointer
+                CompilerWarning.Attributes,              // an attribute the compiler is quietly dropping
+                CompilerWarning.Comment,                 // a // comment continued by a trailing backslash
+                CompilerWarning.ExtraSemi,               // a semicolon that declares nothing
+                CompilerWarning.SignCompare,             // a signed and an unsigned value compared directly
+                CompilerWarning.UnusedVariable,
+                CompilerWarning.UnusedButSetVariable,
+                CompilerWarning.UnusedFunction);
         }
     }
 }

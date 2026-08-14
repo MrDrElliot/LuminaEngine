@@ -21,11 +21,11 @@ namespace Lumina
     {
         if (!Clip.IsValid())
         {
-            EdNodeGraph::FError Error;
-            Error.Name        = "Missing Clip";
-            Error.Description = "Play Animation Clip node has no clip assigned; it will evaluate to the bind pose.";
-            Error.Node        = this;
-            Compiler.AddError(Error);
+            EdNodeGraph::FError NodeError;
+            NodeError.Name        = "Missing Clip";
+            NodeError.Description = "Play Animation Clip node has no clip assigned; it will evaluate to the bind pose.";
+            NodeError.Node        = this;
+            Compiler.AddError(NodeError);
         }
 
         const uint16 ClipIndex = Compiler.AddClip(Clip.Get());

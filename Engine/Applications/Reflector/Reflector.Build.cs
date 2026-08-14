@@ -28,7 +28,7 @@ public class Reflector : ModuleRules
         });
 
         // Prebuilt libclang and LLVM, vendored under the engine's External directory.
-        PublicIncludePaths.Add(ModulePath("../../../External/LLVM/include"));
+        PublicSystemIncludePaths.Add(ModulePath("../../../External/LLVM/include"));
         PublicLibraryPaths.Add(ModulePath("../../../External/LLVM/lib"));
         PublicLibraryPaths.Add(ModulePath("../../../External/LLVM/bin"));
 

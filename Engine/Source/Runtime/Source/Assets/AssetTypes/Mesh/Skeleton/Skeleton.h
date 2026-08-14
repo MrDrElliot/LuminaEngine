@@ -20,6 +20,7 @@ namespace Lumina
         GENERATED_BODY()
 
     public:
+        using Super::Serialize;
         void Serialize(FArchive& Ar) override;
 
         bool IsAsset() const override { return true; }

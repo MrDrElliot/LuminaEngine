@@ -135,7 +135,7 @@ namespace Lumina::RHI
         Write = BIT(2),
     };
     
-    ENUM_CLASS_FLAGS(EDepthFlags)
+    ENUM_CLASS_FLAGS(EDepthFlags);
     
     enum class EOp : uint8
     {

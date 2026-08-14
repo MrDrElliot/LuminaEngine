@@ -67,6 +67,7 @@ namespace Lumina
     public:
 
         bool IsAsset() const override { return true; }
+        using Super::Serialize;
         void Serialize(FArchive& Ar) override;
 
         /** Pre-build the shared piece meshes so the first runtime fracture doesn't hitch. */

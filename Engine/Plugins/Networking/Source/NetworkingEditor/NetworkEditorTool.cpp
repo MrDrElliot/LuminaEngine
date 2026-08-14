@@ -92,9 +92,9 @@ namespace Lumina
         Histories.clear();
     }
 
-    void FNetworkEditorTool::SampleRates(CWorld* World, FNetHistory& History, float DeltaSeconds)
+    void FNetworkEditorTool::SampleRates(CWorld* InWorld, FNetHistory& History, float DeltaSeconds)
     {
-        FNetWorldState* State = GetNetState(World);
+        FNetWorldState* State = GetNetState(InWorld);
         if (State == nullptr) { return; }
 
         const FNetworkStats Stats = State->Transport->GetStats();
@@ -130,13 +130,13 @@ namespace Lumina
         TVector<CWorld*> NetWorlds;
         for (const TUniquePtr<FWorldContext>& Ctx : GWorldManager->GetContexts())
         {
-            CWorld* World = Ctx->World.Get();
-            if (GetNetState(World) == nullptr)
+            CWorld* ContextWorld = Ctx->World.Get();
+            if (GetNetState(ContextWorld) == nullptr)
             {
                 continue;
             }
-            NetWorlds.push_back(World);
-            SampleRates(World, Histories[World], Dt);
+            NetWorlds.push_back(ContextWorld);
+            SampleRates(ContextWorld, Histories[ContextWorld], Dt);
         }
 
         if (NetWorlds.empty())

@@ -34,21 +34,21 @@ namespace Lumina
             if (Skeleton->GetBone(MidIdx).ParentIndex != RootIdx ||
                 Skeleton->GetBone(EndIdx).ParentIndex != MidIdx)
             {
-                EdNodeGraph::FError Error;
-                Error.Name        = "Bad IK Chain";
-                Error.Description = FString("Two-Bone IK chain is not parented as Root -> Mid -> End on the skeleton.");
-                Error.Node        = this;
-                Compiler.AddError(Error);
+                EdNodeGraph::FError NodeError;
+                NodeError.Name        = "Bad IK Chain";
+                NodeError.Description = FString("Two-Bone IK chain is not parented as Root -> Mid -> End on the skeleton.");
+                NodeError.Node        = this;
+                Compiler.AddError(NodeError);
                 bChainOk = false;
             }
         }
         else
         {
-            EdNodeGraph::FError Error;
-            Error.Name        = "Unknown IK Bone";
-            Error.Description = FString("Two-Bone IK references a bone that doesn't exist on the graph's skeleton.");
-            Error.Node        = this;
-            Compiler.AddError(Error);
+            EdNodeGraph::FError NodeError;
+            NodeError.Name        = "Unknown IK Bone";
+            NodeError.Description = FString("Two-Bone IK references a bone that doesn't exist on the graph's skeleton.");
+            NodeError.Node        = this;
+            Compiler.AddError(NodeError);
         }
 
         const uint16 SrcReg = ResolvePoseInput(PoseInPin, Compiler);

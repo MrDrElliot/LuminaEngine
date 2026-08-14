@@ -1,3 +1,6 @@
+#if defined(__GNUC__)
+#   pragma GCC diagnostic ignored "-Wshadow"
+#endif
 //------------------------------------------------------------------------------
 // VERSION 0.9.1
 //
@@ -1347,12 +1350,19 @@ void ed::EditorContext::End()
         {
             auto result = action.Accept(control);
 
+#if defined(__GNUC__)
+#   pragma GCC diagnostic push
+#   pragma GCC diagnostic ignored "-Wduplicated-cond"
+#endif
             if (result == EditorAction::True)
                 return true;
             else if (/*!possibleAction &&*/ result == EditorAction::Possible)
                 possibleAction = &action;
             else if (result == EditorAction::Possible)
                 action.Reject();
+#if defined(__GNUC__)
+#   pragma GCC diagnostic pop
+#endif
 
             return false;
         };

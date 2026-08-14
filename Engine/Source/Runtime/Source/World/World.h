@@ -131,6 +131,7 @@ namespace Lumina
         CWorld();
 
         //~ Begin CObject Interface
+        using Super::Serialize;
         void Serialize(FArchive& Ar) override;
         void PreLoad() override;
         void PostLoad() override;

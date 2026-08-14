@@ -38,8 +38,8 @@ namespace Lumina
         using FArchive::operator<<;
 
         FSaveReferenceBuilderArchive() = delete;
-        FSaveReferenceBuilderArchive(FSaveContext* SaveContext)
-            : SaveContext(SaveContext)
+        FSaveReferenceBuilderArchive(FSaveContext* InSaveContext)
+            : SaveContext(InSaveContext)
         {
             this->SetFlag(EArchiverFlags::Writing);
         }

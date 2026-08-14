@@ -26,6 +26,7 @@ public enum CompilerWarning
     Switch,
     NonNullCompare,
     DanglingPointer,
+    DanglingReference,
     TautologicalCompare,
     Parentheses,
     Format,
@@ -34,6 +35,47 @@ public enum CompilerWarning
     MaybeUninitialized,
     SubobjectLinkage,
 
+    // Lifetime and allocation: an object touched outside its lifetime, or freed through the wrong path.
+    ReturnLocalAddr,
+    UseAfterFree,
+    MismatchedNewDelete,
+    FreeNonheapObject,
+    PlacementNew,
+
+    // Memory intrinsics called with the wrong size, the wrong argument order, or past the end.
+    SizeofPointerMemaccess,
+    SizeofPointerDiv,
+    SizeofArrayArgument,
+    MemsetEltSize,
+    MemsetTransposedArgs,
+    ArrayBounds,
+    StringopOverflow,
+    StringopTruncation,
+    Restrict,
+    Nonnull,
+
+    // Expressions that compile to something other than what they read as.
+    Address,
+    BoolOperation,
+    LogicalNotParentheses,
+    MisleadingIndentation,
+    IntInBoolContext,
+    EmptyBody,
+    InitSelf,
+    SelfMove,
+    ImplicitFallthrough,
+    DuplicatedCond,
+    DuplicatedBranches,
+    LogicalOp,
+
+    // C++ inheritance and value semantics.
+    NonVirtualDtor,
+    SuggestOverride,
+    CatchValue,
+    PessimizingMove,
+    RedundantMove,
+    ExtraSemi,
+
     // Conversions and comparisons.
     SignCompare,
     ConversionLoss,
@@ -41,6 +83,7 @@ public enum CompilerWarning
 
     // Shadowing. GCC's -Wshadow is far broader than MSVC's three codes, so these stay MSVC-only
     // until the engine has been through a shadowing pass on GCC.
+    Shadow,
     ShadowLocal,
     ShadowParameter,
     ShadowMember,
@@ -117,11 +160,50 @@ public static class CompilerWarnings
             new() { Warning = CompilerWarning.Uninitialized,         GccName = "uninitialized",           MsvcCode = "4700" },
             new() { Warning = CompilerWarning.MaybeUninitialized,    GccName = "maybe-uninitialized" },
             new() { Warning = CompilerWarning.SubobjectLinkage,      GccName = "subobject-linkage" },
+            new() { Warning = CompilerWarning.DanglingReference,     GccName = "dangling-reference" },
+
+            new() { Warning = CompilerWarning.ReturnLocalAddr,       GccName = "return-local-addr",       MsvcCode = "4172" },
+            new() { Warning = CompilerWarning.UseAfterFree,          GccName = "use-after-free" },
+            new() { Warning = CompilerWarning.MismatchedNewDelete,   GccName = "mismatched-new-delete" },
+            new() { Warning = CompilerWarning.FreeNonheapObject,     GccName = "free-nonheap-object" },
+            new() { Warning = CompilerWarning.PlacementNew,          GccName = "placement-new" },
+
+            new() { Warning = CompilerWarning.SizeofPointerMemaccess, GccName = "sizeof-pointer-memaccess" },
+            new() { Warning = CompilerWarning.SizeofPointerDiv,      GccName = "sizeof-pointer-div" },
+            new() { Warning = CompilerWarning.SizeofArrayArgument,   GccName = "sizeof-array-argument" },
+            new() { Warning = CompilerWarning.MemsetEltSize,         GccName = "memset-elt-size" },
+            new() { Warning = CompilerWarning.MemsetTransposedArgs,  GccName = "memset-transposed-args" },
+            new() { Warning = CompilerWarning.ArrayBounds,           GccName = "array-bounds" },
+            new() { Warning = CompilerWarning.StringopOverflow,      GccName = "stringop-overflow" },
+            new() { Warning = CompilerWarning.StringopTruncation,    GccName = "stringop-truncation" },
+            new() { Warning = CompilerWarning.Restrict,              GccName = "restrict" },
+            new() { Warning = CompilerWarning.Nonnull,               GccName = "nonnull" },
+
+            new() { Warning = CompilerWarning.Address,               GccName = "address" },
+            new() { Warning = CompilerWarning.BoolOperation,         GccName = "bool-operation" },
+            new() { Warning = CompilerWarning.LogicalNotParentheses, GccName = "logical-not-parentheses" },
+            new() { Warning = CompilerWarning.MisleadingIndentation, GccName = "misleading-indentation" },
+            new() { Warning = CompilerWarning.IntInBoolContext,      GccName = "int-in-bool-context" },
+            new() { Warning = CompilerWarning.EmptyBody,             GccName = "empty-body",              bOffByDefault = true },
+            new() { Warning = CompilerWarning.InitSelf,              GccName = "init-self" },
+            new() { Warning = CompilerWarning.SelfMove,              GccName = "self-move" },
+            new() { Warning = CompilerWarning.ImplicitFallthrough,   GccName = "implicit-fallthrough",    bOffByDefault = true },
+            new() { Warning = CompilerWarning.DuplicatedCond,        GccName = "duplicated-cond",         bOffByDefault = true },
+            new() { Warning = CompilerWarning.DuplicatedBranches,    GccName = "duplicated-branches",     bOffByDefault = true },
+            new() { Warning = CompilerWarning.LogicalOp,             GccName = "logical-op",              bOffByDefault = true },
+
+            new() { Warning = CompilerWarning.NonVirtualDtor,        GccName = "non-virtual-dtor",        bOffByDefault = true },
+            new() { Warning = CompilerWarning.SuggestOverride,       GccName = "suggest-override",        bOffByDefault = true },
+            new() { Warning = CompilerWarning.CatchValue,            GccName = "catch-value" },
+            new() { Warning = CompilerWarning.PessimizingMove,       GccName = "pessimizing-move" },
+            new() { Warning = CompilerWarning.RedundantMove,         GccName = "redundant-move" },
+            new() { Warning = CompilerWarning.ExtraSemi,             GccName = "extra-semi",              bOffByDefault = true },
 
             new() { Warning = CompilerWarning.SignCompare,           GccName = "sign-compare",            MsvcCode = "4018" },
             new() { Warning = CompilerWarning.ConversionLoss,        GccName = "conversion",              MsvcCode = "4244", bOffByDefault = true },
             new() { Warning = CompilerWarning.ConversionSizeT,       MsvcCode = "4267" },
 
+            new() { Warning = CompilerWarning.Shadow,                GccName = "shadow",                  bOffByDefault = true },
             new() { Warning = CompilerWarning.ShadowLocal,           MsvcCode = "4456" },
             new() { Warning = CompilerWarning.ShadowParameter,       MsvcCode = "4457" },
             new() { Warning = CompilerWarning.ShadowMember,          MsvcCode = "4458" },

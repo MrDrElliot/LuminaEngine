@@ -215,9 +215,9 @@ namespace Lumina
 
     void FGameplayInsightsEditorTool::RefreshSchedule()
     {
-        if (CWorld* World = ResolveWorld())
+        if (CWorld* ResolvedWorld = ResolveWorld())
         {
-            World->GetSystemSchedule(Schedule);
+            ResolvedWorld->GetSystemSchedule(Schedule);
         }
         else
         {

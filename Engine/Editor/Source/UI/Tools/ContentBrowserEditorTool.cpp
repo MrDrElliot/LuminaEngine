@@ -154,7 +154,7 @@ namespace Lumina
 
             constexpr float TopPad   = 3.0f;
             constexpr float BotPad   = 3.0f;
-            const     float Gap      = bHasSubtitle ? 0.0f : 0.0f;
+            constexpr float Gap      = 0.0f;
             const     float HeaderH  = TopPad + TitleH + Gap + SubH + BotPad;
 
             ImDrawList* DrawList = ImGui::GetWindowDrawList();
@@ -329,13 +329,11 @@ namespace Lumina
             const FTypeStyle Style = StyleForType(TypeTag);
 
             const float Width  = Max.x - Min.x;
-            const float Height = Max.y - Min.y;
             const float Inset  = Math::Max(Width * 0.16f, 4.0f);
 
             const ImVec2 PageMin(Min.x + Inset, Min.y + Inset * 0.7f);
             const ImVec2 PageMax(Max.x - Inset, Max.y - Inset * 0.7f);
             const float  Fold    = Math::Max((PageMax.x - PageMin.x) * 0.28f, 6.0f);
-            const float  Round   = Math::Max(Width * 0.03f, 2.0f);
             const float  Thick   = Math::Max(Width * 0.018f, 1.25f);
 
             // Page outline with the top-right corner cut away, then the fold drawn over the notch.
@@ -3154,25 +3152,25 @@ namespace Lumina
                 Task::AsyncTask(1, 1, [this, AssetGUID, SourceFile](uint32, uint32, uint32)
                 {
                     bool bSaved = false;
-                    if (CObject* Asset = LoadObject<CObject>(AssetGUID))
+                    if (CObject* LoadedAsset = LoadObject<CObject>(AssetGUID))
                     {
-                        if (CPackage* Package = Asset->GetPackage())
+                        if (CPackage* AssetPackage = LoadedAsset->GetPackage())
                         {
-                            bSaved = CPackage::SavePackage(Package, Package->GetPackagePath());
+                            bSaved = CPackage::SavePackage(AssetPackage, AssetPackage->GetPackagePath());
                         }
                     }
 
                     MainThread::Enqueue([this, AssetGUID, SourceFile, bSaved]()
                     {
-                        if (CObject* Asset = LoadObject<CObject>(AssetGUID))
+                        if (CObject* SavedAsset = LoadObject<CObject>(AssetGUID))
                         {
                             // The asset already existed, so this is a save notification and not a creation:
                             // the registry entry keeps its GUID and path, only the on-disk state moved.
-                            FAssetRegistry::Get().AssetSaved(Asset);
+                            FAssetRegistry::Get().AssetSaved(SavedAsset);
 
                             // Nothing about the reference changed, so no open tool would otherwise notice
                             // that what it is showing is a different mesh/texture than the one it cached.
-                            AssetEvents::BroadcastAssetDataChanged(Asset);
+                            AssetEvents::BroadcastAssetDataChanged(SavedAsset);
                         }
 
                         RefreshContentBrowser();
