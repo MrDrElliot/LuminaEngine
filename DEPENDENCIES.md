@@ -99,6 +99,21 @@ the `clang-c` headers; `apt.llvm.org` carries every version on every release, wh
 is what makes the recipe reproducible instead of dependent on the host's default
 clang.
 
+### Runtime dependencies of the bundle
+
+The bundle ships `libLLVM` and `libclang` but not the system libraries those link against, so a
+machine missing them links the Reflector and then fails on a library the build never names:
+
+```bash
+sudo apt-get install -y libxml2 libzstd1 libffi8 libedit2 zlib1g
+```
+
+`Setup.sh` checks for these now. To see what a given copy actually needs:
+
+```bash
+ldd External/LLVM/lib/libLLVM.so.19.1 | grep "not found"
+```
+
 ### By hand
 
 Fetch each library from its upstream and lay it out to match the build's paths.

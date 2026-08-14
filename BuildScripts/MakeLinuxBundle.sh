@@ -138,6 +138,30 @@ for HeaderTree in clang-c clang llvm-c llvm; do
     cp -RL "$Resolved" "$STAGE/LLVM/include/$HeaderTree"
 done
 
+# Everything libLLVM and libclang link against, staged beside them. Without this the bundle is only
+# self-contained on a machine that already has LLVM's dependencies -- which is any machine with the
+# -dev packages, i.e. exactly the machine that builds the bundle and never the one that consumes it.
+# The core runtime is deliberately excluded: shipping libstdc++/libgcc/glibc alongside a host
+# toolchain is an ABI hazard, and every distribution has them anyway.
+CoreRuntime='^(libc|libm|libdl|libpthread|librt|libstdc\+\+|libgcc_s|ld-linux-x86-64)\.so'
+
+for Library in "$STAGE/LLVM/lib"/libclang-*.so.* "$STAGE/LLVM/lib"/libLLVM.so.*; do
+    [ -f "$Library" ] || continue
+    ldd "$Library" 2>/dev/null | awk '/=>/ {print $1}'
+done | sort -u | while read -r SoName; do
+    echo "$SoName" | grep -qE "$CoreRuntime" && continue
+    case "$SoName" in libclang*|libLLVM*) continue;; esac
+
+    Found="$(ldconfig -p 2>/dev/null | awk -v N="$SoName" '$1==N{print $NF; exit}')"
+    Real="$(readlink -f "$Found" 2>/dev/null)"
+    if [ -n "$Real" ] && [ -f "$Real" ]; then
+        cp -f "$Real" "$STAGE/LLVM/lib/$SoName"
+        echo "  dep $SoName"
+    else
+        echo "  WARNING: $SoName not found on this host; the bundle will need it installed."
+    fi
+done
+
 "$LlvmRoot/bin/llvm-config" --version > "$STAGE/LLVM/Version.txt" 2>/dev/null \
     || echo "$LLVM_MAJOR" > "$STAGE/LLVM/Version.txt"
 

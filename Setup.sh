@@ -49,13 +49,22 @@ if [ -z "${SKIP_PREREQ_CHECKS:-}" ]; then
         fi
     done
 
+    # The bundle ships libLLVM and libclang but not the system libraries THEY link against, so a
+    # machine without these gets a Reflector link that fails on a library it never names directly.
+    for Library in libxml2.so.2 libzstd.so.1 libffi.so.8 libedit.so.2 libz.so.1; do
+        if command -v ldconfig >/dev/null 2>&1 && ! ldconfig -p 2>/dev/null | grep -q "$Library"; then
+            Missing+=("$Library (libclang/libLLVM runtime dependency)")
+        fi
+    done
+
     if [ ${#Missing[@]} -gt 0 ]; then
         echo "error: missing prerequisites:"
         printf '  - %s\n' "${Missing[@]}"
         echo
         echo "On Debian or Ubuntu:"
         echo "  sudo apt-get install -y g++-13 libx11-dev libxrandr-dev libxinerama-dev \\"
-        echo "      libxcursor-dev libxi-dev libxkbcommon-dev pkg-config"
+        echo "      libxcursor-dev libxi-dev libxkbcommon-dev pkg-config \\"
+        echo "      libxml2 libzstd1 libffi8 libedit2 zlib1g"
         echo "  # .NET: https://dotnet.microsoft.com/download/dotnet/10.0"
         echo
         echo "Set SKIP_PREREQ_CHECKS=1 to bypass this check."

@@ -109,6 +109,13 @@ namespace Lumina
     {
         LUMINA_MEMORY_SCOPE("Textures");
 
+        // PostLoad is also the re-entry point after something REPLACES TextureResource wholesale -- the
+        // array factory rebuilds through it. Anything left over from the previous resource describes an
+        // image that no longer exists: a half-drained fill cursor would upload into whatever is here now,
+        // and a residency refusal earned by the old mips would outlive the mips that earned it.
+        PendingFill       = FResidencyFill{};
+        bResidencyBlocked = false;
+
         // Only the inline tail is resident at load. For a streamable texture that is the mips at or below
         // kInlineMipMaxDimension -- tiny next to the full chain, which is the entire point: opening fifteen
         // 4K textures now costs fifteen 256px images until something actually asks for more.

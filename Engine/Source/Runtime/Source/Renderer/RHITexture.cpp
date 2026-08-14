@@ -29,6 +29,10 @@ namespace Lumina::RHI::Textures
         uint64    Batch      = 0;                 // the upload batch this swap waits on; only read when armed
         bool      bArmed     = false;             // CommitRecreate has run
         uint32    IdleTicks  = 0;                 // ticks spent unarmed, for the "forgot to commit" warning
+
+        // Whoever staged it, carried purely so the "never committed" error names an asset instead of a
+        // slot number. A bare slot index identifies nothing once the heap has churned.
+        FFixedString DebugName;
     };
 
     struct FState
@@ -231,6 +235,12 @@ namespace Lumina::RHI::Textures
         const FTextureH Previous = Tex.Texture;
         Tex.Texture = NewTexture;
 
+        FFixedString StagedBy;
+        if (Desc.DebugName != nullptr)
+        {
+            StagedBy.assign(Desc.DebugName);
+        }
+
         FTextureH Abandoned;
         {
             FScopeLock Lock(GState.SwapMutex);
@@ -250,13 +260,15 @@ namespace Lumina::RHI::Textures
                 Existing.Batch      = 0;
                 Existing.bArmed     = false;
                 Existing.IdleTicks  = 0;
+                Existing.DebugName  = StagedBy;
                 bMerged             = true;
                 break;
             }
 
             if (!bMerged)
             {
-                GState.PendingSwaps.push_back(FPendingSwap{ Tex.SampledSlot, NewTexture, Previous, 0, false, 0 });
+                GState.PendingSwaps.push_back(
+                    FPendingSwap{ Tex.SampledSlot, NewTexture, Previous, 0, false, 0, StagedBy });
             }
         }
 
@@ -404,10 +416,11 @@ namespace Lumina::RHI::Textures
                     // A caller that cannot finish what it staged should say so with AbandonRecreate.
                     if (++Pending.IdleTicks == 60)
                     {
-                        LOG_ERROR("RHI: bindless slot {} has a staged texture that was never committed. "
-                                  "Recreate must be followed by uploads and CommitRecreate on the same "
-                                  "thread; until it is, the slot keeps sampling the previous image.",
-                            Pending.Slot);
+                        LOG_ERROR("RHI: '{}' (bindless slot {}) has a staged texture that was never "
+                                  "committed. Recreate must be followed by uploads and CommitRecreate on "
+                                  "the same thread; until it is, the slot keeps sampling the previous "
+                                  "image and the texture can never change residency again.",
+                            Pending.DebugName.empty() ? "<unnamed>" : Pending.DebugName.c_str(), Pending.Slot);
                     }
                     ++i;
                     continue;
@@ -473,7 +486,11 @@ namespace Lumina::RHI::Textures
 
     void Release(FManagedTexture& Tex)
     {
-        if (!Tex.IsValid())
+        // BOTH halves, not just the image. A managed texture with a live slot and a dead image is exactly
+        // what a half-finished swap leaves behind, and bailing on the image alone leaked the heap slot AND
+        // orphaned the pending-swap entry keyed on it -- which then sits unarmed forever, because the only
+        // thing that could have cleared it was this call.
+        if (!Tex.IsValid() && Tex.SampledSlot == kInvalidHeapSlot)
         {
             return;
         }
