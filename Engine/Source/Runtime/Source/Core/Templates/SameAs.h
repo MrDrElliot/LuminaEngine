@@ -1,6 +1,6 @@
 ﻿#pragma once
 
-#include <eastl/type_traits.h>
+#include <EASTL/type_traits.h>
 
 namespace Lumina::Concept
 {

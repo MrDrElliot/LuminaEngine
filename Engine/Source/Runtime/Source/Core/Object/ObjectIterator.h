@@ -8,7 +8,7 @@ namespace Lumina
     class CObjectBase;
 
     template<typename T>
-    requires !std::is_same_v<T, CObjectBase>
+    requires (!std::is_same_v<T, CObjectBase>)
     class TObjectIterator
     {
     public:

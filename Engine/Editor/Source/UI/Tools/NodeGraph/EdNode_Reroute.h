@@ -1,7 +1,7 @@
 #pragma once
 #include "EdGraphNode.h"
 #include "Core/Object/ObjectMacros.h"
-#include "ednode_reroute.generated.h"
+#include "EdNode_Reroute.generated.h"
 
 namespace Lumina
 {

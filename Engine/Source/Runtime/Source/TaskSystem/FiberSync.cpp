@@ -4,7 +4,11 @@
 #include "Scheduler/JobScheduler.h"
 #include "Core/Threading/Thread.h"
 
-#include <intrin.h>
+#if defined(_MSC_VER)
+    #include <intrin.h>
+#else
+    #include <immintrin.h>
+#endif
 
 // All four share one shape: a spinlock guards a FIFO of waiter nodes, and wakeups are direct
 // hand-offs -- the releaser updates the shared state for the woken waiter so it never re-contends.

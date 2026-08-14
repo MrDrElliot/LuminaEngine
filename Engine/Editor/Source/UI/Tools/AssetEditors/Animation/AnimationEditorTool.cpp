@@ -6,14 +6,14 @@
 #include "ImGuiDrawUtils.h"
 #include "implot.h"
 #include "Assets/AssetTypes/Mesh/Animation/Animation.h"
-#include "assets/assettypes/mesh/skeleton/skeleton.h"
+#include "Assets/AssetTypes/Mesh/Skeleton/Skeleton.h"
 #include "Tools/UI/ImGui/ImGuiFonts.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
-#include "world/entity/components/environmentcomponent.h"
+#include "World/Entity/Components/EnvironmentComponent.h"
 #include "World/Entity/Components/SkyLightComponent.h"
 #include "World/Entity/Components/LightComponent.h"
-#include "world/Entity/Components/SimpleAnimationComponent.h"
-#include "world/entity/components/skeletalmeshcomponent.h"
+#include "World/Entity/Components/SimpleAnimationComponent.h"
+#include "World/Entity/Components/SkeletalMeshComponent.h"
 #include "World/Entity/Components/StaticMeshComponent.h"
 
 

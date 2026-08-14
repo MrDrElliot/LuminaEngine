@@ -1,6 +1,6 @@
 ﻿#pragma once
 
-#include "String.h"
+#include "EASTL/string.h"
 #include "EASTL/hash_map.h"
 #include "EASTL/hash_set.h"
 #include "EASTL/string.h"

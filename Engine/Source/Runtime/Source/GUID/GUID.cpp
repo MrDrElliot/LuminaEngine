@@ -13,12 +13,85 @@
 #elif defined(__APPLE__)
 #include <CoreFoundation/CFUUID.h>
 #elif defined(__linux__) || defined(__unix__)
-#include <uuid/uuid.h>
+#include <cerrno>
+#include <fcntl.h>
+#include <unistd.h>
+#if defined(__has_include)
+    #if __has_include(<sys/random.h>)
+        #include <sys/random.h>
+        #define LUMINA_HAS_GETRANDOM 1
+    #endif
 #endif
-    
+#endif
+
 
 namespace Lumina
 {
+#if !defined(_WIN32) && !defined(__APPLE__) && (defined(__linux__) || defined(__unix__))
+    namespace
+    {
+        bool FillRandomBytes(uint8* Buffer, size_t Size)
+        {
+        #if defined(LUMINA_HAS_GETRANDOM)
+            size_t Filled = 0;
+
+            while (Filled < Size)
+            {
+                const ssize_t Read = ::getrandom(Buffer + Filled, Size - Filled, 0);
+
+                if (Read < 0)
+                {
+                    if (errno == EINTR)
+                    {
+                        continue;
+                    }
+
+                    break;
+                }
+
+                Filled += static_cast<size_t>(Read);
+            }
+
+            if (Filled == Size)
+            {
+                return true;
+            }
+        #endif
+
+            const int Descriptor = ::open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+
+            if (Descriptor < 0)
+            {
+                return false;
+            }
+
+            size_t Offset = 0;
+
+            while (Offset < Size)
+            {
+                const ssize_t Read = ::read(Descriptor, Buffer + Offset, Size - Offset);
+
+                if (Read <= 0)
+                {
+                    if (Read < 0 && errno == EINTR)
+                    {
+                        continue;
+                    }
+
+                    ::close(Descriptor);
+                    return false;
+                }
+
+                Offset += static_cast<size_t>(Read);
+            }
+
+            ::close(Descriptor);
+
+            return true;
+        }
+    }
+#endif
+
     // Static empty GUID
     const FGuid& FGuid::Empty() noexcept
     {
@@ -79,14 +152,18 @@ namespace Lumina
         return FGuid(std::move(guidBytes));
         
     #elif defined(__linux__) || defined(__unix__)
-        uuid_t uuid;
-        uuid_generate(uuid);
-        
-        ByteArray bytes;
-        std::copy(std::begin(uuid), std::end(uuid), bytes.begin());
-        
+        ByteArray bytes{};
+
+        if (!FillRandomBytes(bytes.data(), bytes.size()))
+        {
+            return FGuid();
+        }
+
+        bytes[6] = (bytes[6] & 0x0F) | 0x40;
+        bytes[8] = (bytes[8] & 0x3F) | 0x80;
+
         return FGuid(std::move(bytes));
-        
+
     #else
         // Fallback to random generation (not cryptographically secure). Per-thread, because a shared
         // unsynchronized generator here would race and could hand two threads the same GUID.

@@ -1,7 +1,7 @@
-﻿#pragma once
+#pragma once
 #include "World/World.h"
 #include "Assets/Factories/Factory.h"
-#include "core/object/ObjectMacros.h"
+#include "Core/Object/ObjectMacros.h"
 #include "WorldFactory.generated.h"
 
 namespace Lumina

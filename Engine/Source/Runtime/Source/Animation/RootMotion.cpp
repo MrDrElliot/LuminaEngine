@@ -119,7 +119,7 @@ namespace Lumina::RootMotion
         return Delta;
     }
 
-    FRootMotionDelta RootMotion::BlendRootMotion(const FRootMotionDelta& A, const FRootMotionDelta& B, float Alpha)
+    FRootMotionDelta BlendRootMotion(const FRootMotionDelta& A, const FRootMotionDelta& B, float Alpha)
     {
         if (!A.bHasMotion && !B.bHasMotion)
         {

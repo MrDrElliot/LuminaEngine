@@ -448,7 +448,7 @@ namespace Lumina
             ImGui::SameLine();
             if (ImGui::Button(LE_ICON_FOLDER_OPEN " Open Output", ImVec2(140, 32)))
             {
-                Platform::LaunchURL(StringUtils::ToWideString(LastOutputDir).c_str());
+                Platform::LaunchURL(UTF8_TO_TCHAR(LastOutputDir.c_str()));
             }
         }
 

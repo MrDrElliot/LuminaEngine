@@ -210,7 +210,11 @@ namespace Lumina
             const uint8 PrevFirstInlineMip = Data.ImageDescription.FirstInlineMip;
             const bool  bRestoreInlineMip  = Ar.IsWriting() && !Ar.SupportsBulkData();
 
-            if (Ar.IsWriting())
+            // A passthrough save copies the OLD region verbatim, so the split that produced it is the only
+            // one the copied bytes agree with. Recomputing could move a mip from bulk to inline -- and a
+            // streamed-out mip has no Pixels to write inline, so that lands as an empty payload. Today's
+            // policy usually agrees with the file's, but "usually" is not a thing to serialize on.
+            if (Ar.IsWriting() && !Ar.IsBulkPassthrough())
             {
                 // Recomputed on every save rather than carried on the object: it is purely a function of the
                 // description.
@@ -247,8 +251,11 @@ namespace Lumina
                 {
                     if (Ar.IsWriting() && Mip.Pixels.empty() && Mip.BulkRef.IsValid())
                     {
+                        // The bytes built here have this mip emptied out. They are not committed: PreSave
+                        // flagged the package and SavePackage refuses to write it, so the file on disk keeps
+                        // the mip. This says which one, so the failed read above can be traced to a mip.
                         LOG_ERROR("FTextureResource: mip {} is streamed out and could not be made resident; "
-                                  "it is being written as empty and its data will be lost", MipLevel);
+                                  "the save will be refused rather than write it back as empty", MipLevel);
                     }
 
                     Ar << Mip.Pixels;

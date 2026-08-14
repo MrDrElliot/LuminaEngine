@@ -410,12 +410,8 @@ namespace Lumina
 
         Args = FString("Build ") + Args;
 
-        const std::wstring BuildToolW(BuildTool.begin(), BuildTool.end());
-        const std::wstring ArgsW(Args.begin(), Args.end());
-        const std::wstring CwdW(EngineDir.begin(), EngineDir.end());
-
         const int ExitCode = Platform::RunProcessAndWaitCapture(
-            BuildToolW.c_str(), ArgsW.c_str(), CwdW.c_str(),
+            UTF8_TO_TCHAR(BuildTool.c_str()), UTF8_TO_TCHAR(Args.c_str()), UTF8_TO_TCHAR(EngineDir.c_str()),
             [&LogFunc](FStringView Line)
             {
                 if (LogFunc && !Line.empty())

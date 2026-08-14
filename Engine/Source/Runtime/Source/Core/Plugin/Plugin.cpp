@@ -34,10 +34,7 @@ namespace Lumina
         Result += "/Binaries/";
         Result += LUMINA_PLATFORM_NAME;
         Result += "/";
-        Result.append(ModuleName.data(), ModuleName.size());
-        Result += "-";
-        Result += LUMINA_CONFIGURATION_NAME;
-        Result += LUMINA_SHAREDLIB_EXT_NAME;
+        Result += Paths::MakeModuleFileName(ModuleName).c_str();
         return Result;
     }
 }

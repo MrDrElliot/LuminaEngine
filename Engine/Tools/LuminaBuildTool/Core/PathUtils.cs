@@ -174,4 +174,29 @@ public static class PathUtils
 
         return Builder.ToString();
     }
+
+    public static string QuoteUnix(string Argument)
+    {
+        if (Argument.Length > 0 && Argument.IndexOfAny(new[] { ' ', '\t', '"', '\'', '\\' }) < 0)
+        {
+            return Argument;
+        }
+
+        StringBuilder Builder = new(Argument.Length + 8);
+        Builder.Append('"');
+
+        foreach (char Character in Argument)
+        {
+            if (Character is '\\' or '"')
+            {
+                Builder.Append('\\');
+            }
+
+            Builder.Append(Character);
+        }
+
+        Builder.Append('"');
+
+        return Builder.ToString();
+    }
 }

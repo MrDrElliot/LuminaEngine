@@ -197,11 +197,12 @@ namespace Lumina
     }
 }
 
-// C-ABI shim exported from Runtime.dll so third-party static libs route through our allocator.
-#pragma comment(linker, "/EXPORT:LmThirdPartyMalloc")
-#pragma comment(linker, "/EXPORT:LmThirdPartyRealloc")
-#pragma comment(linker, "/EXPORT:LmThirdPartyCalloc")
-#pragma comment(linker, "/EXPORT:LmThirdPartyFree")
+#if defined(LE_PLATFORM_WINDOWS)
+    #pragma comment(linker, "/EXPORT:LmThirdPartyMalloc")
+    #pragma comment(linker, "/EXPORT:LmThirdPartyRealloc")
+    #pragma comment(linker, "/EXPORT:LmThirdPartyCalloc")
+    #pragma comment(linker, "/EXPORT:LmThirdPartyFree")
+#endif
 
 #if LUMINA_MEMORY_TRACKING
     #define LM_TP_SCOPE(Category) \

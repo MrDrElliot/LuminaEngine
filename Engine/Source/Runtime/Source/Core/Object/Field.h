@@ -8,6 +8,13 @@
 
 namespace Lumina
 {
+    class CClass;
+}
+
+RUNTIME_API Lumina::CClass* Construct_CClass_Lumina_CField();
+
+namespace Lumina
+{
     class FField;
     class CStruct;
     class FProperty;

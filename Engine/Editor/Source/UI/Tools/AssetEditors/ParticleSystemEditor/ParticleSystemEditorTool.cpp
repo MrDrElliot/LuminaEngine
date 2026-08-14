@@ -14,9 +14,9 @@
 #include "Renderer/RenderResource.h"
 #include "Renderer/ShaderCompiler.h"
 #include "Renderer/ShaderLibrary.h"
-#include "World/entity/components/environmentcomponent.h"
+#include "World/Entity/Components/EnvironmentComponent.h"
 #include "World/Entity/Components/SkyLightComponent.h"
-#include "World/entity/components/lightcomponent.h"
+#include "World/Entity/Components/LightComponent.h"
 #include "World/Entity/Components/ParticleSystemComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
 

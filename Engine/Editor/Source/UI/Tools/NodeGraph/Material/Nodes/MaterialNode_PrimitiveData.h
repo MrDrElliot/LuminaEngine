@@ -1,5 +1,5 @@
-﻿#pragma once
-#include "materialnodeexpression.h"
+#pragma once
+#include "MaterialNodeExpression.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Renderer/CustomPrimitiveData.h"
 #include "MaterialNode_PrimitiveData.generated.h"

@@ -570,7 +570,7 @@ namespace Lumina
 
         // Shared body of SwapchainResized / SetPrimaryViewSize. Unconditional: callers decide whether the
         // new size is worth the WaitDeviceIdle this costs.
-        void ResizePrimaryView(const FUIntVector2& NewSize);
+        RUNTIME_API void ResizePrimaryView(const FUIntVector2& NewSize);
 
         /** Cleared the first time something sizes the primary view explicitly (an editor tool panel). */
         bool bPrimaryTracksSwapchain = true;

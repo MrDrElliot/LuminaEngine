@@ -252,7 +252,7 @@ namespace Lumina
                 const auto triangleTip = triangleStart + rect_w * (0.45f - 0.32f);
 
                 drawList->AddTriangleFilled(
-                    ImVec2(std::ceilf(triangleTip), rect_y + rect_h * 0.5f),
+                    ImVec2(std::ceil(triangleTip), rect_y + rect_h * 0.5f),
                     ImVec2(triangleStart, rect_center_y + 0.15f * rect_h),
                     ImVec2(triangleStart, rect_center_y - 0.15f * rect_h),
                     color);

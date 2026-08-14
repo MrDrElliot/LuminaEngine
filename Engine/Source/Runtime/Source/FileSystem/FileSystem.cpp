@@ -303,6 +303,19 @@ namespace Lumina::VFS
         });
     }
 
+    bool AtomicWriteFileSpliced(FStringView Path, TSpan<const uint8> Prefix,
+                                FStringView SrcPath, uint64 SrcOffset, uint64 SrcSize,
+                                TSpan<const uint8> Suffix)
+    {
+        // Dispatched on the DESTINATION, which then resolves the source through its own mount. A splice
+        // across two different backends is not a thing anyone needs -- the only caller renames within a
+        // mount -- and the false return already means "use the path that does not need this".
+        return Detail::VisitFileSystems(Path, [&](IFileSystem& FS)
+        {
+            return FS.AtomicWriteFileSpliced(Path, Prefix, SrcPath, SrcOffset, SrcSize, Suffix);
+        });
+    }
+
     void PlatformOpen(FStringView Path)
     {
         Detail::VisitFileSystems(Path, [&](IFileSystem& FS)

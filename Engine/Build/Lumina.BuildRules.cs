@@ -1,5 +1,6 @@
 using System.IO;
 using LuminaBuildTool.Configuration;
+using LuminaBuildTool.Platform;
 
 /// <summary>
 /// Engine-wide target defaults. ABI-affecting definitions belong here and nowhere else, so every
@@ -46,7 +47,8 @@ public abstract class LuminaTargetRules : TargetRules
             $"LUMINA_ARCH_NAME=\"{Target.ArchitectureName}\"",
             $"LUMINA_PLATFORM_NAME=\"{Target.PlatformName}\"",
             $"LUMINA_CONFIGURATION_NAME=\"{Target.Configuration}\"",
-            $"LUMINA_SHAREDLIB_EXT_NAME=\"{Target.Platform.GetSharedLibraryExtension()}\"",
+            $"LUMINA_SHAREDLIB_EXT_NAME=\"{BuildPlatformRegistry.Get(Target.Platform).SharedLibraryExtension}\"",
+            $"LUMINA_SHAREDLIB_PREFIX_NAME=\"{BuildPlatformRegistry.Get(Target.Platform).SharedLibraryPrefix}\"",
         });
 
         LuminaFeatures.ApplyDefinitions(Target, GlobalDefinitions);
@@ -69,15 +71,18 @@ public abstract class LuminaTargetRules : TargetRules
             GlobalDefinitions.Add("LUMINA_MONOLITHIC");
         }
 
-        GlobalDisabledWarnings.AddRange(new[]
+        if (Target.Platform == BuildPlatform.Windows64)
         {
-            "4251", // DLL interface on an exported type
-            "4275", // non-DLL-interface base class
-            "4244", // precision loss
-            "4267", // precision loss
-        });
+            GlobalDisabledWarnings.AddRange(new[]
+            {
+                "4251", // DLL interface on an exported type
+                "4275", // non-DLL-interface base class
+                "4244", // precision loss
+                "4267", // precision loss
+            });
 
-        GlobalCompilerOptions.Add("/bigobj");
+            GlobalCompilerOptions.Add("/bigobj");
+        }
 
         // Layering the module graph cannot state for itself. Checked across the whole closure, so
         // routing one of these through an intermediate module does not get past it.
@@ -114,8 +119,10 @@ public abstract class LuminaModuleRules : ModuleRules
         ForceIncludeFiles.Add("ModuleAPI.h");
 
         // Every engine image links the dynamic CRT; the static one arrives through some vendored
-        // libraries' default-lib directives and produces duplicate symbol errors.
-        PrivateLinkerOptions.Add("/NODEFAULTLIB:LIBCMT");
+        if (Target.Platform == BuildPlatform.Windows64)
+        {
+            PrivateLinkerOptions.Add("/NODEFAULTLIB:LIBCMT");
+        }
 
         // EASTL resolves its allocator per image, so every loaded image needs exactly one compiled
         // copy of the binding. Declared per image rather than per module: a monolithic link folds

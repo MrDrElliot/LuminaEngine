@@ -189,6 +189,14 @@ namespace Lumina
              *  accept the promotion (it rejects on any layer having empty pixels), so loading only
              *  layer 0 leaves it retrying the same read forever, pinned at its inline tail. */
             TVector<TVector<uint8>>  MipBytes;
+
+            /** Where each of those slices lives on disk, snapshotted on the GAME THREAD when the load is
+             *  issued. The worker must not reach back into the texture for them: a save refills
+             *  FMip::Pixels and a re-cook resizes Mips outright, and either one under a running read is a
+             *  use-after-free. Invalid here means the slice was handed over already resident in MipBytes
+             *  (or that there was nothing to read, which fails the load). */
+            TVector<FBulkDataRef>    MipRefs;
+
             uint8                    SourceFirstMip = 0;
             uint32                   LayerCount     = 1;
 
@@ -244,10 +252,8 @@ namespace Lumina
          *  would land twice the spike MaxUploadMBPerFrame names. */
         uint64                                  FrameUploadBudget = 0;
 
-        /** Residency changes left this frame, shared by promotions and demotions. Separate from
-         *  FrameUploadBudget because it meters a different resource: each change is a GPU image create plus
-         *  a retire of the one it replaces, and a demotion pays that in full while spending no host bytes
-         *  at all -- so the upload budget cannot see it. See MaxResidencyChangesPerFrame. */
+        // Residency changes left this frame, promotions and demotions together. Meters image create/retire
+        // churn, which a demotion pays in full while spending no host bytes.
         uint32                                  FrameResidencyChanges = 0;
 
         /** Guards Textures/TextureToIndex against registration from the async-load path and from

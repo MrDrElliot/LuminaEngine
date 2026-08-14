@@ -1,4 +1,6 @@
 #pragma once
+#include <format>
+
 #include "Containers/Array.h"
 #include "Core/Serialization/Archiver.h"
 #include "Core/Templates/Optional.h"

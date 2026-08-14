@@ -9,6 +9,8 @@
 #include "Initializer/ObjectInitializer.h"
 #include "Memory/SmartPtr.h"
 
+RUNTIME_API Lumina::CClass* Construct_CClass_Lumina_CStruct();
+
 namespace Lumina
 {
     class FProperty;
@@ -20,7 +22,7 @@ namespace Lumina
 namespace Lumina
 {
     
-    class CField : public CObject
+    class LUMINA_VISIBLE_TYPE CField : public CObject
     {
     public:
 
@@ -53,7 +55,7 @@ namespace Lumina
     };
 
 
-    class CEnum : public CField
+    class LUMINA_VISIBLE_TYPE CEnum : public CField
     {
     public:
         
@@ -81,7 +83,7 @@ namespace Lumina
     
 
     /** Reflected type with properties; supports single inheritance via SuperStruct. */
-    class CStruct : public CField
+    class LUMINA_VISIBLE_TYPE CStruct : public CField
     {
         friend RUNTIME_API void ConstructCStruct(CStruct** OutStruct, const FStructParams& Params);
 
@@ -216,7 +218,7 @@ namespace Lumina
 
 
     /** Final class for fields and functions. */
-    class CClass final : public CStruct
+    class LUMINA_VISIBLE_TYPE CClass final : public CStruct
     {
     public:
 

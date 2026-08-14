@@ -126,6 +126,26 @@ namespace Lumina
 
     bool FPackageSaver::WriteBulkData(FBulkDataRef& OutRef, const void* Data, int64 Size)
     {
+        // Passthrough: the region this ref points into is being copied to the new file byte for byte, so
+        // the payload is already exactly where OutRef says it is. Succeeding without touching either is
+        // the whole mechanism -- it is what lets a rename move a multi-megabyte region it never read.
+        if (IsBulkPassthrough())
+        {
+            if (OutRef.IsValid())
+            {
+                return true;
+            }
+
+            // A payload with no ref into the region being copied. Passthrough has nowhere to put it, and
+            // the alternative -- writing the null ref through -- is the payload gone. Say so; the saver
+            // reads this as "these bytes cannot be spliced" and rebuilds the region the long way instead.
+            if (Package != nullptr)
+            {
+                Package->FlagUnresolvedBulkData();
+            }
+            return false;
+        }
+
         if (Data == nullptr || Size <= 0)
         {
             OutRef = FBulkDataRef{};

@@ -1,5 +1,5 @@
 #pragma once
-#include "meshcomponent.h"
+#include "MeshComponent.h"
 #include "Animation/TaskSystem/AnimTask.h"
 #include "Core/Math/AABB.h"
 #include "Core/Object/ObjectMacros.h"

@@ -14,6 +14,8 @@ public class ImGui : LuminaThirdPartyModuleRules
         PublicDependencyModuleNames.Add("GLFW");
         PublicDependencyModuleNames.Add("Volk");
 
+        PublicDefinitions.Add("GLFW_INCLUDE_NONE");
+
         // ImGui vendors several optional back ends and add-ons; only the ones the engine uses
         // are built.
         bUseExplicitSourceList = true;

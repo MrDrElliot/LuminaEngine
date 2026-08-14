@@ -202,9 +202,15 @@ namespace Lumina
             RHI::Textures::Upload(Texture->TextureResource->NewTexture, i, Mip.Pixels.data(), Mip.Pixels.size(), Mip.Width, Mip.Width, Mip.Height);
         }
 
+        // Publishes the image staged above once those uploads have executed. Skipping it does not merely
+        // delay the new pixels: the swap stays unarmed forever, so the slot keeps sampling the pre-cook
+        // image AND the texture can never change residency again. See RHITexture.h.
+        RHI::Textures::CommitRecreate(Texture->TextureResource->NewTexture);
+        Texture->OnFullyUploadedExternally();
+
         return true;
     }
-    
+
     static bool NormalizeToRGBA8(Import::Textures::FTextureImportResult& Result)
     {
         const uint64 PixelCount = (uint64)Result.Dimensions.x * Result.Dimensions.y;
@@ -425,6 +431,12 @@ namespace Lumina
             }
         }
 
+        // Publishes the image staged above once those uploads have executed. Skipping it does not merely
+        // delay the new pixels: the swap stays unarmed forever, so the slot keeps sampling the pre-cook
+        // image AND the texture can never change residency again. See RHITexture.h.
+        RHI::Textures::CommitRecreate(Texture->TextureResource->NewTexture);
+        Texture->OnFullyUploadedExternally();
+
         return true;
     }
 
@@ -588,6 +600,12 @@ namespace Lumina
                 RHI::Textures::Upload(Texture->TextureResource->NewTexture, i, Mip.Pixels.data(), Mip.Pixels.size(), Mip.Width, Mip.Width, Mip.Height);
             }
         }
+
+        // Publishes the image staged above once those uploads have executed. Skipping it does not merely
+        // delay the new pixels: the swap stays unarmed forever, so the slot keeps sampling the pre-cook
+        // image AND the texture can never change residency again. See RHITexture.h.
+        RHI::Textures::CommitRecreate(Texture->TextureResource->NewTexture);
+        Texture->OnFullyUploadedExternally();
 
         return true;
     }

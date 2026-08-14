@@ -7,6 +7,11 @@
 
 namespace Lumina::Threading
 {
+    uint64 GetThreadID()
+    {
+        return static_cast<uint64>(::GetCurrentThreadId());
+    }
+
     bool SetThreadName(const char* Name)
     {
         return SetThreadName(Name, ThreadGroup_Other);

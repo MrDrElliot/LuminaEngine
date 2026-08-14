@@ -82,6 +82,8 @@ namespace Lumina
 
     };
 
+    class FTileViewWidget;
+
     struct RUNTIME_API FTileViewContext
     {
         /** Callback to draw any context menus this item may want */
@@ -235,8 +237,7 @@ namespace Lumina
         uint8                                   bRenameWasActive:1 = false;
     };
 
-    
-    
+
     
     template <typename T, typename ... Args>
     requires (eastl::is_base_of_v<FTileViewItem, T> && eastl::is_constructible_v<T, Args...>)

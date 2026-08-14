@@ -2,7 +2,7 @@
 
 #include "Core/Object/ObjectMacros.h"
 #include "Platform/GenericPlatform.h"
-#include "keycodes.generated.h"
+#include "KeyCodes.generated.h"
 
 namespace Lumina
 {

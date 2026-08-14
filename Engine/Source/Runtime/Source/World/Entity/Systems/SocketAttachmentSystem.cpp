@@ -1,8 +1,8 @@
-﻿#include "RuntimePCH.h"
+#include "RuntimePCH.h"
 #include "SocketAttachmentSystem.h"
 
 #include "Animation/SkeletalMeshUtils.h"
-#include "world/entity/components/entitytags.h"
+#include "World/Entity/Components/EntityTags.h"
 #include "World/Entity/Components/RelationshipComponent.h"
 #include "World/Entity/Components/SkeletalMeshComponent.h"
 #include "World/Entity/Components/SocketAttachmentComponent.h"

@@ -28,7 +28,7 @@ namespace Lumina
     DECLARE_MULTICAST_DELEGATE(FProjectLoadedDelegate);
 
     
-    class FEngine
+    class LUMINA_VISIBLE_TYPE FEngine
     {
     public:
         

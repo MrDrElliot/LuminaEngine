@@ -1,4 +1,4 @@
-﻿#include "RuntimePCH.h"
+#include "RuntimePCH.h"
 #include "RHICore.h"
 #include "Log/Log.h"
 #include "Containers/Function.h"
@@ -13,7 +13,11 @@
 
 namespace Lumina::RHI::Core
 {
-    static constexpr uint64 kTransientSliceRequest = 32ull * 1024 * 1024;
+    // Typed, not a ull literal: unsigned long long is a distinct type from uint64 wherever
+    // uint64_t is unsigned long, and Math::Max/AlignUp deduce one T from both arguments.
+    static constexpr uint64 kMegabyte = 1024 * 1024;
+
+    static constexpr uint64 kTransientSliceRequest = 32 * kMegabyte;
 
     static uint64 GTransientSliceSize = kTransientSliceRequest;
 
@@ -259,15 +263,10 @@ namespace Lumina::RHI::Core
         GCore.RetireQueues[Slot].push_back(Item);
     }
 
-    // Destroying a GPU resource is a driver round trip that can reach vkFreeMemory, and an image can also
-    // take a vkDestroyImageView with it. Individually they are cheap; several hundred landing on one frame
-    // is not, and that is exactly what a texture-streaming burst produces -- every residency change retires
-    // the image it replaced. The drain is therefore metered, so a burst is paid down over frames instead of
-    // in the one frame that happened to be holding the queue.
+    // Metered: a destroy can reach vkFreeMemory, and a streaming burst retires hundreds at once.
     static constexpr uint32 kMaxDestroysPerDrain = 64;
 
-    // Past this the backlog is itself the problem: it is VRAM the frame is trying to allocate, held by
-    // resources nothing can reach. Smoothness stops being worth it, and the cap is dropped.
+    // Past this the backlog is itself VRAM the frame is trying to allocate, so the cap is dropped.
     static constexpr size_t kRetireBacklogHighWater = 512;
 
     static void DrainRetireQueue(uint32 Slot)
@@ -318,9 +317,8 @@ namespace Lumina::RHI::Core
             FScopeLock Lock(GCore.RetireMutex);
             TVector<FRetireItem>& Queue = GCore.RetireQueues[Slot];
 
-            // Every kind counts against the cap, including the cheap slot frees and the callbacks. A
-            // callback is deliberately paired with the resource retired alongside it, and metering only
-            // some kinds would fire it a drain before that resource actually died.
+            // Every kind counts, callbacks included: a callback is paired with the resource beside it, so
+            // metering only some kinds would fire it a drain early.
             const bool bUncapped = Queue.size() > kRetireBacklogHighWater;
 
             for (size_t i = 0; i < Queue.size(); )
@@ -350,9 +348,7 @@ namespace Lumina::RHI::Core
             Backlog = Queue.size();
         }
 
-        // A backlog that does not fall between frames means resources are being retired faster than they
-        // can be destroyed, which is worth seeing next to the streaming plots rather than inferring from
-        // VRAM going the wrong way.
+        // A backlog that does not fall between frames means retires are outrunning destroys.
         LUMINA_PROFILE_VALUE("RHI/RetireBacklog", (int64)Backlog);
         LUMINA_PROFILE_VALUE("RHI/RetireDestroyed", (int64)Ready.size());
 
@@ -511,7 +507,7 @@ namespace Lumina::RHI::Core
                 FScopeLock Lock(GCore.SubmitMutex);
                 const uint64 Value = ++GCore.QueueCounter[QueueIndex];
                 const FSemaphoreInfo Signal { GCore.QueueTimeline[QueueIndex], Value, EStageFlags::AllCommands };
-                RHI::Submit(Queue, TSpan{&CL, 1}, {}, TSpan{&Signal, 1});
+                RHI::Submit(Queue, TSpan<const FCmdListH>{&CL, 1}, {}, TSpan<const FSemaphoreInfo>{&Signal, 1});
                 GCore.SlotWaitValue[Slot][QueueIndex] = Value;
                 GCore.SlotCommandLists[Slot].push_back(CL);
 
@@ -554,7 +550,7 @@ namespace Lumina::RHI::Core
             }
             else if (Slice.Capacity > GTransientSliceSize && Demand * 2 < Slice.Capacity && ++Slice.LowStreak >= 64)
             {
-                NewCapacity = Math::Max(GTransientSliceSize, Math::AlignUp(Demand + Demand / 2, 1024ull * 1024));
+                NewCapacity = Math::Max(GTransientSliceSize, Math::AlignUp(Demand + Demand / 2, kMegabyte));
                 Slice.LowStreak = 0;
             }
             else if (Demand * 2 >= Slice.Capacity)
@@ -620,7 +616,7 @@ namespace Lumina::RHI::Core
         }
 
         const FSemaphoreInfo Signal { GCore.QueueTimeline[QueueIndex], Value, EStageFlags::AllCommands };
-        RHI::Submit(Queue, CommandLists, EffectiveWaits, TSpan{&Signal, 1});
+        RHI::Submit(Queue, CommandLists, EffectiveWaits, TSpan<const FSemaphoreInfo>{&Signal, 1});
 
         // Relaxed: only BeginFrame writes this, and both run on the frame thread.
         const uint32 Slot = GCore.CurrentSlot.load(std::memory_order_relaxed);
@@ -640,7 +636,7 @@ namespace Lumina::RHI::Core
 
     void Submit(FCmdListH CommandList)
     {
-        SubmitOn(EQueueType::Graphics, TSpan{&CommandList, 1}, {});
+        SubmitOn(EQueueType::Graphics, TSpan<const FCmdListH>{&CommandList, 1}, {});
     }
 
     void SubmitAndWait(FCmdListH CommandList)
@@ -653,7 +649,7 @@ namespace Lumina::RHI::Core
             Value = ++GCore.QueueCounter[GraphicsIndex];
 
             const FSemaphoreInfo Signal { GCore.QueueTimeline[GraphicsIndex], Value, EStageFlags::AllCommands };
-            RHI::Submit(EQueueType::Graphics, TSpan{&CommandList, 1}, {}, TSpan{&Signal, 1});
+            RHI::Submit(EQueueType::Graphics, TSpan<const FCmdListH>{&CommandList, 1}, {}, TSpan<const FSemaphoreInfo>{&Signal, 1});
         }
 
         WaitSemaphore(GCore.QueueTimeline[GraphicsIndex], Value);

@@ -120,17 +120,6 @@ public static class BuildEnumExtensions
         return Platform == BuildPlatform.Windows64 ? ".exe" : string.Empty;
     }
 
-    public static string GetSharedLibraryExtension(this BuildPlatform Platform)
-    {
-        return Platform switch
-        {
-            BuildPlatform.Windows64 => ".dll",
-            BuildPlatform.Linux64 => ".so",
-            BuildPlatform.Mac64 => ".dylib",
-            _ => string.Empty,
-        };
-    }
-
     public static bool ProducesExecutable(this ModuleBinaryType Type)
     {
         return Type is ModuleBinaryType.ConsoleApplication or ModuleBinaryType.WindowedApplication;

@@ -22,7 +22,7 @@
 #include <imgui_internal.h>
 #include <LuminaEditor.h>
 #include "Core/Object/Package/Package.h"
-#include "thumbnails/thumbnailmanager.h"
+#include "Thumbnails/ThumbnailManager.h"
 
 namespace Lumina
 {

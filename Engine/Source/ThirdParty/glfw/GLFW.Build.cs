@@ -9,6 +9,7 @@ public class GLFW : LuminaThirdPartyModuleRules
         PublicIncludePaths.Add("include");
         PrivateIncludePaths.Add("src");
 
+
         // GLFW ships every platform back end in one tree, so the sources are listed rather than
         // globbed: compiling another platform's files would not even parse.
         bUseExplicitSourceList = true;
@@ -59,10 +60,21 @@ public class GLFW : LuminaThirdPartyModuleRules
                 "src/posix_module.c",
                 "src/posix_time.c",
                 "src/posix_thread.c",
+                "src/posix_poll.c",
                 "src/glx_context.c",
                 "src/egl_context.c",
                 "src/osmesa_context.c",
                 "src/linux_joystick.c",
+            });
+
+            PublicSystemLibraries.AddRange(new[]
+            {
+                "X11",        // core protocol
+                "Xrandr",     // monitor enumeration and video modes
+                "Xinerama",   // multi-monitor geometry
+                "Xcursor",    // standard and custom cursors
+                "Xi",         // XInput2, raw mouse motion
+                "xkbcommon",  // keyboard layout and key naming
             });
         }
     }

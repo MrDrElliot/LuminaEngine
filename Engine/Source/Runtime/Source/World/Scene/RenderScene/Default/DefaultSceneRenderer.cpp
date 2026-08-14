@@ -1,10 +1,10 @@
-﻿#include "RuntimePCH.h"
+#include "RuntimePCH.h"
 #include "DefaultSceneRenderer.h"
 #include <algorithm>
 #include "Animation/SkeletalMeshUtils.h"
 #include "Assets/AssetTypes/Material/Material.h"
 #include "Assets/AssetTypes/Mesh/SkeletalMesh/SkeletalMesh.h"
-#include "assets/assettypes/mesh/skeleton/skeleton.h"
+#include "Assets/AssetTypes/Mesh/Skeleton/Skeleton.h"
 #include "Assets/AssetTypes/Textures/Texture.h"
 #include "Config/EngineSettings.h"
 #include "Core/Console/ConsoleVariable.h"
@@ -30,12 +30,12 @@
 #include "World/Entity/Components/WidgetComponent.h"
 #include "World/Entity/Components/TextComponent.h"
 #include "Tools/FontManager/FontManager.h"
-#include "world/entity/components/charactercontrollercomponent.h"
+#include "World/Entity/Components/CharacterControllerComponent.h"
 #include "World/Entity/Components/EditorComponent.h"
-#include "world/entity/components/entitytags.h"
-#include "world/entity/components/environmentcomponent.h"
+#include "World/Entity/Components/EntityTags.h"
+#include "World/Entity/Components/EnvironmentComponent.h"
 #include "World/Entity/Components/ExponentialHeightFogComponent.h"
-#include "world/entity/components/lightcomponent.h"
+#include "World/Entity/Components/LightComponent.h"
 #include "World/Entity/Components/LineBatcherComponent.h"
 #include "World/Entity/Components/TriangleBatcherComponent.h"
 #include "World/Entity/Components/ParticleSystemComponent.h"
@@ -46,7 +46,7 @@
 #include "World/Entity/Components/SkyLightComponent.h"
 #include "World/Entity/Components/ReflectionProbeComponent.h"
 #include "World/Entity/Components/SplineComponent.h"
-#include "world/entity/components/staticmeshcomponent.h"
+#include "World/Entity/Components/StaticMeshComponent.h"
 #include "World/Entity/Components/DynamicMeshComponent.h"
 #include "World/Entity/Components/FoliageComponent.h"
 #include "World/Entity/Components/TerrainComponent.h"
@@ -74,9 +74,6 @@ namespace Lumina
         constexpr uint32 GFroxelMaxLocalLights = 16;
 
 
-        
-
-
         static TAtomic<uint32> GReflectionProbeRebakeRequests{0};
 
         static FAutoConsoleCommand GCmdRebakeReflectionProbes(
@@ -84,14 +81,11 @@ namespace Lumina
             "Recapture every reflection probe. Needed after moving world geometry, which does not itself "
             "invalidate a bake (only changing a probe does).",
             []{ RequestReflectionProbeRebake(); });
-        
-
 
 
         // One grain for the whole gather: all primitive types share a single dense array.
         constexpr uint32 GPrimitiveGrain = 256;
-        
-        
+
 
         // Uncapped, a large skinned crowd asks for tens of GB and skinning writes past the allocation.
         // 10.5 Mi at the 32 B stride is the same 336 MB the old 12 Mi cost at 28 B.
@@ -7429,8 +7423,8 @@ namespace Lumina
             }
         }
 
-        static void PrepareTerrainExtract(STerrainComponent& Terrain, const FMatrix4& WorldMatrix,
-                                          FDefaultSceneRenderer::FFrameData::FTerrainExtract& Out)
+        void PrepareTerrainExtract(STerrainComponent& Terrain, const FMatrix4& WorldMatrix,
+                                   FDefaultSceneRenderer::FFrameData::FTerrainExtract& Out)
         {
             EnsureTerrainCpuBuffers(Terrain);
 
@@ -11926,7 +11920,7 @@ namespace Lumina
         Desc.bAlphaToCoverage = Key.bAlphaToCoverage;
         Desc.SampleCount      = Key.SampleCount;
         Desc.DepthFormat      = Key.DepthFormat;
-        Desc.ColorTargets     = TSpan(Key.ColorTargets.data(), Key.ColorTargets.size());
+        Desc.ColorTargets     = TSpan<const RHI::FColorTarget>(Key.ColorTargets.data(), Key.ColorTargets.size());
 
         // Checked: a handle that no longer resolves means the entry was freed since this key was built, so
         // there is nothing to compile. Bail rather than feed the driver an empty module.

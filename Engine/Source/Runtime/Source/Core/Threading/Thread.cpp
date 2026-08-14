@@ -15,10 +15,6 @@ namespace Lumina
             std::this_thread::yield();
         }
 
-        uint64 GetThreadID()
-        {
-            return std::this_thread::get_id()._Get_underlying_id();
-        }
 
         bool IsMainThread()
         {

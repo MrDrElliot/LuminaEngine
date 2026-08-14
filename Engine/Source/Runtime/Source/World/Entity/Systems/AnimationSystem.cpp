@@ -1,4 +1,4 @@
-﻿#include "RuntimePCH.h"
+#include "RuntimePCH.h"
 #include "AnimationSystem.h"
 
 #include "Core/Console/ConsoleVariable.h"
@@ -13,7 +13,7 @@
 #include "Assets/AssetTypes/Mesh/Skeleton/Skeleton.h"
 #include "Renderer/MeshData.h"
 #include "TaskSystem/TaskGraph.h"
-#include "world/entity/components/entitytags.h"
+#include "World/Entity/Components/EntityTags.h"
 #include "World/Entity/Components/AnimationGraphComponent.h"
 #include "World/Entity/Components/BlackboardComponent.h"
 #include "World/Entity/Components/SimpleAnimationComponent.h"

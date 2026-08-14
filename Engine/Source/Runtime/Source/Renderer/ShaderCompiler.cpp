@@ -581,7 +581,7 @@ namespace Lumina
         TVector ShaderPaths = { Move(ShaderPath) };
         TVector Options = { CompileOptions };
 
-        return CompileShaderPaths(TSpan(ShaderPaths), TSpan(Options), Move(OnCompleted));
+        return CompileShaderPaths(TSpan<FString>(ShaderPaths), TSpan<FShaderCompileOptions>(Options), Move(OnCompleted));
     }
 
     bool FSpirVShaderCompiler::CompileShaderPaths(TSpan<FString> ShaderPaths, TSpan<FShaderCompileOptions> CompileOptions, CompletedFunc OnCompleted)

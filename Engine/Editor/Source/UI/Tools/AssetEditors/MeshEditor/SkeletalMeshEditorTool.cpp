@@ -1,10 +1,10 @@
-﻿#include "SkeletalMeshEditorTool.h"
+#include "SkeletalMeshEditorTool.h"
 
 #include "Assets/AssetTypes/Mesh/SkeletalMesh/SkeletalMesh.h"
-#include "assets/assettypes/mesh/skeleton/skeleton.h"
+#include "Assets/AssetTypes/Mesh/Skeleton/Skeleton.h"
 #include "Core/Object/Cast.h"
 #include "Tools/UI/ImGui/ImGuiFonts.h"
-#include "world/entity/components/environmentcomponent.h"
+#include "World/Entity/Components/EnvironmentComponent.h"
 #include "World/Entity/Components/SkyLightComponent.h"
 #include "World/Entity/Components/LightComponent.h"
 #include "World/Entity/Components/SkeletalMeshComponent.h"

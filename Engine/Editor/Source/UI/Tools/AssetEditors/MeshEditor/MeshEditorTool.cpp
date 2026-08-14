@@ -1,4 +1,4 @@
-﻿#include "MeshEditorTool.h"
+#include "MeshEditorTool.h"
 
 #include "ImGuiDrawUtils.h"
 #include "Core/Object/Cast.h"
@@ -6,7 +6,7 @@
 #include "Tools/Import/ImportHelpers.h"
 #include "Tools/UI/ImGui/ImGuiFonts.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
-#include "world/entity/components/environmentcomponent.h"
+#include "World/Entity/Components/EnvironmentComponent.h"
 #include "World/Entity/Components/SkyLightComponent.h"
 #include "World/Entity/Components/LightComponent.h"
 #include "World/Entity/Components/StaticMeshComponent.h"

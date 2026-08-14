@@ -3376,7 +3376,7 @@ namespace Lumina
         if (ImGui::MenuItem(LE_ICON_MICROSOFT_WINDOWS " Show in Explorer"))
         {
             FString Parent = Paths::Parent(ContentItem->GetPathSource());
-            Platform::LaunchURL(StringUtils::ToWideString(Parent).c_str());
+            Platform::LaunchURL(UTF8_TO_TCHAR(Parent.c_str()));
         }
 
         // Class-registered actions ("Create Material Instance", ...). Plugins contribute here without
@@ -3915,7 +3915,7 @@ namespace Lumina
         {
             FFixedString Resolved = VFS::ResolvePath(FStringView(SelectedPath.c_str(), SelectedPath.size()));
             const char* Target = Resolved.empty() ? SelectedPath.c_str() : Resolved.c_str();
-            Platform::LaunchURL(StringUtils::ToWideString(Target).c_str());
+            Platform::LaunchURL(UTF8_TO_TCHAR(Target));
         }
     }
 }

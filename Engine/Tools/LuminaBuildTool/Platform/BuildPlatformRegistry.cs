@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using LuminaBuildTool.Configuration;
 using LuminaBuildTool.Core;
+using LuminaBuildTool.Platform.Linux;
 using LuminaBuildTool.Platform.Windows;
 
 namespace LuminaBuildTool.Platform;
@@ -16,6 +17,7 @@ public static class BuildPlatformRegistry
     static BuildPlatformRegistry()
     {
         Register(new WindowsPlatform());
+        Register(new LinuxPlatform());
     }
 
     public static void Register(IBuildPlatform Platform)

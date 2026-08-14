@@ -9897,8 +9897,8 @@ bool from_chars(c4::csubstr buf, std::string * s);
 #       else  // VS2017 and lower do not have these macros
 #           if __has_include(<charconv>) && __cpp_lib_to_chars
 #               define C4CORE_HAVE_STD_TOCHARS 1
-//included above:
-//#               include <charconv>
+// Lumina patch: upstream comments this out, but it is not included above.
+#               include <charconv>
 #           else
 #               define C4CORE_HAVE_STD_TOCHARS 0
 #           endif
@@ -9921,8 +9921,8 @@ bool from_chars(c4::csubstr buf, std::string * s);
 #       if __has_include(<charconv>) && __cpp_lib_to_chars
 #           define C4CORE_HAVE_STD_TOCHARS 1
 #           define C4CORE_HAVE_STD_FROMCHARS 1
-//included above:
-//#           include <charconv>
+// Lumina patch: upstream comments this out, but it is not included above.
+#           include <charconv>
 #       else
 #           define C4CORE_HAVE_STD_TOCHARS 0
 #           define C4CORE_HAVE_STD_FROMCHARS 0

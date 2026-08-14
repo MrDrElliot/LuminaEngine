@@ -779,8 +779,8 @@ namespace Lumina
         
         // The project's C++ module DLL lives in its OWN Binaries, exactly like a template project:
         // <Project>/Binaries/<Platform>/<Name>-<Config>.dll.
-        FFixedString DLLPath = Paths::Combine(ProjectPath, "Binaries", LUMINA_PLATFORM_NAME, ProjectName);
-        DLLPath.append("-").append(LUMINA_CONFIGURATION_NAME).append(LUMINA_SHAREDLIB_EXT_NAME);
+        const FFixedString DLLPath = Paths::Combine(ProjectPath, "Binaries", LUMINA_PLATFORM_NAME,
+                                                    Paths::MakeModuleFileName(ProjectName));
 
         if (Paths::Exists(DLLPath))
         {
@@ -1200,7 +1200,7 @@ namespace Lumina
     bool FEngine::MountCookedRuntime()
     {
         // Find the single .pak next to the exe. Platform::BaseDir returns wide on Windows; convert first.
-        const FString ExeFullPath = StringUtils::FromWideString(Platform::BaseDir());
+        const FString ExeFullPath = FString(TCHAR_TO_UTF8(Platform::BaseDir()));
         const size_t LastSlash = ExeFullPath.find_last_of("/\\");
         const FString ExeDir = (LastSlash == FString::npos)
             ? ExeFullPath
@@ -1281,7 +1281,7 @@ namespace Lumina
     bool FEngine::StartCookedGame()
     {
         // Resolve exe dir again, used for project DLL lookup.
-        const FString ExeFullPath = StringUtils::FromWideString(Platform::BaseDir());
+        const FString ExeFullPath = FString(TCHAR_TO_UTF8(Platform::BaseDir()));
         const size_t LastSlash = ExeFullPath.find_last_of("/\\");
         const FString ExeDir = (LastSlash == FString::npos)
             ? ExeFullPath
@@ -1330,12 +1330,7 @@ namespace Lumina
         ProjectName = GConfig->Get<std::string>("Project.Name").c_str();
         if (!ProjectName.empty())
         {
-            const FFixedString DLLName = FFixedString(FFixedString::CtorSprintf(),
-                "%s-%s%s",
-                ProjectName.c_str(),
-                LUMINA_CONFIGURATION_NAME,
-                LUMINA_SHAREDLIB_EXT_NAME);
-            FFixedString DLLPath = Paths::Combine(ExeDir, DLLName);
+            const FFixedString DLLPath = Paths::Combine(ExeDir, Paths::MakeModuleFileName(ProjectName));
             if (Paths::Exists(DLLPath))
             {
                 if (FModuleManager::Get().LoadModule(DLLPath))

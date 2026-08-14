@@ -186,7 +186,7 @@ https://github.com/user-attachments/assets/3d797479-fc47-4b8f-baf4-87315709d0c2
    Setup.bat
    ```
    It downloads one prebuilt dependency bundle
-   (`External.zip`, ~671 MB), verifies it against a SHA-256 hash pinned in this
+   (`External-Win64.zip`, ~192 MB), verifies it against a SHA-256 hash pinned in this
    repo (once the maintainer records it, see
    [`DEPENDENCIES.md`](DEPENDENCIES.md)), persists the `LUMINA_DIR` environment
    variable, configures git hooks, and generates `Lumina.sln`.
@@ -199,7 +199,7 @@ https://github.com/user-attachments/assets/3d797479-fc47-4b8f-baf4-87315709d0c2
 
    To skip the prompt for unattended/CI runs, pass `--yes` (or set
    `LUMINA_SETUP_YES=1`). If the download fails, manually download
-   [External.zip](https://github.com/MrDrElliot/LuminaEngine/releases/download/external-deps/External.zip),
+   [External-Win64.zip](https://github.com/MrDrElliot/LuminaEngine/releases/download/external-deps/External-Win64.zip),
    extract it into the `LuminaEngine/` folder, then run
    `GenerateProjectFiles.bat`.
 

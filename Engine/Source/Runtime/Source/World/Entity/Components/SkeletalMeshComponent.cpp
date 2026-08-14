@@ -1,6 +1,6 @@
-﻿#include "RuntimePCH.h"
+#include "RuntimePCH.h"
 #include "SkeletalMeshComponent.h"
-#include "assets/assettypes/mesh/skeletalmesh/skeletalmesh.h"
+#include "Assets/AssetTypes/Mesh/SkeletalMesh/SkeletalMesh.h"
 
 
 namespace Lumina

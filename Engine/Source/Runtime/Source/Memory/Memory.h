@@ -203,16 +203,19 @@ namespace Lumina::Memory
     }
 }
 
-// C-ABI shim routing third-party libs (miniz, MikkTSpace, RmlUi) through Memory::Malloc. Declared
-// plain (no RUNTIME_API) to avoid a vendored-TU linkage clash; exported via /EXPORT pragmas in Memory.cpp.
+#if defined(LE_PLATFORM_WINDOWS) || defined(REFLECTION_PARSER)
+    #define LUMINA_THIRDPARTY_ALLOC_API
+#else
+    #define LUMINA_THIRDPARTY_ALLOC_API DLL_EXPORT
+#endif
+
 extern "C"
 {
-    void* LmThirdPartyMalloc(size_t Size, const char* Category);
-    void* LmThirdPartyRealloc(void* Ptr, size_t Size, const char* Category);
-    void* LmThirdPartyCalloc(size_t Count, size_t Size, const char* Category);
-    void  LmThirdPartyFree(void* Ptr);
+    LUMINA_THIRDPARTY_ALLOC_API void* LmThirdPartyMalloc(size_t Size, const char* Category);
+    LUMINA_THIRDPARTY_ALLOC_API void* LmThirdPartyRealloc(void* Ptr, size_t Size, const char* Category);
+    LUMINA_THIRDPARTY_ALLOC_API void* LmThirdPartyCalloc(size_t Count, size_t Size, const char* Category);
+    LUMINA_THIRDPARTY_ALLOC_API void  LmThirdPartyFree(void* Ptr);
 }
-
 
 
 #define DECLARE_MODULE_ALLOCATOR_OVERRIDES() \
@@ -232,7 +235,5 @@ extern "C"
     void operator delete[](void* ptr, std::size_t) noexcept { Lumina::Memory::Free(ptr); } \
     void operator delete(void* ptr, std::size_t, std::align_val_t) noexcept { Lumina::Memory::Free(ptr); } \
     void operator delete[](void* ptr, std::size_t, std::align_val_t) noexcept { Lumina::Memory::Free(ptr); } \
-
-
 
 

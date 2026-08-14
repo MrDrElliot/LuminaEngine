@@ -55,10 +55,10 @@
 
 // Forced inline functions will be inlined in debug, and thus will be stepped over by the debugger.
 #ifndef FORCEINLINE
-    #if _MSC_VER
+    #if defined(_MSC_VER)
         #define FORCEINLINE __forceinline
     #else
-        #define FORCEINLINE __attribute__((always_inline))
+        #define FORCEINLINE inline __attribute__((always_inline))
     #endif
 #endif
 
@@ -72,6 +72,11 @@
 
 #define UTF8TEXT_PASTE(x)  u8 ## x
 #define UTF16TEXT_PASTE(x) u ## x
+
+#ifndef PLATFORM_WIDECHAR_IS_CHAR16
+    #define PLATFORM_WIDECHAR_IS_CHAR16 0
+#endif
+
 #if PLATFORM_WIDECHAR_IS_CHAR16
     #define WIDETEXT_PASTE(x)  UTF16TEXT_PASTE(x)
 #else
@@ -122,10 +127,12 @@
     #define LUMINA_ENABLE_OPTIMIZATION
 #endif
 
-#if defined(_MSC_VER)
+#if defined(_MSC_VER) && defined(_M_IX86)
     #define LUMINA_STDCALL __stdcall
-#else
+#elif (defined(__GNUC__) || defined(__clang__)) && defined(__i386__)
     #define LUMINA_STDCALL __attribute__((stdcall))
+#else
+    #define LUMINA_STDCALL
 #endif
 
 // Generic void function pointer type

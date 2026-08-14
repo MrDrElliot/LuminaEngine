@@ -9,7 +9,7 @@
     "EnabledByDefault": true,
     "EditorOnly": true,
     "ContainsContent": false,
-    "SupportedPlatforms": [],
+    "SupportedPlatforms": [ "Windows" ],
     "Dependencies": [],
     "Modules": [
         {

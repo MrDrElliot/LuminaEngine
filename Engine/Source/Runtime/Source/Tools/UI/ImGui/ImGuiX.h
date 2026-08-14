@@ -10,6 +10,7 @@
 #include "Containers/Function.h"
 #include "Core/LuminaMacros.h"
 #include "Core/Math/Math.h"
+#include "Core/Templates/LuminaTemplate.h"
 #include "Platform/GenericPlatform.h"
 #include "Renderer/RHITexture.h"
 

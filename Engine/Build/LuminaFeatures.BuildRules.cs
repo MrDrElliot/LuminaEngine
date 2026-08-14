@@ -97,7 +97,7 @@ public static class LuminaFeatures
             // Deliberately off for Game targets. A game built on Lumina belongs to whoever built it;
             // shipping it with the engine's reporter would send their players' logs to this database
             // without either party agreeing to it.
-            BugSplat => Target.Type == TargetType.Editor,
+            BugSplat => Target.Type == TargetType.Editor && Target.Platform == BuildPlatform.Windows64,
 
             _ => false,
         };

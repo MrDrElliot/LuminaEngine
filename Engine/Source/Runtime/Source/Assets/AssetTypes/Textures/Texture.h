@@ -109,6 +109,23 @@ namespace Lumina
          *  only, same as ApplyMipResidency. */
         bool TickResidencyFill(uint64& RemainingBytes, bool bMayExceedBudget = true);
 
+        /** Drive TickResidencyFill to completion right now, with no budget. For textures the streamer does
+         *  not drive -- a non-streamable one is never registered, so nothing would ever drain its fill and
+         *  its mips would simply never reach the GPU. Their whole chain is inline by definition, which is
+         *  what makes an unmetered upload the right answer rather than a hitch. */
+        void DrainResidencyFillNow();
+
+        /** Undo a staged residency change that cannot be completed: the staged image is dropped, the slot
+         *  keeps naming the one it already had, and ResidentFirstMip goes back to what it described. Doing
+         *  nothing instead would strand the swap unarmed, which freezes the texture permanently. */
+        void AbandonResidencyFill();
+
+        /** Announce that something outside the streamer (an import, a re-cook) has replaced this texture's
+         *  image and uploaded the WHOLE chain eagerly. Any half-drained residency fill describes the
+         *  previous image and would upload into the new one at the wrong mip sizes, and the streamer's
+         *  cached sizes no longer match the asset. Both are reset here. */
+        void OnFullyUploadedExternally();
+
         /** Pull every streamed-out mip's bytes back off disk, so the whole chain is in memory. The
          *  precondition for ANY write: a mip that is only a BulkRef serializes as a zero-length payload.
          *  No-op (and no IO) when nothing has been streamed out. May block. */
@@ -140,16 +157,12 @@ namespace Lumina
 
         TUniquePtr<FTextureResource> TextureResource;
 
-        /** The host-uploaded half of a staged residency change, drained over frames by TickResidencyFill.
-         *  Mips at or above CpuEndMip came from the previous image by GPU copy and are already there.
-         *
-         *  The cursor is (mip, layer, block row) rather than just a mip: one 4K mip is 16 MiB of copy into
-         *  write-combined memory, so a whole-mip step made MaxUploadMBPerFrame unenforceable -- the budget
-         *  could only ever be checked BETWEEN mips, and the smallest possible step was already bigger than
-         *  any sane budget. Bands make the budget mean what it says. */
+        // Host-uploaded half of a staged residency change, drained over frames by TickResidencyFill. The
+        // cursor is (mip, layer, block row): a whole-mip step is 16 MiB, bigger than any sane frame budget.
         struct FResidencyFill
         {
             uint32 FirstMip   = 0;   // chain mip the staged image starts at
+            uint32 PrevFirstMip = 0; // residency to restore if the staged image has to be abandoned
             uint32 NextMip    = 0;   // next chain mip owing a host upload
             uint32 NextLayer  = 0;   // next array layer of NextMip owing one
             uint32 NextRow    = 0;   // next BLOCK row of that (mip, layer) owing one
@@ -157,5 +170,11 @@ namespace Lumina
             bool   bActive    = false;
         };
         FResidencyFill PendingFill;
+
+        /** Set when a residency change was abandoned for a reason that asking again cannot fix -- a cooked
+         *  mip that is shorter than the image it has to fill. Without it the streamer re-requests the same
+         *  level every frame, re-detects the same hole, and logs forever. Cleared by a re-cook, which is
+         *  the only thing that actually replaces the bad mip. */
+        bool bResidencyBlocked = false;
     };
 }

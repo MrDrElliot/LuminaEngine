@@ -1,4 +1,5 @@
 ﻿#pragma once
+#include <format>
 #include <source_location>
 #include "Containers/String.h"
 #include "Platform/GenericPlatform.h"

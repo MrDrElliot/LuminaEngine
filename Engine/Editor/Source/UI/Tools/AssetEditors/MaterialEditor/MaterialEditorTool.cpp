@@ -25,11 +25,11 @@
 #include "UI/Tools/NodeGraph/Material/MaterialCompiler.h"
 #include "UI/Tools/NodeGraph/Material/MaterialGraphCompile.h"
 #include "UI/Tools/NodeGraph/Material/MaterialNodeGraph.h"
-#include "world/entity/components/cameracomponent.h"
-#include "world/entity/components/environmentcomponent.h"
+#include "World/Entity/Components/CameraComponent.h"
+#include "World/Entity/Components/EnvironmentComponent.h"
 #include "World/Entity/Components/SkyLightComponent.h"
-#include "World/entity/components/lightcomponent.h"
-#include "World/entity/components/staticmeshcomponent.h"
+#include "World/Entity/Components/LightComponent.h"
+#include "World/Entity/Components/StaticMeshComponent.h"
 #include "Log/Log.h"
 
 namespace Lumina

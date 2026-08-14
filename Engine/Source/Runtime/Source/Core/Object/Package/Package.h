@@ -244,6 +244,16 @@ namespace Lumina
 
         RUNTIME_API NODISCARD const FBulkRegion& GetBulkRegion() const { return BulkRegion; }
 
+        /** Report that a bulk payload this package owns could not be read back. Called by an export from
+         *  PreSave, where there is no way to fail the save directly; SavePackage checks it and refuses to
+         *  write rather than commit a file with the payload emptied out. */
+        RUNTIME_API void FlagUnresolvedBulkData() { bBulkDataUnresolved = true; }
+
+        /** True while a save is copying this package's bulk region to the new file verbatim. An export's
+         *  PreSave must NOT pull its payloads into memory for one of these -- the bytes are going across
+         *  untouched, so reading them back would be the entire cost the passthrough exists to avoid. */
+        RUNTIME_API NODISCARD bool IsBulkPassthrough() const { return bBulkPassthrough; }
+
         void CreateLoader(const TVector<uint8>& FileBinary);
         
         RUNTIME_API FPackageLoader* GetLoader() const;
@@ -325,11 +335,42 @@ namespace Lumina
         // keeps them (re-read lazily via EnsureLoader). No-op while a load is in flight on this package.
         void ConditionalDropLoader();
 
+        /** Whether the next save may copy the existing bulk region into the new file instead of rebuilding
+         *  it from memory. True only when this package is CLEAN and still has the file it was read from:
+         *  a dirty package may hold payloads that no longer match those bytes (a re-cook replaces a
+         *  texture's mips outright), and copying then would carry the stale ones across under refs that
+         *  claim to describe the new ones. A false here costs speed, never correctness. */
+        bool CanSpliceBulkRegion() const;
+
+        /** Publish the bulk region and the file it lives in as ONE change, so a streaming worker in
+         *  ReadBulkData either sees both halves of a save or neither. Never mutate the two separately. */
+        void SetBulkSource(const FBulkRegion& Region, FStringView Path);
+
         TAtomic<ELoadState>             LoadState{ELoadState::Unloaded};
 
         // Located at load from the file's trailer, and refreshed on save. Zero for packages saved before
         // PACKAGE_BULK_DATA and for any package whose exports wrote nothing bulk.
         FBulkRegion                     BulkRegion;
+
+        // The file BulkRegion is an offset into -- tracked explicitly rather than re-derived from the
+        // package's name, because a package can be renamed while it still holds unresolved FBulkDataRefs.
+        // A rename saves under the NEW name, and everything PreSave pulls off disk during that save has to
+        // come from the file that still HOLDS it. Empty for a package with no backing file yet.
+        FFixedString                    BulkSourcePath;
+
+        // Guards the (BulkRegion, BulkSourcePath) PAIR. ReadBulkData runs on streaming workers while the
+        // game thread can be committing a save that moves both at once -- a reader that saw one and not the
+        // other would read the right offsets out of the wrong file. Held only to copy the pair, never
+        // across the disk read itself.
+        mutable FMutex                  BulkMutex;
+
+        // Set when an export could not re-read a bulk payload it is about to serialize. The save is refused
+        // rather than allowed to write the payload back as empty, which is silent permanent data loss.
+        bool                            bBulkDataUnresolved = false;
+
+        // Set for the duration of a save that splices the existing bulk region into the new file instead of
+        // rebuilding it. Reachable by exports through IsBulkPassthrough(), because PreSave has no archive.
+        bool                            bBulkPassthrough = false;
 
         // Reentrancy depth of object loads sharing this package's Loader. The cached bytes are dropped only
         // when the outermost load unwinds, so a nested IndexToObject load can't free the buffer mid-read.

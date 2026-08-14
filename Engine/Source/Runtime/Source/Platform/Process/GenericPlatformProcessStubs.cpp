@@ -1,9 +1,8 @@
-﻿// No-op fallbacks for the OS-shell helpers in PlatformProcess.h; compiled only where there's no native impl
-// (empty on Windows, where WindowsPlatformProcess.cpp has the real bodies).
+﻿// No-op fallbacks for the OS-shell helpers in PlatformProcess.h; compiled only where there's no native impl.
 
 #include "RuntimePCH.h"
 
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(LE_PLATFORM_LINUX)
 
 #include "Platform/Process/PlatformProcess.h"
 #include "Log/Log.h"

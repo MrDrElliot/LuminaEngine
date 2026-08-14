@@ -249,7 +249,7 @@ namespace Lumina
         ImGuiX::InstallImGuiAllocator();
 		
         Context = ImGui::CreateContext();
-    	ImPlotContext = ImPlot::CreateContext();
+    	PlotContext = ImPlot::CreateContext();
 		
 		FString FontFile_Regular = Paths::GetEngineFontDirectory() + "/Lexend/Lexend-Regular.ttf";
 		FString FontFile_Bold = Paths::GetEngineFontDirectory() + "/Lexend/Lexend-Bold.ttf";

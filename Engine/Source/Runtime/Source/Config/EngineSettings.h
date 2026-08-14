@@ -66,28 +66,12 @@ namespace Lumina
         PROPERTY(Editable, Category = "Performance")
         int32 MaxLoadsInFlight = 8;
 
-        /** Cap on how many MiB of mips may be handed to the GPU in a single frame. Applying a promotion
-         *  memcpys every resident mip into the upload ring on the game thread, so an unbounded frame can
-         *  move tens of MiB at once -- a visible hitch when a few large textures finish reading together.
-         *  Loads that do not fit wait for the next frame; they are already in memory, so nothing re-reads.
-         *
-         *  Enforced at BAND granularity, so it is a real bound rather than a bound on where a whole-mip
-         *  copy is allowed to start: lowering it genuinely shortens the longest staging copy in a frame. */
+        // Host bytes staged per frame, enforced at band granularity. Loads that do not fit wait a frame.
         PROPERTY(Editable, Category = "Performance")
         int32 MaxUploadMBPerFrame = 8;
 
-        /** Cap on how many textures may CHANGE residency in a single frame, promotions and demotions
-         *  together.
-         *
-         *  This is a separate limit from MaxUploadMBPerFrame because it bounds a different cost. A
-         *  residency change allocates a whole new GPU image and retires the old one -- the mip count of a
-         *  VkImage is fixed, so shrinking one means replacing it -- and that create/destroy pair is paid
-         *  even by a demotion, which moves ZERO host bytes and is therefore invisible to the upload budget.
-         *  A budget sweep that trimmed a mip off every texture in the scene at once cost nothing under that
-         *  budget and hundreds of vmaCreateImage/vmaDestroyImage calls, landing as a long stall in the
-         *  frame that eventually drained them.
-         *
-         *  Textures that do not fit keep asking and are served over the following frames. */
+        // Promotions + demotions per frame. Separate from the upload budget: a residency change recreates
+        // the GPU image and retires the old one, which a demotion pays while moving zero host bytes.
         PROPERTY(Editable, Category = "Performance")
         int32 MaxResidencyChangesPerFrame = 4;
     };

@@ -6,15 +6,9 @@ namespace Lumina::RHI
 {
     RUNTIME_API void UploadBuffer(GPUPtr Dest, const void* Data, uint64 Size);
 
-    // Width/Height are the mip's own dimensions; 0 derives them from the texture description, which is
-    // only correct for mip 0. See RHITexture.h.
-    //
-    // OffsetY places the data as a horizontal BAND starting at that texel row rather than at the top of the
-    // mip, which is what lets one mip be staged over several frames instead of in one copy. Height is then
-    // the band's height, not the mip's, and Data/Size cover only the band. Both must be multiples of the
-    // format's block height (or reach the bottom edge), and Width/Height are REQUIRED when OffsetY is
-    // non-zero -- a derived extent would describe the whole mip and copy past the source.
-    RUNTIME_API void UploadTexture(FTextureH Dest, uint32 Layer, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels = 0, uint32 Width = 0, uint32 Height = 0, uint32 OffsetY = 0);
+    // Width/Height are the mip's own dimensions, REQUIRED past mip 0 and whenever OffsetY is set. OffsetY
+    // stages a horizontal band. False = the upload was DROPPED, so a banded caller must not advance.
+    RUNTIME_API bool UploadTexture(FTextureH Dest, uint32 Layer, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels = 0, uint32 Width = 0, uint32 Height = 0, uint32 OffsetY = 0);
 
     /** Enqueue a GPU-side mip copy between two images, in the same flush (and the same barriers) as the
      *  host uploads around it. No staging, no host bandwidth: this is what a mip that ALREADY exists on

@@ -65,5 +65,5 @@ struct FPackageFileVersion
 
 #define VER_LATEST_ENGINE           PREPROCESSOR_ENUM_PROTECT(ELuminaEngineVersion::AUTOMATIC_VERSION)
 
-extern const FPackageFileVersion GPackageFileLuminaVersion;
+extern RUNTIME_API const FPackageFileVersion GPackageFileLuminaVersion;
 

@@ -1,6 +1,6 @@
-﻿#include "RuntimePCH.h"
+#include "RuntimePCH.h"
 #include "StaticMeshComponent.h"
-#include "Assets/Assettypes/Material/MaterialInterface.h"
+#include "Assets/AssetTypes/Material/MaterialInterface.h"
 
 
 

@@ -13,6 +13,8 @@ namespace Lumina
 {
     enum class EWorldType : uint8;
     enum class EMoveMode : uint8;
+
+    class CWorld;
     struct FSimpleElementVertex;
 
     namespace Physics

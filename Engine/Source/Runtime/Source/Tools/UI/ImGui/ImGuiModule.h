@@ -18,7 +18,7 @@
 //
 // Mirrors the manual setup the directly-linked Editor module does in FEditorUI::Initialize.
 #define LUMINA_MODULE_IMGUI()                                                                    \
-    extern "C" __declspec(dllexport) void LuminaModuleSetupImGui(void* InImGui, void* InImPlot)  \
+    extern "C" DLL_EXPORT void LuminaModuleSetupImGui(void* InImGui, void* InImPlot)             \
     {                                                                                            \
         ImGui::SetCurrentContext(static_cast<ImGuiContext*>(InImGui));                           \
         ImPlot::SetCurrentContext(static_cast<ImPlotContext*>(InImPlot));                        \

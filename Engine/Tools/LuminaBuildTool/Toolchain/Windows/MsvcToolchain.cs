@@ -182,6 +182,15 @@ public sealed class MsvcToolchain : IToolchain
             "/Zc:inline",
             "/Zc:__cplusplus",
 
+            // Conformance switches /permissive- does not imply. They exist so MSVC rejects what GCC
+            // rejects, rather than leaving the divergence to be found by the Linux build.
+            // /Zc:enumTypes is deliberately absent: it changes enum underlying types, which is an ABI
+            // break, not a diagnostic.
+            "/Zc:templateScope",
+            "/Zc:externConstexpr",
+            "/Zc:throwingNew",
+            "/Zc:checkGwOdr",
+
             // Third-party code is not ours to fix, so it compiles quietly.
             Module.Rules.bIsThirdParty ? "/W0" : $"/W{Target.Rules.WarningLevel}",
             $"/Fo{PathUtils.Quote(ObjectFile)}",

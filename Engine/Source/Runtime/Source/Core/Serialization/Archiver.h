@@ -27,6 +27,11 @@ enum class EArchiverFlags : uint8
     Encrypt     = 4,
     NoFields    = 5,
     Cooking     = 6,
+
+    /** The bulk region is being carried over verbatim from the file the package was loaded from, so an
+     *  export must KEEP the FBulkDataRef it already has instead of re-emitting its payload. Region-relative
+     *  offsets are what make this work: copy the whole region and every ref into it is still correct. */
+    BulkPassthrough = 7,
 };
 
 namespace Lumina
@@ -124,6 +129,12 @@ namespace Lumina
          *  a serializer that can split has to branch on this rather than assume. */
         virtual bool SupportsBulkData() const { return false; }
 
+        /** True when the bulk region is being copied over verbatim rather than rebuilt. A serializer must
+         *  then leave its FBulkDataRef alone AND leave whatever describes the inline/bulk split alone: the
+         *  region it is referring into is the old one, byte for byte, so re-deriving either would describe
+         *  a layout the copied bytes do not have. WriteBulkData succeeds without copying anything. */
+        bool IsBulkPassthrough() const { return HasFlag(EArchiverFlags::BulkPassthrough); }
+
         /** Append Size bytes to the archive's bulk region and fill OutRef with where they landed. Returns
          *  false (leaving OutRef untouched) on archives with no region -- write the payload inline instead. */
         virtual bool WriteBulkData(FBulkDataRef& OutRef, const void* Data, int64 Size) { return false; }
@@ -206,7 +217,7 @@ namespace Lumina
         {
             if (IsReading())
             {
-                size_t SaveNum = 0;
+                uint64 SaveNum = 0;
                 *this << SaveNum;
             
                 if (SaveNum > GetMaxSerializeSize())
@@ -230,7 +241,7 @@ namespace Lumina
             }
             else
             {
-                size_t SaveNum = Str.size();
+                uint64 SaveNum = Str.size();
                 *this << SaveNum;
 
                 if (SaveNum)
@@ -246,7 +257,7 @@ namespace Lumina
         {
             if (IsReading())
             {
-                size_t SaveNum = 0;
+                uint64 SaveNum = 0;
                 *this << SaveNum;
             
                 if (SaveNum > GetMaxSerializeSize())
@@ -270,7 +281,7 @@ namespace Lumina
             }
             else
             {
-                size_t SaveNum = Str.size();
+                uint64 SaveNum = Str.size();
                 *this << SaveNum;
 
                 if (SaveNum)
@@ -314,7 +325,7 @@ namespace Lumina
         template<typename ValueType>
         FArchive& operator << (TVector<ValueType>& Array)
         {
-            size_t SerializeNum = IsReading() ? 0 : Array.size();
+            uint64 SerializeNum = IsReading() ? 0 : Array.size();
             *this << SerializeNum;
         
             if (SerializeNum == 0)

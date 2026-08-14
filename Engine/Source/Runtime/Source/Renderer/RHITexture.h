@@ -85,6 +85,15 @@ namespace Lumina::RHI
          *  TickPendingSwaps. No-op when nothing is staged (first-load Recreate falls through to Create). */
         RUNTIME_API void CommitRecreate(FManagedTexture& Tex);
 
+        /** Drop the swap staged by Recreate without publishing it: the staged image is retired and Tex goes
+         *  back to naming the one the bindless slot never stopped pointing at, so the texture is exactly
+         *  where it was before Recreate ran.
+         *
+         *  For a caller that discovers, after staging, that it cannot fill the replacement. The alternative
+         *  -- walking away from an unarmed entry -- freezes the slot forever: HasPendingSwap never clears,
+         *  so no further Recreate is allowed, and both images stay allocated. No-op when nothing is staged. */
+        RUNTIME_API void AbandonRecreate(FManagedTexture& Tex);
+
         /** Queue a GPU-side copy of one mip from the image the bindless slot STILL names into the staged
          *  replacement. Both are alive across a staged swap, which is what makes this possible at all --
          *  a mip that is already on the GPU should never be re-staged from the CPU just because the image
@@ -100,11 +109,10 @@ namespace Lumina::RHI
 
         // Width/Height are the MIP's own dimensions and must be passed past mip 0: the copy otherwise derives
         // (Base >> Mip), which disagrees with a cooked chain and faults the copy engine on non-power-of-two.
-        // OffsetY stages a horizontal BAND of the mip rather than all of it -- see RHIUpload.h. Height is
-        // then the band's height and Data/Size cover only the band.
-        RUNTIME_API void UploadLayer(const FManagedTexture& Tex, uint32 Layer, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels = 0, uint32 Width = 0, uint32 Height = 0, uint32 OffsetY = 0);
+        // OffsetY stages a horizontal BAND -- see RHIUpload.h. False means the upload was DROPPED.
+        RUNTIME_API bool UploadLayer(const FManagedTexture& Tex, uint32 Layer, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels = 0, uint32 Width = 0, uint32 Height = 0, uint32 OffsetY = 0);
 
-        RUNTIME_API void Upload(const FManagedTexture& Tex, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels = 0, uint32 Width = 0, uint32 Height = 0);
+        RUNTIME_API bool Upload(const FManagedTexture& Tex, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels = 0, uint32 Width = 0, uint32 Height = 0);
 
         // Queue a full-texture clear to an RGBA float value. Same deferred semantics as Upload.
         RUNTIME_API void Clear(const FManagedTexture& Tex, const float Value[4]);

@@ -1,7 +1,7 @@
 #pragma once
 
 #include <concepts>
-#include <eastl/type_traits.h>
+#include <EASTL/type_traits.h>
 #include "Core/LuminaMacros.h"
 #include "Platform/GenericPlatform.h"
 

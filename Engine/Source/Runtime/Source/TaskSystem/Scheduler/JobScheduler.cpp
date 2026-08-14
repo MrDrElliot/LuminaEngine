@@ -18,7 +18,12 @@
 #include "JobProfiler.h"
 #endif
 
-#include <intrin.h>
+#if defined(_MSC_VER)
+    #include <intrin.h>
+#else
+    #include <immintrin.h>
+#endif
+
 #include <atomic>
 #include <bit>
 #include <cstdio>
@@ -155,6 +160,8 @@ namespace Lumina::Jobs
             uint32         StealCursor    = 0;       // rotating victim offset for work-stealing
             bool           bOwnsExternalSlot = false; // this thread holds an external slot to give back
 
+            FWorkFiber*    CachedFiber    = nullptr;
+
             // Hands the slot back if the thread never did. GetWorkerIndex() claims one LAZILY for any thread that
             // completes a job inline, and short-lived threads just exit -- the contract alone leaks one each.
             ~FThreadState();
@@ -172,6 +179,8 @@ namespace Lumina::Jobs
             FJobQueue                  Queues[kNumJobPriorities];
             moodycamel::ConsumerToken* Home[kNumJobPriorities] = {};
             TAtomic<uint32>            WakeSignal{0}; // bumped (with notify) to wake this worker from its wait
+
+            TAtomic<uint8>             HasCachedFiber{0};
 
             FWorkerLocal()
             {
@@ -284,9 +293,22 @@ namespace Lumina::Jobs
             G->IdleMask[W >> 6].fetch_and(~(1ull << (W & 63)), std::memory_order_relaxed);
         }
 
+        FORCEINLINE bool ClaimIdleWorker(uint32 W)
+        {
+            const uint64 Bit  = 1ull << (W & 63);
+            const uint64 Prev = G->IdleMask[W >> 6].fetch_and(~Bit, std::memory_order_relaxed);
+            return (Prev & Bit) != 0;
+        }
+
+        FORCEINLINE void SignalWorker(uint32 W)
+        {
+            G->Workers[W].WakeSignal.fetch_add(1, std::memory_order_release);
+            G->Workers[W].WakeSignal.notify_one();
+        }
+
         // The seq_cst fence pairs with the one a parking worker runs between publishing its idle bit and
         // re-checking HasWork, so a submit racing a park is never lost. Spurious bumps are harmless.
-        void WakeWorkers(uint32 Count)
+        void WakeWorkers(uint32 Count, uint32 PreferStart = 0, uint32 NumRecipients = 0)
         {
             if (Count == 0)
             {
@@ -294,6 +316,22 @@ namespace Lumina::Jobs
             }
             std::atomic_thread_fence(std::memory_order_seq_cst);
             uint32 Woken = 0;
+
+            const uint32 W = G->NumWorkers;
+            for (uint32 i = 0; i < NumRecipients && Woken < Count; ++i)
+            {
+                uint32 Wk = PreferStart + i;
+                if (Wk >= W)
+                {
+                    Wk -= W;
+                }
+                if (ClaimIdleWorker(Wk))
+                {
+                    SignalWorker(Wk);
+                    ++Woken;
+                }
+            }
+
             for (uint32 Wd = 0; Wd < G->IdleMaskWords && Woken < Count; ++Wd)
             {
                 uint64 Bits = G->IdleMask[Wd].load(std::memory_order_relaxed);
@@ -301,12 +339,29 @@ namespace Lumina::Jobs
                 {
                     const uint32 B = (uint32)Math::CountTrailingZeros64(Bits);
                     Bits &= (Bits - 1);
-                    const uint32 W = (Wd << 6) + B;
-                    G->Workers[W].WakeSignal.fetch_add(1, std::memory_order_release);
-                    G->Workers[W].WakeSignal.notify_one();
-                    ++Woken;
+                    const uint32 Wk = (Wd << 6) + B;
+                    if (ClaimIdleWorker(Wk))
+                    {
+                        SignalWorker(Wk);
+                        ++Woken;
+                    }
                 }
             }
+        }
+
+        constexpr uint32 kDirectWakeMax     = 8; // wakes the submitting thread issues itself
+        constexpr uint32 kCascadeWakeFanout = 2; // wakes each worker relays onward
+
+        FORCEINLINE void CascadeWake(uint32 Slot)
+        {
+            constexpr int64 kRelayThreshold = (int64)kDirectWakeMax;
+            if (G->AvailJobs.load(std::memory_order_relaxed) <= kRelayThreshold
+                && G->ReadyCount.load(std::memory_order_relaxed) <= kRelayThreshold)
+            {
+                return;
+            }
+            const uint32 Next = Slot + 1 < G->NumWorkers ? Slot + 1 : 0;
+            WakeWorkers(kCascadeWakeFanout, Next, kCascadeWakeFanout);
         }
 
 #if USING(WITH_EDITOR)
@@ -337,15 +392,22 @@ namespace Lumina::Jobs
         #define POPPER_SCOPE() ((void)0)
 #endif
 
+        struct FSubmitSpan
+        {
+            uint32 Start         = 0;
+            uint32 NumRecipients = 0;
+        };
+
         // Spread a batch across worker queues as contiguous slices from a rotating start, so each worker
         // gets a local run to begin on. Bulk-enqueue per slice keeps moodycamel's per-item overhead amortized.
-        void DistributeJobs(const FQueuedJob* Jobs, uint32 Count, int Prio)
+        FSubmitSpan DistributeJobs(const FQueuedJob* Jobs, uint32 Count, int Prio)
         {
             const uint32 W     = G->NumWorkers;
             const uint32 Start = G->NextSubmitWorker.fetch_add(1, std::memory_order_relaxed) % W;
             const uint32 Base  = Count / W;
             const uint32 Rem   = Count % W;
             uint32 Idx = 0;
+            uint32 Recipients = 0;
             for (uint32 i = 0; i < W; ++i)
             {
                 const uint32 N = Base + (i < Rem ? 1u : 0u);
@@ -356,7 +418,9 @@ namespace Lumina::Jobs
                 const uint32 Wk = (Start + i) % W;
                 G->Workers[Wk].Queues[Prio].enqueue_bulk(Jobs + Idx, N);
                 Idx += N;
+                ++Recipients;
             }
+            return FSubmitSpan{ Start, Recipients };
         }
 
         // Retires one job from the queued hints. Both counters move together for the assistable bands;
@@ -628,6 +692,39 @@ namespace Lumina::Jobs
         }
 #endif
 
+        FORCEINLINE FWorkFiber* AcquireFiber(uint32 Slot)
+        {
+            if (FWorkFiber* Cached = TLS.CachedFiber)
+            {
+                TLS.CachedFiber = nullptr;
+                G->Workers[Slot].HasCachedFiber.store(0, std::memory_order_relaxed);
+                return Cached;
+            }
+            FWorkFiber* F = nullptr;
+            return G->FreeFibers.TryDequeue(F) ? F : nullptr;
+        }
+
+        FORCEINLINE void ReleaseFiber(uint32 Slot, FWorkFiber* F)
+        {
+            if (TLS.CachedFiber == nullptr)
+            {
+                TLS.CachedFiber = F;
+                G->Workers[Slot].HasCachedFiber.store(1, std::memory_order_relaxed);
+                return;
+            }
+            G->FreeFibers.Enqueue(F);
+        }
+
+        FORCEINLINE void FlushCachedFiber(uint32 Slot)
+        {
+            if (FWorkFiber* Cached = TLS.CachedFiber)
+            {
+                TLS.CachedFiber = nullptr;
+                G->Workers[Slot].HasCachedFiber.store(0, std::memory_order_relaxed);
+                G->FreeFibers.Enqueue(Cached);
+            }
+        }
+
         // Runs on the scheduler fiber after a work fiber switched back. The ONLY place a work fiber becomes
         // resumable, which is what guarantees its register/stack state is fully saved first.
         void ProcessPending()
@@ -645,7 +742,7 @@ namespace Lumina::Jobs
                 ProfEnd(TLS.WorkerIndex, false);
                 P.Fiber->State.store(static_cast<uint8>(EFiberState::Free), std::memory_order_relaxed);
 #endif
-                G->FreeFibers.Enqueue(P.Fiber);
+                ReleaseFiber(TLS.WorkerIndex, P.Fiber);
                 return;
 
             case EPending::Park:
@@ -799,6 +896,7 @@ namespace Lumina::Jobs
                 ClearWorkerIdle(W);
                 return;
             }
+            FlushCachedFiber(W);
 #if USING(WITH_EDITOR)
             FJobProfiler::Get().IdleBegin(W, FJobProfiler::NowMs());
 #endif
@@ -829,6 +927,7 @@ namespace Lumina::Jobs
                 if (G->ReadyFibers.TryDequeue(Ready))
                 {
                     G->ReadyCount.fetch_sub(1, std::memory_order_relaxed);
+                    CascadeWake(Slot); // before the switch -- a releasing counter can dump many at once
                     TLS.CurrentFiber = Ready;
 #if USING(WITH_EDITOR)
                     ProfResume(Ready, Slot);
@@ -841,9 +940,8 @@ namespace Lumina::Jobs
                 }
 
                 // Claim a free fiber first, then a job, so a job is never popped without somewhere to run
-                // it (avoids re-queue churn). Put the fiber back if there is no job.
-                FWorkFiber* Free = nullptr;
-                if (G->FreeFibers.TryDequeue(Free))
+                FWorkFiber* Free = AcquireFiber(Slot);
+                if (Free != nullptr)
                 {
                     StarveSpins = 0;
                 }
@@ -891,6 +989,7 @@ namespace Lumina::Jobs
                     FQueuedJob Job;
                     if (TryGetJobWorker(Job, Slot))
                     {
+                        CascadeWake(Slot); // relay the ramp before running, so the two overlap
                         Free->Job        = Job;
                         TLS.CurrentFiber = Free;
 #if USING(WITH_EDITOR)
@@ -902,11 +1001,13 @@ namespace Lumina::Jobs
                         StarveSpins = 0;
                         continue;
                     }
-                    G->FreeFibers.Enqueue(Free);
+                    ReleaseFiber(Slot, Free);
                 }
 
                 WaitForWork();
             }
+
+            FlushCachedFiber(Slot);
         }
 
         // Entry for every pooled work fiber. Loops forever: run the bound job, switch back to be reused.
@@ -1325,6 +1426,7 @@ namespace Lumina::Jobs
         
         constexpr uint32 kBatch = 256;
         FQueuedJob Batch[kBatch];
+        FSubmitSpan Span;
         for (uint32 Base = 0; Base < Count; Base += kBatch)
         {
             const uint32 N = (Count - Base) < kBatch ? (Count - Base) : kBatch;
@@ -1337,12 +1439,15 @@ namespace Lumina::Jobs
                 Batch[i].Name     = Jobs[Base + i].Name;
 #endif
             }
-            DistributeJobs(Batch, N, Prio);
+            const FSubmitSpan BatchSpan = DistributeJobs(Batch, N, Prio);
+            if (Base == 0)
+            {
+                Span = BatchSpan;
+            }
         }
 
-        // Wake up to Count idle workers: exactly enough for a fan-out, just one for a single job. Avoids
-        // both the all-workers thundering herd on a tiny submit and the one-worker under-wake on a fan-out.
-        WakeWorkers(Count);
+        const uint32 DirectWakes = Count < kDirectWakeMax ? Count : kDirectWakeMax;
+        WakeWorkers(DirectWakes, Span.Start, Span.NumRecipients);
     }
 
     void RunJob(FJobFunction Fn, void* Arg, EJobPriority Priority, FCounter* Counter, const char* Name)
@@ -1561,7 +1666,12 @@ namespace Lumina::Jobs
         Out.NumWorkers    = G->NumWorkers;
         Out.NumWorkFibers = G->FibersCreated.load(std::memory_order_acquire);
         Out.MaxWorkFibers = G->MaxWorkFibers;
-        Out.FibersFree    = static_cast<uint32>(G->FreeFibers.SizeApprox());
+        uint32 Cached = 0;
+        for (uint32 w = 0; w < G->NumWorkers; ++w)
+        {
+            Cached += G->Workers[w].HasCachedFiber.load(std::memory_order_relaxed);
+        }
+        Out.FibersFree    = static_cast<uint32>(G->FreeFibers.SizeApprox()) + Cached;
         const int64 Ready = G->ReadyCount.load(std::memory_order_relaxed);
         Out.FibersReady   = Ready > 0 ? static_cast<uint32>(Ready) : 0;
         const uint32 NonRunning = Out.FibersFree + Out.FibersReady;

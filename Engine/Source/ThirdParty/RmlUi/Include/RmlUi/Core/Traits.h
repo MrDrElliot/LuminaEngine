@@ -178,6 +178,9 @@ Derived rmlui_static_cast(Base base_instance)
 	return static_cast<Derived>(base_instance);
 }
 
+// Lumina patch: GCC rejects typeid under -fno-rtti even in an uninstantiated template.
+	#if defined(__cpp_rtti) || defined(_CPPRTTI)
+
 template <class T>
 const char* rmlui_type_name(const T& var)
 {
@@ -189,6 +192,22 @@ const char* rmlui_type_name()
 {
 	return typeid(T).name();
 }
+
+	#else
+
+template <class T>
+const char* rmlui_type_name(const T&)
+{
+	return "(type name unavailable: built without RTTI)";
+}
+
+template <class T>
+const char* rmlui_type_name()
+{
+	return "(type name unavailable: built without RTTI)";
+}
+
+	#endif
 
 #endif // RMLUI_CUSTOM_RTTI
 

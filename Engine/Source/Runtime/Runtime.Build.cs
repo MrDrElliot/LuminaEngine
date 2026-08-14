@@ -83,9 +83,18 @@ public class Runtime : LuminaModuleRules
         // Shadowed locals and unreferenced formal parameters have caused real bugs in this module.
         FatalWarnings.AddRange(new[] { "4456", "4457", "4458", "4238" });
 
-        // /GT is fiber-safe TLS. Without it the scheduler reads stale thread-local state after a
-        // fiber migrates and segfaults. See JobScheduler.cpp.
-        AddPerFileOption("JobScheduler.cpp", "/GT");
+        if (Target.Platform == BuildPlatform.Windows64)
+        {
+            AddPerFileOption("JobScheduler.cpp", "/GT");
+        }
+        else
+        {
+            AddPerFileOption("JobScheduler.cpp", "-ftls-model=initial-exec");
+
+            // libstdc++ declares std::stacktrace but leaves the backtrace implementation in its own
+            // archive, so Assert.h's HAS_STD_STACKTRACE path only links with this.
+            PublicSystemLibraries.Add("stdc++_libbacktrace");
+        }
 
         // Defines stb's implementation macros, so it must be the only translation unit that does.
         // Sharing one with any other source would compile stb twice into the same object.

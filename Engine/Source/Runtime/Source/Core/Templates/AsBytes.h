@@ -16,7 +16,7 @@ namespace Lumina
     requires(!eastl::is_pointer_v<T> && eastl::is_trivially_copyable_v<T>)
     TSpan<const Byte> AsBytes(const T& Value)
     {
-        return TSpan(reinterpret_cast<const Byte*>(eastl::addressof(Value)), sizeof(T));
+        return TSpan<const Byte>(reinterpret_cast<const Byte*>(eastl::addressof(Value)), sizeof(T));
     }
     
 }

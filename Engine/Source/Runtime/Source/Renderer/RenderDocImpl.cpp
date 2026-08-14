@@ -1,7 +1,11 @@
 ﻿#include "RuntimePCH.h"
 #include "RenderDocImpl.h"
 
-#include <windows.h>
+#if defined(LE_PLATFORM_WINDOWS)
+    #include <windows.h>
+#else
+    #include <dlfcn.h>
+#endif
 
 #include "renderdoc_app.h"
 #include "Core/Assertions/Assert.h"
@@ -10,9 +14,33 @@
 
 namespace Lumina
 {
+    namespace
+    {
+    #if defined(LE_PLATFORM_WINDOWS)
+        constexpr const TCHAR* kRenderDocLibrary = TEXT("renderdoc.dll");
+    #else
+        constexpr const TCHAR* kRenderDocLibrary = TEXT("librenderdoc.so");
+    #endif
+
+        bool IsLibraryAlreadyLoaded(const TCHAR* Name)
+        {
+        #if defined(LE_PLATFORM_WINDOWS)
+            return ::GetModuleHandleW(Name) != nullptr;
+        #else
+            if (void* Handle = ::dlopen(Name, RTLD_NOLOAD | RTLD_LAZY))
+            {
+                ::dlclose(Handle);
+                return true;
+            }
+
+            return false;
+        #endif
+        }
+    }
+
     FRenderDoc::FRenderDoc()
     {
-        void* Module = Platform::GetDLLHandle(TEXT("renderdoc.dll"));
+        void* Module = Platform::GetDLLHandle(kRenderDocLibrary);
 
         if (Module)
         {
@@ -36,7 +64,7 @@ namespace Lumina
 
     bool FRenderDoc::IsAttached()
     {
-        return ::GetModuleHandleW(L"renderdoc.dll") != nullptr;
+        return IsLibraryAlreadyLoaded(kRenderDocLibrary);
     }
 
     void FRenderDoc::StartFrameCapture() const

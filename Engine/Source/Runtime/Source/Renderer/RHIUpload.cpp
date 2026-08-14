@@ -1,4 +1,4 @@
-﻿#include "RuntimePCH.h"
+#include "RuntimePCH.h"
 #include "RHIUpload.h"
 #include "RHICore.h"
 
@@ -13,7 +13,10 @@ namespace Lumina::RHI
 {
     namespace
     {
-        constexpr uint64 kStagingSliceRequest = 64ull * 1024 * 1024;
+        // Typed, not a ull literal: see the note in RHICore.cpp.
+        constexpr uint64 kMegabyte = 1024 * 1024;
+
+        constexpr uint64 kStagingSliceRequest = 64 * kMegabyte;
 
         // Resolved against the CPU-visible VRAM aperture in Initialize.
         uint64 GStagingSliceSize = kStagingSliceRequest;
@@ -180,11 +183,11 @@ namespace Lumina::RHI
         EndWrite(S);
     }
 
-    void UploadTexture(FTextureH Dest, uint32 Layer, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels, uint32 Width, uint32 Height, uint32 OffsetY)
+    bool UploadTexture(FTextureH Dest, uint32 Layer, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels, uint32 Width, uint32 Height, uint32 OffsetY)
     {
         if (!IsValid(Dest) || Data == nullptr || Size == 0)
         {
-            return;
+            return false;
         }
 
         // A band with no explicit extent would be recorded against the whole mip and read Size bytes past
@@ -193,15 +196,13 @@ namespace Lumina::RHI
         {
             LOG_ERROR("RHI: dropped a banded texture upload at row {} with no extent; Width/Height are "
                       "required whenever OffsetY is non-zero.", OffsetY);
-            return;
+            return false;
         }
 
         LUMINA_PROFILE_SECTION("Upload::StageTextureMip");
         LUMINA_PROFILE_VALUE("Upload/StagedMipKiB", (int64)(Size / 1024));
 
-        // Split from the copy below because they fail differently and cost differently: this arm is a lock
-        // plus a cursor bump in the common case and a fresh host-visible VRAM allocation in the overflow
-        // case, which is the one that turns a staging call into a multi-millisecond stall.
+        // Split from the copy below: this arm is a cursor bump, or a fresh VRAM allocation on overflow.
         FStaging S;
         {
             LUMINA_PROFILE_SECTION("Upload::ReserveStaging");
@@ -212,7 +213,7 @@ namespace Lumina::RHI
         if (S.Cpu == nullptr)
         {
             LOG_ERROR("RHI: dropped a {} KiB texture upload, staging allocation failed.", Size / 1024);
-            return;
+            return false;
         }
 
         {
@@ -243,6 +244,7 @@ namespace Lumina::RHI
         }
 
         EndWrite(S);
+        return true;
     }
 
     void UploadTextureCopy(FTextureH Dest, uint32 DestLayer, uint32 DestMip,
@@ -315,7 +317,7 @@ namespace Lumina::RHI
         // SubmitOn also hands CL to the frame slot, which resets it when that slot comes round. Resetting
         // it here as well would recycle one command buffer twice -- two callers then record into the same
         // VkCommandBuffer while it is pending, which is a device loss, not a warning.
-        const uint64 Value = Core::SubmitOn(EQueueType::Graphics, TSpan{&CL, 1});
+        const uint64 Value = Core::SubmitOn(EQueueType::Graphics, TSpan<const FCmdListH>{&CL, 1});
         Upload::NoteFlushSubmitted(Batch, 0, EQueueType::Graphics, Core::GetQueueTimeline(EQueueType::Graphics), Value);
 
         WaitSemaphore(Core::GetQueueTimeline(EQueueType::Graphics), Value);
@@ -812,7 +814,7 @@ namespace Lumina::RHI
                 {
                     if (++Slice.LowStreak >= 64)
                     {
-                        NewCapacity     = Math::Max(GStagingSliceSize, Math::AlignUp(Demand + Demand / 2, 1024ull * 1024));
+                        NewCapacity     = Math::Max(GStagingSliceSize, Math::AlignUp(Demand + Demand / 2, kMegabyte));
                         Slice.LowStreak = 0;
                     }
                 }
@@ -835,11 +837,8 @@ namespace Lumina::RHI
                     }
                     else if (NewCapacity > Slice.Capacity && !Slice.bWarnedGrowFailed)
                     {
-                        // Silent before this: the ring simply kept its old capacity and every oversized
-                        // upload took the dedicated-allocation arm of ReserveLocked -- a fresh
-                        // vkAllocateMemory + map on the calling thread, EVERY frame, for as long as demand
-                        // stayed high. That reads as "staging a mip is slow" and is really "the ring is
-                        // too small and cannot get bigger".
+                        // Silent before this: the ring kept its old capacity and every oversized upload
+                        // paid a fresh vkAllocateMemory on the calling thread, every frame.
                         Slice.bWarnedGrowFailed = true;
                         LOG_WARN("RHI: upload staging slice could not grow {} -> {} MiB (CPU-visible VRAM "
                                  "exhausted). Uploads larger than the slice will allocate dedicated staging "

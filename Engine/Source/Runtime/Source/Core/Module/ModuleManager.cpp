@@ -75,7 +75,8 @@ namespace Lumina
         // those before freeing the handle, or the next ProcessNewlyLoadedCObjects() calls into unmapped code.
         const FDeferredRegistrationSnapshot RegistrationSnapshot = SnapshotDeferredRegistrations();
 
-        void* ModuleHandle = Platform::GetDLLHandle(StringUtils::ToWideString(ModulePath).c_str());
+        const FString ModulePathStr(ModulePath.data(), ModulePath.size());
+        void* ModuleHandle = Platform::GetDLLHandle(UTF8_TO_TCHAR(ModulePathStr.c_str()));
 
         if (!ModuleHandle)
         {

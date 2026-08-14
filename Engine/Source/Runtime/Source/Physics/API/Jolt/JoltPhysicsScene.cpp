@@ -1,4 +1,4 @@
-﻿#include "RuntimePCH.h"
+#include "RuntimePCH.h"
 #include "JoltPhysicsScene.h"
 #include "JoltCharacterHandle.h"
 #include <Jolt/Physics/Character/CharacterVirtual.h>
@@ -68,7 +68,7 @@
 #include "World/Entity/Components/StaticMeshComponent.h"
 #include "World/Entity/Components/TerrainComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
-#include "world/entity/components/velocitycomponent.h"
+#include "World/Entity/Components/VelocityComponent.h"
 #include "World/Entity/Events/CollisionEvent.h"
 #include "World/Entity/Events/ImpulseEvent.h"
 #include "World/Subsystems/WorldSettings.h"

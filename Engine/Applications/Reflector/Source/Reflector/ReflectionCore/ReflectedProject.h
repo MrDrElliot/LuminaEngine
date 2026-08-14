@@ -4,7 +4,7 @@
 
 #include "EASTL/hash_map.h"
 #include "EASTL/unique_ptr.h"
-#include "eastl/vector.h"
+#include "EASTL/vector.h"
 
 namespace Lumina::Reflection
 {

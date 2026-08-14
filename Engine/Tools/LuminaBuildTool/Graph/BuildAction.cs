@@ -18,6 +18,13 @@ public enum ActionType
     Copy,
 }
 
+public enum DependencyListFormat
+{
+    MsvcSourceDependencies,
+
+    Makefile,
+}
+
 /// <summary>
 /// One external process invocation with declared inputs and outputs. The executor decides
 /// whether to run it by comparing those inputs against those outputs.
@@ -91,6 +98,8 @@ public sealed class BuildAction
     /// </summary>
     public string? DependencyListFile { get; set; }
 
+    public DependencyListFormat DependencyListFormat { get; set; } = DependencyListFormat.MsvcSourceDependencies;
+
     /// <summary>Actions that must not run concurrently with anything else, such as link steps under LTO.</summary>
     public bool bCanExecuteInParallel { get; set; } = true;
 
@@ -111,6 +120,8 @@ public sealed class BuildAction
 
     /// <summary>Treat a failure as a warning rather than a build failure.</summary>
     public bool bIgnoreExitCode { get; set; }
+
+    public bool bDeleteOutputsBeforeRun { get; set; }
 
     /// <summary>
     /// Work performed in process rather than by launching a tool. Mutually exclusive with

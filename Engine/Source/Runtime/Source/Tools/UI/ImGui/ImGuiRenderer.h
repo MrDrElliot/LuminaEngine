@@ -47,11 +47,11 @@ namespace Lumina
         virtual ImTextureID GetOrCreateImTexture(FStringView Path) = 0;
 
         RUNTIME_API ImGuiContext* GetImGuiContext() const { return Context; }
-        RUNTIME_API ImPlotContext* GetImPlotContext() const { return ImPlotContext; }
+        RUNTIME_API ImPlotContext* GetImPlotContext() const { return PlotContext; }
 
     protected:
 
         ImGuiContext* Context = nullptr;
-        ImPlotContext* ImPlotContext = nullptr;
+        ImPlotContext* PlotContext = nullptr;
     };
 }

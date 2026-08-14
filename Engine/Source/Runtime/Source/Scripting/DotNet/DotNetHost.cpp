@@ -70,12 +70,15 @@ namespace Lumina::DotNet
     #if defined(_WIN32)
         #define LSTR(s) L##s
         constexpr const char* kSharedExt = ".dll";
+        constexpr const char* kSharedPrefix = "";
     #elif defined(__APPLE__)
         #define LSTR(s) s
         constexpr const char* kSharedExt = ".dylib";
+        constexpr const char* kSharedPrefix = "lib";
     #else
         #define LSTR(s) s
         constexpr const char* kSharedExt = ".so";
+        constexpr const char* kSharedPrefix = "lib";
     #endif
 
         namespace fs = std::filesystem;
@@ -795,7 +798,14 @@ namespace Lumina::DotNet
                 reinterpret_cast<LPCWSTR>(&Export_Log), &Module);
             return (void*)Module;
         #else
-            return nullptr; // POSIX: dladdr-based, added with the POSIX port
+            // RTLD_NOLOAD: this image is already mapped, so the handle is a reference to it rather
+            // than a second load.
+            Dl_info Info{};
+            if (::dladdr(reinterpret_cast<const void*>(&Export_Log), &Info) != 0 && Info.dli_fname != nullptr)
+            {
+                return ::dlopen(Info.dli_fname, RTLD_LAZY | RTLD_NOLOAD);
+            }
+            return nullptr;
         #endif
         }
 
@@ -869,7 +879,7 @@ namespace Lumina::DotNet
         std::error_code Ec;
         for (const auto& Entry : fs::directory_iterator(Bundled / "host" / "fxr", Ec))
         {
-            const fs::path Candidate = Entry.path() / (FString("hostfxr") + kSharedExt).c_str();
+            const fs::path Candidate = Entry.path() / (FString(kSharedPrefix) + "hostfxr" + kSharedExt).c_str();
             if (fs::exists(Candidate))
             {
                 HostfxrPath = NativePath(Candidate);

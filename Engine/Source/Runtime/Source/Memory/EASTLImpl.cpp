@@ -98,8 +98,7 @@ namespace eastl
     }
 }
 
-int Vsnprintf8(char* dest, size_t n, const char* fmt, char* argPtr)
+int Vsnprintf8(char* dest, size_t n, const char* fmt, va_list args)
 {
-    va_list args = *reinterpret_cast<va_list*>(&argPtr);
     return vsnprintf(dest, n, fmt, args);
 }

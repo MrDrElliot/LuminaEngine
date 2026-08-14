@@ -1,6 +1,6 @@
 ﻿#pragma once
 
-#include <eastl/utility.h>
+#include <EASTL/utility.h>
 
 namespace Lumina
 {

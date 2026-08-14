@@ -5,6 +5,7 @@
 #include "Memory/MemoryTracking.h"
 #include "Renderer/RenderManager.h"
 #include "Renderer/RHITexture.h"
+#include "Renderer/RHIUpload.h"
 #include "Renderer/TextureStreamingManager.h"
 #include "Core/Profiler/Profile.h"
 
@@ -82,11 +83,24 @@ namespace Lumina
                               "writing it now would drop them", GetName());
                     return;
                 }
+
+                // The save in progress is copying the bulk region into the new file byte for byte, so these
+                // mips are already going across and the BulkRefs naming them stay valid. Reading them here
+                // would pull ~21 MiB per 4K texture into memory to produce bytes nobody writes.
+                if (Package->IsBulkPassthrough())
+                {
+                    return;
+                }
             }
 
             if (!Package->ReadBulkData(Mip.BulkRef, Mip.Pixels))
             {
                 LOG_ERROR("CTexture: {} could not re-read a streamed mip; saving would drop it", GetName());
+
+                // PreSave has no way to fail a save, and the serializer downstream would write this mip
+                // back as a zero-length payload -- destroying bytes that are still intact on disk. Tell
+                // the package instead, which refuses to commit rather than lose them.
+                Package->FlagUnresolvedBulkData();
             }
         }
     }
@@ -146,6 +160,14 @@ namespace Lumina
         LUMINA_MEMORY_SCOPE("Textures");
 
         if (TextureResource == nullptr)
+        {
+            return false;
+        }
+
+        // An earlier change had to be given back because this texture's cooked mips cannot fill the image
+        // they describe. Nothing about retrying changes that, and the streamer asks every frame, so the
+        // refusal is remembered rather than re-derived (and re-logged) each time.
+        if (bResidencyBlocked)
         {
             return false;
         }
@@ -263,12 +285,13 @@ namespace Lumina
         // The rest is host data, drained over frames by TickResidencyFill. The staged image is invisible
         // until it is complete, so there is no artifact in spreading it -- and one 4K mip is 16 MiB of
         // memcpy, which is exactly the spike that has to stop landing in a single frame.
-        PendingFill.FirstMip  = InFirstMip;
-        PendingFill.NextMip   = InFirstMip;
-        PendingFill.NextLayer = 0;
-        PendingFill.NextRow   = 0;
-        PendingFill.CpuEndMip = RetainedFrom;
-        PendingFill.bActive   = true;
+        PendingFill.FirstMip     = InFirstMip;
+        PendingFill.PrevFirstMip = OldFirstMip;
+        PendingFill.NextMip      = InFirstMip;
+        PendingFill.NextLayer    = 0;
+        PendingFill.NextRow      = 0;
+        PendingFill.CpuEndMip    = RetainedFrom;
+        PendingFill.bActive      = true;
 
         TextureResource->ResidentFirstMip = (uint8)InFirstMip;
 
@@ -278,8 +301,88 @@ namespace Lumina
         {
             RHI::Textures::CommitRecreate(TextureResource->NewTexture);
             PendingFill.bActive = false;
+            return true;
         }
+
+        // Only textures the streamer registered get their fill drained by TickResidencyFills, and it
+        // registers streamable ones only -- so for everything else this is the one and only chance to
+        // upload. Left to the streamer, a non-streamable texture would sit at an image that never
+        // received a single texel, and a staged one would never be committed.
+        if (!TextureResource->IsStreamable())
+        {
+            DrainResidencyFillNow();
+        }
+
         return true;
+    }
+
+    void CTexture::DrainResidencyFillNow()
+    {
+        // Bounded, not a spin: TickResidencyFill only reports work left with an unlimited budget when an
+        // upload was DROPPED, and the sole reason for that is a full staging ring, which a flush clears.
+        // Anything still refusing after that is not going to resolve by asking again.
+        constexpr uint32 kMaxFlushRetries = 4;
+
+        for (uint32 Attempt = 0; PendingFill.bActive && Attempt <= kMaxFlushRetries; ++Attempt)
+        {
+            uint64 Unmetered = UINT64_MAX;
+            if (!TickResidencyFill(Unmetered, true))
+            {
+                return;   // committed, or abandoned with the reason already logged
+            }
+
+            RHI::FlushUploadsAndWait();
+        }
+
+        LOG_ERROR("CTexture::DrainResidencyFillNow: {} could not stage mip {} layer {}; the upload staging "
+                  "ring stayed full across {} flushes. Keeping the previous image rather than publishing "
+                  "one with a hole.",
+            GetName(), PendingFill.NextMip, PendingFill.NextLayer, kMaxFlushRetries);
+
+        AbandonResidencyFill();
+    }
+
+    void CTexture::AbandonResidencyFill()
+    {
+        if (TextureResource == nullptr)
+        {
+            return;
+        }
+
+        PendingFill.bActive = false;
+
+        // Order matters: the residency the texture reports has to match the image the slot actually names
+        // again, and AbandonRecreate is what puts NewTexture back on that image. Nothing is staged on a
+        // first load (Recreate took the eager path), in which case there is no previous image to fall back
+        // to and the texture simply stays as created -- incomplete, but the log above says why.
+        if (RHI::Textures::HasPendingSwap(TextureResource->NewTexture))
+        {
+            RHI::Textures::AbandonRecreate(TextureResource->NewTexture);
+            TextureResource->ResidentFirstMip = (uint8)PendingFill.PrevFirstMip;
+        }
+    }
+
+    void CTexture::OnFullyUploadedExternally()
+    {
+        if (TextureResource == nullptr)
+        {
+            return;
+        }
+
+        // The image holds mips [0, NumMips) and every one of them was just uploaded, so any cursor left
+        // over from a streaming change is describing an image that no longer exists. A re-cook is also the
+        // one thing that replaces a mip whose block rows did not fill their image, so the refusal that
+        // caused goes with it.
+        PendingFill       = FResidencyFill{};
+        bResidencyBlocked = false;
+        TextureResource->ResidentFirstMip = 0;
+
+        // Re-registration refreshes the cached byte counts and inline tail; without it the streamer prices
+        // this texture at its pre-cook size and can demote it toward a tail that moved.
+        if (FTextureStreamingManager* Streaming = FTextureStreamingManager::TryGet())
+        {
+            Streaming->RegisterTexture(this);
+        }
     }
 
     bool CTexture::TickResidencyFill(uint64& RemainingBytes, bool bMayExceedBudget)
@@ -326,20 +429,45 @@ namespace Lumina
                 continue;
             }
 
+            // The IMAGE's mip height, not the cooked one: they disagree on NPOT chains, and the backend
+            // clamps a copy's extent but not its offset.
+            const uint32 ImageMipHeight = Math::Max(TextureResource->MipExtent(PendingFill.NextMip).y, 1u);
+
             // RowPitch counts BLOCK rows. A pitch that does not divide the payload describes something
             // other than a tightly packed mip, so that one moves whole rather than being cut up wrongly.
-            const bool   bBanded  = Mip.RowPitch != 0 && (SliceBytes % Mip.RowPitch) == 0;
-            const uint64 RowBytes = bBanded ? Mip.RowPitch : SliceBytes;
-            const uint32 NumRows  = bBanded ? (uint32)(SliceBytes / RowBytes) : 1u;
+            const bool   bBanded    = Mip.RowPitch != 0 && (SliceBytes % Mip.RowPitch) == 0;
+            const uint64 RowBytes   = bBanded ? Mip.RowPitch : SliceBytes;
+            const uint32 StoredRows = bBanded ? (uint32)(SliceBytes / RowBytes) : 1u;
+            const uint32 NeededRows = bBanded ? (ImageMipHeight + BlockH - 1u) / BlockH : 1u;
 
-            // Priced BEFORE the copy, not after. Charging afterwards let a slice start whenever any budget
-            // was left and then overshoot by its whole size -- with a 16 MiB budget and a 1+4+16 MiB chain
-            // that is 21 MiB in one frame, which is exactly the spike the budget exists to stop.
-            //
-            // The exception is per FRAME rather than per texture: a row larger than the whole budget has to
-            // go through eventually or it never converges. Granting it per texture -- which is what a local
-            // "have I spent anything" flag did -- handed every converging texture one free step per frame,
-            // so N textures blew the budget N times over.
+            // More stored rows than the image needs is block padding past the bottom edge. Fewer is a hole,
+            // and publishing an image with one is what this staging dance exists to prevent.
+            if (bBanded && StoredRows < NeededRows)
+            {
+                LOG_ERROR("CTexture::TickResidencyFill: {} mip {} layer {} holds {} block rows but its image "
+                          "needs {} ({} texels tall). Abandoning the staged image rather than publishing it "
+                          "with a hole; the texture stays at its previous residency.",
+                    GetName(), PendingFill.NextMip, PendingFill.NextLayer, StoredRows, NeededRows, ImageMipHeight);
+
+                // Actually give the staged image back. Just clearing bActive would leave the swap staged
+                // and unarmed, which never publishes and never clears -- so ApplyMipResidency would refuse
+                // this texture forever after and both images would stay allocated.
+                bResidencyBlocked = true;
+                AbandonResidencyFill();
+                return false;
+            }
+
+            const uint32 NumRows = Math::Min(StoredRows, NeededRows);
+
+            // Unreachable today, but NumRows - FirstRow underflowing reads megabytes past the mip.
+            if (PendingFill.NextRow >= NumRows)
+            {
+                AdvanceSlice();
+                continue;
+            }
+
+            // Priced before the copy, so the budget is never overshot. The oversize exemption is per FRAME,
+            // not per texture, or N converging textures each take a free step and blow it N times over.
             uint64 AffordableRows = RemainingBytes / RowBytes;
             if (AffordableRows == 0)
             {
@@ -354,25 +482,23 @@ namespace Lumina
             const uint32 Rows      = (uint32)Math::Min<uint64>(AffordableRows, NumRows - FirstRow);
             const uint64 BandBytes = (uint64)Rows * RowBytes;
 
-            // Offsets are in TEXELS even though the cursor counts block rows, and the last band of a mip
-            // whose height is not a multiple of the block height must stop at the image edge.
-            const uint32 OffsetY = bBanded ? FirstRow * BlockH : 0u;
-            if (OffsetY >= Mip.Height)
+            // Bounded by BOTH ends: past the destination falls outside the subresource, past the source
+            // walks the copy engine off the staging buffer. Offsets are texels, the cursor counts blocks.
+            const uint32 OffsetY    = bBanded ? FirstRow * BlockH : 0u;
+            const uint32 BandHeight = bBanded ? Math::Min(Rows * BlockH, ImageMipHeight - OffsetY)
+                                              : Math::Min(Mip.Height, ImageMipHeight);
+
+            // Chain mip M is mip (M - FirstMip) of the image, which only holds the resident range.
+            // RowPitchTexels describes the SOURCE row length, not the destination.
+            if (!RHI::Textures::UploadLayer(TextureResource->NewTexture, PendingFill.NextLayer,
+                    PendingFill.NextMip - PendingFill.FirstMip,
+                    Mip.Pixels.data() + (uint64)FirstRow * RowBytes, BandBytes,
+                    Mip.Width, Mip.Width, BandHeight, OffsetY))
             {
-                // Padding rows past the bottom of the image: nothing to copy them into.
-                AdvanceSlice();
-                continue;
+                // Do NOT advance: committing with this band missing bakes the hole in permanently. Retrying
+                // is free -- the bytes are in memory and nothing samples the staged image until commit.
+                return true;
             }
-
-            const uint32 BandHeight = bBanded ? Math::Min(Rows * BlockH, Mip.Height - OffsetY) : Mip.Height;
-
-            // The image only holds the resident range, so chain mip M is mip (M - FirstMip) of the image.
-            // Getting this wrong writes the wrong-sized data into the wrong level.
-            // RowPitchTexels = mip width: pixel rows are tightly packed at the mip's width.
-            RHI::Textures::UploadLayer(TextureResource->NewTexture, PendingFill.NextLayer,
-                PendingFill.NextMip - PendingFill.FirstMip,
-                Mip.Pixels.data() + (uint64)FirstRow * RowBytes, BandBytes,
-                Mip.Width, Mip.Width, BandHeight, OffsetY);
 
             RemainingBytes   = BandBytes >= RemainingBytes ? 0ull : RemainingBytes - BandBytes;
             bMayExceedBudget = false;

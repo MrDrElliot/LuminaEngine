@@ -1,5 +1,5 @@
-﻿#pragma once
-#include "assets/factories/factory.h"
+#pragma once
+#include "Assets/Factories/Factory.h"
 #include "PrefabFactory.generated.h"
 
 namespace Lumina

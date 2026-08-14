@@ -26,7 +26,8 @@ namespace Lumina::RHI::Textures
         uint32    Slot       = kInvalidHeapSlot;
         FTextureH NewTexture;                     // staged; bound once Batch has executed
         FTextureH OldTexture;                     // what the slot still names; retired after the repoint
-        uint64    Batch      = 0;                 // 0 = not armed yet (CommitRecreate has not run)
+        uint64    Batch      = 0;                 // the upload batch this swap waits on; only read when armed
+        bool      bArmed     = false;             // CommitRecreate has run
         uint32    IdleTicks  = 0;                 // ticks spent unarmed, for the "forgot to commit" warning
     };
 
@@ -247,6 +248,7 @@ namespace Lumina::RHI::Textures
                 Abandoned           = Existing.NewTexture;
                 Existing.NewTexture = NewTexture;
                 Existing.Batch      = 0;
+                Existing.bArmed     = false;
                 Existing.IdleTicks  = 0;
                 bMerged             = true;
                 break;
@@ -254,7 +256,7 @@ namespace Lumina::RHI::Textures
 
             if (!bMerged)
             {
-                GState.PendingSwaps.push_back(FPendingSwap{ Tex.SampledSlot, NewTexture, Previous, 0, 0 });
+                GState.PendingSwaps.push_back(FPendingSwap{ Tex.SampledSlot, NewTexture, Previous, 0, false, 0 });
             }
         }
 
@@ -280,7 +282,9 @@ namespace Lumina::RHI::Textures
         }
 
         // Read AFTER the caller queued its uploads, which is what makes this the batch those uploads are
-        // in (or, if a flush raced in between, a later one -- conservative, not wrong).
+        // in (or, if a flush raced in between, a later one -- conservative, not wrong). It is legitimately
+        // ZERO before the first flush of the session, which is why "armed" is its own flag rather than a
+        // batch sentinel: 0 there means "already complete", not "never committed".
         const uint64 Batch = Upload::BatchForQueuedOps();
 
         FScopeLock Lock(GState.SwapMutex);
@@ -289,10 +293,45 @@ namespace Lumina::RHI::Textures
             if (Pending.Slot == Tex.SampledSlot)
             {
                 Pending.Batch     = Batch;
+                Pending.bArmed    = true;
                 Pending.IdleTicks = 0;
                 return;
             }
         }
+    }
+
+    void AbandonRecreate(FManagedTexture& Tex)
+    {
+        if (Tex.SampledSlot == kInvalidHeapSlot)
+        {
+            return;
+        }
+
+        FTextureH Staged;
+        {
+            FScopeLock Lock(GState.SwapMutex);
+            for (size_t i = 0; i < GState.PendingSwaps.size(); ++i)
+            {
+                if (GState.PendingSwaps[i].Slot != Tex.SampledSlot)
+                {
+                    continue;
+                }
+
+                // Tex.Texture is the staged image -- Recreate pointed it there. Hand it back the one the
+                // slot never stopped naming, or the caller would be left describing an image that is about
+                // to be retired while its ResourceID still resolves to a different one.
+                Staged      = GState.PendingSwaps[i].NewTexture;
+                Tex.Texture = GState.PendingSwaps[i].OldTexture;
+
+                GState.PendingSwaps[i] = GState.PendingSwaps.back();
+                GState.PendingSwaps.pop_back();
+                break;
+            }
+        }
+
+        // Outside the lock: retiring re-enters the upload and storage-slot bookkeeping. Also cancels the
+        // partial uploads already queued against it, which would otherwise copy into a dead image.
+        RetireTextureAndSlots(Staged);
     }
 
     bool CopyMipFromCurrent(const FManagedTexture& Tex, uint32 Layer, uint32 SrcMip, uint32 DstMip, uint32 Width, uint32 Height)
@@ -357,11 +396,12 @@ namespace Lumina::RHI::Textures
             {
                 FPendingSwap& Pending = GState.PendingSwaps[i];
 
-                if (Pending.Batch == 0)
+                if (!Pending.bArmed)
                 {
                     // Recreate ran and CommitRecreate never did. Deliberately NOT auto-armed: guessing a
                     // batch could publish an image whose upload has not happened, which is the exact
                     // failure this machinery exists to prevent. Stuck-and-loud beats visibly wrong.
+                    // A caller that cannot finish what it staged should say so with AbandonRecreate.
                     if (++Pending.IdleTicks == 60)
                     {
                         LOG_ERROR("RHI: bindless slot {} has a staged texture that was never committed. "
@@ -395,14 +435,14 @@ namespace Lumina::RHI::Textures
         }
     }
 
-    void Upload(const FManagedTexture& Tex, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels, uint32 Width, uint32 Height)
+    bool Upload(const FManagedTexture& Tex, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels, uint32 Width, uint32 Height)
     {
-        UploadTexture(Tex.Texture, 0, Mip, Data, Size, RowPitchTexels, Width, Height);
+        return UploadTexture(Tex.Texture, 0, Mip, Data, Size, RowPitchTexels, Width, Height);
     }
 
-    void UploadLayer(const FManagedTexture& Tex, uint32 Layer, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels, uint32 Width, uint32 Height, uint32 OffsetY)
+    bool UploadLayer(const FManagedTexture& Tex, uint32 Layer, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels, uint32 Width, uint32 Height, uint32 OffsetY)
     {
-        UploadTexture(Tex.Texture, Layer, Mip, Data, Size, RowPitchTexels, Width, Height, OffsetY);
+        return UploadTexture(Tex.Texture, Layer, Mip, Data, Size, RowPitchTexels, Width, Height, OffsetY);
     }
 
     void Clear(const FManagedTexture& Tex, const float Value[4])

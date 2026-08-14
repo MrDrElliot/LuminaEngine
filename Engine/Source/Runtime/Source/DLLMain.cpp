@@ -40,7 +40,19 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD  ul_reason_for_call, LPVOID lpReser
     return TRUE;
 }
 
+#elif defined(LE_PLATFORM_LINUX)
+
+#include "Memory/Memory.h"
 
 
+extern "C" __attribute__((constructor)) void LuminaRuntimeImageAttach()
+{
+    Lumina::Memory::InitializeThreadHeap();
+}
+
+extern "C" __attribute__((destructor)) void LuminaRuntimeImageDetach()
+{
+    Lumina::Memory::ShutdownThreadHeap();
+}
 
 #endif

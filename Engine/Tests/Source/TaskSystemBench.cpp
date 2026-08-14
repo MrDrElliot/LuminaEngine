@@ -433,3 +433,136 @@ TEST(TaskBench, CoroManyInFlightWaiters)
     std::fflush(stdout);
     SUCCEED();
 }
+
+namespace
+{
+    constexpr uint64 kNarrowJobIters = 300000;
+
+    struct FNarrowShared
+    {
+        std::atomic<uint32> Done{0};
+        std::atomic<double> Sink{0.0};
+    };
+
+    void NarrowJob(void* Arg, uint32 /*Worker*/)
+    {
+        FNarrowShared* S = static_cast<FNarrowShared*>(Arg);
+        const double V = BusySpin(kNarrowJobIters, 1.0);
+        S->Sink.store(V, std::memory_order_relaxed);
+        S->Done.fetch_add(1, std::memory_order_release);
+    }
+}
+
+TEST(TaskBench, NarrowColdSubmit_WakeFanout)
+{
+    const uint32 Workers = GTaskSystem->GetNumWorkers();
+    const uint32 K       = std::max(2u, Workers / 4u); // narrow: well under the worker count
+
+    volatile double OneSink = 0.0;
+    double OneJobMs = 0.0;
+    {
+        TVector<double> One;
+        for (int i = 0; i < 32; ++i)
+        {
+            const auto T0 = Clock::now();
+            OneSink = BusySpin(kNarrowJobIters, (double)i);
+            One.push_back(MsSince(T0));
+        }
+        OneJobMs = Summarize(One).Median;
+    }
+
+    FNarrowShared S;
+    auto RunOnce = [&]() -> double
+    {
+        S.Done.store(0, std::memory_order_relaxed);
+        const auto T0 = Clock::now();
+        for (uint32 i = 0; i < K; ++i)
+        {
+            Jobs::RunJob(&NarrowJob, &S, Jobs::EJobPriority::Normal, nullptr, "NarrowColdSubmit");
+        }
+        while (S.Done.load(std::memory_order_acquire) < K)
+        {
+        }
+        return MsSince(T0);
+    };
+
+    for (int i = 0; i < 20; ++i) RunOnce(); // warm
+
+    constexpr int Runs = 240;
+    TVector<double> Samples;
+    Samples.reserve(Runs);
+    for (int r = 0; r < Runs; ++r)
+    {
+        Threading::Sleep(2); // let the pool drain and park -- the cold-wake precondition
+        Samples.push_back(RunOnce());
+    }
+
+    const FStats St = Summarize(Samples);
+    ReportDist("narrow cold submit (K single jobs)", Samples);
+    std::printf("[TaskBench]   K=%u jobs / %u workers, 1 job %.4f ms -> median %.2fx one job "
+                "(1.0x = perfect fan-out, %.1fx = fully serialized on one worker)\n",
+        K, Workers, OneJobMs, St.Median / OneJobMs, (double)K);
+    std::fflush(stdout);
+    SUCCEED();
+}
+
+namespace
+{
+    struct FResumeShared
+    {
+        Jobs::FCounter*     Gate    = nullptr;
+        std::atomic<uint32> Parked{0};
+        std::atomic<uint32> Resumed{0};
+    };
+
+    void ResumeStormJob(void* Arg, uint32 /*Worker*/)
+    {
+        FResumeShared* S = static_cast<FResumeShared*>(Arg);
+        S->Parked.fetch_add(1, std::memory_order_release);
+        Jobs::WaitForCounter(S->Gate, 0);          // parks this fiber
+        S->Resumed.fetch_add(1, std::memory_order_release);
+    }
+}
+
+TEST(TaskBench, ResumeStorm_ParkedFiberWake)
+{
+    constexpr uint32 N = 200; // under the 256 fiber pool: each parked job pins one
+
+    auto RunOnce = [&]() -> double
+    {
+        FResumeShared S;
+        S.Gate = Jobs::AllocCounter(1);
+
+        Jobs::FJobDecl Decls[N];
+        for (uint32 i = 0; i < N; ++i)
+        {
+            Decls[i] = Jobs::FJobDecl{ &ResumeStormJob, &S, "ResumeStorm" };
+        }
+        Jobs::FCounter* Done = Jobs::AllocCounter(0);
+        Jobs::RunJobs(Decls, N, Jobs::EJobPriority::Normal, Done);
+
+        while (S.Parked.load(std::memory_order_acquire) < N) { Threading::ThreadYield(); }
+        Threading::Sleep(1); // let the last few actually park and the pool settle
+
+        const auto T0 = Clock::now();
+        Jobs::DecrementCounter(S.Gate, 1);         // releases all N at once
+        Jobs::WaitForCounter(Done, 0);
+        const double Ms = MsSince(T0);
+
+        Jobs::FreeCounter(Done);
+        Jobs::FreeCounter(S.Gate);
+        return Ms;
+    };
+
+    for (int i = 0; i < 10; ++i) RunOnce(); // warm
+
+    constexpr int Runs = 120;
+    TVector<double> Samples;
+    Samples.reserve(Runs);
+    for (int r = 0; r < Runs; ++r) Samples.push_back(RunOnce());
+
+    ReportDist("resume storm (200 parked fibers)", Samples);
+    std::printf("[TaskBench] %-40s  %u fibers parked then released at once\n", "resume scale", N);
+    std::fflush(stdout);
+    SUCCEED();
+}

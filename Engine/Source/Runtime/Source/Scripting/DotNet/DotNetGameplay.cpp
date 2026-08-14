@@ -2,6 +2,7 @@
 #include "Scripting/DotNet/LayoutRegistry.h"
 #include "Containers/String.h"
 #include "Containers/Name.h"
+#include "Core/Object/Class.h"
 #include "World/World.h"
 #include "World/WorldContext.h"
 #include "Physics/PhysicsScene.h"

@@ -4,7 +4,7 @@
 #include <EASTL/string.h>
 #include <Reflector/ReflectionConfig.h>
 #include <Reflector/ReflectionCore/ReflectionMacro.h>
-#include "eastl/fixed_hash_map.h"
+#include "EASTL/fixed_hash_map.h"
 #include "Reflector/Clang/ClangParserContext.h"
 #include "Reflector/Clang/Utils.h"
 

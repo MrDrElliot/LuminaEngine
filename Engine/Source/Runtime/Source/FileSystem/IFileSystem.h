@@ -29,6 +29,17 @@ namespace Lumina::VFS
         // Crash-safe write (all-or-nothing); default falls back to WriteFile for backends with no atomic primitive.
         virtual bool AtomicWriteFile(FStringView Path, TSpan<const uint8> Data) { return WriteFile(Path, Data); }
 
+        /** Crash-safe write of Prefix, then SrcSize bytes copied straight out of SrcPath at SrcOffset, then
+         *  Suffix. The spliced middle is streamed in fixed chunks and never lands in a buffer of its own,
+         *  which is the entire reason this exists: it is how a package rename carries a multi-megabyte bulk
+         *  region into the new file without materializing a single mip.
+         *
+         *  Returns false when the backend cannot do it OR the copy failed, so every caller needs a path
+         *  that does not depend on it. Nothing is written unless the whole thing succeeds. */
+        virtual bool AtomicWriteFileSpliced(FStringView Path, TSpan<const uint8> Prefix,
+                                            FStringView SrcPath, uint64 SrcOffset, uint64 SrcSize,
+                                            TSpan<const uint8> Suffix) { return false; }
+
         virtual bool Exists(FStringView Path) const = 0;
         virtual bool IsDirectory(FStringView Path) const = 0;
         virtual bool IsEmpty(FStringView Path) const = 0;

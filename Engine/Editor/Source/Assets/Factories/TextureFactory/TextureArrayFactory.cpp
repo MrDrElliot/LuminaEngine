@@ -1,6 +1,7 @@
 #include "EditorPCH.h"
 #include "TextureArrayFactory.h"
 #include "TextureFactory.h"
+#include "Assets/AssetEvents.h"
 #include "Assets/AssetTypes/Textures/TextureArray.h"
 #include "Core/Object/Package/Package.h"
 #include "Renderer/RHITexture.h"
@@ -108,6 +109,13 @@ namespace Lumina
                 for (uint32 Mip = 0; Mip < SrcMips; ++Mip)
                 {
                     AssembledMips.push_back(Source->TextureResource->Mips[Mip]);
+
+                    // The copy brings the SOURCE's BulkRef with it, and that addresses the source's
+                    // package, not this array's. Left in place, the first demotion would drop these
+                    // pixels (a valid BulkRef is what marks them re-readable) and the promotion after it
+                    // would read the array's package at the source's offsets -- another texture's bytes.
+                    // The array's own refs are written when it is saved.
+                    AssembledMips.back().BulkRef = FBulkDataRef{};
                 }
                 continue;
             }
@@ -190,6 +198,11 @@ namespace Lumina
         {
             Package->MarkDirty();
         }
+
+        // Unlike a plain re-cook, this took a NEW bindless slot (the layer count is baked into the image,
+        // so there was no same-shape image to repoint). Every material that already baked the old
+        // ResourceID is now sampling a slot this array no longer owns, and nothing else rewrites them.
+        AssetEvents::BroadcastAssetDataChanged(Array);
 
         LOG_INFO("TextureArrayFactory: rebuilt '{0}' with {1} layers at {2}x{3} ({4} mips).",
                  Array->GetName().c_str(), LayerCount,

@@ -1,8 +1,10 @@
 using System.Diagnostics;
+using System.Formats.Tar;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using LuminaBuildTool.Configuration;
 using LuminaBuildTool.Core;
+using LuminaBuildTool.Platform;
 
 namespace LuminaBuildTool.Modes;
 
@@ -12,16 +14,57 @@ namespace LuminaBuildTool.Modes;
 /// </summary>
 public static class SetupMode
 {
-    /// <summary>Dependency bundle, published as a release asset to keep it out of the repository.</summary>
-    private const string DependencyUrl =
-        "https://github.com/MrDrElliot/LuminaEngine/releases/download/external-deps/External.zip";
-
-    /// <summary>
-    /// Checked before extracting. Refresh with: (Get-FileHash External.zip -Algorithm SHA256).Hash
-    /// </summary>
-    private const string ExpectedSha256 = "A3405839CC5A355AA6BEBCA74522C19C2306E6268D86C205B67402E721123276";
+    private const string ReleaseUrl =
+        "https://github.com/MrDrElliot/LuminaEngine/releases/download/external-deps";
 
     private const string HooksPath = "BuildScripts/Hooks";
+
+    private enum ArchiveFormat
+    {
+        Zip,
+
+        TarGz,
+    }
+
+    /// <summary>One downloadable dependency bundle and the SHA-256 it must match.</summary>
+    private sealed record DependencyBundle
+    {
+        public required BuildPlatform Platform { get; init; }
+
+        public required string AssetName { get; init; }
+
+        public required ArchiveFormat Format { get; init; }
+
+        public required string Sha256 { get; init; }
+
+        public required string SentinelPath { get; init; }
+
+        public string Url => $"{ReleaseUrl}/{AssetName}";
+
+        public bool bIsPublished => Sha256.Length > 0 || Platform == BuildPlatform.Windows64;
+    }
+
+    private static readonly DependencyBundle[] Bundles =
+    {
+        new()
+        {
+            Platform = BuildPlatform.Windows64,
+
+            AssetName = "External-Win64.zip",
+            Format = ArchiveFormat.Zip,
+            Sha256 = "A3405839CC5A355AA6BEBCA74522C19C2306E6268D86C205B67402E721123276",
+            SentinelPath = "LLVM/bin/libclang.dll",
+        },
+        new()
+        {
+            Platform = BuildPlatform.Linux64,
+            AssetName = "External-Linux64.tar.gz",
+            Format = ArchiveFormat.TarGz,
+
+            Sha256 = "1D0232C93DB3445C39BEE4339FDED7C41A8714E8432106F3304F02A3EE4B33FC",
+            SentinelPath = "LLVM/lib/libclang.so",
+        },
+    };
 
     private static readonly (string Name, string Use)[] DependencyManifest =
     {
@@ -46,16 +89,36 @@ public static class SetupMode
         Log.Info(string.Empty);
         Log.Info("[2/3] External dependencies");
 
+        BuildPlatform HostPlatform = BuildPlatformRegistry.HostPlatform;
+        DependencyBundle? Bundle = Bundles.FirstOrDefault(B => B.Platform == HostPlatform);
+
+        if (Bundle is null)
+        {
+            Log.Error("No dependency bundle is published for {0}.", HostPlatform);
+            Log.Error("DEPENDENCIES.md lists each upstream if you want to assemble one by hand.");
+            return 1;
+        }
+
         string ExternalDirectory = Path.Combine(Directories.EngineRoot, "External");
+        string Sentinel = Path.Combine(ExternalDirectory, Bundle.SentinelPath.Replace('/', Path.DirectorySeparatorChar));
         bool bForce = Arguments.HasFlag("Force");
 
-        if (Directory.Exists(ExternalDirectory) && !bForce)
+        if (File.Exists(Sentinel) && !bForce)
         {
-            Log.Info("External/ is already present; skipping the download. Pass -Force to refresh it.");
+            Log.Info("{0} dependencies are already installed; skipping the download. Pass -Force to refresh them.", HostPlatform);
         }
-        else if (!await InstallDependenciesAsync(Arguments, Directories.EngineRoot, Cancellation).ConfigureAwait(false))
+        else
         {
-            return 1;
+            if (Directory.Exists(ExternalDirectory) && !File.Exists(Sentinel))
+            {
+                Log.Info("External/ exists but holds nothing for {0} ({1} is missing).", HostPlatform, Bundle.SentinelPath);
+                Log.Info("Fetching this platform's bundle; the bundles are built to coexist, so anything already there stays.");
+            }
+
+            if (!await InstallDependenciesAsync(Arguments, Bundle, Directories.EngineRoot, Cancellation).ConfigureAwait(false))
+            {
+                return 1;
+            }
         }
 
         Log.Info(string.Empty);
@@ -71,23 +134,35 @@ public static class SetupMode
 
     private static async Task<bool> InstallDependenciesAsync(
         CommandLine Arguments,
+        DependencyBundle Bundle,
         string EngineRoot,
         CancellationToken Cancellation)
     {
-        if (!ConfirmDownload(Arguments))
+        if (!Bundle.bIsPublished)
+        {
+            Log.Error("No dependency bundle has been published for {0} yet.", Bundle.Platform);
+            Log.Error(string.Empty);
+            Log.Error("To build one: BuildScripts/MakeLinuxBundle.sh, which fetches each upstream and");
+            Log.Error("lays it out to match the paths the build expects. Then upload it as");
+            Log.Error("'{0}' on the external-deps release and pin the SHA-256 it prints", Bundle.AssetName);
+            Log.Error("in SetupMode.Bundles.");
+            return false;
+        }
+
+        if (!ConfirmDownload(Arguments, Bundle))
         {
             Log.Warning("Setup cancelled. No files were downloaded.");
             return false;
         }
 
-        string ArchivePath = Path.Combine(EngineRoot, "External.zip");
+        string ArchivePath = Path.Combine(EngineRoot, Bundle.AssetName);
 
-        if (!await DownloadAsync(DependencyUrl, ArchivePath, Cancellation).ConfigureAwait(false))
+        if (!await DownloadAsync(Bundle.Url, ArchivePath, Cancellation).ConfigureAwait(false))
         {
             return false;
         }
 
-        if (!VerifyChecksum(ArchivePath, ExpectedSha256))
+        if (!VerifyChecksum(ArchivePath, Bundle.Sha256))
         {
             File.Delete(ArchivePath);
             Log.Error("Deleted the failed download. Setup aborted.");
@@ -97,22 +172,32 @@ public static class SetupMode
         try
         {
             Log.Info("Extracting into {0}...", EngineRoot);
-            ZipFile.ExtractToDirectory(ArchivePath, EngineRoot, overwriteFiles: true);
+            Extract(ArchivePath, Bundle.Format, EngineRoot);
         }
         catch (Exception Ex) when (Ex is IOException or InvalidDataException or UnauthorizedAccessException)
         {
             Log.Error("Extraction failed: {0}", Ex.Message);
-            Log.Error("Leaving External.zip in place for inspection.");
+            Log.Error("Leaving {0} in place for inspection.", Bundle.AssetName);
             return false;
         }
 
         File.Delete(ArchivePath);
-        Log.Info("Dependencies installed.");
+
+        string Sentinel = Path.Combine(EngineRoot, "External", Bundle.SentinelPath.Replace('/', Path.DirectorySeparatorChar));
+
+        if (!File.Exists(Sentinel))
+        {
+            Log.Error("The bundle extracted but does not contain External/{0}.", Bundle.SentinelPath);
+            Log.Error("It is either the wrong platform's asset or incomplete; the build will fail on it later.");
+            return false;
+        }
+
+        Log.Info("Dependencies installed for {0}.", Bundle.Platform);
 
         return true;
     }
 
-    private static bool ConfirmDownload(CommandLine Arguments)
+    private static bool ConfirmDownload(CommandLine Arguments, DependencyBundle Bundle)
     {
         if (Arguments.HasFlag("Yes") || Environment.GetEnvironmentVariable("LUMINA_SETUP_YES") is not null)
         {
@@ -120,7 +205,7 @@ public static class SetupMode
         }
 
         Log.Info("------------------------------------------------------------");
-        Log.Info(" External dependencies (prebuilt bundle, roughly 671 MB)");
+        Log.Info(" External dependencies for {0} (prebuilt bundle, several hundred MB)", Bundle.Platform);
         Log.Info("------------------------------------------------------------");
 
         foreach ((string Name, string Use) in DependencyManifest)
@@ -129,7 +214,7 @@ public static class SetupMode
         }
 
         Log.Info(string.Empty);
-        Log.Info(" Source:  {0}", DependencyUrl);
+        Log.Info(" Source:  {0}", Bundle.Url);
         Log.Info(" Details: DEPENDENCIES.md lists upstream sources, versions and licenses.");
         Log.Info(string.Empty);
 
@@ -199,6 +284,20 @@ public static class SetupMode
             Log.Error("Download failed: {0}", Ex.Message);
             return false;
         }
+    }
+
+    private static void Extract(string ArchivePath, ArchiveFormat Format, string EngineRoot)
+    {
+        if (Format == ArchiveFormat.Zip)
+        {
+            ZipFile.ExtractToDirectory(ArchivePath, EngineRoot, overwriteFiles: true);
+            return;
+        }
+
+        using FileStream Compressed = File.OpenRead(ArchivePath);
+        using GZipStream Decompressed = new(Compressed, CompressionMode.Decompress);
+
+        TarFile.ExtractToDirectory(Decompressed, EngineRoot, overwriteFiles: true);
     }
 
     private static bool VerifyChecksum(string FilePath, string Expected)

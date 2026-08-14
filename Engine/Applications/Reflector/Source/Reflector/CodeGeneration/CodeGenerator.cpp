@@ -101,17 +101,17 @@ namespace Lumina::Reflection
                 return Project.GeneratedDir;
             }
 
-            return WorkspacePath + R"(\Intermediates\Reflection\)" + Project.Name;
+            return WorkspacePath + "/Intermediates/Reflection/" + Project.Name;
         }
 
         eastl::string MakeGeneratedHeaderPath(const eastl::string& WorkspacePath, const FReflectedHeader& Header)
         {
-            return ProjectGeneratedDir(WorkspacePath, *Header.Project) + R"(\)" + Header.FileName + ".generated.h";
+            return ProjectGeneratedDir(WorkspacePath, *Header.Project) + "/" + Header.FileName + ".generated.h";
         }
 
         eastl::string MakeGeneratedSourcePath(const eastl::string& WorkspacePath, const FReflectedHeader& Header)
         {
-            return ProjectGeneratedDir(WorkspacePath, *Header.Project) + R"(\)" + Header.FileName + ".generated.cpp";
+            return ProjectGeneratedDir(WorkspacePath, *Header.Project) + "/" + Header.FileName + ".generated.cpp";
         }
 
         // bRoutable = the header has no reflected TYPES (it's a SCRIPT_EXPORT free-function facade). Only those
@@ -122,9 +122,9 @@ namespace Lumina::Reflection
         {
             if (bRoutable && !Header.Project->CSharpBindingsDir.empty())
             {
-                return Header.Project->CSharpBindingsDir + R"(\)" + Header.FileName + ".generated.cs";
+                return Header.Project->CSharpBindingsDir + "/" + Header.FileName + ".generated.cs";
             }
-            return WorkspacePath + R"(\Intermediates\CSharpBindings\)" + Header.Project->Name + R"(\)" + Header.FileName + ".generated.cs";
+            return WorkspacePath + "/Intermediates/CSharpBindings/" + Header.Project->Name + "/" + Header.FileName + ".generated.cs";
         }
 
         // One unity TU per project was a 52s serial spike on Runtime's critical path (more than the
@@ -159,7 +159,7 @@ namespace Lumina::Reflection
         eastl::string MakeUnityPath(const eastl::string& WorkspacePath, const FReflectedProject& Project, int Shard)
         {
             return ProjectGeneratedDir(WorkspacePath, Project)
-                 + R"(\ReflectionUnity_)" + eastl::to_string(Shard) + ".gen.cpp";
+                 + "/ReflectionUnity_" + eastl::to_string(Shard) + ".gen.cpp";
         }
 
         eastl::string MakeProjectIntermediateDir(const eastl::string& WorkspacePath, const FReflectedProject& Project)

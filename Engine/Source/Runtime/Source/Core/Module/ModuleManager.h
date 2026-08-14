@@ -28,13 +28,33 @@
 #define LUMINA_MODULE_ABI_STR2(x) #x
 #define LUMINA_MODULE_ABI_STR(x)  LUMINA_MODULE_ABI_STR2(x)
 
+#if defined(_MSC_VER)
+    #define LUMINA_MODULE_ABI_COMPILER "MSC" LUMINA_MODULE_ABI_STR(_MSC_VER)
+#elif defined(__clang__)
+    #define LUMINA_MODULE_ABI_COMPILER "CLANG" LUMINA_MODULE_ABI_STR(__clang_major__)
+#elif defined(__GNUC__)
+    #define LUMINA_MODULE_ABI_COMPILER "GCC" LUMINA_MODULE_ABI_STR(__GNUC__)
+#else
+    #define LUMINA_MODULE_ABI_COMPILER "UNKNOWNCC"
+#endif
+
+#if defined(_LIBCPP_VERSION)
+    #define LUMINA_MODULE_ABI_STDLIB "LIBCXX"
+#elif defined(__GLIBCXX__)
+    #define LUMINA_MODULE_ABI_STDLIB "GLIBCXX" LUMINA_MODULE_ABI_STR(_GLIBCXX_USE_CXX11_ABI)
+#elif defined(_MSVC_STL_VERSION)
+    #define LUMINA_MODULE_ABI_STDLIB "MSSTL"
+#else
+    #define LUMINA_MODULE_ABI_STDLIB "UNKNOWNSTL"
+#endif
+
 // Compile-time fingerprint, identical for the engine and any ABI-compatible module.
-// Example: "LMABI/1|Development|Editor|MSC1944"
 #define LUMINA_MODULE_ABI_SIGNATURE                              \
     "LMABI/" LUMINA_MODULE_ABI_STR(LUMINA_MODULE_ABI_VERSION)    \
     "|" LUMINA_CONFIGURATION_NAME                                \
     "|" LUMINA_MODULE_ABI_PLATFORM                               \
-    "|MSC" LUMINA_MODULE_ABI_STR(_MSC_VER)
+    "|" LUMINA_MODULE_ABI_COMPILER                               \
+    "|" LUMINA_MODULE_ABI_STDLIB
 
 
 // IMPLEMENT_MODULE has two flavors (LUMINA_MONOLITHIC): modular exports InitializeModule for
@@ -54,16 +74,16 @@
 #else
 
 #define IMPLEMENT_MODULE(ModuleClass, ModuleName)                                           \
-    extern "C" __declspec(dllexport) const char* LuminaModuleABISignature()                 \
+    extern "C" DLL_EXPORT const char* LuminaModuleABISignature()                            \
     {                                                                                       \
         return LUMINA_MODULE_ABI_SIGNATURE;                                                 \
     }                                                                                       \
-    extern "C" __declspec(dllexport) Lumina::IModuleInterface* InitializeModule()           \
+    extern "C" DLL_EXPORT Lumina::IModuleInterface* InitializeModule()                      \
     {                                                                                       \
         Lumina::Memory::InitializeThreadHeap();                                             \
         return Lumina::Memory::New<ModuleClass>();                                          \
     }                                                                                       \
-    extern "C" __declspec(dllexport) void ShutdownModule()                                  \
+    extern "C" DLL_EXPORT void ShutdownModule()                                             \
     {                                                                                       \
         Lumina::Memory::ShutdownThreadHeap();                                               \
     }

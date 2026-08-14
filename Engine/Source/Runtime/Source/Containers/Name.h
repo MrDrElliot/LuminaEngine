@@ -1,5 +1,7 @@
 #pragma once
 
+#include <format>
+
 #include "String.h"
 #include "Core/DisableAllWarnings.h"
 #include "Core/LuminaMacros.h"
@@ -33,11 +35,13 @@ namespace Lumina
         /** Construct from an explicit base name and external number, e.g. FName("Entity", 3) -> "Entity_3". */
         FName(const char* Str, uint32 InNumber);
 
+#if PLATFORM_TCHAR_IS_WIDE
         FName(const TCHAR* Str) : FName(StringUtils::FromWideString(Str)) {}
+#endif
         FName(const FString& Str) : FName(Str.c_str()) {}
         FName(const FWString& Str) : FName(StringUtils::FromWideString(Str)) {}
         FName(const FFixedString& Str) : FName(Str.c_str()) {}
-        FName(const FFixedWString& Str) : FName(Str.c_str()) {}
+        FName(const FFixedWString& Str) : FName(StringUtils::FromWideString(Str.c_str())) {}
         FName(FStringView Str) : FName(FString(Str.data(), Str.length()).c_str()) {}
 
         explicit FName(uint64 InID) : ID(InID) {}
@@ -111,7 +115,7 @@ namespace eastl
     template <typename T> struct hash;
 
     template <>
-    struct eastl::hash<Lumina::FName>
+    struct hash<Lumina::FName>
     {
         size_t operator()(const Lumina::FName& Name) const
         {

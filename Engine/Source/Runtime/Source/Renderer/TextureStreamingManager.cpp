@@ -279,9 +279,8 @@ namespace Lumina
         // and land twice the spike the setting names.
         FrameUploadBudget = (uint64)Math::Max(Settings().MaxUploadMBPerFrame, 1) * 1024ull * 1024ull;
 
-        // And ONE image-churn budget, spent by promotions and demotions alike. The upload budget above
-        // cannot stand in for it: a demotion re-creates the image and retires the old one while copying
-        // zero host bytes, so it is free by that measure and very much not free in practice.
+        // And ONE image-churn budget: a demotion recreates the image while copying zero host bytes, so the
+        // upload budget above cannot see it.
         FrameResidencyChanges = (uint32)Math::Max(Settings().MaxResidencyChangesPerFrame, 1);
 
         // Before anything new is started: an image that is already staged and half-filled is holding a
@@ -319,9 +318,22 @@ namespace Lumina
             // The over-budget allowance is granted at most ONCE per frame, to whichever texture asks
             // first, so a mip bigger than the whole budget still converges without every texture in the
             // scene claiming the same exemption in the same frame.
-            const uint64 Before = FrameUploadBudget;
+            const uint64 Before      = FrameUploadBudget;
+            const uint32 FirstMipWas = Texture->GetResidentFirstMip();
+
             Texture->TickResidencyFill(FrameUploadBudget, bMayExceedBudgetThisFrame);
             bMayExceedBudgetThisFrame = bMayExceedBudgetThisFrame && (FrameUploadBudget == Before);
+
+            // A fill that had to abandon its staged image rolls residency back, and the entry's cached
+            // size was charged against the pool when the change was APPLIED. Left alone, the pool would
+            // keep counting mips that were given back -- permanently, since nothing else recomputes it
+            // until the next successful change.
+            if (Texture->GetResidentFirstMip() != FirstMipWas)
+            {
+                ResidentBytesTotal -= Entry.ResidentBytes;
+                Entry.ResidentBytes = Texture->GetTextureResource().CalcResidentSizeBytes();
+                ResidentBytesTotal += Entry.ResidentBytes;
+            }
         }
     }
 
@@ -498,10 +510,7 @@ namespace Lumina
 
         for (FStreamingTexture& Entry : Textures)
         {
-            // Out of image churn for this frame. Everything still wanting coarser keeps its
-            // FramesWantingCoarser count and is demoted over the following frames instead -- which is the
-            // whole point: a budget sweep that sheds one mip from every texture in the scene used to apply
-            // ALL of them here, and each one is an image create plus a retire. That was the 100ms+ stall.
+            // Out of image churn. The rest keep their FramesWantingCoarser and demote over later frames.
             if (FrameResidencyChanges == 0)
             {
                 break;
@@ -637,21 +646,63 @@ namespace Lumina
             Load->SourceFirstMip = (uint8)CurrentFirstMip;
             Load->LayerCount     = Math::Max(Texture->GetTextureResource().GetNumLayers(), 1u);
             Load->MipBytes.resize((SIZE_T)Load->LayerCount * Load->MipSpan());
+            Load->MipRefs.resize((SIZE_T)Load->LayerCount * Load->MipSpan());
+
+            // Snapshot what the read needs BEFORE it is dispatched, so the worker never dereferences the
+            // texture's mips. It used to read FMip::Pixels and FMip::BulkRef live, which raced anything on
+            // the game thread that touched them -- most sharply a save: CTexture::PreSave refills Pixels
+            // from disk, and reallocating that vector while the worker is copying it is a use-after-free.
+            // Renaming a texture that is streaming in is exactly that sequence.
+            //
+            // Every layer, not just layer 0: Mips is a flat Layer-major array and ApplyMipResidency refuses
+            // the promotion unless all of them are populated.
+            {
+                const FTextureResource& Resource = Texture->GetTextureResource();
+
+                for (uint32 Layer = 0; Layer < Load->LayerCount; ++Layer)
+                {
+                    for (uint32 Mip = Load->TargetFirstMip; Mip < Load->SourceFirstMip; ++Mip)
+                    {
+                        const uint32 MipIndex = Resource.MipIndex(Layer, Mip);
+                        if (MipIndex >= Resource.Mips.size())
+                        {
+                            continue;   // no ref and no bytes: the worker fails the load on this slice
+                        }
+
+                        const FTextureResource::FMip& MipData = Resource.Mips[MipIndex];
+                        const uint32 Slice = Load->SliceIndex(Layer, Mip);
+
+                        // Already in memory (a save just pulled it back, or a demotion has not reclaimed it
+                        // yet): hand the bytes over now rather than re-reading them. Also the correct
+                        // fallback when a failed save left BulkRef pointing into a region never written.
+                        if (!MipData.Pixels.empty())
+                        {
+                            Load->MipBytes[Slice] = MipData.Pixels;
+                        }
+                        else
+                        {
+                            Load->MipRefs[Slice] = MipData.BulkRef;
+                        }
+                    }
+                }
+            }
 
             FPendingLoad* Raw = Load.get();
             PendingLoads.push_back(Move(Load));
             Entry.bLoadInFlight = true;
 
-            // Only the disk read happens off-thread. ReadBulkData is a stateless ranged VFS read against a
-            // region whose location is fixed for the life of the loaded package, so it needs no lock; the
-            // residency change it feeds is applied back on the game thread by ProcessCompletedLoads.
+            // Only the disk read happens off-thread, against refs and a package that were resolved above;
+            // the residency change it feeds is applied back on the game thread by ProcessCompletedLoads.
             Task::AsyncTask(1, 1, [Raw](uint32, uint32, uint32)
             {
                 LUMINA_PROFILE_SECTION("Texture Stream Read");
 
                 // Resolved here rather than captured: a captured CPackage* would have to outlive the read
                 // on its own, whereas the texture's weak pointer already tells us whether any of this is
-                // still worth doing.
+                // still worth doing. A rename does NOT invalidate it -- CPackage::Rename keeps its exported
+                // objects alive precisely so live references survive -- and ReadBulkData takes the region
+                // and the file it lives in as one consistent snapshot, so a save committing underneath this
+                // read moves it to the new file wholesale rather than half-way.
                 CTexture* Target  = Raw->Texture.Get();
                 CPackage* Package = Target ? Target->GetPackage() : nullptr;
                 if (Target == nullptr || Package == nullptr)
@@ -661,38 +712,17 @@ namespace Lumina
                     return;
                 }
 
-                const FTextureResource& Resource = Target->GetTextureResource();
-
-                // Every layer, not just layer 0: Mips is a flat Layer-major array and ApplyMipResidency
-                // refuses the promotion unless all of them are populated.
-                for (uint32 Layer = 0; Layer < Raw->LayerCount && !Raw->bFailed; ++Layer)
+                for (SIZE_T Slice = 0; Slice < Raw->MipBytes.size() && !Raw->bFailed; ++Slice)
                 {
-                    for (uint32 Mip = Raw->TargetFirstMip; Mip < Raw->SourceFirstMip; ++Mip)
+                    if (!Raw->MipBytes[Slice].empty())
                     {
-                        const uint32 Index = Resource.MipIndex(Layer, Mip);
-                        if (Index >= Resource.Mips.size())
-                        {
-                            Raw->bFailed = true;
-                            break;
-                        }
+                        continue;   // handed over already resident
+                    }
 
-                        const FTextureResource::FMip& MipData = Resource.Mips[Index];
-                        TVector<uint8>& Dest = Raw->MipBytes[Raw->SliceIndex(Layer, Mip)];
-
-                        // Already in memory (a save just pulled it back, or a demotion has not reclaimed it yet):
-                        // copy rather than re-read. Also the correct fallback when a failed save left BulkRef
-                        // pointing into a region that was never written.
-                        if (!MipData.Pixels.empty())
-                        {
-                            Dest = MipData.Pixels;
-                            continue;
-                        }
-
-                        if (!Package->ReadBulkData(MipData.BulkRef, Dest))
-                        {
-                            Raw->bFailed = true;
-                            break;
-                        }
+                    if (!Raw->MipRefs[Slice].IsValid()
+                     || !Package->ReadBulkData(Raw->MipRefs[Slice], Raw->MipBytes[Slice]))
+                    {
+                        Raw->bFailed = true;
                     }
                 }
 
@@ -711,11 +741,10 @@ namespace Lumina
         // bytes are allowed to land per frame. A load that does not fit stays complete and pending -- its
         // bytes are already in memory, so waiting a frame costs nothing but the wait.
 
-        // Promotions run before demotions this frame, so without a reserve they would take every residency
-        // change going and the pool would never actually shrink while it was over budget. Demotions are the
-        // half that frees memory, so under pressure they keep half the frame's changes.
+        // Promotions run first, so under pressure they leave half the changes for the half that frees
+        // memory. Floored at one: over-budget can be permanent, and zero would strand a PINNED texture.
         const uint32 PromotionLimit = (ResidentBytesTotal > GetBudgetBytes())
-            ? FrameResidencyChanges / 2u
+            ? Math::Max(FrameResidencyChanges / 2u, 1u)
             : FrameResidencyChanges;
         uint32 PromotionsApplied = 0;
 

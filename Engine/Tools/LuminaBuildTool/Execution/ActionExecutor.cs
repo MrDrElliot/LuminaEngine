@@ -426,7 +426,7 @@ public sealed class ActionExecutor
             // has to see the list the compiler just reported rather than the previous build's.
             if (Action.DependencyListFile is not null)
             {
-                Dependencies.RecordFromCompilerOutput(PrimaryOutput, Action.DependencyListFile);
+                Dependencies.RecordFromCompilerOutput(PrimaryOutput, Action.DependencyListFile, Action.DependencyListFormat);
             }
 
             History.RecordInputFingerprint(PrimaryOutput, ActionGraph.ComputeInputFingerprint(Action, Dependencies));
@@ -452,6 +452,12 @@ public sealed class ActionExecutor
         foreach (FileItem Produced in Action.AllProducedItems)
         {
             PathUtils.EnsureDirectoryForFile(Produced.Location);
+
+            if (Action.bDeleteOutputsBeforeRun && File.Exists(Produced.Location))
+            {
+                File.Delete(Produced.Location);
+                Produced.Invalidate();
+            }
         }
 
         if (Action.WorkingDirectory.Length > 0)

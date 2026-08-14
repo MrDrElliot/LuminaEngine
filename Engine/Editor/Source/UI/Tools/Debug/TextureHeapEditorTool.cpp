@@ -6,7 +6,7 @@
 
 namespace Lumina
 {
-    static const char* TextureTypeName(RHI::ETextureType Type)
+    static const char* HeapTextureTypeName(RHI::ETextureType Type)
     {
         switch (Type)
         {
@@ -225,7 +225,7 @@ namespace Lumina
                 char SlotText[16];
                 snprintf(SlotText, sizeof(SlotText), "%u", Info.Slot);
                 const bool bMatch = FString(FormatName).find(Filter) != FString::npos
-                                 || FString(TextureTypeName(Desc.Type)).find(Filter) != FString::npos
+                                 || FString(HeapTextureTypeName(Desc.Type)).find(Filter) != FString::npos
                                  || FStringView(SlotText) == FilterView;
                 if (!bMatch)
                 {
@@ -274,7 +274,7 @@ namespace Lumina
             ImGui::TextUnformatted(FormatName);
 
             ImGui::TableNextColumn();
-            ImGui::TextUnformatted(TextureTypeName(Desc.Type));
+            ImGui::TextUnformatted(HeapTextureTypeName(Desc.Type));
 
             ImGui::TableNextColumn();
             ImGui::Text("%u", Desc.MipCount);
@@ -332,7 +332,7 @@ namespace Lumina
         }
         else
         {
-            ImGui::TextDisabled("No 2D preview for %s textures.", TextureTypeName(Desc.Type));
+            ImGui::TextDisabled("No 2D preview for %s textures.", HeapTextureTypeName(Desc.Type));
         }
 
         ImGui::Spacing();
@@ -350,7 +350,7 @@ namespace Lumina
 
             Row("Dimensions", "%u x %u x %u", Desc.Dimension.x, Desc.Dimension.y, Desc.Dimension.z);
             Row("Format",     "%s", RHI::Format::Info(Desc.Format).Name);
-            Row("Type",       "%s", TextureTypeName(Desc.Type));
+            Row("Type",       "%s", HeapTextureTypeName(Desc.Type));
             Row("Mips",       "%u", Desc.MipCount);
             Row("Layers",     "%u", Desc.LayerCount);
             Row("Samples",    "%u", Desc.SampleCount);

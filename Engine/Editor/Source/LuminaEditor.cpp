@@ -455,13 +455,10 @@ namespace Lumina
 
             LOG_INFO("[BuildTool] running {0}", BatPathStr.c_str());
 
-            FWString WideExe = StringUtils::ToWideString(BatPathStr.c_str());
-            FWString WideCwd = StringUtils::ToWideString(WorkingDirStr.c_str());
-
             const int ExitCode = Platform::RunProcessAndWaitCapture(
-                WideExe.c_str(),
+                UTF8_TO_TCHAR(BatPathStr.c_str()),
                 nullptr,
-                WideCwd.c_str(),
+                UTF8_TO_TCHAR(WorkingDirStr.c_str()),
                 [](FStringView Line)
                 {
                     if (Line.empty())

@@ -80,7 +80,7 @@ namespace Lumina
         }
 
         // Snapshot the buoyant water planes (center + half extent + mean surface Y + component for the waves).
-        struct FWaterPlane { const SWaterComponent* W; float Cx; float Cz; float HX; float HZ; float SurfaceY; };
+        struct FWaterPlane { const SWaterComponent* W; float Cx; float Cz; float HalfX; float HalfZ; float SurfaceY; };
         FWaterPlane Planes[16];
         int NumPlanes = 0;
         Context.CreateView<SWaterComponent, STransformComponent>().each(
@@ -114,7 +114,7 @@ namespace Lumina
                 for (int p = 0; p < NumPlanes; ++p)
                 {
                     const FWaterPlane& Pl = Planes[p];
-                    if (Math::Abs(BodyPos.x - Pl.Cx) <= Pl.HX && Math::Abs(BodyPos.z - Pl.Cz) <= Pl.HZ)
+                    if (Math::Abs(BodyPos.x - Pl.Cx) <= Pl.HalfX && Math::Abs(BodyPos.z - Pl.Cz) <= Pl.HalfZ)
                     {
                         if (!Plane || Pl.SurfaceY > Plane->SurfaceY)
                         {

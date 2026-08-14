@@ -399,15 +399,30 @@ namespace Lumina
             return false;
         }
 
-        if (!BulkRegion.IsValid() || Ref.Offset < 0 || Ref.Size > BulkRegion.Size - Ref.Offset)
+        // Taken together under the lock, then used outside it. Together, because a save commits a new
+        // region and a new file as ONE change and a reader that caught half of it would read the right
+        // offsets out of the wrong file; outside it, because this call is a blocking disk read on a
+        // streaming worker and holding the lock across it would serialize every streamed read in the game.
+        //
+        // The file is tracked explicitly rather than derived from the package's name: those agree right up
+        // until a rename, which renames in memory and then saves under the new name -- so a name-derived
+        // path would send this read at a file that does not exist yet.
+        FBulkRegion  Region;
+        FFixedString Path;
+        {
+            FScopeLock Lock(BulkMutex);
+            Region = BulkRegion;
+            Path   = BulkSourcePath.empty() ? GetPackagePath() : BulkSourcePath;
+        }
+
+        if (!Region.IsValid() || Ref.Offset < 0 || Ref.Size > Region.Size - Ref.Offset)
         {
             LOG_ERROR("ReadBulkData: ref (offset={}, size={}) is outside package {}'s bulk region (size={})",
-                Ref.Offset, Ref.Size, GetName(), BulkRegion.Size);
+                Ref.Offset, Ref.Size, GetName(), Region.Size);
             return false;
         }
 
-        const FFixedString Path = GetPackagePath();
-        if (!VFS::ReadFileRange(OutBytes, Path, (uint64)(BulkRegion.FileOffset + Ref.Offset), (uint64)Ref.Size))
+        if (!VFS::ReadFileRange(OutBytes, Path, (uint64)(Region.FileOffset + Ref.Offset), (uint64)Ref.Size))
         {
             LOG_ERROR("ReadBulkData: ranged read failed for {}", Path);
             OutBytes.clear();
@@ -740,6 +755,10 @@ namespace Lumina
             return false;
         }
 
+        // The rename above moved the package's NAME, not its bytes: the file still sits at OldPath and is
+        // what BulkSourcePath points at, which is what lets the PreSave inside this save pull streamed-out
+        // payloads back off disk. Removing OldPath before this line, or resolving bulk reads through the
+        // package name, empties every streamed mip into the new file -- silently and permanently.
         if (!SavePackage(Package, NewPath))
         {
             LOG_ERROR("RenamePackage: atomic save to {} failed; rolling back in-memory rename", NewPath);
@@ -768,6 +787,14 @@ namespace Lumina
         {
             FFixedString NewObjectName = SanitizeObjectName(NewPath);
             Package->Rename(NewObjectName, nullptr);
+
+            // Unlike RenamePackage, the bytes really did move -- the bulk region is now in the file at
+            // NewPath, and the old one is gone. Follow it, or every later streamed read goes to a path
+            // that no longer exists. Same region, new file, published as one change.
+            if (!Package->BulkSourcePath.empty())
+            {
+                Package->SetBulkSource(Package->GetBulkRegion(), NewPath);
+            }
         }
     }
 
@@ -816,8 +843,11 @@ namespace Lumina
         auto Start = std::chrono::high_resolution_clock::now();
 
         TVector<uint8> FileBinary;
-        if (ReadPackageFile(Path, FileBinary, &Package->BulkRegion))
+        FBulkRegion    LoadedBulkRegion;
+        if (ReadPackageFile(Path, FileBinary, &LoadedBulkRegion))
         {
+            Package->SetBulkSource(LoadedBulkRegion, Path);
+
             Package->CreateLoader(FileBinary);
         
             FPackageLoader& Reader = *static_cast<FPackageLoader*>(Package->Loader.get());
@@ -905,6 +935,10 @@ namespace Lumina
             {
                 Writer.SetFlag(EArchiverFlags::Cooking);
             }
+            if (Package->IsBulkPassthrough())
+            {
+                Writer.SetFlag(EArchiverFlags::BulkPassthrough);
+            }
 
             FPackageHeader Header;
             Header.Tag = PACKAGE_FILE_TAG;
@@ -942,6 +976,16 @@ namespace Lumina
             if (!CompressPackageBinary(OutUncompressed, OutCompressed))
             {
                 return false;
+            }
+
+            // Passthrough: OutCompressed is the CONTAINER ONLY. The region and trailer are the caller's to
+            // append, because the bytes come off the source file rather than out of this process -- that is
+            // the point. It reports where the region will land and how big it is so the caller can splice.
+            if (Package->IsBulkPassthrough())
+            {
+                OutBulkRegion.FileOffset = (int64)OutCompressed.size();
+                OutBulkRegion.Size       = Package->GetBulkRegion().Size;
+                return true;
             }
 
             // Bulk region rides after the container, raw. Emitted only when an export actually wrote
@@ -987,9 +1031,100 @@ namespace Lumina
         TVector<uint8> FileBinary;
         TVector<uint8> DiskBinary;
         FBulkRegion    NewBulkRegion;
-        if (!BuildPackageBytes(Package, /*bCooking*/ false, FileBinary, DiskBinary, NewBulkRegion))
+
+        // A rename rewrites the container (the object's name lives in the export table) but changes nothing
+        // about the payloads, so the region can be copied from the old file rather than rebuilt out of
+        // memory -- which is the only reason a rename would have to pull a 4K texture's ~21 MiB of mips off
+        // disk at all. Region-relative offsets are what make it legal: copy the region whole and every ref
+        // into it still lands in the right place. Gated on the package being CLEAN, because a dirty one may
+        // hold payloads that no longer match what is on disk.
+        const bool bSplice = Package->CanSpliceBulkRegion();
+
+        Package->bBulkDataUnresolved = false;
+        Package->bBulkPassthrough    = bSplice;
+
+        const bool bBuilt = BuildPackageBytes(Package, /*bCooking*/ false, FileBinary, DiskBinary, NewBulkRegion);
+
+        Package->bBulkPassthrough = false;
+
+        if (!bBuilt)
         {
             LOG_ERROR("Failed to compress package: {}", Path);
+            return false;
+        }
+
+        // The splice attempt, and its exits. Note this deliberately does NOT check bBulkDataUnresolved the
+        // way the rebuild below does: during a passthrough that flag means "an export had a payload with no
+        // ref into the region being copied", which the splice cannot carry but a rebuild handles fine. The
+        // container built above describes a layout the source bytes do not have, so it must never be
+        // written on its own -- every path out of here either commits the splice or rebuilds from scratch.
+        if (bSplice)
+        {
+            // DiskBinary is the container alone; the region streams straight out of the source file and the
+            // trailer that locates it goes on the end.
+            FPackageBulkTrailer Trailer;
+            Trailer.Magic      = kBulkTrailerMagic;
+            Trailer.Version    = kBulkTrailerVersion;
+            Trailer.BulkOffset = (uint64)NewBulkRegion.FileOffset;
+            Trailer.BulkSize   = (uint64)NewBulkRegion.Size;
+
+            const TSpan<const uint8> TrailerBytes(reinterpret_cast<const uint8*>(&Trailer), sizeof(Trailer));
+
+            const bool bSpliced = !Package->bBulkDataUnresolved
+                && VFS::AtomicWriteFileSpliced(Path, DiskBinary, Package->BulkSourcePath,
+                                               (uint64)Package->BulkRegion.FileOffset,
+                                               (uint64)Package->BulkRegion.Size, TrailerBytes);
+
+            if (bSpliced)
+            {
+                // Region and file together: a streaming read in flight against the old file either
+                // completes on it (the bytes are still there until the rename removes it) or picks up the
+                // new pair whole. The spliced region is byte-identical, so both answers are the same one.
+                Package->SetBulkSource(NewBulkRegion, Path);
+
+                Package->CreateLoader(FileBinary);
+                Package->ConditionalDropLoader();
+
+                LOG_INFO("Saved Package: \"{}\" - ( [{}] Exports | [{}] Imports | [{:.2f}] KiB container + "
+                         "[{:.2f}] KiB bulk spliced from disk )",
+                    Package->GetName(),
+                    Package->ExportTable.size(),
+                    Package->ImportTable.size(),
+                    static_cast<double>(DiskBinary.size()) / 1024.0,
+                    static_cast<double>(NewBulkRegion.Size) / 1024.0);
+
+                Package->ClearDirty();
+                return true;
+            }
+
+            // Nothing was written (the splice is all-or-nothing), so the rebuild is free to run from
+            // scratch -- and it is the path that needs nothing from the source file.
+            LOG_WARN("SavePackage: cannot splice the bulk region into {} ({}); rebuilding it from memory, "
+                     "which reads every streamed payload back in first.", Path,
+                     Package->bBulkDataUnresolved ? "an export had no ref into the region"
+                                                  : "the file copy failed");
+
+            DiskBinary.clear();
+            FileBinary.clear();
+            NewBulkRegion = FBulkRegion{};
+
+            Package->bBulkDataUnresolved = false;
+            if (!BuildPackageBytes(Package, /*bCooking*/ false, FileBinary, DiskBinary, NewBulkRegion))
+            {
+                LOG_ERROR("Failed to compress package: {}", Path);
+                return false;
+            }
+        }
+
+        // Checked after any rebuild, so it covers the plain build and the fallback alike: an export could
+        // not read back a payload it only holds a reference to, so the bytes here have it emptied out.
+        // Writing them would destroy data that is still intact on disk and nothing later could undo it.
+        if (Package->bBulkDataUnresolved)
+        {
+            Package->bBulkDataUnresolved = false;
+            LOG_ERROR("SavePackage: refusing to write {} -- an export's bulk data could not be read back and "
+                      "would be saved as empty. The file on disk is unchanged; see the errors above for "
+                      "which payload failed.", Path);
             return false;
         }
 
@@ -1001,8 +1136,9 @@ namespace Lumina
         }
 
         // Only after the write commits: every FBulkDataRef an export just serialized is relative to THIS
-        // region, and a reader that used the old one would read the previous save's bytes.
-        Package->BulkRegion = NewBulkRegion;
+        // region, and a reader that used the old one would read the previous save's bytes. The path moves
+        // with it -- a rename read from the old file up to this point, and from here on this IS the file.
+        Package->SetBulkSource(NewBulkRegion, Path);
 
         // Refresh loader only after disk commit so it can't point at uncommitted bytes (a partially-resident
         // package still needs it for lazy loads at the new offsets). Drop it again immediately if the save
@@ -1037,7 +1173,25 @@ namespace Lumina
         // those bytes, so cooked packages stream exactly like loose ones.
         TVector<uint8> FileBinary;
         FBulkRegion    CookedBulkRegion;
-        return BuildPackageBytes(Package, /*bCooking*/ true, FileBinary, OutCompressed, CookedBulkRegion);
+
+        Package->bBulkDataUnresolved = false;
+        if (!BuildPackageBytes(Package, /*bCooking*/ true, FileBinary, OutCompressed, CookedBulkRegion))
+        {
+            return false;
+        }
+
+        // Same rule as the editor save: a payload that could not be read back is emptied out in these
+        // bytes, and shipping that is a texture the packaged game can never get its mips for.
+        if (Package->bBulkDataUnresolved)
+        {
+            Package->bBulkDataUnresolved = false;
+            LOG_ERROR("SavePackageForCook: {} has bulk data that could not be read back; refusing to cook a "
+                      "package with the payload emptied out.", Package->GetName());
+            OutCompressed.clear();
+            return false;
+        }
+
+        return true;
     }
 
     void CPackage::CreateLoader(const TVector<uint8>& FileBinary)
@@ -1045,6 +1199,21 @@ namespace Lumina
         void* HeapData = Memory::Malloc(FileBinary.size());
         Memory::Memcpy(HeapData, FileBinary.data(), FileBinary.size());
         Loader = MakeUnique<FPackageLoader>(HeapData, FileBinary.size(), this);
+    }
+
+    void CPackage::SetBulkSource(const FBulkRegion& Region, FStringView Path)
+    {
+        FScopeLock Lock(BulkMutex);
+        BulkRegion = Region;
+        BulkSourcePath.assign(Path.data(), Path.size());
+    }
+
+    bool CPackage::CanSpliceBulkRegion() const
+    {
+        return !bDirty
+            && BulkRegion.IsValid()
+            && !BulkSourcePath.empty()
+            && VFS::Exists(BulkSourcePath);
     }
 
     bool CPackage::EnsureLoader()
@@ -1056,18 +1225,25 @@ namespace Lumina
 
         // In-memory (transient / never-saved) packages have no backing file to re-read; their objects are
         // resident anyway, so this path is only ever hit for disk-backed packages whose bytes we dropped.
-        const FFixedString Path = GetPackagePath();
+        //
+        // The file this package was READ from, for the same reason ReadBulkData uses it: mid-rename the
+        // name already points at a file that has not been written yet, and resolving through it here would
+        // fail the FullyLoad that the rename's own save depends on.
+        const FFixedString Path = BulkSourcePath.empty() ? GetPackagePath() : BulkSourcePath;
         if (IsTransientPackage() || !VFS::Exists(Path))
         {
             return false;
         }
 
         TVector<uint8> FileBinary;
-        if (!ReadPackageFile(Path, FileBinary, &BulkRegion))
+        FBulkRegion    ReopenedRegion;
+        if (!ReadPackageFile(Path, FileBinary, &ReopenedRegion))
         {
             LOG_ERROR("EnsureLoader: failed to re-read package file {}", Path);
             return false;
         }
+
+        SetBulkSource(ReopenedRegion, Path);
 
         CreateLoader(FileBinary);
         return Loader != nullptr;

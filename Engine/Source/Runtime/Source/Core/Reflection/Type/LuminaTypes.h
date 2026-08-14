@@ -58,14 +58,14 @@ namespace Lumina
 
         /** UB if ValueType doesn't match the property type. */
         template<typename ValueType>
-        requires !eastl::is_pointer_v<ValueType>
+        requires (!eastl::is_pointer_v<ValueType>)
         ValueType* GetValuePtr(void* ContainerPtr, int64 ArrayIndex = 0) const
         {
             return static_cast<ValueType*>(GetValuePtrInternal(ContainerPtr, ArrayIndex));
         }
 
         template<typename ValueType>
-        requires !eastl::is_pointer_v<ValueType>
+        requires (!eastl::is_pointer_v<ValueType>)
         const ValueType* GetValuePtr(const void* ContainerPtr, int64 ArrayIndex = 0) const
         {
             return static_cast<ValueType*>(GetValuePtrInternal(const_cast<void*>(ContainerPtr), ArrayIndex));

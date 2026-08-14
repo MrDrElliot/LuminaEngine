@@ -1,0 +1,13 @@
+# Single source of truth for the vendored dependency versions.
+#
+# Read by BuildScripts/MakeLinuxBundle.sh (shell-sourced) and by
+# Engine/Source/ThirdParty/SLang/SLang.Build.cs, which needs the Slang version because Slang
+# version-stamps its Linux filenames. Keep the format KEY=VALUE so both can consume it.
+# Lives under Engine/Build so it travels with the build rules that read it.
+#
+# DEPENDENCIES.md documents what each dependency is for; this file is what the tooling actually reads.
+
+LLVM_MAJOR=19
+SLANG_VERSION=2026.3.1
+DOTNET_VERSION=10.0.2
+RENDERDOC_VERSION=1.45

@@ -1,3 +1,4 @@
+#ifdef _WIN32
 
 #include <Windows.h>
 #include <stdlib.h> // __argc / __argv (CRT-provided on Windows).
@@ -8,3 +9,5 @@ int WINAPI WinMain(_In_ HINSTANCE hInInstance, _In_opt_ HINSTANCE hPrevInstance,
 {
     return LuminaMain(__argc, __argv);
 }
+
+#endif

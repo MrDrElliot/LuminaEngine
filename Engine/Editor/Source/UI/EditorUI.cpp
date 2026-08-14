@@ -7,7 +7,6 @@
 #include <imgui_internal.h>
 #include <Lumina.h>
 #include <string.h>
-#include <Windows.h>
 #include <Assets/AssetRegistry/AssetData.h>
 #include <Containers/Array.h>
 #include <Containers/Function.h>
@@ -1102,7 +1101,7 @@ namespace Lumina
     namespace
     {
         // Resolve devenv.exe for a VS major-version range via vswhere; canonical Microsoft recipe.
-        FString FindDevEnv(const wchar_t* VersionRange)
+        FString FindDevEnv(const char* VersionRange)
         {
             const char* VsWhereCandidates[] =
             {
@@ -1118,13 +1117,13 @@ namespace Lumina
                     continue;
                 }
 
-                FWString Args = L"-latest -products * -version \"";
+                FString Args = "-latest -products * -version \"";
                 Args += VersionRange;
-                Args += L"\" -property productPath -nologo";
+                Args += "\" -property productPath -nologo";
 
                 FString FirstLine;
                 const int ExitCode = Platform::RunProcessAndWaitCapture(
-                    StringUtils::ToWideString(Candidate).c_str(), Args.c_str(), nullptr,
+                    UTF8_TO_TCHAR(Candidate), UTF8_TO_TCHAR(Args.c_str()), nullptr,
                     [&FirstLine](FStringView Line)
                     {
                         if (FirstLine.empty() && !Line.empty())
@@ -1210,8 +1209,8 @@ namespace Lumina
             // Cached per editor choice; disk probing / the vswhere subprocess don't change in-session.
             switch (Settings->ScriptEditor)
             {
-            case EScriptEditor::VisualStudio2022: { static FString Found = FindDevEnv(L"[17.0,18.0)"); Exe = Found; bVisualStudio = true; break; }
-            case EScriptEditor::VisualStudio2026: { static FString Found = FindDevEnv(L"[18.0,19.0)"); Exe = Found; bVisualStudio = true; break; }
+            case EScriptEditor::VisualStudio2022: { static FString Found = FindDevEnv("[17.0,18.0)"); Exe = Found; bVisualStudio = true; break; }
+            case EScriptEditor::VisualStudio2026: { static FString Found = FindDevEnv("[18.0,19.0)"); Exe = Found; bVisualStudio = true; break; }
             case EScriptEditor::VSCode:           { static FString Found = FindVSCode(); Exe = Found; break; }
             case EScriptEditor::Rider:            { static FString Found = FindRider(); Exe = Found; break; }
             case EScriptEditor::SystemDefault:    break;
@@ -1221,19 +1220,21 @@ namespace Lumina
         std::error_code Ec;
         if (!Exe.empty() && std::filesystem::exists(Exe.c_str(), Ec))
         {
-            FWString FileW = StringUtils::ToWideString(File);
-            eastl::replace(FileW.begin(), FileW.end(), L'/', L'\\');
+            FString NativeFile = File;
+        #if defined(LE_PLATFORM_WINDOWS)
+            eastl::replace(NativeFile.begin(), NativeFile.end(), '/', '\\');
+        #endif
 
             // /Edit reuses a running Visual Studio instance instead of spawning a new one.
-            FWString Params = bVisualStudio ? L"/Edit \"" : L"\"";
-            Params += FileW;
-            Params += L"\"";
+            FString Params = bVisualStudio ? FString("/Edit \"") : FString("\"");
+            Params += NativeFile;
+            Params += "\"";
 
-            FWString ExeQuoted = L"\"";
-            ExeQuoted += StringUtils::ToWideString(Exe);
-            ExeQuoted += L"\"";
+            FString ExeQuoted = "\"";
+            ExeQuoted += Exe;
+            ExeQuoted += "\"";
 
-            if (Platform::LaunchProcess(ExeQuoted.c_str(), Params.c_str()) == 0)
+            if (Platform::LaunchProcess(UTF8_TO_TCHAR(ExeQuoted.c_str()), UTF8_TO_TCHAR(Params.c_str())) == 0)
             {
                 return;
             }
@@ -1244,7 +1245,7 @@ namespace Lumina
             LOG_WARN("Configured script editor was not found; falling back to the OS file association.");
         }
 
-        Platform::LaunchURL(StringUtils::ToWideString(File).c_str());
+        Platform::LaunchURL(UTF8_TO_TCHAR(File.c_str()));
     }
 
     void FEditorUI::OpenScriptEditor(FStringView ScriptPath)
@@ -1643,7 +1644,7 @@ namespace Lumina
         if (NewTool == nullptr)
         {
             // No registered editor for this extension; fall back to OS default.
-            Platform::LaunchURL(StringUtils::ToWideString(VirtualPath.data()).c_str());
+            Platform::LaunchURL(UTF8_TO_TCHAR(Key.c_str()));
             return;
         }
 
@@ -2862,7 +2863,7 @@ namespace Lumina
 
         // LaunchProcess, not LaunchURL: this is an executable, and it returns the system error so a failed
         // launch can say why instead of silently doing nothing.
-        const int Result = Platform::LaunchProcess(StringUtils::ToWideString(FullPath).c_str());
+        const int Result = Platform::LaunchProcess(UTF8_TO_TCHAR(FullPath.c_str()));
         if (Result != 0)
         {
             LOG_ERROR("Failed to launch Tracy at '{}' (system error {}).", FullPath.c_str(), Result);
@@ -3493,7 +3494,7 @@ namespace Lumina
 
             if (ImGui::MenuItem(LE_ICON_FOLDER " Open Shaders Directory", "F6"))
             {
-                Platform::LaunchURL(StringUtils::ToWideString(Paths::GetEngineShadersDirectory()).c_str());
+                Platform::LaunchURL(UTF8_TO_TCHAR(Paths::GetEngineShadersDirectory().c_str()));
             }
             
             ImGui::EndMenu();
@@ -3610,7 +3611,7 @@ namespace Lumina
             {
                 FString Folder = Paths::GetEngineDirectory() + "/Saved/Screenshots";
                 Paths::CreateDirectories(FStringView(Folder.c_str(), Folder.size()));
-                Platform::LaunchURL(StringUtils::ToWideString(Folder).c_str());
+                Platform::LaunchURL(UTF8_TO_TCHAR(Folder.c_str()));
             }
             ImGui::EndMenu();
         }
@@ -3885,7 +3886,9 @@ namespace Lumina
                 FFixedString File;
                 if (Platform::OpenFileDialogue(File, "Select project location"))
                 {
-                    strncpy_s(NewProjectPath, sizeof(NewProjectPath), File.c_str(), _TRUNCATE);
+                    const size_t Count = eastl::min(File.size(), sizeof(NewProjectPath) - 1);
+                    memcpy(NewProjectPath, File.c_str(), Count);
+                    NewProjectPath[Count] = '\0';
                 }
             }
             ImGui::PopStyleVar();

@@ -40,32 +40,32 @@
 #include <limits>
 #include <cassert>
 
-#include <eastl/type_traits.h>
-#include <eastl/utility.h>
-#include <eastl/array.h>
-#include <eastl/vector.h>
-#include <eastl/map.h>
-#include <eastl/unordered_map.h>
-#include <eastl/set.h>
-#include <eastl/unordered_set.h>
-#include <eastl/hash_set.h>
-#include <eastl/hash_map.h>
-#include <eastl/fixed_hash_set.h>
-#include <eastl/fixed_hash_map.h>
-#include <eastl/fixed_vector.h>
-#include <eastl/fixed_string.h>
+#include <EASTL/type_traits.h>
+#include <EASTL/utility.h>
+#include <EASTL/array.h>
+#include <EASTL/vector.h>
+#include <EASTL/map.h>
+#include <EASTL/unordered_map.h>
+#include <EASTL/set.h>
+#include <EASTL/unordered_set.h>
+#include <EASTL/hash_set.h>
+#include <EASTL/hash_map.h>
+#include <EASTL/fixed_hash_set.h>
+#include <EASTL/fixed_hash_map.h>
+#include <EASTL/fixed_vector.h>
+#include <EASTL/fixed_string.h>
 // Expensive, but Core/Variant pulls it into ~half of all TUs; amortize the parse here.
-#include <eastl/variant.h>
-#include <eastl/atomic.h>
-#include <eastl/sort.h>
-#include <eastl/memory.h>
-#include <eastl/string.h>
-#include <eastl/string_view.h>
-#include <eastl/algorithm.h>
-#include <eastl/functional.h>
-#include <eastl/unique_ptr.h>
-#include <eastl/shared_ptr.h>
-#include <eastl/weak_ptr.h>
+#include <EASTL/variant.h>
+#include <EASTL/atomic.h>
+#include <EASTL/sort.h>
+#include <EASTL/memory.h>
+#include <EASTL/string.h>
+#include <EASTL/string_view.h>
+#include <EASTL/algorithm.h>
+#include <EASTL/functional.h>
+#include <EASTL/unique_ptr.h>
+#include <EASTL/shared_ptr.h>
+#include <EASTL/weak_ptr.h>
 
 // entt is reached directly by 48+ files; keeping it here parses it once instead of per-TU.
 #include <entt/entt.hpp>

@@ -707,11 +707,17 @@ public sealed class TargetAssembler
     /// The file a dependent actually puts on its link line: the import library for a shared
     /// library, the archive itself for a static library, nothing for anything else.
     /// </summary>
+    /// <remarks>
+    /// ELF platforms have no import library, so a shared library is linked against directly. The
+    /// SONAME recorded at link time is what the loader resolves later, not this build path.
+    /// </remarks>
     private static string? GetLinkInput(BuildModule Module)
     {
         return Module.BinaryType switch
         {
-            ModuleBinaryType.SharedLibrary => Module.ImportLibraryFile.Length > 0 ? Module.ImportLibraryFile : null,
+            ModuleBinaryType.SharedLibrary => Module.ImportLibraryFile.Length > 0
+                ? Module.ImportLibraryFile
+                : (Module.OutputFile.Length > 0 ? Module.OutputFile : null),
             ModuleBinaryType.StaticLibrary => Module.OutputFile.Length > 0 ? Module.OutputFile : null,
             _ => null,
         };

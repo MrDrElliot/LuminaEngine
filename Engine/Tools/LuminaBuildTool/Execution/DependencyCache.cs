@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using LuminaBuildTool.Core;
+using LuminaBuildTool.Graph;
 
 namespace LuminaBuildTool.Execution;
 
@@ -150,13 +151,14 @@ public sealed class DependencyCache
         }
     }
 
-    /// <summary>
-    /// Reads the JSON the compiler emitted for one translation unit and records its include
-    /// closure against the object file it produced.
-    /// </summary>
-    public void RecordFromCompilerOutput(string OutputFile, string DependencyListFile)
+    /// <summary>Records the header closure the compiler reported for one output file.</summary>
+    public void RecordFromCompilerOutput(string OutputFile, string DependencyListFile, DependencyListFormat Format)
     {
-        string[]? Includes = ParseSourceDependencies(DependencyListFile);
+        string[]? Includes = Format switch
+        {
+            DependencyListFormat.Makefile => ParseMakefileDependencies(DependencyListFile),
+            _ => ParseSourceDependencies(DependencyListFile),
+        };
 
         if (Includes is null)
         {
@@ -204,6 +206,93 @@ public sealed class DependencyCache
             return Paths.ToArray();
         }
         catch (Exception Ex) when (Ex is IOException or JsonException)
+        {
+            Log.Verbose("Could not read dependency list '{0}': {1}", DependencyListFile, Ex.Message);
+            return null;
+        }
+    }
+
+    private static string[]? ParseMakefileDependencies(string DependencyListFile)
+    {
+        try
+        {
+            if (!File.Exists(DependencyListFile))
+            {
+                return null;
+            }
+
+            string Text = File.ReadAllText(DependencyListFile)
+                .Replace("\\\r\n", " ")
+                .Replace("\\\n", " ");
+
+            string? Rule = Text
+                .Split('\n')
+                .FirstOrDefault(Line => Line.Trim().Length > 0);
+
+            if (Rule is null)
+            {
+                return null;
+            }
+
+            int Separator = -1;
+
+            for (int Index = 0; Index < Rule.Length; Index++)
+            {
+                if (Rule[Index] != ':' || (Index > 0 && Rule[Index - 1] == '\\'))
+                {
+                    continue;
+                }
+
+                if (Index == 1 && char.IsLetter(Rule[0]))
+                {
+                    continue;
+                }
+
+                Separator = Index;
+                break;
+            }
+
+            if (Separator < 0)
+            {
+                return null;
+            }
+
+            List<string> Paths = new();
+            System.Text.StringBuilder Current = new();
+
+            for (int Index = Separator + 1; Index < Rule.Length; Index++)
+            {
+                char Character = Rule[Index];
+
+                if (Character == '\\' && Index + 1 < Rule.Length && Rule[Index + 1] is ' ' or ':' or '#' or '\\')
+                {
+                    Current.Append(Rule[Index + 1]);
+                    Index++;
+                    continue;
+                }
+
+                if (Character is ' ' or '\t' or '\r')
+                {
+                    if (Current.Length > 0)
+                    {
+                        Paths.Add(PathUtils.Normalize(Current.ToString()));
+                        Current.Clear();
+                    }
+
+                    continue;
+                }
+
+                Current.Append(Character);
+            }
+
+            if (Current.Length > 0)
+            {
+                Paths.Add(PathUtils.Normalize(Current.ToString()));
+            }
+
+            return Paths.Count > 0 ? Paths.ToArray() : null;
+        }
+        catch (Exception Ex) when (Ex is IOException)
         {
             Log.Verbose("Could not read dependency list '{0}': {1}", DependencyListFile, Ex.Message);
             return null;

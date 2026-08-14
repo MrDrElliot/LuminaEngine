@@ -3,6 +3,7 @@ Binaries/
 Intermediates/
 /External/
 External.7z
+External-Linux64.tar.gz
 
 # Packaged game output
 Engine/*/Build/

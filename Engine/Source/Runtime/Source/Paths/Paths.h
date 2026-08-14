@@ -41,6 +41,9 @@ namespace Lumina::Paths
     RUNTIME_API void Normalize(FFixedString& Path);
     RUNTIME_API FFixedString Normalize(FStringView Path);
 
+    /** Binary file name for a module: <prefix><Name>-<Config><ext>, e.g. libFoo-Development.so. */
+    RUNTIME_API FFixedString MakeModuleFileName(FStringView ModuleName);
+
     RUNTIME_API bool PathsEqual(FStringView A, FStringView B);
 
     RUNTIME_API FString Parent(FStringView Path, bool bRemoveTrailingSlash = true);
@@ -50,8 +53,8 @@ namespace Lumina::Paths
     {
         typename T::value_type;
     } && (
-        requires(T s) { { s.c_str() } -> std::convertible_to<const T::value_type*>; } ||
-        requires(T s) { { s.data() } -> std::convertible_to<const T::value_type*>; }
+        requires(T s) { { s.c_str() } -> std::convertible_to<const typename T::value_type*>; } ||
+        requires(T s) { { s.data() } -> std::convertible_to<const typename T::value_type*>; }
     );
     
     template <typename... Paths>

@@ -248,6 +248,115 @@ namespace Lumina::VFS
         return true;
     }
 
+    bool FNativeFileSystem::AtomicWriteFileSpliced(FStringView Path, TSpan<const uint8> Prefix,
+                                                   FStringView SrcPath, uint64 SrcOffset, uint64 SrcSize,
+                                                   TSpan<const uint8> Suffix)
+    {
+        FFixedString FullPath = ResolveVirtualPath(Path);
+        FFixedString FullSrc  = ResolveVirtualPath(SrcPath);
+        if (FullPath.empty() || FullSrc.empty())
+        {
+            return false;
+        }
+
+        std::ifstream InFile(FullSrc.data(), std::ios::binary);
+        if (!InFile)
+        {
+            LOG_ERROR("AtomicWriteFileSpliced: cannot open source {0}", FullSrc);
+            return false;
+        }
+
+        InFile.seekg((std::streamoff)SrcOffset, std::ios::beg);
+        if (!InFile)
+        {
+            LOG_ERROR("AtomicWriteFileSpliced: cannot seek {0} to {1}", FullSrc, SrcOffset);
+            return false;
+        }
+
+        EnsureParentDir(FullPath);
+
+        FFixedString TempPath = FullPath;
+        TempPath.append(".tmp");
+
+        // Same as AtomicWriteFile: no orphan from a prior failed save may be mistaken for our output.
+        {
+            std::error_code EC;
+            std::filesystem::remove(TempPath.c_str(), EC);
+        }
+
+        auto Fail = [&TempPath](const char* What) -> bool
+        {
+            LOG_ERROR("AtomicWriteFileSpliced: {0}", What);
+            std::error_code EC;
+            std::filesystem::remove(TempPath.c_str(), EC);
+            return false;
+        };
+
+        {
+            std::ofstream OutFile(TempPath.data(), std::ios::binary | std::ios::trunc);
+            if (!OutFile)
+            {
+                return Fail("could not open the temporary output");
+            }
+
+            if (!Prefix.empty())
+            {
+                OutFile.write(reinterpret_cast<const char*>(Prefix.data()), (std::streamsize)Prefix.size());
+            }
+
+            // Fixed 1 MiB window: the whole point is that a 21 MiB region costs 21 iterations rather than
+            // 21 MiB of resident buffer, so this must not grow with SrcSize.
+            constexpr uint64 kChunkBytes = 1ull << 20;
+            TVector<uint8> Chunk;
+            Chunk.resize((size_t)kChunkBytes);
+
+            uint64 Remaining = SrcSize;
+            while (Remaining > 0)
+            {
+                const uint64 Want = Remaining < kChunkBytes ? Remaining : kChunkBytes;
+                InFile.read(reinterpret_cast<char*>(Chunk.data()), (std::streamsize)Want);
+
+                // Short read means the source is not the file we measured; splicing part of a bulk region
+                // would produce refs pointing past the end of it, so nothing gets committed.
+                if ((uint64)InFile.gcount() != Want)
+                {
+                    return Fail("source ended early; the bulk region is shorter than its trailer claims");
+                }
+
+                OutFile.write(reinterpret_cast<const char*>(Chunk.data()), (std::streamsize)Want);
+                if (!OutFile)
+                {
+                    return Fail("write failed while splicing");
+                }
+
+                Remaining -= Want;
+            }
+
+            if (!Suffix.empty())
+            {
+                OutFile.write(reinterpret_cast<const char*>(Suffix.data()), (std::streamsize)Suffix.size());
+            }
+
+            OutFile.flush();
+            if (!OutFile.good())
+            {
+                return Fail("output stream went bad before commit");
+            }
+        }
+
+        std::error_code EC;
+        std::filesystem::rename(TempPath.c_str(), FullPath.c_str(), EC);
+        if (EC)
+        {
+            LOG_ERROR("AtomicWriteFileSpliced: rename of {0} -> {1} failed: {2}", TempPath, FullPath, EC.message());
+            std::error_code RemoveEC;
+            std::filesystem::remove(TempPath.c_str(), RemoveEC);
+            return false;
+        }
+
+        return true;
+    }
+
     bool FNativeFileSystem::Exists(FStringView Path) const
     {
         // error_code overload: a transient lock/sharing-violation (e.g. another thread mid-rename) must
@@ -311,7 +420,7 @@ namespace Lumina::VFS
 
     void FNativeFileSystem::PlatformOpen(FStringView Path) const
     {
-        Platform::LaunchURL(StringUtils::ToWideString(ResolveVirtualPath(Path)).c_str());
+        Platform::LaunchURL(UTF8_TO_TCHAR(ResolveVirtualPath(Path).c_str()));
     }
 
     void FNativeFileSystem::DirectoryIterator(FStringView Path, const TFunction<void(const FFileInfo&)>& Callback) const

@@ -1,4 +1,8 @@
 #pragma once
+
+#include <format>
+#include <iterator>
+
 #include "Core/DisableAllWarnings.h"
 #include "Platform/PlatformString.h"
 
@@ -43,6 +47,11 @@ namespace Lumina
             const auto Conv = StringCast<ANSICHAR>(Str.c_str(), static_cast<int32>(Str.size()));
             return FString(Conv.Get(), Conv.Length());
         }
+        inline FString FromWideString(const WIDECHAR* Str)
+        {
+            const auto Conv = StringCast<ANSICHAR>(Str);
+            return FString(Conv.Get(), Conv.Length());
+        }
         
         inline FString FormatSize(size_t Bytes)
         {
@@ -63,11 +72,8 @@ namespace Lumina
     }
 }
 
-// Backed by StringCast: the temporary conversion lives to the end of the full expression, same as the
-// owning-string version it replaced, but uses an inline buffer (no heap for short strings) and the
-// platform code-unit conversion. Prefer Lumina::StringCast<> directly in new code.
 #define TCHAR_TO_UTF8(X) (::Lumina::StringCast<ANSICHAR>(X).Get())
-#define UTF8_TO_TCHAR(X) (::Lumina::StringCast<WIDECHAR>(X).Get())
+#define UTF8_TO_TCHAR(X) (::Lumina::StringCast<TCHAR>(X).Get())
 
 namespace std
 {

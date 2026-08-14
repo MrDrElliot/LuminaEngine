@@ -20,7 +20,7 @@ namespace Lumina
 {
 
     // Base object for all reflected Lumina types. Path format: <package-path>.<object-name>
-    class CObject : public CObjectBase
+    class LUMINA_VISIBLE_TYPE CObject : public CObjectBase
     {
     public:
 

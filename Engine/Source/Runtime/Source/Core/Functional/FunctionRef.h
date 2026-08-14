@@ -39,7 +39,7 @@ namespace Lumina
 
         template <typename TCallable>
         TFunctionRef(TCallable&& InCallable) noexcept
-        requires IsValidCallable<TCallable>::value
+        requires (IsValidCallable<TCallable>::value)
         : Callback(CallbackFn<eastl::remove_reference_t<TCallable>>)
         , Callable(reinterpret_cast<intptr_t>(eastl::addressof(InCallable)))
         {}

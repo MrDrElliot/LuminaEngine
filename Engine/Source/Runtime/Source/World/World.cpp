@@ -1,4 +1,4 @@
-﻿#include "RuntimePCH.h"
+#include "RuntimePCH.h"
 #include "World.h"
 #include <cmath>
 #include <utility>
@@ -42,7 +42,7 @@
 #include "World/Scene/RenderScene/MeshResolveCache.h"
 #include "World/Scene/RenderScene/ScenePrimitiveSet.h"
 #include "Entity/Events/ImpulseEvent.h"
-#include "entity/components/entitytags.h"
+#include "Entity/Components/EntityTags.h"
 #include "Entity/Components/LineBatcherComponent.h"
 #include "Entity/Components/TriangleBatcherComponent.h"
 #include "Entity/Components/NameComponent.h"
@@ -56,7 +56,7 @@
 #include "Entity/Components/SingletonEntityComponent.h"
 #include "Entity/Systems/SystemSingletons.h"
 #include "Entity/Systems/CameraSystem.h"
-#include "entity/components/tagcomponent.h"
+#include "Entity/Components/TagComponent.h"
 #include "Entity/Events/WorldEvents.h"
 #include "Physics/Physics.h"
 #include "Scene/RenderScene/RenderSceneFactory.h"
@@ -69,7 +69,7 @@
 #include "Subsystems/WorldSettings.h"
 #include "UI/RmlUiBridge.h"
 #include "World/Entity/Components/RelationshipComponent.h"
-#include "World/entity/systems/EntitySystem.h"
+#include "World/Entity/Systems/EntitySystem.h"
 #include "Log/Log.h"
 #include "Renderer/SkeletonResource.h"
 

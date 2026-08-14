@@ -15,7 +15,7 @@ namespace Lumina
         }
     };
     
-    class FObjectProxyArchiver : public FProxyArchive
+    class LUMINA_VISIBLE_TYPE FObjectProxyArchiver : public FProxyArchive
     {
     public:
 
@@ -47,7 +47,7 @@ namespace Lumina
     // the duplicate then edits the original. Remapping on read is what makes a package-level duplicate
     // self-contained; anything not in the table is left alone, which is exactly right for references to
     // OTHER packages (textures, parent materials) that should stay shared.
-    class FObjectRemapArchiver : public FObjectProxyArchiver
+    class LUMINA_VISIBLE_TYPE FObjectRemapArchiver : public FObjectProxyArchiver
     {
     public:
 

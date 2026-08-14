@@ -1,4 +1,4 @@
-﻿#include "Containers/HandleAllocator.h"
+#include "Containers/HandleAllocator.h"
 #include "RuntimePCH.h"
 #include "Core/Templates/LuminaTemplate.h"
 
@@ -641,7 +641,8 @@ namespace Lumina::RHI
 
         VkMemoryRequirements            MemoryRequirements;
 
-        FMutex                          MemoryMutex;
+        // Shared: FindMemory lookups run on every recording thread; only Malloc/Free move the vector.
+        FSharedMutex                    MemoryMutex;
         TArray<FMutex, 3>               QueueMutexes;
         TArray<uint32, 3>               QueueLockIndex;
         FMutex                          TransientMutex;
@@ -697,10 +698,10 @@ namespace Lumina::RHI
 
     static TVector<Native::FDeviceCreationRequest> GPendingDeviceRequests;
 
-    // Resolve a GPUPtr (possibly interior) to its owning allocation. Caller holds MemoryMutex.
+    // Resolve a GPUPtr (possibly interior) to its owning allocation. Caller holds MemoryMutex (shared).
     static const FMemoryBlock* FindMemory(GPUPtr Ptr)
     {
-        TVector<FMemoryBlock>& Blocks = GDevice->MemoryBlocks;
+        const TVector<FMemoryBlock>& Blocks = GDevice->MemoryBlocks;
         auto It = std::ranges::upper_bound(Blocks, Ptr, {}, &FMemoryBlock::Device);
         if (It == Blocks.begin())
         {
@@ -950,8 +951,12 @@ namespace Lumina::RHI
             return DesiredSliceSize;
         }
 
+        // Typed rather than a ull literal: ull is unsigned long long, which is a DIFFERENT type from
+        // uint64 wherever uint64_t is unsigned long, so the two arguments stopped deducing to one T.
+        constexpr uint64 kMegabyte = 1024 * 1024;
+
         const uint64 PerSlice = (Aperture / kCPUWriteApertureDivisor) / SliceCount;
-        const uint64 Cap      = Math::Max(kMinCPUWriteSlice, (PerSlice / (1024ull * 1024)) * (1024ull * 1024));
+        const uint64 Cap      = Math::Max(kMinCPUWriteSlice, (PerSlice / kMegabyte) * kMegabyte);
         if (Cap >= DesiredSliceSize)
         {
             return DesiredSliceSize;
@@ -972,7 +977,7 @@ namespace Lumina::RHI
         }
 
         {
-            FScopeLock Lock(GDevice->MemoryMutex);
+            FReadScopeLock Lock(GDevice->MemoryMutex);
             Out.reserve(GDevice->MemoryBlocks.size());
 
             for (const FMemoryBlock& Block : GDevice->MemoryBlocks)
@@ -1122,8 +1127,13 @@ namespace Lumina::RHI
         if (!DeviceDesc.bHeadless && !glfwVulkanSupported())
         {
             ShowVulkanInitFailure("Vulkan Not Supported",
-                "GLFW reports that this system does not support Vulkan. The Vulkan runtime (vulkan-1.dll) was not found, "
-                "or no installed GPU driver provides a Vulkan ICD.");
+                "GLFW reports that this system does not support Vulkan. The Vulkan loader ("
+            #if defined(LE_PLATFORM_WINDOWS)
+                "vulkan-1.dll"
+            #else
+                "libvulkan.so.1"
+            #endif
+                ") was not found, or no installed GPU driver provides a Vulkan ICD.");
             std::abort();
         }
 
@@ -2512,10 +2522,10 @@ namespace Lumina::RHI
         Block.MemType = Type;
 #endif
 
-        FScopeLock Lock(GDevice->MemoryMutex);
+        FWriteScopeLock Lock(GDevice->MemoryMutex);
         auto It = std::ranges::lower_bound(GDevice->MemoryBlocks, Gpu, {}, &FMemoryBlock::Device);
         GDevice->MemoryBlocks.insert(It, Block);
-        
+
         return Block.Device;
     }
 
@@ -2526,7 +2536,7 @@ namespace Lumina::RHI
 
     void* ToHost(GPUPtr GPU)
     {
-        FScopeLock Lock(GDevice->MemoryMutex);
+        FReadScopeLock Lock(GDevice->MemoryMutex);
         const FMemoryBlock* Block = FindMemory(GPU);
 
         // GPU-only memory has no mapping
@@ -2564,15 +2574,18 @@ namespace Lumina::RHI
             return;
         }
 
-        FScopeLock Lock(GDevice->MemoryMutex);
-
 #if USING(WITH_EDITOR)
+        // Exclusive: this branch writes the name back into the block.
+        FWriteScopeLock Lock(GDevice->MemoryMutex);
+
         if (FMemoryBlock* Block = FindMemoryMutable(GPU))
         {
             NameObject(VK_OBJECT_TYPE_BUFFER, (uint64)Block->Buffer, Name);
             CopyBlockName(Block->Name, Name);
         }
 #else
+        FReadScopeLock Lock(GDevice->MemoryMutex);
+
         if (const FMemoryBlock* Block = FindMemory(GPU))
         {
             NameObject(VK_OBJECT_TYPE_BUFFER, (uint64)Block->Buffer, Name);
@@ -2608,7 +2621,7 @@ namespace Lumina::RHI
             return;
         }
 
-        FScopeLock Lock(GDevice->MemoryMutex);
+        FWriteScopeLock Lock(GDevice->MemoryMutex);
         auto It = std::ranges::lower_bound(GDevice->MemoryBlocks, GPU, {}, &FMemoryBlock::Device);
 
         if (It != GDevice->MemoryBlocks.end() && It->Device == GPU)
@@ -2635,7 +2648,7 @@ namespace Lumina::RHI
 
         // try_lock, not a lock: this runs from the device-lost path, and another thread stuck mid-Malloc
         // would otherwise turn a crash report into a hang. A missed report is the better failure.
-        std::unique_lock<FMutex> Lock(GDevice->MemoryMutex, std::try_to_lock);
+        FReadScopeLock Lock(GDevice->MemoryMutex, std::try_to_lock);
         if (!Lock.owns_lock())
         {
             return "allocation ledger was locked by another thread; no attribution";
@@ -2759,7 +2772,7 @@ namespace Lumina::RHI
             return false;
         }
 
-        FScopeLock Lock(GDevice->MemoryMutex);
+        FReadScopeLock Lock(GDevice->MemoryMutex);
 
         const FMemoryBlock* Block = FindMemory(Ptr);
         if (Block == nullptr)
@@ -4852,7 +4865,7 @@ namespace Lumina::RHI
 
     void Submit(FCmdListH CommandList, EQueueType Type)
     {
-        Submit(Type, TSpan{&CommandList, 1});
+        Submit(Type, TSpan<const FCmdListH>{&CommandList, 1});
     }
 
     void CmdMemcpy(FCmdListH CL, GPUPtr Dest, GPUPtr Source, size_t Size)
@@ -4863,7 +4876,7 @@ namespace Lumina::RHI
         VkDeviceSize SourceOffset;
 
         {
-            FScopeLock Lock(GDevice->MemoryMutex);
+            FReadScopeLock Lock(GDevice->MemoryMutex);
             const FMemoryBlock* DestIt   = FindMemory(Dest);
             const FMemoryBlock* SourceIt = FindMemory(Source);
 
@@ -4903,7 +4916,7 @@ namespace Lumina::RHI
         VkDeviceSize DestOffset;
 
         {
-            FScopeLock Lock(GDevice->MemoryMutex);
+            FReadScopeLock Lock(GDevice->MemoryMutex);
             const FMemoryBlock* DestIt = FindMemory(Dest);
             if (DestIt == nullptr)
             {
@@ -4939,7 +4952,7 @@ namespace Lumina::RHI
         VkDeviceSize DestOffset;
 
         {
-            FScopeLock Lock(GDevice->MemoryMutex);
+            FReadScopeLock Lock(GDevice->MemoryMutex);
             const FMemoryBlock* DestIt = FindMemory(Dest);
             if (DestIt == nullptr)
             {
@@ -5009,7 +5022,7 @@ namespace Lumina::RHI
         VkDeviceSize SourceOffset;
 
         {
-            FScopeLock Lock(GDevice->MemoryMutex);
+            FReadScopeLock Lock(GDevice->MemoryMutex);
             const FMemoryBlock* BufferIt = FindMemory(Source);
             if (BufferIt == nullptr)
             {
@@ -5025,16 +5038,28 @@ namespace Lumina::RHI
         const uint8 BlockW = RHI::Format::Info(DestTexture.Format).BlockSize;
         const uint32 RowLengthBlocks = (BlockW > 1) ? Math::AlignUp(RowLength, (uint32)BlockW) : RowLength;
 
-        // A copy region may never exceed the subresource it targets. Clamped rather than trusted: the
-        // caller's mip size comes from cooked data while the image's comes from its own implicit chain.
+        // Clamped against what is left PAST THE OFFSET, because the caller's mip size comes from cooked data.
+        // imageOffset has no clamp of its own, so an offset already outside the subresource is dropped.
         VkExtent3D Extent = SliceExtent(DestTexture, Slice);
         {
             const FTextureDesc& Desc = DestTexture.Desc;
             const uint32 DepthDim = (Desc.Type == ETextureType::Tex3D) ? Math::Max(Desc.Dimension.z, 1u) : 1u;
 
-            Extent.width  = Math::Min(Extent.width,  Math::Max(Desc.Dimension.x >> Slice.Mip, 1u));
-            Extent.height = Math::Min(Extent.height, Math::Max(Desc.Dimension.y >> Slice.Mip, 1u));
-            Extent.depth  = Math::Min(Extent.depth,  Math::Max(DepthDim >> Slice.Mip, 1u));
+            const uint32 MipW = Math::Max(Desc.Dimension.x >> Slice.Mip, 1u);
+            const uint32 MipH = Math::Max(Desc.Dimension.y >> Slice.Mip, 1u);
+            const uint32 MipD = Math::Max(DepthDim >> Slice.Mip, 1u);
+
+            if (Slice.Offset.x >= MipW || Slice.Offset.y >= MipH || Slice.Offset.z >= MipD)
+            {
+                LOG_ERROR("RHI: dropped a texture copy whose offset ({}, {}, {}) is outside mip {} "
+                          "({}x{}x{}). The caller's mip dimensions disagree with the image's own chain.",
+                    Slice.Offset.x, Slice.Offset.y, Slice.Offset.z, Slice.Mip, MipW, MipH, MipD);
+                return;
+            }
+
+            Extent.width  = Math::Min(Extent.width,  MipW - Slice.Offset.x);
+            Extent.height = Math::Min(Extent.height, MipH - Slice.Offset.y);
+            Extent.depth  = Math::Min(Extent.depth,  MipD - Slice.Offset.z);
         }
 
         // bufferRowLength must be 0 or >= imageExtent.width. A shorter row is out of spec and the copy
@@ -5066,7 +5091,7 @@ namespace Lumina::RHI
         VkDeviceSize DestOffset;
 
         {
-            FScopeLock Lock(GDevice->MemoryMutex);
+            FReadScopeLock Lock(GDevice->MemoryMutex);
             const FMemoryBlock* BufferIt = FindMemory(Dest);
             if (BufferIt == nullptr)
             {
@@ -5604,7 +5629,7 @@ namespace Lumina::RHI
         VkDeviceSize BufferOffset;
 
         {
-            FScopeLock Lock(GDevice->MemoryMutex);
+            FReadScopeLock Lock(GDevice->MemoryMutex);
             const FMemoryBlock* BufferIt = FindMemory(IndexBuffer);
             if (BufferIt == nullptr)
             {
@@ -5646,7 +5671,7 @@ namespace Lumina::RHI
         VkDeviceSize BufferOffset;
 
         {
-            FScopeLock Lock(GDevice->MemoryMutex);
+            FReadScopeLock Lock(GDevice->MemoryMutex);
             const FMemoryBlock* BufferIt = FindMemory(DrawArgs);
             if (BufferIt == nullptr)
             {
@@ -5698,7 +5723,7 @@ namespace Lumina::RHI
         VkDeviceSize BufferOffset;
 
         {
-            FScopeLock Lock(GDevice->MemoryMutex);
+            FReadScopeLock Lock(GDevice->MemoryMutex);
             const FMemoryBlock* BufferIt = FindMemory(DrawArgs);
             if (BufferIt == nullptr)
             {
@@ -5721,7 +5746,7 @@ namespace Lumina::RHI
         VkDeviceSize BufferOffset;
 
         {
-            FScopeLock Lock(GDevice->MemoryMutex);
+            FReadScopeLock Lock(GDevice->MemoryMutex);
             const FMemoryBlock* BufferIt = FindMemory(IndirectBuffer);
             if (BufferIt == nullptr)
             {
@@ -5747,7 +5772,7 @@ namespace Lumina::RHI
         VkDeviceSize BufferOffset;
 
         {
-            FScopeLock Lock(GDevice->MemoryMutex);
+            FReadScopeLock Lock(GDevice->MemoryMutex);
             const FMemoryBlock* BufferIt = FindMemory(IndirectBuffer);
             if (BufferIt == nullptr)
             {
@@ -5773,7 +5798,7 @@ namespace Lumina::RHI
         VkDeviceSize BufferOffset;
 
         {
-            FScopeLock Lock(GDevice->MemoryMutex);
+            FReadScopeLock Lock(GDevice->MemoryMutex);
             const FMemoryBlock* BufferIt = FindMemory(DrawArgs);
             if (BufferIt == nullptr)
             {
@@ -5807,7 +5832,7 @@ namespace Lumina::RHI
         VkDeviceSize BufferOffset;
 
         {
-            FScopeLock Lock(GDevice->MemoryMutex);
+            FReadScopeLock Lock(GDevice->MemoryMutex);
             const FMemoryBlock* BufferIt = FindMemory(IndirectBuffer);
             if (BufferIt == nullptr)
             {
@@ -5833,7 +5858,7 @@ namespace Lumina::RHI
         VkBuffer CountVkBuffer;  VkDeviceSize CountVkOffset;
 
         {
-            FScopeLock Lock(GDevice->MemoryMutex);
+            FReadScopeLock Lock(GDevice->MemoryMutex);
             const FMemoryBlock* ArgsIt  = FindMemory(IndirectBuffer);
             const FMemoryBlock* CountIt = FindMemory(CountBuffer);
             if (ArgsIt == nullptr || CountIt == nullptr)

@@ -62,6 +62,13 @@ namespace Lumina::VFS
     RUNTIME_API bool WriteFile(FStringView Path, TSpan<const uint8> Data);
     RUNTIME_API bool AtomicWriteFile(FStringView Path, TSpan<const uint8> Data);
 
+    /** Crash-safe write of Prefix + [SrcSize bytes copied from SrcPath at SrcOffset] + Suffix, with the
+     *  middle streamed in chunks rather than buffered. False means the backend cannot do it or the copy
+     *  failed, and nothing was written -- callers must have a path that does not depend on it. */
+    RUNTIME_API bool AtomicWriteFileSpliced(FStringView Path, TSpan<const uint8> Prefix,
+                                            FStringView SrcPath, uint64 SrcOffset, uint64 SrcSize,
+                                            TSpan<const uint8> Suffix);
+
     RUNTIME_API void PlatformOpen(FStringView Path);
 
     RUNTIME_API bool Exists(FStringView Path);

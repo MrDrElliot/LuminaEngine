@@ -32,37 +32,52 @@ public class Reflector : ModuleRules
         PublicLibraryPaths.Add(ModulePath("../../../External/LLVM/lib"));
         PublicLibraryPaths.Add(ModulePath("../../../External/LLVM/bin"));
 
-        // Stage the vendored libclang next to Reflector.exe. The application directory beats PATH in the
-        // Windows DLL search, so this pins the parse to LLVM 19 instead of whatever the host happens to
-        // have installed -- an older system libclang loads fine and then dies mid-parse on modern C++.
         // Deliberately NOT optional: a missing copy means Setup never fetched External/LLVM, and failing
         // here names the file instead of surfacing as an access violation inside the Reflector.
-        AddRuntimeDependency("../../../External/LLVM/bin/libclang.dll");
-
-        PublicSystemLibraries.AddRange(new[]
+        //
+        // ELF: staged under the SONAMEs recorded in the binary, not the unversioned development
+        // symlinks. Staging libclang.so alone leaves the loader asking for libclang-19.so.19, which it
+        // then satisfies from a distro install if one happens to exist -- so the omission is invisible
+        // on a developer box and fatal on a clean one.
+        foreach (string Library in Target.Platform == BuildPlatform.Windows64
+            ? new[] { "bin/libclang.dll" }
+            : new[] { "lib/libclang-19.so.19", "lib/libLLVM.so.19.1" })
         {
-            "clangBasic",
-            "clangLex",
-            "clangAST",
-            "libclang",
-            "LLVMAnalysis",
-            "LLVMBinaryFormat",
-            "LLVMBitReader",
-            "LLVMBitstreamReader",
-            "LLVMDemangle",
-            "LLVMFrontendOffloading",
-            "LLVMFrontendOpenMP",
-            "LLVMMC",
-            "LLVMProfileData",
-            "LLVMRemarks",
-            "LLVMScalarOpts",
-            "LLVMTargetParser",
-            "LLVMTransformUtils",
-            "LLVMCore",
-            "LLVMSupport",
-        });
+            AddRuntimeDependency($"../../../External/LLVM/{Library}");
+        }
 
-        // The prebuilt LLVM libraries are release builds, so the debug CRT must stay out.
-        PrivateLinkerOptions.Add("/NODEFAULTLIB:MSVCRTD");
+        if (Target.Platform == BuildPlatform.Windows64)
+        {
+            PublicSystemLibraries.AddRange(new[]
+            {
+                "clangBasic",
+                "clangLex",
+                "clangAST",
+                "libclang",
+                "LLVMAnalysis",
+                "LLVMBinaryFormat",
+                "LLVMBitReader",
+                "LLVMBitstreamReader",
+                "LLVMDemangle",
+                "LLVMFrontendOffloading",
+                "LLVMFrontendOpenMP",
+                "LLVMMC",
+                "LLVMProfileData",
+                "LLVMRemarks",
+                "LLVMScalarOpts",
+                "LLVMTargetParser",
+                "LLVMTransformUtils",
+                "LLVMCore",
+                "LLVMSupport",
+            });
+
+            PrivateLinkerOptions.Add("/NODEFAULTLIB:MSVCRTD");
+        }
+        else
+        {
+            PublicSystemLibraries.Add("clang");
+            PublicSystemLibraries.Add("clang-cpp");
+            PublicSystemLibraries.Add("LLVM-19");
+        }
     }
 }
