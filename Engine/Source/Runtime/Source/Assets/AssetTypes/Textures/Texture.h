@@ -167,6 +167,13 @@ namespace Lumina
             uint32 NextLayer  = 0;   // next array layer of NextMip owing one
             uint32 NextRow    = 0;   // next BLOCK row of that (mip, layer) owing one
             uint32 CpuEndMip  = 0;   // one past the last chain mip owing one
+
+            /** Consecutive ticks that moved the cursor nowhere. A staged image is invisible until it is
+             *  committed, so a fill that stops advancing does not degrade -- it hangs, permanently and
+             *  silently, and takes the texture's bindless slot with it. This is what makes that
+             *  terminate. Reset by any band that lands. */
+            uint32 StalledTicks = 0;
+
             bool   bActive    = false;
         };
         FResidencyFill PendingFill;

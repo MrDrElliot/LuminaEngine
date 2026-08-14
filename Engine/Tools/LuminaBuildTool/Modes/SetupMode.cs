@@ -61,7 +61,7 @@ public static class SetupMode
             AssetName = "External-Linux64.tar.gz",
             Format = ArchiveFormat.TarGz,
 
-            Sha256 = "1D0232C93DB3445C39BEE4339FDED7C41A8714E8432106F3304F02A3EE4B33FC",
+            Sha256 = "A36EB8E55076F3E5AB1A4255DA12E0C400052B7EB6A64E289AD9951D6D6DFCBA",
             SentinelPath = "LLVM/lib/libclang.so",
         },
     };

@@ -473,13 +473,17 @@ namespace Lumina
                 continue;
             }
 
-            // Priced before the copy, so the budget is never overshot. The oversize exemption is per FRAME,
-            // not per texture, or N converging textures each take a free step and blow it N times over.
+            // Priced before the copy, so the budget is never overshot -- except by the single row that
+            // bGuaranteeProgress forces through. That exemption is what makes a staged fill unable to
+            // stall: an image that is mid-swap is not a candidate for deferral, because nothing samples it
+            // until it completes and its slot is frozen until then. Costing one block row per in-flight
+            // texture per frame is the price of that, and a block row is kilobytes.
             uint64 AffordableRows = RemainingBytes / RowBytes;
             if (AffordableRows == 0)
             {
-                if (!bMayExceedBudget)
+                if (!bGuaranteeProgress)
                 {
+                    ++PendingFill.StalledTicks;
                     return true;
                 }
                 AffordableRows = 1;
@@ -503,12 +507,17 @@ namespace Lumina
                     Mip.Width, Mip.Width, BandHeight, OffsetY))
             {
                 // Do NOT advance: committing with this band missing bakes the hole in permanently. Retrying
-                // is free -- the bytes are in memory and nothing samples the staged image until commit.
+                // is usually free -- the bytes are in memory and nothing samples the staged image until
+                // commit -- but "usually" is not "always", and a rejection that never clears used to hang
+                // the texture for the rest of the session. Bounded below instead.
+                ++PendingFill.StalledTicks;
                 return true;
             }
 
-            RemainingBytes   = BandBytes >= RemainingBytes ? 0ull : RemainingBytes - BandBytes;
-            bMayExceedBudget = false;
+            PendingFill.StalledTicks = 0;
+
+            RemainingBytes    = BandBytes >= RemainingBytes ? 0ull : RemainingBytes - BandBytes;
+            bGuaranteeProgress = false;
 
             PendingFill.NextRow = FirstRow + Rows;
             if (PendingFill.NextRow >= NumRows)
