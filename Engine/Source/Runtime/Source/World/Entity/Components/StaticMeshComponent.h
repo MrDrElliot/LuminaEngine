@@ -14,7 +14,10 @@ namespace Lumina
         GENERATED_BODY()
         
         CMaterialInterface* GetMaterialForSlot(size_t Slot) const;
-        
+
+        /** Installs a transient instance over this slot so its parameters diverge for THIS component only. */
+        CMaterialInstance* CreateDynamicMaterialInstance(uint32 Slot);
+
         FUNCTION(Script)
         FAABB GetAABB() const;
         

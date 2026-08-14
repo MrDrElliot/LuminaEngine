@@ -51,12 +51,6 @@ namespace Lumina
 
         CMaterial();
 
-        void RegisterInstance(CMaterialInstance* Instance);
-        void UnregisterInstance(CMaterialInstance* Instance);
-
-        /** Refresh registered instance uniforms after a recompile. */
-        void NotifyInstancesParentChanged();
-
         using Super::Serialize;
         void Serialize(FArchive& Ar) override;
         bool IsAsset() const override { return true; }
@@ -200,6 +194,10 @@ namespace Lumina
          *  demand path goes through RequestTexturesResolved instead. */
         uint32 ResolveTextureSlot(uint32 Index);
 
+        uint32 GetResolvedTextureSlot(uint32 Index) override { return ResolveTextureSlot(Index); }
+
+        CTexture* GetTextureParameterTexture(const FName& Name, uint32 Index) override;
+
         /** Non-blocking demand for the render path. Returns true when every slot is already resolved;
          *  otherwise kicks a one-shot async load for the missing ones and returns false, leaving the
          *  caller to treat this material as not-ready.
@@ -283,11 +281,6 @@ namespace Lumina
     private:
 
         void RebuildParameterLookup();
-
-        /** Instance back-references; instances unregister in OnDestroy so raw pointers are safe. Guarded by
-            InstancesMutex: instances of one master Register concurrently during the parallel PostLoad wave. */
-        TVector<CMaterialInstance*>             Instances;
-        FMutex                                  InstancesMutex;
 
         THashMap<FName, FMaterialParameter>     ParameterLookup;
     };

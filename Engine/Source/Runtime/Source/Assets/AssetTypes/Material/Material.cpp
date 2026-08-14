@@ -92,59 +92,15 @@ namespace Lumina
         }
     }
 
-    void CMaterial::RegisterInstance(CMaterialInstance* Instance)
+    CTexture* CMaterial::GetTextureParameterTexture(const FName& Name, uint32 Index)
     {
-        if (Instance == nullptr)
+        if (Index >= (uint32)Textures.size())
         {
-            return;
-        }
-        // Instances of one master PostLoad concurrently on worker fibers (the parallel leaf-first wave),
-        // so this back-reference list is touched from many threads at once.
-        FScopeLock Lock(InstancesMutex);
-        for (CMaterialInstance* Existing : Instances)
-        {
-            if (Existing == Instance)
-            {
-                return;
-            }
-        }
-        Instances.push_back(Instance);
-    }
-
-    void CMaterial::UnregisterInstance(CMaterialInstance* Instance)
-    {
-        if (Instance == nullptr)
-        {
-            return;
-        }
-        FScopeLock Lock(InstancesMutex);
-        for (auto It = Instances.begin(); It != Instances.end(); ++It)
-        {
-            if (*It == Instance)
-            {
-                Instances.erase(It);
-                return;
-            }
-        }
-    }
-
-    void CMaterial::NotifyInstancesParentChanged()
-    {
-        TVector<CMaterialInstance*> Snapshot;
-        {
-            FScopeLock Lock(InstancesMutex);
-            Snapshot = Instances;
+            return nullptr;
         }
 
-        for (CMaterialInstance* Instance : Snapshot)
-        {
-            if (Instance == nullptr || Instance->Material.Get() != this)
-            {
-                continue;
-            }
-
-            Instance->RefreshFromParent();
-        }
+        ResolveTextureSlot(Index);
+        return ResolvedTextures[Index].Get();
     }
 
     void CMaterial::UpdateMaterialUniforms()
@@ -376,19 +332,7 @@ namespace Lumina
 
         // Instances copied this block wholesale and nothing else rewrites the slots they inherit. Worst for
         // a slot bound without a parameter, which every parameter-driven path on the instance is blind to.
-        TVector<CMaterialInstance*> Snapshot;
-        {
-            FScopeLock Lock(InstancesMutex);
-            Snapshot = Instances;
-        }
-
-        for (CMaterialInstance* Instance : Snapshot)
-        {
-            if (Instance != nullptr && Instance->Material.Get() == this)
-            {
-                Instance->RefreshInheritedTextureSlots();
-            }
-        }
+        PropagateInheritedTextureSlots();
 
         return true;
     }
@@ -517,7 +461,7 @@ namespace Lumina
 
             SetReadyForRender(true);
 
-            NotifyInstancesParentChanged();
+            PropagateToChildren();
 
 #if !USING(WITH_EDITOR)
             // SPIR-V blobs are dead in cooked builds; the editor keeps them for recompile/save. Driven off the

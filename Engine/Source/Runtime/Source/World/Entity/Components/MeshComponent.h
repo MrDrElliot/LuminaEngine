@@ -11,7 +11,14 @@
 namespace Lumina
 {
     class CMaterialInterface;
+    class CMaterialInstance;
     struct FPropertyChangedEvent;
+
+    namespace MeshComponentUtils
+    {
+        /** Current itself when it is already a transient instance, else a new one parented to it. */
+        RUNTIME_API CMaterialInstance* MakeDynamicMaterialInstance(CMaterialInterface* Current);
+    }
 
     REFLECT()
     struct RUNTIME_API SMeshComponent

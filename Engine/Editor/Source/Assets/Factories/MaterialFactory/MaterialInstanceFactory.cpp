@@ -63,7 +63,7 @@ namespace Lumina
 
         if (SelectedMaterialGUID.IsValid())
         {
-            NewInstance->Material = Cast<CMaterial>(LoadObject<CObject>(SelectedMaterialGUID));
+            NewInstance->Material = Cast<CMaterialInterface>(LoadObject<CObject>(SelectedMaterialGUID));
             // Mirror reload-time PostLoad so Parameters/MaterialIndex are populated for the editor.
             NewInstance->PostLoad();
         }

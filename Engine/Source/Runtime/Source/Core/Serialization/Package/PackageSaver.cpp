@@ -60,7 +60,7 @@ namespace Lumina
         FObjectPackageIndex Index;
         // A reference to a dying object (skipped from the export table) would otherwise write a stale index;
         // serialize it as null instead. The default-constructed Index is the null sentinel.
-        if (Value && !Value->HasAnyFlag(OF_MarkedDestroy))
+        if (Value && !Value->HasAnyFlag(OF_MarkedDestroy) && Value->GetPackage() != nullptr)
         {
             if (Value->GetPackage() == Package)
             {
@@ -89,7 +89,8 @@ namespace Lumina
     FArchive& FPackageSaver::operator<<(FObjectHandle& Value)
     {
         FObjectPackageIndex Index;
-        if (CObject* Obj = Value.Resolve(); Obj && !Obj->HasAnyFlag(OF_MarkedDestroy))
+        // Package-less writes null: an import resolves by GUID against a package, so it could only dangle.
+        if (CObject* Obj = Value.Resolve(); Obj && !Obj->HasAnyFlag(OF_MarkedDestroy) && Obj->GetPackage() != nullptr)
         {
             if (Obj->GetPackage() == Package)
             {

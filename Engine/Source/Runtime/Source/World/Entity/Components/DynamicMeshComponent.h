@@ -41,6 +41,9 @@ namespace Lumina
         // The render path resolves materials through this (override beats the built mesh's slot).
         CMaterialInterface* GetMaterialForSlot(size_t Slot) const;
 
+        /** Installs a transient instance over this slot so its parameters diverge for THIS component only. */
+        CMaterialInstance* CreateDynamicMaterialInstance(uint32 Slot);
+
         /** World-local bounds of the committed mesh (empty until the first Commit). */
         FUNCTION(Script)
         FAABB GetAABB() const;

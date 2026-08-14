@@ -322,13 +322,10 @@ namespace Lumina
                 break;
             }
         }
-        if (DisplayTexture == nullptr && Param.Index < (uint32)Instance->Material->Textures.size())
+        if (DisplayTexture == nullptr)
         {
-            // Showing the inherited default is a demand for that slot: the row draws its thumbnail, so
-            // there is nothing to display without the real texture. Only costs a load for parameters the
-            // instance does NOT override, and only while this editor is open on it.
-            Instance->Material->ResolveTextureSlot(Param.Index);
-            DisplayTexture = Instance->Material->ResolvedTextures[Param.Index].Get();
+            // Through the parent, not the root, so a chained instance shows the texture it inherits.
+            DisplayTexture = Instance->Material->GetTextureParameterTexture(Param.ParameterName, Param.Index);
         }
 
         // Delegates to the engine's object picker rather than the bespoke thumbnail + drop target + browse

@@ -2,6 +2,7 @@
 #include "DynamicMeshComponent.h"
 
 #include "Assets/AssetTypes/Material/MaterialInterface.h"
+#include "Assets/AssetTypes/Material/MaterialInstance.h"
 #include "Assets/AssetTypes/Mesh/Mesh.h"
 #include "Core/Object/ObjectCore.h"
 #include "Core/Object/Package/Package.h"
@@ -154,6 +155,16 @@ namespace Lumina
             BuildData = MakeShared<FDynamicMeshBuildData>();
         }
         return *BuildData;
+    }
+
+    CMaterialInstance* SDynamicMeshComponent::CreateDynamicMaterialInstance(uint32 Slot)
+    {
+        CMaterialInstance* Dynamic = MeshComponentUtils::MakeDynamicMaterialInstance(GetMaterialForSlot(Slot));
+        if (Dynamic != nullptr)
+        {
+            SetMaterialAtSlot(Dynamic, Slot);
+        }
+        return Dynamic;
     }
 
     CMaterialInterface* SDynamicMeshComponent::GetMaterialForSlot(size_t Slot) const

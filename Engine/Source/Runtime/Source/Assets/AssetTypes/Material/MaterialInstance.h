@@ -50,7 +50,16 @@ namespace Lumina
 
         CMaterialInstance();
 
-        bool IsAsset() const override { return true; }
+        /** A transient instance parented to Parent, with its own GPU slot, seeded from Parent's values. */
+        static CMaterialInstance* CreateDynamic(CMaterialInterface* Parent);
+
+        /** A dynamic instance has no package, and must stay out of the registry and the save path. */
+        bool IsAsset() const override { return GetPackage() != nullptr; }
+
+        CMaterialInterface* GetParentMaterial() const override { return Material.Get(); }
+
+        /** Reparents, with a cycle and depth guard, and rebuilds this subtree. False if it was rejected. */
+        bool SetParentMaterial(CMaterialInterface* NewParent);
 
         CMaterial* GetMaterial() const override;
         bool SetScalarValue(const FName& Name, const float Value) override;
@@ -95,13 +104,17 @@ namespace Lumina
 
         /** Re-derive uniforms from the (possibly recompiled) parent and push them to this instance's GPU slot.
             Called by the parent after a recompile; without the upload the instance keeps stale GPU uniforms. */
-        void RefreshFromParent();
+        void RefreshFromParent() override;
 
         /** Copy the parent's texture slots for every slot this instance does not override, and push the block
             if anything moved. Deliberately narrower than RefreshFromParent: no parameter rebuild and no
             synchronous resolve, so the parent can call it from the async texture-load completion, which is
             not on the game thread. */
-        void RefreshInheritedTextureSlots();
+        void RefreshInheritedTextureSlots() override;
+
+        uint32 GetResolvedTextureSlot(uint32 Index) override;
+
+        CTexture* GetTextureParameterTexture(const FName& Name, uint32 Index) override;
 
 
         /** Whether an enabled texture override supplies slot Index. False for a slot the parent binds without
@@ -125,8 +138,9 @@ namespace Lumina
         /** Drop a parameter's override entirely (discards its stored value). */
         void RemoveOverride(const FName& Name);
 
+        /** Immediate parent: a base material, or another instance. Assign through SetParentMaterial. */
         PROPERTY(ReadOnly, Category = "Material")
-        TObjectPtr<CMaterial> Material;
+        TObjectPtr<CMaterialInterface> Material;
         
         PROPERTY(Editable, Category = "Material|Shading")
         bool bOverrideShadingModel = false;

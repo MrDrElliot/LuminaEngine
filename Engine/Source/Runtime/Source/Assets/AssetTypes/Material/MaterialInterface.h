@@ -1,8 +1,10 @@
 ﻿#pragma once
 
 #include "Renderer/ShaderHandle.h"
+#include "Containers/Array.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Object/Object.h"
+#include "Core/Threading/Thread.h"
 #include "Renderer/RHIFwd.h"
 #include "Renderer/Vertex.h"
 #include "MaterialInterface.generated.h"
@@ -62,6 +64,10 @@ namespace Lumina
         GENERATED_BODY()
     public:
 
+        /** Immediate parent in the instance chain; null on a base material, which is always the root. */
+        virtual CMaterialInterface* GetParentMaterial() const { return nullptr; }
+
+        /** The root base material, which is the only level that DECLARES parameters, textures and stages. */
         virtual CMaterial* GetMaterial() const { return nullptr; }
         virtual bool SetVectorValue(const FName& Name, const FVector4& Value) { return false; }
         virtual bool SetScalarValue(const FName& Name, const float Value) { return false; }
@@ -91,6 +97,34 @@ namespace Lumina
 
         void SetReadyForRender(bool bReady) { bReadyForRender.store(bReady, std::memory_order_release); }
         bool IsReadyForRender() const { return bReadyForRender.load(std::memory_order_acquire); }
+
+        /** Longest parent chain allowed. Resolution is linear in depth and every level costs a GPU slot. */
+        static constexpr uint32 MaxChainDepth = 8;
+
+        /** Idempotent. Children of one parent register concurrently during the parallel PostLoad wave. */
+        void RegisterChild(CMaterialInterface* Child);
+        void UnregisterChild(CMaterialInterface* Child);
+
+        /** THIS level only. Re-derive values from the parent and push them to this material's GPU slot. */
+        virtual void RefreshFromParent() { }
+
+        /** Copy the parent's texture slots for every slot this level does not override. */
+        virtual void RefreshInheritedTextureSlots() { }
+
+        /** Bindless resource ID this level's resolved block holds for texture slot Index. */
+        virtual uint32 GetResolvedTextureSlot(uint32 Index);
+
+        /** The texture actually bound to parameter Name at slot Index, found by walking up the chain. */
+        virtual CTexture* GetTextureParameterTexture(const FName& Name, uint32 Index) { return nullptr; }
+
+        /** Refreshes this level and then every descendant. */
+        void RefreshSubtree();
+
+        /** Depth-first RefreshFromParent over every descendant, excluding this level. */
+        void PropagateToChildren(uint32 Depth = 0);
+
+        /** Depth-first RefreshInheritedTextureSlots over every descendant. */
+        void PropagateInheritedTextureSlots(uint32 Depth = 0);
 
         /** Re-reads this material's texture ResourceIDs into its uniform block and re-uploads it, if it
          *  binds ChangedTexture (null = refresh unconditionally). Returns whether it did.
@@ -126,5 +160,9 @@ namespace Lumina
         std::atomic_bool        bReadyForRender;
 
         int32                   MaterialIndex = -1;
+
+        /** Instances parented to this level. Raw pointers; a child unregisters in its OnDestroy. */
+        TVector<CMaterialInterface*>    Children;
+        FMutex                          ChildrenMutex;
     };
 }
