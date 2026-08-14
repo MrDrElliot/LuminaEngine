@@ -455,7 +455,7 @@ namespace Lumina
 
     /** Primitive type for one child of a compound collider. */
     REFLECT()
-    enum class RUNTIME_API ECompoundShapeType : uint8
+    enum class ECompoundShapeType : uint8
     {
         Box,
         Sphere,

@@ -8,7 +8,7 @@
 namespace Lumina
 {
     REFLECT()
-    enum class RUNTIME_API ESequenceFinishAction : uint8
+    enum class ESequenceFinishAction : uint8
     {
         // Leave the last evaluated pose in place; the shot holds on its final frame.
         Hold,

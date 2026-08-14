@@ -3,7 +3,7 @@
 
 namespace Lumina::Dialogs
 {
-    enum class RUNTIME_API EType
+    enum class EType
     {
         Ok = 0,
         OkCancel,
@@ -14,7 +14,7 @@ namespace Lumina::Dialogs
         CancelTryContinue,
     };
 
-    enum class RUNTIME_API EResult
+    enum class EResult
     {
         No,
         Cancel,
@@ -23,7 +23,7 @@ namespace Lumina::Dialogs
         Continue,
     };
 
-    enum class RUNTIME_API ESeverity
+    enum class ESeverity
     {
         Info = 0,
         Warning,

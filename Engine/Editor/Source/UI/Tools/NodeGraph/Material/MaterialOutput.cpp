@@ -79,6 +79,10 @@ namespace Lumina
                     ReturnSize = 200.0f;
                 }
                 break;
+
+            // TextureHandle pins carry no inline editor; they keep the default pin width.
+            default:
+                break;
             }
         }
         else

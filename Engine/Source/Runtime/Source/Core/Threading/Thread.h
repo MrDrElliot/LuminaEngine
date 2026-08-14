@@ -18,8 +18,10 @@ namespace Lumina
 
     namespace Threading
     {
-        constexpr auto kCacheLineSize = std::hardware_destructive_interference_size;
-        #define CACHE_ALIGN alignas(std::hardware_destructive_interference_size)
+        // Pinned rather than std::hardware_destructive_interference_size, whose value differs between
+        // compilers and versions and would silently change the layout of every CACHE_ALIGN type.
+        constexpr size_t kCacheLineSize = 64;
+        #define CACHE_ALIGN alignas(::Lumina::Threading::kCacheLineSize)
 
         using ThreadID = uint64;
 

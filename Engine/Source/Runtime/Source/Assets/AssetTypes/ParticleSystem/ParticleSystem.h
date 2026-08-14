@@ -14,7 +14,7 @@ namespace Lumina
     class CTexture;
 
     REFLECT()
-    enum class RUNTIME_API EParticleEmitterShape : uint8
+    enum class EParticleEmitterShape : uint8
     {
         Point,
         Sphere,
@@ -25,7 +25,7 @@ namespace Lumina
     };
 
     REFLECT()
-    enum class RUNTIME_API EParticleVelocityMode : uint8
+    enum class EParticleVelocityMode : uint8
     {
         /** Random vec3 between VelocityMin and VelocityMax. */
         Explicit,
@@ -34,7 +34,7 @@ namespace Lumina
     };
 
     REFLECT()
-    enum class RUNTIME_API EParticleBlendMode : uint8
+    enum class EParticleBlendMode : uint8
     {
         Alpha,
         Additive,
@@ -44,7 +44,7 @@ namespace Lumina
 
     /** How a particle's billboard is oriented. */
     REFLECT()
-    enum class RUNTIME_API EParticleFacingMode : uint8
+    enum class EParticleFacingMode : uint8
     {
         /** Always square-on to the camera. */
         CameraFacing,
@@ -56,14 +56,14 @@ namespace Lumina
     };
 
     REFLECT()
-    enum class RUNTIME_API EParticleShaderMode : uint8
+    enum class EParticleShaderMode : uint8
     {
         Default,
         Custom,
     };
 
     REFLECT()
-    enum class RUNTIME_API EParticleParameterType : uint8
+    enum class EParticleParameterType : uint8
     {
         Float,
         Int,

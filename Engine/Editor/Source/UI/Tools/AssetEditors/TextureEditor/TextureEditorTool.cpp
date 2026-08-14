@@ -461,7 +461,7 @@ namespace Lumina
                         }
                         else
                         {
-                            ImGui::Text("%llu B", actualSize);
+                            ImGui::Text("%llu B", (unsigned long long)actualSize);
                         }
         
                         // Percentage

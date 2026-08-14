@@ -397,7 +397,7 @@ static bool HandleConnections(ImDrawList* drawList,
                            -textSize.y / 2);
 
             ImRect nodeRect = GetNodeRect(node, factor);
-            if (!inMinimap && (overCon || (nodeRect.Contains(io.MousePos - offset) && closestConn == -1 &&
+            if (!inMinimap && (overCon || (nodeRect.Contains(io.MousePos - offset) && closestConn == SlotIndex(-1) &&
                             (editingInput == (i != 0)) && nodeOperation == NO_EditingLink)))
             {
                 closestDistance = distance;
@@ -428,7 +428,7 @@ static bool HandleConnections(ImDrawList* drawList,
             }
         }
 
-        if (closestConn != -1)
+        if (closestConn != SlotIndex(-1))
         {
             const char** con = i ? nodeTemplate.mOutputNames : nodeTemplate.mInputNames;
             const char* conText = (con && con[closestConn]) ? con[closestConn] : "";
@@ -552,8 +552,6 @@ static bool DrawNode(ImDrawList* drawList,
 
     // test nested IO
     drawList->ChannelsSetCurrent(1); // Background
-    const size_t InputsCount = nodeTemplate.mInputCount;
-    const size_t OutputsCount = nodeTemplate.mOutputCount;
 
     /*
     for (int i = 0; i < 2; i++)
@@ -956,7 +954,7 @@ void Show(Delegate& delegate, const Options& options, ViewState& viewState, bool
                 }
 
                 HandleConnections(drawList, nodeIndex, offset, viewState.mFactor, delegate, options, true, inputSlot, outputSlot, inMinimap);
-                if (inputSlot != -1 || outputSlot != -1)
+                if (inputSlot != SlotIndex(-1) || outputSlot != SlotIndex(-1))
                 {
                     inputSlotOver = inputSlot;
                     outputSlotOver = outputSlot;

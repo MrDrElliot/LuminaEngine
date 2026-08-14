@@ -11,7 +11,7 @@ namespace Lumina
     /** How the segment leaving a key is interpolated. Cubic recomputes its tangents from the
      *  neighbours (Catmull-Rom); CubicUser keeps whatever the curve editor authored. */
     REFLECT()
-    enum class RUNTIME_API ECurveInterpMode : uint8
+    enum class ECurveInterpMode : uint8
     {
         Constant,
         Linear,
@@ -21,7 +21,7 @@ namespace Lumina
 
     /** Behavior outside the keyed range, evaluated separately for each side. */
     REFLECT()
-    enum class RUNTIME_API ECurveExtrapolation : uint8
+    enum class ECurveExtrapolation : uint8
     {
         Clamp,
         Cycle,

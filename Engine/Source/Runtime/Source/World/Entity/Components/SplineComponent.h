@@ -9,7 +9,7 @@ namespace Lumina
 {
     /** How a control point's tangents are produced. */
     REFLECT()
-    enum class RUNTIME_API ESplineTangentMode : uint8
+    enum class ESplineTangentMode : uint8
     {
         /** Catmull-Rom: tangents derived from the neighbouring points, giving a smooth curve. */
         Auto,

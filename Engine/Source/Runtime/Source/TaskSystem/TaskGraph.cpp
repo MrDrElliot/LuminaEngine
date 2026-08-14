@@ -85,6 +85,13 @@ namespace Lumina
         std::coroutine_handle<promise_type> Handle;
     };
 
+    // The coroutine frame GCC synthesises here holds the co_awaited lambda, a type with no linkage.
+    // The frame is compiler-generated, so there is nothing at source level to give linkage to.
+    #if defined(__GNUC__) && !defined(__clang__)
+        #pragma GCC diagnostic push
+        #pragma GCC diagnostic ignored "-Wsubobject-linkage"
+    #endif
+
     FTaskGraph::FNodeCoro FTaskGraph::RunNode(FNode* Node)
     {
         if (Node->bIsParallelFor)
@@ -105,6 +112,10 @@ namespace Lumina
         FTaskGraph::CompleteNode(Node);
         co_return;
     }
+
+    #if defined(__GNUC__) && !defined(__clang__)
+        #pragma GCC diagnostic pop
+    #endif
 
     void FTaskGraph::StartNode(FNode* Node)
     {

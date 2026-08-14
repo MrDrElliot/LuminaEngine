@@ -96,7 +96,7 @@ public sealed class ClangToolchain : IToolchain
 
     private static FileItem? ResolveHeaderOnIncludePaths(BuildModule Module, string Header)
     {
-        foreach (string IncludePath in Module.CompileIncludePaths)
+        foreach (string IncludePath in Module.AllIncludePaths)
         {
             FileItem Candidate = FileItem.Get(Path.Combine(IncludePath, Header));
 
@@ -347,6 +347,14 @@ public sealed class ClangToolchain : IToolchain
         {
             Arguments.Add("-I" + PathUtils.QuoteUnix(IncludePath));
         }
+
+        // Third-party headers reach first-party translation units through these, and -isystem is what
+        // stops their diagnostics from being reported against our code.
+        foreach (string IncludePath in Module.SystemIncludePaths)
+        {
+            Arguments.Add("-isystem");
+            Arguments.Add(PathUtils.QuoteUnix(IncludePath));
+        }
     }
 
     private static void AddWarningFlags(BuildTarget Target, BuildModule Module, List<string> Arguments)
@@ -377,13 +385,15 @@ public sealed class ClangToolchain : IToolchain
             }
         }
 
-        foreach (string Warning in Module.Rules.FatalWarnings)
+        foreach (string Warning in Target.Rules.GlobalFatalWarnings.Concat(Module.Rules.FatalWarnings))
         {
             if (TranslateWarningName(Warning) is string Name)
             {
                 Arguments.Add("-Werror=" + Name);
             }
         }
+
+        AddNamedWarningFlags(Target, Module, Arguments);
 
         if (Target.Rules.bWarningsAsErrors)
         {
@@ -392,6 +402,35 @@ public sealed class ClangToolchain : IToolchain
 
         Arguments.Add("-Wno-unknown-warning-option");
         Arguments.Add("-Wno-unknown-pragmas");
+    }
+
+    /// <summary>Turns the named warning map into flags. Emitted after the raw lists so it wins.</summary>
+    private static void AddNamedWarningFlags(BuildTarget Target, BuildModule Module, List<string> Arguments)
+    {
+        WarningSettings Merged = new();
+        Merged.Apply(Target.Rules.Warnings);
+        Merged.Apply(Module.Rules.Warnings);
+
+        foreach ((CompilerWarning Warning, WarningSeverity Level) in Merged.Entries)
+        {
+            if (CompilerWarnings.Get(Warning).GccName is not string Name)
+            {
+                continue;
+            }
+
+            string? Flag = Level switch
+            {
+                WarningSeverity.Off => "-Wno-" + Name,
+                WarningSeverity.Warning => "-W" + Name,
+                WarningSeverity.Fatal => "-Werror=" + Name,
+                _ => null,
+            };
+
+            if (Flag is not null)
+            {
+                Arguments.Add(Flag);
+            }
+        }
     }
 
     private static string? TranslateWarningName(string Warning)

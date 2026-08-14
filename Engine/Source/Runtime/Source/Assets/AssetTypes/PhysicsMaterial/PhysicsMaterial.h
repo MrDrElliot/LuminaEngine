@@ -9,7 +9,7 @@ namespace Lumina
     /** How two materials combine at a contact; the pair's effective mode is the max of both bodies'
      *  modes (Max > Min > Multiply > Average), so a "sticky" material wins. */
     REFLECT()
-    enum class RUNTIME_API EPhysicsMaterialCombineMode : uint8
+    enum class EPhysicsMaterialCombineMode : uint8
     {
         Average,
         Min,

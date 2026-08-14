@@ -6,6 +6,7 @@
 #include <rpmalloc.h>
 #include <cstring>
 #include <cstdio>
+#include <new>
 #include "Core/Threading/Atomic.h"
 #include "Core/Threading/Thread.h"
 
@@ -170,7 +171,12 @@ namespace Lumina::Memory
             {
                 return false;
             }
-            std::memset(NewEntries, 0, sizeof(FEntry) * NewCap);
+            // Value-init rather than memset: FEntry has member initialisers, so it is not trivially
+            // default-constructible. Same zeroed bytes, without the UB.
+            for (uint32 i = 0; i < NewCap; ++i)
+            {
+                new (NewEntries + i) FEntry();
+            }
 
             uint32 NewCount = 0;
             if (Shard.Entries != nullptr)

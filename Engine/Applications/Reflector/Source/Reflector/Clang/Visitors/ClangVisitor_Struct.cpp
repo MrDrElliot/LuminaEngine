@@ -754,6 +754,10 @@ namespace Lumina::Reflection::Visitor
 			}
 		}
 		break;
+
+		// Every other cursor kind in a struct body is not reflected surface.
+		default:
+			break;
 		}
 
 		return CXChildVisit_Continue;

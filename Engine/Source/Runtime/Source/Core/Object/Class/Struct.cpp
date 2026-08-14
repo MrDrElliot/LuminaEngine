@@ -85,9 +85,6 @@ namespace Lumina
 
     bool CStruct::IsChildOf(const CStruct* Base) const
     {
-        // UB to call on nullptr.
-        ASSUME(this);
-        
         if (Base == nullptr)
         {
             return false;

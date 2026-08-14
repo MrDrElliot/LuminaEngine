@@ -6,7 +6,7 @@
 namespace Lumina
 {
     REFLECT(BitMask)
-    enum class RUNTIME_API ECollisionProfiles : uint16
+    enum class ECollisionProfiles : uint16
     {
         Static      = BIT(0),
         Dynamic     = BIT(1),
@@ -49,7 +49,7 @@ namespace Lumina
     };
     
     REFLECT()
-    enum class RUNTIME_API EMoveMode : uint8
+    enum class EMoveMode : uint8
     {
         Teleport,           // Hard set position (loses velocity)
         MoveKinematic,      // Move with velocity calculation (preserves physics)
@@ -57,7 +57,7 @@ namespace Lumina
     };
     
     REFLECT()
-    enum class RUNTIME_API EBodyType : uint8
+    enum class EBodyType : uint8
     {
         Static,
         Kinematic,
@@ -67,7 +67,7 @@ namespace Lumina
     /** Joint type for SPhysicsConstraintComponent / World.Physics constraints. Order is the wire contract
         shared with the C# Physics facade and the native FConstraintDesc switch -- append only. */
     REFLECT()
-    enum class RUNTIME_API EPhysicsConstraintType : uint8
+    enum class EPhysicsConstraintType : uint8
     {
         Fixed,      // Weld: removes all 6 DOF (compound props, breakable welds).
         Point,      // Ball-and-socket: removes 3 translation DOF (ropes, chains).

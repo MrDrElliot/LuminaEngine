@@ -16,13 +16,13 @@ namespace Lumina
         if (V >= '0' && V <= '9') return FString(1, char(V));
         if (V >= int(EKey::F1) && V <= int(EKey::F25))
         {
-            char Buf[4];
+            char Buf[16];
             std::snprintf(Buf, sizeof(Buf), "F%d", V - int(EKey::F1) + 1);
             return FString(Buf);
         }
         if (V >= int(EKey::KP0) && V <= int(EKey::KP9))
         {
-            char Buf[4];
+            char Buf[16];
             std::snprintf(Buf, sizeof(Buf), "KP%d", V - int(EKey::KP0));
             return FString(Buf);
         }

@@ -22,7 +22,7 @@ static_assert(sizeof(JPH::ObjectLayer) == 4);
 #if defined(LE_PLATFORM_WINDOWS)
 extern "C" __declspec(dllimport) int __stdcall IsDebuggerPresent();
 #else
-static int IsDebuggerPresent() { return 0; }
+[[maybe_unused]] static int IsDebuggerPresent() { return 0; }
 #endif
 
 namespace Lumina::Physics
@@ -128,6 +128,7 @@ namespace Lumina::Physics
         Memory::Free(block);
     }
     
+    #ifdef JPH_ENABLE_ASSERTS
     static bool JoltAssertionFailed(const char* expr, const char* msg, const char* file, uint32 line)
     {
         LOG_CRITICAL("JOLT ASSERT FAILED: Message {}, File: {} - {}", expr, msg, file, line);
@@ -142,6 +143,7 @@ namespace Lumina::Physics
         // log and continue so a standalone run does not hard-crash on STATUS_BREAKPOINT.
         return ::IsDebuggerPresent() != 0;
     }
+    #endif
 
     void FJoltPhysicsContext::Initialize()
     {

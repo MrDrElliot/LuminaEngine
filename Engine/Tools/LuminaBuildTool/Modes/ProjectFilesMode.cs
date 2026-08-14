@@ -133,7 +133,7 @@ public static class ProjectFilesMode
         if (BuildPlatformRegistry.HostPlatform != BuildPlatform.Windows64)
         {
             Log.Info(
-                "Wrote {0}. Point clangd, VS Code (clangd extension) or Rider at this directory to pick it up.",
+                "Wrote {0}. Point clangd, CLion or the VS Code clangd extension at this directory.",
                 Path.Combine(Directories.OutputRoot, "compile_commands.json"));
         }
 

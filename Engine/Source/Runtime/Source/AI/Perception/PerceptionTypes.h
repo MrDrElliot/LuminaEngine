@@ -11,7 +11,7 @@ namespace Lumina
     // The senses a perceiver can run and a stimulus source can register for. A BitMask so one source can
     // be both seen and heard, and a perceiver can report which senses currently detect a target.
     REFLECT(BitMask)
-    enum class RUNTIME_API EAISenseChannel : uint8
+    enum class EAISenseChannel : uint8
     {
         Sight   = BIT(0),
         Hearing = BIT(1),

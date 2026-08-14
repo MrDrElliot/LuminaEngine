@@ -84,7 +84,7 @@ namespace Lumina
         bool bMapKey = false;
     };
 
-    enum class RUNTIME_API EPropertyChangeOp : uint8
+    enum class EPropertyChangeOp : uint8
     {
         None,
         Updated,

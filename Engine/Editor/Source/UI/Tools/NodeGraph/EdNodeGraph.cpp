@@ -929,7 +929,7 @@ namespace Lumina
             
             if (bDebug)
             {
-                ImGui::Text("(ID - %lld)", Node->GetNodeID());
+                ImGui::Text("(ID - %lld)", (long long)Node->GetNodeID());
             }
             
             ImGui::Spring(1);

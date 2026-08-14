@@ -55,7 +55,7 @@ namespace Lumina
 		}
 	};
 
-	static uint64 GetTypeHash(const FDrawBatchKey& K)
+	inline uint64 GetTypeHash(const FDrawBatchKey& K)
 	{
 		size_t Seed = 0;
 		for (FShaderH Entry : { K.VisBufferMeshShader, K.VisBufferMeshShaderMasked,

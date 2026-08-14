@@ -11,7 +11,7 @@ namespace fs = std::filesystem;
 
 namespace Lumina
 {
-    enum class RUNTIME_API  EFileAction
+    enum class EFileAction
     {
         Added,
         Modified,

@@ -311,7 +311,7 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
                 }
 
                 Xml.AppendLine($"    <NMakePreprocessorDefinitions>{Escape(string.Join(';', VariantModule.CompileDefinitions))}</NMakePreprocessorDefinitions>");
-                Xml.AppendLine($"    <NMakeIncludeSearchPath>{Escape(string.Join(';', VariantModule.CompileIncludePaths))}</NMakeIncludeSearchPath>");
+                Xml.AppendLine($"    <NMakeIncludeSearchPath>{Escape(string.Join(';', VariantModule.AllIncludePaths))}</NMakeIncludeSearchPath>");
                 Xml.AppendLine($"    <NMakeForcedIncludes>{Escape(string.Join(';', VariantModule.ForceIncludeFiles))}</NMakeForcedIncludes>");
             }
 

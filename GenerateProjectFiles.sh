@@ -5,7 +5,8 @@
 # are discovered at build time, so this is only needed to refresh what the editor sees.
 #
 # On this platform the artefact is compile_commands.json at the repository root, which is what
-# clangd, VS Code and Rider read. No solution is generated: nothing here can open one.
+# clangd, CLion and the VS Code clangd extension read. No solution is generated: nothing here
+# can open one.
 #
 #   ./GenerateProjectFiles.sh
 #   ./GenerateProjectFiles.sh -Tracy=off      persistent defaults live in Engine/Build/BuildConfiguration.json

@@ -1438,6 +1438,10 @@ namespace Lumina
                     case ENetMessage::NameExport:
                         Net::ApplyNameExport(State->InNames[Event.Connection.Value], Msg, MsgSize);
                         break;
+
+                    // ScriptRpc is not implemented yet, and the id came off the wire, so it may be anything.
+                    default:
+                        break;
                     }
                 });
                 break;

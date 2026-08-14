@@ -116,6 +116,10 @@ namespace Lumina
                 A->SetComponentMask(EComponentMask::A);
             }
             break;
+
+        // A constant node is only ever built for the numeric types; texture constants do not exist.
+        default:
+            break;
         }
     }
 

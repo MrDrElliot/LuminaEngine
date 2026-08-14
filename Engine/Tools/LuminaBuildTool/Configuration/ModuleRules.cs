@@ -168,6 +168,9 @@ public abstract class ModuleRules
     /// <summary>Warning numbers suppressed for this module.</summary>
     public List<string> DisabledWarnings { get; } = new();
 
+    /// <summary>Warning levels for this module, layered over the target's own map.</summary>
+    public WarningSettings Warnings { get; } = new();
+
     /// <summary>Per-file compiler options, for units needing a flag the rest of the module must not get.</summary>
     public Dictionary<string, List<string>> PerFileCompilerOptions { get; } = new(StringComparer.OrdinalIgnoreCase);
 

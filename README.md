@@ -205,8 +205,11 @@ built on them, so the editor refuses to start on anything older and says so.
   whether any installed GPU actually reports `VK_EXT_mesh_shader`.
 
 > [!NOTE]
-> [JetBrains Rider](https://www.jetbrains.com/rider/) is the recommended IDE for
-> Lumina development, but it is not required.
+> No IDE is required. On Windows,
+> [JetBrains Rider](https://www.jetbrains.com/rider/) and Visual Studio both open
+> the generated solution. On Linux there is no solution:
+> [CLion](https://www.jetbrains.com/clion/) reads the generated
+> `compile_commands.json` for C++, and Rider opens the engine's C# projects.
 
 ### Installation (Windows)
 
@@ -329,8 +332,10 @@ takes the same arguments.
 
    - **clangd** (and the VS Code clangd extension) finds it with no
      configuration.
-   - **Rider** and **CLion**: open the folder and select the compile database
-     when prompted.
+   - **CLion**: open the folder and select the compile database when prompted.
+
+   Rider is the tool for the engine's C# projects (`LuminaBuildTool`,
+   `LuminaSharp`) rather than for the compile database.
 
    Re-run it after adding or removing modules, plugins or sources. Ordinary
    source files are discovered at build time, and a build that changes a

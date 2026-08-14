@@ -70,16 +70,10 @@ public abstract class LuminaTargetRules : TargetRules
 
         if (Target.Platform == BuildPlatform.Windows64)
         {
-            GlobalDisabledWarnings.AddRange(new[]
-            {
-                "4251", // DLL interface on an exported type
-                "4275", // non-DLL-interface base class
-                "4244", // precision loss
-                "4267", // precision loss
-            });
-
             GlobalCompilerOptions.Add("/bigobj");
         }
+
+        ConfigureWarnings(Target);
 
         // Layering the module graph cannot state for itself. Checked across the whole closure, so
         // routing one of these through an intermediate module does not get past it.
@@ -96,6 +90,59 @@ public abstract class LuminaTargetRules : TargetRules
             "NsightPerf",
             "The Nsight SDK belongs to the NsightPerf plugin. Nothing in the runtime should be built "
             + "against a vendor profiler that a project is free to disable.");
+    }
+
+    /// <summary>
+    /// The engine's warning policy, in one place. Fatal means the class is a bug rather than a style
+    /// preference, so it is worth failing the build over. Off is reserved for warnings that fire on
+    /// code we do not own or cannot express differently.
+    /// </summary>
+    private void ConfigureWarnings(TargetInfo Target)
+    {
+        Warnings.Set(WarningSeverity.Fatal,
+            CompilerWarning.ReturnType,             // falling off the end of a non-void function
+            CompilerWarning.SequencePoint,          // unsequenced modification, the Memory.h NewArray bug
+            CompilerWarning.StrictAliasing,         // type-punning the optimiser is allowed to break
+            CompilerWarning.ClassMemAccess,         // memset or memcpy over a non-trivial type
+            CompilerWarning.DeleteNonVirtualDtor,   // deleting through a base with no virtual destructor
+            CompilerWarning.Reorder,                // initialisers that do not run in the order written
+            CompilerWarning.NonNullCompare,         // testing a reference or nonnull parameter for null
+            CompilerWarning.TautologicalCompare,    // a comparison whose result is fixed at compile time
+            CompilerWarning.Parentheses,            // assignment or precedence that reads as something else
+            CompilerWarning.Format,                 // printf-family arguments that do not match the format
+            CompilerWarning.FormatTruncation);      // a formatted write the destination cannot hold
+
+        Warnings.Set(WarningSeverity.Off,
+            // The reflection generator takes offsetof of reflected types, which are rarely standard
+            // layout. Conditionally-supported by the letter of the standard, fine on every compiler
+            // the engine targets, and not something generated code can be rewritten to avoid.
+            CompilerWarning.InvalidOffsetof,
+
+            // std::hardware_destructive_interference_size is pinned in Thread.h precisely because its
+            // value moves between compilers; the warning is about the hazard we already removed.
+            CompilerWarning.InterferenceSize,
+
+            // Third-party headers arrive through -isystem, which silences their front-end diagnostics
+            // but not the ones GCC raises after inlining. eastl::swap over basic_string's union layout
+            // trips these in every unit that moves a string, with nothing to fix on our side.
+            CompilerWarning.MaybeUninitialized,
+            CompilerWarning.DanglingPointer);
+
+        if (Target.Platform == BuildPlatform.Windows64)
+        {
+            // Noise inherent to exporting C++ types across a DLL boundary.
+            Warnings.Set(WarningSeverity.Off,
+                CompilerWarning.DllInterface,
+                CompilerWarning.DllInterfaceBase,
+                CompilerWarning.ConversionLoss,
+                CompilerWarning.ConversionSizeT);
+        }
+        else
+        {
+            // Verified clean on GCC. Left out on MSVC until the same pass runs there, because these
+            // are off by default for cl, so promoting them enables them as well as failing on them.
+            Warnings.Set(WarningSeverity.Fatal, CompilerWarning.Switch);
+        }
     }
 }
 

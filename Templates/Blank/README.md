@@ -28,14 +28,14 @@ editor with this project pre-loaded. Breakpoints in your game module hit as soon
 
 That builds the game shared library (`Binaries/Linux64/lib$PROJECTNAME-Development.so`) and launches
 the editor with this project pre-loaded. There is no solution on Linux: `GenerateProject.sh` writes
-a `compile_commands.json` that clangd, VS Code and Rider read for completion.
+a `compile_commands.json`, which clangd, CLion and the VS Code clangd extension read for completion.
 
 The solution also contains the engine's own targets, because the engine is built from source
 alongside your project. Its output stays in the engine tree and is shared by every project, so it
 is built once and not again.
 
-- **Visual Studio** uses the generated `.vcxproj.user`, which points Run at the editor with `--Project=` set to this project.
-- **Rider** uses the shared `.run/` launch configurations that ship with this template. Pick one from the configuration dropdown next to the Run button.
+**Visual Studio** and **Rider** both read the generated `.vcxproj.user`, which points Run at the
+editor with `--Project=` set to this project.
 
 ## Scripting (C#)
 

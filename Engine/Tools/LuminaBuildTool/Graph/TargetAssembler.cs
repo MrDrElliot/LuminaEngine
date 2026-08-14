@@ -325,6 +325,10 @@ public sealed class TargetAssembler
         Inputs.AddRange(TargetRules.GlobalCompilerOptions.OrderBy(O => O, StringComparer.Ordinal));
         Inputs.Add("|");
         Inputs.AddRange(TargetRules.GlobalDisabledWarnings.OrderBy(W => W, StringComparer.Ordinal));
+        Inputs.Add("|");
+        Inputs.AddRange(TargetRules.GlobalFatalWarnings.OrderBy(W => W, StringComparer.Ordinal));
+        Inputs.Add("|");
+        Inputs.AddRange(TargetRules.Warnings.Entries.Select(Pair => $"{Pair.Key}={Pair.Value}"));
 
         return ContentHash.OfString(string.Join('\n', Inputs))[..12];
     }
@@ -459,6 +463,9 @@ public sealed class TargetAssembler
     {
         public List<string> IncludePaths { get; } = new();
 
+        /// <summary>Include paths originating in a third-party module, kept apart so they can go out as -isystem.</summary>
+        public List<string> SystemIncludePaths { get; } = new();
+
         public List<string> Definitions { get; } = new();
 
         public List<string> SystemLibraries { get; } = new();
@@ -489,9 +496,12 @@ public sealed class TargetAssembler
 
         ModuleRules Rules = Module.Rules;
 
+        // A vendored library's headers are not ours to fix, so its exports travel as system paths.
+        List<string> OwnIncludePaths = Rules.bIsThirdParty ? Exports.SystemIncludePaths : Exports.IncludePaths;
+
         foreach (string IncludePath in Rules.PublicIncludePaths)
         {
-            Exports.IncludePaths.Add(Rules.ModulePath(IncludePath));
+            OwnIncludePaths.Add(Rules.ModulePath(IncludePath));
         }
 
         // An engine module's source root is public surface; third-party modules declare roots explicitly.
@@ -527,6 +537,7 @@ public sealed class TargetAssembler
             PublicExports Inherited = GetPublicExports(Dependency);
 
             Exports.IncludePaths.AddRange(Inherited.IncludePaths);
+            Exports.SystemIncludePaths.AddRange(Inherited.SystemIncludePaths);
             Exports.Definitions.AddRange(Inherited.Definitions);
             Exports.SystemLibraries.AddRange(Inherited.SystemLibraries);
             Exports.AdditionalLibraries.AddRange(Inherited.AdditionalLibraries);
@@ -541,6 +552,7 @@ public sealed class TargetAssembler
         ModuleRules Rules = Module.Rules;
 
         List<string> IncludePaths = new();
+        List<string> SystemIncludePaths = new();
         List<string> Definitions = new();
 
         foreach (string IncludePath in Rules.PrivateIncludePaths)
@@ -550,6 +562,7 @@ public sealed class TargetAssembler
 
         PublicExports Own = GetPublicExports(Module);
         IncludePaths.AddRange(Own.IncludePaths);
+        SystemIncludePaths.AddRange(Own.SystemIncludePaths);
         Definitions.AddRange(Own.Definitions);
 
         // A module always sees its own source root even when it exports nothing.
@@ -562,6 +575,7 @@ public sealed class TargetAssembler
         {
             PublicExports Inherited = GetPublicExports(Dependency);
             IncludePaths.AddRange(Inherited.IncludePaths);
+            SystemIncludePaths.AddRange(Inherited.SystemIncludePaths);
             Definitions.AddRange(Inherited.Definitions);
         }
 
@@ -577,6 +591,12 @@ public sealed class TargetAssembler
         AddModuleApiDefinitions(Module, Definitions);
 
         AddUnique(Module.CompileIncludePaths, IncludePaths);
+
+        // A directory already reachable as first-party surface stays a -I path: the compiler lets
+        // -isystem win over -I for the same directory, which would mute warnings we want to see.
+        HashSet<string> Regular = new(Module.CompileIncludePaths, StringComparer.OrdinalIgnoreCase);
+        AddUnique(Module.SystemIncludePaths, SystemIncludePaths.Where(Candidate => !Regular.Contains(Candidate)));
+
         AddUnique(Module.CompileDefinitions, Definitions);
 
         // Third-party code does not get the engine's force includes; it has no ModuleAPI.h.

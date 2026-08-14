@@ -2,6 +2,6 @@
 
 #include "Core/Object/ObjectMacros.h"
 
-class Lumina::CEnum;
+namespace Lumina { class CEnum; }
 
 template<typename EnumType> Lumina::CEnum* StaticEnum();

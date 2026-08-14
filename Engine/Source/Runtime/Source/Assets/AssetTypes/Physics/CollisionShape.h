@@ -12,7 +12,7 @@ namespace Lumina
     class CPhysicsMaterial;
 
     REFLECT()
-    enum class RUNTIME_API ECollisionPrimitiveType : uint8
+    enum class ECollisionPrimitiveType : uint8
     {
         Box,
         Sphere,

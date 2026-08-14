@@ -1910,6 +1910,9 @@ namespace Lumina
         case ImGuizmo::OPERATION::TRANSLATE: Icon = LE_ICON_AXIS_ARROW; break;
         case ImGuizmo::OPERATION::ROTATE:    Icon = LE_ICON_ROTATE_360; break;
         case ImGuizmo::OPERATION::SCALE:     Icon = LE_ICON_ARROW_TOP_RIGHT_BOTTOM_LEFT; break;
+
+        // The editor only ever cycles between the three whole-transform modes.
+        default:                             break;
         }
 
         if (ImGuiX::IconButton(Icon, "##GizmoMode", 0xFFFFFFFF, BtnSize))

@@ -78,7 +78,7 @@ public static class QueryMode
                 Report.AppendLine($"      output:   {(Module.OutputFile.Length > 0 ? Module.OutputFile : "(none)")}");
                 Report.AppendLine($"      public:   {string.Join(", ", Module.Rules.PublicDependencyModuleNames)}");
                 Report.AppendLine($"      private:  {string.Join(", ", Module.Rules.PrivateDependencyModuleNames)}");
-                Report.AppendLine($"      includes: {Module.CompileIncludePaths.Count}");
+                Report.AppendLine($"      includes: {Module.CompileIncludePaths.Count + Module.SystemIncludePaths.Count}");
                 Report.AppendLine($"      defines:  {Module.CompileDefinitions.Count}");
                 Report.AppendLine($"      links:    {Module.LinkLibraries.Count}");
             }

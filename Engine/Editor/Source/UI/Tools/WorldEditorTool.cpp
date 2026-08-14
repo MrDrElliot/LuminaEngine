@@ -1590,6 +1590,10 @@ namespace Lumina
                             SnapArray[2] = GuizmoSnapScale;
                             SnapValues = SnapArray;
                             break;
+
+                        // The editor only ever cycles between the three whole-transform modes.
+                        default:
+                            break;
                         }
                     }
 
@@ -1784,6 +1788,10 @@ namespace Lumina
                                         Transform.SetLocalScale(SanitizeManipulationScale(Transform.GetLocalScale() * LocalDeltaScaleVec));
                                         break;
                                     }
+
+                                // The editor only ever cycles between the three whole-transform modes.
+                                default:
+                                    break;
                                 }
                             });
                         }
@@ -1846,6 +1854,10 @@ namespace Lumina
                                                            * Math::Scale(FMatrix4(1.f), NewWorldScale);
                                         break;
                                     }
+
+                                // The editor only ever cycles between the three whole-transform modes.
+                                default:
+                                    break;
                                 }
 
                                 FRelationshipComponent* Rel = ECS::GetWorldRegistry(*World).try_get<FRelationshipComponent>(Entity);

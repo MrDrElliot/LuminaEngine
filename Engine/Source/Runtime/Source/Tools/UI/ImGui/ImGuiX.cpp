@@ -171,6 +171,9 @@ namespace Lumina::ImGuiX
     		case ImGuizmo::OPERATION::TRANSLATE:	return "Translate";
     		case ImGuizmo::OPERATION::ROTATE:		return "Rotate";
     		case ImGuizmo::OPERATION::SCALE:		return "Scale";
+
+    		// ImGuizmo's per-axis and compound flags have no name of their own here.
+    		default:								break;
     	}
     	
     	return "";
@@ -294,13 +297,6 @@ namespace Lumina::ImGuiX
         ImU32 LerpColor(ImU32 A, ImU32 B, float T)
         {
             return ImGui::ColorConvertFloat4ToU32(ImLerp(ImGui::ColorConvertU32ToFloat4(A), ImGui::ColorConvertU32ToFloat4(B), ImSaturate(T)));
-        }
-
-        ImU32 ScaleColorRGB(ImU32 C, float M)
-        {
-            ImVec4 V = ImGui::ColorConvertU32ToFloat4(C);
-            V.x *= M; V.y *= M; V.z *= M;
-            return ImGui::ColorConvertFloat4ToU32(V);
         }
 
         // Shared float/int implementation. Capsule track + shaded circular ("sphere") knob.
@@ -1003,7 +999,6 @@ namespace Lumina::ImGuiX
 		int border_held = -1;
 		ImU32 resize_grip_col[4] = {};
 		const int resize_grip_count = g.IO.ConfigWindowsResizeFromEdges ? 2 : 1; // Allow resize from lower-left if we have the mouse cursor feedback for it.
-		const float resize_grip_draw_size = Math::Floor(ImMax(g.FontSize * 1.10f, Window->WindowRounding + 1.0f + g.FontSize * 0.2f));
 		Window->ResizeBorderHeld = (signed char)border_held;
 
 		//const ImRect& visibility_rect;

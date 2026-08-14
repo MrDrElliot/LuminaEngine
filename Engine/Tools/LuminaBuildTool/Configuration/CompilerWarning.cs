@@ -1,0 +1,187 @@
+namespace LuminaBuildTool.Configuration;
+
+/// <summary>How a warning is reported. Default leaves the toolchain's own choice alone.</summary>
+public enum WarningSeverity
+{
+    Default,
+    Off,
+    Warning,
+    Fatal,
+}
+
+/// <summary>
+/// Every warning the engine has an opinion about, named once so rules files never spell a raw
+/// -Wname or C#### again. <see cref="CompilerWarningInfo"/> maps each one to its per-toolchain spelling.
+/// </summary>
+public enum CompilerWarning
+{
+    // Correctness. These describe code that is a bug, not code that is untidy.
+    ReturnType,
+    SequencePoint,
+    StrictAliasing,
+    ClassMemAccess,
+    DeleteNonVirtualDtor,
+    OverloadedVirtual,
+    Reorder,
+    Switch,
+    NonNullCompare,
+    DanglingPointer,
+    TautologicalCompare,
+    Parentheses,
+    Format,
+    FormatTruncation,
+    Uninitialized,
+    MaybeUninitialized,
+    SubobjectLinkage,
+
+    // Conversions and comparisons.
+    SignCompare,
+    ConversionLoss,
+    ConversionSizeT,
+
+    // Shadowing. GCC's -Wshadow is far broader than MSVC's three codes, so these stay MSVC-only
+    // until the engine has been through a shadowing pass on GCC.
+    ShadowLocal,
+    ShadowParameter,
+    ShadowMember,
+    NonstandardExtension,
+
+    // Unused entities.
+    UnusedVariable,
+    UnusedFunction,
+    UnusedButSetVariable,
+    UnusedParameter,
+
+    // Portability and layout.
+    InvalidOffsetof,
+    InterferenceSize,
+    Attributes,
+    PointerArith,
+    Comment,
+
+    // Deprecation.
+    DeprecatedDeclarations,
+    DeprecatedLiteralOperator,
+
+    // Windows DLL boundary noise, meaningless elsewhere.
+    DllInterface,
+    DllInterfaceBase,
+}
+
+/// <summary>One warning's spelling on each toolchain, plus whether promoting it also enables it.</summary>
+public sealed class CompilerWarningInfo
+{
+    public required CompilerWarning Warning { get; init; }
+
+    /// <summary>GCC and Clang spelling without the -W prefix, or null when neither has one.</summary>
+    public string? GccName { get; init; }
+
+    /// <summary>MSVC warning number without the C prefix, or null when MSVC has no equivalent.</summary>
+    public string? MsvcCode { get; init; }
+
+    /// <summary>
+    /// True when the compiler leaves this warning off until it is asked for. Promoting one of these
+    /// to Fatal does not merely change severity, it turns the warning on, so a codebase that has
+    /// never seen it can acquire a wall of new errors at once.
+    /// </summary>
+    public bool bOffByDefault { get; init; }
+}
+
+/// <summary>The warning table. Every <see cref="CompilerWarning"/> has exactly one entry.</summary>
+public static class CompilerWarnings
+{
+    private static readonly Dictionary<CompilerWarning, CompilerWarningInfo> Table = Build();
+
+    public static CompilerWarningInfo Get(CompilerWarning Warning) => Table[Warning];
+
+    public static IEnumerable<CompilerWarningInfo> All => Table.Values;
+
+    private static Dictionary<CompilerWarning, CompilerWarningInfo> Build()
+    {
+        CompilerWarningInfo[] Entries =
+        {
+            new() { Warning = CompilerWarning.ReturnType,            GccName = "return-type",             MsvcCode = "4715" },
+            new() { Warning = CompilerWarning.SequencePoint,         GccName = "sequence-point" },
+            new() { Warning = CompilerWarning.StrictAliasing,        GccName = "strict-aliasing" },
+            new() { Warning = CompilerWarning.ClassMemAccess,        GccName = "class-memaccess" },
+            new() { Warning = CompilerWarning.DeleteNonVirtualDtor,  GccName = "delete-non-virtual-dtor" },
+            new() { Warning = CompilerWarning.OverloadedVirtual,     GccName = "overloaded-virtual",      MsvcCode = "4263", bOffByDefault = true },
+            new() { Warning = CompilerWarning.Reorder,               GccName = "reorder",                 MsvcCode = "5038", bOffByDefault = true },
+            new() { Warning = CompilerWarning.Switch,                GccName = "switch",                  MsvcCode = "4062", bOffByDefault = true },
+            new() { Warning = CompilerWarning.NonNullCompare,        GccName = "nonnull-compare" },
+            new() { Warning = CompilerWarning.DanglingPointer,       GccName = "dangling-pointer" },
+            new() { Warning = CompilerWarning.TautologicalCompare,   GccName = "tautological-compare" },
+            new() { Warning = CompilerWarning.Parentheses,           GccName = "parentheses" },
+            new() { Warning = CompilerWarning.Format,                GccName = "format",                  MsvcCode = "4477" },
+            new() { Warning = CompilerWarning.FormatTruncation,      GccName = "format-truncation" },
+            new() { Warning = CompilerWarning.Uninitialized,         GccName = "uninitialized",           MsvcCode = "4700" },
+            new() { Warning = CompilerWarning.MaybeUninitialized,    GccName = "maybe-uninitialized" },
+            new() { Warning = CompilerWarning.SubobjectLinkage,      GccName = "subobject-linkage" },
+
+            new() { Warning = CompilerWarning.SignCompare,           GccName = "sign-compare",            MsvcCode = "4018" },
+            new() { Warning = CompilerWarning.ConversionLoss,        GccName = "conversion",              MsvcCode = "4244", bOffByDefault = true },
+            new() { Warning = CompilerWarning.ConversionSizeT,       MsvcCode = "4267" },
+
+            new() { Warning = CompilerWarning.ShadowLocal,           MsvcCode = "4456" },
+            new() { Warning = CompilerWarning.ShadowParameter,       MsvcCode = "4457" },
+            new() { Warning = CompilerWarning.ShadowMember,          MsvcCode = "4458" },
+            new() { Warning = CompilerWarning.NonstandardExtension,  MsvcCode = "4238" },
+
+            new() { Warning = CompilerWarning.UnusedVariable,        GccName = "unused-variable",         MsvcCode = "4101" },
+            new() { Warning = CompilerWarning.UnusedFunction,        GccName = "unused-function",         MsvcCode = "4505" },
+            new() { Warning = CompilerWarning.UnusedButSetVariable,  GccName = "unused-but-set-variable", MsvcCode = "4189" },
+            new() { Warning = CompilerWarning.UnusedParameter,       GccName = "unused-parameter",        MsvcCode = "4100", bOffByDefault = true },
+
+            new() { Warning = CompilerWarning.InvalidOffsetof,       GccName = "invalid-offsetof" },
+            new() { Warning = CompilerWarning.InterferenceSize,      GccName = "interference-size" },
+            new() { Warning = CompilerWarning.Attributes,            GccName = "attributes" },
+            new() { Warning = CompilerWarning.PointerArith,          GccName = "pointer-arith" },
+            new() { Warning = CompilerWarning.Comment,               GccName = "comment",                 MsvcCode = "4138" },
+
+            new() { Warning = CompilerWarning.DeprecatedDeclarations,    GccName = "deprecated-declarations", MsvcCode = "4996" },
+            new() { Warning = CompilerWarning.DeprecatedLiteralOperator, GccName = "deprecated-literal-operator" },
+
+            new() { Warning = CompilerWarning.DllInterface,          MsvcCode = "4251" },
+            new() { Warning = CompilerWarning.DllInterfaceBase,      MsvcCode = "4275" },
+        };
+
+        return Entries.ToDictionary(Entry => Entry.Warning);
+    }
+}
+
+/// <summary>
+/// A warning-name to level map. Rules files write <c>Warnings[CompilerWarning.Switch] = WarningSeverity.Fatal</c>
+/// and each toolchain turns that into whichever flag it understands.
+/// </summary>
+public sealed class WarningSettings
+{
+    private readonly Dictionary<CompilerWarning, WarningSeverity> Levels = new();
+
+    public WarningSeverity this[CompilerWarning Warning]
+    {
+        get => Levels.TryGetValue(Warning, out WarningSeverity Level) ? Level : WarningSeverity.Default;
+        set => Levels[Warning] = value;
+    }
+
+    /// <summary>Applies one level to several warnings at once.</summary>
+    public void Set(WarningSeverity Level, params CompilerWarning[] Warnings)
+    {
+        foreach (CompilerWarning Warning in Warnings)
+        {
+            Levels[Warning] = Level;
+        }
+    }
+
+    /// <summary>Every explicitly set entry, ordered so it can be hashed reproducibly.</summary>
+    public IEnumerable<KeyValuePair<CompilerWarning, WarningSeverity>> Entries =>
+        Levels.OrderBy(Pair => Pair.Key);
+
+    /// <summary>Layers another map over this one; the argument wins where both name a warning.</summary>
+    public void Apply(WarningSettings Other)
+    {
+        foreach (KeyValuePair<CompilerWarning, WarningSeverity> Pair in Other.Levels)
+        {
+            Levels[Pair.Key] = Pair.Value;
+        }
+    }
+}

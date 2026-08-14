@@ -13,7 +13,7 @@ namespace Lumina
     class CSkeleton;
 
     REFLECT()
-    enum class RUNTIME_API EBlendSpaceAxes : uint8
+    enum class EBlendSpaceAxes : uint8
     {
         // Samples live on a line; the value between the two bracketing samples is a straight lerp.
         One,

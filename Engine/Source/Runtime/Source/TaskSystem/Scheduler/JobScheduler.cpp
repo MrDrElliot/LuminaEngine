@@ -71,7 +71,7 @@ namespace Lumina::Jobs
             TAtomic<uint32> WaitCounterId{0};           // counter pool index when Parked
 #endif
 #if defined(TRACY_ENABLE)
-            char            TracyName[20] = {};       // stable per-fiber label for Tracy's fiber zones
+            char            TracyName[24] = {};       // stable per-fiber label for Tracy's fiber zones
 #endif
         };
 

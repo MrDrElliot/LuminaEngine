@@ -47,6 +47,12 @@ public sealed class BuildModule
     /// <summary>Include paths passed to the compiler for this module's own translation units.</summary>
     public List<string> CompileIncludePaths { get; } = new();
 
+    /// <summary>Include paths contributed by third-party modules, passed as -isystem so their headers do not warn.</summary>
+    public List<string> SystemIncludePaths { get; } = new();
+
+    /// <summary>Every directory on the header search path, in search order.</summary>
+    public IEnumerable<string> AllIncludePaths => CompileIncludePaths.Concat(SystemIncludePaths);
+
     /// <summary>Preprocessor definitions for this module's own translation units.</summary>
     public List<string> CompileDefinitions { get; } = new();
 

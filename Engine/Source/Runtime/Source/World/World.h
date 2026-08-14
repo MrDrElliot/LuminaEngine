@@ -599,6 +599,8 @@ namespace Lumina
         }
 
         // Component lifecycle observers (entt signal sinks); connect member fns exactly as with entt.
+        // The using-declaration keeps CObject's destroy hook visible alongside the component sink.
+        using CObject::OnDestroy;
         template<typename T> NODISCARD auto OnConstruct() { return EntityRegistry.on_construct<T>(); }
         template<typename T> NODISCARD auto OnDestroy()   { return EntityRegistry.on_destroy<T>(); }
         template<typename T> NODISCARD auto OnUpdate()    { return EntityRegistry.on_update<T>(); }

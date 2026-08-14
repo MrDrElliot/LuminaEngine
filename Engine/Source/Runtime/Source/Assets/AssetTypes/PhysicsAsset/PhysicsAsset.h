@@ -16,7 +16,7 @@ namespace Lumina
 
     /** Collision primitive used for a ragdoll body. Capsule is the default limb shape. */
     REFLECT()
-    enum class RUNTIME_API ERagdollBodyShape : uint8
+    enum class ERagdollBodyShape : uint8
     {
         Capsule,
         Box,

@@ -13,7 +13,7 @@ namespace Lumina
     /** Drives how the ragdoll system treats the skeletal mesh. Phase 1: Inactive (animation-driven) or
      *  Simulated (full physics writes the pose). Kinematic/Blending arrive in later phases. */
     REFLECT()
-    enum class RUNTIME_API ERagdollState : uint8
+    enum class ERagdollState : uint8
     {
         Inactive,    // No bodies in the scene; pose stays fully animation-driven.
         Simulated,   // Full physics; the ragdoll bodies drive the bone pose.

@@ -5789,7 +5789,7 @@ namespace Lumina::RHI
     void CmdDispatch(FCmdListH CL, GPUPtr DrawArgs, uint32 GroupX, uint32 GroupY, uint32 GroupZ)
     {
         auto VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
-        if (DrawArgs != NULL)
+        if (DrawArgs != 0)
         {
             vkCmdPushConstants(VkCmdBuf, GDevice->PipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(VkDeviceAddress), &DrawArgs);
         }
@@ -5823,7 +5823,7 @@ namespace Lumina::RHI
     void CmdDraw(FCmdListH CL, GPUPtr DrawArgs, uint32 VertexCount, uint32 InstanceCount, uint32 FirstVertex, uint32 FirstInstance)
     {
         auto VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
-        if (DrawArgs != NULL)
+        if (DrawArgs != 0)
         {
             vkCmdPushConstants(VkCmdBuf, GDevice->PipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(VkDeviceAddress), &DrawArgs);
         }
@@ -5836,7 +5836,7 @@ namespace Lumina::RHI
         auto& CommandList           = GDevice->CommandLists[CL];
         VkCommandBuffer VkCmdBuf    = CommandList.CommandBuffer;
 
-        if (DrawArgs != NULL)
+        if (DrawArgs != 0)
         {
             vkCmdPushConstants(VkCmdBuf, GDevice->PipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(VkDeviceAddress), &DrawArgs);
         }
@@ -5950,7 +5950,7 @@ namespace Lumina::RHI
     void CmdDrawMeshTasks(FCmdListH CL, GPUPtr DrawArgs, uint32 GroupCountX, uint32 GroupCountY, uint32 GroupCountZ)
     {
         VkCommandBuffer VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
-        if (DrawArgs != NULL)
+        if (DrawArgs != 0)
         {
             vkCmdPushConstants(VkCmdBuf, GDevice->PipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(VkDeviceAddress), &DrawArgs);
         }

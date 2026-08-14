@@ -93,7 +93,7 @@ namespace Lumina::Memory
         return rpmalloc_is_thread_initialized();
     }
 
-    NODISCARD inline void ShutdownThreadHeap()
+    inline void ShutdownThreadHeap()
     {
         rpmalloc_thread_finalize(1);
     }
@@ -130,7 +130,7 @@ namespace Lumina::Memory
         const size_t RequiredExtraMemory = Math::Max(RequiredAlignment, size_t(4));
         const size_t RequiredMemory = sizeof(T) * NumElements + RequiredExtraMemory;
 
-        uint8* pOriginalAddress = pOriginalAddress = (uint8*) Malloc(RequiredMemory, RequiredAlignment);
+        uint8* pOriginalAddress = (uint8*) Malloc(RequiredMemory, RequiredAlignment);
 
         T* pArrayAddress = reinterpret_cast<T*>(pOriginalAddress + RequiredExtraMemory);
         for (size_t i = 0; i < NumElements; i++)
@@ -151,7 +151,7 @@ namespace Lumina::Memory
         const size_t RequiredExtraMemory = Math::Max(RequiredAlignment, size_t(4));
         const size_t RequiredMemory = sizeof(T) * NumElements + RequiredExtraMemory;
 
-        uint8* pOriginalAddress = pOriginalAddress = (uint8*) Malloc(RequiredMemory, RequiredAlignment);
+        uint8* pOriginalAddress = (uint8*) Malloc(RequiredMemory, RequiredAlignment);
 
         T* pArrayAddress = reinterpret_cast<T*>(pOriginalAddress + RequiredExtraMemory);
         for (size_t i = 0; i < NumElements; i++)

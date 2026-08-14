@@ -160,6 +160,13 @@ public abstract class TargetRules
     /// <summary>Warning numbers suppressed target wide.</summary>
     public List<string> GlobalDisabledWarnings { get; } = new();
 
+    /// <summary>Warnings promoted to errors target wide. MSVC codes and GCC names may both be listed;
+    /// each toolchain takes the ones it understands.</summary>
+    public List<string> GlobalFatalWarnings { get; } = new();
+
+    /// <summary>Warning levels by name, applied target wide and overridable per module.</summary>
+    public WarningSettings Warnings { get; } = new();
+
     /// <summary>Tools built to completion before this target starts, such as the reflection generator.</summary>
     public List<string> PreBuildTargetNames { get; } = new();
 

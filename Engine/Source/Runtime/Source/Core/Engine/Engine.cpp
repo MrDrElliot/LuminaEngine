@@ -794,7 +794,7 @@ namespace Lumina
 
         if (Paths::Exists(DLLPath))
         {
-            if (IModuleInterface* Module = FModuleManager::Get().LoadModule(DLLPath))
+            if (FModuleManager::Get().LoadModule(DLLPath) != nullptr)
             {
                 ProcessNewlyLoadedCObjects();
             }

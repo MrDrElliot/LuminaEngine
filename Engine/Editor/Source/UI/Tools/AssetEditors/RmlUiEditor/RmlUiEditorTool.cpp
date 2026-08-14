@@ -1843,7 +1843,7 @@ namespace Lumina
             ImGui::TextWrapped(
                 "px - raw pixels\n"
                 "dp - density-independent (scales with DPI slider)\n"
-                "%  - percentage of parent\n"
+                "%%  - percentage of parent\n"
                 "em - relative to current font size\n"
                 "vw / vh - viewport width / height percent");
         }

@@ -10,7 +10,7 @@ namespace Lumina
 	struct FWindowSpecs;
 	class  FInputViewport;
 
-	enum class RUNTIME_API EApplicationFlags : uint32
+	enum class EApplicationFlags : uint32
 	{
 		DevelopmentTools =		1 << 0,
 	};
@@ -73,5 +73,5 @@ namespace Lumina
 
 
 	/* Implemented by client */
-	static FApplication* CreateApplication(int argc, char** argv);
+	extern FApplication* CreateApplication(int argc, char** argv);
 }

@@ -228,6 +228,18 @@ public sealed class MsvcToolchain : IToolchain
             Arguments.Add($"/I{PathUtils.Quote(IncludePath)}");
         }
 
+        // /external:I is the MSVC counterpart of -isystem: third-party headers still resolve, but
+        // their diagnostics are held at /external:W0 rather than the target's warning level.
+        if (Module.SystemIncludePaths.Count > 0)
+        {
+            Arguments.Add("/external:W0");
+
+            foreach (string IncludePath in Module.SystemIncludePaths)
+            {
+                Arguments.Add($"/external:I{PathUtils.Quote(IncludePath)}");
+            }
+        }
+
         // The precompiled header must be force-included first so /Yu finds its marker in every
         // translation unit, including the ones that never write the #include themselves.
         if (Pch != PchMode.None && Module.Rules.PrecompiledHeader is not null)
@@ -242,13 +254,21 @@ public sealed class MsvcToolchain : IToolchain
 
         foreach (string Warning in Target.Rules.GlobalDisabledWarnings.Concat(Module.Rules.DisabledWarnings))
         {
-            Arguments.Add($"/wd{Warning}");
+            if (TranslateWarningCode(Warning) is string Code)
+            {
+                Arguments.Add($"/wd{Code}");
+            }
         }
 
-        foreach (string Warning in Module.Rules.FatalWarnings)
+        foreach (string Warning in Target.Rules.GlobalFatalWarnings.Concat(Module.Rules.FatalWarnings))
         {
-            Arguments.Add($"/we{Warning}");
+            if (TranslateWarningCode(Warning) is string Code)
+            {
+                Arguments.Add($"/we{Code}");
+            }
         }
+
+        AddNamedWarningFlags(Target, Module, Arguments);
 
         if (Target.Rules.bWarningsAsErrors && !Module.Rules.bIsThirdParty)
         {
@@ -361,6 +381,47 @@ public sealed class MsvcToolchain : IToolchain
     private static string NormalizeLibraryName(string Library)
     {
         return Path.HasExtension(Library) ? Library : Library + ".lib";
+    }
+
+    /// <summary>Turns the named warning map into /wd, /w4 and /we flags. Emitted after the raw lists so it wins.</summary>
+    private static void AddNamedWarningFlags(BuildTarget Target, BuildModule Module, List<string> Arguments)
+    {
+        WarningSettings Merged = new();
+        Merged.Apply(Target.Rules.Warnings);
+        Merged.Apply(Module.Rules.Warnings);
+
+        foreach ((CompilerWarning Warning, WarningSeverity Level) in Merged.Entries)
+        {
+            CompilerWarningInfo Info = CompilerWarnings.Get(Warning);
+
+            if (Info.MsvcCode is not string Code)
+            {
+                continue;
+            }
+
+            string? Flag = Level switch
+            {
+                WarningSeverity.Off => $"/wd{Code}",
+
+                // /w1 both enables the warning and pins it to a level this target's /W is sure to show.
+                WarningSeverity.Warning => $"/w1{Code}",
+                WarningSeverity.Fatal => $"/we{Code}",
+                _ => null,
+            };
+
+            if (Flag is not null)
+            {
+                Arguments.Add(Flag);
+            }
+        }
+    }
+
+    /// <summary>Keeps only numeric MSVC codes; GCC-style warning names belong to the Clang toolchain.</summary>
+    private static string? TranslateWarningCode(string Warning)
+    {
+        string Trimmed = Warning.TrimStart('C', 'c');
+
+        return Trimmed.Length > 0 && Trimmed.All(char.IsDigit) ? Trimmed : null;
     }
 
     /// <summary>Mirrors the module's layout under Intermediates so same-named sources cannot collide.</summary>

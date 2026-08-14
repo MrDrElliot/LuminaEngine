@@ -228,7 +228,7 @@ namespace Lumina
     {
     public:
         FMouseScrolledEvent(EMouseKey InCode, float InXOffset)
-            : Offset(InXOffset), Code(InCode) {}
+            : Code(InCode), Offset(InXOffset) {}
         
         EMouseKey GetCode() const { return Code; }
         float GetOffset() const { return Offset; }

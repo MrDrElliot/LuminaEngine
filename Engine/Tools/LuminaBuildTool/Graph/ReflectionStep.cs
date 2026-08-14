@@ -97,7 +97,7 @@ public static class ReflectionStep
             {
                 Name = Module.Name,
                 Path = Module.Rules.ModuleDirectory,
-                IncludeDirs = Module.CompileIncludePaths.ToList(),
+                IncludeDirs = Module.AllIncludePaths.ToList(),
                 Files = Module.Sources.HeaderFiles.Select(H => H.Location).ToList(),
                 CSharpBindingsDir = Module.Rules.CSharpBindingsDirectory,
                 GeneratedDir = Module.GeneratedCodeDirectory,

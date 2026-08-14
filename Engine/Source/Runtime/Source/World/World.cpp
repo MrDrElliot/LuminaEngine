@@ -564,7 +564,7 @@ namespace Lumina
             TimeSinceCreation += DeltaTime;
         }
 
-        if (bPaused && Stage != EUpdateStage::Paused || (!bPaused && Stage == EUpdateStage::Paused))
+        if ((bPaused && Stage != EUpdateStage::Paused) || (!bPaused && Stage == EUpdateStage::Paused))
         {
             return;
         }

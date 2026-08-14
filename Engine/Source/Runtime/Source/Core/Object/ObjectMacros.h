@@ -122,7 +122,7 @@ public: \
     { \
         static Lumina::CClass* Construct() \
         { \
-            Lumina::CClass* SuperClass = ::Construct_CClass_Lumina_##TBaseClass(); \
+            ::Construct_CClass_Lumina_##TBaseClass(); \
             Lumina::CClass* Class = Lumina::TClass::StaticClass(); \
             Lumina::CObjectForceRegistration(Class); \
             return Class; \

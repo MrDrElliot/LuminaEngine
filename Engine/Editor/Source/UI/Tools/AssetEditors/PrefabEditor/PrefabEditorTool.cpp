@@ -1170,6 +1170,10 @@ namespace Lumina
                     SnapArray[0] = SnapArray[1] = SnapArray[2] = GuizmoSnapScale;
                     SnapValues = SnapArray;
                     break;
+
+                // The editor only ever cycles between the three whole-transform modes.
+                default:
+                    break;
                 }
             }
 

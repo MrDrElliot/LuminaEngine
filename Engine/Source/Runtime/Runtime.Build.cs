@@ -81,7 +81,11 @@ public class Runtime : LuminaModuleRules
         }
 
         // Shadowed locals and unreferenced formal parameters have caused real bugs in this module.
-        FatalWarnings.AddRange(new[] { "4456", "4457", "4458", "4238" });
+        Warnings.Set(WarningSeverity.Fatal,
+            CompilerWarning.ShadowLocal,
+            CompilerWarning.ShadowParameter,
+            CompilerWarning.ShadowMember,
+            CompilerWarning.NonstandardExtension);
 
         if (Target.Platform == BuildPlatform.Windows64)
         {

@@ -18,7 +18,7 @@ namespace Lumina
 
 	/** Mix group a voice routes through. Every bus feeds Master, so Master's volume scales everything. */
 	REFLECT()
-	enum class RUNTIME_API EAudioBus : uint8
+	enum class EAudioBus : uint8
 	{
 		Master,
 		Music,
@@ -34,7 +34,7 @@ namespace Lumina
 
 	/** Distance falloff curve applied to a spatialized voice between MinDistance and MaxDistance. */
 	REFLECT()
-	enum class RUNTIME_API EAudioAttenuationModel : uint8
+	enum class EAudioAttenuationModel : uint8
 	{
 		/** No distance falloff; the voice plays at full gain anywhere in the world. */
 		None,
@@ -51,7 +51,7 @@ namespace Lumina
 
 	/** Whether a voice's position is world space or relative to the listener. */
 	REFLECT()
-	enum class RUNTIME_API EAudioPositioning : uint8
+	enum class EAudioPositioning : uint8
 	{
 		Absolute,
 		Relative,

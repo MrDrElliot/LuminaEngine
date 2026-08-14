@@ -38,6 +38,10 @@ namespace Lumina
         bool IsWriting() const override { return InnerArchive.IsWriting(); }
         bool HasError() const override { return InnerArchive.HasError(); }
         
+        // Keeps the base overloads this class does not forward (CObject*&, FFixedString&, the
+        // container and enum templates) visible instead of hidden by the ones below.
+        using FArchive::operator<<;
+
         // Forward all standard types to the inner archive
         FArchive& operator<<(uint8& Value)  override { return InnerArchive << Value; }
         FArchive& operator<<(int8& Value) override { return InnerArchive << Value; }

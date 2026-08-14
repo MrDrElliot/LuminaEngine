@@ -15,7 +15,7 @@ namespace Lumina
     class CWorld;
 
     REFLECT()
-    enum class RUNTIME_API ESequenceBindingKind : uint8
+    enum class ESequenceBindingKind : uint8
     {
         // Resolve an entity that already exists in the world, by name.
         Possess,
