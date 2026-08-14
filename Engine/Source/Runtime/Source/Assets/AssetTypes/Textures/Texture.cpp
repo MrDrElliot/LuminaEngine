@@ -298,6 +298,7 @@ namespace Lumina
         PendingFill.NextLayer    = 0;
         PendingFill.NextRow      = 0;
         PendingFill.CpuEndMip    = RetainedFrom;
+        PendingFill.StalledTicks = 0;   // a fresh fill, not a continuation of whatever stalled before it
         PendingFill.bActive      = true;
 
         TextureResource->ResidentFirstMip = (uint8)InFirstMip;
