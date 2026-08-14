@@ -40,6 +40,9 @@
 
 #include <limits>
 #include <algorithm>
+// Lumina patch: robin_hood uses uint64_t and friends throughout but never included <cstdint>. It
+// arrived transitively up to libstdc++ 13; newer ones dropped it.
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <functional>
