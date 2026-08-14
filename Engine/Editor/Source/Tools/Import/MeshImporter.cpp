@@ -955,6 +955,9 @@ namespace Lumina
             NewMesh->DistanceFieldSettings = DistanceField;
             NewMesh->MeshResources         = Move(MeshResource);
 
+            // Bake the exact box now, while the raw float positions are still around to measure.
+            NewMesh->GenerateBoundingBox();
+
             CreatedObjects.push_back(NewMesh);
             ResourceToMesh[i] = NewMesh;
         }

@@ -385,7 +385,7 @@ namespace Lumina
         FMaterialParameter Param;
         if (!GetParameterValue(EMaterialParameterType::Vector, Name, Param))
         {
-            LOG_ERROR("Failed to find parent vector parameter '{}'", Name);
+            LOG_WARN("Failed to find parent vector parameter '{}'", Name);
             return false;
         }
 

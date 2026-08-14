@@ -4,6 +4,7 @@
 #include "Assets/AssetTypes/Material/MaterialInterface.h"
 #include "Assets/AssetTypes/Material/MaterialInstance.h"
 #include "Assets/AssetTypes/Mesh/Mesh.h"
+#include "Core/Math/SIMD/PackHalf.h"
 #include "Core/Object/ObjectCore.h"
 #include "Core/Object/Package/Package.h"
 #include "Renderer/MeshData.h"
@@ -55,9 +56,7 @@ namespace Lumina
 
             const FVector3* Pos = Positions.data();
             const uint32*   Idx = Indices.data();
-
-            // A triangle with an out-of-range index contributes nothing, and must not reach the counting
-            // sort either (it would index the count array out of bounds), so one test gates every phase.
+            
             auto IsTriangleValid = [Idx, VertexCount](uint32 Tri)
             {
                 return Idx[Tri * 3 + 0] < VertexCount
@@ -128,7 +127,6 @@ namespace Lumina
                 }
             }, kCommitGrain);
 
-            // Phase 3: gather. Each vertex owns its own output slot, so there is no sharing at all.
             Task::ParallelFor(VertexCount, [&](const Task::FParallelRange& Range)
             {
                 for (uint32 Vertex = Range.Start; Vertex < Range.End; ++Vertex)
@@ -169,8 +167,6 @@ namespace Lumina
 
     CMaterialInterface* SDynamicMeshComponent::GetMaterialForSlot(size_t Slot) const
     {
-        // MaterialOverrides is the only source now. The runtime CStaticMesh this used to fall back to only
-        // ever had its Materials array resized to nulls -- it never carried a material -- so nothing is lost.
         if (Slot < MaterialOverrides.size())
         {
             return MaterialOverrides[Slot];
@@ -191,10 +187,6 @@ namespace Lumina
 
     void SDynamicMeshComponent::PublishRenderData(TSharedPtr<FDynamicMeshRenderData> NewData)
     {
-        // Pointer first, then the version with a release, the render scene's poll acquire-loads the
-        // version and only then takes a ref, so it can never see a bump advertising data that isn't
-        // visible yet. The old data (and its GPU buffers) drop when the last holder releases it, which
-        // may be a gather still reading the previous snapshot.
         eastl::atomic_store(&RenderData, eastl::move(NewData));
         (void)std::atomic_ref<uint32>(RenderDataVersion).fetch_add(1u, std::memory_order_release);
     }
@@ -339,12 +331,12 @@ namespace Lumina
         const size_t VertexCount = BD.Positions.size();
 
         TUniquePtr<FMeshResource> Resource = MakeUnique<FMeshResource>();
-        Resource->bSkinnedMesh = false;
-        Resource->MaxLODs      = (uint32)Math::Clamp(MaxLODs, 1, (int32)MAX_MESH_LODS);
-        Resource->bGenerateTangents   = bGenerateTangents;
-        Resource->bMeshletConeCulling = bMeshletConeCulling;
-        Resource->bOptimizeMeshlets   = bOptimizeMeshlets;
-        Resource->bFastMeshletBuild   = bFastMeshletBuild;
+        Resource->bSkinnedMesh          = false;
+        Resource->MaxLODs               = (uint32)Math::Clamp(MaxLODs, 1, (int32)MAX_MESH_LODS);
+        Resource->bGenerateTangents     = bGenerateTangents;
+        Resource->bMeshletConeCulling   = bMeshletConeCulling;
+        Resource->bOptimizeMeshlets     = bOptimizeMeshlets;
+        Resource->bFastMeshletBuild     = bFastMeshletBuild;
 
         // Normals are derived first because deriving them is the only stage that reads Positions and
         // Indices; once it is done both streams can be moved into the resource rather than copied.
@@ -357,38 +349,57 @@ namespace Lumina
         }
 
         Resource->Normals.resize(VertexCount);
-        Resource->UVs.resize(VertexCount);
-        Resource->UVs1.resize(VertexCount);
-        Resource->Colors.resize(VertexCount);
 
         // Tangents are generated inside GenerateMeshlets; start them zeroed.
         Resource->Tangents.assign(VertexCount, 0u);
-        
+
+        const FVector2* InUVs    = (BD.UVs.size()    == VertexCount) ? BD.UVs.data()    : nullptr;
+        const uint32*   InColors = (BD.Colors.size() == VertexCount) ? BD.Colors.data() : nullptr;
+
+        // An absent stream is one constant for the whole mesh, so it fills instead of packing per vertex.
+        if (InColors != nullptr)
+        {
+            Resource->Colors.assign(InColors, InColors + VertexCount);
+        }
+        else
+        {
+            Resource->Colors.assign(VertexCount, 0xFFFFFFFFu);
+        }
+
+        if (InUVs != nullptr)
+        {
+            Resource->UVs.resize(VertexCount);
+        }
+        else
+        {
+            // A zero UV packs to zero.
+            Resource->UVs.assign(VertexCount, 0u);
+        }
+
         {
             LUMINA_PROFILE_SECTION("Pack Normals");
-            const FVector3* InNormals = SourceNormals->data();
-            const FVector2* InUVs     = (BD.UVs.size()    == VertexCount) ? BD.UVs.data()    : nullptr;
-            const uint32*   InColors  = (BD.Colors.size() == VertexCount) ? BD.Colors.data() : nullptr;
+            static_assert(sizeof(FVector2) == 2 * sizeof(float), "PackHalf2x16Array reads UVs as a flat float stream");
 
-            uint32* OutNormals = Resource->Normals.data();
-            uint32* OutUVs     = Resource->UVs.data();
-            uint32* OutUVs1    = Resource->UVs1.data();
-            uint32* OutColors  = Resource->Colors.data();
+            const FVector3* InNormals  = SourceNormals->data();
+            uint32*         OutNormals = Resource->Normals.data();
+            uint32*         OutUVs     = Resource->UVs.data();
 
             Task::ParallelFor((uint32)VertexCount, [=](const Task::FParallelRange& Range)
             {
                 for (uint32 i = Range.Start; i < Range.End; ++i)
                 {
                     OutNormals[i] = PackNormal(InNormals[i]);
-                    OutUVs[i]     = Math::PackHalf2x16(InUVs ? InUVs[i] : FVector2(0.0f));
-                    // A dynamic mesh authors one set; mirroring it keeps a material that samples set 1
-                    // rendering the same as one that samples set 0, instead of collapsing to zero.
-                    OutUVs1[i]    = OutUVs[i];
-                    OutColors[i]  = InColors ? InColors[i] : 0xFFFFFFFFu;
+                }
+
+                if (InUVs != nullptr)
+                {
+                    SIMD::PackHalf2x16Array(&InUVs[Range.Start].x, OutUVs + Range.Start, Range.End - Range.Start);
                 }
             }, kCommitGrain);
         }
-        
+
+        Resource->UVs1 = Resource->UVs;
+
         Resource->Positions = eastl::move(BD.Positions);
         Resource->Indices   = eastl::move(BD.Indices);
 
@@ -446,11 +457,7 @@ namespace Lumina
         {
             FResolvedSurface& R = NewData->Surfaces[i];
             R.NumLODs = Geometry[i].NumLODs;
-
-            // This path builds its own FResolvedSurface list instead of going through FMeshResolveCache,
-            // so anything the cache copies across has to be copied here too. GenerateMeshlets above just
-            // measured it from the staged UVs -- a dynamic mesh needs no resave to get real texel density,
-            // it is computed fresh on every commit.
+            
             R.TexelFactor = Geometry[i].TexelFactor;
             for (uint32 LOD = 0; LOD < MAX_MESH_LODS; ++LOD)
             {
@@ -460,28 +467,19 @@ namespace Lumina
                 R.LODScreenThresholdSq[LOD] = Threshold * Threshold;
             }
         }
-
-        // Everything below happens on the snapshot BEFORE it is published. This used to publish first and
-        // then resolve materials and drop the scratch streams through the member, which is fine on one
-        // thread but hands a worker-committed mesh to the renderer while it is still being written.
+        
         ResolveMaterialsInto(*NewData);
 
-        // Scratch streams are dead once the meshlets and GPU buffers exist.
         NewData->Resource.ClearVertices();
         NewData->Resource.Indices.clear();
         NewData->Resource.Indices.shrink_to_fit();
-
-        // The meshlet streams are dead too now that they live on the GPU -- and they are the biggest
-        // thing here, since the meshlet vertex list is the expanded per-meshlet one. Surfaces were
-        // already copied out above, and MeshletHeaderSlot is what the render path actually draws
-        // from, so nothing below this point needs the CPU copy. Only a collider does.
+        
         if (!bKeepCPUMeshletData)
         {
             NewData->Resource.MeshletData.ClearAndShrink();
         }
 
-        // Single publish point. The extract later this tick already reads the new addresses -- no
-        // resolve-cache tick of lag, same as before.
+        // Single publish point. The extract later this tick already reads the new addresses
         PublishRenderData(eastl::move(NewData));
 
         // Staging is consumed; the next edit re-stages from scratch.

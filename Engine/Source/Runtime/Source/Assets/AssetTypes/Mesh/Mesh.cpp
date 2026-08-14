@@ -30,7 +30,11 @@ namespace Lumina
     {
         LUMINA_MEMORY_SCOPE("Meshes");
 
-        GenerateBoundingBox();
+        // A cooked mesh has no Positions, so regenerating would replace the baked box with a lossy decode.
+        if (!BoundingBox.IsValid())
+        {
+            GenerateBoundingBox();
+        }
 
         // Fallback for procedurally-generated meshes that bypass the import finalize pass.
         if (MeshResources && MeshResources->MeshletData.IsEmpty() && !MeshResources->Indices.empty())
@@ -240,8 +244,6 @@ namespace Lumina
             Header.DistanceFieldSizeZ       = Volume.VolumeSize.z;
             Header.DistanceFieldMaxDistance = Volume.MaxDistance;
             Header.ConesAddress             = MB.MeshletConeBuffer;
-            // From the buffer set, not from MeshletData: the asset path drops the CPU scratch after it
-            // uploads, and RefreshDistanceField rebuilds this header long after that.
             Header.MeshletCount             = MB.MeshletCount;
             return Header;
         }
@@ -308,13 +310,9 @@ namespace Lumina
         const uint64 MeshletBytes  = sizeof(FMeshlet)       * MData.Meshlets.size();
         const uint64 SphereBytes   = sizeof(FMeshletSphere) * MData.MeshletSpheres.size();
         const uint64 ConeBytes     = sizeof(FMeshletCone)   * MData.MeshletCones.size();
-        const uint64 VertexBytes   = VertCount * VertStride;
+        const uint64 VertexBytes   = VertCount              * VertStride;
         const uint64 TriangleBytes = sizeof(uint32)         * MData.MeshletTriangles.size();
-
-        // Every stream is per-meshlet and MeshletData is non-empty here, so none of these can be zero.
-        // Checked anyway because a zero-length section no longer fails loudly: it would take the offset
-        // of the section after it and hand the shader a base pointing at a different stream's bytes.
-        // (Five separate allocations used to turn this into Malloc(0) -> 0 -> rebuild rejected.)
+        
         if (MeshletBytes == 0 || SphereBytes == 0 || ConeBytes == 0 || VertexBytes == 0 || TriangleBytes == 0)
         {
             LOG_ERROR("Mesh rebuild failed: {} meshlets with an empty geometry stream "
@@ -322,10 +320,7 @@ namespace Lumina
                       MData.Meshlets.size(), MeshletBytes, SphereBytes, ConeBytes, VertexBytes, TriangleBytes);
             return;
         }
-
-        // One allocation, five sections. Each section start is padded to kDefaultAlign so every stream
-        // is at least as aligned as it was when it owned a whole allocation -- the shader reaches all
-        // five by device address, and an under-aligned base is a fault, not a slowdown.
+        
         uint64 Cursor = 0;
         auto Reserve = [&Cursor](uint64 Bytes)
         {
@@ -339,23 +334,16 @@ namespace Lumina
         const uint64 ConeOffset     = Reserve(ConeBytes);
         const uint64 VertexOffset   = Reserve(VertexBytes);
         const uint64 TriangleOffset = Reserve(TriangleBytes);
-
-        // Built into a local and swapped in only once it exists, so a rebuild that runs out of memory
-        // keeps rendering what it had instead of losing its geometry.
+        
         const RHI::GPUPtr Block = RHI::Malloc(Cursor, RHI::kDefaultAlign, RHI::EMemoryType::GPUOnly);
-
-        // Nothing downstream null-checks the addresses the header carries, so a failed allocation can
-        // never be published -- it would hand the GPU a null base to fetch vertices through.
+        
         if (Block == 0)
         {
             LOG_ERROR("Mesh rebuild failed: {} KiB GPU allocation for {} meshlets. Previous geometry kept.",
                       Cursor / 1024, MData.Meshlets.size());
             return;
         }
-
-        // One name for the block. A fault inside it lands on "Mesh.Geometry" rather than naming the
-        // individual stream; the meshlet header carries all five addresses, so the offset still
-        // identifies which one.
+        
         RHI::SetDebugName(Block, bSkinned ? "Mesh.SkinnedGeometry" : "Mesh.Geometry");
 
         RHI::UploadBuffer(Block + MeshletOffset,  MData.Meshlets.data(),         MeshletBytes);
@@ -363,9 +351,7 @@ namespace Lumina
         RHI::UploadBuffer(Block + ConeOffset,     MData.MeshletCones.data(),     ConeBytes);
         RHI::UploadBuffer(Block + VertexOffset,   VertSrc,                       VertexBytes);
         RHI::UploadBuffer(Block + TriangleOffset, MData.MeshletTriangles.data(), TriangleBytes);
-
-        // Resets the header slot to "no geometry" before the block it named is retired, so the window
-        // between the two describes nothing rather than describing retired memory. Keeps the SLOT.
+        
         MB.ReleaseGeometryBuffers();
 
         MB.GeometryBlock         = Block;
@@ -379,10 +365,7 @@ namespace Lumina
         // Volume upload before the header, because the header publishes its heap slot. A field that
         // failed to allocate leaves the sentinel in place, which is what every SDF shader path gates on.
         CreateDistanceFieldTexture(Resource);
-
-        // Acquired ONCE and rewritten in place forever after: the SLOT is the identity every cached copy
-        // holds, so a rebuild republishes into it rather than taking a new one. Publishing the header is
-        // also what makes the geometry above reachable -- until this lands the slot reads as no geometry.
+        
         if (MB.MeshletHeaderSlot == MeshletHeaderSlab::kNullSlot)
         {
             MB.MeshletHeaderSlot = MeshletHeaderSlab::Acquire();

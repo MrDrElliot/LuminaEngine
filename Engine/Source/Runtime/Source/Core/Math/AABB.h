@@ -30,6 +30,9 @@ namespace Lumina
             : Min(InMin), Max(InMax)
         {}
 
+        // False for both a default-constructed box and the inverted min/max a failed build leaves behind.
+        FORCEINLINE bool IsValid() const { return Max.x > Min.x || Max.y > Min.y || Max.z > Min.z; }
+
         FUNCTION(Script)
         FORCEINLINE float MaxScale() const { return Math::Max(GetSize().x, Math::Max(GetSize().y, GetSize().z)); }
         

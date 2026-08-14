@@ -108,11 +108,11 @@ TEST(TextureStreaming, ComputeFirstInlineMipSplitsAtThreshold)
     Desc.NumMips = 13;
     EXPECT_EQ(FTextureResource::ComputeFirstInlineMip(Desc), 4);
 
-    // Arrays are excluded outright -- there is no Recreate overload that can resize one in place.
     Desc.Extent     = FUIntVector2(4096, 4096);
     Desc.NumMips    = 13;
     Desc.LayerCount = 6;
-    EXPECT_EQ(FTextureResource::ComputeFirstInlineMip(Desc), 0);
+    EXPECT_EQ(FTextureResource::ComputeFirstInlineMip(Desc), 4)
+        << "arrays stream on the same split as 2D since Recreate gained an overload that repoints the slot";
 
     // A chain that stops above the threshold still keeps its smallest mip inline, so there is always
     // something to draw without IO.
