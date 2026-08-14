@@ -101,14 +101,19 @@ clang.
 
 ### Runtime dependencies of the bundle
 
-The bundle ships `libLLVM` and `libclang` but not the system libraries those link against, so a
-machine missing them links the Reflector and then fails on a library the build never names:
+The bundle carries everything `libLLVM` and `libclang` link against -- libxml2, ICU, libedit, libffi,
+libzstd, liblzma, libtinfo, libbsd, libmd, zlib -- staged into `External/LLVM/lib` beside them. This is
+not belt-and-braces: the versions LLVM was built against are not the versions a current distribution
+ships. Ubuntu 26.04 has `libxml2.so.16`, and nothing installable there satisfies the `libxml2.so.2`
+that an LLVM 19 built on 22.04 asks for, so no `apt-get` line can fix it.
 
-```bash
-sudo apt-get install -y libxml2 libzstd1 libffi8 libedit2 zlib1g
-```
+`Reflector.Build.cs` reaches them with `-Wl,-rpath-link` at link time and an `$ORIGIN`-relative
+`-Wl,-rpath` at load time. A plain `-L` does not apply to the transitive needs of a shared library.
 
-`Setup.sh` checks for these now. To see what a given copy actually needs:
+The core runtime -- glibc, libstdc++, libgcc -- is deliberately NOT bundled. Shipping those next to a
+host toolchain is an ABI hazard, and every distribution has them.
+
+To see what a given copy still needs:
 
 ```bash
 ldd External/LLVM/lib/libLLVM.so.19.1 | grep "not found"
