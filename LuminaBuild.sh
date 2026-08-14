@@ -14,6 +14,12 @@ LuminaRoot="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BuildToolProject="$LuminaRoot/Engine/Tools/LuminaBuildTool/LuminaBuildTool.csproj"
 BuildToolDll="$LuminaRoot/Binaries/DotNet/BuildTool/LuminaBuildTool.dll"
 
+# dotnet-install.sh drops .NET in $HOME/.dotnet and persists nothing, so a new shell loses it and
+# every script here fails claiming the SDK is missing when it is sitting right there.
+if ! command -v dotnet >/dev/null 2>&1 && [ -x "$HOME/.dotnet/dotnet" ]; then
+    export PATH="$HOME/.dotnet:$PATH"
+fi
+
 if ! command -v dotnet >/dev/null 2>&1; then
     echo "error: the .NET SDK is required to run LuminaBuildTool. Install .NET 10 or newer." >&2
     exit 1

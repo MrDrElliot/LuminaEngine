@@ -58,6 +58,12 @@ public class Reflector : ModuleRules
             // relative so the tree can move.
             PrivateLinkerOptions.Add($"-Wl,-rpath-link,{ModulePath("../../../External/LLVM/lib")}");
             PrivateLinkerOptions.Add("-Wl,-rpath,$ORIGIN/../../External/LLVM/lib");
+
+            // DT_RPATH, not the DT_RUNPATH modern linkers default to. RUNPATH applies only to an
+            // object's OWN direct dependencies, so it resolves libclang and libLLVM and then leaves
+            // the loader to find libLLVM's libxml2 on its own -- which fails with the library sitting
+            // in the very directory just named. RPATH is inherited down the dependency chain.
+            PrivateLinkerOptions.Add("-Wl,--disable-new-dtags");
         }
 
         if (Target.Platform == BuildPlatform.Windows64)
