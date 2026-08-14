@@ -229,6 +229,14 @@ namespace Lumina
 
     void FConfig::LoadPath(FStringView ConfigPath)
     {
+        // A config directory that does not exist yet holds no settings, which is the correct state
+        // for a clean clone: the directory appears when something is first saved into it. Iterating
+        // it anyway makes the VFS warn about a missing directory on every first run, so ask first.
+        if (!VFS::Exists(ConfigPath))
+        {
+            return;
+        }
+
         VFS::DirectoryIterator(ConfigPath, [&](const VFS::FFileInfo& Info)
         {
             if (Info.GetExt() != ".json")

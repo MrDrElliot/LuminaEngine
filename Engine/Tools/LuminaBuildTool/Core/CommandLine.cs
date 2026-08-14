@@ -9,12 +9,31 @@ public sealed class CommandLine
 
     private readonly List<string> Positionals = new();
 
+    private readonly List<string> Forwarded = new();
+
     public CommandLine(IEnumerable<string> Args)
     {
+        bool bForwarding = false;
+
         foreach (string Arg in Args)
         {
             if (Arg.Length == 0)
             {
+                continue;
+            }
+
+            // Everything past a bare "--" belongs to whatever this invocation launches, not to us.
+            // Run mode needs it: the editor takes flags whose names collide with ours, and without a
+            // terminator "-Verbose" meant for the editor would be swallowed here and never reach it.
+            if (bForwarding)
+            {
+                Forwarded.Add(Arg);
+                continue;
+            }
+
+            if (Arg == "--")
+            {
+                bForwarding = true;
                 continue;
             }
 
@@ -40,6 +59,9 @@ public sealed class CommandLine
     }
 
     public IReadOnlyList<string> Arguments => Positionals;
+
+    /// <summary>Arguments that followed a bare "--", passed through untouched.</summary>
+    public IReadOnlyList<string> ForwardedArguments => Forwarded;
 
     public string? GetPositional(int Index) => Index < Positionals.Count ? Positionals[Index] : null;
 

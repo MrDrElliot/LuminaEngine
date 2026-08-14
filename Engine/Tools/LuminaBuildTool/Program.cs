@@ -48,6 +48,7 @@ public static class Program
             return Mode.ToLowerInvariant() switch
             {
                 "build" => await BuildMode.RunAsync(Arguments, Directories, Cancellation.Token).ConfigureAwait(false),
+                "run" => RunMode.Run(Arguments, Directories),
                 "clean" => CleanMode.Run(Arguments, Directories),
                 "query" => QueryMode.Run(Arguments, Directories),
                 "includes" => AnalyzeMode.RunIncludes(Arguments, Directories),
@@ -88,11 +89,12 @@ public static class Program
             LuminaBuildTool - build and project generation for Lumina Engine
 
             Usage:
-              LuminaBuildTool <Mode> [Target] [options]
+              LuminaBuildTool <Mode> [Target] [options] [-- <arguments for the target>]
 
             Modes:
               Setup                     Fetch external dependencies and configure the environment
               Build <Target>            Compile and link a target
+              Run <Target>              Launch a target's executable, located from its own rules
               Clean [Target]            Delete a target's outputs, or all intermediates
               Query [Target]            List targets, modules and plugins, or describe one target
               Includes <Target>         Rank headers by how many translation units include them
@@ -105,12 +107,13 @@ public static class Program
               -All                      Include toolchain and SDK headers
 
             Options:
-              -Platform=<name>          Windows64 (default: host platform)
+              -Platform=<name>          Windows64 | Linux64 (default: host platform)
               -Configuration=<name>     Debug | Development | Shipping (default: Development)
               -TargetType=<name>        Editor | Game | Program (default: from the target rules)
               -EngineRoot=<path>        Engine installation root (default: LUMINA_DIR or auto-detected)
               -Project=<path>           Game project root, for building against an installed engine
-              -MaxParallel=<n>          Concurrent actions (default: processor count minus one)
+              -MaxParallel=<n>          Concurrent actions (default: processor count minus one,
+                                        lowered to fit available memory)
               -Clean                    Delete outputs before building
               -NoUnity                  Compile every source on its own, no unity files
               -KeepGoing                Keep building after a failure

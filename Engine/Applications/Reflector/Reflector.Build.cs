@@ -32,18 +32,21 @@ public class Reflector : ModuleRules
         PublicLibraryPaths.Add(ModulePath("../../../External/LLVM/lib"));
         PublicLibraryPaths.Add(ModulePath("../../../External/LLVM/bin"));
 
-        // Deliberately NOT optional: a missing copy means Setup never fetched External/LLVM, and failing
-        // here names the file instead of surfacing as an access violation inside the Reflector.
+        // Windows has no rpath: the loader searches the executable's directory, so libclang.dll has to
+        // be staged beside it. Deliberately NOT optional -- a missing copy means Setup never fetched
+        // External/LLVM, and failing here names the file instead of surfacing as an access violation
+        // inside the Reflector.
         //
-        // ELF: staged under the SONAMEs recorded in the binary, not the unversioned development
-        // symlinks. Staging libclang.so alone leaves the loader asking for libclang-19.so.19, which it
-        // then satisfies from a distro install if one happens to exist -- so the omission is invisible
-        // on a developer box and fatal on a clean one.
-        foreach (string Library in Target.Platform == BuildPlatform.Windows64
-            ? new[] { "bin/libclang.dll" }
-            : new[] { "lib/libclang-19.so.19", "lib/libLLVM.so.19.1" })
+        // ELF does NOT get the same treatment, and staging the libraries there is actively wrong. The
+        // distribution's libLLVM.so.19.1 carries DT_RUNPATH=$ORIGIN/../lib, and DT_RUNPATH on an object
+        // suppresses the inherited DT_RPATH of everything above it when resolving THAT object's own
+        // dependencies. Copied into Binaries/Linux64 its $ORIGIN/../lib becomes Binaries/lib, which does
+        // not exist, so libLLVM's libxml2.so.2 falls through to the system path and fails -- the host
+        // ships libxml2.so.16. Left in External/LLVM/lib the same RUNPATH resolves to that directory,
+        // which is exactly where the bundle stages the closure. See the rpath block below.
+        if (Target.Platform == BuildPlatform.Windows64)
         {
-            AddRuntimeDependency($"../../../External/LLVM/{Library}");
+            AddRuntimeDependency("../../../External/LLVM/bin/libclang.dll");
         }
 
         if (Target.Platform != BuildPlatform.Windows64)
@@ -63,6 +66,12 @@ public class Reflector : ModuleRules
             // object's OWN direct dependencies, so it resolves libclang and libLLVM and then leaves
             // the loader to find libLLVM's libxml2 on its own -- which fails with the library sitting
             // in the very directory just named. RPATH is inherited down the dependency chain.
+            //
+            // Inherited, but not unconditionally: the chain stops at any object that has a RUNPATH of
+            // its own, and the distribution's libLLVM has one. That is why the LLVM libraries are not
+            // staged into Binaries -- see the runtime-dependency block above. This flag is still what
+            // resolves the transitive needs of the bundle's RUNPATH-less libraries (libedit's libtinfo,
+            // libbsd's libmd).
             PrivateLinkerOptions.Add("-Wl,--disable-new-dtags");
         }
 

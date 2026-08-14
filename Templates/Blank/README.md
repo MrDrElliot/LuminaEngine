@@ -4,10 +4,11 @@ A Lumina Engine project.
 
 ## Requirements
 
-- The `LUMINA_DIR` environment variable must point at your engine install (set by the engine's `Setup.bat`).
-- Visual Studio 2026 (18.0+) with the C++ workload. (The engine's C# layer targets `net10.0`, which needs VS 18.0+; the standalone .NET 10 SDK alone is not enough.)
+- The `LUMINA_DIR` environment variable must point at your engine install (set up by the engine's `Setup.bat` on Windows, `Setup.sh` on Linux).
+- **Windows:** Visual Studio 2026 (18.0+) with the C++ workload. (The engine's C# layer targets `net10.0`, which needs VS 18.0+; the standalone .NET 10 SDK alone is not enough.)
+- **Linux:** GCC 13+ and the .NET 10 SDK. See the engine's README for the full package list.
 
-## First-time setup
+## First-time setup (Windows)
 
 1. Run `GenerateProject.bat` from this folder. It calls `%LUMINA_DIR%\LuminaBuild.bat GenerateProjectFiles` for this project and writes `$PROJECTNAME.sln`.
 2. Open `$PROJECTNAME.sln` in **Visual Studio** or **JetBrains Rider**.
@@ -16,6 +17,18 @@ A Lumina Engine project.
 F5 builds the game DLL (`Binaries\Windows64\$PROJECTNAME-Development.dll`) and launches the Lumina
 editor with this project pre-loaded. Breakpoints in your game module hit as soon as
 `IMPLEMENT_MODULE` runs.
+
+## First-time setup (Linux)
+
+```bash
+./GenerateProject.sh                                              # writes compile_commands.json
+"$LUMINA_DIR/LuminaBuild.sh" Build $PROJECTNAME -TargetType=Editor
+"$LUMINA_DIR/LuminaBuild.sh" Run   $PROJECTNAME -TargetType=Editor
+```
+
+That builds the game shared library (`Binaries/Linux64/lib$PROJECTNAME-Development.so`) and launches
+the editor with this project pre-loaded. There is no solution on Linux: `GenerateProject.sh` writes
+a `compile_commands.json` that clangd, VS Code and Rider read for completion.
 
 The solution also contains the engine's own targets, because the engine is built from source
 alongside your project. Its output stays in the engine tree and is shared by every project, so it
@@ -38,13 +51,14 @@ The C++ module in `Source/` is optional: use it for native types, custom compone
 
 - **C# scripts** (`Game/Scripts/*.cs`): save in your editor; the running engine recompiles and reloads them.
 - **Content** (assets in `Game/Content/`): hot-reloads inside the editor; no rebuild needed.
-- **C++** (`Source/*.cpp` / `*.h`): press F5 again to rebuild the DLL and relaunch the editor. New `.h` / `.cpp` files are picked up by the build automatically; re-run `GenerateProject.bat` to make them show up in the IDE's file list.
+- **C++** (`Source/*.cpp` / `*.h`): press F5 again (or re-run `LuminaBuild.sh Build`) to rebuild the game module and relaunch the editor. New `.h` / `.cpp` files are picked up by the build automatically; re-run `GenerateProject.bat` / `GenerateProject.sh` to make them show up in the IDE's file list.
 
 ## Project layout
 
 ```
 $PROJECTNAME.lproject          Project descriptor (name, GUID, plugins)
-GenerateProject.bat            Regenerate the .sln after adding or removing source files
+GenerateProject.bat            Regenerate the .sln after adding or removing source files (Windows)
+GenerateProject.sh             The same, writing compile_commands.json instead (Linux)
 Config/GameSettings.json       Per-project engine settings (startup maps, cook roots, ...)
 Source/                        Your C++ module (optional)
   $PROJECTNAME.Target.cs       What to build: names the launch module, points Run at the editor

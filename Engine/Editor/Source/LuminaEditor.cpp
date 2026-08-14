@@ -196,7 +196,8 @@ namespace Lumina
                     Ext == ".c"          || Ext == ".inl"        || Ext == ".lua"     ||
                     Ext == ".cs"         || Ext == ".rml"        || Ext == ".rcss"    ||
                     Ext == ".json"       || Ext == ".lproject"   || Ext == ".lplugin" ||
-                    Ext == ".bat"        || Ext == ".py"         || Ext == ".md"      ||
+                    Ext == ".bat"        || Ext == ".sh"         || Ext == ".py"      ||
+                    Ext == ".md"         ||
                     Ext == ".txt"        || Ext == ".gitignore"  || Ext == ".cfg"     ||
                     Ext == ".yaml"       || Ext == ".yml"        || Ext == ".xml";
 
@@ -226,6 +227,17 @@ namespace Lumina
                 {
                     OutputFile.write(FileContents.data(), FileContents.size());
                     OutputFile.close();
+
+                    // The token-replaced copy is a new file, so it gets default permissions rather
+                    // than the template's. That drops the executable bit, which is the difference
+                    // between a generated GenerateProject.sh that runs and one that reports
+                    // permission denied. copy_file above keeps the mode already.
+                    std::error_code PermissionsEc;
+                    std::filesystem::permissions(
+                        DestPathFS,
+                        std::filesystem::status(SourcePath).permissions(),
+                        std::filesystem::perm_options::replace,
+                        PermissionsEc);
                 }
             }
         }
@@ -435,10 +447,19 @@ namespace Lumina
 
     bool FEditorEngine::GenerateProjectFiles(FStringView ProjectDirectory) const
     {
-        FFixedString BatPath = Paths::Combine(ProjectDirectory, "GenerateProject.bat");
-        if (!Paths::Exists(BatPath))
+        // Both scripts ship in every generated project, because a project is not tied to the
+        // platform it was created on. Which one to run is decided by the host: handing a .bat to
+        // a POSIX exec fails with "permission denied", which describes nothing about the problem.
+#if defined(_WIN32)
+        constexpr const char* ScriptName = "GenerateProject.bat";
+#else
+        constexpr const char* ScriptName = "GenerateProject.sh";
+#endif
+
+        FFixedString ScriptPath = Paths::Combine(ProjectDirectory, ScriptName);
+        if (!Paths::Exists(ScriptPath))
         {
-            LOG_ERROR("GenerateProjectFiles: missing {0}", BatPath.c_str());
+            LOG_ERROR("GenerateProjectFiles: missing {0}", ScriptPath.c_str());
             return false;
         }
 
@@ -446,17 +467,17 @@ namespace Lumina
         // streams each line into the editor log under a [BuildTool] tag so the
         // user sees what's happening without a separate console window. The
         // FScopedSlowTask drives a centred progress modal for the duration.
-        const std::string BatPathStr(BatPath.c_str(), BatPath.size());
+        const std::string ScriptPathStr(ScriptPath.c_str(), ScriptPath.size());
         const std::string WorkingDirStr(ProjectDirectory.data(), ProjectDirectory.size());
 
-        std::thread([BatPathStr, WorkingDirStr]()
+        std::thread([ScriptPathStr, WorkingDirStr]()
         {
             FScopedSlowTask Task(1.0f, "Generating project files", "Running LuminaBuildTool GenerateProjectFiles...");
 
-            LOG_INFO("[BuildTool] running {0}", BatPathStr.c_str());
+            LOG_INFO("[BuildTool] running {0}", ScriptPathStr.c_str());
 
             const int ExitCode = Platform::RunProcessAndWaitCapture(
-                UTF8_TO_TCHAR(BatPathStr.c_str()),
+                UTF8_TO_TCHAR(ScriptPathStr.c_str()),
                 nullptr,
                 UTF8_TO_TCHAR(WorkingDirStr.c_str()),
                 [](FStringView Line)

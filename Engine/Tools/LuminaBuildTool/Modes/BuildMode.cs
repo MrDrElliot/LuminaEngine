@@ -55,6 +55,62 @@ public static class BuildMode
     }
 
     /// <summary>
+    /// How many actions to run at once when -MaxParallel is not given: core count, less one, and
+    /// then capped at what the machine's memory can actually hold.
+    /// </summary>
+    /// <remarks>
+    /// Core count alone is the wrong answer on any machine with more threads than spare gigabytes.
+    /// A template-heavy translation unit compiled with -g routinely peaks north of a gigabyte, so a
+    /// 16-thread laptop with 14 GiB of RAM would start fifteen of them and ask for roughly twice the
+    /// memory it has. What follows is not a clean out-of-memory failure: the machine swaps, memory
+    /// pressure climbs, and on a systemd-oomd system the kill lands on whichever cgroup in the user
+    /// slice looks worst, which in practice is the desktop shell rather than the build. The build
+    /// carries on and the session dies, so the symptom never points at the cause.
+    ///
+    /// The budget below reserves headroom for everything that is not this build - desktop, editor,
+    /// browser - and then divides what is left by a per-action estimate. Both numbers are
+    /// deliberately pessimistic, because overshooting costs a session and undershooting costs a
+    /// little wall-clock time on a build that was going to be I/O bound at the tail anyway.
+    ///
+    /// This only ever lowers the count. A workstation with memory to spare divides out well past
+    /// its core count and lands on the core count regardless, so nothing changes there.
+    /// </remarks>
+    private static int DefaultParallelism()
+    {
+        int FromCores = Math.Max(1, Environment.ProcessorCount - 1);
+
+        // TotalAvailableMemoryBytes is the cgroup limit where one applies and physical RAM
+        // otherwise, so this reads a container's real allowance rather than the host's.
+        long TotalBytes = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes;
+
+        if (TotalBytes <= 0)
+        {
+            return FromCores;
+        }
+
+        const long ReservedBytes = 3L * 1024 * 1024 * 1024;
+        const long BytesPerAction = 1536L * 1024 * 1024;
+
+        long BudgetBytes = TotalBytes - ReservedBytes;
+        int FromMemory = (int)Math.Max(1, BudgetBytes / BytesPerAction);
+
+        if (FromMemory >= FromCores)
+        {
+            return FromCores;
+        }
+
+        // Worth saying out loud. A build running at half the width of the machine looks like a bug
+        // in the scheduler unless the reason is on screen, and the flag to override it is right here.
+        Log.Info(
+            "Limiting to {0} parallel actions for {1:F1} GiB of usable memory ({2} cores available). Override with -MaxParallel=<n>.",
+            FromMemory,
+            TotalBytes / (double)(1024 * 1024 * 1024),
+            Environment.ProcessorCount);
+
+        return FromMemory;
+    }
+
+    /// <summary>
     /// Brings the IDE workspace back in line with the rules after a successful build, when a
     /// rules file has changed since it was written.
     /// </summary>
@@ -297,7 +353,7 @@ public static class BuildMode
                 return 0;
             }
 
-            int MaxParallelism = Arguments.GetInt("MaxParallel", Math.Max(1, Environment.ProcessorCount - 1));
+            int MaxParallelism = Arguments.GetInt("MaxParallel", DefaultParallelism());
             bool bStopOnFirstError = !Arguments.GetBool("KeepGoing", false);
 
             BuildTimeline? Timeline = Arguments.HasFlag("Timeline") ? new BuildTimeline() : null;

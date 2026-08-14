@@ -76,6 +76,16 @@ namespace Lumina
     {
         const FString PrefsPath = Paths::GetEngineDirectory() + "/Editor/Config/EditorPreferences.json";
 
+        // Checked before the read rather than letting the read fail: the file is written on the
+        // first settings save and is deliberately untracked, so "not there" is what every clean
+        // clone looks like. LoadFileIntoString logs a missing file as an error, which put a red
+        // line in the very first thing a new user sees and described nothing wrong.
+        std::error_code PrefsEc;
+        if (!std::filesystem::exists(PrefsPath.c_str(), PrefsEc))
+        {
+            return {};
+        }
+
         FString Json;
         if (!FileHelper::LoadFileIntoString(Json, PrefsPath))
         {

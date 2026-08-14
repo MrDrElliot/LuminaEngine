@@ -92,7 +92,10 @@ public class Runtime : LuminaModuleRules
             AddPerFileOption("JobScheduler.cpp", "-ftls-model=initial-exec");
 
             // libstdc++ declares std::stacktrace but leaves the backtrace implementation in its own
-            // archive, so Assert.h's HAS_STD_STACKTRACE path only links with this.
+            // archive, so Assert.h's HAS_STD_STACKTRACE path only links with this. The name here is
+            // a request rather than a filename: the archive is libstdc++_libbacktrace.a up to GCC 13
+            // and libstdc++exp.a from GCC 14, and the Unix toolchain substitutes whichever one the
+            // located compiler ships, or drops it where std::stacktrace is unavailable anyway.
             PublicSystemLibraries.Add("stdc++_libbacktrace");
         }
 

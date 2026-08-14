@@ -593,16 +593,51 @@ public sealed class ClangToolchain : IToolchain
         Arguments.Add("-Wl,--no-whole-archive");
     }
 
-    private static void AddLinkLibraries(BuildModule Module, List<string> Arguments)
+    /// <summary>
+    /// Names a module may use to ask for the backtrace implementation behind std::stacktrace. Any
+    /// of them resolves to whichever archive the located toolchain actually ships.
+    /// </summary>
+    /// <remarks>
+    /// A module cannot know the right name: it moved from libstdc++_libbacktrace.a to
+    /// libstdc++exp.a in GCC 14, so whichever a rules file hardcodes is wrong on half the
+    /// toolchains in use. Treating both as a request for the same thing lets a rules file keep
+    /// saying what it needs and leaves the choice of archive with the layer that probed for it.
+    /// </remarks>
+    private static readonly string[] StacktraceLibraryAliases =
     {
-        if (Module.LinkLibraries.Count == 0)
+        "stdc++exp",
+        "stdc++_libbacktrace",
+    };
+
+    private void AddLinkLibraries(BuildModule Module, List<string> Arguments)
+    {
+        List<string> Resolved = new();
+
+        foreach (string Library in Module.LinkLibraries)
+        {
+            string? Substituted = Array.IndexOf(StacktraceLibraryAliases, Library) >= 0
+                ? Installation.StacktraceLibrary
+                : Library;
+
+            // Null means the toolchain ships no such archive, which is the libc++ case. Dropping
+            // the request is right: the header saw no __cpp_lib_stacktrace and compiled the path
+            // that does not need it, so linking it would fail over a symbol nobody referenced.
+            if (Substituted is null || Resolved.Contains(Substituted))
+            {
+                continue;
+            }
+
+            Resolved.Add(Substituted);
+        }
+
+        if (Resolved.Count == 0)
         {
             return;
         }
 
         Arguments.Add("-Wl,--start-group");
 
-        foreach (string Library in Module.LinkLibraries)
+        foreach (string Library in Resolved)
         {
             Arguments.Add(TranslateLibraryReference(Library));
         }

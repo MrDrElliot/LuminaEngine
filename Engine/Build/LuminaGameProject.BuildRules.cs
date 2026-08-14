@@ -66,7 +66,13 @@ public abstract class LuminaGameTargetRules : LuminaTargetRules
         // with this project opened rather than launching the library.
         string EngineBinaries = Path.Combine(Target.EngineDirectory, "Binaries", Target.PlatformName);
 
-        DebuggerCommand = Path.Combine(EngineBinaries, $"Lumina-{Target.Configuration}.exe");
+        // Extension from the target platform rather than a literal ".exe": ELF executables carry
+        // none, so hardcoding it named a file that does not exist and left every game project on
+        // Linux with a Run command that could not start.
+        DebuggerCommand = Path.Combine(
+            EngineBinaries,
+            $"Lumina-{Target.Configuration}{Target.Platform.GetExecutableExtension()}");
+
         DebuggerWorkingDirectory = EngineBinaries;
     }
 

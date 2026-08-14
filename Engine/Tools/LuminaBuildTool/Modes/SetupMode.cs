@@ -126,8 +126,9 @@ public static class SetupMode
         ConfigureGitHooks(Directories.EngineRoot);
 
         Log.Info(string.Empty);
-        Log.Info("Setup complete. Next: run GenerateProjectFiles.bat, or build directly with");
-        Log.Info("  LuminaBuild.bat Build Lumina -TargetType=Editor");
+        Log.Info("Setup complete. Next: run {0}, or build and run directly with", RunMode.HostScriptName("GenerateProjectFiles"));
+        Log.Info("  {0} Build Lumina -TargetType=Editor", RunMode.HostScriptName("LuminaBuild"));
+        Log.Info("  {0} Run Lumina -TargetType=Editor", RunMode.HostScriptName("LuminaBuild"));
 
         return 0;
     }

@@ -119,11 +119,23 @@ public static class ProjectFilesMode
         string RulesProjectPath = RulesProjectGenerator.GetProjectPath(Directories);
 
         IToolchain Toolchain = PlatformSupport.CreateToolchain(Targets[0].PrimaryVariant.Info);
-        IProjectFileGenerator Generator = new VisualStudioGenerator(Toolchain);
 
-        int Changed = Generator.Generate(Directories, Targets, Configurations, RulesProjectPath)
-            + (bRulesProjectChanged ? 1 : 0)
+        int Changed = (bRulesProjectChanged ? 1 : 0)
             + (CompileDatabaseStep.Write(Directories, Targets, Configurations, Toolchain) ? 1 : 0);
+
+        // A .sln full of .vcxproj is worth nothing off Windows: no editor there builds one, MSBuild
+        // cannot evaluate the platform toolset it names, and leaving it generated only invites
+        // someone to open it and conclude the workspace is broken. compile_commands.json above is
+        // the file that does this job on Linux, and it is written for every host.
+        //
+        // Keyed on the host rather than on -Platform: what decides whether a solution is useful is
+        // the machine that would open it, not the machine being compiled for.
+        if (BuildPlatformRegistry.HostPlatform == BuildPlatform.Windows64)
+        {
+            IProjectFileGenerator Generator = new VisualStudioGenerator(Toolchain);
+
+            Changed += Generator.Generate(Directories, Targets, Configurations, RulesProjectPath);
+        }
 
         // A workspace missing targets is a failure, not a partial success. The Targets.Count == 0 guard
         // above does not catch it: Reflector resolves out of the engine tree whatever state a project is
@@ -147,6 +159,16 @@ public static class ProjectFilesMode
         ProjectFileStamp.Write(Directories, Assembly);
 
         Log.Info("{0} project files changed.", Changed);
+
+        // Windows generates a solution and the next step is obvious. Off Windows the only artefact
+        // that matters is a file the user never asked for by name, so say where it is and what
+        // reads it -- otherwise "2 project files changed" is the whole of the feedback.
+        if (BuildPlatformRegistry.HostPlatform != BuildPlatform.Windows64)
+        {
+            Log.Info(
+                "Wrote {0}. Point clangd, VS Code (clangd extension) or Rider at this directory to pick it up.",
+                Path.Combine(Directories.OutputRoot, "compile_commands.json"));
+        }
 
         return Changed;
     }
