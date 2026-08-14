@@ -1443,7 +1443,7 @@ namespace Lumina::Physics
         {
             const entt::entity Entity = InterpStaging.Entities[i];
 
-            FTransform RenderPose = TransformStorage.get(Entity).WorldTransform;
+            FTransform RenderPose = TransformStorage.get(Entity).GetWorldTransformCached();
             RenderPose.SetLocation(InterpStaging.LerpPos[i]);
             RenderPose.SetRotation(FQuat(InterpStaging.LerpQw[i], InterpStaging.LerpQx[i],
                                          InterpStaging.LerpQy[i], InterpStaging.LerpQz[i]));

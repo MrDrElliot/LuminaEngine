@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 #include "Containers/Array.h"
+#include "Containers/String.h"
+#include "Core/Math/Vector/VectorTypes.h"
 #include "Memory/Allocators/ScratchArray.h"
 #include "TaskSystem/TaskSystem.h"
 #include <atomic>
@@ -8,6 +10,31 @@
 #include <vector>
 
 using namespace Lumina;
+
+namespace
+{
+    struct FTrivial       { float X; int32 Y; };
+    struct FUserCtor      { int32 X; FUserCtor(int32 In) : X(In) {} };
+    struct FNonTrivialDtor{ int32 X; ~FNonTrivialDtor() {} };
+    struct FVirtual       { virtual ~FVirtual() = default; };
+}
+
+static_assert(ScratchElement<float>);
+static_assert(ScratchElement<int32>);
+static_assert(ScratchElement<FTrivial>);
+static_assert(ScratchElement<FVector3>);
+static_assert(ScratchElement<float[4]>);
+
+static_assert(!ScratchElement<void>);
+static_assert(!ScratchElement<float&>);
+static_assert(!ScratchElement<const float>);
+static_assert(!ScratchElement<volatile float>);
+static_assert(!ScratchElement<float[]>);
+static_assert(!ScratchElement<FUserCtor>);
+static_assert(!ScratchElement<FNonTrivialDtor>);
+static_assert(!ScratchElement<FVirtual>);
+static_assert(!ScratchElement<TVector<float>>);
+static_assert(!ScratchElement<FString>);
 
 TEST(ScratchArray, DefaultIsEmptyAndHoldsNothing)
 {

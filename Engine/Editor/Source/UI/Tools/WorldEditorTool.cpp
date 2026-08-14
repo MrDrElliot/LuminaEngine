@@ -1795,7 +1795,7 @@ namespace Lumina
                         }
                         else
                         {
-                            FVector3 PivotPosition = PivotTransformComponent.WorldTransform.GetLocation();
+                            FVector3 PivotPosition = PivotTransformComponent.GetWorldLocationCached();
 
                             SelectionView.each([&](entt::entity Entity, STransformComponent& Transform)
                             {
@@ -1812,7 +1812,7 @@ namespace Lumina
 
                                     case ImGuizmo::ROTATE:
                                     {
-                                        FVector3 OffsetFromPivot = Transform.WorldTransform.GetLocation() - PivotPosition;
+                                        FVector3 OffsetFromPivot = Transform.GetWorldLocationCached() - PivotPosition;
                                         FVector3 RotatedOffset   = DeltaRotation * OffsetFromPivot;
                                         FVector3 NewWorldPos     = PivotPosition + RotatedOffset;
                                         FQuat NewWorldRot     = DeltaRotation * Transform.GetWorldRotation();
@@ -1841,7 +1841,7 @@ namespace Lumina
                                             }
                                         }
 
-                                        FVector3 OffsetFromPivot = Transform.WorldTransform.GetLocation() - PivotPosition;
+                                        FVector3 OffsetFromPivot = Transform.GetWorldLocationCached() - PivotPosition;
                                         FVector3 ScaledOffset    = OffsetFromPivot * ClampedDeltaScale;
                                         FVector3 NewWorldPos     = PivotPosition + ScaledOffset;
                                         FQuat WorldRot        = Transform.GetWorldRotation();

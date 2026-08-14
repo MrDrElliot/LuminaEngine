@@ -2562,7 +2562,7 @@ namespace Lumina
 
                     FBillboardInstance& Billboard   = BillboardInstances.emplace_back();
                     Billboard.TextureIndex          = BillboardComponent.Texture->GetResourceID();
-                    Billboard.Position              = TransformStorage.get(Entity).WorldTransform.GetLocation();
+                    Billboard.Position              = TransformStorage.get(Entity).GetWorldLocationCached();
                     Billboard.Size                  = BillboardComponent.Scale;
                     Billboard.EntityID              = entt::to_integral(Entity);
                 });
@@ -2588,39 +2588,39 @@ namespace Lumina
                         {
                             return;
                         }
-                        EmplaceVisualizer(Entity, TransformStorage.get(Entity).WorldTransform.GetLocation(), ENamedImage::CameraIcon, FColor::White);
+                        EmplaceVisualizer(Entity, TransformStorage.get(Entity).GetWorldLocationCached(), ENamedImage::CameraIcon, FColor::White);
                     });
 
                     CharacterView.each([&](entt::entity Entity, SCharacterControllerComponent&)
                     {
-                        EmplaceVisualizer(Entity, TransformStorage.get(Entity).WorldTransform.GetLocation(), ENamedImage::CharacterIcon, FColor::White);
+                        EmplaceVisualizer(Entity, TransformStorage.get(Entity).GetWorldLocationCached(), ENamedImage::CharacterIcon, FColor::White);
                     });
 
                     PointLightView.each([&](entt::entity Entity, const SPointLightComponent& Light)
                     {
-                        EmplaceVisualizer(Entity, TransformStorage.get(Entity).WorldTransform.GetLocation(), ENamedImage::PointLightIcon, FVector4(Light.LightColor, 1.0f));
+                        EmplaceVisualizer(Entity, TransformStorage.get(Entity).GetWorldLocationCached(), ENamedImage::PointLightIcon, FVector4(Light.LightColor, 1.0f));
                     });
 
                     SpotLightView.each([&](entt::entity Entity, const SSpotLightComponent& Light)
                     {
-                        EmplaceVisualizer(Entity, TransformStorage.get(Entity).WorldTransform.GetLocation(), ENamedImage::SpotLightIcon, FVector4(Light.LightColor, 1.0f));
+                        EmplaceVisualizer(Entity, TransformStorage.get(Entity).GetWorldLocationCached(), ENamedImage::SpotLightIcon, FVector4(Light.LightColor, 1.0f));
                     });
 
                     DirectionalView.each([&](entt::entity Entity, const SDirectionalLightComponent& Light)
                     {
                         const auto& Transform = Registry.get<STransformComponent>(Entity);
-                        EmplaceVisualizer(Entity, Transform.WorldTransform.GetLocation(), ENamedImage::DirectionalLightIcon, FVector4(Light.Color, 1.0f));
+                        EmplaceVisualizer(Entity, Transform.GetWorldLocationCached(), ENamedImage::DirectionalLightIcon, FVector4(Light.Color, 1.0f));
                     });
 
                     SkyLightView.each([&](entt::entity Entity, const SSkyLightComponent&)
                     {
                         const auto& Transform = Registry.get<STransformComponent>(Entity);
-                        EmplaceVisualizer(Entity, Transform.WorldTransform.GetLocation(), ENamedImage::SkyLightIcon, FVector4(1.0f));
+                        EmplaceVisualizer(Entity, Transform.GetWorldLocationCached(), ENamedImage::SkyLightIcon, FVector4(1.0f));
                     });
 
                     ParticleView.each([&](entt::entity Entity, const SParticleSystemComponent&)
                     {
-                        EmplaceVisualizer(Entity, TransformStorage.get(Entity).WorldTransform.GetLocation(), ENamedImage::ParticleSystemIcon, FVector4(1.0f));
+                        EmplaceVisualizer(Entity, TransformStorage.get(Entity).GetWorldLocationCached(), ENamedImage::ParticleSystemIcon, FVector4(1.0f));
                     });
                 }
                 #endif
@@ -3185,7 +3185,7 @@ namespace Lumina
                     float BaseHeight = Fog.FogBaseHeight;
                     if (const STransformComponent* Transform = Registry.try_get<STransformComponent>(Entity))
                     {
-                        BaseHeight += Transform->WorldTransform.GetLocation().y;
+                        BaseHeight += Transform->GetWorldLocationCached().y;
                     }
 
                     FExponentialHeightFogParams& P = Frame.Volumetrics.FogParams;
@@ -4243,11 +4243,11 @@ namespace Lumina
             const STransformComponent&  Transform = PointView.get<STransformComponent>(Entity);
             const float     Radius   = Light.Attenuation;
             // Test with the location already resident in the transform's SIMD lanes (no scalar round-trip).
-            if (!SceneCullContext.Frustum.IntersectsSphere(Transform.WorldTransform.Location, Radius))
+            if (!SceneCullContext.Frustum.IntersectsSphere(Transform.GetWorldTransformCached().Location, Radius))
             {
                 continue;
             }
-            SceneCullContext.ShadowLights.push_back({ Transform.WorldTransform.GetLocation(), Radius });
+            SceneCullContext.ShadowLights.push_back({ Transform.GetWorldLocationCached(), Radius });
         }
 
         auto SpotView = Registry.view<SSpotLightComponent, STransformComponent>(entt::exclude<SDisabledTag>);
@@ -4260,11 +4260,11 @@ namespace Lumina
             }
             const STransformComponent& Transform = SpotView.get<STransformComponent>(Entity);
             const float     Radius   = Light.Attenuation;
-            if (!SceneCullContext.Frustum.IntersectsSphere(Transform.WorldTransform.Location, Radius))
+            if (!SceneCullContext.Frustum.IntersectsSphere(Transform.GetWorldTransformCached().Location, Radius))
             {
                 continue;
             }
-            SceneCullContext.ShadowLights.push_back({ Transform.WorldTransform.GetLocation(), Radius });
+            SceneCullContext.ShadowLights.push_back({ Transform.GetWorldLocationCached(), Radius });
         }
     }
 
@@ -4288,7 +4288,7 @@ namespace Lumina
         Light.Color                 = PackColor(FVector4(PointLight.LightColor, 1.0));
         Light.Intensity             = PointLight.Intensity;
         Light.Radius                = PointLight.Attenuation;
-        Light.Position              = TransformComponent.WorldTransform.GetLocation();
+        Light.Position              = TransformComponent.GetWorldLocationCached();
         Light.ShadowDataIndex       = INDEX_NONE;
         if (PointLight.bVolumetric)
         {
@@ -4349,7 +4349,7 @@ namespace Lumina
 
         FLight Light                = {};
         Light.Flags                 = ELightFlags::Spot;
-        Light.Position              = TransformComponent.WorldTransform.GetLocation();
+        Light.Position              = TransformComponent.GetWorldLocationCached();
         Light.Direction             = Math::Normalize(-UpdatedForward);
         Light.Falloff               = SpotLight.Falloff;
         Light.Color                 = PackColor(FVector4(SpotLight.LightColor, 1.0));

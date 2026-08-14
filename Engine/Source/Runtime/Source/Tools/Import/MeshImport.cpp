@@ -725,8 +725,6 @@ namespace Lumina::Import::Mesh
         Task::ParallelFor(LODCount * NumSurfaces, [&](uint32 Cell)
         {
             LUMINA_PROFILE_SECTION("Process Surfaces and LODs");
-            // Scoped again INSIDE the worker: the scope stack is thread-local, so the one on GenerateMeshlets
-            // covers only the calling thread and the bulk of a mesh's memory lands in no category.
             LUMINA_MEMORY_SCOPE("Meshes");
 
             const uint32 lod        = Cell / NumSurfaces;

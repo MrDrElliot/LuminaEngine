@@ -954,7 +954,7 @@ namespace Lumina
                                                  entt::entity Entity, const STransformComponent& Transform)
     {
         return RenderStorage->contains(Entity) ? RenderStorage->get(Entity).Matrix
-                                               : Transform.WorldTransform.GetMatrix();
+                                               : Transform.GetWorldMatrixCached();
     }
 
     namespace

@@ -29,13 +29,21 @@ namespace Lumina
         RUNTIME_API FStats GetStats();
     }
 
-    // Pooled uninitialized bulk storage owned by the object, so it survives fiber migration and frame resets.
+    // What a type must be for raw pooled bytes to be usable as one without a constructor ever running.
     template<typename T>
+    concept ScratchElement =
+        std::is_object_v<T>
+        && !std::is_unbounded_array_v<T>
+        && !std::is_const_v<T>
+        && !std::is_volatile_v<T>
+        && std::is_trivially_default_constructible_v<T>
+        && std::is_trivially_copyable_v<T>
+        && std::is_trivially_destructible_v<T>;
+
+    // Pooled uninitialized bulk storage owned by the object, so it survives fiber migration and frame resets.
+    template<ScratchElement T>
     class TScratchArray
     {
-        static_assert(std::is_trivially_copyable_v<T>, "TScratchArray never constructs its elements");
-        static_assert(std::is_trivially_destructible_v<T>, "TScratchArray never destroys its elements");
-
     public:
 
         TScratchArray() = default;

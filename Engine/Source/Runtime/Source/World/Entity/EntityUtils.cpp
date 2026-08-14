@@ -814,6 +814,9 @@ namespace Lumina::ECS::Utils
         TVector<entt::entity>          DrainScratch;
         TVector<TVector<entt::entity>> HierBySlot;
 
+        // Merged HierBySlot, kept as a member so the resolve reuses one allocation across frames.
+        TVector<entt::entity>          HierScratch;
+
         // Published "who moved" channel, off until a consumer opts in (SetPublishMovedTransforms).
         // Written from the resolve's ParallelFor bodies and from the lazy chain resolve, hence the
         // concurrent queue; drained on the game thread. Duplicates are fine -- the consumer is
@@ -1017,7 +1020,7 @@ namespace Lumina::ECS::Utils
                 continue;
             }
 
-            const FTransform ParentWorld = TransformStorage.get(Parent).WorldTransform;
+            const FTransform ParentWorld = TransformStorage.get(Parent).GetWorldTransformCached();
             entt::entity Child = RelStorage.get(Parent).First;
             while (Child != entt::null)
             {
@@ -1106,7 +1109,7 @@ namespace Lumina::ECS::Utils
             FRelationshipComponent* Rel = Registry.try_get<FRelationshipComponent>(Ancestor);
             if (Rel && Rel->Parent != entt::null && Registry.valid(Rel->Parent))
             {
-                const FTransform& ParentWorld = XFormStorage.get(Rel->Parent).WorldTransform;
+                const FTransform& ParentWorld = XFormStorage.get(Rel->Parent).GetWorldTransformCached();
                 Transform.WorldTransform = ParentWorld * Transform.LocalTransform;
             }
             else
@@ -1249,13 +1252,20 @@ namespace Lumina::ECS::Utils
             }
         }
 
-        // Gather the (rare) hierarchical entities from the per-slot buffers.
-        TFixedVector<entt::entity, 64> HierEntities;
-        for (const TVector<entt::entity>& Slot : DirtyState.HierBySlot)
+        // Gather the hierarchical entities from the per-slot buffers: one reserve, one memcpy per slot.
+        TVector<entt::entity>& HierEntities = DirtyState.HierScratch;
+        HierEntities.clear();
         {
-            for (entt::entity E : Slot)
+            size_t Total = 0;
+            for (const TVector<entt::entity>& Slot : DirtyState.HierBySlot)
             {
-                HierEntities.push_back(E);
+                Total += Slot.size();
+            }
+
+            HierEntities.reserve(Total);
+            for (const TVector<entt::entity>& Slot : DirtyState.HierBySlot)
+            {
+                HierEntities.insert(HierEntities.end(), Slot.begin(), Slot.end());
             }
         }
 
@@ -1279,7 +1289,7 @@ namespace Lumina::ECS::Utils
 
             if (bHasParent)
             {
-                const FTransform& ParentWorld = TransformStorage.get(Rel.Parent).WorldTransform;
+                const FTransform& ParentWorld = TransformStorage.get(Rel.Parent).GetWorldTransformCached();
                 DirtyTransform.WorldTransform = ParentWorld * DirtyTransform.LocalTransform;
             }
             else

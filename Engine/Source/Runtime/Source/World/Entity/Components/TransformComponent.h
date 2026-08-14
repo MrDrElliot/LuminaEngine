@@ -140,33 +140,39 @@ namespace Lumina
             return InScale;
         }
 
+        // Derived, not stored: bIsFlat means world == local, so WorldTransform is left stale for those.
+        FORCEINLINE const FTransform& GetWorldTransformCached() const
+        {
+            return bIsFlat ? LocalTransform : WorldTransform;
+        }
+
         // World getters opt out of SuppressGCTransition: a dirty-chain resolve can exceed the ~1us budget.
         FUNCTION(Script, NoSuppressGCTransition)
         FVector3 GetWorldLocation() const
         {
             ResolveIfDirty();
-            return WorldTransform.GetLocation();
+            return GetWorldTransformCached().GetLocation();
         }
 
         FUNCTION(Script, NoSuppressGCTransition)
         FQuat GetWorldRotation() const
         {
             ResolveIfDirty();
-            return WorldTransform.GetRotation();
+            return GetWorldTransformCached().GetRotation();
         }
 
         FUNCTION(Script, NoSuppressGCTransition)
         FVector3 GetWorldScale() const
         {
             ResolveIfDirty();
-            return WorldTransform.GetScale();
+            return GetWorldTransformCached().GetScale();
         }
 
         FUNCTION(Script, NoSuppressGCTransition)
         FVector3 GetWorldRotationAsEuler() const
         {
             ResolveIfDirty();
-            return Math::Degrees(Math::EulerAngles(WorldTransform.GetRotation()));
+            return Math::Degrees(Math::EulerAngles(GetWorldTransformCached().GetRotation()));
         }
 
         // Composed on demand rather than cached: the matrix is ~20 SIMD instructions out of a
@@ -176,22 +182,22 @@ namespace Lumina
         FMatrix4 GetWorldMatrix() const
         {
             ResolveIfDirty();
-            return WorldTransform.GetMatrix();
+            return GetWorldTransformCached().GetMatrix();
         }
 
         FUNCTION(Script, NoSuppressGCTransition)
         const FTransform& GetWorldTransform() const
         {
             ResolveIfDirty();
-            return WorldTransform;
+            return GetWorldTransformCached();
         }
 
         // Cached world transform WITHOUT a resolve. All by value; the SIMD transform has no scalar member
         // to reference and the matrix is composed on the spot.
-        FVector3 GetWorldLocationCached() const { return WorldTransform.GetLocation(); }
-        FQuat    GetWorldRotationCached() const { return WorldTransform.GetRotation(); }
-        FVector3 GetWorldScaleCached()    const { return WorldTransform.GetScale(); }
-        FMatrix4 GetWorldMatrixCached()   const { return WorldTransform.GetMatrix(); }
+        FVector3 GetWorldLocationCached() const { return GetWorldTransformCached().GetLocation(); }
+        FQuat    GetWorldRotationCached() const { return GetWorldTransformCached().GetRotation(); }
+        FVector3 GetWorldScaleCached()    const { return GetWorldTransformCached().GetScale(); }
+        FMatrix4 GetWorldMatrixCached()   const { return GetWorldTransformCached().GetMatrix(); }
 
         FUNCTION(Script, NoSuppressGCTransition)
         void SetWorldTransform(const FTransform& InTransform)
@@ -299,7 +305,10 @@ namespace Lumina
         PROPERTY(Editable, Category = "Transform")
         FTransform LocalTransform;
 
+        // Never read directly; a flat entity leaves it stale. See GetWorldTransformCached.
         FTransform WorldTransform;
+
+        // Do not move the fields below onto LocalTransform's cache line; measured at +7ns/setter if you do.
 
         // Set by setters, cleared by the resolver. Component-local so writes are ParallelFor-safe.
         mutable bool bWorldDirty = false;
@@ -354,10 +363,7 @@ namespace Lumina
             // The deferral cost more than the work it deferred.
             if (bIsFlat)
             {
-                // Unconditional: the world pose must track every write. Only the NOTIFICATION below is
-                // deduped -- writing location, rotation and scale in turn is one move, not three.
-                WorldTransform = LocalTransform;
-
+                // No world write: GetWorldTransformCached derives it from LocalTransform while bIsFlat holds.
                 const uint32 Epoch   = (DirtyState != nullptr)
                                      ? DirtyState->PublishEpoch.load(std::memory_order_relaxed) : 0u;
                 const bool bPublish  = (LastPublishEpoch != Epoch);

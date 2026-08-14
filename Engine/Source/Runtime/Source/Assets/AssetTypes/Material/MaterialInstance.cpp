@@ -3,6 +3,7 @@
 #include "Material.h"
 #include "Assets/AssetTypes/Textures/Texture.h"
 #include "Core/Engine/Engine.h"
+#include "Core/Object/Cast.h"
 #include "Renderer/RenderManager.h"
 #include "World/Scene/RenderScene/MeshResolveCache.h"
 #include "Log/Log.h"
@@ -317,13 +318,6 @@ namespace Lumina
             UploadUniformField(TextureFieldOffset(FirstChanged), &MaterialUniforms.Textures[FirstChanged],
                 (LastChanged - FirstChanged + 1) * (uint32)sizeof(uint32));
         }
-
-        // Unconditionally, not just when a slot moved: this can be the first call after the parent finished
-        // resolving, where the inherited IDs already matched but the streamer has never seen the mapping.
-        //
-        // Marked, not published: the parent calls this from its async texture-load completion (hence "not on
-        // the game thread" in the header), and publishing walks the parent's ResolvedTextures -- the array
-        // that completion is writing. The streamer drains the queue on the game thread instead.
     }
 
     static FMaterialParameterOverride& FindOrAddOverride(TVector<FMaterialParameterOverride>& Overrides, const FName& Name, EMaterialParameterType Type)
