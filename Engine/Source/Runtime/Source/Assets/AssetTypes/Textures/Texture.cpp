@@ -121,12 +121,22 @@ namespace Lumina
         // 4K textures now costs fifteen 256px images until something actually asks for more.
         TextureResource->ResidentFirstMip = TextureResource->ImageDescription.FirstInlineMip;
 
-        if (ApplyMipResidency(TextureResource->ResidentFirstMip))
+        (void)ApplyMipResidency(TextureResource->ResidentFirstMip);
+
+        // Registration is a statement about whether this texture STREAMS -- RegisterTexture decides that
+        // for itself from IsStreamable(). It used to be conditional on the residency change above having
+        // succeeded, which is a different and much more fragile question: ApplyMipResidency returns false
+        // for a swap that has not published yet, for a refusal earned by earlier mips, and for pixels that
+        // are not resident this instant. None of those mean "never stream this texture", but because
+        // PostLoad is the only thing that ever registers, any one of them meant exactly that -- permanently.
+        //
+        // An unregistered texture is not merely un-streamed. Nothing then drives its residency fill, so a
+        // staged swap it owns is never drained and never committed, and the bindless slot it holds stays
+        // frozen for the rest of the session. Every guard against that lives inside TickResidencyFill,
+        // which is precisely what an unregistered texture never reaches.
+        if (FTextureStreamingManager* Streaming = FTextureStreamingManager::TryGet())
         {
-            if (FTextureStreamingManager* Streaming = FTextureStreamingManager::TryGet())
-            {
-                Streaming->RegisterTexture(this);
-            }
+            Streaming->RegisterTexture(this);
         }
 
 #if !USING(WITH_EDITOR)

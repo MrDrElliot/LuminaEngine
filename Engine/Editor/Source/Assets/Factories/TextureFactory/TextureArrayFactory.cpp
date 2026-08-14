@@ -103,12 +103,35 @@ namespace Lumina
 
             if (bMatches)
             {
+                // A streamed source is sitting at its inline tail, so the mips below FirstInlineMip have
+                // no Pixels at all -- their bytes are still in the source package's bulk region. Copying
+                // in that state assembles the array around holes, and because the copy cannot bring the
+                // source's BulkRef with it (see below), those holes are unfillable: the array can never
+                // stream up past them, and saving it writes them out as zero-length payloads. Which mips
+                // happen to be resident depends on what the streamer did to the source minutes ago, so
+                // without this the array you get is a function of the camera, not of the assets.
+                Source->MakeStreamedMipsResident();
+
                 // The fast path, and the common one: the layer is already cooked to the right shape, so
                 // its mip chain is copied straight across. COPIED, not moved -- the source texture keeps
                 // owning its pixels and stays perfectly usable on its own.
                 for (uint32 Mip = 0; Mip < SrcMips; ++Mip)
                 {
-                    AssembledMips.push_back(Source->TextureResource->Mips[Mip]);
+                    const FTextureResource::FMip& SrcMip = Source->TextureResource->Mips[Mip];
+
+                    // MakeStreamedMipsResident logs its own reason. Refusing here is the point: an array
+                    // with a hole in it is worse than no rebuild, because the hole survives into the saved
+                    // asset and the old array was fine.
+                    if (SrcMip.Pixels.empty())
+                    {
+                        LOG_ERROR("TextureArrayFactory: '{0}' layer {1} ('{2}') mip {3} could not be made "
+                                  "resident, so the array would be built with a hole it can never fill. "
+                                  "Leaving the previous array in place; see the errors above.",
+                                  Array->GetName().c_str(), Layer, Source->GetName().c_str(), Mip);
+                        return Rollback();
+                    }
+
+                    AssembledMips.push_back(SrcMip);
 
                     // The copy brings the SOURCE's BulkRef with it, and that addresses the source's
                     // package, not this array's. Left in place, the first demotion would drop these
