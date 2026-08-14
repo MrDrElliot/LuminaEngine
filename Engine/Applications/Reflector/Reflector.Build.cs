@@ -46,6 +46,20 @@ public class Reflector : ModuleRules
             AddRuntimeDependency($"../../../External/LLVM/{Library}");
         }
 
+        if (Target.Platform != BuildPlatform.Windows64)
+        {
+            // The bundle carries LLVM's own dependencies (libxml2, ICU, libedit, ...) because the
+            // versions it was built against are not the versions a current distribution ships:
+            // Ubuntu 26.04 has libxml2.so.16, and nothing there can satisfy the libxml2.so.2 that an
+            // LLVM 19 built on 22.04 asks for.
+            //
+            // -rpath-link resolves them while linking (a plain -L does not apply to the transitive
+            // needs of a shared library); the $ORIGIN rpath resolves them at load time, and stays
+            // relative so the tree can move.
+            PrivateLinkerOptions.Add($"-Wl,-rpath-link,{ModulePath("../../../External/LLVM/lib")}");
+            PrivateLinkerOptions.Add("-Wl,-rpath,$ORIGIN/../../External/LLVM/lib");
+        }
+
         if (Target.Platform == BuildPlatform.Windows64)
         {
             PublicSystemLibraries.AddRange(new[]

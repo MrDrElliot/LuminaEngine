@@ -307,17 +307,33 @@ namespace Lumina
 
         bool bMayExceedBudgetThisFrame = true;
 
-        for (FStreamingTexture& Entry : Textures)
+        const SIZE_T Count = Textures.size();
+        if (Count == 0)
         {
+            return;
+        }
+
+        // ROTATED, not registry order. The frame's budget is spent by whoever comes first, and in a fixed
+        // order that is always the same textures -- so anything further down could afford zero rows frame
+        // after frame, forever. That is not a slow fill, it is a stuck one: the staged image never
+        // completes, CommitRecreate is never reached, and the swap sits unarmed until the "never
+        // committed" error fires. It bites the biggest textures hardest, which is why terrain arrays
+        // (LayerCount x a full chain, the hungriest things in the registry) were the ones that hung.
+        for (SIZE_T i = 0; i < Count; ++i)
+        {
+            FStreamingTexture& Entry = Textures[(FillCursor + i) % Count];
+
             CTexture* Texture = Entry.Texture.Get();
             if (Texture == nullptr)
             {
                 continue;
             }
 
-            // The over-budget allowance is granted at most ONCE per frame, to whichever texture asks
+            // The over-budget allowance is granted at most ONCE per frame, to whichever texture spends
             // first, so a mip bigger than the whole budget still converges without every texture in the
-            // scene claiming the same exemption in the same frame.
+            // scene claiming the same exemption in the same frame. Combined with the rotation above, every
+            // texture gets its turn at the front, which is what makes progress guaranteed rather than
+            // dependent on where registration happened to put it.
             const uint64 Before      = FrameUploadBudget;
             const uint32 FirstMipWas = Texture->GetResidentFirstMip();
 
@@ -335,6 +351,8 @@ namespace Lumina
                 ResidentBytesTotal += Entry.ResidentBytes;
             }
         }
+
+        FillCursor = (FillCursor + 1) % Count;
     }
 
     void FTextureStreamingManager::ComputeWantedMips()

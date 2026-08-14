@@ -256,6 +256,12 @@ namespace Lumina
         // churn, which a demotion pays in full while spending no host bytes.
         uint32                                  FrameResidencyChanges = 0;
 
+        /** Where TickResidencyFills starts spending the frame's budget, advanced every frame. Registry
+         *  order alone let whatever sits early take all of it, every frame, forever -- see the comment
+         *  there. Purely a fairness hint: it indexes a list that registration reorders, and nothing about
+         *  correctness depends on where it lands. */
+        SIZE_T                                  FillCursor = 0;
+
         /** Guards Textures/TextureToIndex against registration from the async-load path and from
          *  CTexture::OnDestroy, both of which can run while Update is walking the list. */
         mutable FMutex                          Mutex;
