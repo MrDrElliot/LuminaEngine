@@ -1042,8 +1042,6 @@ namespace Lumina
             {
                 ImGui::PopStyleVar();
             }
-
-            Index++;
         }
     
         NodeEditor::Suspend();
