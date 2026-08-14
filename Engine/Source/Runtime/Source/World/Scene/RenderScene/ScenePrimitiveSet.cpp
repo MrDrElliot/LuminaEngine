@@ -106,12 +106,14 @@ namespace Lumina
             return;
         }
 
-        for (const FSceneBatchRegistry::FDeferredMaterialSlot& Existing : Batch.DeferredMaterials)
+        for (FSceneBatchRegistry::FDeferredMaterialSlot& Existing : Batch.DeferredMaterials)
         {
-            if (Existing.MaterialIndex == Surface.MaterialIdx && Existing.DeferredShader == Surface.DeferredShader)
+            if (Existing.MaterialIndex != Surface.MaterialIdx)
             {
-                return;
+                continue;
             }
+            Existing.DeferredShader = Surface.DeferredShader;
+            return;
         }
 
         Batch.DeferredMaterials.push_back({ Surface.MaterialIdx, Surface.DeferredShader });
@@ -800,6 +802,26 @@ namespace Lumina
         return true;
     }
 
+    // Whether the batch still records the shader this surface resolved to for its material slot.
+    static bool DeferredMaterialMatches(const FSceneBatchRegistry::FBatch& Batch, const FResolvedSurface& Surface)
+    {
+        if (Surface.DeferredShader == nullptr || Surface.MaterialIdx == (uint16)-1
+            || Surface.BatchKey.bTranslucent != 0u)
+        {
+            return true;
+        }
+
+        for (const FSceneBatchRegistry::FDeferredMaterialSlot& Existing : Batch.DeferredMaterials)
+        {
+            if (Existing.MaterialIndex == Surface.MaterialIdx)
+            {
+                return Existing.DeferredShader == Surface.DeferredShader;
+            }
+        }
+
+        return false;
+    }
+
     // The memo above is keyed on a resolve handle, and dynamic meshes have none. They also re-resolve
     // their materials IN PLACE, into the same FDynamicMeshRenderData::Surfaces vector, so not one of the
     // three identity fields RefreshPrimitiveData compares can move when a material recompiles: the
@@ -834,7 +856,8 @@ namespace Lumina
             if (!(Batches.Get(Have.BatchIndex).Key == Want.BatchKey)
              || Have.MaterialIndex         != Want.MaterialIdx
              || Have.MaterialFlags         != Want.MaterialFlags
-             || Have.bMaterialCastsShadows != Want.bMaterialCastsShadows)
+             || Have.bMaterialCastsShadows != Want.bMaterialCastsShadows
+             || !DeferredMaterialMatches(Batches.Get(Have.BatchIndex), Want))
             {
                 return false;
             }
