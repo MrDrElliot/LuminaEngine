@@ -253,7 +253,11 @@ namespace Lumina
                     {
                         // Flagged, not just reported: a successful splice commits this container verbatim.
                         LOG_WARN("FTextureResource: mip {} is inline in these bytes but has no resident pixels; "
-                                 "declining to write it back empty", MipLevel);
+                                 "declining to write it back empty (FirstInlineMip={}, NumMips={}, Layers={}, "
+                                 "Extent={}x{}, MipEntries={}, Passthrough={})",
+                            MipLevel, FirstInlineMip, NumMips, Data.GetNumLayers(),
+                            Data.ImageDescription.Extent.x, Data.ImageDescription.Extent.y,
+                            Data.Mips.size(), Ar.IsBulkPassthrough());
 
                         Ar.FlagUnresolvedBulkData();
                     }
