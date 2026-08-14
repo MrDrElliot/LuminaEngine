@@ -3132,19 +3132,19 @@ namespace Lumina
             {
                 CImporterRegistry::DestroyImporter(Importer);
 
-                CObject* Asset = LoadObject<CObject>(AssetGUID);
-                if (Asset == nullptr)
+                CObject* ReimportedAsset = LoadObject<CObject>(AssetGUID);
+                if (ReimportedAsset == nullptr)
                 {
                     ImGuiX::Notifications::NotifyError("The asset was gone before \"{0}\" could be applied.", SourceFile);
                     return;
                 }
 
-                CPackage* Package = Asset->GetPackage();
+                CPackage* Package = ReimportedAsset->GetPackage();
                 if (Package != nullptr)
                 {
                     // No registered renderer (or a type with none) just leaves the old image; the cache
                     // drop below still forces the browser to re-read whatever the package now holds.
-                    CThumbnailManager::Get().GenerateThumbnail(Asset, Package);
+                    CThumbnailManager::Get().GenerateThumbnail(ReimportedAsset, Package);
                     CThumbnailManager::Get().InvalidateThumbnail(Package->GetName());
                 }
 
