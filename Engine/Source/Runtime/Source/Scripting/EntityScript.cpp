@@ -321,16 +321,11 @@ namespace Lumina
             {
                 return false;
             }
-
-            // A strong ref of our own, so the erase below cannot be the drop that destroys the object while
-            // this frame's callers still hold the pointer.
+            
             TObjectPtr<CEntityScript> Pinned(Script);
 
             Script->OnDetach();
-
-            // Re-found after OnDetach rather than erased through an iterator taken before it: OnDetach is user
-            // code and may have attached or removed scripts on this entity, moving (or already removing) this
-            // one. Erasing a stale iterator would drop the wrong slot.
+            
             SEntityScriptComponent* Component = Registry.try_get<SEntityScriptComponent>(Entity);
             if (Component == nullptr)
             {
@@ -450,11 +445,7 @@ namespace Lumina
                         FObjectProxyArchiver Ar(Writer, /*bLoadIfFindFails*/ false);
                         Component->Serialize(Ar);
                     }
-
-                    // The whole component goes, not just the scripts of the changed classes: Serialize writes
-                    // and reads the component as a unit, so a partial evacuation could not be replayed.
-                    // Clearing releases the last reference to each script, which is what the load path relies
-                    // on too -- it clears before reconstructing.
+                    
                     Component->Scripts.clear();
 
                     Out.push_back(eastl::move(Saved));
@@ -515,10 +506,7 @@ namespace Lumina
                     Script->OnDetach();
                 }
             }
-
-            // Re-fetched: an OnDetach above may have destroyed the entity or the component outright, and the
-            // pointer taken before the callbacks would be stale. The snapshot's strong refs are what keep the
-            // scripts alive until it goes out of scope here.
+            
             if (SEntityScriptComponent* Component = Registry.try_get<SEntityScriptComponent>(Entity))
             {
                 Component->Scripts.clear();

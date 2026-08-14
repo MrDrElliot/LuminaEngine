@@ -58,12 +58,7 @@ namespace Lumina
         {
             Property->ConstructValue(Base + Property->Offset);
         }
-
-        // Seed from the CDO, which is where the script type's declared defaults were written once at mint.
-        // This is the script counterpart of a C++ member initializer: a native class gets its defaults from
-        // its constructor, which a minted class does not have. Skipped while the CDO is itself being built
-        // (it has no earlier self to copy from) and driven by CopyCompleteValue, so it is correct for every
-        // kind rather than just the memcpy-able ones.
+        
         if (ClassDefaultObject != nullptr && ClassDefaultObject != Object)
         {
             const uint8* DefaultBase = reinterpret_cast<const uint8*>(ClassDefaultObject);

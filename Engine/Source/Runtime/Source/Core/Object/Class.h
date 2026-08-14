@@ -205,11 +205,8 @@ namespace Lumina
         RUNTIME_API FFixedString MakeDisplayName() const override;
 
     private:
-
-        // Memory::Delete, not the default delete: MakeStructOps allocates through Memory::New so the
-        // block is owned by Runtime's allocator no matter which module built the struct. The two have
-        // to be named together or the pairing silently rots.
-        TUniquePtr<FStructOps, smart_ptr_deleter<FStructOps>> StructOps;
+        
+        TUniquePtr<FStructOps> StructOps;
         CStruct* SuperStruct = nullptr;
         bool bLinked = false;
 

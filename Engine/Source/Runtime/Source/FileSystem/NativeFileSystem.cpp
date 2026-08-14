@@ -344,6 +344,9 @@ namespace Lumina::VFS
             }
         }
 
+        // A resave splices a file's own region, and Windows will not replace a file we hold open for read.
+        InFile.close();
+
         std::error_code EC;
         std::filesystem::rename(TempPath.c_str(), FullPath.c_str(), EC);
         if (EC)
