@@ -13,14 +13,19 @@ struct FPushConstants
     uint   TexIndex0;   // edges
     uint   TexIndex1;   // area LUT
     uint   TexIndex2;   // search LUT
-    uint   _Pad0;
-    uint   _Pad1;
+    float  MaxSearchSteps;     // driven by ESMAAQuality, not a compile-time preset
+    float  MaxSearchStepsDiag;
     uint   _Pad2;
 };
 
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
 #define SMAA_RT_METRICS (Pass().RTMetrics)
+
+// Defined ahead of the include so SMAA.slang's #ifndef defaults are skipped.
+#define SMAA_MAX_SEARCH_STEPS      (Pass().MaxSearchSteps)
+#define SMAA_MAX_SEARCH_STEPS_DIAG (Pass().MaxSearchStepsDiag)
+
 #include "Includes/SMAA.slang"
 
 struct VSOutput

@@ -117,30 +117,13 @@ namespace Lumina
     {
     }
 
-    static uint8 ResolveVisBufferSampleCount(EMSAASampleCount RequestedSetting)
-    {
-        const uint8 Requested = ::Lumina::GetMSAASampleCount(RequestedSetting);
-        if (Requested > 1u)
-        {
-            static bool bWarned = false;
-            if (!bWarned)
-            {
-                bWarned = true;
-                LOG_WARN("MSAA ({}x) is not supported by the VisBuffer renderer; rendering at 1x with SMAA.", (uint32)Requested);
-            }
-            return 1u;
-        }
-        return Requested;
-    }
-
-    void FDefaultSceneRenderer::Init()
+        void FDefaultSceneRenderer::Init()
     {
         LUMINA_MEMORY_SCOPE("Render Scene");
 
         RHI::WaitDeviceIdle();
 
         const SDefaultWorldSettings& InitSettings = World ? World->GetDefaultWorldSettings() : SDefaultWorldSettings{};
-        MSAASampleCount = ResolveVisBufferSampleCount(InitSettings.MSAASampleCount);
 
         // Shared (view-independent) buffers + images first.
         InitBuffers();
@@ -992,8 +975,6 @@ namespace Lumina
         RenderFrame = &FrameData;
         FFrameData& Frame = FrameData;
 
-        // SyncMSAAState reads Frame.CachedWorldSettings, so RenderFrame must be set first.
-        SyncMSAAState();
 
         if (!Frame.bExtractedThisFrame)
         {
@@ -1497,11 +1478,10 @@ namespace Lumina
 
             if (bClearToColor)
             {
-                const FSceneImage& ClearRT = GetSceneColorRT();
+                const FSceneImage& ClearRT = GetNamedImage(ENamedImage::HDR);
 
                 RHI::FRenderAttachment ClearColorAttachment;
                 ClearColorAttachment.Texture        = ClearRT.Texture;
-                ClearColorAttachment.ResolveTexture = GetSceneColorResolve();
                 ClearColorAttachment.LoadOp         = RHI::ELoadOp::Clear;
                 ClearColorAttachment.StoreOp        = RHI::EStoreOp::Store;
                 ClearColorAttachment.Color[0]       = ClearRGB.x;
@@ -5733,7 +5713,7 @@ namespace Lumina
         Barriers::ComputeToAll(CL);
 
         const FSceneImage& VisRT   = GetNamedImage(ENamedImage::VisBuffer);
-        const FSceneImage& DepthRT = GetSceneDepthRT();
+        const FSceneImage& DepthRT = GetNamedImage(ENamedImage::DepthAttachment);
         const FUIntVector2 Extent  = GetNamedImage(ENamedImage::HDR).GetExtent();
         
         const RHI::ELoadOp GeomLoadOp = bClear ? RHI::ELoadOp::Clear : RHI::ELoadOp::Load;
@@ -5746,7 +5726,6 @@ namespace Lumina
         RHI::FRenderPassDesc Pass;
         Pass.ColorAttachments               = TSpan<const RHI::FRenderAttachment>(&Color, 1);
         Pass.DepthAttachment.Texture        = DepthRT.Texture;
-        Pass.DepthAttachment.ResolveTexture = GetSceneDepthResolve();
         Pass.DepthAttachment.LoadOp         = GeomLoadOp;
         Pass.DepthAttachment.StoreOp        = RHI::EStoreOp::Store;
         Pass.DepthAttachment.Color[0]       = 0.0f;   // reverse-Z clear
@@ -5778,7 +5757,6 @@ namespace Lumina
                 Key.PS               = bMaskedClip ? Batch.MaskedVisBufferPixelShader : VisPixel;
                 Key.bVisBufferMasked = bMaskedClip;   // interpolants only when actually masked-clipping
                 Key.bWireframe       = RenderSettings.bWireframe;
-                Key.SampleCount      = MSAASampleCount;
                 // The backface bit must agree with the CmdSetCullMode below or two-sided geometry vanishes.
                 Key.TriCullMode      = (uint8)((Batch.bTwoSided ? 0u : (uint32)TriCull_Backface)
                                              | ((RenderSettings.bWireframe || Key.SampleCount > 1) ? 0u : (uint32)TriCull_SmallPrim));
@@ -6758,13 +6736,12 @@ namespace Lumina
         LUMINA_PROFILE_SECTION_COLORED("Picker Resolve", tracy::Color::SlateBlue);
         SCENE_GPU_SCOPE(CL, "Picker Resolve");
 
-        const FSceneImage& PickerImg = GetPickerRT();
+        const FSceneImage& PickerImg = GetNamedImage(ENamedImage::Picker);
         const FSceneImage& VisRT     = GetNamedImage(ENamedImage::VisBuffer);
         const FUIntVector2 Extent    = GetNamedImage(ENamedImage::HDR).GetExtent();
 
         RHI::FRenderAttachment Color;
         Color.Texture        = PickerImg.Texture;
-        Color.ResolveTexture = GetPickerResolve();
         Color.LoadOp         = RHI::ELoadOp::Undefined;   // every pixel is written, background included
         Color.StoreOp        = RHI::EStoreOp::Store;
 
@@ -6819,12 +6796,11 @@ namespace Lumina
         LUMINA_PROFILE_SECTION_COLORED("Scene Debug View", tracy::Color::Magenta);
         SCENE_GPU_SCOPE(CL, "Scene Debug View");
 
-        const FSceneImage& ColorImg = GetSceneColorRT();
+        const FSceneImage& ColorImg = GetNamedImage(ENamedImage::HDR);
         const FUIntVector2 Extent   = FUIntVector2(MaterialClassifyLayout.ScreenW, MaterialClassifyLayout.ScreenH);
 
         RHI::FRenderAttachment Color;
         Color.Texture        = ColorImg.Texture;
-        Color.ResolveTexture = GetSceneColorResolve();
         Color.LoadOp         = RHI::ELoadOp::Load;   // pixels the deferred lane does not own are discarded
         Color.StoreOp        = RHI::EStoreOp::Store;
 
@@ -6840,7 +6816,6 @@ namespace Lumina
         FGraphicsPipelineKey Key;
         Key.VS          = VertexShader;
         Key.PS          = PixelShader;
-        Key.SampleCount = MSAASampleCount;
         Key.ColorTargets.push_back({ ColorImg.Desc.Format, {} });
         RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
@@ -7996,7 +7971,7 @@ namespace Lumina
             {
                 Pass.ColorAttachments = TSpan<const RHI::FRenderAttachment>(&Color, 1);
             }
-            Pass.DepthAttachment.Texture  = GetSceneDepthRT().Texture;
+            Pass.DepthAttachment.Texture  = GetNamedImage(ENamedImage::DepthAttachment).Texture;
             Pass.DepthAttachment.LoadOp   = RHI::ELoadOp::Load;   // cleared by VisBuffer phase 1 or ResetPass
             Pass.DepthAttachment.StoreOp  = RHI::EStoreOp::Store;
             Pass.RenderArea               = Extent;
@@ -8013,7 +7988,6 @@ namespace Lumina
             FGraphicsPipelineKey Key;
             Key.VS          = VertexShader;
             Key.PS          = StampPS;
-            Key.SampleCount = MSAASampleCount;
             Key.DepthFormat = EFormat::D32;
             if (StampPS != nullptr)
             {
@@ -8110,20 +8084,18 @@ namespace Lumina
             RenderParams.MeshletQuadSide      = GTerrainMeshletQuads;
 
             const bool bHDRWasWritten = !DrawCommands.empty() || RenderSettings.bHasEnvironment;
-            const FSceneImage& ColorRT  = GetSceneColorRT();
+            const FSceneImage& ColorRT  = GetNamedImage(ENamedImage::HDR);
             const FUIntVector2 Extent   = GetNamedImage(ENamedImage::HDR).GetExtent();
 
             RHI::FRenderAttachment Colors[2];
             uint32 NumColors = 1;
             Colors[0].Texture        = ColorRT.Texture;
-            Colors[0].ResolveTexture = GetSceneColorResolve();
             Colors[0].LoadOp         = bHDRWasWritten ? RHI::ELoadOp::Load : RHI::ELoadOp::Clear;
             Colors[0].StoreOp        = RHI::EStoreOp::Store;
             #if USING(WITH_EDITOR)
-            const FSceneImage& PickerRT = GetPickerRT();
+            const FSceneImage& PickerRT = GetNamedImage(ENamedImage::Picker);
             // Deferred clears the picker when meshes exist; terrain-only scenes never ran it (early-out).
             Colors[1].Texture        = PickerRT.Texture;
-            Colors[1].ResolveTexture = GetPickerResolve();
             Colors[1].LoadOp         = DrawCommands.empty() ? RHI::ELoadOp::Clear : RHI::ELoadOp::Load;
             Colors[1].StoreOp        = RHI::EStoreOp::Store;
             NumColors = 2;
@@ -8131,8 +8103,7 @@ namespace Lumina
 
             RHI::FRenderPassDesc Pass;
             Pass.ColorAttachments               = TSpan<const RHI::FRenderAttachment>(Colors, NumColors);
-            Pass.DepthAttachment.Texture        = GetSceneDepthRT().Texture;
-            Pass.DepthAttachment.ResolveTexture = GetSceneDepthResolve();
+            Pass.DepthAttachment.Texture        = GetNamedImage(ENamedImage::DepthAttachment).Texture;
             Pass.DepthAttachment.LoadOp         = RHI::ELoadOp::Load;
             Pass.DepthAttachment.StoreOp        = RHI::EStoreOp::Store;
             Pass.RenderArea                     = Extent;
@@ -8149,7 +8120,6 @@ namespace Lumina
             FGraphicsPipelineKey Key;
             Key.VS          = VertexShader;
             Key.PS          = PixelShader;
-            Key.SampleCount = MSAASampleCount;
             Key.DepthFormat = EFormat::D32;
             Key.ShadingFeatures = SF_DebugViews | SF_GTAO |
                                   (RenderSettings.bShadowMaskValid ? (uint32)SF_ShadowMask : 0u);
@@ -9666,11 +9636,10 @@ namespace Lumina
     {
         if (!RenderSettings.bHasEnvironment)
         {
-            const FSceneImage& ColorRT = GetSceneColorRT();
+            const FSceneImage& ColorRT = GetNamedImage(ENamedImage::HDR);
 
             RHI::FRenderAttachment Color;
             Color.Texture        = ColorRT.Texture;
-            Color.ResolveTexture = GetSceneColorResolve();
             Color.LoadOp         = RHI::ELoadOp::Clear;
             Color.StoreOp        = RHI::EStoreOp::Store;
 
@@ -9693,7 +9662,7 @@ namespace Lumina
             return;
         }
 
-        const FSceneImage& ColorRT = GetSceneColorRT();
+        const FSceneImage& ColorRT = GetNamedImage(ENamedImage::HDR);
         const FSceneImage& SkyCube = GetNamedImage(ENamedImage::SkyCube);
         const FUIntVector2 Extent  = GetNamedImage(ENamedImage::HDR).GetExtent();
 
@@ -9703,7 +9672,6 @@ namespace Lumina
 
         RHI::FRenderAttachment Color;
         Color.Texture        = ColorRT.Texture;
-        Color.ResolveTexture = GetSceneColorResolve();
         Color.LoadOp         = RHI::ELoadOp::Clear;
         Color.StoreOp        = RHI::EStoreOp::Store;
 
@@ -9719,7 +9687,6 @@ namespace Lumina
         FGraphicsPipelineKey Key;
         Key.VS          = VertexShader;
         Key.PS          = PixelShader;
-        Key.SampleCount = MSAASampleCount;
         Key.ColorTargets.push_back({ ColorRT.Desc.Format, {} });
         RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
@@ -10907,8 +10874,8 @@ namespace Lumina
         uint32    TexIndex0;  // bindless SRV index of the pass's primary input
         uint32    TexIndex1;  // pass-specific extra input (0 if unused)
         uint32    TexIndex2;  // pass-specific extra input (0 if unused)
-        uint32    _Pad0;
-        uint32    _Pad1;
+        float     MaxSearchSteps;      // blend-weight pass only; the other two ignore these
+        float     MaxSearchStepsDiag;
         uint32    _Pad2;
     };
     static_assert(sizeof(FSMAAPushConstants) == 48, "FSMAAPushConstants must match the slang push block.");
@@ -10925,6 +10892,19 @@ namespace Lumina
         }
     }
 
+    // Reference SMAA preset step counts. High matches the old hardcoded 16/8, so it is unchanged.
+    static FVector2 GetSMAASearchSteps(ESMAAQuality Quality)
+    {
+        switch (Quality)
+        {
+        case ESMAAQuality::Low:    return FVector2(4.0f,  2.0f);
+        case ESMAAQuality::Medium: return FVector2(8.0f,  4.0f);
+        case ESMAAQuality::High:   return FVector2(16.0f, 8.0f);
+        case ESMAAQuality::Ultra:  return FVector2(32.0f, 16.0f);
+        default:                   return FVector2(16.0f, 8.0f);
+        }
+    }
+
     static FSMAAPushConstants BuildSMAAPushConstants(const FSceneImage& Image, const SDefaultWorldSettings& Settings)
     {
         FSMAAPushConstants PC;
@@ -10934,7 +10914,11 @@ namespace Lumina
         PC.EdgeThreshold  = GetSMAAEdgeThreshold(Settings.SMAAQuality);
         PC.DebugMode      = 0.0f;
         PC.TexIndex0 = 0; PC.TexIndex1 = 0; PC.TexIndex2 = 0;
-        PC._Pad0 = 0; PC._Pad1 = 0; PC._Pad2 = 0;
+
+        const FVector2 Steps = GetSMAASearchSteps(Settings.SMAAQuality);
+        PC.MaxSearchSteps     = Steps.x;
+        PC.MaxSearchStepsDiag = Steps.y;
+        PC._Pad2 = 0;
         return PC;
     }
 
@@ -11476,66 +11460,7 @@ namespace Lumina
         return r;
     }
 
-    void FDefaultSceneRenderer::AllocateMSAAImages(FSceneView& View, const FUIntVector2& Extent)
-    {
-        if (MSAASampleCount <= 1)
-        {
-            return;
-        }
-
-        // MS scratch RTs are attachment-only (resolved into the 1x images); no heap slots.
-        RHI::FTextureDesc Desc;
-        Desc.Type        = RHI::ETextureType::Tex2D;
-        Desc.Dimension   = FUIntVector3(Extent.x, Extent.y, 1);
-        Desc.SampleCount = MSAASampleCount;
-
-        Desc.Format = EFormat::RGBA16_FLOAT;
-        Desc.Usage  = RHI::EImageUsageFlags::ColorAttachment;
-        View.Images[(int)ENamedImage::HDR_MS] = CreateSceneImage(Desc, /*bSampled*/ false);
-
-        Desc.Format = EFormat::D32;
-        Desc.Usage  = RHI::EImageUsageFlags::DepthAttachment;
-        View.Images[(int)ENamedImage::Depth_MS] = CreateSceneImage(Desc, /*bSampled*/ false);
-
-        #if USING(WITH_EDITOR)
-        Desc.Format = EFormat::R32_UINT;
-        Desc.Usage  = RHI::EImageUsageFlags::ColorAttachment;
-        View.Images[(int)ENamedImage::Picker_MS] = CreateSceneImage(Desc, /*bSampled*/ false);
-        #endif
-
-        // These arrive after InitViewImages has already named the rest of the array.
-        NameOwnedImages(View.Images);
-    }
-
-    void FDefaultSceneRenderer::SyncMSAAState()
-    {
-        if (RenderFrame == nullptr)
-        {
-            return;
-        }
-        const uint8 Desired = ResolveVisBufferSampleCount(RenderFrame->CachedWorldSettings.MSAASampleCount);
-
-        if (Desired == MSAASampleCount)
-        {
-            return;
-        }
-
-        MSAASampleCount = Desired;
-
-        for (FSceneView& View : SceneViews)
-        {
-            DeferRelease(View.Images[(int)ENamedImage::HDR_MS]);
-            DeferRelease(View.Images[(int)ENamedImage::Depth_MS]);
-            DeferRelease(View.Images[(int)ENamedImage::Picker_MS]);
-
-            if (MSAASampleCount > 1)
-            {
-                AllocateMSAAImages(View, View.Size);
-            }
-        }
-    }
-
-    void FDefaultSceneRenderer::ReleaseViewImages(FSceneView& View, bool bDeferRelease)
+            void FDefaultSceneRenderer::ReleaseViewImages(FSceneView& View, bool bDeferRelease)
     {
         auto Release = [this, bDeferRelease](FSceneImage& Image)
         {
@@ -11604,9 +11529,6 @@ namespace Lumina
         case ENamedImage::AerialTransmittance: return "Scene.AerialTransmittance";
         case ENamedImage::CloudNoise:         return "Scene.CloudNoise";
         case ENamedImage::CloudScatter:       return "Scene.CloudScatter";
-        case ENamedImage::HDR_MS:             return "Scene.HDR_MS";
-        case ENamedImage::Depth_MS:           return "Scene.Depth_MS";
-        case ENamedImage::Picker_MS:          return "Scene.Picker_MS";
         case ENamedImage::BRDFLut:            return "Scene.BRDFLut";
         case ENamedImage::SkyCube:            return "Scene.SkyCube";
         case ENamedImage::SkyIrradiance:      return "Scene.SkyIrradiance";
@@ -11884,7 +11806,6 @@ namespace Lumina
         Desc.Format = EFormat::R11G11B10_FLOAT;
         View.Images[(int)ENamedImage::GBufferD] = CreateSceneImage(Desc, true, /*bMipUAVs*/ true);
 
-        AllocateMSAAImages(View, Extent);
 
         // The MBOIT, water and decal targets used to be created here. They are ~230 MB at 1080p for
         // features a scene may contain none of, so they now arrive through EnsureOptionalViewImages on

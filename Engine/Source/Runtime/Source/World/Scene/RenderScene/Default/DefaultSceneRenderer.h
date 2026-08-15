@@ -453,9 +453,6 @@ namespace Lumina
             AerialTransmittance,
             CloudNoise,
             CloudScatter,
-            HDR_MS,
-            Depth_MS,
-            Picker_MS,
             BRDFLut,
             SkyCube,
             SkyIrradiance,
@@ -544,17 +541,6 @@ namespace Lumina
         FSceneBuffer GetMaterialClassify()  const { return MaterialClassifyRing[CurrentFrameSlot]; }
         /** One packed screen position per classified pixel, grouped into one contiguous run per material. */
         FSceneBuffer GetMaterialPixelList() const { return MaterialPixelListRing[CurrentFrameSlot]; }
-
-        const FSceneImage& GetSceneColorRT() const { return MSAASampleCount > 1 ? GetNamedImage(ENamedImage::HDR_MS) : GetNamedImage(ENamedImage::HDR); }
-        const FSceneImage& GetSceneDepthRT() const { return MSAASampleCount > 1 ? GetNamedImage(ENamedImage::Depth_MS) : GetNamedImage(ENamedImage::DepthAttachment); }
-        const FSceneImage& GetPickerRT()     const { return MSAASampleCount > 1 ? GetNamedImage(ENamedImage::Picker_MS) : GetNamedImage(ENamedImage::Picker); }
-
-        /** Resolve target, invalid handle when MSAA off (no resolve needed). */
-        RHI::FTextureH GetSceneColorResolve() const { return MSAASampleCount > 1 ? GetNamedImage(ENamedImage::HDR).Texture : RHI::FTextureH{}; }
-        RHI::FTextureH GetSceneDepthResolve() const { return MSAASampleCount > 1 ? GetNamedImage(ENamedImage::DepthAttachment).Texture : RHI::FTextureH{}; }
-        RHI::FTextureH GetPickerResolve()     const { return MSAASampleCount > 1 ? GetNamedImage(ENamedImage::Picker).Texture : RHI::FTextureH{}; }
-
-        uint8 GetMSAASampleCount() const { return MSAASampleCount; }
 
         uint32 GetDisplayResourceID() const override;
 
@@ -931,14 +917,7 @@ namespace Lumina
         TArray<uint32, RHI::kFramesInFlight>                MaterialPixelListRingLowUsage = {};
         TArray<FSceneImage, (int)ENamedImage::Num>          NamedImages = {};
 
-        /** MSAA sample count cached from world settings. 1 == disabled (no overhead). */
-        uint8                                           MSAASampleCount = 1;
-
-        /** Allocate a view's MS-only scratch images (HDR_MS, Depth_MS, Picker_MS). No-op when MSAA is off. */
-        void AllocateMSAAImages(FSceneView& View, const FUIntVector2& Extent);
-
         /** Reconcile cached sample count with the world setting; reallocates every view's MS images when it changes. */
-        void SyncMSAAState();
         
         static constexpr uint32                 BLOOM_MIP_COUNT = 8;
         
@@ -1084,7 +1063,6 @@ namespace Lumina
 
         FSceneBuffer GetVisibleInstances()  const { return VisibleInstanceRing[CurrentFrameSlot]; }
         FSceneBuffer GetCullCounters()      const { return CullCounterRing[CurrentFrameSlot]; }
-
 
         // Sends only the arena slices this frame's gather wrote, coalesced. Must run before anything reads
         // Bones() -- the skinning dispatch and the in-draw skinning fallback both do.
