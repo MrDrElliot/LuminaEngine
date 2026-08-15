@@ -232,5 +232,29 @@ namespace Lumina
         /** Supersample local (point/spot) light in-scatter 4x per froxel to reduce blockiness near lights. */
         PROPERTY(Editable, Category = "Volumetric Fog")
         bool bSupersampleVolumetricLights = true;
+
+        /** Trace reflections against the depth buffer, falling back to the prefiltered cube off-screen. */
+        PROPERTY(Editable, Category = "Screen Space Reflections")
+        bool bScreenSpaceReflections = true;
+
+        /** Ray-march steps per pixel; higher resolves thinner geometry but costs proportionally. */
+        PROPERTY(Editable, Category = "Screen Space Reflections", ClampMin = 4, ClampMax = 128)
+        int32 SSRMaxSteps = 32;
+
+        /** How far a reflection ray travels before giving up and falling back to the cube. */
+        PROPERTY(Editable, Category = "Screen Space Reflections", ClampMin = 1.0f, Units = "m")
+        float SSRMaxDistance = 40.0f;
+
+        /** Assumed depth of screen geometry; too small drops hits, too large reflects hidden surfaces. */
+        PROPERTY(Editable, Category = "Screen Space Reflections", ClampMin = 0.01f, Units = "m")
+        float SSRThickness = 0.5f;
+
+        /** Roughness at which SSR has fully handed back to the cube. Mirror-only without temporal reuse. */
+        PROPERTY(Editable, Category = "Screen Space Reflections", ClampMin = 0.0f, ClampMax = 1.0f)
+        float SSRRoughnessFade = 0.4f;
+
+        /** Overall strength of the traced reflection against the prefiltered fallback. */
+        PROPERTY(Editable, Category = "Screen Space Reflections", ClampMin = 0.0f, ClampMax = 1.0f)
+        float SSRIntensity = 1.0f;
     };
 }

@@ -95,7 +95,7 @@ float4 FragmentMain(PSInput Input) : SV_Target0
         // phase-weighted sun when it opted into volumetrics. Keeps the seam continuous and makes
         // fog track time of day automatically.
         float3 ToCam   = -RayDir;
-        float3 Light   = GetAmbientLightColor() * GetAmbientLightIntensity();
+        float3 Light   = GetVolumetricAmbientRadiance();
         bool   bHasSun = GetNumLights() > 0 && HasFlag(GetLightAt(0).Flags, ELightFlags::Directional);
         float  CosSun  = -1.0;
         if (bHasSun)

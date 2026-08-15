@@ -220,7 +220,7 @@ void ComputeMain(uint3 DispatchID : SV_DispatchThreadID)
     // is not run through the octave loop -- the octaves model further bounces of the DIRECTIONAL light
     // below, and folding the ambient in as well would double-count it. Raise AmbientIntensity for a
     // brighter floor; raise the octave count for shadow fill that follows the sun.
-    float3 InScatter = GetAmbientLightColor() * GetAmbientLightIntensity();
+    float3 InScatter = GetVolumetricAmbientRadiance();
 
     // Sun.
     if (Pass().bSunVolumetric != 0)

@@ -533,7 +533,7 @@ namespace Lumina::EditorEntityUtils
         Entity = World->ConstructEntity("Height Fog");
         {
             SExponentialHeightFogComponent& Fog = World->EmplaceComponent<SExponentialHeightFogComponent>(Entity);
-            Fog.FogDensity                  = 0.018f;
+            Fog.FogVisibilityDistance       = 500.0f;
             Fog.FogHeightFalloff            = 0.35f;
             Fog.FogBaseHeight               = -0.5f;
             Fog.FogMaxOpacity               = 0.65f;

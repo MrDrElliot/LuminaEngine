@@ -21,6 +21,7 @@
 #include "Assets/AssetTypes/ParticleSystem/ParticleSystem.h"
 #include "TaskSystem/FiberSync.h"
 #include "World/Entity/Components/PostProcessSettings.h"
+#include "World/Entity/Components/CloudComponent.h"
 #include "World/Subsystems/WorldSettings.h"
 
 namespace Lumina
@@ -348,6 +349,12 @@ namespace Lumina
                 bool                             bIBLDirty            = false;
                 bool                             bIBLConvolutionDirty = false;
                 FIBLBakeResolution               IBLResolution        = {};
+                bool                             bAerialPerspective   = false;
+                float                            AerialRange          = 8000.0f;
+                float                            AerialIntensity      = 1.0f;
+
+                bool                             bClouds              = false;
+                SCloudComponent                  Clouds               = {};
             } Volumetrics;
 
             // Splines uploaded this frame. Headers index into the two shared arrays; everything is world
@@ -442,6 +449,10 @@ namespace Lumina
             AdaptedLuminance,
             FroxelScatter,
             FroxelIntegrated,
+            AerialInScatter,
+            AerialTransmittance,
+            CloudNoise,
+            CloudScatter,
             HDR_MS,
             Depth_MS,
             Picker_MS,
@@ -479,6 +490,8 @@ namespace Lumina
             /// see EnsureOptionalViewImages.
             TArray<uint64, (int)ENamedImage::Num>           ImageLastUsedTick = {};
             FSceneImage                                     BloomChainImage;
+            // CloudNoise is per-view, so a renderer-wide flag leaves view two sampling an unbaked volume.
+            bool                                            bCloudNoiseBaked = false;
             FSceneBuffer                                    ClusterBuffer;
             FMatrix4                                        LastClusterInvProjection = FMatrix4(0.0f);
             FVector2                                        LastClusterNearFar       = FVector2(0.0f);
@@ -690,6 +703,9 @@ namespace Lumina
         void FroxelInjectPass(RHI::FCmdListH CL);
         void FroxelIntegratePass(RHI::FCmdListH CL);
         void FroxelApplyPass(RHI::FCmdListH CL);
+        void AerialPerspectivePass(RHI::FCmdListH CL);
+        void VolumetricCloudPass(RHI::FCmdListH CL);
+        void ScreenSpaceReflectionsPass(RHI::FCmdListH CL);
         void WaterPass(RHI::FCmdListH CL);
         void UnderwaterPass(RHI::FCmdListH CL);
         void EnvironmentPass(RHI::FCmdListH CL);
@@ -1098,6 +1114,11 @@ namespace Lumina
 
         // Must match HISTOGRAM_BINS in LuminanceHistogram.slang and its TILE_DIM^2 thread count.
         static constexpr uint32                             kLuminanceHistogramBins = 256;
+
+        static constexpr uint32                             kAerialLUTSize   = 32;
+        static constexpr uint32                             kAerialLUTSlices = 32;
+
+        static constexpr uint32                             kCloudNoiseSize = 128;
 
         TArray<RHI::GPUPtr, RHI::kFramesInFlight>           MeshletBoundReadback = {};
         uint32                                              LastDrawListRequired = 0;

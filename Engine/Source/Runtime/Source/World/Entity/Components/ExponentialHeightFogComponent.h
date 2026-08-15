@@ -17,9 +17,9 @@ namespace Lumina
         PROPERTY(Editable, Category = "Fog")
         bool bEnabled = true;
 
-        /** Overall fog thickness at FogBaseHeight; 0 disables the analytic fog. */
-        PROPERTY(Editable, Category = "Fog", ClampMin = 0.0f, Delta = 0.001f)
-        float FogDensity = 0.02f;
+        /** Horizontal distance at FogBaseHeight where fog reaches ~98% opacity. Lower = thicker. */
+        PROPERTY(Editable, Category = "Fog", ClampMin = 1.0f, Delta = 10.0f, Units = "m")
+        float FogVisibilityDistance = 3000.0f;
 
         /** How quickly density drops with altitude; larger = thinner aloft, sharper layer. */
         PROPERTY(Editable, Category = "Fog", ClampMin = 0.0f, ClampMax = 4.0f, Delta = 0.001f)

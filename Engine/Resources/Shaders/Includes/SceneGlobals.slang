@@ -318,6 +318,23 @@ float3 GetAmbientLightColor()       { return LightData().AmbientLight.xyz; }
 float  GetAmbientLightIntensity()   { return LightData().AmbientLight.w;   }
 bool   HasIBL()                     { return LightData().bHasIBL != 0u;     }
 
+// Media ambient: AmbientLight.xyz is only a sun-height lerp, so prefer the baked skylight cube.
+float3 GetVolumetricAmbientRadiance()
+{
+    float3 Ambient = GetAmbientLightColor();
+    if (HasIBL())
+    {
+        // The convolution is cosine-importance-sampled and mean-averaged, so this is already radiance.
+        uint   Index = GetSceneRoot().SkyIrradianceIndex;
+        float3 Up    = SampleTextureCubeLevel(Index, SAMPLER_LINEAR_CLAMP, float3(0.0,  1.0, 0.0), 0.0).rgb;
+        float3 Down  = SampleTextureCubeLevel(Index, SAMPLER_LINEAR_CLAMP, float3(0.0, -1.0, 0.0), 0.0).rgb;
+
+        // Averaging the two hemisphere means approximates the full-sphere mean a medium scatters.
+        Ambient = (Up + Down) * 0.5;
+    }
+    return Ambient * GetAmbientLightIntensity();
+}
+
 // Callers must check Light.ShadowDataIndex != INDEX_NONE first.
 float4x4 GetShadowViewProjection(int ShadowDataIndex, uint ViewIndex)
 {

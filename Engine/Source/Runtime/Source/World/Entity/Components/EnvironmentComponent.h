@@ -98,6 +98,18 @@ namespace Lumina
         PROPERTY(Editable, Category = "Sky|Dynamic", ClampMin = -0.99f, ClampMax = 0.99f)
         float MieAnisotropy = 0.76f;
 
+        /** Tint distant geometry with the same atmosphere that produces the sky. Dynamic sky only. */
+        PROPERTY(Editable, Category = "Sky|Aerial Perspective")
+        bool bAerialPerspective = true;
+
+        /** View distance the aerial-perspective volume spans; beyond it the far-most slice is reused. */
+        PROPERTY(Editable, Category = "Sky|Aerial Perspective", ClampMin = 100.0f, Units = "m")
+        float AerialPerspectiveRange = 8000.0f;
+
+        /** Blend toward the physical result; 1 is physically correct, lower is an artistic pull-back. */
+        PROPERTY(Editable, Category = "Sky|Aerial Perspective", ClampMin = 0.0f, ClampMax = 1.0f)
+        float AerialPerspectiveIntensity = 1.0f;
+
         /** Night sky base color (multiplied by NightBrightness). */
         PROPERTY(Editable, Color, Category = "Sky|Night")
         FVector3 NightSkyColor = FVector3(0.012f, 0.018f, 0.04f);
