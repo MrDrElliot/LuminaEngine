@@ -328,14 +328,29 @@ namespace Lumina::Import
             Camera,
         };
 
-        /** KHR_lights_punctual parameters, in glTF units (candela/lux, metres, radians). */
+        /** How a source expresses light intensity, which decides how it converts onto engine units. */
+        enum class ESourceLightUnits : uint8
+        {
+            /** glTF's KHR_lights_punctual units: lux for directional, candela for point and spot. */
+            Photometric,
+
+            /** Intensity with no absolute meaning, so it anchors to the strongest light of its kind in the file. */
+            Relative,
+        };
+
+        /** Source light parameters. Angles are radians from the cone axis, ranges are metres. */
         struct FSourceLight
         {
-            FVector3 Color          = FVector3(1.0f);
-            float    Intensity      = 1.0f;
-            float    Range          = 0.0f;
-            float    InnerConeAngle = 0.0f;
-            float    OuterConeAngle = 0.0f;
+            FVector3          Color          = FVector3(1.0f);
+            float             Intensity      = 1.0f;
+            float             Range          = 0.0f;
+            float             InnerConeAngle = 0.0f;
+            float             OuterConeAngle = 0.0f;
+
+            /** The direction the light emits in its own node's local space. glTF is -Z, FBX is usually -Y. */
+            FVector3          LocalDirection = FVector3(0.0f, 0.0f, -1.0f);
+
+            ESourceLightUnits Units          = ESourceLightUnits::Photometric;
         };
 
         /** Source camera parameters, in glTF units (radians, metres). */

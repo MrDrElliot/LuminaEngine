@@ -412,6 +412,29 @@ namespace Lumina
         /** Steradians in a sphere; a point light's candela is its lumens spread over all of them. */
         constexpr float GSphereSteradians = 4.0f * Math::Pi<float>();
 
+        /** SPointLightComponent's own default, which is what a relative source's strongest lamp maps onto. */
+        constexpr float GDefaultPunctualIntensity = 10.0f;
+
+        /** A relative light's share of the brightest one of its kind in the same file. */
+        float RelativeShare(float Intensity, float BrightestOfKind)
+        {
+            return (BrightestOfKind > 0.0f) ? Math::Clamp(Intensity / BrightestOfKind, 0.0f, 1.0f) : 1.0f;
+        }
+
+        bool IsSourceLight(ESourceNodeKind Kind)
+        {
+            return Kind == ESourceNodeKind::PointLight
+                || Kind == ESourceNodeKind::SpotLight
+                || Kind == ESourceNodeKind::DirectionalLight;
+        }
+
+        /** The direction the source light emits in its node's local space, guarded against a degenerate one. */
+        FVector3 SourceEmitDirection(const FSourceLight& Light)
+        {
+            const float LengthSq = Math::LengthSquared(Light.LocalDirection);
+            return (LengthSq > Math::Epsilon<float>()) ? Math::Normalize(Light.LocalDirection) : FVector3(0.0f, 0.0f, -1.0f);
+        }
+
         /** Authors the environment an imported scene cannot carry itself. File-local so the importer header
          *  does not have to pull in entt or the component headers. */
         void AddSceneEnvironment(entt::registry& Registry, entt::entity Root, const FVector3& WorldColor)
@@ -458,27 +481,39 @@ namespace Lumina
         }
     }
 
-    float CMeshImporter::ConvertDirectionalIntensity(float SourceIntensity) const
+    float CMeshImporter::ConvertDirectionalIntensity(const FSourceLight& Light, float BrightestOfKind) const
     {
+        const float Source = Light.Intensity * LightIntensityScale;
         if (LightUnits == ELightImportUnits::Raw)
         {
-            return SourceIntensity * LightIntensityScale;
+            return Source;
+        }
+
+        if (Light.Units == ESourceLightUnits::Relative)
+        {
+            return RelativeShare(Light.Intensity, BrightestOfKind) * DirectionalLightCalibration * LightIntensityScale;
         }
 
         // lux -> W/m^2 -> engine units.
-        return (SourceIntensity / GLuminousEfficacy) * DirectionalLightCalibration * LightIntensityScale;
+        return (Source / GLuminousEfficacy) * DirectionalLightCalibration;
     }
 
-    float CMeshImporter::ConvertPunctualIntensity(float SourceIntensity) const
+    float CMeshImporter::ConvertPunctualIntensity(const FSourceLight& Light, float BrightestOfKind) const
     {
+        const float Source = Light.Intensity * LightIntensityScale;
         if (LightUnits == ELightImportUnits::Raw)
         {
-            return SourceIntensity * LightIntensityScale;
+            return Source;
+        }
+
+        if (Light.Units == ESourceLightUnits::Relative)
+        {
+            return RelativeShare(Light.Intensity, BrightestOfKind) * GDefaultPunctualIntensity * LightIntensityScale;
         }
 
         // candela -> lumens -> watts -> engine units.
-        const float Watts = (SourceIntensity * GSphereSteradians) / GLuminousEfficacy;
-        return Watts * PunctualLightCalibration * LightIntensityScale;
+        const float Watts = (Source * GSphereSteradians) / GLuminousEfficacy;
+        return Watts * PunctualLightCalibration;
     }
 
     CPrefab* CMeshImporter::BuildScenePrefab(const FFixedString& PackagePath, FStringView PrefabName,
@@ -502,6 +537,10 @@ namespace Lumina
             // Cameras are always parsed (the dialogue runs after the parse), so a declined camera import
             // has to drop them here rather than leave a bare entity behind.
             if (Nodes[i].Kind == ESourceNodeKind::Camera && !bImportCameras)
+            {
+                continue;
+            }
+            if (IsSourceLight(Nodes[i].Kind) && !bImportLights)
             {
                 continue;
             }
@@ -562,7 +601,27 @@ namespace Lumina
         // vector rather than deriving one from its transform.
         TVector<FQuat> WorldRotations(Nodes.size(), FQuat(1.0f, 0.0f, 0.0f, 0.0f));
 
-        bool bClaimedActiveCamera = false;
+        bool   bClaimedActiveCamera = false;
+        uint32 LightsImported       = 0;
+
+        // A relative source states no absolute unit, so its own brightest light of each kind sets the scale.
+        float BrightestDirectional = 0.0f;
+        float BrightestPunctual    = 0.0f;
+        for (const FSourceSceneNode& Node : Nodes)
+        {
+            if (Node.Light.Units != ESourceLightUnits::Relative)
+            {
+                continue;
+            }
+            if (Node.Kind == ESourceNodeKind::DirectionalLight)
+            {
+                BrightestDirectional = Math::Max(BrightestDirectional, Node.Light.Intensity);
+            }
+            else if (IsSourceLight(Node.Kind))
+            {
+                BrightestPunctual = Math::Max(BrightestPunctual, Node.Light.Intensity);
+            }
+        }
 
         for (size_t i = 0; i < Nodes.size(); ++i)
         {
@@ -586,6 +645,11 @@ namespace Lumina
                 // A glTF camera looks down local -Z; the engine's camera forward is the entity's +Z. Yawing 180
                 // makes the imported orientation frame the same view instead of the exact opposite one.
                 Transform.SetRotation(Node.Rotation * FQuat(FVector3(0.0f, Math::Pi<float>(), 0.0f)));
+            }
+            else if (Node.Kind == ESourceNodeKind::SpotLight && bImportLights)
+            {
+                // A spot lights along the entity's +Z, so the source's own emit axis has to be turned onto it.
+                Transform.SetRotation(Node.Rotation * Math::RotationBetween(FVector3(0.0f, 0.0f, 1.0f), SourceEmitDirection(Node.Light)));
             }
             else
             {
@@ -629,39 +693,57 @@ namespace Lumina
 
             case ESourceNodeKind::PointLight:
                 {
+                    if (!bImportLights)
+                    {
+                        break;
+                    }
+
                     SPointLightComponent& Light = Registry.emplace<SPointLightComponent>(Entity);
                     Light.LightColor = Node.Light.Color;
-                    Light.Intensity  = ConvertPunctualIntensity(Node.Light.Intensity);
+                    Light.Intensity  = ConvertPunctualIntensity(Node.Light, BrightestPunctual);
                     // glTF range 0 means unbounded, which a clustered renderer cannot express; the
                     // component default is the finite stand-in.
                     if (Node.Light.Range > 0.0f)
                     {
                         Light.Attenuation = Node.Light.Range;
                     }
+                    ++LightsImported;
                     break;
                 }
 
             case ESourceNodeKind::SpotLight:
                 {
+                    if (!bImportLights)
+                    {
+                        break;
+                    }
+
                     SSpotLightComponent& Light = Registry.emplace<SSpotLightComponent>(Entity);
                     Light.LightColor      = Node.Light.Color;
-                    Light.Intensity       = ConvertPunctualIntensity(Node.Light.Intensity);
+                    Light.Intensity       = ConvertPunctualIntensity(Node.Light, BrightestPunctual);
                     Light.InnerConeAngle  = Math::Degrees(Node.Light.InnerConeAngle);
                     Light.OuterConeAngle  = Math::Degrees(Node.Light.OuterConeAngle);
                     if (Node.Light.Range > 0.0f)
                     {
                         Light.Attenuation = Node.Light.Range;
                     }
+                    ++LightsImported;
                     break;
                 }
 
             case ESourceNodeKind::DirectionalLight:
                 {
+                    if (!bImportLights)
+                    {
+                        break;
+                    }
+
                     SDirectionalLightComponent& Light = Registry.emplace<SDirectionalLightComponent>(Entity);
                     Light.Color     = Node.Light.Color;
-                    Light.Intensity = ConvertDirectionalIntensity(Node.Light.Intensity);
-                    // glTF lights emit along -Z; the engine stores the TO-LIGHT vector, which is +Z.
-                    Light.Direction = Math::Normalize(Math::Rotate(WorldRotations[i], FVector3(0.0f, 0.0f, 1.0f)));
+                    Light.Intensity = ConvertDirectionalIntensity(Node.Light, BrightestDirectional);
+                    // The engine stores the TO-LIGHT vector, which is the reverse of where the source emits.
+                    Light.Direction = Math::Normalize(Math::Rotate(WorldRotations[i], -SourceEmitDirection(Node.Light)));
+                    ++LightsImported;
                     break;
                 }
 
@@ -725,6 +807,10 @@ namespace Lumina
                 AddSceneEnvironment(Registry, EnvironmentRoot, WorldColor);
             }
         }
+
+        LOG_INFO("[Import] scene prefab '{}': {} entities from {} source nodes, {} light(s); relative anchors sun={} punctual={}",
+                 PackagePath.c_str(), KeptCount + (SharedRoot != entt::null ? 1 : 0), Nodes.size(), LightsImported,
+                 BrightestDirectional, BrightestPunctual);
 
         return Prefab;
     }
@@ -1433,6 +1519,51 @@ namespace Lumina
                 }
                 ImGui::EndTable();
             }
+        });
+
+        Section([&]
+        {
+            if (SourceData.SceneNodes.empty())
+            {
+                return;
+            }
+
+            uint32 Points = 0, Spots = 0, Directionals = 0, Cameras = 0;
+            for (const FSourceSceneNode& Node : SourceData.SceneNodes)
+            {
+                Points       += (Node.Kind == ESourceNodeKind::PointLight);
+                Spots        += (Node.Kind == ESourceNodeKind::SpotLight);
+                Directionals += (Node.Kind == ESourceNodeKind::DirectionalLight);
+                Cameras      += (Node.Kind == ESourceNodeKind::Camera);
+            }
+
+            const uint32 Lights = Points + Spots + Directionals;
+            FFixedString Header(FFixedString::CtorSprintf(), "Scene (%zu nodes, %u lights)###SceneGraph",
+                                SourceData.SceneNodes.size(), Lights);
+            if (!ImGui::CollapsingHeader(Header.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
+            {
+                return;
+            }
+
+            if (!bImportAsPrefab)
+            {
+                ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.45f, 1.0f),
+                    LE_ICON_ALERT_CIRCLE_OUTLINE " Import As Prefab is off, so no entities, lights or cameras are created.");
+            }
+            else if (bMergeMeshes)
+            {
+                ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.45f, 1.0f),
+                    LE_ICON_ALERT_CIRCLE_OUTLINE " Merge Meshes flattens the scene, which skips the prefab entirely.");
+            }
+            else if (Lights == 0)
+            {
+                ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.45f, 1.0f),
+                    LE_ICON_ALERT_CIRCLE_OUTLINE " This source exports no lights, so the prefab relies on the world it is placed in.");
+            }
+
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextDim());
+            ImGui::Text("Point %u   Spot %u   Directional %u   Cameras %u", Points, Spots, Directionals, Cameras);
+            ImGui::PopStyleColor();
         });
 
         Section([&]

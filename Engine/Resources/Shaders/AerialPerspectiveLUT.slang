@@ -60,37 +60,43 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     [[loop]]
     for (uint Slice = 0u; Slice < LutD; ++Slice)
     {
-        // Texel-centre distance, so the apply's linear filter lines up with what was integrated.
-        float NextT  = ((float(Slice) + 0.5) / float(LutD)) * Pass().Range;
+        // Squared spacing; even slices put the nearest sample 125m out, hazing a whole street scene.
+        float Frac   = (float(Slice) + 0.5) / float(LutD);
+        float NextT  = Pass().Range * Frac * Frac;
         float SegLen = max(NextT - PrevT, 0.0);
 
         float3 P = Origin + RayDir * (PrevT + SegLen * 0.5);
         PrevT = NextT;
 
-        float Height = length(P) - kPlanetR;
-        if (Height >= 0.0)
+        // Clamped to the surface, not skipped; skipping leaves a hard seam along the horizon.
+        float Radius = max(length(P), 1e-3);
+        if (Radius < kPlanetR)
         {
-            float DensR = exp(-Height / kRayleighH);
-            float DensM = exp(-Height / kMieH);
-            float DensO = Sky_OzoneDensity(Height);
+            P *= kPlanetR / Radius;
+            Radius = kPlanetR;
+        }
+        float Height = Radius - kPlanetR;
 
-            PrimaryOD += float3(DensR, DensM, DensO) * SegLen;
+        float DensR = exp(-Height / kRayleighH);
+        float DensM = exp(-Height / kMieH);
+        float DensO = Sky_OzoneDensity(Height);
 
-            // Matches Sky_Atmosphere's planet-shadow test so night haze does not stay lit.
-            float2 SunGroundHit = Sky_RaySphereIntersect(P, SunDir, kPlanetR);
-            if (SunGroundHit.x <= 0.0)
-            {
-                float2 LightHit = Sky_RaySphereIntersect(P, SunDir, kAtmosphereR);
-                float3 LightOD  = Sky_OpticalDepth(P, SunDir, LightHit.y);
-                float3 TotalOD  = PrimaryOD + LightOD;
+        PrimaryOD += float3(DensR, DensM, DensO) * SegLen;
 
-                float3 Tr = exp(-(kRayleighCoeff * TotalOD.x
-                                + kMieCoeff     * TotalOD.y * 1.1
-                                + kOzoneCoeff   * TotalOD.z));
+        // Matches Sky_Atmosphere's planet-shadow test so night haze does not stay lit.
+        float2 SunGroundHit = Sky_RaySphereIntersect(P, SunDir, kPlanetR);
+        if (SunGroundHit.x <= 0.0)
+        {
+            float2 LightHit = Sky_RaySphereIntersect(P, SunDir, kAtmosphereR);
+            float3 LightOD  = Sky_OpticalDepth(P, SunDir, LightHit.y);
+            float3 TotalOD  = PrimaryOD + LightOD;
 
-                SumR += DensR * Tr * SegLen;
-                SumM += DensM * Tr * SegLen;
-            }
+            float3 Tr = exp(-(kRayleighCoeff * TotalOD.x
+                            + kMieCoeff     * TotalOD.y * 1.1
+                            + kOzoneCoeff   * TotalOD.z));
+
+            SumR += DensR * Tr * SegLen;
+            SumM += DensM * Tr * SegLen;
         }
 
         float3 Rayleigh = kRayleighCoeff * PhaseR * SumR;

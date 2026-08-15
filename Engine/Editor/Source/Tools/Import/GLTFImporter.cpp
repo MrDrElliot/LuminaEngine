@@ -680,6 +680,33 @@ namespace Lumina
         TVector<FStackEntry> Stack;
         TVector<const cgltf_scene*> Scenes;
 
+        auto FillLight = [](FSourceSceneNode& SceneNode, const cgltf_light& Light)
+        {
+            switch (Light.type)
+            {
+            case cgltf_light_type_directional: SceneNode.Kind = ESourceNodeKind::DirectionalLight; break;
+            case cgltf_light_type_point:       SceneNode.Kind = ESourceNodeKind::PointLight;       break;
+            case cgltf_light_type_spot:        SceneNode.Kind = ESourceNodeKind::SpotLight;        break;
+            default: return;
+            }
+
+            SceneNode.Light.Color          = FVector3(Light.color[0], Light.color[1], Light.color[2]);
+            SceneNode.Light.Intensity      = Light.intensity;
+            SceneNode.Light.Range          = Light.range;
+            SceneNode.Light.InnerConeAngle = Light.spot_inner_cone_angle;
+            SceneNode.Light.OuterConeAngle = Light.spot_outer_cone_angle;
+            SceneNode.Light.LocalDirection = FVector3(0.0f, 0.0f, -1.0f);
+            SceneNode.Light.Units          = ESourceLightUnits::Photometric;
+        };
+
+        // A glTF node may carry a mesh AND a light; the light becomes a child so neither is dropped.
+        struct FDetachedLight
+        {
+            int32              ParentSceneNode;
+            const cgltf_light* Light;
+        };
+        TVector<FDetachedLight> DetachedLights;
+
         if (bImportAllScenes)
         {
             Scenes.reserve(Data.scenes_count);
@@ -763,23 +790,15 @@ namespace Lumina
                     SceneNode.MeshSlot = (int32)MeshIndex;
                     OutData.MeshInstances.push_back(FSourceMeshInstance{
                         (uint32)MeshIndex, (uint32)cgltf_node_index(&Data, &Node), World });
+
+                    if (Node.light != nullptr)
+                    {
+                        DetachedLights.push_back(FDetachedLight{ SceneNodeIndex, Node.light });
+                    }
                 }
                 else if (Node.light != nullptr)
                 {
-                    const cgltf_light& Light = *Node.light;
-                    switch (Light.type)
-                    {
-                    case cgltf_light_type_directional: SceneNode.Kind = ESourceNodeKind::DirectionalLight; break;
-                    case cgltf_light_type_point:       SceneNode.Kind = ESourceNodeKind::PointLight;       break;
-                    case cgltf_light_type_spot:        SceneNode.Kind = ESourceNodeKind::SpotLight;        break;
-                    default: break;
-                    }
-
-                    SceneNode.Light.Color          = FVector3(Light.color[0], Light.color[1], Light.color[2]);
-                    SceneNode.Light.Intensity      = Light.intensity;
-                    SceneNode.Light.Range          = Light.range;
-                    SceneNode.Light.InnerConeAngle = Light.spot_inner_cone_angle;
-                    SceneNode.Light.OuterConeAngle = Light.spot_outer_cone_angle;
+                    FillLight(SceneNode, *Node.light);
                 }
                 // Always parsed: the settings dialogue runs after this, so gating on bImportCameras here
                 // would read whatever the previous import left behind. BuildScenePrefab applies the option.
@@ -814,6 +833,16 @@ namespace Lumina
                     Stack.push_back(FStackEntry{ Node.children[i], World, SceneNodeIndex });
                 }
             }
+        }
+
+        for (const FDetachedLight& Detached : DetachedLights)
+        {
+            FSourceSceneNode& LightNode = OutData.SceneNodes.push_back();
+            LightNode.ParentIndex = Detached.ParentSceneNode;
+            LightNode.Name = (Detached.Light->name != nullptr && Detached.Light->name[0] != '\0')
+                ? FName(Detached.Light->name)
+                : FName("Light", (uint32)cgltf_light_index(&Data, Detached.Light));
+            FillLight(LightNode, *Detached.Light);
         }
 
         // A file with no scene graph still has meshes worth importing.

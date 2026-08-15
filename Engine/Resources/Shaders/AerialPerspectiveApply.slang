@@ -40,8 +40,9 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     float3 ViewPos  = ReconstructViewPos(UV, Depth, GetInverseCameraProjection());
     float3 WorldPos = mul(GetInverseCameraView(), float4(ViewPos, 1.0)).xyz;
 
+    // Inverse of the LUT's squared slice spacing; a linear lookup here reads the wrong slice.
     float RayDist = length(WorldPos - GetCameraPosition());
-    float W       = saturate(RayDist / max(Pass().Range, 1.0));
+    float W       = saturate(sqrt(RayDist / max(Pass().Range, 1.0)));
 
     float3 UVW       = float3(UV, W);
     float3 InScatter = SampleTexture3D(Pass().InScatterIndex,     SAMPLER_LINEAR_CLAMP, UVW).rgb;

@@ -18,11 +18,7 @@ namespace Lumina
     REFLECT()
     enum class ELightImportUnits : uint8
     {
-        /**
-         * Treat glTF intensities as the photometric units the spec defines -- lux for directional,
-         * candela for point/spot -- and convert them onto the engine's intensity scale. This is what a
-         * DCC exports, so it is the mode that reproduces the authored scene.
-         */
+        /** Convert from what the format authored in: glTF's lux and candela, or FBX's ratios anchored to its own brightest light. */
         Photometric,
 
         /** Use the source intensity verbatim. Only useful for files authored against engine units. */
@@ -112,6 +108,10 @@ namespace Lumina
          */
         PROPERTY(Editable, Category = "Scene")
         bool bImportCameras = true;
+
+        /** Also import the source's lights, so a placed prefab lights itself instead of borrowing the host world's lighting. */
+        PROPERTY(Editable, Category = "Scene")
+        bool bImportLights = true;
 
         /**
          * Author an environment onto the prefab root: a flat-color sky, a matching skylight and a neutral
@@ -205,14 +205,11 @@ namespace Lumina
         CPrefab* BuildScenePrefab(const FFixedString& PackagePath, FStringView PrefabName,
                                   const TVector<CMesh*>& ResourceToMesh) const;
 
-        /**
-         * Source directional intensity (lux under Photometric) -> engine directional intensity, including
-         * the LightIntensityScale trim.
-         */
-        float ConvertDirectionalIntensity(float SourceIntensity) const;
+        /** Source directional intensity -> engine directional intensity, including the LightIntensityScale trim. */
+        float ConvertDirectionalIntensity(const Import::Mesh::FSourceLight& Light, float BrightestOfKind) const;
 
-        /** Source point/spot intensity (candela under Photometric) -> engine intensity, trim included. */
-        float ConvertPunctualIntensity(float SourceIntensity) const;
+        /** Source point/spot intensity -> engine intensity, trim included. */
+        float ConvertPunctualIntensity(const Import::Mesh::FSourceLight& Light, float BrightestOfKind) const;
 
         Import::Mesh::FMeshImportData SourceData;
     };

@@ -712,6 +712,60 @@ namespace Lumina
         TVector<FStackEntry> Stack;
         Stack.reserve(Math::Max<size_t>(64, Scene->nodes.count));
 
+        // Light props are still in the file's own units; ufbx only converts transforms and geometry.
+        const float SourceUnitMeters = (float)Scene->settings.original_unit_meters;
+
+        auto FillLight = [SourceUnitMeters](FSourceSceneNode& SceneNode, const ufbx_light& Light)
+        {
+            if (!Light.cast_light)
+            {
+                return;
+            }
+
+            switch (Light.type)
+            {
+            case UFBX_LIGHT_DIRECTIONAL: SceneNode.Kind = ESourceNodeKind::DirectionalLight; break;
+            case UFBX_LIGHT_SPOT:        SceneNode.Kind = ESourceNodeKind::SpotLight;        break;
+            case UFBX_LIGHT_POINT:       SceneNode.Kind = ESourceNodeKind::PointLight;       break;
+            // An area or volume light has no engine equivalent, so it lands as the point light it surrounds.
+            case UFBX_LIGHT_AREA:
+            case UFBX_LIGHT_VOLUME:      SceneNode.Kind = ESourceNodeKind::PointLight;       break;
+            default: return;
+            }
+
+            SceneNode.Light.Color     = ToVector3(Light.color);
+            SceneNode.Light.Intensity = (float)Light.intensity;
+
+            // FBX intensity is a percentage against whatever renderer authored the file, so only its ratios carry over.
+            SceneNode.Light.Units     = ESourceLightUnits::Relative;
+
+            // FBX cone angles span the whole cone; the engine measures from the axis, so they are halved.
+            SceneNode.Light.InnerConeAngle = Math::Radians((float)Light.inner_angle * 0.5f);
+            SceneNode.Light.OuterConeAngle = Math::Radians((float)Light.outer_angle * 0.5f);
+
+            const FVector3 Aim = ToVector3(Light.local_direction);
+            SceneNode.Light.LocalDirection = (Math::LengthSquared(Aim) > Math::Epsilon<float>())
+                ? Math::Normalize(Aim)
+                : FVector3(0.0f, -1.0f, 0.0f);
+
+            // The cutoff distance is only meaningful when the file opted into it.
+            static constexpr const char* EnableFarProp = "EnableFarAttenuation";
+            static constexpr const char* FarEndProp    = "FarAttenuationEnd";
+            if (ufbx_find_int_len(&Light.props, EnableFarProp, strlen(EnableFarProp), 0) != 0)
+            {
+                const float FarEnd = (float)ufbx_find_real_len(&Light.props, FarEndProp, strlen(FarEndProp), 0.0);
+                SceneNode.Light.Range = FarEnd * SourceUnitMeters;
+            }
+        };
+
+        // An FBX node may carry a mesh AND a light; the light becomes a child so neither is dropped.
+        struct FDetachedLight
+        {
+            int32             ParentSceneNode;
+            const ufbx_light* Light;
+        };
+        TVector<FDetachedLight> DetachedLights;
+
         OutData.SceneNodes.reserve(Scene->nodes.count);
         OutData.MeshInstances.reserve(Scene->nodes.count);
 
@@ -757,22 +811,15 @@ namespace Lumina
                 // and the merge path bakes exactly this matrix into the vertices.
                 OutData.MeshInstances.push_back(FSourceMeshInstance{
                     MeshIndex, (uint32)Node.typed_id, ToMatrix4(Node.geometry_to_world) });
+
+                if (Node.light != nullptr)
+                {
+                    DetachedLights.push_back(FDetachedLight{ SceneNodeIndex, Node.light });
+                }
             }
             else if (Node.light != nullptr)
             {
-                const ufbx_light& Light = *Node.light;
-                switch (Light.type)
-                {
-                case UFBX_LIGHT_DIRECTIONAL: SceneNode.Kind = ESourceNodeKind::DirectionalLight; break;
-                case UFBX_LIGHT_POINT:       SceneNode.Kind = ESourceNodeKind::PointLight;       break;
-                case UFBX_LIGHT_SPOT:        SceneNode.Kind = ESourceNodeKind::SpotLight;        break;
-                default: break;
-                }
-
-                SceneNode.Light.Color     = ToVector3(Light.color);
-                SceneNode.Light.Intensity = (float)Light.intensity;
-                SceneNode.Light.InnerConeAngle = Math::Radians((float)Light.inner_angle);
-                SceneNode.Light.OuterConeAngle = Math::Radians((float)Light.outer_angle);
+                FillLight(SceneNode, *Node.light);
             }
             else if (Node.camera != nullptr)
             {
@@ -797,6 +844,16 @@ namespace Lumina
             {
                 Stack.push_back(FStackEntry{ Child, SceneNodeIndex });
             }
+        }
+
+        for (const FDetachedLight& Detached : DetachedLights)
+        {
+            FSourceSceneNode& LightNode = OutData.SceneNodes.push_back();
+            LightNode.ParentIndex = Detached.ParentSceneNode;
+            LightNode.Name = !ToView(Detached.Light->name).empty()
+                ? FName(ToFixed(Detached.Light->name).c_str())
+                : FName("Light", (uint32)Detached.Light->typed_id);
+            FillLight(LightNode, *Detached.Light);
         }
 
         OutData.SourceNodeCount = VisitedNodes;
