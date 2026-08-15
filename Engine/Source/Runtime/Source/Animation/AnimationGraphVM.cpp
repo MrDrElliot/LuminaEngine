@@ -1,6 +1,7 @@
 ﻿#include "RuntimePCH.h"
 #include "AnimationGraphVM.h"
 
+#include "Animation/AnimMontage.h"
 #include "Assets/AssetTypes/Animation/AnimationGraph/AnimationGraph.h"
 #include "Assets/AssetTypes/Animation/BlendSpace/BlendSpace.h"
 #include "Assets/AssetTypes/Mesh/Animation/Animation.h"
@@ -149,7 +150,7 @@ namespace Lumina
         State.bInitialized = true;
     }
 
-    void FAnimationGraphVM::BuildTasks(const CAnimationGraph* Graph, FSkeletonResource* Skeleton, float DeltaTime, FAnimGraphVMState& State, FAnimTaskList& OutTasks, FAnimGraphRootMotion& RootMotionInOut, TVector<FAnimNotifyEvent>* OutEvents)
+    void FAnimationGraphVM::BuildTasks(const CAnimationGraph* Graph, FSkeletonResource* Skeleton, float DeltaTime, FAnimGraphVMState& State, FAnimTaskList& OutTasks, FAnimGraphRootMotion& RootMotionInOut, TVector<FAnimNotifyEvent>* OutEvents, const FAnimMontagePlayer* Montages)
     {
         LUMINA_PROFILE_SCOPE();
 
@@ -1205,6 +1206,86 @@ namespace Lumina
                 {
                     DstCurves[CurveIdx] = ReadScalar(ValueReg, 0.0f);
                 }
+                break;
+            }
+
+            case EAnimOp::EvalSlot:
+            {
+                const uint16 SlotIdx = Reader.Read<uint16>();
+                const uint16 Src     = Reader.Read<uint16>();
+                const uint16 Dst     = Reader.Read<uint16>();
+
+                int16 Current = PoseTaskFor(Src);
+                FRootMotionDelta CurrentDelta = DeltaOf(Src);
+                FEventRange CurrentEvents = EventsOf(Src);
+                const FSyncTag SrcSync = SyncOf(Src);
+                CopyCurves(Dst, Src);
+
+                thread_local TVector<FAnimMontageSlotContribution> Contributions;
+                Contributions.clear();
+
+                if (Montages != nullptr && SlotIdx < Graph->SlotNames.size())
+                {
+                    Montages->GatherSlot(Graph->SlotNames[SlotIdx], Contributions);
+                }
+
+                for (const FAnimMontageSlotContribution& Contribution : Contributions)
+                {
+                    if (Contribution.Clip == nullptr)
+                    {
+                        continue;
+                    }
+
+                    const float Alpha = Math::Clamp(Contribution.Weight, 0.0f, 1.0f);
+
+                    FAnimTask Sample;
+                    Sample.Type = EAnimTaskType::SampleClip;
+                    Sample.Clip = Contribution.Clip;
+                    Sample.Time = Contribution.ClipTime;
+                    const int16 SampleTask = OutTasks.Add(Sample);
+
+                    FAnimTask Blend;
+                    Blend.Type  = EAnimTaskType::Blend;
+                    Blend.DepA  = Current;
+                    Blend.DepB  = SampleTask;
+                    Blend.Alpha = Alpha;
+                    Current = OutTasks.Add(Blend);
+
+                    // A montage curve whose name the graph does not carry has no slot to land in.
+                    if (float* DstCurves = CurvesOf(Dst))
+                    {
+                        for (const FAnimationCurve& Curve : Contribution.Clip->GetCurves())
+                        {
+                            const int32 Slot = Graph->FindCurveIndex(Curve.Name);
+                            if (Slot != INDEX_NONE)
+                            {
+                                const float Value = Curve.Curve.Evaluate(Contribution.ClipTime);
+                                DstCurves[Slot] += (Value - DstCurves[Slot]) * Alpha;
+                            }
+                        }
+                    }
+
+                    if (bExtractRootMotion && Contribution.bRootMotion &&
+                        Contribution.Clip->bEnableRootMotion && !Contribution.Clip->bLockRootMotion)
+                    {
+                        FRootMotionDelta MontageDelta;
+                        if (Contribution.ClipTime != Contribution.PrevClipTime)
+                        {
+                            MontageDelta = RootMotion::ExtractRootDelta(Contribution.Clip, Skeleton,
+                                                                        RootMotionInOut.RootBoneIndex,
+                                                                        Contribution.PrevClipTime, Contribution.ClipTime,
+                                                                        Contribution.bLooping, Contribution.Clip->GetDuration());
+                        }
+                        MontageDelta.bHasMotion = true;
+                        CurrentDelta = RootMotion::BlendRootMotion(CurrentDelta, MontageDelta, Alpha);
+                    }
+
+                    ScaleEventWeights(CurrentEvents, 1.0f - Alpha);
+                }
+
+                SetPoseTask(Dst, Current);
+                SetPoseTags(Dst, CurrentDelta, CurrentEvents);
+                SetPoseSync(Dst, SrcSync);
                 break;
             }
 

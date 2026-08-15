@@ -389,6 +389,7 @@ namespace Lumina
             FreeBuffer(MeshletDrawListRing[Slot]);
             FreeBuffer(MeshDrawArgsRing[Slot]);
             FreeBuffer(SpdCounterRing[Slot]);
+            FreeBuffer(LuminanceHistogramRing[Slot]);
             FreeBuffer(MeshletBlockRing[Slot]);
             FreeBuffer(BlockDispatchArgsRing[Slot]);
             FreeBuffer(MeshletCullDispatchArgsRing[Slot]);
@@ -2928,7 +2929,7 @@ namespace Lumina
 
                     Item.WindAndWave    = FVector4(Wind.x, Wind.y, Water.WindSpeed, Water.WaveAmplitude);
                     Item.WaveParams     = FVector4(Math::Clamp(Water.Choppiness, 0.0f, 1.0f),
-                                                   Math::Max(Water.WaveScale, 0.05f),
+                                                   Math::Max(Water.WaveLength, 0.5f),
                                                    (float)Math::Clamp(Water.WaveCount, 1, 8),
                                                    Math::Clamp(Water.DetailStrength, 0.0f, 1.0f));
                     Item.RefractReflect = FVector4(Math::Max(Water.RefractionStrength, 0.0f),
@@ -3502,7 +3503,8 @@ namespace Lumina
             sizeof(uint32) * 2,
             (SIZE_T)PredictedDrawList * sizeof(uint32) * 2);
 
-        const SIZE_T NumArgSlots = (SIZE_T)NumCullViews * (SIZE_T)NumDraws;
+        // Must mirror MeshletCullPass' bucket count exactly: it clamps both operands to 1.
+        const SIZE_T NumArgSlots = (SIZE_T)Math::Max(NumCullViews, 1u) * (SIZE_T)Math::Max(NumDraws, 1u);
         
         {
             const uint32 MaxGroups = Math::Max(RHI::GetMaxMeshWorkGroupCount(), 1u);
@@ -10076,9 +10078,16 @@ namespace Lumina
             uint32       bFirstPass;
 
             float        Threshold;
-            FVector3     KneeCurve;
+            float        SoftKnee;
+            uint32       AdaptedLumIndex;
+            float        Exposure;
+
+            float        AutoExposureKey;
+            float        AutoExposureMinMul;
+            float        AutoExposureMaxMul;
+            float        _Pad;
         };
-        static_assert(sizeof(FBloomDownPushConstants) == 48, "FBloomDownPushConstants must match BloomDownsample.slang::FPushConstants.");
+        static_assert(sizeof(FBloomDownPushConstants) == 64, "FBloomDownPushConstants must match BloomDownsample.slang::FPushConstants.");
 
         struct FBloomUpCSPushConstants
         {
@@ -10131,8 +10140,10 @@ namespace Lumina
         const uint32 Octaves = MinDim >= 8u ? (uint32)Math::Log2((float)MinDim) - 2u : 1u;
         const uint32 NumMips = Math::Clamp(Octaves, 1u, Math::Max(Bloom.GetNumMips(), 1u));
 
+        const FSceneImage& AdaptedLum = GetNamedImage(ENamedImage::AdaptedLuminance);
+
+        // Threshold is now post-exposure; the shader divides it by the same scale ColorGrading applies.
         const float Threshold = ActivePostProcess->BloomThreshold;
-        const float Knee      = ActivePostProcess->BloomSoftKnee * Threshold + 1e-5f;
 
         // Down chain: 13-tap filtered reduction per mip, prefilter on the first.
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(DownCS));
@@ -10156,8 +10167,13 @@ namespace Lumina
             PC.DstSize      = FUIntVector2(DstW, DstH);
             PC.DstUAV       = (uint32)Bloom.GetMipUAVIndex(Mip);
             PC.bFirstPass   = (Mip == 0) ? 1u : 0u;
-            PC.Threshold    = Threshold;
-            PC.KneeCurve    = FVector3(Threshold - Knee, 2.0f * Knee, 0.25f / Knee);
+            PC.Threshold          = Threshold;
+            PC.SoftKnee           = ActivePostProcess->BloomSoftKnee;
+            PC.AdaptedLumIndex    = (uint32)AdaptedLum.GetResourceID();
+            PC.Exposure           = std::exp2(ActivePostProcess->ExposureCompensation);
+            PC.AutoExposureKey    = ActivePostProcess->bAutoExposure ? 0.18f : 0.0f;
+            PC.AutoExposureMinMul = std::exp2(ActivePostProcess->AutoExposureMinEV);
+            PC.AutoExposureMaxMul = std::exp2(std::max(ActivePostProcess->AutoExposureMaxEV, ActivePostProcess->AutoExposureMinEV));
 
             RHI::CmdDispatch(CL, MakeArgs(PC),
                              RenderUtils::GetGroupCount(DstW, BloomTileSize),
@@ -10197,16 +10213,38 @@ namespace Lumina
 
     namespace
     {
-        // 16 B push block for AutoExposure.slang. Mirrors its FPushConstants.
-        struct FAutoExposurePushConstants
+        struct FHistogramBuildPushConstants
         {
-            uint32 HDRIndex;
-            uint32 AdaptUAV;
-            float  DeltaTime;
-            float  AdaptationSpeed;
+            uint64       Histogram;
+            uint32       HDRIndex;
+            uint32       _Pad0;
+
+            FUIntVector2 HDRSize;
+            float        MinLogLum;
+            float        InvLogLumRange;
         };
-        static_assert(sizeof(FAutoExposurePushConstants) == 16,
-            "FAutoExposurePushConstants must match AutoExposure.slang::FPushConstants.");
+        static_assert(sizeof(FHistogramBuildPushConstants) == 32,
+            "FHistogramBuildPushConstants must match LuminanceHistogram.slang::FPushConstants.");
+
+        struct FHistogramAvgPushConstants
+        {
+            uint64 Histogram;
+            uint32 AdaptUAV;
+            float  MinLogLum;
+
+            float  LogLumRange;
+            float  LowPercent;
+            float  HighPercent;
+            float  DeltaTime;
+
+            float  AdaptationSpeed;
+            float  _Pad;
+        };
+        static_assert(sizeof(FHistogramAvgPushConstants) == 40,
+            "FHistogramAvgPushConstants must match LuminanceHistogramAverage.slang::FPushConstants.");
+
+        // TILE_DIM in LuminanceHistogram.slang; its square must equal kLuminanceHistogramBins.
+        constexpr uint32 HistogramTileSize = 16;
     }
 
     void FDefaultSceneRenderer::AutoExposurePass(RHI::FCmdListH CL)
@@ -10219,8 +10257,9 @@ namespace Lumina
             return;
         }
 
-        static const FShaderH CS = FShaderLibrary::Get("AutoExposure.slang");
-        if (!CS)
+        static const FShaderH BuildCS = FShaderLibrary::Get("LuminanceHistogram.slang");
+        static const FShaderH AvgCS   = FShaderLibrary::Get("LuminanceHistogramAverage.slang");
+        if (!BuildCS || !AvgCS)
         {
             return;
         }
@@ -10229,16 +10268,51 @@ namespace Lumina
 
         const FSceneImage& HDR     = GetNamedImage(ENamedImage::HDR);
         const FSceneImage& Adapted = GetNamedImage(ENamedImage::AdaptedLuminance);
+        const FSceneBuffer Histogram = GetLuminanceHistogram();
 
-        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(CS));
+        // Scene-luminance span the bins cover, in stops. Wide enough for starlight to a clipped sun.
+        constexpr float MinLogLum = -10.0f;
+        constexpr float MaxLogLum =  12.0f;
+        constexpr float LogLumRange = MaxLogLum - MinLogLum;
 
-        FAutoExposurePushConstants PC = {};
-        PC.HDRIndex        = (uint32)HDR.GetResourceID();
-        PC.AdaptUAV        = (uint32)Adapted.GetMipUAVIndex(0);
-        PC.DeltaTime       = Frame.SceneGlobalData.DeltaTime;
-        PC.AdaptationSpeed = ActivePostProcess->AutoExposureSpeed;
+        const uint32 HDRWidth = HDR.GetSizeX();
+        const uint32 HDRHght  = HDR.GetSizeY();
 
-        RHI::CmdDispatch(CL, MakeArgs(PC), 1, 1, 1);
+        RHI::CmdMemset(CL, Histogram.Ptr, Histogram.Size, 0u);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EStageFlags::Compute);
+
+        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(BuildCS));
+
+        FHistogramBuildPushConstants BuildPC = {};
+        BuildPC.Histogram      = Histogram.GetAddress();
+        BuildPC.HDRIndex       = (uint32)HDR.GetResourceID();
+        BuildPC.HDRSize        = FUIntVector2(HDRWidth, HDRHght);
+        BuildPC.MinLogLum      = MinLogLum;
+        BuildPC.InvLogLumRange = 1.0f / LogLumRange;
+
+        RHI::CmdDispatch(CL, MakeArgs(BuildPC),
+                         RenderUtils::GetGroupCount(HDRWidth, HistogramTileSize),
+                         RenderUtils::GetGroupCount(HDRHght,  HistogramTileSize), 1);
+
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EStageFlags::Compute);
+
+        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(AvgCS));
+
+        // Ordered so a mis-set pair narrows the window instead of inverting it and metering nothing.
+        const float LowPercent  = Math::Clamp(ActivePostProcess->AutoExposureLowPercent, 0.0f, 1.0f);
+        const float HighPercent = Math::Clamp(ActivePostProcess->AutoExposureHighPercent, LowPercent, 1.0f);
+
+        FHistogramAvgPushConstants AvgPC = {};
+        AvgPC.Histogram       = Histogram.GetAddress();
+        AvgPC.AdaptUAV        = (uint32)Adapted.GetMipUAVIndex(0);
+        AvgPC.MinLogLum       = MinLogLum;
+        AvgPC.LogLumRange     = LogLumRange;
+        AvgPC.LowPercent      = LowPercent;
+        AvgPC.HighPercent     = HighPercent;
+        AvgPC.DeltaTime       = Frame.SceneGlobalData.DeltaTime;
+        AvgPC.AdaptationSpeed = ActivePostProcess->AutoExposureSpeed;
+
+        RHI::CmdDispatch(CL, MakeArgs(AvgPC), 1, 1, 1);
 
         Barriers::ComputeToAll(CL);
     }
@@ -10600,6 +10674,8 @@ namespace Lumina
             RenderBucketRing[Slot] = CreateSceneBuffer(sizeof(FRenderBucketGPU), "Cull.RenderBuckets");
 
             SpdCounterRing[Slot] = CreateSceneBuffer(sizeof(uint32), "Cull.SpdCounter");
+
+            LuminanceHistogramRing[Slot] = CreateSceneBuffer(sizeof(uint32) * kLuminanceHistogramBins, "Post.LuminanceHistogram");
 
             MeshletBlockRing[Slot] = CreateSceneBuffer(sizeof(uint32) * 2, "Cull.MeshletBlocks");
             // Fixed size: one grid, rewritten by BuildDrawPrefix every frame.

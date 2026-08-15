@@ -16,11 +16,11 @@ namespace Lumina
 
         /** Plane size in the local XZ plane (before the entity transform scale). */
         PROPERTY(Editable, Category = "Water|Surface", Units = "m")
-        FVector2 Extent = FVector2(50.0f, 50.0f);
+        FVector2 Extent = FVector2(512.0f, 512.0f);
 
-        /** Tessellation: verts per side of the procedural grid. Higher = smoother waves, costlier. */
+        /** Tessellation: verts per side of the procedural grid. Keep cell size well under WaveLength. */
         PROPERTY(Editable, Category = "Water|Surface", ClampMin = 2, ClampMax = 512)
-        int32 GridResolution = 128;
+        int32 GridResolution = 384;
 
         /** Master surface opacity (soft-blended at the shoreline regardless). */
         PROPERTY(Editable, Category = "Water|Surface", ClampMin = 0.0f, ClampMax = 1.0f)
@@ -33,23 +33,23 @@ namespace Lumina
 
         /** Wind strength: scales wave speed. */
         PROPERTY(Editable, Category = "Water|Waves", ClampMin = 0.0f)
-        float WindSpeed = 4.0f;
+        float WindSpeed = 8.0f;
 
-        /** Peak vertical displacement of the dominant wave. */
+        /** Crest-to-trough half height of the dominant wave. Clamped against WaveLength at the Stokes breaking limit. */
         PROPERTY(Editable, Category = "Water|Waves", ClampMin = 0.0f, Delta = 0.01f, Units = "m")
-        float WaveAmplitude = 0.4f;
+        float WaveAmplitude = 0.85f;
 
-        /** Gerstner steepness (0 = rolling swell, 1 = sharp peaks). High values can pinch the surface. */
+        /** Gerstner steepness (0 = rolling swell, 1 = sharp peaks). Also drives how readily crests whitecap. */
         PROPERTY(Editable, Category = "Water|Waves", ClampMin = 0.0f, ClampMax = 1.0f)
-        float Choppiness = 0.6f;
+        float Choppiness = 0.65f;
 
-        /** Wavelength multiplier for the synthesized wave set. */
-        PROPERTY(Editable, Category = "Water|Waves", ClampMin = 0.05f)
-        float WaveScale = 0.1f;
+        /** Wavelength of the dominant wave; each successive wave is 0.62x shorter. */
+        PROPERTY(Editable, Category = "Water|Waves", ClampMin = 0.5f, Units = "m")
+        float WaveLength = 24.0f;
 
         /** Number of summed Gerstner waves (fanned around the wind direction). */
         PROPERTY(Editable, Category = "Water|Waves", ClampMin = 1, ClampMax = 8)
-        int32 WaveCount = 4;
+        int32 WaveCount = 6;
 
         /** Optional tangent-space detail normal (BC5) for high-frequency ripples. */
         PROPERTY(Editable, Category = "Water|Waves")
@@ -61,7 +61,7 @@ namespace Lumina
 
         /** Detail normal tiling across the surface. */
         PROPERTY(Editable, Category = "Water|Waves", ClampMin = 0.01f)
-        float DetailTiling = 8.0f;
+        float DetailTiling = 64.0f;
 
         /** Detail normal scroll speed (world units / s along the wind). */
         PROPERTY(Editable, Category = "Water|Waves", ClampMin = 0.0f)
@@ -121,15 +121,15 @@ namespace Lumina
 
         /** Overall foam strength multiplier. */
         PROPERTY(Editable, Category = "Water|Foam", ClampMin = 0.0f)
-        float FoamIntensity = 0.0f;
+        float FoamIntensity = 1.0f;
 
         /** Water-column depth over which shoreline foam appears (foam where water meets geometry). */
         PROPERTY(Editable, Category = "Water|Foam", ClampMin = 0.0f, Units = "m")
         float ShorelineFoamWidth = 1.5f;
 
-        /** Wave-crest height fraction that foams (1 = foam on all crests, 0 = only the tallest). */
+        /** How readily a compressing crest whitecaps (1 = any compression foams, 0 = only fully folded). */
         PROPERTY(Editable, Category = "Water|Foam", ClampMin = 0.0f, ClampMax = 1.0f)
-        float CrestFoamAmount = 0.3f;
+        float CrestFoamAmount = 0.7f;
 
         /** Optional foam texture, scrolled with the wind. */
         PROPERTY(Editable, Category = "Water|Foam")

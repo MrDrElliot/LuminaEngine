@@ -5,6 +5,7 @@
 #include "World/Entity/Components/SimpleAnimationComponent.h"
 #include "World/Entity/Components/AnimationGraphComponent.h"
 #include "World/Entity/Components/BlackboardComponent.h"
+#include "Assets/AssetTypes/Animation/Montage/AnimationMontage.h"
 #include "Scripting/DotNet/DotNetExport.h"
 
 //================================================================================================
@@ -233,4 +234,161 @@ LUMINA_DOTNET_EXPORT(int32, Animation_HasParameter)(uint64 World, uint32 Entity,
     }
     const SAnimationGraphComponent* Comp = W->TryGetComponent<SAnimationGraphComponent>(AsEntity(Entity));
     return (Comp != nullptr && Comp->HasParameter(FName(FStringView(Name, (size_t)Length)))) ? 1 : 0;
+}
+
+//================================================================================================
+// Montages (SAnimationGraphComponent). The component must exist and its graph must contain a Slot node
+// named the same as one of the montage's slot tracks for anything to show. Play auto-adds the component
+// so a montage can drive an entity that had no graph assigned yet; every other call is a no-op without it.
+//================================================================================================
+
+LUMINA_DOTNET_EXPORT(uint32, Animation_PlayMontage)(uint64 World, uint32 Entity, void* MontagePtr, float PlayRate,
+                                                    const char* Section, int32 Length)
+{
+    CWorld* W = AsWorld(World);
+    if (W == nullptr || MontagePtr == nullptr)
+    {
+        return 0;
+    }
+    CAnimationMontage* Montage = static_cast<CAnimationMontage*>(MontagePtr);
+    SAnimationGraphComponent& Comp = W->GetOrEmplaceComponent<SAnimationGraphComponent>(AsEntity(Entity));
+    const FName StartSection = (Section != nullptr && Length > 0) ? FName(FStringView(Section, (size_t)Length)) : FName();
+    return Comp.Montages.Play(Montage, PlayRate, StartSection);
+}
+
+LUMINA_DOTNET_EXPORT(void, Animation_StopMontage)(uint64 World, uint32 Entity, void* MontagePtr, float BlendOutTime)
+{
+    CWorld* W = AsWorld(World);
+    if (W == nullptr)
+    {
+        return;
+    }
+    if (SAnimationGraphComponent* Comp = W->TryGetComponent<SAnimationGraphComponent>(AsEntity(Entity)))
+    {
+        if (MontagePtr != nullptr)
+        {
+            Comp->Montages.Stop(static_cast<CAnimationMontage*>(MontagePtr), BlendOutTime);
+        }
+        else
+        {
+            Comp->Montages.StopAll(BlendOutTime);
+        }
+    }
+}
+
+LUMINA_DOTNET_EXPORT(int32, Animation_JumpToMontageSection)(uint64 World, uint32 Entity, void* MontagePtr,
+                                                            const char* Section, int32 Length)
+{
+    CWorld* W = AsWorld(World);
+    if (W == nullptr || MontagePtr == nullptr || Section == nullptr)
+    {
+        return 0;
+    }
+    SAnimationGraphComponent* Comp = W->TryGetComponent<SAnimationGraphComponent>(AsEntity(Entity));
+    if (Comp == nullptr)
+    {
+        return 0;
+    }
+    return Comp->Montages.JumpToSection(static_cast<CAnimationMontage*>(MontagePtr),
+                                        FName(FStringView(Section, (size_t)Length))) ? 1 : 0;
+}
+
+LUMINA_DOTNET_EXPORT(int32, Animation_SetNextMontageSection)(uint64 World, uint32 Entity, void* MontagePtr,
+                                                             const char* Section, int32 Length)
+{
+    CWorld* W = AsWorld(World);
+    if (W == nullptr || MontagePtr == nullptr || Section == nullptr)
+    {
+        return 0;
+    }
+    SAnimationGraphComponent* Comp = W->TryGetComponent<SAnimationGraphComponent>(AsEntity(Entity));
+    if (Comp == nullptr)
+    {
+        return 0;
+    }
+    return Comp->Montages.SetNextSection(static_cast<CAnimationMontage*>(MontagePtr),
+                                         FName(FStringView(Section, (size_t)Length))) ? 1 : 0;
+}
+
+LUMINA_DOTNET_EXPORT(int32, Animation_IsMontagePlaying)(uint64 World, uint32 Entity, void* MontagePtr)
+{
+    CWorld* W = AsWorld(World);
+    if (W == nullptr)
+    {
+        return 0;
+    }
+    const SAnimationGraphComponent* Comp = W->TryGetComponent<SAnimationGraphComponent>(AsEntity(Entity));
+    if (Comp == nullptr)
+    {
+        return 0;
+    }
+    if (MontagePtr == nullptr)
+    {
+        return Comp->Montages.HasActive() ? 1 : 0;
+    }
+    return Comp->Montages.IsPlaying(static_cast<CAnimationMontage*>(MontagePtr)) ? 1 : 0;
+}
+
+LUMINA_DOTNET_EXPORT(float, Animation_GetMontagePosition)(uint64 World, uint32 Entity, void* MontagePtr)
+{
+    CWorld* W = AsWorld(World);
+    if (W == nullptr || MontagePtr == nullptr)
+    {
+        return 0.0f;
+    }
+    const SAnimationGraphComponent* Comp = W->TryGetComponent<SAnimationGraphComponent>(AsEntity(Entity));
+    return Comp != nullptr ? Comp->Montages.GetPosition(static_cast<CAnimationMontage*>(MontagePtr)) : 0.0f;
+}
+
+LUMINA_DOTNET_EXPORT(float, Animation_GetMontageWeight)(uint64 World, uint32 Entity, void* MontagePtr)
+{
+    CWorld* W = AsWorld(World);
+    if (W == nullptr || MontagePtr == nullptr)
+    {
+        return 0.0f;
+    }
+    const SAnimationGraphComponent* Comp = W->TryGetComponent<SAnimationGraphComponent>(AsEntity(Entity));
+    return Comp != nullptr ? Comp->Montages.GetWeight(static_cast<CAnimationMontage*>(MontagePtr)) : 0.0f;
+}
+
+LUMINA_DOTNET_EXPORT(void, Animation_SetMontagePlayRate)(uint64 World, uint32 Entity, void* MontagePtr, float PlayRate)
+{
+    CWorld* W = AsWorld(World);
+    if (W == nullptr || MontagePtr == nullptr)
+    {
+        return;
+    }
+    if (SAnimationGraphComponent* Comp = W->TryGetComponent<SAnimationGraphComponent>(AsEntity(Entity)))
+    {
+        Comp->Montages.SetPlayRate(static_cast<CAnimationMontage*>(MontagePtr), PlayRate);
+    }
+}
+
+// Two-pass string return: (.., null, 0) sizes; (.., buffer, capacity) fills. Returns the name length.
+LUMINA_DOTNET_EXPORT(int32, Animation_GetMontageSection)(uint64 World, uint32 Entity, void* MontagePtr,
+                                                         char* Buffer, int32 Capacity)
+{
+    CWorld* W = AsWorld(World);
+    if (W == nullptr || MontagePtr == nullptr)
+    {
+        return 0;
+    }
+    const SAnimationGraphComponent* Comp = W->TryGetComponent<SAnimationGraphComponent>(AsEntity(Entity));
+    if (Comp == nullptr)
+    {
+        return 0;
+    }
+
+    const FName Section = Comp->Montages.GetCurrentSection(static_cast<CAnimationMontage*>(MontagePtr));
+    const FStringView Name(Section.c_str());
+    const int32 Len = (int32)Name.size();
+    if (Buffer != nullptr && Capacity > 0)
+    {
+        const int32 N = Len < Capacity ? Len : Capacity;
+        for (int32 i = 0; i < N; ++i)
+        {
+            Buffer[i] = Name[(size_t)i];
+        }
+    }
+    return Len;
 }

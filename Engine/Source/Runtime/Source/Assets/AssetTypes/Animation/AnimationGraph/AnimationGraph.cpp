@@ -29,6 +29,10 @@ namespace Lumina
             Ar << ClipCurveMaps;
             Ar << BlendSpaceCurveMaps;
         }
+        if (Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::ANIM_GRAPH_MONTAGE_SLOTS)
+        {
+            Ar << SlotNames;
+        }
 
         ResolveTransitionParameters();
     }

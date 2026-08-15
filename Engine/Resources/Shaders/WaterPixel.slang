@@ -1,5 +1,6 @@
 #include "Includes/Water.slang"
 #include "Includes/IBLRuntime.slang"
+#include "Includes/ShadowSampling.slang"
 
 // Water surface shading
 
@@ -9,6 +10,7 @@ struct PSInput
     float3 WorldPos : WATER_WORLDPOS;
     float3 Normal   : WATER_NORMAL;
     float2 PlanarUV : WATER_UV;
+    float  Jacobian : WATER_JACOBIAN;
     nointerpolation uint WaterIndex : WATER_INDEX;
 };
 
@@ -95,6 +97,16 @@ float4 FragmentMain(PSInput Input) : SV_Target0
         N = normalize(N + (T * dn.x + B * dn.y));
     }
 
+    // Sub-pixel wave slope folded into roughness, which keeps the sun's glitter path coherent at distance.
+    float3 dNdx = ddx(N);
+    float3 dNdy = ddy(N);
+    float  SlopeVariance   = 0.5 * (dot(dNdx, dNdx) + dot(dNdy, dNdy));
+    float  KernelRoughness = min(2.0 * SlopeVariance, 0.25);
+
+    float  Roughness  = W.RefractReflect.z;
+    float  SpecAlpha  = saturate(max(Roughness * Roughness, 1e-4) + KernelRoughness);
+    float  EffRough   = sqrt(SpecAlpha);
+
     float3 CameraPos = GetCameraPosition();
     float3 V     = normalize(CameraPos - Input.WorldPos);
     float  NdotV = saturate(dot(N, V));
@@ -132,9 +144,8 @@ float4 FragmentMain(PSInput Input) : SV_Target0
     Refracted = lerp(WaterColor, Refracted, SubmergeMask);
 
     // --- Reflection: SSR ray-march against opaque depth, prefiltered-sky fallback ---
-    float  Roughness = W.RefractReflect.z;
     float3 R         = reflect(-V, N);
-    float3 SkyRefl   = SamplePrefilter(R, Roughness);
+    float3 SkyRefl   = SamplePrefilter(R, EffRough);
     float3 Reflection = SkyRefl;
     {
         float  StepCount = max(W.SSRSpecOpacity.y, 8.0);
@@ -200,17 +211,31 @@ float4 FragmentMain(PSInput Input) : SV_Target0
         float3 L      = normalize(GetSunDirection());    // surface -> sun (to-light)
         float3 SunRad = GetLightColor(Sun).rgb * Sun.Intensity;
 
-        // Blinn-Phong sun glint (cascade shadowing on water is a deferred enhancement).
-        float  NdotH = saturate(dot(N, normalize(L + V)));
-        float  Shine = lerp(2048.0, 16.0, saturate(Roughness));
-        float  Spec  = pow(NdotH, Shine) * (Shine + 8.0) / (8.0 * PI);
-        Color += SunRad * Spec * W.SSRSpecOpacity.z;
+        float Shadow = ComputeDirectionalShadow(Sun, Input.WorldPos, N,
+                                                WorldToView(Input.WorldPos), Input.Position.xy);
+
+        // GGX against the variance-widened alpha, so distant water sparkles instead of going mirror flat.
+        float3 H     = normalize(L + V);
+        float  NdotL = saturate(dot(N, L));
+        float  NdotH = saturate(dot(N, H));
+        float  VdotH = saturate(dot(V, H));
+
+        float A2    = SpecAlpha * SpecAlpha;
+        float Denom = NdotH * NdotH * (A2 - 1.0) + 1.0;
+        float NDF   = A2 / (PI * Denom * Denom);
+
+        float Kg = SpecAlpha * 0.5;
+        float G  = (NdotV / (NdotV * (1.0 - Kg) + Kg)) * (NdotL / (NdotL * (1.0 - Kg) + Kg));
+        float Fs = F0 + (1.0 - F0) * pow(1.0 - VdotH, 5.0);
+
+        float Spec = (NDF * G * Fs) / max(4.0 * NdotV * NdotL, 1e-4);
+        Color += SunRad * Spec * NdotL * Shadow * W.SSRSpecOpacity.z;
 
         // Subsurface scattering
         float  MeanY      = mul(W.WaterToWorld, float4(0.0, 0.0, 0.0, 1.0)).y;
         float  WaveHeight = saturate((Input.WorldPos.y - MeanY) / max(W.WindAndWave.w, 0.05));
         float  BackLit    = pow(saturate(dot(V, -normalize(L + N * 0.5))), 4.0);
-        Color += W.ShallowColor.rgb * SunRad * (BackLit * WaveHeight * W.SSRSpecOpacity.z);
+        Color += W.ShallowColor.rgb * SunRad * (BackLit * WaveHeight * Shadow * W.SSRSpecOpacity.z);
     }
 
     // --- Foam
@@ -256,15 +281,12 @@ float4 FragmentMain(PSInput Input) : SV_Target0
         // Shoreline foam only where genuinely submerged (a real water column over a bed).
         Foam *= SubmergeMask;
 
-        // Wave-crest foam: above a height threshold, add foam scaled by crest height (CrestFoamAmount sets it).
-        float MeanY  = mul(W.WaterToWorld, float4(0.0, 0.0, 0.0, 1.0)).y;
-        float Height = Input.WorldPos.y - MeanY;
-        float Crest  = W.WindAndWave.w * (1.0 - saturate(W.FoamAbsorb.y));
-        if (Height > Crest + 0.0001)
-        {
-            float Amount = saturate((Height - Crest) / max(W.WindAndWave.w, 0.05)) * 0.5;
-            Foam += (f3 + f4 * 0.5) * Amount;
-        }
+        // Whitecaps where the surface pinches, since a height band would put foam in horizontal stripes.
+        const float kFoamGain = 1.6;
+        float CrestAmount = saturate(W.FoamAbsorb.y);
+        float FoamBias    = lerp(0.55, 1.0, CrestAmount);
+        float Crest       = saturate((FoamBias - Input.Jacobian) * kFoamGain);
+        Foam += (f3 + f4 * 0.5) * Crest;
 
         Foam = saturate(Foam * W.DetailParams.w);   // FoamIntensity
     }

@@ -65,6 +65,41 @@ public readonly unsafe partial struct Animation
     public bool GetBool(Entity Target, string Name, bool Default = false) => GetBoolRaw(Target.Id, Name, Default ? 1 : 0) != 0;
     public bool HasParameter(Entity Target, string Name) => HasParameterRaw(Target.Id, Name) != 0;
 
+    //~ Montages: the entity's graph needs a Slot node named after one of the montage's slot tracks.
+
+    // Blends out anything already on the slots this montage uses. Returns 0 when nothing started.
+    public uint PlayMontage(Entity Target, CAnimationMontage? Montage, float PlayRate = 1.0f, string Section = "")
+        => PlayMontageRaw(Target.Id, Montage is null ? IntPtr.Zero : Montage.Handle, PlayRate, Section);
+
+    // A null montage stops every montage; a negative BlendOutTime uses the montage's own.
+    public void StopMontage(Entity Target, CAnimationMontage? Montage = null, float BlendOutTime = -1.0f)
+        => StopMontageRaw(Target.Id, Montage is null ? IntPtr.Zero : Montage.Handle, BlendOutTime);
+
+    // Re-arms a montage that was blending out, which is how a combo follow-up chains.
+    public bool JumpToMontageSection(Entity Target, CAnimationMontage Montage, string Section)
+        => JumpToMontageSectionRaw(Target.Id, Montage.Handle, Section) != 0;
+
+    // Overrides the authored link, taken at the current section's end.
+    public bool SetNextMontageSection(Entity Target, CAnimationMontage Montage, string Section)
+        => SetNextMontageSectionRaw(Target.Id, Montage.Handle, Section) != 0;
+
+    // A null montage asks whether any montage is contributing.
+    public bool IsMontagePlaying(Entity Target, CAnimationMontage? Montage = null)
+        => IsMontagePlayingRaw(Target.Id, Montage is null ? IntPtr.Zero : Montage.Handle) != 0;
+
+    public float GetMontagePosition(Entity Target, CAnimationMontage Montage)
+        => GetMontagePositionRaw(Target.Id, Montage.Handle);
+
+    // How strongly the montage is blended over the graph pose, 0 to 1.
+    public float GetMontageWeight(Entity Target, CAnimationMontage Montage)
+        => GetMontageWeightRaw(Target.Id, Montage.Handle);
+
+    public string GetMontageSection(Entity Target, CAnimationMontage Montage)
+        => GetMontageSectionRaw(Target.Id, Montage.Handle);
+
+    public void SetMontagePlayRate(Entity Target, CAnimationMontage Montage, float PlayRate)
+        => SetMontagePlayRateRaw(Target.Id, Montage.Handle, PlayRate);
+
     // Flat shims (Runtime module). World Handle injected first; CAnimation crosses as its native pointer.
     [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Animation_Play")]
     private partial void PlayRaw(uint Entity, IntPtr Clip, int Loop, float Speed);
@@ -107,4 +142,31 @@ public readonly unsafe partial struct Animation
 
     [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Animation_HasParameter")]
     private partial int HasParameterRaw(uint Entity, string Name);
+
+    [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Animation_PlayMontage")]
+    private partial uint PlayMontageRaw(uint Entity, IntPtr Montage, float PlayRate, string Section);
+
+    [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Animation_StopMontage")]
+    private partial void StopMontageRaw(uint Entity, IntPtr Montage, float BlendOutTime);
+
+    [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Animation_JumpToMontageSection")]
+    private partial int JumpToMontageSectionRaw(uint Entity, IntPtr Montage, string Section);
+
+    [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Animation_SetNextMontageSection")]
+    private partial int SetNextMontageSectionRaw(uint Entity, IntPtr Montage, string Section);
+
+    [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Animation_IsMontagePlaying")]
+    private partial int IsMontagePlayingRaw(uint Entity, IntPtr Montage);
+
+    [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Animation_GetMontagePosition")]
+    private partial float GetMontagePositionRaw(uint Entity, IntPtr Montage);
+
+    [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Animation_GetMontageWeight")]
+    private partial float GetMontageWeightRaw(uint Entity, IntPtr Montage);
+
+    [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Animation_GetMontageSection")]
+    private partial string GetMontageSectionRaw(uint Entity, IntPtr Montage);
+
+    [NativeCall(Module = "Runtime", EntryPoint = "LuminaSharp_Animation_SetMontagePlayRate")]
+    private partial void SetMontagePlayRateRaw(uint Entity, IntPtr Montage, float PlayRate);
 }

@@ -68,7 +68,7 @@ namespace Lumina
 
         // Host bytes staged per frame, enforced at band granularity. Loads that do not fit wait a frame.
         PROPERTY(Editable, Category = "Performance")
-        int32 MaxUploadMBPerFrame = 8;
+        int32 MaxUploadMBPerFrame = 32;
 
         // Promotions + demotions per frame. Separate from the upload budget: a residency change recreates
         // the GPU image and retires the old one, which a demotion pays while moving zero host bytes.

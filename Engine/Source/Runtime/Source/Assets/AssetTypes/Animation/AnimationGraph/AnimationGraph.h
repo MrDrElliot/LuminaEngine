@@ -255,6 +255,9 @@ namespace Lumina
         /** Sync groups referenced by AdvanceClock opcodes; members share one normalized phase. */
         uint16 NumSyncGroups = 0;
 
+        /** Montage slot names referenced by EvalSlot opcodes, indexed by slot index. */
+        TVector<FName> SlotNames;
+
         /** Opcode layout the bytecode was compiled against (kAnimBytecodeVersion); the VM refuses
          *  mismatches instead of misparsing. 0 = compiled before versioning existed. */
         uint16 BytecodeVersion = 0;

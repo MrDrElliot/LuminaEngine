@@ -91,9 +91,7 @@ FragmentOutput FragmentMain(FragmentInput Input)
             float DiscAngle = kSunBaseAngle * max(DiscScale, 0.0);
             if (dot(RayDir, SunDir) > cos(DiscAngle * 1.8))
             {
-                float3 SunColor = Sky_SunTimeOfDayColor(SunHeight)
-                                * uEnvironment.SunTint.rgb
-                                * uEnvironment.SunTint.w;
+                float3 SunColor = uEnvironment.SunTint.rgb * uEnvironment.SunTint.w;
                 Overlay += Sky_RenderSun(RayDir, SunDir, SunColor, DiscScale);
             }
 
@@ -107,12 +105,8 @@ FragmentOutput FragmentMain(FragmentInput Input)
                 }
             }
 
-            // Match the cube's exposure + Reinhard tonemap so overlay
-            // intensities read consistently against the sampled cube.
-            float Exposure = max(uEnvironment.Misc.z, 1e-3);
-            Overlay *= Exposure;
-            Overlay = Overlay / (1.0 + Overlay);
-            Color += Overlay;
+            // Same exposure the cube was baked with, so overlays sit consistently against it.
+            Color += Overlay * max(uEnvironment.Misc.z, 1e-3);
         }
     }
 

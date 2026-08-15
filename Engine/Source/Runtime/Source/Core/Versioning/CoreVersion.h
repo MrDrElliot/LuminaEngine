@@ -45,6 +45,9 @@ enum class ELuminaEngineVersion : uint32
 	// sphere estimate; it cannot be recomputed at load because the source UVs are not serialized.
 	MESH_SURFACE_TEXEL_FACTOR,
 
+	// CAnimationGraph serializes SlotNames, the montage slot table its EvalSlot opcodes index.
+	ANIM_GRAPH_MONTAGE_SLOTS,
+
 	AUTOMATIC_VERSION_PLUS_ONE,
 	AUTOMATIC_VERSION = AUTOMATIC_VERSION_PLUS_ONE - 1
 };

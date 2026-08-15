@@ -14,6 +14,7 @@ namespace Lumina
 {
     class CAnimationGraph;
     struct FSkeletonResource;
+    struct FAnimMontagePlayer;
 
     // What AdvanceClock does when the playback clock reaches a clip's duration.
     REFLECT()
@@ -66,6 +67,7 @@ namespace Lumina
         Output,          // src:pReg
         GetCurve,        // src:pReg, curveIdx:uint16, dst:sReg
         SetCurve,        // src:pReg, curveIdx:uint16, value:sReg, dst:pReg
+        EvalSlot,        // slotIdx:uint16, src:pReg, dst:pReg
     };
 
     // Append-only: the enum value is baked into compiled bytecode.
@@ -178,6 +180,7 @@ namespace Lumina
                                FAnimGraphVMState& State,
                                FAnimTaskList& OutTasks,
                                FAnimGraphRootMotion& RootMotionInOut,
-                               TVector<FAnimNotifyEvent>* OutEvents = nullptr);
+                               TVector<FAnimNotifyEvent>* OutEvents = nullptr,
+                               const FAnimMontagePlayer* Montages = nullptr);
     };
 }

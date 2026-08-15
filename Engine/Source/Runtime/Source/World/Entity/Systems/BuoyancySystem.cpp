@@ -26,10 +26,12 @@ namespace Lumina
             : FVector2(1.0f, 0.0f);
 
         float Amplitude  = W.WaveAmplitude;
-        float Scale      = Math::Max(W.WaveScale, 0.05f);
         int   Count      = Math::Clamp(W.WaveCount, 1, 8);
-        float Wavelength = Math::Max(8.0f * Scale, 0.5f);
+        float Wavelength = Math::Max(W.WaveLength, 0.5f);
         float SpeedScale = 1.0f;
+
+        // Must match kMaxSteepness in Includes/Water.slang or floating bodies drift off the visual surface.
+        constexpr float MaxSteepness = 0.42f;
 
         float Y = 0.0f;
         for (int i = 0; i < Count; ++i)
@@ -45,7 +47,7 @@ namespace Lumina
             float Speed = Math::Sqrt(9.81f / Math::Max(k, 1e-3f))
                         * (0.5f + 0.5f * Math::Clamp(W.WindSpeed * 0.1f, 0.0f, 1.0f)) * SpeedScale;
             float Phi   = k * (Dx * WorldX + Dz * WorldZ) + Time * Speed;
-            Y += Amplitude * Math::Sin(Phi);
+            Y += Math::Min(Amplitude, MaxSteepness / k) * Math::Sin(Phi);
 
             Wavelength *= 0.62f;
             Amplitude  *= 0.62f;

@@ -126,27 +126,39 @@ float Sky_FBM(float3 P)
     return V;
 }
 
+// Quadratic step spacing: Mie's 1.2km scale height is nearly invisible to a march uniform over ~60km.
+float Sky_StepFraction(int Index, int Count)
+{
+    float T = float(Index) / float(Count);
+    return T * T;
+}
+
 // Atmospheric scattering (Bruneton-style single-scatter + ozone).
 float3 Sky_OpticalDepth(float3 RayOrigin, float3 RayDir, float RayLength)
 {
     // 4 inner steps: the light-march integral converges fast as the sun ray climbs out
     // monotonically. The cube bake's per-fragment cost is dominated by these samples.
     const int Steps    = 4;
-    float StepSize     = RayLength / float(Steps);
     float3 OpticalDepth = float3(0.0, 0.0, 0.0);
+    float  PrevT        = 0.0;
 
     // [[loop]]: unrolling holds every step's heavy temporaries live at once (register spike on the SkyCube
     // capture pass); rolling keeps one step. The serial exp() chain is latency-bound regardless.
     [[loop]]
     for (int i = 0; i < Steps; i++)
     {
-        float3 P = RayOrigin + RayDir * (float(i) + 0.5) * StepSize;
-        float  H = length(P) - kPlanetR;
+        float NextT = RayLength * Sky_StepFraction(i + 1, Steps);
+        float Width = NextT - PrevT;
+
+        float3 P = RayOrigin + RayDir * (PrevT + Width * 0.5);
+        PrevT = NextT;
+
+        float H = length(P) - kPlanetR;
         if (H < 0.0) break;
 
         OpticalDepth += float3(exp(-H / kRayleighH),
                                exp(-H / kMieH),
-                               Sky_OzoneDensity(H)) * StepSize;
+                               Sky_OzoneDensity(H)) * Width;
     }
     return OpticalDepth;
 }
@@ -170,16 +182,21 @@ float3 Sky_Atmosphere(float3 RayOrigin, float3 RayDir, float3 SunDir, float3 Sun
     // 8 outer steps x 4-step inner march = 32 nested evals (was 128). The sky is
     // low-frequency so the visual difference is imperceptible.
     const int Steps = 8;
-    float StepSize  = Length / float(Steps);
 
     float3 SumR = float3(0.0, 0.0, 0.0);
     float3 SumM = float3(0.0, 0.0, 0.0);
     float3 PrimaryOD = float3(0.0, 0.0, 0.0);
+    float  PrevT = 0.0;
 
     [[loop]]
     for (int i = 0; i < Steps; i++)
     {
-        float3 P = RayOrigin + RayDir * (Start + (float(i) + 0.5) * StepSize);
+        float NextT    = Length * Sky_StepFraction(i + 1, Steps);
+        float StepSize = NextT - PrevT;
+
+        float3 P = RayOrigin + RayDir * (Start + PrevT + StepSize * 0.5);
+        PrevT = NextT;
+
         float  H = length(P) - kPlanetR;
         if (H < 0.0) break;
 
@@ -220,18 +237,19 @@ float3 Sky_Atmosphere(float3 RayOrigin, float3 RayDir, float3 SunDir, float3 Sun
     return SunColor * (Rayleigh + Mie + MultiScatter);
 }
 
-float3 Sky_SunTimeOfDayColor(float SunHeight)
+// At the horizon the air mass reaches ~38x the vertical column, which is what reddens a setting sun.
+float3 Sky_SunTransmittance(float3 SunDir)
 {
-    float3 NightColor    = float3(0.10, 0.15, 0.30) * 0.04;
-    float3 TwilightColor = float3(1.00, 0.40, 0.15) * 0.60;
-    float3 SunriseColor  = float3(1.00, 0.70, 0.30) * 0.90;
-    float3 DayColor      = float3(1.00, 0.95, 0.85) * 1.00;
+    float3 Origin = float3(0.0, kPlanetR + 50.0, 0.0);
 
-    if (SunHeight < -0.3)  return NightColor;
-    if (SunHeight < -0.05) return lerp(NightColor,    TwilightColor, smoothstep(-0.3,  -0.05, SunHeight));
-    if (SunHeight <  0.05) return lerp(TwilightColor, SunriseColor,  smoothstep(-0.05,  0.05, SunHeight));
-    if (SunHeight <  0.40) return lerp(SunriseColor,  DayColor,      smoothstep( 0.05,  0.40, SunHeight));
-    return DayColor;
+    float3 Dir = float3(SunDir.x, max(SunDir.y, 0.0), SunDir.z);
+    float  Len = length(Dir);
+    Dir = (Len > 1e-4) ? (Dir / Len) : float3(0.0, 1.0, 0.0);
+
+    float2 Hit = Sky_RaySphereIntersect(Origin, Dir, kAtmosphereR);
+    float3 OD  = Sky_OpticalDepth(Origin, Dir, max(Hit.y, 0.0));
+
+    return exp(-(kRayleighCoeff * OD.x + kMieCoeff * OD.y * 1.1 + kOzoneCoeff * OD.z));
 }
 
 float3 Sky_RenderSun(float3 RayDir, float3 SunDir, float3 SunColor, float SunDiscScale)
@@ -248,8 +266,10 @@ float3 Sky_RenderSun(float3 RayDir, float3 SunDir, float3 SunColor, float SunDis
     float GlowBase = smoothstep(CosGlowOuter, CosGlowInner, SunDot);
     float SunGlow  = GlowBase * GlowBase * GlowBase;
 
-    float SunFade = smoothstep(0.0, 0.15, SunDir.y);
-    return SunColor * (SunDisc * 0.8 + SunGlow * 0.3) * SunFade;
+    // Narrow enough that a sun sitting on the geometric horizon still renders at full strength.
+    float Occlusion = smoothstep(-0.04, 0.0, SunDir.y);
+
+    return SunColor * Sky_SunTransmittance(SunDir) * (SunDisc * 0.8 + SunGlow * 0.3) * Occlusion;
 }
 
 // One star per cell, sampling only the ray's cell (sub-pixel boundary gaps). Density is a
@@ -409,7 +429,9 @@ float3 Sky_Dynamic(FEnvironmentParams Env, float3 SunDir, float3 RayDir, float T
 {
     float SunHeight = SunDir.y;
     float MieG      = clamp(Env.Misc.w, -0.99, 0.99);
-    float3 SunColor = Sky_SunTimeOfDayColor(SunHeight) * Env.SunTint.rgb * Env.SunTint.w;
+
+    // Constant incident spectrum: twilight reddening is the scattering integral's job, not a ramp.
+    float3 SunColor = Env.SunTint.rgb * Env.SunTint.w;
 
     // Atmosphere math is in planet-relative coords. Origin at 50m altitude
     // so the camera never falls inside the planet sphere.
@@ -449,14 +471,8 @@ float3 Sky_Dynamic(FEnvironmentParams Env, float3 SunDir, float3 RayDir, float T
 
     float3 Color = Atmo + NightBG + Galaxy;
 
-    // Tonemap with the artist's exposure; Reinhard-ish roll-off avoids crushing moon/stars to white.
-    float Exposure = max(Env.Misc.z, 1e-3);
-    Color *= Exposure;
-    Color = Color / (1.0 + Color);
-
-    // Slight contrast lift in the midtones.
-    Color = lerp(Color, Color * Color * (3.0 - 2.0 * Color), 0.1);
-    return Color;
+    // Scene-linear radiance: tonemapping here would also cap the sky cube that feeds IBL.
+    return Color * max(Env.Misc.z, 1e-3);
 }
 
 float3 EvaluateSky(FEnvironmentParams Env, float3 SunDir, float3 RayDir, float Time)

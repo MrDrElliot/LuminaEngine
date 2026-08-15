@@ -18,10 +18,38 @@ struct FPushConstants
     uint   DstUAV;          // bindless RW: destination mip
     uint   bFirstPass;      // 1 = prefilter from HDR (Karis + threshold + sanitize)
 
-    float  Threshold;       // same value as KneeCurve.x + Knee
-    float3 KneeCurve;       // (T - Knee, 2*Knee, 0.25/Knee). See QuadraticThreshold.
+    float  Threshold;       // post-exposure knee, divided by the exposure scale before use
+    float  SoftKnee;        // knee width as a fraction of the threshold
+    uint   AdaptedLumIndex; // bindless SRV: 1x1 adapted luminance, mirrors ColorGrading
+    float  Exposure;        // manual exposure multiplier (2^EV)
+
+    float  AutoExposureKey;    // middle-grey key; <= 0 disables auto-exposure
+    float  AutoExposureMinMul; // 2^MinEV clamp on the adapted multiplier
+    float  AutoExposureMaxMul; // 2^MaxEV clamp on the adapted multiplier
+    float  _Pad;
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
+
+// Mirrors ColorGrading, so a dim scene still blooms its highlights and a bright one does not bloom flat.
+float BloomExposureScale()
+{
+    float AEScale = 1.0;
+    if (Pass().AutoExposureKey > 0.0)
+    {
+        float AdaptedLum = gTextures2D[Pass().AdaptedLumIndex].SampleLevel(
+            gSamplers[SAMPLER_LINEAR_CLAMP], float2(0.5, 0.5), 0.0).r;
+
+        // Frame 0 reads the 1x1 image before the average pass seeds it; a NaN here reaches the chain.
+        if (!(AdaptedLum > 1e-6 && AdaptedLum < 1e6))
+        {
+            AdaptedLum = Pass().AutoExposureKey;
+        }
+
+        AEScale = clamp(Pass().AutoExposureKey / max(AdaptedLum, 1e-4),
+                        Pass().AutoExposureMinMul, Pass().AutoExposureMaxMul);
+    }
+    return max(Pass().Exposure * AEScale, 1e-6);
+}
 
 float3 SampleSrc(float2 UV, float2 Off)
 {
@@ -100,7 +128,12 @@ void ComputeMain(uint3 DispatchID : SV_DispatchThreadID)
 
         Result = (Q0 * W0 + Q1 * W1 + Q2 * W2 + Q3 * W3 + Q4 * W4)
                / max(W0 + W1 + W2 + W3 + W4, 1e-4);
-        Result = QuadraticThreshold(max(Result, 0.0), Pass().Threshold, Pass().KneeCurve);
+        // The chain stays in raw HDR, so ColorGrading's add-then-expose ordering is unaffected.
+        float EffThreshold = Pass().Threshold / BloomExposureScale();
+        float Knee         = Pass().SoftKnee * EffThreshold + 1e-5;
+        float3 KneeCurve   = float3(EffThreshold - Knee, 2.0 * Knee, 0.25 / Knee);
+
+        Result = QuadraticThreshold(max(Result, 0.0), EffThreshold, KneeCurve);
     }
     else
     {

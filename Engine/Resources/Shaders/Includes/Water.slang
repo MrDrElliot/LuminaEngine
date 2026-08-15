@@ -40,6 +40,7 @@ struct FGerstnerResult
 {
     float3 Displacement;   // world-space offset added to the flat grid position
     float3 Normal;         // analytic surface normal (GPU Gems closed form)
+    float  Jacobian;       // horizontal displacement determinant; < 1 compressing, < 0 folded over
 };
 
 // Sum up to WaveCount Gerstner waves fanned around the wind direction, each octave shorter / lower / faster.
@@ -50,15 +51,22 @@ FGerstnerResult EvaluateGerstner(float2 WorldXZ, FGPUWater W, float Time)
     float  WindSpeed = W.WindAndWave.z;
     float  BaseAmp   = W.WindAndWave.w;
     float  Choppy    = W.WaveParams.x;
-    float  Scale     = max(W.WaveParams.y, 0.05);
+    float  BaseLength = max(W.WaveParams.y, 0.5);
     int    Count     = (int)clamp(W.WaveParams.z, 1.0, 8.0);
+
+    // Stokes limit: past ~1/7 height to length a real wave breaks and a Gerstner one turns inside out.
+    const float kMaxSteepness = 0.42;
 
     float3 Disp  = float3(0.0, 0.0, 0.0);
     float  SumNx = 0.0;
     float  SumNy = 0.0;
     float  SumNz = 0.0;
 
-    float Wavelength = max(8.0 * Scale, 0.5);
+    float  Jxx = 0.0;
+    float  Jzz = 0.0;
+    float  Jxz = 0.0;
+
+    float Wavelength = BaseLength;
     float Amplitude  = BaseAmp;
     float SpeedScale = 1.0;
     const float AngleStep = 0.45;
@@ -82,14 +90,22 @@ FGerstnerResult EvaluateGerstner(float2 WorldXZ, FGPUWater W, float Time)
         float S     = sin(Phi);
         float C     = cos(Phi);
 
-        // Steepness normalized by (k*A*waveCount) so summed peaks never loop back on themselves.
-        float Q  = Choppy / max(k * Amplitude * float(Count), 1e-3);
-        float WA = k * Amplitude;
+        float A = min(Amplitude, kMaxSteepness / k);
 
-        Disp  += float3(Q * Amplitude * D.x * C, Amplitude * S, Q * Amplitude * D.y * C);
+        // Steepness normalized by (k*A*waveCount) so summed peaks never loop back on themselves.
+        float Q  = Choppy / max(k * A * float(Count), 1e-3);
+        float WA = k * A;
+
+        Disp  += float3(Q * A * D.x * C, A * S, Q * A * D.y * C);
         SumNx += D.x * WA * C;
         SumNz += D.y * WA * C;
         SumNy += Q * WA * S;
+
+        // d(horizontal displacement)/d(grid position); the identity part is folded in after the loop.
+        float QAk = Q * A * k * S;
+        Jxx += QAk * D.x * D.x;
+        Jzz += QAk * D.y * D.y;
+        Jxz += QAk * D.x * D.y;
 
         Wavelength *= 0.62;
         Amplitude  *= 0.62;
@@ -99,5 +115,6 @@ FGerstnerResult EvaluateGerstner(float2 WorldXZ, FGPUWater W, float Time)
     FGerstnerResult R;
     R.Displacement = Disp;
     R.Normal = normalize(float3(-SumNx, 1.0 - SumNy, -SumNz));
+    R.Jacobian = (1.0 - Jxx) * (1.0 - Jzz) - Jxz * Jxz;
     return R;
 }

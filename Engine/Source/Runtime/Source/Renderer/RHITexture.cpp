@@ -16,6 +16,9 @@ namespace Lumina::RHI::Textures
         uint32 Slot;
     };
 
+    // Matches the backend's own debug-name buffer, so a staged swap stays trivially copyable.
+    static constexpr uint32 kMaxSwapNameLength = 64;
+
     /** A replacement image that exists, is being filled, and is NOT yet reachable by a shader.
      *
      *  Keyed by the bindless slot rather than by a pointer to the owning FManagedTexture: the slot is the
@@ -28,8 +31,14 @@ namespace Lumina::RHI::Textures
         FTextureH OldTexture;                     // what the slot still names; retired after the repoint
         uint64    Batch      = 0;                 // the upload batch this swap waits on; only read when armed
         bool      bArmed     = false;             // CommitRecreate has run
-        uint32    IdleTicks  = 0;                 // ticks spent unarmed, for the "forgot to commit" warning
+        uint32    IdleTicks  = 0;                 // ticks without an upload or a commit, for the abandoned-stage error
+        char      DebugName[kMaxSwapNameLength] = {}; // a bare slot index identifies nothing once the heap churns
     };
+
+    static void CopySwapName(char (&Dest)[kMaxSwapNameLength], const char* Name)
+    {
+        std::snprintf(Dest, kMaxSwapNameLength, "%s", Name != nullptr ? Name : "");
+    }
 
     struct FState
     {
@@ -44,6 +53,28 @@ namespace Lumina::RHI::Textures
     };
 
     static FState GState;
+
+    // Frames a staged swap may go with no upload landing against it before it is called abandoned.
+    inline constexpr uint32 kMaxStagedIdleTicks = 60;
+
+    // An upload queued against a staged image is proof the caller is still filling it.
+    static void NoteStagedProgress(uint32 Slot)
+    {
+        if (Slot == kInvalidHeapSlot)
+        {
+            return;
+        }
+
+        FScopeLock Lock(GState.SwapMutex);
+        for (FPendingSwap& Pending : GState.PendingSwaps)
+        {
+            if (Pending.Slot == Slot)
+            {
+                Pending.IdleTicks = 0;
+                return;
+            }
+        }
+    }
 
     // Everything a texture owns, handed to the retire queue together: the storage (UAV) slots it
     // registered, any upload still queued against it, and the image itself. The sampled slot is NOT
@@ -250,13 +281,18 @@ namespace Lumina::RHI::Textures
                 Existing.Batch      = 0;
                 Existing.bArmed     = false;
                 Existing.IdleTicks  = 0;
+                CopySwapName(Existing.DebugName, Desc.DebugName);
                 bMerged             = true;
                 break;
             }
 
             if (!bMerged)
             {
-                GState.PendingSwaps.push_back(FPendingSwap{ Tex.SampledSlot, NewTexture, Previous, 0, false, 0 });
+                FPendingSwap& Staged = GState.PendingSwaps.emplace_back();
+                Staged.Slot       = Tex.SampledSlot;
+                Staged.NewTexture = NewTexture;
+                Staged.OldTexture = Previous;
+                CopySwapName(Staged.DebugName, Desc.DebugName);
             }
         }
 
@@ -344,11 +380,12 @@ namespace Lumina::RHI::Textures
         FTextureH Source;
         {
             FScopeLock Lock(GState.SwapMutex);
-            for (const FPendingSwap& Pending : GState.PendingSwaps)
+            for (FPendingSwap& Pending : GState.PendingSwaps)
             {
                 if (Pending.Slot == Tex.SampledSlot)
                 {
                     Source = Pending.OldTexture;
+                    Pending.IdleTicks = 0;
                     break;
                 }
             }
@@ -402,12 +439,13 @@ namespace Lumina::RHI::Textures
                     // batch could publish an image whose upload has not happened, which is the exact
                     // failure this machinery exists to prevent. Stuck-and-loud beats visibly wrong.
                     // A caller that cannot finish what it staged should say so with AbandonRecreate.
-                    if (++Pending.IdleTicks == 60)
+                    if (++Pending.IdleTicks == kMaxStagedIdleTicks)
                     {
-                        LOG_ERROR("RHI: bindless slot {} has a staged texture that was never committed. "
-                                  "Recreate must be followed by uploads and CommitRecreate on the same "
-                                  "thread; until it is, the slot keeps sampling the previous image.",
-                            Pending.Slot);
+                        LOG_ERROR("RHI: bindless slot {} ('{}') has a staged texture that took no upload for "
+                                  "{} frames and was never committed. Recreate must be followed by uploads and "
+                                  "CommitRecreate on the same thread; until it is, the slot keeps sampling the "
+                                  "previous image.",
+                            Pending.Slot, Pending.DebugName, kMaxStagedIdleTicks);
                     }
                     ++i;
                     continue;
@@ -437,12 +475,22 @@ namespace Lumina::RHI::Textures
 
     bool Upload(const FManagedTexture& Tex, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels, uint32 Width, uint32 Height)
     {
-        return UploadTexture(Tex.Texture, 0, Mip, Data, Size, RowPitchTexels, Width, Height);
+        if (!UploadTexture(Tex.Texture, 0, Mip, Data, Size, RowPitchTexels, Width, Height))
+        {
+            return false;
+        }
+        NoteStagedProgress(Tex.SampledSlot);
+        return true;
     }
 
     bool UploadLayer(const FManagedTexture& Tex, uint32 Layer, uint32 Mip, const void* Data, uint64 Size, uint32 RowPitchTexels, uint32 Width, uint32 Height, uint32 OffsetY)
     {
-        return UploadTexture(Tex.Texture, Layer, Mip, Data, Size, RowPitchTexels, Width, Height, OffsetY);
+        if (!UploadTexture(Tex.Texture, Layer, Mip, Data, Size, RowPitchTexels, Width, Height, OffsetY))
+        {
+            return false;
+        }
+        NoteStagedProgress(Tex.SampledSlot);
+        return true;
     }
 
     void Clear(const FManagedTexture& Tex, const float Value[4])

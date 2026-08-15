@@ -340,6 +340,7 @@ namespace Lumina
 
             if (!AnimGraph.Graph.IsValid())
             {
+                AnimGraph.Montages.Reset();
                 return;
             }
 
@@ -383,8 +384,10 @@ namespace Lumina
             GraphRootMotion.Mode          = AnimGraph.RootMotionLock;
             GraphRootMotion.RootBoneIndex = RootMotion::ResolveRootBoneIndex(Skeleton, FName());
 
+            AnimGraph.Montages.Update(StepTime, &AnimGraph.NotifyEvents);
+
             FAnimationGraphVM::BuildTasks(Graph, Skeleton, StepTime, AnimGraph.VMState, Mesh.AnimTasks,
-                                          GraphRootMotion, &AnimGraph.NotifyEvents);
+                                          GraphRootMotion, &AnimGraph.NotifyEvents, &AnimGraph.Montages);
             Mesh.AnimTasks.ActiveBoneCount = ComputeActiveBoneCount(Mesh, Skeleton);
 
             if (CVarDumpGraphTasks.GetValue())

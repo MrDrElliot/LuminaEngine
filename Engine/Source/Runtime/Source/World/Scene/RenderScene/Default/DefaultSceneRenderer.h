@@ -525,6 +525,7 @@ namespace Lumina
             decided. CullInstances writes it when it reserves; BuildMeshletBlocks reads it to append. */
         FSceneBuffer GetInstanceViewRanges() const { return InstanceViewRangeRing[CurrentFrameSlot]; }
         FSceneBuffer GetSpdCounter()       const { return SpdCounterRing[CurrentFrameSlot]; }
+        FSceneBuffer GetLuminanceHistogram() const { return LuminanceHistogramRing[CurrentFrameSlot]; }
 
         /** Per-material counts, starts, scatter cursors, dispatch args and the frame pixel total. */
         FSceneBuffer GetMaterialClassify()  const { return MaterialClassifyRing[CurrentFrameSlot]; }
@@ -1023,6 +1024,7 @@ namespace Lumina
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          MeshletDrawListRing = {};
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          MeshDrawArgsRing = {};
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          SpdCounterRing = {};
+        TArray<FSceneBuffer, RHI::kFramesInFlight>                          LuminanceHistogramRing = {};
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          MeshletBlockRing = {};
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          BlockDispatchArgsRing = {};
         TArray<FSceneBuffer, RHI::kFramesInFlight>                          SkinWorkBaseRing = {};
@@ -1093,6 +1095,9 @@ namespace Lumina
         float                                               CascadeMinTexels = 1.0f;
 
         static constexpr uint32                             kTotalsSlots = 8;
+
+        // Must match HISTOGRAM_BINS in LuminanceHistogram.slang and its TILE_DIM^2 thread count.
+        static constexpr uint32                             kLuminanceHistogramBins = 256;
 
         TArray<RHI::GPUPtr, RHI::kFramesInFlight>           MeshletBoundReadback = {};
         uint32                                              LastDrawListRequired = 0;

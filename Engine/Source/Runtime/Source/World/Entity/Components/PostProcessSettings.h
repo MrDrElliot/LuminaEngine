@@ -51,6 +51,14 @@ namespace Lumina
         PROPERTY(Editable, Category = "Post Process|Exposure", ClampMin = 0.1f, ClampMax = 16.0f)
         float AutoExposureSpeed = 2.0f;
 
+        /** Fraction of the darkest pixels ignored when metering, so shadows do not drag exposure up. */
+        PROPERTY(Editable, Category = "Post Process|Exposure", ClampMin = 0.0f, ClampMax = 1.0f)
+        float AutoExposureLowPercent = 0.2f;
+
+        /** Cumulative fraction above which pixels are ignored, letting the sun and speculars clip. */
+        PROPERTY(Editable, Category = "Post Process|Exposure", ClampMin = 0.0f, ClampMax = 1.0f)
+        float AutoExposureHighPercent = 0.95f;
+
 
         /** Color temperature [-1, 1]; negative cools, positive warms. LMS chromatic adaptation keeps neutrals neutral. */
         PROPERTY(Editable, Category = "Post Process|White Balance", ClampMin = -1.0f, ClampMax = 1.0f)
@@ -164,6 +172,8 @@ namespace Lumina
         InOut.AutoExposureMinEV    = LerpF (InOut.AutoExposureMinEV,    In.AutoExposureMinEV);
         InOut.AutoExposureMaxEV    = LerpF (InOut.AutoExposureMaxEV,    In.AutoExposureMaxEV);
         InOut.AutoExposureSpeed    = LerpF (InOut.AutoExposureSpeed,    In.AutoExposureSpeed);
+        InOut.AutoExposureLowPercent  = LerpF (InOut.AutoExposureLowPercent,  In.AutoExposureLowPercent);
+        InOut.AutoExposureHighPercent = LerpF (InOut.AutoExposureHighPercent, In.AutoExposureHighPercent);
         InOut.Temperature          = LerpF (InOut.Temperature,          In.Temperature);
         InOut.Tint                 = LerpF (InOut.Tint,                 In.Tint);
         InOut.Contrast             = LerpF (InOut.Contrast,             In.Contrast);

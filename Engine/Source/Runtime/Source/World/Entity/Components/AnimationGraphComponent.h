@@ -2,6 +2,7 @@
 
 #include "Animation/AnimationGraphVM.h"
 #include "Animation/AnimEvents.h"
+#include "Animation/AnimMontage.h"
 #include "Animation/RootMotion.h"
 #include "Animation/RootMotionTypes.h"
 #include "Core/Object/ObjectMacros.h"
@@ -41,6 +42,90 @@ namespace Lumina
         // Notify events that fired this frame from the graph's active branches, weighted by their
         // branch's blend alpha. Cleared every update. Transient.
         TVector<FAnimNotifyEvent> NotifyEvents;
+
+        // Montages playing on this entity, layered into the graph by its Slot nodes. Transient.
+        FAnimMontagePlayer Montages;
+
+        /** Plays a montage on the slots its tracks name, blending out anything already on them. */
+        FUNCTION(Script)
+        void PlayMontage(CAnimationMontage* Montage, float PlayRate = 1.0f)
+        {
+            Montages.Play(Montage, PlayRate, FName());
+        }
+
+        /** Plays a montage starting at a named section. */
+        FUNCTION(Script)
+        void PlayMontageFromSection(CAnimationMontage* Montage, const FName& SectionName, float PlayRate = 1.0f)
+        {
+            Montages.Play(Montage, PlayRate, SectionName);
+        }
+
+        /** Blends a montage out. A negative BlendOutTime uses the montage's own blend out time. */
+        FUNCTION(Script)
+        void StopMontage(CAnimationMontage* Montage, float BlendOutTime = -1.0f)
+        {
+            Montages.Stop(Montage, BlendOutTime);
+        }
+
+        FUNCTION(Script)
+        void StopAllMontages(float BlendOutTime = -1.0f)
+        {
+            Montages.StopAll(BlendOutTime);
+        }
+
+        /** Moves a playing montage's playhead to a named section. False if it is not playing. */
+        FUNCTION(Script)
+        bool JumpToMontageSection(CAnimationMontage* Montage, const FName& SectionName)
+        {
+            return Montages.JumpToSection(Montage, SectionName);
+        }
+
+        /** Overrides which section follows the one playing now, which is how combos chain. */
+        FUNCTION(Script)
+        bool SetNextMontageSection(CAnimationMontage* Montage, const FName& SectionName)
+        {
+            return Montages.SetNextSection(Montage, SectionName);
+        }
+
+        /** True while the montage is playing and not already blending out. */
+        FUNCTION(Script)
+        bool IsMontagePlaying(CAnimationMontage* Montage) const
+        {
+            return Montages.IsPlaying(Montage);
+        }
+
+        /** True while any montage is contributing to this entity's pose. */
+        FUNCTION(Script)
+        bool IsAnyMontagePlaying() const
+        {
+            return Montages.HasActive();
+        }
+
+        FUNCTION(Script)
+        FName GetMontageSection(CAnimationMontage* Montage) const
+        {
+            return Montages.GetCurrentSection(Montage);
+        }
+
+        /** Playhead position on the montage timeline, in seconds. */
+        FUNCTION(Script)
+        float GetMontagePosition(CAnimationMontage* Montage) const
+        {
+            return Montages.GetPosition(Montage);
+        }
+
+        /** How strongly the montage is currently blended over the graph pose. */
+        FUNCTION(Script)
+        float GetMontageWeight(CAnimationMontage* Montage) const
+        {
+            return Montages.GetWeight(Montage);
+        }
+
+        FUNCTION(Script)
+        void SetMontagePlayRate(CAnimationMontage* Montage, float PlayRate)
+        {
+            Montages.SetPlayRate(Montage, PlayRate);
+        }
 
         /** True if the named point notify fired this frame (any weight). */
         FUNCTION(Script)

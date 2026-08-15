@@ -297,6 +297,7 @@ namespace Lumina
                 { "SKELETALMESH",     LE_ICON_HUMAN,               IM_COL32(129, 199, 255, 255) },
                 { "SKELETON",         LE_ICON_BONE,                IM_COL32(190, 210, 235, 255) },
                 { "ANIMATION",        LE_ICON_RUN,                 IM_COL32(140, 220, 190, 255) },
+                { "ANIMATIONMONTAGE", LE_ICON_ANIMATION_PLAY,      IM_COL32(120, 200, 235, 255) },
                 { "TEXTURE",          LE_ICON_IMAGE,               IM_COL32(240, 170, 120, 255) },
                 { "TEXTUREARRAY",     LE_ICON_IMAGE_MULTIPLE,      IM_COL32(240, 190, 140, 255) },
                 { "MATERIAL",         LE_ICON_SPHERE,              IM_COL32(200, 150, 255, 255) },

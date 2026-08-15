@@ -168,6 +168,29 @@ namespace Lumina
         return (uint16)(SyncGroupNames.size() - 1);
     }
 
+    uint16 FAnimationGraphCompiler::AddSlot(const FName& Name)
+    {
+        for (SIZE_T i = 0; i < SlotNames.size(); ++i)
+        {
+            if (SlotNames[i] == Name)
+            {
+                return (uint16)i;
+            }
+        }
+        SlotNames.push_back(Name);
+        return (uint16)(SlotNames.size() - 1);
+    }
+
+    uint16 FAnimationGraphCompiler::EmitEvalSlot(uint16 SrcPoseReg, uint16 SlotIndex)
+    {
+        const uint16 Dst = AllocPoseReg();
+        WriteOp(EAnimOp::EvalSlot);
+        Write(SlotIndex);
+        Write(SrcPoseReg);
+        Write(Dst);
+        return Dst;
+    }
+
     uint16 FAnimationGraphCompiler::EmitSampleAnim(uint16 ClipIndex, uint16 TimeReg)
     {
         const uint16 Dst = AllocPoseReg();
@@ -493,6 +516,7 @@ namespace Lumina
         OutGraph->NumPoseRegisters    = NextPoseReg;
         OutGraph->NumStateSlots       = NextStateSlot;
         OutGraph->NumSyncGroups       = (uint16)SyncGroupNames.size();
+        OutGraph->SlotNames           = SlotNames;
         OutGraph->BytecodeVersion     = kAnimBytecodeVersion;
 
         OutGraph->ResolveTransitionParameters();

@@ -9,6 +9,7 @@ struct VSOutput
     float3 WorldPos : WATER_WORLDPOS;
     float3 Normal   : WATER_NORMAL;
     float2 PlanarUV : WATER_UV;       // base grid uv in [0,1] for detail/foam tiling
+    float  Jacobian : WATER_JACOBIAN; // drives whitecaps where the surface folds
     nointerpolation uint WaterIndex : WATER_INDEX;
 };
 
@@ -43,6 +44,7 @@ VSOutput VertexMain(uint VertexID : SV_VulkanVertexID, uint WaterIndex : SV_Vulk
     O.WorldPos   = WorldPos;
     O.Normal     = G.Normal;
     O.PlanarUV   = UV;
+    O.Jacobian   = G.Jacobian;
     O.WaterIndex = WaterIndex;
     return O;
 }

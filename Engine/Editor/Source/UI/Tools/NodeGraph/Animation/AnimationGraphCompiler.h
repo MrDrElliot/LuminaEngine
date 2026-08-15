@@ -66,6 +66,12 @@ namespace Lumina
         // Registers a named sync group and returns its index; dedups by name.
         uint16 AddSyncGroup(const FName& Name);
 
+        // Registers a montage slot name and returns its index; dedups by name.
+        uint16 AddSlot(const FName& Name);
+
+        // Layers whatever montages are playing on the slot over the incoming pose.
+        uint16 EmitEvalSlot(uint16 SrcPoseReg, uint16 SlotIndex);
+
         uint16 EmitSampleAnim(uint16 ClipIndex, uint16 TimeReg);
 
         // Samples a blend space at (X, Y). The op owns its playback phase in PhaseSlot and advances it
@@ -174,6 +180,7 @@ namespace Lumina
         TVector<TObjectPtr<CAnimation>>         Clips;
         TVector<TObjectPtr<CBlendSpace>>        BlendSpaces;
         TVector<FName>                          SyncGroupNames;
+        TVector<FName>                          SlotNames;
         TVector<FName>                          CurveNames;
         THashMap<FName, int32>                  CurveNameToIndex;
         TVector<FAnimGraphClipCurveMap>         ClipCurveMaps;
