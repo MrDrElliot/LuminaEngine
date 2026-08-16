@@ -2679,8 +2679,12 @@ namespace Lumina
         DrawOutlinerWorldSelector();
 
         {
-            ImGui::Text(LE_ICON_FORMAT_LIST_NUMBERED " Total Entities: %s", eastl::to_string(CountOutlinerEntities()).c_str());
-            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 24 - ImGui::GetStyle().FramePadding.x);
+            ImGui::Text(LE_ICON_FORMAT_LIST_NUMBERED " Total Entities: %zu", CountOutlinerEntities());
+            const float RefreshButtonOffset = ImGui::GetContentRegionAvail().x - 24 - ImGui::GetStyle().FramePadding.x;
+            ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
+            ImGui::TextDisabled("(%zu)", (size_t)GetSceneRegistry().view<entt::entity>().size());
+            ImGui::SetItemTooltip("Entities listed below, parentheses include those hidden from the outliner.");
+            ImGui::SameLine(RefreshButtonOffset);
             if (ImGui::Button(LE_ICON_REFRESH))
             {
                 OutlinerListView.MarkTreeDirty();
