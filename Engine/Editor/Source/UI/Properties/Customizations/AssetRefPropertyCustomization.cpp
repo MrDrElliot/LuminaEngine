@@ -86,6 +86,10 @@ namespace Lumina
         if (ImGui::BeginCombo("##AssetRefPick", "", ImGuiComboFlags_HeightLarge | ImGuiComboFlags_PopupAlignLeft | ImGuiComboFlags_NoPreview))
         {
             SearchFilter.Draw("##Search", DropdownSize.x - 30.0f);
+            if (ImGui::IsWindowAppearing())
+            {
+                ImGui::SetKeyboardFocusHere(-1);
+            }
             ImGui::SetNextWindowSizeConstraints(ImVec2(200, 200), DropdownSize);
 
             if (ImGui::BeginChild("##OptList", DropdownSize, false, ImGuiChildFlags_NavFlattened))
