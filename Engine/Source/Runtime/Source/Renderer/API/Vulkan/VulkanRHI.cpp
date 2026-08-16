@@ -400,16 +400,13 @@ namespace Lumina::RHI
         };
     }
     
-    // A device fault reports an address and nothing else, so the only way that address ever resolves to
-    // something a human can act on is if the RHI remembers what lived there. Editor only: the name costs
-    // every allocation 64 bytes and the freed ring exists purely to survive its own allocation.
     static constexpr uint32 kMaxBlockNameLength = 64;
 
     struct FMemoryBlock
     {
         VkBuffer        Buffer;
         VmaAllocation   Allocation;
-        void*           Host;       // persistent mapping; null for GPU-only memory
+        void*           Host;
         GPUPtr          Device;
         uint64          Size;
         #if USING(WITH_EDITOR)
@@ -428,10 +425,7 @@ namespace Lumina::RHI
     };
 
     static constexpr uint32 kFreedBlockHistory = 4096;
-
-    // Textures go to VMA directly rather than through Malloc, so they are absent from MemoryBlocks and
-    // would otherwise be the unattributed majority of VRAM. Keyed by handle: streaming churns thousands
-    // of these, and a free has to stay O(1).
+    
     struct FTextureRecord
     {
         uint64          Size;
@@ -449,11 +443,7 @@ namespace Lumina::RHI
         EFormat Format;
         FTextureDesc Desc;
         bool bSwapchainImage = false;
-
-        // The bindless sampled slot whose descriptor currently names this image, or kInvalidHeapSlot.
-        // Maintained by PointSampledSlotAt/AtFallback so FreeH can answer "is anything still pointing at
-        // the image I am about to destroy?" in O(1) -- see the tripwire there. A slot index is a bare
-        // uint32 with no back-reference, so without this the answer is a full heap scan or a page fault.
+        
         uint32        BoundSampledSlot = kInvalidHeapSlot;
         FTextureHeapH BoundHeap        = {};
 
@@ -472,9 +462,9 @@ namespace Lumina::RHI
         TVector<VkSampler>   Samplers;
         TVector<VkImageView> ImageViews;
         TVector<VkImageView> RWImageViews;
+        
         // Debug introspection only.
         TVector<FTextureH>   SampledOwners;
-        // Written into every freed sampled slot so the descriptor never names a destroyed view.
         VkImageView          FallbackView = VK_NULL_HANDLE;
     };
     
@@ -844,25 +834,7 @@ namespace Lumina::RHI
         /// maxMeshWorkGroupCount[0] as reported, before the overflow clamp the caller applies.
         uint32  MaxMeshWorkGroupCount = 0;
     };
-
-    /// <summary>
-    /// Decides whether a physical device can run the renderer, and says why not when it cannot.
-    /// </summary>
-    /// <remarks>
-    /// Free of side effects so selection can ask this of every candidate before committing to one.
-    /// These requirements were once checked only after a device had already been chosen on the
-    /// strength of its type, which meant the highest-scoring GPU was the only one ever tested: a box
-    /// holding a discrete pre-Turing part alongside a mesh-capable integrated Arc would pick the
-    /// discrete one, fail the mesh check, and abort with a perfectly usable device sitting
-    /// unexamined beside it. Scoring only among devices that pass makes that fallback automatic.
-    ///
-    /// Callers are expected to have already filtered on API version. Doing it here too would fold
-    /// "too old for this engine" into the same list as "modern but missing a feature", and the first
-    /// of those deserves its own message about what the engine needs.
-    ///
-    /// bLog lets the winner report its mesh limits once. Running that for every rejected candidate
-    /// would bury the line describing the device actually in use.
-    /// </remarks>
+    
     static FDeviceSuitability EvaluateDeviceSuitability(VkPhysicalDevice Gpu, bool bHeadless, bool bLog)
     {
         FDeviceSuitability Result;

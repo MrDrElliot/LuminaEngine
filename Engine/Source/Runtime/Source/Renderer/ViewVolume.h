@@ -19,7 +19,7 @@ namespace Lumina
     {
     public:
 
-        static constexpr float DefaultFarPlane = 4000.0f;
+        static constexpr float DefaultFarPlane = 1000000.0f;
         static constexpr float DefaultNearPlane = 0.01f;
 
         FViewVolume(float fov = 90.0f, float aspect = 16.0f / 9.0f, float InNear = DefaultNearPlane, float InFar = DefaultFarPlane);
