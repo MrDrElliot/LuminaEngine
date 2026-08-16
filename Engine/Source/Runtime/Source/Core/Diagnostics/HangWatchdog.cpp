@@ -51,9 +51,6 @@ namespace Lumina::HangWatchdog
                 SymInitialize(GetCurrentProcess(), nullptr, TRUE);
             }
 
-            // Whoever called SymInitialize first froze the module list at startup, before any plugin or
-            // game DLL was mapped. The unwind here is RtlLookupFunctionEntry-based so it survives that,
-            // but the frames would symbolize as bare addresses without this.
             SymRefreshModuleList(GetCurrentProcess());
         }
 
