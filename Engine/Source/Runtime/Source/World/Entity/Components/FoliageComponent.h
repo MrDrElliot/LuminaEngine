@@ -12,6 +12,8 @@
 namespace Lumina
 {
     class CWorld;
+    class CCollisionShape;
+    class CPhysicsMaterial;
 
     // One painted foliage instance, in WORLD space. Rotation is a quaternion stored as (x, y, z, w) so it
     // survives reflection (FQuat is a ManualStub the reflector can't walk). Kept deliberately small; the GPU
@@ -96,6 +98,22 @@ namespace Lumina
         PROPERTY(Editable, Category = "Rendering")
         bool bReceiveShadow = true;
 
+        /** Build a static collision body for every instance of this type while the world simulates. */
+        PROPERTY(Editable, Category = "Collision")
+        bool bEnableCollision = false;
+
+        /** Authored collision used per instance; null falls back to collision built from the mesh. */
+        PROPERTY(Editable, Category = "Collision")
+        TObjectPtr<CCollisionShape> CollisionShape;
+
+        /** Mesh fallback only: true builds a convex hull, false a concave triangle mesh. */
+        PROPERTY(Editable, Category = "Collision")
+        bool bConvexCollision = true;
+
+        /** Physics material for this type's bodies; null uses the engine defaults. */
+        PROPERTY(Editable, Category = "Collision")
+        TObjectPtr<CPhysicsMaterial> PhysicsMaterial;
+
         // Transient resolve cache (not serialized); refreshed by ResolveDirtyMeshComponents.
         uint32          CachedMeshletHeaderSlot = 0;
         EInstanceFlags  CachedBaseFlags = EInstanceFlags::None;
@@ -141,6 +159,10 @@ namespace Lumina
         uint32 InstancesVersion = 1;            // bumped whenever Instances/Types change
         uint32 BakedVersion     = 0;            // version BakedInstances was built from
         bool   bBakeIncomplete  = false;        // a type's mesh wasn't ready; rebake next frame
+
+        // Transient physics bake, owned by SFoliageCollisionSystem. Never serialized.
+        uint32 CollisionGroupID     = 0;        // static body group handle, 0 = none
+        uint32 CollisionBakedVersion = 0;       // InstancesVersion the bodies were built from
 
         bool IsValidType(int32 Index) const { return Index >= 0 && Index < (int32)Types.size(); }
 

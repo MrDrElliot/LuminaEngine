@@ -292,61 +292,60 @@ namespace Lumina
                 ETaskPriority Priority;
                 TFn           Func;
 
-                Jobs::FCounter*         Counter   = nullptr;
+                Jobs::FCounter*         Counter = nullptr;
                 std::coroutine_handle<> Caller{};
-                void*                   ChunksRaw = nullptr;
-                uint32                  NumChunks = 0;
-
-                struct FChunk
-                {
-                    FAwaiter* Self;
-                    uint32    Start;
-                    uint32    End;
-                };
+                uint32                  Grain   = 1;
+                TAtomic<uint32>         Cursor{0};
 
                 bool await_ready() const noexcept { return Num == 0; }
 
                 void await_suspend(std::coroutine_handle<> InCaller)
                 {
-                    Caller    = InCaller;
-                    NumChunks = ::Lumina::Task::ComputeChunkCount(Num, MinRange);
-                    ChunksRaw = Memory::Malloc(sizeof(FChunk) * NumChunks, alignof(FChunk));
-                    Counter   = Jobs::AllocCounter(0);
+                    Caller  = InCaller;
+                    Grain   = ::Lumina::Task::ComputeCursorGrain(Num, MinRange);
+                    Counter = Jobs::AllocCounter(0);
                     Jobs::SetCounterCompletion(Counter, &FAwaiter::OnComplete, this);
 
-                    FChunk*        Chunks = static_cast<FChunk*>(ChunksRaw);
-                    Jobs::FJobDecl Decls[::Lumina::Task::kMaxChunks];
+                    // Cursor fan-out: at most one puller job per worker instead of one job per chunk.
+                    const uint32 Grabs = (Num + Grain - 1) / Grain;
+                    uint32 K = Grabs < Jobs::GetNumWorkers() ? Grabs : Jobs::GetNumWorkers();
+                    K = K < ::Lumina::Task::kMaxChunks ? K : ::Lumina::Task::kMaxChunks;
 
-                    const uint32 Base  = Num / NumChunks;
-                    const uint32 Rem   = Num % NumChunks;
-                    uint32       Start = 0;
-                    for (uint32 c = 0; c < NumChunks; ++c)
+                    Jobs::FJobDecl Decls[::Lumina::Task::kMaxChunks];
+                    for (uint32 c = 0; c < K; ++c)
                     {
-                        const uint32 Len = Base + (c < Rem ? 1u : 0u);
-                        Chunks[c] = FChunk{ this, Start, Start + Len };
-                        Decls[c]  = Jobs::FJobDecl{ &FAwaiter::RunChunk, &Chunks[c], "Coro::ParallelFor" };
-                        Start += Len;
+                        Decls[c] = Jobs::FJobDecl{ &FAwaiter::RunChunk, this, "Coro::ParallelFor" };
                     }
 
-                    Jobs::RunJobs(Decls, NumChunks, ToJobPriority(Priority), Counter);
+                    Jobs::RunJobs(Decls, K, ToJobPriority(Priority), Counter);
                 }
 
                 void await_resume() const noexcept {}
 
-                static void RunChunk(void* Arg, uint32 Worker)
+                static void RunChunk(void* Arg, uint32 /*Worker*/)
                 {
-                    FChunk*   C    = static_cast<FChunk*>(Arg);
-                    FAwaiter* Self = C->Self;
-                    if constexpr (eastl::is_invocable_v<TFn, const ::Lumina::Task::FParallelRange&>)
+                    FAwaiter* Self = static_cast<FAwaiter*>(Arg);
+                    for (;;)
                     {
-                        Self->Func(::Lumina::Task::FParallelRange{ C->Start, C->End, Worker });
-                    }
-                    else
-                    {
-                        for (uint32 i = C->Start; i < C->End; ++i)
+                        const uint32 Start = Self->Cursor.fetch_add(Self->Grain, std::memory_order_relaxed);
+                        if (Start >= Self->Num)
                         {
-                            if constexpr (eastl::is_invocable_v<TFn, uint32, uint32>) { Self->Func(i, Worker); }
-                            else                                                      { Self->Func(i); }
+                            return;
+                        }
+                        const uint32 End = Self->Num - Start < Self->Grain ? Self->Num : Start + Self->Grain;
+                        // Re-read the slot per range: the body may wait, and a resumed fiber can migrate.
+                        const uint32 Worker = Jobs::GetWorkerIndex();
+                        if constexpr (eastl::is_invocable_v<TFn, const ::Lumina::Task::FParallelRange&>)
+                        {
+                            Self->Func(::Lumina::Task::FParallelRange{ Start, End, Worker });
+                        }
+                        else
+                        {
+                            for (uint32 i = Start; i < End; ++i)
+                            {
+                                if constexpr (eastl::is_invocable_v<TFn, uint32, uint32>) { Self->Func(i, Worker); }
+                                else                                                      { Self->Func(i); }
+                            }
                         }
                     }
                 }
@@ -356,7 +355,6 @@ namespace Lumina
                     FAwaiter*               Self = static_cast<FAwaiter*>(Ctx);
                     std::coroutine_handle<> C    = Self->Caller;
                     Jobs::FreeCounter(Self->Counter);
-                    Memory::Free(Self->ChunksRaw);
                     C.resume();
                 }
             };

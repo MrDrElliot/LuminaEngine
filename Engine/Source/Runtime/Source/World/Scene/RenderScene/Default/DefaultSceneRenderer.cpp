@@ -2328,9 +2328,9 @@ namespace Lumina
 
                     FTaskGraph::FNodeHandle CullNode = Graph.AddParallelFor(NumPrimitives, GPrimitiveGrain, [&](const Task::FParallelRange& Range)
                     {
-                        LUMINA_PROFILE_SECTION("Cull And Emit Primitives");
+                        LUMINA_PROFILE_SECTION("Cull And Emit Skinned Primitives");
                         FThreadLocalDrawData& Local = AcquireThreadLocalDrawData(Range.Thread);
-                        CullAndEmitPrimitives(Range, Local);
+                        CullAndEmitSkinnedPrimitives(Range, Local);
                     }, ETaskPriority::High); // critical path: MergeNode waits on this, so it runs ahead of emitters
 
                     Graph.AddDependency(MergeNode, CullNode);
@@ -2338,12 +2338,6 @@ namespace Lumina
             }
 
             Graph.Dispatch();
-
-            // Dispatch blocks until the graph drains, so the per-thread rows are complete and we are back on
-            // the game thread -- which is where the streamer may walk CMaterial::ResolvedTextures.
-            // Dispatch above already drained the graph, so we are back on the game thread -- which is
-            // where the streamer may touch CObjects.
-            PublishStreamingFeedback();
 
             EmitTaskGraph.Reset();
             FTaskGraph& EmitGraph = EmitTaskGraph;
@@ -2412,7 +2406,7 @@ namespace Lumina
                     Inst.Pad0         = 0u;
                     Inst.Pad1         = 0u;
                 });
-            }, ETaskPriority::High);
+            }, ETaskPriority::Medium); // emitter, not on the mesh critical path
 
             EmitGraph.Add([&]
             {
@@ -2624,7 +2618,7 @@ namespace Lumina
                     });
                 }
                 #endif
-            }, ETaskPriority::High);
+            }, ETaskPriority::Medium);
 
             #if USING(WITH_EDITOR)
             EmitGraph.Add([&]
@@ -2646,7 +2640,7 @@ namespace Lumina
                     }
                     Bits[Word] |= (1u << (Index & 31u));
                 });
-            }, ETaskPriority::High);
+            }, ETaskPriority::Medium);
             #endif
 
             auto DLightTask = EmitGraph.AddParallelFor(DirectionalView.handle()->size(), 32, [&](Task::FParallelRange Range)
@@ -2719,7 +2713,7 @@ namespace Lumina
                     Item.WorldMatrix = TransformStorage.get(Entity).GetWorldMatrix();
                     PrepareTerrainExtract(Terrain, Item.WorldMatrix, Item);
                 }
-            }, ETaskPriority::High);
+            }, ETaskPriority::Medium);
 
             EmitGraph.Add([&]
             {
@@ -2802,7 +2796,7 @@ namespace Lumina
                         }
                     }
                 });
-            }, ETaskPriority::High);
+            }, ETaskPriority::Medium);
 
             EmitGraph.Add([&]
             {
@@ -2886,7 +2880,7 @@ namespace Lumina
                         PrevOwner                  = Owner;
                     }
                 }
-            }, ETaskPriority::High);
+            }, ETaskPriority::Medium);
 
             EmitGraph.Add([&]
             {
@@ -2968,14 +2962,14 @@ namespace Lumina
                         Frame.Water.Underwater.DeepColor            = FVector4(Water.DeepColor, 0.0f);
                     }
                 });
-            }, ETaskPriority::High);
+            }, ETaskPriority::Medium);
 
             EmitGraph.Add([&]
             {
                 LUMINA_PROFILE_SECTION("Extract Paint Ops");
                 Frame.Extracts.PaintOps.clear();
                 World->DrainRenderTargetPaints(Frame.Extracts.PaintOps);
-            }, ETaskPriority::High);
+            }, ETaskPriority::Medium);
 
             EmitGraph.AddDependency(PointLightTask, DLightTask);
             EmitGraph.AddDependency(SpotLightTask, DLightTask);
@@ -3040,6 +3034,9 @@ namespace Lumina
                 Graph.Wait();
                 EmitGraph.Wait();
             }
+
+            // After the waits: the streamer walks CMaterial state on the game thread with no gather in flight.
+            PublishStreamingFeedback();
 
             // LightCount can overshoot MAX_LIGHTS; clamp to match what Process*Light wrote.
             LightData.NumLights = Math::Min(LightCount.load(std::memory_order_acquire), (uint32)MAX_LIGHTS);
@@ -3875,7 +3872,7 @@ namespace Lumina
         }
     }
 
-    void FDefaultSceneRenderer::CullAndEmitPrimitives(const Task::FParallelRange& Range, FThreadLocalDrawData& Local)
+    void FDefaultSceneRenderer::CullAndEmitSkinnedPrimitives(const Task::FParallelRange& Range, FThreadLocalDrawData& Local)
     {
         const FFrameData&        Frame           = *ExtractFrame;
         const FSceneCullContext& SceneCull       = Frame.Geometry.SceneCullContext;

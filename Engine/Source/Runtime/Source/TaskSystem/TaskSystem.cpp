@@ -1,6 +1,7 @@
 ﻿#include "RuntimePCH.h"
 #include "TaskSystem.h"
 
+#include "Core/Threading/Atomic.h"
 #include "Core/Threading/Thread.h"
 #include "Log/Log.h"
 #include "Memory/Memory.h"
@@ -40,19 +41,36 @@ namespace Lumina
 
         using FRawThunk = void (*)(void* Ctx, uint32 Start, uint32 End, uint32 Thread);
 
-        struct FParChunk
+        // W worker jobs pulling ranges off one atomic cursor: 4x less queue/counter/fiber traffic than W*4 pre-split chunk jobs, at identical balance.
+        struct FCursorFor
         {
-            FRawThunk Thunk;
-            void*     Ctx;
-            uint32    Start;
-            uint32    End;
+            FRawThunk Thunk = nullptr;
+            void*     Ctx   = nullptr;
+            uint32    Num   = 0;
+            uint32    Grain = 1;
+            alignas(64) TAtomic<uint32> Cursor{0};
         };
 
-        void RunParChunk(void* Arg, uint32 Worker)
+        void RunCursorRanges(FCursorFor& C)
         {
-            FParChunk* C = static_cast<FParChunk*>(Arg);
-            C->Thunk(C->Ctx, C->Start, C->End, Worker);
+            for (;;)
+            {
+                const uint32 Start = C.Cursor.fetch_add(C.Grain, std::memory_order_relaxed);
+                if (Start >= C.Num)
+                {
+                    return;
+                }
+                const uint32 End = C.Num - Start < C.Grain ? C.Num : Start + C.Grain;
+                // Re-read the slot per range: the thunk may wait inside, and a resumed fiber can migrate.
+                C.Thunk(C.Ctx, Start, End, Jobs::GetWorkerIndex());
+            }
         }
+
+        void RunCursorJob(void* Arg, uint32 /*Worker*/)
+        {
+            RunCursorRanges(*static_cast<FCursorFor*>(Arg));
+        }
+
 
         // Fire-and-forget task backing Task::AsyncTask. Owns the user function + chunk storage and
         // self-destructs once its counter drains.
@@ -151,30 +169,35 @@ namespace Lumina
 
     void FTaskSystem::ParallelForImpl(uint32 Num, uint32 MinRange, ETaskPriority Priority, FParallelThunk Thunk, void* Ctx)
     {
-        const uint32 NumChunks = Task::ComputeChunkCount(Num, MinRange);
+        const uint32 Grain = Task::ComputeCursorGrain(Num, MinRange);
 
-        if (NumChunks == 1)
+        if (Num <= Grain)
         {
             Thunk(Ctx, 0, Num, Jobs::GetWorkerIndex());
             return;
         }
 
-        FParChunk      Chunks[kMaxChunks];
-        Jobs::FJobDecl Decls[kMaxChunks];
+        FCursorFor C;
+        C.Thunk = Thunk;
+        C.Ctx   = Ctx;
+        C.Num   = Num;
+        C.Grain = Grain;
 
-        const uint32 Base = Num / NumChunks;
-        const uint32 Rem  = Num % NumChunks;
-        uint32 Start = 0;
-        for (uint32 c = 0; c < NumChunks; ++c)
+        // One job per worker at most, minus the grab the participating caller takes itself.
+        const uint32 Grabs = (Num + Grain - 1) / Grain;
+        uint32 K = Grabs - 1;
+        K = std::min({ K, Jobs::GetNumWorkers(), Task::kMaxChunks });
+
+        Jobs::FJobDecl Decls[kMaxChunks];
+        for (uint32 i = 0; i < K; ++i)
         {
-            const uint32 Len = Base + (c < Rem ? 1u : 0u);
-            Chunks[c] = FParChunk{ Thunk, Ctx, Start, Start + Len };
-            Decls[c]  = Jobs::FJobDecl{ &RunParChunk, &Chunks[c], "Task::ParallelFor" };
-            Start += Len;
+            Decls[i] = Jobs::FJobDecl{ &RunCursorJob, &C, "Task::ParallelFor" };
         }
 
         Jobs::FCounter* Counter = Jobs::AllocCounter(0);
-        Jobs::RunJobs(Decls, NumChunks, ToJobPriority(Priority), Counter);
+        Jobs::RunJobs(Decls, K, ToJobPriority(Priority), Counter);
+        // The caller works the cursor too instead of parking for the whole fan-out.
+        RunCursorRanges(C);
         Jobs::WaitForCounter(Counter, 0);
         Jobs::FreeCounter(Counter);
     }

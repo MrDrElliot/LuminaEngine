@@ -11,6 +11,9 @@
 namespace Lumina
 {
     class CPhysicsAsset;
+    class CMesh;
+    class CCollisionShape;
+    class CPhysicsMaterial;
     struct FSkeletonResource;
     struct FJoltRagdollHandle;
 }
@@ -59,6 +62,18 @@ namespace Lumina::Physics
         float                   MotorForceLimit  = 0.0f;             // Slider motor max force (N), 0 = unlimited.
         float                   MotorTorqueLimit = 0.0f;             // Hinge motor max torque (N m), 0 = unlimited.
         float                   BreakForce  = 0.0f;                  // Disable the joint when applied force exceeds this (N). 0 = unbreakable.
+    };
+
+    // One static collision instance with no entity of its own (foliage). World space; Shape wins over Mesh.
+    struct FStaticInstanceDesc
+    {
+        FVector3                Position = FVector3(0.0f);
+        FQuat                   Rotation = FQuat::Identity();
+        FVector3                Scale = FVector3(1.0f);
+        const CMesh*            Mesh = nullptr;
+        const CCollisionShape*  Shape = nullptr;
+        const CPhysicsMaterial* Material = nullptr;
+        bool                    bConvex = true;
     };
 
     class IPhysicsScene
@@ -144,6 +159,10 @@ namespace Lumina::Physics
         // what commits). BodyIDs are valid only after the outermost EndBodyBatch.
         virtual void BeginBodyBatch() = 0;
         virtual void EndBodyBatch() = 0;
+
+        // Batched static bodies for instanced geometry (foliage); hits report Owner. 0 = nothing built.
+        virtual uint32 CreateStaticBodyGroup(entt::entity Owner, TSpan<const FStaticInstanceDesc> Instances) { return 0; }
+        virtual void DestroyStaticBodyGroup(uint32 GroupID) {}
 
         // Build a ragdoll's bodies + constraints and add them to the scene. Returns an opaque handle the
         // caller stores; null on failure. Must be called outside the physics step (PrePhysics is fine).

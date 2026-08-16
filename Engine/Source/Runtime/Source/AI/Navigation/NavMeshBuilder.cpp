@@ -421,7 +421,7 @@ namespace Lumina::NavMeshBuilder
             Handle.Output.Tiles[Index].Y = TY;
 #endif
             Handle.TilesCompleted.fetch_add(1, std::memory_order_release);
-        });
+        }, 1, ETaskPriority::Background);
 
         const uint32 Failed = FailCount.load(std::memory_order_relaxed);
         if (Failed > 0)
@@ -440,7 +440,7 @@ namespace Lumina::NavMeshBuilder
         Task::AsyncTask(1, 1, [Raw, In = std::move(Input)](uint32, uint32, uint32) mutable
         {
             RunBake(In, *Raw);
-        });
+        }, ETaskPriority::Background);
 
         return Handle;
     }

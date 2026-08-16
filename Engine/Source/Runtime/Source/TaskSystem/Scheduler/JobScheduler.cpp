@@ -159,6 +159,7 @@ namespace Lumina::Jobs
             FPendingSwitch Pending;
             uint32         StealCursor    = 0;       // rotating victim offset for work-stealing
             bool           bOwnsExternalSlot = false; // this thread holds an external slot to give back
+            bool           bInlineRecovery   = false; // running a job on the scheduler fiber (pool wedged)
 
             FWorkFiber*    CachedFiber    = nullptr;
 
@@ -181,6 +182,8 @@ namespace Lumina::Jobs
             TAtomic<uint32>            WakeSignal{0}; // bumped (with notify) to wake this worker from its wait
 
             TAtomic<uint8>             HasCachedFiber{0};
+            // Nonempty-band hint, one bit per priority, set before enqueue so a failed victim probe is one load.
+            TAtomic<uint8>             BandMask{0};
 
             FWorkerLocal()
             {
@@ -249,8 +252,10 @@ namespace Lumina::Jobs
 #if USING(WITH_EDITOR)
             // Per-worker OS-core occupancy for the editor's CPU view: which logical core a worker last
             // dispatched a job on, and whether it is running one right now. Sampled at fiber dispatch.
-            struct FWorkerCoreSample { TAtomic<uint32> Core{0}; TAtomic<uint8> Busy{0}; };
+            struct FWorkerCoreSample { TAtomic<uint32> Core{0}; TAtomic<uint32> Gen{0}; TAtomic<uint8> Busy{0}; };
             FWorkerCoreSample* WorkerCores = nullptr; // [NumWorkers]
+            // Bumped per SnapshotWorkerCores call so workers sample their core once per snapshot, not per job.
+            alignas(64) TAtomic<uint32> CoreSampleGen{0};
 #endif
         };
 
@@ -416,6 +421,7 @@ namespace Lumina::Jobs
                     continue;
                 }
                 const uint32 Wk = (Start + i) % W;
+                G->Workers[Wk].BandMask.fetch_or(static_cast<uint8>(1u << Prio), std::memory_order_relaxed);
                 G->Workers[Wk].Queues[Prio].enqueue_bulk(Jobs + Idx, N);
                 Idx += N;
                 ++Recipients;
@@ -432,6 +438,30 @@ namespace Lumina::Jobs
             {
                 G->AvailAssistJobs.fetch_sub(1, std::memory_order_relaxed);
             }
+        }
+
+        // Probe one victim's bands up to MaxPrio, set bits only, most-urgent first.
+        FORCEINLINE bool TryStealFromWorker(FQueuedJob& Out, uint32 V, uint32 MaxPrio)
+        {
+            const uint8 Filter = static_cast<uint8>((1u << (MaxPrio + 1u)) - 1u);
+            uint8 Mask = G->Workers[V].BandMask.load(std::memory_order_relaxed) & Filter;
+            while (Mask != 0)
+            {
+                const uint32 P = (uint32)Math::CountTrailingZeros64(Mask);
+                Mask &= static_cast<uint8>(Mask - 1);
+                if (G->Workers[V].Queues[P].try_dequeue(Out))
+                {
+                    NoteJobDequeued(P);
+                    return true;
+                }
+                // Empty despite the bit: clear it, then re-set if an enqueue raced the clear.
+                G->Workers[V].BandMask.fetch_and(static_cast<uint8>(~(1u << P)), std::memory_order_relaxed);
+                if (G->Workers[V].Queues[P].size_approx() != 0)
+                {
+                    G->Workers[V].BandMask.fetch_or(static_cast<uint8>(1u << P), std::memory_order_relaxed);
+                }
+            }
+            return false;
         }
 
         // Worker fast path: drain own queues (priority order) first, then steal from other workers,
@@ -460,14 +490,10 @@ namespace Lumina::Jobs
             for (uint32 i = 1; i < W; ++i)
             {
                 const uint32 V = (Slot + Cursor + i) % W;
-                for (uint32 P = 0; P < kNumJobPriorities; ++P)
+                if (TryStealFromWorker(Out, V, kNumJobPriorities - 1))
                 {
-                    if (G->Workers[V].Queues[P].try_dequeue(Out))
-                    {
-                        TLS.StealCursor = Cursor + i;
-                        NoteJobDequeued(P);
-                        return true;
-                    }
+                    TLS.StealCursor = Cursor + i;
+                    return true;
                 }
             }
             return false;
@@ -475,11 +501,13 @@ namespace Lumina::Jobs
 
         // Stops at kMaxAssistPriority: this steal is untargeted, so an assisting thread would otherwise adopt
         // an unrelated multi-hundred-ms build into the middle of a frame wait. That is why Background exists.
-        bool TryStealAny(FQueuedJob& Out)
+        bool TryStealAny(FQueuedJob& Out, uint32 MaxPrio = kMaxAssistPriority)
         {
-            // The ASSIST count, not AvailJobs: queued Background work is not stealable here, so counting it would
-            // defeat the fast-fail exactly when it matters most. Safe -- the count is bumped before any enqueue.
-            if (G->AvailAssistJobs.load(std::memory_order_relaxed) <= 0)
+            // Gate on the assist count when Background is excluded; both counts are bumped before any enqueue.
+            const int64 Avail = MaxPrio > kMaxAssistPriority
+                ? G->AvailJobs.load(std::memory_order_relaxed)
+                : G->AvailAssistJobs.load(std::memory_order_relaxed);
+            if (Avail <= 0)
             {
                 return false;
             }
@@ -489,17 +517,19 @@ namespace Lumina::Jobs
             for (uint32 i = 0; i < W; ++i)
             {
                 const uint32 V = (Cursor + i) % W;
-                for (uint32 P = 0; P <= kMaxAssistPriority; ++P)
+                if (TryStealFromWorker(Out, V, MaxPrio))
                 {
-                    if (G->Workers[V].Queues[P].try_dequeue(Out))
-                    {
-                        TLS.StealCursor = Cursor + i + 1;
-                        NoteJobDequeued(P);
-                        return true;
-                    }
+                    TLS.StealCursor = Cursor + i + 1;
+                    return true;
                 }
             }
             return false;
+        }
+
+        // A worker thread in wedge recovery may take Background; main/render assist loops never do.
+        FORCEINLINE uint32 AssistMaxPriority()
+        {
+            return TLS.bInlineRecovery ? (uint32)EJobPriority::Background : kMaxAssistPriority;
         }
 
         void PushReady(FWorkFiber* Fiber)
@@ -617,8 +647,9 @@ namespace Lumina::Jobs
 
             Counter->Releasers.fetch_add(1, std::memory_order_acquire);
             const int32 NewValue = Counter->Value.fetch_sub(1, std::memory_order_seq_cst) - 1;
-            G->InFlight.fetch_sub(1, std::memory_order_acq_rel);
             ReleaseCounter(Counter, NewValue, WorkerIndex);
+            // After the release, so WaitForAll cannot return while this job's completion is still running.
+            G->InFlight.fetch_sub(1, std::memory_order_acq_rel);
         }
 
 #if USING(WITH_EDITOR)
@@ -631,7 +662,14 @@ namespace Lumina::Jobs
             }
             if (Busy)
             {
-                G->WorkerCores[Worker].Core.store(Platform::GetCurrentCoreNumber(), std::memory_order_relaxed);
+                // Gen 0 means nothing has ever snapshotted; skip the core query on every dispatch then.
+                const uint32 Gen = G->CoreSampleGen.load(std::memory_order_relaxed);
+                FScheduler::FWorkerCoreSample& Sample = G->WorkerCores[Worker];
+                if (Gen != 0 && Sample.Gen.load(std::memory_order_relaxed) != Gen)
+                {
+                    Sample.Core.store(Platform::GetCurrentCoreNumber(), std::memory_order_relaxed);
+                    Sample.Gen.store(Gen, std::memory_order_relaxed);
+                }
             }
             G->WorkerCores[Worker].Busy.store(Busy ? 1u : 0u, std::memory_order_relaxed);
         }
@@ -868,6 +906,85 @@ namespace Lumina::Jobs
                 std::memory_order_acq_rel, std::memory_order_relaxed);
         }
 
+        // Wedge recovery: run a queued job on the scheduler fiber posing as external, so any wait inside it assist-spins instead of parking a fiber that does not exist.
+        bool RunOneJobInline(uint32 Slot)
+        {
+            FQueuedJob Job;
+            if (!TryGetJobWorker(Job, Slot))
+            {
+                return false;
+            }
+
+            FWorkFiber* SavedFiber = TLS.CurrentFiber;
+            const char* SavedGuard = GNoParkGuardName;
+            TLS.bIsWorker       = false;
+            TLS.bInlineRecovery = true;
+            TLS.CurrentFiber    = nullptr;
+            GNoParkGuardName    = nullptr;
+
+            Job.Function(Job.Argument, Slot);
+            OnJobComplete(Job.Counter, Slot);
+
+            GNoParkGuardName    = SavedGuard;
+            TLS.CurrentFiber    = SavedFiber;
+            TLS.bInlineRecovery = false;
+            TLS.bIsWorker       = true;
+            return true;
+        }
+
+#if USING(WITH_EDITOR)
+        // Names the wedge: tallies parked fibers by job label so the log says WHAT filled the pool.
+        void ReportWedgeCulprits()
+        {
+            struct FTally { const char* Name = nullptr; uint32 Count = 0; };
+            constexpr uint32 kMaxTallies = 12;
+            FTally Tallies[kMaxTallies];
+            uint32 NumTallies = 0;
+            uint32 Untallied  = 0;
+
+            const uint32 Created = G->FibersCreated.load(std::memory_order_acquire);
+            for (uint32 i = 0; i < Created; ++i)
+            {
+                FWorkFiber& F = G->WorkFibers[i];
+                if (F.State.load(std::memory_order_relaxed) != static_cast<uint8>(EFiberState::Parked))
+                {
+                    continue;
+                }
+                const char* Name = F.Job.Name ? F.Job.Name : "<unnamed>";
+                bool bFound = false;
+                for (uint32 t = 0; t < NumTallies; ++t)
+                {
+                    if (Tallies[t].Name == Name)
+                    {
+                        ++Tallies[t].Count;
+                        bFound = true;
+                        break;
+                    }
+                }
+                if (!bFound)
+                {
+                    if (NumTallies < kMaxTallies)
+                    {
+                        Tallies[NumTallies++] = FTally{ Name, 1 };
+                    }
+                    else
+                    {
+                        ++Untallied;
+                    }
+                }
+            }
+
+            for (uint32 t = 0; t < NumTallies; ++t)
+            {
+                LOG_ERROR("  wedge: {} parked fiber(s) running '{}'", Tallies[t].Count, Tallies[t].Name);
+            }
+            if (Untallied > 0)
+            {
+                LOG_ERROR("  wedge: {} parked fiber(s) across further distinct job names", Untallied);
+            }
+        }
+#endif
+
         void WaitForWork()
         {
             for (int Spin = 0; Spin < kHotPauseSpins; ++Spin)
@@ -966,9 +1083,18 @@ namespace Lumina::Jobs
                         if (ShouldReportWedge())
                         {
                             LOG_ERROR("Job system: fiber pool wedged at the {} fiber ceiling with jobs still queued. "
-                                      "Every fiber is blocked on work that cannot start. Raise FConfig::MaxWorkFibers, "
-                                      "or stop blocking inside jobs that are themselves spawned in bulk.",
+                                      "Every fiber is blocked on work that cannot start; running queued jobs inline "
+                                      "to recover. Raise FConfig::MaxWorkFibers, or stop blocking inside jobs that "
+                                      "are themselves spawned in bulk.",
                                       G->MaxWorkFibers);
+#if USING(WITH_EDITOR)
+                            ReportWedgeCulprits();
+#endif
+                        }
+                        if (RunOneJobInline(Slot))
+                        {
+                            StarveSpins = kStarveSpinBudget; // stay armed, skip the pause ramp between jobs
+                            continue;
                         }
                         // Get off the core. Whatever is still running needs it far more, and every idle worker spinning flat
                         // out is how a stall that would have cleared becomes the permanent one this branch reports.
@@ -1418,18 +1544,18 @@ namespace Lumina::Jobs
 
         const int Prio = static_cast<int>(Priority);
 
-        G->AvailJobs.fetch_add(static_cast<int64>(Count), std::memory_order_relaxed);
-        if ((uint32)Prio <= kMaxAssistPriority)
-        {
-            G->AvailAssistJobs.fetch_add(static_cast<int64>(Count), std::memory_order_relaxed);
-        }
-        
         constexpr uint32 kBatch = 256;
         FQueuedJob Batch[kBatch];
         FSubmitSpan Span;
         for (uint32 Base = 0; Base < Count; Base += kBatch)
         {
             const uint32 N = (Count - Base) < kBatch ? (Count - Base) : kBatch;
+            // Per batch, not per submit: identical cost for ordinary submits, smaller stale-hint window for huge ones.
+            G->AvailJobs.fetch_add(static_cast<int64>(N), std::memory_order_relaxed);
+            if ((uint32)Prio <= kMaxAssistPriority)
+            {
+                G->AvailAssistJobs.fetch_add(static_cast<int64>(N), std::memory_order_relaxed);
+            }
             for (uint32 i = 0; i < N; ++i)
             {
                 Batch[i].Function = Jobs[Base + i].Function;
@@ -1527,7 +1653,7 @@ namespace Lumina::Jobs
         while (Counter->Value.load(std::memory_order_acquire) > Value)
         {
             FQueuedJob Job;
-            if (TryStealAny(Job))
+            if (TryStealAny(Job, AssistMaxPriority()))
             {
                 Job.Function(Job.Argument, Slot);
                 OnJobComplete(Job.Counter, Slot);
@@ -1560,10 +1686,15 @@ namespace Lumina::Jobs
         const auto Start = std::chrono::steady_clock::now();
         auto NextReport  = Start + std::chrono::seconds(5);
 
+        // This is a quiescence barrier, not a latency-sensitive frame wait, so it drains EVERY band:
+        const uint32 Slot = GetWorkerIndex();
         while (G->InFlight.load(std::memory_order_acquire) > 0)
         {
-            if (AssistOneJob())
+            FQueuedJob Job;
+            if (TryStealAny(Job, (uint32)EJobPriority::Background))
             {
+                Job.Function(Job.Argument, Slot);
+                OnJobComplete(Job.Counter, Slot);
                 continue;
             }
             Threading::ThreadYield();
@@ -1647,7 +1778,7 @@ namespace Lumina::Jobs
         }
         const uint32 Slot = GetWorkerIndex();
         FQueuedJob Job;
-        if (TryStealAny(Job))
+        if (TryStealAny(Job, AssistMaxPriority()))
         {
             Job.Function(Job.Argument, Slot);
             OnJobComplete(Job.Counter, Slot);
@@ -1754,6 +1885,7 @@ namespace Lumina::Jobs
         {
             return;
         }
+        G->CoreSampleGen.fetch_add(1, std::memory_order_relaxed);
         Out.reserve(G->NumWorkers);
         for (uint32 i = 0; i < G->NumWorkers; ++i)
         {

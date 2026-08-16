@@ -185,7 +185,7 @@ namespace Lumina
             {
                 OnInitialDiscoveryCompleted();
             }
-        });
+        }, ETaskPriority::Background);
     }
 
     void FAssetRegistry::OnInitialDiscoveryCompleted()

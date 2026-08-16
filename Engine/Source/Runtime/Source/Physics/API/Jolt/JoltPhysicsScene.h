@@ -230,6 +230,9 @@ namespace Lumina::Physics
     	void BeginBodyBatch() override;
     	void EndBodyBatch() override;
 
+    	uint32 CreateStaticBodyGroup(entt::entity Owner, TSpan<const FStaticInstanceDesc> Instances) override;
+    	void DestroyStaticBodyGroup(uint32 GroupID) override;
+
     	TSharedPtr<FJoltRagdollHandle> CreateRagdoll(const FRagdollDesc& Desc) override;
     	void ReadRagdollPose(const FJoltRagdollHandle& Handle, const FMatrix4& WorldToEntity, const FSkeletonResource* Skeleton, TVector<FMatrix4>& OutBoneTransforms) override;
     	void DestroyRagdoll(const TSharedPtr<FJoltRagdollHandle>& Handle) override;
@@ -457,6 +460,11 @@ namespace Lumina::Physics
 
     	// Monotonic source for per-ragdoll self-collision group ids.
     	uint32										NextRagdollGroupID = 1;
+
+    	// Entity-less static body groups (foliage), keyed by the handle CreateStaticBodyGroup returns.
+    	THashMap<uint32, TVector<JPH::BodyID>>		StaticBodyGroups;
+    	uint32										NextStaticBodyGroupID = 1;
+    	void DestroyAllStaticBodyGroups();
 
     	// Active joints, keyed by the opaque handle CreateConstraint hands back. Guarded because the
     	// breakable monitor reads/disables them on the physics step while Create/Destroy mutate the map on

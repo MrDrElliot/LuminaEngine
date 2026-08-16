@@ -29,6 +29,20 @@ namespace Lumina
         RUNTIME_API uint32 ComputeChunkCount(uint32 Num, uint32 MinRange);
 
         inline constexpr uint32 kMaxChunks = 256;
+
+        // Cursor-grab size for shared-cursor fan-outs: never finer than the pre-split balance floor.
+        inline uint32 ComputeCursorGrain(uint32 Num, uint32 MinRange)
+        {
+            uint32 MaxChunks = Jobs::GetNumWorkers() * 4u;
+            if (MaxChunks == 0)
+            {
+                MaxChunks = 1;
+            }
+            MaxChunks = MaxChunks < kMaxChunks ? MaxChunks : kMaxChunks;
+            const uint32 Balanced = (Num + MaxChunks - 1) / MaxChunks;
+            const uint32 Grain    = MinRange == 0 ? 1u : MinRange;
+            return Grain < Balanced ? Balanced : Grain;
+        }
     }
 
     class FTaskSystem

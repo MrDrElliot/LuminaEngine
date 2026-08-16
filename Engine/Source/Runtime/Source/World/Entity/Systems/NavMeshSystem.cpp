@@ -1020,7 +1020,7 @@ namespace Lumina
                     Mesh->Initialize(InitOrigin, InitTileSize, InitMaxTiles, InitMaxPolys, std::move(Tiles));
                     Job->ResultMesh = std::move(Mesh);
                     Job->bDone.store(true, std::memory_order_release);
-                });
+                }, ETaskPriority::Background);
 
                 RebuildEntityAABBCache(Context, BakeMin, BakeMax, Comp.Runtime.EntityAABBs);
                 Comp.Runtime.DirtyTiles.clear();
@@ -1202,8 +1202,8 @@ namespace Lumina
                         Jobs[i]->ResultBlob = std::move(Out.Blob);
                     }
                     Jobs[i]->bDone.store(true, std::memory_order_release);
-                });
-            });
+                }, 1, ETaskPriority::Background);
+            }, ETaskPriority::Background);
 
             (void)Entity;
         }

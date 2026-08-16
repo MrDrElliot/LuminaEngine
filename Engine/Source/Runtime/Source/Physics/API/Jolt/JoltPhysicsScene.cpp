@@ -730,6 +730,7 @@ namespace Lumina::Physics
     {
         // Remove joints before JoltSystem is torn down (constraints reference live bodies/the manager).
         DestroyAllConstraints();
+        DestroyAllStaticBodyGroups();
 
         FEntityRegistry& Registry = ECS::GetWorldRegistry(*World);
 
@@ -871,8 +872,8 @@ namespace Lumina::Physics
                     }
                 }
             }
-            
-        });
+
+        }, 64);
 
         // Consume the requests. A blanket clear used to drop the ones this pass could not apply: an entity
         // whose body does not exist yet (creation deferred behind a still-loading collider asset) was skipped
@@ -1119,8 +1120,10 @@ namespace Lumina::Physics
         auto View = Registry.view<SRigidBodyComponent>();
         View.each([&] (entt::entity EntityID, SRigidBodyComponent&)
         {
-            OnRigidBodyComponentDestroyed(Registry, EntityID); 
+            OnRigidBodyComponentDestroyed(Registry, EntityID);
         });
+
+        DestroyAllStaticBodyGroups();
     }
 
     void FJoltPhysicsScene::ActivateBody(uint32 BodyID)
@@ -1176,7 +1179,7 @@ namespace Lumina::Physics
 
             BodyComponent.LastBodyPosition = JoltUtils::FromJPHVec3(Body->GetPosition());
             BodyComponent.LastBodyRotation = JoltUtils::FromJPHQuat(Body->GetRotation());
-        });
+        }, 64);
 
         auto CharView = Registry.view<SCharacterPhysicsComponent>();
         CharView.each([&](SCharacterPhysicsComponent& CharComponent)
@@ -1311,7 +1314,7 @@ namespace Lumina::Physics
 
             StoreState(i, BodyComponent.LastBodyPosition, JoltUtils::FromJPHVec3(CurrPos),
                           BodyComponent.LastBodyRotation, JoltUtils::FromJPHQuat(Body->GetRotation()));
-        });
+        }, 64);
 
         // Characters are few -- gather them serially into the tail of the batch.
         uint32 ci = RigidCount;
@@ -4521,6 +4524,140 @@ namespace Lumina::Physics
         }
 
         return MakeScaledShape(Base, Scale, Mesh->GetName().ToString());
+    }
+
+    uint32 FJoltPhysicsScene::CreateStaticBodyGroup(entt::entity Owner, TSpan<const FStaticInstanceDesc> Instances)
+    {
+        LUMINA_PROFILE_SCOPE();
+
+        if (Instances.empty() || JoltSystem == nullptr)
+        {
+            return 0;
+        }
+
+        FCollisionProfile Profile;
+        Profile.Layer = ECollisionProfiles::Static;
+        const JPH::ObjectLayer Layer = JoltUtils::PackToObjectLayer(Profile);
+
+        JPH::BodyInterface& BodyInterface = JoltSystem->GetBodyInterface();
+
+        // One unit-scale base shape per source; instances share it through ScaledShape wrappers.
+        THashMap<const void*, JPH::ShapeRefC> BaseShapes;
+
+        TVector<JPH::BodyID> BodyIDs;
+        BodyIDs.reserve(Instances.size());
+
+        for (const FStaticInstanceDesc& Desc : Instances)
+        {
+            const void* SourceKey = Desc.Shape != nullptr ? (const void*)Desc.Shape : (const void*)Desc.Mesh;
+            if (SourceKey == nullptr)
+            {
+                continue;
+            }
+
+            JPH::ShapeRefC Base;
+            auto It = BaseShapes.find(SourceKey);
+            if (It != BaseShapes.end())
+            {
+                Base = It->second;
+            }
+            else
+            {
+                if (Desc.Shape != nullptr)
+                {
+                    Base = BuildCollisionShapeAsset(*Desc.Shape, FVector3(1.0f));
+                }
+                else
+                {
+                    Base = GetOrCreateMeshShape(Desc.Mesh, FVector3(1.0f), Desc.bConvex);
+                }
+                BaseShapes.emplace(SourceKey, Base);
+            }
+
+            if (Base == nullptr)
+            {
+                continue;
+            }
+
+            JPH::BodyCreationSettings Settings(
+                MakeScaledShape(Base, Desc.Scale, "StaticInstance"),
+                JoltUtils::ToJPHRVec3(Desc.Position),
+                JoltUtils::ToJPHQuat(Desc.Rotation),
+                JPH::EMotionType::Static,
+                Layer);
+
+            JPH::Body* Body = BodyInterface.CreateBody(Settings);
+            if (Body == nullptr)
+            {
+                LOG_ERROR("Static body group hit the body limit; built {} of {} instances.", BodyIDs.size(), Instances.size());
+                break;
+            }
+
+            Body->SetUserData(static_cast<uint64>(Owner));
+
+            // Always stored, so a recycled BodyID slot never inherits a destroyed body's material.
+            FRigidBodyBuildResult MaterialOnly;
+            if (Desc.Material != nullptr)
+            {
+                MaterialOnly.bHasMaterial               = true;
+                MaterialOnly.MaterialFriction           = Desc.Material->Friction;
+                MaterialOnly.MaterialRestitution        = Desc.Material->Restitution;
+                MaterialOnly.MaterialFrictionCombine    = (uint8)Desc.Material->FrictionCombine;
+                MaterialOnly.MaterialRestitutionCombine = (uint8)Desc.Material->RestitutionCombine;
+            }
+            StoreBodyMaterial(Body->GetID(), MaterialOnly);
+
+            BodyIDs.push_back(Body->GetID());
+        }
+
+        if (BodyIDs.empty())
+        {
+            return 0;
+        }
+
+        JPH::BodyInterface::AddState AddState = BodyInterface.AddBodiesPrepare(BodyIDs.data(), (int)BodyIDs.size());
+        BodyInterface.AddBodiesFinalize(BodyIDs.data(), (int)BodyIDs.size(), AddState, JPH::EActivation::DontActivate);
+
+        if (BodyIDs.size() >= 128)
+        {
+            JoltSystem->OptimizeBroadPhase();
+        }
+
+        const uint32 GroupID = NextStaticBodyGroupID++;
+        StaticBodyGroups.emplace(GroupID, Move(BodyIDs));
+        return GroupID;
+    }
+
+    void FJoltPhysicsScene::DestroyStaticBodyGroup(uint32 GroupID)
+    {
+        auto It = StaticBodyGroups.find(GroupID);
+        if (It == StaticBodyGroups.end())
+        {
+            return;
+        }
+
+        TVector<JPH::BodyID>& Bodies = It->second;
+        for (JPH::BodyID BodyID : Bodies)
+        {
+            ClearBodyMaterial(BodyID);
+        }
+
+        if (!Bodies.empty())
+        {
+            JPH::BodyInterface& BodyInterface = JoltSystem->GetBodyInterface();
+            BodyInterface.RemoveBodies(Bodies.data(), (int)Bodies.size());
+            BodyInterface.DestroyBodies(Bodies.data(), (int)Bodies.size());
+        }
+
+        StaticBodyGroups.erase(It);
+    }
+
+    void FJoltPhysicsScene::DestroyAllStaticBodyGroups()
+    {
+        while (!StaticBodyGroups.empty())
+        {
+            DestroyStaticBodyGroup(StaticBodyGroups.begin()->first);
+        }
     }
 
     void FJoltPhysicsScene::BulkCreateRigidBodies(entt::registry& Registry)

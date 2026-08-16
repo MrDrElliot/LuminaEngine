@@ -1144,3 +1144,111 @@ TEST(TaskSystem, ExternalThreadSlotsAreRecycled)
         << "two concurrently live external threads were handed the same slot; per-thread arrays "
            "indexed by GetWorkerIndex() are racing";
 }
+
+// Wedged pool recovery: a pool at its ceiling with every fiber parked used to deadlock forever, workers must now drain the queued backlog by running jobs inline on the scheduler fiber.
+namespace
+{
+    struct FWedgeProbe
+    {
+        Jobs::FCounter*     Gate = nullptr;
+        std::atomic<uint32> Finished{0};
+        std::atomic<bool>   Released{false};
+    };
+
+    void WedgeBlockingJob(void* Arg, uint32 /*Worker*/)
+    {
+        FWedgeProbe* P = static_cast<FWedgeProbe*>(Arg);
+        Jobs::WaitForCounter(P->Gate, 0);
+        P->Finished.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    void WedgeReleaseJob(void* Arg, uint32 /*Worker*/)
+    {
+        FWedgeProbe* P = static_cast<FWedgeProbe*>(Arg);
+        P->Released.store(true, std::memory_order_relaxed);
+        Jobs::DecrementCounter(P->Gate, 1);
+    }
+
+    // The wedge needs the ceiling reachable, so these tests cycle the scheduler to a tiny FIXED pool.
+    void CycleToWedgeScheduler(uint32& SavedWorkers, uint32& SavedExternal)
+    {
+        SavedWorkers  = Jobs::GetNumWorkers();
+        SavedExternal = Jobs::GetNumThreadSlots() - SavedWorkers;
+        Jobs::WaitForAll();
+        Jobs::UnregisterExternalThread();
+        Jobs::Shutdown();
+
+        Jobs::FConfig Small;
+        Small.NumWorkerThreads   = 4;
+        Small.NumExternalThreads = SavedExternal;
+        Small.NumWorkFibers      = 8;
+        Small.MaxWorkFibers      = 8;
+        Jobs::Initialize(Small);
+        Jobs::RegisterExternalThread();
+    }
+
+    void RestoreSchedulerAfterWedge(uint32 SavedWorkers, uint32 SavedExternal)
+    {
+        Jobs::WaitForAll();
+        Jobs::UnregisterExternalThread();
+        Jobs::Shutdown();
+
+        Jobs::FConfig Config;
+        Config.NumWorkerThreads   = SavedWorkers;
+        Config.NumExternalThreads = SavedExternal;
+        Jobs::Initialize(Config);
+        Jobs::RegisterExternalThread();
+    }
+
+    void RunWedgeRecoveryScenario(FWedgeProbe& Probe, Jobs::EJobPriority ReleaserPriority)
+    {
+        Probe.Finished.store(0);
+        Probe.Released.store(false);
+        Probe.Gate = Jobs::AllocCounter(1);
+
+        // Far more blocked jobs than the 8-fiber ceiling, so the pool provably wedges before the fix.
+        constexpr uint32 Blockers = 32;
+        for (uint32 i = 0; i < Blockers; ++i)
+        {
+            Jobs::RunJob(&WedgeBlockingJob, &Probe, Jobs::EJobPriority::Normal, nullptr, "Wedge.Block");
+        }
+        Jobs::RunJob(&WedgeReleaseJob, &Probe, ReleaserPriority, nullptr, "Wedge.Release");
+
+        // Nobody opens the gate from outside; recovery must come from workers running queued jobs inline.
+        const bool Recovered = PollUntil([&] { return Probe.Finished.load() == Blockers; },
+            std::chrono::seconds(15));
+        EXPECT_TRUE(Recovered) << "only " << Probe.Finished.load() << " of " << Blockers
+            << " blocked jobs completed; the wedged pool never ran the queued release job inline";
+
+        if (!Recovered)
+        {
+            Jobs::DecrementCounter(Probe.Gate, 1);
+            PollUntil([&] { return Probe.Finished.load() == Blockers; }, std::chrono::seconds(10));
+        }
+        Jobs::WaitForAll();
+        Jobs::FreeCounter(Probe.Gate);
+    }
+}
+
+TEST(TaskSystem, WedgedFiberPool_RecoversByRunningJobsInline)
+{
+    uint32 SavedWorkers = 0, SavedExternal = 0;
+    CycleToWedgeScheduler(SavedWorkers, SavedExternal);
+
+    static FWedgeProbe Probe;
+    RunWedgeRecoveryScenario(Probe, Jobs::EJobPriority::Normal);
+
+    RestoreSchedulerAfterWedge(SavedWorkers, SavedExternal);
+}
+
+TEST(TaskSystem, WedgedFiberPool_BackgroundReleaseJobStillRuns)
+{
+    uint32 SavedWorkers = 0, SavedExternal = 0;
+    CycleToWedgeScheduler(SavedWorkers, SavedExternal);
+
+    // Assist waits normally refuse Background; wedge recovery must take it anyway or the wedge is permanent.
+    static FWedgeProbe Probe;
+    RunWedgeRecoveryScenario(Probe, Jobs::EJobPriority::Background);
+
+    RestoreSchedulerAfterWedge(SavedWorkers, SavedExternal);
+}

@@ -728,7 +728,8 @@ namespace Lumina
         // Routes this frame's transform + component changes into the primitive table. O(changed).
         void SyncScenePrimitives();
 
-        void CullAndEmitPrimitives(const Task::FParallelRange& Range, FThreadLocalDrawData& Local);
+        // Skeletal primitives only; statics flow through the retained batch registry, not a per-frame gather.
+        void CullAndEmitSkinnedPrimitives(const Task::FParallelRange& Range, FThreadLocalDrawData& Local);
 
         void BuildSceneCullContext();
         void MergeMeshDrawData(TVector<FThreadLocalDrawData>& ThreadLocal);
