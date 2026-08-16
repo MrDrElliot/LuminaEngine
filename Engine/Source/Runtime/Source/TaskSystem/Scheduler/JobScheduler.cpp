@@ -532,6 +532,19 @@ namespace Lumina::Jobs
             return TLS.bInlineRecovery ? (uint32)EJobPriority::Background : kMaxAssistPriority;
         }
 
+        // Adopted work runs on the waiting thread, so its cost lands inside the caller's wait zone.
+        FORCEINLINE void RunAdoptedJob(const FQueuedJob& Job, uint32 Slot)
+        {
+            LUMINA_PROFILE_SECTION_COLORED("Assist: Adopted Job", tracy::Color::Orange);
+#if USING(WITH_EDITOR)
+            if (Job.Name != nullptr)
+            {
+                LUMINA_PROFILE_TAG(Job.Name);
+            }
+#endif
+            Job.Function(Job.Argument, Slot);
+        }
+
         void PushReady(FWorkFiber* Fiber)
         {
 #if USING(WITH_EDITOR)
@@ -922,7 +935,7 @@ namespace Lumina::Jobs
             TLS.CurrentFiber    = nullptr;
             GNoParkGuardName    = nullptr;
 
-            Job.Function(Job.Argument, Slot);
+            RunAdoptedJob(Job, Slot);
             OnJobComplete(Job.Counter, Slot);
 
             GNoParkGuardName    = SavedGuard;
@@ -1655,7 +1668,7 @@ namespace Lumina::Jobs
             FQueuedJob Job;
             if (TryStealAny(Job, AssistMaxPriority()))
             {
-                Job.Function(Job.Argument, Slot);
+                RunAdoptedJob(Job, Slot);
                 OnJobComplete(Job.Counter, Slot);
                 IdleSpins = 0;
             }
@@ -1780,7 +1793,7 @@ namespace Lumina::Jobs
         FQueuedJob Job;
         if (TryStealAny(Job, AssistMaxPriority()))
         {
-            Job.Function(Job.Argument, Slot);
+            RunAdoptedJob(Job, Slot);
             OnJobComplete(Job.Counter, Slot);
             return true;
         }
