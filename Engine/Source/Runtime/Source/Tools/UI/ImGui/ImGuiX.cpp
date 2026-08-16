@@ -530,7 +530,6 @@ namespace Lumina::ImGuiX
         const char* QueryEnd  = Query.data() + Query.size();
         const char* TextBegin = Text.data();
         const char* TextEnd   = Text.data() + Text.size();
-        bool bSawWord = false;
 
         while (Word < QueryEnd)
         {
@@ -550,18 +549,16 @@ namespace Lumina::ImGuiX
                 break;
             }
 
-            bSawWord = true;
-
-            if (TextBegin != TextEnd && ImStristr(TextBegin, TextEnd, Word, WordEnd) != nullptr)
+            if (TextBegin == TextEnd || ImStristr(TextBegin, TextEnd, Word, WordEnd) == nullptr)
             {
-                return true;
+                return false;
             }
 
             Word = WordEnd;
         }
 
         // An empty box, or one holding only spaces, filters nothing out.
-        return !bSawWord;
+        return true;
     }
 
     bool PassSearchFilter(const ImGuiTextFilter& Filter, FStringView Text)

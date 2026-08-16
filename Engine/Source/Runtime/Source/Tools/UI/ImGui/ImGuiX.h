@@ -149,7 +149,7 @@ namespace Lumina::ImGuiX
     RUNTIME_API bool SearchBar(const char* StrId, ImGuiTextFilter& Filter, const char* Hint = nullptr);
 
     // ImGuiTextFilter only splits on commas, so "pine tree" is matched as one contiguous run and finds
-    // nothing. Treats spaces as separators too and passes anything matching any one word.
+    // nothing. Treats spaces as separators too and passes only text containing every word.
     RUNTIME_API bool PassSearchFilter(FStringView Query, FStringView Text);
     RUNTIME_API bool PassSearchFilter(const ImGuiTextFilter& Filter, FStringView Text);
 
