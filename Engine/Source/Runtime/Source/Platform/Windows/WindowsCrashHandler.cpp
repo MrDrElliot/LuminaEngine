@@ -183,6 +183,13 @@ namespace Lumina::CrashHandler
                 SymInitialize(Process, nullptr, TRUE);
             }
 
+            // Tracy, the hang watchdog and the memory tracker all call SymInitialize during startup, so
+            // the call above is usually a no-op and the module list predates every plugin and game DLL.
+            // Those modules then get no RUNTIME_FUNCTION from SymFunctionTableAccess64, StackWalk64
+            // falls back to chaining RBP, and under /O2 that is not a frame pointer: the first frame in
+            // project code turns the rest of the trace into garbage addresses.
+            SymRefreshModuleList(Process);
+
             STACKFRAME64 Frame{};
             DWORD MachineType;
 #if defined(_M_X64)
@@ -347,6 +354,15 @@ namespace Lumina::CrashHandler
         // falls straight through to the previous filter / WER.
         LONG HandleCrash(EXCEPTION_POINTERS* ExceptionInfo, bool bMayHandOff)
         {
+            // Break while the faulting frames are still on this thread. This runs first-chance, so the
+            // debugger stops with the real stack under it. Left to run on, the crash is only caught at
+            // second chance, by which point the debugger sits in ntdll's exception dispatcher with
+            // nothing beneath it to unwind -- a single <unknown> frame and no way back to the fault.
+            if (::IsDebuggerPresent())
+            {
+                ::DebugBreak();
+            }
+
             bool Expected = false;
             if (!GInsideHandler.compare_exchange_strong(Expected, true))
             {
