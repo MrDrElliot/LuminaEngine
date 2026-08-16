@@ -50,6 +50,8 @@ namespace Lumina::HangWatchdog
                 SymSetOptions(SymGetOptions() | SYMOPT_LOAD_LINES | SYMOPT_DEFERRED_LOADS);
                 SymInitialize(GetCurrentProcess(), nullptr, TRUE);
             }
+
+            SymRefreshModuleList(GetCurrentProcess());
         }
 
 #if defined(_M_X64)

@@ -183,6 +183,8 @@ namespace Lumina::CrashHandler
                 SymInitialize(Process, nullptr, TRUE);
             }
 
+            SymRefreshModuleList(Process);
+
             STACKFRAME64 Frame{};
             DWORD MachineType;
 #if defined(_M_X64)
@@ -347,6 +349,11 @@ namespace Lumina::CrashHandler
         // falls straight through to the previous filter / WER.
         LONG HandleCrash(EXCEPTION_POINTERS* ExceptionInfo, bool bMayHandOff)
         {
+            if (::IsDebuggerPresent())
+            {
+                ::DebugBreak();
+            }
+
             bool Expected = false;
             if (!GInsideHandler.compare_exchange_strong(Expected, true))
             {
