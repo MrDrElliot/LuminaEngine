@@ -317,8 +317,6 @@ namespace Lumina
 
     void FSceneEditorTool::DrawComponentList(entt::entity Entity)
     {
-        DrawComponentSearchBar();
-
         const bool bFiltering = DetailsFilter.IsActive();
         uint32 VisibleCount = 0;
 
@@ -2214,13 +2212,17 @@ namespace Lumina
     {
         const entt::entity Entity = GetLastSelectedEntity();
 
+        // PropertyTables hold raw component pointers; rebuild before drawing on focus change, invalidation, or dirty mark.
+        const bool bEntityValid = (Entity != entt::null) && GetSceneRegistry().valid(Entity);
+        if (bEntityValid)
+        {
+            DrawComponentSearchBar();
+        }
+
         ImGui::PushStyleColor(ImGuiCol_ChildBg, EditorColors::PanelBg());
         ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 4.0f);
 
         ImGui::BeginChild("Property Editor", ImVec2(0, 0), true);
-
-        // PropertyTables hold raw component pointers; rebuild before drawing on focus change, invalidation, or dirty mark.
-        const bool bEntityValid = (Entity != entt::null) && GetSceneRegistry().valid(Entity);
 
         // A C# reload rebuilds every script component's value buffer and destroys the CScriptStruct that
         // describes it, so a table built against the previous generation points at freed memory in both
