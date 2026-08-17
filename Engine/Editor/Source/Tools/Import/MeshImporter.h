@@ -48,9 +48,8 @@ namespace Lumina
         PROPERTY(Editable, Category = "Import")
         bool bImportAnimations = true;
 
-        // Bind imported clips to an existing skeleton instead of one from this file. Safe whenever the
-        // bone NAMES match, which is what channels resolve against; the dialogue reports the match.
-        PROPERTY(Editable, Category = "Animation")
+        /** Bind imported clips and skinned meshes to an existing skeleton, matching bone names. */
+        PROPERTY(Editable, Category = "Skeleton")
         TObjectPtr<CSkeleton> TargetSkeleton;
 
         /** Import material definitions and generate material assets for them. */
@@ -197,6 +196,12 @@ namespace Lumina
                                      FScopedSlowTask* Progress) { return false; }
 
         Import::Mesh::FMeshImportOptions BuildOptions(bool bSkipFinalization) const;
+
+        /** True when the meshes should bind to TargetSkeleton rather than one minted from this file. */
+        bool BindSkinningToTargetSkeleton();
+
+        /** Rewrites the parsed skinning into the index space of the skeleton the asset already answers to. */
+        void RebindReimportSkinning(CMesh* Mesh);
 
         /**
          * Builds the scene prefab from SourceData.SceneNodes and the meshes just created. ResourceToMesh is

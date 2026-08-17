@@ -188,7 +188,17 @@ namespace Lumina
 
     private:
 
-        void OpenDeletionWarningPopup(const FContentBrowserTileViewItem* Item, const TFunction<void(EYesNo)>& Callback = TFunction<void(EYesNo)>());
+        void OpenDeletionWarningPopup(const FContentBrowserTileViewItem* Item);
+
+        // Single funnel for every delete: play guard, variant guard, referencer fixup, then the destroy queue.
+        void RequestDeletion(TVector<FFixedString> Paths, int32 ProtectedCount);
+
+        // Names the prefab variants that would be orphaned, empty when the set is safe to delete.
+        FFixedString FindBlockingPrefabVariants(const TVector<FFixedString>& Paths) const;
+
+        // Retargets everything pointing at this asset onto another one, leaving the asset itself in place.
+        void OpenReplaceReferencesModal(const FContentBrowserTileViewItem* Item);
+
         void OnProjectLoaded();
 
         // Shared frame around an importer's reflected settings: source header, scrolling property table,

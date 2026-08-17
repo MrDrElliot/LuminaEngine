@@ -124,6 +124,9 @@ namespace Lumina
          *  a Soft ImportTable entry. No-op on archives without an import table. */
         virtual void RegisterSoftAssetReference(const FGuid& AssetGUID) {}
 
+        // Offered its resolved path+GUID on write so a fixup archive can retarget a soft ref in place.
+        virtual bool RewriteSoftAssetReference(FString& Path, FGuid& AssetGUID) { return false; }
+
         /** True when WriteBulkData will actually do something. Only the package saver has somewhere to put a
          *  bulk region; every other archive (duplication, transient, network) must keep payloads inline, so
          *  a serializer that can split has to branch on this rather than assume. */

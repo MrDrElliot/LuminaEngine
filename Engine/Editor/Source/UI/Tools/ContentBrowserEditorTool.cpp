@@ -2,6 +2,7 @@
 
 #include "EditorAssetActions.h"
 #include "EditorToolContext.h"
+#include "ReplaceReferencesModal.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Assets/AssetRegistry/TextAssetTypes.h"
 #include "Assets/AssetRegistry/TextAssetSidecar.h"
@@ -2078,63 +2079,137 @@ namespace Lumina
         ActionRegistry.EnqueueAction<FPendingRename>(FPendingRename{ OldName, NewName });
     }
 
-    void FContentBrowserEditorTool::OpenDeletionWarningPopup(const FContentBrowserTileViewItem* Item, const TFunction<void(EYesNo)>& Callback)
+    void FContentBrowserEditorTool::OpenDeletionWarningPopup(const FContentBrowserTileViewItem* Item)
     {
-        // Refused rather than cascaded: a variant is defined BY its parent, so deleting the parent would
-        // silently empty every descendant. Deleting the variants first is the user's call to make.
+        TVector<FFixedString> Paths;
+        Paths.emplace_back(Item->GetVirtualPath().data(), Item->GetVirtualPath().size());
+
+        RequestDeletion(Move(Paths), 0);
+    }
+
+    FFixedString FContentBrowserEditorTool::FindBlockingPrefabVariants(const TVector<FFixedString>& Paths) const
+    {
         FFixedString DependentVariants;
-        if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(
-                FFixedString(Item->GetVirtualPath().data(), Item->GetVirtualPath().size())))
+
+        for (const FFixedString& Path : Paths)
         {
-            CClass* AssetClass = FindObject<CClass>(Data->AssetClass);
-            if (AssetClass != nullptr && AssetClass->IsChildOf(CPrefab::StaticClass()))
+            const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(Path);
+            if (Data == nullptr)
             {
-                if (CPrefab* Prefab = LoadObject<CPrefab>(Data->AssetGUID))
+                continue;
+            }
+
+            CClass* AssetClass = FindObject<CClass>(Data->AssetClass);
+            if (AssetClass == nullptr || !AssetClass->IsChildOf(CPrefab::StaticClass()))
+            {
+                continue;
+            }
+
+            CPrefab* Prefab = LoadObject<CPrefab>(Data->AssetGUID);
+            if (Prefab == nullptr)
+            {
+                continue;
+            }
+
+            for (CPrefab* Variant : Prefab->FindDirectVariants())
+            {
+                if (!DependentVariants.empty())
                 {
-                    for (CPrefab* Variant : Prefab->FindDirectVariants())
-                    {
-                        if (!DependentVariants.empty())
-                        {
-                            DependentVariants += ", ";
-                        }
-                        DependentVariants += Variant->GetName().c_str();
-                    }
+                    DependentVariants += ", ";
                 }
+                DependentVariants += Variant->GetName().c_str();
             }
         }
 
-        if (!DependentVariants.empty())
+        return DependentVariants;
+    }
+
+    void FContentBrowserEditorTool::OpenReplaceReferencesModal(const FContentBrowserTileViewItem* Item)
+    {
+        TVector<FFixedString> Paths;
+        Paths.emplace_back(Item->GetVirtualPath().data(), Item->GetVirtualPath().size());
+
+        TVector<FAssetReferenceFixup> Plan = ReplaceReferences::BuildPlan(Paths);
+        if (Plan.empty())
         {
-            ImGuiX::Notifications::NotifyError("'{0}' is the parent of {1}. Delete or reparent those first.",
-                Item->GetName(), DependentVariants);
-            if (Callback)
-            {
-                Callback(EYesNo::No);
-            }
+            ImGuiX::Notifications::NotifyInfo("Nothing references '{0}'", Item->GetName());
             return;
         }
 
-        if (VFS::IsEmpty(Item->GetVirtualPath()))
+        ReplaceReferences::OpenModal(ToolContext, Move(Plan), EReferenceFixupMode::Standalone, 1, nullptr);
+    }
+
+    void FContentBrowserEditorTool::RequestDeletion(TVector<FFixedString> Paths, int32 ProtectedCount)
+    {
+        if (Paths.empty())
         {
-            if (Callback)
+            ImGuiX::Notifications::NotifyError("Nothing to delete, every selected entry is protected");
+            return;
+        }
+
+        if (IsAnyWorldPlayingOrSimulating())
+        {
+            ImGuiX::Notifications::NotifyError("Stop play before deleting content");
+            return;
+        }
+
+        // Refused rather than cascaded: a variant is defined BY its parent, so deleting it empties descendants.
+        const FFixedString DependentVariants = FindBlockingPrefabVariants(Paths);
+        if (!DependentVariants.empty())
+        {
+            ImGuiX::Notifications::NotifyError("A selected prefab is the parent of {0}. Delete or reparent those first.",
+                DependentVariants);
+            return;
+        }
+
+        auto Commit = [this, Paths, ProtectedCount]()
+        {
+            for (const FFixedString& Path : Paths)
             {
-                Callback(EYesNo::Yes);
+                ActionRegistry.EnqueueAction<FPendingDestroy>(FPendingDestroy{ Path });
             }
-            ActionRegistry.EnqueueAction<FPendingDestroy>(FPendingDestroy{ FFixedString(Item->GetVirtualPath().data(), Item->GetVirtualPath().size()) });
-        }
-        else if (Dialogs::Confirmation("Confirm Deletion", "Are you sure you want to delete \"{0}\"?\n""\nThis action cannot be undone.", Item->GetName()))
-        {
-            if (Callback)
+
+            if (ProtectedCount > 0)
             {
-                Callback(EYesNo::Yes);
+                ImGuiX::Notifications::NotifyWarning("Skipped {0} protected entries", ProtectedCount);
             }
-            ActionRegistry.EnqueueAction<FPendingDestroy>(FPendingDestroy{ FFixedString(Item->GetVirtualPath().data(), Item->GetVirtualPath().size()) });
-        }
-        
-        if (Callback)
+
+            // Queued destruction kills the tiles, so a held selection pointer is a crash on the next draw.
+            ContentBrowserTileView.ClearSelections();
+        };
+
+        TVector<FAssetReferenceFixup> Plan = ReplaceReferences::BuildPlan(Paths);
+        if (!Plan.empty())
         {
-            Callback(EYesNo::No);
+            ReplaceReferences::OpenModal(ToolContext, Move(Plan), EReferenceFixupMode::BeforeDelete, (uint32)Paths.size(),
+                [Commit = Move(Commit)](bool bProceed)
+                {
+                    if (bProceed)
+                    {
+                        Commit();
+                    }
+                });
+            return;
         }
+
+        // Nothing points at these, so the plain confirmation is the whole safety story.
+        if (Paths.size() == 1)
+        {
+            const FStringView Name = VFS::FileName(FStringView(Paths[0].c_str(), Paths[0].size()), true);
+
+            if (!VFS::IsEmpty(Paths[0]) &&
+                !Dialogs::Confirmation("Confirm Deletion", "Are you sure you want to delete \"{0}\"?\n""\nThis action cannot be undone.", Name))
+            {
+                return;
+            }
+        }
+        else if (!Dialogs::Confirmation("Confirm Deletion",
+            "Are you sure you want to delete {0} selected item(s)?\n""\nThis action cannot be undone.", Paths.size()))
+        {
+            return;
+        }
+
+        Commit();
     }
 
     void FContentBrowserEditorTool::OnProjectLoaded()
@@ -3410,11 +3485,15 @@ namespace Lumina
 
         DrawMenuSection("EDIT");
 
+        bool bReplaceReferencesClicked = false;
         if (bIsAsset)
         {
             DrawDuplicateAssetMenuItem(ContentItem, bIsProtected);
             DrawCreateVariantMenuItem(ContentItem);
             DrawReimportAssetMenuItem(ContentItem, bIsProtected);
+
+            bReplaceReferencesClicked = ImGui::MenuItem(LE_ICON_LINK_VARIANT " Replace References...");
+            ImGuiX::TextTooltip("Point everything that references this asset at a different one, or null them.");
         }
 
         if (ImGui::MenuItem(LE_ICON_RENAME " Rename", "F2", false, !bIsProtected))
@@ -3484,6 +3563,10 @@ namespace Lumina
         if (bDeleteClicked)
         {
             OpenDeletionWarningPopup(ContentItem);
+        }
+        else if (bReplaceReferencesClicked)
+        {
+            OpenReplaceReferencesModal(ContentItem);
         }
 
         PopContextMenuItemStyle();
@@ -3604,14 +3687,7 @@ namespace Lumina
             return;
         }
 
-        if (IsAnyWorldPlayingOrSimulating())
-        {
-            ImGuiX::Notifications::NotifyError("Stop play before deleting content");
-            return;
-        }
-
-        // Paths are snapshotted before anything can rebuild the tile tree; the items themselves live in
-        // the widget's block allocator and die on the next refresh.
+        // Snapshotted before anything can rebuild the tile tree, which frees the items themselves.
         TVector<FFixedString> Deletable;
         Deletable.reserve(Items.size());
 
@@ -3628,31 +3704,7 @@ namespace Lumina
             Deletable.emplace_back(ContentItem->GetVirtualPath().data(), ContentItem->GetVirtualPath().size());
         }
 
-        if (Deletable.empty())
-        {
-            ImGuiX::Notifications::NotifyError("Nothing to delete, every selected entry is protected");
-            return;
-        }
-
-        if (!Dialogs::Confirmation("Confirm Deletion",
-            "Are you sure you want to delete {0} selected item(s)?\n""\nThis action cannot be undone.", Deletable.size()))
-        {
-            return;
-        }
-
-        for (const FFixedString& Path : Deletable)
-        {
-            ActionRegistry.EnqueueAction<FPendingDestroy>(FPendingDestroy{ Path });
-        }
-
-        if (ProtectedCount > 0)
-        {
-            ImGuiX::Notifications::NotifyWarning("Skipped {0} protected entries", ProtectedCount);
-        }
-
-        // The tiles are about to be destroyed by the queued actions; holding pointers to them past this
-        // point is what turns a delete into a crash on the next draw.
-        ContentBrowserTileView.ClearSelections();
+        RequestDeletion(Move(Deletable), ProtectedCount);
     }
 
 

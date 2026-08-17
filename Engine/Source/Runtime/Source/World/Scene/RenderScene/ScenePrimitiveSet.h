@@ -325,6 +325,7 @@ namespace Lumina
                             EPrimitiveDirty Flags);
         void    FullRescan(FEntityRegistry& Registry);
         void    PollUnhookedSources(FEntityRegistry& Registry, FRenderDirtyTracker& Tracker);
+        void    PollSkeletalBoneRanges(FEntityRegistry& Registry, FRenderDirtyTracker& Tracker);
 
         void    RebuildWorldBounds(uint32 Index);
 

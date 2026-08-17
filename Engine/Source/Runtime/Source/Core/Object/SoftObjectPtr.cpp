@@ -89,9 +89,14 @@ namespace Lumina
     {
         // On write, resolve first so the persisted GUID is current and the saver can fold
         // it into the ImportTable as a Soft edge for the cook graph.
-        if (Ar.IsWriting() && !Self.Path.empty() && !Self.CachedGUID.IsValid())
+        if (Ar.IsWriting())
         {
-            (void)Self.TryResolve();
+            if (!Self.Path.empty() && !Self.CachedGUID.IsValid())
+            {
+                (void)Self.TryResolve();
+            }
+
+            (void)Ar.RewriteSoftAssetReference(Self.Path, Self.CachedGUID);
         }
 
         Ar << Self.Path;

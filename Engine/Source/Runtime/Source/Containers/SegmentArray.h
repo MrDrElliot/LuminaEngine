@@ -3,6 +3,7 @@
 
 #include "Core/Assertions/Assert.h"
 #include "Core/Threading/Thread.h"
+#include "EASTL/utility.h"
 #include "Memory/Memory.h"
 
 

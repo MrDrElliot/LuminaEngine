@@ -141,6 +141,124 @@ namespace Lumina
             return SlotToSource;
         }
 
+        struct FBoneRemapResult
+        {
+            bool   bApplied           = false;
+            uint32 MatchedBones       = 0;
+            uint32 UnmatchedBones     = 0;
+            uint32 DroppedInfluences  = 0;
+            uint32 ClampedInfluences  = 0;
+            FName  FirstUnmatched;
+        };
+
+        // A file numbers only the bones its own clusters bind, so modular pieces disagree on order and count.
+        FBoneRemapResult RemapJointIndicesToSkeleton(FMeshImportData& Data, const FSkeletonResource& Target)
+        {
+            FBoneRemapResult Result;
+
+            if (Data.Skeletons.empty() || !Data.Skeletons[0] || Data.Skeletons[0]->Bones.empty())
+            {
+                return Result;
+            }
+
+            const FSkeletonResource& Source = *Data.Skeletons[0];
+
+            TVector<int32> SourceToTarget(Source.Bones.size(), INDEX_NONE);
+            for (size_t i = 0; i < Source.Bones.size(); ++i)
+            {
+                const int32 TargetIndex = Target.FindBoneIndex(Source.Bones[i].Name);
+                SourceToTarget[i] = TargetIndex;
+
+                if (TargetIndex >= 0)
+                {
+                    ++Result.MatchedBones;
+                }
+                else
+                {
+                    ++Result.UnmatchedBones;
+                    if (Result.FirstUnmatched.IsNone())
+                    {
+                        Result.FirstUnmatched = Source.Bones[i].Name;
+                    }
+                }
+            }
+
+            // A different rig entirely; rewriting would weight every vertex to bone 0.
+            if (Result.MatchedBones == 0)
+            {
+                return Result;
+            }
+
+            for (const TUniquePtr<FMeshResource>& ResourcePtr : Data.Resources)
+            {
+                FMeshResource* Resource = ResourcePtr.get();
+                if (Resource == nullptr || !Resource->bSkinnedMesh)
+                {
+                    continue;
+                }
+
+                const size_t VertexCount = eastl::min(Resource->JointIndices.size(), Resource->JointWeights.size());
+                for (size_t v = 0; v < VertexCount; ++v)
+                {
+                    FU8Vector4& Indices = Resource->JointIndices[v];
+                    FU8Vector4& Weights = Resource->JointWeights[v];
+
+                    uint32 Surviving = 0;
+                    for (int32 w = 0; w < 4; ++w)
+                    {
+                        if (Weights[w] == 0)
+                        {
+                            Indices[w] = 0;
+                            continue;
+                        }
+
+                        const uint32 Old = Indices[w];
+                        const int32  New = (Old < SourceToTarget.size()) ? SourceToTarget[Old] : INDEX_NONE;
+
+                        if (New < 0)
+                        {
+                            Indices[w] = 0;
+                            Weights[w] = 0;
+                            ++Result.DroppedInfluences;
+                            continue;
+                        }
+
+                        if (New > 255)
+                        {
+                            ++Result.ClampedInfluences;
+                        }
+
+                        Indices[w] = (uint8)Math::Min(New, 255);
+                        Surviving += Weights[w];
+                    }
+
+                    // Matches PackSkinWeights: the quartet sums to 255, and an empty one goes rigid to bone 0.
+                    if (Surviving == 0)
+                    {
+                        Indices = FU8Vector4(0, 0, 0, 0);
+                        Weights = FU8Vector4(255, 0, 0, 0);
+                        continue;
+                    }
+
+                    if (Surviving != 255)
+                    {
+                        int32 Redistributed = 0;
+                        int32 Largest       = 0;
+                        for (int32 w = 0; w < 4; ++w)
+                        {
+                            Weights[w] = (uint8)(((uint32)Weights[w] * 255u) / Surviving);
+                            Redistributed += Weights[w];
+                            Largest = (Weights[w] > Weights[Largest]) ? w : Largest;
+                        }
+                        Weights[Largest] = (uint8)(Weights[Largest] + (255 - Redistributed));
+                    }
+                }
+            }
+
+            Result.bApplied = true;
+            return Result;
+        }
+
         // Which parsed sub-mesh replaces the asset on reimport. Prefers a name match (survives reordered
         // exports) and falls back to the first compatible resource.
         int32 FindResourceForAsset(const FMeshImportData& Data, const FName& AssetName, bool bWantSkinned)
@@ -880,6 +998,66 @@ namespace Lumina
         SourceData = FMeshImportData();
     }
 
+    bool CMeshImporter::BindSkinningToTargetSkeleton()
+    {
+        if (TargetSkeleton == nullptr || !bImportMeshes)
+        {
+            return false;
+        }
+
+        bool bAnySkinned = false;
+        for (const TUniquePtr<FMeshResource>& Resource : SourceData.Resources)
+        {
+            if (Resource && Resource->bSkinnedMesh)
+            {
+                bAnySkinned = true;
+                break;
+            }
+        }
+
+        if (!bAnySkinned)
+        {
+            return false;
+        }
+
+        const FSkeletonResource* Target = TargetSkeleton->GetSkeletonResource();
+        if (Target == nullptr || Target->GetNumBones() == 0)
+        {
+            LOG_WARN("[Import] target skeleton '{}' has no bones; skinned meshes keep this file's own skeleton.",
+                     TargetSkeleton->GetName());
+            return false;
+        }
+
+        const FBoneRemapResult Remap = RemapJointIndicesToSkeleton(SourceData, *Target);
+
+        if (!Remap.bApplied)
+        {
+            LOG_WARN("[Import] no bone of this file matches '{}' by name, so skinned meshes keep this file's "
+                     "own skeleton. Check the rigs are the same or clear Target Skeleton.",
+                     TargetSkeleton->GetName());
+            return false;
+        }
+
+        LOG_INFO("[Import] rebound skinning to '{}': {}/{} bones matched by name.",
+                 TargetSkeleton->GetName(), Remap.MatchedBones, Remap.MatchedBones + Remap.UnmatchedBones);
+
+        if (Remap.UnmatchedBones > 0)
+        {
+            LOG_WARN("[Import] {} bone(s) of this file are missing from '{}' (first: '{}'); {} vertex influence(s) "
+                     "were dropped and their weights redistributed.",
+                     Remap.UnmatchedBones, TargetSkeleton->GetName(), Remap.FirstUnmatched, Remap.DroppedInfluences);
+        }
+
+        if (Remap.ClampedInfluences > 0)
+        {
+            LOG_ERROR("[Import] '{}' indexes bones past 255 and joint indices are 8-bit, so {} influence(s) "
+                      "clamped and will skin to the wrong bone. Reorder the rig so skinned bones come first.",
+                      TargetSkeleton->GetName(), Remap.ClampedInfluences);
+        }
+
+        return true;
+    }
+
     void CMeshImporter::BuildAssets(const FImportRequest& Request, FImportResult& OutResult, FScopedSlowTask* Progress)
     {
         FMeshImportOptions Options = BuildOptions(false);
@@ -903,6 +1081,9 @@ namespace Lumina
             }
             Options.bMergeMeshes = false;
         }
+
+        // Must run before finalization bakes the raw joint arrays into meshlet vertices.
+        const bool bBoundToTargetSkeleton = BindSkinningToTargetSkeleton();
 
         FinalizeMeshImportData(SourceData, Options, Progress, kFinalizeBudget);
 
@@ -957,7 +1138,7 @@ namespace Lumina
         // With a target skeleton the file's own is only still needed to bind skinned meshes, whose weights
         // are bone INDICES into it. Nothing else would reference it, so skip minting a duplicate.
         bool bFileSkeletonNeeded = TargetSkeleton == nullptr;
-        if (!bFileSkeletonNeeded && bImportMeshes)
+        if (!bFileSkeletonNeeded && bImportMeshes && !bBoundToTargetSkeleton)
         {
             for (const TUniquePtr<FMeshResource>& Resource : SourceData.Resources)
             {
@@ -1023,10 +1204,14 @@ namespace Lumina
             else
             {
                 CSkeletalMesh* NewSkeletalMesh = CFactory::CreateNewOf<CSkeletalMesh>(MeshPath);
-                if (PrimarySkeleton)
+
+                CSkeleton* MeshSkeleton = bBoundToTargetSkeleton ? TargetSkeleton.Get() : PrimarySkeleton.Get();
+                if (MeshSkeleton != nullptr)
                 {
-                    NewSkeletalMesh->Skeleton = PrimarySkeleton;
-                    if (!PrimarySkeleton->PreviewMesh)
+                    NewSkeletalMesh->Skeleton = MeshSkeleton;
+
+                    // Only ever on a skeleton this import owns; the target belongs to another asset.
+                    if (MeshSkeleton == PrimarySkeleton.Get() && !PrimarySkeleton->PreviewMesh)
                     {
                         PrimarySkeleton->PreviewMesh = NewSkeletalMesh;
                     }
@@ -1388,6 +1573,52 @@ namespace Lumina
         return Mesh != nullptr ? Mesh->SourcePath : FString();
     }
 
+    void CMeshImporter::RebindReimportSkinning(CMesh* Mesh)
+    {
+        CSkeletalMesh* SkeletalMesh = Cast<CSkeletalMesh>(Mesh);
+        if (SkeletalMesh == nullptr)
+        {
+            return;
+        }
+
+        // Never the dialogue's target: worlds already pose this mesh against the skeleton it answers to.
+        const FSkeletonResource* Target = SkeletalMesh->Skeleton.IsValid()
+                                        ? SkeletalMesh->Skeleton->GetSkeletonResource()
+                                        : nullptr;
+
+        if (Target == nullptr || Target->GetNumBones() == 0)
+        {
+            LOG_WARN("Reimport: '{}' has no skeleton to bind to, so its joint indices keep whatever order "
+                     "the source file numbers bones in.", Mesh->GetName());
+            return;
+        }
+
+        const FBoneRemapResult Remap = RemapJointIndicesToSkeleton(SourceData, *Target);
+
+        if (!Remap.bApplied)
+        {
+            LOG_ERROR("Reimport: no bone in this file matches '{}' by name. The replaced geometry keeps the "
+                      "file's own bone order and will skin to the wrong bones.",
+                      SkeletalMesh->Skeleton->GetName());
+            return;
+        }
+
+        if (Remap.UnmatchedBones > 0)
+        {
+            LOG_WARN("Reimport: {} bone(s) in the source are missing from '{}' (first: '{}'); {} influence(s) "
+                     "dropped. Reimport the skeleton to pick up bones added since.",
+                     Remap.UnmatchedBones, SkeletalMesh->Skeleton->GetName(), Remap.FirstUnmatched,
+                     Remap.DroppedInfluences);
+        }
+
+        if (Remap.ClampedInfluences > 0)
+        {
+            LOG_ERROR("Reimport: '{}' indexes bones past 255 and joint indices are 8-bit, so {} influence(s) "
+                      "clamped and will skin to the wrong bone.",
+                      SkeletalMesh->Skeleton->GetName(), Remap.ClampedInfluences);
+        }
+    }
+
     bool CMeshImporter::ReimportAsset(CObject* Asset, const FImportRequest& Request, FScopedSlowTask* Progress)
     {
         CMesh* Mesh = Cast<CMesh>(Asset);
@@ -1408,6 +1639,8 @@ namespace Lumina
         // Taken from the ASSET, not the dialogue: without this a mesh with a field silently loses it on
         // every reimport.
         Options.DistanceField = Mesh->DistanceFieldSettings;
+
+        RebindReimportSkinning(Mesh);
 
         FinalizeMeshImportData(SourceData, Options, Progress, 0.9f);
 
@@ -1619,6 +1852,38 @@ namespace Lumina
             if (!ImGui::CollapsingHeader(Header.c_str()))
             {
                 return;
+            }
+
+            const FSkeletonResource* MeshTarget = TargetSkeleton != nullptr ? TargetSkeleton->GetSkeletonResource() : nullptr;
+            if (MeshTarget != nullptr && !SourceData.Skeletons.empty() && SourceData.Skeletons[0])
+            {
+                const FSkeletonResource& FileSkeleton = *SourceData.Skeletons[0];
+
+                int32 Matched = 0;
+                for (const FSkeletonResource::FBoneInfo& Bone : FileSkeleton.Bones)
+                {
+                    Matched += MeshTarget->FindBoneIndex(Bone.Name) >= 0 ? 1 : 0;
+                }
+
+                ImGui::TextDisabled("Skinned meshes bind to %s; no skeleton is created from this file.",
+                                    TargetSkeleton->GetName().c_str());
+
+                if (Matched == (int32)FileSkeleton.Bones.size())
+                {
+                    ImGui::TextColored(ImVec4(0.45f, 0.85f, 0.5f, 1.0f),
+                        LE_ICON_CHECK_CIRCLE_OUTLINE " Every bone matches by name.");
+                }
+                else if (Matched > 0)
+                {
+                    ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.45f, 1.0f),
+                        LE_ICON_ALERT_CIRCLE_OUTLINE " %d of %zu bones match; unmatched influences are dropped.",
+                        Matched, FileSkeleton.Bones.size());
+                }
+                else
+                {
+                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+                        LE_ICON_ALERT_CIRCLE_OUTLINE " No bone matches; this file's own skeleton is used instead.");
+                }
             }
 
             for (TUniquePtr<FSkeletonResource>& Skeleton : SourceData.Skeletons)

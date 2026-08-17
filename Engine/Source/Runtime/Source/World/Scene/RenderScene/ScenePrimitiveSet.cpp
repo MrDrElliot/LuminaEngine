@@ -645,7 +645,10 @@ namespace Lumina
             // Skeletal primitives are Active now: CullInstances compacts them like everything else, taking
             // their per-frame LOD ranges and pre-skin slices from FSkinnedFrameData. They used to be held
             // inactive here and CPU-fed into the head of the visible buffer instead.
-            if (Prim.Surfaces != nullptr)
+            const bool bAwaitingBones = Prim.Source == EPrimitiveSource::SkeletalMesh
+                                     && Prim.BoneArenaBase == kNoBoneRange;
+
+            if (Prim.Surfaces != nullptr && !bAwaitingBones)
             {
                 Flags |= EInstanceFlags::Active;
             }
@@ -1410,6 +1413,44 @@ namespace Lumina
             if (Mesh.SyncedRenderDataVersion != Mesh.LoadRenderDataVersion())
             {
                 Tracker.Mark(Entity, EPrimitiveSource::DynamicMesh, EPrimitiveDirty::Data);
+            }
+        }
+
+        PollSkeletalBoneRanges(Registry, Tracker);
+    }
+
+    // A skeleton finishing its load marks nothing dirty, so a primitive that synced mid-load stays boneless.
+    void FScenePrimitiveSet::PollSkeletalBoneRanges(FEntityRegistry& Registry, FRenderDirtyTracker& Tracker)
+    {
+        if (SkinnedCount == 0u)
+        {
+            return;
+        }
+
+        const entt::storage_type_t<SSkeletalMeshComponent>* Storage =
+            &Registry.storage<SSkeletalMeshComponent>();
+
+        for (const FScenePrimitive& Prim : Primitives)
+        {
+            // A live slice can only need resizing when the MESH changes, which marks the primitive itself.
+            if (Prim.Source != EPrimitiveSource::SkeletalMesh || Prim.BoneArenaCount != 0u)
+            {
+                continue;
+            }
+
+            if (!Storage->contains(Prim.Entity))
+            {
+                continue;
+            }
+
+            const CSkeletalMesh* SkelMesh = Storage->get(Prim.Entity).SkeletalMesh.Get();
+            const FSkeletonResource* SkelRes = (SkelMesh != nullptr && SkelMesh->Skeleton.IsValid())
+                                             ? SkelMesh->Skeleton->GetSkeletonResource()
+                                             : nullptr;
+
+            if (SkelRes != nullptr && SkelRes->GetNumBones() > 0)
+            {
+                Tracker.Mark(Prim.Entity, EPrimitiveSource::SkeletalMesh, EPrimitiveDirty::Data);
             }
         }
     }
