@@ -4589,7 +4589,8 @@ namespace Lumina::Physics
             JPH::Body* Body = BodyInterface.CreateBody(Settings);
             if (Body == nullptr)
             {
-                LOG_ERROR("Static body group hit the body limit; built {} of {} instances.", BodyIDs.size(), Instances.size());
+                LOG_ERROR("Static body group for entity {} built {} of {} instances; physics scene is out of body slots ({}/{}). Raise World Settings > Physics > MaxPhysicsBodies.",
+                    entt::to_integral(Owner), BodyIDs.size(), Instances.size(), JoltSystem->GetNumBodies(), JoltSystem->GetMaxBodies());
                 break;
             }
 
