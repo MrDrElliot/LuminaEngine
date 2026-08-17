@@ -395,6 +395,12 @@ namespace Lumina
                 Reg.SetGameInputFocused(!Reg.IsGameInputFocused());
                 return true;
             }
+
+            if (Key.GetKeyCode() == EKey::F8 && !Key.IsRepeat() && WorldEditorTool != nullptr)
+            {
+                WorldEditorTool->SetEjectedFromPlay(!WorldEditorTool->IsEjectedFromPlay());
+                return true;
+            }
         }
 
         // Consume input ImGui owns so it doesn't fall through; pass everything
@@ -768,10 +774,10 @@ namespace Lumina
             Screenshot::CaptureActiveWorld(Source);
         }
 
-        // Tracy sits on F8 next to the other external-tool keys (F9 screenshot, F11 RenderDoc). It used to
+        // Tracy sits on F7 next to the other external-tool keys (F9 screenshot, F11 RenderDoc). It used to
         // be advertised as Ctrl+P, which quick-open has taken -- and which never had a handler regardless,
-        // so the menu was the only way to launch it.
-        if (ImGui::IsKeyPressed(ImGuiKey_F8, false))
+        // so the menu was the only way to launch it. F8 is Eject/Possess.
+        if (ImGui::IsKeyPressed(ImGuiKey_F7, false))
         {
             LaunchTracyProfiler();
         }
@@ -3589,7 +3595,7 @@ namespace Lumina
         ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.62f, 1.0f), "External Tools");
         ImGui::Separator();
         
-        if (ImGui::MenuItem(LE_ICON_WATCH " Tracy Profiler", "F8"))
+        if (ImGui::MenuItem(LE_ICON_WATCH " Tracy Profiler", "F7"))
         {
             LaunchTracyProfiler();
         }
