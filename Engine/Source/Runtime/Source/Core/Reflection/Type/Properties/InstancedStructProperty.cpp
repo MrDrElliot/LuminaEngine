@@ -54,7 +54,21 @@ namespace Lumina
     {
         // Null for a bare FInstancedStruct, which constrains nothing and accepts any reflected struct.
         MetaStruct = Params->StructFunc != nullptr ? Params->StructFunc() : nullptr;
+        bResolvedStructBase = MetaStruct != nullptr;
         SetElementSize(sizeof(FInstancedStruct));
+    }
+
+    CStruct* FInstancedStructProperty::GetMetaStruct() const
+    {
+        if (!bResolvedStructBase)
+        {
+            bResolvedStructBase = true;
+            if (const FString* Base = TryGetMetadata("StructBase"))
+            {
+                MetaStruct = FindObject<CStruct>(FName(Base->c_str()));
+            }
+        }
+        return MetaStruct;
     }
 
     void FInstancedStructProperty::Serialize(FArchive& Ar, void* Value)
@@ -66,7 +80,7 @@ namespace Lumina
             FName StructKey;
             Ar << StructKey;
 
-            CStruct* Type = ResolveInstancedStructType(MetaStruct, StructKey);
+            CStruct* Type = ResolveInstancedStructType(GetMetaStruct(), StructKey);
             Instance->InitializeAs(Type);
 
             if (Type != nullptr)
@@ -97,7 +111,7 @@ namespace Lumina
             FName StructKey;
             Record << StructuredArchive::TNamedValue<FName>("StructType", StructKey);
 
-            CStruct* Type = ResolveInstancedStructType(MetaStruct, StructKey);
+            CStruct* Type = ResolveInstancedStructType(GetMetaStruct(), StructKey);
             Instance->InitializeAs(Type);
 
             if (Type != nullptr)

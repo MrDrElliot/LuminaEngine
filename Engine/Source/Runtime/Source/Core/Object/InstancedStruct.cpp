@@ -74,7 +74,13 @@ namespace Lumina
 
     bool IsInstancableStructType(const CStruct* Type)
     {
-        return Type != nullptr && !Type->IsA<CClass>();
+        if (Type == nullptr || Type->IsA<CClass>())
+        {
+            return false;
+        }
+
+        // A CDO is an instance OF a struct type, not a type, so it is never something to instance.
+        return !Type->HasAnyFlag(OF_DefaultObject);
     }
 
     void FInstancedStruct::InitializeAs(CStruct* InStruct)

@@ -1438,7 +1438,7 @@ namespace Lumina
             [&Candidates](int32 Index) -> FFixedString
             {
                 return (Index == 0) ? FFixedString("None") : FFixedString(InstancedStructLabel(Candidates[Index - 1]));
-            });
+            }, LE_ICON_CUBE_OUTLINE);
         ImGui::PopItemWidth();
 
         if (Picked != INDEX_NONE)

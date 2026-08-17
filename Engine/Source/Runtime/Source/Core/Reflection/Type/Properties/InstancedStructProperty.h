@@ -26,11 +26,15 @@ namespace Lumina
         RUNTIME_API void DestructValue(void* Value) const override;
         bool OwnsStorage() const override { return true; }
 
-        // The base struct every owned instance must derive from (the T in TInstancedStruct<T>).
-        RUNTIME_API CStruct* GetMetaStruct() const { return MetaStruct; }
+        // The base every owned instance must derive from: the T in TInstancedStruct<T>, or the type named
+        // by PROPERTY(StructBase = "...") on a bare FInstancedStruct. Null means unconstrained.
+        RUNTIME_API CStruct* GetMetaStruct() const;
 
     private:
 
-        CStruct* MetaStruct = nullptr;
+        mutable CStruct* MetaStruct = nullptr;
+
+        // StructBase names a type that may not exist yet at property construction, so resolve on first ask.
+        mutable bool bResolvedStructBase = false;
     };
 }
