@@ -8,8 +8,14 @@ namespace Lumina
 
     // A value type an FInstancedStruct may own: reflected, and NOT a CObject. A CObject has identity
     // and is referenced through TObjectPtr, never copied into an inline value slot.
+#if defined(REFLECTION_PARSER)
+    // GENERATED_BODY is stubbed while parsing, so requiring StaticStruct() would reject every struct.
+    template<typename T>
+    concept InstancableStruct = true;
+#else
     template<typename T>
     concept InstancableStruct = !eastl::is_base_of_v<CObject, T> && requires { T::StaticStruct(); };
+#endif
 
     // Owns a heap instance of a reflected CStruct chosen at runtime.
     struct FInstancedStruct
