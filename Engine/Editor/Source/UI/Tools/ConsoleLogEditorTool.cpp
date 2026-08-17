@@ -13,8 +13,11 @@ namespace Lumina
     {
         CreateToolWindow("Console", [&] (bool bIsFocused)
         {
-            DrawLogWindow(bIsFocused); 
+            DrawLogWindow(bIsFocused);
         });
+
+        // Seeded from the queue rather than a literal, so the slider opens showing what is really retained.
+        Settings.MaxMessageCount = (int32)Logging::GetConsoleLogQueueCapacity();
     }
 
     void FConsoleLogEditorTool::OnDeinitialize(const FUpdateContext& UpdateContext)
@@ -40,7 +43,10 @@ namespace Lumina
         DrawHelpTextRow("Export",
             "Copies the currently filtered messages out to a text file.");
         DrawHelpTextRow("Clear",
-            "Clears the visible buffer only, the underlying ring buffer the engine writes to is unaffected.");
+            "Empties the engine's console message queue. The log file on disk keeps everything.");
+        DrawHelpTextRow("Max Messages",
+            "Size of that queue. The oldest messages fall off once it is full, and lowering the limit "
+            "discards them immediately. It does not affect what is written to the log file.");
     }
 
     void FConsoleLogEditorTool::DrawToolMenu(const FUpdateContext& UpdateContext)
@@ -108,7 +114,11 @@ namespace Lumina
                 
             }
 
-            ImGui::SliderInt("Max Messages", &Settings.MaxMessageCount, 100, 2500);
+            if (ImGui::SliderInt("Max Messages", &Settings.MaxMessageCount, 100, 2500))
+            {
+                Logging::SetConsoleLogQueueCapacity((uint32)Settings.MaxMessageCount);
+            }
+            ImGuiX::TextTooltip("How many messages the console keeps. Lowering it drops the oldest immediately.");
 
             ImGui::Spacing();
             ImGui::SeparatorText("Actions");

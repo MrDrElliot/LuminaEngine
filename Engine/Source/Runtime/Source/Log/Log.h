@@ -30,6 +30,10 @@ namespace Lumina::Logging
 	RUNTIME_API void ClearLogQueue();
 	RUNTIME_API FLogQueue& GetConsoleLogQueue();
 
+	// How many messages the console queue retains; shrinking discards the oldest.
+	RUNTIME_API void SetConsoleLogQueueCapacity(uint32 Capacity);
+	RUNTIME_API uint32 GetConsoleLogQueueCapacity();
+
 	// Exported as data so the gate below stays inline across module boundaries. Write via SetLevel().
 	RUNTIME_API extern std::atomic<uint8> GLevelThreshold;
 

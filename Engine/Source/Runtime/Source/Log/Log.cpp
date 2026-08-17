@@ -35,6 +35,7 @@ namespace Lumina::Logging
 		constexpr uint32 GInlineTextBytes   = 216;          // keeps a slot at one 256B stride
 		constexpr uint32 GMaxMessageBytes   = 16 * 1024;    // anything longer is truncated
 		constexpr uint32 GMaxDrainPerBatch  = 1024;
+		constexpr uint32 kDefaultConsoleLogQueueCapacity = 300;
 		constexpr uint32 GEnqueueSpinLimit  = 256;
 
 		struct alignas(64) FLogSlot
@@ -575,16 +576,32 @@ namespace Lumina::Logging
 	}
 
 
+	// The backend thread pushes into this queue under GSinkMutex, so any resize or clear takes it too.
 	void ClearLogQueue()
 	{
+		std::scoped_lock Lock(GSinkMutex);
 		GetConsoleLogQueue().clear();
 	}
 
 
 	FLogQueue& GetConsoleLogQueue()
 	{
-		static FLogQueue Logs(300);
+		static FLogQueue Logs(kDefaultConsoleLogQueueCapacity);
 		return Logs;
+	}
+
+
+	void SetConsoleLogQueueCapacity(uint32 Capacity)
+	{
+		std::scoped_lock Lock(GSinkMutex);
+		GetConsoleLogQueue().set_capacity(Capacity == 0 ? 1u : Capacity);
+	}
+
+
+	uint32 GetConsoleLogQueueCapacity()
+	{
+		std::scoped_lock Lock(GSinkMutex);
+		return (uint32)GetConsoleLogQueue().capacity();
 	}
 
 
