@@ -98,7 +98,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "Rendering")
         bool bReceiveShadow = true;
 
-        /** Build a static collision body for every instance of this type while the world simulates. */
+        /** Build static collision for this type's instances while the world simulates (merged into compound bodies). */
         PROPERTY(Editable, Category = "Collision")
         bool bEnableCollision = false;
 

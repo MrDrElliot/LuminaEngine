@@ -4526,6 +4526,42 @@ namespace Lumina::Physics
         return MakeScaledShape(Base, Scale, Mesh->GetName().ToString());
     }
 
+    namespace
+    {
+        // Instances merge into one static compound body per material per cell of this size (world units).
+        constexpr float GStaticGroupCellSize = 32.0f;
+
+        // Sub-shape ceiling per body: sub-shape indices share Jolt's 32-bit SubShapeID with mesh triangle bits.
+        constexpr SIZE_T GStaticGroupMaxSubShapes = 256;
+
+        struct FStaticInstanceKey
+        {
+            uintptr_t Material = 0;
+            int32     CellX = 0;
+            int32     CellY = 0;
+            int32     CellZ = 0;
+            uint32    Index = 0;
+
+            bool SameBucket(const FStaticInstanceKey& Other) const
+            {
+                return Material == Other.Material && CellX == Other.CellX && CellY == Other.CellY && CellZ == Other.CellZ;
+            }
+
+            bool operator < (const FStaticInstanceKey& Other) const
+            {
+                if (Material != Other.Material) { return Material < Other.Material; }
+                if (CellX != Other.CellX)       { return CellX < Other.CellX; }
+                if (CellY != Other.CellY)       { return CellY < Other.CellY; }
+                return CellZ < Other.CellZ;
+            }
+        };
+
+        int32 ToStaticGroupCell(float Value)
+        {
+            return (int32)Math::Floor(Value / GStaticGroupCellSize);
+        }
+    }
+
     uint32 FJoltPhysicsScene::CreateStaticBodyGroup(entt::entity Owner, TSpan<const FStaticInstanceDesc> Instances)
     {
         LUMINA_PROFILE_SCOPE();
@@ -4544,52 +4580,115 @@ namespace Lumina::Physics
         // One unit-scale base shape per source; instances share it through ScaledShape wrappers.
         THashMap<const void*, JPH::ShapeRefC> BaseShapes;
 
-        TVector<JPH::BodyID> BodyIDs;
-        BodyIDs.reserve(Instances.size());
-
-        for (const FStaticInstanceDesc& Desc : Instances)
+        auto SourceKeyOf = [](const FStaticInstanceDesc& Desc) -> const void*
         {
-            const void* SourceKey = Desc.Shape != nullptr ? (const void*)Desc.Shape : (const void*)Desc.Mesh;
+            return Desc.Shape != nullptr ? (const void*)Desc.Shape : (const void*)Desc.Mesh;
+        };
+
+        TVector<FStaticInstanceKey> Keys;
+        Keys.reserve(Instances.size());
+
+        for (uint32 Index = 0; Index < (uint32)Instances.size(); ++Index)
+        {
+            const FStaticInstanceDesc& Desc = Instances[Index];
+            const void* SourceKey = SourceKeyOf(Desc);
             if (SourceKey == nullptr)
             {
                 continue;
             }
 
-            JPH::ShapeRefC Base;
             auto It = BaseShapes.find(SourceKey);
-            if (It != BaseShapes.end())
+            if (It == BaseShapes.end())
             {
-                Base = It->second;
-            }
-            else
-            {
-                if (Desc.Shape != nullptr)
-                {
-                    Base = BuildCollisionShapeAsset(*Desc.Shape, FVector3(1.0f));
-                }
-                else
-                {
-                    Base = GetOrCreateMeshShape(Desc.Mesh, FVector3(1.0f), Desc.bConvex);
-                }
-                BaseShapes.emplace(SourceKey, Base);
+                JPH::ShapeRefC Base = Desc.Shape != nullptr
+                    ? BuildCollisionShapeAsset(*Desc.Shape, FVector3(1.0f))
+                    : GetOrCreateMeshShape(Desc.Mesh, FVector3(1.0f), Desc.bConvex);
+
+                It = BaseShapes.emplace(SourceKey, Base).first;
             }
 
-            if (Base == nullptr)
+            if (It->second == nullptr)
             {
                 continue;
             }
 
+            FStaticInstanceKey& Key = Keys.emplace_back();
+            Key.Material = (uintptr_t)Desc.Material;
+            Key.CellX    = ToStaticGroupCell(Desc.Position.x);
+            Key.CellY    = ToStaticGroupCell(Desc.Position.y);
+            Key.CellZ    = ToStaticGroupCell(Desc.Position.z);
+            Key.Index    = Index;
+        }
+
+        if (Keys.empty())
+        {
+            return 0;
+        }
+
+        eastl::sort(Keys.begin(), Keys.end());
+
+        TVector<JPH::BodyID> BodyIDs;
+
+        for (SIZE_T Start = 0, End = 0; Start < Keys.size(); Start = End)
+        {
+            End = Start + 1;
+            while (End < Keys.size() && Keys[End].SameBucket(Keys[Start]) && (End - Start) < GStaticGroupMaxSubShapes)
+            {
+                ++End;
+            }
+
+            // Sub-shapes are body-local, so anchoring at the bucket's centre keeps their offsets small.
+            FVector3 Min = Instances[Keys[Start].Index].Position;
+            FVector3 Max = Min;
+            for (SIZE_T i = Start + 1; i < End; ++i)
+            {
+                Min = Math::Min(Min, Instances[Keys[i].Index].Position);
+                Max = Math::Max(Max, Instances[Keys[i].Index].Position);
+            }
+            const FVector3 Anchor = (Min + Max) * 0.5f;
+
+            JPH::StaticCompoundShapeSettings Compound;
+            Compound.SetEmbedded();
+            Compound.mSubShapes.reserve(End - Start);
+
+            for (SIZE_T i = Start; i < End; ++i)
+            {
+                const FStaticInstanceDesc& Desc = Instances[Keys[i].Index];
+
+                JPH::ShapeRefC Shape = MakeScaledShape(BaseShapes[SourceKeyOf(Desc)], Desc.Scale, "StaticInstance");
+                if (Shape == nullptr)
+                {
+                    continue;
+                }
+
+                Compound.AddShape(JoltUtils::ToJPHVec3(Desc.Position - Anchor), JoltUtils::ToJPHQuat(Desc.Rotation), Shape.GetPtr());
+            }
+
+            if (Compound.mSubShapes.empty())
+            {
+                continue;
+            }
+
+            // One sub-shape resolves to a RotatedTranslatedShape rather than an error.
+            JPH::ShapeSettings::ShapeResult Result = Compound.Create();
+            if (Result.HasError())
+            {
+                LOG_ERROR("Static body group for entity {}: merging {} instances failed ({}).",
+                    entt::to_integral(Owner), End - Start, Result.GetError().c_str());
+                continue;
+            }
+
             JPH::BodyCreationSettings Settings(
-                MakeScaledShape(Base, Desc.Scale, "StaticInstance"),
-                JoltUtils::ToJPHRVec3(Desc.Position),
-                JoltUtils::ToJPHQuat(Desc.Rotation),
+                Result.Get(),
+                JoltUtils::ToJPHRVec3(Anchor),
+                JPH::Quat::sIdentity(),
                 JPH::EMotionType::Static,
                 Layer);
 
             JPH::Body* Body = BodyInterface.CreateBody(Settings);
             if (Body == nullptr)
             {
-                LOG_ERROR("Static body group for entity {} built {} of {} instances; physics scene is out of body slots ({}/{}). Raise World Settings > Physics > MaxPhysicsBodies.",
+                LOG_ERROR("Static body group for entity {} stopped after {} merged bodies ({} instances requested); physics scene is out of body slots ({}/{}). Raise World Settings > Physics > MaxPhysicsBodies.",
                     entt::to_integral(Owner), BodyIDs.size(), Instances.size(), JoltSystem->GetNumBodies(), JoltSystem->GetMaxBodies());
                 break;
             }
@@ -4598,13 +4697,13 @@ namespace Lumina::Physics
 
             // Always stored, so a recycled BodyID slot never inherits a destroyed body's material.
             FRigidBodyBuildResult MaterialOnly;
-            if (Desc.Material != nullptr)
+            if (const CPhysicsMaterial* Material = Instances[Keys[Start].Index].Material)
             {
                 MaterialOnly.bHasMaterial               = true;
-                MaterialOnly.MaterialFriction           = Desc.Material->Friction;
-                MaterialOnly.MaterialRestitution        = Desc.Material->Restitution;
-                MaterialOnly.MaterialFrictionCombine    = (uint8)Desc.Material->FrictionCombine;
-                MaterialOnly.MaterialRestitutionCombine = (uint8)Desc.Material->RestitutionCombine;
+                MaterialOnly.MaterialFriction           = Material->Friction;
+                MaterialOnly.MaterialRestitution        = Material->Restitution;
+                MaterialOnly.MaterialFrictionCombine    = (uint8)Material->FrictionCombine;
+                MaterialOnly.MaterialRestitutionCombine = (uint8)Material->RestitutionCombine;
             }
             StoreBodyMaterial(Body->GetID(), MaterialOnly);
 
@@ -4619,7 +4718,7 @@ namespace Lumina::Physics
         JPH::BodyInterface::AddState AddState = BodyInterface.AddBodiesPrepare(BodyIDs.data(), (int)BodyIDs.size());
         BodyInterface.AddBodiesFinalize(BodyIDs.data(), (int)BodyIDs.size(), AddState, JPH::EActivation::DontActivate);
 
-        if (BodyIDs.size() >= 128)
+        if (Instances.size() >= 128)
         {
             JoltSystem->OptimizeBroadPhase();
         }

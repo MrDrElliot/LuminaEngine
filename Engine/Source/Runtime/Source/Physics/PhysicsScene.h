@@ -160,7 +160,7 @@ namespace Lumina::Physics
         virtual void BeginBodyBatch() = 0;
         virtual void EndBodyBatch() = 0;
 
-        // Batched static bodies for instanced geometry (foliage); hits report Owner. 0 = nothing built.
+        // Static bodies for instanced geometry (foliage), merged per material and cell into compound bodies; hits report Owner. 0 = nothing built.
         virtual uint32 CreateStaticBodyGroup(entt::entity Owner, TSpan<const FStaticInstanceDesc> Instances) { return 0; }
         virtual void DestroyStaticBodyGroup(uint32 GroupID) {}
 
