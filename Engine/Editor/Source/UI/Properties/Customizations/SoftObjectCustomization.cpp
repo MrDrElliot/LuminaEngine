@@ -105,6 +105,10 @@ namespace Lumina
             if (ImGui::BeginCombo("##SoftObjectPath", "", ImGuiComboFlags_HeightLarge | ImGuiComboFlags_PopupAlignLeft | ImGuiComboFlags_NoPreview))
             {
                 SearchFilter.Draw("##Search", ComboDropDownSize.x - 30.0f);
+                if (ImGui::IsWindowAppearing())
+                {
+                    ImGui::SetKeyboardFocusHere(-1);
+                }
                 if (!SearchFilter.IsActive())
                 {
                     ImDrawList* DrawList = ImGui::GetWindowDrawList();

@@ -596,6 +596,10 @@ namespace Lumina
             if (ImGui::BeginPopup("##FilePathPicker"))
             {
                 SearchFilter.Draw("##Search", 250.0f);
+                if (ImGui::IsWindowAppearing())
+                {
+                    ImGui::SetKeyboardFocusHere(-1);
+                }
                 if (ImGui::BeginChild("##PathList", ImVec2(300, 300)))
                 {
                     TVector<FAssetData*> Assets = FAssetRegistry::Get().FindByPredicate([](const FAssetData&) { return true; });
